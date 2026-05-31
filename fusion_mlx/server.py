@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 
 
 def create_app(config: Optional[ServerConfig] = None) -> FastAPI:
-     """Create and configure the FastAPI application."""
+    """Create and configure the FastAPI application."""
 
     if config is None:
         config = ServerConfig()
@@ -24,9 +24,8 @@ def create_app(config: Optional[ServerConfig] = None) -> FastAPI:
         title="fusion-mlx",
         description="Unified local model management for Apple Silicon",
         version="0.1.0",
-     )
+    )
 
-     # Health endpoint
     @app.get("/health")
     async def health():
         return {
@@ -40,7 +39,6 @@ def create_app(config: Optional[ServerConfig] = None) -> FastAPI:
             },
         }
 
-     # Models endpoint (OpenAI-compatible)
     @app.get("/v1/models")
     async def list_models():
         return {"data": []}
