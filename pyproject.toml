@@ -1,0 +1,147 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "fusion-mlx"
+dynamic = ["version"]
+description = "fusion-mlx — unified local model management for Apple Silicon (omlx + Rapid-MLX)"
+readme = "README.md"
+license = {text = "Apache-2.0"}
+requires-python = ">=3.11"
+authors = [
+    {name = "fusion-mlx contributors"}
+]
+keywords = ["llm", "mlx", "apple-silicon", "vllm", "inference", "transformers"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: Apache Software License",
+    "Operating System :: MacOS",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+
+dependencies = [
+    "mlx>=0.31.2",
+    "mlx-lm @ git+https://github.com/ml-explore/mlx-lm@ed1fca4cef15a824c5f1702c80f70b4cffc8e4dd",
+    "regex",
+    "mlx-embeddings @ git+https://github.com/Blaizzy/mlx-embeddings@32981fa4e8064ed664b52071789dd18271fe4206",
+    "transformers>=5.0.0",
+    "mistral-common>=1.10",
+    "tokenizers>=0.19.0",
+    "huggingface-hub>=0.23.0",
+    "numpy>=1.24.0",
+    "tqdm>=4.66.0",
+    "pyyaml>=6.0",
+    "itsdangerous>=2.0",
+    "jinja2>=3.0",
+    "sentencepiece",
+    "tiktoken",
+    "protobuf",
+    "requests>=2.28.0",
+    "socksio>=1.0.0",
+    "tabulate>=0.9.0",
+    "psutil>=5.9.0",
+    "fastapi>=0.108.0",
+    "uvicorn>=0.23.0",
+    "python-multipart>=0.0.5",
+    "jsonschema>=4.0.0",
+    "openai-harmony",
+    "mlx-vlm @ git+https://github.com/Blaizzy/mlx-vlm@f96138eef1f5ce7fb5d97f8dd41a664a195b5659",
+    "Pillow>=9.0.0",
+    "dflash-mlx @ git+https://github.com/bstnxbt/dflash-mlx@1ba671372b289c025b435c1a13aabb4bfb80b183",
+]
+
+[project.optional-dependencies]
+grammar = [
+    "xgrammar>=0.1.32",
+]
+mcp = [
+    "mcp>=1.0.0",
+]
+modelscope = [
+    "modelscope>=1.10.0",
+]
+audio = [
+    "mlx-audio[tts,stt,sts] @ git+https://github.com/Blaizzy/mlx-audio@51753266e0a4f766fd5e6fbc46652224efc23981",
+]
+paroquant = [
+    "paroquant==0.1.14; python_version >= '3.11'",
+]
+vision = [
+    "opencv-python>=4.8.0",
+    "torch>=2.3.0",
+    "torchvision>=0.18.0",
+]
+chat = [
+    "gradio>=4.0.0",
+    "pytz>=2024.1",
+]
+dev = [
+    "pytest>=7.0.0",
+    "pytest-asyncio>=0.21.0",
+    "black>=23.0.0",
+    "ruff>=0.1.0",
+    "mypy>=1.0.0",
+    "mcp>=1.0.0",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=7.0.0",
+    "pytest-asyncio>=0.21.0",
+    "black>=23.0.0",
+    "ruff>=0.1.0",
+    "mypy>=1.0.0",
+    "mcp>=1.0.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/fusion-mlx/fusion-mlx"
+Documentation = "https://github.com/fusion-mlx/fusion-mlx#readme"
+Repository = "https://github.com/fusion-mlx/fusion-mlx"
+
+[project.scripts]
+fusion-mlx = "fusion_mlx.cli:main"
+fm = "fusion_mlx.cli:main"
+
+[tool.setuptools.dynamic]
+version = {attr = "fusion_mlx._version.__version__"}
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["fusion_mlx*"]
+
+[tool.setuptools.package-data]
+"fusion_mlx" = ["aliases.json"]
+"fusion_mlx.admin" = ["templates/**/*.html", "static/**/*", "i18n/*.json"]
+
+[tool.uv]
+override-dependencies = [
+    "mlx-lm @ git+https://github.com/ml-explore/mlx-lm@ed1fca4cef15a824c5f1702c80f70b4cffc8e4dd",
+]
+
+[tool.black]
+line-length = 88
+target-version = ["py311", "py312", "py313"]
+
+[tool.ruff]
+line-length = 88
+select = ["E", "F", "W", "I", "N", "UP", "B", "SIM"]
+ignore = ["E402", "E501", "E731", "F811", "F841", "B004", "B007", "B008", "B011", "B017", "B905", "N801", "N806", "SIM103", "SIM108", "SIM110", "SIM222", "UP028", "SIM102", "SIM105", "SIM115", "B904"]
+
+[tool.mypy]
+python_version = "3.11"
+warn_return_any = true
+warn_unused_configs = true
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+asyncio_mode = "auto"
