@@ -771,9 +771,9 @@ class BoundarySnapshotSSDStore:
 
         Returns:
             - ``list`` of nested sub-state tuples for CacheList layers
-              (``sub_count`` in info), or
+                (``sub_count`` in info), or
             - ``tuple`` of N elements for flat layers (``state_count`` in
-              info, V3 layout), or
+                info, V3 layout), or
             - 2-tuple from V2 polyfill (``layer_{i}_0`` / ``layer_{i}_1``).
 
         Missing elements come back as ``None``.

@@ -71,6 +71,7 @@ print(resp.choices[0].message.content)
 | Audio | `/v1/audio/transcriptions`, `/v1/audio/speech` | Supported |
 | Images | `/v1/images/generate` | Supported (Flux 2) |
 | MCP | `/v1/mcp/tools`, `/v1/mcp/execute` | Supported |
+| OpenClaw Agent | `/v1/openclaw/agent/*` | Sessions, turns, tool calling, SSE streaming |
 
 ## Model Aliases
 

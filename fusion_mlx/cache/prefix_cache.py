@@ -829,9 +829,9 @@ class BlockAwarePrefixCache(CacheManager):
         For RotatingKVCache layers specifically:
         - Last block: stores the full RotatingKVCache state (keys, values)
         - Non-last blocks: stores a placeholder (mx.zeros((1,)), mx.zeros((1,)))
-          to preserve layer count while minimizing storage
+        to preserve layer count while minimizing storage
         - Boundary snapshot: if a snapshot was captured at this block's boundary,
-          the snapshot state is used instead of a placeholder
+        the snapshot state is used instead of a placeholder
 
         During restore, a partial prefix match that ends on a placeholder block
         first attempts walk-back truncation to the latest block with valid
@@ -2207,7 +2207,7 @@ class BlockAwarePrefixCache(CacheManager):
         1. mlx-lm's empty() returns False → Continuation mode (not Fresh Start)
         2. Position IDs (RoPE) are correct for all layers
         3. The merge creates a zero-length buffer (not zero-filled) so that
-           no phantom attention positions exist during window padding reprocessing
+            no phantom attention positions exist during window padding reprocessing
 
         Uses PrefillReadyRotatingKVCache (clamped size() by buffer length)
         so BatchRotatingKVCache.merge() never reads beyond the actual buffer
@@ -2495,7 +2495,7 @@ class BlockAwarePrefixCache(CacheManager):
 
         Args:
             callback: Function with signature (block_id: int, block_hash: bytes) -> bool
-                      Returns True if restoration was successful.
+                        Returns True if restoration was successful.
         """
         self._cold_restore_callback = callback
 

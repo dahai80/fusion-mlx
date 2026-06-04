@@ -367,3 +367,154 @@ Key admin API endpoints:
 | POST | `/admin/api/server/restart` | Restart the server |
 | GET | `/admin/api/hf/models` | Search HuggingFace models |
 | POST | `/admin/api/hf/download` | Start a model download |
+
+## OpenClaw Agent Protocol
+
+The OpenClaw Agent Protocol extends the standard OpenAI API with agent-specific
+features: multi-turn session management, tool calling, conversation steering, and
+SSE event streaming.
+
+### `POST /v1/openclaw/agent/sessions`
+
+Create a new agent session with optional system prompt and tool definitions.
+
+**Request:**
+```json
+{
+  "model": "Qwen2.5-3B-Instruct-4bit",
+  "system_prompt": "You are a helpful assistant with access to weather data.",
+  "tools": [{
+    "type": "function",
+    "function": {
+      "name": "get_weather",
+      "description": "Get current weather for a city",
+      "parameters": {
+        "type": "object",
+        "properties": {"city": {"type": "string"}},
+        "required": ["city"]
+      }
+    }
+  }]
+}
+```
+
+**Response:**
+```json
+{
+  "session_id": "a1b2c3d4e5f6",
+  "turn_count": 0,
+  "active": false,
+  "model": "Qwen2.5-3B-Instruct-4bit",
+  "tools_count": 1
+}
+```
+
+### `GET /v1/openclaw/agent/sessions/{session_id}`
+
+Get session metadata and state.
+
+### `DELETE /v1/openclaw/agent/sessions/{session_id}`
+
+Delete a session and free resources.
+
+### `GET /v1/openclaw/agent/sessions`
+
+List all active sessions.
+
+### `POST /v1/openclaw/agent/turns?session_id={id}`
+
+Execute one agent turn. The agent processes input messages and returns either
+text content or tool call requests.
+
+**Request:**
+```json
+{
+  "messages": [{"role": "user", "content": "What's the weather in Tokyo?"}],
+  "max_tokens": 4096,
+  "temperature": 0.7
+}
+```
+
+**Response (text):**
+```json
+{
+  "content": "Let me check the weather in Tokyo for you.",
+  "tool_calls": [],
+  "usage": {"prompt_tokens": 12, "completion_tokens": 10},
+  "session_id": "a1b2c3d4e5f6"
+}
+```
+
+**Response (tool call):**
+```json
+{
+  "content": "",
+  "tool_calls": [{
+    "id": "call_abc123",
+    "type": "function",
+    "function": {
+      "name": "get_weather",
+      "arguments": "{\"city\": \"Tokyo\"}"
+    }
+  }],
+  "usage": {"prompt_tokens": 12, "completion_tokens": 15},
+  "session_id": "a1b2c3d4e5f6"
+}
+```
+
+### `POST /v1/openclaw/agent/tool-results`
+
+Submit the result of a tool execution back to the agent for continued processing.
+
+**Request:**
+```json
+{
+  "session_id": "a1b2c3d4e5f6",
+  "tool_call_id": "call_abc123",
+  "result": "{\"temperature\": 22, \"condition\": \"sunny\"}"
+}
+```
+
+### `POST /v1/openclaw/agent/steer`
+
+Inject a steering message into an active session. Modes:
+- `append` — Add at end of history
+- `prepend` — Add before last user message
+- `replace` — Replace last message
+
+**Request:**
+```json
+{
+  "session_id": "a1b2c3d4e5f6",
+  "message": {"role": "system", "content": "Now respond in Japanese."},
+  "mode": "append"
+}
+```
+
+### `GET /v1/openclaw/agent/stream/{session_id}`
+
+SSE stream of agent events. Events include:
+- `connected` — Connection established
+- `session_state` — Current session snapshot
+- `turn_start` / `turn_end` — Turn lifecycle
+- `tool_call` — Agent requested a tool call
+- `tool_result` — Tool result was submitted
+- `heartbeat` — Keep-alive (every 30s)
+- `session_closed` — Session was deleted
+
+**Usage:**
+```bash
+curl -N http://localhost:8000/v1/openclaw/agent/stream/a1b2c3d4e5f6
+```
+
+### Typical Agent Flow
+
+```
+1. POST /sessions              → Create session with tools
+2. POST /turns?session_id=X    → "What's the weather in Tokyo?"
+3. ← Response with tool_calls  → Agent wants to call get_weather("Tokyo")
+4. (Caller executes tool)
+5. POST /tool-results          → Submit: {"temp": 22, "condition": "sunny"}
+6. POST /turns?session_id=X    → Continue with empty message
+7. ← Final text response       → "Tokyo is currently 22°C and sunny."
+```

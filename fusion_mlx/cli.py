@@ -54,6 +54,7 @@ def launch_command(args):
     """Launch an integration (Claude Code, OpenClaw, ComfyUI)."""
     print(f"fusion-mlx {__version__}: launching '{args.integration}'")
     server = _get_server_addr(args.host, args.port)
+    model = getattr(args, "model", None)
     if args.integration == "claude":
         token = "local-key"
         print(f"Exporting environment for Claude Code:")
@@ -63,27 +64,21 @@ def launch_command(args):
         print(f'  ANTHROPIC_BASE_URL="{server}" ANTHROPIC_AUTH_TOKEN="{token}" claude')
     elif args.integration == "openclaw":
         print(f"Configuring OpenClaw to use local server at {server}")
-        _configure_openclaw(server)
+        from .integrations.openclaw import OpenClawIntegration
+        OpenClawIntegration().launch(
+            port=args.port, api_key="local-key",
+            model=model or "select-a-model", host=args.host,
+        )
     elif args.integration == "comfyui":
-        print(f"Configuring ComfyUI to use local server at {server}")
+        print(f"Configuring ComfyUI to use fusion-mlx at {server}")
+        from .integrations.comfyui import ComfyUIIntegration
+        ComfyUIIntegration().launch(
+            port=args.port, api_key="local-key",
+            model=model or "flux-2", host=args.host,
+        )
     else:
         print(f"Unknown integration: {args.integration}", file=sys.stderr)
         sys.exit(1)
-
-
-def _configure_openclaw(server: str):
-    """Write OpenClaw config to use local fusion-mlx server."""
-    config_path = Path.home() / ".openclaw" / "config.yaml"
-    config_path.parent.mkdir(parents=True, exist_ok=True)
-    config = f"""# OpenClaw configuration for fusion-mlx
-gateway:
-  url: {server}
-  api_key: local-key
-models:
-  default: claude-4.6-sonnet
-"""
-    config_path.write_text(config)
-    print(f"OpenClaw config written to {config_path}")
 
 
 def ps_command(args):
@@ -113,9 +108,9 @@ def ps_command(args):
     mx_stats = data.get("mx_memory", {})
     print()
     print("MLX Memory:")
-    print(f"  Active:   {mx_stats.get('active', '?')}")
-    print(f"  Cached:   {mx_stats.get('cached', '?')}")
-    print(f"  Limit:    {mx_stats.get('memory_limit', '?')}")
+    print(f"  Active:    {mx_stats.get('active', '?')}")
+    print(f"  Cached:    {mx_stats.get('cached', '?')}")
+    print(f"  Limit:     {mx_stats.get('memory_limit', '?')}")
 
 
 def stats_command(args):
@@ -165,14 +160,14 @@ def diagnose_command(args):
 
     # System info
     mem = psutil.virtual_memory()
-    print(f"Physical RAM:    {mem.total / 1e9:.1f} GB")
-    print(f"Available RAM:   {mem.available / 1e9:.1f} GB")
-    print(f"Used RAM:        {mem.used / 1e9:.1f} GB ({mem.percent}%)")
+    print(f"Physical RAM:     {mem.total / 1e9:.1f} GB")
+    print(f"Available RAM:    {mem.available / 1e9:.1f} GB")
+    print(f"Used RAM:         {mem.used / 1e9:.1f} GB ({mem.percent}%)")
 
     # GPU info
     try:
         gpu_info = mx.metadata()
-        print(f"\nMLX metadata:  {gpu_info}")
+        print(f"\nMLX metadata:   {gpu_info}")
     except Exception as e:
         print(f"\nMLX metadata:  unavailable ({e})")
 
@@ -181,7 +176,7 @@ def diagnose_command(args):
     print(f"\nModel directory: {model_dir}")
     if model_dir.exists():
         models = [d.name for d in model_dir.iterdir() if d.is_dir()]
-        print(f"Models found:  {len(models)}")
+        print(f"Models found:   {len(models)}")
         for m in models:
             print(f"  - {m}")
     else:
@@ -191,7 +186,7 @@ def diagnose_command(args):
     health = _api_get("/health", args.host, args.port)
     if health:
         print(f"\nServer:        running on {args.host}:{args.port}")
-        print(f"Engines:       {len(health.get('engines', []))}")
+        print(f"Engines:        {len(health.get('engines', []))}")
     else:
         print(f"\nServer:        not reachable at {args.host}:{args.port}")
 
@@ -227,6 +222,7 @@ def main():
         choices=["claude", "openclaw", "comfyui"],
         help="Integration to launch",
     )
+    launch_p.add_argument("--model", default=None, help="Model name to use")
 
     # ps
     subparsers.add_parser("ps", help="Show loaded models and memory usage")

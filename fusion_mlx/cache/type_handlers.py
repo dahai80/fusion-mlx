@@ -58,12 +58,12 @@ class CacheStateAxisInfo:
     Each entry describes one element of ``cache_obj.state``:
     - ``name``: logical name (e.g. ``keys``, ``values``, ``buf_kv``, ``pooled``)
     - ``sequence_axis``: axis index of the sequence dimension, or ``None``
-      when the element is per-batch metadata (e.g. ``offset``, ``left_padding``
-      arrays in ``BatchKVCache.state``)
+        when the element is per-batch metadata (e.g. ``offset``, ``left_padding``
+        arrays in ``BatchKVCache.state``)
     - ``sliceable``: whether this element can be sliced along ``sequence_axis``
-      for block-level prefix cache storage. Elements without a sequence_axis
-      are also non-sliceable; non-sliceable elements get last-block-only or
-      boundary-snapshot storage instead.
+        for block-level prefix cache storage. Elements without a sequence_axis
+        are also non-sliceable; non-sliceable elements get last-block-only or
+        boundary-snapshot storage instead.
     """
 
     name: str
@@ -520,11 +520,11 @@ class RotatingKVCacheHandler(CacheTypeHandler):
         """Reconstruct RotatingKVCache from state.
 
         mlx-lm v0.31.3 contract:
-          - ``keys.shape[2]`` is the actual buffer length (≤ ``max_size``).
-          - ``_idx == keys.shape[2]`` puts ``_temporal_order`` in case 1
+        - ``keys.shape[2]`` is the actual buffer length (≤ ``max_size``).
+        - ``_idx == keys.shape[2]`` puts ``_temporal_order`` in case 1
             (return as-is), so the buffer is read in temporal order
             during merge.
-          - ``size()`` (clamped via PrefillReadyRotatingKVCache) reports
+        - ``size()`` (clamped via PrefillReadyRotatingKVCache) reports
             the real RHS slice length, never overshooting the buffer.
 
         We never zero-pad the buffer to ``max_size``: doing so would

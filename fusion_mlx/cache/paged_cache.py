@@ -261,17 +261,17 @@ class FreeKVCacheBlockQueue:
         return block
 
     def popleft_lfu(self, window: int = 8) -> "CacheBlock":
-         candidates = []
-         block = self.fake_head.next_free_block
-         while block is not self.fake_tail and len(candidates) < window:
-             if not block.is_pinned:
-                 candidates.append(block)
-             block = block.next_free_block
-         if not candidates:
-             raise ValueError("No free blocks available")
-         victim = min(candidates, key=lambda b: b.access_count)
-         self.remove(victim)
-         return victim
+        candidates = []
+        block = self.fake_head.next_free_block
+        while block is not self.fake_tail and len(candidates) < window:
+            if not block.is_pinned:
+                candidates.append(block)
+            block = block.next_free_block
+        if not candidates:
+            raise ValueError("No free blocks available")
+        victim = min(candidates, key=lambda b: b.access_count)
+        self.remove(victim)
+        return victim
 
     def popleft_n(self, n: int) -> List[CacheBlock]:
         """
@@ -411,14 +411,14 @@ class BlockHashToBlockMap:
         return None
 
     def get_best_block(self, block_hash: BlockHash) -> "Optional[CacheBlock]":
-         blocks = self._cache.get(block_hash)
-         if blocks is None:
-             return None
-         if isinstance(blocks, CacheBlock):
-             return blocks
-         if isinstance(blocks, dict):
-             return max(blocks.values(), key=lambda b: b.access_count)
-         return None
+        blocks = self._cache.get(block_hash)
+        if blocks is None:
+            return None
+        if isinstance(blocks, CacheBlock):
+            return blocks
+        if isinstance(blocks, dict):
+            return max(blocks.values(), key=lambda b: b.access_count)
+        return None
 
     def insert(self, block_hash: BlockHash, block: CacheBlock) -> None:
         """Insert a block into the cache."""
