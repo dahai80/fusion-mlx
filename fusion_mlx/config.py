@@ -3,6 +3,7 @@
 Merged from omlx model_settings + Rapid-MLX SchedulerConfig.
 """
 
+import json
 import logging
 from dataclasses import dataclass, field
 from enum import Enum
@@ -135,10 +136,20 @@ class ServerConfig:
             self.settings_dir = str(Path.home() / ".fusion-mlx")
 
 
-# Default aliases mapping friendly names to real model IDs
-DEFAULT_ALIASES: Dict[str, str] = {
-    "claude-4.6-sonnet": "BeastCode/Qwen3.5-27B-Claude-4.6-Opus-Distilled-MLX-6bit",
-    "claude-4.5-sonnet": "Qwen/Qwen3-32B-A3B-Think-2512-MLX",
-    "gpt-4o": "Qwen/Qwen3-32B-A3B-Think-2512-MLX",
-    "gpt-4.5": "BeastCode/Qwen3.5-27B-Claude-4.6-Opus-Distilled-MLX-6bit",
-}
+
+# Model config loader
+def _load_model_config() -> Dict[str, Any]:
+    """Load model config from JSON file."""
+    user_config = Path.home() / ".fusion-mlx" / "model-config.json"
+    if user_config.exists():
+        with open(user_config) as f:
+            return json.load(f)
+    pkg_config = Path(__file__).parent / "model-config.json"
+    if pkg_config.exists():
+        with open(pkg_config) as f:
+            return json.load(f)
+    return {"aliases": {}, "models": {}}
+
+
+_model_config = _load_model_config()
+DEFAULT_ALIASES: Dict[str, str] = _model_config.get("aliases", {})

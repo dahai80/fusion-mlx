@@ -38,7 +38,7 @@ def serve_command(args):
         host=args.host,
         port=args.port,
         model_dir=args.model_dir,
-    )
+     )
     if args.memory_tier:
         config.memory.tier = MemoryTier(args.memory_tier)
     if args.enable_ssd_cache:
@@ -68,14 +68,14 @@ def launch_command(args):
         OpenClawIntegration().launch(
             port=args.port, api_key="local-key",
             model=model or "select-a-model", host=args.host,
-        )
+         )
     elif args.integration == "comfyui":
         print(f"Configuring ComfyUI to use fusion-mlx at {server}")
         from .integrations.comfyui import ComfyUIIntegration
         ComfyUIIntegration().launch(
             port=args.port, api_key="local-key",
             model=model or "flux-2", host=args.host,
-        )
+         )
     else:
         print(f"Unknown integration: {args.integration}", file=sys.stderr)
         sys.exit(1)
@@ -96,21 +96,24 @@ def ps_command(args):
     print(f"{'MODEL':<45} {'TYPE':<10} {'LOADED':<7} {'PINNED':<7} {'SIZE':<12}")
     print("-" * 85)
     for e in engines:
-        model_id = e.get("model_id", "?")[:42]
+        model_id = e.get("id", "?")[:42]
         mtype = e.get("model_type", "?")
         loaded = "yes" if e.get("loaded") else "no"
-        pinned = "yes" if e.get("is_pinned") else "no"
+        pinned = "yes" if e.get("pinned") else "no"
         size = e.get("estimated_size", "?")
-        if isinstance(size, float):
-            size = f"{size:.1f} GB"
+        if isinstance(size, (int, float)) and size > 0:
+            size = f"{size / 1e9:.1f} GB"
         print(f"{model_id:<45} {mtype:<10} {loaded:<7} {pinned:<7} {size:<12}")
 
     mx_stats = data.get("mx_memory", {})
     print()
     print("MLX Memory:")
-    print(f"  Active:    {mx_stats.get('active', '?')}")
-    print(f"  Cached:    {mx_stats.get('cached', '?')}")
-    print(f"  Limit:     {mx_stats.get('memory_limit', '?')}")
+    print(f"  Active:     {mx_stats.get('active', '?')}")
+    print(f"  Cached:     {mx_stats.get('cached', '?')}")
+    print(f"  Peak:        {mx_stats.get('peak', '?')}")
+    limit = mx_stats.get("memory_limit")
+    if limit is not None:
+        print(f"  Limit:      {limit}")
 
 
 def stats_command(args):
@@ -148,7 +151,7 @@ def models_command(args):
     print()
     print("Default aliases:")
     for alias, real in DEFAULT_ALIASES.items():
-        print(f"  {alias:<25} -> {real}")
+        print(f"   {alias:<25} -> {real}")
 
 
 def diagnose_command(args):
@@ -160,42 +163,49 @@ def diagnose_command(args):
 
     # System info
     mem = psutil.virtual_memory()
-    print(f"Physical RAM:     {mem.total / 1e9:.1f} GB")
-    print(f"Available RAM:    {mem.available / 1e9:.1f} GB")
-    print(f"Used RAM:         {mem.used / 1e9:.1f} GB ({mem.percent}%)")
+    print(f"Physical RAM:      {mem.total / 1e9:.1f} GB")
+    print(f"Available RAM:     {mem.available / 1e9:.1f} GB")
+    print(f"Used RAM:          {mem.used / 1e9:.1f} GB ({mem.percent}%)")
 
-    # GPU info
+    # MLX info
     try:
-        gpu_info = mx.metadata()
-        print(f"\nMLX metadata:   {gpu_info}")
+        ver = mx.__version__ if hasattr(mx, "__version__") else "unknown"
+        print(f"\nMLX version:       {ver}")
+        print(f"MLX active mem:    {mx.get_active_memory() / 1e9:.2f} GB")
+        print(f"MLX cache mem:     {mx.get_cache_memory() / 1e9:.2f} GB")
+        print(f"MLX peak mem:      {mx.get_peak_memory() / 1e9:.2f} GB")
     except Exception as e:
-        print(f"\nMLX metadata:  unavailable ({e})")
+        print(f"\nMLX info:        unavailable ({e})")
 
-    # Model dir
-    model_dir = Path(args.model_dir) if args.model_dir else Path.home() / ".fusion-mlx" / "models"
+    # Check server first (needed for model_dir)
+    health = _api_get("/health", args.host, args.port)
+    if health:
+        print(f"\nServer:          running on {args.host}:{args.port}")
+        print(f"Engines:         {len(health.get('engines', []))}")
+    else:
+        print(f"\nServer:          not reachable at {args.host}:{args.port}")
+
+    # Model dir — prefer server-reported, then CLI arg, then default
+    server_model_dir = health.get("model_dir") if health else None
+    model_dir = Path(args.model_dir) if args.model_dir else (
+        Path(server_model_dir) if server_model_dir
+        else Path.home() / ".fusion-mlx" / "models"
+    )
     print(f"\nModel directory: {model_dir}")
     if model_dir.exists():
         models = [d.name for d in model_dir.iterdir() if d.is_dir()]
-        print(f"Models found:   {len(models)}")
+        print(f"Models found:      {len(models)}")
         for m in models:
             print(f"  - {m}")
     else:
         print("Model directory does not exist yet.")
-
-    # Check server
-    health = _api_get("/health", args.host, args.port)
-    if health:
-        print(f"\nServer:        running on {args.host}:{args.port}")
-        print(f"Engines:        {len(health.get('engines', []))}")
-    else:
-        print(f"\nServer:        not reachable at {args.host}:{args.port}")
 
 
 def main():
     parser = argparse.ArgumentParser(
         prog="fusion-mlx",
         description="Unified local model management for Apple Silicon",
-    )
+     )
     parser.add_argument("--version", action="version", version=f"fusion-mlx {__version__}")
     parser.add_argument("--host", default="localhost", help="Server host (default: localhost)")
     parser.add_argument("--port", type=int, default=8000, help="Server port (default: 8000)")
@@ -208,20 +218,20 @@ def main():
     serve_p.add_argument("--port", type=int, default=8000, help="Port to listen on")
     serve_p.add_argument("--model-dir", default=None, help="Directory containing MLX models")
     serve_p.add_argument(
-        "--memory-tier",
+         "--memory-tier",
         choices=["safe", "balanced", "aggressive", "custom"],
         default="balanced",
         help="Memory enforcement tier (default: balanced)",
-    )
+     )
     serve_p.add_argument("--enable-ssd-cache", action="store_true", help="Enable SSD cold layer")
 
     # launch
     launch_p = subparsers.add_parser("launch", help="Launch an integration")
     launch_p.add_argument(
-        "integration",
+         "integration",
         choices=["claude", "openclaw", "comfyui"],
         help="Integration to launch",
-    )
+     )
     launch_p.add_argument("--model", default=None, help="Model name to use")
 
     # ps

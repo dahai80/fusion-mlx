@@ -98,7 +98,8 @@ async def _run_anthropic_messages(req: AnthropicMessagesRequest) -> AnthropicMes
     if _pool is None:
         raise HTTPException(450, "Engine pool not initialized")
 
-    model_name = req.model
+    from ..server import resolve_model_id
+    model_name = resolve_model_id(req.model)
     engine = await _pool.get_engine(model_name)
     if engine is None:
         raise HTTPException(404, f"Model {model_name} not available")
@@ -139,7 +140,8 @@ async def _stream_anthropic_generator(req: AnthropicMessagesRequest) -> AsyncIte
     if _pool is None:
         raise HTTPException(450, "Engine pool not initialized")
 
-    model_name = req.model
+    from ..server import resolve_model_id
+    model_name = resolve_model_id(req.model)
     engine = await _pool.get_engine(model_name)
     if engine is None:
         raise HTTPException(404, f"Model {model_name} not available")

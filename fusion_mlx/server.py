@@ -48,8 +48,14 @@ _server_state: Dict[str, Any] = {}
 
 def resolve_model_id(model_id: str) -> str:
     """Resolve a model alias to its real ID."""
+    from .config import DEFAULT_ALIASES
+    resolved = DEFAULT_ALIASES.get(model_id)
+    if resolved:
+        return resolved
+    # Strip provider prefix (e.g. "omlx/my-model" -> "my-model")
+    if "/" in model_id:
+        return model_id.split("/", 1)[1]
     return model_id
-
 
 
 class Server:
@@ -96,13 +102,19 @@ class Server:
         app.include_router(openclaw_router)
         app.include_router(admin_router)
 
+        # Root endpoint (health check for clients)
+        @app.get("/")
+        @app.head("/")
+        async def root():
+            return {"status": "ok", "service": "fusion-mlx"}
+
         # Health check
         @app.get("/health")
         async def health():
             engines_list = []
             if self.pool:
-                for mid in self.pool.list_models():
-                    engines_list.append(mid)
+                status = self.pool.get_status()
+                engines_list = status.get("models", [])
             return {
                 "status": "ok",
                 "version": "0.1.0",
@@ -112,7 +124,14 @@ class Server:
                      "cached": f"{mx.get_cache_memory() / 1e9:.2f} GB",
                       "peak": f"{mx.get_peak_memory() / 1e9:.2f} GB",
                   },
-             }
+                 "model_dir": self.config.model_dir,
+              }
+        # Stats endpoint (combined pool + metrics)
+        @app.get("/stats")
+        async def stats():
+            pool_status = self.pool.get_status() if self.pool else {}
+            metrics = get_server_metrics().__dict__
+            return {**pool_status, **metrics}
 
         # Metrics endpoint
         @app.get("/metrics")
@@ -185,7 +204,7 @@ class Server:
         """Graceful shutdown."""
         logger.info("fusion-mlx shutting down...")
         if self.pool:
-            await self.pool.unload_all()
+            await self.pool.shutdown()
         mx.clear_cache()
         logger.info("fusion-mlx shutdown complete")
 

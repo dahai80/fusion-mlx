@@ -113,7 +113,8 @@ async def _run_chat(request: ChatCompletionRequest) -> ChatCompletionResponse:
     if _pool is None:
         raise HTTPException(450, "Engine pool not initialized")
 
-    model_name = request.model
+    from ..server import resolve_model_id
+    model_name = resolve_model_id(request.model)
     engine = await _pool.get_engine(model_name)
     if engine is None:
         raise HTTPException(404, f"Model {model_name} not available")
@@ -149,7 +150,8 @@ async def _stream_chat_generator(request: ChatCompletionRequest) -> AsyncIterato
     if _pool is None:
         raise HTTPException(450, "Engine pool not initialized")
 
-    model_name = request.model
+    from ..server import resolve_model_id
+    model_name = resolve_model_id(request.model)
     engine = await _pool.get_engine(model_name)
     if engine is None:
         raise HTTPException(404, f"Model {model_name} not available")
