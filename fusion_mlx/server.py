@@ -67,6 +67,7 @@ class Server:
         self.request_router: Optional[RequestRouter] = None
         self.cloud_router: Optional[CloudRouter] = None
         self.engine_cores: Dict[str, AsyncEngineCore] = {}
+        self._load_lock = asyncio.Lock()
         self.settings = Settings.load(Path(self.config.settings_dir) / "settings.json")
         self.app = self._create_app()
 
@@ -153,11 +154,12 @@ class Server:
         # Set memory limit
         mem_cfg = self.config.memory
         if mem_cfg.ssd_cache_enabled:
-            mx.set_memory_limit(
-                mem_cfg.cache_memory_mb
-                if mem_cfg.cache_memory_mb
-                else int(mem_cfg.cache_memory_percent * _available_ram_mb())
-            )
+            avail_mb = _available_ram_mb()
+            limit_mb = (mem_cfg.cache_memory_mb if mem_cfg.cache_memory_mb
+                         else int(mem_cfg.cache_memory_percent * avail_mb))
+            if limit_mb > 0:
+                mx.set_memory_limit(limit_mb)
+                logger.info("MLX memory limit set to %d MB (available: %d MB)", limit_mb, avail_mb)
 
         # Create engine pool
         self.pool = EnginePool()
@@ -209,19 +211,33 @@ class Server:
         logger.info("fusion-mlx shutdown complete")
 
     async def load_model(self, model_id: str, **kwargs):
-        """Dynamically load a model into the pool."""
+        """Dynamically load a model, with lock to prevent concurrent duplicate loading."""
         if self.pool is None:
             raise RuntimeError("Server not started")
-        cfg = EngineConfig(
-            model=model_id,
-            scheduler_config=FusionSchedulerConfig(),
-            **kwargs,
-        )
-        core = AsyncEngineCore(cfg)
-        await core.start()
-        self.engine_cores[model_id] = core
-        self.pool.register_engine(model_id, core)
-        logger.info("Loaded model %s into pool", model_id)
+        async with self._load_lock:
+            if model_id in self.engine_cores:
+                logger.warning("Model %s already loaded, skipping", model_id)
+                return
+            cfg = EngineConfig(
+                model=model_id,
+                scheduler_config=FusionSchedulerConfig(),
+                  **kwargs,
+              )
+            core = AsyncEngineCore(cfg)
+            logger.info("Initializing engine core for %s...", model_id)
+            await asyncio.to_thread(self._sync_start_core, core)
+            self.engine_cores[model_id] = core
+            self.pool.register_engine(model_id, core)
+            logger.info("Loaded model %s into pool", model_id)
+
+    def _sync_start_core(self, core: AsyncEngineCore) -> None:
+        """Synchronously start an AsyncEngineCore in a background thread."""
+        loop = asyncio.new_event_loop()
+        try:
+            loop.run_until_complete(core.start())
+        finally:
+            loop.close()
+
 
     async def unload_model(self, model_id: str):
         """Unload a model from the pool."""
@@ -243,12 +259,14 @@ class Server:
 
 
 def _available_ram_mb() -> int:
-    """Get available system RAM in MB."""
+    """Get truly available system RAM in MB, using psutil."""
     try:
-        import os
-        return os.sysconf("SC_PHYSICAL_MEMORY") // (1024 * 1024)
-    except (AttributeError, ValueError):
-        return 16 * 1024  # fallback: 16 GB
+        import psutil
+        vm = psutil.virtual_memory()
+          # Reserve 4 GB for OS + other processes as a safety margin
+        return max(0, int(vm.available // (1024 * 1024)) - 4096)
+    except Exception:
+        return 16 * 1024    # fallback: 12 GB effective (16 - 4 GB reserve)
 
 
 def create_app(config: Optional[ServerConfig] = None) -> FastAPI:

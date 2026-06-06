@@ -30,6 +30,11 @@ def _api_get(path: str, host: str = "localhost", port: int = 8000) -> Optional[d
         return None
 
 
+def _get_api_key() -> str:
+    """Get API key from environment or use default."""
+    import os
+    return os.environ.get("FUSION_MLX_API_KEY", "local-key")
+
 def serve_command(args):
     """Start the fusion-mlx server."""
     from .server import create_app
@@ -56,7 +61,7 @@ def launch_command(args):
     server = _get_server_addr(args.host, args.port)
     model = getattr(args, "model", None)
     if args.integration == "claude":
-        token = "local-key"
+        token = _get_api_key()
         print(f"Exporting environment for Claude Code:")
         print(f'  export ANTHROPIC_BASE_URL="{server}"')
         print(f'  export ANTHROPIC_AUTH_TOKEN="{token}"')
@@ -66,14 +71,14 @@ def launch_command(args):
         print(f"Configuring OpenClaw to use local server at {server}")
         from .integrations.openclaw import OpenClawIntegration
         OpenClawIntegration().launch(
-            port=args.port, api_key="local-key",
+            port=args.port, api_key=_get_api_key(),
             model=model or "select-a-model", host=args.host,
          )
     elif args.integration == "comfyui":
         print(f"Configuring ComfyUI to use fusion-mlx at {server}")
         from .integrations.comfyui import ComfyUIIntegration
         ComfyUIIntegration().launch(
-            port=args.port, api_key="local-key",
+            port=args.port, api_key=_get_api_key(),
             model=model or "flux-2", host=args.host,
          )
     else:
