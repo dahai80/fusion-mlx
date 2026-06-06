@@ -1,20 +1,17 @@
 {
   "aliases": {
-    "claude-4.6-sonnet": "Qwen3.5-27B-Claude-4.6-Opus-Distilled-MLX-6bit",
-    "claude-4.5-sonnet": "Qwen2.5-3B-Instruct-4bit",
-    "claude-4-opus": "Qwen3.6-27B-MLX-8bit",
-    "gpt-4o": "Qwen2.5-3B-Instruct-4bit",
-    "gpt-4.5": "Qwen3.5-27B-Claude-4.6-Opus-Distilled-MLX-6bit"
+    "claude-4.6-sonnet": "Qwen2.5-Coder-32B-Instruct-8bit",
+    "claude-4.5-sonnet": "Qwen2.5-Coder-32B-Instruct-8bit",
+    "claude-4-opus": "Qwen3.5-35B-A3B-8bit",
+    "gpt-4o": "Qwen3.5-35B-A3B-8bit",
+    "gpt-4.5": "Qwen3.6-27B-mxfp8t"
   },
   "models": {
-    "Qwen3.5-27B-Claude-4.6-Opus-Distilled-MLX-6bit": {
+    "Qwen2.5-Coder-32B-Instruct-8bit": {
       "type": "llm"
     },
-    "Qwen2.5-3B-Instruct-4bit": {
+    "Qwen3.5-35B-A3B-8bit": {
       "type": "llm"
-    },
-    "Qwen3.6-27B-MLX-8bit": {
-      "type": "vlm"
     },
     "Qwen3.6-27B-mxfp8": {
       "type": "vlm"
