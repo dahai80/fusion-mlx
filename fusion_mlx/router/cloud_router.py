@@ -45,6 +45,12 @@ class CloudRouter:
         self.api_key = api_key
         self._litellm = None
 
+         # Circuit breaker state - prevents local/cloud oscillation
+        self._circuit_open = False
+        self._circuit_failure_count = 0
+        self._circuit_failure_threshold = 5
+        self._circuit_reset_on_success = True
+
     def _get_litellm(self):
         """Lazy import of litellm."""
         if self._litellm is None:
@@ -53,9 +59,25 @@ class CloudRouter:
             self._litellm = litellm
         return self._litellm
 
+
+    def report_local_failure(self) -> None:
+        self._circuit_failure_count += 1
+        if self._circuit_failure_count >= self._circuit_failure_threshold:
+            self._circuit_open = True
+            logger.warning("[CLOUD] Circuit breaker OPENED after %d consecutive local failures", self._circuit_failure_count)
+
+    def report_local_success(self) -> None:
+        if self._circuit_open and self._circuit_reset_on_success:
+            self._circuit_open = False
+            self._circuit_failure_count = 0
+            logger.info("[CLOUD] Circuit breaker CLOSED - local inference recovered")
+
+    def is_circuit_open(self) -> bool:
+        return self._circuit_open
+
     def should_route_to_cloud(self, new_tokens: int) -> bool:
-        """Return True if new_tokens exceeds the cloud routing threshold."""
-        return new_tokens > self.threshold
+        """Return True if new_tokens exceeds threshold OR circuit breaker is open."""
+        return self._circuit_open or new_tokens > self.threshold
 
     async def completion(
         self,

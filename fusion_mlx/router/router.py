@@ -128,7 +128,16 @@ class RequestRouter:
                 logger.info(f"Routing {new_tokens}-token request to cloud ({self.cloud_router.cloud_model})")
                 return await self.cloud_router.completion(messages, **kwargs)
 
-        return await engine.chat(messages, **kwargs)
+         # Execute local inference with circuit breaker tracking
+        try:
+            result = await engine.chat(messages, **kwargs)
+            if self.cloud_router:
+                self.cloud_router.report_local_success()
+            return result
+        except Exception:
+            if self.cloud_router:
+                self.cloud_router.report_local_failure()
+            raise
 
     async def route_stream_chat(
         self,
