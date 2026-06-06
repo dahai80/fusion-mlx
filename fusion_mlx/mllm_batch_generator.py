@@ -27,7 +27,7 @@ import mlx.nn as nn
 from mlx_lm.sample_utils import make_sampler
 
 from .multimodal_processor import MultimodalProcessor
-from .vision_embedding_cache import VisionEmbeddingCache
+from .cache.vision_embedding_cache import VisionEmbeddingCache
 
 logger = logging.getLogger(__name__)
 
