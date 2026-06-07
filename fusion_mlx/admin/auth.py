@@ -7,8 +7,8 @@ import time
 from functools import wraps
 from typing import Any, Callable, Optional
 
-SESSION_MAX_AGE = 3600        # 1 hour
-REMEMBER_ME_MAX_AGE = 86400   # 24 hours
+SESSION_MAX_AGE = 3600          # 1 hour
+REMEMBER_ME_MAX_AGE = 86400     # 24 hours
 
 _active_sessions: dict = {}
 _api_key: str = ""
@@ -40,21 +40,48 @@ def verify_session(token: str) -> bool:
     return True
 
 
-def validate_api_key(key: str) -> bool:
-    """Validate an API key."""
-    return _api_key and hashlib.sha256(key.encode()).hexdigest() == hashlib.sha256(_api_key.encode())
+def validate_api_key(key: str) -> tuple[bool, str]:
+    """Validate API key format. Returns (is_valid, error_message)."""
+    if len(key) < 8:
+        return (False, "Must be at least 8 characters")
+    if not any(c.isupper() for c in key):
+        return (False, "Must contain an uppercase letter")
+    if not any(c.islower() for c in key):
+        return (False, "Must contain a lowercase letter")
+    if not any(c.isdigit() for c in key):
+        return (False, "Must contain a digit")
+    return (True, "")
 
 
-def verify_api_key(key: Optional[str]) -> bool:
-    """Verify API key from request headers."""
-    if not key:
+def verify_api_key(input_key: Optional[str], expected_key: str) -> bool:
+    """Verify two API keys match."""
+    if not input_key or not expected_key:
         return False
-    return validate_api_key(key)
+    a = hashlib.sha256(input_key.encode()).hexdigest()
+    b = hashlib.sha256(expected_key.encode()).hexdigest()
+    return a == b
 
 
 def require_admin(f: Callable) -> Callable:
-    """Decorator that requires admin authentication."""
+    """Decorator that requires admin authentication via session cookie or Bearer token."""
     @wraps(f)
-    def wrapper(*args: Any, **kwargs: Any):
-        return f(*args, **kwargs)
+    def wrapper(request: Any, *args: Any, **kwargs: Any):
+        from fastapi import HTTPException
+        token = extract_session_token(request)
+        if token and verify_session(token):
+            return f(request, *args, **kwargs)
+        auth = request.headers.get("authorization", "")
+        if auth.startswith("Bearer "):
+            bearer_key = auth[7:]
+            if _api_key:
+                a = hashlib.sha256(bearer_key.encode()).hexdigest()
+                b = hashlib.sha256(_api_key.encode()).hexdigest()
+                if a == b:
+                    return f(request, *args, **kwargs)
+        raise HTTPException(status_code=401, detail="Unauthorized")
     return wrapper
+
+
+def extract_session_token(request) -> Optional[str]:
+    """Extract session token from request cookies."""
+    return request.cookies.get("session_token")

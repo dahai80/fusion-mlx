@@ -1,0 +1,266 @@
+# SPDX-License-Identifier: Apache-2.0
+"""Admin panel routes for oMLX server configuration.
+
+This module provides HTTP routes for the admin panel including:
+- Login/logout with API key authentication
+- Dashboard for server monitoring
+- Model settings management (per-model sampling parameters, pinning, default)
+- Global settings management
+"""
+
+import asyncio
+import inspect
+import json
+import logging
+import os
+import re
+import secrets
+import shutil
+import signal
+import subprocess
+import sys
+import time
+from collections import deque
+from dataclasses import asdict, is_dataclass
+from datetime import UTC, datetime
+from pathlib import Path
+from typing import Any, Literal, Optional
+
+import requests
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
+from fastapi.templating import Jinja2Templates
+from pydantic import BaseModel, Field
+
+from ..model_profiles import EXCLUDED_FROM_PROFILES
+from ..settings import SubKeyEntry
+from ..utils.release_check import select_latest_stable_release
+from .auth import (
+    REMEMBER_ME_MAX_AGE,
+    SESSION_MAX_AGE,
+    create_session_token,
+    require_admin,
+    validate_api_key,
+    verify_api_key,
+    verify_session,
+)
+
+logger = logging.getLogger(__name__)
+
+PRESET_REMOTE_URL = "https://fusion_mlx.ai/assets/omlx_preset.json"
+
+
+
+from .models import (
+    LoginRequest, SetupApiKeyRequest, CreateSubKeyRequest, DeleteSubKeyRequest,
+    CacheProbeRequest, ModelSettingsRequest,
+    CreateProfileRequest, UpdateProfileRequest,
+    CreateTemplateRequest, UpdateTemplateRequest,
+    GlobalSettingsRequest,
+)
+from .helpers import (
+    _format_cache_size, _paroquant_compat_for_model,
+    _dflash_compat_for_model, _mtp_compat_for_model,
+    _model_has_mtp_weight_tensors,
+    _apply_log_level_runtime, _apply_model_dirs_runtime, _reload_models,
+    _apply_memory_guard_tier_runtime, _apply_cache_settings_runtime,
+    _apply_sampling_settings_runtime,
+    format_size, get_ssd_disk_info, get_system_memory_info,
+    _schedule_self_terminate,
+    _require_settings_manager, _require_admin_or_bearer, _require_model,
+    set_admin_getters, set_hf_downloader, set_ms_downloader,
+    set_oq_manager, set_hf_uploader,
+    _get_engine_pool, _get_global_settings, _get_server_state,
+    _get_hf_downloader, _get_ms_downloader, _get_oq_manager,
+    _get_hf_uploader, _get_settings_manager,
+)
+
+_router = APIRouter()
+
+# =============================================================================
+# ModelScope Downloader API Routes
+# =============================================================================
+
+
+@_router.get("/api/ms/status")
+async def ms_status(is_admin: bool = Depends(require_admin)):
+    """Check if ModelScope downloader is available."""
+    return {"available": _ms_downloader is not None}
+
+
+@_router.post("/api/ms/download")
+async def start_ms_download(
+    request: MSDownloadRequest,
+    is_admin: bool = Depends(require_admin),
+):
+    """Start downloading a model from ModelScope."""
+    if _ms_downloader is None:
+        raise HTTPException(status_code=503, detail="ModelScope downloader not initialized")
+
+    try:
+        task = await _ms_downloader.start_download(
+            request.model_id, request.ms_token
+        )
+        return {"success": True, "task": task.to_dict()}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except RuntimeError as e:
+        raise HTTPException(status_code=503, detail=str(e))
+
+
+@_router.get("/api/ms/tasks")
+async def list_ms_tasks(is_admin: bool = Depends(require_admin)):
+    """List all ModelScope download tasks."""
+    if _ms_downloader is None:
+        raise HTTPException(status_code=503, detail="ModelScope downloader not initialized")
+
+    return {"tasks": _ms_downloader.get_tasks()}
+
+
+@_router.post("/api/ms/cancel/{task_id}")
+async def cancel_ms_download(
+    task_id: str,
+    is_admin: bool = Depends(require_admin),
+):
+    """Cancel an active ModelScope download."""
+    if _ms_downloader is None:
+        raise HTTPException(status_code=503, detail="ModelScope downloader not initialized")
+
+    success = await _ms_downloader.cancel_download(task_id)
+    if not success:
+        raise HTTPException(
+            status_code=404, detail="Task not found or not cancellable"
+        )
+    return {"success": True}
+
+
+class MSRetryRequest(BaseModel):
+    ms_token: Optional[str] = None
+
+
+@_router.post("/api/ms/retry/{task_id}")
+async def retry_ms_download(
+    task_id: str,
+    request: MSRetryRequest = MSRetryRequest(),
+    is_admin: bool = Depends(require_admin),
+):
+    """Retry a failed or cancelled ModelScope download."""
+    if _ms_downloader is None:
+        raise HTTPException(status_code=503, detail="ModelScope downloader not initialized")
+
+    try:
+        task = await _ms_downloader.retry_download(task_id, request.ms_token)
+        return {"success": True, "task": task.to_dict()}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@_router.delete("/api/ms/task/{task_id}")
+async def remove_ms_task(
+    task_id: str,
+    is_admin: bool = Depends(require_admin),
+):
+    """Remove a completed, failed, or cancelled ModelScope task."""
+    if _ms_downloader is None:
+        raise HTTPException(status_code=503, detail="ModelScope downloader not initialized")
+
+    success = _ms_downloader.remove_task(task_id)
+    if not success:
+        raise HTTPException(
+            status_code=404, detail="Task not found or still active"
+        )
+    return {"success": True}
+
+
+@_router.get("/api/ms/recommended")
+async def get_ms_recommended_models(
+    mlx_only: bool = True,
+    is_admin: bool = Depends(require_admin),
+):
+    """Get recommended models from ModelScope filtered by system memory."""
+    if _ms_downloader is None:
+        raise HTTPException(status_code=503, detail="ModelScope downloader not initialized")
+
+    memory_info = get_system_memory_info()
+    max_memory = memory_info["total_bytes"] or 16 * 1024**3
+
+    from .ms_downloader import MSDownloader
+
+    try:
+        result = await MSDownloader.get_recommended_models(
+            max_memory_bytes=max_memory, result_limit=50, mlx_only=mlx_only
+        )
+        return result
+    except TimeoutError:
+        raise HTTPException(
+            status_code=504,
+            detail="ModelScope API request timed out. The service may be temporarily unavailable.",
+        )
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=str(e))
+
+
+@_router.get("/api/ms/search")
+async def search_ms_models(
+    q: str = "",
+    sort: str = "trending",
+    limit: int = 100,
+    mlx_only: bool = True,
+    is_admin: bool = Depends(require_admin),
+):
+    """Search ModelScope models by query."""
+    if not q.strip():
+        raise HTTPException(status_code=400, detail="Query parameter 'q' is required")
+
+    from .ms_downloader import MSDownloader
+
+    try:
+        result = await MSDownloader.search_models(
+            query=q.strip(),
+            sort=sort,
+            limit=min(limit, 100),
+            mlx_only=mlx_only,
+        )
+        return result
+    except TimeoutError:
+        raise HTTPException(
+            status_code=504,
+            detail="ModelScope API request timed out. The service may be temporarily unavailable.",
+        )
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=str(e))
+
+
+@_router.get("/api/ms/model-info")
+async def get_ms_model_info(
+    model_id: str = "",
+    is_admin: bool = Depends(require_admin),
+):
+    """Get detailed model information from ModelScope."""
+    if not model_id.strip():
+        raise HTTPException(
+            status_code=400, detail="Query parameter 'model_id' is required"
+        )
+
+    from .ms_downloader import MSDownloader
+
+    try:
+        result = await MSDownloader.get_model_info(model_id=model_id.strip())
+        return result
+    except TimeoutError:
+        raise HTTPException(
+            status_code=504,
+            detail="ModelScope API request timed out. The service may be temporarily unavailable.",
+        )
+    except RuntimeError as e:
+        raise HTTPException(status_code=503, detail=str(e))
+    except Exception as e:
+        if "NotExistError" in type(e).__name__ or "404" in str(e):
+            raise HTTPException(
+                status_code=404, detail=f"Model '{model_id.strip()}' not found"
+            )
+        raise HTTPException(status_code=502, detail=str(e))
+
+
+
+router = _router
