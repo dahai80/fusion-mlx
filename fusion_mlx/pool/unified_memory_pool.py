@@ -182,32 +182,42 @@ class MetalBufferRegistry:
 # Backend Quota — per-backend pre-allocation limits
 # =============================================================================
 
-@dataclass
 class BackendQuota:
     """Pre-allocation ceiling per backend to prevent memory fragmentation."""
-    backend: str
-    max_bytes: int
-    current_bytes: int = 0
+
+    __slots__ = ("backend", "max_bytes", "_current_bytes", "_lock")
+
+    def __init__(self, backend: str, max_bytes: int, current_bytes: int = 0):
+        self.backend = backend
+        self.max_bytes = max_bytes
+        self._current_bytes = current_bytes
+        self._lock = threading.Lock()
+
+    @property
+    def current_bytes(self) -> int:
+        return self._current_bytes
 
     @property
     def utilization(self) -> float:
-        return self.current_bytes / self.max_bytes if self.max_bytes > 0 else 0.0
+        return self._current_bytes / self.max_bytes if self.max_bytes > 0 else 0.0
 
     @property
     def available(self) -> int:
-        return max(0, self.max_bytes - self.current_bytes)
+        return max(0, self.max_bytes - self._current_bytes)
 
     def can_allocate(self, size: int) -> bool:
-        return self.current_bytes + size <= self.max_bytes
+        return self._current_bytes + size <= self.max_bytes
 
     def allocate(self, size: int) -> bool:
-        if not self.can_allocate(size):
-            return False
-        self.current_bytes += size
-        return True
+        with self._lock:
+            if self._current_bytes + size > self.max_bytes:
+                return False
+            self._current_bytes += size
+            return True
 
     def release(self, size: int) -> None:
-        self.current_bytes = max(0, self.current_bytes - size)
+        with self._lock:
+            self._current_bytes = max(0, self._current_bytes - size)
 
 
 # =============================================================================
@@ -400,6 +410,7 @@ class KVCacheBridge:
 
     def get_active_handoffs(self) -> int:
         return len(self._active_handoffs)
+@dataclass
 class FragmentationReport:
     total_allocated: int       # Total bytes in registry
     total_contiguous: int      # Largest contiguous block available

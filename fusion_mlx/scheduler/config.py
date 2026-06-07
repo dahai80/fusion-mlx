@@ -55,6 +55,31 @@ class SchedulerConfig:
     gc_cleanup_interval: int = 0   # Steps between gc.collect() calls (0=disabled)
     mlx_cache_cleanup_interval: int = 512   # Steps between mx.clear_cache() calls
 
+    def __post_init__(self):
+        """Validate configuration after init."""
+        if self.max_num_seqs < 1:
+            raise ValueError(f"max_num_seqs must be >= 1, got {self.max_num_seqs}")
+        if self.max_num_batched_tokens < self.prefill_step_size:
+            raise ValueError(
+                f"max_num_batched_tokens ({self.max_num_batched_tokens}) must be >= "
+                f"prefill_step_size ({self.prefill_step_size})"
+            )
+        if self.completion_batch_size > self.max_num_seqs:
+            raise ValueError(
+                f"completion_batch_size ({self.completion_batch_size}) must be <= "
+                f"max_num_seqs ({self.max_num_seqs})"
+            )
+        if self.paged_cache_block_size < 1:
+            raise ValueError("paged_cache_block_size must be >= 1")
+        if self.max_cache_blocks is not None and self.max_cache_blocks < self.initial_cache_blocks:
+            raise ValueError(
+                f"max_cache_blocks must be >= initial_cache_blocks ({self.initial_cache_blocks})"
+            )
+        if self.gc_cleanup_interval < 0:
+            raise ValueError("gc_cleanup_interval must be >= 0")
+        if self.mlx_cache_cleanup_interval < 1:
+            raise ValueError("mlx_cache_cleanup_interval must be >= 1")
+
 
 @dataclass
 class SchedulerOutput:

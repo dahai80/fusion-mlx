@@ -15,6 +15,17 @@ try:
 except ImportError:
     HAS_MLX = False
 
+if HAS_MLX:
+    _MX_TO_ST_DTYPE = {
+        mx.float16: "F16", mx.float32: "F32", mx.bfloat16: "BF16",
+        mx.int8: "I8", mx.int16: "I16", mx.int32: "I32", mx.int64: "I64",
+        mx.uint8: "U8", mx.uint16: "U16", mx.uint32: "U32", mx.uint64: "U64",
+    }
+    _ST_TO_MX_DTYPE = {v: k for k, v in _MX_TO_ST_DTYPE.items()}
+else:
+    _MX_TO_ST_DTYPE = {}
+    _ST_TO_MX_DTYPE = {}
+
 
 def parse_size(size_str: str) -> int:
     """Parse a human-readable size string into bytes."""
@@ -47,24 +58,49 @@ def _encode_shape(shape: Tuple[int, ...]) -> bytes:
     return struct.pack(f">{len(shape)}I", *shape)
 
 
-def _extract_tensor_bytes(tensor) -> bytes:
-    if HAS_MLX:
-        return bytes(mx.array(tensor).tolist())
-    return b""
+def _extract_tensor_bytes(arr) -> tuple[bytes, str, list[int]]:
+    if not HAS_MLX:
+        return (b"", "F32", [1])
+    arr = mx.array(arr)
+    mx.eval(arr)
+    dtype_str = _MX_TO_ST_DTYPE.get(arr.dtype, "F32")
+    shape = list(arr.shape)
+    if arr.dtype == mx.bfloat16:
+        raw = bytes(memoryview(arr.view(mx.uint16)))
+    else:
+        raw = bytes(memoryview(arr))
+    return raw, dtype_str, shape
 
 
 def _has_zero_dim(shape: Tuple[int, ...]) -> bool:
     return any(d == 0 for d in shape)
 
 
-def _restore_tensor_from_bytes(data: bytes, shape: Tuple[int, ...], dtype: str):
-    if HAS_MLX:
-        return mx.array(data)
-    return None
+def _restore_tensor_from_bytes(data: bytes, dtype_str: str, shape: list[int]):
+    if not HAS_MLX:
+        return None
+    mx_dtype = _ST_TO_MX_DTYPE.get(dtype_str, mx.float32)
+    try:
+        arr = mx.array(memoryview(data)).astype(mx_dtype)
+        return arr.reshape(shape)
+    except Exception:
+        return mx.zeros(shape, dtype=mx_dtype)
 
 
-def _write_safetensors_no_mx(tensors: Dict[str, Any], path: str):
-    Path(path).write_bytes(b"")
+def _write_safetensors_no_mx(tensors: Dict[str, tuple[bytes, str, list[int]]], path: str):
+    import json
+    header = {}
+    offset = 0
+    all_bytes = b""
+    for name, (raw, dtype_str, sh) in sorted(tensors.items()):
+        header[name] = {"dtype": dtype_str, "shape": sh, "data_offsets": [offset, offset + len(raw)]}
+        offset += len(raw)
+        all_bytes += raw
+    header_json = json.dumps(header).encode("utf-8")
+    with open(path, "wb") as f:
+        f.write(struct.pack("<Q", len(header_json) + 8))
+        f.write(header_json)
+        f.write(all_bytes)
 
 
 @dataclass

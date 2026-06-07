@@ -477,18 +477,31 @@ class SmartRouter:
             return None
 
     def _estimate_tokens(self, messages: list[dict]) -> int:
-        """Rough token estimate from message text length."""
-        total_chars = 0
+        """Rough token estimate with CJK-aware counting."""
+
+
+        cjk_chars = 0
+        ascii_chars = 0
         for msg in messages:
             content = msg.get("content", "")
             if isinstance(content, str):
-                total_chars += len(content)
+                text = content
             elif isinstance(content, list):
+                text = ""
                 for part in content:
                     if isinstance(part, dict) and part.get("type") == "text":
-                        total_chars += len(part.get("text", ""))
-        return max(1, total_chars // 4)  # ~4 chars per token
-
+                        text += part.get("text", "")
+            else:
+                text = ""
+            for ch in text:
+                cp = ord(ch)
+                if (0x4e00 <= cp <= 0x9fff or
+                     0x3040 <= cp <= 0x30ff or
+                     0xac00 <= cp <= 0xd7af):
+                    cjk_chars += 1
+                else:
+                    ascii_chars += 1
+        return max(1, cjk_chars + ascii_chars // 4)
     def _has_images(self, messages: list[dict]) -> bool:
         for msg in messages:
             content = msg.get("content", "")
