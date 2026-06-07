@@ -6,6 +6,7 @@ Provides prefix caching using PagedCacheManager for block-based storage
 with SSD persistence. oMLX only supports paged SSD-based caching.
 """
 
+import asyncio
 import logging
 import math
 import time
@@ -121,6 +122,7 @@ class BlockAwarePrefixCache(CacheManager):
         self._tokens_requested_total = 0
         self._last_partial_tokens_skipped = 0
         self._last_tokens_to_next_block = 0
+        self._cache_lock = asyncio.Lock()
 
     def _get_model_num_layers(self, model: Any) -> int:
         """

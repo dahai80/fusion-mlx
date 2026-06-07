@@ -410,6 +410,7 @@ class EngineCore:
 class AsyncEngineCore:
     def __init__(self, model: Any, tokenizer: Any, config: Optional[EngineConfig] = None):
         self.engine = EngineCore(model, tokenizer, config)
+        self._start_task: Optional[asyncio.Task] = None
 
     @property
     def _mlx_executor(self):
@@ -423,7 +424,7 @@ class AsyncEngineCore:
         await self.stop()
 
     def start(self) -> None:
-        asyncio.create_task(self.engine.start())
+        self._start_task = asyncio.create_task(self.engine.start())
 
     async def stop(self) -> None:
         engine = getattr(self, "engine", None)

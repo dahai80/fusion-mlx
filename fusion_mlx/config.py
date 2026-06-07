@@ -89,6 +89,26 @@ class SchedulerConfig:
     max_concurrent_requests: int = 256
 
 
+    def __post_init__(self):
+         # Validate mutual exclusivity
+        if self.chunked_prefill_tokens > 0 and self.use_paged_cache:
+            logger.warning(
+                 "chunked_prefill_tokens and use_paged_cache both enabled — "
+                 "disabling paged cache to avoid conflicts"
+             )
+            self.use_paged_cache = False
+         # Validate ranges
+        if self.max_num_seqs < 1:
+            self.max_num_seqs = 1
+        if self.max_num_batched_tokens < self.max_num_seqs:
+            self.max_num_batched_tokens = self.max_num_seqs
+        if self.cache_memory_percent < 0 or self.cache_memory_percent > 1:
+            self.cache_memory_percent = 0.20
+        if self.suffix_min_confidence < 0 or self.suffix_min_confidence > 1:
+            self.suffix_min_confidence = 0.3
+        if self.kv_cache_quantization_bits not in (4, 8, 16):
+            self.kv_cache_quantization_bits = 8
+
 @dataclass
 class MemoryConfig:
     """Process memory enforcement configuration."""
@@ -103,6 +123,16 @@ class MemoryConfig:
     ssd_cache_dir: str = "~/Library/Caches/fusion-mlx/ssd"
     ssd_cache_max_bytes: int = 20 * 1024 * 1024 * 1024  # 20 GiB
 
+
+    def __post_init__(self):
+        if self.per_engine_pct < 0 or self.per_engine_pct > 1:
+            self.per_engine_pct = 0.7
+        if self.ssd_cache_max_bytes < 1024 * 1024:
+             # Min 1 MB for SSD cache
+            self.ssd_cache_max_bytes = 1024 * 1024
+        if self.custom_limit_mb is not None and self.custom_limit_mb < 100:
+             # Min 100 MB for custom limit
+            self.custom_limit_mb = 100
 
 @dataclass
 class ServerConfig:
