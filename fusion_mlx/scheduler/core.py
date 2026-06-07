@@ -37,16 +37,16 @@ from mlx_lm.generate import (
 from mlx_lm.models.cache import make_prompt_cache
 from mlx_lm.sample_utils import make_logits_processors
 
-from .cache.observability import CacheRateTracker
-from .cache.paged_cache import PagedCacheManager
-from .cache.prefix_cache import BlockAwarePrefixCache
-from .exceptions import is_cache_corruption_error
-from .prefill_progress import get_prefill_tracker
-from .prefill_transient_tracker import PrefillTransientTracker
-from .request import Request, RequestOutput, RequestStatus, SamplingParams
-from .speculative.vlm_mtp import VLMMTPDrafter, run_vlm_mtp_decode
-from .utils.proc_memory import get_phys_footprint
-from .utils.sampling import make_sampler as omlx_make_sampler
+from ..cache.observability import CacheRateTracker
+from ..cache.paged_cache import PagedCacheManager
+from ..cache.prefix_cache import BlockAwarePrefixCache
+from ..exceptions import is_cache_corruption_error
+from ..prefill_progress import get_prefill_tracker
+from ..prefill_transient_tracker import PrefillTransientTracker
+from ..request import Request, RequestOutput, RequestStatus, SamplingParams
+from ..speculative.vlm_mtp import VLMMTPDrafter, run_vlm_mtp_decode
+from ..utils.proc_memory import get_phys_footprint
+from ..utils.sampling import make_sampler as omlx_make_sampler
 
 # Module-level alias so Scheduler.__init__ can fall back to mlx-lm's default
 # stream when no per-engine stream is provided.
