@@ -90,7 +90,7 @@ class RouterConfig:
     ema_alpha: float = 0.7
 
     # Prefill chunk size for soft-preemption (tokens per chunk)
-    prefill_chunk_size: int = 2048
+    prefill_chunk_size: int = 512
 
     # Batch sizes to pre-warm compute graphs for
     warmup_batch_sizes: list[int] = field(default_factory=lambda: [1, 4, 8])
@@ -220,19 +220,21 @@ class SmartRouter:
                 split_phases=False,
             )
 
-        # 3. Benchmark-based routing (if we have data)
-        benchmark_decision = self._benchmark_route(model_id, quant_format, new_tokens)
-        if benchmark_decision is not None:
-            self._record_route(
-                benchmark_decision.prefill_backend.value,
-                benchmark_decision.split_phases,
-            )
-            return benchmark_decision
-
-        # 4. Priority-based routing
+         # 3. Priority-based routing (resolved before benchmark to prevent
+         # REALTIME requests from being routed to high-TPS/high-latency backends)
         priority = self._resolve_priority(task_tag)
 
-        # 5. Phase split: long prompts with low cache coverage
+         # 4. Benchmark-based routing — skip for REALTIME (latency > throughput)
+        if priority != TaskPriority.REALTIME:
+            benchmark_decision = self._benchmark_route(model_id, quant_format, new_tokens)
+            if benchmark_decision is not None:
+                self._record_route(
+                    benchmark_decision.prefill_backend.value,
+                    benchmark_decision.split_phases,
+                 )
+                return benchmark_decision
+
+         # 5. Phase split: long prompts with low cache coverage
         if (
             new_tokens > self.config.phase_split_threshold
             and cache_hit_rate < 0.5
@@ -335,7 +337,7 @@ class SmartRouter:
         request_data: dict[str, Any],
         decision: RouteDecision,
         **kwargs,
-    ) -> str:
+    ) -> Any:
         """Execute a split-phase request: prefill on omlx, decode on Rapid.
 
         Flow:
