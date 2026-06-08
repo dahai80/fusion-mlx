@@ -9,6 +9,38 @@ from mlx_lm.generate import (
 
 logger = logging.getLogger(__name__)
 
+
+
+# ---------------------------------------------------------------------------
+# Version guard — warn when mlx-lm is outside tested range so operators
+# know patches may not apply correctly.
+# ---------------------------------------------------------------------------
+try:
+    import importlib.metadata
+    _mlx_lm_ver = importlib.metadata.version("mlx-lm")
+except Exception:
+    _mlx_lm_ver = "unknown"
+
+# Update these bounds when testing against new mlx-lm releases.
+_MLX_LM_MIN_TESTED = "0.21"
+_MLX_LM_MAX_TESTED = "0.25"
+
+if _mlx_lm_ver != "unknown":
+    def _ver_tuple(v):
+        return tuple(int(x) for x in v.split(".")[:3])
+    vt = _ver_tuple(_mlx_lm_ver)
+    if vt < _ver_tuple(_MLX_LM_MIN_TESTED) or vt > _ver_tuple(_MLX_LM_MAX_TESTED):
+        logger.warning(
+            "mlx-lm %s is outside the tested range [%s, %s]. "
+            "Monkeypatches may not apply correctly. "
+            "Please verify after upgrading.",
+            _mlx_lm_ver, _MLX_LM_MIN_TESTED, _MLX_LM_MAX_TESTED,
+        )
+    else:
+        logger.debug("mlx-lm %s within tested range [%s, %s]",
+                      _mlx_lm_ver, _MLX_LM_MIN_TESTED, _MLX_LM_MAX_TESTED)
+
+
 # Module-level alias so Scheduler.__init__ can fall back to mlx-lm's default
 # stream when no per-engine stream is provided.
 _default_generation_stream = generation_stream

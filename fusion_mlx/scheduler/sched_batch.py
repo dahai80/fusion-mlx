@@ -507,6 +507,7 @@ def _begin_prefill(
     last_token = tokens[-1:]
     input_arr = mx.array(prefill_tokens)[None]  # (1, N-1)
 
+    sched._prefill_chunk_count = getattr(sched, "_prefill_chunk_count", 0)
     return _PrefillState(
         request=request,
         cache=prompt_cache,

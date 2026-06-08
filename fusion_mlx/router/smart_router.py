@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import enum
 import logging
+import threading
 import time
 from dataclasses import dataclass, field
 from typing import Any, AsyncIterator, Optional
@@ -165,6 +166,7 @@ class SmartRouter:
         self._route_count: dict[str, int] = {}
         self._split_count: int = 0
         self._cloud_count: int = 0
+        self._lock = threading.Lock()
 
     # ================================================================
     # Public API — route requests
@@ -208,7 +210,8 @@ class SmartRouter:
             self.cloud_router
             and new_tokens > self.config.cloud_fallback_threshold
         ):
-            self._cloud_count += 1
+            with self._lock:
+                self._cloud_count += 1
             self._record_route("cloud", False)
             return RouteDecision(
                 prefill_backend=EngineBackend.CLOUD,
@@ -237,7 +240,8 @@ class SmartRouter:
             and self.rapid_engine is not None
         ):
             # Split: prefill on omlx (matmul), decode on Rapid (KV)
-            self._split_count += 1
+            with self._lock:
+                self._split_count += 1
             self._record_route("split", True)
             return RouteDecision(
                 prefill_backend=EngineBackend.OMLX,
@@ -367,7 +371,8 @@ class SmartRouter:
             prefill_backend=decision.prefill_backend,
             decode_backend=decision.decode_backend,
         )
-        self._handoffs[request_id] = handoff
+        with self._lock:
+            self._handoffs[request_id] = handoff
 
         # Step 3: Decode on Rapid-MLX with transferred KV state
         # The decode engine receives the KV state and continues generation
@@ -378,7 +383,8 @@ class SmartRouter:
         })
 
         # Clean up handoff
-        self._handoffs.pop(request_id, None)
+        with self._lock:
+            self._handoffs.pop(request_id, None)
         return decode_result
 
     # ================================================================
@@ -652,7 +658,8 @@ class SmartRouter:
     # ================================================================
 
     def _record_route(self, backend: str, is_split: bool) -> None:
-        self._route_count[backend] = self._route_count.get(backend, 0) + 1
+        with self._lock:
+            self._route_count[backend] = self._route_count.get(backend, 0) + 1
 
     def reset_stats(self) -> None:
         self._route_count.clear()

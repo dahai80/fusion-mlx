@@ -588,7 +588,7 @@ def _cleanup_finished(sched, finished_ids: set[str]) -> None:
         # window was anchored to the first request's finish step, allowing the
         # second request's KV cache blocks to be re-allocated before IOKit
         # finished their completeMemory() callbacks (#557).
-        target = sched._step_counter + sched._DEFERRED_CLEAR_DELAY
+        target = sched._step_counter + sched._deferred_clear_delay()
         if sched._deferred_clear_at is None or target > sched._deferred_clear_at:
             sched._deferred_clear_at = target
 

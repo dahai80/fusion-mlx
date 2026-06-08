@@ -267,6 +267,7 @@ class KVCacheBridge:
     def __init__(self, registry: MetalBufferRegistry):
         self._registry = registry
         self._active_handoffs: dict[str, KVCacheState] = {}
+        self._lock = threading.Lock()
 
     def capture(
         self,
@@ -312,7 +313,8 @@ class KVCacheBridge:
 
         handoff_id = uuid.uuid4().hex[:12]
         state.handoff_id = handoff_id
-        self._active_handoffs[handoff_id] = state
+        with self._lock:
+            self._active_handoffs[handoff_id] = state
         logger.info(
             f"[Bridge] captured KV state: {len(kv_arrays)} buffers, "
             f"{num_tokens} tokens, {num_layers} layers @ {source_backend}"
@@ -388,7 +390,8 @@ class KVCacheBridge:
         # Remove from active handoffs only when both sides released
         hid = state.handoff_id
         if hid and state.source_released and state.target_released:
-            self._active_handoffs.pop(hid, None)
+            with self._lock:
+                self._active_handoffs.pop(hid, None)
             logger.debug(f"[Bridge] fully released handoff {hid}, all buffers freed")
         elif hid:
             logger.debug(
@@ -409,7 +412,8 @@ class KVCacheBridge:
             self._active_handoffs.pop(hid, None)
 
     def get_active_handoffs(self) -> int:
-        return len(self._active_handoffs)
+        with self._lock:
+            return len(self._active_handoffs)
 @dataclass
 class FragmentationReport:
     total_allocated: int       # Total bytes in registry

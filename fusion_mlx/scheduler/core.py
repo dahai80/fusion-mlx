@@ -204,3 +204,6 @@ class Scheduler:
     def _do_abort_request(self, *args, **kwargs):
         return _do_abort_request(self, *args, **kwargs)
 
+    def _deferred_clear_delay(self, *args, **kwargs):
+        return _deferred_clear_delay(self, *args, **kwargs)
+
