@@ -57,6 +57,7 @@ from .models import (
     CreateProfileRequest, UpdateProfileRequest,
     CreateTemplateRequest, UpdateTemplateRequest,
     GlobalSettingsRequest,
+    HFUploadRequest, HFValidateTokenRequest,
 )
 from .helpers import (
     _format_cache_size, _paroquant_compat_for_model,

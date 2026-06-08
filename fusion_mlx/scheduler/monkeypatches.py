@@ -23,7 +23,7 @@ except Exception:
 
 # Update these bounds when testing against new mlx-lm releases.
 _MLX_LM_MIN_TESTED = "0.21"
-_MLX_LM_MAX_TESTED = "0.25"
+_MLX_LM_MAX_TESTED = "0.32"
 
 if _mlx_lm_ver != "unknown":
     def _ver_tuple(v):

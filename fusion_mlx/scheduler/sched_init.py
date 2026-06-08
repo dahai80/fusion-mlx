@@ -51,6 +51,7 @@ from ..utils.sampling import make_sampler as omlx_make_sampler
 # Module-level alias so Scheduler.__init__ can fall back to mlx-lm's default
 # stream when no per-engine stream is provided.
 
+from .config import SchedulerConfig
 from .types import (
      _VLMMTPDecodeState, _VLMMTPResponse, _mx_buffer_access_lock,
      _StoreCacheGate, _PrefillAbortedError, _PrefillState,
