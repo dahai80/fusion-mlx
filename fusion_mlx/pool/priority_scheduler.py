@@ -429,6 +429,8 @@ class PriorityScheduler:
                     if hasattr(self.base, "set_max_tokens_per_step"):
                         self.base.set_max_tokens_per_step(self.config.prefill_chunk_size)
             except Exception:
+                logger.debug("swallowed exception at fusion_mlx/pool/priority_scheduler.py:431")
+
                 pass
                 pass
 

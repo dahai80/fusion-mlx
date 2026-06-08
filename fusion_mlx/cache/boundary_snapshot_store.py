@@ -553,6 +553,8 @@ class BoundarySnapshotSSDStore:
                 if req_dir.exists():
                     shutil.rmtree(req_dir)
             except Exception:
+                logger.debug("swallowed exception at fusion_mlx/cache/boundary_snapshot_store.py:555")
+
                 pass
             self._dec_cancelled(pw_key[0])
             return
@@ -569,6 +571,8 @@ class BoundarySnapshotSSDStore:
                     if temp_path.exists():
                         temp_path.unlink()
                 except Exception:
+                    logger.debug("swallowed exception at fusion_mlx/cache/boundary_snapshot_store.py:572")
+
                     pass
                 with self._pending_lock:
                     self._pending_writes.pop(pw_key, None)
@@ -583,12 +587,16 @@ class BoundarySnapshotSSDStore:
                     if file_path.exists():
                         file_path.unlink()
                 except Exception:
+                    logger.debug("swallowed exception at fusion_mlx/cache/boundary_snapshot_store.py:587")
+
                     pass
                 req_dir = file_path.parent
                 try:
                     if req_dir.exists():
                         shutil.rmtree(req_dir)
                 except Exception:
+                    logger.debug("swallowed exception at fusion_mlx/cache/boundary_snapshot_store.py:594")
+
                     pass
                 self._dec_cancelled(pw_key[0])
         except Exception as e:
@@ -598,6 +606,8 @@ class BoundarySnapshotSSDStore:
                     if p is not None and p.exists():
                         p.unlink()
                 except Exception:
+                    logger.debug("swallowed exception at fusion_mlx/cache/boundary_snapshot_store.py:604")
+
                     pass
             # Same bookkeeping invariant as the early-return path: if
             # cleanup_request bumped the counter and the failure was a

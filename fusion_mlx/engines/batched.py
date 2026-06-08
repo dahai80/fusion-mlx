@@ -81,6 +81,7 @@ class BatchedEngine(BaseEngine):
             self._grammar_compiler = create_grammar_compiler(self._tokenizer, self._model)
             logger.info("GrammarCompiler initialized for %s", self._model_name)
         except Exception:
+            logger.debug("fusion_mlx/engines/batched.py:83: swallowed exception")
             pass
         return self._grammar_compiler
 
@@ -152,6 +153,7 @@ class BatchedEngine(BaseEngine):
                             from ..patches.mlx_lm_mtp import is_mtp_active
                             was_mtp = is_mtp_active()
                         except Exception:
+                            logger.debug("fusion_mlx/engines/batched.py:155: swallowed exception")
                             pass
                         set_mtp_active(False)
                         try:

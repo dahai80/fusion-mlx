@@ -60,6 +60,7 @@ from .helpers import (
     _sync_and_clear_cache, _safe_sync_stream,
     _prompt_cache_needs_snapshots, _cache_layer_token_count, _cache_base_sizes,
     _vlm_extra_seq_slice, _slice_vlm_extra, _advance_vlm_extra,
+    _deferred_clear_delay,
     _KNOWN_SLICEABLE_CACHE_TYPES,
 )
 from .monkeypatches import _default_generation_stream

@@ -517,6 +517,8 @@ def _normalize_rotating_snapshot_state(
             normalized_keys = mx.contiguous(normalized_keys)
             normalized_values = mx.contiguous(normalized_values)
         except Exception:
+            logger.debug("swallowed exception at fusion_mlx/scheduler/sched_boundary.py:519")
+
             pass
 
     normalized_len = (
@@ -622,6 +624,8 @@ def _extract_cache_states(
                     cache_type = CacheTypeRegistry.detect_cache_type(layer_cache)
                     cache_type_name = cache_type.value
                 except Exception:
+                    logger.debug("swallowed exception at fusion_mlx/scheduler/sched_boundary.py:625")
+
                     pass
 
             # CacheList: composite cache with multiple sub-caches

@@ -100,6 +100,7 @@ class OpenClawIntegration(Integration):
             if t := auth.get("token"):
                 token = t
         except Exception:
+            logger.debug("fusion_mlx/integrations/openclaw.py:102: swallowed exception")
             pass
         return token, port
 

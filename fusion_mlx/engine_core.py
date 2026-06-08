@@ -164,6 +164,7 @@ class EngineCore:
                                 if event:
                                     event.set()
                         except Exception:
+                            logger.debug("fusion_mlx/engine_core.py:166: swallowed exception")
                             pass
             else:
                 await asyncio.sleep(step_interval)
@@ -400,6 +401,8 @@ class EngineCore:
             if self._owns_model and not self._closed:
                 get_registry().release(self.model, self._engine_id)
         except Exception:
+            logger.debug("swallowed exception at fusion_mlx/engine_core.py:403")
+
             pass
 
     @property

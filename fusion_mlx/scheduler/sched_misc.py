@@ -179,6 +179,8 @@ def _set_model_info_for_monitor(self) -> None:
                 if num_kv_cache_layers == 0:
                     num_kv_cache_layers = num_layers  # fallback
             except Exception:
+                logger.debug("swallowed exception at fusion_mlx/scheduler/sched_misc.py:181")
+
                 pass
 
         if num_layers and num_kv_heads and head_dim:

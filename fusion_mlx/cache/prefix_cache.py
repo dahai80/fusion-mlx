@@ -1234,12 +1234,16 @@ class BlockAwarePrefixCache(CacheManager):
             if hasattr(mx, "copy"):
                 return mx.copy(tensor)
         except Exception:
+            logger.debug("swallowed exception at fusion_mlx/cache/prefix_cache.py:1236")
+
             pass
 
         if hasattr(tensor, "copy"):
             try:
                 return tensor.copy()
             except Exception:
+                logger.debug("swallowed exception at fusion_mlx/cache/prefix_cache.py:1243")
+
                 pass
 
         return mx.array(tensor)

@@ -323,6 +323,8 @@ class VisionFeatureSSDCache:
                 if oldest.file_path.exists():
                     oldest.file_path.unlink()
             except Exception:
+                logger.debug("swallowed exception at fusion_mlx/cache/vision_feature_cache.py:325")
+
                 pass
 
     def _load_from_ssd(self, key: str) -> Optional[Any]:
@@ -386,6 +388,8 @@ class VisionFeatureSSDCache:
                 if file_path.exists():
                     file_path.unlink()
             except Exception:
+                logger.debug("swallowed exception at fusion_mlx/cache/vision_feature_cache.py:389")
+
                 pass
             return None
 
@@ -496,6 +500,8 @@ class VisionFeatureSSDCache:
                         if p is not None and p.exists():
                             p.unlink()
                     except Exception:
+                        logger.debug("swallowed exception at fusion_mlx/cache/vision_feature_cache.py:500")
+
                         pass
             finally:
                 with self._pending_lock:

@@ -348,6 +348,7 @@ def __init__(
     # covers the *latest* completion.
     # None = no deferred clear pending; int = step at which to fire.
     sched._deferred_clear_at: int | None = None
+    sched._DEFERRED_CLEAR_DELAY = 4
 
     # Cache XTC special tokens (newline + EOS) — stable per tokenizer.
     # Must be after _is_harmony_model / _generation_config_eos init

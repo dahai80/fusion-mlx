@@ -253,6 +253,8 @@ def _resolve_think_end_token_ids(self) -> list[int] | None:
         if ids:
             return list(ids)
     except Exception:
+        logger.debug("swallowed exception at fusion_mlx/scheduler/sched_thinking.py:255")
+
         pass
 
     # Tier 3: direct token lookup
@@ -319,6 +321,8 @@ def _resolve_think_close_pattern(self) -> tuple[list[int] | None, list[int] | No
             if ids:
                 leading_ids = list(ids)
         except Exception:
+            logger.debug("swallowed exception at fusion_mlx/scheduler/sched_thinking.py:322")
+
             pass
     if raw_trailing:
         try:
@@ -326,6 +330,8 @@ def _resolve_think_close_pattern(self) -> tuple[list[int] | None, list[int] | No
             if ids:
                 trailing_ids = list(ids)
         except Exception:
+            logger.debug("swallowed exception at fusion_mlx/scheduler/sched_thinking.py:330")
+
             pass
 
     return leading_ids, trailing_ids
@@ -350,6 +356,8 @@ def _get_chat_template_text(self) -> str | None:
             with open(jinja_path, encoding="utf-8") as f:
                 return f.read()
         except Exception:
+            logger.debug("swallowed exception at fusion_mlx/scheduler/sched_thinking.py:355")
+
             pass
 
     return None

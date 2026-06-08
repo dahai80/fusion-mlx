@@ -582,6 +582,8 @@ def detect_thinking_default(model_path: Path) -> bool | None:
                     tc = json.load(f)
                 template_text = tc.get("chat_template")
             except Exception:
+                logger.debug("swallowed exception at fusion_mlx/pool/model_discovery.py:584")
+
                 pass
 
     if not template_text or "enable_thinking" not in template_text:
@@ -625,6 +627,8 @@ def detect_preserve_thinking(model_path: Path) -> bool | None:
                     tc = json.load(f)
                 template_text = tc.get("chat_template")
             except Exception:
+                logger.debug("swallowed exception at fusion_mlx/pool/model_discovery.py:628")
+
                 pass
 
     if not template_text or "preserve_thinking" not in template_text:
@@ -744,6 +748,8 @@ def _register_model(
             with open(model_dir / "config.json") as f:
                 config_model_type = json.load(f).get("model_type", "")
         except Exception:
+            logger.debug("swallowed exception at fusion_mlx/pool/model_discovery.py:748")
+
             pass
 
         thinking_default = detect_thinking_default(model_dir)

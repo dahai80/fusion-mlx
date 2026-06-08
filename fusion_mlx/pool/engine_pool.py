@@ -691,6 +691,8 @@ class EnginePool:
                     try:
                         await engine.stop()
                     except Exception:
+                        logger.debug("swallowed exception at fusion_mlx/pool/engine_pool.py:693")
+
                         pass
                     gc.collect()
                     loop = asyncio.get_running_loop()
@@ -736,6 +738,8 @@ class EnginePool:
                     try:
                         await engine.stop()
                     except Exception:
+                        logger.debug("swallowed exception at fusion_mlx/pool/engine_pool.py:739")
+
                         pass
                     gc.collect()
                     loop = asyncio.get_running_loop()
@@ -771,6 +775,8 @@ class EnginePool:
                     try:
                         await engine.stop()
                     except Exception:
+                        logger.debug("swallowed exception at fusion_mlx/pool/engine_pool.py:775")
+
                         pass
                     gc.collect()
                     loop = asyncio.get_running_loop()

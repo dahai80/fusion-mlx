@@ -124,7 +124,10 @@ class PagedSSDCacheManager:
             if not layers or _has_zero_dim((len(layers),)):
                 return False
             file_path = self.cache_path / f"block_{block_id}.safetensors"
-            _write_safetensors_no_mx({f"layer_{i}": l for i, l in enumerate(layers)}, str(file_path))
+            tensor_data = {}
+            for i, l in enumerate(layers):
+                tensor_data[f"layer_{i}"] = _extract_tensor_bytes(l)
+            _write_safetensors_no_mx(tensor_data, str(file_path))
             size = file_path.stat().st_size if file_path.exists() else 0
             self._index.blocks[block_id] = PagedSSDBlockMetadata(
                 block_id=block_id,
