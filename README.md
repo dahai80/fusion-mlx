@@ -11,7 +11,10 @@ Drop-in replacement for Ollama, vLLM, or any OpenAI-compatible inference server 
 - **Continuous batching** with vLLM-style scheduler (chunked prefill, preemption, KV cache)
 - **Speculative decoding**: SuffixDecoding, DFlash, MTP, VLM MTP — 2-5× faster generation
 - **Paged KV cache** with SSD cold layer and block-aware prefix caching (COW sharing)
-- **4-tier memory enforcer**: safe / balanced / aggressive / custom hard limits
+- **Typed executor pools**: Separate thread pools for LLM, image, audio and IO operations
+- **SmartRouter**: Phase-aware routing with benchmark-based backend selection and EMA smoothing
+- **Priority scheduling**: REALTIME/BATCH/BACKGROUND queues with Metal command queue priorities
+- **4-tier memory enforcer**: safe / balanced / aggressive / custom hard limits with deadlock-free eviction
 - **Multi-model concurrency**: EnginePool with LRU eviction, pinning, and TTL
 - **MCP tool support**: list, discover, and execute MCP tools via API
 - **Admin web panel**: model management, live chat, HuggingFace downloads, quantization
@@ -28,12 +31,12 @@ fusion-mlx serve --model-dir ~/.cache/huggingface --port 8000
 
 # Test it
 curl http://localhost:8000/v1/chat/completions \
-  -H "Content-Type: application/json" \
-  -d '{
-    "model": "Qwen2.5-3B-Instruct-4bit",
-    "messages": [{"role": "user", "content": "What is 2+2?"}],
-    "max_tokens": 10
-  }'
+   -H "Content-Type: application/json" \
+   -d '{
+     "model": "Qwen2.5-3B-Instruct-4bit",
+     "messages": [{"role": "user", "content": "What is 2+2?"}],
+     "max_tokens": 10
+   }'
 ```
 
 Or use the OpenAI Python client:
@@ -78,8 +81,8 @@ print(resp.choices[0].message.content)
 Use familiar names instead of full model IDs:
 
 ```bash
-fusion-mlx serve --model claude-4.6-sonnet  # → Qwen3.5-27B-Claude-4.6-Opus-Distilled-MLX-6bit
-fusion-mlx serve --model gpt-4o              # → Qwen3-32B-A3B-Think-2512-MLX
+fusion-mlx serve --model claude-4.6-sonnet   # → Qwen3.5-27B-Claude-4.6-Opus-Distilled-MLX-6bit
+fusion-mlx serve --model gpt-4o               # → Qwen3-32B-A3B-Think-2512-MLX
 ```
 
 ## Performance
@@ -94,9 +97,9 @@ Benchmarks on M4 Max (64 GB RAM):
 ## Documentation
 
 - [API Reference](docs/api-reference.md) — All endpoints with request/response examples
-- [Architecture](docs/architecture.md) — EnginePool, Scheduler, Cache layers
+- [Architecture](docs/architecture.md) — EnginePool, Scheduler, Cache layers, SmartRouter
 - [CLI Reference](docs/cli-reference.md) — All commands and flags
-- [Configuration](docs/configuration.md) — Memory tiers, scheduler settings, aliases
+- [Configuration](docs/configuration.md) — Memory tiers, scheduler settings, aliases, executor pools
 
 ## Examples
 
@@ -129,19 +132,19 @@ Access the web admin at `http://localhost:8000/admin`:
 ```
 fusion-mlx/
 ├── fusion_mlx/
-│   ├── api/            # OpenAI, Anthropic, Audio, Images, MCP routes
-│   ├── cache/          # PagedCache, PagedSSDCache, PrefixCache
-│   ├── engines/        # 8 engine types (LLM, VLM, Embedding, etc.)
-│   ├── integrations/   # Claude Code, OpenClaw, Copilot, ComfyUI
-│   ├── parsers/        # Tool call parsers (Gemma, Harmony, etc.)
-│   ├── pool/           # EnginePool, MemoryEnforcer, ModelDiscovery
-│   ├── router/         # RequestRouter, CloudRouter
-│   ├── speculative/    # SuffixDecoding, DFlash, MTP, VLM MTP
-│   └── admin/          # Web panel routes, benchmarking, downloads
-├── downstream/         # Sync scripts for omlx and Rapid-MLX forks
-├── docs/               # API reference, architecture, CLI guide
-├── examples/           # Working code examples
-└── tests/              # Test suite
+│    ├── api/             # OpenAI, Anthropic, Audio, Images, MCP, OpenClaw routes
+│    ├── cache/           # PagedCache, PagedSSDCache, PrefixCache
+│    ├── engines/         # 8 engine types (LLM, VLM, Embedding, etc.)
+│    ├── integrations/    # Claude Code, OpenClaw, Copilot, ComfyUI
+│    ├── parsers/         # Tool call parsers (Gemma, Harmony, etc.)
+│    ├── pool/            # EnginePool, MemoryEnforcer, ModelDiscovery, PriorityScheduler
+│    ├── router/          # RequestRouter, CloudRouter, SmartRouter
+│    ├── speculative/     # SuffixDecoding, DFlash, MTP, VLM MTP
+│    └── admin/           # Web panel routes, benchmarking, downloads
+├── downstream/          # Sync scripts for omlx and Rapid-MLX forks
+├── docs/                # API reference, architecture, CLI guide
+├── examples/            # Working code examples
+└── tests/               # Test suite (44 tests)
 ```
 
 ## License
