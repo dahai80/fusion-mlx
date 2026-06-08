@@ -82,7 +82,14 @@ def _restore_tensor_from_bytes(data: bytes, dtype_str: str, shape: list[int]):
     mx_dtype = _ST_TO_MX_DTYPE.get(dtype_str, mx.float32)
     try:
         arr = mx.array(memoryview(data)).astype(mx_dtype)
-        return arr.reshape(shape)
+        arr = arr.reshape(shape)
+         # Force materialization so Metal buffers are ready before
+         # the tensor is mounted back into a KV cache for inference.
+         # Without this, lazy evaluation can defer the CPU->GPU copy
+         # into the forward pass, causing segfaults when the original
+         # Python bytes object is garbage-collected before Metal reads it.
+        mx.eval(arr)
+        return arr
     except Exception:
         return mx.zeros(shape, dtype=mx_dtype)
 

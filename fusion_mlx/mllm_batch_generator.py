@@ -143,20 +143,30 @@ class MLLMBatch:
         self.max_tokens.extend(other.max_tokens)
         self.requests.extend(other.requests)
 
-        # Extend cache - handle None and incompatible caches
-        for c, o in zip(self.cache, other.cache):
-            if c is not None and o is not None and hasattr(c, "extend"):
-                try:
-                    # Only extend if both caches have valid keys
-                    if (
-                        hasattr(c, "keys")
-                        and c.keys is not None
-                        and hasattr(o, "keys")
-                        and o.keys is not None
-                    ):
-                        c.extend(o)
-                except Exception as e:
-                    logger.warning(f"Failed to extend cache: {e}")
+            # Extend cache - validate shapes before merging
+            # to prevent position encoding corruption when batches
+            # are at different prefill/decode stages.
+        for layer_idx, (c, o) in enumerate(zip(self.cache, other.cache)):
+            if c is None or o is None or not hasattr(c, "extend"):
+                continue
+            try:
+                if hasattr(c, "keys") and c.keys is not None \
+                        and hasattr(o, "keys") and o.keys is not None:
+                    if c.keys.ndim != o.keys.ndim:
+                        logger.warning(
+                            "Skipping cache extend layer %d: dim mismatch",
+                            layer_idx,
+                        )
+                        continue
+                    if c.keys.shape[:-1] != o.keys.shape[:-1]:
+                        logger.warning(
+                            "Skipping cache extend layer %d: shape mismatch",
+                            layer_idx,
+                        )
+                        continue
+                    c.extend(o)
+            except Exception as e:
+                logger.debug("Failed to extend cache layer %d: %s", layer_idx, e)
 
     def extract_cache(self, idx: int) -> list[Any]:
         """
@@ -361,6 +371,7 @@ class MLLMBatchGenerator:
 
         # Memory management
         self._old_wired_limit = None
+        self._executor = None      # engine executor for thread-local close
         if mx.metal.is_available():
             self._old_wired_limit = mx.set_wired_limit(
                 mx.device_info()["max_recommended_working_set_size"]
@@ -369,19 +380,25 @@ class MLLMBatchGenerator:
     def close(self) -> None:
         """Release resources and reset wired limit."""
         if self._old_wired_limit is not None:
-            # mlx-lm 0.31.3+ streams are thread-local. On shutdown the
-            # owning worker thread may already be torn down, in which case
-            # mx.synchronize raises "There is no Stream(gpu, N) in current
-            # thread". The sync is best-effort here — pending ops complete
-            # during process exit anyway, and the wired-limit reset still
-            # needs to run to free reserved memory.
-            try:
-                mx.synchronize(MLLMBatchGenerator._stream)
-            except RuntimeError as e:
-                logger.debug(f"mx.synchronize skipped during close: {e}")
+            # mlx-lm 0.31.3+ streams are thread-local. If an engine
+            # executor is registered, dispatch the sync to that thread
+            # so the stream context exists. Fall back to best-effort
+            # sync, then always reset the wired limit to free memory.
+            if self._executor is not None:
+                try:
+                    fut = self._executor.submit(
+                        mx.synchronize, MLLMBatchGenerator._stream
+                    )
+                    fut.result(timeout=5)
+                except Exception:
+                    pass
+            else:
+                try:
+                    mx.synchronize(MLLMBatchGenerator._stream)
+                except RuntimeError:
+                    pass
             mx.set_wired_limit(self._old_wired_limit)
             self._old_wired_limit = None
-
     def __del__(self):
         try:
             self.close()

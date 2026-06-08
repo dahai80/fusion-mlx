@@ -90,6 +90,7 @@ class MLLMPrefixCacheEntry:
     num_image_tokens: int = 0  # e.g., 256 for Gemma 3
     num_text_tokens: int = 0
     prompt_tokens: int = 0  # Total prompt tokens (for stats)
+    is_vision_placeholder: bool = False   # True when token_ids are dummy values
 
     # Metadata
     created_at: float = field(default_factory=time.time)
@@ -124,6 +125,8 @@ class MLLMPrefixCacheEntry:
         This is the key to prefix caching - if the first N tokens match,
         we can skip computing KV states for those N tokens.
         """
+        if self.is_vision_placeholder:
+            return 0   # Skip prefix matching for vision-only placeholder entries
         match_length = 0
         for i, (cached, new) in enumerate(zip(self.token_ids, new_token_ids)):
             if cached != new:
@@ -355,6 +358,7 @@ class MLLMPrefixCacheManager:
         token_ids: list[int],
         num_image_tokens: int = 0,
         model_name: str = "",
+        is_vision_placeholder: bool = False,
     ) -> None:
         """
         Store prefix state in cache.
@@ -380,6 +384,7 @@ class MLLMPrefixCacheManager:
             num_text_tokens=len(token_ids) - num_image_tokens,
             prompt_tokens=len(token_ids),
             model_name=model_name,
+            is_vision_placeholder=is_vision_placeholder,
         )
 
         # Evict by memory first
@@ -418,8 +423,9 @@ class MLLMPrefixCacheManager:
             prompt=prompt,
             vision_embeddings=None,
             kv_cache=cache,
-            token_ids=[0] * num_tokens,  # Dummy token IDs
+            token_ids=[-1] * num_tokens,  # Dummy token IDs
             num_image_tokens=0,
+            is_vision_placeholder=True,
         )
 
     def get_stats(self) -> dict[str, Any]:
