@@ -83,7 +83,7 @@ class PrioritySchedulerConfig:
 
     # Chunked prefill for soft-preemption (tokens per chunk)
     # Long prefills are split into chunks; REALTIME can interrupt between chunks
-    prefill_chunk_size: int = 2048
+    prefill_chunk_size: int = 512
 
     # Metal command queue priority (0 = highest, used for MTLCommandQueue)
     metal_queue_priority_realtime: int = 0
@@ -430,8 +430,6 @@ class PriorityScheduler:
                         self.base.set_max_tokens_per_step(self.config.prefill_chunk_size)
             except Exception:
                 logger.debug("swallowed exception at fusion_mlx/pool/priority_scheduler.py:431")
-
-                pass
                 pass
 
     def _set_metal_queue_priority(self, stream: Any, level: PriorityLevel) -> None:

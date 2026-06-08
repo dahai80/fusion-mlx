@@ -484,6 +484,9 @@ class EnginePool:
         await loop.run_in_executor(
             get_mlx_executor(), lambda: (mx.synchronize(), mx.clear_cache())
         )
+        gc.collect()
+        # clear_cache releases C++ Metal buffer wrappers — second GC pass
+        # collects the Python-side objects freed by the C++ destructors
 
         # Memory settle barrier: poll actual freed memory instead of
         # trusting the cumulative _current_model_memory estimate.
@@ -514,6 +517,7 @@ class EnginePool:
             await loop.run_in_executor(
                 get_mlx_executor(), lambda: (mx.synchronize(), mx.clear_cache())
             )
+            gc.collect()
 
         # Release memory tracking AFTER barrier
         self._current_model_memory -= entry.estimated_size
