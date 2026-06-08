@@ -12,7 +12,7 @@ from typing import Any, Dict, Optional
 import mlx.core as mx
 import numpy as np
 
-from ..engine_core import get_mlx_executor
+from ..engine_core import get_executor
 from .audio_utils import DEFAULT_SAMPLE_RATE as _DEFAULT_SAMPLE_RATE
 from .audio_utils import audio_to_wav_bytes as _audio_to_wav_bytes
 from .base import BaseNonStreamingEngine
@@ -66,7 +66,8 @@ class TTSEngine(BaseNonStreamingEngine):
                 return _load_model(model_name, strict=False)
 
         loop = asyncio.get_running_loop()
-        self._model = await loop.run_in_executor(get_mlx_executor(), _load_sync)
+        self._model = await asyncio.wait_for(
+            loop.run_in_executor(get_executor("audio"), _load_sync), timeout=120.0)
 
     async def stop(self) -> None:
         if self._model is None:
@@ -74,7 +75,8 @@ class TTSEngine(BaseNonStreamingEngine):
         self._model = None
         gc.collect()
         loop = asyncio.get_running_loop()
-        await loop.run_in_executor(get_mlx_executor(), lambda: (mx.synchronize(), mx.clear_cache()))
+        await asyncio.wait_for(
+            loop.run_in_executor(get_executor("audio"), lambda: (mx.synchronize(), mx.clear_cache())), timeout=5.0)
 
     async def synthesize(
         self, text: str, voice: Optional[str] = None, speed: float = 1.0,
@@ -122,7 +124,8 @@ class TTSEngine(BaseNonStreamingEngine):
         activity_id = self._begin_activity("synthesizing speech", metadata={"text_length": len(text)})
         try:
             loop = asyncio.get_running_loop()
-            result = await loop.run_in_executor(get_mlx_executor(), _synthesize_sync)
+            result = await asyncio.wait_for(
+                loop.run_in_executor(get_executor("audio"), _synthesize_sync), timeout=60.0)
             return result
         finally:
             await self._finish_activity(activity_id)
@@ -185,7 +188,8 @@ class TTSEngine(BaseNonStreamingEngine):
         try:
             loop = asyncio.get_running_loop()
             while True:
-                chunk = await loop.run_in_executor(get_mlx_executor(), _next_chunk)
+                chunk = await asyncio.wait_for(
+                    loop.run_in_executor(get_executor("audio"), _next_chunk), timeout=30.0)
                 if chunk is sentinel:
                     break
                 if chunk is None:

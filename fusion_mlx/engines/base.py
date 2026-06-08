@@ -12,7 +12,7 @@ from typing import Any, AsyncIterator, Dict, List, Optional
 
 import mlx.core as mx
 
-from ..engine_core import get_mlx_executor
+from ..engine_core import get_executor
 
 logger = logging.getLogger(__name__)
 
@@ -157,7 +157,8 @@ class BaseNonStreamingEngine(ABC):
     async def _finish_activity(self, activity_id: str) -> None:
         self._end_activity(activity_id)
         loop = asyncio.get_running_loop()
-        await loop.run_in_executor(get_mlx_executor(), lambda: (mx.synchronize(), mx.clear_cache()))
+        await asyncio.wait_for(
+            loop.run_in_executor(get_executor("llm"), lambda: (mx.synchronize(), mx.clear_cache())), timeout=5.0)
 
     def get_activity_snapshot(self) -> Dict[str, Any]:
         now = time.monotonic()

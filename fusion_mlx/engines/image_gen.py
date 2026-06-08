@@ -11,7 +11,7 @@ import mlx.core as mx
 import numpy as np
 from PIL import Image
 
-from ..engine_core import get_mlx_executor
+from ..engine_core import get_executor
 from .base import BaseNonStreamingEngine
 
 logger = logging.getLogger(__name__)
@@ -56,7 +56,8 @@ class ImageGenEngine(BaseNonStreamingEngine):
             return pipeline
 
         loop = asyncio.get_running_loop()
-        self._pipeline = await loop.run_in_executor(get_mlx_executor(), _load)
+        self._pipeline = await asyncio.wait_for(
+            loop.run_in_executor(get_executor("io"), _load), timeout=120.0)
         logger.info("ImageGen engine loaded: %s", self._model_name)
 
     async def stop(self) -> None:
@@ -65,7 +66,8 @@ class ImageGenEngine(BaseNonStreamingEngine):
         self._pipeline = None
         gc.collect()
         loop = asyncio.get_running_loop()
-        await loop.run_in_executor(get_mlx_executor(), lambda: (mx.synchronize(), mx.clear_cache()))
+        await asyncio.wait_for(
+            loop.run_in_executor(get_executor("image"), lambda: (mx.synchronize(), mx.clear_cache())), timeout=5.0)
 
     async def generate(
         self,
@@ -76,6 +78,7 @@ class ImageGenEngine(BaseNonStreamingEngine):
         seed: Optional[int] = None,
         guidance: float = 4.0,
         n_images: int = 1,
+        output_format: str = "PNG",
         **kwargs,
     ) -> list[bytes]:
         """Generate images from a text prompt.
@@ -110,13 +113,14 @@ class ImageGenEngine(BaseNonStreamingEngine):
                 img = Image.fromarray(np.array(decoded[i]))
                 import io
                 buf = io.BytesIO()
-                img.save(buf, format="PNG")
+                img.save(buf, format=output_format)
                 images.append(buf.getvalue())
             return images
 
         try:
             loop = asyncio.get_running_loop()
-            result = await loop.run_in_executor(get_mlx_executor(), _generate)
+            result = await asyncio.wait_for(
+                loop.run_in_executor(get_executor("image"), _generate), timeout=120.0)
             elapsed = time.monotonic() - t0
             self._update_activity(activity_id, elapsed_seconds=elapsed)
             return result

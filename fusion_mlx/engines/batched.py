@@ -8,7 +8,7 @@ from collections.abc import AsyncIterator
 from typing import Any
 import mlx.core as mx
 
-from ..engine_core import AsyncEngineCore, EngineConfig, get_mlx_executor
+from ..engine_core import AsyncEngineCore, EngineConfig, get_executor
 from ..request import SamplingParams
 from .base import BaseEngine, GenerationOutput
 
@@ -113,9 +113,8 @@ class BatchedEngine(BaseEngine):
         def _load_model_sync():
             return load(self._model_name, tokenizer_config=tokenizer_config)
 
-        self._model, self._tokenizer = await loop.run_in_executor(
-            get_mlx_executor(), _load_model_sync
-        )
+        self._model, self._tokenizer = await asyncio.wait_for(
+            loop.run_in_executor(get_executor("io"), _load_model_sync), timeout=120.0)
 
         scheduler_config = (
             copy.copy(self._scheduler_config) if self._scheduler_config else SchedulerConfig()
@@ -162,7 +161,8 @@ class BatchedEngine(BaseEngine):
                         finally:
                             set_mtp_active(was_mtp)
 
-                    draft_model = await loop.run_in_executor(get_mlx_executor(), _load_draft)
+                    draft_model = await asyncio.wait_for(
+                        loop.run_in_executor(get_executor("io"), _load_draft), timeout=120.0)
                     self._engine.engine.scheduler.set_specprefill_draft_model(draft_model, draft_model_name=specprefill_draft)
                     logger.info(f"SpecPrefill: draft model loaded ({specprefill_draft})")
                 except Exception as e:

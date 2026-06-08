@@ -17,7 +17,13 @@ from .model_registry import get_registry, ModelOwnershipError
 
 logger = logging.getLogger(__name__)
 
-_global_mlx_executor: concurrent.futures.ThreadPoolExecutor | None = None
+_executor_config: dict[str, dict[str, Any]] = {
+    "llm": {"max_workers": 1, "prefix": "mlx-llm"},
+    "image": {"max_workers": 1, "prefix": "mlx-image"},
+    "audio": {"max_workers": 2, "prefix": "mlx-audio"},
+    "io": {"max_workers": 2, "prefix": "mlx-io"},
+}
+_global_executors: dict[str, concurrent.futures.ThreadPoolExecutor] = {}
 
 
 def _init_mlx_thread() -> None:
@@ -31,14 +37,21 @@ def _init_mlx_thread() -> None:
         sched_mod.generation_stream = stream
 
 
+def get_executor(pool_type: str = "llm") -> concurrent.futures.ThreadPoolExecutor:
+    if pool_type in _global_executors:
+        return _global_executors[pool_type]
+    cfg = _executor_config.get(pool_type, {"max_workers": 1, "prefix": f"mlx-{pool_type}"})
+    exec_ = concurrent.futures.ThreadPoolExecutor(
+        max_workers=cfg["max_workers"],
+        thread_name_prefix=cfg["prefix"],
+        initializer=_init_mlx_thread,
+    )
+    _global_executors[pool_type] = exec_
+    return exec_
+
+
 def get_mlx_executor() -> concurrent.futures.ThreadPoolExecutor:
-    global _global_mlx_executor
-    if _global_mlx_executor is None:
-        _global_mlx_executor = concurrent.futures.ThreadPoolExecutor(
-            max_workers=1, thread_name_prefix="mlx-global",
-            initializer=_init_mlx_thread,
-        )
-    return _global_mlx_executor
+    return get_executor("llm")
 
 
 @dataclass
@@ -123,9 +136,10 @@ class EngineCore:
         while self._running:
             if self.scheduler and self.scheduler.has_requests():
                 try:
-                    output = await asyncio.get_running_loop().run_in_executor(
-                        self._mlx_executor, self.scheduler.step
-                    )
+                    output = await asyncio.wait_for(
+                        asyncio.get_running_loop().run_in_executor(
+                            self._mlx_executor, self.scheduler.step
+                        ), timeout=30.0)
                     self._steps_executed += 1
                     if output and output.outputs:
                         collectors = self._output_collectors

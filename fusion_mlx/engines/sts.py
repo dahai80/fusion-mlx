@@ -11,7 +11,7 @@ from typing import Any, Dict, Optional
 import mlx.core as mx
 import numpy as np
 
-from ..engine_core import get_mlx_executor
+from ..engine_core import get_executor
 from .audio_utils import DEFAULT_SAMPLE_RATE as _DEFAULT_SAMPLE_RATE
 from .audio_utils import audio_to_wav_bytes as _audio_to_wav_bytes
 from .base import BaseNonStreamingEngine
@@ -173,7 +173,8 @@ class STSEngine(BaseNonStreamingEngine):
             except ImportError as exc:
                 raise ImportError('mlx-audio required for STS. Install with: pip install "fusion-mlx[audio]"') from exc
         loop = asyncio.get_running_loop()
-        self._model = await loop.run_in_executor(get_mlx_executor(), _load_sync)
+        self._model = await asyncio.wait_for(
+            loop.run_in_executor(get_executor("audio"), _load_sync), timeout=120.0)
 
     async def stop(self) -> None:
         if self._model is None:
@@ -181,7 +182,8 @@ class STSEngine(BaseNonStreamingEngine):
         self._model = None
         gc.collect()
         loop = asyncio.get_running_loop()
-        await loop.run_in_executor(get_mlx_executor(), lambda: (mx.synchronize(), mx.clear_cache()))
+        await asyncio.wait_for(
+            loop.run_in_executor(get_executor("audio"), lambda: (mx.synchronize(), mx.clear_cache())), timeout=5.0)
 
     async def process(self, audio_path: str, **kwargs) -> bytes:
         if self._model is None:
@@ -196,7 +198,8 @@ class STSEngine(BaseNonStreamingEngine):
         activity_id = self._begin_activity("processing audio", metadata={"family": family})
         try:
             loop = asyncio.get_running_loop()
-            return await loop.run_in_executor(get_mlx_executor(), _process_sync)
+            return await asyncio.wait_for(
+                loop.run_in_executor(get_executor("audio"), _process_sync), timeout=60.0)
         finally:
             await self._finish_activity(activity_id)
 
