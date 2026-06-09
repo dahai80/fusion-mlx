@@ -50,6 +50,10 @@ class BatchedEngine(BaseEngine):
         return self._tokenizer
 
     @property
+    def is_mllm(self) -> bool:
+        return False
+
+    @property
     def model_type(self) -> str | None:
         if self._model is None:
             return None

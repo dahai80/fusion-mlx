@@ -41,6 +41,10 @@ class BaseEngine(ABC):
     def tokenizer(self) -> Any:
         pass
 
+    @property
+    def is_mllm(self) -> bool:
+        pass
+
     @abstractmethod
     async def start(self) -> None:
         pass

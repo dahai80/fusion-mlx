@@ -81,6 +81,10 @@ class VLMBatchedEngine(BaseEngine):
         return self._tokenizer
 
     @property
+    def is_mllm(self) -> bool:
+        return True
+
+    @property
     def model_type(self) -> str | None:
         if self._vlm_model is not None and hasattr(self._vlm_model, "config"):
             cfg = self._vlm_model.config
