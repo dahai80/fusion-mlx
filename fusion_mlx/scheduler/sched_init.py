@@ -372,7 +372,8 @@ def __init__(    self,
     # since _get_xtc_special_tokens() delegates to _get_stop_tokens().
     self._xtc_special_tokens: list[int] = self._get_xtc_special_tokens()
 
-def _phase_timer(    self, phase: str):
+@contextmanager
+def _phase_timer(self, phase: str):
     """Lightweight wall-time accumulator for cache-on overhead diagnostics.
 
     Tracks total ms and invocation count per named phase. Intended for
