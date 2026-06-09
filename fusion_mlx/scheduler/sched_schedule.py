@@ -15,6 +15,8 @@ import concurrent.futures
 import copy
 import gc
 import logging
+
+logger = logging.getLogger(__name__)
 import os
 import threading
 import time
@@ -64,8 +66,7 @@ from .helpers import (
 )
 from .monkeypatches import _default_generation_stream
 
-def _schedule_waiting(
-    sched,
+def _schedule_waiting(    self,
 ) -> tuple[list["Request"], list[RequestOutput]]:
     """
     Move requests from waiting queue to running.
@@ -90,15 +91,15 @@ def _schedule_waiting(
     # Track SpecPrefill: these requests must be alone (RoPE patching affects whole model)
     batch_specprefill_status: bool | None = None
 
-    while sched.waiting and len(sched.running) < sched.config.max_num_seqs:
+    while self.waiting and len(self.running) < self.config.max_num_seqs:
         # Admission pause: set by ProcessMemoryEnforcer when phys
         # crosses soft_threshold. New prefills wait; in-flight requests
-        # continue. First request always passes (sched.running is empty)
+        # continue. First request always passes (self.running is empty)
         # so admission can recover by completing the current generation.
-        if sched._admission_paused and sched.running:
+        if self._admission_paused and self.running:
             logger.debug(
                 "Admission paused by memory pressure, %d running",
-                len(sched.running),
+                len(self.running),
             )
             break
 
@@ -108,47 +109,47 @@ def _schedule_waiting(
         # The cap bounds concurrent extracted-KV copies (the #1383 OOM
         # guard) and shrinks under memory pressure via
         # adjust_store_cache_cap. In-flight requests keep generating;
-        # the first request always passes (sched.running is empty) so a
+        # the first request always passes (self.running is empty) so a
         # lone slow SSD write cannot deadlock admission.
-        gate = sched._store_cache_gate
-        if gate is not None and sched.running and not gate.has_capacity:
+        gate = self._store_cache_gate
+        if gate is not None and self.running and not gate.has_capacity:
             logger.debug(
                 "Admission deferred: store-cache pipeline full "
                 "(in_flight=%d cap=%d), %d running",
                 gate.in_flight,
                 gate.cap,
-                len(sched.running),
+                len(self.running),
             )
             break
 
         # Generation memory guard: when requests are already running,
         # defer scheduling if memory pressure is high to prevent
         # Metal allocation failures during batch_generator.next().
-        # First request always passes (sched.running is empty).
+        # First request always passes (self.running is empty).
         if (
-            sched._prefill_memory_guard
-            and sched._memory_limit_bytes > 0
-            and sched.running
+            self._prefill_memory_guard
+            and self._memory_limit_bytes > 0
+            and self.running
         ):
             current = max(mx.get_active_memory(), get_phys_footprint())
-            if current > sched._memory_limit_bytes:
+            if current > self._memory_limit_bytes:
                 logger.debug(
                     "Generation memory guard: deferring scheduling "
                     "(%s > %s), %d running",
                     current,
-                    sched._memory_limit_bytes,
-                    len(sched.running),
+                    self._memory_limit_bytes,
+                    len(self.running),
                 )
                 break
 
-        request = sched.waiting.popleft()
+        request = self.waiting.popleft()
 
         # Ensure we have a batch generator
-        sched._ensure_batch_generator(request.sampling_params)
+        self._ensure_batch_generator(request.sampling_params)
 
-        if sched.batch_generator is None:
+        if self.batch_generator is None:
             # Put back and try again later
-            sched.waiting.appendleft(request)
+            self.waiting.appendleft(request)
             break
 
         # Determine tokens to process and cache to use
@@ -168,7 +169,7 @@ def _schedule_waiting(
         cache_to_use = request.prompt_cache  # May be None
 
         # Validate cache before using it
-        if cache_to_use is not None and not sched._validate_cache(cache_to_use):
+        if cache_to_use is not None and not self._validate_cache(cache_to_use):
             logger.debug(
                 f"Request {request.request_id}: invalid cache detected, "
                 f"proceeding without cache"
@@ -184,20 +185,20 @@ def _schedule_waiting(
         # specprefill request is already running (offset RoPE active).
         request_is_specprefill = request.specprefill_indices is not None
         if (
-            sched._specprefill_active_request_id is not None
+            self._specprefill_active_request_id is not None
             and not request_is_specprefill
         ):
             # A specprefill request is running — defer all others until it finishes
-            sched.waiting.appendleft(request)
+            self.waiting.appendleft(request)
             break
         if batch_specprefill_status is None:
             batch_specprefill_status = request_is_specprefill
         elif batch_specprefill_status != request_is_specprefill:
-            sched.waiting.appendleft(request)
+            self.waiting.appendleft(request)
             break
         if request_is_specprefill and len(scheduled) > 0:
             # SpecPrefill request must be alone
-            sched.waiting.appendleft(request)
+            self.waiting.appendleft(request)
             break
 
         # Check VLM status homogeneity: VLM and text-only requests use
@@ -207,7 +208,7 @@ def _schedule_waiting(
             batch_vlm_status = request_is_vlm
         elif batch_vlm_status != request_is_vlm:
             # VLM status mismatch - defer this request to next batch
-            sched.waiting.appendleft(request)
+            self.waiting.appendleft(request)
             logger.debug(
                 f"Deferring request {request.request_id} to next batch "
                 f"(VLM status mismatch: batch={batch_vlm_status}, request={request_is_vlm})"
@@ -220,7 +221,7 @@ def _schedule_waiting(
             batch_cache_status = request_has_cache
         elif batch_cache_status != request_has_cache:
             # Cache status mismatch - defer this request to next batch
-            sched.waiting.appendleft(request)
+            self.waiting.appendleft(request)
             logger.debug(
                 f"Deferring request {request.request_id} to next batch "
                 f"(cache status mismatch: batch={batch_cache_status}, request={request_has_cache})"
@@ -228,30 +229,30 @@ def _schedule_waiting(
             break
 
         # Mark as Harmony model if applicable (before think detection)
-        if sched._is_harmony_model:
+        if self._is_harmony_model:
             request.is_harmony_model = True
 
         # Check if prompt ends with <think> token for reasoning models.
         # Must happen before _build_sampler_and_processors so the thinking
         # budget processor can check needs_think_prefix.
-        if sched._detect_needs_think_prefix(request):
+        if self._detect_needs_think_prefix(request):
             request.needs_think_prefix = True
 
         # Per-request sampler/logits processors to avoid BatchGenerator recreation.
-        sampler, logits_processors = sched._build_sampler_and_processors(
+        sampler, logits_processors = self._build_sampler_and_processors(
             request.sampling_params, request
         )
 
         # Pre-flight memory guard: estimate peak memory for this request
         # and reject if it would exceed the hard limit.
-        preflight_error = sched._preflight_memory_check(request)
+        preflight_error = self._preflight_memory_check(request)
         if preflight_error:
             logger.warning(
                 f"Request {request.request_id} rejected by prefill "
                 f"memory guard: {preflight_error}"
             )
-            sched._release_paged_cache_for_request(request.request_id)
-            sched.requests.pop(request.request_id, None)
+            self._release_paged_cache_for_request(request.request_id)
+            self.requests.pop(request.request_id, None)
             rejected_outputs.append(
                 RequestOutput(
                     request_id=request.request_id,
@@ -278,7 +279,7 @@ def _schedule_waiting(
         #   First gen token: pos = (N'+1) + (M - N' - 1) = M
         if request.specprefill_indices is not None:
             tracker = get_prefill_tracker()
-            model_id = os.path.basename(sched.config.model_name.rstrip("/"))
+            model_id = os.path.basename(self.config.model_name.rstrip("/"))
             total_pp = 0
             try:
                 from ..patches.specprefill import (
@@ -291,7 +292,7 @@ def _schedule_waiting(
 
                 t0 = time.monotonic()
 
-                sp_cache = make_prompt_cache(sched.model)
+                sp_cache = make_prompt_cache(self.model)
                 all_tokens = tokens_to_process
                 sys_count = getattr(request, "_specprefill_system_tokens", 0)
 
@@ -308,19 +309,19 @@ def _schedule_waiting(
                 tracker.update(request.request_id, 0, total_pp, model_id)
 
                 def _check_specprefill_abort(processed: int) -> None:
-                    if request.request_id in sched._pending_abort_ids:
+                    if request.request_id in self._pending_abort_ids:
                         logger.info(
                             f"SpecPrefill interrupted at {processed}/{total_pp} "
                             f"tokens: request aborted"
                         )
                         tracker.remove(request.request_id)
-                        sched.waiting.appendleft(request)
+                        self.waiting.appendleft(request)
                         raise _PrefillAbortedError([], processed)
 
                 # Phase 1: system prompt full prefill (if not cached)
                 if sys_count > 0:
                     sys_arr = mx.array(all_tokens[:sys_count])
-                    step = sched.config.prefill_step_size
+                    step = self.config.prefill_step_size
                     sys_processed = 0
                     spec_sparse_extra = {
                         "prompt_tokens": request.num_prompt_tokens,
@@ -344,7 +345,7 @@ def _schedule_waiting(
                             detail="system prompt prefill",
                             extra=spec_sparse_extra,
                         )
-                        sched.model(sys_arr[:step][None], cache=sp_cache)
+                        self.model(sys_arr[:step][None], cache=sp_cache)
                         mx.eval([c.state for c in sp_cache])
                         sys_processed += step
                         _check_specprefill_abort(sys_processed)
@@ -365,7 +366,7 @@ def _schedule_waiting(
                         # by the preceding mx.eval(), triggering the same
                         # 'completeMemory() prepare count underflow' kernel
                         # panic that #435 fixed elsewhere (#557).
-                        _sync_and_clear_cache(sched._stream)
+                        _sync_and_clear_cache(self._stream)
                     if sys_arr.size > 0:
                         _check_specprefill_abort(sys_processed)
                         final_sys = int(sys_arr.size)
@@ -378,7 +379,7 @@ def _schedule_waiting(
                             detail="system prompt prefill",
                             extra=spec_sparse_extra,
                         )
-                        sched.model(sys_arr[None], cache=sp_cache)
+                        self.model(sys_arr[None], cache=sp_cache)
                         mx.eval([c.state for c in sp_cache])
                         sys_processed += final_sys
                         _check_specprefill_abort(sys_processed)
@@ -432,18 +433,18 @@ def _schedule_waiting(
                     )
 
                 sparse_prefill(
-                    sched.model,
+                    self.model,
                     conv_tokens,
                     selected,
                     sp_cache,
-                    step_size=sched.config.prefill_step_size,
+                    step_size=self.config.prefill_step_size,
                     position_offset=pos_offset,
                     progress_callback=_sparse_progress,
                 )
                 # sparse_prefill installs _OffsetAdjustedRoPE with
                 # adjustment = M - N'. Subtract 1 to account for the
                 # extra token BatchGenerator will process.
-                for _, layer in _find_attention_layers(sched.model):
+                for _, layer in _find_attention_layers(self.model):
                     attn = _get_attn_module(layer)
                     if (
                         attn
@@ -466,19 +467,19 @@ def _schedule_waiting(
                 cache_to_use = sp_cache
                 # Last token for generation kickoff
                 tokens_to_process = all_tokens[-1:]
-                sched._specprefill_active_request_id = request.request_id
+                self._specprefill_active_request_id = request.request_id
 
                 # Mark spec-prefill complete (auto-removes tracker entry).
                 tracker.update(request.request_id, total_pp, total_pp, model_id)
 
             except _PrefillAbortedError:
-                cleanup_rope(sched.model)
+                cleanup_rope(self.model)
                 request.specprefill_indices = None
                 tracker.remove(request.request_id)
                 raise
             except Exception as e:
                 logger.error(f"SpecPrefill sparse prefill failed: {e}")
-                cleanup_rope(sched.model)
+                cleanup_rope(self.model)
                 request.specprefill_indices = None
                 tracker.remove(request.request_id)
                 # Fall through to normal prefill
@@ -499,19 +500,19 @@ def _schedule_waiting(
             # spread across multiple step() calls. The first chunk is run
             # here; subsequent chunks run in _advance_chunked_prefills().
             if (
-                sched.config.chunked_prefill
+                self.config.chunked_prefill
                 and vlm_embeds is None
-                and len(tokens_to_process) > sched.config.prefill_step_size + 1
+                and len(tokens_to_process) > self.config.prefill_step_size + 1
             ):
-                sm = sched._build_state_machine(request)
+                sm = self._build_state_machine(request)
                 per_row_lps = list(logits_processors) if logits_processors else []
-                state = sched._begin_prefill(request, tokens_to_process, cache_to_use)
+                state = self._begin_prefill(request, tokens_to_process, cache_to_use)
                 state.sampler = sampler
                 state.sm = sm
                 state.per_row_lps = per_row_lps
 
                 try:
-                    done = sched._step_prefill_chunk(state)
+                    done = self._step_prefill_chunk(state)
                 except _PrefillAbortedError:
                     raise
                 except RuntimeError as e:
@@ -526,8 +527,8 @@ def _schedule_waiting(
                         request.request_id,
                         e,
                     )
-                    sched._release_paged_cache_for_request(request.request_id)
-                    sched.requests.pop(request.request_id, None)
+                    self._release_paged_cache_for_request(request.request_id)
+                    self.requests.pop(request.request_id, None)
                     get_prefill_tracker().remove(request.request_id)
                     # Drop Metal cache pool buffers held by the aborted
                     # first chunk's forward / mx.eval transients.
@@ -543,13 +544,13 @@ def _schedule_waiting(
                     continue
 
                 if done:
-                    sched._emit_final_boundary_if_needed(state)
-                    _sync_and_clear_cache(sched._stream)
+                    self._emit_final_boundary_if_needed(state)
+                    _sync_and_clear_cache(self._stream)
                     get_prefill_tracker().remove(request.request_id)
-                    sched._insert_prefilled_request(request, state, scheduled)
+                    self._insert_prefilled_request(request, state, scheduled)
                 else:
-                    sched.prefilling.append(request)
-                    sched._prefill_states[request.request_id] = state
+                    self.prefilling.append(request)
+                    self._prefill_states[request.request_id] = state
                 continue  # Skip normal prefill + insert path
 
             # Normal (non-chunked) full prefill path.
@@ -557,11 +558,11 @@ def _schedule_waiting(
             # uid→request_id during external prefill. Replaced by the
             # real UID returned from insert().
             temp_uid = id(request)  # unique, won't collide with BatchGenerator UIDs
-            sched.request_id_to_uid[request.request_id] = temp_uid
-            sched.uid_to_request_id[temp_uid] = request.request_id
+            self.request_id_to_uid[request.request_id] = temp_uid
+            self.uid_to_request_id[temp_uid] = request.request_id
 
             try:
-                prefilled_cache, last_token = sched._do_external_prefill(
+                prefilled_cache, last_token = self._do_external_prefill(
                     request,
                     tokens_to_process,
                     cache_to_use,
@@ -571,15 +572,15 @@ def _schedule_waiting(
                 # Hard memory limit hit during external prefill. Without
                 # this catch, the exception bubbles up to step() and then
                 # engine_core's fail_all_requests(), which pops
-                # sched.requests but cannot reach the PrefillProgressTracker
+                # self.requests but cannot reach the PrefillProgressTracker
                 # singleton, so the dashboard entry leaks across model
                 # reload (#1405). Mirrors the cleanup in
                 # _advance_chunked_prefills (d736bfd).
                 logger.error("Prefill failed for %s: %s", request.request_id, e)
-                sched.uid_to_request_id.pop(temp_uid, None)
-                sched.request_id_to_uid.pop(request.request_id, None)
-                sched._release_paged_cache_for_request(request.request_id)
-                sched.requests.pop(request.request_id, None)
+                self.uid_to_request_id.pop(temp_uid, None)
+                self.request_id_to_uid.pop(request.request_id, None)
+                self._release_paged_cache_for_request(request.request_id)
+                self.requests.pop(request.request_id, None)
                 get_prefill_tracker().remove(request.request_id)
                 # Drop Metal cache pool buffers held by the aborted
                 # chunk's forward / mx.eval transients.
@@ -595,8 +596,8 @@ def _schedule_waiting(
                 continue
 
             # Clean up temp UID mapping
-            del sched.uid_to_request_id[temp_uid]
-            del sched.request_id_to_uid[request.request_id]
+            del self.uid_to_request_id[temp_uid]
+            del self.request_id_to_uid[request.request_id]
 
             # Prefill complete: remove from progress tracker so dashboard
             # shows "generating" instead of "PP" during decode.
@@ -617,11 +618,11 @@ def _schedule_waiting(
                     request.rope_deltas = float(captured.item())
                 else:
                     request.rope_deltas = float(captured)
-            elif hasattr(sched.model, "get_last_rope_deltas"):
-                request.rope_deltas = sched.model.get_last_rope_deltas()
+            elif hasattr(self.model, "get_last_rope_deltas"):
+                request.rope_deltas = self.model.get_last_rope_deltas()
 
         # Build per-request state machine for stop tokens
-        sm = sched._build_state_machine(request)
+        sm = self._build_state_machine(request)
 
         # Set random seed for reproducible generation (best-effort).
         # This affects global MLX random state, so concurrent requests
@@ -637,21 +638,21 @@ def _schedule_waiting(
         # sample the first bonus, and hand the request to a vlm_mtp
         # generator instead of BatchGenerator. Falls through on any
         # eligibility issue so other speculative paths stay intact.
-        if sched._vlm_mtp_drafter is not None and cache_to_use is not None:
-            vlm_mtp_uid = sched._route_to_vlm_mtp(
+        if self._vlm_mtp_drafter is not None and cache_to_use is not None:
+            vlm_mtp_uid = self._route_to_vlm_mtp(
                 request, cache_to_use, tokens_to_process, sampler, sm
             )
             if vlm_mtp_uid is not None:
-                sched.request_id_to_uid[request.request_id] = vlm_mtp_uid
-                sched.uid_to_request_id[vlm_mtp_uid] = request.request_id
+                self.request_id_to_uid[request.request_id] = vlm_mtp_uid
+                self.uid_to_request_id[vlm_mtp_uid] = request.request_id
                 now = time.monotonic()
                 request.batch_uid = vlm_mtp_uid
                 request.status = RequestStatus.RUNNING
                 request.generation_started_at = now
                 request.last_activity_at = now
-                sched.running[request.request_id] = request
+                self.running[request.request_id] = request
                 scheduled.append(request)
-                sched.total_prompt_tokens += request.num_prompt_tokens
+                self.total_prompt_tokens += request.num_prompt_tokens
                 logger.debug(
                     f"Scheduled request {request.request_id} via vlm_mtp "
                     f"(uid={vlm_mtp_uid}, {request.num_prompt_tokens} prompt tokens)"
@@ -663,8 +664,8 @@ def _schedule_waiting(
         #
         # IMPORTANT: ``logits_processors`` MUST be passed as a per-row
         # list (possibly empty), never None.  mlx-lm's
-        # GenerationBatch._step does ``for p in sched.logits_processors[e]``
-        # in any branch where ``any(sched.logits_processors)`` is True
+        # GenerationBatch._step does ``for p in self.logits_processors[e]``
+        # in any branch where ``any(self.logits_processors)`` is True
         # (e.g., heterogeneous merge with another row that has a
         # processor).  A None slot crashes that loop with
         # ``TypeError: 'NoneType' object is not iterable``, which then
@@ -672,7 +673,7 @@ def _schedule_waiting(
         # See vllm-mlx-patched commit 8d4052b for the same root cause
         # in a sibling project, and #934 for the user-visible symptom.
         per_row_lps = list(logits_processors) if logits_processors else []
-        uids = sched.batch_generator.insert(
+        uids = self.batch_generator.insert(
             [tokens_to_process],
             max_tokens=[request.sampling_params.max_tokens],
             caches=[cache_to_use] if cache_to_use else None,
@@ -683,21 +684,21 @@ def _schedule_waiting(
 
         if uids:
             uid = uids[0]
-            sched.request_id_to_uid[request.request_id] = uid
-            sched.uid_to_request_id[uid] = request.request_id
+            self.request_id_to_uid[request.request_id] = uid
+            self.uid_to_request_id[uid] = request.request_id
             now = time.monotonic()
             request.batch_uid = uid
             request.status = RequestStatus.RUNNING
             request.generation_started_at = now
             request.last_activity_at = now
-            sched.running[request.request_id] = request
+            self.running[request.request_id] = request
             scheduled.append(request)
 
             # Register per-UID rope_delta for mRoPE decode.
-            if hasattr(sched.model, "register_rope_delta"):
-                sched.model.register_rope_delta(uid, request.rope_deltas)
+            if hasattr(self.model, "register_rope_delta"):
+                self.model.register_rope_delta(uid, request.rope_deltas)
 
-            sched.total_prompt_tokens += request.num_prompt_tokens
+            self.total_prompt_tokens += request.num_prompt_tokens
             cache_info = (
                 f", {request.cached_tokens} cached"
                 if request.cached_tokens > 0

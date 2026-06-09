@@ -15,6 +15,8 @@ import concurrent.futures
 import copy
 import gc
 import logging
+
+logger = logging.getLogger(__name__)
 import os
 import threading
 import time
@@ -64,22 +66,22 @@ from .helpers import (
 )
 from .monkeypatches import _default_generation_stream
 
-def _trim_prompt_cache_for_generation(sched, cache_list: list[Any]) -> bool:
+def _trim_prompt_cache_for_generation(    self, cache_list: list[Any]) -> bool:
     """Trim each cache layer by one token for exact-hit generation kickoff."""
     if not cache_list:
         return False
 
     for cache_obj in cache_list:
-        if not sched._trim_cache_tree_by_one(cache_obj):
+        if not self._trim_cache_tree_by_one(cache_obj):
             return False
     return True
 
-def _trim_cache_tree_by_one(sched, cache_obj: Any) -> bool:
+def _trim_cache_tree_by_one(    self, cache_obj: Any) -> bool:
     """Trim one token from cache object (recursively for CacheList)."""
     sub_caches = getattr(cache_obj, "caches", None)
     if isinstance(sub_caches, (list, tuple)):
         return all(
-            sched._trim_cache_tree_by_one(sub_cache) for sub_cache in sub_caches
+            self._trim_cache_tree_by_one(sub_cache) for sub_cache in sub_caches
         )
 
     trim_fn = getattr(cache_obj, "trim", None)
@@ -94,7 +96,7 @@ def _trim_cache_tree_by_one(sched, cache_obj: Any) -> bool:
     except Exception:
         return False
 
-def _remove_uid_from_active_batch(sched, uid: int) -> None:
+def _remove_uid_from_active_batch(    self, uid: int) -> None:
     """Remove UID from BatchGenerator safely.
 
     vlm_mtp uses negative uids that BatchGenerator never sees; the
@@ -103,28 +105,28 @@ def _remove_uid_from_active_batch(sched, uid: int) -> None:
     """
     if uid < 0:
         return
-    if sched.batch_generator is None:
+    if self.batch_generator is None:
         return
 
-    sched.batch_generator.remove([uid])
+    self.batch_generator.remove([uid])
 
-def _check_pending_aborts_for_uids(sched, uids: list[int]) -> list[int]:
+def _check_pending_aborts_for_uids(    self, uids: list[int]) -> list[int]:
     """Return UIDs that have pending aborts.
 
     Called during prefill to detect aborted
     requests between chunks. GIL guarantees thread-safe reads of
     _pending_abort_ids from the executor thread.
     """
-    if not sched._pending_abort_ids:
+    if not self._pending_abort_ids:
         return []
     aborted = []
     for uid in uids:
-        request_id = sched.uid_to_request_id.get(uid)
-        if request_id and request_id in sched._pending_abort_ids:
+        request_id = self.uid_to_request_id.get(uid)
+        if request_id and request_id in self._pending_abort_ids:
             aborted.append(uid)
     return aborted
 
-def abort_request(sched, request_id: str) -> bool:
+def abort_request(    self, request_id: str) -> bool:
     """
     Enqueue a request for deferred abort.
 
@@ -138,7 +140,7 @@ def abort_request(sched, request_id: str) -> bool:
     Returns:
         True (abort is always enqueued)
     """
-    sched._pending_abort_ids.add(request_id)
+    self._pending_abort_ids.add(request_id)
     logger.debug(f"Enqueued deferred abort for request {request_id}")
     return True
 
@@ -148,11 +150,11 @@ def _process_pending_aborts(self) -> None:
     Called from step() to ensure aborts are processed in the same
     execution context as generation (thread-safe).
     """
-    while sched._pending_abort_ids:
-        request_id = sched._pending_abort_ids.pop()
-        sched._do_abort_request(request_id)
+    while self._pending_abort_ids:
+        request_id = self._pending_abort_ids.pop()
+        self._do_abort_request(request_id)
 
-def _do_abort_request(sched, request_id: str) -> bool:
+def _do_abort_request(    self, request_id: str) -> bool:
     """
     Actually abort a request. Must be called from the step() context.
 
@@ -162,49 +164,49 @@ def _do_abort_request(sched, request_id: str) -> bool:
     Returns:
         True if request was found and aborted, False otherwise
     """
-    request = sched.requests.get(request_id)
+    request = self.requests.get(request_id)
     if request is None:
         return False
 
     # Remove from waiting queue
     if request.status == RequestStatus.WAITING:
         try:
-            sched.waiting.remove(request)
+            self.waiting.remove(request)
         except ValueError:
             pass
 
     # Remove from chunked-prefill queue (if mid-prefill)
-    if request_id in sched._prefill_states:
-        sched._prefill_states.pop(request_id, None)
-        sched.prefilling = deque(
-            r for r in sched.prefilling if r.request_id != request_id
+    if request_id in self._prefill_states:
+        self._prefill_states.pop(request_id, None)
+        self.prefilling = deque(
+            r for r in self.prefilling if r.request_id != request_id
         )
 
     # Remove from running (BatchGenerator)
-    if request.request_id in sched.request_id_to_uid:
-        uid = sched.request_id_to_uid[request.request_id]
+    if request.request_id in self.request_id_to_uid:
+        uid = self.request_id_to_uid[request.request_id]
         # Synchronize in-flight GPU work before modifying batch state.
         # batch_generator.remove() triggers lazy KV cache array slicing
         # that replaces references to arrays still used by in-flight
         # Metal command buffers.  Without this barrier the Metal driver
         # can hit 'completeMemory() prepare count underflow'.
-        _safe_sync_stream(sched._stream)
-        sched._remove_uid_from_active_batch(uid)
-        if hasattr(sched.model, "unregister_rope_delta"):
-            sched.model.unregister_rope_delta(uid)
-        del sched.uid_to_request_id[uid]
-        del sched.request_id_to_uid[request.request_id]
+        _safe_sync_stream(self._stream)
+        self._remove_uid_from_active_batch(uid)
+        if hasattr(self.model, "unregister_rope_delta"):
+            self.model.unregister_rope_delta(uid)
+        del self.uid_to_request_id[uid]
+        del self.request_id_to_uid[request.request_id]
 
-    if request_id in sched.running:
-        del sched.running[request_id]
+    if request_id in self.running:
+        del self.running[request_id]
 
     # Release blocks for eviction (same as _cleanup_finished)
-    if sched.paged_cache_manager is not None:
-        block_table = sched.paged_cache_manager.get_block_table(request_id)
+    if self.paged_cache_manager is not None:
+        block_table = self.paged_cache_manager.get_block_table(request_id)
         if block_table is None and hasattr(request, "block_table"):
             block_table = request.block_table
         if block_table:
-            released = sched.paged_cache_manager.release_for_eviction(
+            released = self.paged_cache_manager.release_for_eviction(
                 block_table.block_ids
             )
             if released > 0:
@@ -214,38 +216,38 @@ def _do_abort_request(sched, request_id: str) -> bool:
                 )
 
     # Clear request entry from block_aware_cache
-    if sched.block_aware_cache is not None:
-        sched.block_aware_cache.clear_request_entry(request_id)
+    if self.block_aware_cache is not None:
+        self.block_aware_cache.clear_request_entry(request_id)
 
     # Clean up streaming detokenizer to prevent state contamination
-    sched._cleanup_detokenizer(request_id)
+    self._cleanup_detokenizer(request_id)
 
     # Clean up protocol-specific output parser session
-    sched._cleanup_output_parser_session(request_id)
+    self._cleanup_output_parser_session(request_id)
 
     # Clean up VLM adapter state to prevent contamination
-    if hasattr(sched.model, "clear_vlm_position_state"):
-        sched.model.clear_vlm_position_state()
-    if hasattr(sched.model, "clear_pending_embeddings"):
-        sched.model.clear_pending_embeddings()
+    if hasattr(self.model, "clear_vlm_position_state"):
+        self.model.clear_vlm_position_state()
+    if hasattr(self.model, "clear_pending_embeddings"):
+        self.model.clear_pending_embeddings()
 
     # Drop any boundary snapshot for this request.
-    sched._boundary_cache_snapshots.pop(request_id, None)
-    if sched._boundary_snapshot_store is not None:
-        sched._boundary_snapshot_store.cleanup_request(request_id)
+    self._boundary_cache_snapshots.pop(request_id, None)
+    if self._boundary_snapshot_store is not None:
+        self._boundary_snapshot_store.cleanup_request(request_id)
 
     # Remove from prefill progress tracker.
     get_prefill_tracker().remove(request_id)
 
     # Mark as aborted
     request.set_finished(RequestStatus.FINISHED_ABORTED)
-    sched.finished_req_ids.add(request_id)
+    self.finished_req_ids.add(request_id)
 
     # Remove from requests dict and clear cache references to release
     # MLX arrays promptly (mirrors _cleanup_finished behavior).
     # _cleanup_request (engine_core) no longer calls remove_finished_request,
     # so this is the single cleanup point for aborted requests.
-    req_to_remove = sched.requests.pop(request_id, None)
+    req_to_remove = self.requests.pop(request_id, None)
     if req_to_remove is not None:
         req_to_remove._extracted_cache = None
         req_to_remove.prompt_cache = None
@@ -261,7 +263,7 @@ def has_requests(self) -> bool:
     Without this, an idle server would never reach the target step and
     stale buffers would accumulate indefinitely.
     """
-    return bool(sched.waiting or sched.prefilling or sched.running or sched._deferred_clear_at is not None)
+    return bool(self.waiting or self.prefilling or self.running or self._deferred_clear_at is not None)
 
 def fail_all_requests(self) -> list[str]:
     """Remove all running and waiting requests after unrecoverable error.
@@ -277,33 +279,33 @@ def fail_all_requests(self) -> list[str]:
         List of failed request IDs.
     """
     failed_ids: list[str] = []
-    for request_id in list(sched.running):
+    for request_id in list(self.running):
         failed_ids.append(request_id)
-        req = sched.requests.pop(request_id, None)
+        req = self.requests.pop(request_id, None)
         if req is not None:
             req._extracted_cache = None
             req.prompt_cache = None
-    sched.running.clear()
-    for request in list(sched.prefilling):
+    self.running.clear()
+    for request in list(self.prefilling):
         failed_ids.append(request.request_id)
-        req = sched.requests.pop(request.request_id, None)
+        req = self.requests.pop(request.request_id, None)
         if req is not None:
             req._extracted_cache = None
             req.prompt_cache = None
-    sched.prefilling.clear()
-    sched._prefill_states.clear()
-    for request in list(sched.waiting):
+    self.prefilling.clear()
+    self._prefill_states.clear()
+    for request in list(self.waiting):
         failed_ids.append(request.request_id)
-        req = sched.requests.pop(request.request_id, None)
+        req = self.requests.pop(request.request_id, None)
         if req is not None:
             req._extracted_cache = None
             req.prompt_cache = None
-    sched.waiting.clear()
-    # Catch in-flight orphans: a request popped from sched.waiting but
-    # not yet added to sched.running (or sched.prefilling) sits as a
+    self.waiting.clear()
+    # Catch in-flight orphans: a request popped from self.waiting but
+    # not yet added to self.running (or self.prefilling) sits as a
     # local in _schedule_waiting. If _do_external_prefill raises, the
     # request is unreachable through the three queues but still lives
-    # in sched.requests (and the engine_core collector / finished_event
+    # in self.requests (and the engine_core collector / finished_event
     # for its id is still waiting). Without this pass, fail_all_requests
     # returns an incomplete list and the HTTP request hangs forever.
     #
@@ -311,15 +313,15 @@ def fail_all_requests(self) -> list[str]:
     # (those have an entry in ``_inflight_store_futures`` — see
     # ``_cleanup_finished`` line ~5267). They have already emitted a
     # ``finished=True`` output to their collector; ``_drain_pending_async_removes``
-    # pops them from ``sched.requests`` after the store future completes.
+    # pops them from ``self.requests`` after the store future completes.
     # Failing them here would append an error output that wins over the
     # success for non-streaming ``generate()`` callers (engine_core
     # returns the last queued output).
-    for request_id in list(sched.requests):
-        if request_id in sched._inflight_store_futures:
+    for request_id in list(self.requests):
+        if request_id in self._inflight_store_futures:
             continue
         failed_ids.append(request_id)
-        req = sched.requests.pop(request_id, None)
+        req = self.requests.pop(request_id, None)
         if req is not None:
             req._extracted_cache = None
             req.prompt_cache = None
@@ -331,12 +333,12 @@ def fail_all_requests(self) -> list[str]:
     # async-cleanup uids that _drain_pending_async_removes still needs are
     # left intact.
     for rid in failed_ids:
-        uid = sched.request_id_to_uid.pop(rid, None)
+        uid = self.request_id_to_uid.pop(rid, None)
         if uid is not None:
-            sched.uid_to_request_id.pop(uid, None)
+            self.uid_to_request_id.pop(uid, None)
     # Reset batch generator only (cache is not corrupted)
-    sched.batch_generator = None
-    sched._current_sampler_params = None
+    self.batch_generator = None
+    self._current_sampler_params = None
     # Reclaim fragmented Metal buffers after generation failure.
     # Without this, subsequent requests may hit the same resource
     # limit even though Python references have been cleared.
@@ -344,7 +346,7 @@ def fail_all_requests(self) -> list[str]:
     # state — mx.synchronize() or mx.clear_cache() can throw a C++
     # exception that causes SIGABRT if uncaught (#435).
     try:
-        _sync_and_clear_cache(sched._stream)
+        _sync_and_clear_cache(self._stream)
     except Exception as e:
         logger.warning(f"Metal cache clear failed during error recovery: {e}")
     return failed_ids

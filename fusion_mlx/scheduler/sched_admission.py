@@ -15,6 +15,8 @@ import concurrent.futures
 import copy
 import gc
 import logging
+
+logger = logging.getLogger(__name__)
 import os
 import threading
 import time
@@ -64,7 +66,7 @@ from .helpers import (
 )
 from .monkeypatches import _default_generation_stream
 
-def add_request(sched, request: Request) -> None:
+def add_request(    self, request: Request) -> None:
     """
     Add a new request to the scheduler.
 
@@ -75,32 +77,32 @@ def add_request(sched, request: Request) -> None:
     Args:
         request: The request to add
     """
-    if request.request_id in sched.requests:
+    if request.request_id in self.requests:
         raise ValueError(f"Request {request.request_id} already exists")
 
     # Cap the waiting queue so client-side polling can't accumulate
     # unbounded work and the scheduler can apply backpressure via 503.
-    max_waiting = max(sched.config.max_num_seqs * 4, 32)
-    if len(sched.waiting) >= max_waiting:
+    max_waiting = max(self.config.max_num_seqs * 4, 32)
+    if len(self.waiting) >= max_waiting:
         from ..exceptions import SchedulerQueueFullError
 
         raise SchedulerQueueFullError(
-            current_depth=len(sched.waiting),
+            current_depth=len(self.waiting),
             max_depth=max_waiting,
         )
 
     # Tokenize if needed
     if request.prompt_token_ids is None:
         if isinstance(request.prompt, str):
-            request.prompt_token_ids = sched.tokenizer.encode(request.prompt)
+            request.prompt_token_ids = self.tokenizer.encode(request.prompt)
         else:
             request.prompt_token_ids = list(request.prompt)
         request.num_prompt_tokens = len(request.prompt_token_ids)
 
     # Check prefix cache for cached KV state
-    if sched.block_aware_cache is not None:
+    if self.block_aware_cache is not None:
         # Use paged cache
-        block_table, remaining = sched.block_aware_cache.fetch_cache(
+        block_table, remaining = self.block_aware_cache.fetch_cache(
             request.request_id,
             request.prompt_token_ids,
             extra_keys=request.vlm_extra_keys_for_cache,
@@ -108,12 +110,12 @@ def add_request(sched, request: Request) -> None:
             extra_key_ranges=request.vlm_extra_key_ranges_for_cache,
         )
         if block_table and block_table.num_tokens > 0:
-            sched.block_aware_cache.preload_blocks(block_table)
+            self.block_aware_cache.preload_blocks(block_table)
             # Reconstruct actual KVCache objects from stored tensor data
             # Note: reconstruct_cache may modify block_table in-place if
             # partial reconstruction occurs (some blocks invalid)
             original_tokens = block_table.num_tokens
-            reconstructed = sched.block_aware_cache.reconstruct_cache(block_table)
+            reconstructed = self.block_aware_cache.reconstruct_cache(block_table)
             if reconstructed:
                 request.prompt_cache = reconstructed
                 request.block_table = block_table
@@ -128,14 +130,14 @@ def add_request(sched, request: Request) -> None:
                 # Reusing cache state at N and feeding the last token again
                 # shifts the model state and can change greedy output.
                 if len(request.remaining_tokens) == 0 and request.cached_tokens > 0:
-                    if sched._cache_list_needs_boundary_snapshot(
+                    if self._cache_list_needs_boundary_snapshot(
                         request.prompt_cache
                     ):
                         # Stateful non-sliceable caches (Rotating/Arrays)
                         # cannot be safely converted from N to N-1 state
                         # without cache-type-specific logic.
-                        if sched.paged_cache_manager is not None:
-                            sched.paged_cache_manager.delete_block_table(
+                        if self.paged_cache_manager is not None:
+                            self.paged_cache_manager.delete_block_table(
                                 request.request_id
                             )
                         request.prompt_cache = None
@@ -148,7 +150,7 @@ def add_request(sched, request: Request) -> None:
                             f"stateful cache type, falling back to full prefill "
                             f"for deterministic kickoff"
                         )
-                    elif sched._trim_prompt_cache_for_generation(
+                    elif self._trim_prompt_cache_for_generation(
                         request.prompt_cache
                     ):
                         request.cached_tokens = max(0, request.cached_tokens - 1)
@@ -163,8 +165,8 @@ def add_request(sched, request: Request) -> None:
                         # Fallback to full recompute when cache layers cannot
                         # be safely trimmed by one token (e.g., non-trimmable
                         # recurrent state caches).
-                        if sched.paged_cache_manager is not None:
-                            sched.paged_cache_manager.delete_block_table(
+                        if self.paged_cache_manager is not None:
+                            self.paged_cache_manager.delete_block_table(
                                 request.request_id
                             )
                         request.prompt_cache = None
@@ -191,8 +193,8 @@ def add_request(sched, request: Request) -> None:
                     )
             else:
                 # Reconstruction failed, treat as cache miss
-                if sched.paged_cache_manager is not None:
-                    sched.paged_cache_manager.delete_block_table(request.request_id)
+                if self.paged_cache_manager is not None:
+                    self.paged_cache_manager.delete_block_table(request.request_id)
                 request.remaining_tokens = request.prompt_token_ids
                 logger.debug(
                     f"Request {request.request_id}: paged cache reconstruction failed, "
@@ -206,11 +208,11 @@ def add_request(sched, request: Request) -> None:
 
     # SpecPrefill: score remaining tokens with draft model if applicable.
     # Must run AFTER prefix cache check (scoring applies only to uncached suffix).
-    sched._try_specprefill_scoring(request)
+    self._try_specprefill_scoring(request)
 
     # Add to tracking
-    sched.requests[request.request_id] = request
-    sched.waiting.append(request)
+    self.requests[request.request_id] = request
+    self.waiting.append(request)
 
     logger.debug(
         f"Added request {request.request_id} with {request.num_prompt_tokens} prompt tokens"
@@ -225,12 +227,12 @@ def set_specprefill_draft_model(
     using the existing paged SSD cache infrastructure. The model_name
     in compute_block_hash() naturally isolates draft blocks from target.
     """
-    sched._specprefill_draft_model = draft_model
-    sched._draft_prefix_cache: Any | None = None
+    self._specprefill_draft_model = draft_model
+    self._draft_prefix_cache: Any | None = None
 
     if (
-        sched.paged_cache_manager is not None
-        and sched.paged_ssd_cache_manager is not None
+        self.paged_cache_manager is not None
+        and self.paged_ssd_cache_manager is not None
     ):
         try:
             from ..cache.paged_cache import PagedCacheManager
@@ -238,17 +240,17 @@ def set_specprefill_draft_model(
 
             name = draft_model_name or "specprefill-draft"
             draft_paged = PagedCacheManager(
-                block_size=sched.config.paged_cache_block_size,
-                max_blocks=sched.paged_cache_manager.max_blocks,
+                block_size=self.config.paged_cache_block_size,
+                max_blocks=self.paged_cache_manager.max_blocks,
                 model_name=name,
             )
-            sched._draft_prefix_cache = BlockAwarePrefixCache(
+            self._draft_prefix_cache = BlockAwarePrefixCache(
                 model=draft_model,
                 paged_cache_manager=draft_paged,
-                paged_ssd_cache_manager=sched.paged_ssd_cache_manager,
+                paged_ssd_cache_manager=self.paged_ssd_cache_manager,
             )
-            sched._draft_prefix_cache.set_cold_restore_callback(
-                sched._restore_block_from_cold
+            self._draft_prefix_cache.set_cold_restore_callback(
+                self._restore_block_from_cold
             )
             logger.info(
                 f"SpecPrefill: draft model set with SSD cache (model_name={name})"
@@ -259,8 +261,7 @@ def set_specprefill_draft_model(
     else:
         logger.info("SpecPrefill: draft model set (no SSD cache)")
 
-def set_vlm_mtp_drafter(
-    sched,
+def set_vlm_mtp_drafter(    self,
     drafter: VLMMTPDrafter | None,
     draft_block_size: int | None = None,
 ) -> None:
@@ -269,8 +270,8 @@ def set_vlm_mtp_drafter(
     Called by ``VLMBatchedEngine.set_vlm_mtp_drafter`` once the assistant
     artifact is loaded. ``None`` clears the toggle.
     """
-    sched._vlm_mtp_drafter = drafter
-    sched._vlm_mtp_draft_block_size = draft_block_size
+    self._vlm_mtp_drafter = drafter
+    self._vlm_mtp_draft_block_size = draft_block_size
     if drafter is not None:
         logger.info(
             "VLM MTP drafter attached to scheduler (block_size=%s)",

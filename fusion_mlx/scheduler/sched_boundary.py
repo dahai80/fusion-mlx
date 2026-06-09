@@ -15,6 +15,8 @@ import concurrent.futures
 import copy
 import gc
 import logging
+
+logger = logging.getLogger(__name__)
 import os
 import threading
 import time
@@ -64,17 +66,16 @@ from .helpers import (
 )
 from .monkeypatches import _default_generation_stream
 
-def _cache_list_needs_boundary_snapshot(sched, cache_list: list[Any]) -> bool:
+def _cache_list_needs_boundary_snapshot(    self, cache_list: list[Any]) -> bool:
     """Return True if any layer cache requires boundary snapshots."""
     if not cache_list:
         return False
     return any(
-        sched._cache_tree_has_stateful_non_sliceable(layer_cache)
+        self._cache_tree_has_stateful_non_sliceable(layer_cache)
         for layer_cache in cache_list
     )
 
-def _on_prefill_boundary_snapshot(
-    sched,
+def _on_prefill_boundary_snapshot(    self,
     request_id: str,
     snapshot_cache: list[Any],
     token_count: int,
@@ -87,41 +88,41 @@ def _on_prefill_boundary_snapshot(
     ``BatchGenerator`` yet and the uid mapping does not exist —
     routing through it dropped every snapshot silently (#TBD).
     """
-    if sched.block_aware_cache is None:
+    if self.block_aware_cache is None:
         return
 
-    block_size = sched.config.paged_cache_block_size
+    block_size = self.config.paged_cache_block_size
     if block_size <= 0 or token_count <= 0 or token_count % block_size != 0:
         return
 
-    if not sched._cache_list_needs_boundary_snapshot(snapshot_cache):
+    if not self._cache_list_needs_boundary_snapshot(snapshot_cache):
         return
 
-    if request_id not in sched._boundary_cache_snapshots:
-        sched._boundary_cache_snapshots[request_id] = {}
+    if request_id not in self._boundary_cache_snapshots:
+        self._boundary_cache_snapshots[request_id] = {}
 
     # Skip if we already have a snapshot at this token count
-    if token_count in sched._boundary_cache_snapshots[request_id]:
+    if token_count in self._boundary_cache_snapshots[request_id]:
         return
 
     # Offload snapshot to SSD if store is available, keeping only a
     # None marker in the dict.  Falls back to in-memory storage when
     # the SSD store is unavailable or the write fails.
-    if sched._boundary_snapshot_store is not None:
-        saved = sched._boundary_snapshot_store.save(
+    if self._boundary_snapshot_store is not None:
+        saved = self._boundary_snapshot_store.save(
             request_id,
             token_count,
             snapshot_cache,
-            sched._extract_cache_states,
+            self._extract_cache_states,
         )
         if saved:
-            sched._boundary_cache_snapshots[request_id][token_count] = None
+            self._boundary_cache_snapshots[request_id][token_count] = None
         else:
-            sched._boundary_cache_snapshots[request_id][token_count] = snapshot_cache
+            self._boundary_cache_snapshots[request_id][token_count] = snapshot_cache
     else:
-        sched._boundary_cache_snapshots[request_id][token_count] = snapshot_cache
+        self._boundary_cache_snapshots[request_id][token_count] = snapshot_cache
 
-    sched._boundary_snapshot_required = True
+    self._boundary_snapshot_required = True
     logger.debug(
         "Captured prefill boundary cache snapshot for %s at %s tokens",
         request_id,
@@ -135,29 +136,29 @@ def _detect_boundary_snapshot_need(self) -> bool:
     Evaluated lazily by inspecting model.make_cache() output instead of
     the active batch (which no longer exists in the new API).
     """
-    if sched._boundary_snapshot_required is not None:
-        return sched._boundary_snapshot_required
+    if self._boundary_snapshot_required is not None:
+        return self._boundary_snapshot_required
 
-    if not hasattr(sched.model, "make_cache"):
-        sched._boundary_snapshot_required = False
+    if not hasattr(self.model, "make_cache"):
+        self._boundary_snapshot_required = False
         return False
 
     try:
-        cache_list = sched.model.make_cache()
+        cache_list = self.model.make_cache()
     except Exception:
-        sched._boundary_snapshot_required = False
+        self._boundary_snapshot_required = False
         return False
 
     if not cache_list:
-        sched._boundary_snapshot_required = False
+        self._boundary_snapshot_required = False
         return False
 
-    sched._boundary_snapshot_required = any(
-        sched._cache_tree_has_stateful_non_sliceable(layer_cache)
+    self._boundary_snapshot_required = any(
+        self._cache_tree_has_stateful_non_sliceable(layer_cache)
         for layer_cache in cache_list
     )
 
-    if sched._boundary_snapshot_required:
+    if self._boundary_snapshot_required:
         logger.info(
             "Enabled boundary cache snapshots for stateful non-sliceable "
             "cache layers"
@@ -168,25 +169,25 @@ def _detect_boundary_snapshot_need(self) -> bool:
             "cache layers detected)"
         )
 
-    return sched._boundary_snapshot_required
+    return self._boundary_snapshot_required
 
-def _extract_boundary_snapshot(sched, uid: int) -> list[Any] | None:
+def _extract_boundary_snapshot(    self, uid: int) -> list[Any] | None:
     """Extract a per-request prompt cache snapshot via extract_cache().
 
     Uses BatchGenerator.extract_cache() which returns
     Dict[uid, (cache_list, tokens_list)].
     """
-    if sched.batch_generator is None:
+    if self.batch_generator is None:
         return None
 
     try:
         # Synchronize pending engine stream operations before
         # accessing batch cache tensors.
-        with sched._phase_timer("boundary_capture_sync"):
-            _safe_sync_stream(sched._stream)
-        with sched._phase_timer("boundary_capture_extract"):
-            with mx.stream(sched._stream):
-                result = sched.batch_generator.extract_cache([uid])
+        with self._phase_timer("boundary_capture_sync"):
+            _safe_sync_stream(self._stream)
+        with self._phase_timer("boundary_capture_extract"):
+            with mx.stream(self._stream):
+                result = self.batch_generator.extract_cache([uid])
                 if uid not in result:
                     return None
                 cache_list, _tokens = result[uid]
@@ -206,12 +207,12 @@ def _extract_boundary_snapshot(sched, uid: int) -> list[Any] | None:
         )
         return None
 
-def _maybe_capture_boundary_snapshot(sched, request: Request, uid: int) -> None:
+def _maybe_capture_boundary_snapshot(    self, request: Request, uid: int) -> None:
     """Capture cache snapshot exactly at block boundaries for safe reuse."""
-    if sched.block_aware_cache is None:
+    if self.block_aware_cache is None:
         return
 
-    block_size = sched.config.paged_cache_block_size
+    block_size = self.config.paged_cache_block_size
     if block_size <= 0:
         return
 
@@ -219,33 +220,33 @@ def _maybe_capture_boundary_snapshot(sched, request: Request, uid: int) -> None:
     if total_tokens <= 0 or total_tokens % block_size != 0:
         return
 
-    if not sched._detect_boundary_snapshot_need():
+    if not self._detect_boundary_snapshot_need():
         return
 
-    snapshot_cache = sched._extract_boundary_snapshot(uid)
+    snapshot_cache = self._extract_boundary_snapshot(uid)
     if not snapshot_cache:
         return
 
-    if request.request_id not in sched._boundary_cache_snapshots:
-        sched._boundary_cache_snapshots[request.request_id] = {}
+    if request.request_id not in self._boundary_cache_snapshots:
+        self._boundary_cache_snapshots[request.request_id] = {}
 
     # Offload to SSD with in-memory fallback.
-    if sched._boundary_snapshot_store is not None:
-        with sched._phase_timer("boundary_snapshot_save"):
-            saved = sched._boundary_snapshot_store.save(
+    if self._boundary_snapshot_store is not None:
+        with self._phase_timer("boundary_snapshot_save"):
+            saved = self._boundary_snapshot_store.save(
                 request.request_id,
                 total_tokens,
                 snapshot_cache,
-                sched._extract_cache_states,
+                self._extract_cache_states,
             )
         if saved:
-            sched._boundary_cache_snapshots[request.request_id][total_tokens] = None
+            self._boundary_cache_snapshots[request.request_id][total_tokens] = None
         else:
-            sched._boundary_cache_snapshots[request.request_id][
+            self._boundary_cache_snapshots[request.request_id][
                 total_tokens
             ] = snapshot_cache
     else:
-        sched._boundary_cache_snapshots[request.request_id][
+        self._boundary_cache_snapshots[request.request_id][
             total_tokens
         ] = snapshot_cache
 
@@ -254,8 +255,7 @@ def _maybe_capture_boundary_snapshot(sched, request: Request, uid: int) -> None:
         f"{total_tokens} tokens"
     )
 
-def _get_boundary_store_override(
-    sched,
+def _get_boundary_store_override(    self,
     request_id: str,
     full_token_sequence: list[int],
 ) -> (
@@ -275,12 +275,12 @@ def _get_boundary_store_override(
         intermediate_snapshots) where intermediate_snapshots maps
         token_count -> extracted cache states for per-block storage.
     """
-    snapshots = sched._boundary_cache_snapshots.get(request_id)
+    snapshots = self._boundary_cache_snapshots.get(request_id)
     if not snapshots:
         return None
 
     total_tokens = len(full_token_sequence)
-    block_size = sched.config.paged_cache_block_size
+    block_size = self.config.paged_cache_block_size
 
     # Find all valid boundary-aligned snapshot token counts
     valid_counts = sorted(
@@ -306,18 +306,18 @@ def _get_boundary_store_override(
 
     # Load latest snapshot — may be on SSD (None marker) or in memory.
     latest_snapshot = snapshots[latest_tc]
-    if latest_snapshot is None and sched._boundary_snapshot_store is not None:
+    if latest_snapshot is None and self._boundary_snapshot_store is not None:
         # Offloaded to SSD — load back.
-        extracted_cache = sched._boundary_snapshot_store.load(request_id, latest_tc)
+        extracted_cache = self._boundary_snapshot_store.load(request_id, latest_tc)
         if not extracted_cache:
             return None
         # Build model_cache_config from the main request cache config
         # since the SSD snapshot doesn't carry it.
         model_cache_config = getattr(
-            sched.requests.get(request_id), "_model_cache_config", None
+            self.requests.get(request_id), "_model_cache_config", None
         )
     elif latest_snapshot is not None:
-        extracted_cache, model_cache_config = sched._extract_cache_states(
+        extracted_cache, model_cache_config = self._extract_cache_states(
             latest_snapshot
         )
         if not extracted_cache:
@@ -330,11 +330,11 @@ def _get_boundary_store_override(
     # store_cache() instead of extracting all at once.
     intermediate_tcs = [tc for tc in valid_counts if tc != latest_tc]
     intermediate_snapshots = _BoundarySnapshotProvider(
-        store=sched._boundary_snapshot_store,
+        store=self._boundary_snapshot_store,
         request_id=request_id,
         valid_tcs=intermediate_tcs,
         in_memory_snapshots=snapshots,
-        extract_fn=sched._extract_cache_states,
+        extract_fn=self._extract_cache_states,
     )
 
     token_sequence = (
@@ -376,7 +376,7 @@ def _merge_boundary_with_full_cache(
             merged.append(bc)
     return merged
 
-def _validate_cache(sched, cache: Any) -> bool:
+def _validate_cache(    self, cache: Any) -> bool:
     """
     Validate that a cache object is usable.
 
@@ -423,8 +423,7 @@ def _validate_cache(sched, cache: Any) -> bool:
 
     return True
 
-def _normalize_rotating_snapshot_state(
-    sched,
+def _normalize_rotating_snapshot_state(    self,
     layer_cache: Any,
     state: tuple[Any, Any],
     meta_state: Any,
@@ -555,8 +554,7 @@ def _normalize_rotating_snapshot_state(
 
     return (normalized_keys, normalized_values), normalized_meta
 
-def _extract_cache_states(
-    sched,
+def _extract_cache_states(    self,
     raw_cache: list[Any],
 ) -> tuple[list[dict[str, Any]], Optional["ModelCacheConfig"]]:
     """
@@ -594,7 +592,7 @@ def _extract_cache_states(
         try:
             model_cache_config = ModelCacheConfig.from_cache_list(
                 raw_cache,
-                model_name=sched.model_name if hasattr(self, "model_name") else "",
+                model_name=self.model_name if hasattr(self, "model_name") else "",
             )
         except Exception as e:
             logger.debug(f"Failed to build ModelCacheConfig: {e}")
@@ -683,7 +681,7 @@ def _extract_cache_states(
                 meta = getattr(layer_cache, "meta_state", ())
 
                 if class_name in ("RotatingKVCache", "BatchRotatingKVCache"):
-                    state, meta = sched._normalize_rotating_snapshot_state(
+                    state, meta = self._normalize_rotating_snapshot_state(
                         layer_cache,
                         state,
                         meta,

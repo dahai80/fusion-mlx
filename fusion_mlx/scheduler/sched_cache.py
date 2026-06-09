@@ -15,6 +15,8 @@ import concurrent.futures
 import copy
 import gc
 import logging
+
+logger = logging.getLogger(__name__)
 import os
 import threading
 import time
@@ -109,8 +111,7 @@ def _collect_arrays_from_extracted_cache(
                         arrays.append(val)
     return arrays
 
-def _async_store_cache_worker(
-    sched,
+def _async_store_cache_worker(    self,
     request_id: str,
     token_sequence_to_store: list[int],
     cache_to_store: list[Any],
@@ -128,7 +129,7 @@ def _async_store_cache_worker(
     without blocking the inference thread. async_eval completes
     Metal command enqueueing before returning, so all commands
     are submitted by the time executor.submit() runs.
-    - This worker calls mx.synchronize(sched._stream) via the
+    - This worker calls mx.synchronize(self._stream) via the
     _safe_sync_stream helper to wait on the same stream where
     mx.async_eval dispatched the arrays. A bare mx.synchronize()
     with no args only blocks on the default stream (gpu:0) and
@@ -139,7 +140,7 @@ def _async_store_cache_worker(
     safe cross-thread; it just calls waitUntilCompleted on the
     command buffer.
     - bfloat16 view+eval inside _extract_tensor_bytes runs on this
-    worker's default mx stream, isolated from sched._stream;
+    worker's default mx stream, isolated from self._stream;
     the underlying buffer is read-only at this point.
     - batch_generator.remove(uid) is deferred until this worker
     completes (handled by _drain_pending_async_removes).
@@ -155,9 +156,9 @@ def _async_store_cache_worker(
         # prevents a SIGABRT when those reclaim the underlying Metal
         # buffer pool mid-read (#1106).
         with _mx_buffer_access_lock:
-            with sched._phase_timer("store_cache_worker_sync"):
-                _safe_sync_stream(sched._stream)
-            block_table = sched.block_aware_cache.store_cache(
+            with self._phase_timer("store_cache_worker_sync"):
+                _safe_sync_stream(self._stream)
+            block_table = self.block_aware_cache.store_cache(
                 request_id,
                 token_sequence_to_store,
                 cache_to_store,
@@ -167,12 +168,12 @@ def _async_store_cache_worker(
                 extra_key_token_start=extra_key_token_start,
                 extra_key_ranges=extra_key_ranges,
             )
-        if block_table is None and sched.paged_cache_manager is not None:
-            block_table = sched.paged_cache_manager.get_block_table(request_id)
-        if block_table and sched.paged_cache_manager is not None:
-            sched.paged_cache_manager.release_for_eviction(block_table.block_ids)
-        if sched.block_aware_cache is not None:
-            sched.block_aware_cache.clear_request_entry(request_id)
+        if block_table is None and self.paged_cache_manager is not None:
+            block_table = self.paged_cache_manager.get_block_table(request_id)
+        if block_table and self.paged_cache_manager is not None:
+            self.paged_cache_manager.release_for_eviction(block_table.block_ids)
+        if self.block_aware_cache is not None:
+            self.block_aware_cache.clear_request_entry(request_id)
     except Exception as e:
         logger.warning("Async store_cache failed for %s: %s", request_id, e)
 
@@ -185,15 +186,15 @@ def _drain_pending_async_removes(self) -> None:
     finalize cleanup state. Entries whose futures are still in flight
     are left at the head of the deque for a later step.
     """
-    if not sched._pending_async_removes:
+    if not self._pending_async_removes:
         return
-    while sched._pending_async_removes:
-        uid, request_id, future = sched._pending_async_removes[0]
+    while self._pending_async_removes:
+        uid, request_id, future = self._pending_async_removes[0]
         if future is not None and not future.done():
             # Worker still busy. Stop draining; check again next step.
             # Inflight entry stays at deque head to preserve order.
             break
-        sched._pending_async_removes.popleft()
+        self._pending_async_removes.popleft()
         # Surface worker exceptions for visibility (don't crash step loop).
         if future is not None:
             exc = future.exception()
@@ -203,10 +204,10 @@ def _drain_pending_async_removes(self) -> None:
                 )
         # Run batch_generator.remove on the inference thread.
         try:
-            _safe_sync_stream(sched._stream)
-            sched._remove_uid_from_active_batch(uid)
-            if hasattr(sched.model, "unregister_rope_delta"):
-                sched.model.unregister_rope_delta(uid)
+            _safe_sync_stream(self._stream)
+            self._remove_uid_from_active_batch(uid)
+            if hasattr(self.model, "unregister_rope_delta"):
+                self.model.unregister_rope_delta(uid)
         except Exception as e:
             logger.warning(
                 "Deferred batch_generator.remove(uid=%s) failed: %s",
@@ -214,21 +215,21 @@ def _drain_pending_async_removes(self) -> None:
                 e,
             )
         # Cleanup uid maps now that the slot is reclaimable.
-        if uid in sched.uid_to_request_id:
-            del sched.uid_to_request_id[uid]
-        if request_id in sched.request_id_to_uid:
-            del sched.request_id_to_uid[request_id]
-        sched._inflight_store_futures.pop(request_id, None)
+        if uid in self.uid_to_request_id:
+            del self.uid_to_request_id[uid]
+        if request_id in self.request_id_to_uid:
+            del self.request_id_to_uid[request_id]
+        self._inflight_store_futures.pop(request_id, None)
         # Boundary snapshots were kept on disk for the worker; safe to
         # delete now that the future has completed. Cleanup was
         # deferred from _cleanup_finished to avoid racing the worker's
         # boundary_snapshot_store.load() calls with rmtree.
-        if sched._boundary_snapshot_store is not None:
-            sched._boundary_snapshot_store.cleanup_request(request_id)
+        if self._boundary_snapshot_store is not None:
+            self._boundary_snapshot_store.cleanup_request(request_id)
         # Worker no longer holds extracted_cache — pop request from
-        # sched.requests and drop the cache buffer references so MLX
+        # self.requests and drop the cache buffer references so MLX
         # arrays can be freed.
-        req_to_remove = sched.requests.pop(request_id, None)
+        req_to_remove = self.requests.pop(request_id, None)
         if req_to_remove is not None:
             req_to_remove._extracted_cache = None
             req_to_remove.prompt_cache = None
@@ -247,15 +248,14 @@ def _calculate_max_blocks(self) -> int:
     # The actual limit is SSD capacity (paged_ssd_cache_max_size)
     max_blocks = 100000  # Large default for paged SSD-only mode
 
-    block_size = sched.config.paged_cache_block_size
+    block_size = self.config.paged_cache_block_size
     logger.info(
         f"paged SSD-only mode: max_blocks={max_blocks}, block_size={block_size} tokens"
     )
 
     return max_blocks
 
-def _collect_rotating_window_sizes(
-    sched,
+def _collect_rotating_window_sizes(    self,
     cache_obj: Any,
     window_sizes: set[int],
 ) -> None:
@@ -263,7 +263,7 @@ def _collect_rotating_window_sizes(
     sub_caches = getattr(cache_obj, "caches", None)
     if isinstance(sub_caches, (list, tuple)):
         for sub_cache in sub_caches:
-            sched._collect_rotating_window_sizes(sub_cache, window_sizes)
+            self._collect_rotating_window_sizes(sub_cache, window_sizes)
 
     class_name = type(cache_obj).__name__
     if class_name in ("RotatingKVCache", "BatchRotatingKVCache"):
@@ -273,11 +273,11 @@ def _collect_rotating_window_sizes(
 
 def _detect_rotating_window_sizes(self) -> set[int]:
     """Detect rotating window sizes from model.make_cache() if available."""
-    if not hasattr(sched.model, "make_cache"):
+    if not hasattr(self.model, "make_cache"):
         return set()
 
     try:
-        cache_list = sched.model.make_cache()
+        cache_list = self.model.make_cache()
     except Exception as e:
         logger.debug(f"Failed to inspect model rotating window sizes: {e}")
         return set()
@@ -287,7 +287,7 @@ def _detect_rotating_window_sizes(self) -> set[int]:
 
     window_sizes: set[int] = set()
     for cache_obj in cache_list:
-        sched._collect_rotating_window_sizes(cache_obj, window_sizes)
+        self._collect_rotating_window_sizes(cache_obj, window_sizes)
 
     return window_sizes
 
@@ -310,10 +310,10 @@ def _align_block_size_with_rotating_window(self) -> None:
     window_size that falls within [_ROTATING_BLOCK_SIZE_MIN,
     _ROTATING_BLOCK_SIZE_MAX].
     """
-    if not sched.config.paged_ssd_cache_dir:
+    if not self.config.paged_ssd_cache_dir:
         return
 
-    window_sizes = sched._detect_rotating_window_sizes()
+    window_sizes = self._detect_rotating_window_sizes()
     if not window_sizes:
         return
 
@@ -328,8 +328,8 @@ def _align_block_size_with_rotating_window(self) -> None:
 
     # Find the smallest multiple of window_size >= _ROTATING_BLOCK_SIZE_MIN.
     # If window_size itself is already >= max, just use window_size.
-    lo = sched._ROTATING_BLOCK_SIZE_MIN
-    hi = sched._ROTATING_BLOCK_SIZE_MAX
+    lo = self._ROTATING_BLOCK_SIZE_MIN
+    hi = self._ROTATING_BLOCK_SIZE_MAX
 
     if window_size >= hi or window_size >= lo:
         target_block_size = window_size
@@ -343,16 +343,16 @@ def _align_block_size_with_rotating_window(self) -> None:
             if target_block_size < window_size:
                 target_block_size = window_size
 
-    if sched.config.paged_cache_block_size != target_block_size:
+    if self.config.paged_cache_block_size != target_block_size:
         logger.info(
             "Aligning paged cache block_size=%s to %s "
             "(RotatingKVCache window_size=%s, multiplier=%sx)",
-            sched.config.paged_cache_block_size,
+            self.config.paged_cache_block_size,
             target_block_size,
             window_size,
             target_block_size // window_size,
         )
-        sched.config.paged_cache_block_size = target_block_size
+        self.config.paged_cache_block_size = target_block_size
 
 # Default block size for ArraysCache-only hybrid models.
 # Match prefill_step_size (2048) so that boundary caching ON/OFF
@@ -371,20 +371,20 @@ def _enlarge_block_size_for_arrays_cache(self) -> None:
     aligned to its window size) or if the user explicitly set a block size
     larger than the default.
     """
-    if not sched.config.paged_ssd_cache_dir:
+    if not self.config.paged_ssd_cache_dir:
         return
 
     # Skip if RotatingKVCache already adjusted block size.
-    rotating_sizes = sched._detect_rotating_window_sizes()
+    rotating_sizes = self._detect_rotating_window_sizes()
     if rotating_sizes:
         return
 
     # Detect ArraysCache from model.make_cache()
-    if not hasattr(sched.model, "make_cache"):
+    if not hasattr(self.model, "make_cache"):
         return
 
     try:
-        cache_list = sched.model.make_cache()
+        cache_list = self.model.make_cache()
     except Exception:
         return
 
@@ -392,22 +392,22 @@ def _enlarge_block_size_for_arrays_cache(self) -> None:
         return
 
     has_arrays_cache = any(
-        sched._cache_tree_has_arrays_cache(cache_obj) for cache_obj in cache_list
+        self._cache_tree_has_arrays_cache(cache_obj) for cache_obj in cache_list
     )
     if not has_arrays_cache:
         return
 
-    target = sched._ARRAYS_CACHE_BLOCK_SIZE
-    if sched.config.paged_cache_block_size >= target:
+    target = self._ARRAYS_CACHE_BLOCK_SIZE
+    if self.config.paged_cache_block_size >= target:
         return
 
     logger.info(
         "Enlarging paged cache block_size=%s to %s for "
         "ArraysCache hybrid model (reduces boundary snapshot overhead)",
-        sched.config.paged_cache_block_size,
+        self.config.paged_cache_block_size,
         target,
     )
-    sched.config.paged_cache_block_size = target
+    self.config.paged_cache_block_size = target
 
 @staticmethod
 def _cache_tree_has_arrays_cache(cache_obj: Any) -> bool:

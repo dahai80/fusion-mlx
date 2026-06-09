@@ -15,6 +15,8 @@ import concurrent.futures
 import copy
 import gc
 import logging
+
+logger = logging.getLogger(__name__)
 import os
 import threading
 import time
@@ -82,16 +84,16 @@ def step(self) -> SchedulerOutput:
     output = SchedulerOutput()
 
     # Process pending aborts FIRST (thread-safe with hybrid executor)
-    sched._process_pending_aborts()
+    self._process_pending_aborts()
 
     # Drain async store_cache completions from prior steps. Each completed
     # entry triggers the deferred batch_generator.remove(uid) on the
     # inference thread. Inflight entries are left for a later step.
-    sched._drain_pending_async_removes()
+    self._drain_pending_async_removes()
 
     # Check memory pressure and evict if needed (tiered cache)
-    if sched.memory_monitor is not None and sched._step_counter % 64 == 0:
-        sched._check_memory_pressure()
+    if self.memory_monitor is not None and self._step_counter % 64 == 0:
+        self._check_memory_pressure()
 
     try:
         # Advance in-flight chunked prefills (one chunk per request).
@@ -99,11 +101,11 @@ def step(self) -> SchedulerOutput:
         # are inserted into BatchGenerator before the decode step.
         chunked_scheduled: list[Request] = []
         chunked_rejected: list[RequestOutput] = []
-        if sched.prefilling:
-            sched._advance_chunked_prefills(chunked_scheduled, chunked_rejected)
+        if self.prefilling:
+            self._advance_chunked_prefills(chunked_scheduled, chunked_rejected)
 
         # Schedule waiting requests
-        scheduled, rejected = sched._schedule_waiting()
+        scheduled, rejected = self._schedule_waiting()
         # Merge chunked-prefill completions into the scheduled list.
         if chunked_scheduled:
             scheduled = chunked_scheduled + scheduled
@@ -119,23 +121,23 @@ def step(self) -> SchedulerOutput:
         # Run generation step if we have running requests.
         # Use next_generated() which returns only GenerationBatch.Response
         # objects (prefill is handled externally before insert).
-        if (sched.batch_generator is not None or sched._vlm_mtp_active) and sched.running:
-            if sched.batch_generator is not None:
-                responses = list(sched.batch_generator.next_generated())
+        if (self.batch_generator is not None or self._vlm_mtp_active) and self.running:
+            if self.batch_generator is not None:
+                responses = list(self.batch_generator.next_generated())
             else:
                 responses = []
             # Drive vlm_mtp generators alongside BatchGenerator. Order
             # matters only for log determinism; _process_batch_responses
             # is per-uid.
-            if sched._vlm_mtp_active:
-                responses.extend(sched._step_vlm_mtp())
+            if self._vlm_mtp_active:
+                responses.extend(self._step_vlm_mtp())
             output.has_work = True
 
             if responses:
-                outputs, finished_ids = sched._process_batch_responses(responses)
+                outputs, finished_ids = self._process_batch_responses(responses)
                 output.outputs = outputs
                 output.finished_request_ids = finished_ids
-                sched._cleanup_finished(finished_ids)
+                self._cleanup_finished(finished_ids)
 
                 # Periodic Metal allocator cleanup during long decodes.
                 # mx.random.categorical inside the sampler allocates a
@@ -154,31 +156,31 @@ def step(self) -> SchedulerOutput:
                 # there is no race window. Decode-only path —
                 # next_generated() returns nothing during prefill, so
                 # we never disrupt prefill activation buffers.
-                sched._tokens_since_clear_cache = (
+                self._tokens_since_clear_cache = (
                     getattr(self, "_tokens_since_clear_cache", 0)
                     + len(responses)
                 )
-                if sched._tokens_since_clear_cache >= 1024:
-                    _sync_and_clear_cache(sched._stream)
-                    sched._tokens_since_clear_cache = 0
+                if self._tokens_since_clear_cache >= 1024:
+                    _sync_and_clear_cache(self._stream)
+                    self._tokens_since_clear_cache = 0
 
     except _PrefillAbortedError:
         # Prefill was interrupted by a pending abort.
         # BatchGenerator is in an inconsistent state (partial
         # prefill), so reset it entirely. Pending aborts will
         # be processed at the start of the next step().
-        sched.batch_generator = None
-        sched._current_sampler_params = None
-        sched._boundary_cache_snapshots.clear()
-        if sched._boundary_snapshot_store is not None:
-            sched._boundary_snapshot_store.cleanup_all()
-        sched._boundary_snapshot_required = None
+        self.batch_generator = None
+        self._current_sampler_params = None
+        self._boundary_cache_snapshots.clear()
+        if self._boundary_snapshot_store is not None:
+            self._boundary_snapshot_store.cleanup_all()
+        self._boundary_snapshot_required = None
         # Move any running requests back to waiting so they
         # can be rescheduled with a fresh BatchGenerator.
-        sched._reschedule_running_requests()
+        self._reschedule_running_requests()
 
     except (TypeError, AttributeError, ValueError) as e:
-        if sched._is_cache_corruption_error(e):
+        if self._is_cache_corruption_error(e):
             import traceback
 
             logger.warning(
@@ -187,10 +189,10 @@ def step(self) -> SchedulerOutput:
             )
             logger.debug(f"Cache corruption traceback:\n{traceback.format_exc()}")
             # Full reset: clear batch generator, all caches, VLM state
-            sched._recover_from_cache_error()
+            self._recover_from_cache_error()
             # Reschedule requests for re-prefill from scratch.
             # Requests exceeding max corruption retries are failed.
-            failed_ids = sched._reschedule_running_requests(is_corruption=True)
+            failed_ids = self._reschedule_running_requests(is_corruption=True)
             for rid in failed_ids:
                 output.outputs.append(
                     RequestOutput(
@@ -216,29 +218,29 @@ def step(self) -> SchedulerOutput:
         raise
 
     # Clear finished tracking for next step
-    sched.finished_req_ids = set()
+    self.finished_req_ids = set()
 
     # Periodic Metal cache cleanup
-    sched._step_counter += 1
-    should_clear = sched._should_periodic_clear_cache()
+    self._step_counter += 1
+    should_clear = self._should_periodic_clear_cache()
     # Deferred post-completion cleanup: fire once the step counter reaches
     # the target set by _cleanup_finished() (#435, #557).
     if (
-        sched._deferred_clear_at is not None
-        and sched._step_counter >= sched._deferred_clear_at
+        self._deferred_clear_at is not None
+        and self._step_counter >= self._deferred_clear_at
     ):
         should_clear = True
-        sched._deferred_clear_at = None
+        self._deferred_clear_at = None
     if should_clear:
-        _sync_and_clear_cache(sched._stream)
+        _sync_and_clear_cache(self._stream)
     if (
-        sched.config.gc_cleanup_interval > 0
-        and sched._step_counter % sched.config.gc_cleanup_interval == 0
+        self.config.gc_cleanup_interval > 0
+        and self._step_counter % self.config.gc_cleanup_interval == 0
     ):
         gc.collect()
 
-    if sched._step_counter % 32 == 0:
-        sched._publish_admin_snapshot()
+    if self._step_counter % 32 == 0:
+        self._publish_admin_snapshot()
 
     return output
 
@@ -249,9 +251,9 @@ def _publish_admin_snapshot(self) -> None:
     not concurrently mutated. The admin endpoint reads the reference via
     snapshot_for_admin() and never iterates the live structures.
     """
-    sched._admin_snapshot = {
-        "running_by_id": dict(sched.running),
-        "waiting": list(sched.waiting),
+    self._admin_snapshot = {
+        "running_by_id": dict(self.running),
+        "waiting": list(self.waiting),
     }
 
 def snapshot_for_admin(self) -> dict[str, Any]:
@@ -261,79 +263,79 @@ def snapshot_for_admin(self) -> dict[str, Any]:
     after publication. May be one step stale, which is fine for dashboard
     polling.
     """
-    return sched._admin_snapshot
+    return self._admin_snapshot
 
-def get_request(sched, request_id: str) -> Request | None:
+def get_request(    self, request_id: str) -> Request | None:
     """Get a request by ID."""
-    return sched.requests.get(request_id)
+    return self.requests.get(request_id)
 
-def remove_finished_request(sched, request_id: str) -> Request | None:
+def remove_finished_request(    self, request_id: str) -> Request | None:
     """Remove a finished request from tracking."""
-    return sched.requests.pop(request_id, None)
+    return self.requests.pop(request_id, None)
 
 def get_stats(self) -> dict[str, Any]:
     """Get scheduler statistics."""
     stats = {
-        "num_waiting": len(sched.waiting),
-        "num_prefilling": len(sched.prefilling),
-        "num_running": len(sched.running),
-        "num_requests_processed": sched.num_requests_processed,
-        "total_prompt_tokens": sched.total_prompt_tokens,
-        "total_completion_tokens": sched.total_completion_tokens,
+        "num_waiting": len(self.waiting),
+        "num_prefilling": len(self.prefilling),
+        "num_running": len(self.running),
+        "num_requests_processed": self.num_requests_processed,
+        "total_prompt_tokens": self.total_prompt_tokens,
+        "total_completion_tokens": self.total_completion_tokens,
     }
     # Include cache stats
-    if sched.block_aware_cache is not None:
-        stats["ssd_cache"] = sched.block_aware_cache.get_stats()
+    if self.block_aware_cache is not None:
+        stats["ssd_cache"] = self.block_aware_cache.get_stats()
     return stats
 
 def get_cache_stats(self) -> dict[str, Any] | None:
     """Get cache statistics."""
-    if sched.block_aware_cache is not None:
-        return sched.block_aware_cache.get_stats()
+    if self.block_aware_cache is not None:
+        return self.block_aware_cache.get_stats()
     return None
 
 def reset(self) -> None:
     """Reset the scheduler state."""
     # Drain any pending deferred aborts
-    sched._pending_abort_ids.clear()
+    self._pending_abort_ids.clear()
 
     # Abort all requests directly (reset is synchronous)
-    for request_id in list(sched.requests.keys()):
-        sched._do_abort_request(request_id)
+    for request_id in list(self.requests.keys()):
+        self._do_abort_request(request_id)
 
-    sched.waiting.clear()
-    sched.prefilling.clear()
-    sched._prefill_states.clear()
-    sched.running.clear()
-    sched.requests.clear()
-    sched.finished_req_ids.clear()
-    sched.request_id_to_uid.clear()
-    sched.uid_to_request_id.clear()
+    self.waiting.clear()
+    self.prefilling.clear()
+    self._prefill_states.clear()
+    self.running.clear()
+    self.requests.clear()
+    self.finished_req_ids.clear()
+    self.request_id_to_uid.clear()
+    self.uid_to_request_id.clear()
     # Async store_cache bookkeeping. shutdown() drains these before us,
     # but clear here too so reset() is safe to call standalone (e.g. tests
     # or recovery paths) without leaking Request refs through stale futures.
-    sched._pending_async_removes.clear()
-    sched._inflight_store_futures.clear()
-    sched.batch_generator = None
-    sched._current_sampler_params = None
-    sched._boundary_cache_snapshots.clear()
-    if sched._boundary_snapshot_store is not None:
-        sched._boundary_snapshot_store.cleanup_all()
-    sched._boundary_snapshot_required = None
+    self._pending_async_removes.clear()
+    self._inflight_store_futures.clear()
+    self.batch_generator = None
+    self._current_sampler_params = None
+    self._boundary_cache_snapshots.clear()
+    if self._boundary_snapshot_store is not None:
+        self._boundary_snapshot_store.cleanup_all()
+    self._boundary_snapshot_required = None
 
     # Clear caches
-    if sched.block_aware_cache is not None:
-        sched.block_aware_cache.clear()
-    sched._cache_rate_tracker.clear()
+    if self.block_aware_cache is not None:
+        self.block_aware_cache.clear()
+    self._cache_rate_tracker.clear()
 
     # Clear detokenizers
-    sched._request_detokenizers.clear()
+    self._request_detokenizers.clear()
 
     # Clear protocol-specific output parser sessions
-    sched._output_parser_sessions.clear()
+    self._output_parser_sessions.clear()
 
     # Cancel any pending deferred Metal cache clear
-    sched._deferred_clear_at = None
+    self._deferred_clear_at = None
 
 def deep_reset(self) -> None:
     """
@@ -343,30 +345,30 @@ def deep_reset(self) -> None:
     switching engines or recovering from errors.
     """
     # Standard reset first
-    sched.reset()
+    self.reset()
 
     # Clear any model-level cache state
     # MLX models may have internal cache references
-    if hasattr(sched.model, "cache"):
-        sched.model.cache = None
+    if hasattr(self.model, "cache"):
+        self.model.cache = None
 
     # Some MLX models store cache in layers
-    if hasattr(sched.model, "layers"):
-        for layer in sched.model.layers:
+    if hasattr(self.model, "layers"):
+        for layer in self.model.layers:
             if hasattr(layer, "cache"):
                 layer.cache = None
             if hasattr(layer, "self_attn") and hasattr(layer.self_attn, "cache"):
                 layer.self_attn.cache = None
 
     # Release model and tokenizer references for GC
-    sched.model = None
-    sched.tokenizer = None
+    self.model = None
+    self.tokenizer = None
 
     # Release all cache-related references for GC
-    sched.paged_cache_manager = None
-    sched.block_aware_cache = None
-    sched.memory_monitor = None
-    sched._boundary_snapshot_store = None
+    self.paged_cache_manager = None
+    self.block_aware_cache = None
+    self.memory_monitor = None
+    self._boundary_snapshot_store = None
 
     # Force garbage collection of any lingering cache objects
     import gc
@@ -389,29 +391,29 @@ def shutdown(self) -> None:
     # Wait for any inflight async store_cache futures + drain pending
     # batch_generator removes so the writer thread / underlying paged SSD
     # cache see all blocks before close().
-    if sched._store_cache_executor is not None:
+    if self._store_cache_executor is not None:
         try:
-            inflight = list(sched._inflight_store_futures.values())
+            inflight = list(self._inflight_store_futures.values())
             if inflight:
                 logger.info(
                     "Waiting for %d inflight async store_cache future(s)...",
                     len(inflight),
                 )
                 concurrent.futures.wait(inflight, timeout=30.0)
-            sched._drain_pending_async_removes()
-            sched._store_cache_executor.shutdown(wait=True)
+            self._drain_pending_async_removes()
+            self._store_cache_executor.shutdown(wait=True)
             # Final drain after executor join. All workers are now done,
             # so any entries still in _pending_async_removes (skipped by
             # the first drain because their future hadn't completed yet)
             # are guaranteed drainable here. Without this, slow worker
             # finishes between the 30s wait timeout and shutdown(wait=True)
             # would leave KV cache references pinned on Request objects.
-            sched._drain_pending_async_removes()
+            self._drain_pending_async_removes()
         except Exception as e:
             logger.warning(f"Async store_cache shutdown error: {e}")
-        sched._store_cache_executor = None
-        sched._store_cache_gate = None
-    if sched.paged_ssd_cache_manager is not None:
-        sched.paged_ssd_cache_manager.close()
-        sched.paged_ssd_cache_manager = None
+        self._store_cache_executor = None
+        self._store_cache_gate = None
+    if self.paged_ssd_cache_manager is not None:
+        self.paged_ssd_cache_manager.close()
+        self.paged_ssd_cache_manager = None
     logger.info("Scheduler shutdown completed")
