@@ -107,7 +107,7 @@ async def _run_anthropic_messages(req: AnthropicMessagesRequest) -> AnthropicMes
 # Reject multimodal content on text-only models
     if not getattr(engine, "is_mllm", False):
         for msg in req.messages:
-            content = getattr(msg, "content", msg.get("content")) if msg else None
+            content = getattr(msg, "content", "") if msg else None
             if isinstance(content, list):
                 for part in content:
                     pt = part.get("type", "") if isinstance(part, dict) else getattr(part, "type", "")
@@ -171,7 +171,7 @@ async def _stream_anthropic_generator(req: AnthropicMessagesRequest) -> AsyncIte
 # Reject multimodal content on text-only models
     if not getattr(engine, "is_mllm", False):
         for msg in req.messages:
-            content = getattr(msg, "content", msg.get("content")) if msg else None
+            content = getattr(msg, "content", "") if msg else None
             if isinstance(content, list):
                 for part in content:
                     pt = part.get("type", "") if isinstance(part, dict) else getattr(part, "type", "")

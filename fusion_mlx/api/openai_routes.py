@@ -122,7 +122,7 @@ async def _run_chat(request: ChatCompletionRequest) -> ChatCompletionResponse:
     # Reject multimodal content on text-only models
     if not getattr(engine, "is_mllm", False):
         for msg in request.messages:
-            content = msg.content if hasattr(msg, "content") else msg.get("content")
+            content = getattr(msg, "content", "")
             if isinstance(content, list):
                 for part in content:
                     pt = part.get("type", "") if isinstance(part, dict) else getattr(part, "type", "")
@@ -187,7 +187,7 @@ async def _stream_chat_generator(request: ChatCompletionRequest) -> AsyncIterato
 # Reject multimodal content on text-only models
     if not getattr(engine, "is_mllm", False):
         for msg in request.messages:
-            content = msg.content if hasattr(msg, "content") else msg.get("content")
+            content = getattr(msg, "content", "")
             if isinstance(content, list):
                 for part in content:
                     pt = part.get("type", "") if isinstance(part, dict) else getattr(part, "type", "")
