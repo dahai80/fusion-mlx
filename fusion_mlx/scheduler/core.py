@@ -113,6 +113,10 @@ from .sched_vlm_mtp import _log_vlm_mtp_stats, _route_to_vlm_mtp, _step_vlm_mtp
 
 class Scheduler:
     """Orchestrator — delegates to split modules."""
+    _PREFILL_STEP_TIERS: tuple[int, ...] = (1024, 512, 256, 128)
+    _ROTATING_BLOCK_SIZE_MIN: int = 512
+    _ROTATING_BLOCK_SIZE_MAX: int = 1024
+    _ARRAYS_CACHE_BLOCK_SIZE: int = 2048
 
     def add_request(self, *args, **kwargs):
         return add_request(self, *args, **kwargs)
