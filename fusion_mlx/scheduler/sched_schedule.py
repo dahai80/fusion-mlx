@@ -92,6 +92,18 @@ def _schedule_waiting(    self,
     batch_specprefill_status: bool | None = None
 
     while self.waiting and len(self.running) < self.config.max_num_seqs:
+         # Token budget guard: max_num_batched_tokens bounds the total
+         # tokens (decode + prefill) in a single forward pass.
+        batched_tokens = len(self.running) + sum(
+            len(
+                r.remaining_tokens if r.remaining_tokens is not None
+                else r.prompt_token_ids
+              )
+            for r in scheduled
+          )
+        if batched_tokens >= self.config.max_num_batched_tokens:
+            break
+
         # Admission pause: set by ProcessMemoryEnforcer when phys
         # crosses soft_threshold. New prefills wait; in-flight requests
         # continue. First request always passes (self.running is empty)
