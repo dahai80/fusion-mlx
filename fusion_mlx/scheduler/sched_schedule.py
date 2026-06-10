@@ -607,10 +607,11 @@ def _schedule_waiting(    self,
                 )
                 continue
 
-            # Clean up temp UID mapping
-            del self.uid_to_request_id[temp_uid]
-            del self.request_id_to_uid[request.request_id]
-
+             # Clean up temp UID mapping (use .pop() because
+             # fail_all_requests may have already cleared the maps
+             # if a timeout fired while _do_external_prefill was running)
+            self.uid_to_request_id.pop(temp_uid, None)
+            self.request_id_to_uid.pop(request.request_id, None)
             # Prefill complete: remove from progress tracker so dashboard
             # shows "generating" instead of "PP" during decode.
             get_prefill_tracker().remove(request.request_id)
