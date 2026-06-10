@@ -206,9 +206,9 @@ def add_request(    self, request: Request) -> None:
         # No paged SSD cache configured - process all tokens
         request.remaining_tokens = request.prompt_token_ids
 
-    # SpecPrefill: score remaining tokens with draft model if applicable.
-    # Must run AFTER prefix cache check (scoring applies only to uncached suffix).
-    self._try_specprefill_scoring(request)
+     # SpecPrefill scoring is deferred to _schedule_waiting (executor thread).
+     # Scoring is a full draft-model forward pass (10-30s for 128k tokens)
+     # and must not block the FastAPI event loop.
 
     # Add to tracking
     self.requests[request.request_id] = request

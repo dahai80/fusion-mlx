@@ -505,7 +505,7 @@ def _begin_prefill(    self,
     last_token = tokens[-1:]
     input_arr = mx.array(prefill_tokens)[None]  # (1, N-1)
 
-    self._prefill_chunk_count = getattr(sched, "_prefill_chunk_count", 0)
+    self._prefill_chunk_count = getattr(self, "_prefill_chunk_count", 0)
     return _PrefillState(
         request=request,
         cache=prompt_cache,
@@ -639,10 +639,22 @@ def _step_prefill_chunk(    self, state: _PrefillState) -> bool:
                 f"{self._memory_limit_bytes / 1024**3:.1f}GB "
                 f"(ceiling: "
                 f"{self._memory_hard_limit_bytes / 1024**3:.1f}GB)"
-            )
+             )
 
-    _sync_and_clear_cache(self._stream)
-    return state.tokens_remaining.shape[1] == 0
+     # Only sync+clear at boundary snapshot points or on the final
+     # chunk.  Calling mx.synchronize() + mx.clear_cache() on every
+     # chunk stalls the GPU pipeline — a 128k prompt at 2048-step
+     # size would produce 64 full syncs.  Intermediate chunks already
+     # have mx.eval(c.state) above to ensure states are materialized.
+    is_final = state.tokens_remaining.shape[1] == 0
+    had_boundary_snapshot = (
+        state.boundary_enabled
+        and state.base_size + state.tokens_processed > 0
+        and (state.base_size + state.tokens_processed) % state.block_size == 0
+    )
+    if is_final or had_boundary_snapshot:
+        _sync_and_clear_cache(self._stream)
+    return is_final
 
 def _emit_final_boundary_if_needed(    self, state: _PrefillState) -> None:
     """Emit a final boundary snapshot if the prefill landed on a boundary."""

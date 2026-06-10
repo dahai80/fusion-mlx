@@ -520,9 +520,9 @@ class EnginePool:
             gc.collect()
 
         # Release memory tracking AFTER barrier
-        self._current_model_memory -= entry.estimated_size
 
         if settled:
+            self._current_model_memory -= entry.estimated_size
             logger.info(
                 f"Unloaded model: {model_id}, "
                 f"freed={format_size(actual_freed)} "

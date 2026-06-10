@@ -637,7 +637,7 @@ def detect_preserve_thinking(model_path: Path) -> bool | None:
     return True
 
 
-def estimate_model_size(model_path: Path) -> int:
+def estimate_model_size(model_path: Path, model_type: str = "llm") -> int:
     """
     Estimate model memory usage from safetensors/bin file sizes.
 
@@ -673,8 +673,17 @@ def estimate_model_size(model_path: Path) -> int:
     if total_size == 0:
         raise ValueError(f"No model weights found in {model_path}")
 
-    # Add overhead for runtime buffers (~5%)
-    overhead_factor = 1.05
+     # Add overhead for runtime buffers. Tiered by model type to account
+     # for dequantization (4-bit -> fp16 is ~4x), KV cache, and tokenizer.
+     # LLM 4-bit: 1.3x, VLM: 1.5x (vision encoder overhead), FP16: 1.1x
+    if model_type == "vlm":
+        overhead_factor = 1.5
+    elif "8bit" in model_path.name.lower() or "mxfp8" in model_path.name.lower():
+        overhead_factor = 1.1
+    elif "4bit" in model_path.name.lower() or "4-bit" in model_path.name.lower():
+        overhead_factor = 1.3
+    else:
+        overhead_factor = 1.3  # default for LLMs
 
     return int(total_size * overhead_factor)
 

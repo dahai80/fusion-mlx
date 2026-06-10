@@ -590,7 +590,7 @@ def _cleanup_finished(    self, finished_ids: set[str]) -> None:
         # window was anchored to the first request's finish step, allowing the
         # second request's KV cache blocks to be re-allocated before IOKit
         # finished their completeMemory() callbacks (#557).
-        target = self._step_counter + self._deferred_clear_delay()
+        target = self._step_counter + self._DEFERRED_CLEAR_DELAY
         if self._deferred_clear_at is None or target > self._deferred_clear_at:
             self._deferred_clear_at = target
 

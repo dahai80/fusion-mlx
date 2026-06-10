@@ -156,6 +156,10 @@ def _schedule_waiting(    self,
 
         request = self.waiting.popleft()
 
+         # SpecPrefill: score remaining tokens on the executor thread
+         # (not in add_request, which runs on the FastAPI event loop)
+        self._try_specprefill_scoring(request)
+
         # Ensure we have a batch generator
         self._ensure_batch_generator(request.sampling_params)
 
@@ -636,12 +640,6 @@ def _schedule_waiting(    self,
 
         # Build per-request state machine for stop tokens
         sm = self._build_state_machine(request)
-
-        # Set random seed for reproducible generation (best-effort).
-        # This affects global MLX random state, so concurrent requests
-        # may interfere. Matches OpenAI's best-effort seed semantics.
-        if request.sampling_params.seed is not None:
-            mx.random.seed(request.sampling_params.seed)
 
         # NOTE: TurboQuant KV conversion is not applied during prefill.
         # See _do_external_prefill() comment for rationale (#771).

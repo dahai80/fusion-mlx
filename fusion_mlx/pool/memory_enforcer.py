@@ -689,7 +689,7 @@ class ProcessMemoryEnforcer:
         await self._engine_pool.check_ttl_expirations(
             self._settings_manager,
             global_idle_timeout_seconds=(
-                self._global_settings.idle_timeout.idle_timeout_seconds
+                self._global_settings.idle_timeout
                 if self._global_settings else None
             ),
         )
@@ -817,8 +817,18 @@ class ProcessMemoryEnforcer:
                                          )
                             logger.warning(
                                 f"Evicting model '{victim}' (pressure={new_level})"
-                             )
+                              )
+                            # Release lock before _unload_engine to avoid holding it
+                            # during asyncio.sleep (settle barrier can take up to 5s).
+                            self._engine_pool._lock.release()
                             await self._engine_pool._unload_engine(victim)
+                            # Re-acquire lock to continue the eviction loop
+                            try:
+                                await asyncio.wait_for(
+                                    self._engine_pool._lock.acquire(), timeout=2.0
+                                 )
+                            except asyncio.TimeoutError:
+                                break
                             continue
 
                         if new_level == "hard":

@@ -317,20 +317,25 @@ class PriorityScheduler:
         for pl in levels_to_check:
             if scheduled >= max_requests:
                 break
-            with self._lock:
-                q = self._queues[pl]
-                while q and scheduled < max_requests:
+            while True:
+                pri_req = None
+                with self._lock:
+                    q = self._queues[pl]
+                    if not q:
+                        break
                     pri_req = q[0]
                     max_seqs = self._get_max_for_level(pl)
                     running_at_level = sum(
                          1 for p in self._request_priorities.values() if p == pl
-                      )
+                       )
                     if running_at_level >= max_seqs:
                         break
                     pri_req = q.popleft()
                     self._request_priorities[pri_req.request.request_id] = pl
                     scheduled += 1
-             # Set stream and submit to base outside lock (may block)
+                if pri_req is None:
+                    break
+               # Set stream and submit to base outside lock (may block)
             self._set_stream_for_request(pri_req.request, pl)
             try:
                 self.base.add_request(pri_req.request)
@@ -482,9 +487,12 @@ class PriorityScheduler:
         bt_reserve = max(0, int(available * self.config.min_batch_share) - bt_running)
         rt_available = max(0, available - bg_reserve - bt_reserve)
         return {
-            PriorityLevel.REALTIME: min(self.config.max_realtime_seqs - rt_running, rt_available + self.config.max_realtime_seqs),
-            PriorityLevel.BATCH: min(self.config.max_batch_seqs - bt_running, bt_reserve + self.config.max_batch_seqs),
-            PriorityLevel.BACKGROUND: min(self.config.max_background_seqs - bg_running, bg_reserve + self.config.max_background_seqs),
+            PriorityLevel.REALTIME: max(0, min(
+                self.config.max_realtime_seqs - rt_running, rt_available + self.config.max_realtime_seqs)),
+            PriorityLevel.BATCH: max(0, min(
+                self.config.max_batch_seqs - bt_running, bt_reserve + self.config.max_batch_seqs)),
+            PriorityLevel.BACKGROUND: max(0, min(
+                self.config.max_background_seqs - bg_running, bg_reserve + self.config.max_background_seqs)),
         }
 
     def _get_max_for_level(self, level: PriorityLevel) -> int:
