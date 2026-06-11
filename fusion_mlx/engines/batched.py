@@ -90,6 +90,14 @@ class BatchedEngine(BaseEngine):
         return self._grammar_compiler
 
     @property
+    def supports_prefill_only(self) -> bool:
+        return True
+
+    @property
+    def supports_kv_handoff(self) -> bool:
+        return True
+
+    @property
     def prefix_cache_enabled(self) -> bool:
         if self._engine is None:
             return False
@@ -324,6 +332,34 @@ class BatchedEngine(BaseEngine):
         ct_kwargs = kwargs.pop("chat_template_kwargs", None)
         partial = kwargs.pop("is_partial", None)
         prompt = self._apply_chat_template(messages, template_tools, chat_template_kwargs=ct_kwargs, is_partial=partial)
+        prefill_only = kwargs.pop("prefill_only", False)
+        kv_handoff = kwargs.pop("kv_handoff", None)
+        if prefill_only:
+            sampling_params = SamplingParams(
+                max_tokens=max_tokens, temperature=temperature, top_p=top_p, top_k=top_k,
+                min_p=min_p, repetition_penalty=repetition_penalty, presence_penalty=presence_penalty,
+                stop=kwargs.pop("stop", []),
+            )
+            result = await self._engine.prefill(prompt, sampling_params)
+            return GenerationOutput(
+                text="", prompt_tokens=0, completion_tokens=0, finish_reason=None,
+                tool_calls=[], cached_tokens=0,
+                kv_state=result.get("kv_state", {}),
+            )
+        if kv_handoff is not None:
+            sampling_params = SamplingParams(
+                max_tokens=max_tokens, temperature=temperature, top_p=top_p, top_k=top_k,
+                min_p=min_p, repetition_penalty=repetition_penalty, presence_penalty=presence_penalty,
+                stop=kwargs.pop("stop", []),
+            )
+            token_ids = self._tokenizer.encode(prompt)
+            ro = await self._engine.decode_with_handoff(token_ids, sampling_params, kv_handoff.kv_buffers)
+            from ..api.utils import clean_special_tokens
+            return GenerationOutput(
+                text=clean_special_tokens(ro.output_text), prompt_tokens=ro.prompt_tokens,
+                completion_tokens=ro.completion_tokens, finish_reason=ro.finish_reason,
+                tool_calls=ro.tool_calls, cached_tokens=ro.cached_tokens,
+            )
         return await self.generate(
             prompt=prompt, max_tokens=max_tokens, temperature=temperature,
             top_p=top_p, top_k=top_k, min_p=min_p,
@@ -346,6 +382,40 @@ class BatchedEngine(BaseEngine):
         ct_kwargs = kwargs.pop("chat_template_kwargs", None)
         partial = kwargs.pop("is_partial", None)
         prompt = self._apply_chat_template(messages, template_tools, chat_template_kwargs=ct_kwargs, is_partial=partial)
+
+        kv_handoff = kwargs.pop("kv_handoff", None)
+        prefill_only = kwargs.pop("prefill_only", False)
+        if prefill_only:
+     # prefill_only on streaming path: yield single result from non-streaming
+            result = await self.chat(messages, max_tokens=max_tokens,
+                          temperature=temperature, top_p=top_p, top_k=top_k,
+                          min_p=min_p, repetition_penalty=repetition_penalty,
+                          presence_penalty=presence_penalty, tools=tools,
+                          prefill_only=True, **kwargs)
+            yield result
+            return
+        if kv_handoff is not None:
+             # Decode with handoff — stream outputs
+            sampling_params = SamplingParams(
+                max_tokens=max_tokens, temperature=temperature, top_p=top_p, top_k=top_k,
+                min_p=min_p, repetition_penalty=repetition_penalty, presence_penalty=presence_penalty,
+                stop=[],
+             )
+            token_ids = self._tokenizer.encode(prompt)
+            request_id = await self._engine.add_request(
+                prompt=token_ids, sampling_params=sampling_params
+             )
+            self._engine.scheduler.import_kv_state(request_id, kv_handoff.kv_buffers)
+            async for output in self._engine.stream_outputs(request_id):
+                from ..api.utils import clean_special_tokens
+                text = clean_special_tokens(output.output_text)
+                yield GenerationOutput(
+                    text=text, new_text=output.new_text,
+                    prompt_tokens=output.prompt_tokens, completion_tokens=output.completion_tokens,
+                    finished=output.finished, finish_reason=output.finish_reason,
+                    tool_calls=output.tool_calls, cached_tokens=output.cached_tokens,
+                 )
+            return
 
         # SpecPrefill system_end
         specprefill_model_enabled = getattr(self._model_settings, "specprefill_enabled", False) if self._model_settings else False

@@ -368,6 +368,85 @@ class EngineCore:
                 self.scheduler.remove_finished_request(rid)
         return [results[rid] for rid in request_ids if rid in results]
 
+    async def prefill(
+        self,
+        prompt: Union[str, List[int]],
+        sampling_params: Optional[SamplingParams] = None,
+    ) -> Dict[str, Any]:
+        """Run prefill only: process prompt tokens, export KV state, skip decode."""
+        request_id = await self.add_request(
+            prompt=prompt, sampling_params=sampling_params,
+            request_id=str(uuid.uuid4()),
+        )
+        sched = self.scheduler
+        if not sched:
+            raise RuntimeError("No scheduler for prefill")
+        for _ in range(1000):
+            sched.step()
+            req = sched.requests.get(request_id)
+            if req is None:
+                break
+            remaining = req.remaining_tokens if req.remaining_tokens is not None else []
+            if len(remaining) == 0:
+                break
+        kv_state = sched.export_kv_state(request_id)
+        if kv_state is None:
+            logger.warning("prefill %s: export_kv_state returned None", request_id)
+        collector = self._output_collectors.get(request_id)
+        final_output = None
+        if collector:
+            while True:
+                output = collector.get_nowait()
+                if output is None:
+                    break
+                final_output = output
+        self._cleanup_request(request_id)
+        return {
+            "output": final_output,
+            "kv_state": kv_state or {},
+        }
+
+    async def decode_with_handoff(
+        self,
+        prompt_token_ids: List[int],
+        sampling_params: Optional[SamplingParams],
+        kv_state: Dict[str, Any],
+    ) -> RequestOutput:
+        """Start decode from prefill KV state, skip prefill entirely."""
+        request_id = str(uuid.uuid4())
+        req = Request(
+            request_id=request_id,
+            prompt=prompt_token_ids,
+            sampling_params=sampling_params or SamplingParams(),
+        )
+        req.prompt_token_ids = prompt_token_ids
+        req.num_prompt_tokens = len(prompt_token_ids)
+        await self.add_request(
+            prompt=req, sampling_params=req.sampling_params, request_id=request_id
+        )
+        sched = self.scheduler
+        if sched and kv_state:
+            sched.import_kv_state(request_id, kv_state)
+        event = self._finished_events.get(request_id)
+        if event is None:
+            raise RuntimeError(f"No event for request {request_id}")
+        await event.wait()
+        collector = self._output_collectors.get(request_id)
+        final_output = None
+        if collector:
+            while True:
+                output = collector.get_nowait()
+                if output is None:
+                    break
+                final_output = output
+        self._cleanup_request(request_id)
+        if final_output is None:
+            raise RuntimeError(f"No decode output for request {request_id}")
+        if final_output.error:
+            raise RuntimeError(final_output.error)
+        return final_output
+
+
     def get_stats(self) -> Dict[str, Any]:
         scheduler_stats = self.scheduler.get_stats() if self.scheduler else {}
         uptime = time.time() - self._start_time if self._start_time else 0

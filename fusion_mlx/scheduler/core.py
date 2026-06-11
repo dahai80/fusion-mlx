@@ -94,6 +94,7 @@ from .sched_thinking import *      # noqa: F403
 from .sched_token import *      # noqa: F403
 from .sched_trim import *      # noqa: F403
 from .sched_vlm_mtp import *      # noqa: F403
+from .sched_handoff import export_kv_state, import_kv_state
 from .sched_batch import _adaptive_chunk_size, _advance_chunked_prefills, _begin_prefill, _do_external_prefill, _emit_final_boundary_if_needed, _insert_prefilled_request, _record_chunk_transient, _step_prefill_chunk
 from .sched_boundary import _cache_list_needs_boundary_snapshot, _detect_boundary_snapshot_need, _extract_boundary_snapshot, _extract_cache_states, _get_boundary_store_override, _maybe_capture_boundary_snapshot, _merge_boundary_with_full_cache, _normalize_rotating_snapshot_state, _on_prefill_boundary_snapshot, _validate_cache
 from .sched_cache import _align_block_size_with_rotating_window, _async_store_cache_worker, _cache_tree_has_arrays_cache, _calculate_max_blocks, _collect_arrays_from_extracted_cache, _collect_rotating_window_sizes, _detect_rotating_window_sizes, _drain_pending_async_removes, _enlarge_block_size_for_arrays_cache
@@ -240,6 +241,12 @@ class Scheduler:
 
     def _deferred_clear_delay(self, *args, **kwargs):
         return _deferred_clear_delay(self, *args, **kwargs)
+
+    def export_kv_state(self, *args, **kwargs):
+        return export_kv_state(self, *args, **kwargs)
+
+    def import_kv_state(self, *args, **kwargs):
+        return import_kv_state(self, *args, **kwargs)
 
 # Bind the __init__ from sched_init.py as the Scheduler constructor
 Scheduler.__init__ = __init__

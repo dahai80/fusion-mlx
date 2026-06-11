@@ -28,6 +28,7 @@ class GenerationOutput:
     finished: bool = True
     tool_calls: Optional[List[Dict[str, Any]]] = None
     cached_tokens: int = 0
+    kv_state: Optional[Dict[str, Any]] = None
 
 
 class BaseEngine(ABC):
