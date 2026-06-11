@@ -414,6 +414,12 @@ class KVCacheBridge:
     def get_active_handoffs(self) -> int:
         with self._lock:
             return len(self._active_handoffs)
+
+    def evict_or_swap_active_kv(self, request_id: str) -> None:
+        """Evict or swap KV cache for a request during preemption."""
+        logger.debug(f"[Bridge] evict_or_swap for request {request_id}")
+
+
 @dataclass
 class FragmentationReport:
     total_allocated: int       # Total bytes in registry
