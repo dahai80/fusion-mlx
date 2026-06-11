@@ -15,6 +15,8 @@ import concurrent.futures
 import copy
 import gc
 import logging
+
+logger = logging.getLogger(__name__)
 import os
 import threading
 import time
@@ -81,11 +83,11 @@ def _process_batch_responses(
 
     step_now = time.monotonic()
     for response in responses:
-        request_id = sched.uid_to_request_id.get(response.uid)
+        request_id = self.uid_to_request_id.get(response.uid)
         if request_id is None:
             continue
 
-        request = sched.running.get(request_id)
+        request = self.running.get(request_id)
         if request is None:
             continue
 
@@ -106,7 +108,7 @@ def _process_batch_responses(
         new_text = ""
 
         # Check if this request uses a protocol-specific output parser
-        parser_session = sched._get_output_parser_session(request_id)
+        parser_session = self._get_output_parser_session(request_id)
 
         if parser_session is not None:
             parser_result = parser_session.process_token(response.token)
@@ -132,13 +134,13 @@ def _process_batch_responses(
             request.append_output_token(response.token)
 
             # Decode the new token using streaming detokenizer for proper UTF-8 handling
-            detokenizer = sched._get_detokenizer(request_id)
+            detokenizer = self._get_detokenizer(request_id)
             if detokenizer is not None:
                 detokenizer.add_token(response.token)
                 new_text = detokenizer.last_segment
             else:
                 # Fallback to single-token decode
-                new_text = sched.tokenizer.decode([response.token])
+                new_text = self.tokenizer.decode([response.token])
 
             # Text-level stop-string fallback. Catches BPE edge cases
             # where the tokenized stop sequence does not match the
@@ -168,7 +170,7 @@ def _process_batch_responses(
         # (skip when a protocol parser already manages reasoning formatting)
         if parser_session is None and getattr(request, "needs_think_prefix", False):
             if not getattr(request, "think_prefix_sent", False):
-                think_tag = getattr(sched.tokenizer, "think_start", "<think>")
+                think_tag = getattr(self.tokenizer, "think_start", "<think>")
                 new_text = think_tag + "\n" + new_text
                 request.think_prefix_sent = True
 
@@ -193,7 +195,7 @@ def _process_batch_responses(
         )
 
         if not is_finished:
-            sched._maybe_capture_boundary_snapshot(request, response.uid)
+            self._maybe_capture_boundary_snapshot(request, response.uid)
 
         # Handle finished requests
         if is_finished:
@@ -224,7 +226,7 @@ def _process_batch_responses(
             else:
                 # Standard finalization without a protocol parser
                 # Finalize detokenizer to flush any remaining bytes
-                detokenizer = sched._get_detokenizer(request_id)
+                detokenizer = self._get_detokenizer(request_id)
                 if detokenizer is not None:
                     detokenizer.finalize()
                     final_segment = detokenizer.last_segment
@@ -232,7 +234,7 @@ def _process_batch_responses(
                         output.new_text += final_segment
 
                 # Decode full output
-                output.output_text = sched.tokenizer.decode(request.output_token_ids)
+                output.output_text = self.tokenizer.decode(request.output_token_ids)
                 request.output_text = output.output_text
 
                 # Trim accumulated output text at the first stop string
@@ -261,9 +263,9 @@ def _process_batch_responses(
 
                     # For paged cache, extract actual tensor states
                     # This allows cache to survive BatchGenerator recreation
-                    elif sched.block_aware_cache is not None:
+                    elif self.block_aware_cache is not None:
                         extracted_cache, model_cache_config = (
-                            sched._extract_cache_states(raw_cache)
+                            self._extract_cache_states(raw_cache)
                         )
                         if extracted_cache:
                             request._extracted_cache = extracted_cache
@@ -279,8 +281,8 @@ def _process_batch_responses(
                 except Exception as e:
                     logger.debug(f"Failed to extract cache for {request_id}: {e}")
 
-            sched.total_completion_tokens += request.num_output_tokens
-            sched.num_requests_processed += 1
+            self.total_completion_tokens += request.num_output_tokens
+            self.num_requests_processed += 1
 
             logger.debug(
                 f"Request {request_id} finished: {response.finish_reason}, "
@@ -294,7 +296,7 @@ def _process_batch_responses(
 
     return outputs, finished_ids
 
-def _release_paged_cache_for_request(sched, request_id: str) -> None:
+def _release_paged_cache_for_request(    self, request_id: str) -> None:
     """Drop a request's paged-cache footprint on rejection paths.
 
     ``add_request`` routes through ``block_aware_cache.fetch_cache``
@@ -307,23 +309,23 @@ def _release_paged_cache_for_request(sched, request_id: str) -> None:
     very memory pressure that triggered the rejection) and orphan
     ``_request_tables`` entries.
     """
-    if sched.block_aware_cache is not None:
-        sched.block_aware_cache.release_cache(request_id)
-    elif sched.paged_cache_manager is not None:
-        sched.paged_cache_manager.delete_block_table(request_id)
+    if self.block_aware_cache is not None:
+        self.block_aware_cache.release_cache(request_id)
+    elif self.paged_cache_manager is not None:
+        self.paged_cache_manager.delete_block_table(request_id)
 
-def _cleanup_finished(sched, finished_ids: set[str]) -> None:
+def _cleanup_finished(    self, finished_ids: set[str]) -> None:
     """Clean up finished requests and store caches for reuse."""
     # Synchronize pending engine stream operations before cache storage.
     # store_cache -> mx.save_safetensors triggers implicit mx.eval() which
     # can conflict with async Metal operations on the generation stream.
     if finished_ids:
-        with sched._phase_timer("cleanup_finished_sync"):
-            _safe_sync_stream(sched._stream)
+        with self._phase_timer("cleanup_finished_sync"):
+            _safe_sync_stream(self._stream)
 
     # SpecPrefill: restore original RoPE if active request finished
     for rid in finished_ids:
-        sched._cleanup_specprefill(rid)
+        self._cleanup_specprefill(rid)
 
     # Remove finished requests from prefill progress tracker.
     tracker = get_prefill_tracker()
@@ -331,7 +333,7 @@ def _cleanup_finished(sched, finished_ids: set[str]) -> None:
         tracker.remove(rid)
 
     for request_id in finished_ids:
-        request = sched.running.get(request_id)
+        request = self.running.get(request_id)
 
         # Store cache for future reuse (G2-async): submit to background
         # executor so the post-finish 28GB+ memcpy doesn't block response
@@ -342,7 +344,7 @@ def _cleanup_finished(sched, finished_ids: set[str]) -> None:
         # picked up at the next step's _drain_pending_async_removes.
         store_future = None
         if request is not None and request.prompt_token_ids:
-            if sched.block_aware_cache is not None:
+            if self.block_aware_cache is not None:
                 if (
                     hasattr(request, "_extracted_cache")
                     and request._extracted_cache is not None
@@ -372,9 +374,9 @@ def _cleanup_finished(sched, finished_ids: set[str]) -> None:
                         # without blocking; the worker calls
                         # mx.synchronize() to wait before extracting
                         # bytes.
-                        with mx.stream(sched._stream):
-                            with sched._phase_timer("store_cache_main_boundary"):
-                                boundary_override = sched._get_boundary_store_override(
+                        with mx.stream(self._stream):
+                            with self._phase_timer("store_cache_main_boundary"):
+                                boundary_override = self._get_boundary_store_override(
                                     request_id,
                                     cacheable_sequence,
                                 )
@@ -386,7 +388,7 @@ def _cleanup_finished(sched, finished_ids: set[str]) -> None:
                                         intermediate_snapshots,
                                     ) = boundary_override
                                     cache_to_store = (
-                                        sched._merge_boundary_with_full_cache(
+                                        self._merge_boundary_with_full_cache(
                                             boundary_cache, request._extracted_cache
                                         )
                                     )
@@ -400,17 +402,17 @@ def _cleanup_finished(sched, finished_ids: set[str]) -> None:
                                         f"{len(intermediate_snapshots) if intermediate_snapshots else 0} "
                                         f"intermediate snapshots)"
                                     )
-                            with sched._phase_timer("store_cache_main_collect"):
+                            with self._phase_timer("store_cache_main_collect"):
                                 pre_eval_arrays = (
-                                    sched._collect_arrays_from_extracted_cache(
+                                    self._collect_arrays_from_extracted_cache(
                                         cache_to_store
                                     )
                                 )
-                            with sched._phase_timer("store_cache_main_dispatch"):
+                            with self._phase_timer("store_cache_main_dispatch"):
                                 if pre_eval_arrays:
                                     mx.async_eval(*pre_eval_arrays)
 
-                        if sched._store_cache_executor is not None:
+                        if self._store_cache_executor is not None:
                             # Hand the store-cache write to the background
                             # executor without ever blocking the generation
                             # step. The gate only counts in-flight writes;
@@ -421,12 +423,12 @@ def _cleanup_finished(sched, finished_ids: set[str]) -> None:
                             # called before submit so a fast worker whose
                             # done callback fires immediately still
                             # decrements a counted slot.
-                            gate = sched._store_cache_gate
+                            gate = self._store_cache_gate
                             if gate is not None:
                                 gate.note_submitted()
                             try:
-                                store_future = sched._store_cache_executor.submit(
-                                    sched._async_store_cache_worker,
+                                store_future = self._store_cache_executor.submit(
+                                    self._async_store_cache_worker,
                                     request_id,
                                     token_sequence_to_store,
                                     cache_to_store,
@@ -444,10 +446,10 @@ def _cleanup_finished(sched, finished_ids: set[str]) -> None:
                                 store_future.add_done_callback(
                                     lambda _f, g=gate: g.note_done()
                                 )
-                            sched._inflight_store_futures[request_id] = store_future
+                            self._inflight_store_futures[request_id] = store_future
                         else:
                             # Executor unavailable — synchronous fallback.
-                            sched._async_store_cache_worker(
+                            self._async_store_cache_worker(
                                 request_id,
                                 token_sequence_to_store,
                                 cache_to_store,
@@ -471,21 +473,21 @@ def _cleanup_finished(sched, finished_ids: set[str]) -> None:
                 else:
                     # No extracted_cache to store, but ensure block leak guard.
                     block_table = None
-                    if sched.paged_cache_manager:
-                        block_table = sched.paged_cache_manager.get_block_table(
+                    if self.paged_cache_manager:
+                        block_table = self.paged_cache_manager.get_block_table(
                             request_id
                         )
                         if block_table is None and hasattr(request, "block_table"):
                             block_table = request.block_table
-                    if block_table and sched.paged_cache_manager:
-                        sched.paged_cache_manager.release_for_eviction(
+                    if block_table and self.paged_cache_manager:
+                        self.paged_cache_manager.release_for_eviction(
                             block_table.block_ids
                         )
-                    sched.block_aware_cache.clear_request_entry(request_id)
+                    self.block_aware_cache.clear_request_entry(request_id)
 
         # Remove from running
-        if request_id in sched.running:
-            del sched.running[request_id]
+        if request_id in self.running:
+            del self.running[request_id]
 
         # batch_generator.remove(uid): defer until the async store_cache
         # worker finishes so the BatchKVCache slot isn't reused while the
@@ -494,10 +496,10 @@ def _cleanup_finished(sched, finished_ids: set[str]) -> None:
         # mx.synchronize + remove + uid_maps cleanup. If we have no async
         # store (no extracted_cache, executor missing, fallback fail),
         # fall back to immediate remove for back-compat behavior.
-        if request_id in sched.request_id_to_uid:
-            uid = sched.request_id_to_uid[request_id]
+        if request_id in self.request_id_to_uid:
+            uid = self.request_id_to_uid[request_id]
             if store_future is not None:
-                sched._pending_async_removes.append((uid, request_id, store_future))
+                self._pending_async_removes.append((uid, request_id, store_future))
             else:
                 # Synchronize in-flight GPU work before modifying batch state.
                 # batch_generator.remove() triggers lazy KV cache array slicing
@@ -505,39 +507,39 @@ def _cleanup_finished(sched, finished_ids: set[str]) -> None:
                 # used by in-flight Metal command buffers from the previous
                 # batch_generator.next() call.  Without this barrier the Metal
                 # driver can hit 'completeMemory() prepare count underflow'.
-                _safe_sync_stream(sched._stream)
-                sched._remove_uid_from_active_batch(uid)
-                if hasattr(sched.model, "unregister_rope_delta"):
-                    sched.model.unregister_rope_delta(uid)
-                if uid in sched.uid_to_request_id:
-                    del sched.uid_to_request_id[uid]
-                del sched.request_id_to_uid[request_id]
+                _safe_sync_stream(self._stream)
+                self._remove_uid_from_active_batch(uid)
+                if hasattr(self.model, "unregister_rope_delta"):
+                    self.model.unregister_rope_delta(uid)
+                if uid in self.uid_to_request_id:
+                    del self.uid_to_request_id[uid]
+                del self.request_id_to_uid[request_id]
 
         # Clean up streaming detokenizer
-        sched._cleanup_detokenizer(request_id)
+        self._cleanup_detokenizer(request_id)
 
         # Clean up protocol-specific output parser session
-        sched._cleanup_output_parser_session(request_id)
+        self._cleanup_output_parser_session(request_id)
 
         # Clean up VLM adapter state (position_ids, rope_deltas, pending embeddings)
-        if hasattr(sched.model, "clear_vlm_position_state"):
-            sched.model.clear_vlm_position_state()
-        if hasattr(sched.model, "clear_pending_embeddings"):
-            sched.model.clear_pending_embeddings()
+        if hasattr(self.model, "clear_vlm_position_state"):
+            self.model.clear_vlm_position_state()
+        if hasattr(self.model, "clear_pending_embeddings"):
+            self.model.clear_pending_embeddings()
 
         # Drop any boundary snapshot for this request. The in-memory
         # dict pop is safe — the async store worker holds its own
         # reference to the snapshot dict via _BoundarySnapshotProvider.
-        sched._boundary_cache_snapshots.pop(request_id, None)
+        self._boundary_cache_snapshots.pop(request_id, None)
         # cleanup_request rmtree's the on-disk snapshot directory and
         # races the worker's boundary_snapshot_store.load() calls. If
         # an async store_future is in flight, defer cleanup until the
         # worker finishes (handled in _drain_pending_async_removes).
-        if sched._boundary_snapshot_store is not None and store_future is None:
-            sched._boundary_snapshot_store.cleanup_request(request_id)
+        if self._boundary_snapshot_store is not None and store_future is None:
+            self._boundary_snapshot_store.cleanup_request(request_id)
 
         # Track as finished
-        sched.finished_req_ids.add(request_id)
+        self.finished_req_ids.add(request_id)
 
         # Remove from requests dict to prevent memory leak.
         # When async store_cache is in flight, keep _extracted_cache alive
@@ -547,12 +549,12 @@ def _cleanup_finished(sched, finished_ids: set[str]) -> None:
         # no future is pending; the future's done callback (or
         # _drain_pending_async_removes) clears the request later.
         if store_future is None:
-            req_to_remove = sched.requests.pop(request_id, None)
+            req_to_remove = self.requests.pop(request_id, None)
             if req_to_remove is not None:
                 req_to_remove._extracted_cache = None
                 req_to_remove.prompt_cache = None
         else:
-            # Drop request from running but keep in sched.requests so the
+            # Drop request from running but keep in self.requests so the
             # async worker keeps the cache buffers alive via reachability.
             # Cleanup happens in _drain_pending_async_removes.
             pass
@@ -561,10 +563,10 @@ def _cleanup_finished(sched, finished_ids: set[str]) -> None:
     # Helps diagnose cache-on overhead (boundary capture / store_cache /
     # hot cache eviction). Logged at info level so operators can see it
     # without enabling debug.
-    if finished_ids and sched._phase_total_ms:
+    if finished_ids and self._phase_total_ms:
         stats_parts = []
-        for phase, total_ms in sorted(sched._phase_total_ms.items()):
-            count = sched._phase_count.get(phase, 0)
+        for phase, total_ms in sorted(self._phase_total_ms.items()):
+            count = self._phase_count.get(phase, 0)
             if count == 0:
                 continue
             stats_parts.append(f"{phase}={total_ms:.1f}ms/{count}")
@@ -588,49 +590,49 @@ def _cleanup_finished(sched, finished_ids: set[str]) -> None:
         # window was anchored to the first request's finish step, allowing the
         # second request's KV cache blocks to be re-allocated before IOKit
         # finished their completeMemory() callbacks (#557).
-        target = sched._step_counter + sched._DEFERRED_CLEAR_DELAY
-        if sched._deferred_clear_at is None or target > sched._deferred_clear_at:
-            sched._deferred_clear_at = target
+        target = self._step_counter + self._DEFERRED_CLEAR_DELAY
+        if self._deferred_clear_at is None or target > self._deferred_clear_at:
+            self._deferred_clear_at = target
 
-def _is_cache_corruption_error(sched, error: Exception) -> bool:
+def _is_cache_corruption_error(    self, error: Exception) -> bool:
     """Check if an error indicates cache corruption."""
     return is_cache_corruption_error(error)
 
 def _recover_from_cache_error(self) -> None:
     """Recover from cache corruption error."""
     # Clear batch generator (this is the source of the corruption)
-    sched.batch_generator = None
-    sched._current_sampler_params = None
-    sched._boundary_cache_snapshots.clear()
-    if sched._boundary_snapshot_store is not None:
-        sched._boundary_snapshot_store.cleanup_all()
-    sched._boundary_snapshot_required = None
+    self.batch_generator = None
+    self._current_sampler_params = None
+    self._boundary_cache_snapshots.clear()
+    if self._boundary_snapshot_store is not None:
+        self._boundary_snapshot_store.cleanup_all()
+    self._boundary_snapshot_required = None
 
     # Clear stale VLM position state to prevent re-corruption on retry
-    if hasattr(sched.model, "clear_vlm_position_state"):
-        sched.model.clear_vlm_position_state()
+    if hasattr(self.model, "clear_vlm_position_state"):
+        self.model.clear_vlm_position_state()
 
     # Clear pending VLM embeddings
-    if hasattr(sched.model, "clear_pending_embeddings"):
-        sched.model.clear_pending_embeddings()
+    if hasattr(self.model, "clear_pending_embeddings"):
+        self.model.clear_pending_embeddings()
 
     # Clear caches
-    if sched.block_aware_cache is not None:
-        sched.block_aware_cache.clear()
-    sched._cache_rate_tracker.clear()
+    if self.block_aware_cache is not None:
+        self.block_aware_cache.clear()
+    self._cache_rate_tracker.clear()
 
     # Clear UID mappings
-    sched.request_id_to_uid.clear()
-    sched.uid_to_request_id.clear()
+    self.request_id_to_uid.clear()
+    self.uid_to_request_id.clear()
 
     # Cancel any pending deferred Metal cache clear
-    sched._deferred_clear_at = None
+    self._deferred_clear_at = None
 
     # Clear detokenizer state to prevent contamination after recovery
-    sched._request_detokenizers.clear()
+    self._request_detokenizers.clear()
 
     # Clear protocol-specific output parser sessions
-    sched._output_parser_sessions.clear()
+    self._output_parser_sessions.clear()
 
     logger.info("Cache recovery completed")
 
@@ -649,14 +651,14 @@ def _reschedule_running_requests(
     """
     failed_ids: list[str] = []
     count = 0
-    for request_id, request in list(sched.running.items()):
+    for request_id, request in list(self.running.items()):
         if is_corruption:
             request.cache_corruption_retries += 1
             if request.cache_corruption_retries > max_corruption_retries:
                 failed_ids.append(request_id)
-                del sched.running[request_id]
+                del self.running[request_id]
                 # Clean up from requests dict (prevent memory leak)
-                req = sched.requests.pop(request_id, None)
+                req = self.requests.pop(request_id, None)
                 if req is not None:
                     req._extracted_cache = None
                     req.prompt_cache = None
@@ -686,8 +688,8 @@ def _reschedule_running_requests(
         request.think_prefix_sent = False
 
         # Move to waiting queue (at front for priority)
-        sched.waiting.appendleft(request)
-        del sched.running[request_id]
+        self.waiting.appendleft(request)
+        del self.running[request_id]
         count += 1
 
     if count > 0:

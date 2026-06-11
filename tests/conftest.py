@@ -1,3 +1,4 @@
+import struct as _struct
 import sys
 import types
 from pathlib import Path
@@ -14,10 +15,79 @@ _mlx = MagicMock()
 _mlx.__version__ = "0.31.2"
 # Set __spec__ to prevent transformers find_spec() from crashing
 _mlx.__spec__ = MagicMock()
+
+# Mock dtype tokens — created before _mlx_core so _MockMXArray can
+# reference them at __init__ time without forward-reference errors.
+_MOCK_FLOAT16 = "mock_float16"
+_MOCK_FLOAT32 = "mock_float32"
+_MOCK_BFLOAT16 = "mock_bfloat16"
+_MOCK_UINT16 = "mock_uint16"
+
+
+class _MockMXArray:
+    """Minimal mx.array mock that supports memoryview-based serialization."""
+
+    def __init__(self, data, dtype=None):
+        if isinstance(data, (list, tuple)):
+            self._flat = [float(x) for x in data]
+            self._shape = [len(data)]
+        else:
+            self._flat = []
+            self._shape = [1]
+        self.dtype = _MOCK_FLOAT32
+        self._dtype_name = "float32"
+        if dtype is not None:
+            self.dtype = dtype
+
+    def __repr__(self):
+        return f"<MockMXArray {self._shape} {self._dtype_name}>"
+
+    def __bytes__(self):
+        return b"".join(_struct.pack("<f", x) for x in self._flat)
+
+    @property
+    def shape(self):
+        return tuple(self._shape)
+
+    @property
+    def nbytes(self):
+        return len(self._flat) * _struct.calcsize("f")
+
+    def view(self, dtype):
+        return self
+
+    def tolist(self):
+        return list(self._flat)
+
+
+def _mock_array(data, dtype=None):
+    return _MockMXArray(data, dtype)
+
+
+def _mock_eval(*args):
+    pass
+
+
+_mlx_core = MagicMock()
+_mlx_core.array = _mock_array
+_mlx_core.eval = _mock_eval
+_mlx_core.float16 = _MOCK_FLOAT16
+_mlx_core.float32 = _MOCK_FLOAT32
+_mlx_core.bfloat16 = _MOCK_BFLOAT16
+_mlx_core.int8 = "mock_int8"
+_mlx_core.int16 = "mock_int16"
+_mlx_core.int32 = "mock_int32"
+_mlx_core.int64 = "mock_int64"
+_mlx_core.uint8 = "mock_uint8"
+_mlx_core.uint16 = _MOCK_UINT16
+_mlx_core.uint32 = "mock_uint32"
+_mlx_core.uint64 = "mock_uint64"
+_mlx_core.zeros = MagicMock(return_value=_MockMXArray([]))
+
 sys.modules["mlx"] = _mlx
 sys.modules["mlx.nn"] = MagicMock()
 sys.modules["mlx.optimizers"] = MagicMock()
-sys.modules["mlx.core"] = MagicMock()
+sys.modules["mlx.core"] = _mlx_core
 sys.modules["mlx.random"] = MagicMock()
 sys.modules["mlx.fast"] = MagicMock()
 sys.modules["mlx_dtypes"] = MagicMock()

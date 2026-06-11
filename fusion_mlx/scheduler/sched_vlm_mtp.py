@@ -15,6 +15,8 @@ import concurrent.futures
 import copy
 import gc
 import logging
+
+logger = logging.getLogger(__name__)
 import os
 import threading
 import time
@@ -64,8 +66,7 @@ from .helpers import (
 )
 from .monkeypatches import _default_generation_stream
 
-def _route_to_vlm_mtp(
-    sched,
+def _route_to_vlm_mtp(    self,
     request: Request,
     prefilled_cache: list[Any],
     last_tokens: list[int],
@@ -83,7 +84,7 @@ def _route_to_vlm_mtp(
     (drafter missing, language model lacks rollback hook, etc.) so the
     caller can fall back to the normal BatchGenerator path.
     """
-    drafter = sched._vlm_mtp_drafter
+    drafter = self._vlm_mtp_drafter
     if drafter is None:
         return None
 
@@ -102,22 +103,22 @@ def _route_to_vlm_mtp(
     # commit can swap this gate for true batched MTP via
     # ``_mtp_rounds_batch`` if and when omlx prefill exposes batched
     # hidden/shared_kv outputs.
-    if sched._vlm_mtp_active:
+    if self._vlm_mtp_active:
         logger.info(
             "vlm_mtp routing skipped for %s: drafter is busy with %d "
             "request(s); falling back to BatchGenerator",
             request.request_id,
-            len(sched._vlm_mtp_active),
+            len(self._vlm_mtp_active),
         )
         return None
 
-    lm = getattr(sched.model, "_language_model", None)
+    lm = getattr(self.model, "_language_model", None)
     if lm is None or not hasattr(lm, "rollback_speculative_cache"):
         logger.warning(
             "vlm_mtp toggle on but model lacks _language_model with "
             "rollback_speculative_cache (model=%s); falling back to "
             "standard decode for request %s",
-            type(sched.model).__name__,
+            type(self.model).__name__,
             request.request_id,
         )
         return None
@@ -131,7 +132,7 @@ def _route_to_vlm_mtp(
 
     last_arr = mx.array(last_tokens)[None]  # (1, len_last)
     try:
-        with mx.stream(sched._stream):
+        with mx.stream(self._stream):
             out = lm(
                 last_arr,
                 cache=prefilled_cache,
@@ -164,7 +165,7 @@ def _route_to_vlm_mtp(
 
     # Combine base stop tokens (EOS, Harmony, generation_config) with
     # request-specific stop_token_ids — same shape as _build_state_machine.
-    eos_ids: set[int] = sched._get_stop_tokens()
+    eos_ids: set[int] = self._get_stop_tokens()
     if request.sampling_params.stop_token_ids:
         eos_ids.update(request.sampling_params.stop_token_ids)
 
@@ -178,7 +179,7 @@ def _route_to_vlm_mtp(
             first_bonus=int(first_bonus_arr.item()),
             max_tokens=request.sampling_params.max_tokens,
             sampler=sampler,
-            draft_block_size=sched._vlm_mtp_draft_block_size,
+            draft_block_size=self._vlm_mtp_draft_block_size,
             token_dtype=mx.int32,
             eos_token_ids=eos_ids or None,
         )
@@ -190,9 +191,9 @@ def _route_to_vlm_mtp(
         )
         return None
 
-    uid = sched._vlm_mtp_next_uid
-    sched._vlm_mtp_next_uid -= 1
-    sched._vlm_mtp_active[uid] = _VLMMTPDecodeState(
+    uid = self._vlm_mtp_next_uid
+    self._vlm_mtp_next_uid -= 1
+    self._vlm_mtp_active[uid] = _VLMMTPDecodeState(
         generator=generator,
         request=request,
         prompt_cache=prefilled_cache,
@@ -205,7 +206,7 @@ def _route_to_vlm_mtp(
         "vlm_mtp decode started: request=%s uid=%d block_size=%s",
         request.request_id,
         uid,
-        sched._vlm_mtp_draft_block_size,
+        self._vlm_mtp_draft_block_size,
     )
     return uid
 
@@ -223,7 +224,7 @@ def _log_vlm_mtp_stats(
     ``_route_to_vlm_mtp`` guarantees one in-flight vlm_mtp generator
     at a time, so the value we read here belongs to ``state.request``.
     """
-    drafter = sched._vlm_mtp_drafter
+    drafter = self._vlm_mtp_drafter
     if drafter is None:
         return
     accept_lens = getattr(drafter.model, "accept_lens", None)
@@ -237,7 +238,7 @@ def _log_vlm_mtp_stats(
     if rounds == 0:
         return
     total_accepted = sum(lens)
-    block_size = sched._vlm_mtp_draft_block_size or int(
+    block_size = self._vlm_mtp_draft_block_size or int(
         getattr(drafter.model.config, "block_size", 4)
     )
     max_per_round = max(1, block_size - 1)
@@ -265,18 +266,18 @@ def _step_vlm_mtp(self) -> list[_VLMMTPResponse]:
     Mirrors mlx-lm BatchGenerator's per-step contract: one
     ``GenerationBatch.Response``-shaped object per active uid.
     """
-    if not sched._vlm_mtp_active:
+    if not self._vlm_mtp_active:
         return []
 
     responses: list[_VLMMTPResponse] = []
-    for uid, state in list(sched._vlm_mtp_active.items()):
+    for uid, state in list(self._vlm_mtp_active.items()):
         try:
-            with mx.stream(sched._stream):
+            with mx.stream(self._stream):
                 token_val = next(state.generator)
         except StopIteration:
             # Round loop exited naturally — terminate with prompt cache
             # so the prefix-cache layer can keep using it.
-            sched._log_vlm_mtp_stats(state, "length")
+            self._log_vlm_mtp_stats(state, "length")
             responses.append(
                 _VLMMTPResponse(
                     uid=uid,
@@ -317,7 +318,7 @@ def _step_vlm_mtp(self) -> list[_VLMMTPResponse]:
             finish_reason = "length"
 
         if finish_reason is not None:
-            sched._log_vlm_mtp_stats(state, finish_reason)
+            self._log_vlm_mtp_stats(state, finish_reason)
 
         responses.append(
             _VLMMTPResponse(
@@ -333,7 +334,7 @@ def _step_vlm_mtp(self) -> list[_VLMMTPResponse]:
             state.finished = True
 
     # Drop finished entries.
-    for uid in [u for u, s in sched._vlm_mtp_active.items() if s.finished]:
-        del sched._vlm_mtp_active[uid]
+    for uid in [u for u, s in self._vlm_mtp_active.items() if s.finished]:
+        del self._vlm_mtp_active[uid]
 
     return responses

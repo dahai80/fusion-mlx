@@ -17,7 +17,13 @@ from .model_registry import get_registry, ModelOwnershipError
 
 logger = logging.getLogger(__name__)
 
-_global_mlx_executor: concurrent.futures.ThreadPoolExecutor | None = None
+_executor_config: dict[str, dict[str, Any]] = {
+    "llm": {"max_workers": 1, "prefix": "mlx-llm"},
+    "image": {"max_workers": 1, "prefix": "mlx-image"},
+    "audio": {"max_workers": 2, "prefix": "mlx-audio"},
+    "io": {"max_workers": 2, "prefix": "mlx-io"},
+}
+_global_executors: dict[str, concurrent.futures.ThreadPoolExecutor] = {}
 
 
 def _init_mlx_thread() -> None:
@@ -31,14 +37,21 @@ def _init_mlx_thread() -> None:
         sched_mod.generation_stream = stream
 
 
+def get_executor(pool_type: str = "llm") -> concurrent.futures.ThreadPoolExecutor:
+    if pool_type in _global_executors:
+        return _global_executors[pool_type]
+    cfg = _executor_config.get(pool_type, {"max_workers": 1, "prefix": f"mlx-{pool_type}"})
+    exec_ = concurrent.futures.ThreadPoolExecutor(
+        max_workers=cfg["max_workers"],
+        thread_name_prefix=cfg["prefix"],
+        initializer=_init_mlx_thread,
+    )
+    _global_executors[pool_type] = exec_
+    return exec_
+
+
 def get_mlx_executor() -> concurrent.futures.ThreadPoolExecutor:
-    global _global_mlx_executor
-    if _global_mlx_executor is None:
-        _global_mlx_executor = concurrent.futures.ThreadPoolExecutor(
-            max_workers=1, thread_name_prefix="mlx-global",
-            initializer=_init_mlx_thread,
-        )
-    return _global_mlx_executor
+    return get_executor("llm")
 
 
 @dataclass
@@ -123,9 +136,10 @@ class EngineCore:
         while self._running:
             if self.scheduler and self.scheduler.has_requests():
                 try:
-                    output = await asyncio.get_running_loop().run_in_executor(
-                        self._mlx_executor, self.scheduler.step
-                    )
+                    output = await asyncio.wait_for(
+                        asyncio.get_running_loop().run_in_executor(
+                            self._mlx_executor, self.scheduler.step
+                        ), timeout=30.0)
                     self._steps_executed += 1
                     if output and output.outputs:
                         collectors = self._output_collectors
@@ -164,6 +178,7 @@ class EngineCore:
                                 if event:
                                     event.set()
                         except Exception:
+                            logger.debug("fusion_mlx/engine_core.py:166: swallowed exception")
                             pass
             else:
                 await asyncio.sleep(step_interval)
@@ -353,6 +368,85 @@ class EngineCore:
                 self.scheduler.remove_finished_request(rid)
         return [results[rid] for rid in request_ids if rid in results]
 
+    async def prefill(
+        self,
+        prompt: Union[str, List[int]],
+        sampling_params: Optional[SamplingParams] = None,
+    ) -> Dict[str, Any]:
+        """Run prefill only: process prompt tokens, export KV state, skip decode."""
+        request_id = await self.add_request(
+            prompt=prompt, sampling_params=sampling_params,
+            request_id=str(uuid.uuid4()),
+        )
+        sched = self.scheduler
+        if not sched:
+            raise RuntimeError("No scheduler for prefill")
+        for _ in range(1000):
+            sched.step()
+            req = sched.requests.get(request_id)
+            if req is None:
+                break
+            remaining = req.remaining_tokens if req.remaining_tokens is not None else []
+            if len(remaining) == 0:
+                break
+        kv_state = sched.export_kv_state(request_id)
+        if kv_state is None:
+            logger.warning("prefill %s: export_kv_state returned None", request_id)
+        collector = self._output_collectors.get(request_id)
+        final_output = None
+        if collector:
+            while True:
+                output = collector.get_nowait()
+                if output is None:
+                    break
+                final_output = output
+        self._cleanup_request(request_id)
+        return {
+            "output": final_output,
+            "kv_state": kv_state or {},
+        }
+
+    async def decode_with_handoff(
+        self,
+        prompt_token_ids: List[int],
+        sampling_params: Optional[SamplingParams],
+        kv_state: Dict[str, Any],
+    ) -> RequestOutput:
+        """Start decode from prefill KV state, skip prefill entirely."""
+        request_id = str(uuid.uuid4())
+        req = Request(
+            request_id=request_id,
+            prompt=prompt_token_ids,
+            sampling_params=sampling_params or SamplingParams(),
+        )
+        req.prompt_token_ids = prompt_token_ids
+        req.num_prompt_tokens = len(prompt_token_ids)
+        await self.add_request(
+            prompt=req, sampling_params=req.sampling_params, request_id=request_id
+        )
+        sched = self.scheduler
+        if sched and kv_state:
+            sched.import_kv_state(request_id, kv_state)
+        event = self._finished_events.get(request_id)
+        if event is None:
+            raise RuntimeError(f"No event for request {request_id}")
+        await event.wait()
+        collector = self._output_collectors.get(request_id)
+        final_output = None
+        if collector:
+            while True:
+                output = collector.get_nowait()
+                if output is None:
+                    break
+                final_output = output
+        self._cleanup_request(request_id)
+        if final_output is None:
+            raise RuntimeError(f"No decode output for request {request_id}")
+        if final_output.error:
+            raise RuntimeError(final_output.error)
+        return final_output
+
+
     def get_stats(self) -> Dict[str, Any]:
         scheduler_stats = self.scheduler.get_stats() if self.scheduler else {}
         uptime = time.time() - self._start_time if self._start_time else 0
@@ -400,6 +494,8 @@ class EngineCore:
             if self._owns_model and not self._closed:
                 get_registry().release(self.model, self._engine_id)
         except Exception:
+            logger.debug("swallowed exception at fusion_mlx/engine_core.py:403")
+
             pass
 
     @property

@@ -1,4 +1,5 @@
 import mlx.core as mx
+from typing import Any
 
 from .monkeypatches import _default_generation_stream
 from .types import _mx_buffer_access_lock
@@ -72,8 +73,6 @@ def _prompt_cache_needs_snapshots(prompt_cache: list) -> bool:
     are known-sliceable types (e.g. KVCache), boundary snapshots
     are unnecessary and can be skipped entirely.
     """
-    from typing import Any
-
     for cache_obj in prompt_cache:
         sub_caches = getattr(cache_obj, "caches", None)
         if isinstance(sub_caches, (list, tuple)):
@@ -87,8 +86,6 @@ def _prompt_cache_needs_snapshots(prompt_cache: list) -> bool:
 
 def _cache_layer_token_count(cache_obj: Any) -> int:
     """Return the number of tokens stored in a single cache layer."""
-    from typing import Any
-
     sub_caches = getattr(cache_obj, "caches", None)
     if isinstance(sub_caches, (list, tuple)) and sub_caches:
         return max(_cache_layer_token_count(sub_cache) for sub_cache in sub_caches)
@@ -109,8 +106,6 @@ def _cache_layer_token_count(cache_obj: Any) -> int:
 
 def _cache_base_sizes(caches: list) -> int:
     """Return the base token count of a single-request cache list."""
-    from typing import Any
-
     if not caches:
         return 0
     try:
@@ -134,8 +129,6 @@ def _vlm_extra_seq_slice(val: mx.array, s: slice) -> mx.array:
 
 def _slice_vlm_extra(extra: dict, n: int) -> dict:
     """Slice VLM extra kwargs to first n tokens along seq dimension."""
-    from typing import Any
-
     sliced: dict = {}
     for key, val in extra.items():
         if isinstance(val, mx.array) and val.ndim >= 2:
@@ -147,8 +140,6 @@ def _slice_vlm_extra(extra: dict, n: int) -> dict:
 
 def _advance_vlm_extra(extra: dict, n: int) -> dict:
     """Advance VLM extra kwargs past first n tokens along seq dimension."""
-    from typing import Any
-
     advanced: dict = {}
     for key, val in extra.items():
         if isinstance(val, mx.array) and val.ndim >= 2:
@@ -156,3 +147,9 @@ def _advance_vlm_extra(extra: dict, n: int) -> dict:
         else:
             advanced[key] = val
     return advanced
+
+
+def _deferred_clear_delay(sched) -> int:
+    batch_size = len(getattr(sched, "running", {}))
+    delay = getattr(sched, "_DEFERRED_CLEAR_DELAY", 4)
+    return max(2, min(16, delay + (batch_size // 4)))

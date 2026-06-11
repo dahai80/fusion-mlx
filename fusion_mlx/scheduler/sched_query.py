@@ -15,6 +15,8 @@ import concurrent.futures
 import copy
 import gc
 import logging
+
+logger = logging.getLogger(__name__)
 import os
 import threading
 import time
@@ -72,7 +74,7 @@ def has_requests(self) -> bool:
     Without this, an idle server would never reach the target step and
     stale buffers would accumulate indefinitely.
     """
-    return bool(sched.waiting or sched.prefilling or sched.running or sched._deferred_clear_at is not None)
+    return bool(self.waiting or self.prefilling or self.running or self._deferred_clear_at is not None)
 
 def fail_all_requests(self) -> list[str]:
     """Remove all running and waiting requests after unrecoverable error.
@@ -88,33 +90,33 @@ def fail_all_requests(self) -> list[str]:
         List of failed request IDs.
     """
     failed_ids: list[str] = []
-    for request_id in list(sched.running):
+    for request_id in list(self.running):
         failed_ids.append(request_id)
-        req = sched.requests.pop(request_id, None)
+        req = self.requests.pop(request_id, None)
         if req is not None:
             req._extracted_cache = None
             req.prompt_cache = None
-    sched.running.clear()
-    for request in list(sched.prefilling):
+    self.running.clear()
+    for request in list(self.prefilling):
         failed_ids.append(request.request_id)
-        req = sched.requests.pop(request.request_id, None)
+        req = self.requests.pop(request.request_id, None)
         if req is not None:
             req._extracted_cache = None
             req.prompt_cache = None
-    sched.prefilling.clear()
-    sched._prefill_states.clear()
-    for request in list(sched.waiting):
+    self.prefilling.clear()
+    self._prefill_states.clear()
+    for request in list(self.waiting):
         failed_ids.append(request.request_id)
-        req = sched.requests.pop(request.request_id, None)
+        req = self.requests.pop(request.request_id, None)
         if req is not None:
             req._extracted_cache = None
             req.prompt_cache = None
-    sched.waiting.clear()
-    # Catch in-flight orphans: a request popped from sched.waiting but
-    # not yet added to sched.running (or sched.prefilling) sits as a
+    self.waiting.clear()
+    # Catch in-flight orphans: a request popped from self.waiting but
+    # not yet added to self.running (or self.prefilling) sits as a
     # local in _schedule_waiting. If _do_external_prefill raises, the
     # request is unreachable through the three queues but still lives
-    # in sched.requests (and the engine_core collector / finished_event
+    # in self.requests (and the engine_core collector / finished_event
     # for its id is still waiting). Without this pass, fail_all_requests
     # returns an incomplete list and the HTTP request hangs forever.
     #
@@ -122,15 +124,15 @@ def fail_all_requests(self) -> list[str]:
     # (those have an entry in ``_inflight_store_futures`` — see
     # ``_cleanup_finished`` line ~5267). They have already emitted a
     # ``finished=True`` output to their collector; ``_drain_pending_async_removes``
-    # pops them from ``sched.requests`` after the store future completes.
+    # pops them from ``self.requests`` after the store future completes.
     # Failing them here would append an error output that wins over the
     # success for non-streaming ``generate()`` callers (engine_core
     # returns the last queued output).
-    for request_id in list(sched.requests):
-        if request_id in sched._inflight_store_futures:
+    for request_id in list(self.requests):
+        if request_id in self._inflight_store_futures:
             continue
         failed_ids.append(request_id)
-        req = sched.requests.pop(request_id, None)
+        req = self.requests.pop(request_id, None)
         if req is not None:
             req._extracted_cache = None
             req.prompt_cache = None
@@ -142,12 +144,12 @@ def fail_all_requests(self) -> list[str]:
     # async-cleanup uids that _drain_pending_async_removes still needs are
     # left intact.
     for rid in failed_ids:
-        uid = sched.request_id_to_uid.pop(rid, None)
+        uid = self.request_id_to_uid.pop(rid, None)
         if uid is not None:
-            sched.uid_to_request_id.pop(uid, None)
+            self.uid_to_request_id.pop(uid, None)
     # Reset batch generator only (cache is not corrupted)
-    sched.batch_generator = None
-    sched._current_sampler_params = None
+    self.batch_generator = None
+    self._current_sampler_params = None
     # Reclaim fragmented Metal buffers after generation failure.
     # Without this, subsequent requests may hit the same resource
     # limit even though Python references have been cleared.
@@ -155,20 +157,20 @@ def fail_all_requests(self) -> list[str]:
     # state — mx.synchronize() or mx.clear_cache() can throw a C++
     # exception that causes SIGABRT if uncaught (#435).
     try:
-        _sync_and_clear_cache(sched._stream)
+        _sync_and_clear_cache(self._stream)
     except Exception as e:
         logger.warning(f"Metal cache clear failed during error recovery: {e}")
     return failed_ids
 
 def get_num_waiting(self) -> int:
     """Get number of waiting requests."""
-    return len(sched.waiting)
+    return len(self.waiting)
 
 def get_num_running(self) -> int:
     """Get number of running requests."""
-    return len(sched.running)
+    return len(self.running)
 
-def _preflight_memory_check(sched, request: "Request") -> str | None:
+def _preflight_memory_check(    self, request: "Request") -> str | None:
     """
     Estimate whether prefill would exceed memory limits.
 
@@ -183,11 +185,11 @@ def _preflight_memory_check(sched, request: "Request") -> str | None:
     Returns:
         Error message string if request should be rejected, None if OK.
     """
-    if not sched._prefill_memory_guard:
+    if not self._prefill_memory_guard:
         return None
-    if sched._memory_hard_limit_bytes <= 0:
+    if self._memory_hard_limit_bytes <= 0:
         return None
-    if sched.memory_monitor is None:
+    if self.memory_monitor is None:
         return None
 
     prompt_tokens = request.num_prompt_tokens
@@ -197,23 +199,23 @@ def _preflight_memory_check(sched, request: "Request") -> str | None:
     if new_tokens == 0:
         return None
 
-    peak = sched.memory_monitor.estimate_prefill_peak_bytes(
-        new_tokens, sched.config.prefill_step_size, cached_tokens=cached_tokens
+    peak = self.memory_monitor.estimate_prefill_peak_bytes(
+        new_tokens, self.config.prefill_step_size, cached_tokens=cached_tokens
     )
     if peak == 0:
         return None  # can't estimate, skip
 
     current = max(mx.get_active_memory(), get_phys_footprint())
 
-    if current + peak > sched._memory_hard_limit_bytes:
+    if current + peak > self._memory_hard_limit_bytes:
         from ..utils.hardware import format_bytes
 
         usage_gb = current / (1024**3)
-        ceiling_gb = sched._memory_hard_limit_bytes / (1024**3)
+        ceiling_gb = self._memory_hard_limit_bytes / (1024**3)
         return (
             f"Prefill would require ~{format_bytes(current + peak)} peak "
             f"(current {format_bytes(current)} + KV+SDPA {format_bytes(peak)}) "
-            f"but ceiling is {format_bytes(sched._memory_hard_limit_bytes)} "
+            f"but ceiling is {format_bytes(self._memory_hard_limit_bytes)} "
             f"(usage {usage_gb:.1f} GB, ceiling {ceiling_gb:.1f} GB). "
             f"Reduce context length or lower memory_guard_tier."
         )

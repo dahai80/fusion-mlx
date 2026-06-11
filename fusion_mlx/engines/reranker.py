@@ -8,7 +8,7 @@ from typing import Any, Dict
 
 import mlx.core as mx
 
-from ..engine_core import get_mlx_executor
+from ..engine_core import get_executor
 from .base import BaseNonStreamingEngine
 
 logger = logging.getLogger(__name__)
@@ -107,7 +107,8 @@ class RerankerEngine(BaseNonStreamingEngine):
         logger.info(f"Starting reranker engine: {self._model_name}")
         self._model = MLXRerankerModel(self._model_name, trust_remote_code=self._trust_remote_code)
         loop = asyncio.get_running_loop()
-        await loop.run_in_executor(get_mlx_executor(), self._model.load)
+        await asyncio.wait_for(
+            loop.run_in_executor(get_executor("llm"), self._model.load), timeout=120.0)
 
     async def stop(self) -> None:
         if self._model is None:
@@ -115,7 +116,8 @@ class RerankerEngine(BaseNonStreamingEngine):
         self._model = None
         gc.collect()
         loop = asyncio.get_running_loop()
-        await loop.run_in_executor(get_mlx_executor(), lambda: (mx.synchronize(), mx.clear_cache()))
+        await asyncio.wait_for(
+            loop.run_in_executor(get_executor("llm"), lambda: (mx.synchronize(), mx.clear_cache())), timeout=5.0)
 
     async def rerank(self, query: "str | dict", documents: "list[str] | list[dict]", top_n: int | None = None, max_length: int | None = None) -> RerankOutput:
         if self._model is None:
@@ -125,7 +127,8 @@ class RerankerEngine(BaseNonStreamingEngine):
             loop = asyncio.get_running_loop()
             def _rerank():
                 return self._model.rerank(query=query, documents=documents, max_length=max_length)
-            output = await loop.run_in_executor(get_mlx_executor(), _rerank)
+            output = await asyncio.wait_for(
+                loop.run_in_executor(get_executor("llm"), _rerank), timeout=30.0)
             self._update_activity(activity_id, token_count=output.total_tokens)
             if top_n is not None and top_n < len(output.indices):
                 return RerankOutput(scores=output.scores, indices=output.indices[:top_n], total_tokens=output.total_tokens)

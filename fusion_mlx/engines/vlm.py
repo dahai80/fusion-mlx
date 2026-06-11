@@ -10,7 +10,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import mlx.core as mx
 
-from ..engine_core import AsyncEngineCore, EngineConfig, get_mlx_executor
+from ..engine_core import AsyncEngineCore, EngineConfig, get_executor
 from ..models.vlm import VLMModelAdapter
 from ..utils.image import (
     compute_image_hash,
@@ -81,6 +81,10 @@ class VLMBatchedEngine(BaseEngine):
         return self._tokenizer
 
     @property
+    def is_mllm(self) -> bool:
+        return True
+
+    @property
     def model_type(self) -> str | None:
         if self._vlm_model is not None and hasattr(self._vlm_model, "config"):
             cfg = self._vlm_model.config
@@ -111,7 +115,8 @@ class VLMBatchedEngine(BaseEngine):
             return vlm_load(self._model_name, trust_remote_code=self._trust_remote_code)
 
         loop = asyncio.get_running_loop()
-        self._vlm_model, self._processor = await loop.run_in_executor(get_mlx_executor(), _load_vlm_sync)
+        self._vlm_model, self._processor = await asyncio.wait_for(
+            loop.run_in_executor(get_executor("io"), _load_vlm_sync), timeout=120.0)
 
         # Vision feature cache
         vision_ssd_dir = None
@@ -499,7 +504,8 @@ class VLMBatchedEngine(BaseEngine):
             await self.start()
         loop = asyncio.get_running_loop()
         prompt, vlm_embeds, vlm_kwargs, image_hash, cache_key_start, cache_key_ranges = (
-            await loop.run_in_executor(self._engine._mlx_executor, self._process_chat_messages, messages, tools, kwargs)
+            await asyncio.wait_for(
+                loop.run_in_executor(self._engine._mlx_executor, self._process_chat_messages, messages, tools, kwargs), timeout=30.0)
         )
         return await self.generate(
             prompt=prompt, max_tokens=max_tokens, temperature=temperature,

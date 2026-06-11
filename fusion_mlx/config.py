@@ -168,17 +168,42 @@ class ServerConfig:
 
 
 # Model config loader
+def _deep_merge(base: Dict[str, Any], override: Dict[str, Any]) -> Dict[str, Any]:
+    merged = dict(base)
+    for k, v in override.items():
+        if isinstance(v, dict) and k in merged and isinstance(merged[k], dict):
+            merged[k] = _deep_merge(merged[k], v)
+        else:
+            merged[k] = v
+    return merged
+
+
 def _load_model_config() -> Dict[str, Any]:
-    """Load model config from JSON file."""
-    user_config = Path.home() / ".fusion-mlx" / "model-config.json"
-    if user_config.exists():
-        with open(user_config) as f:
-            return json.load(f)
+    config = {}
     pkg_config = Path(__file__).parent / "model-config.json"
     if pkg_config.exists():
-        with open(pkg_config) as f:
-            return json.load(f)
-    return {"aliases": {}, "models": {}}
+        try:
+            with open(pkg_config) as f:
+                config.update(json.load(f))
+        except json.JSONDecodeError as e:
+            logger.warning(f"pkg model-config.json invalid JSON: {e}. Skipping pkg defaults.")
+        except Exception as e:
+            logger.warning(f"Failed to read pkg model-config.json: {e}")
+
+    user_config = Path.home() / ".fusion-mlx" / "model-config.json"
+    if user_config.exists():
+        try:
+            with open(user_config) as f:
+                user_data = json.load(f)
+            config = _deep_merge(config, user_data)
+        except json.JSONDecodeError as e:
+            logger.warning(f"User model-config.json invalid JSON: {e}. Using pkg defaults only.")
+        except Exception as e:
+            logger.warning(f"Failed to read user model-config.json: {e}")
+
+    if not config:
+        return {"aliases": {}, "models": {}}
+    return config
 
 
 _model_config = _load_model_config()

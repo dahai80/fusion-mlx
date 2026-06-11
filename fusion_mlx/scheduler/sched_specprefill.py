@@ -15,6 +15,8 @@ import concurrent.futures
 import copy
 import gc
 import logging
+
+logger = logging.getLogger(__name__)
 import os
 import threading
 import time
@@ -64,14 +66,14 @@ from .helpers import (
 )
 from .monkeypatches import _default_generation_stream
 
-def _try_specprefill_scoring(sched, request: Request) -> None:
+def _try_specprefill_scoring(    self, request: Request) -> None:
     """Score tokens with draft model if SpecPrefill is applicable.
 
     Uses paged SSD cache for the draft model: if the prompt prefix
     was already scored in a previous turn, the draft cache is restored
     and only the new suffix is prefilled through the draft model.
     """
-    if sched._specprefill_draft_model is None:
+    if self._specprefill_draft_model is None:
         return
 
     specprefill_enabled = getattr(request, "_specprefill_enabled", False)
@@ -113,7 +115,7 @@ def _try_specprefill_scoring(sched, request: Request) -> None:
         return
 
     tracker = get_prefill_tracker()
-    model_id = os.path.basename(sched.config.model_name.rstrip("/"))
+    model_id = os.path.basename(self.config.model_name.rstrip("/"))
 
     try:
         from ..patches.specprefill import score_tokens, select_chunks
@@ -121,14 +123,14 @@ def _try_specprefill_scoring(sched, request: Request) -> None:
         # Draft prefix cache lookup
         draft_cache = None
         draft_cached_tokens = 0
-        if sched._draft_prefix_cache is not None:
+        if self._draft_prefix_cache is not None:
             try:
-                block_table, draft_remaining = sched._draft_prefix_cache.fetch_cache(
+                block_table, draft_remaining = self._draft_prefix_cache.fetch_cache(
                     request.request_id, tokens_to_score
                 )
                 if block_table and block_table.num_tokens > 0:
-                    sched._draft_prefix_cache.preload_blocks(block_table)
-                    reconstructed = sched._draft_prefix_cache.reconstruct_cache(
+                    self._draft_prefix_cache.preload_blocks(block_table)
+                    reconstructed = self._draft_prefix_cache.reconstruct_cache(
                         block_table
                     )
                     if reconstructed:
@@ -169,9 +171,9 @@ def _try_specprefill_scoring(sched, request: Request) -> None:
 
         t0 = time.monotonic()
         importance, used_cache = score_tokens(
-            sched._specprefill_draft_model,
+            self._specprefill_draft_model,
             tokens_to_score,
-            prefill_step_size=sched.config.prefill_step_size,
+            prefill_step_size=self.config.prefill_step_size,
             existing_cache=draft_cache,
             progress_callback=_score_progress,
         )
@@ -220,11 +222,11 @@ def _try_specprefill_scoring(sched, request: Request) -> None:
         )
 
         # Save draft cache for next turn
-        if sched._draft_prefix_cache is not None and used_cache is not None:
+        if self._draft_prefix_cache is not None and used_cache is not None:
             try:
-                extracted, mcc = sched._extract_cache_states(used_cache)
+                extracted, mcc = self._extract_cache_states(used_cache)
                 if extracted:
-                    sched._draft_prefix_cache.store_cache(
+                    self._draft_prefix_cache.store_cache(
                         request.request_id,
                         tokens_to_score,
                         extracted,
@@ -238,7 +240,7 @@ def _try_specprefill_scoring(sched, request: Request) -> None:
         # returned to the pool — a bare mx.clear_cache() here can race
         # with in-flight async evals and trigger a kernel panic (#557).
         del used_cache
-        _sync_and_clear_cache(sched._stream)
+        _sync_and_clear_cache(self._stream)
 
         # Mark scoring complete (auto-removes tracker entry).
         tracker.update(request.request_id, n_to_score, n_to_score, model_id)
@@ -250,13 +252,13 @@ def _try_specprefill_scoring(sched, request: Request) -> None:
         request.specprefill_indices = None
         tracker.remove(request.request_id)
 
-def _cleanup_specprefill(sched, request_id: str) -> None:
+def _cleanup_specprefill(    self, request_id: str) -> None:
     """Clean up SpecPrefill RoPE patches when a request finishes."""
-    if sched._specprefill_active_request_id == request_id:
+    if self._specprefill_active_request_id == request_id:
         from ..patches.specprefill import cleanup_rope
 
-        cleanup_rope(sched.model)
-        sched._specprefill_active_request_id = None
+        cleanup_rope(self.model)
+        self._specprefill_active_request_id = None
         logger.debug(
             f"SpecPrefill: RoPE restored for finished request {request_id}"
         )

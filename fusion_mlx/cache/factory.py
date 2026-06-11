@@ -5,9 +5,9 @@ Factory for creating cache instances from configuration.
 This module provides a unified way to instantiate cache components
 based on configuration settings.
 
-Note: oMLX only supports paged SSD-based caching. Memory KV cache is managed
-by mlx-lm's BatchGenerator. When paged SSD cache is disabled, no oMLX caching
-is performed.
+Note: oMLX supports both pure-memory paged caching and SSD-backed caching.
+Memory KV cache is managed by mlx-lm's BatchGenerator. When paged_ssd_cache_dir
+is None, a pure-memory PagedCacheManager is created with LRU eviction.
 """
 from dataclasses import dataclass
 from pathlib import Path
@@ -81,11 +81,8 @@ class CacheFactory:
             num_layers: Number of model layers (unused, kept for API compat).
 
         Returns:
-            Configured PagedCacheManager instance, or None if paged SSD cache is disabled.
+            Configured PagedCacheManager instance, Pure-memory mode when paged_ssd_cache_dir is None; SSD-backed when set..
         """
-        if config.paged_ssd_cache_dir is None:
-            return None
-
         from .paged_cache import PagedCacheManager
 
         return PagedCacheManager(
@@ -147,7 +144,7 @@ class CacheFactory:
         Returns:
             Configured BlockAwarePrefixCache instance, or None if disabled.
         """
-        if config.paged_ssd_cache_dir is None or paged_cache is None:
+        if paged_cache is None:
             return None
 
         from .prefix_cache import BlockAwarePrefixCache
@@ -213,20 +210,19 @@ class CacheFactory:
         prefix_cache = None
         memory_monitor = None
 
-        # Only create cache components if paged SSD cache is enabled
-        if config.paged_ssd_cache_dir is not None:
-            paged_cache = CacheFactory.create_paged_cache(config, num_layers)
-            paged_ssd_cache = CacheFactory.create_paged_ssd_cache(config, config.model_name)
+           # Create paged cache (always), SSD cache (when configured)
+        paged_cache = CacheFactory.create_paged_cache(config, num_layers)
+        paged_ssd_cache = CacheFactory.create_paged_ssd_cache(config, config.model_name)
 
-            if paged_cache is not None and paged_ssd_cache is not None:
-                paged_cache.set_paged_ssd_cache_manager(paged_ssd_cache)
+        if paged_cache is not None and paged_ssd_cache is not None:
+            paged_cache.set_paged_ssd_cache_manager(paged_ssd_cache)
 
-            prefix_cache = CacheFactory.create_prefix_cache(
-                config, model, paged_cache, paged_ssd_cache
-            )
+        prefix_cache = CacheFactory.create_prefix_cache(
+            config, model, paged_cache, paged_ssd_cache
+        )
 
-            if paged_cache is not None:
-                memory_monitor = CacheFactory.create_memory_monitor(config, paged_cache)
+        if paged_cache is not None:
+            memory_monitor = CacheFactory.create_memory_monitor(config, paged_cache)
 
         return {
             "paged_cache": paged_cache,

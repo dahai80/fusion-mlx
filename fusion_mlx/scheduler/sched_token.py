@@ -15,6 +15,8 @@ import concurrent.futures
 import copy
 import gc
 import logging
+
+logger = logging.getLogger(__name__)
 import os
 import threading
 import time
@@ -67,7 +69,7 @@ from .monkeypatches import _default_generation_stream
 def _load_generation_config_eos(self) -> set[int] | None:
     """Load EOS token IDs from generation_config.json if available."""
     try:
-        model_path = getattr(sched.tokenizer, "name_or_path", None)
+        model_path = getattr(self.tokenizer, "name_or_path", None)
         if not model_path:
             return None
         import json
@@ -99,7 +101,7 @@ def _load_generation_config_eos(self) -> set[int] | None:
         else:
             result = {eos}
         # Only return if there are tokens beyond what tokenizer already provides
-        tokenizer_eos = getattr(sched.tokenizer, "eos_token_id", None)
+        tokenizer_eos = getattr(self.tokenizer, "eos_token_id", None)
         if tokenizer_eos is not None:
             existing = (
                 {tokenizer_eos}
@@ -122,18 +124,18 @@ def _get_stop_tokens(self) -> set[int]:
     """Get stop token IDs from tokenizer and generation_config."""
     stop_tokens = set()
     if (
-        hasattr(sched.tokenizer, "eos_token_id")
-        and sched.tokenizer.eos_token_id is not None
+        hasattr(self.tokenizer, "eos_token_id")
+        and self.tokenizer.eos_token_id is not None
     ):
-        if isinstance(sched.tokenizer.eos_token_id, list):
-            stop_tokens.update(sched.tokenizer.eos_token_id)
+        if isinstance(self.tokenizer.eos_token_id, list):
+            stop_tokens.update(self.tokenizer.eos_token_id)
         else:
-            stop_tokens.add(sched.tokenizer.eos_token_id)
+            stop_tokens.add(self.tokenizer.eos_token_id)
     if (
-        hasattr(sched.tokenizer, "eos_token_ids")
-        and sched.tokenizer.eos_token_ids is not None
+        hasattr(self.tokenizer, "eos_token_ids")
+        and self.tokenizer.eos_token_ids is not None
     ):
-        eos_ids = sched.tokenizer.eos_token_ids
+        eos_ids = self.tokenizer.eos_token_ids
         if isinstance(eos_ids, int):
             stop_tokens.add(eos_ids)
         else:
@@ -142,19 +144,19 @@ def _get_stop_tokens(self) -> set[int]:
     # Read additional EOS tokens from generation_config.json.
     # Some models (e.g. GLM-4.6V) define multiple EOS tokens there
     # that are not reflected in tokenizer.eos_token_id.
-    if sched._generation_config_eos is not None:
-        stop_tokens.update(sched._generation_config_eos)
+    if self._generation_config_eos is not None:
+        stop_tokens.update(self._generation_config_eos)
 
     # Add protocol-specific stop tokens (e.g. Harmony action stops)
-    if sched._output_parser_factory is not None:
-        stop_tokens.update(sched._output_parser_factory.stop_token_ids)
+    if self._output_parser_factory is not None:
+        stop_tokens.update(self._output_parser_factory.stop_token_ids)
 
     return stop_tokens
 
 # _update_stop_tokens deleted — per-request stop tokens are now
 # handled via SequenceStateMachine passed to insert().
 
-def _get_detokenizer(sched, request_id: str):
+def _get_detokenizer(    self, request_id: str):
     """Get or create a streaming detokenizer for a request.
 
     This enables proper UTF-8 handling for multi-byte characters
@@ -165,44 +167,44 @@ def _get_detokenizer(sched, request_id: str):
     finalize()/reset(), causing text corruption (e.g., spaces inserted in paths,
     character swaps like 'features' -> 'featurse').
     """
-    if request_id not in sched._request_detokenizers:
+    if request_id not in self._request_detokenizers:
         # Always create a fresh detokenizer - no pooling to prevent state contamination
-        if hasattr(sched.tokenizer, "detokenizer"):
-            detok = sched.tokenizer.detokenizer
+        if hasattr(self.tokenizer, "detokenizer"):
+            detok = self.tokenizer.detokenizer
         elif NaiveStreamingDetokenizer is not None:
-            detok = NaiveStreamingDetokenizer(sched.tokenizer)
+            detok = NaiveStreamingDetokenizer(self.tokenizer)
         else:
             # Fallback: return None, we'll use decode([token])
             return None
         detok.reset()
-        sched._request_detokenizers[request_id] = detok
-    return sched._request_detokenizers[request_id]
+        self._request_detokenizers[request_id] = detok
+    return self._request_detokenizers[request_id]
 
-def _cleanup_detokenizer(sched, request_id: str):
+def _cleanup_detokenizer(    self, request_id: str):
     """Clean up detokenizer for a finished request.
 
     NOTE: Detokenizers are NOT pooled - each request gets a fresh instance
     to prevent state contamination that causes text corruption.
     """
-    detok = sched._request_detokenizers.pop(request_id, None)
+    detok = self._request_detokenizers.pop(request_id, None)
     # Let GC collect - no pooling to prevent state contamination
 
 def _get_output_parser_session(
     self, request_id: str
 ) -> Optional["OutputParserSession"]:
     """Get or create a protocol-specific output parser session."""
-    if sched._output_parser_factory is None:
+    if self._output_parser_factory is None:
         return None
 
-    if request_id not in sched._output_parser_sessions:
-        sched._output_parser_sessions[request_id] = (
-            sched._output_parser_factory.create_session(sched.tokenizer)
+    if request_id not in self._output_parser_sessions:
+        self._output_parser_sessions[request_id] = (
+            self._output_parser_factory.create_session(self.tokenizer)
         )
-    return sched._output_parser_sessions[request_id]
+    return self._output_parser_sessions[request_id]
 
-def _cleanup_output_parser_session(sched, request_id: str):
+def _cleanup_output_parser_session(    self, request_id: str):
     """Remove any per-request protocol parser session."""
-    sched._output_parser_sessions.pop(request_id, None)
+    self._output_parser_sessions.pop(request_id, None)
 
 def _get_xtc_special_tokens(self) -> list[int]:
     """Get special tokens to exclude from XTC sampling (newline + EOS).
@@ -210,8 +212,8 @@ def _get_xtc_special_tokens(self) -> list[int]:
     Reuses _get_stop_tokens() for EOS coverage (includes generation_config.json
     tokens) so XTC exclusions stay consistent with stop-token logic.
     """
-    tokens = sched.tokenizer.encode("\n")
-    tokens.extend(sched._get_stop_tokens())
+    tokens = self.tokenizer.encode("\n")
+    tokens.extend(self._get_stop_tokens())
     return tokens
 
 def _create_batch_generator(
@@ -225,7 +227,7 @@ def _create_batch_generator(
         top_k=sampling_params.top_k,
         xtc_probability=sampling_params.xtc_probability,
         xtc_threshold=sampling_params.xtc_threshold,
-        xtc_special_tokens=sched._xtc_special_tokens,
+        xtc_special_tokens=self._xtc_special_tokens,
     )
 
     # Create logits processors for repetition/presence/frequency penalties
@@ -249,26 +251,26 @@ def _create_batch_generator(
 
     # Convert stop tokens from Set[int] to Sequence[Sequence[int]]
     # for the new BatchGenerator API (each stop token is a sequence).
-    stop_tokens_set = sched._get_stop_tokens()
+    stop_tokens_set = self._get_stop_tokens()
     if sampling_params.stop_token_ids:
         stop_tokens_set.update(sampling_params.stop_token_ids)
     stop_tokens_seq = [[t] for t in stop_tokens_set] if stop_tokens_set else None
 
     bg = BatchGenerator(
-        model=sched.model,
+        model=self.model,
         max_tokens=sampling_params.max_tokens,
         stop_tokens=stop_tokens_seq,
         sampler=sampler,
         logits_processors=logits_processors if logits_processors else None,
         prefill_batch_size=1,
-        completion_batch_size=sched.config.completion_batch_size,
-        prefill_step_size=sched.config.prefill_step_size,
-        stream=sched._stream,
+        completion_batch_size=self.config.completion_batch_size,
+        prefill_step_size=self.config.prefill_step_size,
+        stream=self._stream,
     )
 
     return bg
 
-def _on_prompt_progress(sched, updates: list[tuple[int, int, int]]) -> None:
+def _on_prompt_progress(    self, updates: list[tuple[int, int, int]]) -> None:
     """Callback from BatchGenerator's prefill loop.
 
     Called once per prefill chunk (default 2048 tokens) with a list of
@@ -278,9 +280,9 @@ def _on_prompt_progress(sched, updates: list[tuple[int, int, int]]) -> None:
     """
     tracker = get_prefill_tracker()
     # model_name is a full path; use basename to match engine_pool model_id.
-    model_id = os.path.basename(sched.config.model_name.rstrip("/"))
+    model_id = os.path.basename(self.config.model_name.rstrip("/"))
     for uid, processed, total in updates:
-        request_id = sched.uid_to_request_id.get(uid)
+        request_id = self.uid_to_request_id.get(uid)
         if request_id is None:
             continue
         tracker.update(
@@ -294,7 +296,7 @@ def _on_prompt_progress(sched, updates: list[tuple[int, int, int]]) -> None:
 # External prefill (composition pattern — replaces _process_prompts)
 # ------------------------------------------------------------------
 
-def _apply_turboquant_kv_empty(sched, prompt_cache: list[Any]) -> None:
+def _apply_turboquant_kv_empty(    self, prompt_cache: list[Any]) -> None:
     """Replace KVCache with empty TurboQuantKVCache before prefill.
 
     NOTE: Not currently called -- see #771. Kept for future use when
@@ -308,11 +310,11 @@ def _apply_turboquant_kv_empty(sched, prompt_cache: list[Any]) -> None:
     from mlx_vlm.turboquant import TurboQuantKVCache
 
     kv_indices = [i for i, c in enumerate(prompt_cache) if isinstance(c, KVCache)]
-    skip_last = sched._turboquant_skip_last and len(kv_indices) > 1
+    skip_last = self._turboquant_skip_last and len(kv_indices) > 1
     last_kv_idx = kv_indices[-1] if skip_last else -1
 
     converted = 0
-    bits = float(sched._turboquant_kv_bits)
+    bits = float(self._turboquant_kv_bits)
     for i, cache_obj in enumerate(prompt_cache):
         if isinstance(cache_obj, KVCache):
             if i == last_kv_idx:
@@ -335,7 +337,7 @@ def _apply_turboquant_kv_empty(sched, prompt_cache: list[Any]) -> None:
             f"cache layers set to {bits}-bit{skip_msg}"
         )
 
-def _apply_turboquant_kv_convert(sched, prompt_cache: list[Any]) -> None:
+def _apply_turboquant_kv_convert(    self, prompt_cache: list[Any]) -> None:
     """Convert existing KVCache data to TurboQuantKVCache via from_cache().
 
     NOTE: Not currently called -- see #771. Kept for future use when
@@ -348,11 +350,11 @@ def _apply_turboquant_kv_convert(sched, prompt_cache: list[Any]) -> None:
     from mlx_vlm.turboquant import TurboQuantKVCache
 
     kv_indices = [i for i, c in enumerate(prompt_cache) if isinstance(c, KVCache)]
-    skip_last = sched._turboquant_skip_last and len(kv_indices) > 1
+    skip_last = self._turboquant_skip_last and len(kv_indices) > 1
     last_kv_idx = kv_indices[-1] if skip_last else -1
 
     converted = 0
-    bits = float(sched._turboquant_kv_bits)
+    bits = float(self._turboquant_kv_bits)
     for i, cache_obj in enumerate(prompt_cache):
         if isinstance(cache_obj, KVCache):
             if i == last_kv_idx:

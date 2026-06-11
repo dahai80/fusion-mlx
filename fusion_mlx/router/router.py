@@ -15,6 +15,7 @@ Routing rules:
 """
 
 import logging
+from collections.abc import AsyncIterator
 from typing import Any, Optional
 
 logger = logging.getLogger(__name__)
@@ -144,9 +145,24 @@ class RequestRouter:
         messages: list[dict],
         request_data: dict[str, Any],
         **kwargs,
-    ) -> Any:
-        """Route a streaming chat request."""
+    ) -> AsyncIterator[str]:
+        """Route a streaming chat request with cloud fallback for large context."""
         engine, etype = self.select_engine(messages, request_data)
+
+        # Cloud routing check for large uncached context (same as route_chat)
+        if (
+            self.cloud_router
+            and etype == "llm"
+            and getattr(engine, "prefix_cache_enabled", False)
+        ):
+            new_tokens = getattr(engine, "count_chat_tokens", lambda m, **_: 0)(messages)
+            if self.cloud_router.should_route_to_cloud(new_tokens):
+                logger.info(
+                    f"Routing streaming {new_tokens}-token request to cloud "
+                    f"({self.cloud_router.cloud_model})"
+                )
+                return self.cloud_router.stream_completion(messages, **kwargs)
+
         return engine.stream_chat(messages, **kwargs)
 
     def get_stats(self) -> dict[str, Any]:

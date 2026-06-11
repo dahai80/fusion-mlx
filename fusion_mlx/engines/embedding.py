@@ -9,7 +9,7 @@ from typing import Any, Dict, List, Optional, Union
 
 import mlx.core as mx
 
-from ..engine_core import get_mlx_executor
+from ..engine_core import get_executor
 from .base import BaseNonStreamingEngine
 
 logger = logging.getLogger(__name__)
@@ -99,7 +99,8 @@ class EmbeddingEngine(BaseNonStreamingEngine):
         logger.info(f"Starting embedding engine: {self._model_name}")
         self._model = MLXEmbeddingModel(self._model_name, trust_remote_code=self._trust_remote_code)
         loop = asyncio.get_running_loop()
-        await loop.run_in_executor(get_mlx_executor(), self._model.load)
+        await asyncio.wait_for(
+            loop.run_in_executor(get_executor("llm"), self._model.load), timeout=120.0)
 
     async def stop(self) -> None:
         if self._model is None:
@@ -107,7 +108,8 @@ class EmbeddingEngine(BaseNonStreamingEngine):
         self._model = None
         gc.collect()
         loop = asyncio.get_running_loop()
-        await loop.run_in_executor(get_mlx_executor(), lambda: (mx.synchronize(), mx.clear_cache()))
+        await asyncio.wait_for(
+            loop.run_in_executor(get_executor("llm"), lambda: (mx.synchronize(), mx.clear_cache())), timeout=5.0)
 
     async def embed(self, texts: Union[List[str], List[Dict[str, str]]], max_length: int = 512, padding: bool = True, truncation: bool = True) -> EmbeddingOutput:
         if self._model is None:
@@ -131,7 +133,8 @@ class EmbeddingEngine(BaseNonStreamingEngine):
                     finally:
                         mx.synchronize()
                         mx.clear_cache()
-                output = await loop.run_in_executor(get_mlx_executor(), _embed_sync)
+                output = await asyncio.wait_for(
+                    loop.run_in_executor(get_executor("llm"), _embed_sync), timeout=30.0)
                 embeddings.extend(output.embeddings)
                 total_tokens += output.total_tokens
                 if output.dimensions:

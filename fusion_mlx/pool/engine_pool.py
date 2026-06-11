@@ -484,6 +484,9 @@ class EnginePool:
         await loop.run_in_executor(
             get_mlx_executor(), lambda: (mx.synchronize(), mx.clear_cache())
         )
+        gc.collect()
+        # clear_cache releases C++ Metal buffer wrappers — second GC pass
+        # collects the Python-side objects freed by the C++ destructors
 
         # Memory settle barrier: poll actual freed memory instead of
         # trusting the cumulative _current_model_memory estimate.
@@ -514,11 +517,12 @@ class EnginePool:
             await loop.run_in_executor(
                 get_mlx_executor(), lambda: (mx.synchronize(), mx.clear_cache())
             )
+            gc.collect()
 
         # Release memory tracking AFTER barrier
-        self._current_model_memory -= entry.estimated_size
 
         if settled:
+            self._current_model_memory -= entry.estimated_size
             logger.info(
                 f"Unloaded model: {model_id}, "
                 f"freed={format_size(actual_freed)} "
@@ -691,6 +695,8 @@ class EnginePool:
                     try:
                         await engine.stop()
                     except Exception:
+                        logger.debug("swallowed exception at fusion_mlx/pool/engine_pool.py:693")
+
                         pass
                     gc.collect()
                     loop = asyncio.get_running_loop()
@@ -736,6 +742,8 @@ class EnginePool:
                     try:
                         await engine.stop()
                     except Exception:
+                        logger.debug("swallowed exception at fusion_mlx/pool/engine_pool.py:739")
+
                         pass
                     gc.collect()
                     loop = asyncio.get_running_loop()
@@ -771,6 +779,8 @@ class EnginePool:
                     try:
                         await engine.stop()
                     except Exception:
+                        logger.debug("swallowed exception at fusion_mlx/pool/engine_pool.py:775")
+
                         pass
                     gc.collect()
                     loop = asyncio.get_running_loop()

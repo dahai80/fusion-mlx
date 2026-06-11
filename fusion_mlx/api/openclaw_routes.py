@@ -2,16 +2,18 @@
 
 Extends the standard OpenAI-compatible endpoints with OpenClaw-specific
 agent protocol features:
-- /v1/openclaw/agent/sessions   — session lifecycle
-- /v1/openclaw/agent/turns      — multi-turn agent turns with tool calling
-- /v1/openclaw/agent/stream      — SSE stream of agent events
-- /v1/openclaw/agent/steer       — mid-conversation steering
+- /v1/openclaw/agent/sessions    — session lifecycle
+- /v1/openclaw/agent/turns       — multi-turn agent turns with tool calling
+- /v1/openclaw/agent/stream       — SSE stream of agent events
+- /v1/openclaw/agent/steer        — mid-conversation steering
 """
 
+import asyncio
 import json
 import logging
+import time
 import uuid
-from collections import defaultdict
+from collections import OrderedDict
 from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, HTTPException
@@ -22,13 +24,38 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/v1/openclaw/agent", tags=["openclaw-agent"])
 
-# In-memory session store (replace with Redis for production)
-_sessions: Dict[str, Dict[str, Any]] = defaultdict(lambda: {
-    "messages": [],
-    "tools": [],
-    "active": False,
-    "turn_count": 0,
-})
+# In-memory session store with TTL and max cap to prevent memory leak.
+# OrderedDict for LRU eviction when cap is reached.
+_SESSION_TTL_SECONDS = 3600  # 1 hour
+_SESSION_MAX_COUNT = 1000
+_sessions: OrderedDict[str, Dict[str, Any]] = OrderedDict()
+
+
+def _init_session() -> Dict[str, Any]:
+    return {
+        "messages": [],
+        "tools": [],
+        "active": False,
+        "turn_count": 0,
+        "created_at": time.time(),
+        "last_accessed": time.time(),
+    }
+
+
+def _cleanup_expired_sessions() -> None:
+    """Remove sessions older than TTL, evict LRU if over cap."""
+    now = time.time()
+    # Remove expired sessions
+    expired = [
+        sid for sid, s in _sessions.items()
+        if now - s["last_accessed"] > _SESSION_TTL_SECONDS
+    ]
+    for sid in expired:
+        del _sessions[sid]
+
+    # Evict oldest sessions if still over cap
+    while len(_sessions) > _SESSION_MAX_COUNT:
+        _sessions.popitem(last=False)
 
 
 # ── Request/Response Models ──────────────────────────────────────────────
@@ -87,13 +114,15 @@ class ToolResultRequest(BaseModel):
 
 @router.post("/sessions", response_model=SessionInfo)
 async def create_session(req: SessionCreateRequest):
+    _cleanup_expired_sessions()
     session_id = uuid.uuid4().hex[:16]
-    session = _sessions[session_id]
+    session = _init_session()
     session["system_prompt"] = req.system_prompt
     session["model"] = req.model
     if req.tools:
         session["tools"] = req.tools
     session["tools_count"] = len(req.tools or [])
+    _sessions[session_id] = session
     logger.info("Created agent session %s (model=%s, tools=%d)", session_id, req.model, session["tools_count"])
     return SessionInfo(
         session_id=session_id,
@@ -109,6 +138,8 @@ async def get_session(session_id: str):
     if session_id not in _sessions:
         raise HTTPException(404, f"Session {session_id} not found")
     s = _sessions[session_id]
+    s["last_accessed"] = time.time()
+    _sessions.move_to_end(session_id)
     return SessionInfo(
         session_id=session_id,
         turn_count=s["turn_count"],
@@ -127,6 +158,7 @@ async def delete_session(session_id: str):
 
 @router.get("/sessions")
 async def list_sessions() -> list[SessionInfo]:
+    _cleanup_expired_sessions()
     result = []
     for sid, s in _sessions.items():
         result.append(SessionInfo(
@@ -150,6 +182,7 @@ async def execute_turn(session_id: str, req: TurnRequest):
     session = _sessions[session_id]
     session["active"] = True
     session["turn_count"] += 1
+    session["last_accessed"] = time.time()
     session["messages"].extend(req.messages)
 
     if req.tools:
@@ -191,7 +224,7 @@ async def _call_chat_completion(pool, body: dict) -> TurnResponse:
         if engine is None:
             raise HTTPException(404, f"Model {model_name} not loaded")
 
-        result = await engine.generate(
+        result = await engine.chat(
             messages=body.get("messages", []),
             max_tokens=body.get("max_tokens", 4096),
             temperature=body.get("temperature", 0.7),
@@ -200,16 +233,24 @@ async def _call_chat_completion(pool, body: dict) -> TurnResponse:
 
         content = ""
         tool_calls = []
+        prompt_tokens = 0
+        completion_tokens = 0
         if isinstance(result, dict):
-            content = result.get("content", "")
+            content = result.get("text", result.get("content", ""))
             tool_calls = result.get("tool_calls", [])
-        elif hasattr(result, "content"):
-            content = result.content or ""
+            prompt_tokens = result.get("prompt_tokens", 0)
+            completion_tokens = result.get("completion_tokens", 0)
+        elif hasattr(result, "text"):
+            content = result.text or ""
+            if hasattr(result, "tool_calls") and result.tool_calls:
+                tool_calls = result.tool_calls
+            prompt_tokens = getattr(result, "prompt_tokens", 0) or 0
+            completion_tokens = getattr(result, "completion_tokens", 0) or 0
 
         return TurnResponse(
             content=content,
             tool_calls=tool_calls,
-            usage={"prompt_tokens": 0, "completion_tokens": 0},
+            usage={"prompt_tokens": prompt_tokens, "completion_tokens": completion_tokens},
             session_id="",
         )
     except (HTTPException, RuntimeError):
@@ -275,16 +316,16 @@ async def stream_events(session_id: str):
     async def event_generator():
         yield f"data: {json.dumps({'type': 'connected', 'session_id': session_id})}\n\n"
 
-        session = _sessions[session_id]
-        yield f"data: {json.dumps({
-            'type': 'session_state',
-            'session_id': session_id,
-            'turn_count': session['turn_count'],
-            'active': session['active'],
-            'messages_count': len(session['messages']),
-        })}\n\n"
+        session = _sessions.get(session_id)
+        if session:
+            yield f"data: {json.dumps({
+                'type': 'session_state',
+                'session_id': session_id,
+                'turn_count': session['turn_count'],
+                'active': session['active'],
+                'messages_count': len(session['messages']),
+            })}\n\n"
 
-        import asyncio
         try:
             while True:
                 await asyncio.sleep(30)

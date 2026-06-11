@@ -9,7 +9,7 @@ from typing import Any
 
 import mlx.core as mx
 
-from ..engine_core import get_mlx_executor
+from ..engine_core import get_executor
 from .base import BaseNonStreamingEngine
 
 logger = logging.getLogger(__name__)
@@ -80,7 +80,8 @@ class STTEngine(BaseNonStreamingEngine):
 
         loop = asyncio.get_running_loop()
         try:
-            model = await loop.run_in_executor(get_mlx_executor(), _load_sync)
+            model = await asyncio.wait_for(
+                loop.run_in_executor(get_executor("audio"), _load_sync), timeout=120.0)
         except Exception as exc:
             raise _wrap_stt_load_error(model_name, exc) from exc
 
@@ -93,7 +94,8 @@ class STTEngine(BaseNonStreamingEngine):
         self._model = None
         gc.collect()
         loop = asyncio.get_running_loop()
-        await loop.run_in_executor(get_mlx_executor(), lambda: (mx.synchronize(), mx.clear_cache()))
+        await asyncio.wait_for(
+            loop.run_in_executor(get_executor("audio"), lambda: (mx.synchronize(), mx.clear_cache())), timeout=5.0)
 
     async def transcribe(self, audio_path: str, language: str | None = None, **kwargs) -> dict[str, Any]:
         if self._model is None:
@@ -134,7 +136,8 @@ class STTEngine(BaseNonStreamingEngine):
         activity_id = self._begin_activity("transcribing", detail="Transcribing")
         try:
             loop = asyncio.get_running_loop()
-            result = await loop.run_in_executor(get_mlx_executor(), _transcribe_sync)
+            result = await asyncio.wait_for(
+                loop.run_in_executor(get_executor("audio"), _transcribe_sync), timeout=60.0)
             return result
         finally:
             await self._finish_activity(activity_id)

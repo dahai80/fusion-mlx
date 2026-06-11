@@ -15,6 +15,8 @@ import concurrent.futures
 import copy
 import gc
 import logging
+
+logger = logging.getLogger(__name__)
 import os
 import threading
 import time
@@ -64,7 +66,7 @@ from .helpers import (
 )
 from .monkeypatches import _default_generation_stream
 
-def adjust_store_cache_cap(sched, pressure_level: str) -> None:
+def adjust_store_cache_cap(    self, pressure_level: str) -> None:
     """Resize the store-cache gate based on memory pressure (#1383).
 
     Called from ProcessMemoryEnforcer on every poll. The cap walks one
@@ -73,12 +75,12 @@ def adjust_store_cache_cap(sched, pressure_level: str) -> None:
     - ok pressure: grow cap back toward max_num_seqs.
     - soft/hard pressure: shrink cap so KV cache backlog fits the system.
     """
-    gate = sched._store_cache_gate
+    gate = self._store_cache_gate
     if gate is None:
         return
     current = gate.cap
     if pressure_level == "ok":
-        new = min(sched.config.max_num_seqs, current + 1)
+        new = min(self.config.max_num_seqs, current + 1)
     else:
         new = max(1, current - 1)
     if new != current:
@@ -96,16 +98,16 @@ def adjust_store_cache_cap(sched, pressure_level: str) -> None:
 
 def _set_model_info_for_monitor(self) -> None:
     """Extract model info and set it on memory monitor for estimation."""
-    if sched.memory_monitor is None:
+    if self.memory_monitor is None:
         return
 
     try:
         # Try to get model config
         config = None
-        if hasattr(sched.model, "config"):
-            config = sched.model.config
-        elif hasattr(sched.model, "args"):
-            config = sched.model.args
+        if hasattr(self.model, "config"):
+            config = self.model.config
+        elif hasattr(self.model, "args"):
+            config = self.model.args
 
         if config is None:
             logger.debug("Could not extract model config for memory estimation")
@@ -153,10 +155,10 @@ def _set_model_info_for_monitor(self) -> None:
 
         # Determine dtype size
         dtype_size = 2  # Default float16
-        if hasattr(sched.model, "dtype"):
-            if sched.model.dtype == mx.float32:
+        if hasattr(self.model, "dtype"):
+            if self.model.dtype == mx.float32:
                 dtype_size = 4
-            elif sched.model.dtype == mx.bfloat16:
+            elif self.model.dtype == mx.bfloat16:
                 dtype_size = 2
 
         # Extract num_attention_heads (query heads) for SDPA peak estimation
@@ -168,9 +170,9 @@ def _set_model_info_for_monitor(self) -> None:
 
         # Count KVCache layers for hybrid models
         num_kv_cache_layers = num_layers
-        if hasattr(sched.model, "make_cache"):
+        if hasattr(self.model, "make_cache"):
             try:
-                cache_list = sched.model.make_cache()
+                cache_list = self.model.make_cache()
                 from mlx_lm.models.cache import KVCache
 
                 num_kv_cache_layers = sum(
@@ -179,10 +181,12 @@ def _set_model_info_for_monitor(self) -> None:
                 if num_kv_cache_layers == 0:
                     num_kv_cache_layers = num_layers  # fallback
             except Exception:
+                logger.debug("swallowed exception at fusion_mlx/scheduler/sched_misc.py:181")
+
                 pass
 
         if num_layers and num_kv_heads and head_dim:
-            sched.memory_monitor.set_model_info(
+            self.memory_monitor.set_model_info(
                 num_layers=num_layers,
                 num_kv_heads=num_kv_heads,
                 head_dim=head_dim,
@@ -214,7 +218,7 @@ def _init_tiered_cache(self) -> None:
     - BatchGenerator handles GPU memory for active inference
     """
     if not HAS_TIERED_CACHE:
-        if sched.config.paged_ssd_cache_dir:
+        if self.config.paged_ssd_cache_dir:
             logger.warning(
                 "paged SSD cache requested but ssd_cache/memory_monitor modules "
                 "not available. Install required dependencies."
@@ -222,7 +226,7 @@ def _init_tiered_cache(self) -> None:
         return
 
     # In paged SSD-only mode, paged_ssd_cache_dir is required
-    if not sched.config.paged_ssd_cache_dir:
+    if not self.config.paged_ssd_cache_dir:
         logger.debug(
             "paged SSD cache not configured (no --ssd-cache-dir specified)"
         )
@@ -230,8 +234,8 @@ def _init_tiered_cache(self) -> None:
 
     try:
         cache_dir = (
-            Path(sched.config.paged_ssd_cache_dir)
-            if sched.config.paged_ssd_cache_dir
+            Path(self.config.paged_ssd_cache_dir)
+            if self.config.paged_ssd_cache_dir
             else None
         )
 
@@ -240,40 +244,40 @@ def _init_tiered_cache(self) -> None:
         # #1404) are unlinked at startup instead of triggering a layer
         # mismatch reject on every prefix lookup. See #1413.
         expected_num_layers = (
-            sched.block_aware_cache.expected_num_layers
-            if sched.block_aware_cache is not None
+            self.block_aware_cache.expected_num_layers
+            if self.block_aware_cache is not None
             else 0
         )
 
         # Initialize paged SSD cache manager for SSD storage
-        sched.paged_ssd_cache_manager = PagedSSDCacheManager(
+        self.paged_ssd_cache_manager = PagedSSDCacheManager(
             cache_dir=cache_dir,
-            max_size_bytes=sched.config.paged_ssd_cache_max_size,
-            hot_cache_max_bytes=sched.config.hot_cache_max_size,
-            hot_cache_only=sched.config.hot_cache_only,
-            expected_model_name=sched.config.model_name or "",
+            max_size_bytes=self.config.paged_ssd_cache_max_size,
+            hot_cache_max_bytes=self.config.hot_cache_max_size,
+            hot_cache_only=self.config.hot_cache_only,
+            expected_model_name=self.config.model_name or "",
             expected_num_layers=expected_num_layers,
         )
 
         # Connect paged SSD cache manager to PagedCacheManager
-        if sched.paged_cache_manager is not None:
-            sched.paged_cache_manager.set_paged_ssd_cache_manager(
-                sched.paged_ssd_cache_manager
+        if self.paged_cache_manager is not None:
+            self.paged_cache_manager.set_paged_ssd_cache_manager(
+                self.paged_ssd_cache_manager
             )
 
         # Connect paged SSD cache manager to BlockAwarePrefixCache for paged SSD-only mode
-        if sched.block_aware_cache is not None:
-            sched.block_aware_cache.set_paged_ssd_cache_manager(
-                sched.paged_ssd_cache_manager
+        if self.block_aware_cache is not None:
+            self.block_aware_cache.set_paged_ssd_cache_manager(
+                self.paged_ssd_cache_manager
             )
 
         # Initialize boundary snapshot SSD store for offloading
         # non-sliceable cache snapshots during prefill.
         # Skip in hot_cache_only mode since snapshots would never be written.
-        if BoundarySnapshotSSDStore is not None and not sched.config.hot_cache_only:
+        if BoundarySnapshotSSDStore is not None and not self.config.hot_cache_only:
             try:
-                sched._boundary_snapshot_store = BoundarySnapshotSSDStore(
-                    base_dir=Path(sched.config.paged_ssd_cache_dir)
+                self._boundary_snapshot_store = BoundarySnapshotSSDStore(
+                    base_dir=Path(self.config.paged_ssd_cache_dir)
                 )
             except Exception as e:
                 logger.debug(
@@ -282,14 +286,14 @@ def _init_tiered_cache(self) -> None:
 
         logger.info(
             f"paged SSD cache enabled: "
-            f"cache_dir={sched.config.paged_ssd_cache_dir}, "
-            f"max_size={sched._format_bytes(sched.config.paged_ssd_cache_max_size)}, "
-            f"block_size={sched.config.paged_cache_block_size} tokens"
+            f"cache_dir={self.config.paged_ssd_cache_dir}, "
+            f"max_size={self._format_bytes(self.config.paged_ssd_cache_max_size)}, "
+            f"block_size={self.config.paged_cache_block_size} tokens"
         )
 
     except Exception as e:
         logger.error(f"Failed to initialize paged SSD cache: {e}")
-        sched.paged_ssd_cache_manager = None
+        self.paged_ssd_cache_manager = None
 
 def _check_memory_pressure(self) -> None:
     """Check memory and evict blocks if needed.
@@ -301,7 +305,7 @@ def _check_memory_pressure(self) -> None:
     # All KV cache data is on paged SSD, so no GPU memory pressure from PagedCache
     pass
 
-def _evict_blocks_permanently(sched, bytes_to_free: int) -> int:
+def _evict_blocks_permanently(    self, bytes_to_free: int) -> int:
     """
     Evict LRU blocks permanently (metadata cleanup).
 
@@ -314,17 +318,17 @@ def _evict_blocks_permanently(sched, bytes_to_free: int) -> int:
     Returns:
         Number of bytes freed (estimated).
     """
-    if sched.paged_cache_manager is None or sched.memory_monitor is None:
+    if self.paged_cache_manager is None or self.memory_monitor is None:
         return 0
 
     # Estimate how many blocks to evict
-    block_size = sched.config.paged_cache_block_size
-    num_blocks_to_evict = sched.memory_monitor.estimate_blocks_to_free(
+    block_size = self.config.paged_cache_block_size
+    num_blocks_to_evict = self.memory_monitor.estimate_blocks_to_free(
         bytes_to_free, block_size
     )
 
     # Get evictable blocks in LRU order
-    evictable = sched.paged_cache_manager.get_evictable_blocks(num_blocks_to_evict)
+    evictable = self.paged_cache_manager.get_evictable_blocks(num_blocks_to_evict)
 
     if not evictable:
         logger.debug("No evictable blocks found for permanent eviction")
@@ -335,8 +339,8 @@ def _evict_blocks_permanently(sched, bytes_to_free: int) -> int:
 
     for block in evictable:
         # In paged SSD-only mode, just clear metadata (data is on paged SSD)
-        if sched.paged_cache_manager.evict_block_permanently(block.block_id):
-            freed += sched.memory_monitor.estimate_block_memory(block_size)
+        if self.paged_cache_manager.evict_block_permanently(block.block_id):
+            freed += self.memory_monitor.estimate_block_memory(block_size)
             evicted_count += 1
 
         if freed >= bytes_to_free:
@@ -345,12 +349,12 @@ def _evict_blocks_permanently(sched, bytes_to_free: int) -> int:
     if evicted_count > 0:
         logger.info(
             f"Evicted {evicted_count} blocks permanently "
-            f"(~{sched._format_bytes(freed)} estimated)"
+            f"(~{self._format_bytes(freed)} estimated)"
         )
 
     return freed
 
-def _evict_blocks_to_cold(sched, bytes_to_free: int) -> int:
+def _evict_blocks_to_cold(    self, bytes_to_free: int) -> int:
     """
     Evict LRU blocks (with paged SSD cache configured).
 
@@ -364,20 +368,20 @@ def _evict_blocks_to_cold(sched, bytes_to_free: int) -> int:
     Returns:
         Number of bytes freed (estimated).
     """
-    if sched.paged_cache_manager is None or sched.paged_ssd_cache_manager is None:
+    if self.paged_cache_manager is None or self.paged_ssd_cache_manager is None:
         return 0
 
-    if sched.memory_monitor is None:
+    if self.memory_monitor is None:
         return 0
 
     # Estimate how many blocks to evict
-    block_size = sched.config.paged_cache_block_size
-    num_blocks_to_evict = sched.memory_monitor.estimate_blocks_to_free(
+    block_size = self.config.paged_cache_block_size
+    num_blocks_to_evict = self.memory_monitor.estimate_blocks_to_free(
         bytes_to_free, block_size
     )
 
     # Get evictable blocks in LRU order
-    evictable = sched.paged_cache_manager.get_evictable_blocks(num_blocks_to_evict)
+    evictable = self.paged_cache_manager.get_evictable_blocks(num_blocks_to_evict)
 
     if not evictable:
         logger.debug("No evictable blocks found")
@@ -388,23 +392,23 @@ def _evict_blocks_to_cold(sched, bytes_to_free: int) -> int:
     for block in evictable:
         # In paged SSD-only mode, data is already on paged SSD
         # Just evict the block metadata
-        if sched.paged_cache_manager.evict_block_permanently(block.block_id):
+        if self.paged_cache_manager.evict_block_permanently(block.block_id):
             evicted_count += 1
 
     # Estimate bytes freed based on block count
-    estimated_freed = evicted_count * sched.memory_monitor.estimate_block_memory(
+    estimated_freed = evicted_count * self.memory_monitor.estimate_block_memory(
         block_size
     )
 
     if evicted_count > 0:
         logger.info(
             f"Evicted {evicted_count} blocks from index "
-            f"(data preserved on paged SSD, ~{sched._format_bytes(estimated_freed)} metadata freed)"
+            f"(data preserved on paged SSD, ~{self._format_bytes(estimated_freed)} metadata freed)"
         )
 
     return estimated_freed
 
-def _restore_block_from_cold(sched, block_id: int, block_hash: bytes) -> bool:
+def _restore_block_from_cold(    self, block_id: int, block_hash: bytes) -> bool:
     """
     Restore a block from cold storage (deprecated in paged SSD-only mode).
 
@@ -420,18 +424,18 @@ def _restore_block_from_cold(sched, block_id: int, block_hash: bytes) -> bool:
     Returns:
         True if block exists in cold storage.
     """
-    if sched.paged_ssd_cache_manager is None or sched.paged_cache_manager is None:
+    if self.paged_ssd_cache_manager is None or self.paged_cache_manager is None:
         return False
 
     # In paged SSD-only mode, just verify block exists on paged SSD
-    if not sched.paged_ssd_cache_manager.has_block(block_hash):
+    if not self.paged_ssd_cache_manager.has_block(block_hash):
         logger.warning(f"Block {block_id} not found in cold storage")
         return False
 
     # Touch the block to update LRU
     block = (
-        sched.paged_cache_manager.blocks[block_id]
-        if block_id < len(sched.paged_cache_manager.blocks)
+        self.paged_cache_manager.blocks[block_id]
+        if block_id < len(self.paged_cache_manager.blocks)
         else None
     )
     if block:
@@ -442,7 +446,7 @@ def _restore_block_from_cold(sched, block_id: int, block_hash: bytes) -> bool:
     )
     return True
 
-def restore_cold_blocks_for_request(sched, request_id: str) -> int:
+def restore_cold_blocks_for_request(    self, request_id: str) -> int:
     """
     Verify all blocks needed for a request exist on paged SSD.
 
@@ -455,31 +459,31 @@ def restore_cold_blocks_for_request(sched, request_id: str) -> int:
     Returns:
         Number of blocks verified on paged SSD.
     """
-    if sched.paged_cache_manager is None or sched.paged_ssd_cache_manager is None:
+    if self.paged_cache_manager is None or self.paged_ssd_cache_manager is None:
         return 0
 
-    if sched.block_aware_cache is None:
+    if self.block_aware_cache is None:
         return 0
 
     # Get block table for request
-    block_table = sched.paged_cache_manager.request_tables.get(request_id)
+    block_table = self.paged_cache_manager.request_tables.get(request_id)
     if block_table is None:
         return 0
 
     verified = 0
     for block_id in block_table.block_ids:
-        block = sched.paged_cache_manager.blocks[block_id]
+        block = self.paged_cache_manager.blocks[block_id]
         if block.block_hash is not None:
-            if sched._restore_block_from_cold(block_id, block.block_hash):
+            if self._restore_block_from_cold(block_id, block.block_hash):
                 verified += 1
 
     return verified
 
 def _collect_cache_counters(self) -> dict[str, int] | None:
-    if sched.block_aware_cache is None:
+    if self.block_aware_cache is None:
         return None
 
-    prefix_stats = sched.block_aware_cache.get_stats()
+    prefix_stats = self.block_aware_cache.get_stats()
     counters = {
         "prefix_hits": prefix_stats.hits,
         "prefix_misses": prefix_stats.misses,
@@ -489,8 +493,8 @@ def _collect_cache_counters(self) -> dict[str, int] | None:
         "evictions": prefix_stats.evictions,
     }
 
-    if sched.paged_ssd_cache_manager is not None:
-        ssd = sched.paged_ssd_cache_manager.get_stats()
+    if self.paged_ssd_cache_manager is not None:
+        ssd = self.paged_ssd_cache_manager.get_stats()
         hot_hits = ssd.hot_cache_hits
         total_loads = ssd.loads
         counters.update({
@@ -508,19 +512,19 @@ def get_ssd_cache_stats(self) -> dict[str, Any] | None:
     """Get paged SSD + prefix cache observability statistics."""
     stats = {}
 
-    if sched.paged_ssd_cache_manager is not None:
-        stats["ssd_cache"] = sched.paged_ssd_cache_manager.get_stats()
+    if self.paged_ssd_cache_manager is not None:
+        stats["ssd_cache"] = self.paged_ssd_cache_manager.get_stats()
 
-    if sched.paged_cache_manager is not None:
-        stats["indexed_blocks"] = sched.paged_cache_manager.cold_block_count
-        stats["block_size"] = sched.config.paged_cache_block_size
+    if self.paged_cache_manager is not None:
+        stats["indexed_blocks"] = self.paged_cache_manager.cold_block_count
+        stats["block_size"] = self.config.paged_cache_block_size
 
-    if sched.block_aware_cache is not None:
-        stats["prefix_cache"] = sched.block_aware_cache.get_stats_dict()
+    if self.block_aware_cache is not None:
+        stats["prefix_cache"] = self.block_aware_cache.get_stats_dict()
 
-    counters = sched._collect_cache_counters()
+    counters = self._collect_cache_counters()
     if counters:
-        stats["cache_rates"] = sched._cache_rate_tracker.snapshot_and_get_rates(
+        stats["cache_rates"] = self._cache_rate_tracker.snapshot_and_get_rates(
             counters
         )
 

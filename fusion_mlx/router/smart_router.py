@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import enum
 import logging
+import threading
 import time
 from dataclasses import dataclass, field
 from typing import Any, AsyncIterator, Optional
@@ -89,13 +90,10 @@ class RouterConfig:
     ema_alpha: float = 0.7
 
     # Prefill chunk size for soft-preemption (tokens per chunk)
-    prefill_chunk_size: int = 2048
+    prefill_chunk_size: int = 512
 
     # Batch sizes to pre-warm compute graphs for
     warmup_batch_sizes: list[int] = field(default_factory=lambda: [1, 4, 8])
-
-    # EMA state: model_id -> {backend -> {tps: float, latency_p50: float}}
-    _ema_state: dict[str, dict[str, dict[str, float]]] = field(default_factory=dict)
 
 
 @dataclass
@@ -165,6 +163,9 @@ class SmartRouter:
         self._route_count: dict[str, int] = {}
         self._split_count: int = 0
         self._cloud_count: int = 0
+        self._lock = threading.Lock()
+        # EMA state — instance-level, not on config (avoids cross-instance pollution)
+        self._ema_state: dict[str, dict[str, dict[str, float]]] = {}
 
     # ================================================================
     # Public API — route requests
@@ -208,7 +209,8 @@ class SmartRouter:
             self.cloud_router
             and new_tokens > self.config.cloud_fallback_threshold
         ):
-            self._cloud_count += 1
+            with self._lock:
+                self._cloud_count += 1
             self._record_route("cloud", False)
             return RouteDecision(
                 prefill_backend=EngineBackend.CLOUD,
@@ -217,19 +219,21 @@ class SmartRouter:
                 split_phases=False,
             )
 
-        # 3. Benchmark-based routing (if we have data)
-        benchmark_decision = self._benchmark_route(model_id, quant_format, new_tokens)
-        if benchmark_decision is not None:
-            self._record_route(
-                benchmark_decision.prefill_backend.value,
-                benchmark_decision.split_phases,
-            )
-            return benchmark_decision
-
-        # 4. Priority-based routing
+         # 3. Priority-based routing (resolved before benchmark to prevent
+         # REALTIME requests from being routed to high-TPS/high-latency backends)
         priority = self._resolve_priority(task_tag)
 
-        # 5. Phase split: long prompts with low cache coverage
+         # 4. Benchmark-based routing — skip for REALTIME (latency > throughput)
+        if priority != TaskPriority.REALTIME:
+            benchmark_decision = self._benchmark_route(model_id, quant_format, new_tokens)
+            if benchmark_decision is not None:
+                self._record_route(
+                    benchmark_decision.prefill_backend.value,
+                    benchmark_decision.split_phases,
+                 )
+                return benchmark_decision
+
+         # 5. Phase split: long prompts with low cache coverage
         if (
             new_tokens > self.config.phase_split_threshold
             and cache_hit_rate < 0.5
@@ -237,7 +241,8 @@ class SmartRouter:
             and self.rapid_engine is not None
         ):
             # Split: prefill on omlx (matmul), decode on Rapid (KV)
-            self._split_count += 1
+            with self._lock:
+                self._split_count += 1
             self._record_route("split", True)
             return RouteDecision(
                 prefill_backend=EngineBackend.OMLX,
@@ -282,7 +287,16 @@ class SmartRouter:
         if decision.prefill_backend == EngineBackend.CLOUD and self.cloud_router:
             return await self.cloud_router.completion(messages, **kwargs)
 
-        return await engine.chat(messages, **kwargs)
+        # Execute local inference with circuit breaker tracking
+        try:
+            result = await engine.chat(messages, **kwargs)
+            if self.cloud_router:
+                self.cloud_router.report_local_success()
+            return result
+        except Exception:
+            if self.cloud_router:
+                self.cloud_router.report_local_failure()
+            raise
 
     async def route_stream_chat(
         self,
@@ -304,9 +318,10 @@ class SmartRouter:
             return
 
         if decision.split_phases:
-            yield await self._execute_split_phase(
+            async for chunk in self._execute_split_phase(
                 engine, messages, request_data, decision, **kwargs
-            )
+             ):
+                yield chunk
         else:
             async for chunk in engine.stream_chat(messages, **kwargs):
                 yield chunk
@@ -331,59 +346,52 @@ class SmartRouter:
         request_data: dict[str, Any],
         decision: RouteDecision,
         **kwargs,
-    ) -> str:
-        """Execute a split-phase request: prefill on omlx, decode on Rapid.
-
-        Flow:
-        1. Run prefill on omlx engine -> get KV cache
-        2. Extract KV buffers as PhaseHandoff
-        3. Transfer to Rapid-MLX engine (zero-copy)
-        4. Continue decode from KV state
-        """
+    ) -> AsyncIterator[str]:
+        """Execute split-phase: prefill on omlx, handoff KV to Rapid-MLX for decode."""
         decode_engine = self.rapid_engine or self.llm_engine
         request_id = request_data.get("request_id", "")
 
-        # Step 1: Prefill on omlx
+        if not (getattr(prefill_engine, "supports_prefill_only", False)
+        and getattr(decode_engine, "supports_kv_handoff", False)):
+              # Fallback: if engines don't support handoff, use unified streaming
+            logger.info(
+                "[SmartRouter] Phase split fallback: engines lack handoff support, "
+                "streaming on %s", decision.prefill_backend.value,
+            )
+            async for chunk in prefill_engine.stream_chat(messages, **kwargs):
+                yield chunk
+            return
+
         logger.info(
-            f"[SmartRouter] Phase split: prefill on "
-            f"{decision.prefill_backend.value}, decode on {decision.decode_backend.value}"
+            "[SmartRouter] Phase split: prefill=%s, decode=%s",
+            decision.prefill_backend.value, decision.decode_backend.value,
         )
 
-        # Run prefill — generate initial tokens and capture KV state
-        # The prefill engine processes the full prompt and returns the KV cache
-        prefill_result = await prefill_engine.chat(messages, **{
-            **kwargs,
-            "prefill_only": True,  # Signal to only run prefill, return KV state
-        })
+         # Step 1: Prefill on omlx — get KV state
+        prefill_result = await prefill_engine.chat(messages, prefill_only=True, **kwargs)
+        kv_state = prefill_result.kv_state or {}
 
-        # Step 2: Create handoff
+         # Step 2: Create PhaseHandoff from KV state
         handoff = PhaseHandoff(
             request_id=request_id,
-            block_table=getattr(prefill_result, "block_table", []),
-            kv_buffers=getattr(prefill_result, "kv_buffers", []),
-            meta_states=getattr(prefill_result, "meta_states", []),
+            block_table=kv_state.get("block_table"),
+            kv_buffers=kv_state,
+            meta_states=[],
             model_name=getattr(prefill_result, "model_name", ""),
-            num_tokens=getattr(prefill_result, "num_tokens", 0),
+            num_tokens=kv_state.get("num_computed_tokens", 0),
             prefill_backend=decision.prefill_backend,
             decode_backend=decision.decode_backend,
         )
-        self._handoffs[request_id] = handoff
+        with self._lock:
+            self._handoffs[request_id] = handoff
 
-        # Step 3: Decode on Rapid-MLX with transferred KV state
-        # The decode engine receives the KV state and continues generation
-        decode_result = await decode_engine.chat(messages, **{
-            **kwargs,
-            "kv_handoff": handoff,  # Inject KV state from prefill
-            "continue_from": handoff.num_tokens,
-        })
-
-        # Clean up handoff
-        self._handoffs.pop(request_id, None)
-        return decode_result
-
-    # ================================================================
-    # Internal — engine selection, priority resolution, benchmarking
-    # ================================================================
+         # Step 3: Decode on Rapid-MLX with KV handoff — stream SSE chunks
+        try:
+            async for chunk in decode_engine.stream_chat(messages, kv_handoff=handoff, **kwargs):
+                yield chunk
+        finally:
+            with self._lock:
+                self._handoffs.pop(request_id, None)
 
     def _select_engine_with_decision(
         self,
@@ -501,7 +509,7 @@ class SmartRouter:
                     cjk_chars += 1
                 else:
                     ascii_chars += 1
-        return max(1, cjk_chars + ascii_chars // 4)
+        return max(1, int(cjk_chars * 1.5) + ascii_chars // 3)
     def _has_images(self, messages: list[dict]) -> bool:
         for msg in messages:
             content = msg.get("content", "")
@@ -602,10 +610,12 @@ class SmartRouter:
 
         # Apply EMA smoothing to each backend scores
         alpha = self.config.ema_alpha
-        ema_state = self.config._ema_state.setdefault(model_id, {})
+        ema_state = self._ema_state.setdefault(model_id, {})
 
         smoothed = {}
         for backend_name, br in benchmarks.items():
+            if backend_name in ("auto", "cloud"):
+                continue
             prev = ema_state.get(backend_name, {})
             smooth_tps = alpha * prev.get("tps", br.tps) + (1 - alpha) * br.tps
             smooth_lat = alpha * prev.get("latency_p50", br.latency_p50) + (1 - alpha) * br.latency_p50
@@ -621,6 +631,9 @@ class SmartRouter:
                 timestamp=br.timestamp,
              )
 
+        if len(smoothed) < 2:
+            return None
+
         # Find best backend for prefill (highest smoothed TPS)
         best_prefill = max(smoothed.items(), key=lambda x: x[1].tps)
         # Find best backend for decode (lowest smoothed p50 latency)
@@ -634,9 +647,15 @@ class SmartRouter:
 
         split = tps_diff > 0.15 or latency_diff > 0.15
 
-        # Map backend name back to enum
-        prefill_be = EngineBackend(best_prefill[0])
-        decode_be = EngineBackend(best_decode[0]) if split else prefill_be
+        # Map backend name back to enum — skip if invalid
+        try:
+            prefill_be = EngineBackend(best_prefill[0])
+        except (ValueError, KeyError):
+            return None
+        try:
+            decode_be = EngineBackend(best_decode[0]) if split else prefill_be
+        except (ValueError, KeyError):
+            decode_be = prefill_be
 
         return RouteDecision(
             prefill_backend=prefill_be,
@@ -652,9 +671,11 @@ class SmartRouter:
     # ================================================================
 
     def _record_route(self, backend: str, is_split: bool) -> None:
-        self._route_count[backend] = self._route_count.get(backend, 0) + 1
+        with self._lock:
+            self._route_count[backend] = self._route_count.get(backend, 0) + 1
 
     def reset_stats(self) -> None:
-        self._route_count.clear()
-        self._split_count = 0
-        self._cloud_count = 0
+        with self._lock:
+            self._route_count.clear()
+            self._split_count = 0
+            self._cloud_count = 0

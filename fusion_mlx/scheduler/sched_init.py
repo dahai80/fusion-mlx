@@ -15,6 +15,23 @@ import concurrent.futures
 import copy
 import gc
 import logging
+
+logger = logging.getLogger(__name__)
+
+# Import protocol-specific output parser support
+try:
+    from ..adapter.output_parser import (
+        OutputParserFactory,
+        OutputParserSession,
+        detect_output_parser,
+     )
+    HAS_OUTPUT_PARSER = True
+except ImportError:
+    OutputParserFactory = None
+    OutputParserSession = None
+    detect_output_parser = None
+    HAS_OUTPUT_PARSER = False
+
 import os
 import threading
 import time
@@ -51,6 +68,7 @@ from ..utils.sampling import make_sampler as omlx_make_sampler
 # Module-level alias so Scheduler.__init__ can fall back to mlx-lm's default
 # stream when no per-engine stream is provided.
 
+from .config import SchedulerConfig
 from .types import (
      _VLMMTPDecodeState, _VLMMTPResponse, _mx_buffer_access_lock,
      _StoreCacheGate, _PrefillAbortedError, _PrefillState,
@@ -64,8 +82,7 @@ from .helpers import (
 )
 from .monkeypatches import _default_generation_stream
 
-def __init__(
-    sched,
+def __init__(    self,
     model: Any,
     tokenizer: Any,
     config: SchedulerConfig | None = None,
@@ -81,180 +98,180 @@ def __init__(
         stream: Optional mx.Stream for this engine. Falls back to the
             module-level _default_generation_stream when not provided.
     """
-    sched.model = model
+    self.model = model
     # Deep-copy the tokenizer so the scheduler owns an independent Rust
     # tokenizer backend.  Without this, concurrent access from the asyncio
     # event loop (encode/apply_chat_template in engine handlers) and the
     # MLX executor thread (scheduler.step) causes
     # "RuntimeError: Already borrowed" from the HuggingFace tokenizers
     # Rust RefCell.  See: https://github.com/huggingface/tokenizers/issues/537
-    sched.tokenizer = copy.deepcopy(tokenizer)
-    sched.config = copy.copy(config) if config else SchedulerConfig()
-    sched._stream = stream if stream is not None else _default_generation_stream
+    self.tokenizer = copy.deepcopy(tokenizer)
+    self.config = copy.copy(config) if config else SchedulerConfig()
+    self._stream = stream if stream is not None else _default_generation_stream
 
     # Load additional EOS tokens from generation_config.json.
     # Some models (e.g. GLM-4.6V) define multiple EOS tokens there
     # that are not in tokenizer.eos_token_id.
-    sched._generation_config_eos: set[int] | None = (
-        sched._load_generation_config_eos()
+    self._generation_config_eos: set[int] | None = (
+        self._load_generation_config_eos()
     )
 
     # For strict RotatingKVCache reuse, align paged cache block size to
     # the model's rotating window size when paged cache is enabled.
-    sched._align_block_size_with_rotating_window()
+    self._align_block_size_with_rotating_window()
     # For ArraysCache-only models (no RotatingKVCache), use a larger block
     # size to reduce boundary snapshot overhead during prefill.
-    sched._enlarge_block_size_for_arrays_cache()
+    self._enlarge_block_size_for_arrays_cache()
 
     # TurboQuant KV cache (set by engine if model_settings has it enabled)
-    sched._turboquant_kv_bits: float | None = None
-    sched._turboquant_skip_last: bool = True
+    self._turboquant_kv_bits: float | None = None
+    self._turboquant_skip_last: bool = True
 
     # Request management - following vLLM's design
-    sched.waiting: deque[Request] = deque()  # Waiting queue (FCFS)
-    sched.running: dict[str, Request] = {}  # Running requests by ID
+    self.waiting: deque[Request] = deque()  # Waiting queue (FCFS)
+    self.running: dict[str, Request] = {}  # Running requests by ID
     # Chunked prefill queue: requests whose prefill spans multiple steps.
     # Populated when chunked_prefill=True and prompt exceeds prefill_step_size.
-    sched.prefilling: deque[Request] = deque()
-    sched._prefill_states: dict[str, _PrefillState] = {}
-    sched.requests: dict[str, Request] = {}  # All requests by ID
-    sched.finished_req_ids: set[str] = set()  # Recently finished
+    self.prefilling: deque[Request] = deque()
+    self._prefill_states: dict[str, _PrefillState] = {}
+    self.requests: dict[str, Request] = {}  # All requests by ID
+    self.finished_req_ids: set[str] = set()  # Recently finished
 
     # Thread-safe set for deferred aborts (main thread → executor thread)
     # CPython GIL guarantees set.add() and `x in set` are atomic.
-    sched._pending_abort_ids: set[str] = set()
+    self._pending_abort_ids: set[str] = set()
 
     # Lock-free admin snapshot. Published at the end of each step() while
     # the engine thread is the sole writer of running/waiting; the admin
     # endpoint reads the dict reference atomically (GIL) and never iterates
     # the live mutable structures.
-    sched._admin_snapshot: dict[str, Any] = {
+    self._admin_snapshot: dict[str, Any] = {
         "running_by_id": {},
         "waiting": [],
     }
 
     # Memory limits for inline prefill checking.
     # Set by ProcessMemoryEnforcer; propagated to BatchGenerator.
-    sched._memory_limit_bytes: int = 0  # soft limit
-    sched._memory_hard_limit_bytes: int = 0  # hard limit (system_ram - 4GB)
-    sched._prefill_memory_guard: bool = False  # set by ProcessMemoryEnforcer
+    self._memory_limit_bytes: int = 0  # soft limit
+    self._memory_hard_limit_bytes: int = 0  # hard limit (system_ram - 4GB)
+    self._prefill_memory_guard: bool = False  # set by ProcessMemoryEnforcer
     # Set to True by ProcessMemoryEnforcer when phys_footprint crosses
     # soft_threshold. Schedulers stop admitting new prefills while this is
     # set; in-flight requests proceed.
-    sched._admission_paused: bool = False
+    self._admission_paused: bool = False
     # Adaptive prefill throttle params, propagated from enforcer.
     # Until set, _adaptive_chunk_size is a no-op (returns requested as-is).
-    sched._prefill_safe_zone_ratio: float = 0.80
-    sched._prefill_min_chunk_tokens: int = 32
+    self._prefill_safe_zone_ratio: float = 0.80
+    self._prefill_min_chunk_tokens: int = 32
     # EWMA estimator of per-token chunk transient bytes, used by
     # _adaptive_chunk_size in the caution zone. Owned per-scheduler.
     _tracker_model_id = ""
     if config is not None and config.model_name:
         _tracker_model_id = os.path.basename(config.model_name.rstrip("/"))
-    sched._prefill_transient_tracker = PrefillTransientTracker(
+    self._prefill_transient_tracker = PrefillTransientTracker(
         model_id=_tracker_model_id
     )
 
     # SpecPrefill: draft model for attention-based sparse prefill
-    sched._specprefill_draft_model: Any | None = None
+    self._specprefill_draft_model: Any | None = None
     # Track active specprefill request for RoPE cleanup
-    sched._specprefill_active_request_id: str | None = None
+    self._specprefill_active_request_id: str | None = None
 
     # VLM MTP: gemma4_assistant drafter attached by VLMBatchedEngine.
     # When set, eligible requests bypass mlx-lm BatchGenerator for decode
     # and run through mlx-vlm's _mtp_rounds round loop instead.
-    sched._vlm_mtp_drafter: VLMMTPDrafter | None = None
+    self._vlm_mtp_drafter: VLMMTPDrafter | None = None
     # Active vlm_mtp decode generators keyed by synthesized negative uid
     # (negative to make collision with BatchGenerator uids impossible).
-    sched._vlm_mtp_active: dict[int, _VLMMTPDecodeState] = {}
-    sched._vlm_mtp_next_uid: int = -1
+    self._vlm_mtp_active: dict[int, _VLMMTPDecodeState] = {}
+    self._vlm_mtp_next_uid: int = -1
     # Per-request settings snapshot for vlm_mtp routing (block size etc.).
     # Injected by VLMBatchedEngine.set_vlm_mtp_drafter alongside the drafter.
-    sched._vlm_mtp_draft_block_size: int | None = None
+    self._vlm_mtp_draft_block_size: int | None = None
 
     # Phase timing instrumentation for cache-on overhead diagnostics.
     # Accumulated wall-time per phase + invocation count, dumped at request
     # end or via get_phase_stats(). Adds ~100ns per measurement.
-    sched._phase_total_ms: dict[str, float] = defaultdict(float)
-    sched._phase_count: dict[str, int] = defaultdict(int)
+    self._phase_total_ms: dict[str, float] = defaultdict(float)
+    self._phase_count: dict[str, int] = defaultdict(int)
 
     # Async store_cache executor (G2-async). Offloads the post-finish
     # bulk memcpy (28GB+ per 32k request) off the inference thread so
     # response streaming isn't blocked by it.
-    sched._store_cache_executor: concurrent.futures.ThreadPoolExecutor | None = None
+    self._store_cache_executor: concurrent.futures.ThreadPoolExecutor | None = None
     # Gate that caps in-flight store-cache submissions. Set only when
     # tiered cache is enabled (alongside _store_cache_executor).
-    sched._store_cache_gate: _StoreCacheGate | None = None
+    self._store_cache_gate: _StoreCacheGate | None = None
     # Pending (uid, request_id, future) entries waiting for async store
     # to finish before batch_generator.remove() can safely run. Drained
     # at the start of every step.
-    sched._pending_async_removes: deque = deque()
+    self._pending_async_removes: deque = deque()
     # Track in-flight store futures per request_id for lookup wait /
     # shutdown wait.
-    sched._inflight_store_futures: dict[str, concurrent.futures.Future] = {}
+    self._inflight_store_futures: dict[str, concurrent.futures.Future] = {}
 
     # Mapping between our request IDs and BatchGenerator UIDs
-    sched.request_id_to_uid: dict[str, int] = {}
-    sched.uid_to_request_id: dict[int, str] = {}
+    self.request_id_to_uid: dict[str, int] = {}
+    self.uid_to_request_id: dict[int, str] = {}
 
     # BatchGenerator - the actual batching engine
-    sched.batch_generator: BatchGenerator | None = None
-    sched._current_sampler_params: tuple | None = None
+    self.batch_generator: BatchGenerator | None = None
+    self._current_sampler_params: tuple | None = None
     # Boundary cache snapshots for stateful non-sliceable caches (e.g., ArraysCache).
     # request_id -> {token_count -> snapshot_cache_or_None}
     # Multiple snapshots per request to support per-block ArraysCache state storage.
     # Values are None when offloaded to SSD via _boundary_snapshot_store.
-    sched._boundary_cache_snapshots: dict[str, dict[int, Any]] = {}
+    self._boundary_cache_snapshots: dict[str, dict[int, Any]] = {}
     # Lazy detection flag: True/False once determined, None before first check.
-    sched._boundary_snapshot_required: bool | None = None
+    self._boundary_snapshot_required: bool | None = None
     # SSD store for offloading boundary snapshots (initialized in _init_tiered_cache).
-    sched._boundary_snapshot_store: BoundarySnapshotSSDStore | None = None
+    self._boundary_snapshot_store: BoundarySnapshotSSDStore | None = None
 
     # paged SSD cache for KV state persistence (oMLX only supports paged SSD-based caching)
-    sched.paged_cache_manager: PagedCacheManager | None = None
-    sched.block_aware_cache: BlockAwarePrefixCache | None = None
-    sched.paged_ssd_cache_manager: PagedSSDCacheManager | None = None
-    sched._cache_rate_tracker = CacheRateTracker()
-    sched.memory_monitor: MemoryMonitor | None = None
+    self.paged_cache_manager: PagedCacheManager | None = None
+    self.block_aware_cache: BlockAwarePrefixCache | None = None
+    self.paged_ssd_cache_manager: PagedSSDCacheManager | None = None
+    self._cache_rate_tracker = CacheRateTracker()
+    self.memory_monitor: MemoryMonitor | None = None
 
     # Initialize paged SSD cache if paged_ssd_cache_dir is specified
-    if sched.config.paged_ssd_cache_dir:
+    if self.config.paged_ssd_cache_dir:
         # Calculate max_blocks automatically if not specified
-        if sched.config.max_cache_blocks is not None:
-            max_blocks = sched.config.max_cache_blocks
+        if self.config.max_cache_blocks is not None:
+            max_blocks = self.config.max_cache_blocks
         else:
-            max_blocks = sched._calculate_max_blocks()
+            max_blocks = self._calculate_max_blocks()
 
         # Initialize paged cache manager for block metadata
-        sched.paged_cache_manager = PagedCacheManager(
-            block_size=sched.config.paged_cache_block_size,
+        self.paged_cache_manager = PagedCacheManager(
+            block_size=self.config.paged_cache_block_size,
             max_blocks=max_blocks,
-            model_name=sched.config.model_name,
-            initial_blocks=sched.config.initial_cache_blocks,
+            model_name=self.config.model_name,
+            initial_blocks=self.config.initial_cache_blocks,
         )
-        sched.block_aware_cache = BlockAwarePrefixCache(
+        self.block_aware_cache = BlockAwarePrefixCache(
             model=model,
-            paged_cache_manager=sched.paged_cache_manager,
+            paged_cache_manager=self.paged_cache_manager,
         )
 
         # Initialize paged SSD cache
-        sched._init_tiered_cache()
+        self._init_tiered_cache()
 
         # Set cold restore callback for prefix cache
-        if sched.paged_ssd_cache_manager is not None:
-            sched.block_aware_cache.set_cold_restore_callback(
-                sched._restore_block_from_cold
+        if self.paged_ssd_cache_manager is not None:
+            self.block_aware_cache.set_cold_restore_callback(
+                self._restore_block_from_cold
             )
             logger.info(
-                f"paged SSD cache enabled: {sched.config.paged_ssd_cache_dir}, "
-                f"block_size={sched.config.paged_cache_block_size}, "
+                f"paged SSD cache enabled: {self.config.paged_ssd_cache_dir}, "
+                f"block_size={self.config.paged_cache_block_size}, "
                 f"max_blocks={max_blocks}"
             )
 
         # Async store_cache executor: single worker so submissions are
         # serialized (matches the original synchronous order) and we
         # never have two stores racing on the same paged_ssd index.
-        sched._store_cache_executor = concurrent.futures.ThreadPoolExecutor(
+        self._store_cache_executor = concurrent.futures.ThreadPoolExecutor(
             max_workers=1,
             thread_name_prefix="omlx-store-cache",
         )
@@ -262,7 +279,7 @@ def __init__(
         # of finishes cannot pile up unbounded KV caches in memory while
         # the single writer drains. Cap starts at max_concurrent_requests
         # and is shrunk by ProcessMemoryEnforcer under pressure (#1383).
-        sched._store_cache_gate = _StoreCacheGate(cap=sched.config.max_num_seqs)
+        self._store_cache_gate = _StoreCacheGate(cap=self.config.max_num_seqs)
     else:
         logger.info(
             "oMLX cache disabled (mlx-lm BatchGenerator manages KV internally)"
@@ -270,15 +287,15 @@ def __init__(
 
     # Streaming detokenizers for proper UTF-8 handling (one per active request)
     # NOTE: No pooling - each request gets a fresh instance to prevent state contamination
-    sched._request_detokenizers: dict[str, Any] = (
+    self._request_detokenizers: dict[str, Any] = (
         {}
     )  # request_id → active detokenizer
 
     # Protocol-specific output parser support (e.g. Harmony, Gemma 4)
-    sched._output_parser_factory: OutputParserFactory | None = None
-    sched._output_parser_kind: str | None = None
-    sched._output_parser_sessions: dict[str, OutputParserSession] = {}
-    sched._is_harmony_model: bool = False
+    self._output_parser_factory: OutputParserFactory | None = None
+    self._output_parser_kind: str | None = None
+    self._output_parser_sessions: dict[str, OutputParserSession] = {}
+    self._is_harmony_model: bool = False
     if HAS_OUTPUT_PARSER and detect_output_parser is not None:
         try:
             model_config = None
@@ -305,33 +322,33 @@ def __init__(
                 except Exception as e:
                     logger.debug(f"Failed to extract model.args: {e}")
 
-            sched._output_parser_factory = detect_output_parser(
-                sched.config.model_name,
-                sched.tokenizer,
+            self._output_parser_factory = detect_output_parser(
+                self.config.model_name,
+                self.tokenizer,
                 model_config,
             )
-            if sched._output_parser_factory is not None:
-                sched._output_parser_kind = sched._output_parser_factory.kind
-                sched._is_harmony_model = sched._output_parser_kind == "harmony"
+            if self._output_parser_factory is not None:
+                self._output_parser_kind = self._output_parser_factory.kind
+                self._is_harmony_model = self._output_parser_kind == "harmony"
                 logger.info(
                     "Output parser detected: %s for %s, stop_tokens=%s",
-                    sched._output_parser_kind,
-                    sched.config.model_name,
-                    sorted(sched._output_parser_factory.stop_token_ids),
+                    self._output_parser_kind,
+                    self.config.model_name,
+                    sorted(self._output_parser_factory.stop_token_ids),
                 )
         except Exception as e:
             logger.warning(f"Error detecting output parser: {e}, assuming none")
-            sched._output_parser_factory = None
-            sched._output_parser_kind = None
-            sched._is_harmony_model = False
+            self._output_parser_factory = None
+            self._output_parser_kind = None
+            self._is_harmony_model = False
 
     # Statistics
-    sched.num_requests_processed = 0
-    sched.total_prompt_tokens = 0
-    sched.total_completion_tokens = 0
+    self.num_requests_processed = 0
+    self.total_prompt_tokens = 0
+    self.total_completion_tokens = 0
 
     # Step counter for periodic cleanup
-    sched._step_counter = 0
+    self._step_counter = 0
     # Deferred Metal cache cleanup after request completion.
     # Immediate mx.clear_cache() after request completion races with
     # IOKit's asynchronous completeMemory() callbacks, causing
@@ -347,14 +364,16 @@ def __init__(
     # completeMemory() callbacks.  Using max() ensures the window always
     # covers the *latest* completion.
     # None = no deferred clear pending; int = step at which to fire.
-    sched._deferred_clear_at: int | None = None
+    self._deferred_clear_at: int | None = None
+    self._DEFERRED_CLEAR_DELAY = 4
 
     # Cache XTC special tokens (newline + EOS) — stable per tokenizer.
     # Must be after _is_harmony_model / _generation_config_eos init
     # since _get_xtc_special_tokens() delegates to _get_stop_tokens().
-    sched._xtc_special_tokens: list[int] = sched._get_xtc_special_tokens()
+    self._xtc_special_tokens: list[int] = self._get_xtc_special_tokens()
 
-def _phase_timer(sched, phase: str):
+@contextmanager
+def _phase_timer(self, phase: str):
     """Lightweight wall-time accumulator for cache-on overhead diagnostics.
 
     Tracks total ms and invocation count per named phase. Intended for
@@ -364,8 +383,8 @@ def _phase_timer(sched, phase: str):
     try:
         yield
     finally:
-        sched._phase_total_ms[phase] += (time.perf_counter() - t0) * 1000.0
-        sched._phase_count[phase] += 1
+        self._phase_total_ms[phase] += (time.perf_counter() - t0) * 1000.0
+        self._phase_count[phase] += 1
 
 def get_phase_stats(self) -> dict[str, dict[str, float]]:
     """Return accumulated phase timings for diagnostics.
@@ -373,8 +392,8 @@ def get_phase_stats(self) -> dict[str, dict[str, float]]:
     Returns dict of phase -> {total_ms, count, avg_ms}.
     """
     result = {}
-    for phase, total in sched._phase_total_ms.items():
-        count = sched._phase_count.get(phase, 0)
+    for phase, total in self._phase_total_ms.items():
+        count = self._phase_count.get(phase, 0)
         result[phase] = {
             "total_ms": total,
             "count": count,
@@ -391,8 +410,8 @@ def _periodic_clear_threshold_bytes(self) -> int:
     bytes avoids producing IOGPUFamily refcount bursts when the pool
     is already small.
     """
-    if sched._memory_limit_bytes > 0:
-        return max(sched._memory_limit_bytes // 3, 2 * 1024**3)
+    if self._memory_limit_bytes > 0:
+        return max(self._memory_limit_bytes // 3, 2 * 1024**3)
     return 2 * 1024**3
 
 def _should_periodic_clear_cache(self) -> bool:
@@ -403,7 +422,7 @@ def _should_periodic_clear_cache(self) -> bool:
     MLX buffer pool exceeds the threshold. See #978 / #1040 for the
     kernel panic class this gating is meant to mitigate.
     """
-    interval = sched.config.mlx_cache_cleanup_interval
-    if interval <= 0 or sched._step_counter % interval != 0:
+    interval = self.config.mlx_cache_cleanup_interval
+    if interval <= 0 or self._step_counter % interval != 0:
         return False
-    return mx.get_cache_memory() > sched._periodic_clear_threshold_bytes()
+    return mx.get_cache_memory() > self._periodic_clear_threshold_bytes()

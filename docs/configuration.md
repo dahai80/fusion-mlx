@@ -24,6 +24,22 @@ fusion-mlx serve --memory-tier aggressive
 fusion-mlx serve --memory-tier custom --custom-limit-mb 16384
 ```
 
+## Typed Executor Pools
+
+MLX operations run on dedicated thread pools to prevent cross-modality blocking:
+
+| Pool | Workers | Purpose |
+|------|---------|---------|
+| `llm` | 1 | LLM inference, embedding, reranking — single worker to avoid Metal device conflicts |
+| `image` | 1 | Image generation (Flux 2) — isolated from text inference |
+| `audio` | 2 | STT, TTS, STS — concurrent audio processing |
+| `io` | 2 | Model loading, file I/O — non-blocking loads |
+
+All `run_in_executor` calls are wrapped with `asyncio.wait_for()` for timeout protection:
+- Model loading: 120s
+- Inference: 30s (LLM), 60s (audio), 120s (image)
+- Sync/clear: 5s
+
 ## Scheduler Settings
 
 The `SchedulerConfig` dataclass controls batching, caching, and decoding:
@@ -45,16 +61,18 @@ The `SchedulerConfig` dataclass controls batching, caching, and decoding:
 
 ### Chunked Prefill
 
-Splits long prompts into smaller chunks to avoid memory spikes:
+Splits long prompts into smaller chunks to avoid memory spikes and allow preemption:
 
 | Setting | Default | Description |
 |---------|---------|-------------|
-| `chunked_prefill_tokens` | 0 (off) | Tokens per chunk (0 = disabled) |
+| `chunked_prefill_tokens` | 512 | Tokens per chunk (0 = disabled) |
 | `mid_prefill_save_interval` | 8192 | Save cache snapshot every N tokens |
+
+The 512-token default balances between prefill overhead and REALTIME request latency. At 512 tokens, a 4K prompt takes ~8 chunks, each yielding ~2ms for high-priority requests to interleave.
 
 Enable for prompts > 4K tokens:
 ```python
-scheduler_config = SchedulerConfig(chunked_prefill_tokens=1024)
+scheduler_config = SchedulerConfig(chunked_prefill_tokens=512)
 ```
 
 ### KV Cache Quantization
@@ -87,6 +105,30 @@ Copy-on-write prefix sharing for common prompts:
 | `prefix_cache_enabled` | `True` | Enable prefix cache |
 | `prefix_cache_max_size` | 100 | Maximum cached prefixes |
 
+## SmartRouter
+
+Phase-aware routing with benchmark-based backend selection. Configured via `RouterConfig`:
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `phase_split_threshold` | 8192 | Split prefill/decode when uncached tokens exceed this |
+| `cloud_fallback_threshold` | 32768 | Route to cloud when uncached tokens exceed this |
+| `enable_benchmark_routing` | `True` | Use EMA-smoothed benchmarks to select backends |
+| `ema_alpha` | 0.7 | EMA smoothing factor (higher = more weight on history) |
+| `prefill_chunk_size` | 512 | Tokens per prefill chunk for soft-preemption |
+| `default_priority` | `BATCH` | Default task priority when no `task_tag` is provided |
+| `warmup_batch_sizes` | `[1, 4, 8]` | Batch sizes to pre-compile compute graphs for |
+
+**Priority levels** (determined by `task_tag`):
+- `REALTIME` — Claude Code, interactive tools. Skips benchmark routing for lowest latency.
+- `BATCH` — OpenClaw agents, batch processing. Uses benchmark routing for highest throughput.
+- `BACKGROUND` — Embedding, reranking, offline tasks. Lowest priority, preemptible.
+
+**Phase split example**: A 16K-token prompt with 20% cache hit rate:
+- Prefill runs on omlx (strong matmul for large batches)
+- Decode runs on Rapid-MLX (lightweight KV operations)
+- KV cache is zero-copy transferred via `PhaseHandoff`
+
 ## Model Aliases
 
 Map friendly names to full model IDs:
@@ -94,17 +136,17 @@ Map friendly names to full model IDs:
 ```python
 # Default aliases in config.py
 DEFAULT_ALIASES = {
-    "claude-4.6-sonnet": "BeastCode/Qwen3.5-27B-Claude-4.6-Opus-Distilled-MLX-6bit",
-    "claude-4.5-sonnet": "Qwen/Qwen3-32B-A3B-Think-2512-MLX",
-    "gpt-4o": "Qwen/Qwen3-32B-A3B-Think-2512-MLX",
-    "gpt-4.5": "BeastCode/Qwen3.5-27B-Claude-4.6-Opus-Distilled-MLX-6bit",
+     "claude-4.6-sonnet": "BeastCode/Qwen3.5-27B-Claude-4.6-Opus-Distilled-MLX-6bit",
+     "claude-4.5-sonnet": "Qwen/Qwen3-32B-A3B-Think-2512-MLX",
+     "gpt-4o": "Qwen/Qwen3-32B-A3B-Think-2512-MLX",
+     "gpt-4.5": "BeastCode/Qwen3.5-27B-Claude-4.6-Opus-Distilled-MLX-6bit",
 }
 ```
 
 Custom aliases via `aliases.json` in `~/.fusion-mlx/`:
 ```json
 {
-  "my-model": "Qwen/Qwen2.5-7B-Instruct-MLX"
+     "my-model": "Qwen/Qwen2.5-7B-Instruct-MLX"
 }
 ```
 
@@ -117,14 +159,19 @@ Automatically route large-context requests to cloud providers:
 | `cloud_router_enabled` | `False` | Enable cloud fallback |
 | `cloud_router_api_key` | `""` | Cloud provider API key |
 | `cloud_router_threshold` | 32768 | Token threshold to trigger cloud routing |
+| `cloud_router_api_base` | `None` | Custom API base for OpenAI-compatible providers |
 
 ```python
 config = ServerConfig(
     cloud_router_enabled=True,
     cloud_router_api_key="sk-...",
-    cloud_router_threshold=16384,  # Route to cloud at 16K+ tokens
+    cloud_router_threshold=16384,    # Route to cloud at 16K+ tokens
 )
 ```
+
+**Circuit breaker**: After 5 consecutive local inference failures, the circuit opens and all requests route to cloud. A single local success closes the circuit. This prevents local/cloud oscillation during transient hardware issues.
+
+**Streaming support**: Both streaming and non-streaming requests are routed to cloud when the threshold is exceeded. The cloud router uses litellm for provider-agnostic calls.
 
 ## SSD Cache
 
@@ -141,19 +188,30 @@ Offload inactive KV cache blocks to SSD:
 fusion-mlx serve --enable-ssd-cache
 ```
 
+## OpenClaw Sessions
+
+Agent session storage configuration:
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `_SESSION_TTL_SECONDS` | 3600 (1h) | Seconds before inactive session expiry |
+| `_SESSION_MAX_COUNT` | 1000 | Maximum concurrent sessions (LRU eviction) |
+
+Sessions are evicted in LRU order when the cap is reached. The TTL timer resets on every turn, tool-result submission, or session GET.
+
 ## Per-Model Settings
 
 Each model can have custom settings stored in `~/.fusion-mlx/settings/`:
 
 ```json
 {
-  "Qwen2.5-3B-Instruct-4bit": {
-    "pinned": true,
-    "ttl_seconds": 3600,
-    "stream_interval": 1,
-    "specprefill_enabled": false,
-    "turboquant_kv_enabled": false
-  }
+     "Qwen2.5-3B-Instruct-4bit": {
+         "pinned": true,
+         "ttl_seconds": 3600,
+         "stream_interval": 1,
+         "specprefill_enabled": false,
+         "turboquant_kv_enabled": false
+     }
 }
 ```
 
@@ -164,6 +222,9 @@ Each model can have custom settings stored in `~/.fusion-mlx/settings/`:
 | `stream_interval` | Tokens between stream updates (1 = every token) |
 | `specprefill_enabled` | Enable speculative prefill |
 | `turboquant_kv_enabled` | Enable TurboQuant V-only KV compression |
+| `dflash_enabled` | Enable DFlash speculative decoding |
+| `mtp_enabled` | Enable native MTP (Qwen3.5/3.6, DeepSeek-V4) |
+| `vlm_mtp_enabled` | Enable VLM MTP with gemma4_assistant drafter |
 
 ## Server Config Summary
 
@@ -173,7 +234,7 @@ ServerConfig(
     port=8000,
     model_dir="~/.fusion-mlx/models",
     memory=MemoryConfig(tier="balanced"),
-    scheduler=SchedulerConfig(),
+    scheduler=SchedulerConfig(chunked_prefill_tokens=512),
     model_aliases=DEFAULT_ALIASES,
     admin_enabled=True,
     cloud_router_enabled=False,

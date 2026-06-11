@@ -15,6 +15,8 @@ import concurrent.futures
 import copy
 import gc
 import logging
+
+logger = logging.getLogger(__name__)
 import os
 import threading
 import time
@@ -64,7 +66,7 @@ from .helpers import (
 )
 from .monkeypatches import _default_generation_stream
 
-def _build_state_machine(sched, request: "Request") -> SequenceStateMachine:
+def _build_state_machine(    self, request: "Request") -> SequenceStateMachine:
     """Build a SequenceStateMachine for per-request stop tokens.
 
     Combines base stop tokens (EOS, Harmony) with request-specific
@@ -72,7 +74,7 @@ def _build_state_machine(sched, request: "Request") -> SequenceStateMachine:
     machine that tells BatchGenerator when to stop generating for
     this request.
     """
-    stop_tokens_set = sched._get_stop_tokens()
+    stop_tokens_set = self._get_stop_tokens()
     if request.sampling_params.stop_token_ids:
         stop_tokens_set.update(request.sampling_params.stop_token_ids)
 
@@ -89,9 +91,9 @@ def _build_state_machine(sched, request: "Request") -> SequenceStateMachine:
         if not isinstance(stop_str, str) or not stop_str:
             continue
         try:
-            seq = sched.tokenizer.encode(stop_str, add_special_tokens=False)
+            seq = self.tokenizer.encode(stop_str, add_special_tokens=False)
         except TypeError:
-            seq = sched.tokenizer.encode(stop_str)
+            seq = self.tokenizer.encode(stop_str)
         if seq:
             transitions["normal"].append((list(seq), None))
 
@@ -99,8 +101,7 @@ def _build_state_machine(sched, request: "Request") -> SequenceStateMachine:
         return SequenceStateMachine(transitions, initial="normal")
     return SequenceStateMachine({}, initial="normal")
 
-def _emit_prefill_boundary_snapshot(
-    sched,
+def _emit_prefill_boundary_snapshot(    self,
     request: "Request",
     prompt_cache: list[Any],
     total_tokens: int,
@@ -114,7 +115,7 @@ def _emit_prefill_boundary_snapshot(
     Pass ``request_id`` directly. The request is mid-prefill and has
     not been inserted into ``BatchGenerator`` yet, so
     ``request_id_to_uid`` has no entry for it. The earlier shape
-    routed through ``sched.request_id_to_uid.get(request_id, -1)`` →
+    routed through ``self.request_id_to_uid.get(request_id, -1)`` →
     ``uid_to_request_id.get(-1)`` → ``None`` → silent return,
     dropping every snapshot. For ArraysCache / GDN / hybrid models
     that made every non-last block store a placeholder, and the
@@ -125,7 +126,7 @@ def _emit_prefill_boundary_snapshot(
         c if type(c).__name__ not in _KNOWN_SLICEABLE_CACHE_TYPES else None
         for c in prompt_cache
     ]
-    sched._on_prefill_boundary_snapshot(
+    self._on_prefill_boundary_snapshot(
         request.request_id,
         snapshot_cache,
         total_tokens,
@@ -148,7 +149,7 @@ def _build_sampler_and_processors(
         top_k=sampling_params.top_k,
         xtc_probability=sampling_params.xtc_probability,
         xtc_threshold=sampling_params.xtc_threshold,
-        xtc_special_tokens=sched._xtc_special_tokens,
+        xtc_special_tokens=self._xtc_special_tokens,
     )
     logits_processors = make_logits_processors(
         repetition_penalty=(
@@ -175,12 +176,12 @@ def _build_sampler_and_processors(
         and getattr(request, "needs_think_prefix", False)
         and not getattr(request, "is_harmony_model", False)
     ):
-        think_end_ids = sched._resolve_think_end_token_ids()
+        think_end_ids = self._resolve_think_end_token_ids()
         if think_end_ids:
             from .api.thinking import ThinkingBudgetProcessor
 
-            think_start_id = sched._get_think_token_id("think_start_id")
-            leading_ids, trailing_ids = sched._resolve_think_close_pattern()
+            think_start_id = self._get_think_token_id("think_start_id")
+            leading_ids, trailing_ids = self._resolve_think_close_pattern()
             processor = ThinkingBudgetProcessor(
                 think_end_token_ids=think_end_ids,
                 budget=sampling_params.thinking_budget,
@@ -198,7 +199,7 @@ def _build_sampler_and_processors(
         try:
             from ..api.grammar import GrammarConstraintProcessor
 
-            vocab_size = sched._get_model_vocab_size()
+            vocab_size = self._get_model_vocab_size()
             if vocab_size is not None:
                 processor = GrammarConstraintProcessor(
                     compiled_grammar=sampling_params.compiled_grammar,
@@ -218,9 +219,9 @@ def _get_model_vocab_size(self) -> int | None:
     """Return vocab_size from model config, or None if unavailable."""
     from ..utils.tokenizer import resolve_vocab_size
 
-    return resolve_vocab_size(sched.model)
+    return resolve_vocab_size(self.model)
 
-def _get_think_token_id(sched, attr: str) -> int | None:
+def _get_think_token_id(    self, attr: str) -> int | None:
     """Safely read a think token id from the tokenizer.
 
     mlx-lm tokenizers expose ``think_start_id`` / ``think_end_id`` as
@@ -231,7 +232,7 @@ def _get_think_token_id(sched, attr: str) -> int | None:
     Returns the token id, or ``None`` when unavailable.
     """
     try:
-        return getattr(sched.tokenizer, attr, None)
+        return getattr(self.tokenizer, attr, None)
     except (ValueError, TypeError):
         return None
 
@@ -242,23 +243,25 @@ def _resolve_think_end_token_ids(self) -> list[int] | None:
     </think> and </longcat_think> automatically.
     """
     # Tier 1: mlx-lm tokenizer attribute (covers all known think variants)
-    think_end_id = sched._get_think_token_id("think_end_id")
+    think_end_id = self._get_think_token_id("think_end_id")
     if think_end_id is not None:
         return [think_end_id]
 
     # Tier 2: encode the think_end string
-    think_end_str = getattr(sched.tokenizer, "think_end", "</think>")
+    think_end_str = getattr(self.tokenizer, "think_end", "</think>")
     try:
-        ids = sched.tokenizer.encode(think_end_str, add_special_tokens=False)
+        ids = self.tokenizer.encode(think_end_str, add_special_tokens=False)
         if ids:
             return list(ids)
     except Exception:
+        logger.debug("swallowed exception at fusion_mlx/scheduler/sched_thinking.py:255")
+
         pass
 
     # Tier 3: direct token lookup
     try:
-        tid = sched.tokenizer.convert_tokens_to_ids("</think>")
-        if tid != getattr(sched.tokenizer, "unk_token_id", None):
+        tid = self.tokenizer.convert_tokens_to_ids("</think>")
+        if tid != getattr(self.tokenizer, "unk_token_id", None):
             return [tid]
     except (AttributeError, KeyError, TypeError):
         pass
@@ -278,10 +281,10 @@ def _resolve_think_close_pattern(self) -> tuple[list[int] | None, list[int] | No
     """
     import re
 
-    think_end_str = getattr(sched.tokenizer, "think_end", "</think>")
+    think_end_str = getattr(self.tokenizer, "think_end", "</think>")
 
     # Try to get the chat template text
-    template_text = sched._get_chat_template_text()
+    template_text = self._get_chat_template_text()
     if not template_text:
         return None, None
 
@@ -315,17 +318,21 @@ def _resolve_think_close_pattern(self) -> tuple[list[int] | None, list[int] | No
     trailing_ids = None
     if raw_leading:
         try:
-            ids = sched.tokenizer.encode(raw_leading, add_special_tokens=False)
+            ids = self.tokenizer.encode(raw_leading, add_special_tokens=False)
             if ids:
                 leading_ids = list(ids)
         except Exception:
+            logger.debug("swallowed exception at fusion_mlx/scheduler/sched_thinking.py:322")
+
             pass
     if raw_trailing:
         try:
-            ids = sched.tokenizer.encode(raw_trailing, add_special_tokens=False)
+            ids = self.tokenizer.encode(raw_trailing, add_special_tokens=False)
             if ids:
                 trailing_ids = list(ids)
         except Exception:
+            logger.debug("swallowed exception at fusion_mlx/scheduler/sched_thinking.py:330")
+
             pass
 
     return leading_ids, trailing_ids
@@ -333,38 +340,40 @@ def _resolve_think_close_pattern(self) -> tuple[list[int] | None, list[int] | No
 def _get_chat_template_text(self) -> str | None:
     """Get chat template text from the tokenizer or model directory."""
     # Try tokenizer's chat_template attribute (Jinja string)
-    ct = getattr(sched.tokenizer, "_chat_template", None)
+    ct = getattr(self.tokenizer, "_chat_template", None)
     if ct:
         return ct if isinstance(ct, str) else str(ct)
-    ct = getattr(sched.tokenizer, "chat_template", None)
+    ct = getattr(self.tokenizer, "chat_template", None)
     if ct:
         return ct if isinstance(ct, str) else str(ct)
 
     # Try reading the .jinja file from model directory
     import os
 
-    model_path = getattr(sched.config, "model_name", None) or ""
+    model_path = getattr(self.config, "model_name", None) or ""
     jinja_path = os.path.join(model_path, "chat_template.jinja")
     if os.path.isfile(jinja_path):
         try:
             with open(jinja_path, encoding="utf-8") as f:
                 return f.read()
         except Exception:
+            logger.debug("swallowed exception at fusion_mlx/scheduler/sched_thinking.py:355")
+
             pass
 
     return None
 
-def _detect_needs_think_prefix(sched, request: "Request") -> bool:
+def _detect_needs_think_prefix(    self, request: "Request") -> bool:
     """Detect if prompt ends with an open <think> tag (thinking enabled).
 
     Returns False for disabled-thinking patterns like <think></think>
     where </think> immediately follows <think> in the prompt tail.
     """
-    think_start_id = sched._get_think_token_id("think_start_id")
+    think_start_id = self._get_think_token_id("think_start_id")
     if think_start_id is None:
         try:
-            think_start_id = sched.tokenizer.convert_tokens_to_ids("<think>")
-            if think_start_id == getattr(sched.tokenizer, "unk_token_id", None):
+            think_start_id = self.tokenizer.convert_tokens_to_ids("<think>")
+            if think_start_id == getattr(self.tokenizer, "unk_token_id", None):
                 return False
         except (AttributeError, KeyError, TypeError):
             return False
@@ -381,20 +390,20 @@ def _detect_needs_think_prefix(sched, request: "Request") -> bool:
     after_start = last_tokens[last_idx + 1 :]
 
     if after_start:
-        think_end_ids = sched._resolve_think_end_token_ids()
+        think_end_ids = self._resolve_think_end_token_ids()
         if think_end_ids and think_end_ids[0] in after_start:
             return False
 
     return True
 
-def _ensure_batch_generator(sched, sampling_params: SamplingParams) -> None:
+def _ensure_batch_generator(    self, sampling_params: SamplingParams) -> None:
     """Ensure BatchGenerator exists with compatible settings."""
     # Only create once; per-request samplers are passed at insert time.
-    if sched.batch_generator is None:
-        sched.batch_generator = sched._create_batch_generator(sampling_params)
+    if self.batch_generator is None:
+        self.batch_generator = self._create_batch_generator(sampling_params)
 
     # Track latest params for debugging/metrics.
-    sched._current_sampler_params = (
+    self._current_sampler_params = (
         sampling_params.temperature,
         sampling_params.top_p,
         sampling_params.min_p,
@@ -402,7 +411,7 @@ def _ensure_batch_generator(sched, sampling_params: SamplingParams) -> None:
         sampling_params.repetition_penalty,
     )
 
-def _cache_tree_has_stateful_non_sliceable(sched, cache_obj: Any) -> bool:
+def _cache_tree_has_stateful_non_sliceable(    self, cache_obj: Any) -> bool:
     """Detect non-sliceable recurrent cache layers requiring snapshots."""
     # None placeholders from boundary snapshots (sliceable layers replaced).
     if cache_obj is None:
@@ -412,7 +421,7 @@ def _cache_tree_has_stateful_non_sliceable(sched, cache_obj: Any) -> bool:
     sub_caches = getattr(cache_obj, "caches", None)
     if isinstance(sub_caches, (list, tuple)):
         return any(
-            sched._cache_tree_has_stateful_non_sliceable(sub_cache)
+            self._cache_tree_has_stateful_non_sliceable(sub_cache)
             for sub_cache in sub_caches
         )
 

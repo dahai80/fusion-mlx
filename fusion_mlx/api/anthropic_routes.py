@@ -104,6 +104,22 @@ async def _run_anthropic_messages(req: AnthropicMessagesRequest) -> AnthropicMes
     if engine is None:
         raise HTTPException(404, f"Model {model_name} not available")
 
+# Reject multimodal content on text-only models
+    if not getattr(engine, "is_mllm", False):
+        for msg in req.messages:
+            content = getattr(msg, "content", "") if msg else None
+            if isinstance(content, list):
+                for part in content:
+                    pt = part.get("type", "") if isinstance(part, dict) else getattr(part, "type", "")
+                    if pt in ("image_url", "image", "video", "video_url", "audio_url", "audio", "input_audio"):
+                        raise HTTPException(
+                            status_code=400,
+                            detail=(
+                                f"Model '{model_name}' does not support "
+                                  "image, video, or audio inputs."
+                              ),
+                          )
+
     messages = _anthropic_to_messages(req)
     sampling = _build_sampling_params(req)
     request_id = f"msg-{uuid.uuid4().hex[:12]}"
@@ -130,7 +146,13 @@ async def _run_anthropic_messages(req: AnthropicMessagesRequest) -> AnthropicMes
             model=model_name,
         )
         return _adapter.format_response(internal, req)
+    except HTTPException:
+        raise
     except Exception as exc:
+        err_msg = str(exc)
+          # VLM image/video fetch failures -> 400
+        if "Failed to process image" in err_msg or "Failed to process video" in err_msg:
+            raise HTTPException(status_code=400, detail=err_msg)
         logger.exception("Anthropic messages failed for %s", request_id)
         raise HTTPException(500, str(exc))
 
@@ -145,6 +167,22 @@ async def _stream_anthropic_generator(req: AnthropicMessagesRequest) -> AsyncIte
     engine = await _pool.get_engine(model_name)
     if engine is None:
         raise HTTPException(404, f"Model {model_name} not available")
+
+# Reject multimodal content on text-only models
+    if not getattr(engine, "is_mllm", False):
+        for msg in req.messages:
+            content = getattr(msg, "content", "") if msg else None
+            if isinstance(content, list):
+                for part in content:
+                    pt = part.get("type", "") if isinstance(part, dict) else getattr(part, "type", "")
+                    if pt in ("image_url", "image", "video", "video_url", "audio_url", "audio", "input_audio"):
+                        raise HTTPException(
+                            status_code=400,
+                            detail=(
+                                f"Model '{model_name}' does not support "
+                                  "image, video, or audio inputs."
+                              ),
+                          )
 
     messages = _anthropic_to_messages(req)
     sampling = _build_sampling_params(req)
@@ -187,8 +225,13 @@ async def _stream_anthropic_generator(req: AnthropicMessagesRequest) -> AsyncIte
                 yield _adapter.format_stream_end(req)
 
     except Exception as exc:
-        logger.exception("Streaming Anthropic messages failed for %s", request_id)
-        yield f"event: error\ndata: {{\"error\": {str(exc)!r}}}\n\n"
+        err_msg = str(exc)
+          # VLM image/video fetch failures -> 400
+        if "Failed to process image" in err_msg or "Failed to process video" in err_msg:
+            yield f"event: error\ndata: {{\"error\": {err_msg!r}, \"status\": 400}}\n\n"
+        else:
+            logger.exception("Streaming Anthropic messages failed for %s", request_id)
+            yield f"event: error\ndata: {{\"error\": {err_msg!r}}}\n\n"
 
 
 @router.post("/messages")

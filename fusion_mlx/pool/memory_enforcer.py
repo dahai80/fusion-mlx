@@ -356,6 +356,10 @@ class ProcessMemoryEnforcer:
         # Prevents the per-poll warning from spamming logs while keeping
         # the first occurrence loud enough to alert CI / oncall.
         self._scheduler_resolve_warned: set[str] = set()
+        # Model IDs marked for eviction by the enforcer when the pool
+        # lock is held by a loading coroutine. This avoids blocking on
+        # asyncio.Lock while Metal is mid-allocation (which can crash).
+        self._eviction_marked: set[str] = set()
 
     @staticmethod
     def _normalize_tier(tier: str) -> str:
@@ -685,7 +689,7 @@ class ProcessMemoryEnforcer:
         await self._engine_pool.check_ttl_expirations(
             self._settings_manager,
             global_idle_timeout_seconds=(
-                self._global_settings.idle_timeout.idle_timeout_seconds
+                self._global_settings.idle_timeout
                 if self._global_settings else None
             ),
         )
@@ -745,81 +749,128 @@ class ProcessMemoryEnforcer:
         # at the boundary.
         target = soft
 
-        async with self._engine_pool._lock:
-            while self._current_usage_bytes() > target:
-                victim = self._engine_pool._find_lru_victim()
-                if victim is not None:
-                    loaded_non_pinned = [
-                        mid
-                        for mid, e in self._engine_pool._entries.items()
-                        if e.engine is not None and not e.is_pinned
-                    ]
-                    if len(loaded_non_pinned) > 1:
-                        # Multiple non-pinned: evict LRU victim cleanly.
-                        # abort_all_requests is fired before _unload_engine
-                        # so clients receive proper error responses instead
-                        # of silent disconnect.
-                        entry = self._engine_pool._entries.get(victim)
-                        if entry and entry.engine is not None:
-                            if hasattr(entry.engine, "abort_all_requests"):
-                                aborted = await entry.engine.abort_all_requests()
-                                if aborted > 0:
-                                    logger.warning(
-                                        f"Aborted {aborted} requests on "
-                                        f"'{victim}' before eviction"
-                                    )
+        _lock_acquired = False
+        try:
+            _lock_acquired = await asyncio.wait_for(
+                self._engine_pool._lock.acquire(), timeout=2.0
+             )
+        except asyncio.TimeoutError:
+            victim = self._engine_pool._find_lru_victim()
+            if victim:
+                self._eviction_marked.add(victim)
+                entry = self._engine_pool._entries.get(victim)
+                if entry and entry.is_loading:
+                    entry.abort_loading = True
+                    logger.warning(
+                        f"Marked loading model '{victim}' for eviction "
+                        f"(pressure={new_level}, lock timeout)"
+                     )
+            if new_level == "hard":
+                for entry in self._engine_pool._entries.values():
+                    if entry.is_loading and not entry.abort_loading:
+                        entry.abort_loading = True
                         logger.warning(
-                            f"Evicting model '{victim}' (pressure={new_level})"
-                        )
-                        await self._engine_pool._unload_engine(victim)
-                        continue
+                            f"Aborting load '{entry.model_id}' "
+                            f"(hard pressure, lock timeout)"
+                         )
+            post_current = self._current_usage_bytes()
+            post_ceiling = self._get_hard_limit_bytes()
+            post_soft = int(post_ceiling * self._soft_threshold) if post_ceiling > 0 else 0
+            post_hard = int(post_ceiling * self._hard_threshold) if post_ceiling > 0 else 0
+            if post_ceiling <= 0 or post_current < post_soft:
+                post_level = "ok"
+            elif post_current < post_hard:
+                post_level = "soft"
+            else:
+                post_level = "hard"
+            if post_level != self._pressure_level:
+                self._pressure_level = post_level
+                self._propagate_memory_limit()
+            self._walk_store_cache_caps()
+            return
 
-                    # Only one non-pinned model remains.
-                    if new_level == "hard":
-                        # Abort in-flight requests, keep model loaded —
-                        # frees KV blocks so short-context follow-ups work.
-                        entry = self._engine_pool._entries.get(victim)
-                        if entry and entry.engine is not None:
-                            if hasattr(entry.engine, "abort_all_requests"):
-                                aborted = await entry.engine.abort_all_requests()
-                                if aborted > 0:
-                                    logger.warning(
-                                        f"Aborted {aborted} requests on "
-                                        f"'{victim}' due to hard memory "
-                                        f"pressure (model kept loaded)"
-                                    )
-                    # soft: leave in-flight alone — admission pause already
-                    # signaled, eviction can't help further without aborts.
-                    break
-
-                # No non-pinned victim. All loaded models are pinned.
-                if new_level == "hard":
-                    # Hard only: abort any in-progress model loads.
-                    aborted_any = False
-                    for entry in self._engine_pool._entries.values():
-                        if entry.is_loading and not entry.abort_loading:
-                            logger.warning(
-                                f"Aborting in-progress load of "
-                                f"'{entry.model_id}' (hard memory pressure)"
-                            )
+        if _lock_acquired:
+            try:
+                while self._current_usage_bytes() > target:
+                    for mid in list(self._eviction_marked):
+                        entry = self._engine_pool._entries.get(mid)
+                        if entry and entry.is_loading:
                             entry.abort_loading = True
-                            aborted_any = True
-                    if not aborted_any:
-                        has_loaded = any(
-                            e.engine is not None
-                            for e in self._engine_pool._entries.values()
-                        )
-                        if has_loaded:
+                    self._eviction_marked.clear()
+
+                    victim = self._engine_pool._find_lru_victim()
+                    if victim is not None:
+                        loaded_non_pinned = [
+                            mid
+                            for mid, e in self._engine_pool._entries.items()
+                            if e.engine is not None and not e.is_pinned
+                         ]
+                        if len(loaded_non_pinned) > 1:
+                            entry = self._engine_pool._entries.get(victim)
+                            if entry and entry.engine is not None:
+                                if hasattr(entry.engine, "abort_all_requests"):
+                                    aborted = await entry.engine.abort_all_requests()
+                                    if aborted > 0:
+                                        logger.warning(
+                                            f"Aborted {aborted} requests on "
+                                            f"'{victim}' before eviction"
+                                         )
                             logger.warning(
-                                "Hard memory pressure but all loaded models "
-                                "are pinned and no loads in progress."
-                            )
-                        else:
-                            logger.warning(
-                                "Hard memory pressure but no models loaded."
-                            )
-                # soft + all pinned: nothing to do beyond admission pause.
-                break
+                                f"Evicting model '{victim}' (pressure={new_level})"
+                              )
+                            # Release lock before _unload_engine to avoid holding it
+                            # during asyncio.sleep (settle barrier can take up to 5s).
+                            self._engine_pool._lock.release()
+                            await self._engine_pool._unload_engine(victim)
+                            # Re-acquire lock to continue the eviction loop
+                            try:
+                                await asyncio.wait_for(
+                                    self._engine_pool._lock.acquire(), timeout=2.0
+                                 )
+                            except asyncio.TimeoutError:
+                                break
+                            continue
+
+                        if new_level == "hard":
+                            entry = self._engine_pool._entries.get(victim)
+                            if entry and entry.engine is not None:
+                                if hasattr(entry.engine, "abort_all_requests"):
+                                    aborted = await entry.engine.abort_all_requests()
+                                    if aborted > 0:
+                                        logger.warning(
+                                            f"Aborted {aborted} requests on "
+                                            f"'{victim}' due to hard memory "
+                                            f"pressure (model kept loaded)"
+                                         )
+                        break
+
+                    if new_level == "hard":
+                        aborted_any = False
+                        for entry in self._engine_pool._entries.values():
+                            if entry.is_loading and not entry.abort_loading:
+                                logger.warning(
+                                    f"Aborting in-progress load of "
+                                    f"'{entry.model_id}' (hard memory pressure)"
+                                 )
+                                entry.abort_loading = True
+                                aborted_any = True
+                        if not aborted_any:
+                            has_loaded = any(
+                                e.engine is not None
+                                for e in self._engine_pool._entries.values()
+                             )
+                            if has_loaded:
+                                logger.warning(
+                                     "Hard memory pressure but all loaded models "
+                                     "are pinned and no loads in progress."
+                                 )
+                            else:
+                                logger.warning(
+                                     "Hard memory pressure but no models loaded."
+                                 )
+            finally:
+                self._engine_pool._lock.release()
+
 
         # Re-evaluate level after eviction completes so admission state
         # reflects post-eviction reality on the next propagate.

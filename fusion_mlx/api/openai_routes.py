@@ -119,6 +119,22 @@ async def _run_chat(request: ChatCompletionRequest) -> ChatCompletionResponse:
     if engine is None:
         raise HTTPException(404, f"Model {model_name} not available")
 
+    # Reject multimodal content on text-only models
+    if not getattr(engine, "is_mllm", False):
+        for msg in request.messages:
+            content = getattr(msg, "content", "")
+            if isinstance(content, list):
+                for part in content:
+                    pt = part.get("type", "") if isinstance(part, dict) else getattr(part, "type", "")
+                    if pt in ("image_url", "image", "video", "video_url", "audio_url", "audio", "input_audio"):
+                        raise HTTPException(
+                            status_code=400,
+                            detail=(
+                                f"Model '{model_name}' does not support "
+                                "image, video, or audio inputs."
+                            ),
+                        )
+
     messages = [
         {"role": m.role, "content": _extract_text(m)} for m in request.messages
     ]
@@ -138,9 +154,21 @@ async def _run_chat(request: ChatCompletionRequest) -> ChatCompletionResponse:
             tools=request.tools,
             stop=sampling.stop,
         )
+        # Honor parallel_tool_calls=false by capping to 1 call
+        tool_calls = gen.tool_calls
+        if tool_calls and len(tool_calls) > 1 and getattr(request, "parallel_tool_calls", None) is False:
+            tool_calls = tool_calls[:1]
         internal = _gen_to_internal(gen, model_name, request_id)
+        if tool_calls is not None:
+            internal.tool_calls = tool_calls
         return _adapter.format_response(internal, request)
+    except HTTPException:
+        raise
     except Exception as exc:
+        err_msg = str(exc)
+         # VLM image/video fetch failures -> 400
+        if "Failed to process image" in err_msg or "Failed to process video" in err_msg:
+            raise HTTPException(status_code=400, detail=err_msg)
         logger.exception("Non-streaming chat failed for %s", request_id)
         raise HTTPException(500, str(exc))
 
@@ -155,6 +183,22 @@ async def _stream_chat_generator(request: ChatCompletionRequest) -> AsyncIterato
     engine = await _pool.get_engine(model_name)
     if engine is None:
         raise HTTPException(404, f"Model {model_name} not available")
+
+# Reject multimodal content on text-only models
+    if not getattr(engine, "is_mllm", False):
+        for msg in request.messages:
+            content = getattr(msg, "content", "")
+            if isinstance(content, list):
+                for part in content:
+                    pt = part.get("type", "") if isinstance(part, dict) else getattr(part, "type", "")
+                    if pt in ("image_url", "image", "video", "video_url", "audio_url", "audio", "input_audio"):
+                        raise HTTPException(
+                            status_code=400,
+                            detail=(
+                                f"Model '{model_name}' does not support "
+                                 "image, video, or audio inputs."
+                             ),
+                         )
 
     messages = [
         {"role": m.role, "content": _extract_text(m)} for m in request.messages
@@ -215,8 +259,13 @@ async def _stream_chat_generator(request: ChatCompletionRequest) -> AsyncIterato
         yield _adapter.format_stream_end(request)
 
     except Exception as exc:
-        logger.exception("Streaming chat failed for %s", request_id)
-        yield f"data: {{\"error\": {str(exc)!r}}}\n\n"
+        err_msg = str(exc)
+         # VLM image/video fetch failures -> 400
+        if "Failed to process image" in err_msg or "Failed to process video" in err_msg:
+            yield f"data: {{\"error\": {err_msg!r}, \"status\": 400}}\n\n"
+        else:
+            logger.exception("Streaming chat failed for %s", request_id)
+            yield f"data: {{\"error\": {err_msg!r}}}\n\n"
 
 
 async def _stream_chat(request: ChatCompletionRequest) -> StreamingResponse:
