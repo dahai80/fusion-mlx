@@ -2,7 +2,7 @@
 
 import threading
 from dataclasses import dataclass, field
-from typing import Any, Dict
+from typing import Any
 
 
 @dataclass
@@ -17,7 +17,7 @@ class ServerMetrics:
     total_cached_tokens: int = 0
     active_requests: int = 0
     # Per-model stats: model_name -> dict
-    model_stats: Dict[str, Dict[str, Any]] = field(default_factory=dict)
+    model_stats: dict[str, dict[str, Any]] = field(default_factory=dict)
 
     def __post_init__(self):
         self._lock = threading.Lock()
@@ -31,6 +31,19 @@ class ServerMetrics:
     def update_active_requests(self, delta: int) -> None:
         with self._lock:
             self.active_requests += delta
+
+    def to_dict(self) -> dict:
+        """Return a JSON-safe dict, excluding internal lock."""
+        return {
+            "total_requests": self.total_requests,
+            "successful_requests": self.successful_requests,
+            "failed_requests": self.failed_requests,
+            "total_tokens_generated": self.total_tokens_generated,
+            "total_tokens_prompt": self.total_tokens_prompt,
+            "total_cached_tokens": self.total_cached_tokens,
+            "active_requests": self.active_requests,
+            "model_stats": self.model_stats,
+        }
 
 
 # Global singleton

@@ -1,14 +1,15 @@
 from collections import deque
-from unittest.mock import MagicMock, patch
-
-import pytest
+from unittest.mock import MagicMock
 
 from fusion_mlx.request import (
-    Request, RequestOutput, RequestStatus, SamplingParams,
+    Request,
+    RequestStatus,
+    SamplingParams,
 )
 from fusion_mlx.scheduler.config import SchedulerConfig
 from fusion_mlx.scheduler.types import (
-    _StoreCacheGate, _PrefillAbortedError, _PrefillState,
+    _PrefillAbortedError,
+    _StoreCacheGate,
 )
 
 

@@ -4,7 +4,6 @@ import time
 from collections import deque
 from typing import Any
 
-
 _DEFAULT_WINDOWS = (60, 300, 900)
 _MAX_SNAPSHOTS = 90
 _MIN_INTERVAL = 10.0

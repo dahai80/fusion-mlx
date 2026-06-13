@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 from abc import ABC, abstractmethod
-from typing import Any, Dict, Optional, Tuple
+from typing import Any
 
 from .stats import BaseCacheStats
 
@@ -9,7 +9,7 @@ class CacheManager(ABC):
     """Abstract interface for all cache implementations."""
 
     @abstractmethod
-    def fetch(self, key: Any) -> Tuple[Optional[Any], bool]:
+    def fetch(self, key: Any) -> tuple[Any | None, bool]:
         pass
 
     @abstractmethod

@@ -14,7 +14,7 @@ import math
 import os
 import re
 import tempfile
-from typing import AsyncIterator, Optional
+from collections.abc import AsyncIterator
 
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from fastapi.responses import Response, StreamingResponse
@@ -123,7 +123,7 @@ async def _read_upload(file: UploadFile) -> bytes:
     return b"".join(chunks)
 
 
-def _decode_ref_audio_base64(request: AudioSpeechRequest) -> Optional[bytes]:
+def _decode_ref_audio_base64(request: AudioSpeechRequest) -> bytes | None:
     """Validate and decode optional base64 ref_audio from a TTS request."""
     if request.ref_audio is None:
         return None
@@ -152,7 +152,7 @@ def _decode_ref_audio_base64(request: AudioSpeechRequest) -> Optional[bytes]:
         )
 
 
-def _write_ref_audio_tempfile(audio_bytes: Optional[bytes]) -> Optional[str]:
+def _write_ref_audio_tempfile(audio_bytes: bytes | None) -> str | None:
     """Persist decoded ref audio to a temp file if present."""
     if audio_bytes is None:
         return None
@@ -164,7 +164,7 @@ def _write_ref_audio_tempfile(audio_bytes: Optional[bytes]) -> Optional[str]:
         tmp.close()
 
 
-def _cleanup_tempfile(path: Optional[str]) -> None:
+def _cleanup_tempfile(path: str | None) -> None:
     if path and os.path.exists(path):
         try:
             os.unlink(path)
@@ -252,7 +252,7 @@ def _split_tts_text(text: str, max_chars: int = 300) -> list[str]:
 async def _stream_speech_response(
     engine,
     request: AudioSpeechRequest,
-    ref_audio_path: Optional[str],
+    ref_audio_path: str | None,
     streaming_interval: float,
 ) -> AsyncIterator[bytes]:
     """Stream sentence-level TTS as a single WAV header plus PCM chunks."""
@@ -266,7 +266,7 @@ async def _stream_speech_response(
                 "TTS native streaming start: model=%s, text_len=%d, voice=%s",
                 request.model, len(request.input), request.voice,
             )
-            stream_format: Optional[tuple[int, int, int]] = None
+            stream_format: tuple[int, int, int] | None = None
             try:
                 async for sample_rate, channels, sample_width, pcm_bytes in engine.stream_synthesize_pcm(
                     request.input,
@@ -314,7 +314,7 @@ async def _stream_speech_response(
             request.model, len(request.input), len(segments), request.voice,
         )
 
-        stream_format: Optional[tuple[int, int, int]] = None
+        stream_format: tuple[int, int, int] | None = None
         for idx, segment in enumerate(segments, start=1):
             wav_bytes = await engine.synthesize(
                 segment,
@@ -373,10 +373,10 @@ async def _stream_with_prefetched_chunk(
 async def create_transcription(
     file: UploadFile = File(...),
     model: str = Form(...),
-    language: Optional[str] = Form(None),
+    language: str | None = Form(None),
     response_format: str = Form("json"),
     temperature: float = Form(0.0),
-    max_tokens: Optional[int] = Form(None),
+    max_tokens: int | None = Form(None),
     word_timestamps: bool = Form(False),
 ):
     """OpenAI-compatible audio transcription endpoint (Speech-to-Text).

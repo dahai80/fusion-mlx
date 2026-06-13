@@ -17,7 +17,7 @@ import asyncio
 import gc
 import logging
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal
 
 if TYPE_CHECKING:
@@ -25,25 +25,24 @@ if TYPE_CHECKING:
 
 import mlx.core as mx
 
-from ..engines.base import BaseEngine, GenerationOutput
+from ..engine_core import get_mlx_executor
+from ..engines.base import BaseEngine
 from ..engines.batched import BatchedEngine
 from ..engines.embedding import EmbeddingEngine
 from ..engines.reranker import RerankerEngine
-from ..engines.stt import STTEngine
 from ..engines.sts import STSEngine
+from ..engines.stt import STTEngine
 from ..engines.tts import TTSEngine
 from ..engines.vlm import VLMBatchedEngine
 from ..exceptions import (
-    EnginePoolError,
     InsufficientMemoryError,
     ModelLoadingError,
     ModelNotFoundError,
     ModelTooLargeError,
 )
-from .model_discovery import DiscoveredModel, discover_models, format_size
-from ..engine_core import get_mlx_executor
 from ..scheduler import SchedulerConfig
 from ..utils.proc_memory import get_phys_footprint
+from .model_discovery import discover_models, format_size
 
 logger = logging.getLogger(__name__)
 
@@ -229,7 +228,7 @@ class EnginePool:
     }
 
     def apply_settings_overrides(
-        self, settings_manager: "ModelSettingsManager"
+        self, settings_manager: ModelSettingsManager
     ) -> None:
         """Apply model_type_override from persisted settings to discovered entries."""
         for model_id, entry in self._entries.items():

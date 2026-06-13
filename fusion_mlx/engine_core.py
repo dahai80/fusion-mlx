@@ -6,14 +6,15 @@ import concurrent.futures
 import logging
 import time
 import uuid
+from collections.abc import AsyncIterator
 from dataclasses import dataclass
-from typing import Any, AsyncIterator, Dict, List, Optional, Union
+from typing import Any
 
 import mlx.core as mx
 
-from .request import Request, RequestOutput, RequestStatus, SamplingParams
+from .model_registry import get_registry
 from .output_collector import RequestOutputCollector, RequestStreamState
-from .model_registry import get_registry, ModelOwnershipError
+from .request import Request, RequestOutput, SamplingParams
 
 logger = logging.getLogger(__name__)
 
@@ -74,8 +75,8 @@ class EngineCore:
         self,
         model: Any,
         tokenizer: Any,
-        config: Optional[EngineConfig] = None,
-        engine_id: Optional[str] = None,
+        config: EngineConfig | None = None,
+        engine_id: str | None = None,
         force_model_ownership: bool = True,
     ):
         self.model = model
@@ -106,11 +107,11 @@ class EngineCore:
             stream=self._mlx_stream,
         )
 
-        self._active_contexts: Dict[str, RequestContext] = {}
+        self._active_contexts: dict[str, RequestContext] = {}
 
         self._running = False
-        self._task: Optional[asyncio.Task] = None
-        self._start_time: Optional[float] = None
+        self._task: asyncio.Task | None = None
+        self._start_time: float | None = None
         self._steps_executed = 0
 
     async def start(self) -> None:
@@ -194,20 +195,20 @@ class EngineCore:
 
     async def add_request(
         self,
-        prompt: Union[str, List[int]],
-        sampling_params: Optional[SamplingParams] = None,
-        request_id: Optional[str] = None,
-        images: Optional[List[Any]] = None,
-        videos: Optional[List[Any]] = None,
-        vlm_inputs_embeds: Optional[Any] = None,
-        vlm_extra_kwargs: Optional[Dict[str, Any]] = None,
-        vlm_image_hash: Optional[str] = None,
+        prompt: str | list[int],
+        sampling_params: SamplingParams | None = None,
+        request_id: str | None = None,
+        images: list[Any] | None = None,
+        videos: list[Any] | None = None,
+        vlm_inputs_embeds: Any | None = None,
+        vlm_extra_kwargs: dict[str, Any] | None = None,
+        vlm_image_hash: str | None = None,
         vlm_cache_key_start: int = 0,
-        vlm_cache_key_ranges: Optional[list] = None,
-        specprefill: Optional[bool] = None,
-        specprefill_keep_pct: Optional[float] = None,
-        specprefill_threshold: Optional[int] = None,
-        specprefill_system_end: Optional[int] = None,
+        vlm_cache_key_ranges: list | None = None,
+        specprefill: bool | None = None,
+        specprefill_keep_pct: float | None = None,
+        specprefill_threshold: int | None = None,
+        specprefill_system_end: int | None = None,
     ) -> str:
         if request_id is None:
             request_id = str(uuid.uuid4())
@@ -287,7 +288,7 @@ class EngineCore:
         if ctx:
             ctx.collector.clear()
 
-    async def stream_outputs(self, request_id: str, timeout: Optional[float] = None) -> AsyncIterator[RequestOutput]:
+    async def stream_outputs(self, request_id: str, timeout: float | None = None) -> AsyncIterator[RequestOutput]:
         ctx = self._active_contexts.get(request_id)
         if ctx is None:
             return
@@ -306,7 +307,7 @@ class EngineCore:
                         raise RuntimeError(output.error)
                     if output.finished:
                         break
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     logger.warning(f"Timeout waiting for request {request_id}")
                     break
         finally:
@@ -314,9 +315,9 @@ class EngineCore:
 
     async def generate(
         self,
-        prompt: Union[str, List[int]],
-        sampling_params: Optional[SamplingParams] = None,
-        request_id: Optional[str] = None,
+        prompt: str | list[int],
+        sampling_params: SamplingParams | None = None,
+        request_id: str | None = None,
         **kwargs,
     ) -> RequestOutput:
         request_id = await self.add_request(prompt=prompt, sampling_params=sampling_params, request_id=request_id, **kwargs)
@@ -347,9 +348,9 @@ class EngineCore:
 
     def generate_batch_sync(
         self,
-        prompts: List[Union[str, List[int]]],
-        sampling_params: Optional[SamplingParams] = None,
-    ) -> List[RequestOutput]:
+        prompts: list[str | list[int]],
+        sampling_params: SamplingParams | None = None,
+    ) -> list[RequestOutput]:
         if sampling_params is None:
             sampling_params = SamplingParams()
         request_ids = []
@@ -359,7 +360,7 @@ class EngineCore:
             if self.scheduler:
                 self.scheduler.add_request(req)
             request_ids.append(rid)
-        results: Dict[str, RequestOutput] = {}
+        results: dict[str, RequestOutput] = {}
         if self.scheduler:
             while self.scheduler.has_requests():
                 output = self.scheduler.step()
@@ -373,9 +374,9 @@ class EngineCore:
 
     async def generate_batch_async(
         self,
-        prompts: List[Union[str, List[int]]],
-        sampling_params: Optional[SamplingParams] = None,
-      ) -> List[RequestOutput]:
+        prompts: list[str | list[int]],
+        sampling_params: SamplingParams | None = None,
+      ) -> list[RequestOutput]:
         """Non-blocking batch generation via asyncio.gather."""
         tasks = [self.generate(prompt, sampling_params) for prompt in prompts]
         results = await asyncio.gather(*tasks, return_exceptions=True)
@@ -389,9 +390,9 @@ class EngineCore:
 
     async def prefill(
         self,
-        prompt: Union[str, List[int]],
-        sampling_params: Optional[SamplingParams] = None,
-    ) -> Dict[str, Any]:
+        prompt: str | list[int],
+        sampling_params: SamplingParams | None = None,
+    ) -> dict[str, Any]:
         """Run prefill only: process prompt tokens, export KV state, skip decode."""
         request_id = await self.add_request(
             prompt=prompt, sampling_params=sampling_params,
@@ -432,9 +433,9 @@ class EngineCore:
 
     async def decode_with_handoff(
         self,
-        prompt_token_ids: List[int],
-        sampling_params: Optional[SamplingParams],
-        kv_state: Dict[str, Any],
+        prompt_token_ids: list[int],
+        sampling_params: SamplingParams | None,
+        kv_state: dict[str, Any],
     ) -> RequestOutput:
         """Start decode from prefill KV state, skip prefill entirely."""
         request_id = str(uuid.uuid4())
@@ -467,7 +468,7 @@ class EngineCore:
         return final_output
 
 
-    def get_stats(self) -> Dict[str, Any]:
+    def get_stats(self) -> dict[str, Any]:
         scheduler_stats = self.scheduler.get_stats() if self.scheduler else {}
         uptime = time.time() - self._start_time if self._start_time else 0
         return {
@@ -477,7 +478,7 @@ class EngineCore:
             "stream_interval": self.config.stream_interval, **scheduler_stats,
         }
 
-    def get_cache_stats(self) -> Optional[Dict[str, Any]]:
+    def get_cache_stats(self) -> dict[str, Any] | None:
         if self.scheduler:
             return self.scheduler.get_cache_stats()
         return None
@@ -522,9 +523,9 @@ class EngineCore:
 
 
 class AsyncEngineCore:
-    def __init__(self, model: Any, tokenizer: Any, config: Optional[EngineConfig] = None):
+    def __init__(self, model: Any, tokenizer: Any, config: EngineConfig | None = None):
         self.engine = EngineCore(model, tokenizer, config)
-        self._start_task: Optional[asyncio.Task] = None
+        self._start_task: asyncio.Task | None = None
 
     @property
     def _mlx_executor(self):
@@ -546,7 +547,7 @@ class AsyncEngineCore:
             return
         await engine.stop()
 
-    async def add_request(self, prompt: Union[str, List[int]], sampling_params: Optional[SamplingParams] = None, request_id: Optional[str] = None, **kwargs) -> str:
+    async def add_request(self, prompt: str | list[int], sampling_params: SamplingParams | None = None, request_id: str | None = None, **kwargs) -> str:
         return await self.engine.add_request(prompt=prompt, sampling_params=sampling_params, request_id=request_id, **kwargs)
 
     async def abort_request(self, request_id: str) -> bool:
@@ -561,15 +562,15 @@ class AsyncEngineCore:
             return 0
         return await engine.abort_all_requests()
 
-    async def stream_outputs(self, request_id: str, timeout: Optional[float] = None) -> AsyncIterator[RequestOutput]:
+    async def stream_outputs(self, request_id: str, timeout: float | None = None) -> AsyncIterator[RequestOutput]:
         async for output in self.engine.stream_outputs(request_id, timeout):
             yield output
 
-    async def generate(self, prompt: Union[str, List[int]], sampling_params: Optional[SamplingParams] = None, **kwargs) -> RequestOutput:
+    async def generate(self, prompt: str | list[int], sampling_params: SamplingParams | None = None, **kwargs) -> RequestOutput:
         return await self.engine.generate(prompt=prompt, sampling_params=sampling_params, **kwargs)
 
-    def get_stats(self) -> Dict[str, Any]:
+    def get_stats(self) -> dict[str, Any]:
         return self.engine.get_stats()
 
-    def get_cache_stats(self) -> Optional[Dict[str, Any]]:
+    def get_cache_stats(self) -> dict[str, Any] | None:
         return self.engine.get_cache_stats()

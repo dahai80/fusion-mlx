@@ -2,8 +2,8 @@
 """TurboQuant KV cache - stub module. Full implementation migrated when needed."""
 
 from __future__ import annotations
+
 from collections import namedtuple
-from typing import List
 
 TurboQuantMSEState = namedtuple("TurboQuantMSEState", [])
 TurboQuantProdState = namedtuple("TurboQuantProdState", [])

@@ -5,7 +5,7 @@ import asyncio
 import gc
 import logging
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Union
+from typing import Any
 
 import mlx.core as mx
 
@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class EmbeddingOutput:
-    embeddings: List[List[float]]
+    embeddings: list[list[float]]
     total_tokens: int
     dimensions: int
 
@@ -41,7 +41,7 @@ class MLXEmbeddingModel:
         return self._processor
 
     @property
-    def hidden_size(self) -> Optional[int]:
+    def hidden_size(self) -> int | None:
         if self._model is None:
             return None
         try:
@@ -49,7 +49,7 @@ class MLXEmbeddingModel:
         except AttributeError:
             return None
 
-    def embed(self, inputs: List[Any], max_length: int = 512, padding: bool = True, truncation: bool = True) -> "EmbeddingOutput":
+    def embed(self, inputs: list[Any], max_length: int = 512, padding: bool = True, truncation: bool = True) -> "EmbeddingOutput":
         if self._processor is None:
             raise RuntimeError("Model not loaded")
         encoded = self._processor(
@@ -67,7 +67,7 @@ class MLXEmbeddingModel:
         dims = len(mean_emb[0]) if mean_emb else 0
         return EmbeddingOutput(embeddings=mean_emb, total_tokens=total_tokens, dimensions=dims)
 
-    def get_model_info(self) -> Dict[str, Any]:
+    def get_model_info(self) -> dict[str, Any]:
         return {"model_name": self._model_name, "hidden_size": self.hidden_size}
 
 
@@ -79,7 +79,7 @@ class EmbeddingEngine(BaseNonStreamingEngine):
         if batch_size is None:
             batch_size = getattr(scheduler_config, "embedding_batch_size", 32) if scheduler_config is not None else 32
         self._batch_size = max(1, int(batch_size))
-        self._model: Optional[MLXEmbeddingModel] = None
+        self._model: MLXEmbeddingModel | None = None
 
     @property
     def model_name(self) -> str:
@@ -90,7 +90,7 @@ class EmbeddingEngine(BaseNonStreamingEngine):
         return self._model.processor if self._model else None
 
     @property
-    def hidden_size(self) -> Optional[int]:
+    def hidden_size(self) -> int | None:
         return self._model.hidden_size if self._model else None
 
     async def start(self) -> None:
@@ -111,7 +111,7 @@ class EmbeddingEngine(BaseNonStreamingEngine):
         await asyncio.wait_for(
             loop.run_in_executor(get_executor("llm"), lambda: (mx.synchronize(), mx.clear_cache())), timeout=5.0)
 
-    async def embed(self, texts: Union[List[str], List[Dict[str, str]]], max_length: int = 512, padding: bool = True, truncation: bool = True) -> EmbeddingOutput:
+    async def embed(self, texts: list[str] | list[dict[str, str]], max_length: int = 512, padding: bool = True, truncation: bool = True) -> EmbeddingOutput:
         if self._model is None:
             raise RuntimeError("Engine not started. Call start() first.")
         model = self._model
@@ -122,7 +122,7 @@ class EmbeddingEngine(BaseNonStreamingEngine):
         activity_id = self._begin_activity("embedding", detail="Embedding", total_items=len(input_items))
         try:
             loop = asyncio.get_running_loop()
-            embeddings: List[List[float]] = []
+            embeddings: list[list[float]] = []
             total_tokens = 0
             dimensions = 0
             for start in range(0, len(input_items), batch_size):
@@ -139,7 +139,7 @@ class EmbeddingEngine(BaseNonStreamingEngine):
         finally:
             self._end_activity(activity_id)
 
-    def get_stats(self) -> Dict[str, Any]:
+    def get_stats(self) -> dict[str, Any]:
         return {"model_name": self._model_name, "loaded": self._model is not None, "hidden_size": self.hidden_size, "batch_size": self._batch_size}
 
     def __repr__(self) -> str:

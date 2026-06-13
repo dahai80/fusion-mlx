@@ -86,10 +86,10 @@ class _LazyMockObject:
     def __init__(self, name: str) -> None:
         self._name = name
 
-    def __call__(self, *args, **kwargs) -> "_LazyMockObject":
+    def __call__(self, *args, **kwargs) -> _LazyMockObject:
         return _LazyMockObject(f"{self._name}()")
 
-    def __getattr__(self, name: str) -> "_LazyMockObject":
+    def __getattr__(self, name: str) -> _LazyMockObject:
         return _LazyMockObject(f"{self._name}.{name}")
 
     def __repr__(self) -> str:
@@ -204,7 +204,7 @@ _KNOWN_PROBE_NAMES: frozenset[str] = frozenset({
 })
 
 
-def _make_top_level_torch_getattr() -> "callable":
+def _make_top_level_torch_getattr() -> callable:
     """Return a ``__getattr__`` for the stub's top-level torch module.
 
     Real-torch users who reach an unset attribute would get an

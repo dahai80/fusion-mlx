@@ -1,21 +1,34 @@
 # SPDX-License-Identifier: Apache-2.0
 """Unit tests for scheduler modules — config, types, helpers, trim, query, handoff, batch, misc."""
 
-from collections import deque
 from unittest.mock import MagicMock, patch
+
 import pytest
 
-from fusion_mlx.scheduler.config import SchedulerConfig, SchedulerOutput, SchedulingPolicy
-from fusion_mlx.scheduler.types import (
-    _StoreCacheGate, _PrefillAbortedError, _BoundarySnapshotProvider,
+from fusion_mlx.request import (
+    Request,
+    RequestOutput,
+    RequestStatus,
+    SamplingParams,
+)
+from fusion_mlx.scheduler.config import (
+    SchedulerConfig,
+    SchedulerOutput,
+    SchedulingPolicy,
 )
 from fusion_mlx.scheduler.helpers import (
-    _prompt_cache_needs_snapshots, _cache_layer_token_count, _cache_base_sizes,
-    _slice_vlm_extra, _advance_vlm_extra, _deferred_clear_delay,
     _KNOWN_SLICEABLE_CACHE_TYPES,
+    _advance_vlm_extra,
+    _cache_base_sizes,
+    _cache_layer_token_count,
+    _deferred_clear_delay,
+    _prompt_cache_needs_snapshots,
+    _slice_vlm_extra,
 )
-from fusion_mlx.request import (
-    Request, RequestOutput, RequestStatus, SamplingParams,
+from fusion_mlx.scheduler.types import (
+    _BoundarySnapshotProvider,
+    _PrefillAbortedError,
+    _StoreCacheGate,
 )
 
 

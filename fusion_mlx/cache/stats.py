@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
-from dataclasses import dataclass, asdict, field
-from typing import Any, Dict
+from dataclasses import asdict, dataclass, field
+from typing import Any
 
 
 @dataclass
@@ -34,7 +34,7 @@ class BaseCacheStats:
         self.misses = 0
         self.evictions = 0
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         d = asdict(self)
         d["total_queries"] = self.total_queries
         d["hit_rate"] = self.hit_rate
@@ -94,7 +94,7 @@ class PagedCacheStats(BaseCacheStats):
         super().reset()
         self.cow_copies = 0
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         d = super().to_dict()
         d["utilization"] = self.utilization
         return d
@@ -155,7 +155,7 @@ class PagedSSDCacheStats(BaseCacheStats):
         self.errors = 0
         self.ssd_write_drops = 0
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         d = super().to_dict()
         d["save_rate"] = self.save_rate
         return d

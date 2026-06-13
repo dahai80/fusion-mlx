@@ -7,7 +7,7 @@ import inspect
 import logging
 import time
 from collections.abc import AsyncIterator
-from typing import Any, Dict, Optional
+from typing import Any
 
 import mlx.core as mx
 import numpy as np
@@ -79,19 +79,19 @@ class TTSEngine(BaseNonStreamingEngine):
             loop.run_in_executor(get_executor("audio"), lambda: (mx.synchronize(), mx.clear_cache())), timeout=5.0)
 
     async def synthesize(
-        self, text: str, voice: Optional[str] = None, speed: float = 1.0,
-        instructions: Optional[str] = None, ref_audio: Optional[str] = None,
-        ref_text: Optional[str] = None, temperature: Optional[float] = None,
-        top_k: Optional[int] = None, top_p: Optional[float] = None,
-        repetition_penalty: Optional[float] = None, max_tokens: Optional[int] = None, **kwargs,
+        self, text: str, voice: str | None = None, speed: float = 1.0,
+        instructions: str | None = None, ref_audio: str | None = None,
+        ref_text: str | None = None, temperature: float | None = None,
+        top_k: int | None = None, top_p: float | None = None,
+        repetition_penalty: float | None = None, max_tokens: int | None = None, **kwargs,
         ) -> bytes:
         if self._model is None:
             raise RuntimeError("Engine not started.")
         model = self._model
         t0 = time.monotonic()
 
-        def _build_kwargs() -> Dict[str, Any]:
-            gk: Dict[str, Any] = {"text": text, "verbose": False}
+        def _build_kwargs() -> dict[str, Any]:
+            gk: dict[str, Any] = {"text": text, "verbose": False}
             gp = inspect.signature(model.generate).parameters
             if voice is not None:
                 gk["voice"] = voice if "voice" in gp else gk.setdefault("instruct", voice) if "instruct" in gp else None
@@ -131,11 +131,11 @@ class TTSEngine(BaseNonStreamingEngine):
             await self._finish_activity(activity_id)
 
     async def stream_synthesize_pcm(
-        self, text: str, voice: Optional[str] = None, speed: float = 1.0,
-        instructions: Optional[str] = None, ref_audio: Optional[str] = None,
-        ref_text: Optional[str] = None, temperature: Optional[float] = None,
-        top_k: Optional[int] = None, top_p: Optional[float] = None,
-        repetition_penalty: Optional[float] = None, max_tokens: Optional[int] = None,
+        self, text: str, voice: str | None = None, speed: float = 1.0,
+        instructions: str | None = None, ref_audio: str | None = None,
+        ref_text: str | None = None, temperature: float | None = None,
+        top_k: int | None = None, top_p: float | None = None,
+        repetition_penalty: float | None = None, max_tokens: int | None = None,
         streaming_interval: float = 0.4, **kwargs,
         ) -> AsyncIterator[tuple[int, int, int, bytes]]:
         if self._model is None:
@@ -145,8 +145,8 @@ class TTSEngine(BaseNonStreamingEngine):
         model = self._model
         t0 = time.monotonic()
 
-        def _build_kwargs() -> Dict[str, Any]:
-            gk: Dict[str, Any] = {"text": text, "verbose": False, "stream": True}
+        def _build_kwargs() -> dict[str, Any]:
+            gk: dict[str, Any] = {"text": text, "verbose": False, "stream": True}
             gp = inspect.signature(model.generate).parameters
             if "streaming_interval" in gp:
                 gk["streaming_interval"] = streaming_interval
@@ -204,7 +204,7 @@ class TTSEngine(BaseNonStreamingEngine):
         finally:
             await self._finish_activity(activity_id)
 
-    def get_stats(self) -> Dict[str, Any]:
+    def get_stats(self) -> dict[str, Any]:
         return {"model_name": self._model_name, "loaded": self._model is not None}
 
     def __repr__(self) -> str:

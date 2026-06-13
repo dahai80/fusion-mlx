@@ -297,7 +297,7 @@ def _is_unsupported_model(model_path: Path) -> bool:
     try:
         with open(config_path) as f:
             config = json.load(f)
-    except (json.JSONDecodeError, IOError):
+    except (OSError, json.JSONDecodeError):
         return False
 
     architectures = config.get("architectures", [])
@@ -351,7 +351,7 @@ def _has_sentence_transformers_embedding_pipeline(model_path: Path) -> bool:
     try:
         with open(modules_path) as f:
             modules = json.load(f)
-    except (json.JSONDecodeError, IOError):
+    except (OSError, json.JSONDecodeError):
         return False
 
     if not isinstance(modules, list):
@@ -423,7 +423,7 @@ def detect_model_type(model_path: Path) -> ModelType:
     try:
         with open(config_path) as f:
             config = json.load(f)
-    except (json.JSONDecodeError, IOError):
+    except (OSError, json.JSONDecodeError):
         return "llm"
 
     # Check architectures field for reranker first (more specific)

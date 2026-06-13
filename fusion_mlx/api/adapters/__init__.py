@@ -6,6 +6,7 @@ This package provides adapters for different API formats (OpenAI, Anthropic),
 enabling clean separation between API-specific logic and core inference.
 """
 
+from .anthropic import AnthropicAdapter
 from .base import (
     BaseAdapter,
     InternalMessage,
@@ -14,11 +15,10 @@ from .base import (
     StreamChunk,
 )
 from .openai import OpenAIAdapter
-from .anthropic import AnthropicAdapter
 from .sse_formatter import (
-    SSEFormatter,
-    OpenAISSEFormatter,
     AnthropicSSEFormatter,
+    OpenAISSEFormatter,
+    SSEFormatter,
 )
 
 __all__ = [

@@ -5,7 +5,7 @@ import enum
 import time
 from collections import Counter
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any
 
 
 class RequestStatus(enum.IntEnum):
@@ -21,7 +21,7 @@ class RequestStatus(enum.IntEnum):
         return status > RequestStatus.PREEMPTED
 
     @staticmethod
-    def get_finish_reason(status: "RequestStatus") -> Optional[str]:
+    def get_finish_reason(status: "RequestStatus") -> str | None:
         if status == RequestStatus.FINISHED_STOPPED:
             return "stop"
         elif status == RequestStatus.FINISHED_LENGTH_CAPPED:
@@ -43,13 +43,13 @@ class SamplingParams:
     repetition_penalty: float = 1.0
     presence_penalty: float = 0.0
     frequency_penalty: float = 0.0
-    stop: Optional[List[str]] = None
-    stop_token_ids: Optional[List[int]] = None
+    stop: list[str] | None = None
+    stop_token_ids: list[int] | None = None
     logprobs: bool = False
-    top_logprobs: Optional[int] = None
-    thinking_budget: Optional[int] = None
+    top_logprobs: int | None = None
+    thinking_budget: int | None = None
     compiled_grammar: Any = None
-    seed: Optional[int] = None
+    seed: int | None = None
 
     # SpecPrefill (set per-request by engine)
     _specprefill_enabled: bool = False
@@ -67,50 +67,50 @@ class SamplingParams:
 @dataclass
 class Request:
     request_id: str
-    prompt: Union[str, List[int]]
+    prompt: str | list[int]
     sampling_params: SamplingParams
     arrival_time: float = field(default_factory=time.monotonic)
     priority: int = 0
 
     # Set after tokenization
-    prompt_token_ids: Optional[List[int]] = None
+    prompt_token_ids: list[int] | None = None
     num_prompt_tokens: int = 0
 
     # Generation state
     status: RequestStatus = RequestStatus.WAITING
     num_computed_tokens: int = 0
-    output_token_ids: List[int] = field(default_factory=list)
+    output_token_ids: list[int] = field(default_factory=list)
     token_freqs: Counter = field(default_factory=Counter)
     output_text: str = ""
-    generation_started_at: Optional[float] = None
-    last_activity_at: Optional[float] = None
+    generation_started_at: float | None = None
+    last_activity_at: float | None = None
 
     # For BatchGenerator integration
-    batch_uid: Optional[int] = None
+    batch_uid: int | None = None
 
     # Prefix cache fields
-    prompt_cache: Optional[List[Any]] = None
+    prompt_cache: list[Any] | None = None
     cached_tokens: int = 0
-    remaining_tokens: Optional[List[int]] = None
+    remaining_tokens: list[int] | None = None
 
     # Paged cache fields
-    block_table: Optional[Any] = None
+    block_table: Any | None = None
     shared_prefix_blocks: int = 0
 
     # Multimodal content
-    images: Optional[List[Any]] = None
-    videos: Optional[List[Any]] = None
+    images: list[Any] | None = None
+    videos: list[Any] | None = None
 
     # VLM fields
-    vlm_inputs_embeds: Optional[Any] = None
-    vlm_extra_kwargs: Optional[Dict[str, Any]] = None
-    vlm_image_hash: Optional[str] = None
+    vlm_inputs_embeds: Any | None = None
+    vlm_extra_kwargs: dict[str, Any] | None = None
+    vlm_image_hash: str | None = None
     vlm_cache_key_start: int = 0
-    vlm_cache_key_ranges: Optional[List[Tuple[int, str]]] = None
+    vlm_cache_key_ranges: list[tuple[int, str]] | None = None
     rope_deltas: float = 0.0
 
     # SpecPrefill
-    specprefill_indices: Optional[Any] = None
+    specprefill_indices: Any | None = None
     specprefill_total_tokens: int = 0
     specprefill_position_offset: int = 0
     specprefill_system_end: int = 0
@@ -124,16 +124,16 @@ class Request:
     is_harmony_model: bool = False
 
     # Metadata
-    finish_reason: Optional[str] = None
+    finish_reason: str | None = None
 
     @property
-    def vlm_extra_keys_for_cache(self) -> Optional[Tuple[str, ...]]:
+    def vlm_extra_keys_for_cache(self) -> tuple[str, ...] | None:
         if self.vlm_image_hash:
             return (self.vlm_image_hash,)
         return None
 
     @property
-    def vlm_extra_key_token_start_for_cache(self) -> Optional[int]:
+    def vlm_extra_key_token_start_for_cache(self) -> int | None:
         if self.vlm_image_hash:
             return self.vlm_cache_key_start
         return None
@@ -141,7 +141,7 @@ class Request:
     @property
     def vlm_extra_key_ranges_for_cache(
         self,
-    ) -> Optional[List[Tuple[int, Tuple[str, ...]]]]:
+    ) -> list[tuple[int, tuple[str, ...]]] | None:
         if not self.vlm_cache_key_ranges:
             return None
         return [(start, (h,)) for start, h in self.vlm_cache_key_ranges]
@@ -161,7 +161,7 @@ class Request:
     def is_finished(self) -> bool:
         return RequestStatus.is_finished(self.status)
 
-    def get_finish_reason(self) -> Optional[str]:
+    def get_finish_reason(self) -> str | None:
         if self.finish_reason:
             return self.finish_reason
         return RequestStatus.get_finish_reason(self.status)
@@ -171,7 +171,7 @@ class Request:
         self.token_freqs[token_id] += 1
         self.num_computed_tokens += 1
 
-    def set_finished(self, status: RequestStatus, reason: Optional[str] = None) -> None:
+    def set_finished(self, status: RequestStatus, reason: str | None = None) -> None:
         self.status = status
         self.finish_reason = reason or RequestStatus.get_finish_reason(status)
 
@@ -192,20 +192,20 @@ class Request:
 @dataclass
 class RequestOutput:
     request_id: str
-    new_token_ids: List[int] = field(default_factory=list)
+    new_token_ids: list[int] = field(default_factory=list)
     new_text: str = ""
-    output_token_ids: List[int] = field(default_factory=list)
+    output_token_ids: list[int] = field(default_factory=list)
     output_text: str = ""
     finished: bool = False
-    finish_reason: Optional[str] = None
+    finish_reason: str | None = None
     prompt_tokens: int = 0
     completion_tokens: int = 0
-    tool_calls: Optional[List[Dict[str, str]]] = None
+    tool_calls: list[dict[str, str]] | None = None
     cached_tokens: int = 0
-    error: Optional[str] = None
+    error: str | None = None
 
     @property
-    def usage(self) -> Dict[str, int]:
+    def usage(self) -> dict[str, int]:
         return {
             "prompt_tokens": self.prompt_tokens,
             "completion_tokens": self.completion_tokens,

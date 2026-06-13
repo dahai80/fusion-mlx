@@ -8,14 +8,14 @@ SSE events in different API formats (OpenAI, Anthropic).
 
 import json
 from abc import ABC, abstractmethod
-from typing import Any, Dict
+from typing import Any
 
 
 class SSEFormatter(ABC):
     """Abstract base class for SSE event formatting."""
 
     @abstractmethod
-    def format_event(self, event_type: str, data: Dict[str, Any]) -> str:
+    def format_event(self, event_type: str, data: dict[str, Any]) -> str:
         """
         Format an SSE event.
 
@@ -47,7 +47,7 @@ class OpenAISSEFormatter(SSEFormatter):
     The stream ends with `data: [DONE]\n\n`
     """
 
-    def format_event(self, event_type: str, data: Dict[str, Any]) -> str:
+    def format_event(self, event_type: str, data: dict[str, Any]) -> str:
         """
         Format an SSE event in OpenAI format.
 
@@ -80,7 +80,7 @@ class AnthropicSSEFormatter(SSEFormatter):
     The stream ends with a message_stop event (no separate [DONE] marker).
     """
 
-    def format_event(self, event_type: str, data: Dict[str, Any]) -> str:
+    def format_event(self, event_type: str, data: dict[str, Any]) -> str:
         """
         Format an SSE event in Anthropic format.
 

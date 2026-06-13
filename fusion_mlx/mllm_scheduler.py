@@ -30,12 +30,12 @@ from typing import Any
 import mlx.core as mx
 from mlx_lm.tokenizer_utils import NaiveStreamingDetokenizer
 
+from .cache.mllm_cache import MLLMCacheManager
 from .mllm_batch_generator import (
     MLLMBatchGenerator,
     MLLMBatchRequest,
     MLLMBatchResponse,
 )
-from .cache.mllm_cache import MLLMCacheManager
 from .multimodal_processor import MultimodalProcessor
 from .request import RequestOutput, RequestStatus, SamplingParams
 

@@ -2,8 +2,7 @@
 """Output collector for streaming with low-latency optimizations."""
 
 import asyncio
-from dataclasses import dataclass, field
-from typing import List, Optional
+from dataclasses import dataclass
 
 from .request import RequestOutput
 
@@ -14,7 +13,7 @@ class RequestOutputCollector:
     _waiting_consumers: int = 0
 
     def __init__(self, aggregate: bool = True):
-        self.output: Optional[RequestOutput] = None
+        self.output: RequestOutput | None = None
         self.ready = asyncio.Event()
         self.aggregate = aggregate
         self._is_waiting = False
@@ -28,7 +27,7 @@ class RequestOutputCollector:
             self.output = output
         self.ready.set()
 
-    def get_nowait(self) -> Optional[RequestOutput]:
+    def get_nowait(self) -> RequestOutput | None:
         output = self.output
         if output is not None:
             self.output = None

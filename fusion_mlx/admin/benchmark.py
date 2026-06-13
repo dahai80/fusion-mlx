@@ -13,7 +13,7 @@ import time
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 from pydantic import BaseModel, field_validator
 
@@ -83,7 +83,7 @@ class BenchmarkRun:
     events: list[dict] = field(default_factory=list)
     cond: asyncio.Condition = field(default_factory=asyncio.Condition)
     terminal: bool = False
-    task: Optional[asyncio.Task] = None
+    task: asyncio.Task | None = None
     results: list[dict] = field(default_factory=list)
     error_message: str = ""
     # Experimental flags active when the benchmark started. When non-empty
@@ -113,12 +113,12 @@ class BenchmarkRun:
 _BENCH_TERMINAL_TYPES = frozenset({"upload_done", "error"})
 
 
-def get_run(bench_id: str) -> Optional[BenchmarkRun]:
+def get_run(bench_id: str) -> BenchmarkRun | None:
     """Get a benchmark run by ID."""
     return _benchmark_runs.get(bench_id)
 
 
-def get_active_run() -> Optional[BenchmarkRun]:
+def get_active_run() -> BenchmarkRun | None:
     """Return the currently-running throughput benchmark, if any.
 
     Discovery surface for clients that need to attach to an in-progress

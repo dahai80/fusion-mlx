@@ -6,7 +6,6 @@ import copy
 import logging
 from collections.abc import AsyncIterator
 from typing import Any
-import mlx.core as mx
 
 from ..engine_core import AsyncEngineCore, EngineConfig, get_executor
 from ..request import SamplingParams
@@ -116,6 +115,7 @@ class BatchedEngine(BaseEngine):
             return
 
         from mlx_lm import load
+
         from ..scheduler import SchedulerConfig
 
         tokenizer_config = {"trust_remote_code": self._trust_remote_code}
@@ -143,7 +143,9 @@ class BatchedEngine(BaseEngine):
         if self._model_settings is not None:
             tq_enabled = getattr(self._model_settings, "turboquant_kv_enabled", False)
             if tq_enabled:
-                from ..patches.turboquant_attention import apply_turboquant_attention_patch
+                from ..patches.turboquant_attention import (
+                    apply_turboquant_attention_patch,
+                )
                 apply_turboquant_attention_patch()
                 tq_bits = float(getattr(self._model_settings, "turboquant_kv_bits", 4))
                 self._engine.engine.scheduler._turboquant_kv_bits = tq_bits
@@ -256,8 +258,8 @@ class BatchedEngine(BaseEngine):
             xtc_threshold=kwargs.get("xtc_threshold", 0.1),
             repetition_penalty=repetition_penalty, presence_penalty=presence_penalty,
             frequency_penalty=kwargs.get("frequency_penalty", 0.0),
-            stop=stop or [], thinking_budget=kwargs.get("thinking_budget", None),
-            compiled_grammar=kwargs.get("compiled_grammar", None), seed=kwargs.get("seed", None),
+            stop=stop or [], thinking_budget=kwargs.get("thinking_budget"),
+            compiled_grammar=kwargs.get("compiled_grammar"), seed=kwargs.get("seed"),
         )
         output = await self._engine.generate(prompt=prompt, sampling_params=sampling_params)
         from ..api.utils import clean_special_tokens
@@ -282,8 +284,8 @@ class BatchedEngine(BaseEngine):
             xtc_threshold=kwargs.get("xtc_threshold", 0.1),
             repetition_penalty=repetition_penalty, presence_penalty=presence_penalty,
             frequency_penalty=kwargs.get("frequency_penalty", 0.0),
-            stop=stop or [], thinking_budget=kwargs.get("thinking_budget", None),
-            compiled_grammar=kwargs.get("compiled_grammar", None), seed=kwargs.get("seed", None),
+            stop=stop or [], thinking_budget=kwargs.get("thinking_budget"),
+            compiled_grammar=kwargs.get("compiled_grammar"), seed=kwargs.get("seed"),
         )
         specprefill_kwargs = {}
         if kwargs.get("specprefill") is not None:

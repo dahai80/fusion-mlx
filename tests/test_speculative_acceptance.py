@@ -1,6 +1,4 @@
-from unittest.mock import MagicMock, patch
 
-import pytest
 
 from fusion_mlx.speculative.prompt_lookup import (
     PromptLookupDecoder,

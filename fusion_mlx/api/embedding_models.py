@@ -6,18 +6,16 @@ These models define the request and response schemas for:
 - /v1/embeddings endpoint
 """
 
-import time
-import uuid
-from typing import List, Literal, Optional, Union
+from typing import Literal
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, model_validator
 
 
 class EmbeddingInputItem(BaseModel):
     """Structured input item for multimodal embeddings."""
 
-    text: Optional[str] = None
-    image: Optional[str] = None
+    text: str | None = None
+    image: str | None = None
 
     model_config = {"extra": "forbid"}
 
@@ -36,10 +34,10 @@ class EmbeddingRequest(BaseModel):
     OpenAI-compatible request format for the /v1/embeddings endpoint.
     """
 
-    input: Optional[Union[str, List[str]]] = None
+    input: str | list[str] | None = None
     """Input text(s) to embed. Can be a single string or list of strings."""
 
-    items: Optional[List[EmbeddingInputItem]] = None
+    items: list[EmbeddingInputItem] | None = None
     """Structured embedding items for multimodal inputs."""
 
     model: str
@@ -52,7 +50,7 @@ class EmbeddingRequest(BaseModel):
     - "base64": Returns a base64-encoded string of little-endian floats
     """
 
-    dimensions: Optional[int] = None
+    dimensions: int | None = None
     """
     The number of dimensions the output embeddings should have.
     Only supported by some models. If not supported, returns full dimensions.
@@ -79,7 +77,7 @@ class EmbeddingData(BaseModel):
     index: int
     """The index of the embedding in the input list."""
 
-    embedding: Union[List[float], str]
+    embedding: list[float] | str
     """
     The embedding vector.
     - List[float] when encoding_format="float"
@@ -107,7 +105,7 @@ class EmbeddingResponse(BaseModel):
     object: str = "list"
     """The object type, always "list"."""
 
-    data: List[EmbeddingData]
+    data: list[EmbeddingData]
     """List of embedding objects."""
 
     model: str

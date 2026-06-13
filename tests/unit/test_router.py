@@ -1,4 +1,5 @@
-from unittest.mock import MagicMock, AsyncMock
+from unittest.mock import AsyncMock, MagicMock
+
 import pytest
 
 from fusion_mlx.router.router import RequestRouter

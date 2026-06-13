@@ -3,12 +3,16 @@
 
 import time
 from unittest.mock import AsyncMock, MagicMock
+
 import pytest
 
-from fusion_mlx.router.smart_router import (
-    SmartRouter, RouterConfig, EngineBackend, BenchmarkResult,
-)
 from fusion_mlx.router.cloud_router import CloudRouter
+from fusion_mlx.router.smart_router import (
+    BenchmarkResult,
+    EngineBackend,
+    RouterConfig,
+    SmartRouter,
+)
 
 
 class TestRouterDecisionLatency:

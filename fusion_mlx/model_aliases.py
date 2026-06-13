@@ -2,7 +2,6 @@
 """Model alias definitions for fusion-mlx."""
 
 from dataclasses import dataclass
-from typing import List, Optional
 
 
 @dataclass
@@ -11,9 +10,9 @@ class AliasProfile:
     hf_path: str
     supports_dflash: bool = False
     is_moe: bool = False
-    drafter_hf_path: Optional[str] = None
+    drafter_hf_path: str | None = None
     description: str = ""
 
 
-def list_profiles() -> List[AliasProfile]:
+def list_profiles() -> list[AliasProfile]:
     return []

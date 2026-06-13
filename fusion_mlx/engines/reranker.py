@@ -4,7 +4,7 @@
 import asyncio
 import gc
 import logging
-from typing import Any, Dict
+from typing import Any
 
 import mlx.core as mx
 
@@ -14,6 +14,7 @@ from .base import BaseNonStreamingEngine
 logger = logging.getLogger(__name__)
 
 from dataclasses import dataclass
+
 
 @dataclass
 class RerankOutput:
@@ -78,7 +79,7 @@ class MLXRerankerModel:
         total_tokens = sum(len(e) for e in encoded["input_ids"])
         return RerankOutput(scores=scores, indices=indices, total_tokens=total_tokens)
 
-    def get_model_info(self) -> Dict[str, Any]:
+    def get_model_info(self) -> dict[str, Any]:
         return {"model_name": self._model_name, "num_labels": self.num_labels}
 
 
@@ -136,7 +137,7 @@ class RerankerEngine(BaseNonStreamingEngine):
         finally:
             await self._finish_activity(activity_id)
 
-    def get_stats(self) -> Dict[str, Any]:
+    def get_stats(self) -> dict[str, Any]:
         return {"model_name": self._model_name, "loaded": self._model is not None, "num_labels": self.num_labels}
 
     def __repr__(self) -> str:

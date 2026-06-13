@@ -8,15 +8,7 @@ internal request/response format used by the inference engine.
 
 import json
 import uuid
-from typing import Any, List, Optional
 
-from .base import (
-    BaseAdapter,
-    InternalMessage,
-    InternalRequest,
-    InternalResponse,
-    StreamChunk,
-)
 from ..anthropic_models import (
     MessagesRequest as AnthropicMessagesRequest,
 )
@@ -33,6 +25,13 @@ from ..anthropic_utils import (
     create_message_stop_event,
     create_text_delta_event,
     map_finish_reason_to_stop_reason,
+)
+from .base import (
+    BaseAdapter,
+    InternalMessage,
+    InternalRequest,
+    InternalResponse,
+    StreamChunk,
 )
 
 

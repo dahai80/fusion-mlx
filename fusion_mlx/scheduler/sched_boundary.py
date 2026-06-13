@@ -11,60 +11,25 @@ The scheduler follows vLLM's design with:
 - Continuous batching via BatchGenerator
 """
 
-import concurrent.futures
-import copy
-import gc
 import logging
 
 logger = logging.getLogger(__name__)
-import os
-import threading
-import time
-from collections import defaultdict, deque
-from collections.abc import Callable
-from contextlib import contextmanager
-from dataclasses import dataclass, field
-from enum import Enum
-from pathlib import Path
 from typing import Any, Optional
 
 import mlx.core as mx
-from mlx_lm.generate import (
-    BatchGenerator,
-    GenerationBatch,
-    PromptProcessingBatch,
-    SequenceStateMachine,
-    generation_stream,
-)
-from mlx_lm.models.cache import make_prompt_cache
-from mlx_lm.sample_utils import make_logits_processors
 
-from ..cache.observability import CacheRateTracker
-from ..cache.paged_cache import PagedCacheManager
-from ..cache.prefix_cache import BlockAwarePrefixCache
-from ..exceptions import is_cache_corruption_error
-from ..prefill_progress import get_prefill_tracker
-from ..prefill_transient_tracker import PrefillTransientTracker
-from ..request import Request, RequestOutput, RequestStatus, SamplingParams
-from ..speculative.vlm_mtp import VLMMTPDrafter, run_vlm_mtp_decode
-from ..utils.proc_memory import get_phys_footprint
-from ..utils.sampling import make_sampler as omlx_make_sampler
+from ..request import Request
+from .helpers import (
+    _KNOWN_SLICEABLE_CACHE_TYPES,
+    _safe_sync_stream,
+)
 
 # Module-level alias so Scheduler.__init__ can fall back to mlx-lm's default
 # stream when no per-engine stream is provided.
-
 from .types import (
-     _VLMMTPDecodeState, _VLMMTPResponse, _mx_buffer_access_lock,
-     _StoreCacheGate, _PrefillAbortedError, _PrefillState,
-     _BoundarySnapshotProvider,
+    _BoundarySnapshotProvider,
 )
-from .helpers import (
-     _sync_and_clear_cache, _safe_sync_stream,
-     _prompt_cache_needs_snapshots, _cache_layer_token_count, _cache_base_sizes,
-     _vlm_extra_seq_slice, _slice_vlm_extra, _advance_vlm_extra,
-     _KNOWN_SLICEABLE_CACHE_TYPES,
-)
-from .monkeypatches import _default_generation_stream
+
 
 def _cache_list_needs_boundary_snapshot(    self, cache_list: list[Any]) -> bool:
     """Return True if any layer cache requires boundary snapshots."""

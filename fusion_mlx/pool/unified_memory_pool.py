@@ -24,9 +24,7 @@ import threading
 import time
 import uuid
 from dataclasses import dataclass, field
-from typing import Any, Optional
-
-import mlx.core as mx
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -510,7 +508,7 @@ class UnifiedMemoryPool:
     def __init__(
         self,
         total_bytes: int = 0,
-        quotas: Optional[dict[str, int]] = None,
+        quotas: dict[str, int] | None = None,
         frag_threshold: float = 0.4,
     ):
         """

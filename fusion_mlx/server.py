@@ -12,12 +12,9 @@ Wires together all API routes:
 
 import asyncio
 import logging
-import signal
-import sys
-import threading
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 import mlx.core as mx
 import uvicorn
@@ -25,25 +22,31 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from .config import ServerConfig, SchedulerConfig as FusionSchedulerConfig
+from .admin.routes import router as admin_router
+from .api.anthropic_routes import router as anthropic_router
+from .api.anthropic_routes import set_anthropic_context
+from .api.audio_routes import router as audio_router
+from .api.images import router as images_router
+from .api.images import set_images_context
+from .api.mcp_routes import router as mcp_router
+from .api.mcp_routes import set_mcp_manager_getter
+
+# Import route modules
+from .api.openai_routes import router as openai_router
+from .api.openai_routes import set_openai_context
+from .api.openclaw_routes import router as openclaw_router
+from .api.openclaw_routes import set_openclaw_agent_pool
+from .config import SchedulerConfig as FusionSchedulerConfig
+from .config import ServerConfig
 from .engine_core import AsyncEngineCore, EngineConfig
-from .pool import EnginePool, ProcessMemoryEnforcer, MemoryProfile, ModelDiscovery
-from .router import RequestRouter, CloudRouter
+from .pool import EnginePool, ProcessMemoryEnforcer
+from .router import CloudRouter, RequestRouter
 from .server_metrics import get_server_metrics
 from .settings import Settings
 
-# Import route modules
-from .api.openai_routes import router as openai_router, set_openai_context
-from .api.anthropic_routes import router as anthropic_router, set_anthropic_context
-from .api.audio_routes import router as audio_router
-from .api.images import router as images_router, set_images_context
-from .api.mcp_routes import router as mcp_router, set_mcp_manager_getter
-from .admin.routes import router as admin_router
-from .api.openclaw_routes import router as openclaw_router, set_openclaw_agent_pool
-
 logger = logging.getLogger(__name__)
 
-_server_state: Dict[str, Any] = {}
+_server_state: dict[str, Any] = {}
 
 
 def resolve_model_id(model_id: str) -> str:
@@ -62,12 +65,12 @@ def resolve_model_id(model_id: str) -> str:
 class Server:
     """Main fusion-mlx server with engine pool, routing, and API endpoints."""
 
-    def __init__(self, config: Optional[ServerConfig] = None):
+    def __init__(self, config: ServerConfig | None = None):
         self.config = config or ServerConfig()
-        self.pool: Optional[EnginePool] = None
-        self.request_router: Optional[RequestRouter] = None
-        self.cloud_router: Optional[CloudRouter] = None
-        self.engine_cores: Dict[str, AsyncEngineCore] = {}
+        self.pool: EnginePool | None = None
+        self.request_router: RequestRouter | None = None
+        self.cloud_router: CloudRouter | None = None
+        self.engine_cores: dict[str, AsyncEngineCore] = {}
         self._load_lock = asyncio.Lock()
         self.settings = Settings.load(Path(self.config.settings_dir) / "settings.json")
         self.app = self._create_app()
@@ -132,13 +135,13 @@ class Server:
         @app.get("/stats")
         async def stats():
             pool_status = self.pool.get_status() if self.pool else {}
-            metrics = get_server_metrics().__dict__
+            metrics = get_server_metrics().to_dict()
             return {**pool_status, **metrics}
 
         # Metrics endpoint
         @app.get("/metrics")
         async def metrics():
-            return JSONResponse(get_server_metrics().__dict__)
+            return JSONResponse(get_server_metrics().to_dict())
 
         return app
 
@@ -273,7 +276,7 @@ def _available_ram_mb() -> int:
         return 16 * 1024    # fallback: 12 GB effective (16 - 4 GB reserve)
 
 
-def create_app(config: Optional[ServerConfig] = None) -> FastAPI:
+def create_app(config: ServerConfig | None = None) -> FastAPI:
     """Create the FastAPI app (convenience function for external use)."""
     server = Server(config)
     return server.app

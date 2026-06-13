@@ -1,20 +1,14 @@
 import asyncio
-import json
 import logging
 import os
-import re
 import shutil
 import signal
 import subprocess
-import sys
-import time
 from pathlib import Path
-from typing import Any
 
-from fastapi import Depends, HTTPException, Request
+from fastapi import HTTPException, Request
 
-from .auth import require_admin, verify_api_key, verify_session
-
+from .auth import verify_api_key, verify_session
 
 # =============================================================================
 # Runtime Settings Application Functions

@@ -1,5 +1,6 @@
-import mlx.core as mx
 from typing import Any
+
+import mlx.core as mx
 
 from .monkeypatches import _default_generation_stream
 from .types import _mx_buffer_access_lock

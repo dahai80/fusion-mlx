@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import os
 import socket
 import subprocess
 import sys
@@ -296,7 +295,7 @@ NODE_DISPLAY_NAME = "Fusion MLX Image Generate"
             print("To run manually:")
             print(f"  FUSION_MLX_URL=http://{host}:{port} ")
             print(f"  comfyui --listen 127.0.0.1 --port {DEFAULT_COMFYUI_PORT}")
-            print(f"\nOr clone: git clone https://github.com/comfyanonymous/ComfyUI")
+            print("\nOr clone: git clone https://github.com/comfyanonymous/ComfyUI")
             return
 
         env = self._scrubbed_env()

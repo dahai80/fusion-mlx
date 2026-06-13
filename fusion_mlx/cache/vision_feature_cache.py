@@ -17,16 +17,15 @@ for consistency and bfloat16 support.
 
 import errno
 import hashlib
-import json
 import logging
 import os
 import queue
 import threading
 import time
 from collections import OrderedDict
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 import mlx.core as mx
 
@@ -78,7 +77,7 @@ class VisionFeatureSSDCache:
 
     def __init__(
         self,
-        cache_dir: Optional[Path] = None,
+        cache_dir: Path | None = None,
         max_size_bytes: int = 10 * 1024**3,
         max_memory_entries: int = 20,
     ):
@@ -102,7 +101,7 @@ class VisionFeatureSSDCache:
         self._pending_lock = threading.Lock()
 
         # Stats
-        self._stats: Dict[str, int] = {
+        self._stats: dict[str, int] = {
             "hits": 0,
             "misses": 0,
             "saves": 0,
@@ -121,7 +120,7 @@ class VisionFeatureSSDCache:
         )
         self._writer_thread.start()
 
-    def get(self, image_hash: str, model_name: str) -> Optional[Any]:
+    def get(self, image_hash: str, model_name: str) -> Any | None:
         """Look up cached vision features.
 
         Checks memory LRU first, then SSD. Returns None on miss.
@@ -198,7 +197,7 @@ class VisionFeatureSSDCache:
         )
 
     @property
-    def stats(self) -> Dict[str, int]:
+    def stats(self) -> dict[str, int]:
         """Return a copy of cache statistics."""
         return dict(self._stats)
 
@@ -252,7 +251,7 @@ class VisionFeatureSSDCache:
 
         try:
             # Extract raw bytes on the Metal-safe thread
-            tensors_raw: Dict[str, Tuple[bytes, str, List[int]]] = {}
+            tensors_raw: dict[str, tuple[bytes, str, list[int]]] = {}
             num_tensors = 1
 
             if isinstance(features, list):
@@ -327,7 +326,7 @@ class VisionFeatureSSDCache:
 
                 pass
 
-    def _load_from_ssd(self, key: str) -> Optional[Any]:
+    def _load_from_ssd(self, key: str) -> Any | None:
         """Load cached features from SSD.
 
         Args:

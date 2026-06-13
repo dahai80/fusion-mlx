@@ -7,13 +7,10 @@ import threading
 import time
 import uuid
 from abc import ABC, abstractmethod
-from enum import Enum
+from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
-from typing import Any, AsyncIterator, Dict, List, Optional
-
-import mlx.core as mx
-
-from ..engine_core import get_executor
+from enum import Enum
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -28,15 +25,15 @@ class EngineStatus(str, Enum):
 @dataclass
 class GenerationOutput:
     text: str
-    tokens: List[int] = field(default_factory=list)
+    tokens: list[int] = field(default_factory=list)
     prompt_tokens: int = 0
     completion_tokens: int = 0
-    finish_reason: Optional[str] = "stop"
+    finish_reason: str | None = "stop"
     new_text: str = ""
     finished: bool = True
-    tool_calls: Optional[List[Dict[str, Any]]] = None
+    tool_calls: list[dict[str, Any]] | None = None
     cached_tokens: int = 0
-    kv_state: Optional[Dict[str, Any]] = None
+    kv_state: dict[str, Any] | None = None
 
 
 class BaseEngine(ABC):
@@ -67,7 +64,7 @@ class BaseEngine(ABC):
         self, prompt: str, max_tokens: int = 256, temperature: float = 0.7,
         top_p: float = 0.9, top_k: int = 0, min_p: float = 0.0,
         repetition_penalty: float = 1.0, presence_penalty: float = 0.0,
-        stop: Optional[List[str]] = None, **kwargs,
+        stop: list[str] | None = None, **kwargs,
     ) -> GenerationOutput:
         pass
 
@@ -76,31 +73,31 @@ class BaseEngine(ABC):
         self, prompt: str, max_tokens: int = 256, temperature: float = 0.7,
         top_p: float = 0.9, top_k: int = 0, min_p: float = 0.0,
         repetition_penalty: float = 1.0, presence_penalty: float = 0.0,
-        stop: Optional[List[str]] = None, **kwargs,
+        stop: list[str] | None = None, **kwargs,
     ) -> AsyncIterator[GenerationOutput]:
         pass
 
     @abstractmethod
     async def chat(
-        self, messages: List[Dict[str, Any]], max_tokens: int = 256,
+        self, messages: list[dict[str, Any]], max_tokens: int = 256,
         temperature: float = 0.7, top_p: float = 0.9, top_k: int = 0,
         min_p: float = 0.0, repetition_penalty: float = 1.0,
-        presence_penalty: float = 0.0, tools: Optional[List[dict]] = None, **kwargs,
+        presence_penalty: float = 0.0, tools: list[dict] | None = None, **kwargs,
     ) -> GenerationOutput:
         pass
 
     @abstractmethod
     async def stream_chat(
-        self, messages: List[Dict[str, Any]], max_tokens: int = 256,
+        self, messages: list[dict[str, Any]], max_tokens: int = 256,
         temperature: float = 0.7, top_p: float = 0.9, top_k: int = 0,
         min_p: float = 0.0, repetition_penalty: float = 1.0,
-        presence_penalty: float = 0.0, tools: Optional[List[dict]] = None, **kwargs,
+        presence_penalty: float = 0.0, tools: list[dict] | None = None, **kwargs,
     ) -> AsyncIterator[GenerationOutput]:
         pass
 
     @property
     @abstractmethod
-    def model_type(self) -> Optional[str]:
+    def model_type(self) -> str | None:
         pass
 
     @property
@@ -145,7 +142,7 @@ class BaseEngine(ABC):
             await asyncio.wait_for(
                 self._wait_streams_drained(), timeout=timeout
             )
-        except asyncio.TimeoutError:
+        except TimeoutError:
             logger.warning(
                 "Engine eviction timeout: %d streams still active, forcing stop",
                 self._active_streams_count,
@@ -162,17 +159,17 @@ class BaseEngine(ABC):
             await asyncio.sleep(0.05)
 
     @abstractmethod
-    def get_stats(self) -> Dict[str, Any]:
+    def get_stats(self) -> dict[str, Any]:
         pass
 
     @abstractmethod
-    def get_cache_stats(self) -> Optional[Dict[str, Any]]:
+    def get_cache_stats(self) -> dict[str, Any] | None:
         pass
 class BaseNonStreamingEngine(ABC):
     def __init__(self):
         self._active_count = 0
         self._active_lock = threading.Lock()
-        self._activities: Dict[str, Dict[str, Any]] = {}
+        self._activities: dict[str, dict[str, Any]] = {}
 
     def has_active_requests(self) -> bool:
         with self._active_lock:
@@ -180,12 +177,12 @@ class BaseNonStreamingEngine(ABC):
 
     _ACTIVITY_RESERVED_KEYS = {"request_id", "kind", "detail", "started_at", "last_activity_at", "total_items"}
 
-    def _sanitize_activity_metadata(self, metadata: Dict[str, Any] | None) -> Dict[str, Any]:
+    def _sanitize_activity_metadata(self, metadata: dict[str, Any] | None) -> dict[str, Any]:
         if not metadata:
             return {}
         return {k: v for k, v in metadata.items() if k not in self._ACTIVITY_RESERVED_KEYS}
 
-    def _begin_activity(self, kind: str, detail: str | None = None, total_items: int | None = None, metadata: Dict[str, Any] | None = None) -> str:
+    def _begin_activity(self, kind: str, detail: str | None = None, total_items: int | None = None, metadata: dict[str, Any] | None = None) -> str:
         activity_id = str(uuid.uuid4())
         now = time.monotonic()
         with self._active_lock:
@@ -215,7 +212,7 @@ class BaseNonStreamingEngine(ABC):
     async def _finish_activity(self, activity_id: str) -> None:
         self._end_activity(activity_id)
 
-    def get_activity_snapshot(self) -> Dict[str, Any]:
+    def get_activity_snapshot(self) -> dict[str, Any]:
         now = time.monotonic()
         with self._active_lock:
             activities = []
@@ -242,5 +239,5 @@ class BaseNonStreamingEngine(ABC):
         pass
 
     @abstractmethod
-    def get_stats(self) -> Dict[str, Any]:
+    def get_stats(self) -> dict[str, Any]:
         pass

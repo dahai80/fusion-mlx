@@ -5,7 +5,7 @@ import logging
 import struct
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -52,7 +52,7 @@ def parse_size(size_str: str) -> int:
 class PagedSSDBlockMetadata:
     """Metadata for a single cached block on SSD."""
     block_id: int
-    shape: Tuple[int, ...]
+    shape: tuple[int, ...]
     dtype: str
     file_size: int
     created_at: float = 0.0
@@ -61,11 +61,11 @@ class PagedSSDBlockMetadata:
 @dataclass
 class PagedSSDCacheIndex:
     """Index of all cached blocks on SSD."""
-    blocks: Dict[int, PagedSSDBlockMetadata] = field(default_factory=dict)
+    blocks: dict[int, PagedSSDBlockMetadata] = field(default_factory=dict)
     total_size: int = 0
 
 
-def _encode_shape(shape: Tuple[int, ...]) -> bytes:
+def _encode_shape(shape: tuple[int, ...]) -> bytes:
     return struct.pack(f">{len(shape)}I", *shape)
 
 
@@ -112,7 +112,7 @@ def _extract_tensor_bytes(arr) -> tuple[bytes, str, list[int]]:
     return raw, dtype_str, shape
 
 
-def _has_zero_dim(shape: Tuple[int, ...]) -> bool:
+def _has_zero_dim(shape: tuple[int, ...]) -> bool:
     return any(d == 0 for d in shape)
 
 
@@ -134,7 +134,7 @@ def _restore_tensor_from_bytes(data: bytes, dtype_str: str, shape: list[int]):
         return mx.zeros(shape, dtype=mx_dtype)
 
 
-def _write_safetensors_no_mx(tensors: Dict[str, tuple[bytes, str, list[int]]], path: str):
+def _write_safetensors_no_mx(tensors: dict[str, tuple[bytes, str, list[int]]], path: str):
     import json
     header = {}
     offset = 0
@@ -157,7 +157,7 @@ class PagedSSDCacheManager:
     max_cache_size: int = 10 * 1024**3
     block_size: int = 32
 
-    _index: Optional[PagedSSDCacheIndex] = None
+    _index: PagedSSDCacheIndex | None = None
     _current_size: int = 0
 
     def __post_init__(self):
@@ -165,7 +165,7 @@ class PagedSSDCacheManager:
         self.cache_path.mkdir(parents=True, exist_ok=True)
         self._index = PagedSSDCacheIndex()
 
-    def store_block(self, block_id: int, layers: List[Any], metadata: Optional[Dict] = None) -> bool:
+    def store_block(self, block_id: int, layers: list[Any], metadata: dict | None = None) -> bool:
         """Write a block of KV cache layers to SSD."""
         try:
             if not layers or _has_zero_dim((len(layers),)):
@@ -196,7 +196,7 @@ class PagedSSDCacheManager:
             logger.debug("Failed to store block %d to SSD: %s", block_id, e)
             return False
 
-    def load_block(self, block_id: int) -> Optional[List[Any]]:
+    def load_block(self, block_id: int) -> list[Any] | None:
         """Load a block of KV cache layers from SSD."""
         try:
             if block_id not in self._index.blocks:
@@ -228,7 +228,7 @@ class PagedSSDCacheManager:
     def has_block(self, block_id: int) -> bool:
         return block_id in self._index.blocks
 
-    def get_stats(self) -> Dict[str, Any]:
+    def get_stats(self) -> dict[str, Any]:
         """Return cache statistics."""
         return {
             "blocks_cached": len(self._index.blocks),

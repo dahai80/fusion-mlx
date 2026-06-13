@@ -14,7 +14,7 @@ import logging
 import time
 import uuid
 from collections import OrderedDict
-from typing import Any, Dict, Optional
+from typing import Any
 
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
@@ -28,10 +28,10 @@ router = APIRouter(prefix="/v1/openclaw/agent", tags=["openclaw-agent"])
 # OrderedDict for LRU eviction when cap is reached.
 _SESSION_TTL_SECONDS = 3600  # 1 hour
 _SESSION_MAX_COUNT = 1000
-_sessions: OrderedDict[str, Dict[str, Any]] = OrderedDict()
+_sessions: OrderedDict[str, dict[str, Any]] = OrderedDict()
 
 
-def _init_session() -> Dict[str, Any]:
+def _init_session() -> dict[str, Any]:
     return {
         "messages": [],
         "tools": [],
@@ -62,26 +62,26 @@ def _cleanup_expired_sessions() -> None:
 
 class TurnRequest(BaseModel):
     """Agent turn request with optional tool definitions."""
-    messages: list[Dict[str, Any]] = Field(..., description="Conversation messages")
-    tools: Optional[list[Dict[str, Any]]] = None
+    messages: list[dict[str, Any]] = Field(..., description="Conversation messages")
+    tools: list[dict[str, Any]] | None = None
     max_tokens: int = Field(default=4096, ge=1, le=131072)
     temperature: float = Field(default=0.7, ge=0.0, le=2.0)
-    model: Optional[str] = None
+    model: str | None = None
 
 
 class TurnResponse(BaseModel):
     """Agent turn response with content and optional tool calls."""
     content: str = ""
-    tool_calls: list[Dict[str, Any]] = []
-    usage: Dict[str, int] = {"prompt_tokens": 0, "completion_tokens": 0}
+    tool_calls: list[dict[str, Any]] = []
+    usage: dict[str, int] = {"prompt_tokens": 0, "completion_tokens": 0}
     session_id: str
 
 
 class SessionCreateRequest(BaseModel):
     """Create a new agent session."""
-    system_prompt: Optional[str] = None
-    tools: Optional[list[Dict[str, Any]]] = None
-    model: Optional[str] = None
+    system_prompt: str | None = None
+    tools: list[dict[str, Any]] | None = None
+    model: str | None = None
 
 
 class SessionInfo(BaseModel):
@@ -89,14 +89,14 @@ class SessionInfo(BaseModel):
     session_id: str
     turn_count: int = 0
     active: bool = False
-    model: Optional[str] = None
+    model: str | None = None
     tools_count: int = 0
 
 
 class SteerRequest(BaseModel):
     """Inject a steering message into an active agent turn."""
     session_id: str
-    message: Dict[str, Any] = Field(..., description="Message to inject")
+    message: dict[str, Any] = Field(..., description="Message to inject")
     mode: str = Field(
         default="append",
         description="append=add to end, prepend=add to front, replace=replace last",

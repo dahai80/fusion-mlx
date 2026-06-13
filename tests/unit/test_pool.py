@@ -1,14 +1,14 @@
 # SPDX-License-Identifier: Apache-2.0
 """Unit tests for pool modules — PriorityScheduler, EnginePool, MemoryEnforcer."""
 
-from unittest.mock import MagicMock, AsyncMock, patch
-import pytest
+from unittest.mock import MagicMock, patch
 
 from fusion_mlx.pool.priority_scheduler import (
-    PriorityScheduler, PrioritySchedulerConfig, PriorityLevel, PriorityRequest,
-    ScheduleDecision,
+    PriorityLevel,
+    PriorityRequest,
+    PriorityScheduler,
+    PrioritySchedulerConfig,
 )
-from fusion_mlx.request import SamplingParams
 
 
 class TestPrioritySchedulerSubmit:

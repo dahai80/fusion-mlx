@@ -9,129 +9,127 @@ This module provides shared components used by the server:
 - Tool calling parsing and conversion
 """
 
-from .openai_models import (
-    # Content types
-    ContentPart,
-    Message,
-    # Tool calling
-    FunctionCall,
-    ToolCall,
-    ToolDefinition,
-    # Structured output
-    ResponseFormat,
-    ResponseFormatJsonSchema,
-    # Chat requests/responses
-    ChatCompletionRequest,
-    ChatCompletionChoice,
-    ChatCompletionResponse,
-    AssistantMessage,
-    # Completion requests/responses
-    CompletionRequest,
-    CompletionChoice,
-    CompletionResponse,
-    # Common
-    Usage,
-    ModelInfo,
-    ModelsResponse,
-    # MCP
-    MCPToolInfo,
-    MCPToolsResponse,
-    MCPServerInfo,
-    MCPServersResponse,
-    MCPExecuteRequest,
-    MCPExecuteResponse,
-)
-
-from .utils import (
-    clean_output_text,
-    clean_special_tokens,
-    extract_text_content,
-    SPECIAL_TOKENS_PATTERN,
-)
-
-from .thinking import (
-    ThinkingParser,
-    extract_thinking,
-)
-
-from .tool_calling import (
-    parse_tool_calls,
-    convert_tools_for_template,
-    # Structured output
-    parse_json_output,
-    validate_json_schema,
-    extract_json_from_text,
-    build_json_system_prompt,
-)
-
 from .anthropic_models import (
-    # Content blocks
-    ContentBlockText,
-    ContentBlockImage,
-    ContentBlockToolUse,
-    ContentBlockToolResult,
-    # Messages
-    SystemContent,
+    AnthropicErrorDetail,
+    # Error response
+    AnthropicErrorResponse,
     AnthropicMessage,
     AnthropicTool,
-    ToolChoice,
-    ThinkingConfig,
-    # Request/Response
-    MessagesRequest as AnthropicMessagesRequest,
-    MessagesResponse as AnthropicMessagesResponse,
     AnthropicUsage,
+    ContentBlockDeltaEvent,
+    ContentBlockImage,
+    ContentBlockStartEvent,
+    ContentBlockStopEvent,
+    # Content blocks
+    ContentBlockText,
+    ContentBlockToolResult,
+    ContentBlockToolUse,
+    ErrorEvent,
+    InputJsonDelta,
+    MessageDeltaEvent,
+    # Streaming events
+    MessageStartEvent,
+    MessageStopEvent,
+    PingEvent,
+    # Messages
+    SystemContent,
+    TextDelta,
+    ThinkingConfig,
     # Token counting
     TokenCountRequest,
     TokenCountResponse,
-    # Streaming events
-    MessageStartEvent,
-    ContentBlockStartEvent,
-    ContentBlockDeltaEvent,
-    ContentBlockStopEvent,
-    MessageDeltaEvent,
-    MessageStopEvent,
-    PingEvent,
-    ErrorEvent,
-    TextDelta,
-    InputJsonDelta,
-    # Error response
-    AnthropicErrorResponse,
-    AnthropicErrorDetail,
+    ToolChoice,
 )
-
+from .anthropic_models import (
+    # Request/Response
+    MessagesRequest as AnthropicMessagesRequest,
+)
+from .anthropic_models import (
+    MessagesResponse as AnthropicMessagesResponse,
+)
 from .anthropic_utils import (
     convert_anthropic_to_internal,
     convert_anthropic_tools_to_internal,
     convert_internal_to_anthropic_response,
-    map_finish_reason_to_stop_reason,
-    format_sse_event,
-    create_message_start_event,
     create_content_block_start_event,
-    create_text_delta_event,
-    create_input_json_delta_event,
     create_content_block_stop_event,
+    create_error_event,
+    create_input_json_delta_event,
     create_message_delta_event,
+    create_message_start_event,
     create_message_stop_event,
     create_ping_event,
-    create_error_event,
+    create_text_delta_event,
+    format_sse_event,
+    map_finish_reason_to_stop_reason,
 )
-
 from .embedding_models import (
+    EmbeddingData,
     EmbeddingRequest,
     EmbeddingResponse,
-    EmbeddingData,
     EmbeddingUsage,
 )
-
 from .embedding_utils import (
-    encode_embedding_base64,
-    truncate_embedding,
     count_tokens,
+    encode_embedding_base64,
     normalize_input,
+    truncate_embedding,
 )
 
 # MCP routes
-from .mcp_routes import router as mcp_router, set_mcp_manager_getter
+from .mcp_routes import router as mcp_router
+from .mcp_routes import set_mcp_manager_getter
+from .openai_models import (
+    AssistantMessage,
+    ChatCompletionChoice,
+    # Chat requests/responses
+    ChatCompletionRequest,
+    ChatCompletionResponse,
+    CompletionChoice,
+    # Completion requests/responses
+    CompletionRequest,
+    CompletionResponse,
+    # Content types
+    ContentPart,
+    # Tool calling
+    FunctionCall,
+    MCPExecuteRequest,
+    MCPExecuteResponse,
+    MCPServerInfo,
+    MCPServersResponse,
+    # MCP
+    MCPToolInfo,
+    MCPToolsResponse,
+    Message,
+    ModelInfo,
+    ModelsResponse,
+    # Structured output
+    ResponseFormat,
+    ResponseFormatJsonSchema,
+    ToolCall,
+    ToolDefinition,
+    # Common
+    Usage,
+)
+from .thinking import (
+    ThinkingParser,
+    extract_thinking,
+)
+from .tool_calling import (
+    build_json_system_prompt,
+    convert_tools_for_template,
+    extract_json_from_text,
+    # Structured output
+    parse_json_output,
+    parse_tool_calls,
+    validate_json_schema,
+)
+from .utils import (
+    SPECIAL_TOKENS_PATTERN,
+    clean_output_text,
+    clean_special_tokens,
+    extract_text_content,
+)
 
 __all__ = [
     # Models

@@ -16,7 +16,7 @@ Routing rules:
 
 import logging
 from collections.abc import AsyncIterator
-from typing import Any, Optional
+from typing import Any
 
 logger = logging.getLogger(__name__)
 

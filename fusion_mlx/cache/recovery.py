@@ -8,7 +8,7 @@ failures, enabling the scheduler to continue processing after encountering error
 
 import gc
 import logging
-from typing import TYPE_CHECKING, Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Optional
 
 from ..exceptions import is_cache_corruption_error
 
@@ -54,9 +54,9 @@ class CacheRecoveryManager:
     def recover(
         self,
         batch_generator_holder: Any,
-        request_id_to_uid: Dict[str, int],
-        uid_to_request_id: Dict[int, str],
-        request_detokenizers: Dict[str, Any],
+        request_id_to_uid: dict[str, int],
+        uid_to_request_id: dict[int, str],
+        request_detokenizers: dict[str, Any],
     ) -> None:
         """
         Recover from cache corruption error.
@@ -93,7 +93,7 @@ class CacheRecoveryManager:
 
     def reschedule_running_requests(
         self,
-        running: Dict[str, "Request"],
+        running: dict[str, "Request"],
         waiting: Any,  # deque[Request]
         request_status_waiting: "RequestStatus",
     ) -> int:

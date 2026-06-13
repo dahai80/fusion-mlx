@@ -4,11 +4,11 @@ Provides SuffixDecoding, DFlash, MTP, PLD, and VLM-MTP drafters.
 Merged from omlx/speculative + Rapid-MLX speculative implementations.
 """
 
-from .vlm_mtp import VLMMTPDrafter, load_vlm_mtp_drafter, run_vlm_mtp_decode
-from .suffix_decoding import SuffixDecodingDrafter, DraftStats
-from .prompt_lookup import PromptLookupDecoder, prompt_lookup_generate_step
-from .mtp_generate import MTPStats, MTPOutput, mtp_generate_step
 from . import dflash
+from .mtp_generate import MTPOutput, MTPStats, mtp_generate_step
+from .prompt_lookup import PromptLookupDecoder, prompt_lookup_generate_step
+from .suffix_decoding import DraftStats, SuffixDecodingDrafter
+from .vlm_mtp import VLMMTPDrafter, load_vlm_mtp_drafter, run_vlm_mtp_decode
 
 __all__ = [
     "VLMMTPDrafter",

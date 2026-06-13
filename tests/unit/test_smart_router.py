@@ -1,15 +1,20 @@
 # SPDX-License-Identifier: Apache-2.0
 """Unit tests for SmartRouter — routing decisions, phase split, circuit breaker tracking."""
 
-import time
-from unittest.mock import MagicMock, AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock
+
 import pytest
 
-from fusion_mlx.router.smart_router import (
-    SmartRouter, RouterConfig, EngineBackend, TaskPriority, RouteDecision,
-    BenchmarkResult, PhaseHandoff,
-)
 from fusion_mlx.router.cloud_router import CloudRouter
+from fusion_mlx.router.smart_router import (
+    BenchmarkResult,
+    EngineBackend,
+    PhaseHandoff,
+    RouteDecision,
+    RouterConfig,
+    SmartRouter,
+    TaskPriority,
+)
 
 
 class TestSmartRouterDecide:

@@ -6,7 +6,7 @@ import gc
 import logging
 import os
 import tempfile
-from typing import Any, Dict, Optional
+from typing import Any
 
 import mlx.core as mx
 import numpy as np
@@ -18,7 +18,7 @@ from .base import BaseNonStreamingEngine
 
 logger = logging.getLogger(__name__)
 
-_CONFIG_TYPE_TO_FAMILY: Dict[str, str] = {
+_CONFIG_TYPE_TO_FAMILY: dict[str, str] = {
     "deepfilternet": "deepfilternet", "mossformer2_se": "mossformer2",
     "sam_audio": "sam_audio", "lfm_audio": "lfm2", "lfm2_audio": "lfm2", "lfm2": "lfm2",
     "DeepFilterNetModel": "deepfilternet", "MossFormer2SEModel": "mossformer2",
@@ -203,7 +203,7 @@ class STSEngine(BaseNonStreamingEngine):
         finally:
             await self._finish_activity(activity_id)
 
-    def get_stats(self) -> Dict[str, Any]:
+    def get_stats(self) -> dict[str, Any]:
         return {"model_name": self._model_name, "loaded": self._model is not None, "family": self._family}
 
     def __repr__(self) -> str:

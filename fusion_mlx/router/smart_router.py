@@ -18,8 +18,9 @@ import enum
 import logging
 import threading
 import time
+from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
-from typing import Any, AsyncIterator, Optional
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -130,7 +131,7 @@ class SmartRouter:
 
     def __init__(
         self,
-        config: Optional[RouterConfig] = None,
+        config: RouterConfig | None = None,
         cloud_router: Any = None,
         llm_engine: Any = None,
         rapid_engine: Any = None,
@@ -176,7 +177,7 @@ class SmartRouter:
         prompt_length: int,
         task_tag: str = "",
         cache_hit_rate: float = 0.0,
-        backend_override: Optional[EngineBackend] = None,
+        backend_override: EngineBackend | None = None,
         quant_format: str = "",
         model_id: str = "",
     ) -> RouteDecision:
@@ -470,7 +471,7 @@ class SmartRouter:
             return TaskPriority.BACKGROUND
         return self.config.default_priority
 
-    def _parse_backend_override(self, request_data: dict[str, Any]) -> Optional[EngineBackend]:
+    def _parse_backend_override(self, request_data: dict[str, Any]) -> EngineBackend | None:
         """Parse explicit backend override from request."""
         override = request_data.get("backend_override")
         if not override:
@@ -678,7 +679,7 @@ class SmartRouter:
         model_id: str,
         quant_format: str,
         new_tokens: int,
-    ) -> Optional[RouteDecision]:
+    ) -> RouteDecision | None:
         """Make routing decision based on EMA-smoothed benchmark data."""
         # Uses EMA to prevent route oscillation from GC/Metal jitter
         # formula: score = alpha * history + (1-alpha) * measured

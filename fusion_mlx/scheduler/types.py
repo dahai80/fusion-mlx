@@ -1,7 +1,7 @@
-from dataclasses import dataclass, field
 import threading
 from collections.abc import Callable
-from typing import Any, Optional
+from dataclasses import dataclass, field
+from typing import Any
 
 
 @dataclass
@@ -39,7 +39,7 @@ class _VLMMTPResponse:
 
     uid: int
     token: int
-    finish_reason: Optional[str] = None
+    finish_reason: str | None = None
     logprobs: Any = None
     prompt_cache: Any = None
 

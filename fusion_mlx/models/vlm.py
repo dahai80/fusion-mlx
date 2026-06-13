@@ -7,7 +7,7 @@ prefill, then becomes transparent for autoregressive decode.
 """
 
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 import mlx.core as mx
 import mlx.nn as nn
@@ -29,12 +29,12 @@ class VLMModelAdapter(nn.Module):
         self._uses_mrope = self._detect_mrope(vlm_model)
 
         # Pending vision embeddings (set before prefill, cleared after)
-        self._pending_embeds: Optional[mx.array] = None
-        self._pending_kwargs: Dict[str, Any] = {}
+        self._pending_embeds: mx.array | None = None
+        self._pending_kwargs: dict[str, Any] = {}
         self._embed_offset: int = 0
 
         # Batch mRoPE state
-        self._batch_rope_deltas: Optional[mx.array] = None
+        self._batch_rope_deltas: mx.array | None = None
 
     @property
     def layers(self):
@@ -65,7 +65,7 @@ class VLMModelAdapter(nn.Module):
             return self._language_model.args
         return self.config
 
-    def make_cache(self) -> List[Any]:
+    def make_cache(self) -> list[Any]:
         """Create KV cache using the language model's make_cache()."""
         if hasattr(self._language_model, "make_cache"):
             return self._language_model.make_cache()
@@ -75,7 +75,7 @@ class VLMModelAdapter(nn.Module):
     def set_pending_embeddings(
         self,
         inputs_embeds: mx.array,
-        extra_kwargs: Optional[Dict[str, Any]] = None,
+        extra_kwargs: dict[str, Any] | None = None,
         start_offset: int = 0,
     ) -> None:
         """Register pre-computed embeddings for the next prefill."""
@@ -124,7 +124,7 @@ class VLMModelAdapter(nn.Module):
     def __call__(
         self,
         input_ids: mx.array,
-        cache: Optional[List[Any]] = None,
+        cache: list[Any] | None = None,
         **kwargs,
     ) -> Any:
         inputs_embeds = kwargs.pop("inputs_embeds", None)
@@ -172,7 +172,7 @@ class VLMModelAdapter(nn.Module):
     def _forward_with_embeddings(
         self,
         input_ids: mx.array,
-        cache: Optional[List[Any]] = None,
+        cache: list[Any] | None = None,
         **kwargs,
     ) -> Any:
         chunk_len = input_ids.shape[1]
@@ -187,7 +187,7 @@ class VLMModelAdapter(nn.Module):
         return result
 
     def get_input_embeddings(
-        self, input_ids: mx.array, pixel_values: Optional[mx.array] = None, **kwargs
+        self, input_ids: mx.array, pixel_values: mx.array | None = None, **kwargs
     ) -> Any:
         """Compute vision+text merged embeddings via the VLM model."""
         return self._vlm_model.get_input_embeddings(input_ids, pixel_values, **kwargs)

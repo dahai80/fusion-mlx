@@ -7,7 +7,6 @@ Provides FastAPI routes for:
 
 import base64
 import logging
-from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
@@ -19,10 +18,9 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/v1/images", tags=["images"])
 
-_pool: Optional[EnginePool] = None
+_pool: EnginePool | None = None
 
 
-from typing import Optional
 
 
 def set_images_context(pool: EnginePool) -> None:
@@ -43,26 +41,26 @@ class ImageGenerateRequest(BaseModel):
     # Diffusion steps (fewer = faster, more = higher quality)
     steps: int = Field(default=4, ge=1, le=50)
     # Random seed (None = random)
-    seed: Optional[int] = None
+    seed: int | None = None
     # Guidance scale (higher = closer to prompt)
     guidance: float = Field(default=4.0, ge=1.0, le=20.0)
     # Response format
     response_format: str = Field(default="url", pattern="^(url|b64_json)$")
     # Model name (default: first available image gen model)
-    model: Optional[str] = None
+    model: str | None = None
 
 
 class ImageOutput(BaseModel):
     """Single generated image output."""
 
-    url: Optional[str] = None
-    b64_json: Optional[str] = None
+    url: str | None = None
+    b64_json: str | None = None
 
 
 class ImageGenerateResponse(BaseModel):
     """Response from image generation."""
 
-    data: List[ImageOutput]
+    data: list[ImageOutput]
     created: int = Field(default_factory=lambda: int(__import__("time").time()))
 
 

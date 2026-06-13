@@ -12,15 +12,14 @@ import os
 import shutil
 import time
 import uuid
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Callable, Optional
 from urllib.parse import urlparse
 
 import huggingface_hub.constants as _hf_constants
 from huggingface_hub import HfApi, hf_hub_download, snapshot_download
 from huggingface_hub.utils import (
-    EntryNotFoundError,
     GatedRepoError,
     RepositoryNotFoundError,
 )
@@ -367,10 +366,10 @@ class HFDownloader:
         limit: int = 100,
         mlx_only: bool = True,
         # Filtering options
-        min_params: Optional[int] = None,
-        max_params: Optional[int] = None,
-        min_size: Optional[int] = None,
-        max_size: Optional[int] = None,
+        min_params: int | None = None,
+        max_params: int | None = None,
+        min_size: int | None = None,
+        max_size: int | None = None,
         # Sorting options
         sort_by_size: bool = False,
         sort_ascending: bool = False,
@@ -569,7 +568,7 @@ class HFDownloader:
     def __init__(
         self,
         model_dir: str,
-        on_complete: Optional[Callable] = None,
+        on_complete: Callable | None = None,
     ):
         self._model_dir = Path(model_dir)
         self._tasks: dict[str, DownloadTask] = {}

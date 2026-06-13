@@ -25,7 +25,6 @@ The processor supports two usage modes:
 """
 
 import logging
-from typing import List, Optional
 
 import mlx.core as mx
 import numpy as np

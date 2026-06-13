@@ -7,7 +7,7 @@ import logging
 import uuid
 from collections import OrderedDict
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Union
+from typing import Any
 
 from .responses_models import (
     InputItem,
@@ -48,8 +48,8 @@ def _try_parse_json(s: str):
 
 
 def _flush_pending_tool_calls(
-    messages: List[Dict[str, Any]],
-    pending: List[Dict[str, Any]],
+    messages: list[dict[str, Any]],
+    pending: list[dict[str, Any]],
     min_merge_index: int = 0,
     pending_reasoning: str = "",
 ) -> str:
@@ -77,7 +77,7 @@ def _flush_pending_tool_calls(
         if pending_reasoning:
             messages[-1]["reasoning_content"] = pending_reasoning
     else:
-        msg: Dict[str, Any] = {"role": "assistant", "tool_calls": list(pending)}
+        msg: dict[str, Any] = {"role": "assistant", "tool_calls": list(pending)}
         if pending_reasoning:
             msg["reasoning_content"] = pending_reasoning
         messages.append(msg)
@@ -85,10 +85,10 @@ def _flush_pending_tool_calls(
     return ""
 
 
-def _consolidate_system_messages(messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+def _consolidate_system_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Move all system messages to the front and merge them into one."""
-    system_parts: List[str] = []
-    non_system: List[Dict[str, Any]] = []
+    system_parts: list[str] = []
+    non_system: list[dict[str, Any]] = []
     for msg in messages:
         if msg.get("role") == "system":
             content = msg.get("content", "")
@@ -109,10 +109,10 @@ def _consolidate_system_messages(messages: List[Dict[str, Any]]) -> List[Dict[st
 
 
 def convert_responses_input_to_messages(
-    input_data: Optional[Union[str, List[InputItem]]],
-    instructions: Optional[str] = None,
-    previous_messages: Optional[List[Dict[str, Any]]] = None,
-) -> List[Dict[str, Any]]:
+    input_data: str | list[InputItem] | None,
+    instructions: str | None = None,
+    previous_messages: list[dict[str, Any]] | None = None,
+) -> list[dict[str, Any]]:
     """Convert Responses API input to internal messages format.
 
     Args:
@@ -123,13 +123,13 @@ def convert_responses_input_to_messages(
     Returns:
         List of message dicts compatible with chat template.
     """
-    messages: List[Dict[str, Any]] = []
+    messages: list[dict[str, Any]] = []
 
     # Collect all system/developer content to merge into a single system message.
     # Many chat templates (Qwen, Llama, etc.) only allow one system message
     # at position 0. Codex can send both `instructions` and developer-role
     # input items, so we merge them.
-    system_parts: List[str] = []
+    system_parts: list[str] = []
     if instructions:
         system_parts.append(instructions)
 
@@ -151,7 +151,7 @@ def convert_responses_input_to_messages(
 
     # Process input items
     # Track pending tool calls for grouping into a single assistant message
-    pending_tool_calls: List[Dict[str, Any]] = []
+    pending_tool_calls: list[dict[str, Any]] = []
     # Track reasoning content to attach to the next assistant message
     pending_reasoning: str = ""
 
@@ -182,7 +182,7 @@ def convert_responses_input_to_messages(
                 # Convert content parts - preserve images for VLM processing
                 text_parts = []
                 has_image = False
-                converted_parts: List[Dict[str, Any]] = []
+                converted_parts: list[dict[str, Any]] = []
                 for part in content:
                     if isinstance(part, dict):
                         if part.get("type") in ("input_text", "text", "output_text"):
@@ -212,7 +212,7 @@ def convert_responses_input_to_messages(
             if role == "system":
                 system_parts.append(content or "")
             else:
-                msg_dict: Dict[str, Any] = {"role": role, "content": content or ""}
+                msg_dict: dict[str, Any] = {"role": role, "content": content or ""}
                 if role == "assistant" and pending_reasoning:
                     msg_dict["reasoning_content"] = pending_reasoning
                     pending_reasoning = ""
@@ -283,8 +283,8 @@ def convert_responses_input_to_messages(
 
 
 def convert_responses_tools(
-    tools: Optional[List[ResponsesTool]],
-) -> Optional[List[Dict[str, Any]]]:
+    tools: list[ResponsesTool] | None,
+) -> list[dict[str, Any]] | None:
     """Convert Responses API flat tool format to Chat Completions nested format.
 
     Responses: {"type": "function", "name": "fn", "parameters": {...}}
@@ -299,7 +299,7 @@ def convert_responses_tools(
     result = []
     for tool in tools:
         if tool.type == "function" and tool.name:
-            func_def: Dict[str, Any] = {"name": tool.name}
+            func_def: dict[str, Any] = {"name": tool.name}
             if tool.description:
                 func_def["description"] = tool.description
             if tool.parameters:
@@ -319,7 +319,7 @@ def convert_responses_tools(
 
 def build_message_output_item(
     text: str,
-    item_id: Optional[str] = None,
+    item_id: str | None = None,
     status: str = "completed",
 ) -> OutputItem:
     """Build a message-type OutputItem."""
@@ -336,7 +336,7 @@ def build_function_call_output_item(
     name: str,
     arguments: str,
     call_id: str,
-    item_id: Optional[str] = None,
+    item_id: str | None = None,
     status: str = "completed",
 ) -> OutputItem:
     """Build a function_call-type OutputItem."""
@@ -352,7 +352,7 @@ def build_function_call_output_item(
 
 def build_reasoning_output_item(
     reasoning_text: str,
-    item_id: Optional[str] = None,
+    item_id: str | None = None,
     status: str = "completed",
 ) -> OutputItem:
     """Build a reasoning-type OutputItem with full CoT in summary[0].text."""
@@ -419,9 +419,9 @@ class ResponseStore:
     def __init__(
         self,
         max_size: int = MAX_STORED_RESPONSES,
-        state_dir: Optional[Union[str, Path]] = None,
+        state_dir: str | Path | None = None,
     ):
-        self._store: OrderedDict[str, Dict[str, Any]] = OrderedDict()
+        self._store: OrderedDict[str, dict[str, Any]] = OrderedDict()
         self._max_size = max_size
         self._state_dir = Path(state_dir).expanduser().resolve() if state_dir else None
         if self._state_dir:
@@ -429,11 +429,11 @@ class ResponseStore:
             self._load_persisted_records()
 
     @property
-    def state_dir(self) -> Optional[Path]:
+    def state_dir(self) -> Path | None:
         """Resolved directory used for persisted response state."""
         return self._state_dir
 
-    def _record_path(self, response_id: str) -> Optional[Path]:
+    def _record_path(self, response_id: str) -> Path | None:
         if self._state_dir is None:
             return None
         return self._state_dir / f"{response_id}.json"
@@ -441,8 +441,8 @@ class ResponseStore:
     def _normalize_record(
         self,
         response_id: str,
-        response_data: Dict[str, Any],
-    ) -> Dict[str, Any]:
+        response_data: dict[str, Any],
+    ) -> dict[str, Any]:
         if "public_response" in response_data:
             record = copy.deepcopy(response_data)
             record.setdefault("response_id", response_id)
@@ -470,7 +470,7 @@ class ResponseStore:
             "created_at": public_response.get("created_at", 0),
         }
 
-    def _persist_record(self, record: Dict[str, Any]) -> None:
+    def _persist_record(self, record: dict[str, Any]) -> None:
         path = self._record_path(record["response_id"])
         if path is None:
             return
@@ -492,7 +492,7 @@ class ResponseStore:
 
     def _load_persisted_records(self) -> None:
         assert self._state_dir is not None
-        loaded: List[Dict[str, Any]] = []
+        loaded: list[dict[str, Any]] = []
         for path in sorted(self._state_dir.glob("*.json")):
             try:
                 with path.open("r", encoding="utf-8") as f:
@@ -509,7 +509,7 @@ class ResponseStore:
             self._store[record["response_id"]] = record
         self._evict_oldest()
 
-    def put(self, response_id: str, response_data: Dict[str, Any]) -> None:
+    def put(self, response_id: str, response_data: dict[str, Any]) -> None:
         """Store response state, evicting oldest records if needed."""
         record = self._normalize_record(response_id, response_data)
         if response_id in self._store:
@@ -518,7 +518,7 @@ class ResponseStore:
         self._persist_record(record)
         self._evict_oldest()
 
-    def get_record(self, response_id: str) -> Optional[Dict[str, Any]]:
+    def get_record(self, response_id: str) -> dict[str, Any] | None:
         """Retrieve a stored response-state record."""
         data = self._store.get(response_id)
         if data is not None:
@@ -526,21 +526,21 @@ class ResponseStore:
             return copy.deepcopy(data)
         return None
 
-    def get(self, response_id: str) -> Optional[Dict[str, Any]]:
+    def get(self, response_id: str) -> dict[str, Any] | None:
         """Retrieve the public response object for a stored record."""
         data = self.get_record(response_id)
         if data is None:
             return None
         return data.get("public_response")
 
-    def resolve_chain_messages(self, response_id: str) -> List[Dict[str, Any]]:
+    def resolve_chain_messages(self, response_id: str) -> list[dict[str, Any]]:
         """Resolve the full previous_response_id chain into message history."""
         if response_id not in self._store:
             raise ResponseStateNotFoundError(f"Response state not found: {response_id}")
 
-        chain: List[Dict[str, Any]] = []
+        chain: list[dict[str, Any]] = []
         seen: set[str] = set()
-        current_id: Optional[str] = response_id
+        current_id: str | None = response_id
         while current_id:
             if current_id in seen:
                 raise ResponseStateCorruptError(
@@ -557,7 +557,7 @@ class ResponseStore:
             current_id = record.get("previous_response_id")
 
         chain.reverse()
-        messages: List[Dict[str, Any]] = []
+        messages: list[dict[str, Any]] = []
         for record in chain:
             messages.extend(copy.deepcopy(record.get("input_messages", [])))
             messages.extend(copy.deepcopy(record.get("output_messages", [])))
@@ -581,8 +581,8 @@ class ResponseStore:
 
 
 def convert_stored_response_to_messages(
-    response_data: Dict[str, Any],
-) -> List[Dict[str, Any]]:
+    response_data: dict[str, Any],
+) -> list[dict[str, Any]]:
     """Convert a stored public response or state record back to messages."""
     if "output_messages" in response_data:
         return copy.deepcopy(response_data.get("output_messages", []))
@@ -590,11 +590,11 @@ def convert_stored_response_to_messages(
 
 
 def normalize_response_output_to_messages(
-    output_items: List[Dict[str, Any]],
-) -> List[Dict[str, Any]]:
+    output_items: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
     """Convert response output items to assistant/tool-call history messages."""
-    messages: List[Dict[str, Any]] = []
-    pending_tool_calls: List[Dict[str, Any]] = []
+    messages: list[dict[str, Any]] = []
+    pending_tool_calls: list[dict[str, Any]] = []
     pending_reasoning: str = ""
 
     for item in output_items:
@@ -614,7 +614,7 @@ def normalize_response_output_to_messages(
             for block in content_blocks:
                 if block.get("type") == "output_text":
                     text_parts.append(block.get("text", ""))
-            msg_dict: Dict[str, Any] = {
+            msg_dict: dict[str, Any] = {
                 "role": item.get("role", "assistant"),
                 "content": "\n".join(text_parts),
             }
@@ -642,10 +642,10 @@ def normalize_response_output_to_messages(
 
 
 def build_response_store_record(
-    public_response: Dict[str, Any],
-    input_messages: List[Dict[str, Any]],
-    output_messages: List[Dict[str, Any]],
-) -> Dict[str, Any]:
+    public_response: dict[str, Any],
+    input_messages: list[dict[str, Any]],
+    output_messages: list[dict[str, Any]],
+) -> dict[str, Any]:
     """Build a persisted response-state record."""
     return {
         "response_id": public_response.get("id", ""),

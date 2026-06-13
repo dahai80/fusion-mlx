@@ -4,6 +4,7 @@ import types
 from pathlib import Path
 from unittest.mock import MagicMock
 
+
 def _mock_module(name):
     mod = types.ModuleType(name)
     sys.modules[name] = mod

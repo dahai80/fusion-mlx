@@ -6,17 +6,17 @@ This module provides a registry for looking up cache type handlers
 by cache type enum or class name string.
 """
 
-from typing import Any, Dict, Optional, Type
 import logging
+from typing import Any
 
 from .type_handlers import (
-    CacheType,
-    CacheTypeHandler,
-    KVCacheHandler,
-    RotatingKVCacheHandler,
     ArraysCacheHandler,
     CacheListHandler,
+    CacheType,
+    CacheTypeHandler,
     DefaultCacheHandler,
+    KVCacheHandler,
+    RotatingKVCacheHandler,
     SizedArraysCache,
 )
 
@@ -37,10 +37,10 @@ class CacheTypeRegistry:
     """
 
     # Handler instances by cache type
-    _handlers: Dict[CacheType, CacheTypeHandler] = {}
+    _handlers: dict[CacheType, CacheTypeHandler] = {}
 
     # Mapping from mlx-lm class names to cache types
-    _class_name_map: Dict[str, CacheType] = {
+    _class_name_map: dict[str, CacheType] = {
         "KVCache": CacheType.KVCACHE,
         "RotatingKVCache": CacheType.ROTATING_KVCACHE,
         # omlx subclass that overrides size() to clamp by actual buffer

@@ -2,12 +2,11 @@
 """Pydantic models for the OpenAI Responses API (/v1/responses)."""
 
 import json
-from typing import Any, Dict, List, Literal, Optional, Union
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field, model_validator
 
 from .shared_models import IDPrefix, generate_id, get_unix_timestamp
-
 
 # =============================================================================
 # Request Models
@@ -22,19 +21,19 @@ class InputItem(BaseModel):
     """
 
     # type is optional — EasyInputMessage omits it
-    type: Optional[str] = None
+    type: str | None = None
     # message fields
-    role: Optional[str] = None
-    content: Optional[Union[str, List[Any]]] = None
+    role: str | None = None
+    content: str | list[Any] | None = None
     # function_call fields
-    id: Optional[str] = None
-    call_id: Optional[str] = None
-    name: Optional[str] = None
-    arguments: Optional[str] = None
+    id: str | None = None
+    call_id: str | None = None
+    name: str | None = None
+    arguments: str | None = None
     # function_call_output fields
-    output: Optional[Union[str, List[Any], Dict[str, Any]]] = None
+    output: str | list[Any] | dict[str, Any] | None = None
     # status field (present on many item types)
-    status: Optional[str] = None
+    status: str | None = None
 
     model_config = {"extra": "allow"}
 
@@ -62,10 +61,10 @@ class ResponsesTool(BaseModel):
 
     type: str = "function"
     # function tool fields
-    name: Optional[str] = None
-    description: Optional[str] = None
-    parameters: Optional[Dict[str, Any]] = None
-    strict: Optional[bool] = None
+    name: str | None = None
+    description: str | None = None
+    parameters: dict[str, Any] | None = None
+    strict: bool | None = None
 
     model_config = {"extra": "allow"}
 
@@ -74,10 +73,10 @@ class TextFormatConfig(BaseModel):
     """Text format configuration."""
 
     type: str = "text"  # "text", "json_object", "json_schema"
-    name: Optional[str] = None
-    description: Optional[str] = None
-    schema_: Optional[Dict[str, Any]] = Field(None, alias="schema")
-    strict: Optional[bool] = None
+    name: str | None = None
+    description: str | None = None
+    schema_: dict[str, Any] | None = Field(None, alias="schema")
+    strict: bool | None = None
 
     model_config = {"extra": "allow", "populate_by_name": True}
 
@@ -85,8 +84,8 @@ class TextFormatConfig(BaseModel):
 class TextConfig(BaseModel):
     """Text configuration wrapper."""
 
-    format: Optional[TextFormatConfig] = None
-    verbosity: Optional[str] = None  # "low", "medium", "high"
+    format: TextFormatConfig | None = None
+    verbosity: str | None = None  # "low", "medium", "high"
 
     model_config = {"extra": "allow"}
 
@@ -95,34 +94,34 @@ class ResponsesRequest(BaseModel):
     """Request body for POST /v1/responses."""
 
     model: str
-    input: Optional[Union[str, List[InputItem]]] = None
-    instructions: Optional[str] = None
-    temperature: Optional[float] = None
-    top_p: Optional[float] = None
-    max_output_tokens: Optional[int] = None
+    input: str | list[InputItem] | None = None
+    instructions: str | None = None
+    temperature: float | None = None
+    top_p: float | None = None
+    max_output_tokens: int | None = None
     stream: bool = False
-    tools: Optional[List[ResponsesTool]] = None
-    tool_choice: Optional[Union[str, Dict[str, Any]]] = None
-    text: Optional[TextConfig] = None
-    previous_response_id: Optional[str] = None
-    store: Optional[bool] = None
-    truncation: Optional[str] = None  # "auto" or "disabled"
-    metadata: Optional[Dict[str, str]] = None
-    reasoning: Optional[Dict[str, Any]] = None
-    parallel_tool_calls: Optional[bool] = None
+    tools: list[ResponsesTool] | None = None
+    tool_choice: str | dict[str, Any] | None = None
+    text: TextConfig | None = None
+    previous_response_id: str | None = None
+    store: bool | None = None
+    truncation: str | None = None  # "auto" or "disabled"
+    metadata: dict[str, str] | None = None
+    reasoning: dict[str, Any] | None = None
+    parallel_tool_calls: bool | None = None
     # Fields that Codex CLI sends
-    include: Optional[List[str]] = None
-    service_tier: Optional[str] = None
-    prompt_cache_key: Optional[str] = None
-    prompt_cache_retention: Optional[str] = None
-    user: Optional[str] = None
-    top_logprobs: Optional[int] = None
-    background: Optional[bool] = None
-    conversation: Optional[Any] = None
-    max_tool_calls: Optional[int] = None
-    stream_options: Optional[Dict[str, Any]] = None
+    include: list[str] | None = None
+    service_tier: str | None = None
+    prompt_cache_key: str | None = None
+    prompt_cache_retention: str | None = None
+    user: str | None = None
+    top_logprobs: int | None = None
+    background: bool | None = None
+    conversation: Any | None = None
+    max_tool_calls: int | None = None
+    stream_options: dict[str, Any] | None = None
     # Seed for reproducible generation (best-effort)
-    seed: Optional[int] = None
+    seed: int | None = None
 
     model_config = {"extra": "allow"}
 
@@ -137,7 +136,7 @@ class OutputContent(BaseModel):
 
     type: str = "output_text"
     text: str = ""
-    annotations: List[Any] = Field(default_factory=list)
+    annotations: list[Any] = Field(default_factory=list)
 
 
 class ReasoningSummaryPart(BaseModel):
@@ -157,14 +156,14 @@ class OutputItem(BaseModel):
     id: str
     status: str = "completed"
     # message fields
-    role: Optional[str] = None
-    content: Optional[List[OutputContent]] = None
+    role: str | None = None
+    content: list[OutputContent] | None = None
     # function_call fields
-    call_id: Optional[str] = None
-    name: Optional[str] = None
-    arguments: Optional[str] = None
+    call_id: str | None = None
+    name: str | None = None
+    arguments: str | None = None
     # reasoning fields
-    summary: Optional[List[ReasoningSummaryPart]] = None
+    summary: list[ReasoningSummaryPart] | None = None
 
 
 class InputTokensDetails(BaseModel):
@@ -209,15 +208,15 @@ class ResponseObject(BaseModel):
     created_at: int = Field(default_factory=get_unix_timestamp)
     model: str
     status: str = "completed"  # "completed", "in_progress", "failed", "incomplete"
-    output: List[OutputItem] = Field(default_factory=list)
-    usage: Optional[ResponseUsage] = None
-    text: Optional[TextConfig] = None
-    tool_choice: Optional[Union[str, Dict[str, Any]]] = "auto"
-    tools: List[ResponsesTool] = Field(default_factory=list)
-    temperature: Optional[float] = None
-    top_p: Optional[float] = None
-    max_output_tokens: Optional[int] = None
-    previous_response_id: Optional[str] = None
-    metadata: Optional[Dict[str, str]] = Field(default_factory=dict)
-    truncation: Optional[str] = None
-    error: Optional[Dict[str, Any]] = None
+    output: list[OutputItem] = Field(default_factory=list)
+    usage: ResponseUsage | None = None
+    text: TextConfig | None = None
+    tool_choice: str | dict[str, Any] | None = "auto"
+    tools: list[ResponsesTool] = Field(default_factory=list)
+    temperature: float | None = None
+    top_p: float | None = None
+    max_output_tokens: int | None = None
+    previous_response_id: str | None = None
+    metadata: dict[str, str] | None = Field(default_factory=dict)
+    truncation: str | None = None
+    error: dict[str, Any] | None = None

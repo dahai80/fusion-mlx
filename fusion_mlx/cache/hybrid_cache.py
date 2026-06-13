@@ -6,9 +6,9 @@ This module provides configuration classes for models that use different
 cache types across layers (e.g., Qwen3-Next with ArraysCache + KVCache).
 """
 
-from dataclasses import dataclass, field
-from typing import Any, List, Optional, Tuple
 import logging
+from dataclasses import dataclass, field
+from typing import Any
 
 from .type_handlers import CacheType, CacheTypeHandler
 from .type_registry import CacheTypeRegistry
@@ -56,14 +56,14 @@ class ModelCacheConfig:
 
     model_name: str = ""
     num_layers: int = 0
-    layer_configs: List[LayerCacheConfig] = field(default_factory=list)
+    layer_configs: list[LayerCacheConfig] = field(default_factory=list)
     is_hybrid: bool = False
     sliceable_layer_count: int = 0
 
     @classmethod
     def from_cache_list(
         cls,
-        cache_list: List[Any],
+        cache_list: list[Any],
         model_name: str = "",
     ) -> "ModelCacheConfig":
         """Create configuration from mlx-lm cache list.
@@ -130,7 +130,7 @@ class ModelCacheConfig:
     @classmethod
     def from_type_list(
         cls,
-        cache_types: List[str],
+        cache_types: list[str],
         model_name: str = "",
     ) -> "ModelCacheConfig":
         """Create configuration from list of type names.
@@ -176,7 +176,7 @@ class ModelCacheConfig:
             sliceable_layer_count=sliceable_count,
         )
 
-    def get_sliceable_layers(self) -> List[int]:
+    def get_sliceable_layers(self) -> list[int]:
         """Get indices of layers that support block slicing.
 
         Returns:
@@ -184,7 +184,7 @@ class ModelCacheConfig:
         """
         return [cfg.layer_idx for cfg in self.layer_configs if cfg.supports_block_slicing]
 
-    def get_non_sliceable_layers(self) -> List[int]:
+    def get_non_sliceable_layers(self) -> list[int]:
         """Get indices of layers that don't support block slicing.
 
         Returns:
@@ -220,7 +220,7 @@ class ModelCacheConfig:
             return self.layer_configs[layer_idx].handler
         return CacheTypeRegistry.get_handler(CacheType.KVCACHE)
 
-    def get_type_names(self) -> List[str]:
+    def get_type_names(self) -> list[str]:
         """Get list of cache type names for serialization.
 
         Returns:
@@ -228,7 +228,7 @@ class ModelCacheConfig:
         """
         return [cfg.class_name for cfg in self.layer_configs]
 
-    def get_meta_states(self, cache_list: List[Any]) -> List[Tuple]:
+    def get_meta_states(self, cache_list: list[Any]) -> list[tuple]:
         """Extract meta_states from cache objects.
 
         For CacheList layers, the meta_state is a composite:

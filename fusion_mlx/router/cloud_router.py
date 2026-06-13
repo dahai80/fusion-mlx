@@ -198,7 +198,7 @@ class CloudRouter:
                 return await asyncio.wait_for(
                     litellm.acompletion(**call_kwargs), timeout=30.0
                 )
-            except (asyncio.TimeoutError, Exception) as e:
+            except (TimeoutError, Exception) as e:
                 last_error = e
                 if attempt < 2:
                     wait = 1.0 * (2 ** attempt)

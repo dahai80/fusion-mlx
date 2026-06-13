@@ -55,13 +55,13 @@ class CodexIntegration(Integration):
         new_lines = []
         in_any_section = False
         in_omlx_section = False
-        
+
         # Keys to override at the top level
         top_level_overrides = {
             "model": f'"{model or "select-a-model"}"',
             "model_provider": '"omlx"'
         }
-        
+
         # If it is a reasoning model, add reasoning effort
         is_reasoning = bool(re.search(r'\b(thinking|o1|o3|r1)\b', (model or "").lower()))
         if is_reasoning:
@@ -87,11 +87,11 @@ class CodexIntegration(Integration):
                     continue
                 if key in managed_keys:
                     continue
-            
+
             # Skip old oMLX section
             if in_omlx_section:
                 continue
-                
+
             new_lines.append(line)
 
         # Add missing top-level keys

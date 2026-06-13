@@ -13,7 +13,6 @@ Does NOT modify the base Scheduler. Composes via wrapper pattern.
 
 from __future__ import annotations
 
-import asyncio
 import logging
 import threading
 import time
@@ -21,8 +20,7 @@ import uuid
 from collections import deque
 from dataclasses import dataclass, field
 from enum import IntEnum
-from typing import Any, AsyncIterator, Optional
-from typing import Protocol
+from typing import Any, Protocol
 
 import mlx.core as mx
 
@@ -47,7 +45,7 @@ class SchedulerProtocol(Protocol):
     def abort_request(self, request_id: str) -> bool: ...
     def has_requests(self) -> bool: ...
     def step(self) -> Any: ...
-    def get_request(self, request_id: str) -> Optional[Request]: ...
+    def get_request(self, request_id: str) -> Request | None: ...
 
 
 class PriorityLevel(IntEnum):

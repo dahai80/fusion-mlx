@@ -4,7 +4,7 @@ import asyncio
 import json
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 
 @dataclass
@@ -14,7 +14,7 @@ class SubKeyEntry:
     name: str
     key_hash: str
     created_at: str
-    expires_at: Optional[str] = None
+    expires_at: str | None = None
     usage_count: int = 0
     is_active: bool = True
 
@@ -23,10 +23,10 @@ class SubKeyEntry:
 class Settings:
     """Persistent server settings."""
 
-    api_key: Optional[str] = None
-    sub_keys: List[SubKeyEntry] = field(default_factory=list)
-    model_settings: Dict[str, Any] = field(default_factory=dict)
-    global_settings: Dict[str, Any] = field(default_factory=dict)
+    api_key: str | None = None
+    sub_keys: list[SubKeyEntry] = field(default_factory=list)
+    model_settings: dict[str, Any] = field(default_factory=dict)
+    global_settings: dict[str, Any] = field(default_factory=dict)
 
     def _save_sync(self, path: Path) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)

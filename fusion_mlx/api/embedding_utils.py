@@ -11,12 +11,12 @@ Provides:
 import base64
 import math
 import struct
-from typing import Any, Dict, List, Union
+from typing import Any
 
 from .embedding_models import EmbeddingInputItem
 
 
-def encode_embedding_base64(embedding: List[float]) -> str:
+def encode_embedding_base64(embedding: list[float]) -> str:
     """
     Encode embedding vector as base64 string.
 
@@ -32,7 +32,7 @@ def encode_embedding_base64(embedding: List[float]) -> str:
     return base64.b64encode(packed).decode("ascii")
 
 
-def truncate_embedding(embedding: List[float], dimensions: int) -> List[float]:
+def truncate_embedding(embedding: list[float], dimensions: int) -> list[float]:
     """
     Truncate embedding to specified dimensions and renormalize.
 
@@ -60,7 +60,7 @@ def truncate_embedding(embedding: List[float], dimensions: int) -> List[float]:
     return truncated
 
 
-def count_tokens(processor: Any, texts: List[str]) -> int:
+def count_tokens(processor: Any, texts: list[str]) -> int:
     """
     Count total tokens in input texts.
 
@@ -101,7 +101,7 @@ def count_tokens(processor: Any, texts: List[str]) -> int:
     return total
 
 
-def normalize_input(input_data: Union[str, List[str]]) -> List[str]:
+def normalize_input(input_data: str | list[str]) -> list[str]:
     """
     Normalize input to a list of strings.
 
@@ -117,8 +117,8 @@ def normalize_input(input_data: Union[str, List[str]]) -> List[str]:
 
 
 def normalize_embedding_items(
-    items: List[Union[EmbeddingInputItem, Dict[str, Any]]]
-) -> List[Dict[str, str]]:
+    items: list[EmbeddingInputItem | dict[str, Any]]
+) -> list[dict[str, str]]:
     """
     Normalize structured embedding items into plain dicts.
 
@@ -128,7 +128,7 @@ def normalize_embedding_items(
     Returns:
         List of normalized item dicts with only supported keys
     """
-    normalized: List[Dict[str, str]] = []
+    normalized: list[dict[str, str]] = []
 
     for item in items:
         if hasattr(item, "model_dump"):
@@ -141,7 +141,7 @@ def normalize_embedding_items(
         text = payload.get("text")
         image = payload.get("image")
 
-        normalized_item: Dict[str, str] = {}
+        normalized_item: dict[str, str] = {}
         if text is not None:
             normalized_item["text"] = text
         if image is not None:

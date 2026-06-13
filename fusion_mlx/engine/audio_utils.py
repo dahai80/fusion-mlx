@@ -1,9 +1,7 @@
 """Audio engine utilities for fusion-mlx."""
 
-import struct
 import wave
 from io import BytesIO
-from typing import Optional
 
 import numpy as np
 
@@ -30,7 +28,7 @@ def wav_header(duration_seconds: float, sample_rate: int = 24000, channels: int 
     return buf.getvalue()
 
 
-def wav_bytes_to_pcm_frames(wav_data: bytes, sample_rate: int = 24000) -> Optional[np.ndarray]:
+def wav_bytes_to_pcm_frames(wav_data: bytes, sample_rate: int = 24000) -> np.ndarray | None:
     """Decode WAV bytes to PCM frames as a numpy array.
 
     Args:

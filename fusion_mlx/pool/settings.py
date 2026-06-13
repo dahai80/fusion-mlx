@@ -2,6 +2,7 @@
 """Settings stub for fusion-mlx pool."""
 
 from dataclasses import dataclass
+
 import psutil
 
 

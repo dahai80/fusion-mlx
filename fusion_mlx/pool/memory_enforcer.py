@@ -754,7 +754,7 @@ class ProcessMemoryEnforcer:
             _lock_acquired = await asyncio.wait_for(
                 self._engine_pool._lock.acquire(), timeout=2.0
              )
-        except asyncio.TimeoutError:
+        except TimeoutError:
             victim = self._engine_pool._find_lru_victim()
             if victim:
                 self._eviction_marked.add(victim)
@@ -827,7 +827,7 @@ class ProcessMemoryEnforcer:
                                 await asyncio.wait_for(
                                     self._engine_pool._lock.acquire(), timeout=2.0
                                  )
-                            except asyncio.TimeoutError:
+                            except TimeoutError:
                                 break
                             continue
 

@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import json
 import re
-from typing import Any, List
+from typing import Any
 
 try:
     from mlx_lm.tokenizer_utils import NaiveStreamingDetokenizer
@@ -64,10 +64,10 @@ def _strip_thinking(text: Any) -> Any:
 
 
 def extract_gemma4_messages(
-    messages: List[Any],
+    messages: list[Any],
     max_tool_result_tokens: int | None = None,
     tokenizer: Any | None = None,
-) -> List[dict]:
+) -> list[dict]:
     """Convert OpenAI-format messages to Gemma 4 chat-template format.
 
     The Gemma 4 chat template does not handle ``role=tool`` messages.

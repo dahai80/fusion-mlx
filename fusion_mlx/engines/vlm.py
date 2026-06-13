@@ -6,7 +6,7 @@ import copy
 import logging
 from collections.abc import AsyncIterator
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 import mlx.core as mx
 
@@ -23,7 +23,7 @@ logger = logging.getLogger(__name__)
 
 OCR_MODEL_TYPES = {"deepseekocr", "deepseekocr_2", "dots_ocr", "glm_ocr"}
 
-OCR_MODEL_PROMPTS: Dict[str, str] = {
+OCR_MODEL_PROMPTS: dict[str, str] = {
     "deepseekocr": "Convert the document to markdown.",
     "deepseekocr_2": "Convert the document to markdown.",
     "dots_ocr": "Convert this page to clean Markdown while preserving reading order.",
@@ -32,7 +32,7 @@ OCR_MODEL_PROMPTS: Dict[str, str] = {
 
 OCR_EXTRA_STOP_SEQUENCES = ["<|user|>", "##", "\n", "<|endofassistant|>"]
 
-OCR_MODEL_GENERATION_DEFAULTS: Dict[str, Dict[str, Any]] = {
+OCR_MODEL_GENERATION_DEFAULTS: dict[str, dict[str, Any]] = {
     "glm_ocr": {"temperature": 0.0, "repetition_penalty": 1.1, "max_tokens": 4096},
     "deepseekocr": {"temperature": 0.0, "max_tokens": 8192},
     "deepseekocr_2": {"temperature": 0.0, "max_tokens": 8192},
@@ -138,7 +138,7 @@ class VLMBatchedEngine(BaseEngine):
         # Create adapter wrapping language_model
         self._adapter = VLMModelAdapter(self._vlm_model)
 
-       
+
 
         # Scheduler + engine
         scheduler_config = copy.copy(self._scheduler_config) if self._scheduler_config else None
@@ -213,7 +213,7 @@ class VLMBatchedEngine(BaseEngine):
 
     def _split_vision_features(
         self, features: mx.array, num_images: int, extra_model_inputs: dict
-    ) -> List[mx.array] | None:
+    ) -> list[mx.array] | None:
         if num_images <= 1:
             return [features]
 
@@ -247,12 +247,11 @@ class VLMBatchedEngine(BaseEngine):
         self,
         messages: list[dict[str, Any]],
         images: list[Any],
-    ) -> Tuple:
+    ) -> tuple:
         """Run VLM preprocessing: tokenize, preprocess images, compute embeddings, cache.
 
         Returns (token_ids, inputs_embeds, extra_kwargs, image_hash, image_cache_key_start, image_cache_key_ranges).
         """
-        from mlx_vlm.prompt_utils import apply_chat_template as vlm_apply_chat_template
         from mlx_vlm.utils import prepare_inputs
 
         num_images = len(images)
@@ -359,7 +358,7 @@ class VLMBatchedEngine(BaseEngine):
         messages: list[dict[str, Any]],
         tools: list[dict] | None,
         kwargs: dict,
-    ) -> Tuple:
+    ) -> tuple:
         text_messages, images = extract_images_from_messages(messages)
         if images:
             text_messages = self._apply_ocr_prompt(messages) if self.is_ocr_model else text_messages
@@ -426,9 +425,9 @@ class VLMBatchedEngine(BaseEngine):
             xtc_threshold=kwargs.get("xtc_threshold", 0.1),
             repetition_penalty=repetition_penalty, presence_penalty=presence_penalty,
             stop=stop or [], stop_token_ids=extra_stop_ids or None,
-            thinking_budget=kwargs.get("thinking_budget", None),
-            compiled_grammar=kwargs.get("compiled_grammar", None),
-            seed=kwargs.get("seed", None),
+            thinking_budget=kwargs.get("thinking_budget"),
+            compiled_grammar=kwargs.get("compiled_grammar"),
+            seed=kwargs.get("seed"),
         )
 
     async def generate(
@@ -438,7 +437,7 @@ class VLMBatchedEngine(BaseEngine):
         stop: list[str] | None = None,
         vlm_inputs_embeds: Any = None, vlm_extra_kwargs: dict[str, Any] | None = None,
         vlm_image_hash: str | None = None, vlm_cache_key_start: int = 0,
-        vlm_cache_key_ranges: Optional[List[Tuple[int, str]]] = None, **kwargs,
+        vlm_cache_key_ranges: list[tuple[int, str]] | None = None, **kwargs,
     ) -> GenerationOutput:
         if not self._loaded:
             await self.start()
@@ -464,7 +463,7 @@ class VLMBatchedEngine(BaseEngine):
         stop: list[str] | None = None,
         vlm_inputs_embeds: Any = None, vlm_extra_kwargs: dict[str, Any] | None = None,
         vlm_image_hash: str | None = None, vlm_cache_key_start: int = 0,
-        vlm_cache_key_ranges: Optional[List[Tuple[int, str]]] = None, **kwargs,
+        vlm_cache_key_ranges: list[tuple[int, str]] | None = None, **kwargs,
     ) -> AsyncIterator[GenerationOutput]:
         if not self._loaded:
             await self.start()

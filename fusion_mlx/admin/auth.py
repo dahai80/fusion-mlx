@@ -4,8 +4,9 @@
 import hashlib
 import secrets
 import time
+from collections.abc import Callable
 from functools import wraps
-from typing import Any, Callable, Optional
+from typing import Any
 
 SESSION_MAX_AGE = 3600          # 1 hour
 REMEMBER_ME_MAX_AGE = 86400     # 24 hours
@@ -53,7 +54,7 @@ def validate_api_key(key: str) -> tuple[bool, str]:
     return (True, "")
 
 
-def verify_api_key(input_key: Optional[str], expected_key: str) -> bool:
+def verify_api_key(input_key: str | None, expected_key: str) -> bool:
     """Verify two API keys match."""
     if not input_key or not expected_key:
         return False
@@ -82,6 +83,6 @@ def require_admin(f: Callable) -> Callable:
     return wrapper
 
 
-def extract_session_token(request) -> Optional[str]:
+def extract_session_token(request) -> str | None:
     """Extract session token from request cookies."""
     return request.cookies.get("session_token")

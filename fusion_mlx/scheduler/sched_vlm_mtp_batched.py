@@ -26,8 +26,9 @@ Performance (M4 Max, B=4):
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass, field
-from typing import Any, Callable
+from collections.abc import Callable
+from dataclasses import dataclass
+from typing import Any
 
 import mlx.core as mx
 
@@ -288,7 +289,7 @@ def _vlm_mtp_flush_batch(
         batch_id, len(rows), [r.uid for r in rows],
     )
 
-    setattr(self, "_vlm_mtp_next_uid", next_uid_base - len(rows))
+    self._vlm_mtp_next_uid = next_uid_base - len(rows)
     return rows
 
 
@@ -446,12 +447,12 @@ class _BatchedCacheLayer:
     def __len__(self) -> int:
         return len(self._layers)
 
-    def copy(self) -> "_BatchedCacheLayer":
+    def copy(self) -> _BatchedCacheLayer:
         return _BatchedCacheLayer(
                 [l.copy() if hasattr(l, "copy") else l for l in self._layers]
             )
 
-    def save(self) -> "_BatchedCacheLayer":
+    def save(self) -> _BatchedCacheLayer:
         return self.copy()
 
     def write(self, tokens: mx.array, logits: mx.array, kv: tuple) -> None:

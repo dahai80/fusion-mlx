@@ -7,7 +7,6 @@ These models define the request and response schemas for:
 - Audio speech synthesis (text-to-speech)
 """
 
-from typing import List, Optional
 
 from pydantic import BaseModel
 
@@ -16,35 +15,35 @@ class AudioTranscriptionRequest(BaseModel):
     """OpenAI-compatible audio transcription request."""
 
     model: str
-    language: Optional[str] = None
-    prompt: Optional[str] = None
-    response_format: Optional[str] = "json"
-    temperature: Optional[float] = 0.0
+    language: str | None = None
+    prompt: str | None = None
+    response_format: str | None = "json"
+    temperature: float | None = 0.0
 
 
 class AudioTranscriptionResponse(BaseModel):
     text: str
-    language: Optional[str] = None
-    duration: Optional[float] = None
-    segments: Optional[List[dict]] = None
+    language: str | None = None
+    duration: float | None = None
+    segments: list[dict] | None = None
 
 
 class AudioSpeechRequest(BaseModel):
     model: str
     input: str
-    voice: Optional[str] = None
-    instructions: Optional[str] = None
-    speed: Optional[float] = 1.0
-    response_format: Optional[str] = "wav"
-    ref_audio: Optional[str] = None
-    ref_text: Optional[str] = None
-    temperature: Optional[float] = None
-    top_k: Optional[int] = None
-    top_p: Optional[float] = None
-    repetition_penalty: Optional[float] = None
-    max_tokens: Optional[int] = None
-    stream: Optional[bool] = False
-    streaming_interval: Optional[float] = None
+    voice: str | None = None
+    instructions: str | None = None
+    speed: float | None = 1.0
+    response_format: str | None = "wav"
+    ref_audio: str | None = None
+    ref_text: str | None = None
+    temperature: float | None = None
+    top_k: int | None = None
+    top_p: float | None = None
+    repetition_penalty: float | None = None
+    max_tokens: int | None = None
+    stream: bool | None = False
+    streaming_interval: float | None = None
 
 
 class AudioProcessRequest(BaseModel):

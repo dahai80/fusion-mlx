@@ -1,9 +1,8 @@
 """Release checking utilities for fusion-mlx."""
 
-from typing import Optional
 
 
-def select_latest_stable_release(version_list: Optional[list[str]] = None) -> str:
+def select_latest_stable_release(version_list: list[str] | None = None) -> str:
     """Select the latest stable release from a list of versions.
 
     Args:

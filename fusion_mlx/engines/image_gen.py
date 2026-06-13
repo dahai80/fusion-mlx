@@ -5,7 +5,7 @@ import asyncio
 import gc
 import logging
 import time
-from typing import Any, Dict, Optional
+from typing import Any
 
 import mlx.core as mx
 import numpy as np
@@ -75,7 +75,7 @@ class ImageGenEngine(BaseNonStreamingEngine):
         width: int = 1024,
         height: int = 1024,
         steps: int = 4,
-        seed: Optional[int] = None,
+        seed: int | None = None,
         guidance: float = 4.0,
         n_images: int = 1,
         output_format: str = "PNG",
@@ -127,7 +127,7 @@ class ImageGenEngine(BaseNonStreamingEngine):
         finally:
             await self._finish_activity(activity_id)
 
-    def get_stats(self) -> Dict[str, Any]:
+    def get_stats(self) -> dict[str, Any]:
         return {"model_name": self._model_name, "loaded": self._pipeline is not None}
 
     def __repr__(self) -> str:

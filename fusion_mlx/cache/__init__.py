@@ -5,66 +5,11 @@ Merged from omlx/cache + Rapid-MLX cache implementations.
 """
 
 # Stats
-from .stats import (
-    BaseCacheStats,
-    PagedCacheStats,
-    VLMCacheStats,
-    PagedSSDCacheStats,
-)
-
-# Interfaces
-from .interface import CacheManager
-
-# Paged cache implementations
-from .paged_cache import (
-    PagedCacheManager,
-    CacheBlock,
-    BlockTable,
-    FreeKVCacheBlockQueue,
-    BlockHashToBlockMap,
-)
-
-# Prefix cache implementations
-from .prefix_cache import (
-    BlockAwarePrefixCache,
-    BlockCacheEntry,
-)
-
-# Paged SSD cache implementations
-from .paged_ssd_cache import (
-    PagedSSDCacheManager,
-    PagedSSDBlockMetadata,
-    PagedSSDCacheIndex,
-    parse_size,
-)
-
-# Vision feature cache
-from .vision_feature_cache import (
-    VisionFeatureSSDCache,
-    VisionFeatureSSDEntry,
-)
-
-# Managers
-from .recovery import CacheRecoveryManager
+# Boundary snapshots
+from .boundary_snapshot_store import BoundarySnapshotSSDStore
 
 # Factory
 from .factory import CacheConfig, CacheFactory
-
-# Type handlers
-from .type_handlers import (
-    CacheType,
-    CacheTypeHandler,
-    CacheStateInfo,
-    KVCacheHandler,
-    RotatingKVCacheHandler,
-    ArraysCacheHandler,
-    CacheListHandler,
-    DefaultCacheHandler,
-    SizedArraysCache,
-)
-
-# Type registry
-from .type_registry import CacheTypeRegistry
 
 # Hybrid cache config
 from .hybrid_cache import (
@@ -73,11 +18,8 @@ from .hybrid_cache import (
     create_default_kvcache_config,
 )
 
-# Observability
-from .observability import CacheRateTracker
-
-# Boundary snapshots
-from .boundary_snapshot_store import BoundarySnapshotSSDStore
+# Interfaces
+from .interface import CacheManager
 
 # MLLM cache (from Rapid-MLX)
 from .mllm_cache import (
@@ -88,10 +30,67 @@ from .mllm_cache import (
     compute_images_hash,
 )
 
+# Observability
+from .observability import CacheRateTracker
+
+# Paged cache implementations
+from .paged_cache import (
+    BlockHashToBlockMap,
+    BlockTable,
+    CacheBlock,
+    FreeKVCacheBlockQueue,
+    PagedCacheManager,
+)
+
+# Paged SSD cache implementations
+from .paged_ssd_cache import (
+    PagedSSDBlockMetadata,
+    PagedSSDCacheIndex,
+    PagedSSDCacheManager,
+    parse_size,
+)
+
+# Prefix cache implementations
+from .prefix_cache import (
+    BlockAwarePrefixCache,
+    BlockCacheEntry,
+)
+
+# Managers
+from .recovery import CacheRecoveryManager
+from .stats import (
+    BaseCacheStats,
+    PagedCacheStats,
+    PagedSSDCacheStats,
+    VLMCacheStats,
+)
+
+# Type handlers
+from .type_handlers import (
+    ArraysCacheHandler,
+    CacheListHandler,
+    CacheStateInfo,
+    CacheType,
+    CacheTypeHandler,
+    DefaultCacheHandler,
+    KVCacheHandler,
+    RotatingKVCacheHandler,
+    SizedArraysCache,
+)
+
+# Type registry
+from .type_registry import CacheTypeRegistry
+
 # Vision embedding cache (from Rapid-MLX)
 from .vision_embedding_cache import (
     VisionCacheStats,
     VisionEmbeddingCache,
+)
+
+# Vision feature cache
+from .vision_feature_cache import (
+    VisionFeatureSSDCache,
+    VisionFeatureSSDEntry,
 )
 
 __all__ = [

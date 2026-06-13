@@ -9,16 +9,17 @@ suppression) and exposes a uniform token-by-token interface.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any, Callable, Optional, Protocol
+from typing import Any, Protocol
 
 try:
     from mlx_lm.tokenizer_utils import NaiveStreamingDetokenizer
 except ImportError:
     NaiveStreamingDetokenizer = None
 
-from .harmony import HarmonyStreamingParser, parse_tool_calls_from_tokens
 from ..utils.tokenizer import is_gemma4_model, is_harmony_model
+from .harmony import HarmonyStreamingParser, parse_tool_calls_from_tokens
 
 
 @dataclass
@@ -145,7 +146,7 @@ class HarmonyOutputParserSession:
 def detect_output_parser(
     model_name: str,
     tokenizer: Any,
-    model_config: Optional[dict[str, Any]] = None,
+    model_config: dict[str, Any] | None = None,
 ) -> OutputParserFactory | None:
     """Detect a protocol-specific output parser for the model, if needed."""
 
@@ -171,7 +172,7 @@ def detect_output_parser(
 
 def detect_message_extractor(
     model_name: str,
-    model_config: Optional[dict[str, Any]] = None,
+    model_config: dict[str, Any] | None = None,
 ) -> Callable:
     """Return the appropriate message extractor function for the model.
 

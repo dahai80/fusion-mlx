@@ -11,7 +11,8 @@ Provides FastAPI routes for:
 import logging
 import time
 import uuid
-from typing import Any, AsyncIterator
+from collections.abc import AsyncIterator
+from typing import Any
 
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
@@ -19,22 +20,16 @@ from fastapi.responses import StreamingResponse
 from ..api.adapters.base import InternalResponse, StreamChunk
 from ..api.adapters.openai import OpenAIAdapter
 from ..api.openai_models import (
-    ChatCompletionChoice,
-    ChatCompletionChunk,
-    ChatCompletionChunkChoice,
-    ChatCompletionChunkDelta,
     ChatCompletionRequest,
     ChatCompletionResponse,
     CompletionRequest,
     ModelInfo,
     ModelsResponse,
-    PromptTokensDetails,
-    Usage,
 )
 from ..engines.base import GenerationOutput
 from ..pool import EnginePool
-from ..router import RequestRouter
 from ..request import SamplingParams
+from ..router import RequestRouter
 
 logger = logging.getLogger(__name__)
 

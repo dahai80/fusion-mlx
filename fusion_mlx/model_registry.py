@@ -4,7 +4,7 @@
 import logging
 import threading
 import weakref
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -26,7 +26,7 @@ class ModelRegistry:
         return cls._instance
 
     def _init(self) -> None:
-        self._owners: Dict[int, Tuple[weakref.ref, str]] = {}
+        self._owners: dict[int, tuple[weakref.ref, str]] = {}
         self._registry_lock = threading.Lock()
 
     def acquire(self, model: Any, engine: Any, engine_id: str, force: bool = False) -> bool:
@@ -56,7 +56,7 @@ class ModelRegistry:
                     return True
         return False
 
-    def is_owned(self, model: Any) -> Tuple[bool, Optional[str]]:
+    def is_owned(self, model: Any) -> tuple[bool, str | None]:
         model_id = id(model)
         with self._registry_lock:
             if model_id in self._owners:
@@ -83,7 +83,7 @@ class ModelRegistry:
                 cleaned += 1
         return cleaned
 
-    def get_stats(self) -> Dict[str, Any]:
+    def get_stats(self) -> dict[str, Any]:
         with self._registry_lock:
             active = sum(1 for _, (r, _) in self._owners.items() if r() is not None)
             return {"total_entries": len(self._owners), "active_owners": active}

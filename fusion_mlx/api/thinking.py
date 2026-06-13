@@ -10,8 +10,6 @@ their chain-of-thought reasoning in <think>...</think> tags.
 """
 
 import re
-from typing import List, Optional, Tuple
-
 
 # Tags used for thinking blocks
 _OPEN_TAG = "<think>"
@@ -26,7 +24,7 @@ _THINKING_PATTERN = re.compile(r'<think>(.*?)</think>', re.DOTALL)
 _THINKING_TAIL_PATTERN = re.compile(r'^(.*?)</think>', re.DOTALL)
 
 
-def extract_thinking(text: str) -> Tuple[str, str]:
+def extract_thinking(text: str) -> tuple[str, str]:
     """Extract thinking and content from complete text.
 
     Handles:
@@ -121,10 +119,10 @@ class ThinkingParser:
         # text once more as content — the client will show both panels but
         # the answer body is no longer empty.
         self._close_seen: bool = False
-        self._thinking_accumulated: List[str] = []
+        self._thinking_accumulated: list[str] = []
         self._content_emitted: bool = False
 
-    def feed(self, text: str) -> Tuple[str, str]:
+    def feed(self, text: str) -> tuple[str, str]:
         """Feed a text chunk, return (thinking_delta, content_delta).
 
         Args:
@@ -189,7 +187,7 @@ class ThinkingParser:
             self._content_emitted = True
         return (thinking_delta, content_delta)
 
-    def finish(self) -> Tuple[str, str]:
+    def finish(self) -> tuple[str, str]:
         """Flush any remaining buffered content.
 
         Should be called when the stream is complete to emit any
@@ -273,11 +271,11 @@ class ThinkingBudgetProcessor:
 
     def __init__(
         self,
-        think_end_token_ids: List[int],
+        think_end_token_ids: list[int],
         budget: int,
-        think_start_token_id: Optional[int] = None,
-        leading_token_ids: Optional[List[int]] = None,
-        trailing_token_ids: Optional[List[int]] = None,
+        think_start_token_id: int | None = None,
+        leading_token_ids: list[int] | None = None,
+        trailing_token_ids: list[int] | None = None,
     ):
         self._think_end_ids = think_end_token_ids
         # Full force sequence: \n + </think> + \n\n (matches training pattern)
@@ -299,7 +297,7 @@ class ThinkingBudgetProcessor:
         # After forced sequence, suppress duplicate </think> tokens
         self._suppress_end: bool = False
         # Sliding window for multi-token end detection
-        self._recent_tokens: List[int] = []
+        self._recent_tokens: list[int] = []
         # Flat set for fast single-token suppression check
         self._end_id_set = set(think_end_token_ids)
 

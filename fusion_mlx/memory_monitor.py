@@ -2,12 +2,9 @@
 """Memory monitoring for fusion-mlx on Apple Silicon unified memory."""
 
 import logging
-import platform
-import struct
 import subprocess
-import threading
-from ctypes import c_void_p, c_uint64, c_uint32, CDLL, byref
-from typing import Any, Optional
+from ctypes import CDLL, byref, c_uint32, c_uint64, c_void_p
+from typing import Any
 
 logger = logging.getLogger(__name__)
 

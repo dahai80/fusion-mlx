@@ -6,18 +6,8 @@ This adapter handles conversion between OpenAI API format and the internal
 request/response format used by the inference engine.
 """
 
-import json
-import time
 import uuid
-from typing import Any, List, Optional
 
-from .base import (
-    BaseAdapter,
-    InternalMessage,
-    InternalRequest,
-    InternalResponse,
-    StreamChunk,
-)
 from ..openai_models import (
     AssistantMessage,
     ChatCompletionChoice,
@@ -30,8 +20,15 @@ from ..openai_models import (
     Usage,
 )
 from ..thinking import extract_thinking
-from ..utils import clean_special_tokens, extract_text_content
 from ..tool_calling import convert_tools_for_template
+from ..utils import clean_special_tokens, extract_text_content
+from .base import (
+    BaseAdapter,
+    InternalMessage,
+    InternalRequest,
+    InternalResponse,
+    StreamChunk,
+)
 
 
 class OpenAIAdapter(BaseAdapter):

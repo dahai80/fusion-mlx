@@ -8,12 +8,12 @@ The KV cache (prompt_cache + block_table) is transferred between engines as MLX 
 """
 
 import logging
-from typing import Any, Optional
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
 
-def export_kv_state(self, request_id: str) -> Optional[dict[str, Any]]:
+def export_kv_state(self, request_id: str) -> dict[str, Any] | None:
     """Export KV state for a completed prefill request.
 
     Called after all prompt tokens are processed but before decode begins.

@@ -3,12 +3,12 @@
 from fusion_mlx.integrations.base import Integration
 from fusion_mlx.integrations.claude import ClaudeCodeIntegration
 from fusion_mlx.integrations.codex import CodexIntegration
+from fusion_mlx.integrations.comfyui import ComfyUIIntegration
 from fusion_mlx.integrations.copilot import CopilotIntegration
 from fusion_mlx.integrations.hermes import HermesIntegration
 from fusion_mlx.integrations.openclaw import OpenClawIntegration
 from fusion_mlx.integrations.opencode import OpenCodeIntegration
 from fusion_mlx.integrations.pi import PiIntegration
-from fusion_mlx.integrations.comfyui import ComfyUIIntegration
 
 INTEGRATIONS: dict[str, Integration] = {
     "claude": ClaudeCodeIntegration(),

@@ -1,15 +1,9 @@
 import time
-from collections import deque
-from unittest.mock import MagicMock, patch
-
-import pytest
+from unittest.mock import MagicMock
 
 from fusion_mlx.cache.paged_cache import (
-    CacheBlock,
-    FreeKVCacheBlockQueue,
-    PagedCacheManager,
     BlockHash,
-    compute_block_hash,
+    PagedCacheManager,
 )
 
 

@@ -9,7 +9,8 @@ Provides FastAPI routes for:
 
 import logging
 import uuid
-from typing import Any, AsyncIterator
+from collections.abc import AsyncIterator
+from typing import Any
 
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
@@ -18,11 +19,14 @@ from ..api.adapters.anthropic import AnthropicAdapter
 from ..api.adapters.base import InternalResponse, StreamChunk
 from ..api.anthropic_models import (
     MessagesRequest as AnthropicMessagesRequest,
+)
+from ..api.anthropic_models import (
     MessagesResponse as AnthropicMessagesResponse,
+)
+from ..api.anthropic_models import (
     TokenCountRequest,
     TokenCountResponse,
 )
-from ..engines.base import GenerationOutput
 from ..pool import EnginePool
 from ..request import SamplingParams
 
