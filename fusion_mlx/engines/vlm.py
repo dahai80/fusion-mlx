@@ -269,6 +269,9 @@ class VLMBatchedEngine(BaseEngine):
         if not hasattr(template_target, "apply_chat_template"):
             template_target = getattr(self._processor, "tokenizer", self._processor)
 
+        # Ensure system messages are always at the beginning (some VLM templates enforce this)
+        messages.sort(key=lambda m: 0 if m.get("role") == "system" else 1)
+
         try:
             prompt = template_target.apply_chat_template(messages, **template_kwargs)
         except TypeError:
