@@ -38,8 +38,12 @@ if HAS_MLX:
 
 logger = logging.getLogger(__name__)
 
-# Max pending writes before save() blocks.
-_MAX_PENDING_WRITES = 128
+# Default queue bounds — overridden dynamically by memory pressure.
+_DEFAULT_MAX_PENDING_WRITES = 128
+_MIN_PENDING_WRITES = 16
+_MAX_PENDING_WRITES_CAP = 512
+
+_SOFT_LIMIT_PCT = 0.80
 
 
 class BoundarySnapshotSSDStore:
@@ -97,7 +101,7 @@ class BoundarySnapshotSSDStore:
         self._cancelled_lock = threading.Lock()
 
         # Background writer thread.
-        self._write_queue: queue.Queue = queue.Queue(maxsize=_MAX_PENDING_WRITES)
+        self._write_queue: queue.Queue = queue.Queue(maxsize=_DEFAULT_MAX_PENDING_WRITES)
         self._shutdown = threading.Event()
         # Held by the writer for the duration of each item's processing.
         # cleanup_all() acquires it after draining the queue so the writer
@@ -171,7 +175,36 @@ class BoundarySnapshotSSDStore:
             with self._registry_lock:
                 self._file_registry.setdefault(request_id, {})[token_count] = file_path
 
-            # 5. Enqueue for background write.
+            # Backpressure check: warn at 80% capacity so caller can
+            # throttle new prefills before the hard cap drops snapshots.
+            qsize = self._write_queue.qsize()
+            soft_limit = int(_MAX_PENDING_WRITES * _SOFT_LIMIT_PCT)
+            if qsize >= soft_limit:
+                logger.warning(
+                     "Boundary snapshot write queue at %d/%d (%.0f%%) — "
+                     "backpressure active; consider reducing concurrent prefills",
+                    qsize, _MAX_PENDING_WRITES,
+                    qsize / _MAX_PENDING_WRITES * 100,
+                 )
+
+            # 5. Enqueue for background write (dynamic capacity check).
+            max_bound = self._get_dynamic_queue_bound()
+            if qsize >= max_bound:
+                 # Queue at dynamic capacity — drop snapshot to protect memory
+                logger.warning(
+                     "Boundary snapshot queue at dynamic capacity (%d/%d), "
+                     "dropping snapshot %s/%d",
+                    qsize, max_bound, request_id, token_count
+                 )
+                with self._pending_lock:
+                    self._pending_writes.pop(pw_key, None)
+                with self._registry_lock:
+                    req_files = self._file_registry.get(request_id)
+                    if req_files is not None:
+                        req_files.pop(token_count, None)
+                        if not req_files:
+                            self._file_registry.pop(request_id, None)
+                return False
             try:
                 self._write_queue.put_nowait((pw_key, tensors_raw, metadata, file_path))
             except queue.Full:
@@ -707,8 +740,17 @@ class BoundarySnapshotSSDStore:
         # Materialize lazy tensors on inference thread.
         if arrays:
             mx.eval(*arrays.values())
+            # Force Metal queue to finish before extracting bytes.
+            # Without this the background writer can read un-initialized
+            # or garbage buffers — MLX is lazy and eval() only submits
+            # to the command queue, it does not wait for completion.
+            mx.synchronize()
 
         # Extract raw bytes (Metal-safe memoryview copy).
+        # CRITICAL: use bytes() to create an independent copy.  A bare
+        # memoryview would keep the original MLX tensor alive (ref-count
+        # anchor) until the writer thread finishes — causing temporary
+        # memory spikes under high concurrency.
         tensors_raw = {}
         for name, arr in arrays.items():
             tensors_raw[name] = _extract_tensor_bytes(arr)

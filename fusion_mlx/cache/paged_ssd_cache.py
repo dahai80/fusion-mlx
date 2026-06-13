@@ -174,7 +174,15 @@ class PagedSSDCacheManager:
             tensor_data = {}
             for i, l in enumerate(layers):
                 tensor_data[f"layer_{i}"] = _extract_tensor_bytes(l)
-            _write_safetensors_no_mx(tensor_data, str(file_path))
+            # Atomic write: temp file + rename to prevent partial writes
+            temp_path = file_path.with_suffix(".tmp")
+            try:
+                _write_safetensors_no_mx(tensor_data, str(temp_path))
+                temp_path.replace(file_path)  # POSIX atomic rename
+            except Exception:
+                if temp_path.exists():
+                    temp_path.unlink()
+                raise
             size = file_path.stat().st_size if file_path.exists() else 0
             self._index.blocks[block_id] = PagedSSDBlockMetadata(
                 block_id=block_id,

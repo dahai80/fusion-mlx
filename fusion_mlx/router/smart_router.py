@@ -119,11 +119,11 @@ class SmartRouter:
     Routing decision tree:
     1. Explicit backend override (model config or request param) -> use it
     2. Prompt > phase_split_threshold AND low cache hit -> split phases
-       - Prefill -> omlx (matmul optimized)
-       - Decode  -> Rapid-MLX (KV lightweight)
+        - Prefill -> omlx (matmul optimized)
+        - Decode  -> Rapid-MLX (KV lightweight)
     3. Prompt <= threshold OR high cache hit -> unified backend
-       - REALTIME tasks -> Rapid-MLX (low latency)
-       - BATCH tasks    -> omlx (high throughput)
+        - REALTIME tasks -> Rapid-MLX (low latency)
+        - BATCH tasks    -> omlx (high throughput)
     4. Uncached tokens > cloud_threshold -> CloudRouter
     5. Benchmark-based: if loaded, use actual TPS data to decide
     """
@@ -219,21 +219,21 @@ class SmartRouter:
                 split_phases=False,
             )
 
-         # 3. Priority-based routing (resolved before benchmark to prevent
-         # REALTIME requests from being routed to high-TPS/high-latency backends)
+        # 3. Priority-based routing (resolved before benchmark to prevent
+        # REALTIME requests from being routed to high-TPS/high-latency backends)
         priority = self._resolve_priority(task_tag)
 
-         # 4. Benchmark-based routing — skip for REALTIME (latency > throughput)
+        # 4. Benchmark-based routing — skip for REALTIME (latency > throughput)
         if priority != TaskPriority.REALTIME:
             benchmark_decision = self._benchmark_route(model_id, quant_format, new_tokens)
             if benchmark_decision is not None:
                 self._record_route(
                     benchmark_decision.prefill_backend.value,
                     benchmark_decision.split_phases,
-                 )
+                )
                 return benchmark_decision
 
-         # 5. Phase split: long prompts with low cache coverage
+        # 5. Phase split: long prompts with low cache coverage
         if (
             new_tokens > self.config.phase_split_threshold
             and cache_hit_rate < 0.5
@@ -320,7 +320,7 @@ class SmartRouter:
         if decision.split_phases:
             async for chunk in self._execute_split_phase(
                 engine, messages, request_data, decision, **kwargs
-             ):
+            ):
                 yield chunk
         else:
             async for chunk in engine.stream_chat(messages, **kwargs):
@@ -353,7 +353,7 @@ class SmartRouter:
 
         if not (getattr(prefill_engine, "supports_prefill_only", False)
         and getattr(decode_engine, "supports_kv_handoff", False)):
-              # Fallback: if engines don't support handoff, use unified streaming
+                # Fallback: if engines don't support handoff, use unified streaming
             logger.info(
                 "[SmartRouter] Phase split fallback: engines lack handoff support, "
                 "streaming on %s", decision.prefill_backend.value,
@@ -367,11 +367,11 @@ class SmartRouter:
             decision.prefill_backend.value, decision.decode_backend.value,
         )
 
-         # Step 1: Prefill on omlx — get KV state
+        # Step 1: Prefill on omlx — get KV state
         prefill_result = await prefill_engine.chat(messages, prefill_only=True, **kwargs)
         kv_state = prefill_result.kv_state or {}
 
-         # Step 2: Create PhaseHandoff from KV state
+        # Step 2: Create PhaseHandoff from KV state
         handoff = PhaseHandoff(
             request_id=request_id,
             block_table=kv_state.get("block_table"),
@@ -385,7 +385,7 @@ class SmartRouter:
         with self._lock:
             self._handoffs[request_id] = handoff
 
-         # Step 3: Decode on Rapid-MLX with KV handoff — stream SSE chunks
+        # Step 3: Decode on Rapid-MLX with KV handoff — stream SSE chunks
         try:
             async for chunk in decode_engine.stream_chat(messages, kv_handoff=handoff, **kwargs):
                 yield chunk
@@ -504,8 +504,8 @@ class SmartRouter:
             for ch in text:
                 cp = ord(ch)
                 if (0x4e00 <= cp <= 0x9fff or
-                     0x3040 <= cp <= 0x30ff or
-                     0xac00 <= cp <= 0xd7af):
+                    0x3040 <= cp <= 0x30ff or
+                    0xac00 <= cp <= 0xd7af):
                     cjk_chars += 1
                 else:
                     ascii_chars += 1
@@ -588,12 +588,97 @@ class SmartRouter:
             f"{result.tps:.1f} tps, p50={result.latency_p50:.0f}ms"
         )
 
+    def _estimate_tps_from_params(
+        self,
+        model_id: str,
+        quant_format: str,
+        backend: EngineBackend,
+    ) -> tuple[float, float]:
+        """Estimate TPS and latency from model metadata using theoretical throughput.
+
+        Uses parameter count + quant bits to estimate FLOPs per token,
+        then divides by backend peak throughput. Values calibrated for M4 Max
+        (~300 GFLOPS FP16, ~1200 GFLOPS INT4 via Matmul).
+
+        Returns:
+            (estimated_tps, estimated_latency_p50_ms)
+        """
+        # Get parameter count — check config, model-config.json, or estimate from name
+        param_count = self._get_param_estimate(model_id)
+        if param_count < 1e6:
+            # Unreliable estimate, use defaults
+            return (30.0, 50.0)
+
+        # Quant bits from format string
+        bits = 4
+        if "8" in quant_format:
+            bits = 8
+        elif "16" in quant_format or "fp16" in quant_format:
+            bits = 16
+
+        # FLOPs per token = 2 * param_count * (16 / bits) for decode (1-token input)
+        flops_per_token = 2 * param_count * (16.0 / bits)
+
+        # Backend peak FLOPS (conservative estimates for M4 Max)
+        peak_gflops = {
+            EngineBackend.OMLX: 1400e9,
+            EngineBackend.RAPID: 1000e9,
+        }
+        peak = peak_gflops.get(backend, 800e9)
+
+        # Estimated TPS = peak / flops_per_token, with 30% efficiency factor
+        efficiency = 0.3 if backend == EngineBackend.OMLX else 0.35
+        tps = (peak * efficiency) / flops_per_token
+        tps = max(5.0, min(tps, 200.0))
+
+        # Latency estimate: base overhead + 1/tps
+        base_overhead_ms = 15.0 if backend == EngineBackend.RAPID else 25.0
+        latency_ms = base_overhead_ms + 1000.0 / tps
+        return (tps, latency_ms)
+
+    def _get_param_estimate(self, model_id: str) -> int:
+        """Get estimated parameter count for a model.
+
+        Checks model-config.json first, then infers from model name.
+        """
+        import json
+        from pathlib import Path
+
+        config_path = Path(__file__).parent.parent.parent / ".." / "model-config.json"
+        try:
+            with open(config_path) as f:
+                mc = json.load(f)
+            model_cfg = mc.get("models", {}).get(model_id, {})
+            if model_cfg.get("parameter_count_estimate", 0) > 0:
+                return int(model_cfg["parameter_count_estimate"])
+        except (FileNotFoundError, json.JSONDecodeError, KeyError):
+            pass
+
+        # Infer from model name — common patterns
+        name_lower = model_id.lower()
+        for suffix, params in [
+            ("70b", 70_000_000_000), ("72b", 72_000_000_000),
+            ("35b", 35_000_000_000), ("32b", 32_000_000_000),
+            ("14b", 14_000_000_000), ("13b", 13_000_000_000),
+            ("10b", 10_000_000_000),
+            ("7b", 7_000_000_000), ("8b", 8_000_000_000),
+            ("4b", 4_000_000_000),
+            ("3b", 3_000_000_000),
+            ("2b", 2_000_000_000),
+            ("1b", 1_000_000_000),
+            ("760m", 760_000_000), ("460m", 460_000_000),
+            ("350m", 350_000_000), ("260m", 260_000_000),
+        ]:
+            if suffix in name_lower:
+                return params
+        return 3_000_000_000
+
     def _benchmark_route(
         self,
         model_id: str,
         quant_format: str,
         new_tokens: int,
-     ) -> Optional[RouteDecision]:
+    ) -> Optional[RouteDecision]:
         """Make routing decision based on EMA-smoothed benchmark data."""
         # Uses EMA to prevent route oscillation from GC/Metal jitter
         # formula: score = alpha * history + (1-alpha) * measured
@@ -608,7 +693,7 @@ class SmartRouter:
         if len(benchmarks) < 2:
             return None
 
-        # Apply EMA smoothing to each backend scores
+        # Apply EMA smoothing with cold-start prior
         alpha = self.config.ema_alpha
         ema_state = self._ema_state.setdefault(model_id, {})
 
@@ -617,19 +702,45 @@ class SmartRouter:
             if backend_name in ("auto", "cloud"):
                 continue
             prev = ema_state.get(backend_name, {})
-            smooth_tps = alpha * prev.get("tps", br.tps) + (1 - alpha) * br.tps
-            smooth_lat = alpha * prev.get("latency_p50", br.latency_p50) + (1 - alpha) * br.latency_p50
-            ema_state[backend_name] = {"tps": smooth_tps, "latency_p50": smooth_lat}
+            observation_count = prev.get("count", 0)
+            # Cold start: blend static prior when few observations
+            if observation_count < 20:
+                backend_enum = br.backend
+                try:
+                    backend_enum = EngineBackend(backend_name)
+                except (ValueError, KeyError):
+                    pass
+                prior_tps, prior_lat = self._estimate_tps_from_params(
+                    model_id, quant_format, backend_enum
+                )
+                # Weight prior by (20 - observations) / 20
+                prior_weight = max(0.0, (20 - observation_count) / 20.0)
+                effective_tps = (
+                    prior_weight * prior_tps
+                    + (1 - prior_weight) * (alpha * prev.get("tps", prior_tps) + (1 - alpha) * br.tps)
+                )
+                effective_lat = (
+                    prior_weight * prior_lat
+                    + (1 - prior_weight) * (alpha * prev.get("latency_p50", prior_lat) + (1 - alpha) * br.latency_p50)
+                )
+            else:
+                effective_tps = alpha * prev.get("tps", br.tps) + (1 - alpha) * br.tps
+                effective_lat = alpha * prev.get("latency_p50", br.latency_p50) + (1 - alpha) * br.latency_p50
+            ema_state[backend_name] = {
+                "tps": effective_tps,
+                "latency_p50": effective_lat,
+                "count": observation_count + 1,
+            }
             smoothed[backend_name] = BenchmarkResult(
                 model_id=br.model_id,
                 backend=br.backend,
                 quant_format=br.quant_format,
-                tps=smooth_tps,
-                latency_p50=smooth_lat,
+                tps=effective_tps,
+                latency_p50=effective_lat,
                 latency_p99=br.latency_p99,
                 memory_peak_bytes=br.memory_peak_bytes,
                 timestamp=br.timestamp,
-             )
+            )
 
         if len(smoothed) < 2:
             return None
@@ -664,7 +775,7 @@ class SmartRouter:
                 f"benchmark(ema): prefill={prefill_be.value}({best_prefill[1].tps:.0f}tps), "
                 f"decode={decode_be.value}({best_decode[1].latency_p50:.0f}ms p50), "
                 f"split={split}"
-             ),
+            ),
             split_phases=split,
         )
     # Stats helpers

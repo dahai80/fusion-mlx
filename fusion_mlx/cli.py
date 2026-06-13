@@ -215,8 +215,8 @@ def main():
 
     # serve
     serve_p = subparsers.add_parser("serve", help="Start the inference server")
-    serve_p.add_argument("--host", default="0.0.0.0", help="Bind address")
-    serve_p.add_argument("--port", type=int, default=8000, help="Port to listen on")
+    serve_p.add_argument("--host", default="0.0.0.0", help="Bind address (default: 0.0.0.0)")
+    serve_p.add_argument("--port", type=int, default=8000, help="Port (default: 8000)")
     serve_p.add_argument("--model-dir", default=None, help="Directory containing MLX models")
     serve_p.add_argument(
         "--memory-tier",

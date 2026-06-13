@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """Minimal ``torch`` stub for the DMG bundle.
 
-xgrammar 0.2.0 declares ``torch>=1.10.0`` as a runtime dep, but oMLX never
+xgrammar 0.2.0 declares ``torch>=1.10.0`` as a runtime dep, but fusion-mlx never
 exercises its torch-backed code paths: bitmasks are allocated as numpy
 ``int32`` buffers, the C++ binding fills them, and the MLX kernel applies the
 mask. The torch dep is load-bearing only at *import time* — module-level code
@@ -11,7 +11,7 @@ in ``xgrammar.matcher``, ``xgrammar.testing``, ``xgrammar.contrib.hf`` and
 Real torch is ~500 MB unpacked on macOS arm64 — too heavy to ship in the DMG.
 This stub provides just enough of the torch surface for those modules to
 finish loading. Code paths that would actually call into torch raise
-``RuntimeError`` from the helpers below; oMLX never reaches them.
+``RuntimeError`` from the helpers below; fusion-mlx never reaches them.
 
 When a real torch is installed (pip / Homebrew flow) the stub is a no-op:
 ``install()`` checks ``importlib.util.find_spec('torch')`` first.
@@ -35,7 +35,7 @@ logger = logging.getLogger(__name__)
 # both tuples here when bumping; the build script auto-tracks.
 #
 # Reachable-but-stubbed torch surface to be aware of when upgrading:
-#   - ``torch.full``: ``xgrammar.allocate_token_bitmask`` calls it. oMLX
+#   - ``torch.full``: ``xgrammar.allocate_token_bitmask`` calls it. fusion-mlx
 #     never invokes ``allocate_token_bitmask`` (we use the MLX kernel
 #     path), but the symbol is re-exported from ``xgrammar.__init__``.
 #     Any future caller that touches it will hit ``_unsupported("full")``
@@ -54,6 +54,46 @@ _TARGET_TVM_FFI_VERSIONS = ("0.1.11",)
 # from concurrent HTTP handlers that call install() on first xgrammar use.
 _INSTALL_LOCK = threading.Lock()
 _INSTALLED = False
+
+class _LazyMockModule(types.ModuleType):
+    """Module that auto-creates _LazyMockObject for any attribute access.
+
+    Prevents AttributeError when upstream libs probe attributes we never
+    explicitly stubbed. Falls back silently instead of crashing at import time.
+    """
+
+    def __init__(self, name: str) -> None:
+        super().__init__(name)
+        self._name = name
+
+    def __getattr__(self, name: str):
+        if name.startswith("__") and name.endswith("__"):
+            raise AttributeError(name)
+        logger.debug("Torch stub intercepted: torch.%s.%s", self._name, name)
+        return _LazyMockObject(f"{self._name}.{name}")
+
+
+class _LazyMockObject:
+    """Auto-delegating mock that survives any attribute chain.
+
+    ``x.y.z.w()`` returns another _LazyMockObject so import-time probes
+    don't crash. Actual method calls return a mock -- if a code path
+    depends on the result, it will fail at the usage site.
+    """
+
+    __slots__ = ("_name",)
+
+    def __init__(self, name: str) -> None:
+        self._name = name
+
+    def __call__(self, *args, **kwargs) -> "_LazyMockObject":
+        return _LazyMockObject(f"{self._name}()")
+
+    def __getattr__(self, name: str) -> "_LazyMockObject":
+        return _LazyMockObject(f"{self._name}.{name}")
+
+    def __repr__(self) -> str:
+        return f"<_LazyMockObject {self._name}>"
 
 
 class _StubTensor:
@@ -74,11 +114,11 @@ class _StubTensor:
         if name.startswith("__") and name.endswith("__"):
             raise AttributeError(name)
         raise RuntimeError(
-            f"_StubTensor.{name} is not implemented: oMLX ships a torch "
+            f"_StubTensor.{name} is not implemented: fusion-mlx ships a torch "
             "stub for xgrammar's import-time needs only. Reaching a real "
             "tensor method means a code path that needs real torch was "
             "exercised — install torch via pip/Homebrew or report this as "
-            "a bug if the call originated inside oMLX."
+            "a bug if the call originated inside fusion-mlx."
         )
 
 
@@ -117,7 +157,7 @@ def _false(*args, **kwargs) -> bool:
 def _unsupported(qualname: str):
     def _fn(*args, **kwargs):
         raise RuntimeError(
-            f"torch.{qualname} is not available: this oMLX build ships a "
+            f"torch.{qualname} is not available: this fusion-mlx build ships a "
             "torch stub for xgrammar's import-time needs only. Install "
             "real torch via pip/Homebrew if you need this code path."
         )
@@ -172,7 +212,7 @@ def _make_top_level_torch_getattr() -> "callable":
     But we *also* want a clearly-identifiable message when downstream
     libraries (transformers, accelerate, etc.) reach for a torch surface
     we never stubbed — so this raises ``AttributeError`` whose message
-    pinpoints the omlx stub. ``pkgutil.iter_modules(torch.__path__)`` and
+    pinpoints the fusion-mlx stub. ``pkgutil.iter_modules(torch.__path__)`` and
     similar discovery paths see the empty ``__path__`` and short-circuit
     before hitting this.
     """
@@ -193,14 +233,14 @@ def _make_top_level_torch_getattr() -> "callable":
             level = logging.DEBUG if name in _KNOWN_PROBE_NAMES else logging.WARNING
             logger.log(
                 level,
-                "oMLX torch stub missing attribute: torch.%s "
+                "fusion-mlx torch stub missing attribute: torch.%s "
                 "(install real torch if this is load-bearing)",
                 name,
             )
         # Dunder probes always fall through as AttributeError so pickling,
         # copy.deepcopy, and similar Python machinery work as expected.
         raise AttributeError(
-            f"torch.{name!s} is not provided by the oMLX torch stub. "
+            f"torch.{name!s} is not provided by the fusion-mlx torch stub. "
             "Install real torch via pip/Homebrew if this attribute is "
             "actually needed."
         )
@@ -213,7 +253,7 @@ def _build_modules() -> dict[str, types.ModuleType]:
     for alias in _TENSOR_ALIASES:
         setattr(torch, alias, _StubTensor)
     torch.dtype = _StubDtype
-    torch.__version__ = "0.0.0+omlx-stub"
+    torch.__version__ = "0.0.0+fusion-mlx-stub"
     # Pin the stub as the source of truth for the xgrammar version it
     # targets; packaging/build.py imports this constant to stay in sync.
     # (Module-level constant lives at the top of this file.)
@@ -227,7 +267,7 @@ def _build_modules() -> dict[str, types.ModuleType]:
     torch.zeros = _unsupported("zeros")
     torch.from_dlpack = _unsupported("from_dlpack")
 
-    cuda = types.ModuleType("torch.cuda")
+    cuda = _LazyMockModule("cuda")
     cuda.is_available = _false
 
     class _Stream:
@@ -236,20 +276,20 @@ def _build_modules() -> dict[str, types.ModuleType]:
     cuda.Stream = _Stream
     torch.cuda = cuda
 
-    version = types.ModuleType("torch.version")
+    version = _LazyMockModule("version")
     version.cuda = None
     version.hip = None
     torch.version = version
 
-    nn_functional = types.ModuleType("torch.nn.functional")
+    nn_functional = _LazyMockModule("nn.functional")
     nn_functional.pad = _unsupported("nn.functional.pad")
-    nn = types.ModuleType("torch.nn")
+    nn = _LazyMockModule("nn")
     nn.functional = nn_functional
     torch.nn = nn
 
-    utils_dlpack = types.ModuleType("torch.utils.dlpack")
+    utils_dlpack = _LazyMockModule("utils.dlpack")
     utils_dlpack.to_dlpack = _unsupported("utils.dlpack.to_dlpack")
-    utils = types.ModuleType("torch.utils")
+    utils = _LazyMockModule("utils")
     utils.dlpack = utils_dlpack
     torch.utils = utils
 
@@ -288,7 +328,7 @@ def install() -> bool:
         if "torch" in sys.modules:
             already_stub = getattr(
                 sys.modules["torch"], "__version__", ""
-            ).endswith("+omlx-stub")
+            ).endswith("+fusion-mlx-stub")
             _INSTALLED = already_stub
             return already_stub
 

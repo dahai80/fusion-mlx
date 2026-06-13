@@ -55,6 +55,13 @@ def get_mlx_executor() -> concurrent.futures.ThreadPoolExecutor:
 
 
 @dataclass
+class RequestContext:
+    collector: RequestOutputCollector
+    stream_state: RequestStreamState
+    finished_event: asyncio.Event
+
+
+@dataclass
 class EngineConfig:
     model_name: str = ""
     scheduler_config: Any | None = None
@@ -86,6 +93,7 @@ class EngineCore:
         self._mlx_executor = concurrent.futures.ThreadPoolExecutor(
             max_workers=1,
             thread_name_prefix=f"mlx-engine-{self._engine_id[:8]}",
+            initializer=_init_mlx_thread,
         )
 
         # Create scheduler with per-engine stream
@@ -98,9 +106,7 @@ class EngineCore:
             stream=self._mlx_stream,
         )
 
-        self._output_collectors: Dict[str, RequestOutputCollector] = {}
-        self._stream_states: Dict[str, RequestStreamState] = {}
-        self._finished_events: Dict[str, asyncio.Event] = {}
+        self._active_contexts: Dict[str, RequestContext] = {}
 
         self._running = False
         self._task: Optional[asyncio.Task] = None
@@ -136,49 +142,51 @@ class EngineCore:
         while self._running:
             if self.scheduler and self.scheduler.has_requests():
                 try:
-                    output = await asyncio.wait_for(
-                        asyncio.get_running_loop().run_in_executor(
-                            self._mlx_executor, self.scheduler.step
-                        ), timeout=30.0)
+                    loop = asyncio.get_running_loop()
+                    output = await loop.run_in_executor(
+                        self._mlx_executor, self.scheduler.step
+                     )
                     self._steps_executed += 1
                     if output and output.outputs:
-                        collectors = self._output_collectors
-                        states = self._stream_states
-                        events = self._finished_events
+                        contexts = self._active_contexts
                         for req_output in output.outputs:
-                            rid = req_output.request_id
-                            collector = collectors.get(rid)
-                            if collector is not None:
+                            ctx = contexts.get(req_output.request_id)
+                            if ctx is not None:
                                 if use_simple_streaming:
-                                    collector.put(req_output)
+                                    ctx.collector.put(req_output)
                                 else:
-                                    state = states.get(rid)
-                                    if state and state.should_send(
+                                    if ctx.stream_state.should_send(
                                         req_output.completion_tokens, req_output.finished
-                                    ):
-                                        collector.put(req_output)
-                                        state.mark_sent(req_output.completion_tokens)
+                                     ):
+                                        ctx.collector.put(req_output)
+                                        ctx.stream_state.mark_sent(req_output.completion_tokens)
                             if req_output.finished:
-                                event = events.get(rid)
-                                if event:
-                                    event.set()
+                                ctx.finished_event.set()
                 except Exception as e:
                     logger.error(f"Engine loop error: {e}", exc_info=True)
                     if self.scheduler:
                         try:
-                            failed_ids = self.scheduler.fail_all_requests()
+                             # Run fail_all_requests on the same executor thread
+                             # to avoid data race with in-flight scheduler.step()
+                            def _safe_fail():
+                                try:
+                                    return self.scheduler.fail_all_requests()
+                                except Exception:
+                                    return []
+                            loop = asyncio.get_running_loop()
+                            failed_ids = await loop.run_in_executor(
+                                self._mlx_executor, _safe_fail
+                             )
                             for rid in failed_ids:
-                                collector = self._output_collectors.get(rid)
-                                if collector is not None:
-                                    collector.put(RequestOutput(
+                                ctx = self._active_contexts.get(rid)
+                                if ctx is not None:
+                                    ctx.collector.put(RequestOutput(
                                         request_id=rid, finished=True,
                                         finish_reason="error", error=str(e)
-                                    ))
-                                event = self._finished_events.get(rid)
-                                if event:
-                                    event.set()
+                                     ))
+                                    ctx.finished_event.set()
                         except Exception:
-                            logger.debug("fusion_mlx/engine_core.py:166: swallowed exception")
+                            logger.debug("swallowed exception in engine loop error handler", exc_info=True)
                             pass
             else:
                 await asyncio.sleep(step_interval)
@@ -224,9 +232,11 @@ class EngineCore:
         if specprefill_system_end is not None and specprefill_system_end > 0:
             request.specprefill_system_end = specprefill_system_end
 
-        self._output_collectors[request_id] = RequestOutputCollector(aggregate=True)
-        self._stream_states[request_id] = RequestStreamState(stream_interval=self.config.stream_interval)
-        self._finished_events[request_id] = asyncio.Event()
+        self._active_contexts[request_id] = RequestContext(
+            collector=RequestOutputCollector(aggregate=True),
+            stream_state=RequestStreamState(stream_interval=self.config.stream_interval),
+            finished_event=asyncio.Event(),
+        )
 
         if self.scheduler:
             self.scheduler.add_request(request)
@@ -237,18 +247,16 @@ class EngineCore:
         if getattr(self, "_closed", False) or not self.scheduler:
             return False
         result = self.scheduler.abort_request(request_id)
-        collector = self._output_collectors.get(request_id)
-        if collector is not None:
-            collector.put(RequestOutput(request_id=request_id, finished=True, finish_reason="abort", error="Request aborted"))
-        event = self._finished_events.get(request_id)
-        if event is not None:
-            event.set()
+        ctx = self._active_contexts.get(request_id)
+        if ctx is not None:
+            ctx.collector.put(RequestOutput(request_id=request_id, finished=True, finish_reason="abort", error="Request aborted"))
+            ctx.finished_event.set()
         return result
 
     async def abort_all_requests(self) -> int:
         from .utils.formatting import get_phys_footprint
 
-        request_ids = list(self._output_collectors.keys())
+        request_ids = list(self._active_contexts.keys())
         ceiling = 0
         sched = self.scheduler
         if sched is not None:
@@ -259,7 +267,7 @@ class EngineCore:
         for rid in request_ids:
             if self.scheduler:
                 self.scheduler.abort_request(rid)
-            collector = self._output_collectors.get(rid)
+            ctx = self._active_contexts.get(rid)
             if collector is not None:
                 error_msg = (
                     f"Request aborted: process memory limit exceeded "
@@ -269,24 +277,21 @@ class EngineCore:
                     else f"Request aborted: process memory limit exceeded (usage {usage_gb:.1f} GB)."
                 )
                 collector.put(RequestOutput(request_id=rid, finished=True, finish_reason="error", new_text=f"\n\n[Error: {error_msg}]", error=error_msg))
-            event = self._finished_events.get(rid)
-            if event is not None:
-                event.set()
+                ctx.finished_event.set()
         if request_ids:
             logger.warning(f"Aborted {len(request_ids)} requests due to memory pressure")
         return len(request_ids)
 
     def _cleanup_request(self, request_id: str) -> None:
-        collector = self._output_collectors.pop(request_id, None)
-        if collector:
-            collector.clear()
-        self._stream_states.pop(request_id, None)
-        self._finished_events.pop(request_id, None)
+        ctx = self._active_contexts.pop(request_id, None)
+        if ctx:
+            ctx.collector.clear()
 
     async def stream_outputs(self, request_id: str, timeout: Optional[float] = None) -> AsyncIterator[RequestOutput]:
-        collector = self._output_collectors.get(request_id)
-        if collector is None:
+        ctx = self._active_contexts.get(request_id)
+        if ctx is None:
             return
+        collector = ctx.collector
         try:
             while True:
                 try:
@@ -315,20 +320,18 @@ class EngineCore:
         **kwargs,
     ) -> RequestOutput:
         request_id = await self.add_request(prompt=prompt, sampling_params=sampling_params, request_id=request_id, **kwargs)
-        event = self._finished_events.get(request_id)
-        if event is None:
-            raise RuntimeError(f"No event for request {request_id}")
+        ctx = self._active_contexts.get(request_id)
+        if ctx is None:
+            raise RuntimeError(f"No context for request {request_id}")
         try:
-            await event.wait()
+            await ctx.finished_event.wait()
         except asyncio.CancelledError:
             logger.info(f"Request {request_id} cancelled, aborting")
             await self.abort_request(request_id)
             self._cleanup_request(request_id)
             raise
 
-        collector = self._output_collectors.get(request_id)
-        if collector is None:
-            raise RuntimeError(f"No collector for request {request_id}")
+        collector = ctx.collector
         final_output = None
         while True:
             output = collector.get_nowait()
@@ -368,6 +371,22 @@ class EngineCore:
                 self.scheduler.remove_finished_request(rid)
         return [results[rid] for rid in request_ids if rid in results]
 
+    async def generate_batch_async(
+        self,
+        prompts: List[Union[str, List[int]]],
+        sampling_params: Optional[SamplingParams] = None,
+      ) -> List[RequestOutput]:
+        """Non-blocking batch generation via asyncio.gather."""
+        tasks = [self.generate(prompt, sampling_params) for prompt in prompts]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        outputs = []
+        for i, r in enumerate(results):
+            if isinstance(r, RequestOutput):
+                outputs.append(r)
+            else:
+                logger.warning(f"generate_batch_async: prompt {i} failed: {r}")
+        return outputs
+
     async def prefill(
         self,
         prompt: Union[str, List[int]],
@@ -381,18 +400,23 @@ class EngineCore:
         sched = self.scheduler
         if not sched:
             raise RuntimeError("No scheduler for prefill")
-        for _ in range(1000):
-            sched.step()
-            req = sched.requests.get(request_id)
-            if req is None:
-                break
-            remaining = req.remaining_tokens if req.remaining_tokens is not None else []
-            if len(remaining) == 0:
-                break
+        def _prefill_loop():
+            for _ in range(1000):
+                sched.step()
+                req = sched.requests.get(request_id)
+                if req is None:
+                    break
+                remaining = req.remaining_tokens if req.remaining_tokens is not None else []
+                if len(remaining) == 0:
+                    break
+
+        loop = asyncio.get_running_loop()
+        await loop.run_in_executor(self._mlx_executor, _prefill_loop)
         kv_state = sched.export_kv_state(request_id)
         if kv_state is None:
             logger.warning("prefill %s: export_kv_state returned None", request_id)
-        collector = self._output_collectors.get(request_id)
+        ctx = self._active_contexts.get(request_id)
+        collector = ctx.collector if ctx else None
         final_output = None
         if collector:
             while True:
@@ -414,24 +438,20 @@ class EngineCore:
     ) -> RequestOutput:
         """Start decode from prefill KV state, skip prefill entirely."""
         request_id = str(uuid.uuid4())
-        req = Request(
-            request_id=request_id,
+        await self.add_request(
             prompt=prompt_token_ids,
             sampling_params=sampling_params or SamplingParams(),
-        )
-        req.prompt_token_ids = prompt_token_ids
-        req.num_prompt_tokens = len(prompt_token_ids)
-        await self.add_request(
-            prompt=req, sampling_params=req.sampling_params, request_id=request_id
-        )
+            request_id=request_id,
+         )
         sched = self.scheduler
         if sched and kv_state:
             sched.import_kv_state(request_id, kv_state)
-        event = self._finished_events.get(request_id)
-        if event is None:
+        ctx = self._active_contexts.get(request_id)
+        if ctx is None:
             raise RuntimeError(f"No event for request {request_id}")
-        await event.wait()
-        collector = self._output_collectors.get(request_id)
+        await ctx.finished_event.wait()
+        ctx = self._active_contexts.get(request_id)
+        collector = ctx.collector if ctx else None
         final_output = None
         if collector:
             while True:
@@ -453,7 +473,7 @@ class EngineCore:
         return {
             "running": self._running, "uptime_seconds": uptime,
             "steps_executed": self._steps_executed,
-            "active_requests": len(self._output_collectors),
+            "active_requests": len(self._active_contexts),
             "stream_interval": self.config.stream_interval, **scheduler_stats,
         }
 
@@ -480,11 +500,9 @@ class EngineCore:
         if self._mlx_executor is not None:
             self._mlx_executor.shutdown(wait=True)
             self._mlx_executor = None
-        for c in self._output_collectors.values():
-            c.clear()
-        self._output_collectors.clear()
-        self._stream_states.clear()
-        self._finished_events.clear()
+        for ctx in self._active_contexts.values():
+            ctx.collector.clear()
+        self._active_contexts.clear()
         self.model = None
         self.tokenizer = None
         self.scheduler = None
@@ -519,8 +537,8 @@ class AsyncEngineCore:
     async def __aexit__(self, *args) -> None:
         await self.stop()
 
-    def start(self) -> None:
-        self._start_task = asyncio.create_task(self.engine.start())
+    async def start(self) -> None:
+        await self.engine.start()
 
     async def stop(self) -> None:
         engine = getattr(self, "engine", None)

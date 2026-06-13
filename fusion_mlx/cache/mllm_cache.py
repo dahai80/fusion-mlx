@@ -92,6 +92,9 @@ class MLLMPrefixCacheEntry:
     prompt_tokens: int = 0  # Total prompt tokens (for stats)
     is_vision_placeholder: bool = False   # True when token_ids are dummy values
 
+      # Structural metadata for shape-validation on fetch
+    image_meta: dict = field(default_factory=dict)       # grid_thw, vision_patch_size, etc.
+    actual_vision_token_len: int = 0
     # Metadata
     created_at: float = field(default_factory=time.time)
     hit_count: int = 0
@@ -240,13 +243,42 @@ class MLLMPrefixCacheManager:
         return compute_images_hash(images)
 
     def _evict_by_memory(self, required_size: int) -> None:
-        """Evict entries until we have enough memory."""
+        """Evict entries until we have enough memory.
+
+        Runs two layers:
+        1. Python logical memory accounting (self._current_memory)
+        2. Physical MLX allocator pressure (mx.get_cache_memory) to catch
+           the gap between freed Python objects and MLX's internal free-list
+           that hasn't returned pages to the OS.
+        """
         while self._current_memory + required_size > self.max_memory and self._cache:
             oldest_key = next(iter(self._cache))
             oldest_entry = self._cache.pop(oldest_key)
             self._current_memory -= oldest_entry.memory_size
             self.stats.evictions += 1
             logger.debug(f"MLLM cache evicted (memory): {oldest_key[:20]}...")
+
+        # Second layer: physical MLX allocator pressure check.
+        # _current_memory can be low while the MLX Caching Allocator still
+        # holds huge free-list fragments that never returned to the OS.
+        try:
+            import mlx.core as mx
+            mlx_used = mx.get_cache_memory()
+            threshold = self.max_memory * 0.9
+            while mlx_used > threshold and self._cache:
+                oldest_key = next(iter(self._cache))
+                oldest_entry = self._cache.pop(oldest_key)
+                self._current_memory -= oldest_entry.memory_size
+                self.stats.evictions += 1
+                mx.clear_cache()
+                mlx_used = mx.get_cache_memory()
+                logger.warning(
+                    "Physical MLX allocator pressure detected. "
+                    "Evicted additional MLLM entry. mlx_cache=%d bytes",
+                    mlx_used,
+                )
+        except Exception:
+            pass
 
     def _evict_by_count(self) -> None:
         """Evict entries until we're under max_size."""

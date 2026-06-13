@@ -3,6 +3,7 @@
 
 import enum
 import time
+from collections import Counter
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Tuple, Union
 
@@ -79,6 +80,7 @@ class Request:
     status: RequestStatus = RequestStatus.WAITING
     num_computed_tokens: int = 0
     output_token_ids: List[int] = field(default_factory=list)
+    token_freqs: Counter = field(default_factory=Counter)
     output_text: str = ""
     generation_started_at: Optional[float] = None
     last_activity_at: Optional[float] = None
@@ -166,6 +168,7 @@ class Request:
 
     def append_output_token(self, token_id: int) -> None:
         self.output_token_ids.append(token_id)
+        self.token_freqs[token_id] += 1
         self.num_computed_tokens += 1
 
     def set_finished(self, status: RequestStatus, reason: Optional[str] = None) -> None:

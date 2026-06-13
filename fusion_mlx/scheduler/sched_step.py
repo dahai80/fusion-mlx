@@ -92,7 +92,7 @@ def step(self) -> SchedulerOutput:
     self._drain_pending_async_removes()
 
     # Check memory pressure and evict if needed (tiered cache)
-    if self.memory_monitor is not None and self._step_counter % 64 == 0:
+    if self.memory_monitor is not None and self._step_counter % self.config.memory_check_interval == 0:
         self._check_memory_pressure()
 
     try:
@@ -156,11 +156,8 @@ def step(self) -> SchedulerOutput:
                 # there is no race window. Decode-only path —
                 # next_generated() returns nothing during prefill, so
                 # we never disrupt prefill activation buffers.
-                self._tokens_since_clear_cache = (
-                    getattr(self, "_tokens_since_clear_cache", 0)
-                    + len(responses)
-                )
-                if self._tokens_since_clear_cache >= 1024:
+                self._tokens_since_clear_cache += len(responses)
+                if self._tokens_since_clear_cache >= self.config.decode_clear_interval:
                     _sync_and_clear_cache(self._stream)
                     self._tokens_since_clear_cache = 0
 
@@ -239,7 +236,7 @@ def step(self) -> SchedulerOutput:
     ):
         gc.collect()
 
-    if self._step_counter % 32 == 0:
+    if self._step_counter % self.config.admin_snapshot_interval == 0:
         self._publish_admin_snapshot()
 
     return output

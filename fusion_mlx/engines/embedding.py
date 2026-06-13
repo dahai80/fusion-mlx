@@ -128,11 +128,7 @@ class EmbeddingEngine(BaseNonStreamingEngine):
             for start in range(0, len(input_items), batch_size):
                 batch = input_items[start:start + batch_size]
                 def _embed_sync(b=batch):
-                    try:
-                        return model.embed(inputs=b, max_length=max_length, padding=padding, truncation=truncation)
-                    finally:
-                        mx.synchronize()
-                        mx.clear_cache()
+                    return model.embed(inputs=b, max_length=max_length, padding=padding, truncation=truncation)
                 output = await asyncio.wait_for(
                     loop.run_in_executor(get_executor("llm"), _embed_sync), timeout=30.0)
                 embeddings.extend(output.embeddings)

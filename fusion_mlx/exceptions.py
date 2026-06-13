@@ -64,4 +64,4 @@ class CloudRoutingError(RouterError):
 
 def is_cache_corruption_error(err):
     """Check if an error indicates cache corruption."""
-    return isinstance(err, (CacheCorruptionError, IOError, ValueError))
+    return isinstance(err, CacheCorruptionError)

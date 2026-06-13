@@ -66,6 +66,16 @@ from .helpers import (
 )
 from .monkeypatches import _default_generation_stream
 
+def _release_multimodal_tensors(request: "Request") -> None:
+    """Release multimodal tensors after prefill to free unified memory."""
+    if request.images is not None:
+        request.images = None
+    if request.videos is not None:
+        request.videos = None
+    if request.vlm_inputs_embeds is not None:
+        request.vlm_inputs_embeds = None
+
+
 def _schedule_waiting(    self,
 ) -> tuple[list["Request"], list[RequestOutput]]:
     """
@@ -659,6 +669,7 @@ def _schedule_waiting(    self,
                 now = time.monotonic()
                 request.batch_uid = vlm_mtp_uid
                 request.status = RequestStatus.RUNNING
+                _release_multimodal_tensors(request)
                 request.generation_started_at = now
                 request.last_activity_at = now
                 self.running[request.request_id] = request
@@ -669,6 +680,17 @@ def _schedule_waiting(    self,
                     f"(uid={vlm_mtp_uid}, {request.num_prompt_tokens} prompt tokens)"
                 )
                 continue
+
+         # If _route_to_vlm_mtp returned None but the request is in the
+        # pending queue (batch not full yet), skip the BatchGenerator
+        # fallthrough. The request will be flushed by _vlm_mtp_drain_pending
+        # at the end of this _schedule_waiting loop.
+        pending_queue = getattr(self, "_vlm_mtp_pending_queue", None)
+        if pending_queue and any(
+             p["request"].request_id == request.request_id
+            for p in pending_queue
+         ):
+            continue
 
         # Insert into BatchGenerator with pre-filled cache + last token.
         # BatchGenerator only handles decode from here.
@@ -721,5 +743,24 @@ def _schedule_waiting(    self,
                 f"with {len(tokens_to_process)} tokens to process "
                 f"({request.num_prompt_tokens} total){cache_info}, {cache_used}"
             )
+
+      # Drain any pending vlm_mtp requests (batch not full but should flush)
+    if self._vlm_mtp_drafter is not None:
+        from .sched_vlm_mtp_batched import _vlm_mtp_drain_pending
+        lm = getattr(self.model, "_language_model", None)
+        if lm is not None:
+            for row in _vlm_mtp_drain_pending(self, lm, self._vlm_mtp_drafter):
+                rid = row.request.request_id
+                self.request_id_to_uid[rid] = row.uid
+                self.uid_to_request_id[row.uid] = rid
+                now = time.monotonic()
+                row.request.batch_uid = row.uid
+                row.request.status = RequestStatus.RUNNING
+                row.request.generation_started_at = now
+                row.request.last_activity_at = now
+                self.running[rid] = row.request
+                scheduled.append(row.request)
+                self.total_prompt_tokens += row.request.num_prompt_tokens
+
 
     return scheduled, rejected_outputs

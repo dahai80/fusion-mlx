@@ -579,8 +579,12 @@ class PagedCacheManager(CacheManager):
             free_blocks=initial_count - 1,
         )
 
-        # Thread safety
-        self._lock = threading.RLock()
+        # Thread safety — sharded locks to reduce contention under high
+        # completion_batch_size.  Lock order (when multiple needed):
+        # _block_table_lock > _hash_map_lock > _free_queue_lock
+        self._block_table_lock = threading.Lock()
+        self._hash_map_lock = threading.Lock()
+        self._free_queue_lock = threading.Lock()
 
         # paged SSD cache manager for storage (set via set_paged_ssd_cache_manager)
         self._paged_ssd_cache_manager: Optional[Any] = None
@@ -621,7 +625,7 @@ class PagedCacheManager(CacheManager):
         Returns:
             Number of blocks actually created.
         """
-        with self._lock:
+        with self._block_table_lock, self._free_queue_lock:
             available = self.max_blocks - self._current_allocated_count
             to_create = min(additional_blocks, available)
 
@@ -658,7 +662,7 @@ class PagedCacheManager(CacheManager):
         Returns:
             CacheBlock if available, None if out of memory.
         """
-        with self._lock:
+        with self._block_table_lock, self._hash_map_lock, self._free_queue_lock:
             if self.free_block_queue.num_free_blocks == 0:
                 # Try to grow the block pool dynamically
                 grown = self._grow_blocks(min(256, self.max_blocks - self._current_allocated_count))
@@ -694,7 +698,7 @@ class PagedCacheManager(CacheManager):
         Raises:
             ValueError: If not enough free blocks even after dynamic growth
         """
-        with self._lock:
+        with self._block_table_lock, self._hash_map_lock, self._free_queue_lock:
             if num_blocks > self.free_block_queue.num_free_blocks:
                 # Try to grow the block pool dynamically
                 needed = num_blocks - self.free_block_queue.num_free_blocks
@@ -756,7 +760,7 @@ class PagedCacheManager(CacheManager):
         Returns:
             True if block was freed, False if still referenced.
         """
-        with self._lock:
+        with self._block_table_lock, self._hash_map_lock, self._free_queue_lock:
             if block_id not in self.allocated_blocks:
                 logger.warning(f"Attempted to free unknown block: {block_id}")
                 return False
@@ -795,7 +799,7 @@ class PagedCacheManager(CacheManager):
         Args:
             blocks: Blocks to free (in eviction order)
         """
-        with self._lock:
+        with self._block_table_lock, self._hash_map_lock, self._free_queue_lock:
             blocks_list = list(blocks)
             to_free = []
 
@@ -828,7 +832,7 @@ class PagedCacheManager(CacheManager):
         Args:
             blocks: Blocks to touch
         """
-        with self._lock:
+        with self._block_table_lock, self._free_queue_lock:
             for block in blocks:
                 if block.ref_count == 0 and not block.is_null:
                     # Block is in free queue, remove it
@@ -849,7 +853,7 @@ class PagedCacheManager(CacheManager):
 
     def increment_ref(self, block_id: int) -> bool:
         """Increment reference count for a block."""
-        with self._lock:
+        with self._block_table_lock:
             if block_id not in self.allocated_blocks:
                 return False
 
@@ -880,7 +884,7 @@ class PagedCacheManager(CacheManager):
             Number of blocks released.
         """
         released = 0
-        with self._lock:
+        with self._block_table_lock:
             for block_id in block_ids:
                 block = self.allocated_blocks.get(block_id)
                 if block is None or block.is_null:
@@ -912,7 +916,7 @@ class PagedCacheManager(CacheManager):
         if not self.enable_caching:
             return None
 
-        with self._lock:
+        with self._hash_map_lock:
             block = self.cached_block_hash_to_block.get_block(block_hash)
             if block:
                 self.stats.hits += 1
@@ -946,7 +950,7 @@ class PagedCacheManager(CacheManager):
         if num_cached_blocks >= num_full_blocks:
             return
 
-        with self._lock:
+        with self._hash_map_lock:
             # Get parent hash from last cached block
             parent_hash = None
             if num_cached_blocks > 0:
@@ -996,7 +1000,7 @@ class PagedCacheManager(CacheManager):
         if not self.enable_caching:
             return [], 0
 
-        with self._lock:
+        with self._block_table_lock, self._hash_map_lock, self._free_queue_lock:
             cached_blocks = []
             parent_hash = None
             num_cached_tokens = 0
@@ -1075,7 +1079,7 @@ class PagedCacheManager(CacheManager):
         if not self.enable_caching:
             return None
 
-        with self._lock:
+        with self._hash_map_lock:
             block_hash = compute_block_hash(
                 parent_hash, tokens, extra_keys=extra_keys,
                 model_name=self.model_name,
@@ -1108,7 +1112,7 @@ class PagedCacheManager(CacheManager):
         if not self.enable_caching:
             return
 
-        with self._lock:
+        with self._hash_map_lock:
             block_hash = compute_block_hash(
                 parent_hash, tokens, extra_keys=extra_keys,
                 model_name=self.model_name,
@@ -1122,26 +1126,26 @@ class PagedCacheManager(CacheManager):
 
     def create_block_table(self, request_id: str) -> BlockTable:
         """Create a new block table for a request."""
-        with self._lock:
+        with self._block_table_lock:
             table = BlockTable(request_id=request_id)
             self.request_tables[request_id] = table
             return table
 
     def get_block_table(self, request_id: str) -> Optional[BlockTable]:
         """Get block table for a request."""
-        with self._lock:
+        with self._block_table_lock:
             return self.request_tables.get(request_id)
 
     def get_or_create_block_table(self, request_id: str) -> BlockTable:
         """Get or create block table for a request."""
-        with self._lock:
+        with self._block_table_lock:
             if request_id not in self.request_tables:
                 self.request_tables[request_id] = BlockTable(request_id=request_id)
             return self.request_tables[request_id]
 
     def delete_block_table(self, request_id: str) -> None:
         """Delete block table and free associated blocks."""
-        with self._lock:
+        with self._block_table_lock, self._hash_map_lock, self._free_queue_lock:
             table = self.request_tables.pop(request_id, None)
             if table:
                 for block_id in table.block_ids:
@@ -1154,7 +1158,7 @@ class PagedCacheManager(CacheManager):
         tokens_in_block: int,
     ) -> None:
         """Add a block to a block table."""
-        with self._lock:
+        with self._block_table_lock:
             table.block_ids.append(block.block_id)
             block.token_count = tokens_in_block
             table.num_tokens += tokens_in_block
@@ -1196,11 +1200,17 @@ class PagedCacheManager(CacheManager):
         """
         Fork a block table for a new request (COW).
         """
-        with self._lock:
+        with self._block_table_lock, self._hash_map_lock:
             new_table = source_table.copy(new_request_id)
 
             for block_id in new_table.block_ids:
-                self.increment_ref(block_id)
+                    # Inline increment_ref (lock already held)
+                if block_id in self.allocated_blocks:
+                    blk = self.allocated_blocks[block_id]
+                    blk.ref_count += 1
+                    blk.last_access = time.time()
+                    if blk.ref_count == 2:
+                        self.stats.shared_blocks += 1
 
             self.request_tables[new_request_id] = new_table
 
@@ -1218,7 +1228,7 @@ class PagedCacheManager(CacheManager):
         """
         Get blocks for generation, applying COW if needed.
         """
-        with self._lock:
+        with self._block_table_lock, self._hash_map_lock, self._free_queue_lock:
             blocks = []
             was_copied = False
 
@@ -1228,18 +1238,34 @@ class PagedCacheManager(CacheManager):
                     continue
 
                 if block.is_shared():
-                    new_block = self._cow_copy_block(block)
-                    if new_block:
-                        table.block_ids[i] = new_block.block_id
-                        blocks.append(new_block)
-                        was_copied = True
-                        self.stats.cow_copies += 1
-                    else:
+                       # Inline _cow_copy_block + allocate_block (locks already held)
+                    if self.free_block_queue.num_free_blocks == 0:
                         blocks.append(block)
+                        continue
+                    new_block = self.free_block_queue.popleft()
+                    if self.enable_caching:
+                          # Inline _maybe_evict_cached_block
+                        if new_block.block_hash is not None:
+                            self.cached_block_hash_to_block.pop(
+                                new_block.block_hash, new_block.block_id
+                             )
+                    new_block.ref_count = 1
+                    new_block.touch()
+                    self.allocated_blocks[new_block.block_id] = new_block
+                    new_block.token_count = block.token_count
+                    new_block.block_hash = block.block_hash
+                    block.ref_count -= 1
+                    if block.ref_count == 1:
+                        self.stats.shared_blocks -= 1
+                    table.block_ids[i] = new_block.block_id
+                    blocks.append(new_block)
+                    was_copied = True
+                    self.stats.cow_copies += 1
                 else:
                     blocks.append(block)
 
-                block.touch()
+                  # Inline touch (lock already held)
+                block.last_access = time.time()
 
             return blocks, was_copied
 
@@ -1288,7 +1314,7 @@ class PagedCacheManager(CacheManager):
         With the doubly linked list, LRU blocks are already at the front
         of the free queue. We just need to pop from front.
         """
-        with self._lock:
+        with self._hash_map_lock, self._free_queue_lock:
             evicted = 0
 
             # Get evictable blocks from free queue (they're already LRU ordered)
@@ -1309,7 +1335,7 @@ class PagedCacheManager(CacheManager):
 
     def handle_memory_pressure(self, requested_blocks: int) -> bool:
         """Handle memory pressure by evicting blocks."""
-        with self._lock:
+        with self._hash_map_lock, self._free_queue_lock:
             if self.free_block_queue.num_free_blocks >= requested_blocks:
                 return True
 
@@ -1337,7 +1363,7 @@ class PagedCacheManager(CacheManager):
 
     def get_stats(self) -> PagedCacheStats:
         """Get current cache statistics."""
-        with self._lock:
+        with self._block_table_lock, self._free_queue_lock:
             self.stats.shared_blocks = sum(
                 1 for b in self.allocated_blocks.values() if b.ref_count > 1
             )
@@ -1346,7 +1372,7 @@ class PagedCacheManager(CacheManager):
 
     def get_memory_usage(self) -> Dict[str, Any]:
         """Get memory usage information."""
-        with self._lock:
+        with self._block_table_lock, self._free_queue_lock:
             stats = self.get_stats()
             return {
                 "block_size": self.block_size,
@@ -1364,15 +1390,15 @@ class PagedCacheManager(CacheManager):
 
     def reset_stats(self) -> None:
         """Reset statistics counters."""
-        with self._lock:
-            self.stats.hits = 0
-            self.stats.misses = 0
-            self.stats.cow_copies = 0
-            self.stats.evictions = 0
+        # stats are simple counters — no lock needed
+        self.stats.hits = 0
+        self.stats.misses = 0
+        self.stats.cow_copies = 0
+        self.stats.evictions = 0
 
     def reset_prefix_cache(self) -> bool:
         """Reset the prefix cache."""
-        with self._lock:
+        with self._hash_map_lock, self._free_queue_lock:
             num_used = self.max_blocks - self.free_block_queue.num_free_blocks
             if num_used > 1:  # null_block is always "used"
                 logger.warning(f"Cannot reset cache: {num_used - 1} blocks in use")
@@ -1397,7 +1423,7 @@ class PagedCacheManager(CacheManager):
         Returns:
             Number of entries cleared.
         """
-        with self._lock:
+        with self._block_table_lock, self._hash_map_lock, self._free_queue_lock:
             # Count entries before clearing
             cleared_count = len(self.allocated_blocks) - 1  # Exclude null block
 
@@ -1450,7 +1476,7 @@ class PagedCacheManager(CacheManager):
         Returns:
             List of evictable blocks in LRU order.
         """
-        with self._lock:
+        with self._block_table_lock, self._free_queue_lock:
             candidates = []
 
             # Iterate through free queue (LRU order)
@@ -1495,7 +1521,7 @@ class PagedCacheManager(CacheManager):
         Returns:
             True if successful, False if block not found or has data users.
         """
-        with self._lock:
+        with self._block_table_lock:
             block = self.blocks[block_id] if block_id < len(self.blocks) else None
             if block is None:
                 logger.warning(f"Block {block_id} not found")
@@ -1538,7 +1564,7 @@ class PagedCacheManager(CacheManager):
         Returns:
             True if successful, False if block not found or in use.
         """
-        with self._lock:
+        with self._block_table_lock, self._hash_map_lock, self._free_queue_lock:
             block = self.blocks[block_id] if block_id < len(self.blocks) else None
             if block is None:
                 logger.warning(f"Block {block_id} not found for permanent eviction")
@@ -1574,6 +1600,32 @@ class PagedCacheManager(CacheManager):
             logger.debug(f"Permanently evicted block {block_id}")
             return True
 
+    def _evict_block_permanently_inline(self, block_id: int) -> bool:
+        """Lock-free version for use when caller already holds all three locks."""
+        if block_id >= len(self.blocks):
+            logger.warning(f"Block {block_id} not found for permanent eviction")
+            return False
+        block = self.blocks[block_id]
+        if block.ref_count > 0:
+            logger.warning(
+                f"Cannot permanently evict block {block_id}: ref_count={block.ref_count}"
+             )
+            return False
+        if block.is_null:
+            logger.warning(f"Cannot evict null block")
+            return False
+        if block.block_hash is not None:
+            self.cached_block_hash_to_block.pop(block.block_hash, block.block_id)
+        block.reset_hash()
+        block.token_count = 0
+        if block_id in self.allocated_blocks:
+            del self.allocated_blocks[block_id]
+            self.stats.allocated_blocks -= 1
+        self.free_block_queue.append(block)
+        self.stats.free_blocks += 1
+        self.stats.evictions += 1
+        return True
+
     def restore_block(
         self,
         block_id: int,
@@ -1592,7 +1644,7 @@ class PagedCacheManager(CacheManager):
         Returns:
             True if successful, False if block not found.
         """
-        with self._lock:
+        with self._block_table_lock:
             block = self.blocks[block_id] if block_id < len(self.blocks) else None
             if block is None:
                 logger.warning(f"Block {block_id} not found for restoration")
@@ -1616,13 +1668,13 @@ class PagedCacheManager(CacheManager):
         Returns:
             List of blocks with paged SSD data.
         """
-        with self._lock:
+        with self._block_table_lock:
             return [b for b in self.blocks if b.block_hash is not None and not b.is_null]
 
     @property
     def cold_block_count(self) -> int:
         """Number of blocks with data on paged SSD."""
-        with self._lock:
+        with self._block_table_lock:
             return sum(1 for b in self.blocks if b.block_hash is not None and not b.is_null)
 
     def get_ref_count_distribution(self) -> Dict[int, int]:
@@ -1633,7 +1685,7 @@ class PagedCacheManager(CacheManager):
             Dict mapping ref_count -> number of blocks with that count.
             Only includes ref_counts that have at least one block.
         """
-        with self._lock:
+        with self._block_table_lock:
             distribution: Dict[int, int] = {}
             for block in self.allocated_blocks.values():
                 rc = block.ref_count
@@ -1654,7 +1706,7 @@ class PagedCacheManager(CacheManager):
 
         # Count blocks with paged SSD data (blocks with block_hash)
         ssd_count = 0
-        with self._lock:
+        with self._block_table_lock:
             for block in self.allocated_blocks.values():
                 if block.ref_count == 0 and block.block_hash is not None:
                     ssd_count += 1
@@ -1707,7 +1759,7 @@ class PagedCacheManager(CacheManager):
         if not isinstance(key, bytes) or not isinstance(value, CacheBlock):
             return False
 
-        with self._lock:
+        with self._hash_map_lock:
             block_hash = BlockHash(key)
             value.block_hash = block_hash
             self.cached_block_hash_to_block.insert(block_hash, value)

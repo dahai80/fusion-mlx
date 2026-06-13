@@ -428,10 +428,13 @@ class MultimodalProcessor:
         """
         import hashlib
 
-        # Use shape and a sample of values for hashing
-        shape_str = str(pixel_values.shape)
-        sample_values = pixel_values.reshape(-1)[:100].tolist()
-        hash_input = f"{shape_str}_{sample_values}"
+          # Use shape + strided samples + per-channel mean to avoid collisions
+        flat = pixel_values.reshape(-1)
+        stride = max(1, len(flat) // 64)
+        sample_values = flat[::stride].tolist()
+        mean_vals = [round(float(mx.mean(pixel_values[..., i:i+1]).item()), 4)
+                      for i in range(min(pixel_values.shape[-1], 4))]
+        hash_input = f"{pixel_values.shape}_{mean_vals}_{sample_values}"
 
         return hashlib.sha256(hash_input.encode()).hexdigest()[:16]
 

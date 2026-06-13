@@ -7,6 +7,7 @@ import threading
 import time
 import uuid
 from abc import ABC, abstractmethod
+from enum import Enum
 from dataclasses import dataclass, field
 from typing import Any, AsyncIterator, Dict, List, Optional
 
@@ -15,6 +16,13 @@ import mlx.core as mx
 from ..engine_core import get_executor
 
 logger = logging.getLogger(__name__)
+
+
+class EngineStatus(str, Enum):
+    """Engine lifecycle states for safe eviction."""
+    READY = "ready"
+    CLOSING = "closing"
+    UNLOADED = "unloaded"
 
 
 @dataclass
@@ -103,8 +111,55 @@ class BaseEngine(ABC):
     def prefix_cache_enabled(self) -> bool:
         return False
 
+    def __init__(self):
+        self._active_streams_count = 0
+        self._stream_lock = threading.Lock()
+        self._status = EngineStatus.READY
+
+    def _inc_streams(self) -> None:
+        with self._stream_lock:
+            self._active_streams_count += 1
+
+    def _dec_streams(self) -> None:
+        with self._stream_lock:
+            self._active_streams_count -= 1
+
     def has_active_requests(self) -> bool:
-        return False
+        with self._stream_lock:
+            return self._active_streams_count > 0
+
+    @property
+    def status(self) -> EngineStatus:
+        return self._status
+
+    async def safe_evict(self, timeout: float = 30.0) -> None:
+        with self._stream_lock:
+            self._status = EngineStatus.CLOSING
+        remaining = self._active_streams_count
+        if remaining > 0:
+            logger.info(
+                "Engine evicting: draining %d active streams (timeout=%.0fs)",
+                remaining, timeout,
+            )
+        try:
+            await asyncio.wait_for(
+                self._wait_streams_drained(), timeout=timeout
+            )
+        except asyncio.TimeoutError:
+            logger.warning(
+                "Engine eviction timeout: %d streams still active, forcing stop",
+                self._active_streams_count,
+            )
+        await self.stop()
+        with self._stream_lock:
+            self._status = EngineStatus.UNLOADED
+
+    async def _wait_streams_drained(self) -> None:
+        while True:
+            with self._stream_lock:
+                if self._active_streams_count <= 0:
+                    break
+            await asyncio.sleep(0.05)
 
     @abstractmethod
     def get_stats(self) -> Dict[str, Any]:
@@ -113,8 +168,6 @@ class BaseEngine(ABC):
     @abstractmethod
     def get_cache_stats(self) -> Optional[Dict[str, Any]]:
         pass
-
-
 class BaseNonStreamingEngine(ABC):
     def __init__(self):
         self._active_count = 0
@@ -161,9 +214,6 @@ class BaseNonStreamingEngine(ABC):
 
     async def _finish_activity(self, activity_id: str) -> None:
         self._end_activity(activity_id)
-        loop = asyncio.get_running_loop()
-        await asyncio.wait_for(
-            loop.run_in_executor(get_executor("llm"), lambda: (mx.synchronize(), mx.clear_cache())), timeout=5.0)
 
     def get_activity_snapshot(self) -> Dict[str, Any]:
         now = time.monotonic()

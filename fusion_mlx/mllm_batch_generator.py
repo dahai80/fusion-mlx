@@ -143,9 +143,9 @@ class MLLMBatch:
         self.max_tokens.extend(other.max_tokens)
         self.requests.extend(other.requests)
 
-            # Extend cache - validate shapes before merging
-            # to prevent position encoding corruption when batches
-            # are at different prefill/decode stages.
+        # Extend cache - validate shapes before merging
+        # to prevent position encoding corruption when batches
+        # are at different prefill/decode stages.
         for layer_idx, (c, o) in enumerate(zip(self.cache, other.cache)):
             if c is None or o is None or not hasattr(c, "extend"):
                 continue

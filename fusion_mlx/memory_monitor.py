@@ -3,10 +3,67 @@
 
 import logging
 import platform
+import struct
 import subprocess
+import threading
+from ctypes import c_void_p, c_uint64, c_uint32, CDLL, byref
 from typing import Any, Optional
 
 logger = logging.getLogger(__name__)
+
+# macOS libsystem for host_statistics — initialised lazily
+_libsystem: CDLL | None = None
+_HOST_PAGE_SIZE = 4096
+
+# mach_vm_statistics64 struct fields (13 uint64 fields)
+_VM_STAT_FIELDS = 13
+
+
+def _get_libsystem():
+    global _libsystem
+    if _libsystem is None:
+        _libsystem = CDLL("/usr/lib/libSystem.B.dylib")
+    return _libsystem
+
+
+def _get_host_page_size() -> int:
+    try:
+        host = c_void_p(0)  # mach_host_self()
+        host_page_size = c_uint64(0)
+        _get_libsystem().host_page_size(host, byref(host_page_size))
+        return host_page_size.value
+    except Exception:
+        return _HOST_PAGE_SIZE
+
+
+def _get_vm_stat_fast() -> dict[str, int]:
+    """Get vm stat via direct host_statistics64 syscall — zero subprocess overhead.
+
+    Returns the same keys as the old _parse_vm_stat output (in bytes).
+    """
+    try:
+        host = c_void_p(0)  # mach_host_self()
+        page_size = _get_host_page_size()
+        stat = (c_uint64 * _VM_STAT_FIELDS)()
+        count = c_uint32(_VM_STAT_FIELDS)
+        ret = _get_libsystem().host_statistics64(
+            host, 2,  # HOST_VM_STAT
+            c_void_p(stat), byref(count)
+        )
+        if ret != 0:
+            return {}
+        return {
+            "free": stat[0] * page_size,
+            "active": stat[1] * page_size,
+            "inactive": stat[2] * page_size,
+            "throttled": stat[3] * page_size,
+            "wired": stat[4] * page_size,
+            "purgeable": stat[5] * page_size,
+            "speculative": stat[6] * page_size,
+            "compressed": stat[7] * page_size,
+        }
+    except Exception:
+        return {}
 
 
 class MemoryMonitor:
@@ -31,6 +88,12 @@ class MemoryMonitor:
             self._has_psutil = True
         except ImportError:
             pass
+        # Cache total RAM at init — hardware value, never changes
+        if self._has_psutil:
+            self._total_memory = self._ps.virtual_memory().total
+        else:
+            sys_mem = self._get_sysctl_memory()
+            self._total_memory = sys_mem.get("total", 0)
 
     def set_paged_cache_manager(self, paged_cache_manager: Any) -> None:
         self._paged_cache_manager = paged_cache_manager
@@ -92,29 +155,43 @@ class MemoryMonitor:
             paged_cache_blocks: Active paged cache block count
             paged_cache_hit_rate: Paged cache hit rate (0.0-1.0)
         """
-        mem = self._parse_vm_stat()
-        sys_mem = self._get_sysctl_memory()
-
-        total = sys_mem.get("total", 0)
-        inactive = mem.get("inactive", 0)
-        free = mem.get("free", 0)
-        wired = mem.get("wired", 0)
-        active = mem.get("active", 0)
-
-        compressed = 0
         if self._has_psutil:
             try:
                 virt = self._ps.virtual_memory()
-                compressed = getattr(virt, "cached", 0)
+                total = self._total_memory
+                available = virt.available
+                wired = getattr(virt, "wired", 0)
+                active = getattr(virt, "active", 0)
+                inactive = getattr(virt, "inactive", 0)
+                compressed = getattr(virt, "compressed", 0)
+                if not compressed:
+                    compressed = getattr(virt, "cached", 0)
             except Exception:
-                pass
+                # Fallback to subprocess on psutil failure
+                mem = self._parse_vm_stat()
+                total = self._total_memory
+                inactive = mem.get("inactive", 0)
+                free = mem.get("free", 0)
+                wired = mem.get("wired", 0)
+                active = mem.get("active", 0)
+                compressed = 0
+                available = inactive + free
+        else:
+            mem = self._parse_vm_stat()
+            total = self._total_memory
+            inactive = mem.get("inactive", 0)
+            free = mem.get("free", 0)
+            wired = mem.get("wired", 0)
+            active = mem.get("active", 0)
+            compressed = 0
+            available = inactive + free
 
         mlx_cache = 0
         mlx_peak = 0
         try:
             import mlx.core as mx
             mlx_cache = mx.get_cache_memory()
-            mlx_peak = mx.get_cache_max_memory()
+            mlx_peak = mx.get_peak_memory()
         except Exception:
             pass
 
@@ -129,8 +206,6 @@ class MemoryMonitor:
                 paged_hit_rate = total_hits / total_lookups if total_lookups > 0 else 0.0
             except Exception:
                 pass
-
-        available = inactive + free
 
         return {
             "total": total,

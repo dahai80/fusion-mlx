@@ -1081,9 +1081,10 @@ class MLLMScheduler:
 
     def reset(self) -> None:
         """Reset the scheduler state."""
-        # Abort all requests
+         # Drain pending aborts first, then abort remaining requests directly
+        self._pending_abort_ids.clear()
         for request_id in list(self.requests.keys()):
-            self.abort_request(request_id)
+            self._do_abort_request(request_id)
 
         self.waiting.clear()
         self.running.clear()

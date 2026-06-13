@@ -88,127 +88,14 @@ def _route_to_vlm_mtp(    self,
     if drafter is None:
         return None
 
-    # Gemma4AssistantDraftModel keeps ``_shared_kv`` / ``_input_embed`` on
-    # the module instance, so multiple in-flight ``_mtp_rounds`` generators
-    # share one drafter and effectively serialize on it: each round has
-    # to ``set_shared_kv`` for its own request before ``draft_block`` runs.
-    # Output stays correct because target-side verify is the source of
-    # truth in speculative decoding (a stale-drafter round just rejects
-    # everything and falls back to a target-only step), but the
-    # per-request tok/s is roughly halved under concurrency. Empirically
-    # at 4 concurrent, vlm_mtp gives ~14 tok/s each vs BatchGenerator's
-    # ~27 tok/s each — BG's batched matmul beats serialized speculative
-    # rounds. So we route only the first eligible request through
-    # vlm_mtp and let subsequent concurrent requests fall back. A future
-    # commit can swap this gate for true batched MTP via
-    # ``_mtp_rounds_batch`` if and when omlx prefill exposes batched
-    # hidden/shared_kv outputs.
-    if self._vlm_mtp_active:
-        logger.info(
-            "vlm_mtp routing skipped for %s: drafter is busy with %d "
-            "request(s); falling back to BatchGenerator",
-            request.request_id,
-            len(self._vlm_mtp_active),
-        )
-        return None
+     # Replaced: single-request gate swapped for batched MTP routing.
+     # Eligible requests are accumulated into a batch and run together
+     # via _mtp_rounds_batch, eliminating the serialization bottleneck.
+    from .sched_vlm_mtp_batched import _vlm_mtp_try_enqueue
+    return _vlm_mtp_try_enqueue(
+        self, request, prefilled_cache, last_tokens, sampler, state_machine
+       )
 
-    lm = getattr(self.model, "_language_model", None)
-    if lm is None or not hasattr(lm, "rollback_speculative_cache"):
-        logger.warning(
-            "vlm_mtp toggle on but model lacks _language_model with "
-            "rollback_speculative_cache (model=%s); falling back to "
-            "standard decode for request %s",
-            type(self.model).__name__,
-            request.request_id,
-        )
-        return None
-
-    if not last_tokens:
-        logger.warning(
-            "vlm_mtp routing skipped: last_tokens empty for request %s",
-            request.request_id,
-        )
-        return None
-
-    last_arr = mx.array(last_tokens)[None]  # (1, len_last)
-    try:
-        with mx.stream(self._stream):
-            out = lm(
-                last_arr,
-                cache=prefilled_cache,
-                return_hidden=True,
-                return_shared_kv=True,
-            )
-            mx.eval([c.state for c in prefilled_cache])
-    except Exception as e:
-        logger.warning(
-            "vlm_mtp final-prefill forward failed (%s); falling back "
-            "to standard decode for request %s",
-            e,
-            request.request_id,
-        )
-        return None
-
-    logits = out.logits[:, -1, :]
-    first_bonus_arr = sampler(logits)  # mx.array shape [1]
-    mx.eval(first_bonus_arr)
-
-    hidden_states = out.hidden_states
-    if isinstance(hidden_states, list):
-        hidden = hidden_states[-1]
-    else:
-        hidden = hidden_states
-    # Slice to last position so the drafter sees a [B, 1, H] tensor
-    # regardless of how many tokens this forward processed.
-    if hidden.shape[1] > 1:
-        hidden = hidden[:, -1:, :]
-
-    # Combine base stop tokens (EOS, Harmony, generation_config) with
-    # request-specific stop_token_ids — same shape as _build_state_machine.
-    eos_ids: set[int] = self._get_stop_tokens()
-    if request.sampling_params.stop_token_ids:
-        eos_ids.update(request.sampling_params.stop_token_ids)
-
-    try:
-        generator = run_vlm_mtp_decode(
-            target_language_model=lm,
-            drafter=drafter,
-            prompt_cache=prefilled_cache,
-            hidden=hidden,
-            shared_kv_states=out.shared_kv_states,
-            first_bonus=int(first_bonus_arr.item()),
-            max_tokens=request.sampling_params.max_tokens,
-            sampler=sampler,
-            draft_block_size=self._vlm_mtp_draft_block_size,
-            token_dtype=mx.int32,
-            eos_token_ids=eos_ids or None,
-        )
-    except Exception as e:
-        logger.warning(
-            "vlm_mtp generator setup failed (%s); falling back for %s",
-            e,
-            request.request_id,
-        )
-        return None
-
-    uid = self._vlm_mtp_next_uid
-    self._vlm_mtp_next_uid -= 1
-    self._vlm_mtp_active[uid] = _VLMMTPDecodeState(
-        generator=generator,
-        request=request,
-        prompt_cache=prefilled_cache,
-        sampler=sampler,
-        state_machine=state_machine,
-        max_tokens=request.sampling_params.max_tokens,
-        stop_token_ids=set(eos_ids),
-    )
-    logger.info(
-        "vlm_mtp decode started: request=%s uid=%d block_size=%s",
-        request.request_id,
-        uid,
-        self._vlm_mtp_draft_block_size,
-    )
-    return uid
 
 def _log_vlm_mtp_stats(
     self, state: "_VLMMTPDecodeState", finish_reason: str
@@ -260,81 +147,7 @@ def _log_vlm_mtp_stats(
     )
 
 def _step_vlm_mtp(self) -> list[_VLMMTPResponse]:
-    """Advance every active vlm_mtp generator by one yield.
+    """Advance all active vlm_mtp batches by one yield."""
+    from .sched_vlm_mtp_batched import _step_vlm_mtp_batched
+    return _step_vlm_mtp_batched(self)
 
-    Returns the synthesized responses for ``_process_batch_responses``.
-    Mirrors mlx-lm BatchGenerator's per-step contract: one
-    ``GenerationBatch.Response``-shaped object per active uid.
-    """
-    if not self._vlm_mtp_active:
-        return []
-
-    responses: list[_VLMMTPResponse] = []
-    for uid, state in list(self._vlm_mtp_active.items()):
-        try:
-            with mx.stream(self._stream):
-                token_val = next(state.generator)
-        except StopIteration:
-            # Round loop exited naturally — terminate with prompt cache
-            # so the prefix-cache layer can keep using it.
-            self._log_vlm_mtp_stats(state, "length")
-            responses.append(
-                _VLMMTPResponse(
-                    uid=uid,
-                    token=0,
-                    finish_reason="length",
-                    prompt_cache=state.prompt_cache,
-                )
-            )
-            state.finished = True
-            continue
-
-        # Single-request mode yields ints; batch mode (not yet routed
-        # by omlx) would yield a list. Guard so the path stays robust
-        # if we widen routing later.
-        if isinstance(token_val, list):
-            # Take the first row (we only route singles for now).
-            tok = next((t for t in token_val if t is not None), None)
-            if tok is None:
-                responses.append(
-                    _VLMMTPResponse(
-                        uid=uid,
-                        token=0,
-                        finish_reason="length",
-                        prompt_cache=state.prompt_cache,
-                    )
-                )
-                state.finished = True
-                continue
-            token = int(tok)
-        else:
-            token = int(token_val)
-
-        state.emitted += 1
-        finish_reason: str | None = None
-        if state.stop_token_ids and token in state.stop_token_ids:
-            finish_reason = "stop"
-        elif state.emitted >= state.max_tokens:
-            finish_reason = "length"
-
-        if finish_reason is not None:
-            self._log_vlm_mtp_stats(state, finish_reason)
-
-        responses.append(
-            _VLMMTPResponse(
-                uid=uid,
-                token=token,
-                finish_reason=finish_reason,
-                prompt_cache=(
-                    state.prompt_cache if finish_reason is not None else None
-                ),
-            )
-        )
-        if finish_reason is not None:
-            state.finished = True
-
-    # Drop finished entries.
-    for uid in [u for u, s in self._vlm_mtp_active.items() if s.finished]:
-        del self._vlm_mtp_active[uid]
-
-    return responses

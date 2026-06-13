@@ -71,7 +71,7 @@ def report(profile: AliasProfile, alias: str | None = None) -> EligibilityReport
     if not profile.supports_dflash:
         reasons.append(
             "alias is not DFlash-enabled (set supports_dflash=true in "
-            "aliases.json after benching to validate ≥1.3× speedup)"
+            "model-config.json after benching to validate ≥1.3× speedup)"
         )
     if profile.is_moe:
         reasons.append(
@@ -102,7 +102,7 @@ def report(profile: AliasProfile, alias: str | None = None) -> EligibilityReport
 
 def eligible_aliases() -> list[str]:
     """Return alias names whose AliasProfile currently passes every
-    DFlash gate. Computed from the live ``aliases.json`` registry so
+    DFlash gate. Computed from the live ``model-config.json`` registry so
     error messages don't go stale as more aliases are validated.
 
     Kept tolerant: any import or registry error returns an empty list

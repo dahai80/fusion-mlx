@@ -13,10 +13,15 @@ TurboQuantSplitState = namedtuple("TurboQuantSplitState", [])
 
 
 def _state_length(keys):
-    if hasattr(keys, "norms") and hasattr(keys.norms, "shape"):
+    try:
         return keys.norms.shape[2]
-    if hasattr(keys, "shape") and len(keys.shape) >= 3:
-        return keys.shape[2]
+    except AttributeError:
+        try:
+            shape = keys.shape
+            if len(shape) >= 3:
+                return shape[2]
+        except AttributeError:
+            pass
     return 0
 
 

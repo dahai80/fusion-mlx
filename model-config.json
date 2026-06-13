@@ -1,0 +1,101 @@
+{
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "description": "fusion-mlx model configuration — per-model overrides for discovery, scheduling, and inference",
+    "type": "object",
+    "properties": {
+        "models": {
+            "type": "object",
+            "description": "Map of model_id -> model config",
+            "additionalProperties": {
+                "type": "object",
+                "properties": {
+                    "max_seq_len": {
+                        "type": "integer",
+                        "description": "Maximum sequence length (tokens)",
+                        "minimum": 256,
+                        "default": 4096
+                    },
+                    "kv_heads": {
+                        "type": "integer",
+                        "description": "Number of KV attention heads (overrides auto-detect)",
+                        "minimum": 1
+                    },
+                    "quant_bits": {
+                        "type": "integer",
+                        "description": "Quantization bit width (4, 8, or 16)",
+                        "enum": [4, 8, 16],
+                        "default": 4
+                    },
+                    "quant_group_size": {
+                        "type": "integer",
+                        "description": "Quantization group size",
+                        "minimum": 16,
+                        "default": 64
+                    },
+                    "model_type": {
+                        "type": "string",
+                        "description": "Override detected model type",
+                        "enum": ["llm", "vlm", "embedding", "reranker", "audio_stt", "audio_tts", "audio_sts"]
+                    },
+                    "pinned": {
+                        "type": "boolean",
+                        "description": "If true, never evict from engine pool",
+                        "default": false
+                    },
+                    "ttl_seconds": {
+                        "type": "integer",
+                        "description": "Idle TTL before eviction (0 = use global default)",
+                        "minimum": 0,
+                        "default": 0
+                    },
+                    "dflash_enabled": {
+                        "type": "boolean",
+                        "description": "Enable DFlash speculative decoding",
+                        "default": false
+                    },
+                    "dflash_draft_model": {
+                        "type": "string",
+                        "description": "Model ID or path for DFlash draft model"
+                    },
+                    "vlm_mtp_enabled": {
+                        "type": "boolean",
+                        "description": "Enable VLM-native MTP speculative decoding",
+                        "default": false
+                    },
+                    "vlm_mtp_draft_model": {
+                        "type": "string",
+                        "description": "Model ID or path for VLM MTP drafter"
+                    },
+                    "trust_remote_code": {
+                        "type": "boolean",
+                        "description": "Allow remote code execution for custom model classes",
+                        "default": false
+                    },
+                    "parameter_count_estimate": {
+                        "type": "integer",
+                        "description": "Estimated parameter count (for EMA cold-start prior)",
+                        "minimum": 0
+                    }
+                },
+                "additionalProperties": false
+            }
+        },
+        "defaults": {
+            "type": "object",
+            "description": "Global defaults applied when per-model values are absent",
+            "properties": {
+                "max_seq_len": {"type": "integer", "default": 4096},
+                "quant_bits": {"type": "integer", "enum": [4, 8, 16], "default": 4},
+                "ttl_seconds": {"type": "integer", "minimum": 0, "default": 3600},
+                "trust_remote_code": {"type": "boolean", "default": false}
+            }
+        }
+    },
+    "models": {},
+    "defaults": {
+        "max_seq_len": 4096,
+        "quant_bits": 4,
+        "ttl_seconds": 3600,
+        "trust_remote_code": false
+    }
+}

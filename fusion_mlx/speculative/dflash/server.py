@@ -649,7 +649,7 @@ def run_dflash_server(
     notebook or test harness) can bypass the CLI entirely. We re-run
     the path-detectable gates (4-bit quant via repo-name heuristic;
     non-empty drafter). MoE detection requires the AliasProfile (an
-    ``is_moe`` flag aliases.json maintains by hand) and is therefore
+    ``is_moe`` flag model-config.json maintains by hand) and is therefore
     only enforced via the CLI entrypoint — callers serving an
     arbitrary ``main_model_repo`` programmatically are responsible for
     not pointing it at a MoE model. Documented in CALLERS.md.

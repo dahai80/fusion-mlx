@@ -366,6 +366,7 @@ def __init__(    self,
     # None = no deferred clear pending; int = step at which to fire.
     self._deferred_clear_at: int | None = None
     self._DEFERRED_CLEAR_DELAY = 4
+    self._tokens_since_clear_cache = 0
 
     # Cache XTC special tokens (newline + EOS) — stable per tokenizer.
     # Must be after _is_harmony_model / _generation_config_eos init

@@ -7,7 +7,7 @@ generation; B>1 transparently falls back to AR until phase-2 batched
 support lands.
 
 Eligibility (enforced by ``eligibility.check``):
-- alias has ``supports_dflash=True`` in ``aliases.json``
+- alias has ``supports_dflash=True`` in ``model-config.json``
 - alias is NOT MoE (PoC: 0.76-0.82× regression on Qwen3.6-35B-A3B)
 - main-model precision ≥ 8-bit (PoC: 4-bit accept rate collapses)
 - drafter HF path is reachable (no gating block)

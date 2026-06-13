@@ -403,13 +403,13 @@ def _adaptive_chunk_size(    self,
     over_ratio = max(0.0, min(1.0, (current - soft_watermark) / band))
 
     if over_ratio < 0.25:
-        target = self._PREFILL_STEP_TIERS[0]    # 1024
+        target = _PREFILL_STEP_TIERS[0]    # 1024
     elif over_ratio < 0.50:
-        target = self._PREFILL_STEP_TIERS[1]    # 512
+        target = _PREFILL_STEP_TIERS[1]    # 512
     elif over_ratio < 0.75:
-        target = self._PREFILL_STEP_TIERS[2]    # 256
+        target = _PREFILL_STEP_TIERS[2]    # 256
     else:
-        target = self._PREFILL_STEP_TIERS[3]    # 128
+        target = _PREFILL_STEP_TIERS[3]    # 128
 
     target = max(target, self._prefill_min_chunk_tokens)
     if requested <= target:

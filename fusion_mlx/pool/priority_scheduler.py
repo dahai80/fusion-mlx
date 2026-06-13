@@ -494,10 +494,10 @@ class PriorityScheduler:
         """Calculate minimum slot reservation per priority based on config shares."""
         with self._lock:
             running = len(self._request_priorities)
+            rt_running = sum(1 for p in self._request_priorities.values() if p == PriorityLevel.REALTIME)
+            bt_running = sum(1 for p in self._request_priorities.values() if p == PriorityLevel.BATCH)
+            bg_running = sum(1 for p in self._request_priorities.values() if p == PriorityLevel.BACKGROUND)
         total_capacity = self.config.max_realtime_seqs + self.config.max_batch_seqs + self.config.max_background_seqs
-        rt_running = sum(1 for p in self._request_priorities.values() if p == PriorityLevel.REALTIME)
-        bt_running = sum(1 for p in self._request_priorities.values() if p == PriorityLevel.BATCH)
-        bg_running = sum(1 for p in self._request_priorities.values() if p == PriorityLevel.BACKGROUND)
         available = max(0, total_capacity - running)
         bg_reserve = max(0, int(available * self.config.min_background_share) - bg_running)
         bt_reserve = max(0, int(available * self.config.min_batch_share) - bt_running)
@@ -509,7 +509,7 @@ class PriorityScheduler:
                 self.config.max_batch_seqs - bt_running, bt_reserve + self.config.max_batch_seqs)),
             PriorityLevel.BACKGROUND: max(0, min(
                 self.config.max_background_seqs - bg_running, bg_reserve + self.config.max_background_seqs)),
-         }
+          }
 
     def _get_max_for_level(self, level: PriorityLevel) -> int:
         if level == PriorityLevel.REALTIME:

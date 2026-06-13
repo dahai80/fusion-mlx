@@ -33,8 +33,7 @@ class VLMModelAdapter(nn.Module):
         self._pending_kwargs: Dict[str, Any] = {}
         self._embed_offset: int = 0
 
-        # Per-request mRoPE state
-        self._uid_rope_deltas: Dict[int, float] = {}
+        # Batch mRoPE state
         self._batch_rope_deltas: Optional[mx.array] = None
 
     @property
@@ -98,19 +97,16 @@ class VLMModelAdapter(nn.Module):
         if not text_config:
             return False
         rope_cfg = getattr(text_config, "rope_scaling", None) or getattr(text_config, "rope_parameters", None)
-        return isinstance(rope_cfg, dict) and "mrope_section" in rope_cfg
+        if not isinstance(rope_cfg, dict):
+            return False
+        return "mrope_section" in rope_cfg or rope_cfg.get("type") == "mrope"
 
     def clear_vlm_position_state(self) -> None:
         """Clear stale mRoPE state from previous VLM requests."""
-        self._language_model._position_ids = None
-        self._language_model._rope_deltas = None
-        self._batch_rope_deltas = None
-
-    def register_rope_delta(self, uid: int, delta: float) -> None:
-        self._uid_rope_deltas[uid] = delta
-
-    def unregister_rope_delta(self, uid: int) -> None:
-        self._uid_rope_deltas.pop(uid, None)
+        if hasattr(self._language_model, "_position_ids"):
+            self._language_model._position_ids = None
+        if hasattr(self._language_model, "_rope_deltas"):
+            self._language_model._rope_deltas = None
 
     def set_batch_rope_deltas(self, deltas: mx.array) -> None:
         self._batch_rope_deltas = deltas
@@ -148,7 +144,7 @@ class VLMModelAdapter(nn.Module):
                         break
                 B, L = input_ids.shape
                 deltas = self._batch_rope_deltas
-                if offsets is not None and isinstance(offsets, mx.array) and deltas.size == B:
+                if offsets is not None and isinstance(offsets, mx.array) and deltas.shape[-1] == B:
                     positions = offsets + deltas
                     position_ids = mx.broadcast_to(positions[None, :, None], (3, B, L))
                     result = self._language_model(input_ids, cache=cache, position_ids=position_ids, **kwargs)
@@ -186,7 +182,7 @@ class VLMModelAdapter(nn.Module):
 
         result = self._language_model(input_ids, inputs_embeds=chunk_embeds, cache=cache, **self._pending_kwargs, **kwargs)
         self._embed_offset = end_offset
-        if self._embed_offset >= total_len - 1:
+        if self._embed_offset >= total_len:
             self.clear_pending_embeddings()
         return result
 

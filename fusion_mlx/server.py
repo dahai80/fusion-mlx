@@ -52,9 +52,10 @@ def resolve_model_id(model_id: str) -> str:
     resolved = DEFAULT_ALIASES.get(model_id)
     if resolved:
         return resolved
-    # Strip provider prefix (e.g. "omlx/my-model" -> "my-model")
-    if "/" in model_id:
-        return model_id.split("/", 1)[1]
+     # Only strip known provider prefixes — preserve HF paths
+    for prefix in ["omlx/", "fusion/"]:
+        if model_id.startswith(prefix):
+            return model_id[len(prefix):]
     return model_id
 
 
@@ -248,13 +249,16 @@ class Server:
             self.pool.unload_engine(model_id)
         logger.info("Unloaded model %s from pool", model_id)
 
-    def run(self):
-        """Start the server."""
+        from uvicorn.config import LOGGING_CONFIG
+        custom_fmt = "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
+        LOGGING_CONFIG["formatters"]["default"]["format"] = custom_fmt
+        LOGGING_CONFIG["formatters"]["access"]["format"] = custom_fmt
         uvicorn.run(
             self.app,
             host=self.config.host,
             port=self.config.port,
             log_level="info",
+            log_config=LOGGING_CONFIG,
         )
 
 
@@ -289,11 +293,6 @@ def main():
     parser.add_argument("--cloud-router", action="store_true", help="Enable cloud fallback")
     parser.add_argument("--cloud-api-key", default=None, help="Cloud router API key")
     args = parser.parse_args()
-
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-    )
 
     config = ServerConfig(
         host=args.host,
