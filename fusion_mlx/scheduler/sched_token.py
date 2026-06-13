@@ -20,6 +20,13 @@ from typing import Any, Optional
 from mlx_lm.generate import (
     BatchGenerator,
 )
+
+# NaiveStreamingDetokenizer was removed/renamed in newer mlx-lm releases.
+# Import with fallback so _get_detokenizer guard still works.
+try:
+    from mlx_lm.generate import NaiveStreamingDetokenizer
+except ImportError:
+    NaiveStreamingDetokenizer = None  # type: ignore
 from mlx_lm.sample_utils import make_logits_processors
 
 from ..prefill_progress import get_prefill_tracker
