@@ -39,12 +39,16 @@ class TestEvictionTiming:
         assert evictable[1].last_access <= evictable[2].last_access
 
     def test_evict_lru_blocks_respects_order(self):
-        mgr = self._make_manager()
+        mgr = self._make_manager(initial_blocks=5)
         blocks = mgr.get_new_blocks(4)
-        for b in blocks:
-            b.block_hash = BlockHash(b"hash")
+        for i, b in enumerate(blocks):
+            b.block_hash = BlockHash(bytes([i]))
+            mgr.cached_block_hash_to_block.insert(b.block_hash, b)
         for b in blocks:
             mgr.free_block(b.block_id)
+            # Re-insert after free since free_block clears hash cache
+            if b.block_hash is not None:
+                mgr.cached_block_hash_to_block.insert(b.block_hash, b)
 
         evicted = mgr.evict_lru_blocks(2)
         assert evicted == 2
@@ -52,7 +56,7 @@ class TestEvictionTiming:
         assert stats.evictions == 2
 
     def test_no_eviction_when_all_referenced(self):
-        mgr = self._make_manager()
+        mgr = self._make_manager(max_blocks=4, initial_blocks=4)
         blocks = mgr.get_new_blocks(3)
         # All blocks have ref_count=1, none are evictable
         evictable = mgr.get_evictable_blocks(10)
@@ -173,6 +177,8 @@ class TestTwoPhaseEviction:
         b.block_hash = h
         mgr.cached_block_hash_to_block.insert(h, b)
         mgr.free_block(b.block_id)
+          # Re-insert after free since free_block clears hash cache
+        mgr.cached_block_hash_to_block.insert(h, b)
 
         assert mgr.evict(h) is True
         assert b.block_hash is None

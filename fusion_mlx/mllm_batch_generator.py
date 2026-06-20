@@ -28,6 +28,7 @@ from mlx_lm.sample_utils import make_sampler
 
 from .cache.vision_embedding_cache import VisionEmbeddingCache
 from .multimodal_processor import MultimodalProcessor
+from .request import get_default_max_tokens
 
 logger = logging.getLogger(__name__)
 
@@ -46,7 +47,7 @@ class MLLMBatchRequest:
     prompt: str  # Text prompt
     images: list[str] | None = None  # Image paths/URLs/base64
     videos: list[str] | None = None  # Video inputs
-    max_tokens: int = 256
+    max_tokens: int = get_default_max_tokens()
     temperature: float = 0.7
     top_p: float = 0.9
     video_fps: float | None = None  # Caller-specified video FPS
@@ -295,7 +296,7 @@ class MLLMBatchGenerator:
         model: nn.Module,
         processor: Any,
         mm_processor: MultimodalProcessor | None = None,
-        max_tokens: int = 256,
+        max_tokens: int = get_default_max_tokens(),
         stop_tokens: set | None = None,
         sampler: Callable[[mx.array], mx.array] | None = None,
         prefill_batch_size: int = 4,  # Smaller for MLLM due to vision overhead

@@ -4,6 +4,7 @@
 import asyncio
 import copy
 import logging
+import time
 from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Any
@@ -17,9 +18,17 @@ from ..utils.image import (
     compute_per_image_hashes,
     extract_images_from_messages,
 )
-from .base import BaseEngine, GenerationOutput
+from .base import BaseEngine, GenerationOutput, _fallback_parse_tool_calls
 
 logger = logging.getLogger(__name__)
+
+
+def _human_size(n: int) -> str:
+    for unit in ("B", "KB", "MB", "GB", "TB"):
+        if n < 1024:
+            return f"{n:.1f} {unit}"
+        n /= 1024
+    return f"{n:.1f} PB"
 
 OCR_MODEL_TYPES = {"deepseekocr", "deepseekocr_2", "dots_ocr", "glm_ocr"}
 
@@ -54,13 +63,16 @@ class VLMBatchedEngine(BaseEngine):
         scheduler_config: Any | None = None,
         stream_interval: int = 1,
         enable_thinking: bool | None = None,
+        preserve_thinking: bool | None = None,
         model_settings: Any | None = None,
     ):
+        super().__init__()
         self._model_name = model_name
         self._trust_remote_code = trust_remote_code
         self._scheduler_config = scheduler_config
         self._stream_interval = stream_interval
         self._enable_thinking = enable_thinking
+        self._preserve_thinking = preserve_thinking
         self._model_settings = model_settings
 
         self._vlm_model = None
@@ -112,7 +124,23 @@ class VLMBatchedEngine(BaseEngine):
         from mlx_vlm.utils import load as vlm_load
 
         def _load_vlm_sync():
-            return vlm_load(self._model_name, trust_remote_code=self._trust_remote_code)
+            start = time.monotonic()
+            logger.info("Loading VLM model: %s", self._model_name)
+            model, processor = vlm_load(self._model_name, trust_remote_code=self._trust_remote_code)
+            elapsed = time.monotonic() - start
+             # Estimate model size
+            try:
+                from mlx.utils import tree_flatten
+                params = tree_flatten(model.parameters())
+                total_bytes = sum(arr.size * arr.itemsize for _, arr in params)
+            except Exception:
+                total_bytes = 0
+            size_str = _human_size(total_bytes)
+            logger.info(
+                 "VLM model loaded in %.1fs | %s | %s",
+                elapsed, size_str, self._model_name,
+             )
+            return model, processor
 
         loop = asyncio.get_running_loop()
         self._vlm_model, self._processor = await asyncio.wait_for(
@@ -269,8 +297,17 @@ class VLMBatchedEngine(BaseEngine):
         if not hasattr(template_target, "apply_chat_template"):
             template_target = getattr(self._processor, "tokenizer", self._processor)
 
-        # Ensure system messages are always at the beginning (some VLM templates enforce this)
-        messages.sort(key=lambda m: 0 if m.get("role") == "system" else 1)
+         # Ensure exactly one system message at the beginning
+        systems = [m for m in messages if m.get("role") in ("system", "developer")]
+        others = [m for m in messages if m.get("role") not in ("system", "developer")]
+        if systems:
+            sys_text = "\n\n".join(m.get("content", "") for m in systems if m.get("content"))
+            messages = [{"role": "system", "content": sys_text}] + others
+        elif others:
+            messages = [{"role": "system", "content": "You are a helpful assistant."}] + others
+
+
+        logger.debug("VLM template: roles=%s", [m.get("role", "?") for m in messages[:3]])
 
         try:
             prompt = template_target.apply_chat_template(messages, **template_kwargs)
@@ -434,7 +471,7 @@ class VLMBatchedEngine(BaseEngine):
         )
 
     async def generate(
-        self, prompt: str | list[int], max_tokens: int = 256, temperature: float = 0.7,
+        self, prompt: str | list[int], max_tokens: int = 4096, temperature: float = 0.7,
         top_p: float = 0.9, top_k: int = 0, min_p: float = 0.0,
         repetition_penalty: float = 1.0, presence_penalty: float = 0.0,
         stop: list[str] | None = None,
@@ -460,7 +497,7 @@ class VLMBatchedEngine(BaseEngine):
         )
 
     async def stream_generate(
-        self, prompt: str | list[int], max_tokens: int = 256, temperature: float = 0.7,
+        self, prompt: str | list[int], max_tokens: int = 4096, temperature: float = 0.7,
         top_p: float = 0.9, top_k: int = 0, min_p: float = 0.0,
         repetition_penalty: float = 1.0, presence_penalty: float = 0.0,
         stop: list[str] | None = None,
@@ -497,7 +534,7 @@ class VLMBatchedEngine(BaseEngine):
                 await engine.abort_request(request_id)
 
     async def chat(
-        self, messages: list[dict[str, Any]], max_tokens: int = 256, temperature: float = 0.7,
+        self, messages: list[dict[str, Any]], max_tokens: int = 4096, temperature: float = 0.7,
         top_p: float = 0.9, top_k: int = 0, min_p: float = 0.0,
         repetition_penalty: float = 1.0, presence_penalty: float = 0.0,
         tools: list[dict] | None = None, **kwargs,
@@ -509,7 +546,7 @@ class VLMBatchedEngine(BaseEngine):
             await asyncio.wait_for(
                 loop.run_in_executor(self._engine._mlx_executor, self._process_chat_messages, messages, tools, kwargs), timeout=30.0)
         )
-        return await self.generate(
+        gen = await self.generate(
             prompt=prompt, max_tokens=max_tokens, temperature=temperature,
             top_p=top_p, top_k=top_k, min_p=min_p,
             repetition_penalty=repetition_penalty, presence_penalty=presence_penalty,
@@ -517,9 +554,11 @@ class VLMBatchedEngine(BaseEngine):
             vlm_image_hash=image_hash, vlm_cache_key_start=cache_key_start,
             vlm_cache_key_ranges=cache_key_ranges, **kwargs,
         )
-
+        if tools and not gen.tool_calls:
+            gen = _fallback_parse_tool_calls(gen, self._tokenizer, tools)
+        return gen
     async def stream_chat(
-        self, messages: list[dict[str, Any]], max_tokens: int = 256, temperature: float = 0.7,
+        self, messages: list[dict[str, Any]], max_tokens: int = 4096, temperature: float = 0.7,
         top_p: float = 0.9, top_k: int = 0, min_p: float = 0.0,
         repetition_penalty: float = 1.0, presence_penalty: float = 0.0,
         tools: list[dict] | None = None, **kwargs,
@@ -538,6 +577,8 @@ class VLMBatchedEngine(BaseEngine):
             vlm_image_hash=image_hash, vlm_cache_key_start=cache_key_start,
             vlm_cache_key_ranges=cache_key_ranges, **kwargs,
         ):
+            if output.finished and tools and not output.tool_calls:
+                output = _fallback_parse_tool_calls(output, self._tokenizer, tools)
             yield output
 
     # -- Utilities --

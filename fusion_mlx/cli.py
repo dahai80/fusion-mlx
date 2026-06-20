@@ -6,8 +6,10 @@ with Rapid-MLX conveniences.
 
 import argparse
 import json
+import logging
 import os
 import sys
+from datetime import datetime
 from pathlib import Path
 
 import requests
@@ -77,6 +79,24 @@ def _get_api_key() -> str:
     return os.environ.get("FUSION_MLX_API_KEY", "local-key")
 
 
+def _setup_logging(port: int) -> None:
+     """Configure root logger with INFO level + file handler (Ollama-style)."""
+     log_dir = Path.home() / ".fusion-mlx" / "logs"
+     log_dir.mkdir(parents=True, exist_ok=True)
+     log_file = log_dir / f"fusion-mlx-{datetime.now().strftime('%Y%m%d')}.log"
+
+     root_logger = logging.getLogger()
+     root_logger.setLevel(logging.INFO)
+
+     # File handler — Ollama-style timestamped logs
+     fh = logging.FileHandler(str(log_file))
+     fh.setLevel(logging.INFO)
+     fh.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(name)s: %(message)s"))
+     root_logger.addHandler(fh)
+
+     print(f"fusion-mlx: logs -> {log_file}")
+
+
 def serve_command(args):
     from .server import create_app
 
@@ -96,7 +116,21 @@ def serve_command(args):
     app = create_app(config)
     import uvicorn
 
-    uvicorn.run(app, host=config.host, port=config.port)
+    # Configure logging (Ollama-style: INFO level + file output)
+    _setup_logging(config.port)
+
+    from uvicorn.config import LOGGING_CONFIG
+    _fmt = "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
+    LOGGING_CONFIG["formatters"]["default"]["format"] = _fmt
+    LOGGING_CONFIG["formatters"]["access"]["format"] = _fmt
+
+    uvicorn.run(
+        app,
+        host=config.host,
+        port=config.port,
+        log_level="info",
+        log_config=LOGGING_CONFIG,
+    )
 
 
 def launch_command(args):

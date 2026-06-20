@@ -8,6 +8,7 @@ Wires together all API routes:
 - MCP: /v1/mcp/tools, /v1/mcp/servers, /v1/mcp/execute
 - OpenClaw Agent: /v1/openclaw/agent/*
 - Admin: /admin/*
+- GUI compatibility: /v1/manager/*, /v1/discover/*, /v1/settings, /admin
 """
 
 import asyncio
@@ -30,6 +31,14 @@ from .api.images import router as images_router
 from .api.images import set_images_context
 from .api.mcp_routes import router as mcp_router
 from .api.mcp_routes import set_mcp_manager_getter
+# GUI compatibility layer
+try:
+    from fusion_gui.server import get_gui_compat_router
+    from fusion_gui.database import get_database_manager, close_database
+except ImportError:
+    get_gui_compat_router = None
+    get_database_manager = None
+    close_database = None
 
 # Import route modules
 from .api.openai_routes import router as openai_router
@@ -106,6 +115,10 @@ class Server:
         app.include_router(mcp_router)
         app.include_router(openclaw_router)
         app.include_router(admin_router)
+
+         # Register GUI compatibility router (discovery, settings, manager, admin UI)
+        if get_gui_compat_router:
+            app.include_router(get_gui_compat_router())
 
         # Root endpoint (health check for clients)
         @app.get("/")
@@ -204,11 +217,31 @@ class Server:
             self.pool.discover_models(self.config.model_dir)
             logger.info("Discovered %d models in %s", self.pool.model_count, self.config.model_dir)
 
+         # Initialize GUI database (for compat layer)
+        if get_database_manager:
+            try:
+                get_database_manager()
+                logger.info("GUI database initialized")
+            except Exception as e:
+                logger.warning(f"GUI database init failed (non-fatal): {e}")
+
         logger.info("fusion-mlx startup complete")
 
     async def _shutdown(self):
         """Graceful shutdown."""
         logger.info("fusion-mlx shutting down...")
+
+         # Cleanup GUI resources
+        if close_database:
+            try:
+                from fusion_gui.model_manager import shutdown_model_manager
+                from fusion_gui.inference_queue_manager import shutdown_inference_manager
+                shutdown_inference_manager()
+                shutdown_model_manager()
+                close_database()
+                logger.info("GUI resources cleaned up")
+            except Exception as e:
+                logger.warning(f"GUI cleanup warning: {e}")
         if self.pool:
             await self.pool.shutdown()
         mx.clear_cache()

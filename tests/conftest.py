@@ -94,13 +94,18 @@ sys.modules["mlx.fast"] = MagicMock()
 sys.modules["mlx_dtypes"] = MagicMock()
 
 # MLX-LM mocks
-sys.modules["mlx_lm"] = MagicMock()
+_mlx_lm = MagicMock()
+_mlx_lm.load = MagicMock
+_mlx_lm.generate = MagicMock
+_mlx_lm.stream_generate = MagicMock
+sys.modules["mlx_lm"] = _mlx_lm
 sys.modules["mlx_lm.generate"] = MagicMock()
 sys.modules["mlx_lm.models"] = MagicMock()
 sys.modules["mlx_lm.models.cache"] = MagicMock()
 sys.modules["mlx_lm.tokenizer_utils"] = MagicMock()
 sys.modules["mlx_lm.load"] = MagicMock()
 sys.modules["mlx_lm.sample_utils"] = MagicMock()
+sys.modules["mlx_lm.utils"] = MagicMock()
 
 # MLX-VLM mocks
 sys.modules["mlx_vlm"] = MagicMock()
@@ -114,7 +119,18 @@ sys.modules["dflash_mlx"] = MagicMock()
 
 # Mock heavy/optional dependencies to avoid import issues
 _mock_module("transformers")
-_mock_module("huggingface_hub")
+_hf_hub = MagicMock()
+_hf_hub.__spec__ = MagicMock()
+_hf_hub.HfApi = MagicMock
+_hf_hub.list_models = MagicMock
+_hf_hub.model_info = MagicMock
+_hf_hub.hf_hub_download = MagicMock
+_hf_hub.snapshot_download = MagicMock
+sys.modules["huggingface_hub"] = _hf_hub
+_hf_hub_utils = MagicMock()
+_hf_hub_utils.RepositoryNotFoundError = Exception
+_hf_hub_utils.RevisionNotFoundError = Exception
+sys.modules["huggingface_hub.utils"] = _hf_hub_utils
 _mock_module("tokenizers")
 _mock_module("mistral_common")
 _mock_module("mistral_common.tokens")

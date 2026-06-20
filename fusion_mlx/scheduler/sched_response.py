@@ -12,10 +12,46 @@ The scheduler follows vLLM's design with:
 """
 
 import logging
-
-logger = logging.getLogger(__name__)
 import time
 from typing import Any
+
+logger = logging.getLogger(__name__)
+
+
+def _log_completion_summary(request, output):
+    """Log Ollama-style request completion summary."""
+    prompt_tokens = output.prompt_tokens
+    completion_tokens = output.completion_tokens
+    cached_tokens = output.cached_tokens
+    finish_reason = output.finish_reason or "unknown"
+
+    # Calculate timing
+    now = time.monotonic()
+    total_time = (now - request.arrival_time) if request.arrival_time else 0
+    gen_time = (now - request.generation_started_at) if request.generation_started_at else total_time
+    ttft = (now - request.first_token_at) if request.first_token_at else 0
+
+    # Token-per-second (Ollama style: ms/token)
+    prompt_ms_per_token = (ttft * 1000 / prompt_tokens) if prompt_tokens > 0 else 0
+    completion_ms_per_token = ((gen_time - ttft) * 1000 / max(completion_tokens - 1, 1)) if gen_time > ttft else 0
+    prompt_tps = (prompt_tokens / ttft) if ttft > 0 else 0
+    completion_tps = (completion_tokens / max(gen_time - ttft, 0.001)) if gen_time > ttft else 0
+
+    logger.info(
+        "| completed | prompt_tokens=%d | completion_tokens=%d | cached_tokens=%d | "
+        "ttft=%.2fs | prompt_eval=%.1fms/token | completion_eval=%.1fms/token | "
+        "prompt_tps=%.1f | completion_tps=%.1f | total=%.1fs | finish=%s",
+        prompt_tokens,
+        completion_tokens,
+        cached_tokens,
+        ttft,
+        prompt_ms_per_token,
+        completion_ms_per_token,
+        prompt_tps,
+        completion_tps,
+        total_time,
+        finish_reason,
+    )
 
 import mlx.core as mx
 
@@ -147,6 +183,10 @@ def _process_batch_responses(
         ):
             response.logprobs = None
 
+        # Track first token arrival time
+        if request.num_output_tokens == 1 and request.first_token_at is None:
+            request.first_token_at = time.monotonic()
+
         # Create output
         output = RequestOutput(
             request_id=request_id,
@@ -171,6 +211,9 @@ def _process_batch_responses(
             output.finished = True
             output.finish_reason = response.finish_reason
             finished_ids.add(request_id)
+
+             # Ollama-style completion summary
+            _log_completion_summary(request, output)
 
             if parser_session is not None:
                 final_result = parser_session.finalize()
@@ -248,6 +291,10 @@ def _process_batch_responses(
             self.total_completion_tokens += request.num_output_tokens
             self.num_requests_processed += 1
 
+            logger.info(
+                "Request %s finished: %s, %d tokens",
+                request_id, response.finish_reason, request.num_output_tokens,
+                )
             logger.debug(
                 f"Request {request_id} finished: {response.finish_reason}, "
                 f"{request.num_output_tokens} tokens"

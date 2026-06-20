@@ -37,7 +37,7 @@ from .mllm_batch_generator import (
     MLLMBatchResponse,
 )
 from .multimodal_processor import MultimodalProcessor
-from .request import RequestOutput, RequestStatus, SamplingParams
+from .request import RequestOutput, RequestStatus, SamplingParams, get_default_max_tokens
 
 logger = logging.getLogger(__name__)
 
@@ -59,7 +59,7 @@ class MLLMSchedulerConfig:
     # Maximum cache entries
     vision_cache_size: int = 100
     # Default max tokens
-    default_max_tokens: int = 256
+    default_max_tokens: int = get_default_max_tokens()
     # Default video FPS for frame extraction
     default_video_fps: float = 2.0
     # Maximum video frames
@@ -295,7 +295,7 @@ class MLLMScheduler:
         prompt: str,
         images: list[str] | None = None,
         videos: list[str] | None = None,
-        max_tokens: int = 256,
+        max_tokens: int = 4096,
         temperature: float = 0.7,
         top_p: float = 0.9,
         stop: list[str] | None = None,
@@ -907,7 +907,7 @@ class MLLMScheduler:
         prompt: str,
         images: list[str] | None = None,
         videos: list[str] | None = None,
-        max_tokens: int = 256,
+        max_tokens: int = 4096,
         temperature: float = 0.7,
         top_p: float = 0.9,
         stop: list[str] | None = None,

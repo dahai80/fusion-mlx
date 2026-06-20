@@ -323,7 +323,7 @@ class TestSamplingParams:
 
     def test_defaults(self):
         sp = SamplingParams()
-        assert sp.max_tokens == 256
+        assert sp.max_tokens == 4096
         assert sp.temperature == 0.7
         assert sp.stop == []
 

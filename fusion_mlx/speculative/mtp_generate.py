@@ -90,7 +90,7 @@ def mtp_generate_step(
     prompt_tokens: mx.array,
     cache: list,
     sampler: Any,
-    max_tokens: int = 256,
+    max_tokens: int = 4096,
     optimistic: bool = False,
 ) -> Iterator[MTPOutput]:
     """Core MTP decode generator used by BatchedEngine.

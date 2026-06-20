@@ -1038,10 +1038,17 @@ def convert_tools_for_template(tools: list | None) -> list[dict] | None:
         if isinstance(tool, dict):
             tool_type = tool.get("type")
             tool_func = tool.get("function")
+            tool_name_direct = tool.get("name")
+            tool_desc_direct = tool.get("description")
+            tool_schema_direct = tool.get("input_schema")
         else:
             tool_type = getattr(tool, "type", None)
             tool_func = getattr(tool, "function", None)
+            tool_name_direct = getattr(tool, "name", None)
+            tool_desc_direct = getattr(tool, "description", None)
+            tool_schema_direct = getattr(tool, "input_schema", None)
 
+         # OpenAI format: {"type": "function", "function": {...}}
         if tool_type == "function" and tool_func:
             # Handle function as dict or Pydantic model
             if isinstance(tool_func, dict):
@@ -1067,7 +1074,27 @@ def convert_tools_for_template(tools: list | None) -> list[dict] | None:
                     },
                 }
             )
+            continue
 
+         # Anthropic format: {"name": "...", "description": "...", "input_schema": {...}}
+        if tool_name_direct and tool_schema_direct is not None:
+            desc = tool_desc_direct or ""
+            if isinstance(tool_schema_direct, dict):
+                params = tool_schema_direct
+            else:
+                params = {"type": "object", "properties": {}}
+
+            converted.append(
+                 {
+                     "type": "function",
+                     "function": {
+                         "name": str(tool_name_direct),
+                         "description": str(desc),
+                         "parameters": params,
+                     },
+                 }
+             )
+            continue
     return converted if converted else None
 
 

@@ -136,7 +136,12 @@ class TestChunkedPrefillOrdering:
         assert call_order == ["ra", "rb"]
 
     def test_chunked_prefill_partial_done(self):
-        from fusion_mlx.scheduler.sched_batch import _advance_chunked_prefills
+        from fusion_mlx.scheduler.sched_batch import (
+            _advance_chunked_prefills,
+            _insert_prefilled_request,
+            _sync_and_clear_cache as _sync_fn,
+         )
+        from unittest import mock
 
         s = MagicMock()
         req_a = Request("ra", "prompt a", SamplingParams())
@@ -145,10 +150,19 @@ class TestChunkedPrefillOrdering:
 
         state_a = MagicMock()
         state_a.request = req_a
+        state_a.cache = None
+        state_a.last_token = [99]
+        state_a.sampler = MagicMock()
+        state_a.sm = MagicMock()
+        state_a.per_row_lps = None
         state_b = MagicMock()
         state_b.request = req_b
         s._prefill_states = {"ra": state_a, "rb": state_b}
         s.config = SchedulerConfig(chunked_prefill=True)
+        s._stream = None
+        req_a.num_prompt_tokens = 10
+        req_a.cached_tokens = 0
+        req_a.rope_deltas = None
 
         call_count = [0]
 
@@ -161,15 +175,21 @@ class TestChunkedPrefillOrdering:
         s.batch_generator.insert = MagicMock(return_value=[1])
         s._ensure_batch_generator = MagicMock()
         s._emit_final_boundary_if_needed = MagicMock()
+        s.model = MagicMock()
+           # Real dicts so _insert_prefilled_request can mutate them
         s.running = {}
-        s.requests = {}
         s.request_id_to_uid = {}
         s.uid_to_request_id = {}
-        s.total_prompt_tokens = 0
+           # Bind real _insert_prefilled_request so it executes
+        def bind_insert(*a):
+            return _insert_prefilled_request(s, *a)
+        s._insert_prefilled_request = bind_insert
 
         scheduled = []
         rejected = []
-        _advance_chunked_prefills(s, scheduled, rejected)
+        with mock.patch("fusion_mlx.scheduler.sched_batch.get_prefill_tracker", return_value=MagicMock()):
+            with mock.patch("fusion_mlx.scheduler.sched_batch._sync_and_clear_cache"):
+                _advance_chunked_prefills(s, scheduled, rejected)
 
         assert len(s.prefilling) == 1
         assert s.prefilling[0].request_id == "rb"
@@ -223,7 +243,7 @@ class TestAdmissionBackpressure:
         s = MagicMock()
         gate = _StoreCacheGate(cap=5)
         s._store_cache_gate = gate
-        s.config = SchedulerConfig(max_num_seqs=10)
+        s.config = SchedulerConfig(max_num_seqs=10, completion_batch_size=4)
 
         adjust_store_cache_cap(s, "soft")
         assert gate.cap == 4
@@ -240,7 +260,7 @@ class TestAdmissionBackpressure:
         s = MagicMock()
         gate = _StoreCacheGate(cap=1)
         s._store_cache_gate = gate
-        s.config = SchedulerConfig(max_num_seqs=10)
+        s.config = SchedulerConfig(max_num_seqs=10, completion_batch_size=4)
 
         adjust_store_cache_cap(s, "hard")
         assert gate.cap == 1
@@ -261,6 +281,7 @@ class TestAdmissionBackpressure:
         s.config = SchedulerConfig()
         s._store_cache_gate = None
         s._prefill_memory_guard = False
+        s._vlm_mtp_drafter = None
 
         scheduled, rejected = _schedule_waiting(s)
         assert scheduled == []
@@ -278,6 +299,7 @@ class TestAdmissionBackpressure:
         gate.note_submitted()
         s._store_cache_gate = gate
         s._prefill_memory_guard = False
+        s._vlm_mtp_drafter = None
 
         scheduled, rejected = _schedule_waiting(s)
         assert scheduled == []

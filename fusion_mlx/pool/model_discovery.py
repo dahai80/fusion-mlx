@@ -372,28 +372,26 @@ def _has_sentence_transformers_embedding_pipeline(model_path: Path) -> bool:
     )
 
 
-def _has_vision_subconfig(config: dict) -> bool:
+def _has_vision_subconfig(config: dict, model_path: Path | None = None) -> bool:
     """
-    Return True if ``config`` carries evidence of a vision sub-config.
+    Return True if config carries evidence of a vision sub-config.
 
-    Three keys cover the conventions in the wild:
-
-    - ``vision_config`` — most VLMs (Qwen2-VL, Gemma3, LLaVA-Next, ...).
-    - ``vit_config`` — Molmo / Molmo2 family.
-    - ``mm_vision_tower`` — older LLaVA family including FastVLM's
-        ``llava_qwen2``. The check is non-empty-only: a config-stub text-only
-        quant could in principle declare a tower path it doesn't ship weights
-        for, but in practice bf16 FastVLM ships a real path string.
-
-    Used by the VLM classifier in :func:`detect_model_type` and by other
-    paths (``oq``, admin model info) that need to ask "is this a VLM?".
+    When model_path is provided, also verifies that actual vision weight
+    files exist. Text-only quants retain vision_config but no weights.
     """
-    return (
-        "vision_config" in config
+    has_config = (
+          "vision_config" in config
         or "vit_config" in config
         or bool(config.get("mm_vision_tower"))
-    )
-
+     )
+    if not has_config:
+        return False
+    if model_path is None:
+        return True
+    for f in model_path.iterdir():
+        if f.is_file() and "vision" in f.name.lower() and f.suffix in (".safetensors", ".pt", ".bin"):
+            return True
+    return False
 
 def detect_model_type(model_path: Path) -> ModelType:
     """
@@ -496,7 +494,7 @@ def detect_model_type(model_path: Path) -> ModelType:
     # ``mm_vision_tower``).
     for arch in architectures:
         if arch in VLM_ARCHITECTURES:
-            if normalized_type in VLM_MODEL_TYPES and not _has_vision_subconfig(config):
+            if normalized_type in VLM_MODEL_TYPES and not _has_vision_subconfig(config, model_path):
                 logger.info(
                     f"Architecture '{arch}' is a VLM architecture but no "
                     "vision_config / vit_config / mm_vision_tower found — "
@@ -509,7 +507,7 @@ def detect_model_type(model_path: Path) -> ModelType:
     # Some model families (e.g., qwen3_5_moe) have both VLM and text-only variants.
     # Text-only quants won't carry a vision sub-config.
     if normalized_type in VLM_MODEL_TYPES:
-        if _has_vision_subconfig(config):
+        if _has_vision_subconfig(config, model_path):
             return "vlm"
         logger.info(
             f"Model type '{model_type}' is in VLM_MODEL_TYPES but no "
@@ -519,7 +517,7 @@ def detect_model_type(model_path: Path) -> ModelType:
 
     # Check for VLM: presence of a vision sub-config (fallback heuristic).
     # Catch-all for VLMs that aren't yet listed in VLM_MODEL_TYPES.
-    if _has_vision_subconfig(config):
+    if _has_vision_subconfig(config, model_path):
         return "vlm"
 
     # Check for audio models — architectures take priority over model_type.

@@ -2,11 +2,16 @@
 """Request management for fusion-mlx continuous batching."""
 
 import enum
+import os
 import time
 from collections import Counter
 from dataclasses import dataclass, field
 from typing import Any
 
+_DEFAULT_MAX_TOKENS = int(os.environ.get("FUSION_MLX_MAX_TOKENS", "4096"))
+
+def get_default_max_tokens() -> int:
+    return _DEFAULT_MAX_TOKENS
 
 class RequestStatus(enum.IntEnum):
     WAITING = enum.auto()
@@ -33,7 +38,7 @@ class RequestStatus(enum.IntEnum):
 
 @dataclass
 class SamplingParams:
-    max_tokens: int = 256
+    max_tokens: int = _DEFAULT_MAX_TOKENS
     temperature: float = 0.7
     top_p: float = 0.9
     top_k: int = 0
@@ -83,6 +88,7 @@ class Request:
     token_freqs: Counter = field(default_factory=Counter)
     output_text: str = ""
     generation_started_at: float | None = None
+    first_token_at: float | None = None
     last_activity_at: float | None = None
 
     # For BatchGenerator integration

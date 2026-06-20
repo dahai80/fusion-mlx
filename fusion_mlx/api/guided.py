@@ -136,7 +136,7 @@ class GuidedGenerator:
         self,
         prompt: str,
         json_schema: dict[str, Any],
-        max_tokens: int = 256,
+        max_tokens: int = 4096,
         temperature: float = 0.7,
     ) -> str | None:
         """Generate JSON output constrained to a schema.
@@ -213,7 +213,7 @@ class GuidedGenerator:
     def generate_json_object(
         self,
         prompt: str,
-        max_tokens: int = 256,
+        max_tokens: int = 4096,
         temperature: float = 0.7,
     ) -> str | None:
         """
@@ -249,7 +249,7 @@ def generate_with_schema(
     tokenizer,
     prompt: str,
     json_schema: dict[str, Any],
-    max_tokens: int = 256,
+    max_tokens: int = 4096,
     temperature: float = 0.7,
 ) -> str | None:
     """

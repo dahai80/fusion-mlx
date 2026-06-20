@@ -4,14 +4,34 @@
 import asyncio
 import copy
 import logging
+import time
 from collections.abc import AsyncIterator
 from typing import Any
 
 from ..engine_core import AsyncEngineCore, EngineConfig, get_executor
 from ..request import SamplingParams
-from .base import BaseEngine, GenerationOutput
+from .base import BaseEngine, GenerationOutput, _fallback_parse_tool_calls
 
 logger = logging.getLogger(__name__)
+
+
+def _human_size(n: int) -> str:
+    for unit in ("B", "KB", "MB", "GB", "TB"):
+        if n < 1024:
+            return f"{n:.1f} {unit}"
+        n /= 1024
+    return f"{n:.1f} PB"
+
+
+def _nbytes_per_item(dtype) -> int:
+    try:
+        return int(dtype.itemsize)
+    except AttributeError:
+        dtype_map = {
+            "float16": 2, "bfloat16": 2, "float32": 4,
+            "int32": 4, "int64": 8, "uint8": 1, "bool": 1,
+        }
+        return dtype_map.get(str(dtype), 2)
 
 try:
     from ..adapter.harmony import preprocess_harmony_messages
@@ -21,17 +41,50 @@ except ImportError:
     preprocess_harmony_messages = None     # type: ignore
 
 
+def _fallback_parse_tool_calls(gen: GenerationOutput, tokenizer: Any, tools: list[dict]) -> GenerationOutput:
+    """Fallback tool call extraction when the scheduler has no parser session.
+
+    Qwen, GLM, and other models that emit XML-based tool call markers
+    (e.g. \u241d...\u241e) don't get parsed by the mllm scheduler.
+    This runs parse_tool_calls on the final text as a safety net.
+    """
+    try:
+        from ..api.tool_calling import parse_tool_calls
+        cleaned, tc_list = parse_tool_calls(gen.text, tokenizer, tools)
+        if tc_list:
+            tc_dicts = []
+            for tc in tc_list:
+                tc_dicts.append({
+                    "id": tc.id,
+                    "type": tc.type,
+                    "function": {
+                        "name": tc.function.name,
+                        "arguments": tc.function.arguments,
+                    },
+                })
+            gen = copy.deepcopy(gen)
+            gen.tool_calls = tc_dicts
+            if cleaned.strip() and cleaned.strip() != gen.text.strip():
+                gen.text = cleaned
+    except Exception as e:
+        logger.debug(f"_fallback_parse_tool_calls failed: {e}")
+    return gen
+
+
 class BatchedEngine(BaseEngine):
     def __init__(
         self, model_name: str, trust_remote_code: bool = False,
         scheduler_config: Any | None = None, stream_interval: int = 1,
-        enable_thinking: bool | None = None, model_settings: Any | None = None,
+        enable_thinking: bool | None = None,
+        preserve_thinking: bool | None = None, model_settings: Any | None = None,
     ):
+        super().__init__()
         self._model_name = model_name
         self._trust_remote_code = trust_remote_code
         self._scheduler_config = scheduler_config
         self._stream_interval = stream_interval
         self._enable_thinking = enable_thinking
+        self._preserve_thinking = preserve_thinking
         self._model_settings = model_settings
         self._model = None
         self._tokenizer = None
@@ -105,6 +158,17 @@ class BatchedEngine(BaseEngine):
         except AttributeError:
             return False
 
+    def _sort_system_first(self, messages: list[dict]) -> list[dict]:
+        """Ensure exactly one system message at the beginning."""
+        systems = [m for m in messages if m.get("role") in ("system", "developer")]
+        others = [m for m in messages if m.get("role") not in ("system", "developer")]
+        if systems:
+            sys_text = "\n\n".join(m.get("content", "") for m in systems if m.get("content"))
+            systems = [{"role": "system", "content": sys_text}]
+        elif others:
+            systems = [{"role": "system", "content": "You are a helpful assistant."}]
+        return systems + others
+
     def _preprocess_messages(self, messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
         if self.model_type == "gpt_oss" and HAS_HARMONY_ADAPTER and preprocess_harmony_messages:
             return preprocess_harmony_messages(messages)
@@ -123,7 +187,24 @@ class BatchedEngine(BaseEngine):
         loop = asyncio.get_running_loop()
 
         def _load_model_sync():
-            return load(self._model_name, tokenizer_config=tokenizer_config)
+            start = time.monotonic()
+            logger.info("Loading model: %s", self._model_name)
+            model, tokenizer = load(self._model_name, tokenizer_config=tokenizer_config)
+            elapsed = time.monotonic() - start
+             # Estimate model size from loaded weights
+            total_params = 0
+            try:
+                from mlx.utils import tree_flatten
+                flat = tree_flatten(model.parameters())
+                total_params = sum(arr.size * arr.itemsize for _, arr in flat)
+            except Exception:
+                total_params = 0
+            size_str = _human_size(total_params)
+            logger.info(
+                "Model loaded in %.1fs | %s | %s",
+                elapsed, size_str, self._model_name,
+            )
+            return model, tokenizer
 
         self._model, self._tokenizer = await asyncio.wait_for(
             loop.run_in_executor(get_executor("io"), _load_model_sync), timeout=120.0)
@@ -217,17 +298,38 @@ class BatchedEngine(BaseEngine):
                 template_kwargs["tools"] = convert_tools_for_template(tools)
             if self._enable_thinking is not None:
                 template_kwargs["enable_thinking"] = self._enable_thinking
+            if self._preserve_thinking is not None:
+                template_kwargs["preserve_thinking"] = self._preserve_thinking
             if chat_template_kwargs:
                 template_kwargs.update(chat_template_kwargs)
+            # Ensure system message exists at start
+            if not messages or messages[0].get("role") not in ("system", "developer"):
+                logger.warning(
+                    "No system message at start, inserting. first_role=%s, total=%d",
+                    messages[0].get("role", "empty") if messages else "empty", len(messages),
+                )
+                messages.insert(0, {"role": "system", "content": "You are a helpful assistant."})
+            logger.info(
+                "Chat template: roles=%s",
+                [m.get("role") for m in messages[:5]],
+            )
             try:
                 return self._tokenizer.apply_chat_template(messages, **template_kwargs)
-            except TypeError:
-                if chat_template_kwargs:
-                    for key in chat_template_kwargs:
-                        template_kwargs.pop(key, None)
-                template_kwargs.pop("tools", None)
-                template_kwargs.pop("enable_thinking", None)
-                return self._tokenizer.apply_chat_template(messages, **template_kwargs)
+            except Exception as e:
+                if "system message" in str(e).lower():
+                    logger.error("Template demands system message, retrying with fallback insert")
+                    messages.insert(0, {"role": "system", "content": "You are a helpful assistant."})
+                    return self._tokenizer.apply_chat_template(messages, **template_kwargs)
+                if isinstance(e, TypeError):
+                    if chat_template_kwargs:
+                        for key in chat_template_kwargs:
+                            template_kwargs.pop(key, None)
+                    template_kwargs.pop("tools", None)
+                    template_kwargs.pop("enable_thinking", None)
+                    template_kwargs.pop("preserve_thinking", None)
+                    return self._tokenizer.apply_chat_template(messages, **template_kwargs)
+                logger.error("apply_chat_template failed: %s, roles=%s", e, [m.get("role") for m in messages[:3]])
+                raise
         else:
             prompt = "\n".join(f"{m['role']}: {m['content']}" for m in messages)
             return prompt + "\nassistant:"
@@ -237,6 +339,7 @@ class BatchedEngine(BaseEngine):
         chat_template_kwargs: dict[str, Any] | None = None, is_partial: bool | None = None,
     ) -> int:
         messages = self._preprocess_messages(messages)
+        messages = self._sort_system_first(messages)
         template_tools = None
         if tools:
             from ..api.tool_calling import convert_tools_for_template
@@ -245,7 +348,7 @@ class BatchedEngine(BaseEngine):
         return len(self._tokenizer.encode(prompt))
 
     async def generate(
-        self, prompt: str, max_tokens: int = 256, temperature: float = 0.7,
+        self, prompt: str, max_tokens: int = 4096, temperature: float = 0.7,
         top_p: float = 0.9, top_k: int = 0, min_p: float = 0.0,
         repetition_penalty: float = 1.0, presence_penalty: float = 0.0,
         stop: list[str] | None = None, **kwargs,
@@ -271,7 +374,7 @@ class BatchedEngine(BaseEngine):
         )
 
     async def stream_generate(
-        self, prompt: str, max_tokens: int = 256, temperature: float = 0.7,
+        self, prompt: str, max_tokens: int = 4096, temperature: float = 0.7,
         top_p: float = 0.9, top_k: int = 0, min_p: float = 0.0,
         repetition_penalty: float = 1.0, presence_penalty: float = 0.0,
         stop: list[str] | None = None, **kwargs,
@@ -319,7 +422,7 @@ class BatchedEngine(BaseEngine):
                 await engine.abort_request(request_id)
 
     async def chat(
-        self, messages: list[dict[str, Any]], max_tokens: int = 256, temperature: float = 0.7,
+        self, messages: list[dict[str, Any]], max_tokens: int = 4096, temperature: float = 0.7,
         top_p: float = 0.9, top_k: int = 0, min_p: float = 0.0,
         repetition_penalty: float = 1.0, presence_penalty: float = 0.0,
         tools: list[dict] | None = None, **kwargs,
@@ -327,6 +430,7 @@ class BatchedEngine(BaseEngine):
         if not self._loaded:
             await self.start()
         messages = self._preprocess_messages(messages)
+        messages = self._sort_system_first(messages)
         template_tools = None
         if tools:
             from ..api.tool_calling import convert_tools_for_template
@@ -362,14 +466,17 @@ class BatchedEngine(BaseEngine):
                 completion_tokens=ro.completion_tokens, finish_reason=ro.finish_reason,
                 tool_calls=ro.tool_calls, cached_tokens=ro.cached_tokens,
             )
-        return await self.generate(
+        gen = await self.generate(
             prompt=prompt, max_tokens=max_tokens, temperature=temperature,
             top_p=top_p, top_k=top_k, min_p=min_p,
             repetition_penalty=repetition_penalty, presence_penalty=presence_penalty, **kwargs,
-        )
+             )
+        if tools and not gen.tool_calls:
+            gen = _fallback_parse_tool_calls(gen, self._tokenizer, tools)
+        return gen
 
     async def stream_chat(
-        self, messages: list[dict[str, Any]], max_tokens: int = 256, temperature: float = 0.7,
+        self, messages: list[dict[str, Any]], max_tokens: int = 4096, temperature: float = 0.7,
         top_p: float = 0.9, top_k: int = 0, min_p: float = 0.0,
         repetition_penalty: float = 1.0, presence_penalty: float = 0.0,
         tools: list[dict] | None = None, **kwargs,
@@ -377,6 +484,7 @@ class BatchedEngine(BaseEngine):
         if not self._loaded:
             await self.start()
         messages = self._preprocess_messages(messages)
+        messages = self._sort_system_first(messages)
         template_tools = None
         if tools:
             from ..api.tool_calling import convert_tools_for_template
@@ -438,7 +546,9 @@ class BatchedEngine(BaseEngine):
             prompt=prompt, max_tokens=max_tokens, temperature=temperature,
             top_p=top_p, top_k=top_k, min_p=min_p,
             repetition_penalty=repetition_penalty, presence_penalty=presence_penalty, **kwargs,
-        ):
+              ):
+            if output.finished and tools and not output.tool_calls:
+                output = _fallback_parse_tool_calls(output, self._tokenizer, tools)
             yield output
 
     def has_active_requests(self) -> bool:

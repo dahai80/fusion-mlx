@@ -143,16 +143,26 @@ def openai_to_anthropic(
         # Add tool use blocks
         if choice.message.tool_calls:
             for tc in choice.message.tool_calls:
+                if isinstance(tc, dict):
+                    tc_id = tc.get("id", "")
+                    func = tc.get("function", {})
+                    args_raw = func.get("arguments", "{}")
+                    func_name = func.get("name", "")
+                else:
+                    tc_id = tc.id
+                    args_raw = tc.function.arguments
+                    func_name = tc.function.name
+
                 try:
-                    tool_input = json.loads(tc.function.arguments)
+                    tool_input = json.loads(args_raw)
                 except (json.JSONDecodeError, AttributeError):
                     tool_input = {}
 
                 content.append(
                     AnthropicResponseContentBlock(
                         type="tool_use",
-                        id=tc.id,
-                        name=tc.function.name,
+                        id=tc_id,
+                        name=func_name,
                         input=tool_input,
                     )
                 )

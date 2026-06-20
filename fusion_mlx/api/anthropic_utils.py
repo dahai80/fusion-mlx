@@ -152,7 +152,7 @@ def convert_anthropic_to_internal(
     Returns:
         List of {"role": str, "content": str or list}
     """
-    from ..utils import _chat_template_supports_tool_role
+    from .utils import _chat_template_supports_tool_role
 
     processed_messages: list[dict[str, Any]] = []
     native_tool_calling = bool(
@@ -349,7 +349,7 @@ def convert_anthropic_to_internal(
             # Unknown format
             processed_messages.append({"role": role, "content": str(content)})
 
-    from ..utils import _merge_consecutive_roles
+    from .utils import _merge_consecutive_roles
 
     return _merge_consecutive_roles(processed_messages)
 
@@ -538,7 +538,7 @@ def convert_anthropic_to_internal_harmony(
             # Unknown format
             processed_messages.append({"role": role, "content": str(content)})
 
-    from ..utils import _merge_consecutive_roles
+    from .utils import _merge_consecutive_roles
 
     return _merge_consecutive_roles(processed_messages)
 
@@ -855,17 +855,26 @@ def convert_internal_to_anthropic_response(
     # Add tool_use blocks if present
     if tool_calls:
         for tc in tool_calls:
+            if isinstance(tc, dict):
+                tc_id = tc.get("id", "")
+                func = tc.get("function", {})
+                args_raw = func.get("arguments", "{}")
+                func_name = func.get("name", "")
+            else:
+                tc_id = tc.id
+                args_raw = tc.function.arguments
+                func_name = tc.function.name
+
             try:
-                # Parse arguments from JSON string
-                args = json.loads(tc.function.arguments)
+                args = json.loads(args_raw)
             except (json.JSONDecodeError, AttributeError):
                 args = {}
 
             content.append(
                 ContentBlockToolUse(
                     type="tool_use",
-                    id=tc.id,
-                    name=tc.function.name,
+                    id=tc_id,
+                    name=func_name,
                     input=args,
                 )
             )

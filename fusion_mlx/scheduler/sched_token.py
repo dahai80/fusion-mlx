@@ -226,6 +226,11 @@ def _create_batch_generator(
     if sampling_params.stop_token_ids:
         stop_tokens_set.update(sampling_params.stop_token_ids)
     stop_tokens_seq = [[t] for t in stop_tokens_set] if stop_tokens_set else None
+    logger.info(
+          "BatchGenerator: max_tokens=%d, stop_tokens=%s",
+        sampling_params.max_tokens,
+        stop_tokens_seq,
+          )
 
     bg = BatchGenerator(
         model=self.model,
@@ -261,7 +266,11 @@ def _on_prompt_progress(    self, updates: list[tuple[int, int, int]]) -> None:
             processed=processed,
             total=total,
             model_id=model_id,
-        )
+         )
+        logger.info(
+             "Prompt processing progress: model=%s, processed=%d, total=%d",
+            model_id, processed, total,
+         )
 
 # ------------------------------------------------------------------
 # External prefill (composition pattern — replaces _process_prompts)

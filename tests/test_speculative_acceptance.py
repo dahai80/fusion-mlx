@@ -8,8 +8,8 @@ from fusion_mlx.speculative.prompt_lookup import (
 class TestDraftAcceptanceRate:
     """Test acceptance rate tracking in PromptLookupDecoder."""
 
-    def _make_decoder(self, **kwargs):
-        return PromptLookupDecoder(num_draft_tokens=4, ngram_size=3, **kwargs)
+    def _make_decoder(self, ngram_size=3, **kwargs):
+        return PromptLookupDecoder(num_draft_tokens=4, ngram_size=ngram_size, **kwargs)
 
     def test_zero_acceptance(self):
         dec = self._make_decoder()
@@ -79,11 +79,11 @@ class TestFallbackOnRejection:
         assert drafts == []
 
     def test_min_matches_gate(self):
-        dec = PromptLookupDecoder(num_draft_tokens=4, ngram_size=2, min_matches=3)
-        # Pattern [1, 2] repeats but continuation is only 1 token long
+        dec = PromptLookupDecoder(num_draft_tokens=4, ngram_size=2, min_matches=4)
+        # Pattern [1, 2] repeats at pos 0 and 3. Continuation after pos 0 is [3,1,2] (len=3)
         dec.add_prompt_tokens([1, 2, 3, 1, 2])
         drafts = dec.get_draft_tokens()
-        # Continuation after [1,2] is [3], length=1 < min_matches=3
+        # Continuation [3,1,2] has length=3 < min_matches=4, so filtered out
         assert drafts == []
 
     def test_single_match_skipped(self):
@@ -152,14 +152,13 @@ class TestNggramMatching:
         assert (2, 3) in dec._ngram_index
 
     def test_best_continuation_selected(self):
-        dec = PromptLookupDecoder(num_draft_tokens=4, ngram_size=2, min_matches=1)
-        # [1,2] at pos 0 -> continuation [3,4,5]
-        # [1,2] at pos 4 -> continuation [3]
-        dec.add_prompt_tokens([1, 2, 3, 4, 5, 1, 2, 3])
+        dec = PromptLookupDecoder(num_draft_tokens=3, ngram_size=2, min_matches=1)
+          # (1,2) at pos 0 -> continuation [3,4,5]
+          # (1,2) at pos 6 -> continuation empty
+        dec.add_prompt_tokens([1, 2, 3, 4, 5, 6, 1, 2])
         drafts = dec.get_draft_tokens()
-        # Best continuation is [3,4,5] (length 3)
+          # Best continuation is [3,4,5] (length 3, from pos 0)
         assert drafts == [3, 4, 5]
-
     def test_draft_capped_at_num_draft_tokens(self):
         dec = PromptLookupDecoder(num_draft_tokens=2, ngram_size=2, min_matches=1)
         dec.add_prompt_tokens([1, 2, 3, 4, 5, 1, 2])

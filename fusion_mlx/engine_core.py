@@ -233,6 +233,11 @@ class EngineCore:
         if specprefill_system_end is not None and specprefill_system_end > 0:
             request.specprefill_system_end = specprefill_system_end
 
+        logger.info(
+              "add_request: id=%s, prompt=%r, max_tokens=%d",
+            request_id, str(prompt)[:100] if isinstance(prompt, str) else f"tokens({len(prompt)})",
+            sampling_params.max_tokens,
+              )
         self._active_contexts[request_id] = RequestContext(
             collector=RequestOutputCollector(aggregate=True),
             stream_state=RequestStreamState(stream_interval=self.config.stream_interval),
@@ -294,6 +299,7 @@ class EngineCore:
             return
         collector = ctx.collector
         try:
+            logger.info("stream_outputs start: %s", request_id)
             while True:
                 try:
                     if timeout:
@@ -306,6 +312,10 @@ class EngineCore:
                     if output.error:
                         raise RuntimeError(output.error)
                     if output.finished:
+                        logger.info(
+                                "stream_outputs done: %s, finish=%s, tokens=%d",
+                                request_id, output.finish_reason, output.completion_tokens,
+                                )
                         break
                 except TimeoutError:
                     logger.warning(f"Timeout waiting for request {request_id}")
@@ -538,8 +548,11 @@ class AsyncEngineCore:
     async def __aexit__(self, *args) -> None:
         await self.stop()
 
-    async def start(self) -> None:
-        await self.engine.start()
+    def start(self) -> asyncio.Task:
+        if self._start_task is not None and not self._start_task.done():
+            return self._start_task
+        self._start_task = asyncio.create_task(self.engine.start())
+        return self._start_task
 
     async def stop(self) -> None:
         engine = getattr(self, "engine", None)

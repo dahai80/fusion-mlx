@@ -140,7 +140,7 @@ class PromptLookupDecoder:
             cont_end = min(cont_begin + self.num_draft_tokens, len(self._token_history))
             continuation = self._token_history[cont_begin:cont_end]
 
-            if len(continuation) > best_continuation_length:
+            if len(continuation) >= self.min_matches and len(continuation) > best_continuation_length:
                 best_continuation_length = len(continuation)
                 draft_tokens = continuation[: self.num_draft_tokens]
 
@@ -179,7 +179,7 @@ def prompt_lookup_generate_step(
     *,
     num_draft_tokens: int = 4,
     ngram_size: int = 3,
-    max_tokens: int = 256,
+    max_tokens: int = 4096,
     sampler=None,
     logits_processors=None,
     prompt_cache=None,

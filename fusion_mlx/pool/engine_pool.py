@@ -708,6 +708,8 @@ class EnginePool:
                         trust_remote_code=trc,
                         scheduler_config=self._scheduler_config,
                         model_settings=model_settings,
+                        enable_thinking=entry.thinking_default,
+                        preserve_thinking=entry.preserve_thinking_default,
                     )
                 elif entry.engine_type == "audio_stt":
                     engine = STTEngine(model_name=entry.model_path)
@@ -724,6 +726,8 @@ class EnginePool:
                         trust_remote_code=trc,
                         scheduler_config=self._scheduler_config,
                         model_settings=model_settings,
+                        enable_thinking=entry.thinking_default,
+                        preserve_thinking=entry.preserve_thinking_default,
                     )
 
             _is_dflash_engine = engine is not None and type(engine).__name__ == "DFlashEngine"
@@ -757,6 +761,8 @@ class EnginePool:
                             trust_remote_code=trc,
                             scheduler_config=self._scheduler_config,
                             model_settings=model_settings,
+                            enable_thinking=entry.thinking_default,
+                            preserve_thinking=entry.preserve_thinking_default,
                         )
                     else:
                         engine = BatchedEngine(
@@ -764,6 +770,8 @@ class EnginePool:
                             trust_remote_code=trc,
                             scheduler_config=self._scheduler_config,
                             model_settings=model_settings,
+                            enable_thinking=entry.thinking_default,
+                            preserve_thinking=entry.preserve_thinking_default,
                         )
                     try:
                         await engine.start()
@@ -803,6 +811,8 @@ class EnginePool:
                         trust_remote_code=trc,
                         scheduler_config=self._scheduler_config,
                         model_settings=model_settings,
+                        enable_thinking=entry.thinking_default,
+                        preserve_thinking=entry.preserve_thinking_default,
                     )
                     try:
                         await engine.start()
@@ -840,6 +850,8 @@ class EnginePool:
                         trust_remote_code=trc,
                         scheduler_config=self._scheduler_config,
                         model_settings=model_settings,
+                        enable_thinking=entry.thinking_default,
+                        preserve_thinking=entry.preserve_thinking_default,
                     )
                     try:
                         await engine.start()

@@ -46,6 +46,9 @@ def step(self) -> SchedulerOutput:
         SchedulerOutput with results of this step
     """
     output = SchedulerOutput()
+      # Log step start (Ollama-style)
+    logger.info("step(%d): waiting=%d, running=%d, prefilling=%d",
+            self._step_counter, len(self.waiting), len(self.running), len(self.prefilling))
 
     # Process pending aborts FIRST (thread-safe with hybrid executor)
     self._process_pending_aborts()
@@ -102,6 +105,8 @@ def step(self) -> SchedulerOutput:
                 output.outputs = outputs
                 output.finished_request_ids = finished_ids
                 self._cleanup_finished(finished_ids)
+                if finished_ids:
+                    logger.info("step(%d): finished=%s", self._step_counter, finished_ids)
 
                 # Periodic Metal allocator cleanup during long decodes.
                 # mx.random.categorical inside the sampler allocates a

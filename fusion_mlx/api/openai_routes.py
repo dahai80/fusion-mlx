@@ -137,6 +137,9 @@ async def _run_chat(request: ChatCompletionRequest) -> ChatCompletionResponse:
     request_id = f"chatcmpl-{uuid.uuid4().hex[:12]}"
 
     try:
+        ct_kwargs = dict(getattr(request, "chat_template_kwargs", {}) or {})
+        if request.tools and "enable_thinking" not in ct_kwargs:
+            ct_kwargs["enable_thinking"] = False
         gen = await engine.chat(
             messages=messages,
             max_tokens=sampling.max_tokens,
@@ -148,6 +151,7 @@ async def _run_chat(request: ChatCompletionRequest) -> ChatCompletionResponse:
             presence_penalty=sampling.presence_penalty,
             tools=request.tools,
             stop=sampling.stop,
+            chat_template_kwargs=ct_kwargs if ct_kwargs else None,
         )
         # Honor parallel_tool_calls=false by capping to 1 call
         tool_calls = gen.tool_calls
@@ -215,6 +219,9 @@ async def _stream_chat_generator(request: ChatCompletionRequest) -> AsyncIterato
         completion_tokens = 0
         cached_tokens = 0
 
+        ct_kwargs_stream = dict(getattr(request, "chat_template_kwargs", {}) or {})
+        if request.tools and "enable_thinking" not in ct_kwargs_stream:
+            ct_kwargs_stream["enable_thinking"] = False
         async for gen in engine.stream_chat(
             messages=messages,
             max_tokens=sampling.max_tokens,
@@ -226,6 +233,7 @@ async def _stream_chat_generator(request: ChatCompletionRequest) -> AsyncIterato
             presence_penalty=sampling.presence_penalty,
             tools=request.tools,
             stop=sampling.stop,
+            chat_template_kwargs=ct_kwargs_stream if ct_kwargs_stream else None,
         ):
             if gen.new_text:
                 accumulated += gen.new_text
@@ -241,7 +249,26 @@ async def _stream_chat_generator(request: ChatCompletionRequest) -> AsyncIterato
                 cached_tokens = gen.cached_tokens or cached_tokens
 
             if gen.finished:
-                finish_reason = gen.finish_reason
+                finish_reason = gen.finish_reason or "stop"
+                # Emit tool call deltas if present
+                if gen.tool_calls:
+                    finish_reason = "tool_calls"
+                    for idx, tc in enumerate(gen.tool_calls):
+                        tc_chunk = StreamChunk(
+                            tool_call_delta=[{
+                                "index": idx,
+                                "id": tc.get("id", ""),
+                                "type": tc.get("type", "function"),
+                                "function": {
+                                    "name": tc.get("function", {}).get("name", ""),
+                                    "arguments": tc.get("function", {}).get("arguments", "{}"),
+                                },
+                            }],
+                            prompt_tokens=prompt_tokens,
+                            completion_tokens=completion_tokens,
+                            cached_tokens=cached_tokens,
+                        )
+                        yield _adapter.format_stream_chunk(tc_chunk, request)
 
         # Final chunk with finish_reason
         last_chunk = StreamChunk(
@@ -275,6 +302,20 @@ async def _stream_chat(request: ChatCompletionRequest) -> StreamingResponse:
 @router.post("/chat/completions")
 async def chat_completions(request: ChatCompletionRequest) -> Any:
     """Handle OpenAI-compatible chat completion requests."""
+        # Log request entry (Ollama-style)
+    prompt_preview = ""
+    if request.messages:
+        last_msg = request.messages[-1]
+        c = getattr(last_msg, "content", "") if last_msg else ""
+        prompt_preview = str(c)[:120] if c else ""
+    logger.info(
+            "OpenAI /chat: model=%s, stream=%s, max_tokens=%s, "
+             "temp=%s, prompt=%r",
+        request.model, request.stream,
+        getattr(request, "max_tokens", None),
+        getattr(request, "temperature", 0.7) or 0.7,
+        getattr(request, "temperature", None),
+        )
     try:
         if request.stream:
             return await _stream_chat(request)

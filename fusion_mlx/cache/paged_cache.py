@@ -625,31 +625,30 @@ class PagedCacheManager(CacheManager):
         Returns:
             Number of blocks actually created.
         """
-        with self._block_table_lock, self._free_queue_lock:
-            available = self.max_blocks - self._current_allocated_count
-            to_create = min(additional_blocks, available)
+        available = self.max_blocks - self._current_allocated_count
+        to_create = min(additional_blocks, available)
 
-            if to_create <= 0:
-                return 0
+        if to_create <= 0:
+            return 0
 
-            start_id = self._current_allocated_count
-            new_blocks = [
-                CacheBlock(block_id=i)
-                for i in range(start_id, start_id + to_create)
-            ]
+        start_id = self._current_allocated_count
+        new_blocks = [
+            CacheBlock(block_id=i)
+            for i in range(start_id, start_id + to_create)
+        ]
 
-            self.blocks.extend(new_blocks)
-            self.free_block_queue.append_n(new_blocks)
-            self._current_allocated_count += to_create
+        self.blocks.extend(new_blocks)
+        self.free_block_queue.append_n(new_blocks)
+        self._current_allocated_count += to_create
 
-            self.stats.total_blocks = self._current_allocated_count
-            self.stats.free_blocks = self.free_block_queue.num_free_blocks
+        self.stats.total_blocks = self._current_allocated_count
+        self.stats.free_blocks = self.free_block_queue.num_free_blocks
 
-            logger.info(
-                f"Block pool grown: +{to_create}, "
-                f"total={self._current_allocated_count}/{self.max_blocks}"
-            )
-            return to_create
+        logger.info(
+            f"Block pool grown: +{to_create}, "
+            f"total={self._current_allocated_count}/{self.max_blocks}"
+        )
+        return to_create
 
     # =========================================================================
     # Block Allocation (vLLM style)

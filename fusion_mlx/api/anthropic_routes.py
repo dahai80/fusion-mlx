@@ -55,24 +55,58 @@ def _extract_anthropic_text(msg: Any) -> str:
     if isinstance(content, list):
         parts = []
         for part in content:
-            if isinstance(part, dict) and part.get("type") == "text":
-                parts.append(part.get("text", ""))
+            if isinstance(part, dict):
+                pt = part.get("type", "")
+                if pt == "text":
+                    parts.append(part.get("text", ""))
+                elif pt == "tool_result":
+                    result_content = part.get("content", "")
+                    parts.append(f"Tool result: {result_content}")
+                else:
+                    if hasattr(part, "text") and part.text:
+                        parts.append(part.text)
             elif hasattr(part, "text") and part.text:
                 parts.append(part.text)
         return "\n".join(parts)
     return str(content) if content else ""
 
 
-def _anthropic_to_messages(req: AnthropicMessagesRequest) -> list[dict]:
-    """Convert Anthropic MessagesRequest to engine messages."""
+def _anthropic_to_messages(
+    req: AnthropicMessagesRequest,
+    tokenizer: Any | None = None,
+) -> list[dict]:
+    """Convert Anthropic MessagesRequest to engine messages.
+
+    Uses convert_anthropic_to_internal() when a tokenizer is available
+    so that tool_use/tool_result blocks are preserved rather than
+    flattened to plain text.  Falls back to the legacy text-only
+    path when no tokenizer is provided.
+    """
+    if tokenizer is not None:
+        from .anthropic_utils import convert_anthropic_to_internal
+
+        messages = convert_anthropic_to_internal(
+            req,
+            tokenizer=tokenizer,
+            preserve_images=True,
+            native_reasoning_content=True,
+        )
+        return messages
+
+    # Legacy text-only fallback (no tokenizer available)
     messages = []
     if hasattr(req, "system") and req.system:
         if isinstance(req.system, str):
             messages.append({"role": "system", "content": req.system})
         elif isinstance(req.system, list):
+            parts = []
             for part in req.system:
                 if isinstance(part, dict) and part.get("type") == "text":
-                    messages.append({"role": "system", "content": part.get("text", "")})
+                    txt = part.get("text", "")
+                    if txt:
+                        parts.append(txt)
+            if parts:
+                messages.append({"role": "system", "content": "\n\n".join(parts)})
 
     for msg in req.messages or []:
         role = msg.role if hasattr(msg, "role") else msg.get("role", "user")
@@ -124,11 +158,15 @@ async def _run_anthropic_messages(req: AnthropicMessagesRequest) -> AnthropicMes
                               ),
                           )
 
-    messages = _anthropic_to_messages(req)
+    tokenizer = getattr(engine, "_tokenizer", None) or getattr(engine, "tokenizer", None)
+    messages = _anthropic_to_messages(req, tokenizer=tokenizer)
     sampling = _build_sampling_params(req)
     request_id = f"msg-{uuid.uuid4().hex[:12]}"
 
     try:
+        ct_kwargs = dict(getattr(req, "chat_template_kwargs", {}) or {})
+        if getattr(req, "tools", None) and "enable_thinking" not in ct_kwargs:
+            ct_kwargs["enable_thinking"] = False
         gen = await engine.chat(
             messages=messages,
             max_tokens=sampling.max_tokens,
@@ -136,7 +174,16 @@ async def _run_anthropic_messages(req: AnthropicMessagesRequest) -> AnthropicMes
             top_p=sampling.top_p,
             tools=getattr(req, "tools", None),
             stop=sampling.stop,
+            chat_template_kwargs=ct_kwargs if ct_kwargs else None,
         )
+
+         # Log completion (Ollama-style)
+        logger.info(
+                "Non-stream done: %s, finish=%s, prompt_tok=%d, "
+                "completion_tok=%d, cached=%d",
+              request_id, gen.finish_reason,
+              gen.prompt_tokens, gen.completion_tokens, gen.cached_tokens,
+           )
 
         # Convert to InternalResponse, then through adapter
         internal = InternalResponse(
@@ -188,10 +235,17 @@ async def _stream_anthropic_generator(req: AnthropicMessagesRequest) -> AsyncIte
                               ),
                           )
 
-    messages = _anthropic_to_messages(req)
+    tokenizer = getattr(engine, "_tokenizer", None) or getattr(engine, "tokenizer", None)
+    messages = _anthropic_to_messages(req, tokenizer=tokenizer)
     sampling = _build_sampling_params(req)
     request_id = f"msg-{uuid.uuid4().hex[:12]}"
 
+
+    logger.info(
+           "Stream start: %s, max_tokens=%d, prompt=%r",
+        request_id, sampling.max_tokens,
+        messages[-1].get("content", "")[:120] if messages else "",
+       )
     try:
         # Send message_start
         yield _adapter.format_stream_chunk(
@@ -199,6 +253,9 @@ async def _stream_anthropic_generator(req: AnthropicMessagesRequest) -> AsyncIte
             req,
         )
 
+        ct_kwargs_stream = dict(getattr(req, "chat_template_kwargs", {}) or {})
+        if getattr(req, "tools", None) and "enable_thinking" not in ct_kwargs_stream:
+            ct_kwargs_stream["enable_thinking"] = False
         async for gen in engine.stream_chat(
             messages=messages,
             max_tokens=sampling.max_tokens,
@@ -206,6 +263,7 @@ async def _stream_anthropic_generator(req: AnthropicMessagesRequest) -> AsyncIte
             top_p=sampling.top_p,
             tools=getattr(req, "tools", None),
             stop=sampling.stop,
+            chat_template_kwargs=ct_kwargs_stream if ct_kwargs_stream else None,
         ):
             if gen.new_text:
                 chunk = StreamChunk(
@@ -217,6 +275,13 @@ async def _stream_anthropic_generator(req: AnthropicMessagesRequest) -> AsyncIte
                 yield _adapter.format_stream_chunk(chunk, req)
 
             if gen.finished:
+                    # Log completion (Ollama-style)
+                logger.info(
+                        "Stream done: %s, finish=%s, prompt_tok=%d, "
+                        "completion_tok=%d, cached=%d",
+                      request_id, gen.finish_reason,
+                      gen.prompt_tokens, gen.completion_tokens, gen.cached_tokens,
+                    )
                 # Send message_delta and message_stop
                 last = StreamChunk(
                     text="", is_last=True,
@@ -231,16 +296,43 @@ async def _stream_anthropic_generator(req: AnthropicMessagesRequest) -> AsyncIte
     except Exception as exc:
         err_msg = str(exc)
           # VLM image/video fetch failures -> 400
+            # Log EVERY error with full details (Ollama-style)
+        logger.error(
+                "Stream ERROR %s: %s\n  type=%s\n  model=%s",
+            request_id, err_msg, type(exc).__name__, model_name,
+            exc_info=True,
+           )
         if "Failed to process image" in err_msg or "Failed to process video" in err_msg:
             yield f"event: error\ndata: {{\"error\": {err_msg!r}, \"status\": 400}}\n\n"
         else:
-            logger.exception("Streaming Anthropic messages failed for %s", request_id)
+            pass
             yield f"event: error\ndata: {{\"error\": {err_msg!r}}}\n\n"
 
 
 @router.post("/messages")
 async def anthropic_messages(request: AnthropicMessagesRequest) -> Any:
     """Handle Anthropic Messages API requests."""
+       # Log request entry (Ollama-style)
+    prompt_preview = ""
+    if request.messages:
+        first = request.messages[0]
+        msg_content = getattr(first, "content", "") if first else ""
+        if isinstance(msg_content, str):
+            prompt_preview = msg_content[:120]
+        elif isinstance(msg_content, list):
+            for p in msg_content:
+                if isinstance(p, dict) and p.get("type") == "text":
+                    prompt_preview = p.get("text", "")[:120]
+                    break
+    logger.info(
+           "Anthropic /messages: model=%s, stream=%s, max_tokens=%d, "
+            "temp=%s, top_p=%s, prompt=%r",
+        request.model, request.stream,
+        getattr(request, "max_tokens", 2048) or 2048,
+        getattr(request, "temperature", None),
+        getattr(request, "top_p", None),
+        prompt_preview,
+       )
     try:
         if request.stream:
             return StreamingResponse(

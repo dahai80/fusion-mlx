@@ -2,6 +2,7 @@
 """Base engine interface for fusion-mlx inference."""
 
 import asyncio
+import copy
 import logging
 import threading
 import time
@@ -36,6 +37,31 @@ class GenerationOutput:
     kv_state: dict[str, Any] | None = None
 
 
+
+def _fallback_parse_tool_calls(gen: GenerationOutput, tokenizer: Any, tools: list[dict]) -> GenerationOutput:
+    """Fallback tool call extraction when the scheduler has no parser session."""
+    try:
+        from ..api.tool_calling import parse_tool_calls
+        cleaned, tc_list = parse_tool_calls(gen.text, tokenizer, tools)
+        if tc_list:
+            tc_dicts = []
+            for tc in tc_list:
+                tc_dicts.append({
+                     "id": tc.id,
+                     "type": tc.type,
+                     "function": {
+                         "name": tc.function.name,
+                         "arguments": tc.function.arguments,
+                     },
+                 })
+            gen = copy.deepcopy(gen)
+            gen.tool_calls = tc_dicts
+            if cleaned.strip() and cleaned.strip() != gen.text.strip():
+                gen.text = cleaned
+    except Exception as e:
+        logger.debug(f"_fallback_parse_tool_calls failed: {e}")
+    return gen
+
 class BaseEngine(ABC):
     @property
     @abstractmethod
@@ -61,7 +87,7 @@ class BaseEngine(ABC):
 
     @abstractmethod
     async def generate(
-        self, prompt: str, max_tokens: int = 256, temperature: float = 0.7,
+        self, prompt: str, max_tokens: int = 4096, temperature: float = 0.7,
         top_p: float = 0.9, top_k: int = 0, min_p: float = 0.0,
         repetition_penalty: float = 1.0, presence_penalty: float = 0.0,
         stop: list[str] | None = None, **kwargs,
@@ -70,7 +96,7 @@ class BaseEngine(ABC):
 
     @abstractmethod
     async def stream_generate(
-        self, prompt: str, max_tokens: int = 256, temperature: float = 0.7,
+        self, prompt: str, max_tokens: int = 4096, temperature: float = 0.7,
         top_p: float = 0.9, top_k: int = 0, min_p: float = 0.0,
         repetition_penalty: float = 1.0, presence_penalty: float = 0.0,
         stop: list[str] | None = None, **kwargs,
@@ -79,7 +105,7 @@ class BaseEngine(ABC):
 
     @abstractmethod
     async def chat(
-        self, messages: list[dict[str, Any]], max_tokens: int = 256,
+        self, messages: list[dict[str, Any]], max_tokens: int = 4096,
         temperature: float = 0.7, top_p: float = 0.9, top_k: int = 0,
         min_p: float = 0.0, repetition_penalty: float = 1.0,
         presence_penalty: float = 0.0, tools: list[dict] | None = None, **kwargs,
@@ -88,7 +114,7 @@ class BaseEngine(ABC):
 
     @abstractmethod
     async def stream_chat(
-        self, messages: list[dict[str, Any]], max_tokens: int = 256,
+        self, messages: list[dict[str, Any]], max_tokens: int = 4096,
         temperature: float = 0.7, top_p: float = 0.9, top_k: int = 0,
         min_p: float = 0.0, repetition_penalty: float = 1.0,
         presence_penalty: float = 0.0, tools: list[dict] | None = None, **kwargs,
