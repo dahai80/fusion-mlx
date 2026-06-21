@@ -280,6 +280,14 @@ async def _stream_chat_generator(request: ChatCompletionRequest) -> AsyncIterato
         yield _adapter.format_stream_chunk(last_chunk, request)
         yield _adapter.format_stream_end(request)
 
+    except asyncio.CancelledError:
+        logger.info("Client disconnected during streaming: %s", request_id)
+        if engine:
+            try:
+                asyncio.create_task(engine.abort_request(request_id))
+            except Exception:
+                pass
+        raise
     except Exception as exc:
         err_msg = str(exc)
          # VLM image/video fetch failures -> 400

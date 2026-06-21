@@ -360,6 +360,10 @@ class ProcessMemoryEnforcer:
         # lock is held by a loading coroutine. This avoids blocking on
         # asyncio.Lock while Metal is mid-allocation (which can crash).
         self._eviction_marked: set[str] = set()
+         # Loaded model size in bytes — used for safety floor in
+         # ``_get_hard_limit_bytes`` so the ceiling never drops below
+         # the model weights + a fixed 10 GB headroom.
+        self._loaded_model_bytes: int = 0
 
     @staticmethod
     def _normalize_tier(tier: str) -> str:
@@ -517,7 +521,12 @@ class ProcessMemoryEnforcer:
         metal_cap = get_effective_metal_cap_bytes()
         if metal_cap > 0:
             candidates.append(metal_cap)
-        return min(candidates)
+        hard = min(candidates)
+         # Safety floor: never drop below loaded model size + 10 GB.
+         # Prevents dynamic ceiling collapse (other apps eating RAM) from
+         # evicting the only loaded model mid-session.
+        floor = self._loaded_model_bytes + 10 * 1024**3
+        return max(hard, floor)
 
     def get_final_ceiling(self) -> int:
         """Public accessor used by engine_pool pre-load admission."""
@@ -577,19 +586,23 @@ class ProcessMemoryEnforcer:
         ``entry.engine.scheduler`` directly. Returns None if neither
         path resolves.
         """
-        eng = entry.engine
-        if eng is None:
+        try:
+            eng = entry.engine
+            if eng is None:
+                return None
+            sched = getattr(eng, "scheduler", None)
+            if sched is not None:
+                return sched
+            inner = getattr(eng, "_engine", None)
+            if inner is None:
+                return None
+            inner_engine = getattr(inner, "engine", None)
+            if inner_engine is None:
+                return None
+            return getattr(inner_engine, "scheduler", None)
+        except (AttributeError, TypeError):
+            # Entry object corrupted or not an EngineEntry — skip
             return None
-        sched = getattr(eng, "scheduler", None)
-        if sched is not None:
-            return sched
-        inner = getattr(eng, "_engine", None)
-        if inner is None:
-            return None
-        inner_engine = getattr(inner, "engine", None)
-        if inner_engine is None:
-            return None
-        return getattr(inner_engine, "scheduler", None)
 
     def _propagate_memory_limit(self) -> None:
         """Propagate ceiling-derived watermarks to all schedulers.
@@ -790,6 +803,7 @@ class ProcessMemoryEnforcer:
             return
 
         if _lock_acquired:
+            _lock_held = True
             try:
                 while self._current_usage_bytes() > target:
                     for mid in list(self._eviction_marked):
@@ -821,12 +835,14 @@ class ProcessMemoryEnforcer:
                             # Release lock before _unload_engine to avoid holding it
                             # during asyncio.sleep (settle barrier can take up to 5s).
                             self._engine_pool._lock.release()
+                            _lock_held = False
                             await self._engine_pool._unload_engine(victim)
                             # Re-acquire lock to continue the eviction loop
                             try:
                                 await asyncio.wait_for(
                                     self._engine_pool._lock.acquire(), timeout=2.0
-                                 )
+                                )
+                                _lock_held = True
                             except TimeoutError:
                                 break
                             continue
@@ -869,7 +885,8 @@ class ProcessMemoryEnforcer:
                                      "Hard memory pressure but no models loaded."
                                  )
             finally:
-                self._engine_pool._lock.release()
+                if _lock_held:
+                    self._engine_pool._lock.release()
 
 
         # Re-evaluate level after eviction completes so admission state

@@ -165,10 +165,29 @@ class EngineCore:
                                 ctx.finished_event.set()
                 except Exception as e:
                     logger.error(f"Engine loop error: {e}", exc_info=True)
+                    # Retry once — transient Metal allocation failures should not kill all requests
+                    retry_ok = False
                     if self.scheduler:
                         try:
-                             # Run fail_all_requests on the same executor thread
-                             # to avoid data race with in-flight scheduler.step()
+                            loop = asyncio.get_running_loop()
+                            output = await loop.run_in_executor(
+                                self._mlx_executor, self.scheduler.step
+                               )
+                            if output and output.outputs:
+                                contexts = self._active_contexts
+                                for req_output in output.outputs:
+                                    ctx = contexts.get(req_output.request_id)
+                                    if ctx is not None:
+                                        ctx.collector.put(req_output)
+                                    if req_output.finished:
+                                        ctx.finished_event.set()
+                            retry_ok = True
+                        except Exception as e2:
+                            logger.critical(f"Engine loop retry also failed: {e2}", exc_info=True)
+                    if not retry_ok and self.scheduler:
+                        try:
+                               # Run fail_all_requests on the same executor thread
+                               # to avoid data race with in-flight scheduler.step()
                             def _safe_fail():
                                 try:
                                     return self.scheduler.fail_all_requests()
@@ -177,14 +196,14 @@ class EngineCore:
                             loop = asyncio.get_running_loop()
                             failed_ids = await loop.run_in_executor(
                                 self._mlx_executor, _safe_fail
-                             )
+                               )
                             for rid in failed_ids:
                                 ctx = self._active_contexts.get(rid)
                                 if ctx is not None:
                                     ctx.collector.put(RequestOutput(
                                         request_id=rid, finished=True,
                                         finish_reason="error", error=str(e)
-                                     ))
+                                       ))
                                     ctx.finished_event.set()
                         except Exception:
                             logger.debug("swallowed exception in engine loop error handler", exc_info=True)
@@ -274,7 +293,7 @@ class EngineCore:
             if self.scheduler:
                 self.scheduler.abort_request(rid)
             ctx = self._active_contexts.get(rid)
-            if collector is not None:
+            if ctx is not None:
                 error_msg = (
                     f"Request aborted: process memory limit exceeded "
                     f"(usage {usage_gb:.1f} GB, ceiling {ceiling_gb:.1f} GB). "

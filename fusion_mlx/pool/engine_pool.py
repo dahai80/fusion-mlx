@@ -434,6 +434,32 @@ class EnginePool:
 
             return self._entries[model_id].engine
 
+    def register_engine(self, model_id: str, engine) -> None:
+        """Register an externally-created engine in the pool."""
+        entry = self._entries.get(model_id)
+        if entry is None:
+            from .model_discovery import ModelInfo
+            entry = EngineEntry(
+                model_id=model_id,
+                model_path="",
+                model_type="llm",
+                engine_type="batched",
+                estimated_size=0,
+            )
+            self._entries[model_id] = entry
+        entry.engine = engine
+        entry.last_access = time.monotonic()
+        self._current_model_memory += entry.estimated_size
+        logger.info(f"Registered engine '{model_id}' in pool")
+
+    def unload_engine(self, model_id: str) -> None:
+        """Synchronously remove an engine from pool entries (non-blocking)."""
+        entry = self._entries.get(model_id)
+        if entry and entry.engine is not None:
+            entry.engine = None
+            entry.last_access = 0.0
+            logger.info(f"Unregistered engine '{model_id}' from pool")
+
     def _find_lru_victim(self) -> str | None:
         """
         Find the least recently used non-pinned loaded model.
@@ -598,6 +624,7 @@ class EnginePool:
                     f"({format_size(self._current_model_memory + 5 * 1024**3)})"
                 )
             else:
+                self._current_model_memory -= entry.estimated_size
                 logger.info(
                     f"Emergency reclaim succeeded: "
                     f"active_memory={format_size(active_after)}"

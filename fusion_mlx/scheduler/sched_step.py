@@ -107,6 +107,28 @@ def step(self) -> SchedulerOutput:
                 self._cleanup_finished(finished_ids)
                 if finished_ids:
                     logger.info("step(%d): finished=%s", self._step_counter, finished_ids)
+            elif self.running:
+                 # Empty responses with running requests = stale.
+                 # Model batch cleared them silently (finished length/EOS
+                 # without returning a final response token). Reschedule
+                 # so they don't rot in running forever.
+                logger.warning(
+                    "step(%d): empty responses with %d running requests — "
+                    "rescheduling as stale",
+                    self._step_counter, len(self.running),
+                )
+                for rid in list(self.running.keys()):
+                    req = self.running.pop(rid)
+                    req.status = RequestStatus.WAITING
+                    req.batch_uid = None
+                    self.waiting.append(req)
+                    output.outputs.append(
+                        RequestOutput(
+                            request_id=rid,
+                            finished=False,
+                            finish_reason=None,
+                        )
+                    )
 
                 # Periodic Metal allocator cleanup during long decodes.
                 # mx.random.categorical inside the sampler allocates a
@@ -130,7 +152,7 @@ def step(self) -> SchedulerOutput:
                     _sync_and_clear_cache(self._stream)
                     self._tokens_since_clear_cache = 0
 
-    except _PrefillAbortedError:
+    except _PrefillAbortedError as e:
         # Prefill was interrupted by a pending abort.
         # BatchGenerator is in an inconsistent state (partial
         # prefill), so reset it entirely. Pending aborts will
@@ -141,11 +163,21 @@ def step(self) -> SchedulerOutput:
         if self._boundary_snapshot_store is not None:
             self._boundary_snapshot_store.cleanup_all()
         self._boundary_snapshot_required = None
-        # Move any running requests back to waiting so they
-        # can be rescheduled with a fresh BatchGenerator.
-        self._reschedule_running_requests()
+        # Only reschedule the aborted requests, not the entire
+        # batch — innocent requests should keep decoding.
+        if e.aborted_uids:
+            for uid in e.aborted_uids:
+                rid = self.uid_to_request_id.get(uid)
+                if rid and rid in self.running:
+                    req = self.running.pop(rid)
+                    req.status = RequestStatus.WAITING
+                    req.batch_uid = None
+                    self.waiting.append(req)
+                    logger.debug("Rescheduled aborted uid=%d rid=%s", uid, rid)
+        else:
+            self._reschedule_running_requests()
 
-    except (TypeError, AttributeError, ValueError) as e:
+    except (TypeError, AttributeError) as e:
         if self._is_cache_corruption_error(e):
             import traceback
 

@@ -189,6 +189,8 @@ class Server:
             engine_pool=self.pool,
             memory_guard_tier=tier_str,
         )
+        self.pool._process_memory_enforcer.start()
+        self.pool._get_final_ceiling = self.pool._process_memory_enforcer.get_final_ceiling
 
         # Create request router
         self.request_router = RequestRouter()
@@ -262,20 +264,10 @@ class Server:
               )
             core = AsyncEngineCore(cfg)
             logger.info("Initializing engine core for %s...", model_id)
-            await asyncio.to_thread(self._sync_start_core, core)
+            await core.start()
             self.engine_cores[model_id] = core
             self.pool.register_engine(model_id, core)
             logger.info("Loaded model %s into pool", model_id)
-
-    def _sync_start_core(self, core: AsyncEngineCore) -> None:
-        """Synchronously start an AsyncEngineCore in a background thread."""
-        loop = asyncio.new_event_loop()
-        try:
-            loop.run_until_complete(core.start())
-        finally:
-            loop.close()
-
-
     async def unload_model(self, model_id: str):
         """Unload a model from the pool."""
         core = self.engine_cores.pop(model_id, None)

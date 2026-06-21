@@ -72,14 +72,19 @@ class TestSmartRouterDecide:
     def test_benchmark_based_routing(self):
         router = self._make_router()
         router.store_benchmark(BenchmarkResult(
-            model_id="m1", backend=EngineBackend.OMLX, quant_format="4bit",
+            model_id="test-3b", backend=EngineBackend.OMLX, quant_format="4bit",
             tps=100.0, latency_p50=50.0, latency_p99=80.0, memory_peak_bytes=1024,
-        ))
+         ))
         router.store_benchmark(BenchmarkResult(
-            model_id="m1", backend=EngineBackend.RAPID, quant_format="4bit",
+            model_id="test-3b", backend=EngineBackend.RAPID, quant_format="4bit",
             tps=80.0, latency_p50=30.0, latency_p99=45.0, memory_peak_bytes=512,
-        ))
-        decision = router.decide(prompt_length=512, model_id="m1", quant_format="4bit")
+         ))
+         # Set EMA counts past cold-start threshold so measured values dominate
+        router._ema_state["test-3b"] = {
+             "omlx": {"tps": 100.0, "latency_p50": 50.0, "count": 25},
+             "rapid": {"tps": 80.0, "latency_p50": 30.0, "count": 25},
+         }
+        decision = router.decide(prompt_length=512, model_id="test-3b", quant_format="4bit")
         assert decision.prefill_backend == EngineBackend.OMLX
         assert decision.decode_backend == EngineBackend.RAPID
 

@@ -329,6 +329,19 @@ def _step_vlm_mtp_batched(self) -> list[_VLMMTPResponse]:
 
         for i, row in enumerate(bs.rows):
             if i >= len(token_val):
+                  # Row didn't receive a token from this step — emit
+                  # a sentinel response so the scheduler doesn't lose track
+                  # of the request silently.
+                logger.warning(
+                    "vlm_mtp step: row uid=%d bid=%d missed token "
+                     "(tokens=%d rows=%d) — emitting sentinel",
+                    row.uid, bid, len(token_val), len(bs.rows),
+                 )
+                responses.append(_VLMMTPResponse(
+                    uid=row.uid, token=0, finish_reason="length",
+                    prompt_cache=row.prefilled_cache,
+                 ))
+                row.finished = True
                 continue
             tok = token_val[i]
             if tok is None:
