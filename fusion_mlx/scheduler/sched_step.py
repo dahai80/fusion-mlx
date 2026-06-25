@@ -18,7 +18,7 @@ import logging
 logger = logging.getLogger(__name__)
 from typing import Any
 
-from ..request import Request, RequestOutput
+from ..request import Request, RequestOutput, RequestStatus
 
 # Module-level alias so Scheduler.__init__ can fall back to mlx-lm's default
 # stream when no per-engine stream is provided.
@@ -102,7 +102,7 @@ def step(self) -> SchedulerOutput:
 
             if responses:
                 outputs, finished_ids = self._process_batch_responses(responses)
-                output.outputs = outputs
+                output.outputs.extend(outputs)
                 output.finished_request_ids = finished_ids
                 self._cleanup_finished(finished_ids)
                 if finished_ids:

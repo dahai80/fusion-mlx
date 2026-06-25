@@ -360,10 +360,17 @@ class ProcessMemoryEnforcer:
         # lock is held by a loading coroutine. This avoids blocking on
         # asyncio.Lock while Metal is mid-allocation (which can crash).
         self._eviction_marked: set[str] = set()
-         # Loaded model size in bytes — used for safety floor in
-         # ``_get_hard_limit_bytes`` so the ceiling never drops below
-         # the model weights + a fixed 10 GB headroom.
+        # Loaded model size in bytes — used for safety floor in
+        # ``_get_hard_limit_bytes`` so the ceiling never drops below
+        # the model weights + a fixed 10 GB headroom.
         self._loaded_model_bytes: int = 0
+
+    def update_loaded_model_bytes(self, delta: int) -> None:
+        """Adjust tracked loaded model byte count.
+
+        Called by EnginePool on load (positive delta) and unload (negative).
+        """
+        self._loaded_model_bytes = max(0, self._loaded_model_bytes + delta)
 
     @staticmethod
     def _normalize_tier(tier: str) -> str:
@@ -411,7 +418,7 @@ class ProcessMemoryEnforcer:
         """Whether the enforcement loop is active."""
         return self._running
 
-    def start(self) -> None:
+    async def start(self) -> None:
         """Start the background enforcement loop.
 
         Also raises this process's Metal wired-memory limit to the static
@@ -844,6 +851,7 @@ class ProcessMemoryEnforcer:
                                 )
                                 _lock_held = True
                             except TimeoutError:
+                                 # _lock_held stays False — finally won't double-release.
                                 break
                             continue
 

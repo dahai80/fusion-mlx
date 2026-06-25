@@ -260,18 +260,6 @@ class FreeKVCacheBlockQueue:
 
         return block
 
-    def popleft_lfu(self, window: int = 8) -> CacheBlock:
-        candidates = []
-        block = self.fake_head.next_free_block
-        while block is not self.fake_tail and len(candidates) < window:
-            if not block.is_pinned:
-                candidates.append(block)
-            block = block.next_free_block
-        if not candidates:
-            raise ValueError("No free blocks available")
-        victim = min(candidates, key=lambda b: b.access_count)
-        self.remove(victim)
-        return victim
 
     def popleft_n(self, n: int) -> list[CacheBlock]:
         """
@@ -417,7 +405,7 @@ class BlockHashToBlockMap:
         if isinstance(blocks, CacheBlock):
             return blocks
         if isinstance(blocks, dict):
-            return max(blocks.values(), key=lambda b: b.access_count)
+            return max(blocks.values(), key=lambda b: b.last_access)
         return None
 
     def insert(self, block_hash: BlockHash, block: CacheBlock) -> None:
@@ -662,27 +650,31 @@ class PagedCacheManager(CacheManager):
             CacheBlock if available, None if out of memory.
         """
         with self._block_table_lock, self._hash_map_lock, self._free_queue_lock:
-            if self.free_block_queue.num_free_blocks == 0:
-                # Try to grow the block pool dynamically
-                grown = self._grow_blocks(min(256, self.max_blocks - self._current_allocated_count))
-                if grown == 0:
-                    logger.warning("Out of cache blocks (max reached)")
-                    return None
+            return self._allocate_block_internal()
 
-            block = self.free_block_queue.popleft()
+    def _allocate_block_internal(self) -> CacheBlock | None:
+        """Lock-free allocation body. Caller must hold all 3 locks."""
+        if self.free_block_queue.num_free_blocks == 0:
+            # Try to grow the block pool dynamically
+            grown = self._grow_blocks(min(256, self.max_blocks - self._current_allocated_count))
+            if grown == 0:
+                logger.warning("Out of cache blocks (max reached)")
+                return None
 
-            # Evict from hash cache if needed
-            if self.enable_caching:
-                self._maybe_evict_cached_block(block)
+        block = self.free_block_queue.popleft()
 
-            block.ref_count = 1
-            block.touch()
-            self.allocated_blocks[block.block_id] = block
+        # Evict from hash cache if needed
+        if self.enable_caching:
+            self._maybe_evict_cached_block(block)
 
-            self.stats.allocated_blocks += 1
-            self.stats.free_blocks -= 1
+        block.ref_count = 1
+        block.touch()
+        self.allocated_blocks[block.block_id] = block
 
-            return block
+        self.stats.allocated_blocks += 1
+        self.stats.free_blocks -= 1
+
+        return block
 
     def get_new_blocks(self, num_blocks: int) -> list[CacheBlock]:
         """
@@ -1031,7 +1023,7 @@ class PagedCacheManager(CacheManager):
                     if self._paged_ssd_cache_manager.has_block(block_hash):
                         # Use standard allocation path so we handle an empty
                         # free queue gracefully (grow/evict) and keep stats in sync.
-                        block = self.allocate_block()
+                        block = self._allocate_block_internal()
                         if block is not None:
                             block.block_hash = block_hash
                             block.token_count = self.block_size
@@ -1308,28 +1300,36 @@ class PagedCacheManager(CacheManager):
 
     def evict_lru_blocks(self, num_blocks: int) -> int:
         """
-        Evict least recently used blocks.
+        Evict least recently used free blocks from the cache.
 
-        With the doubly linked list, LRU blocks are already at the front
-        of the free queue. We just need to pop from front.
+        Scans the free block queue from front (LRU end), clears block
+        content, and increments eviction counter. Blocks remain in free
+        queue for reuse but old content is discarded.
         """
-        with self._hash_map_lock, self._free_queue_lock:
+        with self._block_table_lock, self._hash_map_lock, self._free_queue_lock:
             evicted = 0
-
-            # Get evictable blocks from free queue (they're already LRU ordered)
-            for _ in range(min(num_blocks, self.free_block_queue.num_free_blocks)):
-                try:
-                    block = self.free_block_queue.popleft()
-                    self._maybe_evict_cached_block(block)
-                    # Put back at end (now available for allocation)
-                    self.free_block_queue.append(block)
-                    evicted += 1
-                except ValueError:
+            # Iterate free queue from front (LRU) to back (MRU)
+            curr = self.free_block_queue.fake_head.next_free_block
+            while curr is not None and curr is not self.free_block_queue.fake_tail:
+                if evicted >= num_blocks:
                     break
-
+                # Skip blocks still in use
+                if curr.ref_count > 0 or curr.is_null:
+                    curr = curr.next_free_block
+                    continue
+                # Evict this block - clear content
+                if curr.block_hash is not None:
+                    self.cached_block_hash_to_block.pop(curr.block_hash, curr.block_id)
+                curr.reset_hash()
+                curr.token_count = 0
+                if curr.block_id in self.allocated_blocks:
+                    del self.allocated_blocks[curr.block_id]
+                    self.stats.allocated_blocks -= 1
+                self.stats.evictions += 1
+                evicted += 1
+                curr = curr.next_free_block
             if evicted > 0:
                 logger.info(f"Evicted {evicted} LRU blocks from cache")
-
             return evicted
 
     def handle_memory_pressure(self, requested_blocks: int) -> bool:

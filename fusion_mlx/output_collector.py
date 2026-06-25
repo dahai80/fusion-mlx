@@ -35,18 +35,19 @@ class RequestOutputCollector:
         return output
 
     async def get(self) -> RequestOutput:
-        if not self._is_waiting:
-            self._is_waiting = True
-            RequestOutputCollector._waiting_consumers += 1
+        self._is_waiting = True
+        RequestOutputCollector._waiting_consumers += 1
         try:
-            while self.output is None:
-                await self.ready.wait()
-            output = self.get_nowait()
-            assert output is not None
-            return output
+            while True:
+                while self.output is None:
+                    await self.ready.wait()
+                output = self.get_nowait()
+                if output is not None:
+                    return output
+                 # clear() stole output; re-wait
         finally:
-            if self._is_waiting:
-                self._is_waiting = False
+            self._is_waiting = False
+            if RequestOutputCollector._waiting_consumers > 0:
                 RequestOutputCollector._waiting_consumers -= 1
 
     def _merge_outputs(
@@ -72,9 +73,6 @@ class RequestOutputCollector:
     def clear(self) -> None:
         self.output = None
         self.ready.clear()
-        if self._is_waiting:
-            self._is_waiting = False
-            RequestOutputCollector._waiting_consumers -= 1
 
     @classmethod
     def has_waiting_consumers(cls) -> bool:

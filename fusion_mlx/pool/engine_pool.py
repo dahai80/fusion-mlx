@@ -458,6 +458,10 @@ class EnginePool:
         if entry and entry.engine is not None:
             entry.engine = None
             entry.last_access = 0.0
+            if self._process_memory_enforcer is not None:
+                self._process_memory_enforcer.update_loaded_model_bytes(
+                     -int(entry.estimated_size)
+                 )
             logger.info(f"Unregistered engine '{model_id}' from pool")
 
     def _find_lru_victim(self) -> str | None:
@@ -595,6 +599,10 @@ class EnginePool:
 
         if settled:
             self._current_model_memory -= entry.estimated_size
+            if self._process_memory_enforcer is not None:
+                self._process_memory_enforcer.update_loaded_model_bytes(
+                    -int(entry.estimated_size)
+                )
             logger.info(
                 f"Unloaded model: {model_id}, "
                 f"freed={format_size(actual_freed)} "
@@ -923,6 +931,10 @@ class EnginePool:
             entry.last_access = time.time()
             self._current_model_memory += entry.estimated_size
             load_completed = True
+            if self._process_memory_enforcer is not None:
+                self._process_memory_enforcer.update_loaded_model_bytes(
+                    int(entry.estimated_size)
+                )
 
             # VLM MTP: load gemma4_assistant drafter and attach to engine.
             # Fail-soft — drafter load issues never block the target engine.
@@ -1128,7 +1140,13 @@ class EnginePool:
                     f"TTL expired for model '{model_id}' "
                     f"(idle {idle_time:.0f}s > ttl {effective_ttl}s)"
                 )
-                await self._unload_engine(model_id)
                 expired.append(model_id)
+
+        # Unload expired models outside the lock to avoid blocking
+        for model_id in expired:
+            try:
+                await self._unload_engine(model_id)
+            except Exception as e:
+                logger.error(f"Failed to unload expired model {model_id}: {e}")
 
         return expired

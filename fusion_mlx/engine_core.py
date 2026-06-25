@@ -208,6 +208,7 @@ class EngineCore:
                         except Exception:
                             logger.debug("swallowed exception in engine loop error handler", exc_info=True)
                             pass
+                await asyncio.sleep(0)
             else:
                 await asyncio.sleep(step_interval)
 
@@ -301,7 +302,7 @@ class EngineCore:
                     if ceiling > 0
                     else f"Request aborted: process memory limit exceeded (usage {usage_gb:.1f} GB)."
                 )
-                collector.put(RequestOutput(request_id=rid, finished=True, finish_reason="error", new_text=f"\n\n[Error: {error_msg}]", error=error_msg))
+                ctx.collector.put(RequestOutput(request_id=rid, finished=True, finish_reason="error", new_text=f"\n\n[Error: {error_msg}]", error=error_msg))
                 ctx.finished_event.set()
         if request_ids:
             logger.warning(f"Aborted {len(request_ids)} requests due to memory pressure")

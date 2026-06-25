@@ -19,7 +19,7 @@ from typing import Any
 
 import mlx.core as mx
 import uvicorn
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
@@ -45,6 +45,7 @@ from .api.openai_routes import router as openai_router
 from .api.openai_routes import set_openai_context
 from .api.openclaw_routes import router as openclaw_router
 from .api.openclaw_routes import set_openclaw_agent_pool
+from .api.recommend_routes import router as recommend_router
 from .config import SchedulerConfig as FusionSchedulerConfig
 from .config import ServerConfig
 from .engine_core import AsyncEngineCore, EngineConfig
@@ -109,11 +110,21 @@ class Server:
 
         # Register all route modules
         app.include_router(openai_router)
+
+
+        @app.exception_handler(HTTPException)
+        async def _http_exception_handler(_req, exc: HTTPException):
+            return JSONResponse(
+                status_code=exc.status_code,
+                content={"error": {"message": str(exc.detail)}},
+             )
+
         app.include_router(anthropic_router)
         app.include_router(audio_router)
         app.include_router(images_router)
         app.include_router(mcp_router)
         app.include_router(openclaw_router)
+        app.include_router(recommend_router)
         app.include_router(admin_router)
 
          # Register GUI compatibility router (discovery, settings, manager, admin UI)
@@ -189,7 +200,7 @@ class Server:
             engine_pool=self.pool,
             memory_guard_tier=tier_str,
         )
-        self.pool._process_memory_enforcer.start()
+        await self.pool._process_memory_enforcer.start()
         self.pool._get_final_ceiling = self.pool._process_memory_enforcer.get_final_ceiling
 
         # Create request router
@@ -250,24 +261,14 @@ class Server:
         logger.info("fusion-mlx shutdown complete")
 
     async def load_model(self, model_id: str, **kwargs):
-        """Dynamically load a model, with lock to prevent concurrent duplicate loading."""
+        """Dynamically load a model via the engine pool."""
         if self.pool is None:
             raise RuntimeError("Server not started")
         async with self._load_lock:
-            if model_id in self.engine_cores:
-                logger.warning("Model %s already loaded, skipping", model_id)
-                return
-            cfg = EngineConfig(
-                model=model_id,
-                scheduler_config=FusionSchedulerConfig(),
-                  **kwargs,
-              )
-            core = AsyncEngineCore(cfg)
-            logger.info("Initializing engine core for %s...", model_id)
-            await core.start()
-            self.engine_cores[model_id] = core
-            self.pool.register_engine(model_id, core)
-            logger.info("Loaded model %s into pool", model_id)
+            resolved = resolve_model_id(model_id)
+            engine = await self.pool.get_engine(resolved)
+            logger.info("Loaded model %s into pool (engine=%s)", model_id, type(engine).__name__)
+
     async def unload_model(self, model_id: str):
         """Unload a model from the pool."""
         core = self.engine_cores.pop(model_id, None)
@@ -277,17 +278,7 @@ class Server:
             self.pool.unload_engine(model_id)
         logger.info("Unloaded model %s from pool", model_id)
 
-        from uvicorn.config import LOGGING_CONFIG
-        custom_fmt = "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
-        LOGGING_CONFIG["formatters"]["default"]["format"] = custom_fmt
-        LOGGING_CONFIG["formatters"]["access"]["format"] = custom_fmt
-        uvicorn.run(
-            self.app,
-            host=self.config.host,
-            port=self.config.port,
-            log_level="info",
-            log_config=LOGGING_CONFIG,
-        )
+
 
 
 def _available_ram_mb() -> int:

@@ -292,10 +292,10 @@ async def _stream_chat_generator(request: ChatCompletionRequest) -> AsyncIterato
         err_msg = str(exc)
          # VLM image/video fetch failures -> 400
         if "Failed to process image" in err_msg or "Failed to process video" in err_msg:
-            yield f"data: {{\"error\": {err_msg!r}, \"status\": 400}}\n\n"
+            yield f'data: {{"error": {{"message": {err_msg!r}, "status": 400}}}}\n\n'
         else:
             logger.exception("Streaming chat failed for %s", request_id)
-            yield f"data: {{\"error\": {err_msg!r}}}\n\n"
+            yield f'data: {{"error": {{"message": {err_msg!r}}}}}\n\n'
 
 
 async def _stream_chat(request: ChatCompletionRequest) -> StreamingResponse:
