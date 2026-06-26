@@ -199,6 +199,8 @@ class Server:
         self.pool._process_memory_enforcer = ProcessMemoryEnforcer(
             engine_pool=self.pool,
             memory_guard_tier=tier_str,
+            soft_threshold=mem_cfg.soft_threshold,
+            hard_threshold=mem_cfg.hard_threshold,
         )
         await self.pool._process_memory_enforcer.start()
         self.pool._get_final_ceiling = self.pool._process_memory_enforcer.get_final_ceiling

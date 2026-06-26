@@ -25,6 +25,7 @@ from ..request import Request, RequestOutput, RequestStatus
 from .config import SchedulerOutput
 from .helpers import (
     _sync_and_clear_cache,
+    _should_clear_on_fragmentation,
 )
 from .types import (
     _PrefillAbortedError,
@@ -149,7 +150,14 @@ def step(self) -> SchedulerOutput:
                 # we never disrupt prefill activation buffers.
                 self._tokens_since_clear_cache += len(responses)
                 if self._tokens_since_clear_cache >= self.config.decode_clear_interval:
-                    _sync_and_clear_cache(self._stream)
+                    frag = getattr(self, '_fragmentation_ratio', 0.0)
+                    if _should_clear_on_fragmentation(frag):
+                        _sync_and_clear_cache(self._stream)
+                    else:
+                        logger.debug(
+                            "step(%d): skipping clear_cache — fragmentation %.2f too high",
+                            self._step_counter, frag,
+                        )
                     self._tokens_since_clear_cache = 0
 
     except _PrefillAbortedError as e:
@@ -230,7 +238,14 @@ def step(self) -> SchedulerOutput:
         should_clear = True
         self._deferred_clear_at = None
     if should_clear:
-        _sync_and_clear_cache(self._stream)
+        frag = getattr(self, '_fragmentation_ratio', 0.0)
+        if _should_clear_on_fragmentation(frag):
+            _sync_and_clear_cache(self._stream)
+        else:
+            logger.debug(
+                "step(%d): skipping periodic clear_cache — fragmentation %.2f too high",
+                self._step_counter, frag,
+            )
     if (
         self.config.gc_cleanup_interval > 0
         and self._step_counter % self.config.gc_cleanup_interval == 0

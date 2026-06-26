@@ -45,6 +45,7 @@ class BufferEntry:
     created_at: float = field(default_factory=time.time)
     last_accessed: float = field(default_factory=time.time)
     is_kv_cache: bool = False
+    _shared: bool = False
 
     def touch(self):
         self.last_accessed = time.time()
@@ -119,6 +120,7 @@ class MetalBufferRegistry:
                 del self._buffers[buf_id]
                 if entry.is_kv_cache:
                     logger.debug(f"[Registry] freed KV buffer {buf_id}: {entry.size_bytes / 1e6:.1f}MB")
+                del entry
                 return True
             return False
 
@@ -154,6 +156,7 @@ class MetalBufferRegistry:
             entry.backend = "shared"
             self._per_backend_bytes["shared"] = self._per_backend_bytes.get("shared", 0) + entry.size_bytes
             entry.ref_count += 1
+            entry._shared = True
             return True
 
     @property
@@ -407,7 +410,8 @@ class KVCacheBridge:
             self._registry.decrement_ref(buf_id)
         hid = state.handoff_id
         if hid:
-            self._active_handoffs.pop(hid, None)
+            with self._lock:
+                self._active_handoffs.pop(hid, None)
 
     def get_active_handoffs(self) -> int:
         with self._lock:

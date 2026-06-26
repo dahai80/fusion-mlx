@@ -346,6 +346,16 @@ def _cleanup_finished(    self, finished_ids: set[str]) -> None:
     for request_id in finished_ids:
         request = self.running.get(request_id)
 
+        # Guard: skip if request was already removed from running by another path
+        # (e.g. concurrent abort, preemption, or recovery). This prevents
+        # double-cleanup and inconsistent state (dict iteration safety fix).
+        if request is None:
+            logger.warning(
+                f"_cleanup_finished: request {request_id} not in running, "
+                f"skipping cleanup (likely removed by abort/preemption)"
+            )
+            continue
+
         # Store cache for future reuse (G2-async): submit to background
         # executor so the post-finish 28GB+ memcpy doesn't block response
         # streaming. The inference thread does mx.synchronize +

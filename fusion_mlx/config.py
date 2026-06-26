@@ -122,6 +122,9 @@ class MemoryConfig:
     ssd_cache_enabled: bool = False
     ssd_cache_dir: str = "~/Library/Caches/fusion-mlx/ssd"
     ssd_cache_max_bytes: int = 20 * 1024 * 1024 * 1024  # 20 GiB
+    # Memory enforcer watermark thresholds (fraction of hard ceiling)
+    soft_threshold: float = 0.85
+    hard_threshold: float = 0.95
 
 
     def __post_init__(self):
@@ -133,6 +136,14 @@ class MemoryConfig:
         if self.custom_limit_mb is not None and self.custom_limit_mb < 100:
              # Min 100 MB for custom limit
             self.custom_limit_mb = 100
+        # Clamp thresholds to valid range
+        if self.soft_threshold < 0.1 or self.soft_threshold > 0.99:
+            self.soft_threshold = 0.85
+        if self.hard_threshold < 0.1 or self.hard_threshold > 0.99:
+            self.hard_threshold = 0.95
+        # Ensure soft < hard
+        if self.soft_threshold >= self.hard_threshold:
+            self.hard_threshold = min(0.99, self.soft_threshold + 0.1)
 
 @dataclass
 class ServerConfig:

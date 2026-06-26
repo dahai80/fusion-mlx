@@ -79,6 +79,7 @@ class MemoryMonitor:
         self._paged_cache_manager = paged_cache_manager
         self._has_psutil = False
         self._ps = None
+        self._closed = False
         try:
             import psutil
             self._ps = psutil
@@ -139,6 +140,16 @@ class MemoryMonitor:
 
     def get_memory_usage(self) -> dict[str, Any]:
         """Return current memory usage snapshot.
+
+        Returns safe defaults when the monitor has been closed.
+        """
+        if self._closed:
+            return {
+                "total": 0, "available": 0, "wired": 0,
+                "compressed": 0, "active": 0, "inactive": 0,
+                "mlx_cache": 0, "mlx_peak": 0,
+                "paged_cache_blocks": 0, "paged_cache_hit_rate": 0.0,
+            }
 
         Keys:
             total: Total system RAM (bytes)
@@ -219,6 +230,11 @@ class MemoryMonitor:
     def is_memory_pressure(self) -> bool:
         """Return True when system is under memory pressure.
 
+        Returns False when the monitor has been closed (safe default).
+        """
+        if self._closed:
+            return False
+
         Triggers when:
         - Available memory < 10% of total RAM
         - MLX cache > configured max_kv_cache_memory
@@ -243,4 +259,29 @@ class MemoryMonitor:
             except Exception:
                 pass
 
+        return False
+
+    def close(self) -> None:
+        """Gracefully shut down the memory monitor.
+
+        Releases references to the paged cache manager and marks the
+        monitor as closed so subsequent calls are no-ops.
+        """
+        if self._closed:
+            return
+        self._closed = True
+        self._paged_cache_manager = None
+        self._ps = None
+        self._has_psutil = False
+        logger.info("MemoryMonitor closed")
+
+    @property
+    def is_closed(self) -> bool:
+        return self._closed
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.close()
         return False

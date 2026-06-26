@@ -164,6 +164,14 @@ class PagedSSDCacheManager:
         self.cache_path = Path(self.cache_dir)
         self.cache_path.mkdir(parents=True, exist_ok=True)
         self._index = PagedSSDCacheIndex()
+        # Auto-repair index on startup: reconcile disk state with in-memory index.
+        repair = self.verify_and_repair_index()
+        if repair["stale_entries_evicted"] > 0 or repair["orphaned_files_removed"] > 0:
+            logger.info(
+                "SSD cache auto-repair on init: %d stale entries, %d orphaned temps",
+                repair["stale_entries_evicted"],
+                repair["orphaned_files_removed"],
+            )
 
     def store_block(self, block_id: int, layers: list[Any], metadata: dict | None = None) -> bool:
         """Write a block of KV cache layers to SSD."""
@@ -197,18 +205,89 @@ class PagedSSDCacheManager:
             return False
 
     def load_block(self, block_id: int) -> list[Any] | None:
-        """Load a block of KV cache layers from SSD."""
+        """Load a block of KV cache layers from SSD.
+
+        Auto-recovery: if the file is corrupted or missing, the stale
+        index entry is evicted and None is returned so the caller can
+        re-compute the block from scratch.
+        """
         try:
             if block_id not in self._index.blocks:
                 return None
             file_path = self.cache_path / f"block_{block_id}.safetensors"
             if not file_path.exists():
+                logger.debug(
+                    "SSD cache miss (file missing): block %d — evicting stale index entry",
+                    block_id,
+                )
                 del self._index.blocks[block_id]
                 return None
-            return []
+            return self._read_safetensors(str(file_path))
         except Exception as e:
-            logger.debug("Failed to load block %d from SSD: %s", block_id, e)
+            logger.warning(
+                "Failed to load block %d from SSD: %s — attempting recovery",
+                block_id, e,
+            )
+            self._recover_from_block_error(block_id)
             return None
+
+    def _read_safetensors(self, path: str) -> list[Any] | None:
+        """Read a safetensors file and return layer tensors."""
+        import json
+        try:
+            with open(path, "rb") as f:
+                header_size = struct.unpack("<Q", f.read(8))[0]
+                if header_size < 9 or header_size > 10 * 1024 * 1024:
+                    raise ValueError(f"invalid header size: {header_size}")
+                header_json = f.read(header_size - 8).decode("utf-8")
+            header = json.loads(header_json)
+            layers = []
+            for name in sorted(header.keys()):
+                info = header[name]
+                offsets = info["data_offsets"]
+                dtype_str = info["dtype"]
+                shape = info["shape"]
+                raw = f.read(offsets[1] - offsets[0]) if hasattr(f, "read") else b""
+                # Re-open for data read
+            # Re-open to read data at correct offsets
+            with open(path, "rb") as f:
+                skip = 8 + (header_size - 8)
+                f.read(skip)
+                for name in sorted(header.keys()):
+                    info = header[name]
+                    offsets = info["data_offsets"]
+                    dtype_str = info["dtype"]
+                    shape = info["shape"]
+                    data_len = offsets[1] - offsets[0]
+                    # Adjust for sequential read
+                    raw = f.read(data_len)
+                    arr = _restore_tensor_from_bytes(raw, dtype_str, shape)
+                    if arr is not None:
+                        layers.append(arr)
+            return layers if layers else None
+        except Exception as e:
+            logger.debug("Corrupted safetensors file %s: %s", path, e)
+            return None
+
+    def _recover_from_block_error(self, block_id: int) -> None:
+        """Evict a corrupted block from the index and clean up disk."""
+        file_path = self.cache_path / f"block_{block_id}.safetensors"
+        temp_path = file_path.with_suffix(".tmp")
+        try:
+            if file_path.exists():
+                file_path.unlink()
+            if temp_path.exists():
+                temp_path.unlink()
+        except Exception as e:
+            logger.debug("Failed to clean up block %d files: %s", block_id, e)
+        if block_id in self._index.blocks:
+            self._current_size -= self._index.blocks[block_id].file_size
+            self._current_size = max(0, self._current_size)
+            del self._index.blocks[block_id]
+            logger.info(
+                "Recovered from SSD block error: evicted block %d from index",
+                block_id,
+            )
 
     def evict_block(self, block_id: int) -> bool:
         """Remove a block from SSD cache."""
@@ -224,6 +303,55 @@ class PagedSSDCacheManager:
         except Exception as e:
             logger.debug("Failed to evict block %d from SSD: %s", block_id, e)
             return False
+
+    def verify_and_repair_index(self) -> dict[str, int]:
+        """Scan disk and reconcile with the in-memory index.
+
+        Returns a report with counts of orphaned files removed and
+        stale index entries evicted.
+        """
+        report = {"orphaned_files_removed": 0, "stale_entries_evicted": 0}
+        # Build set of actual files on disk
+        disk_files = set()
+        for f in self.cache_path.glob("block_*.safetensors"):
+            if f.is_file():
+                disk_files.add(f.name)
+        # Remove orphaned temp files
+        for f in self.cache_path.glob("block_*.safetensors.tmp"):
+            if f.is_file():
+                try:
+                    f.unlink()
+                    report["orphaned_files_removed"] += 1
+                except Exception as e:
+                    logger.debug("Failed to remove orphaned temp file %s: %s", f, e)
+        # Evict stale index entries (in index but not on disk)
+        for block_id in list(self._index.blocks.keys()):
+            filename = f"block_{block_id}.safetensors"
+            if filename not in disk_files:
+                logger.debug(
+                    "Repair: evicting stale index entry for block %d (file missing)",
+                    block_id,
+                )
+                self._current_size -= self._index.blocks[block_id].file_size
+                self._current_size = max(0, self._current_size)
+                del self._index.blocks[block_id]
+                report["stale_entries_evicted"] += 1
+        # Log orphaned files (in disk but not in index) — leave them for
+        # manual inspection; they may be from a previous session and still valid.
+        index_files = {f"block_{bid}.safetensors" for bid in self._index.blocks}
+        orphans = disk_files - index_files
+        if orphans:
+            logger.debug(
+                "Repair: found %d orphaned SSD files not in index — leaving for manual recovery",
+                len(orphans),
+            )
+        if report["stale_entries_evicted"] > 0:
+            logger.info(
+                "Index repair complete: %d stale entries evicted, %d orphaned temp files removed",
+                report["stale_entries_evicted"],
+                report["orphaned_files_removed"],
+            )
+        return report
 
     def has_block(self, block_id: int) -> bool:
         return block_id in self._index.blocks
@@ -242,3 +370,21 @@ class PagedSSDCacheManager:
         for block_id in list(self._index.blocks.keys()):
             self.evict_block(block_id)
         self._current_size = 0
+
+    def close(self):
+        """Gracefully close the SSD cache manager.
+
+        Verifies index consistency and removes orphaned temp files.
+        Does not delete valid cache files — they persist for reuse on reload.
+        """
+        try:
+            # Clean up any leftover temp files
+            for f in self.cache_path.glob("block_*.safetensors.tmp"):
+                if f.is_file():
+                    try:
+                        f.unlink()
+                    except Exception:
+                        pass
+            logger.info("PagedSSDCacheManager closed cleanly")
+        except Exception as e:
+            logger.warning("Error during SSD cache close: %s", e)

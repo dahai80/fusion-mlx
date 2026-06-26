@@ -6,6 +6,18 @@ from .monkeypatches import _default_generation_stream
 from .types import _mx_buffer_access_lock
 
 
+def _should_clear_on_fragmentation(
+    frag_ratio: float, threshold: float = 0.7
+) -> bool:
+    """Return False when fragmentation is too high to safely clear cache.
+
+    Clearing the Metal buffer cache on a highly fragmented heap forces
+    re-allocation from scratch, which amplifies fragmentation and can cause
+    I/O thrashing.  Skip the clear when frag_ratio >= threshold.
+    """
+    return frag_ratio < threshold
+
+
 def _sync_and_clear_cache(stream=None):
     """Synchronize in-flight GPU work before clearing the Metal buffer cache.
 
