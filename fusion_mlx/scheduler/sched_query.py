@@ -135,13 +135,13 @@ def _preflight_memory_check(    self, request: "Request") -> str | None:
     """
     Estimate whether prefill would exceed memory limits.
 
-    Computes worst-case peak memory for the last prefill chunk
-    (model weights + KV cache + SDPA attention matrix) and rejects
-    if it would exceed the hard limit.
+    Computes worst-case peak memory for:
+    - KV cache for the last prefill chunk (K + V)
+    - SDPA temporary attention matrix (for head_dim > 128)
+    - Existing running requests' KV cache growth
+    - 5% safety margin for Metal implicit allocations
 
-    For head_dim > 128, MLX SDPA uses a fallback that materializes
-    the full attention matrix [B, n_q, chunk, kv_len] in float32.
-    For head_dim <= 128, MLX uses a fused kernel with O(n) memory.
+    Rejects if the sum would exceed the hard limit.
 
     Returns:
         Error message string if request should be rejected, None if OK.
@@ -149,8 +149,6 @@ def _preflight_memory_check(    self, request: "Request") -> str | None:
     if not self._prefill_memory_guard:
         return None
     if self._memory_hard_limit_bytes <= 0:
-        return None
-    if self.memory_monitor is None:
         return None
 
     prompt_tokens = request.num_prompt_tokens
@@ -160,24 +158,156 @@ def _preflight_memory_check(    self, request: "Request") -> str | None:
     if new_tokens == 0:
         return None
 
-    peak = self.memory_monitor.estimate_prefill_peak_bytes(
-        new_tokens, self.config.prefill_step_size, cached_tokens=cached_tokens
+    # Extract model architecture params for memory estimation
+    model = getattr(self, "model", None)
+    if model is None:
+        return None  # no model, can't estimate
+
+    config = getattr(model, "config", None) or getattr(model, "args", None)
+    if config is None:
+        return None  # no config, can't estimate
+
+    num_layers = getattr(config, "num_hidden_layers", None) or getattr(
+        config, "num_layers", None
     )
-    if peak == 0:
-        return None  # can't estimate, skip
+    num_kv_heads = getattr(config, "num_key_value_heads", None)
+    num_query_heads = getattr(config, "num_attention_heads", None) or num_kv_heads
+    head_dim = getattr(config, "head_dim", None)
+
+    # Derive head_dim from hidden_size if not explicit
+    if head_dim is None:
+        hidden_size = getattr(config, "hidden_size", None) or getattr(
+            config, "n_embd", None
+        )
+        if hidden_size and num_query_heads:
+            head_dim = hidden_size // num_query_heads
+
+    if not all([num_layers, num_kv_heads, head_dim]):
+        return None  # can't estimate without key params
+
+    # Determine dtype size from model weights
+    dtype_bytes = 2  # float16 default
+    try:
+        first_weight = None
+        for child in model.children():
+            if hasattr(child, "weight"):
+                first_weight = child.weight
+                break
+        if first_weight is not None:
+            dtype_map = {
+                mx.float16: 2, mx.bfloat16: 2,
+                mx.float32: 4, mx.int8: 1,
+            }
+            dtype_bytes = dtype_map.get(first_weight.dtype, 2)
+    except Exception:
+        pass
+
+    chunk = min(new_tokens, self.config.prefill_step_size)
+
+    # KV cache for the prefill chunk: 2 (K+V) * layers * chunk * kv_heads * head_dim
+    kv_bytes = 2 * num_layers * chunk * num_kv_heads * head_dim * dtype_bytes
+
+    # SDPA temp matrix: only for head_dim > 128
+    sdpa_bytes = 0
+    if head_dim > 128:
+        kv_len = cached_tokens + chunk
+        sdpa_bytes = num_query_heads * chunk * kv_len * 4  # float32
+
+    # Estimate running requests' KV cache memory (decode growth headroom)
+    running_kv_bytes = 0
+    for r in self.running:
+        req = self.requests.get(r)
+        if req is None:
+            continue
+        # Count tokens already in KV cache for this request
+        req_tokens = getattr(req, "_total_tokens_generated", 0) or 0
+        if req_tokens == 0:
+            # Fallback: estimate from prompt length (conservative)
+            req_tokens = request.num_prompt_tokens // 4
+        running_kv_bytes += (
+            2 * num_layers * req_tokens * num_kv_heads * head_dim * dtype_bytes
+        )
+
+    prefill_peak = kv_bytes + sdpa_bytes
+    safety_margin = int(prefill_peak * 0.05)  # 5% for Metal implicit allocs
+    total_estimated = prefill_peak + safety_margin
 
     current = max(mx.get_active_memory(), get_phys_footprint())
 
-    if current + peak > self._memory_hard_limit_bytes:
+    if current + total_estimated > self._memory_hard_limit_bytes:
         from ..utils.hardware import format_bytes
 
         usage_gb = current / (1024**3)
         ceiling_gb = self._memory_hard_limit_bytes / (1024**3)
         return (
-            f"Prefill would require ~{format_bytes(current + peak)} peak "
-            f"(current {format_bytes(current)} + KV+SDPA {format_bytes(peak)}) "
+            f"Prefill would require ~{format_bytes(current + total_estimated)} peak "
+            f"(current {format_bytes(current)} + KV+SDPA {format_bytes(prefill_peak)} "
+            f"+ safety {format_bytes(safety_margin)}) "
             f"but ceiling is {format_bytes(self._memory_hard_limit_bytes)} "
             f"(usage {usage_gb:.1f} GB, ceiling {ceiling_gb:.1f} GB). "
             f"Reduce context length or lower memory_guard_tier."
         )
     return None
+
+
+def _estimate_prefill_peak(self, new_tokens: int) -> int:
+    """Estimate worst-case peak memory for a prefill chunk.
+
+    Returns 0 if model info is unavailable or new_tokens is 0.
+    """
+    if new_tokens <= 0:
+        return 0
+
+    model = getattr(self, "model", None)
+    if model is None:
+        return 0
+
+    config = getattr(model, "config", None) or getattr(model, "args", None)
+    if config is None:
+        return 0
+
+    num_layers = getattr(config, "num_hidden_layers", None) or getattr(
+        config, "num_layers", None
+    )
+    num_kv_heads = getattr(config, "num_key_value_heads", None)
+    num_query_heads = getattr(config, "num_attention_heads", None) or num_kv_heads
+    head_dim = getattr(config, "head_dim", None)
+
+    if head_dim is None:
+        hidden_size = getattr(config, "hidden_size", None) or getattr(
+            config, "n_embd", None
+        )
+        if hidden_size and num_query_heads:
+            head_dim = hidden_size // num_query_heads
+
+    if not all([num_layers, num_kv_heads, head_dim]):
+        return 0
+
+    # Determine dtype size
+    dtype_bytes = 2
+    try:
+        first_weight = None
+        for child in model.children():
+            if hasattr(child, "weight"):
+                first_weight = child.weight
+                break
+        if first_weight is not None:
+            dtype_map = {
+                mx.float16: 2, mx.bfloat16: 2,
+                mx.float32: 4, mx.int8: 1,
+            }
+            dtype_bytes = dtype_map.get(first_weight.dtype, 2)
+    except Exception:
+        pass
+
+    chunk = min(new_tokens, self.config.prefill_step_size)
+
+    # KV cache: 2 (K+V) * layers * chunk * kv_heads * head_dim * dtype
+    kv_bytes = 2 * num_layers * chunk * num_kv_heads * head_dim * dtype_bytes
+
+    # SDPA temp matrix: only for head_dim > 128
+    sdpa_bytes = 0
+    if head_dim > 128:
+        sdpa_bytes = num_query_heads * chunk * chunk * 4  # float32, conservative kv_len ~ chunk
+
+    return kv_bytes + sdpa_bytes
