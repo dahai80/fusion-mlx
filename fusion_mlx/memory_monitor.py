@@ -151,18 +151,6 @@ class MemoryMonitor:
                 "paged_cache_blocks": 0, "paged_cache_hit_rate": 0.0,
             }
 
-        Keys:
-            total: Total system RAM (bytes)
-            available: Free + reclaimable memory (bytes)
-            wired: Wired (unpageable) memory (bytes)
-            compressed: Compressed memory (bytes)
-            active: Active (in-use) memory (bytes)
-            inactive: Inactive (cacheable) memory (bytes)
-            mlx_cache: MLX Metal cache memory (bytes)
-            mlx_peak: MLX peak memory (bytes)
-            paged_cache_blocks: Active paged cache block count
-            paged_cache_hit_rate: Paged cache hit rate (0.0-1.0)
-        """
         if self._has_psutil:
             try:
                 virt = self._ps.virtual_memory()
@@ -235,11 +223,6 @@ class MemoryMonitor:
         if self._closed:
             return False
 
-        Triggers when:
-        - Available memory < 10% of total RAM
-        - MLX cache > configured max_kv_cache_memory
-        - macOS reports memory pressure via psutil
-        """
         usage = self.get_memory_usage()
         total = usage.get("total", 0)
         available = usage.get("available", 0)
@@ -278,6 +261,88 @@ class MemoryMonitor:
     @property
     def is_closed(self) -> bool:
         return self._closed
+
+    # Model info for prefill peak estimation. Set by the scheduler
+    # when the model is loaded so we can derive num_layers, head_dim,
+    # num_kv_heads, and dtype without holding a model reference.
+    _model_num_layers: int = 0
+    _model_head_dim: int = 0
+    _model_num_kv_heads: int = 0
+    _model_num_query_heads: int = 0
+    _model_dtype_bytes: int = 2  # float16 by default
+
+    def set_model_info(
+        self,
+        num_layers: int,
+        head_dim: int,
+        num_kv_heads: int,
+        num_query_heads: int | None = None,
+        dtype_bytes: int = 2,
+    ) -> None:
+        """Cache model architecture params for memory estimation.
+
+        Called by the scheduler once the model is loaded.
+        """
+        self._model_num_layers = num_layers
+        self._model_head_dim = head_dim
+        self._model_num_kv_heads = num_kv_heads
+        self._model_num_query_heads = num_query_heads or num_kv_heads
+        self._model_dtype_bytes = dtype_bytes
+
+    def estimate_prefill_peak_bytes(
+        self,
+        new_tokens: int,
+        prefill_step_size: int,
+        cached_tokens: int = 0,
+    ) -> int:
+        """Estimate worst-case peak memory for a prefill chunk.
+
+        Accounts for:
+        - KV cache for the last prefill chunk (K + V, 2 groups)
+        - SDPA temporary attention matrix (materialized for head_dim > 128)
+        - For head_dim <= 128, MLX uses a fused kernel with minimal temp memory
+
+        Returns 0 if model info is not available (set_model_info not called).
+        """
+        if self._model_num_layers <= 0 or self._model_head_dim <= 0:
+            return 0
+        if new_tokens <= 0:
+            return 0
+
+        chunk = min(new_tokens, prefill_step_size)
+        layers = self._model_num_layers
+        hd = self._model_head_dim
+        db = self._model_dtype_bytes
+        kv_heads = self._model_num_kv_heads
+        q_heads = self._model_num_query_heads
+
+        # KV cache: 2 (K+V) * layers * chunk * kv_heads * head_dim * dtype
+        kv_bytes = 2 * layers * chunk * kv_heads * hd * db
+
+        # SDPA temp matrix: only materialized when head_dim > 128
+        # Shape: [batch=1, n_q_heads, chunk, kv_len] in float32
+        # kv_len = cached_tokens + chunk (existing cache + new tokens)
+        sdpa_bytes = 0
+        if hd > 128:
+            kv_len = cached_tokens + chunk
+            sdpa_bytes = q_heads * chunk * kv_len * 4  # float32
+
+        return kv_bytes + sdpa_bytes
+
+    def estimate_decode_kv_bytes(self, total_tokens: int) -> int:
+        """Estimate KV cache memory for `total_tokens` across all running requests.
+
+        Used by the scheduler to account for existing decode-state memory
+        when deciding whether to admit a new prefill.
+        """
+        if self._model_num_layers <= 0 or self._model_head_dim <= 0:
+            return 0
+        layers = self._model_num_layers
+        hd = self._model_head_dim
+        db = self._model_dtype_bytes
+        kv_heads = self._model_num_kv_heads
+        # 2 (K+V) * layers * total_tokens * kv_heads * head_dim * dtype
+        return 2 * layers * total_tokens * kv_heads * hd * db
 
     def __enter__(self):
         return self

@@ -113,8 +113,10 @@ def _schedule_waiting(    self,
             break
 
         # Generation memory guard: when requests are already running,
-        # defer scheduling if memory pressure is high to prevent
-        # Metal allocation failures during batch_generator.next().
+        # defer scheduling if current memory + estimated prefill peak
+        # exceeds the soft limit. This prevents admitting new requests
+        # when there isn't enough headroom for their KV cache + SDPA
+        # temp allocations, avoiding Metal OOM during batch_generator.next().
         # First request always passes (self.running is empty).
         if (
             self._prefill_memory_guard
@@ -122,11 +124,15 @@ def _schedule_waiting(    self,
             and self.running
         ):
             current = max(mx.get_active_memory(), get_phys_footprint())
-            if current > self._memory_limit_bytes:
+            _next = self.waiting[0]
+            new_tokens = max(_next.num_prompt_tokens - (_next.cached_tokens or 0), 0)
+            estimated_prefill = self._estimate_prefill_peak(new_tokens)
+            if current + estimated_prefill > self._memory_limit_bytes:
                 logger.debug(
                     "Generation memory guard: deferring scheduling "
-                    "(%s > %s), %d running",
+                    "(current=%s + prefill=%s > limit=%s), %d running",
                     current,
+                    estimated_prefill,
                     self._memory_limit_bytes,
                     len(self.running),
                 )
