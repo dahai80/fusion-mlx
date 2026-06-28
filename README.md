@@ -160,4 +160,8 @@ Apache-2.0
 - [mlx-embeddings](https://github.com/Blaizzy/mlx-embeddings) - Embedding model support for Apple Silicon
 - [dflash-mlx](https://github.com/bstnxbt/dflash-mlx) - Block diffusion speculative decoding on Apple Silicon
 - [omlx](https://github.com/jundot/omlx) - LLM inference, optimized for your Mac, Continuous batching and tiered KV caching.
+<<<<<<< HEAD
 - [Rapid-MLX](https://github.com/raullenchai/Rapid-MLX) - The fastest local AI engine for Apple Silicon
+=======
+- [Rapid-MLX](https://github.com/raullenchai/Rapid-MLX) - The fastest local AI engine for Apple Silicon
+>>>>>>> 9d6a772de8ab12dfe5f73c85086d1339fe3cd415
