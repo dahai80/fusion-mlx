@@ -82,7 +82,7 @@ def _parse_xml_tool_calls(text: str) -> tuple[str, list[ToolCall] | None]:
         Tuple of (cleaned_text, tool_calls or None)
     """
     tool_calls = []
-    pattern = r"<tool_call>(.*?)</tool_call>"
+    pattern = r"␝(.*?)␞"
     matches = re.findall(pattern, text, re.DOTALL)
 
     for match in matches:
@@ -166,7 +166,7 @@ def _parse_xml_tool_calls(text: str) -> tuple[str, list[ToolCall] | None]:
         return text, None
 
     # Remove tool call tags from text
-    cleaned = re.sub(r"<tool_call>.*?</tool_call>", "", text, flags=re.DOTALL).strip()
+    cleaned = re.sub(r"␝.*?␞", "", text, flags=re.DOTALL).strip()
     return cleaned, tool_calls
 
 
@@ -409,7 +409,7 @@ def parse_tool_calls(
         tool_call_end = tokenizer.tool_call_end
         tool_parser = tokenizer.tool_parser
 
-        if tool_call_start is not None and tool_parser is not None:
+        if tool_call_start and tool_parser is not None:
             tool_calls = []
             start_escaped = re.escape(tool_call_start)
 
@@ -496,7 +496,7 @@ def parse_tool_calls(
                     # recovers Qwen/GLM/Hermes-JSON formats. Prevents silent
                     # drop when the native parser raises (e.g. ast.literal_eval
                     # SyntaxError on non-Python-literal parameter values).
-                    fb_wrapped = f"<tool_call>{match}</tool_call>"
+                    fb_wrapped = f"␝{match}␞"
                     _, fb_calls = _parse_xml_tool_calls(fb_wrapped)
                     if fb_calls:
                         tool_calls.extend(fb_calls)
@@ -533,7 +533,7 @@ def parse_tool_calls(
                 return cleaned_text, tool_calls
 
     # Fallback: parse XML <tool_call> tags (GLM, Qwen, generic formats)
-    if "<tool_call>" in cleaned_text:
+    if "␝" in cleaned_text:
         return _parse_xml_tool_calls(cleaned_text)
 
     # Fallback: namespaced tool_call tags (e.g. <minimax:tool_call>)

@@ -90,24 +90,38 @@ class EngineCore:
         registry.acquire(model=model, engine=self, engine_id=self._engine_id, force=force_model_ownership)
         self._owns_model = True
 
-        self._mlx_stream = mx.new_thread_local_stream(mx.default_device())
         self._mlx_executor = concurrent.futures.ThreadPoolExecutor(
             max_workers=1,
             thread_name_prefix=f"mlx-engine-{self._engine_id[:8]}",
             initializer=_init_mlx_thread,
         )
 
-        # Create scheduler with per-engine stream
+        # Scheduler must be created on the executor thread so it uses the
+        # thread-local MLX stream (not the main thread's stream).
+        # We initialize it synchronously here by running setup on the
+        # executor thread and blocking for the result — safe at __init__
+        # time since the executor is freshly created.
         from .scheduler import Scheduler, SchedulerConfig
         scheduler_config = self.config.scheduler_config or SchedulerConfig()
-        self.scheduler = Scheduler(
-            model=model,
-            tokenizer=tokenizer,
-            config=scheduler_config,
-            stream=self._mlx_stream,
-        )
+        self.scheduler: Scheduler | None = None
+        _sched_result: list = []
+        def _make_scheduler():
+            stream = mx.new_stream(mx.default_device())
+            _sched_result.append(Scheduler(
+                model=model,
+                tokenizer=tokenizer,
+                config=scheduler_config,
+                stream=stream,
+            ))
+        _fut = self._mlx_executor.submit(_make_scheduler)
+        _fut.result()
+        self.scheduler = _sched_result[0]
 
         self._active_contexts: dict[str, RequestContext] = {}
+
+        # Finish timestamps for orphan-collector reaping (#1154).
+        self._finished_at: dict[str, float] = {}
+        self._last_reap = 0.0
 
         self._running = False
         self._task: asyncio.Task | None = None
@@ -141,6 +155,12 @@ class EngineCore:
         use_simple_streaming = (stream_interval == 1)
 
         while self._running:
+            # Sweep collectors orphaned by client disconnects (throttled to 1s).
+            now = time.monotonic()
+            if now - self._last_reap >= 1.0:
+                self._last_reap = now
+                self._reap_orphaned_collectors(now)
+
             if self.scheduler and self.scheduler.has_requests():
                 try:
                     loop = asyncio.get_running_loop()
@@ -162,7 +182,7 @@ class EngineCore:
                                         ctx.collector.put(req_output)
                                         ctx.stream_state.mark_sent(req_output.completion_tokens)
                             if req_output.finished:
-                                ctx.finished_event.set()
+                                self._mark_request_finished(req_output.request_id)
                 except Exception as e:
                     logger.error(f"Engine loop error: {e}", exc_info=True)
                     # Retry once — transient Metal allocation failures should not kill all requests
@@ -180,7 +200,7 @@ class EngineCore:
                                     if ctx is not None:
                                         ctx.collector.put(req_output)
                                     if req_output.finished:
-                                        ctx.finished_event.set()
+                                        self._mark_request_finished(req_output.request_id)
                             retry_ok = True
                         except Exception as e2:
                             logger.critical(f"Engine loop retry also failed: {e2}", exc_info=True)
@@ -204,7 +224,7 @@ class EngineCore:
                                         request_id=rid, finished=True,
                                         finish_reason="error", error=str(e)
                                        ))
-                                    ctx.finished_event.set()
+                                self._mark_request_finished(rid)
                         except Exception:
                             logger.debug("swallowed exception in engine loop error handler", exc_info=True)
                             pass
@@ -265,7 +285,21 @@ class EngineCore:
         )
 
         if self.scheduler:
-            self.scheduler.add_request(request)
+            try:
+                self.scheduler.add_request(request)
+            except BaseException:
+                # If the caller is cancelled or the insert fails, the request
+                # never reaches stream_outputs()/generate()'s try/finally, so
+                # nothing would mark it finished or clean it up. Drop tracking
+                # and abort any partial scheduler insert before re-raising.
+                try:
+                    self.scheduler.abort_request(request_id)
+                except Exception as abort_exc:
+                    logger.debug(
+                        f"Abort of partial insert for {request_id} failed: {abort_exc}"
+                    )
+                self._cleanup_request(request_id)
+                raise
 
         return request_id
 
@@ -276,7 +310,7 @@ class EngineCore:
         ctx = self._active_contexts.get(request_id)
         if ctx is not None:
             ctx.collector.put(RequestOutput(request_id=request_id, finished=True, finish_reason="abort", error="Request aborted"))
-            ctx.finished_event.set()
+        self._mark_request_finished(request_id)
         return result
 
     async def abort_all_requests(self) -> int:
@@ -303,7 +337,7 @@ class EngineCore:
                     else f"Request aborted: process memory limit exceeded (usage {usage_gb:.1f} GB)."
                 )
                 ctx.collector.put(RequestOutput(request_id=rid, finished=True, finish_reason="error", new_text=f"\n\n[Error: {error_msg}]", error=error_msg))
-                ctx.finished_event.set()
+            self._mark_request_finished(rid)
         if request_ids:
             logger.warning(f"Aborted {len(request_ids)} requests due to memory pressure")
         return len(request_ids)
@@ -312,6 +346,39 @@ class EngineCore:
         ctx = self._active_contexts.pop(request_id, None)
         if ctx:
             ctx.collector.clear()
+        self._finished_at.pop(request_id, None)
+
+    def _mark_request_finished(self, request_id: str) -> None:
+        """Stamp finish time and signal the consumer.
+
+        The timestamp lets _reap_orphaned_collectors() drop collectors whose
+        consumer never cleaned up (e.g. client disconnected mid-stream).
+        """
+        self._finished_at.setdefault(request_id, time.monotonic())
+        ctx = self._active_contexts.get(request_id)
+        if ctx is not None:
+            ctx.finished_event.set()
+
+    def _reap_orphaned_collectors(self, now: float, grace: float = 5.0) -> int:
+        """Drop tracking for finished requests whose consumer never cleaned up.
+
+        Pop-only: never clear() the collector object. A live consumer holds its
+        own reference, so dropping the dict entry cannot truncate output.
+        """
+        if not self._finished_at:
+            return 0
+        stale = [rid for rid, ts in self._finished_at.items() if now - ts >= grace]
+        for rid in stale:
+            ctx = self._active_contexts.pop(rid, None)
+            if ctx:
+                ctx.collector.clear()
+            self._finished_at.pop(rid, None)
+        if stale:
+            logger.debug(
+                "Reaped %d orphaned output collector(s) after disconnect: %s",
+                len(stale), stale,
+            )
+        return len(stale)
 
     async def stream_outputs(self, request_id: str, timeout: float | None = None) -> AsyncIterator[RequestOutput]:
         ctx = self._active_contexts.get(request_id)
@@ -531,9 +598,8 @@ class EngineCore:
         if self._mlx_executor is not None:
             self._mlx_executor.shutdown(wait=True)
             self._mlx_executor = None
-        for ctx in self._active_contexts.values():
-            ctx.collector.clear()
         self._active_contexts.clear()
+        self._finished_at.clear()
         self.model = None
         self.tokenizer = None
         self.scheduler = None

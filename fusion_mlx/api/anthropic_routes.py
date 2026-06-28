@@ -17,6 +17,24 @@ from fastapi.responses import StreamingResponse
 
 from ..api.adapters.anthropic import AnthropicAdapter
 from ..api.adapters.base import InternalResponse, StreamChunk
+from ..api.anthropic_utils import (
+    create_content_block_start_event,
+    create_content_block_stop_event,
+    create_input_json_delta_event,
+    create_message_delta_event,
+    create_message_stop_event,
+    create_tool_name_delta_event,
+    map_finish_reason_to_stop_reason,
+)
+from ..api.anthropic_utils import (
+    create_content_block_start_event,
+    create_content_block_stop_event,
+    create_input_json_delta_event,
+    create_message_delta_event,
+    create_message_stop_event,
+    create_tool_name_delta_event,
+    map_finish_reason_to_stop_reason,
+)
 from ..api.anthropic_models import (
     MessagesRequest as AnthropicMessagesRequest,
 )
@@ -282,16 +300,31 @@ async def _stream_anthropic_generator(req: AnthropicMessagesRequest) -> AsyncIte
                       request_id, gen.finish_reason,
                       gen.prompt_tokens, gen.completion_tokens, gen.cached_tokens,
                     )
+
+                # Emit tool_use content blocks if tool calls present
+                if gen.tool_calls:
+                    for i, tc in enumerate(gen.tool_calls):
+                        tc_id = tc.get("id", f"call_{i}")
+                        tc_name = tc.get("function", {}).get("name", "")
+                        tc_args = tc.get("function", {}).get("arguments", "{}")
+                        block_index = 1 + i
+                        yield create_content_block_start_event(
+                            block_index, "tool_use", id=tc_id, name=tc_name,
+                        )
+                        yield create_tool_name_delta_event(block_index, tc_name)
+                        yield create_input_json_delta_event(block_index, tc_args)
+                        yield create_content_block_stop_event(block_index)
+
                 # Send message_delta and message_stop
-                last = StreamChunk(
-                    text="", is_last=True,
-                    finish_reason=gen.finish_reason,
-                    prompt_tokens=gen.prompt_tokens,
-                    completion_tokens=gen.completion_tokens,
-                    cached_tokens=gen.cached_tokens,
+                stop_reason = map_finish_reason_to_stop_reason(
+                    gen.finish_reason, bool(gen.tool_calls),
                 )
-                yield _adapter.format_stream_chunk(last, req)
-                yield _adapter.format_stream_end(req)
+                yield create_message_delta_event(
+                    stop_reason=stop_reason,
+                    output_tokens=gen.completion_tokens,
+                    input_tokens=gen.prompt_tokens,
+                )
+                yield create_message_stop_event()
 
     except Exception as exc:
         err_msg = str(exc)

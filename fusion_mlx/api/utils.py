@@ -79,7 +79,7 @@ def clean_output_text(text: str) -> str:
     if not text:
         return text
     text = SPECIAL_TOKENS_PATTERN.sub("", text)
-    from ..thinking import extract_thinking
+    from .thinking import extract_thinking
 
     _, content = extract_thinking(text)
     return content.strip()

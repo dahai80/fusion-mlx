@@ -24,6 +24,7 @@ from ..anthropic_utils import (
     create_message_start_event,
     create_message_stop_event,
     create_text_delta_event,
+    create_tool_name_delta_event,
     map_finish_reason_to_stop_reason,
 )
 from .base import (
@@ -139,10 +140,16 @@ class AnthropicAdapter(BaseAdapter):
         if chunk.text:
             events.append(create_text_delta_event(0, chunk.text))
 
-        # Tool call delta
+        # Tool call delta — emit tool_use content block
         if chunk.tool_call_delta:
-            partial_json = json.dumps(chunk.tool_call_delta)
-            events.append(create_input_json_delta_event(0, partial_json))
+            tc_id = chunk.tool_call_delta.get("id", "")
+            tc_name = chunk.tool_call_delta.get("function", {}).get("name", "")
+            tc_args = chunk.tool_call_delta.get("function", {}).get("arguments", "{}")
+            events.append(create_content_block_start_event(
+                0, "tool_use", id=tc_id, name=tc_name,
+            ))
+            events.append(create_tool_name_delta_event(0, tc_name))
+            events.append(create_input_json_delta_event(0, tc_args))
 
         # Last chunk: send content_block_stop, message_delta, message_stop
         if chunk.is_last:

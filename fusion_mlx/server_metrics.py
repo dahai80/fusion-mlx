@@ -32,6 +32,39 @@ class ServerMetrics:
         with self._lock:
             self.active_requests += delta
 
+    def record_request_complete(
+        self,
+        prompt_tokens: int = 0,
+        completion_tokens: int = 0,
+        cached_tokens: int = 0,
+        prefill_duration: float = 0.0,
+        model_id: str | None = None,
+    ) -> None:
+        with self._lock:
+            self.total_requests += 1
+            self.successful_requests += 1
+            self.total_tokens_prompt += prompt_tokens
+            self.total_tokens_generated += completion_tokens
+            self.total_cached_tokens += cached_tokens
+            if model_id:
+                stats = self.model_stats.get(model_id)
+                if stats is None:
+                    stats = {
+                        "requests": 0,
+                        "prompt_tokens": 0,
+                        "completion_tokens": 0,
+                        "avg_prefill_tps": 0.0,
+                        "avg_generation_tps": 0.0,
+                    }
+                    self.model_stats[model_id] = stats
+                stats["requests"] += 1
+                stats["prompt_tokens"] += prompt_tokens
+                stats["completion_tokens"] += completion_tokens
+                if prefill_duration > 0 and prompt_tokens > 0:
+                    tps = prompt_tokens / prefill_duration
+                    old_avg = stats["avg_prefill_tps"]
+                    stats["avg_prefill_tps"] = (old_avg * (stats["requests"] - 1) + tps) / stats["requests"]
+
     def to_dict(self) -> dict:
         """Return a JSON-safe dict, excluding internal lock."""
         return {

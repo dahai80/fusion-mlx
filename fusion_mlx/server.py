@@ -43,6 +43,10 @@ except ImportError:
 # Import route modules
 from .api.openai_routes import router as openai_router
 from .api.openai_routes import set_openai_context
+from .api.embeddings_routes import router as embeddings_router
+from .api.embeddings_routes import set_embeddings_context
+from .api.rerank_routes import router as rerank_router
+from .api.rerank_routes import set_rerank_context
 from .api.openclaw_routes import router as openclaw_router
 from .api.openclaw_routes import set_openclaw_agent_pool
 from .api.recommend_routes import router as recommend_router
@@ -125,6 +129,8 @@ class Server:
         app.include_router(mcp_router)
         app.include_router(openclaw_router)
         app.include_router(recommend_router)
+        app.include_router(embeddings_router)
+        app.include_router(rerank_router)
         app.include_router(admin_router)
 
          # Register GUI compatibility router (discovery, settings, manager, admin UI)
@@ -166,6 +172,84 @@ class Server:
         @app.get("/metrics")
         async def metrics():
             return JSONResponse(get_server_metrics().to_dict())
+
+        @app.get("/api/status")
+        async def api_status():
+            from .pool.model_discovery import format_size
+            metrics = get_server_metrics().to_dict()
+            models_discovered = 0
+            models_loaded = 0
+            models_loading = 0
+            loaded_models = []
+            model_memory_used = 0
+            model_memory_max = None
+            if self.pool:
+                models_discovered = self.pool.model_count
+                models_loaded = self.pool.loaded_model_count
+                loaded_models = self.pool.get_loaded_model_ids()
+                model_memory_used = self.pool.current_model_memory
+                enforcer = self.pool._process_memory_enforcer
+                if enforcer:
+                    try:
+                        model_memory_max = enforcer.get_final_ceiling()
+                    except Exception:
+                        pass
+                for entry in self.pool._entries.values():
+                    if getattr(entry, "is_loading", False):
+                        models_loading += 1
+            return {
+                "status": "ok",
+                "version": "0.1.0",
+                "uptime_seconds": metrics.get("total_requests", 0),
+                "models_discovered": models_discovered,
+                "models_loaded": models_loaded,
+                "models_loading": models_loading,
+                "default_model": self.config.default_model,
+                "loaded_models": loaded_models,
+                "total_requests": metrics.get("total_requests", 0),
+                "total_prompt_tokens": metrics.get("total_tokens_prompt", 0),
+                "total_completion_tokens": metrics.get("total_tokens_generated", 0),
+                "model_memory_used": model_memory_used,
+                "model_memory_max": model_memory_max,
+                "model_memory_used_formatted": format_size(model_memory_used) if model_memory_used else "0B",
+                "model_memory_max_formatted": format_size(model_memory_max) if model_memory_max else "unlimited",
+            }
+
+        @app.get("/v1/models/status")
+        async def models_status():
+            if self.pool is None:
+                raise HTTPException(status_code=503, detail="Server not initialized")
+            status = self.pool.get_status()
+            return status
+
+        @app.post("/v1/models/{model_id}/load")
+        async def load_model_public(model_id: str):
+            if self.pool is None:
+                raise HTTPException(status_code=503, detail="Server not initialized")
+            resolved = resolve_model_id(model_id)
+            entry = self.pool.get_entry(resolved)
+            if entry is None:
+                raise HTTPException(status_code=404, detail=f"Model not found: {model_id}")
+            if getattr(entry, "engine", None) is not None:
+                return {"status": "ok", "model_id": model_id, "message": f"Already loaded: {model_id}"}
+            try:
+                await self.pool.get_engine(resolved)
+            except Exception as e:
+                raise HTTPException(status_code=500, detail=str(e))
+            return {"status": "ok", "model_id": model_id, "message": f"Loaded {model_id}"}
+
+        @app.post("/v1/models/{model_id}/unload")
+        async def unload_model_public(model_id: str):
+            if self.pool is None:
+                raise HTTPException(status_code=503, detail="Server not initialized")
+            resolved = resolve_model_id(model_id)
+            entry = self.pool.get_entry(resolved)
+            if entry is None:
+                raise HTTPException(status_code=404, detail=f"Model not found: {model_id}")
+            if getattr(entry, "engine", None) is None:
+                raise HTTPException(status_code=400, detail=f"Model not loaded: {model_id}")
+            await self.pool._unload_engine(resolved)
+            return {"status": "ok", "model_id": model_id}
 
         return app
 
@@ -221,6 +305,8 @@ class Server:
         set_images_context(self.pool)
         set_openclaw_agent_pool(self.pool)
         set_mcp_manager_getter(lambda: None)  # TODO: wire MCP manager
+        set_embeddings_context(self.pool, _server_state)
+        set_rerank_context(self.pool, _server_state)
 
         # Apply model aliases
         aliases = {**self.config.model_aliases}

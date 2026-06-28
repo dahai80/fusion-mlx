@@ -1057,6 +1057,54 @@ def create_input_json_delta_event(index: int, partial_json: str) -> str:
     )
 
 
+def create_tool_name_delta_event(index: int, name: str) -> str:
+    """Create content_block_delta SSE event for tool_use name."""
+    return format_sse_event(
+        "content_block_delta",
+        {
+            "type": "content_block_delta",
+            "index": index,
+            "delta": {"type": "tool_use", "name": name},
+        },
+    )
+
+
+def create_tool_name_delta_event(index: int, name: str) -> str:
+    """Create content_block_delta SSE event for tool_use name."""
+    return format_sse_event(
+        "content_block_delta",
+        {
+            "type": "content_block_delta",
+            "index": index,
+            "delta": {"type": "tool_use", "name": name},
+        },
+    )
+
+
+def create_tool_name_delta_event(index: int, name: str) -> str:
+    """Create content_block_delta SSE event for tool_use name."""
+    return format_sse_event(
+        "content_block_delta",
+        {
+            "type": "content_block_delta",
+            "index": index,
+            "delta": {"type": "tool_use", "name": name},
+        },
+    )
+
+
+def create_tool_name_delta_event(index: int, name: str) -> str:
+    """Create content_block_delta SSE event for tool_use name."""
+    return format_sse_event(
+        "content_block_delta",
+        {
+            "type": "content_block_delta",
+            "index": index,
+            "delta": {"type": "tool_use", "name": name},
+        },
+    )
+
+
 def create_content_block_stop_event(index: int) -> str:
     """Create content_block_stop SSE event."""
     return format_sse_event(

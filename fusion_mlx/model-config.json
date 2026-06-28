@@ -2,11 +2,12 @@
   "aliases": {
     "claude-4.6-sonnet": "Qwen3.6-27B-mxfp8",
     "claude-sonnet-4-6": "Qwen3.6-27B-mxfp8",
-    "claude-4.5-sonnet": "Qwen3.6-27B-mxfp8t",
+    "claude-4.5-sonnet": "Qwen3.6-27B-mxfp8",
+    "claude-haiku-4-5-20251001": "Qwen3.6-27B-mxfp8",
     "claude-4-opus": "Qwen3.6-27B-mxfp8",
     "claude-haiku": "Qwen3.6-27B-mxfp8",
     "all-chat": "Qwen3.6-27B-mxfp8",
-    "openclaw": "Qwen3.5-4B-MLX-8b"
+    "openclaw": "Qwen3.5-9B-4bit"
   },
   "models": {
     "Qwen3.6-27B-mxfp8": {
