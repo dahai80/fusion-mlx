@@ -16,7 +16,7 @@ class SchedulerConfig:
     # Maximum number of concurrent requests in the batch
     max_num_seqs: int = 256
     # Maximum tokens to process per step (for prefill chunking)
-    max_num_batched_tokens: int = 8192
+    max_num_batched_tokens: int = 65536
     # Scheduling policy
     policy: SchedulingPolicy = SchedulingPolicy.FCFS
     # BatchGenerator settings (passed directly to mlx-lm)

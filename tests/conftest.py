@@ -91,6 +91,7 @@ sys.modules["mlx.optimizers"] = MagicMock()
 sys.modules["mlx.core"] = _mlx_core
 sys.modules["mlx.random"] = MagicMock()
 sys.modules["mlx.fast"] = MagicMock()
+sys.modules["mlx.utils"] = MagicMock()
 sys.modules["mlx_dtypes"] = MagicMock()
 
 # MLX-LM mocks
@@ -138,7 +139,11 @@ _mock_module("mistral_common.tokens.tokenizers")
 _mock_module("sentencepiece")
 _mock_module("tiktoken")
 _mock_module("socksio")
-_mock_module("openai_harmony")
+_oh = _mock_module("openai_harmony")
+_oh.HarmonyEncoding = MagicMock()
+_oh.Role = MagicMock()
+_oh.StreamableParser = MagicMock()
+_oh.load_harmony_encoding = MagicMock()
 
 # Now import pytest after mocks are in place
 import pytest

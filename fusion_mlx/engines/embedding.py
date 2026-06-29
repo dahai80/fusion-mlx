@@ -9,7 +9,7 @@ from typing import Any
 
 import mlx.core as mx
 
-from ..engine_core import get_executor
+from ..engine_core import get_mlx_executor
 from .base import BaseNonStreamingEngine
 
 logger = logging.getLogger(__name__)
@@ -100,18 +100,21 @@ class EmbeddingEngine(BaseNonStreamingEngine):
         self._model = MLXEmbeddingModel(self._model_name, trust_remote_code=self._trust_remote_code)
         loop = asyncio.get_running_loop()
         await asyncio.wait_for(
-            loop.run_in_executor(get_executor("llm"), self._model.load), timeout=120.0)
+            loop.run_in_executor(get_mlx_executor(), self._model.load), timeout=120.0)
+        logger.info(f"Embedding engine started: {self._model_name}")
 
     async def stop(self) -> None:
         if self._model is None:
             return
+        logger.info(f"Stopping embedding engine: {self._model_name}")
         self._model = None
         gc.collect()
         loop = asyncio.get_running_loop()
         await asyncio.wait_for(
-            loop.run_in_executor(get_executor("llm"), lambda: (mx.synchronize(), mx.clear_cache())), timeout=5.0)
+            loop.run_in_executor(get_mlx_executor(), lambda: (mx.synchronize(), mx.clear_cache())), timeout=5.0)
+        logger.info(f"Embedding engine stopped: {self._model_name}")
 
-    async def embed(self, texts: list[str] | list[dict[str, str]], max_length: int = 512, padding: bool = True, truncation: bool = True) -> EmbeddingOutput:
+    async def embed(self, texts: list[str] | list[dict[str, str]], max_length: int | None = 512, padding: bool = True, truncation: bool = True) -> EmbeddingOutput:
         if self._model is None:
             raise RuntimeError("Engine not started. Call start() first.")
         model = self._model
@@ -119,7 +122,12 @@ class EmbeddingEngine(BaseNonStreamingEngine):
         if not input_items:
             return EmbeddingOutput(embeddings=[], total_tokens=0, dimensions=0)
         batch_size = self._batch_size
-        activity_id = self._begin_activity("embedding", detail="Embedding", total_items=len(input_items))
+        activity_id = self._begin_activity(
+            "embedding",
+            detail="Embedding",
+            total_items=len(input_items),
+            metadata={"input_count": len(input_items), "batch_size": batch_size},
+        )
         try:
             loop = asyncio.get_running_loop()
             embeddings: list[list[float]] = []
@@ -127,20 +135,41 @@ class EmbeddingEngine(BaseNonStreamingEngine):
             dimensions = 0
             for start in range(0, len(input_items), batch_size):
                 batch = input_items[start:start + batch_size]
-                def _embed_sync(b=batch):
-                    return model.embed(inputs=b, max_length=max_length, padding=padding, truncation=truncation)
+                def _embed_sync():
+                    try:
+                        return model.embed(inputs=batch, max_length=max_length, padding=padding, truncation=truncation)
+                    finally:
+                        mx.synchronize()
+                        mx.clear_cache()
                 output = await asyncio.wait_for(
-                    loop.run_in_executor(get_executor("llm"), _embed_sync), timeout=30.0)
+                    loop.run_in_executor(get_mlx_executor(), _embed_sync), timeout=30.0)
                 embeddings.extend(output.embeddings)
                 total_tokens += output.total_tokens
                 if output.dimensions:
                     dimensions = output.dimensions
-            return EmbeddingOutput(embeddings=embeddings, total_tokens=total_tokens, dimensions=dimensions)
+                self._update_activity(
+                    activity_id,
+                    completed_items=min(start + len(batch), len(input_items)),
+                    token_count=total_tokens,
+                    dimensions=dimensions,
+                )
+            output = EmbeddingOutput(embeddings=embeddings, total_tokens=total_tokens, dimensions=dimensions)
+            self._update_activity(
+                activity_id,
+                token_count=output.total_tokens,
+                dimensions=output.dimensions,
+            )
+            return output
         finally:
             self._end_activity(activity_id)
 
     def get_stats(self) -> dict[str, Any]:
         return {"model_name": self._model_name, "loaded": self._model is not None, "hidden_size": self.hidden_size, "batch_size": self._batch_size}
+
+    def get_model_info(self) -> dict[str, Any]:
+        if self._model is None:
+            return {"loaded": False, "model_name": self._model_name}
+        return self._model.get_model_info()
 
     def __repr__(self) -> str:
         status = "running" if self._model is not None else "stopped"

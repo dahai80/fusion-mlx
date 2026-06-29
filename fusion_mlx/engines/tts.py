@@ -83,10 +83,18 @@ class TTSEngine(BaseNonStreamingEngine):
         instructions: str | None = None, ref_audio: str | None = None,
         ref_text: str | None = None, temperature: float | None = None,
         top_k: int | None = None, top_p: float | None = None,
-        repetition_penalty: float | None = None, max_tokens: int | None = None, **kwargs,
+        repetition_penalty: float | None = None, max_tokens: int | None = None,
+        language: str | None = None, **kwargs,
         ) -> bytes:
         if self._model is None:
             raise RuntimeError("Engine not started.")
+
+        logger.info(
+            "TTS synthesize: model=%s, text_len=%d, voice=%s, language=%s, speed=%.1f, ref_audio=%s",
+            self._model_name, len(text), voice, language or "auto", speed,
+            "yes" if ref_audio else "no",
+        )
+
         model = self._model
         t0 = time.monotonic()
 
@@ -94,9 +102,14 @@ class TTSEngine(BaseNonStreamingEngine):
             gk: dict[str, Any] = {"text": text, "verbose": False}
             gp = inspect.signature(model.generate).parameters
             if voice is not None:
-                gk["voice"] = voice if "voice" in gp else gk.setdefault("instruct", voice) if "instruct" in gp else None
+                if "voice" in gp:
+                    gk["voice"] = voice
+                elif "instruct" in gp:
+                    gk["instruct"] = voice
             if instructions is not None and "instruct" in gp:
                 gk["instruct"] = instructions
+            if language and "lang_code" in gp:
+                gk["lang_code"] = language
             if speed != 1.0:
                 gk["speed"] = speed
             if ref_audio is not None and "ref_audio" in gp:
@@ -121,11 +134,19 @@ class TTSEngine(BaseNonStreamingEngine):
                 raise RuntimeError("TTS model produced no audio output")
             return _audio_to_wav_bytes(np.concatenate(chunks, axis=0), int(sr))
 
-        activity_id = self._begin_activity("synthesizing speech", metadata={"text_length": len(text)})
+        activity_id = self._begin_activity(
+            "synthesizing speech", detail="Synthesizing speech",
+            metadata={"text_length": len(text)},
+        )
         try:
             loop = asyncio.get_running_loop()
             result = await asyncio.wait_for(
                 loop.run_in_executor(get_executor("audio"), _synthesize_sync), timeout=60.0)
+            elapsed = time.monotonic() - t0
+            logger.info(
+                "TTS synthesize done: model=%s, %.2fs, %d bytes output",
+                self._model_name, elapsed, len(result),
+            )
             return result
         finally:
             await self._finish_activity(activity_id)
@@ -136,12 +157,18 @@ class TTSEngine(BaseNonStreamingEngine):
         ref_text: str | None = None, temperature: float | None = None,
         top_k: int | None = None, top_p: float | None = None,
         repetition_penalty: float | None = None, max_tokens: int | None = None,
-        streaming_interval: float = 0.4, **kwargs,
+        streaming_interval: float = 0.4, language: str | None = None, **kwargs,
         ) -> AsyncIterator[tuple[int, int, int, bytes]]:
         if self._model is None:
             raise RuntimeError("Engine not started.")
         if not self.supports_native_tts_streaming():
             raise NotImplementedError("Loaded TTS model does not expose native streaming")
+
+        logger.info(
+            "TTS native stream start: model=%s, text_len=%d, voice=%s, language=%s, interval=%.2fs",
+            self._model_name, len(text), voice, language or "auto", streaming_interval,
+        )
+
         model = self._model
         t0 = time.monotonic()
 
@@ -151,9 +178,14 @@ class TTSEngine(BaseNonStreamingEngine):
             if "streaming_interval" in gp:
                 gk["streaming_interval"] = streaming_interval
             if voice is not None:
-                gk["voice"] = voice if "voice" in gp else gk.setdefault("instruct", voice) if "instruct" in gp else None
+                if "voice" in gp:
+                    gk["voice"] = voice
+                elif "instruct" in gp:
+                    gk["instruct"] = voice
             if instructions is not None and "instruct" in gp:
                 gk["instruct"] = instructions
+            if language and "lang_code" in gp:
+                gk["lang_code"] = language
             if speed != 1.0:
                 gk["speed"] = speed
             if ref_audio is not None and "ref_audio" in gp:
@@ -184,7 +216,10 @@ class TTSEngine(BaseNonStreamingEngine):
             sr = int(getattr(result, "sample_rate", getattr(model, "sample_rate", _DEFAULT_SAMPLE_RATE)))
             return sr, 1, 2, self._audio_array_to_pcm_bytes(audio)
 
-        activity_id = self._begin_activity("streaming speech", metadata={"text_length": len(text)})
+        activity_id = self._begin_activity(
+            "streaming speech", detail="Streaming speech",
+            metadata={"text_length": len(text)},
+        )
         try:
             loop = asyncio.get_running_loop()
             while True:
@@ -203,6 +238,10 @@ class TTSEngine(BaseNonStreamingEngine):
                 yield sr, ch, sw, pcm
         finally:
             await self._finish_activity(activity_id)
+            logger.info(
+                "TTS native stream done: model=%s, %.2fs, chunks=%d, pcm_bytes=%d",
+                self._model_name, time.monotonic() - t0, chunk_count, total_bytes,
+            )
 
     def get_stats(self) -> dict[str, Any]:
         return {"model_name": self._model_name, "loaded": self._model is not None}

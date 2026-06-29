@@ -13,7 +13,31 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
 
+import mlx.core as mx
+
+from ..engine_core import get_mlx_executor
+
 logger = logging.getLogger(__name__)
+
+_preflight_logger = logging.getLogger("fusion_mlx.engines.preflight")
+_PREFLIGHT_UNREACHABLE_WARNED: set[tuple[str, str]] = set()
+
+
+def _warn_scheduler_unreachable_once(
+    engine: object, method: str, detail: str = ""
+) -> None:
+    key = (type(engine).__name__, method)
+    if key in _PREFLIGHT_UNREACHABLE_WARNED:
+        return
+    _PREFLIGHT_UNREACHABLE_WARNED.add(key)
+    suffix = f" — {detail}" if detail else ""
+    _preflight_logger.warning(
+        "%s.%s: scheduler unreachable via _engine.engine.scheduler"
+        "%s; preflight check skipped (further occurrences suppressed)",
+        type(engine).__name__,
+        method,
+        suffix,
+    )
 
 
 class EngineStatus(str, Enum):
@@ -35,6 +59,15 @@ class GenerationOutput:
     tool_calls: list[dict[str, Any]] | None = None
     cached_tokens: int = 0
     kv_state: dict[str, Any] | None = None
+    prompt_tps: float = 0.0
+    generation_tps: float = 0.0
+    diffusion_canvas_tokens: int = 0
+    diffusion_denoising_steps: int = 0
+    diffusion_work_tokens: int = 0
+    diffusion_canvas_tps: float = 0.0
+    diffusion_work_tps: float = 0.0
+    generated_at: float | None = None
+    generated_until: float | None = None
 
 
 
@@ -75,7 +108,7 @@ class BaseEngine(ABC):
 
     @property
     def is_mllm(self) -> bool:
-        pass
+        return False
 
     @abstractmethod
     async def start(self) -> None:
@@ -134,6 +167,10 @@ class BaseEngine(ABC):
     def prefix_cache_enabled(self) -> bool:
         return False
 
+    @property
+    def message_extractor(self):
+        return None
+
     def __init__(self):
         self._active_streams_count = 0
         self._stream_lock = threading.Lock()
@@ -191,6 +228,32 @@ class BaseEngine(ABC):
     @abstractmethod
     def get_cache_stats(self) -> dict[str, Any] | None:
         pass
+
+    async def preflight_chat(
+        self,
+        messages: list,
+        tools: list | None = None,
+        request_id: str | None = None,
+        **kwargs,
+    ) -> None:
+        """Optional prefill-memory preflight check for chat requests.
+
+        Default no-op; engines that implement the prefill memory guard
+        (``BatchedEngine``, ``VLMBatchedEngine``) override this with the
+        actual estimation logic.
+        """
+        return None
+
+    async def preflight_completion(
+        self,
+        prompt: str,
+        request_id: str | None = None,
+        **kwargs,
+    ) -> None:
+        """Optional prefill-memory preflight check for completion requests."""
+        return None
+
+
 class BaseNonStreamingEngine(ABC):
     def __init__(self):
         self._active_count = 0
@@ -200,6 +263,12 @@ class BaseNonStreamingEngine(ABC):
     def has_active_requests(self) -> bool:
         with self._active_lock:
             return self._active_count > 0
+
+    def _reset_activity_tracking(self) -> None:
+        """Clear the in-flight activity counter + records on engine teardown."""
+        with self._active_lock:
+            self._active_count = 0
+            self._activities.clear()
 
     _ACTIVITY_RESERVED_KEYS = {"request_id", "kind", "detail", "started_at", "last_activity_at", "total_items"}
 
@@ -237,6 +306,11 @@ class BaseNonStreamingEngine(ABC):
 
     async def _finish_activity(self, activity_id: str) -> None:
         self._end_activity(activity_id)
+        loop = asyncio.get_running_loop()
+        await loop.run_in_executor(
+            get_mlx_executor(),
+            lambda: (mx.synchronize(), mx.clear_cache()),
+        )
 
     def get_activity_snapshot(self) -> dict[str, Any]:
         now = time.monotonic()

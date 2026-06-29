@@ -21,26 +21,57 @@ _ISO_TO_STT_LANG: dict[str, str] = {
 }
 
 
-def _normalize_stt_generate_language(language: str | None) -> str | None:
-    if not language:
+def _stt_model_expects_language_names(model: Any) -> bool:
+    config = getattr(model, "config", None)
+    support_languages = getattr(config, "support_languages", None)
+    if not support_languages:
+        return False
+    if isinstance(support_languages, str):
+        support_languages = [support_languages]
+    supported = {
+        str(lang).strip().lower() for lang in support_languages if str(lang).strip()
+    }
+    return bool(supported & set(_ISO_TO_STT_LANG.values()))
+
+
+def _normalize_stt_generate_language(
+    model: Any, language: str | None,
+) -> str | None:
+    if language is None:
         return None
-    n = language.strip()
-    if not n:
+    normalized = language.strip()
+    if not normalized:
         return None
-    return _ISO_TO_STT_LANG.get(n.lower(), n)
+    if _stt_model_expects_language_names(model):
+        return _ISO_TO_STT_LANG.get(normalized.lower(), normalized)
+    return normalized
+
+
+_MISSING_PROCESSOR_HINTS = (
+    "preprocessor_config.json",
+    "feature extractor",
+    "featureextractor",
+)
+
+
+def _looks_like_missing_processor(message: str) -> bool:
+    lowered = message.lower()
+    return any(h in lowered for h in _MISSING_PROCESSOR_HINTS)
 
 
 def _missing_processor_hint(model_name: str) -> str:
     return (
         f"STT model '{model_name}' is missing the HuggingFace processor / "
-        "feature-extractor configuration. Use an HF-compatible variant or copy "
-        "preprocessor_config.json from the upstream repo."
+        "feature-extractor configuration (preprocessor_config.json and/or "
+        "tokenizer files). MLX-converted repositories sometimes omit these. "
+        "Fix: either use an HF-compatible variant of the model or copy "
+        "preprocessor_config.json, tokenizer.json and special_tokens_map.json "
+        "from the upstream HuggingFace repo into the local model directory."
     )
 
 
 def _wrap_stt_load_error(model_name: str, exc: Exception) -> Exception:
-    msg = str(exc).lower()
-    if any(h in msg for h in ("preprocessor_config.json", "feature extractor", "featureextractor")):
+    if _looks_like_missing_processor(str(exc)):
         return RuntimeError(f"{_missing_processor_hint(model_name)} Original error: {exc}")
     return exc
 
@@ -100,6 +131,14 @@ class STTEngine(BaseNonStreamingEngine):
     async def transcribe(self, audio_path: str, language: str | None = None, **kwargs) -> dict[str, Any]:
         if self._model is None:
             raise RuntimeError("Engine not started.")
+
+        import os
+        file_size = os.path.getsize(audio_path) if os.path.exists(audio_path) else 0
+        logger.info(
+            "STT transcribe: model=%s, file=%s (%d bytes), language=%s",
+            self._model_name, os.path.basename(audio_path), file_size, language,
+        )
+
         model = self._model
         t0 = time.monotonic()
 
@@ -122,9 +161,9 @@ class STTEngine(BaseNonStreamingEngine):
 
         def _transcribe_sync():
             gen_kwargs = dict(kwargs)
-            gl = _normalize_stt_generate_language(language)
-            if gl is not None:
-                gen_kwargs["language"] = gl
+            generate_language = _normalize_stt_generate_language(model, language)
+            if generate_language is not None:
+                gen_kwargs["language"] = generate_language
             result = model.generate(audio_path, **gen_kwargs)
             if hasattr(result, "text"):
                 raw_lang = _normalize_language(getattr(result, "language", None)) or language
@@ -133,11 +172,20 @@ class STTEngine(BaseNonStreamingEngine):
                 return {"text": result.text or "", "language": raw_lang, "segments": segments, "duration": getattr(result, "total_time", 0.0)}
             return {"text": str(result), "language": language, "segments": [], "duration": 0.0}
 
-        activity_id = self._begin_activity("transcribing", detail="Transcribing")
+        activity_id = self._begin_activity(
+            "transcribing", detail="Transcribing",
+            metadata={"file_size_bytes": file_size},
+        )
         try:
             loop = asyncio.get_running_loop()
             result = await asyncio.wait_for(
                 loop.run_in_executor(get_executor("audio"), _transcribe_sync), timeout=60.0)
+            elapsed = time.monotonic() - t0
+            text_len = len(result.get("text", ""))
+            logger.info(
+                "STT transcribe done: model=%s, %.2fs, %d chars output",
+                self._model_name, elapsed, text_len,
+            )
             return result
         finally:
             await self._finish_activity(activity_id)

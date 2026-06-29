@@ -62,6 +62,36 @@ class CloudRoutingError(RouterError):
     """Cloud routing failed."""
 
 
+class APIError(FusionMLXError):
+    """Base exception for API errors."""
+
+
+class InvalidRequestError(APIError):
+    """The request is invalid."""
+
+
+class PrefillMemoryExceededError(InvalidRequestError):
+    """Raised when a prompt's prefill would exceed memory limits.
+
+    Attributes:
+        request_id: Unique identifier for the rejected request
+        estimated_bytes: Estimated memory required for the prefill
+        limit_bytes: Memory limit that would have been exceeded
+    """
+
+    def __init__(
+        self,
+        message: str,
+        request_id: str,
+        estimated_bytes: int,
+        limit_bytes: int,
+    ):
+        super().__init__(message)
+        self.request_id = request_id
+        self.estimated_bytes = estimated_bytes
+        self.limit_bytes = limit_bytes
+
+
 def is_cache_corruption_error(err):
     """Check if an error indicates cache corruption."""
     return isinstance(err, (
