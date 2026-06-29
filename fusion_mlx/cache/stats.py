@@ -117,9 +117,12 @@ class VLMCacheStats(BaseCacheStats):
 @dataclass
 class PagedSSDCacheStats(BaseCacheStats):
     saves: int = 0
+    saves_persisted: int = 0
     loads: int = 0
     errors: int = 0
     ssd_write_drops: int = 0
+    ssd_inline_write_fallbacks: int = 0
+    evict_unlink_failures: int = 0
     total_size_bytes: int = 0
     max_size_bytes: int = 0
     configured_max_size_bytes: int = 0
@@ -151,9 +154,12 @@ class PagedSSDCacheStats(BaseCacheStats):
     def reset(self) -> None:
         super().reset()
         self.saves = 0
+        self.saves_persisted = 0
         self.loads = 0
         self.errors = 0
         self.ssd_write_drops = 0
+        self.ssd_inline_write_fallbacks = 0
+        self.evict_unlink_failures = 0
 
     def to_dict(self) -> dict[str, Any]:
         d = super().to_dict()

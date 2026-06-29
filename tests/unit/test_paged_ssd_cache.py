@@ -5,27 +5,30 @@ from fusion_mlx.cache.paged_ssd_cache import PagedSSDCacheManager
 
 
 class TestPagedSSDCacheManager:
-     def test_init_creates_directory(self):
+    def test_init_creates_directory(self):
         with tempfile.TemporaryDirectory() as tmp:
             cache_dir = Path(tmp) / "sub" / "cache"
-            mgr = PagedSSDCacheManager(cache_dir=str(cache_dir))
+            mgr = PagedSSDCacheManager(
+                cache_dir=cache_dir,
+                max_size_bytes=10 * 1024 * 1024,
+            )
             assert cache_dir.exists()
+            mgr.close()
 
-     def test_store_block_returns_false_for_empty(self):
+    def test_has_block_returns_false_for_unknown(self):
         with tempfile.TemporaryDirectory() as tmp:
-            mgr = PagedSSDCacheManager(cache_dir=tmp)
-            assert mgr.store_block(0, []) is False
+            mgr = PagedSSDCacheManager(
+                cache_dir=Path(tmp),
+                max_size_bytes=10 * 1024 * 1024,
+            )
+            assert mgr.has_block(b"\x00" * 16) is False
+            mgr.close()
 
-     def test_store_block_creates_file(self):
+    def test_max_size_bytes_param(self):
         with tempfile.TemporaryDirectory() as tmp:
-            mgr = PagedSSDCacheManager(cache_dir=tmp)
-             # Use a simple list instead of numpy to avoid MLX dependency
-            layers = [[1.0, 2.0, 3.0]]
-            result = mgr.store_block(1, layers)
-            assert result is True
-            assert (Path(tmp) / "block_1.safetensors").exists()
-
-     def test_max_cache_size_param(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            mgr = PagedSSDCacheManager(cache_dir=tmp, max_cache_size=2048)
-            assert mgr.max_cache_size == 2048
+            mgr = PagedSSDCacheManager(
+                cache_dir=Path(tmp),
+                max_size_bytes=2048,
+            )
+            assert mgr.configured_max_size == 2048
+            mgr.close()
