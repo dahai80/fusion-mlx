@@ -24,7 +24,7 @@ from typing import Any
 
 import mlx.core as mx
 import mlx.nn as nn
-from mlx_lm.sample_utils import make_sampler
+from mlx_lm.sample_utils import make_logits_processors, make_sampler
 
 from .cache.vision_embedding_cache import VisionEmbeddingCache
 from .multimodal_processor import MultimodalProcessor
@@ -50,6 +50,15 @@ class MLLMBatchRequest:
     max_tokens: int = get_default_max_tokens()
     temperature: float = 0.7
     top_p: float = 0.9
+    # OpenAI-spec penalties (#512) — wired into mlx-lm's
+    # ``make_logits_processors`` inside ``_step``. ``repetition_penalty`` is
+    # a rapid-mlx extension (mlx-lm-native semantics); ``presence_penalty``
+    # and ``frequency_penalty`` follow the OpenAI spec. Defaults match the
+    # neutral values that ``make_logits_processors`` treats as "disabled"
+    # so the homogeneous-default fast path stays a no-op.
+    repetition_penalty: float = 1.0
+    presence_penalty: float = 0.0
+    frequency_penalty: float = 0.0
     video_fps: float | None = None  # Caller-specified video FPS
     video_max_frames: int | None = None  # Caller-specified max video frames
 
@@ -63,6 +72,14 @@ class MLLMBatchRequest:
     # Generation state
     num_tokens: int = 0  # Tokens generated so far
     output_tokens: list[int] = field(default_factory=list)
+    # Prompt-token count snapshotted from ``input_ids.size`` at the end of
+    # ``_process_prompts`` (before ``input_ids`` is released to free
+    # buffers). Stamped onto every ``MLLMBatchResponse.prompt_tokens`` so
+    # the scheduler can populate ``MLLMRequest.num_prompt_tokens`` without
+    # re-tokenising the prompt or guessing at the vision-token expansion.
+    # 0 means "not yet processed" — the field is set in ``_process_prompts``
+    # once preprocessing has run.
+    num_prompt_tokens: int = 0
 
     # Vision state (populated after initial VLM forward pass)
     vision_encoded: bool = False
@@ -83,7 +100,20 @@ class MLLMBatchResponse:
     token: int  # Generated token
     logprobs: mx.array  # Log probabilities
     finish_reason: str | None = None  # "stop", "length", or None
+    # True only when the batch generator confirms ``token`` is an EOS/control
+    # stop id from its stop-token set. User stop strings are matched later by
+    # the scheduler on decoded text and must not set this flag.
+    token_is_stop_token: bool = False
     prompt_cache: list[Any] | None = None  # Extracted cache for finished requests
+    # Prompt-token count for the request that produced this token. Stamped
+    # by ``_next()`` from ``req.num_prompt_tokens`` so the scheduler can wire
+    # it through to ``RequestOutput.prompt_tokens`` → ``GenerationOutput``
+    # → OpenAI ``usage.prompt_tokens``. 0 means "not stamped" — only fresh
+    # ``_next()`` responses set it; the scheduler then memoises onto
+    # ``MLLMRequest.num_prompt_tokens`` so subsequent streaming responses
+    # inherit the count without us having to thread it through every
+    # decode step.
+    prompt_tokens: int = 0
 
 
 @dataclass
@@ -264,6 +294,42 @@ def _left_pad_prompts(
     return mx.array([[0] * (max_length - len(p)) + list(p) for p in prompts])
 
 
+def _maybe_apply_penalty_processors(
+    req: MLLMBatchRequest, row_logits: mx.array
+) -> mx.array:
+    """Return ``row_logits`` after applying the request's penalty processors (#512).
+
+    Builds and memoises a list of ``mlx_lm.sample_utils.make_logits_processors``
+    callables on the request when at least one of ``repetition_penalty`` /
+    ``presence_penalty`` / ``frequency_penalty`` is non-neutral. The neutral
+    fast path returns the input row unchanged (no allocation, no work) so
+    default-sampling batches keep the pre-#512 step time.
+    """
+    rep = req.repetition_penalty
+    pres = req.presence_penalty
+    freq = req.frequency_penalty
+    if rep == 1.0 and pres == 0.0 and freq == 0.0:
+        return row_logits
+    cached = getattr(req, "_cached_penalty_processors", None)
+    key = (rep, pres, freq)
+    if cached is None or cached[0] != key:
+        processors = make_logits_processors(
+            repetition_penalty=rep if rep != 1.0 else None,
+            presence_penalty=pres if pres != 0.0 else None,
+            presence_context_size=4096,
+            frequency_penalty=freq if freq != 0.0 else None,
+            frequency_context_size=4096,
+        )
+        cached = (key, processors)
+        req._cached_penalty_processors = cached
+    if not cached[1]:
+        return row_logits
+    tokens = req.output_tokens
+    for processor in cached[1]:
+        row_logits = processor(tokens, row_logits)
+    return row_logits
+
+
 class MLLMBatchGenerator:
     """
     Batch generator for Vision Language Models.
@@ -342,6 +408,7 @@ class MLLMBatchGenerator:
         self.max_tokens = max_tokens
         self.stop_tokens = stop_tokens or set()
         self.sampler = sampler or (lambda x: mx.argmax(x, axis=-1))
+        self._shared_batch_sampler: tuple[tuple[float, float], Callable] | None = None
 
         self.prefill_batch_size = prefill_batch_size
         self.completion_batch_size = max(completion_batch_size, prefill_batch_size)
@@ -366,13 +433,28 @@ class MLLMBatchGenerator:
                 f"MLLMBatchGenerator: Vision cache enabled (size={vision_cache_size})"
             )
 
-        # Generation stream
+        # Generation stream.
+        #
+        # Use the WORKER THREAD's default stream rather than a freshly
+        # created ``mx.new_stream(...)``. mlx-lm 0.31.3+ tags every
+        # ``mx.array`` with the stream it was produced on, and a stream
+        # created by ``mx.new_stream`` is bound to the caller thread —
+        # any other thread that later tries to materialise (lazy
+        # ``mx.eval`` / ``np.array(...)``) one of those arrays crashes
+        # with ``There is no Stream(gpu, N) in current thread``.
+        #
+        # The text scheduler avoids this by running on a dedicated
+        # ``mlx-step`` worker initialised via ``_init_mlx_step_thread``
+        # (engine_core.py), which adopts
+        # ``mx.default_stream(mx.default_device())`` — the process-wide
+        # default that every thread can materialise against. Mirror
+        # that here so logprob arrays produced under this default
+        # round-trip cleanly to the route handler thread.
         if MLLMBatchGenerator._stream is None:
-            MLLMBatchGenerator._stream = mx.new_stream(mx.default_device())
+            MLLMBatchGenerator._stream = mx.default_stream(mx.default_device())
 
         # Memory management
         self._old_wired_limit = None
-        self._executor = None      # engine executor for thread-local close
         if mx.metal.is_available():
             self._old_wired_limit = mx.set_wired_limit(
                 mx.device_info()["max_recommended_working_set_size"]
@@ -381,23 +463,16 @@ class MLLMBatchGenerator:
     def close(self) -> None:
         """Release resources and reset wired limit."""
         if self._old_wired_limit is not None:
-            # mlx-lm 0.31.3+ streams are thread-local. If an engine
-            # executor is registered, dispatch the sync to that thread
-            # so the stream context exists. Fall back to best-effort
-            # sync, then always reset the wired limit to free memory.
-            if self._executor is not None:
-                try:
-                    fut = self._executor.submit(
-                        mx.synchronize, MLLMBatchGenerator._stream
-                    )
-                    fut.result(timeout=5)
-                except Exception:
-                    pass
-            else:
-                try:
-                    mx.synchronize(MLLMBatchGenerator._stream)
-                except RuntimeError:
-                    pass
+            # mlx-lm 0.31.3+ streams are thread-local. On shutdown the
+            # owning worker thread may already be torn down, in which case
+            # mx.synchronize raises "There is no Stream(gpu, N) in current
+            # thread". The sync is best-effort here — pending ops complete
+            # during process exit anyway, and the wired-limit reset still
+            # needs to run to free reserved memory.
+            try:
+                mx.synchronize(MLLMBatchGenerator._stream)
+            except RuntimeError as e:
+                logger.debug(f"mx.synchronize skipped during close: {e}")
             mx.set_wired_limit(self._old_wired_limit)
             self._old_wired_limit = None
     def __del__(self):
@@ -557,13 +632,82 @@ class MLLMBatchGenerator:
             getattr(model_config, "image_token_index", None) if model_config else None
         )
 
-        # Prepare inputs using mlx_vlm
-        inputs = prepare_inputs(
-            self.processor,
-            images=all_images if all_images else None,
-            prompts=request.prompt,
-            image_token_index=image_token_index,
-        )
+        # F-063: extreme-aspect-ratio guard.
+        #
+        # When an image has ``min(w, h) <= 2`` (e.g. 1x10000, 10000x1,
+        # 2x2, 1x100), the Qwen3-VL patch-tokenizer (patch_size=14)
+        # rounds the short dimension to 0 patches and emits an empty
+        # vision-token sequence. The language model then has nothing
+        # to attend to and silently hallucinates a generic reply.
+        #
+        # Pre-filter with PIL here so the request fails fast with a
+        # canonical ``Failed to process image: image too small …``
+        # ``ValueError`` — the same marker the
+        # ``except (OSError, ValueError)`` block below uses, so
+        # ``is_client_error`` fires and routes map it to HTTP 400.
+        if all_images:
+            from PIL import Image as _PILImage
+
+            _MIN_DIM = 3  # patches collapse to zero below this
+            for _img_path in all_images:
+                try:
+                    with _PILImage.open(_img_path) as _im:
+                        _w, _h = _im.size
+                except Exception:
+                    # Decode failures are handled by the prepare_inputs
+                    # try/except below; don't double-report here.
+                    continue
+                if min(_w, _h) < _MIN_DIM:
+                    raise ValueError(
+                        f"Failed to process image: image too small "
+                        f"(min dimension must be >= {_MIN_DIM}, "
+                        f"got {_w}x{_h})"
+                    )
+
+        # Prepare inputs using mlx_vlm.
+        #
+        # mlx_vlm's ``prepare_inputs`` opens each saved image via PIL,
+        # which raises ``OSError`` ("broken data stream when reading
+        # image file"), ``UnidentifiedImageError``, or
+        # ``ValueError("Failed to load image from <path>: cannot
+        # identify image file ...")`` for corrupted / supported
+        # payloads (e.g. mangled-IDAT PNGs, ``data:image/png;base64,``
+        # of "Hello World", SVG-as-PNG, etc.).
+        #
+        # Normalize every image-decode failure to the canonical
+        # ``Failed to process image: …`` ``ValueError`` so:
+        #   * ``_step_no_queue``'s ``except (ValueError, RuntimeError)``
+        #     catches it (no infinite retry),
+        #   * ``is_client_error`` fires on the ``"Failed to process
+        #     image"`` substring (clean ``error`` field), and
+        #   * ``routes/chat.py`` / ``routes/anthropic.py`` /
+        #     ``routes/responses.py`` map the marker to HTTP 400 with
+        #     an actionable message.
+        # Catch the *narrow* set of exception types that PIL / mlx_vlm
+        # raise for bad image bytes — ``OSError`` (PIL "broken data
+        # stream when reading image file"), ``PIL.UnidentifiedImageError``
+        # (a subclass of ``OSError``), and ``ValueError`` ("Failed to
+        # load image from …"). Internal bugs in the processor /
+        # tokenizer / MLX runtime (``AttributeError`` / ``TypeError`` /
+        # ``RuntimeError`` / arbitrary ``Exception``) MUST keep
+        # propagating as server errors so the caller sees HTTP 500
+        # instead of a misleading HTTP 400 "Failed to process image".
+        try:
+            inputs = prepare_inputs(
+                self.processor,
+                images=all_images if all_images else None,
+                prompts=request.prompt,
+                image_token_index=image_token_index,
+            )
+        except (OSError, ValueError) as e:
+            # Already-canonical messages (the ``process_image_input``
+            # branch above raises ``ValueError("Failed to process image:
+            # …")``) pass through unchanged; everything else gets the
+            # canonical prefix so downstream matchers fire.
+            msg = str(e)
+            if msg.startswith("Failed to process image"):
+                raise
+            raise ValueError(f"Failed to process image: {msg}") from e
 
         request.input_ids = inputs.get("input_ids")
         request.pixel_values = inputs.get("pixel_values")
@@ -685,6 +829,17 @@ class MLLMBatchGenerator:
         for req in requests:
             self._preprocess_request(req)
 
+        # Snapshot per-request prompt-token counts BEFORE any later step
+        # nulls out ``input_ids`` to release Metal buffers. We stash the count on
+        # the request so ``_next()`` can stamp it onto every
+        # ``MLLMBatchResponse.prompt_tokens`` and the scheduler can wire
+        # it through to ``RequestOutput.prompt_tokens`` →
+        # ``GenerationOutput`` → OpenAI ``usage.prompt_tokens``.
+        for req in requests:
+            req.num_prompt_tokens = (
+                int(req.input_ids.size) if req.input_ids is not None else 0
+            )
+
         total_prompt_tokens = sum(
             req.input_ids.size if req.input_ids is not None else 1 for req in requests
         )
@@ -692,13 +847,29 @@ class MLLMBatchGenerator:
 
         # Guard against excessive memory usage during cache merge.
         # Each token in the batch requires KV entries across all layers.
+        #
+        # The error string MUST keep the ``exceeds the per-batch cap``
+        # phrase — ``MLLMScheduler._step_no_queue`` matches on it to
+        # classify the error as client-actionable (#682) and ``routes/
+        # chat.py`` maps it to HTTP 400 with the actionable message.
+        # If the phrase ever drifts, the soft-truncation regression
+        # comes back: the route would return HTTP 200 with empty
+        # content + ``finish_reason="length"`` and the Desktop client
+        # would render "Reached max_tokens before any output".
+        #
+        # The message also calls out image-downscale as a lever
+        # explicitly, because vision tokens dominate the prompt budget
+        # on a typical screenshot and "shorten the prompt" is not a
+        # useful instruction when the prompt is mostly image patches.
         max_batch_tokens = self.prefill_step_size * len(requests)
         if total_prompt_tokens > max_batch_tokens:
             raise ValueError(
                 f"Total prompt tokens ({total_prompt_tokens}) exceeds the "
                 f"per-batch cap ({max_batch_tokens} = prefill_step_size "
                 f"{self.prefill_step_size} × {len(requests)} request(s)). "
-                f"Raise the cap with --prefill-step-size, or shorten the prompt."
+                f"For image inputs, downscale the image; for text inputs, "
+                f"shorten the prompt or restart the server with "
+                f"--prefill-step-size set higher."
             )
 
         # Run vision encoding for each request with its own KVCache.
@@ -827,21 +998,74 @@ class MLLMBatchGenerator:
 
         logits = logits[:, -1, :]
 
-        # Sample per-request with correct temperature/top_p
+        # Apply per-request OpenAI-spec penalty processors (#512) BEFORE
+        # the softmax → sampler chain. The outer ``any(...)`` gate keeps
+        # the neutral-default path allocation-free AND skips the per-row
+        # Python loop entirely so default-sampling batches retain the
+        # pre-#512 step time. When at least one request carries a
+        # non-neutral penalty we build a fresh ``[B, vocab]`` tensor via
+        # ``mx.concatenate`` of per-row results.
+        if (
+            requests
+            and len(requests) == logits.shape[0]
+            and any(
+                r.repetition_penalty != 1.0
+                or r.presence_penalty != 0.0
+                or r.frequency_penalty != 0.0
+                for r in requests
+            )
+        ):
+            processed_rows = []
+            for i, req in enumerate(requests):
+                processed_rows.append(
+                    _maybe_apply_penalty_processors(req, logits[i : i + 1])
+                )
+            logits = mx.concatenate(processed_rows, axis=0)
+
+        # Sample per-request with correct temperature/top_p.
+        # Fast path: when all requests in the batch share (temp, top_p),
+        # invoke a single batched sampler on [B, vocab] instead of B
+        # per-row calls + mx.concatenate. mlx-lm's ``make_sampler`` chain
+        # (``apply_top_p`` + ``categorical_sampling``) is row-wise along
+        # ``axis=-1``, so one call on [B, vocab] yields [B] tokens via one
+        # MLX kernel chain — distributionally identical to the per-row
+        # loop. At B=8 on Gemma 3 12B this cuts step time ~30%.
+        #
+        # WARNING: ``_shared_batch_sampler`` is keyed only on
+        # ``(temperature, top_p)``. If we ever add per-request sampling
+        # knobs (top_k, min_p) that change the sampler's *shape* (not just
+        # the per-row logits, which the penalty processors above handle),
+        # the key MUST grow accordingly — otherwise homogeneous-looking
+        # batches would silently share an incorrect sampler. The single
+        # ``MLLMScheduler`` worker thread (see mlx-lm 0.31.3+ stream
+        # ownership rule in #404) is the only writer, so no lock needed.
         logprobs = logits - mx.logsumexp(logits, axis=-1, keepdims=True)
         if requests and len(requests) == logprobs.shape[0]:
-            sampled_tokens = []
-            for i, req in enumerate(requests):
-                # Reuse cached sampler when params haven't changed
-                sampler_key = (req.temperature, req.top_p)
-                cached = getattr(req, "_cached_sampler", None)
-                if cached is None or cached[0] != sampler_key:
-                    req_sampler = make_sampler(temp=req.temperature, top_p=req.top_p)
-                    req._cached_sampler = (sampler_key, req_sampler)
-                else:
-                    req_sampler = cached[1]
-                sampled_tokens.append(req_sampler(logprobs[i : i + 1]))
-            sampled = mx.concatenate(sampled_tokens, axis=0)
+            first_key = (requests[0].temperature, requests[0].top_p)
+            homogeneous = all((r.temperature, r.top_p) == first_key for r in requests)
+            if homogeneous:
+                shared = self._shared_batch_sampler
+                if shared is None or shared[0] != first_key:
+                    fn = make_sampler(
+                        temp=requests[0].temperature, top_p=requests[0].top_p
+                    )
+                    shared = (first_key, fn)
+                    self._shared_batch_sampler = shared
+                sampled = shared[1](logprobs)
+            else:
+                sampled_tokens = []
+                for i, req in enumerate(requests):
+                    sampler_key = (req.temperature, req.top_p)
+                    cached = getattr(req, "_cached_sampler", None)
+                    if cached is None or cached[0] != sampler_key:
+                        req_sampler = make_sampler(
+                            temp=req.temperature, top_p=req.top_p
+                        )
+                        req._cached_sampler = (sampler_key, req_sampler)
+                    else:
+                        req_sampler = cached[1]
+                    sampled_tokens.append(req_sampler(logprobs[i : i + 1]))
+                sampled = mx.concatenate(sampled_tokens, axis=0)
         else:
             sampled = self.sampler(logprobs)
 
@@ -882,9 +1106,29 @@ class MLLMBatchGenerator:
         if batch is None:
             return []
 
-        y, logprobs = batch.y, batch.logprobs
+        # ``y`` / ``outgoing_logprobs`` capture the PREVIOUS step's
+        # sampled tokens + per-token logprobs distribution (one row per
+        # active request). ``MLLMBatchResponse.logprobs`` for the
+        # responses we are about to build below at
+        # ``logprobs=outgoing_logprobs[i]`` slices from THIS array, so
+        # ``outgoing_logprobs`` is the exact object that crosses the
+        # worker → route-handler thread boundary.
+        y, outgoing_logprobs = batch.y, batch.logprobs
         batch.y, batch.logprobs = self._step(y[:, None], batch.cache, batch.requests)
         mx.async_eval(batch.y, batch.logprobs)
+
+        # Force evaluation of the OUTGOING per-step logprobs on the
+        # worker thread before they are sliced into ``MLLMBatchResponse``
+        # (and consumed by the route handler thread for ``np.array`` /
+        # top-k extraction in ``service.helpers._extract_token_logprob``).
+        # ``mx.async_eval`` above only schedules work — any residual
+        # laziness on the response slice would otherwise be resolved on
+        # the consumer thread, which under mlx-lm 0.31.3+ thread-local-
+        # stream rules crashes with ``There is no Stream(...) in current
+        # thread``. Pairs with the worker-default-stream adoption in
+        # ``__init__`` so logprobs survive a cross-thread ``np.array(...)``
+        # even if ``MLLMBatchGenerator._stream`` is ever re-pointed.
+        mx.eval(outgoing_logprobs)
 
         y = y.tolist()
         toc = time.perf_counter()
@@ -917,7 +1161,8 @@ class MLLMBatchGenerator:
             finish_reason = None
             prompt_cache = None
 
-            if token in self.stop_tokens:
+            token_is_stop_token = token in self.stop_tokens
+            if token_is_stop_token:
                 finish_reason = "stop"
                 end_idx.append(i)
             elif num_tok >= max_tok:
@@ -937,9 +1182,20 @@ class MLLMBatchGenerator:
                     uid=uid,
                     request_id=request_id,
                     token=token,
-                    logprobs=logprobs[i],
+                    # ``outgoing_logprobs[i]`` is the exact slice we
+                    # eval'd above on the worker thread; the consumer
+                    # thread's ``np.array(...)`` is therefore a pure
+                    # CPU copy with no stream lookup.
+                    logprobs=outgoing_logprobs[i],
                     finish_reason=finish_reason,
+                    token_is_stop_token=token_is_stop_token,
                     prompt_cache=prompt_cache,
+                    # ``num_prompt_tokens`` was snapshotted in
+                    # ``_process_prompts`` from ``input_ids.size`` before
+                    # the per-request buffers got released, so it's safe
+                    # to read here (``req.input_ids`` itself may now be
+                    # None to free memory).
+                    prompt_tokens=req.num_prompt_tokens,
                 )
             )
 

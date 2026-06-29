@@ -1,6 +1,8 @@
 # SPDX-License-Identifier: Apache-2.0
 """Tokenizer detection utilities."""
 
+RAPID_EXTRA_EOS_ATTR = "_rapid_extra_eos_token_ids"
+
 
 def is_gemma4_model(model_path: str) -> bool:
     """Check if the model is a Gemma 4 variant."""
