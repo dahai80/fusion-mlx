@@ -3,6 +3,8 @@
 
 import logging
 import struct
+import threading
+from collections import OrderedDict
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -148,6 +150,148 @@ def _write_safetensors_no_mx(tensors: dict[str, tuple[bytes, str, list[int]]], p
         f.write(struct.pack("<Q", len(header_json) + 8))
         f.write(header_json)
         f.write(all_bytes)
+
+
+@dataclass
+class _HotCacheBudgetEntry:
+    owner: Any
+    block_hash: bytes
+    size_bytes: int
+
+
+class SharedHotCacheBudget:
+    """Process-wide byte budget for hot cache entries across cache managers."""
+
+    def __init__(self, max_bytes: int):
+        self.max_bytes = max(0, int(max_bytes))
+        self._entries: OrderedDict[tuple[int, bytes], _HotCacheBudgetEntry] = (
+            OrderedDict()
+        )
+        self._total_bytes = 0
+        self._lock = threading.RLock()
+
+    @staticmethod
+    def _key(owner: Any, block_hash: bytes) -> tuple[int, bytes]:
+        return (id(owner), block_hash)
+
+    @property
+    def total_bytes(self) -> int:
+        with self._lock:
+            return self._total_bytes
+
+    @property
+    def remaining_bytes(self) -> int:
+        with self._lock:
+            return max(0, self.max_bytes - self._total_bytes)
+
+    def touch(self, owner: Any, block_hash: bytes) -> None:
+        """Mark an entry as recently used in the global LRU order."""
+        with self._lock:
+            key = self._key(owner, block_hash)
+            if key in self._entries:
+                self._entries.move_to_end(key)
+
+    def forget(self, owner: Any, block_hash: bytes) -> None:
+        """Remove one entry from budget accounting if present."""
+        with self._lock:
+            key = self._key(owner, block_hash)
+            entry = self._entries.pop(key, None)
+            if entry is not None:
+                self._total_bytes = max(0, self._total_bytes - entry.size_bytes)
+
+    def forget_owner(self, owner: Any) -> None:
+        """Remove all entries owned by a cache manager."""
+        owner_id = id(owner)
+        with self._lock:
+            keys = [key for key in self._entries if key[0] == owner_id]
+            for key in keys:
+                entry = self._entries.pop(key)
+                self._total_bytes = max(0, self._total_bytes - entry.size_bytes)
+
+    def clear_all_owners(self) -> int:
+        """Clear the hot cache of every manager the budget still references."""
+        with self._lock:
+            owners = []
+            seen = set()
+            for entry in self._entries.values():
+                if id(entry.owner) not in seen:
+                    seen.add(id(entry.owner))
+                    owners.append(entry.owner)
+        cleared = 0
+        for owner in owners:
+            fn = getattr(owner, "clear_hot_cache", None)
+            if callable(fn):
+                try:
+                    cleared += fn()
+                except Exception:
+                    logger.warning(
+                        "clear_hot_cache failed for an orphaned owner",
+                        exc_info=True,
+                    )
+        return cleared
+
+    def shrink_to(
+        self,
+        target_bytes: int,
+        protected_hashes: set[bytes] | None = None,
+    ) -> int:
+        """Shrink the shared hot cache to ``target_bytes`` by global LRU order."""
+        target_bytes = max(0, int(target_bytes))
+        protected_hashes = protected_hashes or set()
+        victims: list[tuple[Any, bytes, int]] = []
+
+        with self._lock:
+            while self._total_bytes > target_bytes and self._entries:
+                victim_key = None
+                victim = None
+                for key, candidate in self._entries.items():
+                    if candidate.block_hash not in protected_hashes:
+                        victim_key = key
+                        victim = candidate
+                        break
+                if victim_key is None or victim is None:
+                    break
+
+                self._entries.pop(victim_key)
+                self._total_bytes = max(0, self._total_bytes - victim.size_bytes)
+                victims.append((victim.owner, victim.block_hash, victim.size_bytes))
+
+        freed = 0
+        for owner, block_hash, size_bytes in victims:
+            evicted = owner._hot_cache_remove(block_hash, update_budget=False)
+            if evicted is not None:
+                freed += size_bytes
+                owner._handle_hot_cache_eviction(block_hash, evicted)
+        return freed
+
+    def put(
+        self, owner: Any, block_hash: bytes, size_bytes: int
+    ) -> list[tuple[Any, bytes]]:
+        """Account an entry and return globally-evicted owners/block hashes."""
+        victims: list[tuple[Any, bytes]] = []
+        size_bytes = max(0, int(size_bytes))
+        with self._lock:
+            key = self._key(owner, block_hash)
+            old = self._entries.pop(key, None)
+            if old is not None:
+                self._total_bytes = max(0, self._total_bytes - old.size_bytes)
+
+            self._entries[key] = _HotCacheBudgetEntry(
+                owner=owner,
+                block_hash=block_hash,
+                size_bytes=size_bytes,
+            )
+            self._total_bytes += size_bytes
+
+            while self._total_bytes > self.max_bytes and self._entries:
+                victim_key, victim = self._entries.popitem(last=False)
+                if victim_key == key and not self._entries:
+                    self._entries[victim_key] = victim
+                    break
+                self._total_bytes = max(0, self._total_bytes - victim.size_bytes)
+                victims.append((victim.owner, victim.block_hash))
+
+        return victims
 
 
 @dataclass
