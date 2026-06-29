@@ -20,7 +20,7 @@ import json
 import logging
 import re
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, is_dataclass
 from typing import Any
 
 from jsonschema import ValidationError, validate
@@ -28,6 +28,26 @@ from jsonschema import ValidationError, validate
 from .openai_models import FunctionCall, ResponseFormat, ToolCall
 
 logger = logging.getLogger(__name__)
+
+
+def _tool_parser_result_to_dict(p: Any) -> dict:
+    """Normalize tool parser output to a dict with 'name' and 'arguments'.
+
+    mlx-lm's parsers return different types:
+    - dict (json_tools, glm47, etc.)
+    - dataclass (AnthropicTool, GemmaTool, etc.)
+    - object with arbitrary attributes (minimax_m2, function_gemma)
+    """
+    if isinstance(p, dict):
+        return p
+    name = getattr(p, "name", None) or getattr(p, "function_name", "")
+    arguments = getattr(p, "arguments", None) or getattr(p, "input", {})
+    if isinstance(arguments, str):
+        try:
+            arguments = json.loads(arguments)
+        except (json.JSONDecodeError, ValueError):
+            pass
+    return {"name": str(name or ""), "arguments": arguments}
 
 
 def _serialize_tool_call_arguments(arguments: Any) -> str:
@@ -433,8 +453,9 @@ def parse_tool_calls(
                     # <minimax:tool_call> block contains multiple <invoke>s.
                     items = parsed if isinstance(parsed, list) else [parsed]
                     for p in items:
-                        name = p.get("name", "")
-                        arguments = p.get("arguments", {})
+                        d = _tool_parser_result_to_dict(p)
+                        name = d.get("name", "")
+                        arguments = d.get("arguments", {})
                         tool_calls.append(
                             ToolCall(
                                 id=f"call_{uuid.uuid4().hex[:8]}",

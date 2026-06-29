@@ -35,7 +35,7 @@ class SchedulerConfig:
 
     # Concurrency limits
     max_num_seqs: int = 256
-    max_num_batched_tokens: int = 8192
+    max_num_batched_tokens: int = 65536
     policy: SchedulingPolicy = SchedulingPolicy.FCFS
 
     # BatchGenerator settings

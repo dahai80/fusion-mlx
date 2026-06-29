@@ -8,7 +8,7 @@ from collections import Counter
 from dataclasses import dataclass, field
 from typing import Any
 
-_DEFAULT_MAX_TOKENS = int(os.environ.get("FUSION_MLX_MAX_TOKENS", "4096"))
+_DEFAULT_MAX_TOKENS = int(os.environ.get("FUSION_MLX_MAX_TOKENS", "65536"))
 
 def get_default_max_tokens() -> int:
     return _DEFAULT_MAX_TOKENS
