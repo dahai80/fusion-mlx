@@ -25,6 +25,8 @@ from ..utils.proc_memory import get_phys_footprint
 from .helpers import (
     _sync_and_clear_cache,
 )
+from .monkeypatches import _unregister_uid_row, _unregister_uid_rows_for_model
+from .types import _PreflightRejection
 
 
 def has_requests(self) -> bool:
@@ -107,8 +109,10 @@ def fail_all_requests(self) -> list[str]:
     for rid in failed_ids:
         uid = self.request_id_to_uid.pop(rid, None)
         if uid is not None:
+            _unregister_uid_row(self.model, uid)
             self.uid_to_request_id.pop(uid, None)
     # Reset batch generator only (cache is not corrupted)
+    _unregister_uid_rows_for_model(self.model)
     self.batch_generator = None
     self._current_sampler_params = None
     # Reclaim fragmented Metal buffers after generation failure.
@@ -131,24 +135,222 @@ def get_num_running(self) -> int:
     """Get number of running requests."""
     return len(self.running)
 
-def _preflight_memory_check(    self, request: "Request") -> str | None:
+
+def _hot_cache_cpu_bytes(self) -> int:
+    """Return serialized hot-cache bytes safe to exclude from phys guard."""
+    config = getattr(self, "config", None)
+    budget = getattr(config, "hot_cache_budget", None)
+    if budget is not None:
+        try:
+            return max(0, int(getattr(budget, "total_bytes", 0)))
+        except Exception:
+            logger.debug("Failed to read shared hot-cache byte budget")
+            return 0
+
+    manager = getattr(self, "paged_ssd_cache_manager", None)
+    if manager is None:
+        return 0
+
+    try:
+        stats = manager.get_stats()
+        return max(0, int(getattr(stats, "hot_cache_size_bytes", 0)))
+    except Exception:
+        try:
+            return max(0, int(getattr(manager, "_hot_cache_total_bytes", 0)))
+        except Exception:
+            logger.debug("Failed to read local hot-cache byte counter")
+            return 0
+
+
+def _current_usage_bytes(self, *, refresh_mlx_active: bool = True) -> int:
+    """Current memory usage for scheduler-side guard checks.
+
+    Scheduler steps run on the MLX executor thread, so they can refresh
+    mx.get_active_memory() safely.  Event-loop callers such as early
+    preflight use the cached executor sample and phys_footprint instead.
     """
-    Estimate whether prefill would exceed memory limits.
+    active = self._last_mlx_active_memory_bytes
+    if refresh_mlx_active:
+        active = max(0, int(mx.get_active_memory()))
+        self._last_mlx_active_memory_bytes = active
+    hot_cache_bytes = _hot_cache_cpu_bytes(self)
+    phys = max(0, int(get_phys_footprint()) - hot_cache_bytes)
+    return max(active, phys)
 
-    Computes worst-case peak memory for:
-    - KV cache for the last prefill chunk (K + V)
-    - SDPA temporary attention matrix (for head_dim > 128)
-    - Existing running requests' KV cache growth
-    - 5% safety margin for Metal implicit allocations
 
-    Rejects if the sum would exceed the hard limit.
+def _memory_component_limit_for_rejection(self, component_limit: int) -> int:
+    """Apply hot-cache headroom reservation to a component ceiling."""
+    if component_limit <= 0:
+        return 0
+    hot_reserved = max(0, int(getattr(self, "_memory_hot_cache_reserved_bytes", 0) or 0))
+    if hot_reserved <= 0:
+        return component_limit
+    return max(1, component_limit - hot_reserved)
+
+
+def _preflight_abort_description(self) -> tuple[int, int, float]:
+    """Return ``(base_cap, effective_cap, margin)`` for the prefill abort path.
+
+    The abort cap is the stable physical limit used to kill an in-flight
+    prefill that would overshoot Metal's wired ceiling.  It is derived
+    from ``_memory_abort_limit_bytes`` (set by the enforcer) or falls
+    back to ``_memory_hard_limit_bytes`` when the enforcer has not yet
+    propagated.
+    """
+    base_cap = getattr(self, "_memory_abort_limit_bytes", 0)
+    if base_cap <= 0:
+        base_cap = self._memory_hard_limit_bytes
+    margin = getattr(self, "_prefill_abort_margin", 0.90)
+    effective = int(base_cap * margin)
+    return (int(base_cap), effective, margin)
+
+
+def _format_rejection_message(
+    self,
+    *,
+    estimated: int,
+    current: int,
+    peak: int,
+    hard_limit: int,
+) -> str:
+    """Build the prefill-rejection diagnostic.
+
+    Identifies which of static / dynamic / metal_cap is binding so the
+    message can steer the user to the right remedy (close apps for
+    dynamic, raise sysctl for metal_cap, raise tier or reduce context
+    for static).
+    """
+    from ..utils.hardware import format_bytes
+
+    static = getattr(self, "_memory_static_ceiling_bytes", 0)
+    dynamic = getattr(self, "_memory_dynamic_ceiling_bytes", 0)
+    metal_cap = getattr(self, "_memory_metal_cap_bytes", 0)
+
+    binding: list[str] = []
+    if static and _memory_component_limit_for_rejection(self, static) == hard_limit:
+        binding.append("static")
+    if dynamic and _memory_component_limit_for_rejection(self, dynamic) == hard_limit:
+        binding.append("dynamic")
+    if metal_cap and _memory_component_limit_for_rejection(self, metal_cap) == hard_limit:
+        binding.append("metal_cap")
+    binding_str = "/".join(binding) if binding else "effective"
+
+    is_custom = getattr(self, "_memory_guard_tier", "") == "custom"
+    if "dynamic" in binding and is_custom:
+        advice = (
+            f"raise custom_ceiling_bytes in admin Memory settings "
+            f"(currently pinned at {format_bytes(dynamic)}), "
+            f"or reduce context length"
+        )
+    elif "dynamic" in binding and static and static > dynamic:
+        headroom = max(0, dynamic - current)
+        advice = (
+            f"close other apps to free RAM "
+            f"(static cap is {format_bytes(static)} but only "
+            f"{format_bytes(headroom)} is reclaimable right now), "
+            f"raise memory_guard_tier (safe → balanced → aggressive), "
+            f"or reduce context length"
+        )
+    elif "metal_cap" in binding:
+        advice = (
+            f"raise kernel iogpu.wired_limit_mb in Terminal "
+            f"(currently caps Metal at {format_bytes(metal_cap)}), "
+            f"or reduce context length"
+        )
+    else:
+        advice = (
+            "reduce context length or raise memory_guard_tier "
+            "(safe → balanced → aggressive)"
+        )
+    advice = advice[:1].upper() + advice[1:]
+
+    return (
+        f"Prefill would require ~{format_bytes(estimated)} peak "
+        f"(current {format_bytes(current)} + KV+SDPA {format_bytes(peak)}) "
+        f"but {binding_str} ceiling is {format_bytes(hard_limit)}. "
+        f"{advice}."
+    )
+
+
+def _preflight_safety_rejection(
+    self,
+    *,
+    num_prompt_tokens: int,
+    cached_tokens: int = 0,
+    current_usage_bytes: int,
+) -> _PreflightRejection | None:
+    """Predict whether even the safety floor chunk cannot fit.
+
+    This mirrors the mid-prefill ``_guard_prefill_chunk`` rejection, but
+    runs before the route returns a ``StreamingResponse``.  It charges the
+    resident KV that will be allocated by the prompt plus the minimum
+    chunk transient at the full prompt context length.
+    """
+    if self.memory_monitor is None:
+        return None
+    base_cap, cap, margin = _preflight_abort_description(self)
+    if cap <= 0:
+        return None
+
+    new_tokens = max(int(num_prompt_tokens) - max(int(cached_tokens), 0), 0)
+    if new_tokens == 0:
+        return None
+
+    floor_chunk = min(max(1, self._prefill_min_chunk_tokens), new_tokens)
+    kv_len = max(int(num_prompt_tokens) - 1, 1)
+    new_kv, _cached_kv = self.memory_monitor.estimate_prompt_kv_bytes(
+        new_tokens, cached_tokens
+    )
+    min_transient = self.memory_monitor._predicted_chunk_transient(floor_chunk, kv_len)
+    if new_kv <= 0 and min_transient <= 0:
+        return None
+
+    estimated = int(current_usage_bytes + new_kv + min_transient)
+    if estimated <= cap:
+        return None
+
+    from ..utils.hardware import format_bytes
+
+    message = (
+        "Prefill context too large for available memory "
+        f"(preflight safety guard, kv_len={kv_len}, "
+        f"min_chunk={floor_chunk}): predicted peak would require "
+        f"~{format_bytes(estimated)} "
+        f"(current {format_bytes(current_usage_bytes)} + "
+        f"KV {format_bytes(new_kv)} + "
+        f"min-chunk transient {format_bytes(min_transient)}) "
+        f"but prefill safety cap is {format_bytes(cap)} "
+        f"({round(margin * 100)}% of effective ceiling "
+        f"{format_bytes(base_cap)}). Reduce context length, free system "
+        "memory, or loosen memory_guard_tier (safe → balanced → aggressive)."
+    )
+    return _PreflightRejection(
+        message=message,
+        estimated_bytes=estimated,
+        limit_bytes=int(cap),
+    )
+
+
+def _preflight_memory_check(self, request: "Request") -> _PreflightRejection | None:
+    """Estimate whether prefill would exceed memory limits.
+
+    Computes worst-case peak memory for the last prefill chunk
+    (model weights + KV cache + SDPA activation/scratch) and rejects
+    if it would exceed the hard limit.
+
+    Mirrors MLX SDPA dispatch closely enough that unsupported prefill
+    head dimensions are charged for the unfused fp32 score matrix.
 
     Returns:
-        Error message string if request should be rejected, None if OK.
+        ``_PreflightRejection`` carrying the message + numeric
+        estimated / limit bytes if the request should be rejected,
+        otherwise ``None``.
     """
     if not self._prefill_memory_guard:
         return None
     if self._memory_hard_limit_bytes <= 0:
+        return None
+    if self.memory_monitor is None:
         return None
 
     prompt_tokens = request.num_prompt_tokens
@@ -158,105 +360,64 @@ def _preflight_memory_check(    self, request: "Request") -> str | None:
     if new_tokens == 0:
         return None
 
-    # Extract model architecture params for memory estimation
-    model = getattr(self, "model", None)
-    if model is None:
-        return None  # no model, can't estimate
-
-    config = getattr(model, "config", None) or getattr(model, "args", None)
-    if config is None:
-        return None  # no config, can't estimate
-
-    num_layers = getattr(config, "num_hidden_layers", None) or getattr(
-        config, "num_layers", None
+    peak = self.memory_monitor.estimate_prefill_peak_bytes(
+        new_tokens, self.config.prefill_step_size, cached_tokens=cached_tokens
     )
-    num_kv_heads = getattr(config, "num_key_value_heads", None)
-    num_query_heads = getattr(config, "num_attention_heads", None) or num_kv_heads
-    head_dim = getattr(config, "head_dim", None)
+    if peak == 0:
+        return None
 
-    # Derive head_dim from hidden_size if not explicit
-    if head_dim is None:
-        hidden_size = getattr(config, "hidden_size", None) or getattr(
-            config, "n_embd", None
+    current = _current_usage_bytes(self)
+    estimated = current + peak
+    hard_limit = self._memory_hard_limit_bytes
+
+    if estimated > hard_limit:
+        message = _format_rejection_message(
+            self,
+            estimated=estimated,
+            current=current,
+            peak=peak,
+            hard_limit=hard_limit,
         )
-        if hidden_size and num_query_heads:
-            head_dim = hidden_size // num_query_heads
-
-    if not all([num_layers, num_kv_heads, head_dim]):
-        return None  # can't estimate without key params
-
-    # Determine dtype size from model weights
-    dtype_bytes = 2  # float16 default
-    try:
-        first_weight = None
-        for child in model.children():
-            if hasattr(child, "weight"):
-                first_weight = child.weight
-                break
-        if first_weight is not None:
-            dtype_map = {
-                mx.float16: 2, mx.bfloat16: 2,
-                mx.float32: 4, mx.int8: 1,
-            }
-            dtype_bytes = dtype_map.get(first_weight.dtype, 2)
-    except Exception:
-        pass
-
-    chunk = min(new_tokens, self.config.prefill_step_size)
-
-    # KV cache for the prefill chunk: 2 (K+V) * layers * chunk * kv_heads * head_dim
-    kv_bytes = 2 * num_layers * chunk * num_kv_heads * head_dim * dtype_bytes
-
-    # SDPA temp matrix: only for head_dim > 128
-    sdpa_bytes = 0
-    if head_dim > 128:
-        kv_len = cached_tokens + chunk
-        sdpa_bytes = num_query_heads * chunk * kv_len * 4  # float32
-
-    # Estimate running requests' KV cache memory (decode growth headroom)
-    running_kv_bytes = 0
-    for r in self.running:
-        req = self.requests.get(r)
-        if req is None:
-            continue
-        # Count tokens already in KV cache for this request
-        req_tokens = getattr(req, "_total_tokens_generated", 0) or 0
-        if req_tokens == 0:
-            # Fallback: estimate from prompt length (conservative)
-            req_tokens = request.num_prompt_tokens // 4
-        running_kv_bytes += (
-            2 * num_layers * req_tokens * num_kv_heads * head_dim * dtype_bytes
+        return _PreflightRejection(
+            message=message,
+            estimated_bytes=int(estimated),
+            limit_bytes=int(hard_limit),
         )
 
-    prefill_peak = kv_bytes + sdpa_bytes
-    safety_margin = int(prefill_peak * 0.05)  # 5% for Metal implicit allocs
-    total_estimated = prefill_peak + safety_margin
-
-    current = max(mx.get_active_memory(), get_phys_footprint())
-
-    if current + total_estimated > self._memory_hard_limit_bytes:
-        from ..utils.hardware import format_bytes
-
-        usage_gb = current / (1024**3)
-        ceiling_gb = self._memory_hard_limit_bytes / (1024**3)
-        return (
-            f"Prefill would require ~{format_bytes(current + total_estimated)} peak "
-            f"(current {format_bytes(current)} + KV+SDPA {format_bytes(prefill_peak)} "
-            f"+ safety {format_bytes(safety_margin)}) "
-            f"but ceiling is {format_bytes(self._memory_hard_limit_bytes)} "
-            f"(usage {usage_gb:.1f} GB, ceiling {ceiling_gb:.1f} GB). "
-            f"Reduce context length or lower memory_guard_tier."
+    safety_rejection = _preflight_safety_rejection(
+        self,
+        num_prompt_tokens=prompt_tokens,
+        cached_tokens=cached_tokens,
+        current_usage_bytes=current,
+    )
+    if safety_rejection is not None:
+        logger.warning(
+            "Preflight safety-cap rejected request %s: %s",
+            request.request_id,
+            safety_rejection.message,
         )
+        return safety_rejection
+
     return None
 
 
 def _estimate_prefill_peak(self, new_tokens: int) -> int:
     """Estimate worst-case peak memory for a prefill chunk.
 
+    Delegates to memory_monitor when available; falls back to inline
+    estimation when the monitor has not been initialised.
+
     Returns 0 if model info is unavailable or new_tokens is 0.
     """
     if new_tokens <= 0:
         return 0
+
+    if self.memory_monitor is not None:
+        peak = self.memory_monitor.estimate_prefill_peak_bytes(
+            new_tokens, self.config.prefill_step_size
+        )
+        if peak > 0:
+            return peak
 
     model = getattr(self, "model", None)
     if model is None:
@@ -283,7 +444,6 @@ def _estimate_prefill_peak(self, new_tokens: int) -> int:
     if not all([num_layers, num_kv_heads, head_dim]):
         return 0
 
-    # Determine dtype size
     dtype_bytes = 2
     try:
         first_weight = None
@@ -301,13 +461,10 @@ def _estimate_prefill_peak(self, new_tokens: int) -> int:
         pass
 
     chunk = min(new_tokens, self.config.prefill_step_size)
-
-    # KV cache: 2 (K+V) * layers * chunk * kv_heads * head_dim * dtype
     kv_bytes = 2 * num_layers * chunk * num_kv_heads * head_dim * dtype_bytes
 
-    # SDPA temp matrix: only for head_dim > 128
     sdpa_bytes = 0
     if head_dim > 128:
-        sdpa_bytes = num_query_heads * chunk * chunk * 4  # float32, conservative kv_len ~ chunk
+        sdpa_bytes = num_query_heads * chunk * chunk * 4
 
     return kv_bytes + sdpa_bytes

@@ -32,6 +32,7 @@ from .helpers import (
     _slice_vlm_extra,
     _sync_and_clear_cache,
 )
+from .monkeypatches import _register_uid_rows
 
 # Module-level alias so Scheduler.__init__ can fall back to mlx-lm's default
 # stream when no per-engine stream is provided.
@@ -672,6 +673,7 @@ def _insert_prefilled_request(    self,
     )
 
     if uids:
+        _register_uid_rows(self.model, uids, [state.sampler], [per_row_lps])
         uid = uids[0]
         self.request_id_to_uid[request.request_id] = uid
         self.uid_to_request_id[uid] = request.request_id

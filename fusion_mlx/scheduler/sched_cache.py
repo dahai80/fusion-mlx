@@ -21,12 +21,49 @@ import mlx.core as mx
 from .helpers import (
     _safe_sync_stream,
 )
+from .monkeypatches import _unregister_uid_row
 
 # Module-level alias so Scheduler.__init__ can fall back to mlx-lm's default
 # stream when no per-engine stream is provided.
+from .helpers import (
+    _get_attr_or_key,
+    _model_declares_llama4,
+)
 from .types import (
     _mx_buffer_access_lock,
 )
+
+try:
+    from ..cache.hybrid_cache import ModelCacheConfig
+    HAS_CACHE_TYPE_HANDLERS = True
+except ImportError:
+    ModelCacheConfig = None
+    HAS_CACHE_TYPE_HANDLERS = False
+
+
+_TURBOQUANT_KV_CACHE_TYPES = frozenset(
+    {
+        "TurboQuantKVCache",
+        "BatchTurboQuantKVCache",
+    }
+)
+
+
+_MINIMAX_M3_KV_CACHE_TYPES = frozenset(
+    {
+        "MiniMaxM3KVCache",
+        "MiniMaxM3BatchKVCache",
+    }
+)
+
+
+def _is_turboquant_kv_cache(cache_obj):
+    return type(cache_obj).__name__ in _TURBOQUANT_KV_CACHE_TYPES
+
+
+def _is_turboquant_kv_family_cache(cache_obj):
+    from mlx_lm.models.cache import KVCache
+    return isinstance(cache_obj, KVCache) or _is_turboquant_kv_cache(cache_obj)
 
 
 @staticmethod
@@ -178,6 +215,7 @@ def _drain_pending_async_removes(self) -> None:
                 e,
             )
         # Cleanup uid maps now that the slot is reclaimable.
+        _unregister_uid_row(self.model, uid)
         if uid in self.uid_to_request_id:
             del self.uid_to_request_id[uid]
         if request_id in self.request_id_to_uid:
@@ -381,3 +419,376 @@ def _cache_tree_has_arrays_cache(cache_obj: Any) -> bool:
             Scheduler._cache_tree_has_arrays_cache(sub) for sub in sub_caches
         )
     return type(cache_obj).__name__ in ("ArraysCache", "SizedArraysCache")
+
+
+def _collect_cache_storage_arrays(self, cache_obj: Any) -> list:
+    arrays = []
+    if isinstance(cache_obj, mx.array):
+        return [cache_obj]
+    sub_caches = getattr(cache_obj, "caches", None)
+    if isinstance(sub_caches, (list, tuple)):
+        for sub_cache in sub_caches:
+            arrays.extend(self._collect_cache_storage_arrays(sub_cache))
+    array_cache = getattr(cache_obj, "cache", None)
+    if isinstance(array_cache, (list, tuple)):
+        for item in array_cache:
+            arrays.extend(self._collect_cache_storage_arrays(item))
+    for attr in ("keys", "values", "left_padding", "lengths"):
+        value = getattr(cache_obj, attr, None)
+        if isinstance(value, mx.array):
+            arrays.append(value)
+    return arrays
+
+
+def _materialize_cache_storage(self, cache_list: list) -> None:
+    arrays = []
+    for cache_obj in cache_list:
+        arrays.extend(self._collect_cache_storage_arrays(cache_obj))
+    if arrays:
+        with _mx_buffer_access_lock:
+            mx.eval(*arrays)
+
+
+def _trim_prompt_cache_by_tokens(self, cache_list: list, n: int) -> bool:
+    if not cache_list:
+        return False
+    if n <= 0:
+        return True
+    for cache_obj in cache_list:
+        if not self._trim_cache_tree_by_tokens(cache_obj, n):
+            return False
+    return True
+
+
+def _trim_cache_tree_by_tokens(self, cache_obj: Any, n: int) -> bool:
+    sub_caches = getattr(cache_obj, "caches", None)
+    if isinstance(sub_caches, (list, tuple)):
+        return all(
+            self._trim_cache_tree_by_tokens(sub_cache, n)
+            for sub_cache in sub_caches
+        )
+    trim_fn = getattr(cache_obj, "trim", None)
+    if not callable(trim_fn):
+        return False
+    try:
+        trimmed = trim_fn(n)
+        if trimmed is None:
+            return True
+        return int(trimmed) >= n
+    except Exception:
+        return False
+
+
+def _cache_tree_has_class_name(
+    self,
+    cache_obj: Any,
+    class_names: frozenset,
+) -> bool:
+    if type(cache_obj).__name__ in class_names:
+        return True
+    sub_caches = getattr(cache_obj, "caches", None)
+    if isinstance(sub_caches, (list, tuple)):
+        return any(
+            self._cache_tree_has_class_name(sub_cache, class_names)
+            for sub_cache in sub_caches
+        )
+    return False
+
+
+def _align_minimax_m3_partial_cache_to_prefill_step(
+    self,
+    request,
+) -> bool:
+    cache_list = request.prompt_cache
+    block_table = request.block_table
+    prompt_tokens = request.prompt_token_ids or []
+    if not cache_list or block_table is None or not block_table.block_ids:
+        return False
+    if (
+        block_table.num_tokens <= 0
+        or block_table.num_tokens >= len(prompt_tokens)
+    ):
+        return False
+
+    has_minimax_m3 = any(
+        self._cache_tree_has_class_name(cache_obj, _MINIMAX_M3_KV_CACHE_TYPES)
+        for cache_obj in cache_list
+    )
+    if not has_minimax_m3:
+        return False
+
+    block_size = int(getattr(self.config, "paged_cache_block_size", 0) or 0)
+    prefill_step = int(getattr(self.config, "prefill_step_size", 0) or 0)
+    if block_size <= 0 or prefill_step <= block_size:
+        return False
+
+    aligned_tokens = (block_table.num_tokens // prefill_step) * prefill_step
+    aligned_tokens = (aligned_tokens // block_size) * block_size
+    if aligned_tokens <= 0 or aligned_tokens >= block_table.num_tokens:
+        return False
+
+    target_block_count = 0
+    target_tokens = 0
+    for block_id in block_table.block_ids:
+        block = (
+            self.paged_cache_manager.allocated_blocks.get(block_id)
+            if self.paged_cache_manager is not None
+            else None
+        )
+        token_count = int(getattr(block, "token_count", block_size) or block_size)
+        if target_tokens + token_count > aligned_tokens:
+            break
+        target_tokens += token_count
+        target_block_count += 1
+
+    if target_tokens != aligned_tokens:
+        logger.debug(
+            "MiniMax M3 partial cache alignment skipped for %s: cannot align "
+            "block table from %d to %d tokens",
+            request.request_id,
+            block_table.num_tokens,
+            aligned_tokens,
+        )
+        return False
+
+    trim_tokens = block_table.num_tokens - aligned_tokens
+    if not self._trim_prompt_cache_by_tokens(cache_list, trim_tokens):
+        logger.debug(
+            "MiniMax M3 partial cache alignment skipped for %s: cache trim "
+            "by %d tokens failed",
+            request.request_id,
+            trim_tokens,
+        )
+        return False
+
+    dropped_block_ids = block_table.block_ids[target_block_count:]
+    if self.paged_cache_manager is not None:
+        for block_id in dropped_block_ids:
+            self.paged_cache_manager.free_block(block_id)
+    block_table.block_ids = block_table.block_ids[:target_block_count]
+    block_table.num_tokens = aligned_tokens
+
+    logger.debug(
+        "MiniMax M3 partial cache aligned for %s: trimmed %d tokens, "
+        "released %d blocks, new num_tokens=%d",
+        request.request_id,
+        trim_tokens,
+        len(dropped_block_ids),
+        aligned_tokens,
+    )
+    return True
+
+
+def _model_uses_mla(self) -> bool:
+    cached = getattr(self, "_mla_model", None)
+    if cached is not None:
+        return cached
+
+    detected = False
+    model = getattr(self, "model", None)
+
+    def _cfg_has_kv_lora(cfg, depth=0):
+        if cfg is None or depth > 3:
+            return False
+        if isinstance(getattr(cfg, "kv_lora_rank", None), int):
+            return True
+        return any(
+            _cfg_has_kv_lora(getattr(cfg, sub, None), depth + 1)
+            for sub in (
+                "text_config",
+                "llm_config",
+                "language_config",
+                "thinker_config",
+            )
+        )
+
+    for holder in (
+        model,
+        getattr(model, "_language_model", None),
+        getattr(model, "language_model", None),
+    ):
+        if holder is None:
+            continue
+        if _cfg_has_kv_lora(getattr(holder, "args", None)) or _cfg_has_kv_lora(
+            getattr(holder, "config", None)
+        ):
+            detected = True
+            break
+
+    if not detected and model is not None and hasattr(model, "modules"):
+        try:
+            for m in model.modules():
+                if (
+                    hasattr(m, "kv_a_proj_with_mqa")
+                    or hasattr(m, "kv_a_layernorm")
+                    or isinstance(getattr(m, "kv_lora_rank", None), int)
+                ):
+                    detected = True
+                    break
+        except Exception:
+            pass
+
+    if detected:
+        logger.info(
+            "TurboQuant disabled: model uses Multi-head Latent Attention "
+            "(MLA), which is incompatible with quantized KV cache states; "
+            "keeping fp16 KV cache."
+        )
+    self._mla_model = detected
+    return detected
+
+
+def _model_uses_attention_sinks(self) -> bool:
+    cached = getattr(self, "_attention_sink_model", None)
+    if cached is not None:
+        return cached
+
+    detected = False
+    model = getattr(self, "model", None)
+
+    def _has_real_sink_attr(obj):
+        for name in ("sinks", "attention_sink_bias", "attn_sink"):
+            value = None
+            if isinstance(obj, dict):
+                value = obj.get(name)
+            if value is None:
+                data = getattr(obj, "__dict__", {})
+                if isinstance(data, dict):
+                    value = data.get(name)
+            if isinstance(value, mx.array):
+                return True
+            if value is not None and isinstance(value, (int, float, list, tuple)):
+                return True
+        return False
+
+    try:
+        modules = getattr(model, "modules", None)
+    except Exception:
+        modules = None
+    if type(modules).__module__.startswith("unittest.mock"):
+        modules = None
+    if not detected and callable(modules):
+        try:
+            for m in modules():
+                if _has_real_sink_attr(m):
+                    detected = True
+                    break
+        except Exception:
+            pass
+
+    if detected:
+        logger.info(
+            "TurboQuant disabled: model uses attention sinks, which are "
+            "not supported by TurboQuant's quantized attention kernels; "
+            "keeping fp16 KV cache."
+        )
+    self._attention_sink_model = detected
+    return detected
+
+
+def _turboquant_eligible(self, prompt_cache: list) -> bool:
+    from mlx_lm.models.cache import ArraysCache, CacheList, KVCache
+
+    if self._model_uses_mla():
+        return False
+    if self._model_uses_attention_sinks():
+        return False
+
+    def _ok(c):
+        if isinstance(c, KVCache):
+            return True
+        if isinstance(c, ArraysCache):
+            return True
+        class_name = type(c).__name__
+        if class_name in (
+            "SizedArraysCache",
+            "RotatingKVCache",
+            "BatchRotatingKVCache",
+            "PrefillReadyRotatingKVCache",
+            "TurboQuantKVCache",
+            "BatchTurboQuantKVCache",
+        ):
+            return True
+        if class_name in ("MiniMaxM3KVCache", "MiniMaxM3BatchKVCache"):
+            return False
+        if isinstance(c, CacheList):
+            return all(_ok(inner) for inner in c.caches)
+        return False
+
+    return bool(prompt_cache) and all(_ok(c) for c in prompt_cache)
+
+
+def _infer_live_layer_cache_types(self):
+    if not HAS_CACHE_TYPE_HANDLERS or ModelCacheConfig is None:
+        return None
+
+    make_cache = getattr(self.model, "make_cache", None)
+    if not callable(make_cache):
+        return None
+
+    try:
+        cache_list = make_cache()
+    except Exception as e:
+        logger.debug("Failed to build cache list for SSD signature: %s", e)
+        return None
+
+    if not isinstance(cache_list, (list, tuple)) or not cache_list:
+        return None
+
+    cache_list = list(cache_list)
+    try:
+        model_cache_config = ModelCacheConfig.from_cache_list(
+            cache_list,
+            model_name=self.config.model_name or "",
+        )
+        layer_cache_types = model_cache_config.get_type_names()
+    except Exception as e:
+        logger.debug("Failed to infer SSD layer cache signature: %s", e)
+        return None
+
+    if not layer_cache_types:
+        return None
+
+    if self._turboquant_kv_bits is None:
+        return layer_cache_types
+
+    try:
+        if not self._turboquant_eligible(cache_list):
+            return layer_cache_types
+    except Exception as e:
+        logger.debug("Failed to evaluate TurboQuant SSD signature: %s", e)
+        return layer_cache_types
+
+    kv_indices = [
+        i for i, c in enumerate(cache_list) if _is_turboquant_kv_family_cache(c)
+    ]
+    skip_last = self._turboquant_skip_last and len(kv_indices) > 1
+    last_kv_idx = kv_indices[-1] if skip_last else -1
+    for idx in kv_indices:
+        if idx != last_kv_idx and idx < len(layer_cache_types):
+            layer_cache_types[idx] = "TurboQuantKVCache"
+
+    return layer_cache_types
+
+
+def refresh_ssd_layer_signature(self):
+    manager = self.paged_ssd_cache_manager
+    if manager is None:
+        return None
+
+    layer_cache_types = self._infer_live_layer_cache_types()
+    if not layer_cache_types:
+        return None
+
+    try:
+        set_signature = getattr(manager, "set_expected_layer_signature", None)
+        if callable(set_signature):
+            set_signature(layer_cache_types)
+        else:
+            manager.adopt_layer_signature_if_unset(layer_cache_types)
+        manager.invalidate_stale_layer_signature()
+    except Exception as e:
+        logger.warning("Failed to refresh SSD layer cache signature: %s", e)
+        return None
+
+    return layer_cache_types

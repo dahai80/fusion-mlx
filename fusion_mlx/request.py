@@ -209,6 +209,8 @@ class RequestOutput:
     tool_calls: list[dict[str, str]] | None = None
     cached_tokens: int = 0
     error: str | None = None
+    error_code: str | None = None
+    error_metadata: dict | None = None
 
     @property
     def usage(self) -> dict[str, int]:

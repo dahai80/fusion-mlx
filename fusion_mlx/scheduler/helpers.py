@@ -166,3 +166,70 @@ def _deferred_clear_delay(sched) -> int:
     batch_size = len(getattr(sched, "running", {}))
     delay = getattr(sched, "_DEFERRED_CLEAR_DELAY", 4)
     return max(2, min(16, delay + (batch_size // 4)))
+
+
+def _get_attr_or_key(obj, name):
+    if isinstance(obj, dict):
+        return obj.get(name)
+    try:
+        value = getattr(obj, name)
+    except Exception:
+        return None
+    if type(value).__module__.startswith("unittest.mock"):
+        return None
+    return value
+
+
+def _model_declares_llama4(model) -> bool:
+    seen = set()
+    stack = [model]
+    while stack:
+        obj = stack.pop()
+        if obj is None:
+            continue
+        obj_id = id(obj)
+        if obj_id in seen:
+            continue
+        seen.add(obj_id)
+        if _get_attr_or_key(obj, "model_type") == "llama4":
+            return True
+        for attr in ("config", "args", "text_config", "language_config", "llm_config"):
+            child = _get_attr_or_key(obj, attr)
+            if child is not None and not isinstance(
+                child, (str, bytes, int, float, bool)
+            ):
+                stack.append(child)
+    return False
+
+
+def _model_declares_minimax_m3(model) -> bool:
+    seen = set()
+    stack = [model]
+    while stack:
+        obj = stack.pop()
+        if obj is None:
+            continue
+        obj_id = id(obj)
+        if obj_id in seen:
+            continue
+        seen.add(obj_id)
+        model_type = _get_attr_or_key(obj, "model_type")
+        if isinstance(model_type, str) and "minimax" in model_type.lower():
+            if "m3" in model_type.lower() or "M3" in model_type:
+                return True
+        for attr in ("config", "args", "text_config", "language_config", "llm_config"):
+            child = _get_attr_or_key(obj, attr)
+            if child is not None and not isinstance(
+                child, (str, bytes, int, float, bool)
+            ):
+                stack.append(child)
+    return False
+
+
+def _seed_text_only_mrope_delta_for_cached_prefill(model, request) -> None:
+    if getattr(request, "cached_tokens", 0) <= 0:
+        return
+    lm = getattr(model, "_language_model", None)
+    if lm is None or not hasattr(lm, "_rope_deltas"):
+        return
+    lm._rope_deltas = mx.zeros((1, 1), dtype=mx.int64)

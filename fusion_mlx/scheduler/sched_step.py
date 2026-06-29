@@ -27,6 +27,7 @@ from .helpers import (
     _sync_and_clear_cache,
     _should_clear_on_fragmentation,
 )
+from .monkeypatches import _unregister_uid_rows_for_model
 from .types import (
     _PrefillAbortedError,
 )
@@ -165,6 +166,7 @@ def step(self) -> SchedulerOutput:
         # BatchGenerator is in an inconsistent state (partial
         # prefill), so reset it entirely. Pending aborts will
         # be processed at the start of the next step().
+        _unregister_uid_rows_for_model(self.model)
         self.batch_generator = None
         self._current_sampler_params = None
         self._boundary_cache_snapshots.clear()
@@ -322,6 +324,7 @@ def reset(self) -> None:
     self.running.clear()
     self.requests.clear()
     self.finished_req_ids.clear()
+    _unregister_uid_rows_for_model(self.model)
     self.request_id_to_uid.clear()
     self.uid_to_request_id.clear()
     # Async store_cache bookkeeping. shutdown() drains these before us,

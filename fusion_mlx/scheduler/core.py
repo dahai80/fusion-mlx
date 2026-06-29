@@ -61,7 +61,12 @@ from .sched_misc import (
     _restore_block_from_cold,
 )
 from .sched_query import *  # noqa: F403
-from .sched_query import _preflight_memory_check
+from .sched_query import (
+    _current_usage_bytes,
+    _estimate_prefill_peak,
+    _hot_cache_cpu_bytes,
+    _preflight_memory_check,
+)
 from .sched_response import *  # noqa: F403
 from .sched_response import (
     _cleanup_finished,
@@ -147,6 +152,15 @@ class Scheduler:
 
     def restore_cold_blocks_for_request(self, *args, **kwargs):
         return restore_cold_blocks_for_request(self, *args, **kwargs)
+
+    def _current_usage_bytes(self, *args, **kwargs):
+        return _current_usage_bytes(self, *args, **kwargs)
+
+    def _hot_cache_cpu_bytes(self):
+        return _hot_cache_cpu_bytes(self)
+
+    def _estimate_prefill_peak(self, *args, **kwargs):
+        return _estimate_prefill_peak(self, *args, **kwargs)
 
     def _preflight_memory_check(self, *args, **kwargs):
         return _preflight_memory_check(self, *args, **kwargs)

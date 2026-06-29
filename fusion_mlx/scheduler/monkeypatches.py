@@ -1,4 +1,8 @@
 import logging
+import threading
+import time
+from collections import OrderedDict
+from typing import Any, NamedTuple
 
 import mlx.core as mx
 from mlx_lm.generate import (
@@ -8,6 +12,119 @@ from mlx_lm.generate import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# UID row registry — tracks the sampler/logits_processors each uid should run.
+# Heterogeneous continuous batching (extend/filter across prompt and
+# generation batches) can leave stale or offset row slots behind; the
+# registry records what each uid is supposed to run at insert time, and
+# the step chokepoint realigns the positional lists from it.
+# Bounded so a missing cleanup can never grow it unbounded.
+# ---------------------------------------------------------------------------
+class _RegisteredRow(NamedTuple):
+    sampler: Any
+    logits_processors: list
+
+
+_UID_ROW_REGISTRY_MAX = 4096
+_uid_row_registry: "OrderedDict[tuple[int, int], _RegisteredRow]" = OrderedDict()
+_uid_row_registry_lock = threading.Lock()
+_UID_ROW_DRIFT_WARNING_INTERVAL_S = 60.0
+_uid_row_drift_last_warning = float("-inf")
+
+
+def _register_uid_rows(model, uids, samplers, lps_rows) -> None:
+    with _uid_row_registry_lock:
+        for uid, sampler, lps in zip(uids, samplers, lps_rows):
+            _uid_row_registry[(id(model), uid)] = _RegisteredRow(
+                sampler, list(lps or ())
+            )
+        while len(_uid_row_registry) > _UID_ROW_REGISTRY_MAX:
+            _uid_row_registry.popitem(last=False)
+
+
+def _unregister_uid_row(model, uid) -> None:
+    with _uid_row_registry_lock:
+        _uid_row_registry.pop((id(model), uid), None)
+
+
+def _unregister_uid_rows_for_model(model) -> None:
+    model_id = id(model)
+    with _uid_row_registry_lock:
+        for key in [key for key in _uid_row_registry if key[0] == model_id]:
+            del _uid_row_registry[key]
+
+
+def _row_drifted(current_lps, expected_lps) -> bool:
+    if not current_lps and not expected_lps:
+        return False
+    return current_lps != expected_lps
+
+
+def _log_drift_correction(uids, slot_count) -> None:
+    global _uid_row_drift_last_warning
+    now = time.monotonic()
+    rate_limited = now - _uid_row_drift_last_warning < _UID_ROW_DRIFT_WARNING_INTERVAL_S
+    if not rate_limited:
+        _uid_row_drift_last_warning = now
+    (logger.debug if rate_limited else logger.warning)(
+        "Realigned generation-batch row state from the uid registry "
+        f"(uids={list(uids)}, had {slot_count} processor slots); "
+        "stale or offset slots would have run the wrong sampler/processors."
+    )
+
+
+def _realigned_rows(model, uids, cur_samplers, cur_lps):
+    model_id = id(model)
+    with _uid_row_registry_lock:
+        rows = [_uid_row_registry.get((model_id, uid)) for uid in uids]
+
+    drift = len(cur_lps) != len(uids)
+    samplers, lps = [], []
+    for i, row in enumerate(rows):
+        if row is not None:
+            if not drift:
+                if i >= len(cur_samplers):
+                    drift = row.sampler is not None
+                elif cur_samplers[i] is not row.sampler:
+                    drift = True
+            if (
+                not drift
+                and i < len(cur_lps)
+                and cur_lps[i] is not row.logits_processors
+            ):
+                drift = _row_drifted(cur_lps[i], row.logits_processors)
+            samplers.append(row.sampler)
+            lps.append(row.logits_processors)
+        else:
+            samplers.append(cur_samplers[i] if i < len(cur_samplers) else None)
+            lps.append(cur_lps[i] if i < len(cur_lps) else [])
+    return samplers, lps, drift
+
+
+def _omlx_realign_generation_batch_rows(self) -> None:
+    if self.logits_processors is None:
+        self.logits_processors = []
+    else:
+        self.logits_processors = [
+            procs if procs is not None else [] for procs in self.logits_processors
+        ]
+
+    uids = getattr(self, "uids", None) or []
+    if not uids:
+        return
+
+    new_samplers, new_lps, drift = _realigned_rows(
+        getattr(self, "model", None),
+        uids,
+        getattr(self, "samplers", None) or [],
+        self.logits_processors,
+    )
+    if drift:
+        _log_drift_correction(uids, len(self.logits_processors))
+    self.logits_processors = new_lps
+    self.samplers = new_samplers
 
 
 
@@ -68,6 +185,8 @@ def _patched_generation_batch_step(self):
         deltas = [model._uid_rope_deltas.get(uid, 0.0) for uid in self.uids]
         model.set_batch_rope_deltas(mx.array(deltas))
 
+    _omlx_realign_generation_batch_rows(self)
+
     result = _original_generation_batch_step(self)
 
     # self._next_tokens contains the just-sampled tokens (async eval pending).
@@ -92,7 +211,36 @@ def _patched_generation_batch_step(self):
     return result
 
 
+GenerationBatch._omlx_realign_rows = _omlx_realign_generation_batch_rows
 GenerationBatch._step = _patched_generation_batch_step
+
+
+# ---------------------------------------------------------------------------
+# Monkey-patch GenerationBatch.filter to keep logits_processors aligned with
+# uids. mlx-lm's filter only reindexes the processor list when at least one
+# row has an active processor:
+#
+#     if any(self.logits_processors):
+#         self.logits_processors = [self.logits_processors[idx] for idx in keep]
+#
+# There is no else branch, so when every slot is empty the stale list
+# survives while uids/tokens shrink. A later extend() then appends the
+# next request's processors behind its own row index.
+# ---------------------------------------------------------------------------
+_original_generation_batch_filter = GenerationBatch.filter
+
+
+def _patched_generation_batch_filter(self, keep):
+    lps = self.logits_processors
+    lps_inert = not lps or not any(lps)
+    if lps is None:
+        self.logits_processors = []
+    _original_generation_batch_filter(self, keep)
+    if lps_inert:
+        self.logits_processors = [[] for _ in keep]
+
+
+GenerationBatch.filter = _patched_generation_batch_filter
 
 
 # Monkey-patch TurboQuantKVCache.merge so _merge_caches() works

@@ -52,7 +52,10 @@ from ..speculative.vlm_mtp import VLMMTPDrafter
 # Module-level alias so Scheduler.__init__ can fall back to mlx-lm's default
 # stream when no per-engine stream is provided.
 from .config import SchedulerConfig
-from .monkeypatches import _default_generation_stream
+from .helpers import (
+    _default_generation_stream,
+    _model_declares_llama4,
+)
 from .types import (
     _PrefillState,
     _StoreCacheGate,
@@ -130,8 +133,29 @@ def __init__(    self,
 
     # Memory limits for inline prefill checking.
     # Set by ProcessMemoryEnforcer; propagated to BatchGenerator.
-    self._memory_limit_bytes: int = 0  # soft limit
-    self._memory_hard_limit_bytes: int = 0  # hard limit (system_ram - 4GB)
+    self._memory_limit_bytes: int = 0  # soft limit (dynamic, jittery)
+    self._memory_hard_limit_bytes: int = 0  # hard limit (dynamic ceiling)
+    # Stable physical cap = min(static_ceiling, metal_cap).  Used ONLY to
+    # abort an in-flight prefill, so a transient dynamic-ceiling dip can't
+    # kill a near-complete request that actually fits.  0 => fall back to
+    # _memory_hard_limit_bytes (pre-propagation / old enforcer).
+    self._memory_abort_limit_bytes: int = 0
+    # Prefill abort margin — fraction of the abort cap we allow a chunk's
+    # predicted peak to reach.  Set by enforcer per tier.
+    self._prefill_abort_margin: float = 0.90
+    # Last mx.get_active_memory() sample taken on this scheduler's MLX
+    # executor thread.  The background memory enforcer reads this cached
+    # value during active decode instead of touching MLX/Metal directly.
+    self._last_mlx_active_memory_bytes: int = 0
+    # Component ceilings — propagated alongside the hard limit so the
+    # rejection-path error message can identify which constraint is
+    # binding and suggest the right remedy (close apps / raise tier /
+    # raise iogpu.wired_limit_mb / reduce context).  0 = not set yet.
+    self._memory_static_ceiling_bytes: int = 0
+    self._memory_dynamic_ceiling_bytes: int = 0
+    self._memory_metal_cap_bytes: int = 0
+    self._memory_hot_cache_reserved_bytes: int = 0
+    self._memory_guard_tier: str = ""
     self._prefill_memory_guard: bool = False  # set by ProcessMemoryEnforcer
     # Set to True by ProcessMemoryEnforcer when phys_footprint crosses
     # soft_threshold. Schedulers stop admitting new prefills while this is
@@ -167,9 +191,44 @@ def __init__(    self,
     # Injected by VLMBatchedEngine.set_vlm_mtp_drafter alongside the drafter.
     self._vlm_mtp_draft_block_size: int | None = None
 
+    # Llama 4 serialization: ChunkedKVCache does not support multi-row batching
+    from .helpers import _model_declares_llama4
+    self._serialize_llama4_requests = _model_declares_llama4(model)
+    if self._serialize_llama4_requests and self.config.max_num_seqs > 1:
+        logger.info(
+            "Llama 4 detected; serializing requests because ChunkedKVCache "
+            "does not support multi-row batching yet"
+        )
+        self.config.max_num_seqs = 1
+
+    # MiniMax M3 detection: requires special cache alignment handling
+    from .helpers import _model_declares_minimax_m3
+    self._uses_minimax_m3 = _model_declares_minimax_m3(model)
+
+    # Overflow recovery: request IDs that triggered generation overflow
+    self._generation_overflow_recovery_ids: set[str] = set()
+
+    # GLM DSA adaptive prefill (Sparse MLA kernels)
+    self._glm_dsa_adaptive_prefill = None
+    try:
+        from ..patches.glm_moe_dsa.generate_patch import (
+            _glm_dsa_adaptive_prefill_config,
+        )
+        self._glm_dsa_adaptive_prefill = _glm_dsa_adaptive_prefill_config(
+            model, self.config.prefill_step_size
+        )
+    except Exception:
+        logger.debug("GLM DSA adaptive prefill config unavailable", exc_info=True)
+    if self._glm_dsa_adaptive_prefill is not None:
+        logger.info(
+            "GLM DSA adaptive scheduler prefill enabled: step=%d after=%d "
+            "min_remaining=%d",
+            self._glm_dsa_adaptive_prefill.step_size,
+            self._glm_dsa_adaptive_prefill.after,
+            self._glm_dsa_adaptive_prefill.min_remaining,
+        )
+
     # Phase timing instrumentation for cache-on overhead diagnostics.
-    # Accumulated wall-time per phase + invocation count, dumped at request
-    # end or via get_phase_stats(). Adds ~100ns per measurement.
     self._phase_total_ms: dict[str, float] = defaultdict(float)
     self._phase_count: dict[str, int] = defaultdict(int)
 
@@ -187,6 +246,16 @@ def __init__(    self,
     # Track in-flight store futures per request_id for lookup wait /
     # shutdown wait.
     self._inflight_store_futures: dict[str, concurrent.futures.Future] = {}
+    self._inflight_store_info: dict[str, Any] = {}
+
+    # Admission control: memory and store-cache stall tracking
+    self._memory_admission_blocked_request_id: str | None = None
+    self._memory_admission_blocked_since: float = 0.0
+    self._store_cache_admission_blocked_request_id: str | None = None
+    self._store_cache_admission_blocked_since: float = 0.0
+    # Cache freshness waits: per-request deferral for in-flight store_cache
+    self._cache_freshness_waits: dict[str, Any] = {}
+    self._prefix_cache_prepared: set[str] = set()
 
     # Mapping between our request IDs and BatchGenerator UIDs
     self.request_id_to_uid: dict[str, int] = {}
