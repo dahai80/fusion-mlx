@@ -218,6 +218,8 @@ class RequestOutput:
     error: str | None = None
     error_code: str | None = None
     error_metadata: dict | None = None
+    logprobs: Any = None
+    matched_stop: str | None = None
 
     @property
     def usage(self) -> dict[str, int]:

@@ -20,6 +20,7 @@ Architecture:
 
 import asyncio
 import logging
+import threading
 import time
 import uuid
 from collections import deque
@@ -100,10 +101,36 @@ class MLLMRequest:
     output_text: str = ""
     output_tokens: list[int] = field(default_factory=list)
     finish_reason: str | None = None
+    stop_tail: str = ""
+    stop_text: str = ""
+    stop_text_len: int = 0
 
     # Token counts
     num_prompt_tokens: int = 0
     num_output_tokens: int = 0
+
+
+def _find_stop_match_in_new_window(
+    text: str, new_text_start_len: int, stop_params: list[str]
+) -> tuple[int, str] | None:
+    """Find stops that overlap the newly searchable suffix of ``text``."""
+    if not stop_params:
+        return None
+    max_stop_len = max(len(s) for s in stop_params)
+    keep = max(0, max_stop_len - 1)
+    window_base = max(0, new_text_start_len - keep)
+    stop_window = text[window_base:]
+    match: tuple[int, str] | None = None
+    for stop_str in stop_params:
+        if not stop_str:
+            continue
+        search_from = max(0, new_text_start_len - window_base - len(stop_str) + 1)
+        local_idx = stop_window.find(stop_str, search_from)
+        if local_idx != -1:
+            global_idx = window_base + local_idx
+            if match is None or global_idx < match[0]:
+                match = (global_idx, stop_str)
+    return match
 
 
 @dataclass
@@ -228,6 +255,12 @@ class MLLMScheduler:
         # Thread-safe set for deferred aborts (event loop → executor thread).
         # CPython GIL guarantees set.add() and set.pop() are atomic.
         self._pending_abort_ids: set[str] = set()
+        # Lifetime de-dup ledger for the total cancellation counter.
+        self._cancelled_request_ids: set[str] = set()
+        # Once-per-request guard for the disconnect-cause sub-counter.
+        self._disconnect_abort_ids: set[str] = set()
+        # Serializes check-add-increment for both counters.
+        self._cancel_counter_lock = threading.Lock()
         # Aborted request IDs that need queue signaling (executor → event loop).
         self._aborted_queue_ids: set[str] = set()
 
@@ -244,27 +277,47 @@ class MLLMScheduler:
         self.num_requests_processed = 0
         self.total_prompt_tokens = 0
         self.total_completion_tokens = 0
+        self.num_requests_cancelled = 0
+        self.num_requests_cancelled_via_disconnect = 0
 
     def _get_stop_tokens(self) -> set[int]:
-        """Get stop token IDs from tokenizer."""
-        stop_tokens = set()
+        """Get stop token IDs from tokenizer.
+
+        Four sources are checked in order to cover every tokenizer shape
+        we encounter in the wild.
+        """
+        from .utils.tokenizer import RAPID_EXTRA_EOS_ATTR
+
+        stop_tokens: set[int] = set()
         tokenizer = (
             self.processor.tokenizer
             if hasattr(self.processor, "tokenizer")
             else self.processor
         )
 
+        # Source 1: mlx-lm TokenizerWrapper's curated set.
+        wrapper_ids = getattr(tokenizer, "_eos_token_ids", None)
+        if wrapper_ids:
+            stop_tokens.update(wrapper_ids)
+
+        # Source 2: legacy singular path.
         if hasattr(tokenizer, "eos_token_id") and tokenizer.eos_token_id is not None:
             if isinstance(tokenizer.eos_token_id, list):
                 stop_tokens.update(tokenizer.eos_token_id)
             else:
                 stop_tokens.add(tokenizer.eos_token_id)
 
+        # Source 3: processor-style plural path.
         if hasattr(tokenizer, "eos_token_ids") and tokenizer.eos_token_ids is not None:
             if isinstance(tokenizer.eos_token_ids, (list, set, tuple)):
                 stop_tokens.update(tokenizer.eos_token_ids)
             else:
                 stop_tokens.add(tokenizer.eos_token_ids)
+
+        # Source 4: extras stash (see RAPID_EXTRA_EOS_ATTR).
+        extras = getattr(tokenizer, RAPID_EXTRA_EOS_ATTR, None)
+        if extras:
+            stop_tokens.update(extras)
 
         return stop_tokens
 
@@ -337,10 +390,23 @@ class MLLMScheduler:
                 f"(currently {len(self.requests)} in-flight)"
             )
 
+        # OpenAI-spec penalty passthrough (#512). Pop with the same defaults
+        # ``SamplingParams`` uses so the MLLM path matches the LLM path's
+        # "absence == neutral" contract.
+        def _pop_penalty(name: str, neutral: float) -> float:
+            raw = kwargs.pop(name, None)
+            return neutral if raw is None else float(raw)
+
+        repetition_penalty = _pop_penalty("repetition_penalty", 1.0)
+        presence_penalty = _pop_penalty("presence_penalty", 0.0)
+        frequency_penalty = _pop_penalty("frequency_penalty", 0.0)
         sampling_params = SamplingParams(
             max_tokens=max_tokens,
             temperature=temperature,
             top_p=top_p,
+            repetition_penalty=repetition_penalty,
+            presence_penalty=presence_penalty,
+            frequency_penalty=frequency_penalty,
         )
 
         request = MLLMRequest(
@@ -354,7 +420,12 @@ class MLLMScheduler:
             video_max_frames=video_max_frames,
         )
 
-        self.requests[request_id] = request
+        # Gate the commit + ledger clear under the same lock so a
+        # concurrent abort_request can't double-count.
+        with self._cancel_counter_lock:
+            self._cancelled_request_ids.discard(request_id)
+            self._disconnect_abort_ids.discard(request_id)
+            self.requests[request_id] = request
         self.waiting.append(request)
 
         logger.debug(
@@ -376,11 +447,45 @@ class MLLMScheduler:
             request_id: The request ID to abort
 
         Returns:
-            True (abort is always enqueued)
+            True when an active/queued request was enqueued for abort, False
+            when ``request_id`` is unknown to this scheduler. The route
+            layer uses the False return as the 404 signal.
         """
-        self._pending_abort_ids.add(request_id)
+        with self._cancel_counter_lock:
+            if not (
+                request_id in self.requests
+                or request_id in self.request_id_to_uid
+                or request_id in self.running
+                or request_id in self._pending_abort_ids
+            ):
+                logger.debug("Rejected abort for unknown MLLM request_id")
+                return False
+            already_counted = request_id in self._cancelled_request_ids
+            self._cancelled_request_ids.add(request_id)
+            self._pending_abort_ids.add(request_id)
+            if not already_counted:
+                self.num_requests_cancelled += 1
         logger.debug(f"Enqueued abort for request {request_id}")
         return True
+
+    def record_disconnect_abort(self, request_id: str) -> None:
+        """Attribute a previously-accepted abort to client disconnect.
+
+        Mirrors ``Scheduler.record_disconnect_abort`` so MLLM-active
+        engines surface the same ``via_disconnect`` sub-counter on
+        /metrics.
+        """
+        try:
+            if not request_id:
+                return
+            with self._cancel_counter_lock:
+                if request_id not in self._cancelled_request_ids:
+                    return
+                if request_id not in self._disconnect_abort_ids:
+                    self._disconnect_abort_ids.add(request_id)
+                    self.num_requests_cancelled_via_disconnect += 1
+        except Exception:
+            pass
 
     def _process_pending_aborts(self) -> None:
         """Drain and execute pending abort requests.
@@ -426,9 +531,11 @@ class MLLMScheduler:
         if request is not None:
             request.status = RequestStatus.FINISHED_ABORTED
         self.finished_req_ids.add(request_id)
-        self.requests.pop(request_id, None)
 
-        self._detokenizer_pool.pop(request_id, None)
+        # Keep dedupe ledgers lifetime-persistent (do NOT discard them).
+        with self._cancel_counter_lock:
+            self.requests.pop(request_id, None)
+            self._detokenizer_pool.pop(request_id, None)
 
         # Do NOT write to output_queues here — this may run on the
         # executor thread where asyncio.Queue is not safe.  Mark for
@@ -475,6 +582,9 @@ class MLLMScheduler:
                 max_tokens=request.sampling_params.max_tokens,
                 temperature=request.sampling_params.temperature,
                 top_p=request.sampling_params.top_p,
+                repetition_penalty=request.sampling_params.repetition_penalty,
+                presence_penalty=request.sampling_params.presence_penalty,
+                frequency_penalty=request.sampling_params.frequency_penalty,
                 video_fps=request.video_fps,
                 video_max_frames=request.video_max_frames,
             )
@@ -527,85 +637,209 @@ class MLLMScheduler:
             if request is None:
                 continue
 
-            # Append token to request
-            request.output_tokens.append(response.token)
-            request.num_output_tokens = len(request.output_tokens)
+            # Stamp prompt-token count on the request once the batch
+            # generator has actually preprocessed the prompt (vision
+            # encoding includes image-patch token expansion, so the
+            # count can only be known AFTER ``_process_prompts``). Pre-
+            # fix this field was never assigned, so MLLM responses always
+            # reported ``usage.prompt_tokens=0``.
+            if request.num_prompt_tokens == 0:
+                resp_pt = getattr(response, "prompt_tokens", 0) or 0
+                if resp_pt > 0:
+                    request.num_prompt_tokens = resp_pt
 
-            # Decode the new token using streaming detokenizer (UTF-8 safe).
-            # Skip stop tokens — they are not content.
-            if response.finish_reason == "stop":
-                new_text = ""
-            else:
-                if request_id not in self._detokenizer_pool:
-                    if hasattr(tokenizer, "detokenizer"):
-                        detok = tokenizer.detokenizer
-                    else:
-                        detok = NaiveStreamingDetokenizer(tokenizer)
-                    detok.reset()
-                    self._detokenizer_pool[request_id] = detok
-                detok = self._detokenizer_pool[request_id]
-                detok.add_token(response.token)
-                new_text = detok.last_segment
-
-            # output_token_ids is a live reference (not a defensive copy):
-            # consumers read it synchronously; the per-decode list() was O(n).
-            output = RequestOutput(
-                request_id=request_id,
-                new_token_ids=[response.token],
-                new_text=new_text,
-                output_token_ids=request.output_tokens,
-                prompt_tokens=request.num_prompt_tokens,
-                completion_tokens=request.num_output_tokens,
+            token_is_control_stop_token = bool(
+                getattr(response, "token_is_stop_token", False)
             )
 
-            # Check text-based stop sequences
+            # Append generated content tokens to request state. Backend
+            # EOS/control stop ids are scheduler control signals, not user
+            # output, so they must not appear in output_token_ids either.
+            if not token_is_control_stop_token:
+                request.output_tokens.append(response.token)
+            request.num_output_tokens = len(request.output_tokens)
+
             finish_reason = response.finish_reason
+
+            # Decode the new token using streaming detokenizer (UTF-8 safe).
+            # Backend EOS/control stop tokens are not decoded. Backend
+            # responses that finish with normal text still detokenize so
+            # the rolling matcher can keep visible text before a user stop.
+            had_detok = request_id in self._detokenizer_pool
+            if not had_detok:
+                if hasattr(tokenizer, "detokenizer"):
+                    detok = tokenizer.detokenizer
+                else:
+                    detok = NaiveStreamingDetokenizer(tokenizer)
+                detok.reset()
+                self._detokenizer_pool[request_id] = detok
+            detok = self._detokenizer_pool[request_id]
+            stop_params = [s for s in request.stop if s] if request.stop else []
+            if token_is_control_stop_token:
+                new_text = ""
+            else:
+                detok.add_token(response.token)
+                new_text = detok.last_segment
+            detok_finalized = False
+            if finish_reason is not None and (
+                stop_params or token_is_control_stop_token
+            ):
+                baseline_prefix = (
+                    request.stop_text if request.stop_text else request.output_text
+                )
+                baseline_text = baseline_prefix + (
+                    new_text if isinstance(new_text, str) else ""
+                )
+                detok.finalize()
+                detok_finalized = True
+                finalized_text = detok.text
+                if isinstance(finalized_text, str) and finalized_text.startswith(
+                    baseline_text
+                ):
+                    new_text = finalized_text[len(baseline_text) :]
+                    if baseline_text:
+                        new_text = baseline_text[len(baseline_prefix) :] + new_text
+            if not isinstance(new_text, str):
+                new_text = (
+                    ""
+                    if token_is_control_stop_token
+                    else tokenizer.decode([response.token])
+                )
+
+            output_new_text = new_text
+            output_output_text = ""
+            output_finished = False
+            output_finish_reason: str | None = None
+            output_matched_stop: str | None = None
+
             stop_trimmed = False
-            if finish_reason is None and request.stop:
-                decoded_so_far = tokenizer.decode(request.output_tokens)
-                for stop_str in request.stop:
-                    if stop_str in decoded_so_far:
+            if (finish_reason != "stop" or new_text) and stop_params:
+                if (
+                    not had_detok
+                    and request.stop_text_len == 0
+                    and not request.stop_tail
+                    and len(request.output_tokens) > 1
+                ):
+                    request.stop_text = tokenizer.decode(request.output_tokens[:-1])
+                    request.stop_text_len = len(request.stop_text)
+                    max_stop_len = max(len(s) for s in stop_params)
+                    keep = max(0, max_stop_len - 1)
+                    request.stop_tail = request.stop_text[-keep:] if keep else ""
+                    request.output_text = request.stop_text
+                    output_output_text = request.output_text
+                prev_text_len = request.stop_text_len
+                if stop_params and new_text:
+                    max_stop_len = max(len(s) for s in stop_params)
+                    keep = max(0, max_stop_len - 1)
+                    previous_seen_len = len(request.stop_text)
+                    streamed_so_far = request.stop_text + new_text
+                    match = _find_stop_match_in_new_window(
+                        streamed_so_far, previous_seen_len, stop_params
+                    )
+                    if match is not None:
+                        idx, stop_str = match
                         finish_reason = "stop"
-                        # Trim output at stop string
-                        idx = decoded_so_far.index(stop_str)
-                        request.output_text = decoded_so_far[:idx]
+                        output_finish_reason = finish_reason
+                        output_matched_stop = stop_str
+                        visible_text = streamed_so_far[:idx]
+                        output_new_text = visible_text[prev_text_len:]
+                        request.output_text = visible_text
+                        output_output_text = visible_text
+                        request.stop_text = streamed_so_far
+                        request.stop_text_len = len(streamed_so_far)
+                        request.stop_tail = ""
                         stop_trimmed = True
-                        # Emit only the valid prefix before the stop marker
-                        # in new_text so streaming clients don't lose content.
-                        # Compute what was already streamed vs the trimmed total.
-                        prev_text = tokenizer.decode(request.output_tokens[:-1])
-                        trimmed_total = decoded_so_far[:idx]
-                        if len(trimmed_total) > len(prev_text):
-                            output.new_text = trimmed_total[len(prev_text) :]
+                    else:
+                        request.stop_text = streamed_so_far
+                        if finish_reason is not None:
+                            safe_upto = len(request.stop_text)
                         else:
-                            output.new_text = ""
-                        break
+                            safe_upto = max(0, len(request.stop_text) - keep)
+                        output_new_text = request.stop_text[
+                            request.stop_text_len : safe_upto
+                        ]
+                        request.stop_text_len = safe_upto
+                        request.stop_tail = (
+                            (
+                                ""
+                                if finish_reason is not None
+                                else request.stop_text[-keep:]
+                            )
+                            if keep
+                            else ""
+                        )
+                        request.output_text = request.stop_text[:safe_upto]
+                        output_output_text = request.output_text
+                elif stop_params:
+                    pass
+            else:
+                if finish_reason != "stop" or new_text:
+                    request.output_text += new_text
+                    output_output_text = request.output_text
+                else:
+                    output_new_text = ""
+                    output_output_text = request.output_text
 
             # Check if finished
             if finish_reason is not None:
+                if (
+                    not stop_trimmed
+                    and stop_params
+                    and request.stop_text
+                    and request.stop_text_len < len(request.stop_text)
+                ):
+                    match = _find_stop_match_in_new_window(
+                        request.stop_text, request.stop_text_len, stop_params
+                    )
+                    if match is not None:
+                        idx, stop_str = match
+                        finish_reason = "stop"
+                        output_finish_reason = finish_reason
+                        visible_text = request.stop_text[:idx]
+                        output_new_text = visible_text[
+                            request.stop_text_len : len(visible_text)
+                        ]
+                        request.output_text = visible_text
+                        output_output_text = visible_text
+                        request.stop_text_len = len(request.stop_text)
+                        request.stop_tail = ""
+                        output_matched_stop = stop_str
+                        stop_trimmed = True
+                if (
+                    not stop_trimmed
+                    and stop_params
+                    and request.stop_text
+                    and request.stop_text_len < len(request.stop_text)
+                ):
+                    held_text = request.stop_text[request.stop_text_len :]
+                    request.stop_text_len = len(request.stop_text)
+                    output_new_text += held_text
+                    request.output_text += held_text
+                    output_output_text = request.output_text
                 if finish_reason == "stop":
                     request.status = RequestStatus.FINISHED_STOPPED
                 elif finish_reason == "length":
                     request.status = RequestStatus.FINISHED_LENGTH_CAPPED
 
-                output.finished = True
-                output.finish_reason = finish_reason
+                output_finished = True
+                output_finish_reason = finish_reason
                 finished_ids.add(request_id)
 
                 # Use trimmed output if set by stop-string check, else
                 # finalize streaming detokenizer for full output.
                 # Use explicit flag instead of string truthiness — empty string
                 # is a valid trimmed result (stop at position 0).
-                if stop_trimmed:
-                    output.output_text = request.output_text
+                if stop_trimmed or finish_reason == "stop":
+                    output_output_text = request.output_text
                 else:
                     detok = self._detokenizer_pool.get(request_id)
                     if detok is not None:
-                        detok.finalize()
-                        output.output_text = detok.text
+                        if not detok_finalized:
+                            detok.finalize()
+                        output_output_text = detok.text
                     else:
-                        output.output_text = tokenizer.decode(request.output_tokens)
-                    request.output_text = output.output_text
+                        output_output_text = tokenizer.decode(request.output_tokens)
+                    request.output_text = output_output_text
                 request.finish_reason = finish_reason
                 self._detokenizer_pool.pop(request_id, None)
 
@@ -617,7 +851,25 @@ class MLLMScheduler:
                     f"{request.num_output_tokens} tokens"
                 )
 
-            outputs.append(output)
+            # output_token_ids is a live reference (not a defensive copy):
+            # consumers read it synchronously; the per-decode list() was O(n).
+            outputs.append(
+                RequestOutput(
+                    request_id=request_id,
+                    new_token_ids=[]
+                    if token_is_control_stop_token
+                    else [response.token],
+                    new_text=output_new_text,
+                    output_token_ids=request.output_tokens,
+                    output_text=output_output_text,
+                    finished=output_finished,
+                    finish_reason=output_finish_reason,
+                    prompt_tokens=request.num_prompt_tokens,
+                    completion_tokens=request.num_output_tokens,
+                    logprobs=getattr(response, "logprobs", None),
+                    matched_stop=output_matched_stop,
+                )
+            )
 
         return outputs, finished_ids
 
@@ -702,6 +954,7 @@ class MLLMScheduler:
                 is_client_error = (
                     "Failed to process image" in err_msg
                     or "Failed to process video" in err_msg
+                    or "exceeds the per-batch cap" in err_msg
                 )
                 # Create error outputs (queue delivery deferred to caller).
                 for request_id in error_ids:
@@ -871,14 +1124,63 @@ class MLLMScheduler:
             )
             self._owns_step_executor = True
         loop = asyncio.get_running_loop()
+        # The currently in-flight step ``concurrent.futures.Future``
+        # (None when the loop is between steps). Lets the ``finally``
+        # block wait on THIS specific future with a bounded timeout
+        # instead of issuing a blocking ``shutdown(wait=True)`` second
+        # join that no asyncio cancel can unblock.
+        self._inflight_step_cf: concurrent.futures.Future | None = None
 
         try:
             while self._running:
                 try:
                     if self.has_requests():
-                        output = await loop.run_in_executor(
-                            self._step_executor, self._step_no_queue
-                        )
+                        # Hold the underlying ``concurrent.futures.Future``
+                        # directly, await it via ``asyncio.wrap_future``,
+                        # and gate any post-cancel cleanup on
+                        # ``cf.cancelled()`` so we only ever consume an
+                        # ``output`` that actually came back from the
+                        # executor thread.
+                        try:
+                            cf = self._step_executor.submit(self._step_no_queue)
+                        except RuntimeError as _submit_exc:
+                            logger.warning(
+                                "MLLM scheduler executor rejected new work "
+                                "(%s); breaking step loop for clean shutdown",
+                                _submit_exc,
+                            )
+                            self._inflight_step_cf = None
+                            break
+                        self._inflight_step_cf = cf
+                        try:
+                            output = await asyncio.wrap_future(cf, loop=loop)
+                        except asyncio.CancelledError:
+                            # The asyncio side is cancelled; the executor
+                            # may already be running (or completed).
+                            # ``asyncio.wrap_future`` will have called
+                            # ``cf.cancel()`` — succeeds only if the work
+                            # had not started yet. If the work DID start,
+                            # let it run to completion silently.
+                            if not cf.cancelled():
+
+                                def _drain_step_result(_future: Any) -> None:
+                                    try:
+                                        _future.result()
+                                    except Exception as _exc:
+                                        logger.debug(
+                                            "MLLM step exception during"
+                                            " cancellation drain: %r",
+                                            _exc,
+                                        )
+
+                                cf.add_done_callback(_drain_step_result)
+                            raise
+                        except Exception:
+                            self._inflight_step_cf = None
+                            raise
+
+                        # Successful step → clear the inflight reference
+                        self._inflight_step_cf = None
 
                         # Distribute outputs to queues ON the event loop thread
                         # (asyncio.Queue is not thread-safe).
@@ -897,10 +1199,47 @@ class MLLMScheduler:
                     logger.error(f"Error in MLLM process loop: {e}")
                     await asyncio.sleep(0.1)
         finally:
+            cancel_to_reraise: asyncio.CancelledError | None = None
             if self._step_executor is not None:
                 if getattr(self, "_owns_step_executor", True):
-                    self._step_executor.shutdown(wait=False)
+                    # Bound the teardown WITHOUT relying on
+                    # ``shutdown(wait=True)`` (an uncancellable blocking
+                    # join that no asyncio timeout can stop).
+                    _drain_secs = 5.0
+                    inflight = self._inflight_step_cf
+                    self._inflight_step_cf = None
+                    if (
+                        inflight is not None
+                        and not inflight.done()
+                        and not inflight.cancelled()
+                    ):
+                        wrapped = asyncio.wrap_future(inflight, loop=loop)
+                        try:
+                            await asyncio.wait_for(
+                                asyncio.shield(wrapped),
+                                timeout=_drain_secs,
+                            )
+                        except TimeoutError:
+                            logger.warning(
+                                "MLLM step exceeded %.1fs drain budget"
+                                " during shutdown; abandoning the"
+                                " worker thread and proceeding with"
+                                " non-blocking executor teardown",
+                                _drain_secs,
+                            )
+                        except asyncio.CancelledError as exc:
+                            cancel_to_reraise = exc
+                        except Exception as exc:
+                            logger.debug("MLLM step in-flight drain ended with %r", exc)
+                    try:
+                        self._step_executor.shutdown(wait=False, cancel_futures=True)
+                    except Exception:
+                        logger.debug(
+                            "MLLM step executor shutdown raised", exc_info=True
+                        )
                 self._step_executor = None
+            if cancel_to_reraise is not None:
+                raise cancel_to_reraise
 
     async def add_request_async(
         self,
@@ -1055,6 +1394,10 @@ class MLLMScheduler:
             "num_requests_processed": self.num_requests_processed,
             "total_prompt_tokens": self.total_prompt_tokens,
             "total_completion_tokens": self.total_completion_tokens,
+            "num_requests_cancelled": self.num_requests_cancelled,
+            "num_requests_cancelled_via_disconnect": (
+                self.num_requests_cancelled_via_disconnect
+            ),
         }
 
         if self.batch_generator is not None:
@@ -1081,10 +1424,9 @@ class MLLMScheduler:
 
     def reset(self) -> None:
         """Reset the scheduler state."""
-         # Drain pending aborts first, then abort remaining requests directly
-        self._pending_abort_ids.clear()
+        # Abort all requests
         for request_id in list(self.requests.keys()):
-            self._do_abort_request(request_id)
+            self.abort_request(request_id)
 
         self.waiting.clear()
         self.running.clear()
@@ -1093,6 +1435,11 @@ class MLLMScheduler:
         self.request_id_to_uid.clear()
         self.uid_to_request_id.clear()
         self._detokenizer_pool.clear()
+        # Clear cancellation ledgers under lock. Prometheus counters
+        # themselves are NOT zeroed (lifetime-cumulative contract).
+        with self._cancel_counter_lock:
+            self._cancelled_request_ids.clear()
+            self._disconnect_abort_ids.clear()
 
         if self.batch_generator is not None:
             self.batch_generator.close()
