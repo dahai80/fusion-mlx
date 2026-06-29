@@ -64,6 +64,7 @@ from ..request import RequestOutput, RequestStatus
 from .helpers import (
     _safe_sync_stream,
 )
+from .monkeypatches import _unregister_uid_row, _unregister_uid_rows_for_model
 
 
 def _process_batch_responses(
@@ -110,7 +111,7 @@ def _process_batch_responses(
         # Check if this request uses a protocol-specific output parser
         parser_session = self._get_output_parser_session(request_id)
 
-        if parser_session is not None:
+        if parser_session is not None and not is_stop:
             parser_result = parser_session.process_token(response.token)
             new_text = parser_result.stream_text
             if parser_result.visible_text:
@@ -532,6 +533,7 @@ def _cleanup_finished(    self, finished_ids: set[str]) -> None:
                 self._remove_uid_from_active_batch(uid)
                 if hasattr(self.model, "unregister_rope_delta"):
                     self.model.unregister_rope_delta(uid)
+                _unregister_uid_row(self.model, uid)
                 if uid in self.uid_to_request_id:
                     del self.uid_to_request_id[uid]
                 del self.request_id_to_uid[request_id]
@@ -643,6 +645,7 @@ def _recover_from_cache_error(self) -> None:
     self._cache_rate_tracker.clear()
 
     # Clear UID mappings
+    _unregister_uid_rows_for_model(self.model)
     self.request_id_to_uid.clear()
     self.uid_to_request_id.clear()
 

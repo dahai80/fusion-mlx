@@ -26,6 +26,7 @@ from ..utils.proc_memory import get_phys_footprint
 from .helpers import (
     _sync_and_clear_cache,
 )
+from .monkeypatches import _register_uid_rows
 
 # Module-level alias so Scheduler.__init__ can fall back to mlx-lm's default
 # stream when no per-engine stream is provided.
@@ -245,11 +246,11 @@ def _schedule_waiting(    self,
 
         # Pre-flight memory guard: estimate peak memory for this request
         # and reject if it would exceed the hard limit.
-        preflight_error = self._preflight_memory_check(request)
-        if preflight_error:
+        preflight_rejection = self._preflight_memory_check(request)
+        if preflight_rejection is not None:
             logger.warning(
                 f"Request {request.request_id} rejected by prefill "
-                f"memory guard: {preflight_error}"
+                f"memory guard: {preflight_rejection.message}"
             )
             self._release_paged_cache_for_request(request.request_id)
             self.requests.pop(request.request_id, None)
@@ -258,7 +259,11 @@ def _schedule_waiting(    self,
                     request_id=request.request_id,
                     finished=True,
                     finish_reason="error",
-                    error=preflight_error,
+                    error=preflight_rejection.message,
+                    error_metadata={
+                        "estimated_bytes": preflight_rejection.estimated_bytes,
+                        "limit_bytes": preflight_rejection.limit_bytes,
+                    },
                 )
             )
             continue
@@ -690,6 +695,7 @@ def _schedule_waiting(    self,
         )
 
         if uids:
+            _register_uid_rows(self.model, uids, [sampler], [per_row_lps])
             uid = uids[0]
             self.request_id_to_uid[request.request_id] = uid
             self.uid_to_request_id[uid] = request.request_id

@@ -501,3 +501,24 @@ def _format_bytes(bytes_value: int) -> str:
         return f"{bytes_value / 1024:.2f} KB"
     else:
         return f"{bytes_value} B"
+
+def _bypass_hot_cache_under_pressure(self) -> bool:
+    if not self._prefill_memory_guard:
+        return False
+    if self._memory_limit_bytes <= 0:
+        return False
+    config = getattr(self, "config", None)
+    if config is None:
+        return False
+    if getattr(config, "hot_cache_only", False):
+        return False
+    if int(getattr(config, "hot_cache_max_size", 0) or 0) <= 0:
+        return False
+    if getattr(self, "paged_ssd_cache_manager", None) is None:
+        return False
+    try:
+        current = self._current_usage_bytes()
+    except Exception:
+        logger.debug("Failed to sample memory for hot-cache pressure bypass")
+        return False
+    return current >= self._memory_limit_bytes

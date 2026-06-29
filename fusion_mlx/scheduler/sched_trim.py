@@ -25,6 +25,7 @@ from ..request import RequestStatus
 from .helpers import (
     _safe_sync_stream,
 )
+from .monkeypatches import _unregister_uid_row
 
 
 def _trim_prompt_cache_for_generation(    self, cache_list: list[Any]) -> bool:
@@ -155,6 +156,7 @@ def _do_abort_request(    self, request_id: str) -> bool:
         self._remove_uid_from_active_batch(uid)
         if hasattr(self.model, "unregister_rope_delta"):
             self.model.unregister_rope_delta(uid)
+        _unregister_uid_row(self.model, uid)
         del self.uid_to_request_id[uid]
         del self.request_id_to_uid[request.request_id]
 

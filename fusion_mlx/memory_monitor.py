@@ -289,6 +289,49 @@ class MemoryMonitor:
         self._model_num_query_heads = num_query_heads or num_kv_heads
         self._model_dtype_bytes = dtype_bytes
 
+    # MLX SDPA fused-kernel head-dim cutoff.  Head dims up to this value
+    # dispatch to the fused Metal kernel (minimal temp memory).  Above it,
+    # MLX falls back to an unfused path that materialises the full fp32
+    # score matrix [q_heads, query_len, kv_len].
+    _SDPA_FUSED_MAX_HEAD_DIM: int = 128
+
+    # Dtype size for the unfused SDPA score matrix (always float32).
+    _SDPA_SCORE_DTYPE_SIZE: int = 4
+
+    def _uses_fused_sdpa(self, query_tokens: int, kv_len: int) -> bool:
+        """Return True when MLX dispatches to the fused SDPA kernel.
+
+        The fused path avoids materialising the full attention score
+        matrix.  Currently gated on head_dim only; query/kv lengths do
+        not affect dispatch in the MLX backend as of 0.24.
+        """
+        return self._model_head_dim <= self._SDPA_FUSED_MAX_HEAD_DIM
+
+    def _estimate_sdpa_activation_bytes(
+        self, query_tokens: int, kv_len: int
+    ) -> int:
+        """Estimate SDPA activation peak for one attention layer.
+
+        Fused path: only the weighted-output buffer
+        ``[q_heads, query_tokens, head_dim]`` in float32.
+        Unfused path: the full score matrix
+        ``[q_heads, query_tokens, kv_len]`` in float32 *plus* the output.
+        """
+        hd = self._model_head_dim or 0
+        n_q = self._model_num_query_heads or 0
+        if n_q == 0 or hd == 0 or query_tokens <= 0:
+            return 0
+
+        query_tokens = int(query_tokens)
+        kv_len = max(int(kv_len), 0)
+
+        output = n_q * query_tokens * hd * 4
+        if self._uses_fused_sdpa(query_tokens, kv_len):
+            return output
+
+        scores = n_q * query_tokens * kv_len * self._SDPA_SCORE_DTYPE_SIZE
+        return scores + output
+
     def estimate_prefill_peak_bytes(
         self,
         new_tokens: int,
@@ -299,8 +342,7 @@ class MemoryMonitor:
 
         Accounts for:
         - KV cache for the last prefill chunk (K + V, 2 groups)
-        - SDPA temporary attention matrix (materialized for head_dim > 128)
-        - For head_dim <= 128, MLX uses a fused kernel with minimal temp memory
+        - SDPA activation (fused output or unfused score matrix + output)
 
         Returns 0 if model info is not available (set_model_info not called).
         """
@@ -309,25 +351,62 @@ class MemoryMonitor:
         if new_tokens <= 0:
             return 0
 
-        chunk = min(new_tokens, prefill_step_size)
+        eff_chunk = min(new_tokens, prefill_step_size)
         layers = self._model_num_layers
         hd = self._model_head_dim
         db = self._model_dtype_bytes
         kv_heads = self._model_num_kv_heads
-        q_heads = self._model_num_query_heads
 
         # KV cache: 2 (K+V) * layers * chunk * kv_heads * head_dim * dtype
-        kv_bytes = 2 * layers * chunk * kv_heads * hd * db
+        kv_bytes = 2 * layers * eff_chunk * kv_heads * hd * db
 
-        # SDPA temp matrix: only materialized when head_dim > 128
-        # Shape: [batch=1, n_q_heads, chunk, kv_len] in float32
-        # kv_len = cached_tokens + chunk (existing cache + new tokens)
-        sdpa_bytes = 0
-        if hd > 128:
-            kv_len = cached_tokens + chunk
-            sdpa_bytes = q_heads * chunk * kv_len * 4  # float32
+        # SDPA activation: delegate to the proper estimator.
+        # kv_len includes cached prefix positions — they participate in
+        # attention even though their KV tensors are already resident.
+        full_kv_len = eff_chunk + max(cached_tokens, 0)
+        sdpa_bytes = self._estimate_sdpa_activation_bytes(eff_chunk, full_kv_len)
 
         return kv_bytes + sdpa_bytes
+
+    def estimate_prompt_kv_bytes(
+        self,
+        new_tokens: int,
+        cached_tokens: int = 0,
+    ) -> tuple[int, int]:
+        """Estimate KV cache growth for ``new_tokens`` prompt tokens.
+
+        Same math as the KV portion of ``estimate_prefill_peak_bytes``
+        but without the chunk-size cap — used by the safety-rejection
+        path to charge the full prompt's KV allocation.
+
+        Returns:
+            ``(new_kv_bytes, cached_kv_bytes)`` — the caller needs both
+            to distinguish already-resident cache from new allocation.
+        """
+        if self._model_num_layers <= 0 or self._model_head_dim <= 0:
+            return (0, 0)
+        layers = self._model_num_layers
+        hd = self._model_head_dim
+        db = self._model_dtype_bytes
+        kv_heads = self._model_num_kv_heads
+        new_kv = 0
+        if new_tokens > 0:
+            new_kv = 2 * layers * new_tokens * kv_heads * hd * db
+        cached_kv = 0
+        if cached_tokens > 0:
+            cached_kv = 2 * layers * cached_tokens * kv_heads * hd * db
+        return (new_kv, cached_kv)
+
+    def _predicted_chunk_transient(
+        self, chunk_tokens: int, kv_len: int
+    ) -> int:
+        """Predict the peak transient of a single decode/prefill chunk.
+
+        Returns the SDPA activation peak for the given chunk width and
+        context length.  Used by the safety-rejection path and the
+        adaptive chunk sizer.
+        """
+        return self._estimate_sdpa_activation_bytes(chunk_tokens, kv_len)
 
     def estimate_decode_kv_bytes(self, total_tokens: int) -> int:
         """Estimate KV cache memory for `total_tokens` across all running requests.

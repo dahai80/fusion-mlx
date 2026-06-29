@@ -1,3 +1,4 @@
+import concurrent.futures
 import threading
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -122,6 +123,41 @@ class _PrefillAbortedError(Exception):
 
 
 @dataclass
+class _PreflightRejection:
+    """Typed return for preflight memory checks.
+
+    Carries the human-readable diagnostic plus the numeric estimated /
+    limit bytes so callers can populate error responses without parsing
+    the string.
+    """
+
+    message: str
+    estimated_bytes: int
+    limit_bytes: int
+
+
+class PrefillMemoryExceededError(Exception):
+    """Raised when preflight rejects a request that would exceed memory.
+
+    Mapped to HTTP 400 by the server layer.  Carries structured fields
+    so the API can return ``estimated_bytes`` / ``limit_bytes`` in the
+    JSON body without parsing the human message.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        request_id: str,
+        estimated_bytes: int,
+        limit_bytes: int,
+    ):
+        self.request_id = request_id
+        self.estimated_bytes = estimated_bytes
+        self.limit_bytes = limit_bytes
+        super().__init__(message)
+
+
+@dataclass
 class _PrefillState:
     """Intermediate state for a request undergoing chunked prefill.
 
@@ -187,3 +223,20 @@ class _BoundarySnapshotProvider:
 
     def __bool__(self) -> bool:
         return bool(self._valid_tcs)
+
+
+@dataclass
+class _InflightStoreInfo:
+    tokens: list[int]
+    extra_keys: tuple[Any, ...] | None = None
+    extra_key_token_start: int | None = None
+    extra_key_ranges: list[tuple[int, tuple[Any, ...]]] | None = None
+
+
+@dataclass
+class _CacheFreshnessWait:
+    store_request_id: str
+    future: concurrent.futures.Future
+    common_prefix: int
+    prompt_len: int
+    deadline_s: float
