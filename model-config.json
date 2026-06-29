@@ -84,7 +84,7 @@
             "type": "object",
             "description": "Global defaults applied when per-model values are absent",
             "properties": {
-                "max_seq_len": {"type": "integer", "default": 4096},
+                "max_seq_len": {"type": "integer", "default": 8192},
                 "quant_bits": {"type": "integer", "enum": [4, 8, 16], "default": 4},
                 "ttl_seconds": {"type": "integer", "minimum": 0, "default": 3600},
                 "trust_remote_code": {"type": "boolean", "default": false}
@@ -93,8 +93,8 @@
     },
     "models": {},
     "defaults": {
-        "max_seq_len": 4096,
-        "quant_bits": 4,
+        "max_seq_len": 8192,
+        "quant_bits": 8,
         "ttl_seconds": 3600,
         "trust_remote_code": false
     }

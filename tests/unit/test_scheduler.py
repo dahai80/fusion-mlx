@@ -37,7 +37,7 @@ class TestSchedulerConfig:
     def test_defaults(self):
         cfg = SchedulerConfig()
         assert cfg.max_num_seqs == 256
-        assert cfg.max_num_batched_tokens == 8192
+        assert cfg.max_num_batched_tokens == 65536
         assert cfg.policy == SchedulingPolicy.FCFS
         assert cfg.chunked_prefill is False
 
@@ -323,7 +323,7 @@ class TestSamplingParams:
 
     def test_defaults(self):
         sp = SamplingParams()
-        assert sp.max_tokens == 4096
+        assert sp.max_tokens == 65536
         assert sp.temperature == 0.7
         assert sp.stop == []
 
