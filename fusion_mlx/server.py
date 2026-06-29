@@ -286,7 +286,7 @@ class Server:
             soft_threshold=mem_cfg.soft_threshold,
             hard_threshold=mem_cfg.hard_threshold,
         )
-        await self.pool._process_memory_enforcer.start()
+        self.pool._process_memory_enforcer.start()
         self.pool._get_final_ceiling = self.pool._process_memory_enforcer.get_final_ceiling
 
         # Create request router

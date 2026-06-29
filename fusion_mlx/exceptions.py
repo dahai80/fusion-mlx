@@ -22,6 +22,17 @@ class ModelNotFoundError(EnginePoolError):
     """Requested model does not exist or is not loaded."""
 
 
+class ModelBusyError(EnginePoolError):
+    """Model engine is busy and cannot be reloaded."""
+
+    def __init__(self, model_id: str, operation: str):
+        self.model_id = model_id
+        self.operation = operation
+        super().__init__(
+            f"Model '{model_id}' is busy; cannot {operation}"
+        )
+
+
 class ModelTooLargeError(InsufficientMemoryError):
     """Model is too large to fit in available memory."""
 
