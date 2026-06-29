@@ -8,9 +8,12 @@ import time
 from collections.abc import AsyncIterator
 from typing import Any
 
+from ..api.tool_calling import convert_tools_for_template
+from ..api.utils import clean_special_tokens, detect_and_strip_partial
 from ..engine_core import AsyncEngineCore, EngineConfig, get_executor
 from ..request import SamplingParams
-from .base import BaseEngine, GenerationOutput, _fallback_parse_tool_calls
+from ..utils.tokenizer import get_tokenizer_config
+from .base import BaseEngine, GenerationOutput, _fallback_parse_tool_calls, _warn_scheduler_unreachable_once
 
 logger = logging.getLogger(__name__)
 
@@ -33,6 +36,7 @@ def _nbytes_per_item(dtype) -> int:
         }
         return dtype_map.get(str(dtype), 2)
 
+
 try:
     from ..adapter.harmony import preprocess_harmony_messages
     HAS_HARMONY_ADAPTER = True
@@ -41,42 +45,13 @@ except ImportError:
     preprocess_harmony_messages = None     # type: ignore
 
 
-def _fallback_parse_tool_calls(gen: GenerationOutput, tokenizer: Any, tools: list[dict]) -> GenerationOutput:
-    """Fallback tool call extraction when the scheduler has no parser session.
-
-    Qwen, GLM, and other models that emit XML-based tool call markers
-    (e.g. \u241d...\u241e) don't get parsed by the mllm scheduler.
-    This runs parse_tool_calls on the final text as a safety net.
-    """
-    try:
-        from ..api.tool_calling import parse_tool_calls
-        cleaned, tc_list = parse_tool_calls(gen.text, tokenizer, tools)
-        if tc_list:
-            tc_dicts = []
-            for tc in tc_list:
-                tc_dicts.append({
-                    "id": tc.id,
-                    "type": tc.type,
-                    "function": {
-                        "name": tc.function.name,
-                        "arguments": tc.function.arguments,
-                    },
-                })
-            gen = copy.deepcopy(gen)
-            gen.tool_calls = tc_dicts
-            if cleaned.strip() and cleaned.strip() != gen.text.strip():
-                gen.text = cleaned
-    except Exception as e:
-        logger.debug(f"_fallback_parse_tool_calls failed: {e}")
-    return gen
-
-
 class BatchedEngine(BaseEngine):
     def __init__(
         self, model_name: str, trust_remote_code: bool = False,
         scheduler_config: Any | None = None, stream_interval: int = 1,
         enable_thinking: bool | None = None,
-        preserve_thinking: bool | None = None, model_settings: Any | None = None,
+        model_settings: Any | None = None,
+        prefill_eviction_callback: Any | None = None,
     ):
         super().__init__()
         self._model_name = model_name
@@ -84,14 +59,36 @@ class BatchedEngine(BaseEngine):
         self._scheduler_config = scheduler_config
         self._stream_interval = stream_interval
         self._enable_thinking = enable_thinking
-        self._preserve_thinking = preserve_thinking
         self._model_settings = model_settings
+        self._prefill_eviction_callback = prefill_eviction_callback
         self._model = None
         self._tokenizer = None
         self._engine = None
         self._loaded = False
         self._grammar_compiler = None
         self._grammar_compiler_init_attempted = False
+
+    async def _preflight_or_raise_with_eviction(
+        self,
+        scheduler: Any,
+        *,
+        num_prompt_tokens: int,
+        request_id: str | None,
+    ) -> None:
+        eviction_request = scheduler.preflight_eviction_request(
+            num_prompt_tokens=num_prompt_tokens,
+            request_id=request_id,
+        )
+        if eviction_request is not None and self._prefill_eviction_callback is not None:
+            logger.info(
+                "Running preflight LRU eviction for request %s",
+                eviction_request.request_id,
+            )
+            await self._prefill_eviction_callback(eviction_request)
+        scheduler.preflight_or_raise(
+            num_prompt_tokens=num_prompt_tokens,
+            request_id=request_id,
+        )
 
     @property
     def model_name(self) -> str:
@@ -126,6 +123,22 @@ class BatchedEngine(BaseEngine):
         return None
 
     @property
+    def message_extractor(self):
+        try:
+            from ..parsers.output_parser import detect_message_extractor
+
+            model_config = None
+            if self._model is not None and hasattr(self._model, "config"):
+                cfg = self._model.config
+                if hasattr(cfg, "model_type"):
+                    model_config = {"model_type": cfg.model_type}
+                elif isinstance(cfg, dict):
+                    model_config = cfg
+            return detect_message_extractor(self._model_name, model_config)
+        except Exception:
+            return None
+
+    @property
     def grammar_compiler(self):
         if self._grammar_compiler is not None:
             return self._grammar_compiler
@@ -137,8 +150,27 @@ class BatchedEngine(BaseEngine):
             self._grammar_compiler = create_grammar_compiler(self._tokenizer, self._model)
             logger.info("GrammarCompiler initialized for %s", self._model_name)
         except Exception:
-            logger.debug("fusion_mlx/engines/batched.py:83: swallowed exception")
-            pass
+            from ..utils.install import get_install_method
+
+            method = get_install_method()
+            if method == "dmg":
+                logger.warning(
+                    "GrammarCompiler initialization failed for %s on the "
+                    "DMG build. The bundle ships xgrammar against a torch "
+                    "stub; this usually means the bundled xgrammar / tvm-"
+                    "ffi version drifted past what the stub covers.",
+                    self._model_name,
+                )
+            elif method == "homebrew":
+                logger.info(
+                    "Structured output requires xgrammar. "
+                    "Reinstall with: brew reinstall fusion-mlx --with-grammar"
+                )
+            else:
+                logger.info(
+                    "Structured output requires xgrammar. "
+                    "Install with: pip install 'fusion-mlx[grammar]'"
+                )
         return self._grammar_compiler
 
     @property
@@ -159,7 +191,6 @@ class BatchedEngine(BaseEngine):
             return False
 
     def _sort_system_first(self, messages: list[dict]) -> list[dict]:
-        """Ensure exactly one system message at the beginning."""
         systems = [m for m in messages if m.get("role") in ("system", "developer")]
         others = [m for m in messages if m.get("role") not in ("system", "developer")]
         if systems:
@@ -181,17 +212,41 @@ class BatchedEngine(BaseEngine):
         from mlx_lm import load
 
         from ..scheduler import SchedulerConfig
+        from ..utils.model_loading import (
+            maybe_apply_pre_load_patches,
+            maybe_load_custom_quantization,
+        )
 
-        tokenizer_config = {"trust_remote_code": self._trust_remote_code}
+        tokenizer_config = get_tokenizer_config(
+            self._model_name,
+            trust_remote_code=self._trust_remote_code,
+        )
+
+        maybe_apply_pre_load_patches(
+            self._model_name, model_settings=self._model_settings
+        )
 
         loop = asyncio.get_running_loop()
 
         def _load_model_sync():
             start = time.monotonic()
             logger.info("Loading model: %s", self._model_name)
-            model, tokenizer = load(self._model_name, tokenizer_config=tokenizer_config)
+
+            custom_loaded = maybe_load_custom_quantization(
+                self._model_name,
+                is_vlm=False,
+            )
+            if custom_loaded is not None:
+                model, processor = custom_loaded
+                tokenizer = getattr(processor, "tokenizer", processor)
+            else:
+                model, tokenizer = load(
+                    self._model_name,
+                    tokenizer_config=tokenizer_config,
+                    trust_remote_code=self._trust_remote_code,
+                )
+
             elapsed = time.monotonic() - start
-             # Estimate model size from loaded weights
             total_params = 0
             try:
                 from mlx.utils import tree_flatten
@@ -209,18 +264,17 @@ class BatchedEngine(BaseEngine):
         self._model, self._tokenizer = await asyncio.wait_for(
             loop.run_in_executor(get_executor("io"), _load_model_sync), timeout=120.0)
 
-        scheduler_config = (
-            copy.copy(self._scheduler_config) if self._scheduler_config else SchedulerConfig()
+        from ..utils.model_loading import (
+            apply_post_load_transforms,
+            materialize_lazy_state,
         )
-        scheduler_config.model_name = self._model_name
-        engine_config = EngineConfig(
-            model_name=self._model_name, scheduler_config=scheduler_config,
-            stream_interval=self._stream_interval,
-        )
-        self._engine = AsyncEngineCore(model=self._model, tokenizer=self._tokenizer, config=engine_config)
-        await self._engine.engine.start()
 
-        # TurboQuant KV cache
+        self._model = apply_post_load_transforms(self._model, self._model_settings)
+
+        await loop.run_in_executor(
+            get_executor("io"), materialize_lazy_state, self._model
+        )
+
         if self._model_settings is not None:
             tq_enabled = getattr(self._model_settings, "turboquant_kv_enabled", False)
             if tq_enabled:
@@ -229,12 +283,32 @@ class BatchedEngine(BaseEngine):
                 )
                 apply_turboquant_attention_patch()
                 tq_bits = float(getattr(self._model_settings, "turboquant_kv_bits", 4))
-                self._engine.engine.scheduler._turboquant_kv_bits = tq_bits
-                self._engine.engine.scheduler._turboquant_skip_last = getattr(
+                logger.info(f"TurboQuant KV cache enabled: {tq_bits} bits")
+
+        scheduler_config = (
+            copy.copy(self._scheduler_config) if self._scheduler_config else SchedulerConfig()
+        )
+        scheduler_config.model_name = self._model_name
+        engine_config = EngineConfig(
+            model_name=self._model_name, scheduler_config=scheduler_config,
+            stream_interval=self._stream_interval,
+            prefill_eviction_callback=self._prefill_eviction_callback,
+        )
+        self._engine = AsyncEngineCore(model=self._model, tokenizer=self._tokenizer, config=engine_config)
+        await self._engine.engine.start()
+
+        scheduler = self._engine.engine.scheduler
+        if self._model_settings is not None:
+            tq_enabled = getattr(self._model_settings, "turboquant_kv_enabled", False)
+            if tq_enabled:
+                tq_bits = float(getattr(self._model_settings, "turboquant_kv_bits", 4))
+                scheduler._turboquant_kv_bits = tq_bits
+                scheduler._turboquant_skip_last = getattr(
                     self._model_settings, "turboquant_skip_last", True
                 )
+                scheduler._set_model_info_for_monitor()
+        scheduler.refresh_ssd_layer_signature()
 
-        # SpecPrefill
         if self._model_settings is not None:
             specprefill_draft = getattr(self._model_settings, "specprefill_draft_model", None)
             specprefill_enabled = getattr(self._model_settings, "specprefill_enabled", False)
@@ -247,11 +321,19 @@ class BatchedEngine(BaseEngine):
                             from ..patches.mlx_lm_mtp import is_mtp_active
                             was_mtp = is_mtp_active()
                         except Exception:
-                            logger.debug("fusion_mlx/engines/batched.py:155: swallowed exception")
                             pass
                         set_mtp_active(False)
                         try:
-                            draft_model, _ = load(specprefill_draft)
+                            draft_tokenizer_config = get_tokenizer_config(
+                                specprefill_draft,
+                                trust_remote_code=self._trust_remote_code,
+                            )
+                            draft_model, _ = load(
+                                specprefill_draft,
+                                tokenizer_config=draft_tokenizer_config,
+                                trust_remote_code=self._trust_remote_code,
+                            )
+                            materialize_lazy_state(draft_model)
                             return draft_model
                         finally:
                             set_mtp_active(was_mtp)
@@ -278,6 +360,7 @@ class BatchedEngine(BaseEngine):
         self._model = None
         self._tokenizer = None
         self._loaded = False
+        logger.info("BatchedEngine stopped")
 
     def _apply_chat_template(
         self, messages: list[dict[str, Any]], tools: list[dict] | None = None,
@@ -285,7 +368,6 @@ class BatchedEngine(BaseEngine):
     ) -> str:
         if hasattr(self._tokenizer, "apply_chat_template"):
             if is_partial is None:
-                from ..api.utils import detect_and_strip_partial
                 is_partial = detect_and_strip_partial(messages)
             else:
                 for msg in messages:
@@ -294,41 +376,23 @@ class BatchedEngine(BaseEngine):
             if is_partial:
                 template_kwargs["continue_final_message"] = True
             if tools:
-                from ..api.tool_calling import convert_tools_for_template
                 template_kwargs["tools"] = convert_tools_for_template(tools)
             if self._enable_thinking is not None:
                 template_kwargs["enable_thinking"] = self._enable_thinking
-            if self._preserve_thinking is not None:
-                template_kwargs["preserve_thinking"] = self._preserve_thinking
             if chat_template_kwargs:
                 template_kwargs.update(chat_template_kwargs)
-            # Ensure system message exists at start
-            if not messages or messages[0].get("role") not in ("system", "developer"):
-                logger.warning(
-                    "No system message at start, inserting. first_role=%s, total=%d",
-                    messages[0].get("role", "empty") if messages else "empty", len(messages),
-                )
-                messages.insert(0, {"role": "system", "content": "You are a helpful assistant."})
-            logger.info(
-                "Chat template: roles=%s",
-                [m.get("role") for m in messages[:5]],
-            )
+
             try:
                 return self._tokenizer.apply_chat_template(messages, **template_kwargs)
+            except TypeError:
+                if chat_template_kwargs:
+                    for key in chat_template_kwargs:
+                        template_kwargs.pop(key, None)
+                template_kwargs.pop("tools", None)
+                template_kwargs.pop("enable_thinking", None)
+                return self._tokenizer.apply_chat_template(messages, **template_kwargs)
             except Exception as e:
-                if "system message" in str(e).lower():
-                    logger.error("Template demands system message, retrying with fallback insert")
-                    messages.insert(0, {"role": "system", "content": "You are a helpful assistant."})
-                    return self._tokenizer.apply_chat_template(messages, **template_kwargs)
-                if isinstance(e, TypeError):
-                    if chat_template_kwargs:
-                        for key in chat_template_kwargs:
-                            template_kwargs.pop(key, None)
-                    template_kwargs.pop("tools", None)
-                    template_kwargs.pop("enable_thinking", None)
-                    template_kwargs.pop("preserve_thinking", None)
-                    return self._tokenizer.apply_chat_template(messages, **template_kwargs)
-                logger.error("apply_chat_template failed: %s, roles=%s", e, [m.get("role") for m in messages[:3]])
+                logger.error(f"Chat template rendering failed: {e}")
                 raise
         else:
             prompt = "\n".join(f"{m['role']}: {m['content']}" for m in messages)
@@ -339,12 +403,11 @@ class BatchedEngine(BaseEngine):
         chat_template_kwargs: dict[str, Any] | None = None, is_partial: bool | None = None,
     ) -> int:
         messages = self._preprocess_messages(messages)
-        messages = self._sort_system_first(messages)
-        template_tools = None
-        if tools:
-            from ..api.tool_calling import convert_tools_for_template
-            template_tools = convert_tools_for_template(tools)
-        prompt = self._apply_chat_template(messages, template_tools, chat_template_kwargs=chat_template_kwargs, is_partial=is_partial)
+        template_tools = convert_tools_for_template(tools) if tools else None
+        prompt = self._apply_chat_template(
+            messages, template_tools,
+            chat_template_kwargs=chat_template_kwargs, is_partial=is_partial,
+        )
         return len(self._tokenizer.encode(prompt))
 
     async def generate(
@@ -365,7 +428,6 @@ class BatchedEngine(BaseEngine):
             compiled_grammar=kwargs.get("compiled_grammar"), seed=kwargs.get("seed"),
         )
         output = await self._engine.generate(prompt=prompt, sampling_params=sampling_params)
-        from ..api.utils import clean_special_tokens
         text = clean_special_tokens(output.output_text)
         return GenerationOutput(
             text=text, prompt_tokens=output.prompt_tokens,
@@ -405,7 +467,6 @@ class BatchedEngine(BaseEngine):
         finished_normally = False
         try:
             async for output in engine.stream_outputs(request_id):
-                from ..api.utils import clean_special_tokens
                 text = clean_special_tokens(output.output_text)
                 if output.finished:
                     finished_normally = True
@@ -414,12 +475,23 @@ class BatchedEngine(BaseEngine):
                     prompt_tokens=output.prompt_tokens, completion_tokens=output.completion_tokens,
                     finished=output.finished, finish_reason=output.finish_reason,
                     tool_calls=output.tool_calls, cached_tokens=output.cached_tokens,
+                    generated_at=getattr(output, "generated_at", None),
+                    generated_until=getattr(output, "generated_until", None),
                 )
         except GeneratorExit:
-            logger.info(f"[stream_generate] GeneratorExit for request {request_id}")
+            logger.info(
+                f"[stream_generate] GeneratorExit caught for request {request_id}"
+            )
         finally:
             if not finished_normally:
+                logger.info(
+                    f"[stream_generate] Aborting request {request_id} (finished_normally={finished_normally})"
+                )
                 await engine.abort_request(request_id)
+            else:
+                logger.debug(
+                    f"[stream_generate] Request {request_id} finished normally"
+                )
 
     async def chat(
         self, messages: list[dict[str, Any]], max_tokens: int = 4096, temperature: float = 0.7,
@@ -430,11 +502,7 @@ class BatchedEngine(BaseEngine):
         if not self._loaded:
             await self.start()
         messages = self._preprocess_messages(messages)
-        messages = self._sort_system_first(messages)
-        template_tools = None
-        if tools:
-            from ..api.tool_calling import convert_tools_for_template
-            template_tools = convert_tools_for_template(tools)
+        template_tools = convert_tools_for_template(tools) if tools else None
         ct_kwargs = kwargs.pop("chat_template_kwargs", None)
         partial = kwargs.pop("is_partial", None)
         prompt = self._apply_chat_template(messages, template_tools, chat_template_kwargs=ct_kwargs, is_partial=partial)
@@ -460,7 +528,6 @@ class BatchedEngine(BaseEngine):
             )
             token_ids = self._tokenizer.encode(prompt)
             ro = await self._engine.decode_with_handoff(token_ids, sampling_params, kv_handoff.kv_buffers)
-            from ..api.utils import clean_special_tokens
             return GenerationOutput(
                 text=clean_special_tokens(ro.output_text), prompt_tokens=ro.prompt_tokens,
                 completion_tokens=ro.completion_tokens, finish_reason=ro.finish_reason,
@@ -470,10 +537,71 @@ class BatchedEngine(BaseEngine):
             prompt=prompt, max_tokens=max_tokens, temperature=temperature,
             top_p=top_p, top_k=top_k, min_p=min_p,
             repetition_penalty=repetition_penalty, presence_penalty=presence_penalty, **kwargs,
-             )
+        )
         if tools and not gen.tool_calls:
             gen = _fallback_parse_tool_calls(gen, self._tokenizer, tools)
         return gen
+
+    async def preflight_chat(
+        self,
+        messages: list[dict[str, Any]],
+        tools: list[dict] | None = None,
+        request_id: str | None = None,
+        **kwargs,
+    ) -> None:
+        if not self._loaded:
+            await self.start()
+        messages = self._preprocess_messages(messages)
+        template_tools = convert_tools_for_template(tools) if tools else None
+        ct_kwargs = kwargs.get("chat_template_kwargs")
+        partial = kwargs.get("is_partial")
+        prompt = self._apply_chat_template(
+            messages, template_tools,
+            chat_template_kwargs=ct_kwargs, is_partial=partial,
+        )
+        try:
+            num_tokens = len(self._tokenizer.encode(prompt))
+        except Exception as e:
+            logger.warning(
+                "BatchedEngine.preflight_chat: tokenizer.encode raised %s; "
+                "skipping prefill memory check, real chat path will surface "
+                "the error",
+                type(e).__name__,
+            )
+            return
+        scheduler = getattr(getattr(self._engine, "engine", None), "scheduler", None)
+        if scheduler is None:
+            _warn_scheduler_unreachable_once(self, "preflight_chat")
+            return
+        await self._preflight_or_raise_with_eviction(
+            scheduler, num_prompt_tokens=num_tokens, request_id=request_id
+        )
+
+    async def preflight_completion(
+        self,
+        prompt: str,
+        request_id: str | None = None,
+        **kwargs,
+    ) -> None:
+        if not self._loaded:
+            await self.start()
+        try:
+            num_tokens = len(self._tokenizer.encode(prompt))
+        except Exception as e:
+            logger.warning(
+                "BatchedEngine.preflight_completion: tokenizer.encode raised "
+                "%s; skipping prefill memory check, real completion path "
+                "will surface the error",
+                type(e).__name__,
+            )
+            return
+        scheduler = getattr(getattr(self._engine, "engine", None), "scheduler", None)
+        if scheduler is None:
+            _warn_scheduler_unreachable_once(self, "preflight_completion")
+            return
+        await self._preflight_or_raise_with_eviction(
+            scheduler, num_prompt_tokens=num_tokens, request_id=request_id
+        )
 
     async def stream_chat(
         self, messages: list[dict[str, Any]], max_tokens: int = 4096, temperature: float = 0.7,
@@ -484,11 +612,7 @@ class BatchedEngine(BaseEngine):
         if not self._loaded:
             await self.start()
         messages = self._preprocess_messages(messages)
-        messages = self._sort_system_first(messages)
-        template_tools = None
-        if tools:
-            from ..api.tool_calling import convert_tools_for_template
-            template_tools = convert_tools_for_template(tools)
+        template_tools = convert_tools_for_template(tools) if tools else None
         ct_kwargs = kwargs.pop("chat_template_kwargs", None)
         partial = kwargs.pop("is_partial", None)
         prompt = self._apply_chat_template(messages, template_tools, chat_template_kwargs=ct_kwargs, is_partial=partial)
@@ -496,7 +620,6 @@ class BatchedEngine(BaseEngine):
         kv_handoff = kwargs.pop("kv_handoff", None)
         prefill_only = kwargs.pop("prefill_only", False)
         if prefill_only:
-     # prefill_only on streaming path: yield single result from non-streaming
             result = await self.chat(messages, max_tokens=max_tokens,
                           temperature=temperature, top_p=top_p, top_k=top_k,
                           min_p=min_p, repetition_penalty=repetition_penalty,
@@ -505,29 +628,26 @@ class BatchedEngine(BaseEngine):
             yield result
             return
         if kv_handoff is not None:
-             # Decode with handoff — stream outputs
             sampling_params = SamplingParams(
                 max_tokens=max_tokens, temperature=temperature, top_p=top_p, top_k=top_k,
                 min_p=min_p, repetition_penalty=repetition_penalty, presence_penalty=presence_penalty,
                 stop=[],
-             )
+            )
             token_ids = self._tokenizer.encode(prompt)
             request_id = await self._engine.add_request(
                 prompt=token_ids, sampling_params=sampling_params
-             )
+            )
             self._engine.scheduler.import_kv_state(request_id, kv_handoff.kv_buffers)
             async for output in self._engine.stream_outputs(request_id):
-                from ..api.utils import clean_special_tokens
                 text = clean_special_tokens(output.output_text)
                 yield GenerationOutput(
                     text=text, new_text=output.new_text,
                     prompt_tokens=output.prompt_tokens, completion_tokens=output.completion_tokens,
                     finished=output.finished, finish_reason=output.finish_reason,
                     tool_calls=output.tool_calls, cached_tokens=output.cached_tokens,
-                 )
+                )
             return
 
-        # SpecPrefill system_end
         specprefill_model_enabled = getattr(self._model_settings, "specprefill_enabled", False) if self._model_settings else False
         if specprefill_model_enabled and kwargs.get("specprefill") is not False:
             non_system = [m for m in messages if m.get("role") not in ("system", "developer")]
@@ -546,7 +666,7 @@ class BatchedEngine(BaseEngine):
             prompt=prompt, max_tokens=max_tokens, temperature=temperature,
             top_p=top_p, top_k=top_k, min_p=min_p,
             repetition_penalty=repetition_penalty, presence_penalty=presence_penalty, **kwargs,
-              ):
+        ):
             if output.finished and tools and not output.tool_calls:
                 output = _fallback_parse_tool_calls(output, self._tokenizer, tools)
             yield output

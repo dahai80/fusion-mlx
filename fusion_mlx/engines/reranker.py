@@ -8,7 +8,7 @@ from typing import Any
 
 import mlx.core as mx
 
-from ..engine_core import get_executor
+from ..engine_core import get_mlx_executor
 from .base import BaseNonStreamingEngine
 
 logger = logging.getLogger(__name__)
@@ -109,27 +109,35 @@ class RerankerEngine(BaseNonStreamingEngine):
         self._model = MLXRerankerModel(self._model_name, trust_remote_code=self._trust_remote_code)
         loop = asyncio.get_running_loop()
         await asyncio.wait_for(
-            loop.run_in_executor(get_executor("llm"), self._model.load), timeout=120.0)
+            loop.run_in_executor(get_mlx_executor(), self._model.load), timeout=120.0)
+        logger.info(f"Reranker engine started: {self._model_name}")
 
     async def stop(self) -> None:
         if self._model is None:
             return
+        logger.info(f"Stopping reranker engine: {self._model_name}")
         self._model = None
         gc.collect()
         loop = asyncio.get_running_loop()
         await asyncio.wait_for(
-            loop.run_in_executor(get_executor("llm"), lambda: (mx.synchronize(), mx.clear_cache())), timeout=5.0)
+            loop.run_in_executor(get_mlx_executor(), lambda: (mx.synchronize(), mx.clear_cache())), timeout=5.0)
+        logger.info(f"Reranker engine stopped: {self._model_name}")
 
     async def rerank(self, query: "str | dict", documents: "list[str] | list[dict]", top_n: int | None = None, max_length: int | None = None) -> RerankOutput:
         if self._model is None:
             raise RuntimeError("Engine not started.")
-        activity_id = self._begin_activity("reranking", total_items=len(documents))
+        activity_id = self._begin_activity(
+            "reranking",
+            detail="Reranking",
+            total_items=len(documents),
+            metadata={"document_count": len(documents)},
+        )
         try:
             loop = asyncio.get_running_loop()
             def _rerank():
                 return self._model.rerank(query=query, documents=documents, max_length=max_length)
             output = await asyncio.wait_for(
-                loop.run_in_executor(get_executor("llm"), _rerank), timeout=30.0)
+                loop.run_in_executor(get_mlx_executor(), _rerank), timeout=30.0)
             self._update_activity(activity_id, token_count=output.total_tokens)
             if top_n is not None and top_n < len(output.indices):
                 return RerankOutput(scores=output.scores, indices=output.indices[:top_n], total_tokens=output.total_tokens)
@@ -139,6 +147,11 @@ class RerankerEngine(BaseNonStreamingEngine):
 
     def get_stats(self) -> dict[str, Any]:
         return {"model_name": self._model_name, "loaded": self._model is not None, "num_labels": self.num_labels}
+
+    def get_model_info(self) -> dict[str, Any]:
+        if self._model is None:
+            return {"loaded": False, "model_name": self._model_name}
+        return self._model.get_model_info()
 
     def __repr__(self) -> str:
         status = "running" if self._model is not None else "stopped"

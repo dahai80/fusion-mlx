@@ -35,11 +35,13 @@ from .observability import CacheRateTracker
 
 # Paged cache implementations
 from .paged_cache import (
+    BlockHash,
     BlockHashToBlockMap,
     BlockTable,
     CacheBlock,
     FreeKVCacheBlockQueue,
     PagedCacheManager,
+    compute_block_hash,
 )
 
 # Paged SSD cache implementations
@@ -107,6 +109,8 @@ __all__ = [
     "BlockTable",
     "FreeKVCacheBlockQueue",
     "BlockHashToBlockMap",
+    "BlockHash",
+    "compute_block_hash",
     # Prefix cache
     "BlockAwarePrefixCache",
     "BlockCacheEntry",

@@ -6,6 +6,8 @@ import subprocess
 from ctypes import CDLL, byref, c_uint32, c_uint64, c_void_p
 from typing import Any
 
+from fusion_mlx.utils.formatting import format_bytes
+
 logger = logging.getLogger(__name__)
 
 # macOS libsystem for host_statistics — initialised lazily
@@ -350,3 +352,152 @@ class MemoryMonitor:
     def __exit__(self, exc_type, exc_val, exc_tb):
         self.close()
         return False
+
+
+def _cfg_get(obj: Any, key: str, default: Any = None) -> Any:
+    if isinstance(obj, dict):
+        return obj.get(key, default)
+    return getattr(obj, key, default)
+
+
+def _pos_int(v: Any) -> bool:
+    return isinstance(v, int) and not isinstance(v, bool) and v > 0
+
+
+def set_model_info_from_model(monitor: "MemoryMonitor", model: Any) -> None:
+    """Populate ``monitor`` with KV/SDPA dims read from an mlx-lm ``model``.
+
+    Best-effort: on any extraction failure the monitor is left dim-less
+    and ``estimate_prefill_peak_bytes`` returns 0, making the guard a no-op
+    rather than raising spuriously.
+    """
+    try:
+        import mlx.core as mx
+
+        config = None
+        if hasattr(model, "config"):
+            config = model.config
+        elif hasattr(model, "args"):
+            config = model.args
+
+        if config is None:
+            logger.debug("Could not extract model config for memory estimation")
+            return
+
+        for sub_attr in ("text_config", "language_config", "llm_config"):
+            sub = _cfg_get(config, sub_attr)
+            if sub is not None and (
+                _cfg_get(sub, "num_hidden_layers") or _cfg_get(sub, "n_layer")
+            ):
+                config = sub
+                break
+
+        num_layers = _cfg_get(config, "num_hidden_layers") or _cfg_get(config, "n_layer")
+        num_kv_heads = (
+            _cfg_get(config, "num_key_value_heads")
+            or _cfg_get(config, "num_attention_heads")
+            or _cfg_get(config, "n_head")
+        )
+        head_dim = _cfg_get(config, "head_dim")
+        hidden_size = _cfg_get(config, "hidden_size") or _cfg_get(config, "n_embd")
+
+        if head_dim is None and hidden_size and num_kv_heads:
+            num_heads = _cfg_get(config, "num_attention_heads") or num_kv_heads
+            head_dim = hidden_size // num_heads
+
+        dtype_size = 2
+        if hasattr(model, "dtype"):
+            if model.dtype == mx.float32:
+                dtype_size = 4
+            elif model.dtype == mx.bfloat16:
+                dtype_size = 2
+
+        num_attention_heads = (
+            _cfg_get(config, "num_attention_heads")
+            or _cfg_get(config, "n_head")
+            or num_kv_heads
+        )
+
+        if _pos_int(num_layers) and _pos_int(num_kv_heads) and _pos_int(head_dim):
+            monitor.set_model_info(
+                num_layers=num_layers,
+                num_kv_heads=num_kv_heads,
+                head_dim=head_dim,
+                num_query_heads=num_attention_heads,
+                dtype_bytes=dtype_size,
+            )
+            logger.debug(
+                "Model info for memory estimation: "
+                "layers=%s, kv_heads=%s, q_heads=%s, "
+                "head_dim=%s, dtype_size=%s",
+                num_layers, num_kv_heads, num_attention_heads,
+                head_dim, dtype_size,
+            )
+        else:
+            logger.debug(
+                "Incomplete model info: layers=%s, kv_heads=%s, head_dim=%s",
+                num_layers, num_kv_heads, head_dim,
+            )
+    except Exception as e:
+        logger.debug("Failed to extract model info: %s", e)
+
+
+def raise_if_prefill_exceeds(
+    monitor: "MemoryMonitor | None",
+    *,
+    prefill_memory_guard: bool,
+    hard_limit_bytes: int,
+    current_usage_bytes: int,
+    prefill_step_size: int,
+    num_prompt_tokens: int,
+    cached_tokens: int = 0,
+    request_id: str | None = None,
+) -> None:
+    if not prefill_memory_guard:
+        return
+    if hard_limit_bytes <= 0:
+        return
+    if monitor is None:
+        return
+
+    new_tokens = max(int(num_prompt_tokens) - max(int(cached_tokens), 0), 0)
+    if new_tokens == 0:
+        return
+
+    peak = monitor.estimate_prefill_peak_bytes(
+        new_tokens, prefill_step_size, cached_tokens=cached_tokens
+    )
+    if peak == 0:
+        return
+
+    current = max(0, int(current_usage_bytes))
+    if current + peak <= hard_limit_bytes:
+        return
+
+    from fusion_mlx.exceptions import PrefillMemoryExceededError
+
+    usage_gb = current / (1024**3)
+    ceiling_gb = hard_limit_bytes / (1024**3)
+    message = (
+        f"Prefill would require ~{format_bytes(current + peak)} peak "
+        f"(current {format_bytes(current)} + KV+SDPA {format_bytes(peak)}) "
+        f"but ceiling is {format_bytes(hard_limit_bytes)} "
+        f"(usage {usage_gb:.1f} GB, ceiling {ceiling_gb:.1f} GB). "
+        f"Reduce context length, free system memory, or loosen "
+        f"memory_guard_tier (safe → balanced → aggressive)."
+    )
+
+    if not request_id:
+        import uuid as _uuid
+
+        request_id = f"preflight-{_uuid.uuid4().hex[:8]}"
+    logger.warning(
+        "Preflight rejected (%d tokens, cached=%d, request_id=%s): %s",
+        num_prompt_tokens, cached_tokens, request_id, message,
+    )
+    raise PrefillMemoryExceededError(
+        message=message,
+        request_id=request_id,
+        estimated_bytes=int(current + peak),
+        limit_bytes=int(hard_limit_bytes),
+    )
