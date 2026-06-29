@@ -1531,8 +1531,9 @@ class EnginePool:
                     lambda: (mx.synchronize(), mx.clear_cache()),
                 )
                 raise ModelLoadingError(
+                    model_id,
                     f"Model {model_id} load aborted: "
-                    f"process memory limit exceeded"
+                    f"process memory limit exceeded",
                 )
 
             entry.engine = engine

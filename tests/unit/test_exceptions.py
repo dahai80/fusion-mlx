@@ -27,9 +27,11 @@ class TestExceptionHierarchy:
         assert isinstance(err, EnginePoolError)
 
      def test_model_too_large_inheritance(self):
-        err = ModelTooLargeError("too big")
-        assert isinstance(err, InsufficientMemoryError)
+        err = ModelTooLargeError("model-x", 8_000_000_000, 4_000_000_000)
         assert isinstance(err, EnginePoolError)
+        assert err.model_id == "model-x"
+        assert err.model_size == 8_000_000_000
+        assert err.ceiling == 4_000_000_000
 
      def test_is_cache_corruption_error(self):
         assert is_cache_corruption_error(Exception("test")) is False

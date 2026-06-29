@@ -1,60 +1,130 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Exceptions for fusion-mlx."""
+"""
+Custom exception hierarchy for fusion-mlx.
+
+This module provides a structured exception hierarchy for better error handling
+and debugging throughout the codebase.
+
+Usage:
+    from fusion_mlx.exceptions import CacheCorruptionError, SchedulerError
+
+    try:
+        scheduler.step()
+    except CacheCorruptionError as e:
+        scheduler.recover()
+    except SchedulerError as e:
+        logger.error(f"Scheduler error: {e}")
+"""
+
+from typing import Any, Optional
 
 
 class FusionMLXError(Exception):
     """Base exception for all fusion-mlx errors."""
 
+    def __init__(self, message: str, details: Optional[dict] = None):
+        super().__init__(message)
+        self.message = message
+        self.details = details or {}
 
-class EnginePoolError(FusionMLXError):
-    """Base exception for engine pool errors."""
-
-
-class InsufficientMemoryError(EnginePoolError):
-    """Not enough memory to load the requested model."""
-
-
-class ModelLoadingError(EnginePoolError):
-    """Failed to load a model."""
+    def __str__(self) -> str:
+        if self.details:
+            return f"{self.message} (details: {self.details})"
+        return self.message
 
 
-class ModelNotFoundError(EnginePoolError):
-    """Requested model does not exist or is not loaded."""
+class OMLXError(FusionMLXError):
+    """Base exception for all OMLX-derived errors."""
+
+    pass
 
 
-class ModelBusyError(EnginePoolError):
-    """Model engine is busy and cannot be reloaded."""
+class OMLXMemoryError(OMLXError):
+    """Base exception for memory-related errors."""
 
-    def __init__(self, model_id: str, operation: str):
-        self.model_id = model_id
-        self.operation = operation
-        super().__init__(
-            f"Model '{model_id}' is busy; cannot {operation}"
-        )
+    pass
 
 
-class ModelTooLargeError(InsufficientMemoryError):
-    """Model is too large to fit in available memory."""
-
-
-class SchedulerError(FusionMLXError):
-    """Base exception for scheduler errors."""
-
-
-class RequestTimeoutError(SchedulerError):
-    """A request timed out waiting for resources."""
-
-
-class PreemptionError(SchedulerError):
-    """Failed to preempt a request."""
+# =============================================================================
+# Cache-related Exceptions
+# =============================================================================
 
 
 class CacheError(FusionMLXError):
-    """Base exception for cache errors."""
+    """Base exception for cache-related errors."""
+
+    pass
 
 
 class CacheCorruptionError(CacheError):
-    """Cache data is corrupted or invalid."""
+    """
+    KV cache data is corrupted or invalid.
+
+    Recovery typically involves clearing the cache and
+    rescheduling affected requests.
+
+    Attributes:
+        request_id: The request ID affected by corruption, if known.
+        block_id: The block ID that is corrupted, if applicable.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        request_id: Optional[str] = None,
+        block_id: Optional[int] = None,
+        details: Optional[dict] = None,
+    ):
+        super().__init__(message, details)
+        self.request_id = request_id
+        self.block_id = block_id
+
+
+class CacheMissError(CacheError):
+    """
+    Requested cache entry was not found.
+
+    Typically not fatal — handle by falling back to computation.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        key: Optional[Any] = None,
+        details: Optional[dict] = None,
+    ):
+        super().__init__(message, details)
+        self.key = key
+
+
+class CacheEvictionError(CacheError):
+    """
+    Failed to evict cache entries.
+
+    Can occur when eviction policies fail or when there are no
+    evictable entries despite memory pressure.
+    """
+
+    pass
+
+
+class CacheStorageError(CacheError):
+    """
+    Failed to store or retrieve cache data from storage (paged SSD/disk).
+
+    Indicates I/O issues with the paged SSD cache storage layer.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        path: Optional[str] = None,
+        operation: Optional[str] = None,
+        details: Optional[dict] = None,
+    ):
+        super().__init__(message, details)
+        self.path = path
+        self.operation = operation
 
 
 class CacheWriteError(CacheError):
@@ -65,16 +135,436 @@ class CacheReadError(CacheError):
     """Failed to read from cache storage."""
 
 
+# =============================================================================
+# Scheduler-related Exceptions
+# =============================================================================
+
+
+class SchedulerError(FusionMLXError):
+    """Base exception for scheduler-related errors."""
+
+    pass
+
+
+class RequestError(SchedulerError):
+    """
+    Error related to a specific request.
+
+    Attributes:
+        request_id: The ID of the request that caused the error.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        request_id: Optional[str] = None,
+        details: Optional[dict] = None,
+    ):
+        super().__init__(message, details)
+        self.request_id = request_id
+
+
+class RequestNotFoundError(RequestError):
+    """Request was not found in the scheduler."""
+
+    pass
+
+
+class RequestAbortedError(RequestError):
+    """Request was aborted before completion."""
+
+    pass
+
+
+class BatchingError(SchedulerError):
+    """
+    Error during batch processing.
+
+    Can occur when the BatchGenerator encounters issues during
+    token generation or batch management.
+    """
+
+    pass
+
+
+class SchedulerQueueFullError(SchedulerError):
+    """
+    Waiting queue depth cap exceeded.
+
+    Raised when admission control rejects a request because the scheduler's
+    waiting queue is already at the configured depth cap. Server layer maps
+    this to HTTP 503 with a short Retry-After.
+
+    Attributes:
+        current_depth: Current number of waiting requests.
+        max_depth: Configured queue depth cap.
+    """
+
+    def __init__(
+        self,
+        current_depth: int,
+        max_depth: int,
+        details: Optional[dict] = None,
+    ):
+        super().__init__(
+            f"Scheduler waiting queue full: {current_depth} >= {max_depth}",
+            details,
+        )
+        self.current_depth = current_depth
+        self.max_depth = max_depth
+
+
+class RequestTimeoutError(SchedulerError):
+    """An request timed out waiting for resources."""
+
+    pass
+
+
+class PreemptionError(SchedulerError):
+    """Failed to preempt a request."""
+
+    pass
+
+
+# =============================================================================
+# Model-related Exceptions
+# =============================================================================
+
+
+class ModelError(OMLXError):
+    """Base exception for model-related errors."""
+
+    pass
+
+
+class ModelLoadError(ModelError):
+    """
+    Failed to load the model.
+
+    Attributes:
+        model_name: The name/path of the model that failed to load.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        model_name: Optional[str] = None,
+        details: Optional[dict] = None,
+    ):
+        super().__init__(message, details)
+        self.model_name = model_name
+
+
+class ModelInferenceError(ModelError):
+    """Error during model inference/generation."""
+
+    pass
+
+
+class TokenizerError(ModelError):
+    """Error related to tokenization."""
+
+    pass
+
+
+# =============================================================================
+# API-related Exceptions
+# =============================================================================
+
+
+class APIError(OMLXError):
+    """Base exception for API-related errors."""
+
+    pass
+
+
+class InvalidRequestError(APIError):
+    """
+    The API request is invalid.
+
+    Attributes:
+        field: The field that is invalid, if applicable.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        field: Optional[str] = None,
+        details: Optional[dict] = None,
+    ):
+        super().__init__(message, details)
+        self.field = field
+
+
+class RateLimitError(APIError):
+    """Request was rate limited."""
+
+    pass
+
+
+class AuthenticationError(APIError):
+    """Authentication failed."""
+
+    pass
+
+
+# =============================================================================
+# Configuration-related Exceptions
+# =============================================================================
+
+
+class ConfigurationError(OMLXError):
+    """
+    Configuration is invalid or inconsistent.
+
+    Attributes:
+        config_key: The configuration key that is invalid.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        config_key: Optional[str] = None,
+        details: Optional[dict] = None,
+    ):
+        super().__init__(message, details)
+        self.config_key = config_key
+
+
+# =============================================================================
+# Memory-related Exceptions
+# =============================================================================
+
+
+class OutOfMemoryError(OMLXMemoryError):
+    """
+    Out of memory error.
+
+    Typically indicates that the system has run out of GPU/CPU memory
+    and cannot allocate more resources.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        requested_bytes: Optional[int] = None,
+        available_bytes: Optional[int] = None,
+        details: Optional[dict] = None,
+    ):
+        super().__init__(message, details)
+        self.requested_bytes = requested_bytes
+        self.available_bytes = available_bytes
+
+
+class PrefillMemoryExceededError(OMLXMemoryError):
+    """
+    Prefill would exceed memory limits.
+
+    Raised by the pre-flight memory guard when the estimated peak memory
+    for a prefill operation (model weights + KV cache + SDPA attention matrix)
+    exceeds the hard memory limit. This prevents kernel panics from large
+    context windows on memory-constrained systems.
+
+    Attributes:
+        request_id: The request that was rejected.
+        estimated_bytes: Estimated peak memory in bytes.
+        limit_bytes: Hard memory limit in bytes.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        request_id: Optional[str] = None,
+        estimated_bytes: Optional[int] = None,
+        limit_bytes: Optional[int] = None,
+        details: Optional[dict] = None,
+    ):
+        super().__init__(message, details)
+        self.request_id = request_id
+        self.estimated_bytes = estimated_bytes
+        self.limit_bytes = limit_bytes
+
+
+# =============================================================================
+# Engine Pool Exceptions
+# =============================================================================
+
+
+class EnginePoolError(FusionMLXError):
+    """Base exception for engine pool errors."""
+
+    pass
+
+
+class ModelNotFoundError(EnginePoolError):
+    """Raised when a requested model is not found."""
+
+    def __init__(
+        self,
+        model_id: str,
+        available_models: Optional[list[str]] = None,
+        message: Optional[str] = None,
+    ):
+        self.model_id = model_id
+        self.available_models = available_models or []
+        if message is None:
+            models_str = (
+                ", ".join(self.available_models)
+                if self.available_models
+                else "(none)"
+            )
+            message = (
+                f"Model '{model_id}' not found. "
+                f"Available models: {models_str}"
+            )
+        super().__init__(message)
+
+
+class ModelTooLargeError(EnginePoolError):
+    """Raised when a model cannot fit under the current memory ceiling."""
+
+    def __init__(
+        self,
+        model_id: str,
+        model_size: int,
+        ceiling: int,
+        message: Optional[str] = None,
+    ):
+        self.model_id = model_id
+        self.model_size = model_size
+        self.ceiling = ceiling
+        if message is None:
+            from .pool.model_discovery import format_size
+
+            message = (
+                f"Model '{model_id}' ({format_size(model_size)}) "
+                f"does not fit under the memory ceiling "
+                f"({format_size(ceiling)}). "
+                f"Free system memory or lower memory_guard_tier."
+            )
+        super().__init__(message)
+
+
+class InsufficientMemoryError(EnginePoolError):
+    """Raised when there's not enough memory even after eviction."""
+
+    def __init__(
+        self,
+        required: int = 0,
+        current: int = 0,
+        message: Optional[str] = None,
+    ):
+        self.required = required
+        self.current = current
+        if message is None:
+            message = (
+                f"Insufficient memory: required {required}, "
+                f"current {current}"
+            )
+        super().__init__(message)
+
+
+class ModelLoadingError(EnginePoolError):
+    """Raised when a model is already being loaded."""
+
+    def __init__(self, model_id: str, message: Optional[str] = None):
+        self.model_id = model_id
+        if message is None:
+            message = f"Model '{model_id}' is already being loaded"
+        super().__init__(message)
+
+
+class ModelBusyError(EnginePoolError):
+    """Raised when an operation would unload a model that is currently in use."""
+
+    def __init__(self, model_id: str, operation: str):
+        self.model_id = model_id
+        self.operation = operation
+        super().__init__(
+            f"Model '{model_id}' is busy; cannot {operation} until active "
+            f"requests finish or are aborted"
+        )
+
+
+# =============================================================================
+# Routing Exceptions (fusion-mlx only)
+# =============================================================================
+
+
 class RouterError(FusionMLXError):
     """Base exception for routing errors."""
+
+    pass
 
 
 class CloudRoutingError(RouterError):
     """Cloud routing failed."""
 
+    pass
 
-def is_cache_corruption_error(err):
-    """Check if an error indicates cache corruption."""
-    return isinstance(err, (
-        CacheCorruptionError, ValueError, TypeError, AttributeError
-     ))
+
+# =============================================================================
+# MCP Errors
+# =============================================================================
+
+
+class MCPError(OMLXError):
+    """Base exception for MCP-related errors."""
+
+    pass
+
+
+class MCPConnectionError(MCPError):
+    """Failed to connect to MCP server."""
+
+    pass
+
+
+class MCPToolExecutionError(MCPError):
+    """Failed to execute MCP tool."""
+
+    pass
+
+
+# =============================================================================
+# Helper Functions
+# =============================================================================
+
+# Patterns that indicate cache corruption (used by scheduler recovery logic)
+CACHE_CORRUPTION_PATTERNS = [
+    "'NoneType' object is not subscriptable",
+    # Heterogeneous-batch crash: when one row has logits_processors=[proc]
+    # and another has None, mlx-lm's GenerationBatch._step does
+    # ``for p in self.logits_processors[e]`` over a None slot and raises
+    # this exact message.  See vllm-mlx-patched commit 8d4052b for the same
+    # root cause.  Issue #934.
+    "'NoneType' object is not iterable",
+    "BatchKVCache",
+    "KVCache",
+    "cache.keys",
+    "cache.values",
+    "'NoneType' object has no attribute",
+    "not broadcastable",
+    "cannot be broadcast",
+    "shape mismatch",
+]
+
+
+def is_cache_corruption_error(error: Exception) -> bool:
+    """
+    Check if an error indicates cache corruption.
+
+    Examines the error message against known cache corruption patterns,
+    and also matches isinstance for common Python error types that
+    typically indicate corrupted state.
+
+    Args:
+        error: The exception to check.
+
+    Returns:
+        True if the error appears to be cache corruption.
+    """
+    if isinstance(error, (CacheCorruptionError, ValueError, TypeError, AttributeError)):
+        return True
+    error_str = str(error)
+    return any(pattern in error_str for pattern in CACHE_CORRUPTION_PATTERNS)

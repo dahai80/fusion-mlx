@@ -4,6 +4,8 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
+from ..exceptions import PrefillMemoryExceededError
+
 
 @dataclass
 class _VLMMTPDecodeState:
@@ -136,25 +138,6 @@ class _PreflightRejection:
     limit_bytes: int
 
 
-class PrefillMemoryExceededError(Exception):
-    """Raised when preflight rejects a request that would exceed memory.
-
-    Mapped to HTTP 400 by the server layer.  Carries structured fields
-    so the API can return ``estimated_bytes`` / ``limit_bytes`` in the
-    JSON body without parsing the human message.
-    """
-
-    def __init__(
-        self,
-        message: str,
-        request_id: str,
-        estimated_bytes: int,
-        limit_bytes: int,
-    ):
-        self.request_id = request_id
-        self.estimated_bytes = estimated_bytes
-        self.limit_bytes = limit_bytes
-        super().__init__(message)
 
 
 @dataclass

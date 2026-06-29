@@ -123,6 +123,11 @@ class Request:
 
     # Cache corruption recovery
     cache_corruption_retries: int = 0
+    generation_overflow_retries: int = 0
+
+    # Prefill memory-pressure recovery
+    prefill_oom_retries: int = 0
+    prefill_eviction_retries: int = 0
 
     # Reasoning model support
     needs_think_prefix: bool = False
@@ -206,6 +211,8 @@ class RequestOutput:
     finish_reason: str | None = None
     prompt_tokens: int = 0
     completion_tokens: int = 0
+    generated_at: float | None = None
+    generated_until: float | None = None
     tool_calls: list[dict[str, str]] | None = None
     cached_tokens: int = 0
     error: str | None = None

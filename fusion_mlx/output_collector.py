@@ -35,8 +35,9 @@ class RequestOutputCollector:
         return output
 
     async def get(self) -> RequestOutput:
-        self._is_waiting = True
-        RequestOutputCollector._waiting_consumers += 1
+        if not self._is_waiting:
+            self._is_waiting = True
+            RequestOutputCollector._waiting_consumers += 1
         try:
             while True:
                 while self.output is None:
@@ -44,10 +45,10 @@ class RequestOutputCollector:
                 output = self.get_nowait()
                 if output is not None:
                     return output
-                 # clear() stole output; re-wait
+                # clear() stole output; re-wait
         finally:
-            self._is_waiting = False
-            if RequestOutputCollector._waiting_consumers > 0:
+            if self._is_waiting:
+                self._is_waiting = False
                 RequestOutputCollector._waiting_consumers -= 1
 
     def _merge_outputs(
@@ -65,14 +66,29 @@ class RequestOutputCollector:
             finish_reason=new.finish_reason,
             prompt_tokens=new.prompt_tokens,
             completion_tokens=new.completion_tokens,
+            generated_at=(
+                existing.generated_at
+                if existing.generated_at is not None
+                else new.generated_at
+            ),
+            generated_until=(
+                new.generated_until
+                if new.generated_until is not None
+                else existing.generated_until
+            ),
             tool_calls=new.tool_calls,
             cached_tokens=new.cached_tokens,
             error=new.error or existing.error,
+            error_code=new.error_code or existing.error_code,
+            error_metadata=new.error_metadata or existing.error_metadata,
         )
 
     def clear(self) -> None:
         self.output = None
         self.ready.clear()
+        if self._is_waiting:
+            self._is_waiting = False
+            RequestOutputCollector._waiting_consumers -= 1
 
     @classmethod
     def has_waiting_consumers(cls) -> bool:

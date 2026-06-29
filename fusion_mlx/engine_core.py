@@ -4,19 +4,54 @@
 import asyncio
 import concurrent.futures
 import logging
+import os
 import time
 import uuid
 from collections.abc import AsyncIterator
-from dataclasses import dataclass
-from typing import Any
+from contextlib import suppress
+from dataclasses import dataclass, field
+from typing import Any, Awaitable, Callable
 
 import mlx.core as mx
 
 from .model_registry import get_registry
 from .output_collector import RequestOutputCollector, RequestStreamState
 from .request import Request, RequestOutput, SamplingParams
+from .scheduler.types import PrefillMemoryExceededError
+from .utils.compile_cache import (
+    clear_thread_compile_cache,
+    compile_cache_clear_available,
+)
+from .utils.fatal import FATAL_TEARDOWN_TIMEOUT_S, fatal_exit
 
 logger = logging.getLogger(__name__)
+
+
+def _raise_request_output_error(output: RequestOutput) -> None:
+    if output.error_code == "prefill_memory_exceeded":
+        metadata = output.error_metadata or {}
+        request_id = metadata.get("request_id")
+        estimated_bytes = metadata.get("estimated_bytes")
+        limit_bytes = metadata.get("limit_bytes")
+        raise PrefillMemoryExceededError(
+            message=output.error or "Prefill memory exceeded",
+            request_id=str(request_id) if request_id is not None else output.request_id,
+            estimated_bytes=(
+                int(estimated_bytes) if estimated_bytes is not None else None
+            ),
+            limit_bytes=int(limit_bytes) if limit_bytes is not None else None,
+        )
+    raise RuntimeError(output.error)
+
+
+# Fallback only: used when the MLX compile-cache clear symbol is unavailable
+# (see utils/compile_cache.py). In that case a per-engine MLX worker thread
+# cannot exit safely (its thread_local ~CompilerCache would free @mx.compile
+# graphs' Python objects without the GIL -> crash), so close() keeps the
+# executor + stream alive here for the process lifetime instead.
+_immortal_mlx_executors: list = []
+_immortal_mlx_streams: list = []
+
 
 _executor_config: dict[str, dict[str, Any]] = {
     "llm": {"max_workers": 1, "prefix": "mlx-llm"},
@@ -36,6 +71,7 @@ def _init_mlx_thread() -> None:
     sched_mod = sys.modules.get("fusion_mlx.scheduler")
     if sched_mod is not None:
         sched_mod.generation_stream = stream
+    logger.debug("MLX executor thread initialized: generation_stream = %s", stream)
 
 
 def get_executor(pool_type: str = "llm") -> concurrent.futures.ThreadPoolExecutor:
@@ -66,8 +102,29 @@ class RequestContext:
 class EngineConfig:
     model_name: str = ""
     scheduler_config: Any | None = None
-    step_interval: float = 0.001
+    step_interval: float = 0.05
     stream_interval: int = 1
+    prefill_eviction_callback: Callable[[Any], Awaitable[bool]] | None = None
+    # Decode burst: run several scheduler.step() calls per run_in_executor
+    # hand-off instead of one. Each decode token otherwise bounces back to the
+    # event loop, ping-ponging the GIL with asyncio + uvicorn on the main
+    # thread; bursting keeps the MLX thread holding the GIL continuously.
+    # scheduler.step() services aborts/admission/finish every step, so
+    # correctness is unchanged. Budget is a TIME ceiling so event-loop pause
+    # is bounded consistently across hardware.
+    decode_burst_max_steps: int = field(
+        default_factory=lambda: int(os.environ.get("OMLX_DECODE_BURST_MAX_STEPS", "64"))
+    )
+    decode_burst_budget_single_s: float = field(
+        default_factory=lambda: float(
+            os.environ.get("OMLX_DECODE_BURST_BUDGET_SINGLE_S", "0.1")
+        )
+    )
+    decode_burst_budget_s: float = field(
+        default_factory=lambda: float(
+            os.environ.get("OMLX_DECODE_BURST_BUDGET_S", "0.03")
+        )
+    )
 
 
 class EngineCore:
@@ -90,28 +147,27 @@ class EngineCore:
         registry.acquire(model=model, engine=self, engine_id=self._engine_id, force=force_model_ownership)
         self._owns_model = True
 
+        # Per-engine executor with dedicated mx.Stream (#1248).
+        # Each EngineCore gets its own thread + GPU stream so different
+        # models can run scheduler.step() concurrently.
+        self._mlx_stream = mx.new_thread_local_stream(mx.default_device())
         self._mlx_executor = concurrent.futures.ThreadPoolExecutor(
             max_workers=1,
             thread_name_prefix=f"mlx-engine-{self._engine_id[:8]}",
-            initializer=_init_mlx_thread,
         )
 
         # Scheduler must be created on the executor thread so it uses the
         # thread-local MLX stream (not the main thread's stream).
-        # We initialize it synchronously here by running setup on the
-        # executor thread and blocking for the result — safe at __init__
-        # time since the executor is freshly created.
         from .scheduler import Scheduler, SchedulerConfig
         scheduler_config = self.config.scheduler_config or SchedulerConfig()
         self.scheduler: Scheduler | None = None
         _sched_result: list = []
         def _make_scheduler():
-            stream = mx.new_stream(mx.default_device())
             _sched_result.append(Scheduler(
                 model=model,
                 tokenizer=tokenizer,
                 config=scheduler_config,
-                stream=stream,
+                stream=self._mlx_stream,
             ))
         _fut = self._mlx_executor.submit(_make_scheduler)
         _fut.result()
@@ -125,112 +181,228 @@ class EngineCore:
 
         self._running = False
         self._task: asyncio.Task | None = None
+        self._loop: asyncio.AbstractEventLoop | None = None
+        self._wake_event: asyncio.Event | None = None
         self._start_time: float | None = None
         self._steps_executed = 0
+        logger.debug("Engine %s initialized", self._engine_id)
 
     async def start(self) -> None:
         if self._running:
             return
+        self._loop = asyncio.get_running_loop()
+        self._wake_event = asyncio.Event()
         self._running = True
         self._start_time = time.time()
         self._task = asyncio.create_task(self._engine_loop())
+        logger.info("Engine started")
 
     async def stop(self) -> None:
         self._running = False
+        if self._wake_event is not None:
+            self._wake_event.set()
         if self._task:
             self._task.cancel()
-            try:
+            with suppress(asyncio.CancelledError):
                 await self._task
-            except asyncio.CancelledError:
-                pass
             self._task = None
+        self._wake_event = None
+        self._loop = None
+        logger.info("Engine stopped")
 
     def is_running(self) -> bool:
         return self._running
 
+    def _wake_engine_loop(self) -> None:
+        """Wake the idle engine loop after scheduler-visible state changes."""
+        event = getattr(self, "_wake_event", None)
+        loop = getattr(self, "_loop", None)
+        if event is None or loop is None or loop.is_closed():
+            return
+        try:
+            running_loop = asyncio.get_running_loop()
+        except RuntimeError:
+            running_loop = None
+        if running_loop is loop:
+            event.set()
+        else:
+            loop.call_soon_threadsafe(event.set)
+
+    def _step_burst(self) -> list:
+        """Run scheduler.step() several times in one executor hand-off.
+
+        Each decode token otherwise bounces back to the event loop, which
+        ping-pongs the GIL with asyncio + uvicorn on the main thread.
+        Chaining a few steps lets the MLX thread hold the GIL continuously.
+
+        scheduler.step() services aborts/admission/finish every step, so
+        correctness is unchanged; the only cost is event-loop responsiveness,
+        bounded by decode_burst_budget_s. Stops early when no work remains, a
+        prefill eviction needs the (async) callback, or the budget elapses.
+
+        Runs on the MLX executor thread. Returns the SchedulerOutputs in order.
+        """
+        max_steps = self.config.decode_burst_max_steps
+        outputs = [self.scheduler.step()]
+        if max_steps <= 1:
+            return outputs
+        running = getattr(self.scheduler, "running", None)
+        single = running is None or len(running) <= 1
+        budget = (
+            self.config.decode_burst_budget_single_s
+            if single
+            else self.config.decode_burst_budget_s
+        )
+        if budget <= 0:
+            return outputs
+        deadline = time.monotonic() + budget
+        while len(outputs) < max_steps:
+            last = outputs[-1]
+            if (
+                not last.has_work
+                or not self.scheduler.has_requests()
+                or last.prefill_eviction_request is not None
+                or time.monotonic() >= deadline
+            ):
+                break
+            outputs.append(self.scheduler.step())
+        return outputs
+
     async def _engine_loop(self) -> None:
-        """Main engine loop — steps the scheduler on the MLX thread."""
+        """Main engine loop — runs scheduler steps on the MLX executor.
+
+        All scheduler steps run on _mlx_executor (single-worker thread) to
+        guarantee that MLX GPU operations are never concurrent.
+        """
+        loop = asyncio.get_running_loop()
         step_interval = self.config.step_interval
         stream_interval = self.config.stream_interval
-        use_simple_streaming = (stream_interval == 1)
+        use_simple_streaming = stream_interval == 1
 
         while self._running:
-            # Sweep collectors orphaned by client disconnects (throttled to 1s).
-            now = time.monotonic()
-            if now - self._last_reap >= 1.0:
-                self._last_reap = now
-                self._reap_orphaned_collectors(now)
+            try:
+                # Sweep collectors orphaned by client disconnects (throttled).
+                now = time.monotonic()
+                if now - self._last_reap >= 1.0:
+                    self._last_reap = now
+                    self._reap_orphaned_collectors(now)
 
-            if self.scheduler and self.scheduler.has_requests():
-                try:
-                    loop = asyncio.get_running_loop()
-                    output = await loop.run_in_executor(
-                        self._mlx_executor, self.scheduler.step
-                     )
-                    self._steps_executed += 1
-                    if output and output.outputs:
-                        contexts = self._active_contexts
-                        for req_output in output.outputs:
-                            ctx = contexts.get(req_output.request_id)
+                if self.scheduler.has_requests():
+                    step_outputs = await loop.run_in_executor(
+                        self._mlx_executor, self._step_burst
+                    )
+                    self._steps_executed += len(step_outputs)
+
+                    contexts = self._active_contexts
+                    eviction_request = None
+                    distributed = False
+
+                    for output in step_outputs:
+                        if (
+                            eviction_request is None
+                            and output.prefill_eviction_request is not None
+                        ):
+                            eviction_request = output.prefill_eviction_request
+
+                        outputs = output.outputs
+                        if not outputs:
+                            continue
+                        distributed = True
+
+                        for req_output in outputs:
+                            rid = req_output.request_id
+                            ctx = contexts.get(rid)
                             if ctx is not None:
                                 if use_simple_streaming:
                                     ctx.collector.put(req_output)
                                 else:
                                     if ctx.stream_state.should_send(
-                                        req_output.completion_tokens, req_output.finished
-                                     ):
+                                        req_output.completion_tokens,
+                                        req_output.finished,
+                                    ):
                                         ctx.collector.put(req_output)
-                                        ctx.stream_state.mark_sent(req_output.completion_tokens)
+                                        ctx.stream_state.mark_sent(
+                                            req_output.completion_tokens
+                                        )
                             if req_output.finished:
-                                self._mark_request_finished(req_output.request_id)
-                except Exception as e:
-                    logger.error(f"Engine loop error: {e}", exc_info=True)
-                    # Retry once — transient Metal allocation failures should not kill all requests
-                    retry_ok = False
-                    if self.scheduler:
-                        try:
-                            loop = asyncio.get_running_loop()
-                            output = await loop.run_in_executor(
-                                self._mlx_executor, self.scheduler.step
-                               )
-                            if output and output.outputs:
-                                contexts = self._active_contexts
-                                for req_output in output.outputs:
-                                    ctx = contexts.get(req_output.request_id)
-                                    if ctx is not None:
-                                        ctx.collector.put(req_output)
-                                    if req_output.finished:
-                                        self._mark_request_finished(req_output.request_id)
-                            retry_ok = True
-                        except Exception as e2:
-                            logger.critical(f"Engine loop retry also failed: {e2}", exc_info=True)
-                    if not retry_ok and self.scheduler:
-                        try:
-                               # Run fail_all_requests on the same executor thread
-                               # to avoid data race with in-flight scheduler.step()
-                            def _safe_fail():
-                                try:
-                                    return self.scheduler.fail_all_requests()
-                                except Exception:
-                                    return []
-                            loop = asyncio.get_running_loop()
-                            failed_ids = await loop.run_in_executor(
-                                self._mlx_executor, _safe_fail
-                               )
-                            for rid in failed_ids:
-                                ctx = self._active_contexts.get(rid)
-                                if ctx is not None:
-                                    ctx.collector.put(RequestOutput(
-                                        request_id=rid, finished=True,
-                                        finish_reason="error", error=str(e)
-                                       ))
                                 self._mark_request_finished(rid)
-                        except Exception:
-                            logger.debug("swallowed exception in engine loop error handler", exc_info=True)
-                            pass
-                await asyncio.sleep(0)
-            else:
-                await asyncio.sleep(step_interval)
+
+                    if distributed:
+                        await asyncio.sleep(0)
+
+                    if eviction_request is not None:
+                        callback = self.config.prefill_eviction_callback
+                        if callback is not None:
+                            logger.info(
+                                "Running prefill LRU eviction for request %s",
+                                eviction_request.request_id,
+                            )
+                            evicted = await callback(eviction_request)
+                            if evicted:
+                                logger.info(
+                                    "Prefill LRU eviction completed for request %s",
+                                    eviction_request.request_id,
+                                )
+                            else:
+                                logger.info(
+                                    "No idle model evicted for request %s; "
+                                    "scheduler will fall back to throttling",
+                                    eviction_request.request_id,
+                                )
+                        else:
+                            logger.debug(
+                                "Prefill eviction requested for %s but no callback "
+                                "is configured",
+                                eviction_request.request_id,
+                            )
+                        continue
+                    if not step_outputs[-1].has_work:
+                        event = self._wake_event
+                        if event is None:
+                            await asyncio.sleep(step_interval)
+                        else:
+                            event.clear()
+                            with suppress(TimeoutError):
+                                await asyncio.wait_for(
+                                    event.wait(), timeout=step_interval
+                                )
+                else:
+                    event = self._wake_event
+                    if event is None:
+                        await asyncio.sleep(step_interval)
+                    else:
+                        event.clear()
+                        if self.scheduler.has_requests():
+                            continue
+                        with suppress(TimeoutError):
+                            await asyncio.wait_for(
+                                event.wait(), timeout=step_interval
+                            )
+
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                import traceback
+                logger.error("Engine loop error: %s\n%s", e, traceback.format_exc())
+                # Fail all requests and remove from scheduler to prevent
+                # infinite loop (has_requests() must return False).
+                def _safe_fail():
+                    try:
+                        return self.scheduler.fail_all_requests()
+                    except Exception:
+                        return []
+                failed_ids = await loop.run_in_executor(
+                    self._mlx_executor, _safe_fail
+                )
+                for rid in failed_ids:
+                    ctx = self._active_contexts.get(rid)
+                    if ctx is not None:
+                        ctx.collector.put(RequestOutput(
+                            request_id=rid, finished=True,
+                            finish_reason="error", error=str(e)
+                        ))
+                    self._mark_request_finished(rid)
+                await asyncio.sleep(0.1)
 
 
     async def add_request(
@@ -285,8 +457,14 @@ class EngineCore:
         )
 
         if self.scheduler:
+            # Route through the MLX executor so prefix cache reconstruction
+            # (mx.load, mx.concatenate) never races with scheduler.step()
+            # on the Metal stream.
+            loop = asyncio.get_running_loop()
             try:
-                self.scheduler.add_request(request)
+                await loop.run_in_executor(
+                    self._mlx_executor, self.scheduler.add_request, request
+                )
             except BaseException:
                 # If the caller is cancelled or the insert fails, the request
                 # never reaches stream_outputs()/generate()'s try/finally, so
@@ -296,25 +474,35 @@ class EngineCore:
                     self.scheduler.abort_request(request_id)
                 except Exception as abort_exc:
                     logger.debug(
-                        f"Abort of partial insert for {request_id} failed: {abort_exc}"
+                        "Abort of partial insert for %s failed: %s",
+                        request_id, abort_exc,
                     )
                 self._cleanup_request(request_id)
                 raise
-
+        self._wake_engine_loop()
         return request_id
 
     async def abort_request(self, request_id: str) -> bool:
-        if getattr(self, "_closed", False) or not self.scheduler:
+        scheduler = getattr(self, "scheduler", None)
+        if getattr(self, "_closed", False) or scheduler is None:
+            logger.debug(
+                "Skipping abort for request %s because engine is already closed",
+                request_id,
+            )
             return False
-        result = self.scheduler.abort_request(request_id)
+        result = scheduler.abort_request(request_id)
         ctx = self._active_contexts.get(request_id)
         if ctx is not None:
-            ctx.collector.put(RequestOutput(request_id=request_id, finished=True, finish_reason="abort", error="Request aborted"))
+            ctx.collector.put(RequestOutput(
+                request_id=request_id, finished=True,
+                finish_reason="abort", error="Request aborted",
+            ))
         self._mark_request_finished(request_id)
+        self._wake_engine_loop()
         return result
 
     async def abort_all_requests(self) -> int:
-        from .utils.formatting import get_phys_footprint
+        from .utils.proc_memory import get_phys_footprint
 
         request_ids = list(self._active_contexts.keys())
         ceiling = 0
@@ -334,12 +522,20 @@ class EngineCore:
                     f"(usage {usage_gb:.1f} GB, ceiling {ceiling_gb:.1f} GB). "
                     "Reduce context size or lower memory_guard_tier."
                     if ceiling > 0
-                    else f"Request aborted: process memory limit exceeded (usage {usage_gb:.1f} GB)."
+                    else (
+                        f"Request aborted: process memory limit exceeded "
+                        f"(usage {usage_gb:.1f} GB). "
+                        "Reduce context size or lower memory_guard_tier."
+                    )
                 )
-                ctx.collector.put(RequestOutput(request_id=rid, finished=True, finish_reason="error", new_text=f"\n\n[Error: {error_msg}]", error=error_msg))
+                ctx.collector.put(RequestOutput(
+                    request_id=rid, finished=True, finish_reason="error",
+                    new_text=f"\n\n[Error: {error_msg}]", error=error_msg,
+                ))
             self._mark_request_finished(rid)
         if request_ids:
-            logger.warning(f"Aborted {len(request_ids)} requests due to memory pressure")
+            logger.warning("Aborted %d requests due to memory pressure", len(request_ids))
+            self._wake_engine_loop()
         return len(request_ids)
 
     def _cleanup_request(self, request_id: str) -> None:
@@ -392,20 +588,23 @@ class EngineCore:
                     if timeout:
                         output = collector.get_nowait()
                         if output is None:
-                            output = await asyncio.wait_for(collector.get(), timeout=timeout)
+                            output = await asyncio.wait_for(
+                                collector.get(), timeout=timeout
+                            )
                     else:
                         output = collector.get_nowait() or await collector.get()
                     yield output
                     if output.error:
-                        raise RuntimeError(output.error)
+                        _raise_request_output_error(output)
                     if output.finished:
                         logger.info(
-                                "stream_outputs done: %s, finish=%s, tokens=%d",
-                                request_id, output.finish_reason, output.completion_tokens,
-                                )
+                            "stream_outputs done: %s, finish=%s, tokens=%d",
+                            request_id, output.finish_reason,
+                            output.completion_tokens,
+                        )
                         break
-                except TimeoutError:
-                    logger.warning(f"Timeout waiting for request {request_id}")
+                except asyncio.TimeoutError:
+                    logger.warning("Timeout waiting for request %s", request_id)
                     break
         finally:
             self._cleanup_request(request_id)
@@ -417,19 +616,25 @@ class EngineCore:
         request_id: str | None = None,
         **kwargs,
     ) -> RequestOutput:
-        request_id = await self.add_request(prompt=prompt, sampling_params=sampling_params, request_id=request_id, **kwargs)
+        request_id = await self.add_request(
+            prompt=prompt, sampling_params=sampling_params,
+            request_id=request_id, **kwargs,
+        )
         ctx = self._active_contexts.get(request_id)
         if ctx is None:
             raise RuntimeError(f"No context for request {request_id}")
+        # Capture the collector reference BEFORE awaiting — the orphan reaper
+        # is pop-only and may drop the dict entry once the request is finished,
+        # but a held reference still drains.
+        collector = ctx.collector
         try:
             await ctx.finished_event.wait()
         except asyncio.CancelledError:
-            logger.info(f"Request {request_id} cancelled, aborting")
+            logger.info("Request %s cancelled, aborting", request_id)
             await self.abort_request(request_id)
             self._cleanup_request(request_id)
             raise
 
-        collector = ctx.collector
         final_output = None
         while True:
             output = collector.get_nowait()
@@ -440,7 +645,7 @@ class EngineCore:
         if final_output is None:
             raise RuntimeError(f"No output for request {request_id}")
         if final_output.error:
-            raise RuntimeError(final_output.error)
+            _raise_request_output_error(final_output)
         return final_output
 
     def generate_batch_sync(
@@ -547,21 +752,25 @@ class EngineCore:
         ctx = self._active_contexts.get(request_id)
         if ctx is None:
             raise RuntimeError(f"No event for request {request_id}")
-        await ctx.finished_event.wait()
-        ctx = self._active_contexts.get(request_id)
-        collector = ctx.collector if ctx else None
+        collector = ctx.collector
+        try:
+            await ctx.finished_event.wait()
+        except asyncio.CancelledError:
+            logger.info("Request %s cancelled, aborting", request_id)
+            await self.abort_request(request_id)
+            self._cleanup_request(request_id)
+            raise
         final_output = None
-        if collector:
-            while True:
-                output = collector.get_nowait()
-                if output is None:
-                    break
-                final_output = output
+        while True:
+            output = collector.get_nowait()
+            if output is None:
+                break
+            final_output = output
         self._cleanup_request(request_id)
         if final_output is None:
             raise RuntimeError(f"No decode output for request {request_id}")
         if final_output.error:
-            raise RuntimeError(final_output.error)
+            _raise_request_output_error(final_output)
         return final_output
 
 
@@ -587,19 +796,54 @@ class EngineCore:
             get_registry().release(self.model, self._engine_id)
             self._owns_model = False
         self._closed = True
+        mgr = getattr(self.scheduler, "paged_ssd_cache_manager", None)
+        if mgr is not None:
+            try:
+                mgr.close()
+            except Exception:
+                logger.debug("SSD cache manager close failed", exc_info=True)
         for fn in (self.scheduler.shutdown, self.scheduler.deep_reset) if self.scheduler else ():
             try:
-                self._mlx_executor.submit(fn).result()
+                self._mlx_executor.submit(fn).result(
+                    timeout=FATAL_TEARDOWN_TIMEOUT_S
+                )
+            except concurrent.futures.TimeoutError:
+                fatal_exit(
+                    f"scheduler teardown timed out after {FATAL_TEARDOWN_TIMEOUT_S}s"
+                )
             except RuntimeError:
                 try:
                     fn()
                 except RuntimeError:
                     pass
-        if self._mlx_executor is not None:
-            self._mlx_executor.shutdown(wait=True)
-            self._mlx_executor = None
+        for ctx in list(self._active_contexts.values()):
+            with suppress(Exception):
+                ctx.collector.clear()
         self._active_contexts.clear()
         self._finished_at.clear()
+        if self._mlx_executor is not None:
+            if compile_cache_clear_available():
+                try:
+                    self._mlx_executor.submit(
+                        clear_thread_compile_cache
+                    ).result(timeout=FATAL_TEARDOWN_TIMEOUT_S)
+                except concurrent.futures.TimeoutError:
+                    fatal_exit(
+                        "compile cache clear timed out after "
+                        f"{FATAL_TEARDOWN_TIMEOUT_S}s"
+                    )
+            else:
+                _immortal_mlx_executors.append(self._mlx_executor)
+                if self._mlx_stream is not None:
+                    _immortal_mlx_streams.append(self._mlx_stream)
+                self._mlx_executor = None
+                self._mlx_stream = None
+                self.model = None
+                self.tokenizer = None
+                self.scheduler = None
+                return
+            self._mlx_executor.shutdown(wait=True)
+            self._mlx_executor = None
         self.model = None
         self.tokenizer = None
         self.scheduler = None
