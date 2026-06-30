@@ -224,10 +224,6 @@ class BatchedEngine(BaseEngine):
         if self._model_settings is not None:
             tq_enabled = getattr(self._model_settings, "turboquant_kv_enabled", False)
             if tq_enabled:
-                from ..patches.turboquant_attention import (
-                    apply_turboquant_attention_patch,
-                )
-                apply_turboquant_attention_patch()
                 tq_bits = float(getattr(self._model_settings, "turboquant_kv_bits", 4))
                 self._engine.engine.scheduler._turboquant_kv_bits = tq_bits
                 self._engine.engine.scheduler._turboquant_skip_last = getattr(

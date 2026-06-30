@@ -23,6 +23,7 @@ from mlx_lm.models.cache import make_prompt_cache
 from ..prefill_progress import get_prefill_tracker
 from ..request import Request, RequestOutput, RequestStatus
 from ..utils.proc_memory import get_phys_footprint
+from .sched_cache import _turboquant_eligible
 from .helpers import (
     _sync_and_clear_cache,
 )
@@ -630,8 +631,8 @@ def _schedule_waiting(    self,
         # Build per-request state machine for stop tokens
         sm = self._build_state_machine(request)
 
-        # NOTE: TurboQuant KV conversion is not applied during prefill.
-        # See _do_external_prefill() comment for rationale (#771).
+        # TurboQuant KV conversion applied at insert() time below,
+        # after prefill completes and before BatchGenerator takes over.
 
         # VLM MTP routing: if a gemma4_assistant drafter is attached, run
         # an extra last-token forward to capture hidden + shared_kv_states,
@@ -684,6 +685,15 @@ def _schedule_waiting(    self,
         # bubbles into the engine retry loop and presents as a hang.
         # See vllm-mlx-patched commit 8d4052b for the same root cause
         # in a sibling project, and #934 for the user-visible symptom.
+        # Apply TurboQuant KV cache conversion after prefill, before insert.
+        # merge() blocker resolved via monkeypatches.py (BatchTurboQuantKVCache.merge).
+        if (
+            cache_to_use is not None
+            and getattr(self, "_turboquant_kv_bits", None) is not None
+            and _turboquant_eligible(self, cache_to_use)
+        ):
+            self._apply_turboquant_kv_convert(cache_to_use)
+
         per_row_lps = list(logits_processors) if logits_processors else []
         uids = self.batch_generator.insert(
             [tokens_to_process],
