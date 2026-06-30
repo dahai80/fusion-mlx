@@ -1,5 +1,6 @@
 from dataclasses import dataclass, field
 from enum import Enum
+from typing import Any
 
 
 class SchedulingPolicy(Enum):
@@ -102,3 +103,5 @@ class SchedulerOutput:
     outputs: list = field(default_factory=list)
     # Whether any work was done
     has_work: bool = False
+    # Prefill eviction request for memory management (omlx compat)
+    prefill_eviction_request: Any = None

@@ -506,6 +506,34 @@ _get_server_state = None
 _get_engine_pool = None
 _get_settings_manager = None
 _get_global_settings = None
+
+def get_engine_pool():
+    """Lazy accessor that always returns current engine pool getter result."""
+    if _get_engine_pool is None:
+        return None
+    return _get_engine_pool()
+
+
+def get_server_state():
+    """Lazy accessor that always returns current server state."""
+    if _get_server_state is None:
+        return None
+    return _get_server_state()
+
+
+def get_global_settings():
+    """Lazy accessor that always returns current global settings."""
+    if _get_global_settings is None:
+        return None
+    return _get_global_settings()
+
+
+def get_settings_manager():
+    """Lazy accessor that always returns current settings manager."""
+    if _get_settings_manager is None:
+        return None
+    return _get_settings_manager()
+
 _hf_downloader = None
 _ms_downloader = None
 _oq_manager = None
@@ -535,7 +563,6 @@ def set_admin_getters(
     _get_engine_pool = pool_getter
     _get_settings_manager = settings_manager_getter
     _get_global_settings = global_settings_getter
-    _refresh_i18n_globals()
 
 
 def set_hf_downloader(downloader):

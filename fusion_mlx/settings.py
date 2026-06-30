@@ -62,11 +62,16 @@ class Settings:
             return cls()
         try:
             data = json.loads(path.read_text())
+            # Support both flat api_key and nested auth.api_key formats
+            api_key = data.get("api_key")
+            if not api_key:
+                auth_data = data.get("auth", {})
+                api_key = auth_data.get("api_key") if isinstance(auth_data, dict) else None
             sub_keys = [
                 SubKeyEntry(**sk) for sk in data.get("sub_keys", [])
             ]
             return cls(
-                api_key=data.get("api_key"),
+                api_key=api_key,
                 sub_keys=sub_keys,
                 model_settings=data.get("model_settings", {}),
                 global_settings=data.get("global_settings", {}),

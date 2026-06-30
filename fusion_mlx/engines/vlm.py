@@ -65,6 +65,7 @@ class VLMBatchedEngine(BaseEngine):
         enable_thinking: bool | None = None,
         preserve_thinking: bool | None = None,
         model_settings: Any | None = None,
+        prefill_eviction_callback: Any | None = None,
     ):
         super().__init__()
         self._model_name = model_name
@@ -74,6 +75,7 @@ class VLMBatchedEngine(BaseEngine):
         self._enable_thinking = enable_thinking
         self._preserve_thinking = preserve_thinking
         self._model_settings = model_settings
+        self._prefill_eviction_callback = prefill_eviction_callback
 
         self._vlm_model = None
         self._processor = None

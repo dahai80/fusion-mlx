@@ -23,9 +23,7 @@ PRESET_REMOTE_URL = "http://bench.dpdns.org/assets/omlx_preset.json"
 
 
 
-from .helpers import (
-    _get_engine_pool,
-)
+from .helpers import get_engine_pool
 
 _router = APIRouter()
 
@@ -75,7 +73,7 @@ async def start_benchmark(
         run_benchmark,
     )
 
-    engine_pool = _get_engine_pool()
+    engine_pool = get_engine_pool()
     if engine_pool is None:
         raise HTTPException(status_code=503, detail="Engine pool not initialized")
 
