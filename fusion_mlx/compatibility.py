@@ -32,12 +32,23 @@ class CompatibilityResult:
 def _estimate_weight_bytes(params: int, quant_type: str) -> int:
     QUANT_BYTES = {
         "F32": 4.0, "F16": 2.0, "BF16": 2.0,
-        "Q8_0": 1.0625, "Q6_K": 0.8125,
-        "Q5_K_M": 0.6875, "Q5_0": 0.625,
-        "Q4_K_M": 0.5625, "Q4_0": 0.5,
-        "Q3_K_M": 0.4375, "Q2_K": 0.3125,
+        "Q8_0": 1.0625, "Q8_K": 1.0625,
+        "Q6_K": 0.8125,
+        "Q5_K_M": 0.6875, "Q5_K_S": 0.6875,
+        "Q5_1": 0.6875, "Q5_0": 0.625,
+        "Q4_K_M": 0.5625, "Q4_K_S": 0.5625,
+        "Q4_1": 0.5625, "Q4_0": 0.5,
+        "Q3_K_L": 0.5, "Q3_K_M": 0.4375, "Q3_K_S": 0.4375,
+        "Q2_K": 0.3125,
+        "IQ4_NL": 0.5, "IQ4_XS": 0.4375,
+        "IQ3_M": 0.375, "IQ3_S": 0.3125,
+        "IQ2_XXS": 0.25, "IQ2_XS": 0.3125, "IQ2_S": 0.3125,
+        "IQ1_M": 0.1875,
+        "TQ1_0": 0.1875, "TQ2_0": 0.3125,
+        "4BIT": 0.5, "8BIT": 1.0,
+        "4bit": 0.5, "8bit": 1.0,
     }
-    bytes_per_weight = QUANT_BYTES.get(quant_type, 2.0)
+    bytes_per_weight = QUANT_BYTES.get(quant_type, QUANT_BYTES.get(quant_type.upper(), 2.0))
     return int(params * bytes_per_weight)
 
 
