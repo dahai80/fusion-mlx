@@ -19,6 +19,7 @@ Architecture:
 """
 
 import asyncio
+import concurrent.futures
 import logging
 import threading
 import time
@@ -131,6 +132,56 @@ def _find_stop_match_in_new_window(
             if match is None or global_idx < match[0]:
                 match = (global_idx, stop_str)
     return match
+
+
+def _detokenize_response(
+    detok,
+    token: int,
+    token_is_control_stop_token: bool,
+    finish_reason: str | None,
+    stop_params: list[str],
+    baseline_prefix: str,
+    tokenizer,
+    fallback_token_ids: list[int] | None,
+) -> tuple[str, bool]:
+    """Run streaming detokenizer add_token + finalize on a thread pool.
+
+    Pure detokenization — no request state mutation.  Called from
+    ``_process_batch_responses`` via ``_detok_executor`` so the CPU
+    cost of ``add_token`` / ``finalize`` / ``detok.text`` overlaps
+    across batch responses instead of running serially.
+
+    Returns:
+        (new_text, detok_finalized)
+    """
+    if token_is_control_stop_token:
+        return ("", False)
+
+    detok.add_token(token)
+    new_text = detok.last_segment
+    detok_finalized = False
+
+    if finish_reason is not None and (stop_params or token_is_control_stop_token):
+        baseline_text = baseline_prefix + (
+            new_text if isinstance(new_text, str) else ""
+        )
+        detok.finalize()
+        detok_finalized = True
+        finalized_text = detok.text
+        if isinstance(finalized_text, str) and finalized_text.startswith(
+            baseline_text
+        ):
+            new_text = finalized_text[len(baseline_text) :]
+            if baseline_text:
+                new_text = baseline_text[len(baseline_prefix) :] + new_text
+
+    if not isinstance(new_text, str):
+        if fallback_token_ids is not None:
+            new_text = tokenizer.decode(fallback_token_ids)
+        else:
+            new_text = ""
+
+    return (new_text, detok_finalized)
 
 
 @dataclass
@@ -248,6 +299,13 @@ class MLLMScheduler:
 
         # Per-request streaming detokenizers for UTF-8-safe incremental decode
         self._detokenizer_pool: dict[str, Any] = {}
+
+        # Thread pool for parallel detokenization across batch responses.
+        # add_token/finalize are CPU-bound; running them in parallel for
+        # B batch responses reduces serial B×detok_time to ~detok_time.
+        self._detok_executor = concurrent.futures.ThreadPoolExecutor(
+            max_workers=4, thread_name_prefix="mllm-detok"
+        )
 
         # Output queues for async streaming
         self.output_queues: dict[str, asyncio.Queue] = {}
@@ -628,11 +686,66 @@ class MLLMScheduler:
             else self.processor
         )
 
+        # Phase 1: Pre-create detokenizers and submit add_token/finalize
+        # to thread pool for parallel execution across batch responses.
+        # This reduces serial B×detok_time to ~detok_time for B responses.
+        detok_futures: list[concurrent.futures.Future | None] = []
+        detok_meta: list[tuple[str, bool, list[str]]] = []
+
         for response in responses:
             request_id = self.uid_to_request_id.get(response.uid)
             if request_id is None:
+                detok_futures.append(None)
+                detok_meta.append(("", False, []))
                 continue
 
+            request = self.running.get(request_id)
+            if request is None:
+                detok_futures.append(None)
+                detok_meta.append(("", False, []))
+                continue
+
+            had_detok = request_id in self._detokenizer_pool
+            if not had_detok:
+                if hasattr(tokenizer, "detokenizer"):
+                    detok = tokenizer.detokenizer
+                else:
+                    detok = NaiveStreamingDetokenizer(tokenizer)
+                detok.reset()
+                self._detokenizer_pool[request_id] = detok
+            detok = self._detokenizer_pool[request_id]
+
+            token_is_control_stop_token = bool(
+                getattr(response, "token_is_stop_token", False)
+            )
+            stop_params = [s for s in request.stop if s] if request.stop else []
+            finish_reason = response.finish_reason
+            baseline_prefix = (
+                request.stop_text if request.stop_text else request.output_text
+            )
+
+            future = self._detok_executor.submit(
+                _detokenize_response,
+                detok,
+                response.token,
+                token_is_control_stop_token,
+                finish_reason,
+                stop_params,
+                baseline_prefix,
+                tokenizer,
+                [response.token],
+            )
+            detok_futures.append(future)
+            detok_meta.append((request_id, had_detok, stop_params))
+
+        # Phase 2: Process responses, awaiting detokenize results from
+        # the thread pool.
+        for idx, response in enumerate(responses):
+            future = detok_futures[idx]
+            if future is None:
+                continue
+
+            request_id, had_detok, stop_params = detok_meta[idx]
             request = self.running.get(request_id)
             if request is None:
                 continue
@@ -661,50 +774,9 @@ class MLLMScheduler:
 
             finish_reason = response.finish_reason
 
-            # Decode the new token using streaming detokenizer (UTF-8 safe).
-            # Backend EOS/control stop tokens are not decoded. Backend
-            # responses that finish with normal text still detokenize so
-            # the rolling matcher can keep visible text before a user stop.
-            had_detok = request_id in self._detokenizer_pool
-            if not had_detok:
-                if hasattr(tokenizer, "detokenizer"):
-                    detok = tokenizer.detokenizer
-                else:
-                    detok = NaiveStreamingDetokenizer(tokenizer)
-                detok.reset()
-                self._detokenizer_pool[request_id] = detok
-            detok = self._detokenizer_pool[request_id]
-            stop_params = [s for s in request.stop if s] if request.stop else []
-            if token_is_control_stop_token:
-                new_text = ""
-            else:
-                detok.add_token(response.token)
-                new_text = detok.last_segment
-            detok_finalized = False
-            if finish_reason is not None and (
-                stop_params or token_is_control_stop_token
-            ):
-                baseline_prefix = (
-                    request.stop_text if request.stop_text else request.output_text
-                )
-                baseline_text = baseline_prefix + (
-                    new_text if isinstance(new_text, str) else ""
-                )
-                detok.finalize()
-                detok_finalized = True
-                finalized_text = detok.text
-                if isinstance(finalized_text, str) and finalized_text.startswith(
-                    baseline_text
-                ):
-                    new_text = finalized_text[len(baseline_text) :]
-                    if baseline_text:
-                        new_text = baseline_text[len(baseline_prefix) :] + new_text
-            if not isinstance(new_text, str):
-                new_text = (
-                    ""
-                    if token_is_control_stop_token
-                    else tokenizer.decode([response.token])
-                )
+            # Await detokenize result from thread pool (CPU work for
+            # all batch responses ran in parallel on _detok_executor).
+            new_text, detok_finalized = future.result()
 
             output_new_text = new_text
             output_output_text = ""
@@ -1074,6 +1146,11 @@ class MLLMScheduler:
         if self.batch_generator is not None:
             self.batch_generator.close()
             self.batch_generator = None
+
+        # Shut down the detokenize thread pool.
+        if getattr(self, "_detok_executor", None) is not None:
+            self._detok_executor.shutdown(wait=False)
+            self._detok_executor = None
 
         # Shut down the step executor to avoid leaking worker threads.
         # Only shut down if we own it — caller-supplied executors stay alive.
