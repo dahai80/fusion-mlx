@@ -104,39 +104,44 @@ class MetalBufferRegistry:
                 return True
             return False
 
-    def decrement_ref(self, buf_id: str) -> bool:
-        """Decrement ref count. Returns True if buffer was freed."""
+    def decrement_ref(self, buf_id: str):
+        """Decrement ref count.
+        Returns (size_bytes, backend) if buffer was freed, False otherwise.
+        """
         with self._lock:
             entry = self._buffers.get(buf_id)
             if not entry:
                 return False
             entry.ref_count -= 1
             if entry.ref_count <= 0:
-                self._total_bytes -= entry.size_bytes
+                size = entry.size_bytes
                 backend = entry.backend
+                self._total_bytes -= size
                 self._per_backend_bytes[backend] = max(
-                    0, self._per_backend_bytes.get(backend, 0) - entry.size_bytes
+                    0, self._per_backend_bytes.get(backend, 0) - size
                  )
                 del self._buffers[buf_id]
                 if entry.is_kv_cache:
-                    logger.debug(f"[Registry] freed KV buffer {buf_id}: {entry.size_bytes / 1e6:.1f}MB")
-                del entry
-                return True
+                    logger.debug(f"[Registry] freed KV buffer {buf_id}: {size / 1e6:.1f}MB")
+                return (size, backend)
             return False
 
-    def release(self, buf_id: str) -> bool:
-        """Force release a buffer (set ref_count = 0)."""
+    def release(self, buf_id: str):
+        """Force release a buffer (set ref_count = 0).
+        Returns (size_bytes, backend) if freed, False otherwise.
+        """
         with self._lock:
             entry = self._buffers.get(buf_id)
             if not entry:
                 return False
-            self._total_bytes -= entry.size_bytes
+            size = entry.size_bytes
             backend = entry.backend
+            self._total_bytes -= size
             self._per_backend_bytes[backend] = max(
-                0, self._per_backend_bytes.get(backend, 0) - entry.size_bytes
+                0, self._per_backend_bytes.get(backend, 0) - size
              )
             del self._buffers[buf_id]
-            return True
+            return (size, backend)
 
     def share_buffer(self, buf_id: str, new_backend: str) -> bool:
         """Re-register a buffer under a shared backend label.
@@ -563,14 +568,21 @@ class UnifiedMemoryPool:
         """Release a buffer (decrement ref count)."""
         freed = self.registry.decrement_ref(buf_id)
         if freed:
-             # Update quota
-            # We don't track per-buffer backend in quotas, so this is best-effort
-            pass
-        return freed
+            size, backend = freed
+            quota = self.quotas.get(backend)
+            if quota:
+                quota.release(size)
+        return bool(freed)
 
     def release_force(self, buf_id: str) -> bool:
         """Force release a buffer regardless of ref count."""
-        return self.registry.release(buf_id)
+        freed = self.registry.release(buf_id)
+        if freed:
+            size, backend = freed
+            quota = self.quotas.get(backend)
+            if quota:
+                quota.release(size)
+        return bool(freed)
 
     # KV cache handoff shortcuts
 
@@ -594,7 +606,8 @@ class UnifiedMemoryPool:
         return self.bridge.claim(state)
 
     def release_kv(self, state: KVCacheState) -> None:
-        self.bridge.release_handoff(state)
+        self.bridge.release_source(state)
+        self.bridge.release_target(state)
 
     # Stats
 

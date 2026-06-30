@@ -339,13 +339,13 @@ class PriorityScheduler:
                 if pri_req is None:
                     break
                 # Set stream and submit to base outside lock (may block)
-            self._set_stream_for_request(pri_req.request, pl)
-            try:
-                self.base.add_request(pri_req.request)
-            except Exception as e:
-                logger.warning(f"[PriorityScheduler] failed to schedule {pri_req.request.request_id}: {e}")
-                with self._lock:
-                    self._request_priorities.pop(pri_req.request.request_id, None)
+                self._set_stream_for_request(pri_req.request, pl)
+                try:
+                    self.base.add_request(pri_req.request)
+                except Exception as e:
+                    logger.warning(f"[PriorityScheduler] failed to schedule {pri_req.request.request_id}: {e}")
+                    with self._lock:
+                        self._request_priorities.pop(pri_req.request.request_id, None)
 
         return scheduled
 
