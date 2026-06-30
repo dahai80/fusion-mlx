@@ -260,9 +260,9 @@ final class MenubarVisibilityWatcher {
             let menuBundleIDs = menuItemBundleIdentifiers(in: entry)
             let locationMatches = locationBundleID.map(targetBundleIDs.contains) ?? false
             let menuMatches = menuBundleIDs.contains { targetBundleIDs.contains($0) }
-            let referencesOmlx = locationMatches || menuMatches
+            let referencesFusionmlx = locationMatches || menuMatches
 
-            guard referencesOmlx else {
+            guard referencesFusionmlx else {
                 normalizedEntries.append(entry)
                 continue
             }

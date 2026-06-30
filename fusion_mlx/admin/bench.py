@@ -19,7 +19,7 @@ from .auth import (
 
 logger = logging.getLogger(__name__)
 
-PRESET_REMOTE_URL = "https://fusion_mlx.ai/assets/omlx_preset.json"
+PRESET_REMOTE_URL = "http://bench.dpdns.org/assets/omlx_preset.json"
 
 
 
@@ -233,7 +233,7 @@ async def get_benchmark_results(
 async def get_device_info(
     is_admin: bool = Depends(require_admin),
 ):
-    """Get device hardware info and owner_hash for fusion_mlx.ai integration."""
+    """Get device hardware info and owner_hash for bench.dpdns.org integration."""
     from ..utils.hardware import (
         compute_owner_hash,
         get_chip_name,

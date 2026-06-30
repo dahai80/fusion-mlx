@@ -21,7 +21,7 @@ from .auth import (
 
 logger = logging.getLogger(__name__)
 
-PRESET_REMOTE_URL = "https://fusion_mlx.ai/assets/omlx_preset.json"
+PRESET_REMOTE_URL = "http://bench.dpdns.org/assets/omlx_preset.json"
 
 
 
@@ -32,15 +32,15 @@ from .helpers import (
 _router = APIRouter()
 
 # =============================================================================
-# Preset refresh (proxy to fusion_mlx.ai to avoid CORS)
+# Preset refresh (proxy to bench.dpdns.org to avoid CORS)
 # =============================================================================
 
 
 @_router.post("/api/presets/refresh")
 async def refresh_presets(is_admin: bool = Depends(require_admin)):
-    """Fetch the latest preset bundle from fusion_mlx.ai and return it.
+    """Fetch the latest preset bundle from bench.dpdns.org and return it.
 
-    The client uses this instead of fetching fusion_mlx.ai directly so we do not
+    The client uses this instead of fetching bench.dpdns.org directly so we do not
     depend on CORS headers on the remote host. Any failure is surfaced as 502
     so the client can silently fall back to the bundled presets.
     """

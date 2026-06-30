@@ -119,7 +119,7 @@ final class ReleasesCheckerTests: XCTestCase {
             tagName: tag,
             name: tag,
             body: nil,
-            htmlURL: URL(string: "https://github.com/jundot/fusion/releases/tag/\(tag)")!,
+            htmlURL: URL(string: "https://github.com/dahai80/fusion-mlx/releases/tag/\(tag)")!,
             prerelease: prerelease,
             draft: draft,
             assets: []

@@ -9,3 +9,7 @@ build/
 *.tar.gz
 .DS_Store
 *.json.tmp
+.codegraph/
+PLAN.md
+nohup.out
+start.sh
