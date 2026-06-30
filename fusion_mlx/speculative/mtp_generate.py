@@ -212,9 +212,10 @@ def mtp_generate_step(
             else:
                 # Verified mode
                 verify_pred = mx.argmax(verify_logits[:, 0, :], axis=-1)
-                mx.eval(verify_pred, draft)
+                verify_match = verify_pred == draft
+                mx.eval(verify_match)
 
-                if verify_pred.item() == draft.item():
+                if verify_match.item():
                     # --- ACCEPT ---
                     draft_lp = verify_logits[:, 0, :] - mx.logsumexp(
                         verify_logits[:, 0, :], axis=-1, keepdims=True
@@ -274,8 +275,7 @@ def mtp_generate_step(
 
         # If skip_state is None (verify_hidden was None), do fresh forward
         if skip_state is None:
-            last_token = mx.array([[primary.item()]])
-            out = model(last_token, cache=cache, return_hidden=True)
+            out = model(primary[:, None], cache=cache, return_hidden=True)
             if isinstance(out, tuple):
                 logits, hidden_states = out
             else:

@@ -1130,7 +1130,6 @@ class MLLMBatchGenerator:
         # even if ``MLLMBatchGenerator._stream`` is ever re-pointed.
         mx.eval(outgoing_logprobs)
 
-        y = y.tolist()
         toc = time.perf_counter()
 
         if prompt_processing:
@@ -1143,9 +1142,8 @@ class MLLMBatchGenerator:
         end_idx = []
         responses = []
 
-        for i, (token, uid, request_id, num_tok, max_tok, req) in enumerate(
+        for i, (uid, request_id, num_tok, max_tok, req) in enumerate(
             zip(
-                y,
                 batch.uids,
                 batch.request_ids,
                 batch.num_tokens,
@@ -1153,6 +1151,7 @@ class MLLMBatchGenerator:
                 batch.requests,
             )
         ):
+            token = int(y[i].item())
             num_tok += 1
             batch.num_tokens[i] = num_tok
             req.num_tokens = num_tok

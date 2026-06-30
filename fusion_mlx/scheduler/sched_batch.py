@@ -73,11 +73,10 @@ def _do_external_prefill(    self,
     if n_tokens <= 1:
         # Nothing to prefill, return cache + tokens as-is
         cache = existing_cache or make_prompt_cache(self.model)
-        # NOTE: Do NOT apply TurboQuant here. TurboQuantKVCache does not
-        # support merge(), which is called by _merge_caches() inside
-        # BatchGenerator when insert() creates a PromptProcessingBatch.
-        # TurboQuant conversion must happen inside BatchGenerator after
-        # the batch cache is created, not on individual per-request caches.
+        # NOTE: Do NOT apply TurboQuant here. TurboQuant conversion must
+        # happen at insert() time in sched_schedule.py, after prefill
+        # completes but before BatchGenerator takes ownership of the cache.
+        # merge() blocker resolved via monkeypatches.py.
         return cache, tokens
 
     # Create or reuse cache
@@ -87,13 +86,9 @@ def _do_external_prefill(    self,
         prompt_cache = make_prompt_cache(self.model)
 
     # NOTE: TurboQuant conversion is NOT applied during external prefill.
-    # TurboQuantKVCache does not support merge() or maybe_trim_front(),
-    # so passing it to insert() would fail in _merge_caches() or cause
-    # AttributeError in chunked-attention models (e.g. Llama-4-Scout).
-    # Additionally, on-the-fly quantization during prefill causes
-    # precision loss that corrupts hidden states across layers (#771).
-    # Prefill runs with standard KVCache; TurboQuant quantization
-    # happens inside BatchGenerator during the decode phase.
+    # Prefill runs with standard KVCache; TurboQuant quantization happens
+    # at insert() time (sched_schedule.py) after prefill completes.
+    # merge() blocker resolved via monkeypatches.py.
 
     # Clear stale mRoPE position state for text-only requests.
     if vlm_embeds is None and hasattr(self.model, "clear_vlm_position_state"):

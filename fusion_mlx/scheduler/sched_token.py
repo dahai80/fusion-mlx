@@ -279,8 +279,7 @@ def _on_prompt_progress(    self, updates: list[tuple[int, int, int]]) -> None:
 def _apply_turboquant_kv_empty(    self, prompt_cache: list[Any]) -> None:
     """Replace KVCache with empty TurboQuantKVCache before prefill.
 
-    NOTE: Not currently called -- see #771. Kept for future use when
-    TurboQuantKVCache implements merge()/maybe_trim_front().
+    merge() blocker resolved via monkeypatches.py (BatchTurboQuantKVCache.merge).
 
     Tokens are quantized on the fly during update_and_fetch, avoiding
     the peak memory spike from storing full-precision KV then converting.
@@ -320,8 +319,7 @@ def _apply_turboquant_kv_empty(    self, prompt_cache: list[Any]) -> None:
 def _apply_turboquant_kv_convert(    self, prompt_cache: list[Any]) -> None:
     """Convert existing KVCache data to TurboQuantKVCache via from_cache().
 
-    NOTE: Not currently called -- see #771. Kept for future use when
-    TurboQuantKVCache implements merge()/maybe_trim_front().
+    merge() blocker resolved via monkeypatches.py (BatchTurboQuantKVCache.merge).
 
     Used when an existing cache is provided (e.g. from SSD prefix cache).
     Uses from_cache() to quantize the existing KV data.

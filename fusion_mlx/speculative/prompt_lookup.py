@@ -232,7 +232,7 @@ def prompt_lookup_generate_step(
         logprobs = logits - mx.logsumexp(logits, axis=-1, keepdims=True)
         sampled = sampler(logprobs)
 
-        return sampled.squeeze(0), logprobs.squeeze(0)
+        return sampled[0], logprobs.squeeze(0)
 
     def _prefill(tokens: mx.array):
         """Process prompt tokens in chunks."""
@@ -268,18 +268,22 @@ def prompt_lookup_generate_step(
 
         if draft_tokens and len(draft_tokens) > 0:
             # Speculative path: verify draft tokens
-            verify_input = mx.array([current_token.item()] + draft_tokens, mx.uint32)
+            # Build verify input via concatenate — avoids unwrap/rewrap sync
+            draft_arr = mx.array(draft_tokens, mx.uint32)
+            verify_input = mx.concatenate(
+                [current_token, draft_arr]
+            )
             verified_tokens, verified_logprobs = _step(
                 verify_input, n_predict=len(draft_tokens) + 1
             )
             mx.eval(verified_tokens, verified_logprobs)
 
-            verified_tokens = verified_tokens.tolist()
+            verified_list = verified_tokens.tolist()
 
             # Check how many draft tokens were accepted
             n_accepted = 0
             for i, (draft_t, verify_t) in enumerate(
-                zip(draft_tokens, verified_tokens[:-1])
+                zip(draft_tokens, verified_list[:-1])
             ):
                 if draft_t == verify_t:
                     n_accepted += 1
@@ -301,13 +305,12 @@ def prompt_lookup_generate_step(
                 cache.trim_prompt_cache(prompt_cache, len(draft_tokens) - n_accepted)
 
             # Next token is the first non-accepted verification result
-            current_token = mx.array(verified_tokens[n_accepted], mx.uint32)
+            current_token = verified_tokens[n_accepted : n_accepted + 1]
             logprobs = verified_logprobs[n_accepted]
         else:
             # Standard path: single token generation
-            next_token, next_logprobs = _step(
-                mx.array([current_token.item()], mx.uint32)
-            )
+            # Pass current_token directly (shape [1]) — no unwrap/rewrap
+            next_token, next_logprobs = _step(current_token)
             mx.eval(next_token, next_logprobs)
             current_token = next_token
             logprobs = next_logprobs

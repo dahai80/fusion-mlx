@@ -276,7 +276,7 @@ def estimate_kv_cache_memory(cache: list[Any]) -> int:
         if layer_cache is None:
             continue
         # TurboQuantKVCache: has values_compressed instead of values
-        from .turboquant import TurboQuantKVCache
+        from .turboquant_kv import TurboQuantKVCache
 
         if isinstance(layer_cache, TurboQuantKVCache):
             total_bytes += layer_cache.memory_bytes
@@ -593,7 +593,7 @@ def _turboquant_compress_cache(
     """Compress KVCache V tensors using TurboQuant (K stays FP16)."""
     from mlx_lm.models.cache import KVCache
 
-    from .turboquant import TurboQuantConfig, TurboQuantKVCache, auto_select_bits
+    from .turboquant_kv import TurboQuantConfig, TurboQuantKVCache, auto_select_bits
 
     compressed_count = 0
     result = []
