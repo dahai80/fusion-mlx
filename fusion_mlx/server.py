@@ -47,6 +47,7 @@ from .api.embeddings_routes import router as embeddings_router
 from .api.embeddings_routes import set_embeddings_context
 from .api.rerank_routes import router as rerank_router
 from .api.rerank_routes import set_rerank_context
+from .admin.helpers import set_admin_getters
 from .api.openclaw_routes import router as openclaw_router
 from .api.openclaw_routes import set_openclaw_agent_pool
 from .api.recommend_routes import router as recommend_router
@@ -87,6 +88,11 @@ class Server:
         self.engine_cores: dict[str, AsyncEngineCore] = {}
         self._load_lock = asyncio.Lock()
         self.settings = Settings.load(Path(self.config.settings_dir) / "settings.json")
+
+        from .admin.auth import set_api_key
+        if self.settings.api_key:
+            set_api_key(self.settings.api_key)
+
         self.app = self._create_app()
 
     def _create_app(self) -> FastAPI:
@@ -307,6 +313,14 @@ class Server:
         set_mcp_manager_getter(lambda: None)  # TODO: wire MCP manager
         set_embeddings_context(self.pool, _server_state)
         set_rerank_context(self.pool, _server_state)
+
+        # Wire admin getters so require_admin can access global settings/auth
+        set_admin_getters(
+            state_getter=lambda: _server_state,
+            pool_getter=lambda: self.pool,
+            settings_manager_getter=lambda: None,
+            global_settings_getter=lambda: self.settings,
+        )
 
         # Apply model aliases
         aliases = {**self.config.model_aliases}
