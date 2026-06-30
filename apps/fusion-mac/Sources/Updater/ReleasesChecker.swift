@@ -69,7 +69,7 @@ enum ReleasesError: Error, CustomStringConvertible {
 }
 
 enum ReleasesChecker {
-    static let releasesURL = URL(string: "https://api.github.com/repos/jundot/fusion/releases?per_page=20")!
+    static let releasesURL = URL(string: "https://api.github.com/repos/dahai80/fusion-mlx/releases?per_page=20")!
 
     /// Fetches recent releases and picks the newest one that beats `currentVersion`
     /// under the given channel. Returns `nil` if we're already up to date.

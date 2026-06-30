@@ -87,7 +87,7 @@ class BenchmarkRun:
     results: list[dict] = field(default_factory=list)
     error_message: str = ""
     # Experimental flags active when the benchmark started. When non-empty
-    # the run's results are not uploaded to fusion_mlx.ai community benchmarks
+    # the run's results are not uploaded to bench.dpdns.org community benchmarks
     # because experimental features skew the numbers.
     experimental_features: list[str] = field(default_factory=list)
     # Mirror of the upload SSE events so REST consumers (e.g. native Swift
@@ -381,7 +381,7 @@ async def _run_batch_test(
     }
 
 
-OMLX_AI_API_URL = "https://fusion_mlx.ai/api/benchmarks"
+BENCH_API_URL = "http://bench.dpdns.org/api/benchmarks"
 
 # Quantization patterns to strip from model directory names
 _QUANT_SUFFIXES = re.compile(
@@ -442,7 +442,7 @@ def _sanitize_upload_error(resp: Any) -> str:
     1. Cloudflare challenge — header ``cf-mitigated: challenge`` is
         authoritative; a body sniff for "just a moment" / "cf-chl" covers
         edge transports that strip the header.
-    2. JSON envelope — the fusion_mlx.ai API's normal error shape; extract
+    2. JSON envelope — the bench.dpdns.org API's normal error shape; extract
         ``error`` / ``detail`` / ``message`` if present, truncated.
     3. Plain-text body — short responses only; HTML-looking bodies are
         collapsed to a one-line "non-JSON response (N bytes)" hint.
@@ -457,7 +457,7 @@ def _sanitize_upload_error(resp: Any) -> str:
     if cf_mitigated == "challenge" or "just a moment" in body_head or "cf-chl" in body_head:
         return (
             f"Upload blocked by Cloudflare (HTTP {status}). "
-            f"This is a server-side issue with fusion_mlx.ai — retry later or "
+            f"This is a server-side issue with bench.dpdns.org — retry later or "
             f"report it to the maintainer."
         )
 
@@ -476,7 +476,7 @@ def _sanitize_upload_error(resp: Any) -> str:
 
 
 async def _upload_to_omlx_ai(run: BenchmarkRun, engine_pool: Any) -> None:
-    """Upload benchmark results to fusion_mlx.ai community benchmarks.
+    """Upload benchmark results to bench.dpdns.org community benchmarks.
 
     Sends each single-request result as a separate submission,
     grouped by submission_group. Upload failures don't affect
@@ -608,7 +608,7 @@ async def _upload_to_omlx_ai(run: BenchmarkRun, engine_pool: Any) -> None:
         try:
             resp = await asyncio.to_thread(
                 requests.post,
-                OMLX_AI_API_URL,
+                BENCH_API_URL,
                 json=payload,
                 timeout=15,
             )
@@ -888,11 +888,11 @@ async def run_benchmark(run: BenchmarkRun, engine_pool: Any) -> None:
             },
         })
 
-        # Upload results to fusion_mlx.ai (failures don't affect benchmark status)
+        # Upload results to bench.dpdns.org (failures don't affect benchmark status)
         try:
             await _upload_to_omlx_ai(run, engine_pool)
         except Exception as e:
-            logger.warning(f"Benchmark upload to fusion_mlx.ai failed: {e}")
+            logger.warning(f"Benchmark upload to bench.dpdns.org failed: {e}")
             await _send_event(run, {
                 "type": "upload_done",
                 "data": {

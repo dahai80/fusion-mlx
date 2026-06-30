@@ -96,7 +96,7 @@ private struct ProjectSection: View {
                                  defaultValue: "Source, issues, and roadmap",
                                  comment: "Sublabel under the GitHub Repository link on the About screen"),
                 icon: "chevron.left.forwardslash.chevron.right",
-                url: URL(string: "https://github.com/jundot/fusion")!
+                url: URL(string: "https://github.com/dahai80/fusion-mlx")!
             )
             LinkRow(
                 label: String(localized: "about.project.releases.label",
@@ -106,7 +106,7 @@ private struct ProjectSection: View {
                                  defaultValue: "Download the latest CLI and macOS app",
                                  comment: "Sublabel under the Releases link on the About screen"),
                 icon: "shippingbox",
-                url: URL(string: "https://github.com/jundot/fusion/releases")!
+                url: URL(string: "https://github.com/dahai80/fusion-mlx/releases")!
             )
             LinkRow(
                 label: String(localized: "about.project.docs.label",
@@ -116,7 +116,7 @@ private struct ProjectSection: View {
                                  defaultValue: "Setup, model management, integrations",
                                  comment: "Sublabel under the Documentation link on the About screen"),
                 icon: "book.closed",
-                url: URL(string: "https://github.com/jundot/fusion")!
+                url: URL(string: "https://github.com/dahai80/fusion-mlx")!
             )
             LinkRow(
                 label: String(localized: "about.project.issue.label",
@@ -126,7 +126,7 @@ private struct ProjectSection: View {
                                  defaultValue: "Bugs and feature requests on GitHub",
                                  comment: "Sublabel under the Report an Issue link on the About screen"),
                 icon: "exclamationmark.bubble",
-                url: URL(string: "https://github.com/jundot/fusion/issues/new")!,
+                url: URL(string: "https://github.com/dahai80/fusion-mlx/issues/new")!,
                 isLast: true
             )
         }
@@ -215,6 +215,20 @@ private struct CreditsSection: View {
                          defaultValue: "Audio (STT / TTS / STS) models on MLX",
                          comment: "About screen Credits row: role/description for the mlx-audio project"),
             url: URL(string: "https://github.com/Blaizzy/mlx-audio")!
+        ),
+        Credit(
+            name: "oMLX",
+            role: String(localized: "about.credits.omlx.role",
+                         defaultValue: "FusionMLX",
+                         comment: "About screen Credits row: role/description for the FusionMLX project"),
+            url: URL(string: "https://github.com/jundot/oMLX")!
+        ),
+        Credit(
+            name: "Rapid-MLX",
+            role: String(localized: "about.credits.rapid-mlx.role",
+                         defaultValue: "Rapid-MLX",
+                         comment: "About screen Credits row: role/description for the Rapid-MLX project"),
+            url: URL(string: "https://github.com/raullenchai/Rapid-MLX")!
         ),
     ]
 
