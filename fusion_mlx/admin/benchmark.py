@@ -385,7 +385,7 @@ OMLX_AI_API_URL = "https://fusion_mlx.ai/api/benchmarks"
 
 # Quantization patterns to strip from model directory names
 _QUANT_SUFFIXES = re.compile(
-    r"[-_](2bit|3bit|4bit|6bit|8bit|fp16|bf16|fp32|MXFP4|NVFP4)$", re.IGNORECASE
+    r"[-_](1bit|2bit|3bit|4bit|6bit|8bit|fp16|bf16|fp32|MXFP4|NVFP4|IQ4_NL|IQ4_XS|IQ3_M|IQ3_S|IQ2_XXS|IQ2_XS|IQ2_S|IQ1_M|TQ1_0|TQ2_0)$", re.IGNORECASE
 )
 _MLX_SUFFIXES = re.compile(r"[-_]?MLX[-_]?", re.IGNORECASE)
 
