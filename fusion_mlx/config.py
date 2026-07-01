@@ -44,7 +44,7 @@ class SchedulerConfig:
     prefill_step_size: int = 2048
 
     # Chunked prefill
-    chunked_prefill_tokens: int = 0  # 0 = disabled
+    chunked_prefill_tokens: int = 2048  # >0 = enabled, value = chunk size
     # Mid-prefill cache saving every N tokens (from Rapid-MLX)
     mid_prefill_save_interval: int = 8192
 
