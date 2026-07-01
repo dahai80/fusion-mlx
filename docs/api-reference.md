@@ -1,17 +1,17 @@
 # API Reference
 
-fusion-mlx exposes 14 public API endpoints plus a full admin panel. All `/v1/*` endpoints are OpenAI-compatible.
+fusion-mlx exposes OpenAI-compatible, Anthropic-compatible, audio, image, MCP, and OpenClaw Agent endpoints plus a full admin panel.
 
 ## Chat Completions (OpenAI)
 
 ### `POST /v1/chat/completions`
 
-Generate a chat completion. Supports streaming, tool calling, and structured output.
+Generate a chat completion. Supports streaming, tool calling, structured output, and thinking/reasoning mode.
 
 **Request:**
 ```json
 {
-    "model": "Qwen2.5-3B-Instruct-4bit",
+    "model": "Qwen3-4B-Q4_K_M",
     "messages": [
         {"role": "system", "content": "You are a helpful assistant."},
         {"role": "user", "content": "What is the capital of France?"}
@@ -29,7 +29,7 @@ Generate a chat completion. Supports streaming, tool calling, and structured out
     "id": "chatcmpl-abc123",
     "object": "chat.completion",
     "created": 1780501235,
-    "model": "Qwen2.5-3B-Instruct-4bit",
+    "model": "Qwen3-4B-Q4_K_M",
     "choices": [{
         "index": 0,
         "message": {
@@ -61,7 +61,19 @@ data: {"id":"chatcmpl-4","object":"chat.completion.chunk","choices":[{"index":0,
 data: [DONE]
 ```
 
-**Cloud routing**: When `cloud_router_enabled=True` and the request has >32K uncached tokens, both streaming and non-streaming requests are automatically routed to the configured cloud provider. The circuit breaker opens after 5 consecutive local failures, forcing all requests to cloud until a local success resets it.
+**Thinking/reasoning mode** — Models with `<think>` tags (Qwen3, DeepSeek) return reasoning content separately:
+```json
+{
+    "choices": [{
+        "message": {
+            "content": "2 + 2 = 4",
+            "reasoning_content": "Let me think about this simple addition..."
+        }
+    }]
+}
+```
+
+Set `"enable_thinking": true` to force thinking mode, or omit to let the model decide.
 
 **Optional parameters:**
 - `stream` (bool) — Enable SSE streaming
@@ -85,7 +97,7 @@ Legacy text completion endpoint. Converts to chat format internally.
 **Request:**
 ```json
 {
-    "model": "Qwen2.5-3B-Instruct-4bit",
+    "model": "Qwen3-4B-Q4_K_M",
     "prompt": "Once upon a time",
     "max_tokens": 50
 }
@@ -100,7 +112,7 @@ List available models in the engine pool.
 {
     "object": "list",
     "data": [
-        {"id": "Qwen2.5-3B-Instruct-4bit", "object": "model"},
+        {"id": "Qwen3-4B-Q4_K_M", "object": "model"},
         {"id": "Qwen3.6-27B-mxfp8", "object": "model"}
     ]
 }
@@ -117,7 +129,7 @@ Anthropic-compatible Messages API. Supports tools, extended thinking, and stream
 **Request:**
 ```json
 {
-    "model": "Qwen2.5-3B-Instruct-4bit",
+    "model": "Qwen3-4B-Q4_K_M",
     "messages": [
         {"role": "user", "content": "What is the weather in Paris?"}
     ],
@@ -136,13 +148,13 @@ Anthropic-compatible Messages API. Supports tools, extended thinking, and stream
 }
 ```
 
-**Response:**
+**Response (text):**
 ```json
 {
     "id": "msg_abc123",
     "type": "message",
     "role": "assistant",
-    "model": "Qwen2.5-3B-Instruct-4bit",
+    "model": "Qwen3-4B-Q4_K_M",
     "content": [
         {"type": "text", "text": "Let me check the weather in Paris."}
     ],
@@ -154,6 +166,42 @@ Anthropic-compatible Messages API. Supports tools, extended thinking, and stream
 }
 ```
 
+**Response (tool call):**
+```json
+{
+    "id": "msg_abc123",
+    "type": "message",
+    "role": "assistant",
+    "model": "Qwen3-4B-Q4_K_M",
+    "content": [
+        {"type": "tool_use", "id": "toolu_abc123", "name": "get_weather", "input": {"city": "Paris"}}
+    ],
+    "stop_reason": "tool_use",
+    "usage": {
+        "input_tokens": 35,
+        "output_tokens": 15
+    }
+}
+```
+
+**Streaming** — Set `"stream": true` for SSE events:
+- `message_start` — Message metadata
+- `content_block_start` — New text or tool_use block
+- `content_block_delta` — Text or JSON delta
+- `content_block_stop` — Block complete
+- `message_delta` — Stop reason, usage
+- `message_stop` — Message complete
+
+**Thinking mode** — When the model uses `<think>` tags, reasoning content is returned as:
+```json
+{
+    "content": [
+        {"type": "thinking", "thinking": "Let me reason through this..."},
+        {"type": "text", "text": "The answer is 42."}
+    ]
+}
+```
+
 ### `POST /v1/count_tokens`
 
 Count tokens for a given input.
@@ -161,7 +209,7 @@ Count tokens for a given input.
 **Request:**
 ```json
 {
-    "model": "Qwen2.5-3B-Instruct-4bit",
+    "model": "Qwen3-4B-Q4_K_M",
     "messages": [{"role": "user", "content": "Hello world"}]
 }
 ```
@@ -169,6 +217,36 @@ Count tokens for a given input.
 **Response:**
 ```json
 {"input_tokens": 2}
+```
+
+---
+
+## Embeddings
+
+### `POST /v1/embeddings`
+
+Generate text embeddings.
+
+**Request:**
+```json
+{
+    "model": "bge-large-en-v1.5",
+    "input": "What is the meaning of life?"
+}
+```
+
+**Response:**
+```json
+{
+    "object": "list",
+    "data": [{
+        "object": "embedding",
+        "embedding": [0.0023, -0.0094, ...],
+        "index": 0
+    }],
+    "model": "bge-large-en-v1.5",
+    "usage": {"prompt_tokens": 7, "total_tokens": 7}
+}
 ```
 
 ---
@@ -311,8 +389,8 @@ Health check with MLX memory stats.
 ```json
 {
     "status": "ok",
-    "version": "0.1.0",
-    "engines": ["Qwen2.5-3B-Instruct-4bit", "Qwen3.6-27B-mxfp8"],
+    "version": "0.3.0",
+    "engines": ["Qwen3-4B-Q4_K_M", "Qwen3.6-27B-mxfp8"],
     "mx_memory": {
         "active": "2.5 GB",
         "cached": "1.2 GB",
@@ -335,7 +413,7 @@ Server metrics — request counts, token totals, per-model stats.
     "total_tokens_prompt": 12000,
     "active_requests": 3,
     "model_stats": {
-        "Qwen2.5-3B-Instruct-4bit": {
+        "Qwen3-4B-Q4_K_M": {
             "requests": 100,
             "tokens_generated": 30000
         }
@@ -351,13 +429,15 @@ The admin panel is accessible at `http://localhost:8000/admin/` and provides:
 
 - **Dashboard** — System overview, memory usage, model status
 - **Chat** — Interactive chat interface for testing models
-- **Model management** — Load/unload/pin models dynamically
-- **HuggingFace integration** — Search and download models directly
+- **Model management** — Load/unload/pin models dynamically, ParoQuant compat detection
+- **HuggingFace integration** — Search and download models directly with progress tracking
 - **ModelScope integration** — Alternative model source
 - **Quantization (oQ)** — Online quantization pipeline
+- **Benchmarks** — Throughput and accuracy benchmarking
 - **Profiles** — Per-model performance profiles
 - **Sub-API keys** — API key management
-- **Benchmarks** — Built-in benchmarking tools
+- **Settings** — Global and per-model configuration
+- **Logs** — Real-time log streaming
 
 Key admin API endpoints:
 
@@ -377,6 +457,13 @@ Key admin API endpoints:
 | POST | `/admin/api/cache/probe` | Probe cache state for messages |
 | GET | `/admin/api/hf/models` | Search HuggingFace models |
 | POST | `/admin/api/hf/download` | Start a model download |
+| GET | `/admin/api/logs/stream` | SSE log streaming |
+| POST | `/admin/api/bench/run` | Run throughput benchmark |
+| POST | `/admin/api/bench/accuracy` | Run accuracy benchmark |
+| POST | `/admin/api/oq/start` | Start online quantization |
+| GET | `/admin/api/subkeys` | List sub-API keys |
+| POST | `/admin/api/subkeys` | Create sub-API key |
+| DELETE | `/admin/api/subkeys/{id}` | Delete sub-API key |
 
 ### Cache Probe
 
@@ -385,7 +472,7 @@ Probe how a chat message list maps to cache state:
 ```json
 POST /admin/api/cache/probe
 {
-    "model_id": "Qwen2.5-3B-Instruct-4bit",
+    "model_id": "Qwen3-4B-Q4_K_M",
     "messages": [
         {"role": "user", "content": "Hello"}
     ]
@@ -395,7 +482,7 @@ POST /admin/api/cache/probe
 **Response:**
 ```json
 {
-    "model_id": "Qwen2.5-3B-Instruct-4bit",
+    "model_id": "Qwen3-4B-Q4_K_M",
     "model_loaded": true,
     "total_tokens": 12,
     "block_size": 64,
@@ -410,13 +497,9 @@ POST /admin/api/cache/probe
 
 ## OpenClaw Agent Protocol
 
-The OpenClaw Agent Protocol extends the standard OpenAI API with agent-specific
-features: multi-turn session management, tool calling, conversation steering, and
-SSE event streaming.
+The OpenClaw Agent Protocol extends the standard OpenAI API with agent-specific features: multi-turn session management, tool calling, conversation steering, and SSE event streaming.
 
-**Session lifecycle**: Sessions have a 1-hour TTL (from last access) and a maximum
-cap of 1000 concurrent sessions. Oldest inactive sessions are evicted via LRU when
-the cap is reached.
+**Session lifecycle**: Sessions have a 1-hour TTL (from last access) and a maximum cap of 1000 concurrent sessions. Oldest inactive sessions are evicted via LRU when the cap is reached.
 
 ### `POST /v1/openclaw/agent/sessions`
 
@@ -425,7 +508,7 @@ Create a new agent session with optional system prompt and tool definitions.
 **Request:**
 ```json
 {
-    "model": "Qwen2.5-3B-Instruct-4bit",
+    "model": "Qwen3-4B-Q4_K_M",
     "system_prompt": "You are a helpful assistant with access to weather data.",
     "tools": [{
         "type": "function",
@@ -448,7 +531,7 @@ Create a new agent session with optional system prompt and tool definitions.
     "session_id": "a1b2c3d4e5f6",
     "turn_count": 0,
     "active": false,
-    "model": "Qwen2.5-3B-Instruct-4bit",
+    "model": "Qwen3-4B-Q4_K_M",
     "tools_count": 1
 }
 ```
@@ -467,8 +550,7 @@ List all active sessions. Automatically expires sessions older than 1 hour.
 
 ### `POST /v1/openclaw/agent/turns?session_id={id}`
 
-Execute one agent turn. The agent processes input messages and returns either
-text content or tool call requests. Resets the 1h TTL timer.
+Execute one agent turn. The agent processes input messages and returns either text content or tool call requests. Resets the 1h TTL timer.
 
 **Request:**
 ```json

@@ -10,7 +10,7 @@ Control how much system RAM the server can use for model inference:
 |------|---------------------|---------------|----------|
 | `safe` | 75% | 25% | Shared workstations, background serving |
 | `balanced` | 50% | 50% | **Default** — good for dedicated inference |
-| `aggressive` | 25% | 75% | Maximum model capacity, dedicated machines |
+| `aggressive` | 75% | 25% | Maximum model capacity, dedicated machines |
 | `custom` | User-defined | User-defined | Precise control via `--custom-limit-mb` |
 
 ```bash
@@ -49,7 +49,7 @@ The `SchedulerConfig` dataclass controls batching, caching, and decoding:
 | Setting | Default | Description |
 |---------|---------|-------------|
 | `max_num_seqs` | 256 | Maximum concurrent sequences |
-| `max_num_batched_tokens` | 8192 | Max tokens per batch step |
+| `max_num_batched_tokens` | 65536 | Max tokens per batch step |
 
 ### Batching
 
@@ -65,26 +65,24 @@ Splits long prompts into smaller chunks to avoid memory spikes and allow preempt
 
 | Setting | Default | Description |
 |---------|---------|-------------|
+| `chunked_prefill` | `True` | Enable chunked prefill |
 | `chunked_prefill_tokens` | 512 | Tokens per chunk (0 = disabled) |
 | `mid_prefill_save_interval` | 8192 | Save cache snapshot every N tokens |
 
 The 512-token default balances between prefill overhead and REALTIME request latency. At 512 tokens, a 4K prompt takes ~8 chunks, each yielding ~2ms for high-priority requests to interleave.
 
-Enable for prompts > 4K tokens:
-```python
-scheduler_config = SchedulerConfig(chunked_prefill_tokens=512)
-```
+### TurboQuant KV Cache
 
-### KV Cache Quantization
-
-Compress KV cache to reduce GPU memory:
+4-bit KV cache quantization that reduces memory traffic ~4× for KV reads:
 
 | Setting | Default | Description |
 |---------|---------|-------------|
-| `kv_cache_quant_enabled` | `False` | Enable quantized KV cache |
-| `kv_cache_quant_bits` | 8 | Bits per value (4-8) |
+| `kv_cache_quant_enabled` | `True` | Enable quantized KV cache |
+| `kv_cache_quant_bits` | 4 | Bits per value (4 or 8) |
 | `kv_cache_quant_group_size` | 64 | Quantization group size |
 | `kv_cache_quant_min_tokens` | 256 | Minimum tokens before quantizing |
+
+TurboQuant is enabled by default and is a key contributor to fusion-mlx's 2× concurrent throughput advantage. It compresses V-only KV cache to 4-bit with minimal quality loss.
 
 ### Paged Cache
 
@@ -92,7 +90,7 @@ Block-based KV cache with dynamic allocation:
 
 | Setting | Default | Description |
 |---------|---------|-------------|
-| `paged_cache_enabled` | `False` | Enable paged KV cache |
+| `paged_cache_enabled` | `True` | Enable paged KV cache |
 | `paged_cache_block_size` | 64 | Tokens per block |
 | `paged_cache_max_blocks` | 1000 | Maximum blocks |
 
@@ -169,7 +167,7 @@ config = ServerConfig(
 )
 ```
 
-**Circuit breaker**: After 5 consecutive local inference failures, the circuit opens and all requests route to cloud. A single local success closes the circuit. This prevents local/cloud oscillation during transient hardware issues.
+**Circuit breaker**: After 5 consecutive local inference failures, the circuit opens and all requests route to cloud. A single local success closes the circuit.
 
 **Streaming support**: Both streaming and non-streaming requests are routed to cloud when the threshold is exceeded. The cloud router uses litellm for provider-agnostic calls.
 
@@ -205,12 +203,15 @@ Each model can have custom settings stored in `~/.fusion-mlx/settings/`:
 
 ```json
 {
-     "Qwen2.5-3B-Instruct-4bit": {
+     "Qwen3-4B-Q4_K_M": {
          "pinned": true,
          "ttl_seconds": 3600,
          "stream_interval": 1,
          "specprefill_enabled": false,
-         "turboquant_kv_enabled": false
+         "turboquant_kv_enabled": true,
+         "dflash_enabled": false,
+         "mtp_enabled": false,
+         "vlm_mtp_enabled": false
      }
 }
 ```
@@ -221,7 +222,7 @@ Each model can have custom settings stored in `~/.fusion-mlx/settings/`:
 | `ttl_seconds` | Seconds before idle unload (0 = never) |
 | `stream_interval` | Tokens between stream updates (1 = every token) |
 | `specprefill_enabled` | Enable speculative prefill |
-| `turboquant_kv_enabled` | Enable TurboQuant V-only KV compression |
+| `turboquant_kv_enabled` | Enable TurboQuant 4-bit V-only KV compression (default: true) |
 | `dflash_enabled` | Enable DFlash speculative decoding |
 | `mtp_enabled` | Enable native MTP (Qwen3.5/3.6, DeepSeek-V4) |
 | `vlm_mtp_enabled` | Enable VLM MTP with gemma4_assistant drafter |
@@ -234,7 +235,13 @@ ServerConfig(
     port=8000,
     model_dir="~/.fusion-mlx/models",
     memory=MemoryConfig(tier="balanced"),
-    scheduler=SchedulerConfig(chunked_prefill_tokens=512),
+    scheduler=SchedulerConfig(
+        chunked_prefill=True,
+        chunked_prefill_tokens=512,
+        kv_cache_quant_enabled=True,
+        kv_cache_quant_bits=4,
+        max_num_batched_tokens=65536,
+    ),
     model_aliases=DEFAULT_ALIASES,
     admin_enabled=True,
     cloud_router_enabled=False,
