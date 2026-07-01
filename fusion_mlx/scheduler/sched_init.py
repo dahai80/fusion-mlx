@@ -415,6 +415,16 @@ def __init__(    self,
     self._DEFERRED_CLEAR_DELAY = 4
     self._tokens_since_clear_cache = 0
 
+    # GPU contention detection: rolling window of decode step times.
+    # When CV (std/mean) exceeds threshold, competing GPU processes
+    # are likely causing bimodal latency (3-4x slowdown observed).
+    self._step_time_window: list[float] = []
+    self._step_time_window_size: int = 20
+    self._contention_cv_threshold: float = 0.15
+    self._contention_detected: bool = False
+    self._contention_log_interval: int = 50  # log every N steps when contended
+    self._last_contention_log_step: int = 0
+
     # Cache XTC special tokens (newline + EOS) — stable per tokenizer.
     # Must be after _is_harmony_model / _generation_config_eos init
     # since _get_xtc_special_tokens() delegates to _get_stop_tokens().

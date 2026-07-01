@@ -21,7 +21,7 @@ class SchedulerConfig:
     # Scheduling policy
     policy: SchedulingPolicy = SchedulingPolicy.FCFS
     # BatchGenerator settings (passed directly to mlx-lm)
-    completion_batch_size: int = 32
+    completion_batch_size: int = 64
     # Per-forward embedding input chunk size
     embedding_batch_size: int = 32
     prefill_step_size: int = 2048
@@ -54,10 +54,10 @@ class SchedulerConfig:
 
     # GC/cleanup settings (memory optimization)
     gc_cleanup_interval: int = 0   # Steps between gc.collect() calls (0=disabled)
-    mlx_cache_cleanup_interval: int = 512   # Steps between mx.clear_cache() calls
+    mlx_cache_cleanup_interval: int = 2048   # Steps between mx.clear_cache() calls
     memory_check_interval: int = 64     # Steps between memory pressure checks
     admin_snapshot_interval: int = 32     # Steps between admin snapshots
-    decode_clear_interval: int = 1024     # Tokens between decode-phase cache clears
+    decode_clear_interval: int = 4096     # Tokens between decode-phase cache clears
 
     def __post_init__(self):
         """Validate configuration after init."""
