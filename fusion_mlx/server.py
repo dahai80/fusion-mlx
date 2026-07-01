@@ -259,6 +259,19 @@ class Server:
 
         return app
 
+    def _convert_scheduler_config(self):
+        """Convert ServerConfig.scheduler to scheduler SchedulerConfig."""
+        from .scheduler.config import SchedulerConfig as SchedConfig
+        src = self.config.scheduler
+        return SchedConfig(
+            max_num_seqs=src.max_num_seqs,
+            max_num_batched_tokens=src.max_num_batched_tokens,
+            completion_batch_size=src.completion_batch_size,
+            prefill_step_size=src.prefill_step_size,
+            chunked_prefill=src.chunked_prefill_tokens > 0,
+            model_name="",
+        )
+
     @asynccontextmanager
     async def _lifespan(self):
         """Startup/shutdown lifecycle."""
@@ -279,8 +292,8 @@ class Server:
                 mx.set_memory_limit(limit_mb)
                 logger.info("MLX memory limit set to %d MB (available: %d MB)", limit_mb, avail_mb)
 
-        # Create engine pool
-        self.pool = EnginePool()
+        # Create engine pool with scheduler config from ServerConfig
+        self.pool = EnginePool(scheduler_config=self._convert_scheduler_config())
 
         # Create and wire memory enforcer
         tier_str = getattr(mem_cfg, "tier", "balanced")

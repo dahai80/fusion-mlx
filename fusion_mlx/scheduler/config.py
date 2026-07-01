@@ -17,18 +17,19 @@ class SchedulerConfig:
     # Maximum number of concurrent requests in the batch
     max_num_seqs: int = 256
     # Maximum tokens to process per step (for prefill chunking)
-    max_num_batched_tokens: int = 8192
+    max_num_batched_tokens: int = 65536
     # Scheduling policy
     policy: SchedulingPolicy = SchedulingPolicy.FCFS
     # BatchGenerator settings (passed directly to mlx-lm)
     completion_batch_size: int = 64
+    prefill_batch_size: int = 4
     # Per-forward embedding input chunk size
     embedding_batch_size: int = 32
     prefill_step_size: int = 2048
     # When True, long prefills are processed one chunk per step() call,
     # interleaved with decode steps for already-running requests. This
     # reduces TTFT for concurrent requests but adds per-step overhead.
-    chunked_prefill: bool = False
+    chunked_prefill: bool = True
 
     # Paged cache settings (internal defaults)
     paged_cache_block_size: int = 256   # Tokens per block
