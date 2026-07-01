@@ -14,6 +14,8 @@ The scheduler follows vLLM's design with:
 import concurrent.futures
 import gc
 import logging
+import math
+import time
 
 logger = logging.getLogger(__name__)
 from typing import Any
@@ -49,7 +51,7 @@ def step(self) -> SchedulerOutput:
     """
     output = SchedulerOutput()
       # Log step start (Ollama-style)
-    logger.info("step(%d): waiting=%d, running=%d, prefilling=%d",
+    logger.debug("step(%d): waiting=%d, running=%d, prefilling=%d",
             self._step_counter, len(self.waiting), len(self.running), len(self.prefilling))
 
     # Process pending aborts FIRST (thread-safe with hybrid executor)
@@ -91,10 +93,55 @@ def step(self) -> SchedulerOutput:
         # Use next_generated() which returns only GenerationBatch.Response
         # objects (prefill is handled externally before insert).
         if (self.batch_generator is not None or self._vlm_mtp_active) and self.running:
+            _decode_t0 = time.perf_counter()
             if self.batch_generator is not None:
-                responses = list(self.batch_generator.next_generated())
+                # Fast path for pure decode: when no prompts are pending,
+                # _next() returns (prompt_resp=[], gen_resp=[...]) in one
+                # call — the while-True loop in next_generated() is wasted
+                # overhead. Skip the generator entirely and call _next()
+                # directly.
+                bg = self.batch_generator
+                has_pending = getattr(bg, "_prompt_batch", None) or getattr(
+                    bg, "_unprocessed_sequences", None
+                )
+                if not has_pending:
+                    _, responses = bg._next()
+                else:
+                    responses = list(bg.next_generated())
             else:
                 responses = []
+            _decode_dt = time.perf_counter() - _decode_t0
+            # GPU contention detection: track decode step time in rolling
+            # window and compute CV. Bimodal latency (fast ~80ms vs slow
+            # ~400ms) indicates competing GPU processes.
+            self._step_time_window.append(_decode_dt)
+            if len(self._step_time_window) > self._step_time_window_size:
+                self._step_time_window.pop(0)
+            if len(self._step_time_window) >= 8:
+                _times = self._step_time_window
+                _mean = sum(_times) / len(_times)
+                if _mean > 0:
+                    _var = sum((t - _mean) ** 2 for t in _times) / len(_times)
+                    _cv = math.sqrt(_var) / _mean
+                    self._contention_detected = _cv > self._contention_cv_threshold
+                    if self._contention_detected:
+                        _log_step_delta = (
+                            self._step_counter - self._last_contention_log_step
+                        )
+                        if _log_step_delta >= self._contention_log_interval:
+                            self._last_contention_log_step = self._step_counter
+                            logger.warning(
+                                "step(%d): GPU contention detected — "
+                                "decode CV=%.1f%% (mean=%.1fms, std=%.1fms, "
+                                "n=%d). Competing GPU processes may cause "
+                                "3-4x slowdown. Consider stopping other "
+                                "MLX/GPU workloads.",
+                                self._step_counter,
+                                _cv * 100,
+                                _mean * 1000,
+                                math.sqrt(_var) * 1000,
+                                len(_times),
+                            )
             # Drive vlm_mtp generators alongside BatchGenerator. Order
             # matters only for log determinism; _process_batch_responses
             # is per-uid.
@@ -297,7 +344,19 @@ def get_stats(self) -> dict[str, Any]:
         "num_requests_processed": self.num_requests_processed,
         "total_prompt_tokens": self.total_prompt_tokens,
         "total_completion_tokens": self.total_completion_tokens,
+        "gpu_contention_detected": self._contention_detected,
     }
+    if self._step_time_window:
+        _times = self._step_time_window
+        _mean = sum(_times) / len(_times)
+        if _mean > 0 and len(_times) >= 2:
+            _var = sum((t - _mean) ** 2 for t in _times) / len(_times)
+            _cv = math.sqrt(_var) / _mean
+            stats["decode_step_time_ms"] = round(_mean * 1000, 1)
+            stats["decode_step_cv_pct"] = round(_cv * 100, 1)
+        else:
+            stats["decode_step_time_ms"] = round(_mean * 1000, 1)
+            stats["decode_step_cv_pct"] = 0.0
     # Include cache stats
     if self.block_aware_cache is not None:
         stats["ssd_cache"] = self.block_aware_cache.get_stats()
@@ -338,6 +397,11 @@ def reset(self) -> None:
     if self._boundary_snapshot_store is not None:
         self._boundary_snapshot_store.cleanup_all()
     self._boundary_snapshot_required = None
+
+    # Reset GPU contention detection state
+    self._step_time_window.clear()
+    self._contention_detected = False
+    self._last_contention_log_step = 0
 
     # Clear caches
     if self.block_aware_cache is not None:

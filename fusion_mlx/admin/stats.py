@@ -522,6 +522,24 @@ def _build_active_models_data() -> dict:
                             }
                             for idx, req in enumerate(waiting_queue, start=1)
                         ]
+                    # Expose GPU contention metrics from scheduler
+                    _contention_detected = False
+                    _decode_step_time_ms = None
+                    _decode_step_cv_pct = None
+                    if sched is not None and hasattr(sched, "get_stats"):
+                        try:
+                            sched_stats = sched.get_stats()
+                            _contention_detected = sched_stats.get(
+                                "gpu_contention_detected", False
+                            )
+                            _decode_step_time_ms = sched_stats.get(
+                                "decode_step_time_ms"
+                            )
+                            _decode_step_cv_pct = sched_stats.get(
+                                "decode_step_cv_pct"
+                            )
+                        except Exception:
+                            pass
             elif hasattr(entry.engine, "get_activity_snapshot"):
                 snapshot = entry.engine.get_activity_snapshot()
                 active_requests = snapshot.get("active_requests", 0)
@@ -632,6 +650,9 @@ def _build_active_models_data() -> dict:
             "generating": generating,
             "idle_seconds": idle_seconds,
             "ttl_remaining_seconds": ttl_remaining_seconds,
+            "gpu_contention_detected": _contention_detected,
+            "decode_step_time_ms": _decode_step_time_ms,
+            "decode_step_cv_pct": _decode_step_cv_pct,
         })
 
         total_active += active_requests
@@ -647,10 +668,18 @@ def _build_active_models_data() -> dict:
     else:
         memory_used = status.get("current_model_memory", 0)
         memory_max = status.get("final_ceiling", 0)
+    # Aggregate GPU contention across all models
+    any_contention = any(m.get("gpu_contention_detected", False) for m in models)
+    max_cv = max(
+        (m.get("decode_step_cv_pct") or 0.0 for m in models), default=0.0
+    )
+
     return {
         "models": models,
         "model_memory_used": memory_used,
         "model_memory_max": memory_max,
+        "gpu_contention_detected": any_contention,
+        "decode_step_cv_pct": round(max_cv, 1),
         "memory_pressure": {
             "enabled": bool(enforcer_status and enforcer_status.get("enabled")),
             "current_bytes": (
