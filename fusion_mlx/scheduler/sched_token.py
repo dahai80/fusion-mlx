@@ -244,6 +244,26 @@ def _create_batch_generator(
         stream=self._stream,
     )
 
+    # Attach fused sampler to the model object so GenerationBatch._step
+    # can pick it up. The model is shared across all batches, so this
+    # works even when new GenerationBatch instances are created via
+    # PromptProcessingBatch.generate().
+    from .sampler_fast_path import get_or_create_fused_sampler
+    fused = get_or_create_fused_sampler(
+        temperature=sampling_params.temperature,
+        top_p=sampling_params.top_p,
+        top_k=sampling_params.top_k,
+        min_p=sampling_params.min_p,
+    )
+    if fused is not None:
+        self.model._fused_sampler = fused
+        logger.debug(
+            "Fused sampler attached for temp=%.2f top_p=%.2f top_k=%d",
+            sampling_params.temperature, sampling_params.top_p, sampling_params.top_k,
+        )
+    else:
+        self.model._fused_sampler = None
+
     return bg
 
 def _on_prompt_progress(    self, updates: list[tuple[int, int, int]]) -> None:

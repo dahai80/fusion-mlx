@@ -222,15 +222,33 @@ class BatchedEngine(BaseEngine):
         self._engine = AsyncEngineCore(model=self._model, tokenizer=self._tokenizer, config=engine_config)
         await self._engine.engine.start()
 
-        # TurboQuant KV cache
+        # TurboQuant KV cache — auto-enable when model is eligible and no
+        # explicit override was provided.  TurboQuant quantises the KV cache
+        # from float16 to 4-bit, cutting memory traffic per decode step by
+        # ~4× for the KV portion.  On memory-bound models like Qwen3.6-27B
+        # this gives a measurable advantage at 8K+ context lengths where KV
+        # reads become a significant fraction of total step traffic.
+        tq_explicit = False
         if self._model_settings is not None:
-            tq_enabled = getattr(self._model_settings, "turboquant_kv_enabled", False)
+            tq_enabled = getattr(self._model_settings, "turboquant_kv_enabled", None)
+            if tq_enabled is not None:
+                tq_explicit = True
+            else:
+                # No explicit setting → auto-enable for eligible models
+                tq_enabled = True
             if tq_enabled:
-                tq_bits = float(getattr(self._model_settings, "turboquant_kv_bits", 4))
+                tq_bits = float(getattr(self._model_settings, "turboquant_kv_bits", 4) or 4)
                 self._engine.engine.scheduler._turboquant_kv_bits = tq_bits
                 self._engine.engine.scheduler._turboquant_skip_last = getattr(
                     self._model_settings, "turboquant_skip_last", True
                 )
+                if not tq_explicit:
+                    logger.info(
+                        "TurboQuant KV cache auto-enabled (4-bit) — no explicit "
+                        "model_settings override found; eligible model defaults to "
+                        "on.  Set turboquant_kv_enabled=false in model_settings to "
+                        "disable."
+                    )
 
         # SpecPrefill
         if self._model_settings is not None:

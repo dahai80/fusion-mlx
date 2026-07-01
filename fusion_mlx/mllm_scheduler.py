@@ -643,6 +643,7 @@ class MLLMScheduler:
                 repetition_penalty=request.sampling_params.repetition_penalty,
                 presence_penalty=request.sampling_params.presence_penalty,
                 frequency_penalty=request.sampling_params.frequency_penalty,
+                logprobs_requested=bool(request.sampling_params.logprobs),
                 video_fps=request.video_fps,
                 video_max_frames=request.video_max_frames,
             )

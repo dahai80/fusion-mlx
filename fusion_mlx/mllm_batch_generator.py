@@ -59,6 +59,11 @@ class MLLMBatchRequest:
     repetition_penalty: float = 1.0
     presence_penalty: float = 0.0
     frequency_penalty: float = 0.0
+    # Whether the client requested logprobs in the response. When False
+    # (the common case), the decode step can skip logsumexp computation
+    # and avoid the mx.eval(outgoing_logprobs) GPU sync, saving ~1-2 ms
+    # per step on memory-bound models.
+    logprobs_requested: bool = False
     video_fps: float | None = None  # Caller-specified video FPS
     video_max_frames: int | None = None  # Caller-specified max video frames
 
@@ -98,7 +103,7 @@ class MLLMBatchResponse:
     uid: int  # Batch generator UID
     request_id: str  # External request ID
     token: int  # Generated token
-    logprobs: mx.array  # Log probabilities
+    logprobs: mx.array | None  # Log probabilities (None when not requested)
     finish_reason: str | None = None  # "stop", "length", or None
     # True only when the batch generator confirms ``token`` is an EOS/control
     # stop id from its stop-token set. User stop strings are matched later by
@@ -128,7 +133,7 @@ class MLLMBatch:
     uids: list[int]
     request_ids: list[str]
     y: mx.array  # Current token(s) for each request [batch_size]
-    logprobs: list[mx.array]  # Log probs for each request
+    logprobs: list[mx.array | None]  # Log probs for each request (None when not requested)
     max_tokens: list[int]  # Max tokens per request
     num_tokens: list[int]  # Tokens generated per request
     cache: list[Any]  # BatchKVCache for language model
@@ -890,16 +895,23 @@ class MLLMBatchGenerator:
 
                 # Extract last token logits and sample with per-request params
                 last_logits = logits[:, -1, :]
-                logprobs = last_logits - mx.logsumexp(
-                    last_logits, axis=-1, keepdims=True
-                )
-                req_sampler = make_sampler(temp=req.temperature, top_p=req.top_p)
-                sampled = req_sampler(logprobs)
-
-                mx.eval(sampled, logprobs)
-
-                first_tokens.append(sampled.item())
-                all_logprobs.append(logprobs.squeeze(0))
+                # Skip logsumexp when client doesn't need logprobs —
+                # categorical sampling is shift-invariant.
+                if req.logprobs_requested:
+                    logprobs = last_logits - mx.logsumexp(
+                        last_logits, axis=-1, keepdims=True
+                    )
+                    req_sampler = make_sampler(temp=req.temperature, top_p=req.top_p)
+                    sampled = req_sampler(logprobs)
+                    mx.eval(sampled, logprobs)
+                    first_tokens.append(sampled.item())
+                    all_logprobs.append(logprobs.squeeze(0))
+                else:
+                    req_sampler = make_sampler(temp=req.temperature, top_p=req.top_p)
+                    sampled = req_sampler(last_logits)
+                    mx.eval(sampled)
+                    first_tokens.append(sampled.item())
+                    all_logprobs.append(None)
 
             per_request_caches.append(request_cache)
 
@@ -1039,8 +1051,27 @@ class MLLMBatchGenerator:
         # batches would silently share an incorrect sampler. The single
         # ``MLLMScheduler`` worker thread (see mlx-lm 0.31.3+ stream
         # ownership rule in #404) is the only writer, so no lock needed.
-        logprobs = logits - mx.logsumexp(logits, axis=-1, keepdims=True)
-        if requests and len(requests) == logprobs.shape[0]:
+        #
+        # Log-probability optimisation: logsumexp is only needed when at
+        # least one request in the batch asked for logprobs in the
+        # response.  When nobody needs them (the common case for chat),
+        # we feed raw logits to the sampler — mx.random.categorical is
+        # shift-invariant so the constant logsumexp offset does not change
+        # the sampling outcome, and the top-p mask is built from the
+        # softmax probabilities which are also shift-invariant.  Skipping
+        # the logsumexp saves one full pass over the vocab dimension and
+        # eliminates the intermediate [B, vocab] logprobs allocation.
+        _any_logprobs = requests and any(
+            getattr(r, "logprobs_requested", False) for r in requests
+        )
+        if _any_logprobs:
+            logprobs = logits - mx.logsumexp(logits, axis=-1, keepdims=True)
+            sampler_input = logprobs
+        else:
+            logprobs = None
+            sampler_input = logits
+
+        if requests and len(requests) == sampler_input.shape[0]:
             first_key = (requests[0].temperature, requests[0].top_p)
             homogeneous = all((r.temperature, r.top_p) == first_key for r in requests)
             if homogeneous:
@@ -1051,7 +1082,7 @@ class MLLMBatchGenerator:
                     )
                     shared = (first_key, fn)
                     self._shared_batch_sampler = shared
-                sampled = shared[1](logprobs)
+                sampled = shared[1](sampler_input)
             else:
                 sampled_tokens = []
                 for i, req in enumerate(requests):
@@ -1064,12 +1095,12 @@ class MLLMBatchGenerator:
                         req._cached_sampler = (sampler_key, req_sampler)
                     else:
                         req_sampler = cached[1]
-                    sampled_tokens.append(req_sampler(logprobs[i : i + 1]))
+                    sampled_tokens.append(req_sampler(sampler_input[i : i + 1]))
                 sampled = mx.concatenate(sampled_tokens, axis=0)
         else:
-            sampled = self.sampler(logprobs)
+            sampled = self.sampler(sampler_input)
 
-        return sampled, list(logprobs)
+        return sampled, logprobs
 
     def _next(self) -> list[MLLMBatchResponse]:
         """
@@ -1115,20 +1146,33 @@ class MLLMBatchGenerator:
         # worker → route-handler thread boundary.
         y, outgoing_logprobs = batch.y, batch.logprobs
         batch.y, batch.logprobs = self._step(y[:, None], batch.cache, batch.requests)
-        mx.async_eval(batch.y, batch.logprobs)
+        if batch.logprobs is not None:
+            mx.async_eval(batch.y, batch.logprobs)
+        else:
+            mx.async_eval(batch.y)
 
-        # Force evaluation of the OUTGOING per-step logprobs on the
-        # worker thread before they are sliced into ``MLLMBatchResponse``
-        # (and consumed by the route handler thread for ``np.array`` /
-        # top-k extraction in ``service.helpers._extract_token_logprob``).
-        # ``mx.async_eval`` above only schedules work — any residual
-        # laziness on the response slice would otherwise be resolved on
-        # the consumer thread, which under mlx-lm 0.31.3+ thread-local-
-        # stream rules crashes with ``There is no Stream(...) in current
-        # thread``. Pairs with the worker-default-stream adoption in
-        # ``__init__`` so logprobs survive a cross-thread ``np.array(...)``
-        # even if ``MLLMBatchGenerator._stream`` is ever re-pointed.
-        mx.eval(outgoing_logprobs)
+        # Force evaluation of the OUTGOING per-step logprobs **only when
+        # at least one request in the batch asked for them**.  When
+        # nobody needs logprobs (the common case for chat), skipping this
+        # mx.eval eliminates a full GPU synchronisation point that blocks
+        # the CPU until the entire [B, vocab] logprobs tensor is
+        # materialised.  The sampled tokens (``y``) are still async-eval'd
+        # above; the first ``.item()`` / ``tolist()`` below will wait for
+        # them, but that sync is over a [B] int array — orders of
+        # magnitude smaller than [B, vocab].
+        if outgoing_logprobs is not None:
+            # Force evaluation on the worker thread before they are sliced
+            # into ``MLLMBatchResponse`` (and consumed by the route handler
+            # thread for ``np.array`` / top-k extraction in
+            # ``service.helpers._extract_token_logprob``).
+            # ``mx.async_eval`` above only schedules work — any residual
+            # laziness on the response slice would otherwise be resolved on
+            # the consumer thread, which under mlx-lm 0.31.3+ thread-local-
+            # stream rules crashes with ``There is no Stream(...) in current
+            # thread``. Pairs with the worker-default-stream adoption in
+            # ``__init__`` so logprobs survive a cross-thread ``np.array(...)``
+            # even if ``MLLMBatchGenerator._stream`` is ever re-pointed.
+            mx.eval(outgoing_logprobs)
 
         toc = time.perf_counter()
 
@@ -1142,6 +1186,13 @@ class MLLMBatchGenerator:
         end_idx = []
         responses = []
 
+        # Batch-materialise all sampled tokens with a single tolist() call
+        # instead of per-item .item() calls.  tolist() triggers one GPU→CPU
+        # transfer for the entire [B] array; .item() would synchronise B
+        # times.  For B=1 the difference is negligible, but at B≥8 the
+        # per-item syncs add measurable latency on memory-bound models.
+        _y_tokens = y.tolist()
+
         for i, (uid, request_id, num_tok, max_tok, req) in enumerate(
             zip(
                 batch.uids,
@@ -1151,7 +1202,7 @@ class MLLMBatchGenerator:
                 batch.requests,
             )
         ):
-            token = int(y[i].item())
+            token = int(_y_tokens[i])
             num_tok += 1
             batch.num_tokens[i] = num_tok
             req.num_tokens = num_tok
@@ -1181,11 +1232,14 @@ class MLLMBatchGenerator:
                     uid=uid,
                     request_id=request_id,
                     token=token,
-                    # ``outgoing_logprobs[i]`` is the exact slice we
-                    # eval'd above on the worker thread; the consumer
-                    # thread's ``np.array(...)`` is therefore a pure
-                    # CPU copy with no stream lookup.
-                    logprobs=outgoing_logprobs[i],
+                    # When outgoing_logprobs is None (no client requested
+                    # them), pass None to avoid a cross-thread stream
+                    # lookup on a non-existent tensor.
+                    logprobs=(
+                        outgoing_logprobs[i]
+                        if outgoing_logprobs is not None
+                        else None
+                    ),
                     finish_reason=finish_reason,
                     token_is_stop_token=token_is_stop_token,
                     prompt_cache=prompt_cache,
