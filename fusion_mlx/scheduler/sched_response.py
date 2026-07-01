@@ -188,12 +188,13 @@ def _process_batch_responses(
         if request.num_output_tokens == 1 and request.first_token_at is None:
             request.first_token_at = time.monotonic()
 
-        # Create output
+        # Create output — skip O(N) output_token_ids copy for streaming;
+        # only materialize the full list when the request finishes.
         output = RequestOutput(
             request_id=request_id,
             new_token_ids=[response.token] if not is_stop else [],
             new_text=new_text,
-            output_token_ids=list(request.output_token_ids),
+            output_token_ids=list(request.output_token_ids) if is_finished else None,
             prompt_tokens=request.num_prompt_tokens,
             completion_tokens=request.num_output_tokens,
             cached_tokens=request.cached_tokens,
@@ -331,9 +332,16 @@ def _cleanup_finished(    self, finished_ids: set[str]) -> None:
     # Synchronize pending engine stream operations before cache storage.
     # store_cache -> mx.save_safetensors triggers implicit mx.eval() which
     # can conflict with async Metal operations on the generation stream.
+    # Skip the sync entirely when no finished request has extracted cache —
+    # the sync is only needed to protect async store_cache workers.
     if finished_ids:
-        with self._phase_timer("cleanup_finished_sync"):
-            _safe_sync_stream(self._stream)
+        needs_sync = any(
+            getattr(self.running.get(rid), "_extracted_cache", None) is not None
+            for rid in finished_ids
+        )
+        if needs_sync:
+            with self._phase_timer("cleanup_finished_sync"):
+                _safe_sync_stream(self._stream)
 
     # SpecPrefill: restore original RoPE if active request finished
     for rid in finished_ids:
