@@ -549,6 +549,14 @@ def _cleanup_finished(    self, finished_ids: set[str]) -> None:
         # Clean up streaming detokenizer
         self._cleanup_detokenizer(request_id)
 
+        # Clean up speculative decode state for this request
+        if self._spec_decode_state is not None:
+            if (
+                hasattr(self._spec_decode_state, "_last_request_id")
+                and self._spec_decode_state._last_request_id == request_id
+            ):
+                self._spec_decode_state.reset()
+
         # Clean up protocol-specific output parser session
         self._cleanup_output_parser_session(request_id)
 

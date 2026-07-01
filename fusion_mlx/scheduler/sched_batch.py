@@ -73,6 +73,8 @@ def _do_external_prefill(    self,
     if n_tokens <= 1:
         # Nothing to prefill, return cache + tokens as-is
         cache = existing_cache or make_prompt_cache(self.model)
+        if existing_cache is None and hasattr(self.model, "prealloc_caches"):
+            self.model.prealloc_caches(cache)
         # NOTE: Do NOT apply TurboQuant here. TurboQuant conversion must
         # happen at insert() time in sched_schedule.py, after prefill
         # completes but before BatchGenerator takes ownership of the cache.
@@ -84,6 +86,8 @@ def _do_external_prefill(    self,
         prompt_cache = existing_cache
     else:
         prompt_cache = make_prompt_cache(self.model)
+        if hasattr(self.model, "prealloc_caches"):
+            self.model.prealloc_caches(prompt_cache)
 
     # NOTE: TurboQuant conversion is NOT applied during external prefill.
     # Prefill runs with standard KVCache; TurboQuant quantization happens
@@ -450,6 +454,8 @@ def _begin_prefill(    self,
         self.model.clear_vlm_position_state()
 
     prompt_cache = existing_cache if existing_cache is not None else make_prompt_cache(self.model)
+    if existing_cache is None and hasattr(self.model, "prealloc_caches"):
+        self.model.prealloc_caches(prompt_cache)
 
     block_size = self.config.paged_cache_block_size
     boundary_enabled = (

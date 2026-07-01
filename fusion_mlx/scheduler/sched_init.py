@@ -430,6 +430,9 @@ def __init__(    self,
     # since _get_xtc_special_tokens() delegates to _get_stop_tokens().
     self._xtc_special_tokens: list[int] = self._get_xtc_special_tokens()
 
+    # Speculative decode state (lazy-initialized in _step_pure_decode)
+    self._spec_decode_state = None
+
 @contextmanager
 def _phase_timer(self, phase: str):
     """Lightweight wall-time accumulator for cache-on overhead diagnostics.

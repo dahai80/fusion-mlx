@@ -117,8 +117,9 @@ class RerankerEngine(BaseNonStreamingEngine):
         self._model = None
         gc.collect()
         loop = asyncio.get_running_loop()
+        from ..scheduler.helpers import _safe_clear_cache_for_non_llm
         await asyncio.wait_for(
-            loop.run_in_executor(get_executor("llm"), lambda: (mx.synchronize(), mx.clear_cache())), timeout=5.0)
+            loop.run_in_executor(get_executor("llm"), _safe_clear_cache_for_non_llm), timeout=5.0)
 
     async def rerank(self, query: "str | dict", documents: "list[str] | list[dict]", top_n: int | None = None, max_length: int | None = None) -> RerankOutput:
         if self._model is None:

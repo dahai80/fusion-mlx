@@ -108,8 +108,9 @@ class EmbeddingEngine(BaseNonStreamingEngine):
         self._model = None
         gc.collect()
         loop = asyncio.get_running_loop()
+        from ..scheduler.helpers import _safe_clear_cache_for_non_llm
         await asyncio.wait_for(
-            loop.run_in_executor(get_executor("llm"), lambda: (mx.synchronize(), mx.clear_cache())), timeout=5.0)
+            loop.run_in_executor(get_executor("llm"), _safe_clear_cache_for_non_llm), timeout=5.0)
 
     async def embed(self, texts: list[str] | list[dict[str, str]], max_length: int = 512, padding: bool = True, truncation: bool = True) -> EmbeddingOutput:
         if self._model is None:

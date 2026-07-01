@@ -17,6 +17,8 @@ import logging
 import math
 import time
 
+import mlx.core as mx
+
 logger = logging.getLogger(__name__)
 from typing import Any
 
@@ -36,33 +38,32 @@ from .types import (
 
 
 def step(self) -> SchedulerOutput:
-    """
-    Execute one scheduling step with automatic error recovery.
-
-    This method:
-    1. Schedules waiting requests into the batch
-    2. Runs one generation step via BatchGenerator
-    3. Processes outputs and handles finished requests
-    4. On cache corruption: clears all cache and reschedules requests
-        for re-prefill (no error raised to caller)
-
-    Returns:
-        SchedulerOutput with results of this step
-    """
     output = SchedulerOutput()
-      # Log step start (Ollama-style)
+    self._step_counter += 1
+
+    # --- Pure-decode fast path ---
+    # When there are no waiting/prefilling requests and only 1 running request,
+    # skip all scheduling, memory checks, admin snapshots, and contention
+    # detection. The only work is: bg._next() + process responses.
+    if (
+        not self.waiting
+        and not self.prefilling
+        and len(self.running) == 1
+        and self.batch_generator is not None
+        and not self._vlm_mtp_active
+        and not self._pending_abort_ids
+        and not self._pending_async_removes
+    ):
+        self._pure_decode_count = getattr(self, '_pure_decode_count', 0) + 1
+        return self._step_pure_decode(output)
+
+    # --- Full step path ---
     logger.debug("step(%d): waiting=%d, running=%d, prefilling=%d",
             self._step_counter, len(self.waiting), len(self.running), len(self.prefilling))
 
-    # Process pending aborts FIRST (thread-safe with hybrid executor)
     self._process_pending_aborts()
-
-    # Drain async store_cache completions from prior steps. Each completed
-    # entry triggers the deferred batch_generator.remove(uid) on the
-    # inference thread. Inflight entries are left for a later step.
     self._drain_pending_async_removes()
 
-    # Check memory pressure and evict if needed (tiered cache)
     if self.memory_monitor is not None and self._step_counter % self.config.memory_check_interval == 0:
         self._check_memory_pressure()
 
@@ -217,12 +218,15 @@ def step(self) -> SchedulerOutput:
                 self._tokens_since_clear_cache += len(responses)
                 if self._tokens_since_clear_cache >= self.config.decode_clear_interval:
                     frag = getattr(self, '_fragmentation_ratio', 0.0)
-                    if _should_clear_on_fragmentation(frag):
+                    cache_mem = mx.get_cache_memory()
+                    cache_threshold = self._periodic_clear_threshold_bytes()
+                    if _should_clear_on_fragmentation(frag) and cache_mem > cache_threshold:
                         _sync_and_clear_cache(self._stream)
                     else:
                         logger.debug(
-                            "step(%d): skipping clear_cache — fragmentation %.2f too high",
+                            "step(%d): skipping clear_cache — frag=%.2f cache_mem=%dMB threshold=%dMB",
                             self._step_counter, frag,
+                            cache_mem // (1024*1024), cache_threshold // (1024*1024),
                         )
                     self._tokens_since_clear_cache = 0
 
@@ -294,7 +298,6 @@ def step(self) -> SchedulerOutput:
     self.finished_req_ids = set()
 
     # Periodic Metal cache cleanup
-    self._step_counter += 1
     should_clear = self._should_periodic_clear_cache()
     # Deferred post-completion cleanup: fire once the step counter reaches
     # the target set by _cleanup_finished() (#435, #557).
@@ -306,12 +309,15 @@ def step(self) -> SchedulerOutput:
         self._deferred_clear_at = None
     if should_clear:
         frag = getattr(self, '_fragmentation_ratio', 0.0)
-        if _should_clear_on_fragmentation(frag):
+        cache_mem = mx.get_cache_memory()
+        cache_threshold = self._periodic_clear_threshold_bytes()
+        if _should_clear_on_fragmentation(frag) and cache_mem > cache_threshold:
             _sync_and_clear_cache(self._stream)
         else:
             logger.debug(
-                "step(%d): skipping periodic clear_cache — fragmentation %.2f too high",
+                "step(%d): skipping periodic clear_cache — frag=%.2f cache_mem=%dMB threshold=%dMB",
                 self._step_counter, frag,
+                cache_mem // (1024*1024), cache_threshold // (1024*1024),
             )
     if (
         self.config.gc_cleanup_interval > 0
@@ -385,6 +391,108 @@ def get_cache_stats(self) -> dict[str, Any] | None:
     if self.block_aware_cache is not None:
         return self.block_aware_cache.get_stats()
     return None
+
+
+def _step_pure_decode(self, output: SchedulerOutput) -> SchedulerOutput:
+    """Fast path for single-request pure decode.
+
+    Skips all scheduling, memory checks, admin snapshots, contention
+    detection, and periodic cleanup. Only runs the model forward pass
+    and processes the response. This path is ~2ms faster than the full
+    step() for a typical 90ms decode step.
+    """
+    bg = self.batch_generator
+    with mx.stream(self._stream):
+        _, responses = bg._next()
+
+    if not responses:
+        return output
+
+    output.has_work = True
+    outputs, finished_ids = self._process_batch_responses(responses)
+    output.outputs.extend(outputs)
+    output.finished_request_ids = finished_ids
+
+    if finished_ids:
+        self._cleanup_finished(finished_ids)
+        logger.info("step(%d): finished=%s", self._step_counter, finished_ids)
+    else:
+        # Speculative decode: after regular step produces one token,
+        # try to draft and verify additional tokens via n-gram matching
+        spec_outputs = self._try_spec_decode(responses, output)
+        if spec_outputs:
+            output.outputs.extend(spec_outputs)
+            # Check if spec decode finished the request
+            for so in spec_outputs:
+                if so.finished and so.request_id not in finished_ids:
+                    finished_ids.add(so.request_id)
+            if finished_ids:
+                self._cleanup_finished(finished_ids)
+                logger.info(
+                    "step(%d): spec_finished=%s", self._step_counter, finished_ids
+                )
+
+    # Decode-phase cache clear (same interval as full path)
+    if self._tokens_since_clear_cache is not None:
+        self._tokens_since_clear_cache += len(responses)
+        if self._tokens_since_clear_cache >= self.config.decode_clear_interval:
+            _sync_and_clear_cache(self._stream)
+            self._tokens_since_clear_cache = 0
+
+    return output
+
+
+def _try_spec_decode(
+    self, responses: list, output: SchedulerOutput
+) -> list[RequestOutput]:
+    """Try speculative decode after a regular decode step.
+
+    If PromptLookup has draft tokens, runs a verify pass to produce
+    additional tokens. Only active during single-request pure decode.
+    Returns list of additional RequestOutput objects (empty if no drafts).
+    """
+    from .spec_decode import SpecDecodeState, spec_decode_step
+
+    # Only speculate when there's exactly 1 running request and it's not finished
+    if len(self.running) != 1:
+        return []
+    if len(responses) != 1:
+        return []
+
+    # Check if the regular step finished the request — no point speculating
+    if output.finished_request_ids:
+        return []
+
+    # Extract current token and request ID from the response
+    resp = responses[0]
+    if resp.finish_reason is not None:
+        return []
+
+    current_token = resp.token
+    request_id = self.uid_to_request_id.get(resp.uid)
+    if request_id is None:
+        return []
+
+    request = self.running.get(request_id)
+    if request is None or request.is_finished:
+        return []
+
+    # Don't speculate on VLM MTP or protocol-parsed requests
+    if self._vlm_mtp_active:
+        return []
+    if request_id in self._output_parser_sessions:
+        return []
+
+    # Don't speculate when there are pending aborts
+    if self._pending_abort_ids:
+        return []
+
+    # Initialize spec decode state lazily
+    if self._spec_decode_state is None:
+        self._spec_decode_state = SpecDecodeState()
+
+    return spec_decode_step(self, output, current_token, request_id)
+
 
 def reset(self) -> None:
     """Reset the scheduler state."""

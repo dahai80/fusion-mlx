@@ -280,6 +280,8 @@ class BatchedEngine(BaseEngine):
                     logger.error(f"SpecPrefill: draft model load failed: {e}")
 
         self._loaded = True
+        from ..scheduler.helpers import register_llm_engine
+        register_llm_engine()
         logger.info(f"BatchedEngine loaded: {self._model_name}")
 
     async def stop(self) -> None:
@@ -293,6 +295,9 @@ class BatchedEngine(BaseEngine):
         self._engine = None
         self._model = None
         self._tokenizer = None
+        if self._loaded:
+            from ..scheduler.helpers import unregister_llm_engine
+            unregister_llm_engine()
         self._loaded = False
 
     def _apply_chat_template(
@@ -417,16 +422,16 @@ class BatchedEngine(BaseEngine):
             specprefill_kwargs["specprefill_system_end"] = kwargs.pop("specprefill_system_end")
 
         engine = self._engine
-        request_id = await engine.add_request(prompt=prompt, sampling_params=sampling_params, **specprefill_kwargs)
+        request_id = await engine.add_request(prompt=prompt, sampling_params=sampling_params, streaming=True, **specprefill_kwargs)
         finished_normally = False
         try:
             async for output in engine.stream_outputs(request_id):
                 from ..api.utils import clean_special_tokens
-                text = clean_special_tokens(output.output_text)
+                text = clean_special_tokens(output.new_text)
                 if output.finished:
                     finished_normally = True
                 yield GenerationOutput(
-                    text=text, new_text=output.new_text,
+                    text=text, new_text=text,
                     prompt_tokens=output.prompt_tokens, completion_tokens=output.completion_tokens,
                     finished=output.finished, finish_reason=output.finish_reason,
                     tool_calls=output.tool_calls, cached_tokens=output.cached_tokens,

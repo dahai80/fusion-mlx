@@ -205,6 +205,15 @@ async def _stream_chat_generator(request: ChatCompletionRequest) -> AsyncIterato
     sampling = _build_sampling_params(request)
     request_id = f"chatcmpl-{uuid.uuid4().hex[:12]}"
 
+    # Create StreamingJSONEncoder for fast-path SSE encoding (avoids per-token
+    # Pydantic model construction + model_dump_json overhead)
+    from .streaming import StreamingJSONEncoder
+    encoder = StreamingJSONEncoder(
+        response_id=request_id,
+        model=request.model,
+        object_type="chat.completion.chunk",
+    )
+
     try:
         # First chunk with role
         first_chunk = StreamChunk(
@@ -243,7 +252,7 @@ async def _stream_chat_generator(request: ChatCompletionRequest) -> AsyncIterato
                     completion_tokens=gen.completion_tokens,
                     cached_tokens=gen.cached_tokens,
                 )
-                yield _adapter.format_stream_chunk(chunk, request)
+                yield _adapter.format_stream_chunk(chunk, request, encoder=encoder)
                 prompt_tokens = gen.prompt_tokens or prompt_tokens
                 completion_tokens = gen.completion_tokens or completion_tokens
                 cached_tokens = gen.cached_tokens or cached_tokens
@@ -268,7 +277,7 @@ async def _stream_chat_generator(request: ChatCompletionRequest) -> AsyncIterato
                             completion_tokens=completion_tokens,
                             cached_tokens=cached_tokens,
                         )
-                        yield _adapter.format_stream_chunk(tc_chunk, request)
+                        yield _adapter.format_stream_chunk(tc_chunk, request, encoder=encoder)
 
         # Final chunk with finish_reason
         last_chunk = StreamChunk(
@@ -277,7 +286,7 @@ async def _stream_chat_generator(request: ChatCompletionRequest) -> AsyncIterato
             completion_tokens=completion_tokens,
             cached_tokens=cached_tokens,
         )
-        yield _adapter.format_stream_chunk(last_chunk, request)
+        yield _adapter.format_stream_chunk(last_chunk, request, encoder=encoder)
         yield _adapter.format_stream_end(request)
 
     except asyncio.CancelledError:

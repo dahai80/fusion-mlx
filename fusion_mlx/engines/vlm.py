@@ -183,6 +183,8 @@ class VLMBatchedEngine(BaseEngine):
         await self._engine.engine.start()
 
         self._loaded = True
+        from ..scheduler.helpers import register_llm_engine
+        register_llm_engine()
         logger.info("VLMBatchedEngine loaded: %s", self._model_name)
 
     async def stop(self) -> None:
@@ -201,6 +203,9 @@ class VLMBatchedEngine(BaseEngine):
         self._processor = None
         self._adapter = None
         self._tokenizer = None
+        if self._loaded:
+            from ..scheduler.helpers import unregister_llm_engine
+            unregister_llm_engine()
         self._loaded = False
 
     # -- Vision feature computation --
@@ -517,6 +522,7 @@ class VLMBatchedEngine(BaseEngine):
             vlm_inputs_embeds=vlm_inputs_embeds, vlm_extra_kwargs=vlm_extra_kwargs,
             vlm_image_hash=vlm_image_hash, vlm_cache_key_start=vlm_cache_key_start,
             vlm_cache_key_ranges=vlm_cache_key_ranges,
+            streaming=True,
         )
         finished_normally = False
         try:

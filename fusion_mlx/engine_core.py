@@ -113,16 +113,16 @@ class EngineConfig:
     # correctness is unchanged. Budget is a TIME ceiling so event-loop pause
     # is bounded consistently across hardware.
     decode_burst_max_steps: int = field(
-        default_factory=lambda: int(os.environ.get("OMLX_DECODE_BURST_MAX_STEPS", "64"))
+        default_factory=lambda: int(os.environ.get("OMLX_DECODE_BURST_MAX_STEPS", "16"))
     )
     decode_burst_budget_single_s: float = field(
         default_factory=lambda: float(
-            os.environ.get("OMLX_DECODE_BURST_BUDGET_SINGLE_S", "0.1")
+            os.environ.get("OMLX_DECODE_BURST_BUDGET_SINGLE_S", "0.5")
         )
     )
     decode_burst_budget_s: float = field(
         default_factory=lambda: float(
-            os.environ.get("OMLX_DECODE_BURST_BUDGET_S", "0.03")
+            os.environ.get("OMLX_DECODE_BURST_BUDGET_S", "0.1")
         )
     )
 
@@ -295,7 +295,7 @@ class EngineCore:
 
                     contexts = self._active_contexts
                     eviction_request = None
-                    distributed = False
+                    has_streaming_consumer = False
 
                     for output in step_outputs:
                         if (
@@ -307,14 +307,15 @@ class EngineCore:
                         outputs = output.outputs
                         if not outputs:
                             continue
-                        distributed = True
 
                         for req_output in outputs:
                             rid = req_output.request_id
                             ctx = contexts.get(rid)
                             if ctx is not None:
-                                if use_simple_streaming:
+                                is_streaming = not ctx.collector.aggregate
+                                if use_simple_streaming or is_streaming:
                                     ctx.collector.put(req_output)
+                                    has_streaming_consumer = True
                                 else:
                                     if ctx.stream_state.should_send(
                                         req_output.completion_tokens,
@@ -327,7 +328,12 @@ class EngineCore:
                             if req_output.finished:
                                 self._mark_request_finished(rid)
 
-                    if distributed:
+                    # Yield to event loop so SSE handlers can flush queued
+                    # outputs. For streaming (deque-based collector), this must
+                    # happen after every burst to avoid buffering all tokens.
+                    if has_streaming_consumer or any(
+                        o.outputs for o in step_outputs
+                    ):
                         await asyncio.sleep(0)
 
                     if eviction_request is not None:
@@ -421,6 +427,7 @@ class EngineCore:
         specprefill_keep_pct: float | None = None,
         specprefill_threshold: int | None = None,
         specprefill_system_end: int | None = None,
+        streaming: bool = False,
     ) -> str:
         if request_id is None:
             request_id = str(uuid.uuid4())
@@ -451,7 +458,7 @@ class EngineCore:
             sampling_params.max_tokens,
               )
         self._active_contexts[request_id] = RequestContext(
-            collector=RequestOutputCollector(aggregate=True),
+            collector=RequestOutputCollector(aggregate=not streaming),
             stream_state=RequestStreamState(stream_interval=self.config.stream_interval),
             finished_event=asyncio.Event(),
         )

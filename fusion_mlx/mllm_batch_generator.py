@@ -24,10 +24,11 @@ from typing import Any
 
 import mlx.core as mx
 import mlx.nn as nn
-from mlx_lm.sample_utils import make_logits_processors, make_sampler
+from mlx_lm.sample_utils import make_logits_processors
 
 from .cache.vision_embedding_cache import VisionEmbeddingCache
 from .multimodal_processor import MultimodalProcessor
+from .scheduler.sampler_fast_path import make_fused_sampler
 from .request import get_default_max_tokens
 
 logger = logging.getLogger(__name__)
@@ -50,6 +51,8 @@ class MLLMBatchRequest:
     max_tokens: int = get_default_max_tokens()
     temperature: float = 0.7
     top_p: float = 0.9
+    top_k: int = 0
+    min_p: float = 0.0
     # OpenAI-spec penalties (#512) — wired into mlx-lm's
     # ``make_logits_processors`` inside ``_step``. ``repetition_penalty`` is
     # a rapid-mlx extension (mlx-lm-native semantics); ``presence_penalty``
@@ -413,7 +416,7 @@ class MLLMBatchGenerator:
         self.max_tokens = max_tokens
         self.stop_tokens = stop_tokens or set()
         self.sampler = sampler or (lambda x: mx.argmax(x, axis=-1))
-        self._shared_batch_sampler: tuple[tuple[float, float], Callable] | None = None
+        self._shared_batch_sampler: tuple[tuple[float, float, int, float], Callable] | None = None
 
         self.prefill_batch_size = prefill_batch_size
         self.completion_batch_size = max(completion_batch_size, prefill_batch_size)
@@ -897,17 +900,21 @@ class MLLMBatchGenerator:
                 last_logits = logits[:, -1, :]
                 # Skip logsumexp when client doesn't need logprobs —
                 # categorical sampling is shift-invariant.
+                req_sampler = make_fused_sampler(
+                    temperature=req.temperature,
+                    top_p=req.top_p,
+                    top_k=req.top_k,
+                    min_p=req.min_p,
+                )
                 if req.logprobs_requested:
                     logprobs = last_logits - mx.logsumexp(
                         last_logits, axis=-1, keepdims=True
                     )
-                    req_sampler = make_sampler(temp=req.temperature, top_p=req.top_p)
                     sampled = req_sampler(logprobs)
                     mx.eval(sampled, logprobs)
                     first_tokens.append(sampled.item())
                     all_logprobs.append(logprobs.squeeze(0))
                 else:
-                    req_sampler = make_sampler(temp=req.temperature, top_p=req.top_p)
                     sampled = req_sampler(last_logits)
                     mx.eval(sampled)
                     first_tokens.append(sampled.item())
@@ -1034,51 +1041,56 @@ class MLLMBatchGenerator:
                 )
             logits = mx.concatenate(processed_rows, axis=0)
 
-        # Sample per-request with correct temperature/top_p.
-        # Fast path: when all requests in the batch share (temp, top_p),
-        # invoke a single batched sampler on [B, vocab] instead of B
-        # per-row calls + mx.concatenate. mlx-lm's ``make_sampler`` chain
-        # (``apply_top_p`` + ``categorical_sampling``) is row-wise along
-        # ``axis=-1``, so one call on [B, vocab] yields [B] tokens via one
-        # MLX kernel chain — distributionally identical to the per-row
-        # loop. At B=8 on Gemma 3 12B this cuts step time ~30%.
+        # Sample per-request with correct temperature/top_p/top_k/min_p.
+        # Uses the fused sampler (sampler_fast_path.py) which combines
+        # top_k / top_p / min_p / temperature / categorical into one
+        # lazy-graph segment, avoiding the multiple @mx.compile boundaries
+        # in mlx-lm's ``make_sampler`` chain (apply_top_p ->
+        # apply_min_p -> categorical_sampling). At B=1 on Qwen3 27B this
+        # cuts sampling overhead ~30%.
         #
-        # WARNING: ``_shared_batch_sampler`` is keyed only on
-        # ``(temperature, top_p)``. If we ever add per-request sampling
-        # knobs (top_k, min_p) that change the sampler's *shape* (not just
-        # the per-row logits, which the penalty processors above handle),
-        # the key MUST grow accordingly — otherwise homogeneous-looking
-        # batches would silently share an incorrect sampler. The single
-        # ``MLLMScheduler`` worker thread (see mlx-lm 0.31.3+ stream
-        # ownership rule in #404) is the only writer, so no lock needed.
+        # ``_shared_batch_sampler`` is keyed on (temperature, top_p,
+        # top_k, min_p). The single ``MLLMScheduler`` worker thread
+        # (see mlx-lm 0.31.3+ stream ownership rule in #404) is the
+        # only writer, so no lock needed.
         #
-        # Log-probability optimisation: logsumexp is only needed when at
-        # least one request in the batch asked for logprobs in the
-        # response.  When nobody needs them (the common case for chat),
-        # we feed raw logits to the sampler — mx.random.categorical is
-        # shift-invariant so the constant logsumexp offset does not change
-        # the sampling outcome, and the top-p mask is built from the
-        # softmax probabilities which are also shift-invariant.  Skipping
-        # the logsumexp saves one full pass over the vocab dimension and
-        # eliminates the intermediate [B, vocab] logprobs allocation.
+        # Log-probability handling: mx.random.categorical is shift-invariant,
+        # so for temp-only sampling we can pass raw logits.  However, top-p
+        # and min-p need normalised probabilities (cumsum must be in [0,1]),
+        # so we must compute logprobs when those filters are active.
         _any_logprobs = requests and any(
             getattr(r, "logprobs_requested", False) for r in requests
         )
-        if _any_logprobs:
+        _needs_top_p = requests and any(
+            0.0 < r.top_p < 1.0 for r in requests
+        )
+        _needs_min_p = requests and any(
+            r.min_p > 0.0 for r in requests
+        )
+        if _any_logprobs or _needs_top_p or _needs_min_p:
             logprobs = logits - mx.logsumexp(logits, axis=-1, keepdims=True)
             sampler_input = logprobs
+            if not _any_logprobs:
+                logprobs = None
         else:
             logprobs = None
             sampler_input = logits
 
         if requests and len(requests) == sampler_input.shape[0]:
-            first_key = (requests[0].temperature, requests[0].top_p)
-            homogeneous = all((r.temperature, r.top_p) == first_key for r in requests)
+            first_key = (requests[0].temperature, requests[0].top_p,
+                         requests[0].top_k, requests[0].min_p)
+            homogeneous = all(
+                (r.temperature, r.top_p, r.top_k, r.min_p) == first_key
+                for r in requests
+            )
             if homogeneous:
                 shared = self._shared_batch_sampler
                 if shared is None or shared[0] != first_key:
-                    fn = make_sampler(
-                        temp=requests[0].temperature, top_p=requests[0].top_p
+                    fn = make_fused_sampler(
+                        temperature=requests[0].temperature,
+                        top_p=requests[0].top_p,
+                        top_k=requests[0].top_k,
+                        min_p=requests[0].min_p,
                     )
                     shared = (first_key, fn)
                     self._shared_batch_sampler = shared
@@ -1086,11 +1098,14 @@ class MLLMBatchGenerator:
             else:
                 sampled_tokens = []
                 for i, req in enumerate(requests):
-                    sampler_key = (req.temperature, req.top_p)
+                    sampler_key = (req.temperature, req.top_p, req.top_k, req.min_p)
                     cached = getattr(req, "_cached_sampler", None)
                     if cached is None or cached[0] != sampler_key:
-                        req_sampler = make_sampler(
-                            temp=req.temperature, top_p=req.top_p
+                        req_sampler = make_fused_sampler(
+                            temperature=req.temperature,
+                            top_p=req.top_p,
+                            top_k=req.top_k,
+                            min_p=req.min_p,
                         )
                         req._cached_sampler = (sampler_key, req_sampler)
                     else:
