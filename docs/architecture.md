@@ -1,84 +1,88 @@
 # Architecture
 
-fusion-mlx is a multi-modal inference server built on Apple MLX. It serves LLM, VLM, audio, and image generation models through a unified OpenAI-compatible API.
+fusion-mlx is a multi-modal inference server built on Apple MLX. It serves LLM, VLM, audio, and image generation models through OpenAI- and Anthropic-compatible APIs.
 
 ## High-Level Architecture
 
 ```
-┌──────────────────────────────────────────────────────────────┐
-│                    FastAPI Server (uvicorn)                     │
-│   ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────┐   │
-│   │ OpenAI    │  │ Anthropic │  │  Audio   │  │   Images │   │
-│   │ Routes    │  │  Routes   │  │  Routes  │  │   Routes │   │
-│   └────┬─────┘  └────┬─────┘  └────┬─────┘  └─────┬────┘   │
-│        │              │              │              │          │
-│   ┌────▼──────────────▼──────────────▼──────────────▼─────┐   │
-│   │         RequestRouter / SmartRouter (dispatch)          │   │
-│   │  - Modality-based routing (text/image/audio/gen)        │   │
-│   │  - Phase-aware split (prefill → decode on different    │   │
-│   │    backends)                                             │   │
-│   │  - Priority scheduling (REALTIME/BATCH/BACKGROUND)      │   │
-│   │  - Cloud fallback for large uncached context            │   │
-│   └──────────────────────┬─────────────────────────────────┘   │
-│                          │                                       │
-│   ┌─────────────────────▼──────────────────────────────────┐   │
-│   │                 EnginePool (LRU + Memory)                │   │
-│   │   ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────┐  │   │
-│   │   │ Batched   │ │   VLM    │ │  Embed   │ │  Audio   │  │   │
-│   │   │ Engine    │ │  Engine  │ │  Engine  │ │  Engine  │  │   │
-│   │   └────┬─────┘ └────┬─────┘ └────┬─────┘ └────┬─────┘  │   │
-│   └────────┼─────────────┼────────────┼────────────┼────────┘   │
-│            │             │            │            │               │
-│   ┌───────▼─────────────▼────────────▼────────────▼─────────┐   │
-│   │              Scheduler (continuous batching)               │   │
-│   │   - Waiting queue   - Running set   - Preemption         │   │
-│   │   - Chunked prefill (512 tokens)   - KV cache mgmt      │   │
-│   └─────────────────────┬───────────────────────────────────┘   │
-│                          │                                        │
-│   ┌─────────────────────▼───────────────────────────────────┐   │
-│   │         Typed Executor Pools (thread isolation)           │   │
-│   │   ┌─────────┐ ┌─────────┐ ┌─────────┐ ┌─────────┐      │   │
-│   │   │  LLM    │ │  Image  │ │  Audio  │ │   IO    │      │   │
-│   │   │ (1 wrk) │ │ (1 wrk) │ │ (2 wrk) │ │ (2 wrk) │      │   │
-│   │   └─────────┘ └─────────┘ └─────────┘ └─────────┘      │   │
-│   └──────────────────────────────────────────────────────────┘   │
-│                          │                                        │
-│   ┌─────────────────────▼───────────────────────────────────┐   │
-│   │              MLX Thread (Metal kernels)                    │   │
-│   │   - BatchGenerator   - Forward pass   - Sampling         │   │
-│   └──────────────────────────────────────────────────────────┘   │
-│                          │                                        │
-│   ┌─────────────────────▼───────────────────────────────────┐   │
-│   │         ProcessMemoryEnforcer (deadlock-free)            │   │
-│   │   - Timeout-based lock acquisition (2s)                  │   │
-│   │   - Mark-then-execute eviction fallback                  │   │
-│   │   - Double gc.collect() around mx.clear_cache()         │   │
-│   └──────────────────────────────────────────────────────────┘   │
-└──────────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────────┐
+│                      FastAPI Server (uvicorn)                         │
+│   ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────┐           │
+│   │ OpenAI    │  │ Anthropic │  │  Audio   │  │   Images │           │
+│   │ Routes    │  │  Routes   │  │  Routes  │  │   Routes │           │
+│   └────┬─────┘  └────┬─────┘  └────┬─────┘  └─────┬────┘           │
+│        │              │              │              │                  │
+│   ┌────▼──────────────▼──────────────▼──────────────▼─────────────┐  │
+│   │         RequestRouter / SmartRouter (dispatch)                  │  │
+│   │  - Modality-based routing (text/image/audio/gen)               │  │
+│   │  - Phase-aware split (prefill → decode on different backends)  │  │
+│   │  - Priority scheduling (REALTIME/BATCH/BACKGROUND)             │  │
+│   │  - Cloud fallback for large uncached context                   │  │
+│   └──────────────────────┬────────────────────────────────────────┘  │
+│                          │                                            │
+│   ┌─────────────────────▼──────────────────────────────────────────┐  │
+│   │                 EnginePool (LRU + Memory)                        │  │
+│   │   ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────┐        │  │
+│   │   │ Batched   │ │   VLM    │ │  Embed   │ │  Audio   │        │  │
+│   │   │ Engine    │ │  Engine  │ │  Engine  │ │  Engine  │        │  │
+│   │   └────┬─────┘ └────┬─────┘ └────┬─────┘ └────┬─────┘        │  │
+│   └────────┼─────────────┼────────────┼────────────┼──────────────┘  │
+│            │             │            │            │                    │
+│   ┌───────▼─────────────▼────────────▼────────────▼────────────────┐  │
+│   │         Scheduler (25 modules, continuous batching)              │  │
+│   │   - Waiting queue   - Running set   - Preemption                │  │
+│   │   - Chunked prefill   - TurboQuant KV   - Fused sampler         │  │
+│   │   - Output Collector   - Stale request recovery                  │  │
+│   └─────────────────────┬──────────────────────────────────────────┘  │
+│                          │                                             │
+│   ┌─────────────────────▼──────────────────────────────────────────┐  │
+│   │         Typed Executor Pools (thread isolation)                  │  │
+│   │   ┌─────────┐ ┌─────────┐ ┌─────────┐ ┌─────────┐            │  │
+│   │   │  LLM    │ │  Image  │ │  Audio  │ │   IO    │            │  │
+│   │   │ (1 wrk) │ │ (1 wrk) │ │ (2 wrk) │ │ (2 wrk) │            │  │
+│   │   └─────────┘ └─────────┘ └─────────┘ └─────────┘            │  │
+│   └──────────────────────────────────────────────────────────────────┘  │
+│                          │                                              │
+│   ┌─────────────────────▼──────────────────────────────────────────┐  │
+│   │              MLX Thread (Metal kernels)                          │  │
+│   │   - BatchGenerator   - Forward pass   - Fused sampler           │  │
+│   └──────────────────────────────────────────────────────────────────┘  │
+│                          │                                              │
+│   ┌─────────────────────▼──────────────────────────────────────────┐  │
+│   │         ProcessMemoryEnforcer (deadlock-free)                    │  │
+│   │   - Timeout-based lock acquisition (2s)                          │  │
+│   │   - Mark-then-execute eviction fallback                          │  │
+│   │   - Double gc.collect() around mx.clear_cache()                 │  │
+│   └──────────────────────────────────────────────────────────────────┘  │
+└──────────────────────────────────────────────────────────────────────────┘
 ```
 
 ## Request Flow
 
-1. **API Route** — Client sends request to `/v1/chat/completions`
+1. **API Route** — Client sends request to `/v1/chat/completions` or `/v1/messages`
 2. **Adapter** — `OpenAIAdapter` or `AnthropicAdapter` normalizes request to `InternalRequest`
 3. **Router** — `RequestRouter` dispatches by modality, `SmartRouter` decides prefill/decode backends
 4. **EnginePool** — Looks up or loads the appropriate engine by model name
 5. **Engine** — `BatchedEngine` creates a `Request` with `SamplingParams`
 6. **EngineCore** — Submits request to the `Scheduler` via typed executor pool
-7. **Scheduler** — Manages waiting queue, running batch, and KV cache
-8. **MLX Thread** — Runs `scheduler.step()` → `BatchGenerator` → model forward pass
-9. **Output Collector** — Streams tokens back through `AsyncIterator` to the client
+7. **Scheduler** — Manages waiting queue, running batch, KV cache, and continuous batching
+8. **MLX Thread** — Runs `scheduler.step()` → `BatchGenerator` → model forward pass → fused sampler
+9. **Output Collector** — `RequestOutputCollector` buffers and merges tokens, streams back via `AsyncIterator`
 
 ## Component Layers
 
 ### 1. API Layer (`fusion_mlx/api/`)
 
-Handles HTTP request parsing, validation, and response formatting. Each API flavor (OpenAI, Anthropic, Audio, Images, OpenClaw) has its own router and adapter.
+Handles HTTP request parsing, validation, and response formatting. Each API flavor has its own router and adapter.
 
-- **Routes** — FastAPI endpoint definitions with Pydantic models
-- **Adapters** — Convert between API-specific formats and internal representations
-- **Tool Calling** — JSON schema validation, tool dispatch, and output parsing
+- **OpenAI Routes** — `/v1/chat/completions`, `/v1/completions`, `/v1/models`, `/v1/embeddings`
+- **Anthropic Routes** — `/v1/messages`, `/v1/count_tokens` with streaming tool_use blocks
+- **Audio Routes** — `/v1/audio/transcriptions`, `/v1/audio/speech`, `/v1/audio/process`
+- **Image Routes** — `/v1/images/generate` (Flux 2)
+- **MCP Routes** — `/v1/mcp/tools`, `/v1/mcp/servers`, `/v1/mcp/execute`
 - **OpenClaw Agent Protocol** — Multi-turn sessions with TTL (1h), max cap (1000), LRU eviction
+- **Adapters** — Convert between API-specific formats and internal representations
+- **Tool Calling** — JSON schema validation, tool dispatch, output parsing, streaming blocks
 
 ### 2. Engine Layer (`fusion_mlx/engines/`)
 
@@ -86,8 +90,8 @@ Eight engine types, each optimized for a specific modality:
 
 | Engine | Modality | Executor Pool | Key Features |
 |--------|----------|---------------|-------------|
-| `BatchedEngine` | LLM text | llm (1 worker) | Continuous batching, streaming, tool calling |
-| `VLMBatchedEngine` | Vision + text | io (2 workers) | Image/video understanding, MTP drafter |
+| `BatchedEngine` | LLM text | llm (1 worker) | Continuous batching, streaming, tool calling, thinking mode |
+| `VLMBatchedEngine` | Vision + text | io (2 workers) | Image/video understanding, MTP drafter, paged KV cache |
 | `EmbeddingEngine` | Text → vectors | llm (1 worker) | Batch embedding generation |
 | `RerankerEngine` | Passage ranking | llm (1 worker) | Cohere/Jina compatible reranking |
 | `STTEngine` | Audio → text | audio (2 workers) | Whisper, VibeVoice-ASR |
@@ -134,7 +138,6 @@ Three-tier caching for KV states:
     - Spills inactive blocks to SSD when GPU memory is full
     - 20 GB default capacity
     - Transparent recovery when blocks are needed again
-    - Mock-friendly dtype serialization for cross-environment testing
 
 3. **BlockAwarePrefixCache** — Copy-on-write prefix sharing
     - Shared prefixes between concurrent requests
@@ -143,14 +146,42 @@ Three-tier caching for KV states:
 
 ### 5. Scheduler (`fusion_mlx/scheduler/`)
 
-Split into 21 focused modules (~500 lines each). Core features:
+Decomposed into 25 focused modules (~400 lines each):
 
-- **Waiting Queue** — New requests wait for batch slots
-- **Running Set** — Active requests processed in parallel
-- **Chunked Prefill** — 512-token chunks to avoid memory spikes and allow preemption
-- **Preemption** — Low-priority requests can be swapped out under memory pressure
-- **Speculative Decoding** — Integrates SuffixDecoding, DFlash, MTP, and VLM MTP
-- **Mid-Prefill Save** — Periodic cache snapshots during long prefill steps
+| Module | Purpose |
+|--------|---------|
+| `config.py` | Scheduler configuration |
+| `core.py` | Core scheduler loop and state management |
+| `types.py` | Request/Response type definitions |
+| `sched_admission.py` | Request admission control under memory pressure |
+| `sched_batch.py` | Batch formation and management |
+| `sched_boundary.py` | Boundary condition handling |
+| `sched_cache.py` | Cache-aware scheduling decisions |
+| `sched_handoff.py` | Phase handoff (prefill → decode) |
+| `sched_init.py` | Scheduler initialization |
+| `sched_misc.py` | Utility scheduling operations |
+| `sched_query.py` | Query scheduling and GPU OOM preflight guard |
+| `sched_response.py` | Response processing and output collection |
+| `sched_schedule.py` | Main scheduling loop (prefill, insert, decode) |
+| `sched_specprefill.py` | Speculative prefill |
+| `sched_step.py` | Step execution with stale request recovery |
+| `sched_thinking.py` | Thinking/reasoning token scheduling |
+| `sched_token.py` | Token-level scheduling and boundary |
+| `sched_trim.py` | Context trimming for long conversations |
+| `sched_vlm_mtp.py` | VLM multi-token prediction |
+| `sched_vlm_mtp_batched.py` | Batched VLM MTP (~14 → ~27 tok/s per request) |
+| `compiled_kv_cache.py` | Compiled KV cache operations |
+| `monkeypatches.py` | Runtime patches for MLX compatibility |
+| `sampler_fast_path.py` | Fused sampler — skip logsumexp, batched sampling |
+| `helpers.py` | Shared utility functions |
+
+**Key scheduling flows:**
+
+- **Continuous batching** — Multiple requests share one GPU step, giving 2× aggregate throughput under concurrent load
+- **Chunked prefill** — 512-token chunks to avoid memory spikes and allow preemption
+- **Stale request recovery** — After prefill+insert, the first decode step may return empty responses; the scheduler detects and correctly recovers without losing tokens
+- **TurboQuant KV** — 4-bit KV cache quantization reduces memory traffic ~4× for KV reads
+- **Fused sampler** — Skips logsumexp when not needed, eliminates `.item()` GPU sync calls, auto-detects and applies batched sampling
 
 ### 6. Speculative Decoding (`fusion_mlx/speculative/`)
 
@@ -173,7 +204,7 @@ Three routing layers, applied in order:
     - Embedding requests → `EmbeddingEngine`
     - Audio → `STTEngine` / `TTSEngine` / `STSEngine`
     - Image generation → `ImageGenEngine`
-    - Large uncached context → `CloudRouter` (both streaming and non-streaming)
+    - Large uncached context → `CloudRouter`
 
 - **SmartRouter** — Phase-aware routing with cross-engine handoff:
     - Prefill on omlx (strong matmul), decode on Rapid-MLX (lightweight KV)
@@ -189,13 +220,18 @@ Three routing layers, applied in order:
 
 ### 8. Integrations (`fusion_mlx/integrations/`)
 
-Pre-built connectors for AI development tools:
+8 pre-built connectors for AI development tools:
 
-- **Claude Code** — `fusion-mlx launch claude` sets up environment variables
-- **OpenClaw** — Writes `~/.openclaw/config.yaml`
-- **GitHub Copilot** — Copilot-compatible proxy
-- **OpenAI Codex** — Codex CLI integration
-- **ComfyUI** — ComfyUI node server (stub)
+| Integration | What it does |
+|-------------|-------------|
+| Claude Code | Sets `ANTHROPIC_BASE_URL` and `ANTHROPIC_AUTH_TOKEN` for local proxy |
+| OpenClaw | Writes `~/.openclaw/config.yaml` with local server URL |
+| GitHub Copilot | Copilot-compatible proxy |
+| OpenAI Codex | Codex CLI integration |
+| ComfyUI | ComfyUI node server for Flux 2 |
+| OpenCode | OpenCode integration |
+| Pi | Pi integration |
+| Hermes | Hermes tool parser |
 
 ## Thread Model
 
@@ -205,7 +241,7 @@ Main Thread (asyncio)          Typed Executor Pools          MLX Thread
 │ FastAPI request      │       │ LLM pool (1 wrk) │       │ scheduler.step()       │
 │   ├─ parse request   │──────>│   ├─ mx.array()  │──────>│   ├─ BatchGenerator   │
 │   ├─ create Request  │       │   ├─ mx.eval()   │       │   ├─ model forward()  │
-│   ├─ add to queue    │       │ Image pool (1 wrk)│       │   ├─ sample token     │
+│   ├─ add to queue    │       │ Image pool (1 wrk)│       │   ├─ fused sampler    │
 │   ├─ wait on queue   │<──────│ Audio pool (2 wrk)│       │   └─ return Output   │
 │   └─ yield tokens    │       │ IO pool (2 wrk)   │       └──────────────────────┘
 └─────────────────────┘       └──────────────────┘
@@ -217,14 +253,37 @@ Main Thread (asyncio)          Typed Executor Pools          MLX Thread
 - Token generation flows back via `asyncio.Queue` through `RequestOutputCollector`
 - All `run_in_executor` calls have timeout protection via `asyncio.wait_for()`
 
+## Output Pipeline
+
+```
+BatchGenerator._next()
+    → gen_responses (per-request token arrays)
+    → _process_batch_responses()
+        → RequestOutput (new_text, output_text, finished, finish_reason)
+    → RequestOutputCollector._merge_outputs()
+        → Concatenates new_text, merges cumulative output_text
+    → EngineCore._engine_loop()
+        → Distributes to per-request collectors via ctx.collector.put()
+    → BatchedEngine.generate()
+        → clean_special_tokens(output_text)
+        → extract_thinking() splits reasoning vs regular content
+    → API adapter formats response (OpenAI or Anthropic)
+```
+
+Key behaviors:
+- **Stale recovery**: After prefill+insert, the first decode may return empty responses. The scheduler detects this (empty responses + just scheduled) and skips the stale reschedule, avoiding token loss.
+- **Thinking extraction**: `extract_thinking()` splits `مایه...` tags into `reasoning_content` and regular `content` for both OpenAI and Anthropic APIs.
+- **Streaming detokenization**: Tokens are decoded incrementally via the streaming detokenizer, avoiding full re-decode each step.
+
 ## Memory Management
 
 ```
-System RAM (e.g., 64 GB)
-├── 32 GB — OS / other apps (Balanced tier: 50%)
-└── 32 GB — fusion-mlx budget
+System RAM (e.g., 128 GB)
+├── 64 GB — OS / other apps (Balanced tier: 50%)
+└── 64 GB — fusion-mlx budget
      ├── Model weights (GPU)
      ├── KV cache (PagedCache → PagedSSDCache → disk)
+     ├── TurboQuant KV (4-bit compressed, ~4× less memory traffic)
      └── Prefix cache (shared blocks with COW)
 ```
 
@@ -235,7 +294,9 @@ The `ProcessMemoryEnforcer` monitors process memory in real-time. When memory ex
 3. **Request preemption** — Swap out low-priority requests
 4. **Request abort** — Abort in-flight requests when memory is critically low
 
-**Deadlock prevention**: The enforcer uses a 2-second timeout when acquiring the pool lock. If the lock is held by a loading coroutine (which blocks during Metal allocation), the enforcer marks models for eviction via `abort_loading=True` rather than waiting. This prevents OOM crashes when memory pressure hits during a slow model load.
+**GPU OOM preflight guard**: Before scheduling a prefill, the scheduler estimates the memory needed (model weights + KV cache + activation tensors) and refuses admission if it would exceed available Metal memory. This prevents Metal GPU OOM crashes.
+
+**Deadlock prevention**: The enforcer uses a 2-second timeout when acquiring the pool lock. If the lock is held by a loading coroutine (which blocks during Metal allocation), the enforcer marks models for eviction via `abort_loading=True` rather than waiting.
 
 **GC strategy**: Double `gc.collect()` pattern around every `mx.clear_cache()`:
 - First `gc.collect()` BEFORE `clear_cache()` — frees C++ Metal buffer wrappers

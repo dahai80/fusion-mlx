@@ -156,11 +156,17 @@ def step(self) -> SchedulerOutput:
                 self._cleanup_finished(finished_ids)
                 if finished_ids:
                     logger.info("step(%d): finished=%s", self._step_counter, finished_ids)
-            elif self.running:
-                 # Empty responses with running requests = stale.
-                 # Model batch cleared them silently (finished length/EOS
-                 # without returning a final response token). Reschedule
-                 # so they don't rot in running forever.
+            elif self.running and not scheduled:
+                # Empty responses with running requests = stale.
+                # Model batch cleared them silently (finished length/EOS
+                # without returning a final response token). Reschedule
+                # so they don't rot in running forever.
+                #
+                # Skip when we just scheduled requests: the first decode
+                # step after insert() may return empty gen_responses
+                # because prefill just completed and the batch generator
+                # hasn't produced a generation token yet. This is normal,
+                # not stale — the next step will produce responses.
                 logger.warning(
                     "step(%d): empty responses with %d running requests — "
                     "rescheduling as stale",
@@ -168,9 +174,21 @@ def step(self) -> SchedulerOutput:
                 )
                 for rid in list(self.running.keys()):
                     req = self.running.pop(rid)
+                    # Clean up UID mapping so re-insert gets fresh state
+                    old_uid = self.request_id_to_uid.pop(rid, None)
+                    if old_uid is not None:
+                        self.uid_to_request_id.pop(old_uid, None)
+                    # Reset output state to prevent duplicate tokens on re-prefill
+                    req.output_token_ids = []
+                    req.output_text = ""
+                    req.num_computed_tokens = 0
+                    req.prompt_cache = None
+                    req.cached_tokens = 0
+                    req.remaining_tokens = req.prompt_token_ids
+                    req.think_prefix_sent = False
                     req.status = RequestStatus.WAITING
                     req.batch_uid = None
-                    self.waiting.append(req)
+                    self.waiting.appendleft(req)
                     output.outputs.append(
                         RequestOutput(
                             request_id=rid,

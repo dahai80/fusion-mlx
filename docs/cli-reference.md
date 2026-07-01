@@ -1,12 +1,11 @@
 # CLI Reference
 
-fusion-mlx provides two CLI entry points: `fusion-mlx` and `fm` (short alias).
+fusion-mlx provides the `fusion-mlx` CLI entry point.
 
 ## Global Flags
 
 ```
 fusion-mlx [--version] [--host HOST] [--port PORT] <command>
-fm         [--version] [--host HOST] [--port PORT] <command>
 ```
 
 | Flag | Default | Description |
@@ -32,38 +31,56 @@ fusion-mlx serve [options]
 | `--model-dir PATH` | `~/.fusion-mlx/models` | Directory containing MLX models |
 | `--memory-tier TIER` | `balanced` | Memory limit: `safe`, `balanced`, `aggressive`, `custom` |
 | `--enable-ssd-cache` | off | Enable SSD-based KV cache cold layer |
+| `--admin` | on | Enable admin web panel |
+| `--no-admin` | off | Disable admin web panel |
 
 **Examples:**
 ```bash
 # Basic start with HuggingFace cache
 fusion-mlx serve --model-dir ~/.cache/huggingface
 
+# Specific model
+fusion-mlx serve --model Qwen3-4B-Q4_K_M
+
 # Aggressive memory usage (maximize model capacity)
 fusion-mlx serve --memory-tier aggressive --port 9000
 
 # With SSD cache for large contexts
 fusion-mlx serve --model-dir ~/.cache/huggingface --enable-ssd-cache
+
+# With admin panel for model management
+fusion-mlx serve --model-dir ~/.cache/huggingface --admin
+
+# Custom memory limit (16 GB)
+fusion-mlx serve --memory-tier custom --custom-limit-mb 16384
 ```
 
 ### `launch` — Launch an integration
 
 ```bash
-fusion-mlx launch <integration>
+fusion-mlx launch <integration> [--model MODEL]
 ```
 
 | Integration | What it does |
-|-------------|--------------|
-| `claude` | Prints environment variables to point Claude Code at the local server |
+|-------------|-------------|
+| `claude` | Sets `ANTHROPIC_BASE_URL` and `ANTHROPIC_AUTH_TOKEN` to point Claude Code at the local server |
 | `openclaw` | Writes `~/.openclaw/config.yaml` with local server URL |
-| `comfyui` | Sets up ComfyUI integration (stub) |
+| `comfyui` | Sets up ComfyUI integration for Flux 2 image generation |
+| `copilot` | Configures GitHub Copilot to use local server |
+| `codex` | Sets up OpenAI Codex CLI integration |
+| `opencode` | Configures OpenCode integration |
+| `pi` | Sets up Pi integration |
 
 **Examples:**
 ```bash
 # Configure Claude Code to use fusion-mlx
 fusion-mlx launch claude
 
-# Set up OpenClaw
-fusion-mlx launch openclaw
+# Set up OpenClaw with a specific model
+fusion-mlx launch openclaw --model Qwen3-4B-Q4_K_M
+
+# Launch ComfyUI for image generation
+fusion-mlx launch comfyui
 ```
 
 ### `ps` — Show loaded models and memory
@@ -97,6 +114,7 @@ fusion-mlx models
 Queries `/v1/models` and shows:
 - All discovered models in the model directory
 - Default model aliases (e.g., `claude-4.6-sonnet` → real model ID)
+- Model types and sizes
 
 ### `diagnose` — Run system diagnostics
 
@@ -129,8 +147,20 @@ fusion-mlx launch claude
 fusion-mlx stats
 ```
 
+### Multi-model serving
+```bash
+# Start with multiple model directories
+fusion-mlx serve --model-dir ~/.cache/huggingface --enable-ssd-cache
+
+# Load specific models via admin panel
+# Visit http://localhost:8000/admin
+```
+
 ### Diagnostics
 ```bash
 # Full system check before deploying
 fusion-mlx diagnose --model-dir ~/.cache/huggingface
+
+# Check if server is healthy
+fusion-mlx ps
 ```
