@@ -100,8 +100,15 @@ class Server:
 
         @asynccontextmanager
         async def lifespan(app: FastAPI):
-            async with self._lifespan():
+            gen = self._lifespan()
+            await gen.__anext__()
+            try:
                 yield
+            finally:
+                try:
+                    await gen.__anext__()
+                except StopAsyncIteration:
+                    pass
 
         app = FastAPI(
             title="fusion-mlx",
@@ -273,6 +280,15 @@ class Server:
         )
 
     @asynccontextmanager
+    def run(self):
+        """Start the server using uvicorn."""
+        uvicorn.run(
+            self.app,
+            host=self.config.host,
+            port=self.config.port,
+            log_level="info",
+        )
+
     async def _lifespan(self):
         """Startup/shutdown lifecycle."""
         logger.info("fusion-mlx starting up...")

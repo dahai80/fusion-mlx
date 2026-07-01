@@ -34,16 +34,60 @@ def _sync_and_clear_cache(stream=None):
     See: https://github.com/jundot/omlx/issues/300, #888, #1106
     """
     with _mx_buffer_access_lock:
-        # The engine stream may not have in-flight work on the current thread
-        # (e.g. external prefill submits to the default stream). On some MLX
-        # builds mx.synchronize raises "There is no Stream(gpu, 0) in current
-        # thread" in that case; swallow it since there is nothing to drain.
         target = stream if stream is not None else _default_generation_stream
         try:
             mx.synchronize(target)
         except RuntimeError:
             pass
-        mx.synchronize()   # default stream
+        mx.synchronize()
+        mx.clear_cache()
+
+
+def _sync_only(stream=None):
+    """Synchronize GPU work WITHOUT clearing the Metal buffer cache.
+
+    Use in non-LLM engine stop() paths to avoid nuking LLM KV cache
+    from concurrent engines sharing the same process. Model tensors
+    are reclaimed by gc.collect(); the Metal buffer pool entries
+    become eligible for reuse once their Python refs drop to zero.
+    """
+    target = stream if stream is not None else _default_generation_stream
+    try:
+        mx.synchronize(target)
+    except RuntimeError:
+        pass
+    mx.synchronize()
+
+
+_active_llm_engine_count = 0
+
+
+def register_llm_engine():
+    global _active_llm_engine_count
+    _active_llm_engine_count += 1
+
+
+def unregister_llm_engine():
+    global _active_llm_engine_count
+    _active_llm_engine_count = max(0, _active_llm_engine_count - 1)
+
+
+def llm_engines_active() -> bool:
+    return _active_llm_engine_count > 0
+
+
+def _safe_clear_cache_for_non_llm():
+    """Clear Metal buffer cache only when no LLM engines are active.
+
+    When LLM engines are running, mx.clear_cache() would destroy their
+    KV cache buffers. Skip the clear and rely on gc.collect() to
+    release the non-LLM model's own tensors instead.
+    """
+    if llm_engines_active():
+        mx.synchronize()
+        return
+    with _mx_buffer_access_lock:
+        mx.synchronize()
         mx.clear_cache()
 
 

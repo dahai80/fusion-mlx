@@ -75,8 +75,9 @@ class TTSEngine(BaseNonStreamingEngine):
         self._model = None
         gc.collect()
         loop = asyncio.get_running_loop()
+        from ..scheduler.helpers import _safe_clear_cache_for_non_llm
         await asyncio.wait_for(
-            loop.run_in_executor(get_executor("audio"), lambda: (mx.synchronize(), mx.clear_cache())), timeout=5.0)
+            loop.run_in_executor(get_executor("audio"), _safe_clear_cache_for_non_llm), timeout=5.0)
 
     async def synthesize(
         self, text: str, voice: str | None = None, speed: float = 1.0,

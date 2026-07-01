@@ -2,37 +2,57 @@
 """Output collector for streaming with low-latency optimizations."""
 
 import asyncio
+from collections import deque
 from dataclasses import dataclass
 
 from .request import RequestOutput
 
 
 class RequestOutputCollector:
-    """Per-request output collector with smart buffering."""
+    """Per-request output collector with smart buffering.
+
+    Two modes:
+    - aggregate=True (non-streaming): merges all outputs into one final result
+    - aggregate=False (streaming): queues individual outputs in a deque for
+      low-latency per-token delivery
+    """
 
     _waiting_consumers: int = 0
 
     def __init__(self, aggregate: bool = True):
-        self.output: RequestOutput | None = None
-        self.ready = asyncio.Event()
         self.aggregate = aggregate
+        self.ready = asyncio.Event()
         self._is_waiting = False
+        if aggregate:
+            self._merged: RequestOutput | None = None
+        else:
+            self._queue: deque[RequestOutput] = deque()
 
     def put(self, output: RequestOutput) -> None:
-        if self.output is None:
-            self.output = output
-        elif self.aggregate:
-            self.output = self._merge_outputs(self.output, output)
+        if self.aggregate:
+            if self._merged is None:
+                self._merged = output
+            else:
+                self._merged = self._merge_outputs(self._merged, output)
         else:
-            self.output = output
+            self._queue.append(output)
         self.ready.set()
 
     def get_nowait(self) -> RequestOutput | None:
-        output = self.output
-        if output is not None:
-            self.output = None
+        if self.aggregate:
+            output = self._merged
+            if output is not None:
+                self._merged = None
+                self.ready.clear()
+            return output
+        else:
+            if self._queue:
+                output = self._queue.popleft()
+                if not self._queue:
+                    self.ready.clear()
+                return output
             self.ready.clear()
-        return output
+            return None
 
     async def get(self) -> RequestOutput:
         if not self._is_waiting:
@@ -40,12 +60,11 @@ class RequestOutputCollector:
             RequestOutputCollector._waiting_consumers += 1
         try:
             while True:
-                while self.output is None:
+                while not (self._merged if self.aggregate else self._queue):
                     await self.ready.wait()
                 output = self.get_nowait()
                 if output is not None:
                     return output
-                # clear() stole output; re-wait
         finally:
             if self._is_waiting:
                 self._is_waiting = False
@@ -84,7 +103,10 @@ class RequestOutputCollector:
         )
 
     def clear(self) -> None:
-        self.output = None
+        if self.aggregate:
+            self._merged = None
+        else:
+            self._queue.clear()
         self.ready.clear()
         if self._is_waiting:
             self._is_waiting = False
@@ -93,6 +115,11 @@ class RequestOutputCollector:
     @classmethod
     def has_waiting_consumers(cls) -> bool:
         return cls._waiting_consumers > 0
+
+    def __bool__(self) -> bool:
+        if self.aggregate:
+            return self._merged is not None
+        return bool(self._queue)
 
 
 @dataclass

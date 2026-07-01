@@ -601,7 +601,6 @@ class MLLMScheduler:
         self._aborted_queue_ids.add(request_id)
 
         logger.debug(f"Aborted request {request_id}")
-        mx.clear_cache()
 
     def has_requests(self) -> bool:
         """Check if there are any pending or running requests."""
@@ -640,6 +639,8 @@ class MLLMScheduler:
                 max_tokens=request.sampling_params.max_tokens,
                 temperature=request.sampling_params.temperature,
                 top_p=request.sampling_params.top_p,
+                top_k=request.sampling_params.top_k,
+                min_p=request.sampling_params.min_p,
                 repetition_penalty=request.sampling_params.repetition_penalty,
                 presence_penalty=request.sampling_params.presence_penalty,
                 frequency_penalty=request.sampling_params.frequency_penalty,
@@ -1052,20 +1053,8 @@ class MLLMScheduler:
                 output.finished_request_ids = finished_ids
 
                 self._cleanup_finished(finished_ids)
-                if finished_ids:
-                    mx.clear_cache()
-
-        # Adaptive periodic cache clear: scale inversely with concurrency
-        # to prevent Metal buffer pool growth during long generations
-        active_seqs = len(self.running)
-        min_interval = max(4, self._clear_cache_interval // 4)
-        effective_interval = max(
-            min_interval, self._clear_cache_interval // max(1, active_seqs // 8)
-        )
 
         self._step_count += 1
-        if self._step_count % effective_interval == 0:
-            mx.clear_cache()
 
         # Clear finished tracking for next step
         self.finished_req_ids = set()
