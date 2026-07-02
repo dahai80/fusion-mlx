@@ -48,6 +48,102 @@ async def list_oq_models(is_admin: bool = Depends(require_admin)):
     return {"models": source_models, "all_models": all_models}
 
 
+@_router.get("/api/oq/recipes")
+async def list_mlx_recipes(is_admin: bool = Depends(require_admin)):
+    """List available MLX quantization recipes with benchmark data."""
+    recipes = [
+        {
+            "name": "mixed_3_4",
+            "label": "Mixed 3/4-bit",
+            "description": "Good quality/speed tradeoff. 3-bit for sensitive layers, 4-bit for rest.",
+            "category": "recommended",
+            "bpw": 3.68,
+            "relative_speed": "+96%",
+        },
+        {
+            "name": "mixed_2_6",
+            "label": "Mixed 2/6-bit",
+            "description": "Faster decode, decent quality. 2-bit for robust layers, 6-bit for sensitive.",
+            "category": "recommended",
+            "bpw": 3.25,
+            "relative_speed": "+112%",
+        },
+        {
+            "name": "mixed_2_4",
+            "label": "Mixed 2/4-bit",
+            "description": "Fast decode, lower quality. 2-bit for robust layers, 4-bit for sensitive.",
+            "category": "aggressive",
+            "bpw": 2.95,
+            "relative_speed": "+131%",
+        },
+        {
+            "name": "mixed_3_6",
+            "label": "Mixed 3/6-bit",
+            "description": "Balanced quality and speed. 3-bit for robust, 6-bit for sensitive layers.",
+            "category": "balanced",
+            "bpw": 4.0,
+            "relative_speed": "+75%",
+        },
+        {
+            "name": "mixed_4_6",
+            "label": "Mixed 4/6-bit",
+            "description": "High quality, moderate speed gain. 4-bit for robust, 6-bit for sensitive.",
+            "category": "conservative",
+            "bpw": 4.85,
+            "relative_speed": "+57%",
+        },
+        {
+            "name": "quant2_all",
+            "label": "quant2-all",
+            "description": "Best speed/quality balance. 2-bit middle, 3-bit first/last, 4-bit embed/lm_head.",
+            "category": "recommended",
+            "bpw": 2.37,
+            "relative_speed": "+162%",
+        },
+        {
+            "name": "quant2",
+            "label": "quant2",
+            "description": "Ultra-aggressive 2-bit. 2-bit for most layers, 4-bit for embed/lm_head.",
+            "category": "aggressive",
+            "bpw": 2.72,
+            "relative_speed": "+144%",
+        },
+        {
+            "name": "quant2_128",
+            "label": "quant2-g128",
+            "description": "2-bit with group_size=128. Slightly faster than quant2, similar quality.",
+            "category": "aggressive",
+            "bpw": 2.46,
+            "relative_speed": "+161%",
+        },
+        {
+            "name": "quant2_flat",
+            "label": "quant2-flat",
+            "description": "Max speed but 2-bit embeddings degrade quality. Use quant2_all instead.",
+            "category": "experimental",
+            "bpw": 2.25,
+            "relative_speed": "+167%",
+        },
+        {
+            "name": "mxfp4",
+            "label": "MLX FP4",
+            "description": "Uniform 4-bit. Simple, good quality, moderate speed gain.",
+            "category": "conservative",
+            "bpw": 4.0,
+            "relative_speed": "+75%",
+        },
+        {
+            "name": "mxfp8",
+            "label": "MLX FP8",
+            "description": "Uniform 8-bit. Best quality, smallest speed gain. Baseline.",
+            "category": "conservative",
+            "bpw": 8.0,
+            "relative_speed": "baseline",
+        },
+    ]
+    return {"recipes": recipes}
+
+
 @_router.get("/api/oq/estimate")
 async def estimate_oq(
     model_path: str,
@@ -76,12 +172,13 @@ async def start_oq_quantization(
     request: OQStartRequest,
     is_admin: bool = Depends(require_admin),
 ):
-    """Start an oQ quantization task."""
+    """Start an oQ quantization task (or MLX recipe-based conversion)."""
     if _oq_manager is None:
         raise HTTPException(
             status_code=503, detail="oQ quantizer not initialized"
         )
-    if request.oq_level not in (2, 3, 3.5, 4, 5, 6, 8):
+    is_recipe = bool(request.recipe)
+    if not is_recipe and request.oq_level not in (2, 3, 3.5, 4, 5, 6, 8):
         raise HTTPException(
             status_code=400,
             detail="Invalid oQ level. Must be 2, 3, 4, 5, 6, or 8",
@@ -92,7 +189,7 @@ async def start_oq_quantization(
             detail="Invalid dtype. Must be 'bfloat16' or 'float16'",
         )
     is_paro, _ = _paroquant_compat_for_model({"model_path": request.model_path})
-    if is_paro:
+    if is_paro and not is_recipe:
         raise HTTPException(
             status_code=400,
             detail=(
@@ -110,6 +207,7 @@ async def start_oq_quantization(
             dtype=request.dtype,
             preserve_mtp=request.preserve_mtp,
             auto_proxy_sensitivity=request.auto_proxy_sensitivity,
+            recipe=request.recipe,
         )
         return {"success": True, "task": task.to_dict()}
     except ValueError as e:

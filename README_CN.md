@@ -6,7 +6,7 @@
 
 Ollama / vLLM 的直接替代 —— 基于 MLX 原生运行在 Metal 上
 
-[![Version](https://img.shields.io/badge/v0.3.0-blue.svg)](https://github.com/dahai80/fusion-mlx/releases)
+[![Version](https://img.shields.io/badge/v0.4.0-blue.svg)](https://github.com/dahai80/fusion-mlx/releases)
 [![Python](https://img.shields.io/badge/Python-3.11+-3776AB.svg)](https://www.python.org/)
 [![License](https://img.shields.io/badge/License-Apache--2.0-green.svg)](LICENSE)
 [![Tests](https://img.shields.io/badge/Tests-1200+-success.svg)](tests/)
@@ -137,6 +137,7 @@ pip install -e .
 
 从 [GitHub Releases](https://github.com/dahai80/fusion-mlx/releases) 下载原生 SwiftUI 应用，支持：
 - 一键启动模型和服务控制
+- 量化模式切换：**oQ Online**（基于灵敏度）/ **MLX Recipe**（预调优方案）
 - 吞吐量和精度基准测试
 - 自动更新
 - 模型管理和下载
@@ -162,6 +163,32 @@ pip install -e .
 | Imatrix | IQ1_M, IQ2_S, IQ2_XS, IQ2_XXS, IQ3_M, IQ3_S, IQ4_NL, IQ4_XS |
 | TurboQuant | TQ1_0, TQ2_0 |
 | MLX 原生 | mxfp4, mxfp8, 6bit (ParoQuant), 4bit, 8bit, F16, BF16, F32 |
+| MLX 量化方案 | mixed_3_4, mixed_2_6, mixed_2_4, mixed_3_6, mixed_4_6, quant2_all, quant2, quant2_128, quant2_flat（见下方） |
+
+### 量化方案（Quantization Recipes）
+
+MLX 量化方案提供预调优的混合精度计划，可最大化 Apple Silicon 解码速度。两种模式均输出标准 mlx-lm safetensors，兼容任何 MLX 运行时。
+
+macOS 应用提供模式切换：
+
+- **oQ Online** — 基于灵敏度的逐层量化（原始模式）
+- **MLX Recipe** — 预调优量化方案，底层调用 `mlx_lm.convert --quant-recipe <name>`
+
+| 方案 | 标签 | BPW | 相对 mxfp8 加速 | 类别 |
+|------|------|-----|-----------------|------|
+| mixed_3_4 | Mixed 3/4-bit | 3.68 | +96% | 推荐 |
+| mixed_2_6 | Mixed 2/6-bit | 3.25 | +112% | 推荐 |
+| mixed_2_4 | Mixed 2/4-bit | 2.95 | +131% | 激进 |
+| mixed_3_6 | Mixed 3/6-bit | 4.0 | +75% | 均衡 |
+| mixed_4_6 | Mixed 4/6-bit | 4.85 | +57% | 保守 |
+| quant2_all | quant2-all | 2.37 | +162% | 推荐 |
+| quant2 | quant2 | 2.72 | +144% | 激进 |
+| quant2_128 | quant2-g128 | 2.46 | +161% | 激进 |
+| quant2_flat | quant2-flat | 2.25 | +167% | 实验性 |
+| mxfp4 | MLX FP4 | 4.0 | +75% | 保守 |
+| mxfp8 | MLX FP8 | 8.0 | 基准线 | 保守 |
+
+**推荐**：`mixed_3_4` 或 `quant2_all` 获得最佳质量/速度平衡。**保守**：`mixed_4_6` 或 `mxfp4` 适用于质量优先场景。**激进**：`mixed_2_4` 或 `quant2` 适用于受限内存下追求极限速度。
 
 ## API 兼容性
 
