@@ -397,6 +397,11 @@ final class FusionClient: ObservableObject {
         try await delete(AdminAPI.oqTask(taskId))
     }
 
+    /// List available MLX quantization recipes with benchmark data.
+    func listMLXRecipes() async throws -> MLXRecipesResponse {
+        try await get(AdminAPI.oqRecipes)
+    }
+
     // PR 13 — HF Upload (merged into QuantizationScreen)
 
     func validateHFUploadToken(hfToken: String) async throws -> HFValidateTokenResponse {

@@ -6,7 +6,7 @@
 
 Drop-in replacement for Ollama / vLLM — runs natively on Metal via MLX
 
-[![Version](https://img.shields.io/badge/v0.3.0-blue.svg)](https://github.com/dahai80/fusion-mlx/releases)
+[![Version](https://img.shields.io/badge/v0.4.0-blue.svg)](https://github.com/dahai80/fusion-mlx/releases)
 [![Python](https://img.shields.io/badge/Python-3.11+-3776AB.svg)](https://www.python.org/)
 [![License](https://img.shields.io/badge/License-Apache--2.0-green.svg)](LICENSE)
 [![Tests](https://img.shields.io/badge/Tests-1200+-success.svg)](tests/)
@@ -137,6 +137,32 @@ print(resp.content[0].text)
 | Imatrix | IQ1_M, IQ2_S, IQ2_XS, IQ2_XXS, IQ3_M, IQ3_S, IQ4_NL, IQ4_XS |
 | TurboQuant | TQ1_0, TQ2_0 |
 | MLX-native | mxfp4, mxfp8, 6bit (ParoQuant), 4bit, 8bit, F16, BF16, F32 |
+| MLX Recipes | mixed_3_4, mixed_2_6, mixed_2_4, mixed_3_6, mixed_4_6, quant2_all, quant2, quant2_128, quant2_flat (see below) |
+
+### Quantization Recipes
+
+MLX recipe quantization provides pre-tuned mixed-bit plans that maximize decode speed for Apple Silicon. Both modes produce standard mlx-lm safetensors compatible with any MLX runtime.
+
+The macOS app offers a mode toggle between:
+
+- **oQ Online** — sensitivity-based per-layer quantization (original mode)
+- **MLX Recipe** — pre-tuned quantization plans via `mlx_lm.convert --quant-recipe <name>`
+
+| Recipe | Label | BPW | Speed vs mxfp8 | Category |
+|--------|-------|-----|-----------------|----------|
+| mixed_3_4 | Mixed 3/4-bit | 3.68 | +96% | recommended |
+| mixed_2_6 | Mixed 2/6-bit | 3.25 | +112% | recommended |
+| mixed_2_4 | Mixed 2/4-bit | 2.95 | +131% | aggressive |
+| mixed_3_6 | Mixed 3/6-bit | 4.0 | +75% | balanced |
+| mixed_4_6 | Mixed 4/6-bit | 4.85 | +57% | conservative |
+| quant2_all | quant2-all | 2.37 | +162% | recommended |
+| quant2 | quant2 | 2.72 | +144% | aggressive |
+| quant2_128 | quant2-g128 | 2.46 | +161% | aggressive |
+| quant2_flat | quant2-flat | 2.25 | +167% | experimental |
+| mxfp4 | MLX FP4 | 4.0 | +75% | conservative |
+| mxfp8 | MLX FP8 | 8.0 | baseline | conservative |
+
+**Recommended**: `mixed_3_4` or `quant2_all` for best quality/speed tradeoff. **Conservative**: `mixed_4_6` or `mxfp4` when quality is priority. **Aggressive**: `mixed_2_4` or `quant2` when maximizing speed on constrained memory.
 
 ## API Compatibility
 
@@ -191,6 +217,7 @@ Access at `http://localhost:8000/admin`:
 Native SwiftUI app with menu bar integration:
 
 - One-click model launch and server control
+- Quantization mode toggle: **oQ Online** (sensitivity-based) / **MLX Recipe** (pre-tuned plans)
 - Throughput & accuracy benchmarking
 - Auto-update from GitHub Releases
 - Model management and downloads

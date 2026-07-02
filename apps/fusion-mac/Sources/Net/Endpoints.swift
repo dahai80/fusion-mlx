@@ -74,6 +74,7 @@ enum AdminAPI {
     static let oqEstimate      = "\(prefix)/oq/estimate"
     static let oqStart         = "\(prefix)/oq/start"
     static let oqTasks         = "\(prefix)/oq/tasks"
+    static let oqRecipes       = "\(prefix)/oq/recipes"
     static func oqCancel(_ taskId: String) -> String { "\(prefix)/oq/cancel/\(taskId)" }
     static func oqTask(_ taskId: String) -> String   { "\(prefix)/oq/task/\(taskId)" }
 

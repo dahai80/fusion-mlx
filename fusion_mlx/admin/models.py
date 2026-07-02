@@ -259,13 +259,14 @@ class OQStartRequest(BaseModel):
     """Request model for starting an oQ quantization task."""
 
     model_path: str
-    oq_level: float
+    oq_level: float = 0
     group_size: int = 64
     sensitivity_model_path: str = ""
     text_only: bool = False
     dtype: str = "bfloat16"
     preserve_mtp: bool = False
     auto_proxy_sensitivity: bool = True
+    recipe: str = ""
 
 
 class HFUploadRequest(BaseModel):

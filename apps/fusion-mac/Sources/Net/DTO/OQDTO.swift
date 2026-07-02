@@ -67,6 +67,7 @@ struct OQStartRequest: Encodable, Sendable {
     let textOnly: Bool
     let dtype: String
     let preserveMtp: Bool
+    let recipe: String
 }
 
 struct OQStartResponse: Decodable, Sendable {
@@ -95,6 +96,7 @@ struct OQTaskDTO: Codable, Equatable, Sendable, Identifiable {
     let sourceSize: Int64
     let outputSize: Int64
     let dtype: String
+    let recipe: String?
 
     var id: String { taskId }
 
@@ -116,4 +118,21 @@ struct OQTaskDTO: Codable, Equatable, Sendable, Identifiable {
 
 struct OQTasksResponse: Codable, Sendable {
     let tasks: [OQTaskDTO]
+}
+
+// MARK: - Recipes
+
+struct MLXRecipe: Codable, Equatable, Sendable, Identifiable {
+    let name: String
+    let label: String
+    let description: String
+    let category: String
+    let bpw: Double
+    let relativeSpeed: String
+
+    var id: String { name }
+}
+
+struct MLXRecipesResponse: Codable, Sendable {
+    let recipes: [MLXRecipe]
 }
