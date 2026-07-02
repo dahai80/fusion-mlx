@@ -658,6 +658,12 @@ class MLLMScheduler:
         if batch_requests and self.batch_generator is not None:
             uids = self.batch_generator.insert(batch_requests)
 
+            if len(uids) != len(scheduled):
+                logger.warning(
+                    "batch_generator.insert returned %d UIDs for %d scheduled requests",
+                    len(uids), len(scheduled),
+                )
+
             for uid, request in zip(uids, scheduled):
                 self.request_id_to_uid[request.request_id] = uid
                 self.uid_to_request_id[uid] = request.request_id
@@ -1075,7 +1081,10 @@ class MLLMScheduler:
                     if req_output.finished:
                         queue.put_nowait(None)  # Signal end
                 except asyncio.QueueFull:
-                    pass
+                    logger.warning(
+                        "Output queue full for request %s — dropping response",
+                        req_output.request_id,
+                    )
 
         # Signal queues for requests aborted during this step
         while self._aborted_queue_ids:
@@ -1085,7 +1094,10 @@ class MLLMScheduler:
                 try:
                     queue.put_nowait(None)
                 except asyncio.QueueFull:
-                    pass
+                    logger.warning(
+                        "Output queue full for aborted request %s — dropping signal",
+                        request_id,
+                    )
 
     def step(self) -> MLLMSchedulerOutput:
         """
@@ -1209,6 +1221,8 @@ class MLLMScheduler:
                         # ``output`` that actually came back from the
                         # executor thread.
                         try:
+                            if not self._running:
+                                break
                             cf = self._step_executor.submit(self._step_no_queue)
                         except RuntimeError as _submit_exc:
                             logger.warning(

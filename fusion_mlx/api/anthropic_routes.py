@@ -156,8 +156,9 @@ async def _run_anthropic_messages(req: AnthropicMessagesRequest) -> AnthropicMes
 
     from ..server import resolve_model_id
     model_name = resolve_model_id(req.model)
-    engine = await _pool.get_engine(model_name)
+    engine = await _pool.get_engine(model_name, _lease=True)
     if engine is None:
+        await _pool.release_engine(model_name)
         raise HTTPException(404, f"Model {model_name} not available")
 
 # Reject multimodal content on text-only models
@@ -168,6 +169,7 @@ async def _run_anthropic_messages(req: AnthropicMessagesRequest) -> AnthropicMes
                 for part in content:
                     pt = part.get("type", "") if isinstance(part, dict) else getattr(part, "type", "")
                     if pt in ("image_url", "image", "video", "video_url", "audio_url", "audio", "input_audio"):
+                        await _pool.release_engine(model_name)
                         raise HTTPException(
                             status_code=400,
                             detail=(
@@ -224,6 +226,8 @@ async def _run_anthropic_messages(req: AnthropicMessagesRequest) -> AnthropicMes
             raise HTTPException(status_code=400, detail=err_msg)
         logger.exception("Anthropic messages failed for %s", request_id)
         raise HTTPException(500, str(exc))
+    finally:
+        await _pool.release_engine(model_name)
 
 
 async def _stream_anthropic_generator(req: AnthropicMessagesRequest) -> AsyncIterator[str]:
@@ -233,8 +237,9 @@ async def _stream_anthropic_generator(req: AnthropicMessagesRequest) -> AsyncIte
 
     from ..server import resolve_model_id
     model_name = resolve_model_id(req.model)
-    engine = await _pool.get_engine(model_name)
+    engine = await _pool.get_engine(model_name, _lease=True)
     if engine is None:
+        await _pool.release_engine(model_name)
         raise HTTPException(404, f"Model {model_name} not available")
 
 # Reject multimodal content on text-only models
@@ -245,6 +250,7 @@ async def _stream_anthropic_generator(req: AnthropicMessagesRequest) -> AsyncIte
                 for part in content:
                     pt = part.get("type", "") if isinstance(part, dict) else getattr(part, "type", "")
                     if pt in ("image_url", "image", "video", "video_url", "audio_url", "audio", "input_audio"):
+                        await _pool.release_engine(model_name)
                         raise HTTPException(
                             status_code=400,
                             detail=(
@@ -340,6 +346,8 @@ async def _stream_anthropic_generator(req: AnthropicMessagesRequest) -> AsyncIte
         else:
             pass
             yield f"event: error\ndata: {{\"error\": {err_msg!r}}}\n\n"
+    finally:
+        await _pool.release_engine(model_name)
 
 
 @router.post("/messages")

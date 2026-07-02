@@ -1298,49 +1298,42 @@ class PagedCacheManager(CacheManager):
     # Eviction
     # =========================================================================
 
-    def evict_lru_blocks(self, num_blocks: int) -> int:
-        """
-        Evict least recently used free blocks from the cache.
-
-        Scans the free block queue from front (LRU end), clears block
-        content, and increments eviction counter. Blocks remain in free
-        queue for reuse but old content is discarded.
-        """
-        with self._block_table_lock, self._hash_map_lock, self._free_queue_lock:
-            evicted = 0
-            # Iterate free queue from front (LRU) to back (MRU)
-            curr = self.free_block_queue.fake_head.next_free_block
-            while curr is not None and curr is not self.free_block_queue.fake_tail:
-                if evicted >= num_blocks:
-                    break
-                # Skip blocks still in use
-                if curr.ref_count > 0 or curr.is_null:
-                    curr = curr.next_free_block
-                    continue
-                # Evict this block - clear content
-                if curr.block_hash is not None:
-                    self.cached_block_hash_to_block.pop(curr.block_hash, curr.block_id)
-                curr.reset_hash()
-                curr.token_count = 0
-                if curr.block_id in self.allocated_blocks:
-                    del self.allocated_blocks[curr.block_id]
-                    self.stats.allocated_blocks -= 1
-                self.stats.evictions += 1
-                evicted += 1
+    def _evict_lru_blocks_locked(self, num_blocks: int) -> int:
+        """Evict LRU blocks — caller must hold _block_table_lock, _hash_map_lock, _free_queue_lock."""
+        evicted = 0
+        curr = self.free_block_queue.fake_head.next_free_block
+        while curr is not None and curr is not self.free_block_queue.fake_tail:
+            if evicted >= num_blocks:
+                break
+            if curr.ref_count > 0 or bool(curr.is_null):
                 curr = curr.next_free_block
-            if evicted > 0:
-                logger.info(f"Evicted {evicted} LRU blocks from cache")
-            return evicted
+                continue
+            if curr.block_hash is not None:
+                self.cached_block_hash_to_block.pop(curr.block_hash, curr.block_id)
+            curr.reset_hash()
+            curr.token_count = 0
+            if curr.block_id in self.allocated_blocks:
+                del self.allocated_blocks[curr.block_id]
+                self.stats.allocated_blocks -= 1
+            self.stats.evictions += 1
+            evicted += 1
+            curr = curr.next_free_block
+        if evicted > 0:
+            logger.info(f"Evicted {evicted} LRU blocks from cache")
+        return evicted
+
+    def evict_lru_blocks(self, num_blocks: int) -> int:
+        """Evict least recently used free blocks from the cache."""
+        with self._block_table_lock, self._hash_map_lock, self._free_queue_lock:
+            return self._evict_lru_blocks_locked(num_blocks)
 
     def handle_memory_pressure(self, requested_blocks: int) -> bool:
         """Handle memory pressure by evicting blocks."""
-        with self._hash_map_lock, self._free_queue_lock:
+        with self._block_table_lock, self._hash_map_lock, self._free_queue_lock:
             if self.free_block_queue.num_free_blocks >= requested_blocks:
                 return True
-
             needed = requested_blocks - self.free_block_queue.num_free_blocks
-            self.evict_lru_blocks(needed)
-
+            self._evict_lru_blocks_locked(needed)
             return self.free_block_queue.num_free_blocks >= requested_blocks
 
     # =========================================================================

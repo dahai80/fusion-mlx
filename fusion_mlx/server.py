@@ -19,10 +19,11 @@ from typing import Any
 
 import mlx.core as mx
 import uvicorn
-from fastapi import FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
+from .admin.auth import require_admin
 from .admin.routes import router as admin_router
 from .api.anthropic_routes import router as anthropic_router
 from .api.anthropic_routes import set_anthropic_context
@@ -236,7 +237,7 @@ class Server:
             return status
 
         @app.post("/v1/models/{model_id}/load")
-        async def load_model_public(model_id: str):
+        async def load_model_public(model_id: str, is_admin: bool = Depends(require_admin)):
             if self.pool is None:
                 raise HTTPException(status_code=503, detail="Server not initialized")
             resolved = resolve_model_id(model_id)
@@ -252,7 +253,7 @@ class Server:
             return {"status": "ok", "model_id": model_id, "message": f"Loaded {model_id}"}
 
         @app.post("/v1/models/{model_id}/unload")
-        async def unload_model_public(model_id: str):
+        async def unload_model_public(model_id: str, is_admin: bool = Depends(require_admin)):
             if self.pool is None:
                 raise HTTPException(status_code=503, detail="Server not initialized")
             resolved = resolve_model_id(model_id)

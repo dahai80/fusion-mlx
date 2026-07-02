@@ -10,7 +10,7 @@ This module provides HTTP routes for the admin panel including:
 
 import logging
 
-from fastapi import APIRouter, HTTPException, Response
+from fastapi import APIRouter, HTTPException, Request, Response
 from fastapi.responses import RedirectResponse
 
 from .auth import (
@@ -92,7 +92,7 @@ async def login(request: LoginRequest, response: Response):
 
 
 @_router.post("/api/setup-api-key")
-async def setup_api_key(request: SetupApiKeyRequest, response: Response):
+async def setup_api_key(request: SetupApiKeyRequest, response: Response, fastapi_request: Request):
     """
     Set up the initial API key when none is configured.
 
@@ -112,6 +112,14 @@ async def setup_api_key(request: SetupApiKeyRequest, response: Response):
                         or keys don't match.
     """
     from ..server import _server_state
+
+    # Only allow from localhost to prevent remote takeover
+    client_host = fastapi_request.client.host if fastapi_request.client else ""
+    if client_host not in ("127.0.0.1", "::1", "localhost"):
+        raise HTTPException(
+            status_code=403,
+            detail="Initial API key setup is only allowed from localhost",
+        )
 
     global_settings = _get_global_settings()
 
@@ -173,8 +181,8 @@ async def logout(response: Response):
     return {"success": True}
 
 
-@_router.get("/auto-login")
-async def auto_login(key: str = "", redirect: str = "/admin/dashboard"):
+@_router.post("/auto-login")
+async def auto_login(fastapi_request: Request, redirect: str = "/admin/dashboard"):
     """
     Auto-login using API key and redirect to the target admin page.
 
@@ -190,6 +198,13 @@ async def auto_login(key: str = "", redirect: str = "/admin/dashboard"):
     """
     if not redirect.startswith("/admin"):
         raise HTTPException(status_code=400, detail="Invalid redirect path")
+
+    # Read API key from POST body instead of query param to avoid leaking in logs/history
+    try:
+        body = await fastapi_request.json()
+        key = body.get("key", "")
+    except Exception:
+        key = ""
 
     global_settings = _get_global_settings()
     server_api_key = global_settings.auth.api_key if global_settings else None
