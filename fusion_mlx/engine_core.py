@@ -173,6 +173,29 @@ class EngineCore:
         _fut.result()
         self.scheduler = _sched_result[0]
 
+        # Initialize speculative decode draft model on the executor thread
+        from .scheduler.spec_decode import SpecDecodeState, SPEC_DRAFT_MODEL_ENABLED
+        if SPEC_DRAFT_MODEL_ENABLED:
+            def _init_draft():
+                from .speculative.draft_model import DraftModelDecoder
+                draft = DraftModelDecoder()
+                loaded = draft.load()
+                if loaded:
+                    self.scheduler._spec_decode_state = SpecDecodeState(draft_model_decoder=draft)
+                    logger.info("Speculative decode: draft model enabled (%s)", draft.model_path)
+                else:
+                    logger.info("Speculative decode: draft model failed to load, disabled")
+            _fut = self._mlx_executor.submit(_init_draft)
+            _fut.result()
+
+        # Initialize n-gram speculative decode (CPU-side, zero GPU overhead)
+        from .scheduler.ngram_spec import NGramSpecState, NGRAM_SPEC_ENABLED
+        if NGRAM_SPEC_ENABLED:
+            self.scheduler._ngram_spec_state = NGramSpecState()
+            logger.info("N-gram speculative decode: enabled (order=%d, num_draft=%d)",
+                        self.scheduler._ngram_spec_state.predictor.order,
+                        self.scheduler._ngram_spec_state.predictor.num_draft)
+
         self._active_contexts: dict[str, RequestContext] = {}
 
         # Finish timestamps for orphan-collector reaping (#1154).

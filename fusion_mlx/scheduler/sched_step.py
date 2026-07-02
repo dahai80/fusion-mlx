@@ -55,6 +55,8 @@ def step(self) -> SchedulerOutput:
         and not self._pending_async_removes
     ):
         self._pure_decode_count = getattr(self, '_pure_decode_count', 0) + 1
+        if self._pure_decode_count <= 3 or self._pure_decode_count % 50 == 0:
+            logger.info("step(%d): pure_decode path (#%d)", self._step_counter, self._pure_decode_count)
         return self._step_pure_decode(output)
 
     # --- Full step path ---
@@ -447,23 +449,17 @@ def _try_spec_decode(
 ) -> list[RequestOutput]:
     """Try speculative decode after a regular decode step.
 
-    If PromptLookup has draft tokens, runs a verify pass to produce
-    additional tokens. Only active during single-request pure decode.
-    Returns list of additional RequestOutput objects (empty if no drafts).
+    Tries n-gram spec decode first (CPU-side, zero GPU overhead),
+    then falls back to draft-model spec decode if available.
     """
-    from .spec_decode import SpecDecodeState, spec_decode_step
-
-    # Only speculate when there's exactly 1 running request and it's not finished
     if len(self.running) != 1:
         return []
     if len(responses) != 1:
         return []
 
-    # Check if the regular step finished the request — no point speculating
     if output.finished_request_ids:
         return []
 
-    # Extract current token and request ID from the response
     resp = responses[0]
     if resp.finish_reason is not None:
         return []
@@ -474,24 +470,31 @@ def _try_spec_decode(
         return []
 
     request = self.running.get(request_id)
-    if request is None or request.is_finished:
+    if request is None or request.is_finished():
         return []
 
-    # Don't speculate on VLM MTP or protocol-parsed requests
     if self._vlm_mtp_active:
         return []
     if request_id in self._output_parser_sessions:
         return []
 
-    # Don't speculate when there are pending aborts
     if self._pending_abort_ids:
         return []
 
-    # Initialize spec decode state lazily
-    if self._spec_decode_state is None:
-        self._spec_decode_state = SpecDecodeState()
+    # N-gram spec decode (CPU-side, zero GPU overhead for drafting)
+    ngram_state = getattr(self, '_ngram_spec_state', None)
+    if ngram_state is not None:
+        from .ngram_spec import ngram_spec_step
+        result = ngram_spec_step(self, output, current_token, request_id)
+        if result:
+            return result
 
-    return spec_decode_step(self, output, current_token, request_id)
+    # Draft-model spec decode (GPU-side, requires loaded draft model)
+    if self._spec_decode_state is not None and self._spec_decode_state.draft_model is not None:
+        from .spec_decode import spec_decode_step
+        return spec_decode_step(self, output, current_token, request_id)
+
+    return []
 
 
 def reset(self) -> None:

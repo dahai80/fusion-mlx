@@ -1,17 +1,18 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Speculative decode integration for the pure-decode fast path.
+"""N-gram speculative decode integration.
 
-Uses DraftModelDecoder (small LM like Qwen3-0.6B-4bit) to draft K tokens,
+Uses NGramPredictor (CPU-side) to draft K tokens from n-gram patterns,
 then verifies them in a single forward pass of the target model.
 
+Unlike draft-model spec decode, this has ZERO GPU overhead for drafting —
+predictions come from a CPU hash table. The only GPU cost is the verify
+pass, which processes K tokens in one batch.
+
 Token flow:
-  1. Regular _step() produces token T and samples T_next
-  2. spec_decode_step checks if draft model has draft tokens for T
-  3. If yes, feeds [D1, D2, ..., DK] to the target model (caches past T)
-     - logits[i] = target prediction AFTER D_i (matches D_{i+1})
-     - D1 is verified against T_next (from the regular step)
+  1. Regular _step() produces token T
+  2. ngram_spec_step looks up n-gram predictions [D1, D2, ..., DK]
+  3. Feed [D1, D2, ..., DK] to target model for verification
   4. Accepted drafts + resampled token are emitted as RequestOutputs
-     - The resampled token goes into gen._next_tokens for the next step
 """
 
 import copy
@@ -22,106 +23,90 @@ from typing import Any
 import mlx.core as mx
 
 from ..request import RequestOutput
+from ..speculative.ngram_predictor import NGramPredictor
 
 logger = logging.getLogger(__name__)
 
-SPEC_NUM_DRAFT_TOKENS = int(__import__("os").environ.get("FUSION_SPEC_DRAFT_TOKENS", "3"))
-SPEC_WARMUP_STEPS = int(__import__("os").environ.get("FUSION_SPEC_WARMUP_STEPS", "2"))
-SPEC_DRAFT_MODEL_ENABLED = __import__("os").environ.get("FUSION_DRAFT_MODEL_ENABLED", "1") == "1"
-SPEC_MIN_ACCEPT_RATE = float(__import__("os").environ.get("FUSION_SPEC_MIN_ACCEPT_RATE", "0.10"))
-SPEC_ADAPTIVE_WINDOW = int(__import__("os").environ.get("FUSION_SPEC_ADAPTIVE_WINDOW", "20"))
+NGRAM_SPEC_ENABLED = __import__("os").environ.get("FUSION_NGRAM_SPEC_ENABLED", "1") == "1"
+NGRAM_SPEC_WARMUP = int(__import__("os").environ.get("FUSION_NGRAM_SPEC_WARMUP", "5"))
+NGRAM_SPEC_MIN_ACCEPT = float(__import__("os").environ.get("FUSION_NGRAM_SPEC_MIN_ACCEPT", "0.05"))
 
 
-class SpecDecodeState:
-    """Per-scheduler speculative decode state."""
+class NGramSpecState:
+    """Per-scheduler n-gram speculative decode state."""
 
-    def __init__(self, draft_model_decoder=None):
-        self.draft_model = draft_model_decoder
-        self.steps_since_start = 0
+    def __init__(self, predictor: NGramPredictor | None = None):
+        self.predictor = predictor or NGramPredictor()
+        self.steps = 0
         self.total_spec_steps = 0
         self.total_draft_proposed = 0
         self.total_draft_accepted = 0
         self._last_request_id = None
-        self._recent_accepted = []
-        self._spec_paused = False
+        self._recent_rates = []
+        self._paused = False
+        self._window = 20
 
     def reset(self):
-        if self.draft_model:
-            self.draft_model.reset()
-        self.steps_since_start = 0
+        self.predictor.reset()
+        self.steps = 0
         self._last_request_id = None
 
-    def on_new_request(self, request_id: str, prompt_tokens: list[int]):
+    def on_new_request(self, request_id: str):
         if self._last_request_id != request_id:
-            if self.draft_model:
-                self.draft_model.on_new_request(request_id, prompt_tokens)
+            self.predictor.reset()
             self._last_request_id = request_id
-            self.steps_since_start = 0
-            self._spec_paused = False
-            self._recent_accepted.clear()
+            self.steps = 0
+            self._paused = False
+            self._recent_rates.clear()
 
     def add_token(self, token: int):
-        self.steps_since_start += 1
+        self.steps += 1
+        self.predictor.add_token(token)
 
     def should_speculate(self) -> bool:
-        if self.steps_since_start < SPEC_WARMUP_STEPS:
+        if self.steps < NGRAM_SPEC_WARMUP:
             return False
-        if self._spec_paused:
+        if self._paused:
             return False
         return True
 
-    def get_drafts(self, current_token: int | None = None) -> list[int]:
-        if self.draft_model and current_token is not None:
-            return self.draft_model.generate_draft_tokens(current_token)
-        return []
+    def get_drafts(self) -> list[int]:
+        return self.predictor.predict()
 
-    def record_accepted(self, n_accepted: int, n_total: int):
+    def record_result(self, n_accepted: int, n_total: int):
         self.total_spec_steps += 1
         self.total_draft_proposed += n_total
         self.total_draft_accepted += n_accepted
-        if self.draft_model:
-            self.draft_model.record_accepted(n_accepted)
+        self.predictor.record_accepted(n_accepted)
 
-        self._recent_accepted.append((n_accepted, n_total))
-        if len(self._recent_accepted) > SPEC_ADAPTIVE_WINDOW:
-            self._recent_accepted.pop(0)
+        if n_total > 0:
+            self._recent_rates.append(n_accepted / n_total)
+        if len(self._recent_rates) > self._window:
+            self._recent_rates.pop(0)
 
-        if len(self._recent_accepted) >= SPEC_ADAPTIVE_WINDOW:
-            total_a = sum(a for a, t in self._recent_accepted)
-            total_t = sum(t for a, t in self._recent_accepted)
-            recent_rate = total_a / total_t if total_t > 0 else 0
-            if recent_rate < SPEC_MIN_ACCEPT_RATE and not self._spec_paused:
-                self._spec_paused = True
-                logger.info(
-                    "spec_decode: pausing — acceptance %.1f%% < %.1f%%",
-                    recent_rate * 100, SPEC_MIN_ACCEPT_RATE * 100,
-                )
-            elif recent_rate >= SPEC_MIN_ACCEPT_RATE and self._spec_paused:
-                self._spec_paused = False
-                logger.info(
-                    "spec_decode: resuming — acceptance %.1f%% recovered",
-                    recent_rate * 100,
-                )
+        if len(self._recent_rates) >= self._window:
+            avg_rate = sum(self._recent_rates) / len(self._recent_rates)
+            if avg_rate < NGRAM_SPEC_MIN_ACCEPT and not self._paused:
+                self._paused = True
+                logger.info("ngram_spec: pausing — avg rate %.1f%% < %.1f%%", avg_rate * 100, NGRAM_SPEC_MIN_ACCEPT * 100)
+            elif avg_rate >= NGRAM_SPEC_MIN_ACCEPT and self._paused:
+                self._paused = False
+                logger.info("ngram_spec: resuming — avg rate %.1f%% recovered", avg_rate * 100)
 
     def get_stats(self) -> dict:
-        rate = (
-            self.total_draft_accepted / self.total_draft_proposed
-            if self.total_draft_proposed > 0 else 0.0
-        )
+        rate = self.total_draft_accepted / self.total_draft_proposed if self.total_draft_proposed > 0 else 0.0
         stats = {
             "spec_steps": self.total_spec_steps,
             "draft_proposed": self.total_draft_proposed,
             "draft_accepted": self.total_draft_accepted,
             "acceptance_rate": rate,
-            "paused": self._spec_paused,
+            "paused": self._paused,
         }
-        if self.draft_model:
-            stats["draft_model"] = self.draft_model.get_stats()
+        stats["ngram"] = self.predictor.get_stats()
         return stats
 
 
-def _snapshot_non_trimmable_caches(prompt_cache: list) -> list | None:
-    """Deep-copy non-trimmable cache entries before verify."""
+def _snapshot_non_trimmable(prompt_cache: list) -> list | None:
     snapshots = []
     for i, c in enumerate(prompt_cache):
         if hasattr(c, "is_trimmable") and not c.is_trimmable():
@@ -129,55 +114,42 @@ def _snapshot_non_trimmable_caches(prompt_cache: list) -> list | None:
     return snapshots if snapshots else None
 
 
-def _restore_non_trimmable_caches(prompt_cache: list, snapshots: list):
+def _restore_non_trimmable(prompt_cache: list, snapshots: list):
     for i, snapshot in snapshots:
         prompt_cache[i] = snapshot
 
 
-def _run_spec_verify(
+def _verify_drafts(
     model,
-    current_token: int,
     draft_tokens: list[int],
     prompt_cache: list,
     sampled_from_regular: int | None = None,
 ) -> tuple[list[int], int, int]:
-    """Verify draft tokens against the target model.
-
-    Caches are positioned after current_token (from the regular step).
-    We feed [D1, D2, ..., DK] to the model:
-      - logits[0] = prediction after D1 → should match D2
-      - logits[1] = prediction after D2 → should match D3
-      - logits[K-1] = prediction after DK → resampled token
-
-    D1 is verified against sampled_from_regular (the regular step's
-    sampled token), since we can't get logits at D1's position without
-    re-processing current_token.
+    """Verify n-gram draft tokens against target model.
 
     Returns (verified_tokens, n_accepted, cache_tokens_processed).
     """
     K = len(draft_tokens)
 
-    # Verify D1 against the regular step's prediction
+    # Verify D1 against regular step's prediction
     if sampled_from_regular is not None and draft_tokens[0] != sampled_from_regular:
-        logger.debug("spec_verify: D1 rejected — draft=%d sampled=%d", draft_tokens[0], sampled_from_regular)
         return [sampled_from_regular], 0, 0
 
-    # D1 accepted
     n_accepted = 1 if sampled_from_regular is not None else 0
 
     if K == 1:
         return draft_tokens[:1], n_accepted, 0
 
-    # Feed [D1, ..., DK] — caches are past current_token
+    # Feed [D1, ..., DK] through model
     verify_input = mx.array(draft_tokens, mx.uint32)
     logits = model(verify_input[None], cache=prompt_cache)
-    logits = logits.squeeze(0)  # [K, vocab]
+    logits = logits.squeeze(0)
 
     sampled = mx.argmax(logits, axis=-1)
     mx.eval(sampled)
     sampled_list = sampled.tolist()
 
-    # Compare logits[i] (after D_i) with D_{i+1}
+    # Compare logits[i] with D_{i+1}
     for i in range(K - 1):
         if sampled_list[i] == draft_tokens[i + 1]:
             n_accepted += 1
@@ -186,7 +158,7 @@ def _run_spec_verify(
     else:
         n_accepted = K
 
-    # Build verified list: accepted drafts + resampled token
+    # Build verified list
     resample_idx = min(n_accepted, K - 1)
     verified = draft_tokens[:n_accepted]
     verified.append(sampled_list[resample_idx])
@@ -194,18 +166,15 @@ def _run_spec_verify(
     return verified, n_accepted, K
 
 
-def spec_decode_step(
+def ngram_spec_step(
     scheduler,
     output,
     current_token: int,
     request_id: str,
 ) -> list[RequestOutput]:
-    """Run speculative decode after a regular decode step."""
-    spec_state = scheduler._spec_decode_state
+    """Run n-gram speculative decode after a regular decode step."""
+    spec_state = scheduler._ngram_spec_state
     if spec_state is None:
-        return []
-
-    if not spec_state.draft_model:
         return []
 
     request = scheduler.running.get(request_id)
@@ -213,22 +182,15 @@ def spec_decode_step(
         return []
 
     if spec_state._last_request_id != request_id:
-        spec_state.on_new_request(request_id, request.prompt_token_ids or [])
+        spec_state.on_new_request(request_id)
 
     spec_state.add_token(current_token)
 
     if not spec_state.should_speculate():
-        if spec_state.steps_since_start <= 3:
-            logger.info(
-                "spec_decode: warming up step=%d/%d",
-                spec_state.steps_since_start, SPEC_WARMUP_STEPS,
-            )
         return []
 
-    draft_tokens = spec_state.get_drafts(current_token)
+    draft_tokens = spec_state.get_drafts()
     if not draft_tokens:
-        if spec_state.total_spec_steps == 0:
-            logger.info("spec_decode: no draft tokens generated for token=%d", current_token)
         return []
 
     K = len(draft_tokens)
@@ -244,7 +206,6 @@ def spec_decode_step(
     prompt_cache = gen.prompt_cache
     model = gen.model
 
-    # Capture regular step's sampled token for D1 verification
     sampled_from_regular = None
     if gen._next_tokens is not None:
         try:
@@ -252,12 +213,12 @@ def spec_decode_step(
         except Exception:
             pass
 
-    non_trimmable_snapshots = _snapshot_non_trimmable_caches(prompt_cache)
+    non_trimmable_snapshots = _snapshot_non_trimmable(prompt_cache)
 
     with mx.stream(scheduler._stream):
         t0 = time.perf_counter()
-        verified, n_accepted, cache_tokens_processed = _run_spec_verify(
-            model, current_token, draft_tokens, prompt_cache,
+        verified, n_accepted, cache_tokens_processed = _verify_drafts(
+            model, draft_tokens, prompt_cache,
             sampled_from_regular=sampled_from_regular,
         )
     dt = time.perf_counter() - t0
@@ -266,28 +227,23 @@ def spec_decode_step(
     if cache_tokens_processed > 0 and n_accepted < K:
         n_rejected = cache_tokens_processed - n_accepted
         if non_trimmable_snapshots is not None:
-            _restore_non_trimmable_caches(prompt_cache, non_trimmable_snapshots)
+            _restore_non_trimmable(prompt_cache, non_trimmable_snapshots)
             if n_accepted > 0:
                 accepted_prefix = draft_tokens[:n_accepted]
                 replay_input = mx.array(accepted_prefix, mx.uint32)
                 with mx.stream(scheduler._stream):
                     replay_logits = model(replay_input[None], cache=prompt_cache)
                     mx.eval(replay_logits)
-            logger.debug(
-                "spec_decode: restored %d non-trimmable caches, %d/%d rejected",
-                len(non_trimmable_snapshots), n_rejected, K,
-            )
-        # Trim trimmable caches
         if n_rejected > 0:
             from mlx_lm.models import cache as mlx_cache
             mlx_cache.trim_prompt_cache(prompt_cache, n_rejected)
 
-    spec_state.record_accepted(n_accepted, K)
+    spec_state.record_result(n_accepted, K)
 
     if spec_state.total_spec_steps % 50 == 1:
         stats = spec_state.get_stats()
         logger.info(
-            "spec_decode: step=%d, K=%d, accepted=%d/%d (%.1f%%), "
+            "ngram_spec: step=%d, K=%d, accepted=%d/%d (%.1f%%), "
             "verify=%.1fms, rate=%.1f%%",
             spec_state.total_spec_steps, K,
             n_accepted, K, 100.0 * n_accepted / K if K else 0,
@@ -297,11 +253,12 @@ def spec_decode_step(
     if not verified:
         return []
 
-    # The resampled token (verified[-1]) will be returned by the next
-    # regular _step() via gen._next_tokens. _step() returns the INPUT
-    # token as the Response, so emitting it here would double-count.
+    # Add accepted draft tokens to n-gram predictor
     accepted_only = verified[:-1]
+    for t in accepted_only:
+        spec_state.predictor.add_token(t)
 
+    # Set up next token for regular decode
     last_token = verified[-1]
     gen._next_tokens = mx.array([last_token], mx.uint32)
 
@@ -309,6 +266,7 @@ def spec_decode_step(
         for t in accepted_only:
             gen.tokens[0].append(t)
 
+    # Build RequestOutputs
     outputs = []
     step_now = time.monotonic()
 
