@@ -11,6 +11,8 @@ Drop-in replacement for Ollama / vLLM — runs natively on Metal via MLX
 [![License](https://img.shields.io/badge/License-Apache--2.0-green.svg)](LICENSE)
 [![Tests](https://img.shields.io/badge/Tests-1200+-success.svg)](tests/)
 
+[English](README.md) | [中文](README_CN.md)
+
 [Get Started](#quick-start) · [Download App](https://github.com/dahai80/fusion-mlx/releases) · [Benchmarks](https://bench.dpdns.org/) · [Documentation](docs/)
 
 </div>
@@ -23,9 +25,9 @@ Drop-in replacement for Ollama / vLLM — runs natively on Metal via MLX
 |---|---|---|---|
 | Continuous batching | ✅ | ✅ | ❌ |
 | 2× concurrent throughput | ✅ 36 vs 17.9 tok/s | Baseline | — |
-| TurboQuant KV (4-bit) | ✅ | ❌ | ❌ |
+| TurboQuant KV (4-bit) | ✅ | ✅ (advanced) | ❌ |
 | Speculative decoding | ✅ 4 methods | ❌ | ❌ |
-| OpenAI + Anthropic API | ✅ Both | OpenAI only | OpenAI only |
+| OpenAI + Anthropic API | ✅ Both | ✅ Both | ✅ Both |
 | VLM with paged KV cache | ✅ | ❌ | ❌ |
 | 40+ quant formats | ✅ | ~15 | ~10 |
 | macOS native app | ✅ SwiftUI | ✅ | ✅ |
