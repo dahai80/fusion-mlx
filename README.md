@@ -37,14 +37,19 @@ Drop-in replacement for Ollama / vLLM — runs natively on Metal via MLX
 | Quantization | Model Size | bpw | Decode Speed | vs mxfp8 | vs mixed_3_4 |
 |---|---|---|---|---|---|
 | mxfp8 | 26 GB | 8.0 | 18.5 tok/s | baseline | — |
+| mxfp4 | 13 GB | 4.0 | 32.3 tok/s | **+75%** | — |
 | mixed_4_6 | 15 GB | 4.85 | 29.0 tok/s | **+57%** | — |
 | mixed_3_4 | 12 GB | 3.68 | 36.2 tok/s | **+96%** | baseline |
+| mixed_2_6 | 10 GB | 3.25 | 39.3 tok/s | **+112%** | +9% |
 | mixed_2_4 | 9.3 GB | 2.95 | 42.8 tok/s | **+131%** | +18% |
 | quant2 | 8.5 GB | 2.72 | 45.1 tok/s | **+144%** | +25% |
 | quant2-g128 | 7.8 GB | 2.46 | 48.2 tok/s | **+161%** | +33% |
 | quant2-all | 7.5 GB | 2.37 | 48.5 tok/s | **+162%** | **+34%** |
+| quant2-flat | 7.1 GB | 2.25 | 49.4 tok/s | **+167%** | +36%* |
 
-Key optimizations: quant2/quant2_128 ultra-aggressive 2-bit quantization recipes, mixed-bit quantization (bandwidth reduction), fused QKV/gate projections, fused decode sampler, skip logsumexp, async_eval double-buffering, GatedDeltaNet linear attention fast path, StreamingJSONEncoder, B=1 fast path.
+*\*quant2-flat: max speed but 2-bit embeddings degrade quality. Use quant2-all for best quality/speed tradeoff.*
+
+Key optimizations: quant2/quant2_128/quant2_flat ultra-aggressive 2-bit quantization recipes, mixed-bit quantization (bandwidth reduction), greedy decode fast path (skip logsumexp for argmax), fused QKV/gate projections, fused decode sampler, async_eval double-buffering, GatedDeltaNet linear attention fast path, StreamingJSONEncoder, B=1 fast path.
 
 ## Features
 
