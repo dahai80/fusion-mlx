@@ -433,6 +433,9 @@ def __init__(    self,
     # Speculative decode state (lazy-initialized in _step_pure_decode)
     self._spec_decode_state = None
 
+    # N-gram speculative decode state (lazy-initialized in _step_pure_decode)
+    self._ngram_spec_state = None
+
 @contextmanager
 def _phase_timer(self, phase: str):
     """Lightweight wall-time accumulator for cache-on overhead diagnostics.

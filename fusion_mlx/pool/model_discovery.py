@@ -454,14 +454,27 @@ def _has_vision_subconfig(config: dict) -> bool:
       quant could in principle declare a tower path it doesn't ship weights
       for, but in practice bf16 FastVLM ships a real path string.
 
+    Qwen3.5/3.6 text-only quants carry a vision_config stub with
+    ``deepstack_visual_indexes: []`` — these are NOT VLMs. We detect
+    this by checking for an empty visual index list.
+
     Used by the VLM classifier in :func:`detect_model_type` and by other
     paths (``oq``, admin model info) that need to ask "is this a VLM?".
     """
-    return (
-        "vision_config" in config
-        or "vit_config" in config
-        or bool(config.get("mm_vision_tower"))
-    )
+    if "vision_config" in config:
+        vcfg = config["vision_config"]
+        # Qwen3.5/3.6 text-only models have vision_config but empty
+        # deepstack_visual_indexes — this means no visual layers are active
+        if isinstance(vcfg, dict):
+            idx = vcfg.get("deepstack_visual_indexes")
+            if isinstance(idx, list) and len(idx) == 0:
+                return False
+        return True
+    if "vit_config" in config:
+        return True
+    if config.get("mm_vision_tower"):
+        return True
+    return False
 
 
 def _architecture_indicates_causal_lm(architectures: list[str]) -> bool:
