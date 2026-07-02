@@ -80,7 +80,7 @@ def verify_api_key(input_key: str | None, expected_key: str) -> bool:
         return False
     a = hashlib.sha256(input_key.encode()).hexdigest()
     b = hashlib.sha256(expected_key.encode()).hexdigest()
-    return a == b
+    return secrets.compare_digest(a, b)
 
 
 def _get_settings_api_key(gs) -> str:

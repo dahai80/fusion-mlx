@@ -619,6 +619,7 @@ class EnginePool:
             InsufficientMemoryError: If can't free enough memory (all pinned)
             ModelLoadingError: If model is already being loaded
         """
+        # Phase 1: Quick check under lock for already-loaded models
         async with self._lock:
             entry = self._entries.get(model_id)
             if not entry:
@@ -628,8 +629,9 @@ class EnginePool:
                 runtime_settings,
             )
 
-            # Already loaded - just update access time
+            # Already loaded - just update access time (fast path)
             if entry.engine is not None:
+                needs_reload = False
                 if (
                     expected_signature is not None
                     and entry.runtime_settings_signature is not None
@@ -642,25 +644,16 @@ class EnginePool:
                         entry,
                         "reload runtime settings variant",
                     )
-                    logger.info(
-                        "Runtime settings variant changed for %s; "
-                        "unloading before reload.",
-                        model_id,
-                    )
-                    await self._unload_engine(model_id)
-                # If force_lm requested but current engine is VLM, unload and reload
+                    needs_reload = True
                 if (
                     entry.engine is not None
                     and force_lm
                     and isinstance(entry.engine, VLMBatchedEngine)
                 ):
                     self._raise_if_reload_busy(entry, "reload as LM")
-                    logger.info(
-                        f"Unloading VLM engine for {model_id} "
-                        f"(force_lm=True, reloading as LM)"
-                    )
-                    await self._unload_engine(model_id)
-                elif entry.engine is not None:
+                    needs_reload = True
+
+                if not needs_reload:
                     if entry.runtime_settings_signature is None:
                         entry.runtime_settings_signature = expected_signature
                     entry.last_access = time.time()
@@ -668,70 +661,80 @@ class EnginePool:
                         entry.in_use += 1
                     return entry.engine
 
-            # Pre-load admission against the memory ceiling from the
-            # process memory enforcer (min of static and dynamic). Try
-            # evicting LRU non-pinned models first; if the model still
-            # cannot fit after evicting everything available, raise.
-            #
-            # ceiling == 0 means the enforcer is off (guard disabled or
-            # not yet wired up), so we admit unconditionally.
-            ceiling = self._current_ceiling()
-            if ceiling > 0:
-                while True:
-                    # Consult the tracked accumulator alongside live memory:
-                    # after a model settles or idles, mx.get_active_memory() and
-                    # the process footprint can read well below the model's true
-                    # resident size, while _current_model_memory still reflects
-                    # the committed total. Using only live memory lets a second
-                    # large model load without evicting the first, over-
-                    # committing past the ceiling (#1623).
-                    current = max(
-                        mx.get_active_memory(),
-                        get_phys_footprint(),
-                        self._current_model_memory,
-                    )
-                    projected = current + entry.estimated_size
-                    if projected <= ceiling:
-                        break
-                    victim = self._find_lru_victim()
-                    if victim is not None:
-                        logger.info(
-                            f"Evicting '{victim}' to fit '{model_id}' "
-                            f"under memory ceiling "
-                            f"({format_size(projected)} > "
-                            f"{format_size(ceiling)})"
-                        )
-                        await self._unload_engine(victim)
-                        continue
-                    # Nothing else to evict -- model cannot fit. Use
-                    # ModelTooLargeError when the model alone exceeds the
-                    # ceiling (no chance of fitting), InsufficientMemoryError
-                    # when the model would fit on a clean process but the
-                    # current usage leaves no room.
-                    if entry.estimated_size > ceiling:
-                        raise ModelTooLargeError(
-                            model_id, entry.estimated_size, ceiling
-                        )
-                    raise InsufficientMemoryError(
-                        required=entry.estimated_size,
-                        current=current,
-                        message=(
-                            f"Cannot load {model_id}: projected memory "
-                            f"{format_size(projected)} would exceed the memory "
-                            f"ceiling {format_size(ceiling)} "
-                            f"(current: {format_size(current)}, "
-                            f"model: {format_size(entry.estimated_size)}). "
-                            "Free system memory or lower memory_guard_tier."
-                        ),
-                    )
+                # Needs reload — mark loading and release lock for slow unload
+                if entry.is_loading:
+                    raise ModelLoadingError(model_id)
+                entry.is_loading = True
+                entry.loading_started_at = time.monotonic()
+                entry.abort_loading = False
 
-            # Now load the model
-            await self._load_engine(
+            else:
+                # Not loaded yet — mark loading
+                if entry.is_loading:
+                    raise ModelLoadingError(model_id)
+                entry.is_loading = True
+                entry.loading_started_at = time.monotonic()
+                entry.abort_loading = False
+
+        # Phase 2: Slow operations OUTSIDE the lock
+        # so concurrent requests are not blocked for 5-20 seconds.
+        if entry.engine is not None:
+            logger.info(
+                "Unloading %s before reload (outside lock)",
                 model_id,
-                force_lm=force_lm,
-                runtime_settings=runtime_settings,
             )
+            await self._unload_engine(model_id)
 
+        # Pre-load admission check (outside lock — memory state is approximate)
+        ceiling = self._current_ceiling()
+        if ceiling > 0:
+            for _ in range(20):
+                current = max(
+                    mx.get_active_memory(),
+                    get_phys_footprint(),
+                    self._current_model_memory,
+                )
+                projected = current + entry.estimated_size
+                if projected <= ceiling:
+                    break
+                victim = self._find_lru_victim()
+                if victim is not None:
+                    logger.info(
+                        f"Evicting '{victim}' to fit '{model_id}' "
+                        f"under memory ceiling "
+                        f"({format_size(projected)} > "
+                        f"{format_size(ceiling)})"
+                    )
+                    await self._unload_engine(victim)
+                    continue
+                # Nothing to evict — clean up loading flag and raise
+                async with self._lock:
+                    entry.is_loading = False
+                if entry.estimated_size > ceiling:
+                    raise ModelTooLargeError(
+                        model_id, entry.estimated_size, ceiling
+                    )
+                raise InsufficientMemoryError(
+                    required=entry.estimated_size,
+                    current=current,
+                    message=(
+                        f"Cannot load {model_id}: projected memory "
+                        f"{format_size(projected)} would exceed the memory "
+                        f"ceiling {format_size(ceiling)} "
+                        f"(current: {format_size(current)}, "
+                        f"model: {format_size(entry.estimated_size)}). "
+                        "Free system memory or lower memory_guard_tier."
+                    ),
+                )
+
+        # Now load the model (slow, outside lock)
+        await self._load_engine(
+            model_id,
+            force_lm=force_lm,
+            runtime_settings=runtime_settings,
+        )
+
+        async with self._lock:
             loaded = self._entries[model_id]
             if _lease:
                 loaded.in_use += 1

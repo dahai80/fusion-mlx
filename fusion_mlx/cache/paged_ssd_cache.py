@@ -140,16 +140,17 @@ def _write_safetensors_no_mx(tensors: dict[str, tuple[bytes, str, list[int]]], p
     import json
     header = {}
     offset = 0
-    all_bytes = b""
+    chunks = []
     for name, (raw, dtype_str, sh) in sorted(tensors.items()):
         header[name] = {"dtype": dtype_str, "shape": sh, "data_offsets": [offset, offset + len(raw)]}
         offset += len(raw)
-        all_bytes += raw
+        chunks.append(raw)
     header_json = json.dumps(header).encode("utf-8")
     with open(path, "wb") as f:
         f.write(struct.pack("<Q", len(header_json) + 8))
         f.write(header_json)
-        f.write(all_bytes)
+        for chunk in chunks:
+            f.write(chunk)
 
 
 @dataclass
@@ -308,6 +309,7 @@ class PagedSSDCacheManager:
         self.cache_path = Path(self.cache_dir)
         self.cache_path.mkdir(parents=True, exist_ok=True)
         self._index = PagedSSDCacheIndex()
+        self._state_lock = threading.RLock()
         # Auto-repair index on startup: reconcile disk state with in-memory index.
         repair = self.verify_and_repair_index()
         if repair["stale_entries_evicted"] > 0 or repair["orphaned_files_removed"] > 0:
@@ -336,13 +338,14 @@ class PagedSSDCacheManager:
                     temp_path.unlink()
                 raise
             size = file_path.stat().st_size if file_path.exists() else 0
-            self._index.blocks[block_id] = PagedSSDBlockMetadata(
-                block_id=block_id,
-                shape=(len(layers),),
-                dtype="float16",
-                file_size=size,
-            )
-            self._current_size += size
+            with self._state_lock:
+                self._index.blocks[block_id] = PagedSSDBlockMetadata(
+                    block_id=block_id,
+                    shape=(len(layers),),
+                    dtype="float16",
+                    file_size=size,
+                )
+                self._current_size += size
             return True
         except Exception as e:
             logger.debug("Failed to store block %d to SSD: %s", block_id, e)
@@ -356,15 +359,17 @@ class PagedSSDCacheManager:
         re-compute the block from scratch.
         """
         try:
-            if block_id not in self._index.blocks:
-                return None
+            with self._state_lock:
+                if block_id not in self._index.blocks:
+                    return None
             file_path = self.cache_path / f"block_{block_id}.safetensors"
             if not file_path.exists():
                 logger.debug(
                     "SSD cache miss (file missing): block %d — evicting stale index entry",
                     block_id,
                 )
-                del self._index.blocks[block_id]
+                with self._state_lock:
+                    self._index.blocks.pop(block_id, None)
                 return None
             return self._read_safetensors(str(file_path))
         except Exception as e:
@@ -424,26 +429,28 @@ class PagedSSDCacheManager:
                 temp_path.unlink()
         except Exception as e:
             logger.debug("Failed to clean up block %d files: %s", block_id, e)
-        if block_id in self._index.blocks:
-            self._current_size -= self._index.blocks[block_id].file_size
-            self._current_size = max(0, self._current_size)
-            del self._index.blocks[block_id]
-            logger.info(
-                "Recovered from SSD block error: evicted block %d from index",
-                block_id,
-            )
+        with self._state_lock:
+            if block_id in self._index.blocks:
+                self._current_size -= self._index.blocks[block_id].file_size
+                self._current_size = max(0, self._current_size)
+                del self._index.blocks[block_id]
+                logger.info(
+                    "Recovered from SSD block error: evicted block %d from index",
+                    block_id,
+                )
 
     def evict_block(self, block_id: int) -> bool:
         """Remove a block from SSD cache."""
         try:
-            if block_id in self._index.blocks:
-                file_path = self.cache_path / f"block_{block_id}.safetensors"
-                if file_path.exists():
-                    file_path.unlink()
-                    self._current_size -= self._index.blocks[block_id].file_size
-                del self._index.blocks[block_id]
-                return True
-            return False
+            with self._state_lock:
+                if block_id in self._index.blocks:
+                    file_path = self.cache_path / f"block_{block_id}.safetensors"
+                    if file_path.exists():
+                        file_path.unlink()
+                        self._current_size -= self._index.blocks[block_id].file_size
+                    del self._index.blocks[block_id]
+                    return True
+                return False
         except Exception as e:
             logger.debug("Failed to evict block %d from SSD: %s", block_id, e)
             return False
@@ -469,20 +476,21 @@ class PagedSSDCacheManager:
                 except Exception as e:
                     logger.debug("Failed to remove orphaned temp file %s: %s", f, e)
         # Evict stale index entries (in index but not on disk)
-        for block_id in list(self._index.blocks.keys()):
-            filename = f"block_{block_id}.safetensors"
-            if filename not in disk_files:
-                logger.debug(
-                    "Repair: evicting stale index entry for block %d (file missing)",
-                    block_id,
-                )
-                self._current_size -= self._index.blocks[block_id].file_size
-                self._current_size = max(0, self._current_size)
-                del self._index.blocks[block_id]
-                report["stale_entries_evicted"] += 1
-        # Log orphaned files (in disk but not in index) — leave them for
-        # manual inspection; they may be from a previous session and still valid.
-        index_files = {f"block_{bid}.safetensors" for bid in self._index.blocks}
+        with self._state_lock:
+            for block_id in list(self._index.blocks.keys()):
+                filename = f"block_{block_id}.safetensors"
+                if filename not in disk_files:
+                    logger.debug(
+                        "Repair: evicting stale index entry for block %d (file missing)",
+                        block_id,
+                    )
+                    self._current_size -= self._index.blocks[block_id].file_size
+                    self._current_size = max(0, self._current_size)
+                    del self._index.blocks[block_id]
+                    report["stale_entries_evicted"] += 1
+            # Log orphaned files (in disk but not in index) — leave them for
+            # manual inspection; they may be from a previous session and still valid.
+            index_files = {f"block_{bid}.safetensors" for bid in self._index.blocks}
         orphans = disk_files - index_files
         if orphans:
             logger.debug(
@@ -498,22 +506,25 @@ class PagedSSDCacheManager:
         return report
 
     def has_block(self, block_id: int) -> bool:
-        return block_id in self._index.blocks
+        with self._state_lock:
+            return block_id in self._index.blocks
 
     def get_stats(self) -> dict[str, Any]:
         """Return cache statistics."""
-        return {
-            "blocks_cached": len(self._index.blocks),
-            "total_size_bytes": self._current_size,
-            "max_size_bytes": self.max_cache_size,
-            "utilization": self._current_size / self.max_cache_size if self.max_cache_size > 0 else 0,
-        }
+        with self._state_lock:
+            return {
+                "blocks_cached": len(self._index.blocks),
+                "total_size_bytes": self._current_size,
+                "max_size_bytes": self.max_cache_size,
+                "utilization": self._current_size / self.max_cache_size if self.max_cache_size > 0 else 0,
+            }
 
     def clear(self):
         """Remove all cached blocks."""
-        for block_id in list(self._index.blocks.keys()):
-            self.evict_block(block_id)
-        self._current_size = 0
+        with self._state_lock:
+            for block_id in list(self._index.blocks.keys()):
+                self.evict_block(block_id)
+            self._current_size = 0
 
     def close(self):
         """Gracefully close the SSD cache manager.

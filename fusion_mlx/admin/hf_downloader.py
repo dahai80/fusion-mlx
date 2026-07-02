@@ -607,6 +607,17 @@ class HFDownloader:
                 f"Invalid repository ID: '{repo_id}'. "
                 "Expected format: 'owner/model' (e.g., 'mlx-community/Llama-3-8B-4bit')"
             )
+        # Prevent path traversal: reject ".." components and validate resolved path
+        owner, model = repo_id.split("/", 1)
+        if ".." in owner or ".." in model:
+            raise ValueError(f"Invalid repository ID: '{repo_id}' — path traversal not allowed")
+        target_dir = self._model_dir / repo_id
+        try:
+            resolved = target_dir.resolve()
+            if not str(resolved).startswith(str(self._model_dir.resolve())):
+                raise ValueError(f"Invalid repository ID: '{repo_id}' — resolves outside model directory")
+        except (OSError, ValueError):
+            raise ValueError(f"Invalid repository ID: '{repo_id}'")
 
         # Check for duplicate active downloads
         for task in self._tasks.values():

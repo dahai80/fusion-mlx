@@ -10,8 +10,10 @@ This module provides HTTP routes for the admin panel including:
 
 import asyncio
 import logging
+from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel
 
 from .auth import (
     require_admin,
@@ -31,6 +33,18 @@ from .models import (
 )
 
 _router = APIRouter()
+
+
+def _validate_model_path(model_path: str) -> str:
+    resolved = Path(model_path).resolve()
+    model_root = Path.home() / ".cache" / "fusion-mlx" / "models"
+    model_root = model_root.resolve()
+    if not str(resolved).startswith(str(model_root)):
+        raise HTTPException(
+            status_code=403,
+            detail="model_path must reside under the configured model directory",
+        )
+    return str(resolved)
 
 # =============================================================================
 # oQ Quantization API Routes
@@ -144,7 +158,7 @@ async def list_mlx_recipes(is_admin: bool = Depends(require_admin)):
     return {"recipes": recipes}
 
 
-@_router.get("/api/oq/estimate")
+@_router.post("/api/oq/estimate")
 async def estimate_oq(
     model_path: str,
     oq_level: float,
@@ -152,6 +166,7 @@ async def estimate_oq(
     is_admin: bool = Depends(require_admin),
 ):
     """Estimate effective bpw and output size for a model at given oQ level."""
+    model_path = _validate_model_path(model_path)
     from ..oq import estimate_bpw_and_size
 
     try:
@@ -188,6 +203,7 @@ async def start_oq_quantization(
             status_code=400,
             detail="Invalid dtype. Must be 'bfloat16' or 'float16'",
         )
+    _validate_model_path(request.model_path)
     is_paro, _ = _paroquant_compat_for_model({"model_path": request.model_path})
     if is_paro and not is_recipe:
         raise HTTPException(
