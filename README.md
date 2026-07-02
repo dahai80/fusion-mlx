@@ -32,14 +32,15 @@ Drop-in replacement for Ollama / vLLM — runs natively on Metal via MLX
 | 8 engine types | ✅ | 2 | 2 |
 | Admin web panel | ✅ | ✅ | ❌ |
 
-**Benchmark** (Qwen3.6-27B-mxfp8, Apple M4 Pro 48GB):
+**Benchmark** (Qwen3.6-27B, Apple M2 Ultra 137GB):
 
-| Metric | fusion-mlx v0.4 | Baseline | Speedup |
+| Quantization | Model Size | Decode Speed | vs mxfp8 |
 |---|---|---|---|
-| Non-streaming TG | 12.8 tok/s | 7.0 tok/s | **1.83×** |
-| Streaming TG | 12.9 tok/s | 6.5 tok/s | **1.98×** |
+| mxfp8 | 26 GB | 18.5 tok/s | baseline |
+| mixed_4_6 | 15 GB | 29.0 tok/s | **+57%** |
+| mixed_3_4 | 12 GB | 36.2 tok/s | **+96%** |
 
-Key optimizations: fused QKV/gate projections, fused decode sampler, speculative decoding (PromptLookup), StreamingJSONEncoder, B=1 fast path, async logprobs, mx.compile kernel fusion.
+Key optimizations: mixed-bit quantization (bandwidth reduction), fused QKV/gate projections, fused decode sampler, skip logsumexp, async_eval double-buffering, GatedDeltaNet linear attention fast path, StreamingJSONEncoder, B=1 fast path.
 
 ## Features
 
