@@ -3,10 +3,18 @@ import SwiftUI
 @MainActor
 @Observable
 final class QuantizationScreenVM {
+    // Mode state
+    enum QuantMode: String, CaseIterable {
+        case oq = "oq"
+        case recipe = "recipe"
+    }
+    var quantMode: QuantMode = .oq
+
     // Form state
     var selectedModelPath: String = ""
     var sensitivityModelPath: String = ""
     var oqLevel: Double = 4
+    var selectedRecipe: String = ""
     var textOnly: Bool = false
     var preserveMtp: Bool = false
     var dtype: String = "bfloat16"
@@ -18,6 +26,8 @@ final class QuantizationScreenVM {
     private(set) var modelsLoaded: Bool = false
     private(set) var tasks: [OQTaskDTO] = []
     private(set) var estimate: OQEstimateResponse?
+    private(set) var recipes: [MLXRecipe] = []
+    private(set) var recipesLoaded: Bool = false
 
     // Upload state — covers the sheet + the Upload Tasks section. The token
     // is hydrated from Keychain on `start()` and re-written after a
@@ -75,6 +85,19 @@ final class QuantizationScreenVM {
         models.first(where: { $0.path == selectedModelPath })?.hasMtpHeads ?? false
     }
 
+    var selectedRecipeInfo: MLXRecipe? {
+        guard !selectedRecipe.isEmpty else { return nil }
+        return recipes.first(where: { $0.name == selectedRecipe })
+    }
+
+    var canStart: Bool {
+        guard !selectedModelPath.isEmpty, !isStarting else { return false }
+        if quantMode == .recipe {
+            return !selectedRecipe.isEmpty
+        }
+        return true
+    }
+
     /// Estimate strip — memory pill. Mirrors `oqEstimatedMemory` in JS:
     /// if a sensitivity model is picked memory ≈ sens.size × 1.5 + 5 GB,
     /// else the `memory_streaming_formatted` from the API, else the source
@@ -105,12 +128,11 @@ final class QuantizationScreenVM {
 
     func start(client: FusionClient) async {
         self.client = client
-        // Hydrate the HF token from Keychain. Silent on miss — the sheet
-        // shows an empty SecureField and the user can paste a new token.
         if let stored = Keychain.read(), !stored.isEmpty {
             self.uploadToken = stored
         }
         await loadModels()
+        await loadRecipes()
         await loadUploadCandidates()
         await loadTasks()
         await loadUploadTasks()
@@ -137,6 +159,18 @@ final class QuantizationScreenVM {
             self.lastError = String(localized: "quant.error.load_models",
                                     defaultValue: "Failed to load models: \(error)",
                                     comment: "Banner error message when listing OQ models fails. Placeholder is the underlying error")
+        }
+    }
+
+    private func loadRecipes() async {
+        guard let client else { return }
+        do {
+            let resp = try await client.listMLXRecipes()
+            self.recipes = resp.recipes
+            self.recipesLoaded = true
+        } catch {
+            self.recipesLoaded = true
+            NSLog("FusionMLX: failed to load MLX recipes — %@", String(describing: error))
         }
     }
 
@@ -252,23 +286,31 @@ final class QuantizationScreenVM {
     // MARK: Actions
 
     func startQuantization(client: FusionClient) {
-        guard !selectedModelPath.isEmpty, !isStarting else { return }
+        guard canStart else { return }
         isStarting = true
         lastError = nil
         lastSuccess = nil
+        let isRecipe = quantMode == .recipe
+        let recipeName = isRecipe ? selectedRecipe : ""
         let body = OQStartRequest(
             modelPath: selectedModelPath,
-            oqLevel: oqLevel,
+            oqLevel: isRecipe ? 0 : oqLevel,
             groupSize: Self.groupSize,
-            sensitivityModelPath: sensitivityModelPath,
+            sensitivityModelPath: isRecipe ? "" : sensitivityModelPath,
             textOnly: textOnly,
             dtype: dtype,
-            preserveMtp: selectedHasMTP && preserveMtp
+            preserveMtp: !isRecipe && selectedHasMTP && preserveMtp,
+            recipe: recipeName
         )
         let displayName = models.first(where: { $0.path == selectedModelPath })?.name
             ?? selectedModelPath
-        let levelLabel = (oqLevel.rounded() == oqLevel)
-            ? "oQ\(Int(oqLevel))" : "oQ\(oqLevel)"
+        let levelLabel: String
+        if isRecipe, let r = selectedRecipeInfo {
+            levelLabel = r.label
+        } else {
+            levelLabel = (oqLevel.rounded() == oqLevel)
+                ? "oQ\(Int(oqLevel))" : "oQ\(oqLevel)"
+        }
         Task { [weak self] in
             defer { Task { @MainActor [weak self] in self?.isStarting = false } }
             do {

@@ -54,9 +54,11 @@ struct QuantizationScreen: View {
                               defaultValue: "Quantize on device",
                               comment: "Main title for the Quantization screen header"),
                 subtitle: String(localized: "quant.header.subtitle",
-                                 defaultValue: "Pick a full-precision model, choose an oQ level, and FusionMLX builds a mixed-precision plan tuned to that model's per-layer sensitivity. Output is standard mlx-lm safetensors — usable in any MLX runtime.",
+                                 defaultValue: "Pick a full-precision model, choose an oQ level or MLX recipe, and FusionMLX builds a mixed-precision plan tuned to that model's per-layer sensitivity. Output is standard mlx-lm safetensors — usable in any MLX runtime.",
                                  comment: "Subtitle paragraph describing what the Quantization screen does")
             )
+
+            ModePicker(quantMode: $vm.quantMode)
 
             SourceModelSection(
                 models: vm.models,
@@ -64,17 +66,26 @@ struct QuantizationScreen: View {
                 selectedModelPath: $vm.selectedModelPath,
                 sensitivityModelPath: $vm.sensitivityModelPath,
                 oqLevel: $vm.oqLevel,
+                quantMode: vm.quantMode,
+                recipes: vm.recipes,
+                selectedRecipe: $vm.selectedRecipe,
+                selectedRecipeInfo: vm.selectedRecipeInfo,
                 isStarting: vm.isStarting,
                 modelsLoaded: vm.modelsLoaded,
+                canStart: vm.canStart,
                 onStart: { vm.startQuantization(client: services.client) }
             )
 
             if vm.selectedModelPath.isEmpty == false {
-                EstimateStrip(
-                    memoryText: vm.memoryText,
-                    bpwText: vm.bpwText,
-                    outputSizeText: vm.outputSizeText
-                )
+                if vm.quantMode == .oq {
+                    EstimateStrip(
+                        memoryText: vm.memoryText,
+                        bpwText: vm.bpwText,
+                        outputSizeText: vm.outputSizeText
+                    )
+                } else if let recipe = vm.selectedRecipeInfo {
+                    RecipeInfoStrip(recipe: recipe)
+                }
             }
 
             AdvancedSection(
@@ -135,9 +146,16 @@ private struct SourceModelSection: View {
     @Binding var selectedModelPath: String
     @Binding var sensitivityModelPath: String
     @Binding var oqLevel: Double
+    let quantMode: QuantizationScreenVM.QuantMode
+    let recipes: [MLXRecipe]
+    @Binding var selectedRecipe: String
+    let selectedRecipeInfo: MLXRecipe?
     let isStarting: Bool
     let modelsLoaded: Bool
+    let canStart: Bool
     let onStart: () -> Void
+
+    @Environment(\.fusionTheme) private var theme
 
     var body: some View {
         SectionHeader(
@@ -169,7 +187,7 @@ private struct SourceModelSection: View {
                 )
             }
 
-            if !sensitivityCandidates.isEmpty && !selectedModelPath.isEmpty {
+            if quantMode == .oq && !sensitivityCandidates.isEmpty && !selectedModelPath.isEmpty {
                 Row(
                     label: String(localized: "quant.source.row.sensitivity.label",
                                   defaultValue: "Sensitivity model",
@@ -186,17 +204,32 @@ private struct SourceModelSection: View {
                 }
             }
 
-            Row(label: String(localized: "quant.source.row.level.label",
-                              defaultValue: "oQ level",
-                              comment: "Row label for the oQ level picker"),
-                sublabel: String(localized: "quant.source.row.level.sub",
-                                 defaultValue: "Lower bits = smaller, faster, less accurate",
-                                 comment: "Row sublabel explaining the oQ level tradeoff")) {
-                Popup(
-                    selection: $oqLevel,
-                    width: 120,
-                    options: Self.levelOptions
-                )
+            if quantMode == .oq {
+                Row(label: String(localized: "quant.source.row.level.label",
+                                  defaultValue: "oQ level",
+                                  comment: "Row label for the oQ level picker"),
+                    sublabel: String(localized: "quant.source.row.level.sub",
+                                     defaultValue: "Lower bits = smaller, faster, less accurate",
+                                     comment: "Row sublabel explaining the oQ level tradeoff")) {
+                    Popup(
+                        selection: $oqLevel,
+                        width: 120,
+                        options: Self.levelOptions
+                    )
+                }
+            } else {
+                Row(label: String(localized: "quant.source.row.recipe.label",
+                                  defaultValue: "Recipe",
+                                  comment: "Row label for the MLX recipe picker"),
+                    sublabel: String(localized: "quant.source.row.recipe.sub",
+                                     defaultValue: "Pre-tuned mixed-bit quantization plan",
+                                     comment: "Row sublabel explaining the recipe picker")) {
+                    Popup(
+                        selection: $selectedRecipe,
+                        width: 240,
+                        options: recipeOptions
+                    )
+                }
             }
 
             Row(isLast: true) {
@@ -221,7 +254,7 @@ private struct SourceModelSection: View {
                         }
                     }
                     .buttonStyle(.fusion(.primary))
-                    .disabled(isStarting || selectedModelPath.isEmpty)
+                    .disabled(!canStart)
                 }
             }
         }
@@ -259,6 +292,89 @@ private struct SourceModelSection: View {
         PopupOption(value: 6,   label: "oQ6"),
         PopupOption(value: 8,   label: "oQ8"),
     ]
+
+    private var recipeOptions: [PopupOption<String>] {
+        var opts = [PopupOption(value: "",
+                                label: String(localized: "quant.source.option.select_recipe",
+                                              defaultValue: "Select a recipe…",
+                                              comment: "Placeholder option in the recipe dropdown"))]
+        for r in recipes {
+            let speedTag = r.relativeSpeed == "baseline" ? "" : " (\(r.relativeSpeed))"
+            opts.append(PopupOption(value: r.name, label: "\(r.label)\(speedTag)"))
+        }
+        return opts
+    }
+}
+
+// MARK: - Mode picker
+
+private struct ModePicker: View {
+    @Binding var quantMode: QuantizationScreenVM.QuantMode
+    @Environment(\.fusionTheme) private var theme
+
+    var body: some View {
+        HStack(spacing: 0) {
+            ForEach(QuantizationScreenVM.QuantMode.allCases, id: \.self) { mode in
+                Button {
+                    withAnimation(.easeOut(duration: 0.15)) { quantMode = mode }
+                } label: {
+                    Text(mode == .oq
+                         ? String(localized: "quant.mode.oq",
+                                  defaultValue: "oQ Online",
+                                  comment: "Mode tab label for oQ sensitivity-based quantization")
+                         : String(localized: "quant.mode.recipe",
+                                  defaultValue: "MLX Recipe",
+                                  comment: "Mode tab label for MLX recipe quantization"))
+                        .font(.fusionText(12, weight: .medium))
+                        .foregroundStyle(quantMode == mode ? theme.text : theme.textTertiary)
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 7)
+                        .background(quantMode == mode
+                                    ? theme.codeBg
+                                    : Color.clear)
+                        .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(.horizontal, 18)
+        .padding(.top, 8)
+        .padding(.bottom, 4)
+    }
+}
+
+// MARK: - Recipe info strip
+
+private struct RecipeInfoStrip: View {
+    let recipe: MLXRecipe
+    @Environment(\.fusionTheme) private var theme
+
+    var body: some View {
+        HStack(spacing: 18) {
+            pill(icon: "gauge.with.dots.needle.50percent",
+                 text: String(format: "%.2f bpw", recipe.bpw))
+            pill(icon: "bolt.fill",
+                 text: recipe.relativeSpeed == "baseline"
+                     ? "baseline"
+                     : "\(recipe.relativeSpeed) vs mxfp8")
+            pill(icon: "tag",
+                 text: recipe.category)
+        }
+        .padding(.horizontal, 18)
+        .padding(.top, 4)
+        .padding(.bottom, 10)
+    }
+
+    private func pill(icon: String, text: String) -> some View {
+        HStack(spacing: 5) {
+            Image(systemName: icon)
+                .font(.system(size: 10.5))
+                .foregroundStyle(theme.textTertiary)
+            Text(text)
+                .font(.fusionText(11))
+                .foregroundStyle(theme.textSecondary)
+        }
+    }
 }
 
 // MARK: - Estimate strip
