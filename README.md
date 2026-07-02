@@ -34,13 +34,17 @@ Drop-in replacement for Ollama / vLLM — runs natively on Metal via MLX
 
 **Benchmark** (Qwen3.6-27B, Apple M2 Ultra 137GB):
 
-| Quantization | Model Size | Decode Speed | vs mxfp8 |
-|---|---|---|---|
-| mxfp8 | 26 GB | 18.5 tok/s | baseline |
-| mixed_4_6 | 15 GB | 29.0 tok/s | **+57%** |
-| mixed_3_4 | 12 GB | 36.2 tok/s | **+96%** |
+| Quantization | Model Size | bpw | Decode Speed | vs mxfp8 | vs mixed_3_4 |
+|---|---|---|---|---|---|
+| mxfp8 | 26 GB | 8.0 | 18.5 tok/s | baseline | — |
+| mixed_4_6 | 15 GB | 4.85 | 29.0 tok/s | **+57%** | — |
+| mixed_3_4 | 12 GB | 3.68 | 36.2 tok/s | **+96%** | baseline |
+| mixed_2_4 | 9.3 GB | 2.95 | 42.8 tok/s | **+131%** | +18% |
+| quant2 | 8.5 GB | 2.72 | 45.1 tok/s | **+144%** | +25% |
+| quant2-g128 | 7.8 GB | 2.46 | 48.2 tok/s | **+161%** | +33% |
+| quant2-all | 7.5 GB | 2.37 | 48.5 tok/s | **+162%** | **+34%** |
 
-Key optimizations: mixed-bit quantization (bandwidth reduction), fused QKV/gate projections, fused decode sampler, skip logsumexp, async_eval double-buffering, GatedDeltaNet linear attention fast path, StreamingJSONEncoder, B=1 fast path.
+Key optimizations: quant2/quant2_128 ultra-aggressive 2-bit quantization recipes, mixed-bit quantization (bandwidth reduction), fused QKV/gate projections, fused decode sampler, skip logsumexp, async_eval double-buffering, GatedDeltaNet linear attention fast path, StreamingJSONEncoder, B=1 fast path.
 
 ## Features
 
