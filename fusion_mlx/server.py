@@ -32,6 +32,11 @@ from .api.images import router as images_router
 from .api.images import set_images_context
 from .api.mcp_routes import router as mcp_router
 from .api.mcp_routes import set_mcp_manager_getter
+from .middleware import (
+    install_exception_handlers,
+    install_request_body_depth_middleware,
+    install_request_body_limit_middleware,
+)
 # GUI compatibility layer
 try:
     from fusion_gui.server import get_gui_compat_router
@@ -126,17 +131,15 @@ class Server:
             allow_headers=["*"],
         )
 
+        # Body-size and depth guards (ASGI-level, run before FastAPI routing)
+        install_request_body_limit_middleware(app)
+        install_request_body_depth_middleware(app)
+
+        # Unified exception handlers (OpenAI/Anthropic envelope shapes)
+        install_exception_handlers(app)
+
         # Register all route modules
         app.include_router(openai_router)
-
-
-        @app.exception_handler(HTTPException)
-        async def _http_exception_handler(_req, exc: HTTPException):
-            return JSONResponse(
-                status_code=exc.status_code,
-                content={"error": {"message": str(exc.detail)}},
-             )
-
         app.include_router(anthropic_router)
         app.include_router(audio_router)
         app.include_router(images_router)
@@ -299,6 +302,16 @@ class Server:
 
     async def _startup(self):
         """Initialize engine pool, routers, and load models."""
+        # Telemetry: check consent state at server startup so we can log
+        # the current status for operators auditing their install.
+        try:
+            from fusion_mlx.telemetry import is_enabled, consent_source
+            src = consent_source()
+            enabled = is_enabled()
+            logger.info("telemetry consent: enabled=%s source=%s", enabled, src)
+        except Exception:
+            logger.debug("telemetry consent check failed (non-fatal)", exc_info=True)
+
         # Set memory limit
         mem_cfg = self.config.memory
         if mem_cfg.ssd_cache_enabled:
@@ -375,6 +388,17 @@ class Server:
     async def _shutdown(self):
         """Graceful shutdown."""
         logger.info("fusion-mlx shutting down...")
+
+        # Telemetry: fire the session_end hook registered by cli.py.
+        # SIGTERM from systemd/Docker/K8s triggers FastAPI lifespan
+        # shutdown, NOT atexit, so without this the session_end event
+        # would be lost. The latch inside fire_session_end_hook makes
+        # the second invocation (atexit fallback) a no-op.
+        try:
+            from fusion_mlx.telemetry.emit import fire_session_end_hook
+            fire_session_end_hook()
+        except Exception:
+            logger.debug("telemetry session_end hook failed (non-fatal)", exc_info=True)
 
          # Cleanup GUI resources
         if close_database:

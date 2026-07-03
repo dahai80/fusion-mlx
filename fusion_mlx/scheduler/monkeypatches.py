@@ -401,7 +401,10 @@ try:
     if _original_next_generated is not None:
         import inspect
 
-        _ng_src = inspect.getsource(_original_next_generated)
+        try:
+            _ng_src = inspect.getsource(_original_next_generated)
+        except (TypeError, OSError):
+            _ng_src = ""
         # Only patch if the source contains the stream context manager.
         if "mx.stream" in _ng_src:
             def _patched_next_generated(self):

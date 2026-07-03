@@ -17,7 +17,7 @@ GLM-4.6V additionally wraps content in
 ``<|begin_of_box|>...<|end_of_box|>`` container markers; we strip them
 so the user-facing content stays clean.
 
-Adapted from upstream waybarrios/vllm-mlx#295 (``Glm4ReasoningParser``).
+Adapted from upstream waybarrios/rapid-mlx#295 (``Glm4ReasoningParser``).
 Upstream uses a ``_phase`` enum state machine; our base class uses a
 ``_saw_any_tag`` flag (see ``think_parser.py``). The behavioural
 divergence is the same — only the override surface differs.
@@ -57,10 +57,23 @@ class Glm4ReasoningParser(BaseThinkingReasoningParser):
     def extract_reasoning(
         self,
         model_output: str,
+        enable_thinking: bool | None = None,
     ) -> tuple[str | None, str | None]:
         # Strip 4.6V box markers before tag inspection. They're whole
         # special tokens, never embedded inside actual reasoning prose,
         # so a literal replace is safe.
+        #
+        # NB: ``enable_thinking`` is accepted (signature parity with
+        # the base class) but DELIBERATELY NOT forwarded — codex R1
+        # BLOCKING: GLM-4's chat template does NOT prompt-inject
+        # ``<think>`` (this file's module docstring is the canonical
+        # statement of that fact), so a no-tag GLM response is
+        # genuine content, not a truncated thought. Forwarding
+        # ``True`` to ``BaseThinkingReasoningParser`` would trigger
+        # the #575 Case-4 fallback and silently swap legitimate
+        # content into ``reasoning`` — diverging from the streaming
+        # path which already treats no-tag GLM output as content.
+        del enable_thinking  # noqa: F841 — see comment above
         return super().extract_reasoning(self._strip_box(model_output))
 
     def extract_reasoning_streaming(

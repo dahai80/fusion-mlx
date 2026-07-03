@@ -104,7 +104,6 @@ def test_scheduler_handles_response_without_prompt_tokens_attr():
     assert req.num_prompt_tokens == 0
 
 
-@pytest.mark.skip(reason="rapid-mlx-only: fusion_mlx._next() returns empty list")
 def test_next_stamps_prompt_tokens_from_request(monkeypatch):
     gen = MLLMBatchGenerator.__new__(MLLMBatchGenerator)
     gen._stats = MLLMBatchStats()

@@ -301,6 +301,27 @@ def __init__(    self,
             paged_cache_manager=self.paged_cache_manager,
         )
 
+        # Auto-init MemoryMonitor BEFORE _init_tiered_cache so the
+        # SSD manager can use model-derived KV bytes-per-token instead
+        # of its 200 KB default.  Regression guard: PR #1627.
+        try:
+            from fusion_mlx.memory_monitor import MemoryMonitor
+
+            max_kv = getattr(self.config, "max_kv_cache_memory", None) or (
+                4 * 1024**3
+            )
+            self.memory_monitor = MemoryMonitor(
+                max_kv_cache_memory=max_kv,
+            )
+            if self.paged_cache_manager is not None:
+                self.memory_monitor.set_paged_cache_manager(
+                    self.paged_cache_manager
+                )
+            self._set_model_info_for_monitor()
+        except Exception as e:
+            logger.debug("Auto-init MemoryMonitor failed: %s", e)
+            self.memory_monitor = None
+
         # Initialize paged SSD cache
         self._init_tiered_cache()
 

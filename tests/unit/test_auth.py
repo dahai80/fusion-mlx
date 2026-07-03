@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 from unittest.mock import MagicMock
 
 from fastapi import Request as FastAPIRequest
@@ -27,24 +28,14 @@ class TestValidateApiKey:
         assert error == ""
 
     def test_too_short(self):
-        is_valid, error = validate_api_key("Ab1")
+        is_valid, error = validate_api_key("Ab")
         assert is_valid is False
-        assert "8 characters" in error
+        assert "4 characters" in error
 
-    def test_no_uppercase(self):
-        is_valid, error = validate_api_key("abcdefg1")
+    def test_non_ascii(self):
+        is_valid, error = validate_api_key("éééé")
         assert is_valid is False
-        assert "uppercase" in error
-
-    def test_no_lowercase(self):
-        is_valid, error = validate_api_key("ABCDEFG1")
-        assert is_valid is False
-        assert "lowercase" in error
-
-    def test_no_digit(self):
-        is_valid, error = validate_api_key("Abcdefgh")
-        assert is_valid is False
-        assert "digit" in error
+        assert "ASCII" in error
 
 
 class TestVerifyApiKey:
@@ -101,38 +92,27 @@ class _MockRequest(FastAPIRequest):
 
 
 class TestRequireAdmin:
+    import asyncio
+
     def test_allows_valid_session(self):
         set_api_key("Test1234key")
         token = create_session_token()
-
-        @require_admin
-        def protected(request):
-            return "ok"
-
         mock_req = _MockRequest(token=token)
-        assert protected(mock_req) == "ok"
+        result = self.asyncio.run(require_admin(mock_req))
+        assert result is True
 
     def test_allows_valid_api_key(self):
         set_api_key("Test1234key")
-
-        @require_admin
-        def protected(request):
-            return "ok"
-
         mock_req = _MockRequest(auth_header="Bearer Test1234key")
-        assert protected(mock_req) == "ok"
+        result = self.asyncio.run(require_admin(mock_req))
+        assert result is True
 
     def test_rejects_no_auth(self):
         set_api_key("Test1234key")
-
-        @require_admin
-        def protected(request):
-            return "ok"
-
         mock_req = _MockRequest()
         from fastapi import HTTPException
         try:
-            protected(mock_req)
+            self.asyncio.run(require_admin(mock_req))
             assert False, "Should have raised"
         except HTTPException as e:
             assert e.status_code == 401

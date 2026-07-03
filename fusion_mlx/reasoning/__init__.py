@@ -1,13 +1,13 @@
 # SPDX-License-Identifier: Apache-2.0
 """
-Reasoning parser module for vllm-mlx.
+Reasoning parser module for fusion-mlx.
 
 This module provides parsers for extracting reasoning/thinking content from
 model outputs. Supports models like Qwen3, DeepSeek-R1, etc. that use special
 tokens (e.g., <think>...</think>) to separate reasoning from final responses.
 
 Usage:
-    from vllm_mlx.reasoning import get_parser, list_parsers
+    from fusion_mlx.reasoning import get_parser, list_parsers
 
     # Get a parser by name
     parser = get_parser("qwen3")()
@@ -24,7 +24,12 @@ Usage:
             ...
 """
 
-from .base import DeltaMessage, ReasoningParser
+from .base import (
+    DeltaMessage,
+    ReasoningParser,
+    finalize_streaming_compat,
+    finalize_truncation,
+)
 from .think_parser import BaseThinkingReasoningParser
 
 # Parser registry
@@ -75,21 +80,35 @@ def list_parsers() -> list[str]:
 
 def _register_builtin_parsers():
     """Register built-in parsers."""
-    from .deepseek_r1_parser import DeepSeekR1ReasoningParser
+    from .deepseek_r1_parser import (
+        DeepSeekR1ReasoningParser,
+        VibeThinkerReasoningParser,
+    )
     from .gemma4_parser import Gemma4ReasoningParser
     from .glm4_parser import Glm4ReasoningParser
     from .gpt_oss_parser import GptOssReasoningParser
     from .harmony_parser import HarmonyReasoningParser
     from .minimax_parser import MiniMaxReasoningParser
     from .qwen3_parser import Qwen3ReasoningParser
+    from .ui_tars_parser import UiTarsReasoningParser
 
     register_parser("gemma4", Gemma4ReasoningParser)
     register_parser("qwen3", Qwen3ReasoningParser)
     register_parser("deepseek_r1", DeepSeekR1ReasoningParser)
+    # ``vibethinker`` — DeepSeek-R1 variant with a 1024-char no-tag
+    # threshold (vs. 64) to accommodate VibeThinker's preamble-before-
+    # ``<think>`` shape. See ``VibeThinkerReasoningParser`` docstring
+    # for the 2026-06-17 live-test rationale (codex r2 P2).
+    register_parser("vibethinker", VibeThinkerReasoningParser)
     register_parser("glm4", Glm4ReasoningParser)
     register_parser("gpt_oss", GptOssReasoningParser)
     register_parser("harmony", HarmonyReasoningParser)
     register_parser("minimax", MiniMaxReasoningParser)
+    # ``ui_tars`` — UI-TARS Thought:/Reflection: preamble splitter (no
+    # ``<think>`` tags; labels are literal). Auto-wired by the ``ui-tars*``
+    # regex in ``model_auto_config`` and by the alias entries in
+    # ``aliases.json``.
+    register_parser("ui_tars", UiTarsReasoningParser)
 
 
 # Register built-in parsers on module load
@@ -101,8 +120,11 @@ __all__ = [
     "ReasoningParser",
     "DeltaMessage",
     "BaseThinkingReasoningParser",
+    "finalize_streaming_compat",
     # Registry functions
     "register_parser",
     "get_parser",
     "list_parsers",
+    # r5-D shared finalize-on-truncation helper
+    "finalize_truncation",
 ]

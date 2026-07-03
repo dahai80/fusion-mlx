@@ -406,7 +406,7 @@ class VLMBatchedEngine(BaseEngine):
         tools: list[dict] | None,
         kwargs: dict,
     ) -> tuple:
-        text_messages, images = extract_images_from_messages(messages)
+        text_messages, images, _audio = extract_images_from_messages(messages)
         if images:
             text_messages = self._apply_ocr_prompt(messages) if self.is_ocr_model else text_messages
 
@@ -592,7 +592,7 @@ class VLMBatchedEngine(BaseEngine):
     # -- Utilities --
 
     def count_chat_tokens(self, messages: list[dict[str, Any]], tools: list[dict] | None = None) -> int:
-        text_messages, _ = extract_images_from_messages(messages)
+        text_messages, _, _ = extract_images_from_messages(messages)
         prompt = "\n".join(f"{m['role']}: {m['content']}" for m in text_messages) + "\nassistant:"
         return len(self._tokenizer.encode(prompt))
 

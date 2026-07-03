@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 """
-Abstract tool parser base class and manager for vllm-mlx.
+Abstract tool parser base class and manager for fusion-mlx.
 
 Inspired by vLLM's tool parser architecture but simplified for MLX backend.
 """
@@ -83,11 +83,18 @@ class ExtractedToolCallInformation:
 #   deepseek_native       — DeepSeek V3 specific
 #   deepseek_v31_native   — DeepSeek V3.1 / R1-0528 specific
 #   qwen3_coder_xml_named — Qwen3-Coder XML variant with named function tags
+#   function_xml_named    — <function><name>NAME</name><arguments>JSON
+#                           </arguments></function>  VibeThinker auto-emit
+#                           (F-042); distinct from ``function_bare`` which
+#                           uses the inline ``<function=NAME>`` attribute form.
+#   ui_tars_action        — Action: verb(kwargs)  UI-TARS GUI-agent action
+#                           lines, normalized to ``computer`` tool_calls.
 WIRE_FORMAT_LABELS: frozenset[str] = frozenset(
     {
         "tool_call_json",
         "tool_call_xml_body",
         "function_bare",
+        "function_xml_named",
         "raw_json",
         "calling_tool_text",
         "gemma4_native",
@@ -103,6 +110,7 @@ WIRE_FORMAT_LABELS: frozenset[str] = frozenset(
         "deepseek_native",
         "deepseek_v31_native",
         "qwen3_coder_xml_named",
+        "ui_tars_action",
     }
 )
 
@@ -451,7 +459,7 @@ class ToolParserManager:
 
         Args:
             name: Parser name to register
-            module_path: Full module path (e.g., 'vllm_mlx.tool_parsers.mistral')
+            module_path: Full module path (e.g., 'fusion_mlx.tool_parsers.mistral')
             class_name: Class name within the module
         """
         cls.lazy_parsers[name] = (module_path, class_name)

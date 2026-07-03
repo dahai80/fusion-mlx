@@ -1,22 +1,16 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Tests for fusion_mlx.memory_monitor module.
-
-NOTE: fusion-mlx MemoryMonitor has a significantly different API from omlx:
-- No MemoryInfo dataclass
-- No eviction_enabled parameter
-- No get_memory_info(), is_under_pressure(), bytes_to_free()
-- No estimate_block_memory(), estimate_blocks_to_free()
-- No get_stats(), set_baseline_memory(), set_request_stats()
-- No check_interval parameter
-- set_model_info() has different signature (no kv_quant)
-- _predicted_chunk_transient() replaces estimate_chunk_transient_bytes()
-- _estimate_sdpa_activation_bytes() exists (not estimate_sdpa_activation_bytes)
-- SDPA constants are not module-level exports
-"""
+"""Tests for fusion_mlx.memory_monitor module."""
 
 import pytest
 
-from fusion_mlx.memory_monitor import MemoryMonitor
+from fusion_mlx.memory_monitor import (
+    MemoryInfo,
+    MemoryMonitor,
+    _SDPA_FALLBACK_SCORE_DTYPE_SIZE,
+    _SDPA_FULL_SUPPORTED_HEAD_DIMS,
+    _SDPA_VECTOR_QUERY_TOKEN_THRESHOLD,
+    _SDPA_VECTOR_SUPPORTED_HEAD_DIMS,
+)
 
 
 class TestMemoryMonitor:
@@ -33,9 +27,9 @@ class TestMemoryMonitor:
     def test_set_model_info(self):
         monitor = MemoryMonitor()
         monitor.set_model_info(num_layers=32, head_dim=128, num_kv_heads=8)
-        assert monitor._model_num_layers == 32
-        assert monitor._model_head_dim == 128
-        assert monitor._model_num_kv_heads == 8
+        assert monitor._num_layers == 32
+        assert monitor._head_dim == 128
+        assert monitor._num_kv_heads == 8
 
     def test_set_model_info_with_optional(self):
         monitor = MemoryMonitor()
@@ -46,8 +40,8 @@ class TestMemoryMonitor:
             num_query_heads=64,
             dtype_bytes=4,
         )
-        assert monitor._model_num_query_heads == 64
-        assert monitor._model_dtype_bytes == 4
+        assert monitor._num_attention_heads == 64
+        assert monitor._dtype_size == 4
 
     def test_estimate_prefill_peak_bytes(self):
         monitor = MemoryMonitor()
@@ -78,75 +72,128 @@ class TestMemoryMonitor:
         assert result > 0
 
 
-@pytest.mark.skip(reason="omlx-only: MemoryInfo not in fusion-mlx")
 class TestMemoryInfo:
-    """MemoryInfo dataclass does not exist in fusion-mlx."""
+    """MemoryInfo dataclass tests."""
 
     def test_memory_info_creation(self):
-        pass
+        info = MemoryInfo(total_bytes=16 * 1024**3, used_bytes=8 * 1024**3, available_bytes=8 * 1024**3, utilization=0.5)
+        assert info.total_bytes == 16 * 1024**3
+        assert info.used_bytes == 8 * 1024**3
+        assert info.available_bytes == 8 * 1024**3
+        assert info.utilization == 0.5
 
 
-@pytest.mark.skip(reason="omlx-only: eviction_enabled not in fusion-mlx")
 class TestEvictionEnabled:
     def test_eviction_enabled_default(self):
-        pass
+        monitor = MemoryMonitor()
+        assert monitor.eviction_enabled is True
+
+    def test_eviction_enabled_false(self):
+        monitor = MemoryMonitor(eviction_enabled=False)
+        assert monitor.eviction_enabled is False
 
 
-@pytest.mark.skip(reason="omlx-only: get_memory_info not in fusion-mlx")
 class TestGetMemoryInfo:
     def test_get_memory_info(self):
-        pass
+        monitor = MemoryMonitor()
+        info = monitor.get_memory_info()
+        assert isinstance(info, MemoryInfo)
+        assert info.total_bytes >= 0
+        assert info.used_bytes >= 0
+        assert info.available_bytes >= 0
+        assert 0.0 <= info.utilization <= 1.0
 
 
-@pytest.mark.skip(reason="omlx-only: is_under_pressure not in fusion-mlx")
 class TestIsUnderPressure:
     def test_is_under_pressure(self):
-        pass
+        monitor = MemoryMonitor()
+        result = monitor.is_under_pressure()
+        assert isinstance(result, bool)
 
 
-@pytest.mark.skip(reason="omlx-only: bytes_to_free not in fusion-mlx")
 class TestBytesToFree:
     def test_bytes_to_free(self):
-        pass
+        monitor = MemoryMonitor()
+        result = monitor.bytes_to_free()
+        assert isinstance(result, int)
+        assert result >= 0
+
+    def test_bytes_to_free_no_eviction(self):
+        monitor = MemoryMonitor(eviction_enabled=False)
+        assert monitor.bytes_to_free() == 0
 
 
-@pytest.mark.skip(reason="omlx-only: estimate_block_memory not in fusion-mlx")
 class TestEstimateBlockMemory:
     def test_estimate_block_memory(self):
-        pass
+        monitor = MemoryMonitor()
+        monitor.set_model_info(num_layers=32, head_dim=128, num_kv_heads=8)
+        result = monitor.estimate_block_memory(64)
+        assert isinstance(result, (int, float))
+        assert result > 0
 
 
-@pytest.mark.skip(reason="omlx-only: estimate_blocks_to_free not in fusion-mlx")
 class TestEstimateBlocksToFree:
     def test_estimate_blocks_to_free(self):
-        pass
+        monitor = MemoryMonitor()
+        monitor.set_model_info(num_layers=32, head_dim=128, num_kv_heads=8)
+        block_mem = monitor.estimate_block_memory(64)
+        result = monitor.estimate_blocks_to_free(int(block_mem * 3), 64)
+        assert isinstance(result, int)
+        assert result >= 1
+
+    def test_estimate_blocks_to_free_disabled_raises(self):
+        monitor = MemoryMonitor(eviction_enabled=False)
+        with pytest.raises(RuntimeError, match="eviction_enabled=False"):
+            monitor.estimate_blocks_to_free(1024, 64)
 
 
-@pytest.mark.skip(reason="omlx-only: get_stats not in fusion-mlx")
 class TestGetStats:
     def test_get_stats(self):
-        pass
+        monitor = MemoryMonitor()
+        stats = monitor.get_stats()
+        assert isinstance(stats, dict)
+        assert "total_bytes" in stats
+        assert "used_bytes" in stats
+        assert "available_bytes" in stats
+        assert "utilization" in stats
+        assert "max_kv_cache_memory" in stats
+        assert "baseline_memory" in stats
+        assert "has_model_info" in stats
 
 
-@pytest.mark.skip(reason="omlx-only: set_baseline_memory not in fusion-mlx")
 class TestSetBaselineMemory:
     def test_set_baseline_memory(self):
-        pass
+        monitor = MemoryMonitor()
+        monitor.set_baseline_memory()
+        assert isinstance(monitor._baseline_memory, int)
+        assert monitor._baseline_memory >= 0
 
 
-@pytest.mark.skip(reason="omlx-only: set_request_stats not in fusion-mlx")
 class TestSetRequestStats:
     def test_set_request_stats(self):
-        pass
+        monitor = MemoryMonitor()
+        monitor.set_request_stats(running=3, waiting=5)
+        assert monitor._running_requests == 3
+        assert monitor._waiting_requests == 5
 
 
-@pytest.mark.skip(reason="omlx-only: SDPA constants not exported from fusion-mlx")
 class TestSDPAConstants:
     def test_sdpa_constants(self):
-        pass
+        assert _SDPA_VECTOR_QUERY_TOKEN_THRESHOLD == 8
+        assert 64 in _SDPA_FULL_SUPPORTED_HEAD_DIMS
+        assert 80 in _SDPA_FULL_SUPPORTED_HEAD_DIMS
+        assert 128 in _SDPA_FULL_SUPPORTED_HEAD_DIMS
+        assert 64 in _SDPA_VECTOR_SUPPORTED_HEAD_DIMS
+        assert 96 in _SDPA_VECTOR_SUPPORTED_HEAD_DIMS
+        assert 128 in _SDPA_VECTOR_SUPPORTED_HEAD_DIMS
+        assert 256 in _SDPA_VECTOR_SUPPORTED_HEAD_DIMS
+        assert _SDPA_FALLBACK_SCORE_DTYPE_SIZE == 2
 
 
-@pytest.mark.skip(reason="omlx-only: estimate_chunk_transient_bytes not in fusion-mlx")
 class TestEstimateChunkTransientBytes:
     def test_estimate_chunk_transient_bytes(self):
-        pass
+        monitor = MemoryMonitor()
+        monitor.set_model_info(num_layers=32, head_dim=128, num_kv_heads=8)
+        result = monitor.estimate_chunk_transient_bytes(n_tokens=512, kv_len=2000)
+        assert isinstance(result, int)
+        assert result > 0

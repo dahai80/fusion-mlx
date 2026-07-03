@@ -368,6 +368,22 @@ class ProcessMemoryEnforcer:
         )
 
     @property
+    def soft_threshold(self) -> float:
+        return self._soft_threshold
+
+    @property
+    def hard_threshold(self) -> float:
+        return self._hard_threshold
+
+    @property
+    def prefill_safe_zone_ratio(self) -> float:
+        return self._prefill_safe_zone_ratio
+
+    @property
+    def prefill_min_chunk_tokens(self) -> int:
+        return self._prefill_min_chunk_tokens
+
+    @property
     def is_running(self) -> bool:
         """Whether the enforcement loop is active."""
         return self._running
@@ -812,7 +828,9 @@ class ProcessMemoryEnforcer:
         Standard engines wrap scheduler as entry.engine._engine.engine.scheduler.
         DFlash's primary speculative path exposes _prefill_guard instead.
         """
-        eng = entry.engine
+        if entry is None:
+            return None
+        eng = getattr(entry, "engine", None)
         if eng is None:
             return None
         sched = getattr(eng, "scheduler", None)

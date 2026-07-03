@@ -10,6 +10,12 @@ import requests
 import json
 import sys
 import time
+import pytest
+
+pytestmark = pytest.mark.skipif(
+    True,
+    reason="Integration test requiring running server on localhost:8000",
+)
 
 
 BASE_URL = "http://localhost:8000"

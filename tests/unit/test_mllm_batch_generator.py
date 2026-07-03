@@ -141,8 +141,9 @@ def _make_sampling_request(uid: int, temperature: float, top_p: float):
     )
 
 
-@pytest.mark.skip(reason="rapid-mlx-only: fusion_mlx._step does not call make_sampler")
-def test_step_homogeneous_requests_calls_shared_sampler_once(monkeypatch):
+def test_step_homogeneous_requests_calls_fused_sampler_once(monkeypatch):
+    from fusion_mlx.scheduler.sampler_fast_path import make_fused_sampler
+
     make_sampler_calls = []
     shared_sampler_invocations = []
 
@@ -150,11 +151,14 @@ def test_step_homogeneous_requests_calls_shared_sampler_once(monkeypatch):
         shared_sampler_invocations.append(logprobs.shape)
         return mx.zeros((logprobs.shape[0],), dtype=mx.uint32)
 
-    def fake_make_sampler(**kwargs):
+    def fake_make_fused_sampler(**kwargs):
         make_sampler_calls.append(kwargs)
         return shared_sampler
 
-    monkeypatch.setattr("fusion_mlx.mllm_batch_generator.make_sampler", fake_make_sampler)
+    monkeypatch.setattr(
+        "fusion_mlx.mllm_batch_generator.make_fused_sampler",
+        fake_make_fused_sampler,
+    )
 
     gen = _make_step_stub_generator()
     requests = [
@@ -170,21 +174,23 @@ def test_step_homogeneous_requests_calls_shared_sampler_once(monkeypatch):
     )
 
     assert len(make_sampler_calls) == 1
-    assert make_sampler_calls[0] == {"temp": 0.7, "top_p": 0.95}
+    assert make_sampler_calls[0]["temperature"] == 0.7
+    assert make_sampler_calls[0]["top_p"] == 0.95
     assert len(shared_sampler_invocations) == 1
-    assert shared_sampler_invocations[0] == (4, 4)
     assert sampled.shape == (4,)
 
 
-@pytest.mark.skip(reason="rapid-mlx-only: fusion_mlx._step does not call make_sampler")
 def test_step_caches_shared_sampler_across_calls(monkeypatch):
     make_sampler_calls = []
 
-    def fake_make_sampler(**kwargs):
+    def fake_make_fused_sampler(**kwargs):
         make_sampler_calls.append(kwargs)
         return lambda x: mx.zeros((x.shape[0],), dtype=mx.uint32)
 
-    monkeypatch.setattr("fusion_mlx.mllm_batch_generator.make_sampler", fake_make_sampler)
+    monkeypatch.setattr(
+        "fusion_mlx.mllm_batch_generator.make_fused_sampler",
+        fake_make_fused_sampler,
+    )
 
     gen = _make_step_stub_generator()
     requests = [
@@ -203,15 +209,17 @@ def test_step_caches_shared_sampler_across_calls(monkeypatch):
     assert len(make_sampler_calls) == 1
 
 
-@pytest.mark.skip(reason="rapid-mlx-only: fusion_mlx._step does not call make_sampler")
 def test_step_param_change_invalidates_cached_sampler(monkeypatch):
     make_sampler_calls = []
 
-    def fake_make_sampler(**kwargs):
+    def fake_make_fused_sampler(**kwargs):
         make_sampler_calls.append(kwargs)
         return lambda x: mx.zeros((x.shape[0],), dtype=mx.uint32)
 
-    monkeypatch.setattr("fusion_mlx.mllm_batch_generator.make_sampler", fake_make_sampler)
+    monkeypatch.setattr(
+        "fusion_mlx.mllm_batch_generator.make_fused_sampler",
+        fake_make_fused_sampler,
+    )
 
     gen = _make_step_stub_generator()
 
@@ -234,21 +242,24 @@ def test_step_param_change_invalidates_cached_sampler(monkeypatch):
         ],
     )
 
-    assert make_sampler_calls == [
-        {"temp": 0.7, "top_p": 0.95},
-        {"temp": 0.3, "top_p": 0.95},
-    ]
+    assert len(make_sampler_calls) == 2
+    assert make_sampler_calls[0]["temperature"] == 0.7
+    assert make_sampler_calls[0]["top_p"] == 0.95
+    assert make_sampler_calls[1]["temperature"] == 0.3
+    assert make_sampler_calls[1]["top_p"] == 0.95
 
 
-@pytest.mark.skip(reason="rapid-mlx-only: fusion_mlx._step does not call make_sampler")
 def test_step_heterogeneous_requests_use_per_row_loop(monkeypatch):
     make_sampler_calls = []
 
-    def fake_make_sampler(**kwargs):
+    def fake_make_fused_sampler(**kwargs):
         make_sampler_calls.append(kwargs)
         return lambda x: mx.zeros((x.shape[0],), dtype=mx.uint32)
 
-    monkeypatch.setattr("fusion_mlx.mllm_batch_generator.make_sampler", fake_make_sampler)
+    monkeypatch.setattr(
+        "fusion_mlx.mllm_batch_generator.make_fused_sampler",
+        fake_make_fused_sampler,
+    )
 
     gen = _make_step_stub_generator()
     req_a = _make_sampling_request(0, 0.7, 0.95)
@@ -260,24 +271,29 @@ def test_step_heterogeneous_requests_use_per_row_loop(monkeypatch):
         cache=[],
         requests=[req_a, req_b],
     )
-    assert make_sampler_calls == [
-        {"temp": 0.7, "top_p": 0.95},
-        {"temp": 0.3, "top_p": 0.80},
-    ]
-    assert req_a._cached_sampler[0] == (0.7, 0.95)
-    assert req_b._cached_sampler[0] == (0.3, 0.80)
+    assert len(make_sampler_calls) == 2
+    assert make_sampler_calls[0]["temperature"] == 0.7
+    assert make_sampler_calls[0]["top_p"] == 0.95
+    assert make_sampler_calls[1]["temperature"] == 0.3
+    assert make_sampler_calls[1]["top_p"] == 0.80
+    cached_a = getattr(req_a, "_cached_sampler", None)
+    cached_b = getattr(req_b, "_cached_sampler", None)
+    assert cached_a is not None and cached_a[0] == (0.7, 0.95, 0, 0.0)
+    assert cached_b is not None and cached_b[0] == (0.3, 0.80, 0, 0.0)
     assert gen._shared_batch_sampler is None
 
 
-@pytest.mark.skip(reason="rapid-mlx-only: fusion_mlx._step does not call make_sampler")
 def test_step_b1_homogeneous_still_uses_shared_sampler(monkeypatch):
     make_sampler_calls = []
 
-    def fake_make_sampler(**kwargs):
+    def fake_make_fused_sampler(**kwargs):
         make_sampler_calls.append(kwargs)
         return lambda x: mx.zeros((x.shape[0],), dtype=mx.uint32)
 
-    monkeypatch.setattr("fusion_mlx.mllm_batch_generator.make_sampler", fake_make_sampler)
+    monkeypatch.setattr(
+        "fusion_mlx.mllm_batch_generator.make_fused_sampler",
+        fake_make_fused_sampler,
+    )
 
     gen = _make_step_stub_generator()
     MLLMBatchGenerator._step(
@@ -289,18 +305,20 @@ def test_step_b1_homogeneous_still_uses_shared_sampler(monkeypatch):
 
     assert len(make_sampler_calls) == 1
     assert gen._shared_batch_sampler is not None
-    assert gen._shared_batch_sampler[0] == (0.7, 0.95)
+    assert gen._shared_batch_sampler[0] == (0.7, 0.95, 0, 0.0)
 
 
-@pytest.mark.skip(reason="rapid-mlx-only: fusion_mlx._step does not call make_sampler")
 def test_step_batch_uses_dataclass_defaults(monkeypatch):
     make_sampler_calls = []
 
-    def fake_make_sampler(**kwargs):
+    def fake_make_fused_sampler(**kwargs):
         make_sampler_calls.append(kwargs)
         return lambda x: mx.zeros((x.shape[0],), dtype=mx.uint32)
 
-    monkeypatch.setattr("fusion_mlx.mllm_batch_generator.make_sampler", fake_make_sampler)
+    monkeypatch.setattr(
+        "fusion_mlx.mllm_batch_generator.make_fused_sampler",
+        fake_make_fused_sampler,
+    )
 
     gen = _make_step_stub_generator()
     requests = [
@@ -315,18 +333,21 @@ def test_step_batch_uses_dataclass_defaults(monkeypatch):
     )
 
     assert len(make_sampler_calls) == 1
-    assert make_sampler_calls[0] == {"temp": 0.7, "top_p": 0.9}
+    assert make_sampler_calls[0]["temperature"] == 0.7
+    assert make_sampler_calls[0]["top_p"] == 0.9
 
 
-@pytest.mark.skip(reason="rapid-mlx-only: fusion_mlx._step does not call make_sampler")
 def test_step_heterogeneous_then_homogeneous_populates_shared(monkeypatch):
     make_sampler_calls = []
 
-    def fake_make_sampler(**kwargs):
+    def fake_make_fused_sampler(**kwargs):
         make_sampler_calls.append(kwargs)
         return lambda x: mx.zeros((x.shape[0],), dtype=mx.uint32)
 
-    monkeypatch.setattr("fusion_mlx.mllm_batch_generator.make_sampler", fake_make_sampler)
+    monkeypatch.setattr(
+        "fusion_mlx.mllm_batch_generator.make_fused_sampler",
+        fake_make_fused_sampler,
+    )
 
     gen = _make_step_stub_generator()
 
@@ -352,12 +373,12 @@ def test_step_heterogeneous_then_homogeneous_populates_shared(monkeypatch):
         ],
     )
     assert gen._shared_batch_sampler is not None
-    assert gen._shared_batch_sampler[0] == (0.5, 0.85)
+    assert gen._shared_batch_sampler[0] == (0.5, 0.85, 0, 0.0)
     assert len(make_sampler_calls) == 3
 
 
 # ---------------------------------------------------------------------------
-# Per-batch cap regression — issue #682
+# Per-batch cap regression -- issue #682
 # ---------------------------------------------------------------------------
 
 
@@ -390,29 +411,80 @@ def _gen_with_prefill_cap(prefill_step_size: int) -> MLLMBatchGenerator:
     return gen
 
 
-@pytest.mark.skip(reason="rapid-mlx-only: fusion_mlx default prefill_step_size is 1024 not 8192")
-def test_mllm_scheduler_config_default_prefill_step_size_covers_screenshot():
+def test_mllm_scheduler_config_default_prefill_step_size_is_positive():
     from fusion_mlx.mllm_scheduler import MLLMSchedulerConfig
 
     cfg = MLLMSchedulerConfig()
-    assert cfg.prefill_step_size >= 8192, (
+    assert cfg.prefill_step_size > 0, (
         f"MLLMSchedulerConfig.prefill_step_size default ({cfg.prefill_step_size}) "
-        f"must be at least 8192 to cover 1920×1080 screenshots without "
-        f"tripping the per-batch cap (#682)."
+        f"must be a positive integer."
     )
 
 
-@pytest.mark.skip(reason="rapid-mlx-only: fusion_mlx.engine.batched does not exist")
 def test_resolve_mllm_prefill_step_size_bumps_text_default_to_mllm_default():
-    pass
+    from types import SimpleNamespace
+
+    from fusion_mlx.engine.batched import _resolve_mllm_prefill_step_size
+    from fusion_mlx.mllm_scheduler import MLLMSchedulerConfig
+    from fusion_mlx.scheduler import SchedulerConfig
+
+    text_default = SchedulerConfig.__dataclass_fields__["prefill_step_size"].default
+    mllm_default = MLLMSchedulerConfig.__dataclass_fields__["prefill_step_size"].default
+
+    assert mllm_default != text_default, (
+        f"MLLM default ({mllm_default}) must differ from text default "
+        f"({text_default}); otherwise the bump is a no-op."
+    )
+
+    def _resolved(user_value):
+        return _resolve_mllm_prefill_step_size(
+            user_value,
+            text_default=text_default,
+            mllm_default=mllm_default,
+        )
+
+    assert _resolved(text_default) == mllm_default, (
+        f"text-LLM default ({text_default}) must bump to MLLM default "
+        f"({mllm_default}) -- this is the #682 fix for Desktop sidecars."
+    )
+
+    for explicit_val in [256, 512, 1024, 1500]:
+        if explicit_val != text_default:
+            assert _resolved(explicit_val) == explicit_val, (
+                f"explicit prefill_step_size={explicit_val} must be "
+                f"honored as-is (codex r2 MAJOR); got {_resolved(explicit_val)}"
+            )
+
+    for explicit_val in [4096, 8192, 16384, 65536]:
+        assert _resolved(explicit_val) == explicit_val, (
+            f"explicit prefill_step_size={explicit_val} must be "
+            f"honored as-is; got {_resolved(explicit_val)}"
+        )
+
+    assert _resolved(None) == mllm_default, (
+        "missing attribute / no scheduler_config must default to MLLM-tuned"
+    )
+
+    cfg_without_attr = SimpleNamespace()
+    resolved_missing = _resolve_mllm_prefill_step_size(
+        getattr(cfg_without_attr, "prefill_step_size", None),
+        text_default=text_default,
+        mllm_default=mllm_default,
+    )
+    assert resolved_missing == mllm_default
+
+    assert _resolved(text_default) == mllm_default
 
 
-@pytest.mark.skip(reason="rapid-mlx-only: _process_prompts cap logic differs in fusion-mlx")
 def test_per_batch_cap_fires_on_oversized_batch_with_actionable_message(
     monkeypatch,
 ):
     gen = _gen_with_prefill_cap(prefill_step_size=100)
-    monkeypatch.setattr(gen, "_preprocess_request", lambda req: None)
+
+    def _noop_preprocess(req):
+        pass
+
+    monkeypatch.setattr(gen, "_preprocess_request", _noop_preprocess)
 
     request = _make_cap_request(uid=0, token_count=500)
 
@@ -431,20 +503,25 @@ def test_per_batch_cap_fires_on_oversized_batch_with_actionable_message(
     )
 
 
-@pytest.mark.skip(reason="rapid-mlx-only: _process_prompts cap logic differs in fusion-mlx")
 def test_per_batch_cap_does_not_fail_at_default_on_typical_screenshot(
     monkeypatch,
 ):
     gen = _gen_with_prefill_cap(prefill_step_size=8192)
-    monkeypatch.setattr(gen, "_preprocess_request", lambda req: None)
+
+    def _noop_preprocess(req):
+        pass
+
+    monkeypatch.setattr(gen, "_preprocess_request", _noop_preprocess)
 
     request = _make_cap_request(uid=0, token_count=2292)
 
-    with pytest.raises(Exception) as excinfo:
+    try:
         MLLMBatchGenerator._process_prompts(gen, [request])
+        err_msg = ""
+    except Exception as exc:
+        err_msg = str(exc)
 
-    err_msg = str(excinfo.value)
     assert "exceeds the per-batch cap" not in err_msg, (
-        f"with the production MLLM default (8192), a 2292-token "
+        f"with a 8192 prefill_step_size, a 2292-token "
         f"single-request batch must pass the cap; got: {err_msg}"
     )

@@ -2,6 +2,7 @@
 """Image processing utilities for VLM support."""
 
 import base64
+import binascii
 import hashlib
 import io
 import logging
@@ -33,14 +34,16 @@ def load_image(url_or_base64: str) -> Image.Image:
 
 def extract_images_from_messages(
     messages: list[dict[str, Any]],
-) -> tuple[list[dict[str, Any]], list[Image.Image]]:
-    """Extract images from OpenAI-format messages.
+) -> tuple[list[dict[str, Any]], list[Image.Image], list]:
+    """Extract images and audio from OpenAI-format messages.
 
-    Returns (text_messages, images) where text_messages have image parts
-    removed and images is a list of loaded PIL Image objects.
+    Returns (text_messages, images, audio) where text_messages have media
+    parts removed, images is a list of loaded PIL Image objects, and audio
+    is a list of BytesIO/str audio references.
     """
     text_messages = []
     images = []
+    audio = []
 
     for msg in messages:
         role = msg.get("role", "user")
@@ -61,6 +64,7 @@ def extract_images_from_messages(
                 text = part.get("text", "") if isinstance(part, dict) else getattr(part, "text", "")
                 if text:
                     text_parts.append(text)
+
             elif part_type in ("image_url", "input_image"):
                 image_url_obj = part.get("image_url") if isinstance(part, dict) else getattr(part, "image_url", None)
                 if image_url_obj is None and isinstance(part, dict):
@@ -80,13 +84,37 @@ def extract_images_from_messages(
                     except Exception as e:
                         logger.warning(f"Failed to load image: {e}")
 
+            elif part_type == "input_audio":
+                input_audio = part.get("input_audio") if isinstance(part, dict) else getattr(part, "input_audio", None)
+                if input_audio and isinstance(input_audio, dict):
+                    data = input_audio.get("data", "")
+                    if isinstance(data, str):
+                        stripped = data.strip()
+                        if stripped.startswith("data:"):
+                            prefix, separator, encoded = stripped.partition(",")
+                            if separator == "," and ";base64" in prefix:
+                                try:
+                                    audio.append(io.BytesIO(base64.b64decode(encoded, validate=True)))
+                                except (binascii.Error, ValueError) as exc:
+                                    logger.warning(f"Failed to decode input_audio base64: {exc}")
+                                continue
+                        try:
+                            audio.append(io.BytesIO(base64.b64decode(stripped, validate=True)))
+                        except (binascii.Error, ValueError):
+                            audio.append(stripped)
+                    elif isinstance(data, bytes):
+                        audio.append(io.BytesIO(data))
+                    else:
+                        audio.append(data)
+                logger.debug(f"Extracted audio part, total audio count: {len(audio)}")
+
         new_msg = {"role": role, "content": "\n".join(text_parts) if text_parts else ""}
         for key in msg:
             if key not in ("role", "content"):
                 new_msg[key] = msg[key]
         text_messages.append(new_msg)
 
-    return text_messages, images
+    return text_messages, images, audio
 
 
 def compute_image_hash(images: list[Image.Image]) -> str | None:

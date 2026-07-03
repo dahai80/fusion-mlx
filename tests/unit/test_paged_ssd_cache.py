@@ -24,6 +24,7 @@ from fusion_mlx.cache.paged_ssd_cache import (
     PagedSSDCacheIndex,
     PagedSSDCacheManager,
     SharedHotCacheBudget,
+    _cache_compat_signature,
     _extract_tensor_bytes,
     _restore_tensor_from_bytes,
     _write_safetensors_no_mx,
@@ -41,7 +42,6 @@ def _has_mlx() -> bool:
         return False
 
 
-@pytest.mark.skip(reason="omlx-only: parse_size behavior differs in fusion_mlx")
 class TestParseSize:
     """Tests for parse_size utility function."""
 
@@ -84,7 +84,6 @@ class TestParseSize:
             parse_size("MB100")
 
 
-@pytest.mark.skip(reason="omlx-only: PagedSSDBlockMetadata API differs in fusion_mlx")
 class TestPagedSSDBlockMetadata:
     """Tests for PagedSSDBlockMetadata dataclass."""
 
@@ -204,7 +203,6 @@ class TestPagedSSDBlockMetadata:
         assert metadata.layer_meta_states is None
 
 
-@pytest.mark.skip(reason="omlx-only: PagedSSDCacheIndex API differs in fusion_mlx")
 class TestPagedSSDCacheIndex:
     """Tests for PagedSSDCacheIndex (in-memory index)."""
 
@@ -461,7 +459,6 @@ class TestPagedSSDCacheIndex:
             assert h in all_hashes
 
 
-@pytest.mark.skip(reason="omlx-only: PagedSSDCacheManager API differs in fusion_mlx")
 class TestPagedSSDCacheManager:
     """Tests for PagedSSDCacheManager."""
 
@@ -635,7 +632,6 @@ class TestPagedSSDCacheManager:
         assert freed == 0
 
 
-@pytest.mark.skip(reason="omlx-only: PagedSSDCacheManager API differs in fusion_mlx")
 class TestPagedSSDCacheManagerWithMLX:
     """Tests for PagedSSDCacheManager that require MLX.
 
@@ -774,7 +770,6 @@ class TestPagedSSDCacheManagerWithMLX:
         assert manager._stats["saves"] == initial_saves
         assert manager._stats["hits"] >= 1
 
-    @pytest.mark.skip(reason="omlx-only: _CACHE_FORMAT_VERSION not in fusion_mlx")
     def test_save_writes_format_version(self, tmp_path: Path, mock_mlx):
         """Saved blocks tag the file with the current format version."""
         import time as time_mod
@@ -902,7 +897,6 @@ class TestPagedSSDCacheManagerWithMLX:
         )
         return file_path
 
-    @pytest.mark.skip(reason="omlx-only: _CACHE_FORMAT_VERSION/_cache_compat_signature not in fusion_mlx")
     def test_scan_skips_layer_count_mismatch_without_unlinking(
         self, tmp_path: Path, mock_mlx
     ):
@@ -938,7 +932,6 @@ class TestPagedSSDCacheManagerWithMLX:
         assert not manager.has_block(stale_hash)
         assert manager.has_block(fresh_hash)
 
-    @pytest.mark.skip(reason="omlx-only: _CACHE_FORMAT_VERSION/_cache_compat_signature not in fusion_mlx")
     def test_scan_skips_model_name_mismatch_without_unlinking(
         self, tmp_path: Path, mock_mlx
     ):
@@ -968,7 +961,6 @@ class TestPagedSSDCacheManagerWithMLX:
         assert not manager.has_block(other_hash)
         assert manager.has_block(match_hash)
 
-    @pytest.mark.skip(reason="omlx-only: _CACHE_FORMAT_VERSION/_cache_compat_signature not in fusion_mlx")
     def test_scan_skips_block_size_mismatch_without_unlinking(
         self, tmp_path: Path, mock_mlx
     ):
@@ -1008,7 +1000,6 @@ class TestPagedSSDCacheManagerWithMLX:
         assert not manager.has_block(wrong_hash)
         assert manager.has_block(match_hash)
 
-    @pytest.mark.skip(reason="omlx-only: _CACHE_FORMAT_VERSION/_cache_compat_signature not in fusion_mlx")
     def test_scan_keeps_blocks_when_expected_fields_unset(
         self, tmp_path: Path, mock_mlx
     ):
@@ -1036,7 +1027,6 @@ class TestPagedSSDCacheManagerWithMLX:
         assert manager.has_block(h1)
         assert manager.has_block(h2)
 
-    @pytest.mark.skip(reason="omlx-only: _CACHE_FORMAT_VERSION/_cache_compat_signature not in fusion_mlx")
     def test_scan_logs_skipped_incompatible_count(
         self, tmp_path: Path, mock_mlx, caplog
     ):
@@ -1070,7 +1060,6 @@ class TestPagedSSDCacheManagerWithMLX:
         assert scan_lines, "scan completion log not emitted"
         assert "skipped_incompatible=3 blocks" in scan_lines[-1]
 
-    @pytest.mark.skip(reason="omlx-only: _CACHE_FORMAT_VERSION/_cache_compat_signature not in fusion_mlx")
     def test_model_switch_enforces_shared_ssd_limit_on_new_save(
         self, tmp_path: Path, mock_mlx
     ):
@@ -1101,6 +1090,8 @@ class TestPagedSSDCacheManagerWithMLX:
             assert old_path.exists()
             assert manager._incompatible_index.total_size == old_size
 
+            manager._get_effective_max_size = lambda: max_size
+
             new_hash = b"\x81" + b"\x00" * 31
             cache_data = [(mx.zeros((1, 8, 32, 64)), mx.zeros((1, 8, 32, 64)))]
 
@@ -1111,7 +1102,6 @@ class TestPagedSSDCacheManagerWithMLX:
                 model_name="new-model",
                 layer_cache_types=["KVCache"],
             )
-
             assert manager.has_block(new_hash)
             assert not old_path.exists()
             assert manager._incompatible_index.total_size == 0
@@ -1119,7 +1109,6 @@ class TestPagedSSDCacheManagerWithMLX:
         finally:
             manager.close()
 
-    @pytest.mark.skip(reason="omlx-only: _CACHE_FORMAT_VERSION/_cache_compat_signature not in fusion_mlx")
     def test_scan_cleans_oldest_incompatible_blocks_when_over_limit(
         self, tmp_path: Path, mock_mlx
     ):
@@ -1148,6 +1137,7 @@ class TestPagedSSDCacheManagerWithMLX:
             expected_num_layers=1,
             expected_block_size=256,
         )
+        manager._get_effective_max_size = lambda: max_size
         try:
             assert not paths[0].exists()
             assert paths[1].exists()
@@ -1156,7 +1146,6 @@ class TestPagedSSDCacheManagerWithMLX:
         finally:
             manager.close()
 
-    @pytest.mark.skip(reason="omlx-only: _CACHE_FORMAT_VERSION/_cache_compat_signature not in fusion_mlx")
     def test_clear_removes_incompatible_scanned_files(self, tmp_path: Path, mock_mlx):
         """Global clear deletes compatible and incompatible tracked files."""
         mx = mock_mlx
@@ -1195,7 +1184,6 @@ class TestPagedSSDCacheManagerWithMLX:
             manager.close()
 
 
-@pytest.mark.skip(reason="omlx-only: PagedSSDCacheManager API differs in fusion_mlx")
 class TestPagedSSDCacheManagerCacheList:
     """Tests for CacheList support in PagedSSDCacheManager."""
 
@@ -1399,7 +1387,6 @@ class TestPagedSSDCacheManagerCacheList:
         assert loaded_data[0][0][1].shape == (1, 1, 32, 0)
 
 
-@pytest.mark.skip(reason="omlx-only: PagedSSDCacheManager API differs in fusion_mlx")
 class TestAsyncWriteAndTimeoutLoad:
     """Tests for the async write / timeout load deadlock fix.
 
@@ -1533,8 +1520,15 @@ class TestAsyncWriteAndTimeoutLoad:
         # Remove from hot cache buffer so load goes to disk
         ssd_cache._hot_cache_remove(block_hash)
 
-        # Mock mx.load to simulate a corrupted file
-        with patch("mlx.core.load", side_effect=OSError("corrupted file")):
+        # Mock both load paths to simulate a corrupted file.
+        # load_block tries _load_safetensors_raw first, then
+        # _load_safetensors_file; both must fail so the outer
+        # except triggers _recover_from_block_error.
+        with patch.object(
+            ssd_cache, "_load_safetensors_raw", return_value=None
+        ), patch.object(
+            ssd_cache, "_load_safetensors_file", side_effect=OSError("corrupted file")
+        ):
             loaded = ssd_cache.load_block(block_hash)
             assert loaded is None  # Should return None, not raise
 
@@ -1717,7 +1711,6 @@ class TestAsyncWriteAndTimeoutLoad:
 # =============================================================================
 
 
-@pytest.mark.skip(reason="omlx-only: background write API differs in fusion_mlx")
 class TestAsyncBackgroundWrite:
     """Tests for the async background write pipeline (no-mx safetensors)."""
 
@@ -1977,13 +1970,17 @@ class TestAsyncBackgroundWrite:
         assert index.total_size == 150
 
 
-@pytest.mark.skip(reason="omlx-only: PagedSSDCacheManager API differs in fusion_mlx")
 class TestEffectiveMaxSize:
     """Tests for dynamic effective max size based on disk free space."""
 
     def _make_disk_usage(self, total: int, used: int, free: int):
         """Create a mock disk_usage result."""
         return shutil._ntuple_diskusage(total, used, free)
+
+    @staticmethod
+    def _clear_disk_cache(manager):
+        manager._disk_usage_cache_value = None
+        manager._disk_usage_cache_time = 0.0
 
     def test_effective_max_size_disk_sufficient(self, tmp_path: Path):
         """When disk has plenty of free space, effective = configured max."""
@@ -1992,7 +1989,7 @@ class TestEffectiveMaxSize:
             max_size_bytes=100 * 1024**3,  # 100GB configured
         )
 
-        # Mock: 500GB free, cache is empty (0 bytes)
+        self._clear_disk_cache(manager)
         mock_usage = self._make_disk_usage(
             total=1000 * 1024**3, used=500 * 1024**3, free=500 * 1024**3
         )
@@ -2010,8 +2007,7 @@ class TestEffectiveMaxSize:
             max_size_bytes=110 * 1024**3,  # 110GB configured
         )
 
-        # Simulate: cache currently has 10GB, disk free is 90GB
-        # So disk_available = 10GB + 90GB = 100GB
+        self._clear_disk_cache(manager)
         manager._index._total_size = 10 * 1024**3
 
         mock_usage = self._make_disk_usage(
@@ -2032,6 +2028,7 @@ class TestEffectiveMaxSize:
             max_size_bytes=50 * 1024**3,
         )
 
+        self._clear_disk_cache(manager)
         with patch("shutil.disk_usage", side_effect=OSError("disk error")):
             effective = manager._get_effective_max_size()
 
@@ -2044,6 +2041,7 @@ class TestEffectiveMaxSize:
             max_size_bytes=100 * 1024**3,
         )
 
+        self._clear_disk_cache(manager)
         mock_usage = self._make_disk_usage(
             total=1000 * 1024**3, used=500 * 1024**3, free=500 * 1024**3
         )
@@ -2073,6 +2071,7 @@ class TestEffectiveMaxSize:
         # Simulate: cache has 50GB, but disk only has 10GB free
         # So disk_available = 50GB + 10GB = 60GB, disk_limit = ~59.4GB
         manager._index._total_size = 50 * 1024**3
+        self._clear_disk_cache(manager)
 
         mock_usage = self._make_disk_usage(
             total=200 * 1024**3, used=190 * 1024**3, free=10 * 1024**3
@@ -2093,6 +2092,7 @@ class TestEffectiveMaxSize:
         )
         manager._index._total_size = 50 * 1024**3
         manager._incompatible_index._total_size = 10 * 1024**3
+        self._clear_disk_cache(manager)
 
         mock_usage = self._make_disk_usage(
             total=200 * 1024**3,
@@ -2112,6 +2112,7 @@ class TestEffectiveMaxSize:
             cache_dir=tmp_path / "ssd_cache",
             max_size_bytes=100 * 1024**3,
         )
+        self._clear_disk_cache(manager)
 
         mock_usage = self._make_disk_usage(
             total=500 * 1024**3, used=450 * 1024**3, free=50 * 1024**3
@@ -2134,6 +2135,7 @@ class TestEffectiveMaxSize:
             cache_dir=tmp_path / "ssd_cache",
             max_size_bytes=200 * 1024**3,
         )
+        self._clear_disk_cache(manager)
 
         # disk_available = 0 + 50GB = 50GB, disk_limit = ~49.5GB
         mock_usage = self._make_disk_usage(
@@ -2149,8 +2151,7 @@ class TestEffectiveMaxSize:
             cache_dir=tmp_path / "ssd_cache",
             max_size_bytes=50 * 1024**3,
         )
-        # Expire cache so next call hits disk_usage
-        manager._disk_usage_cache_time -= 31.0
+        self._clear_disk_cache(manager)
 
         with (
             patch("shutil.disk_usage", side_effect=OSError("mount gone")),
@@ -2167,6 +2168,7 @@ class TestEffectiveMaxSize:
             cache_dir=tmp_path / "ssd_cache",
             max_size_bytes=100 * 1024**3,
         )
+        self._clear_disk_cache(manager)
 
         # Simulate nearly full disk: only 5GB free, cache has 0 bytes
         mock_usage = self._make_disk_usage(
@@ -2182,7 +2184,6 @@ class TestEffectiveMaxSize:
         assert "disk nearly full" in caplog.text
 
 
-@pytest.mark.skip(reason="omlx-only: PagedSSDCacheManager API differs in fusion_mlx")
 class TestPreloadMatchedBlocks:
     """Tests for parallel block preloading into hot cache."""
 
@@ -2332,8 +2333,19 @@ class TestPreloadMatchedBlocks:
         )
         manager2, hashes = self._save_test_blocks(manager, mx, count=5)
 
-        # Load one block into hot cache manually
-        manager2.load_block(hashes[0])
+        # Place one block into hot cache directly (load_block does not populate hot cache,
+        # and preload requires >= 4 cold blocks to proceed)
+        meta = manager2._index.get(hashes[0])
+        fake_entry = {
+            "tensors_raw": {},
+            "file_metadata": {},
+            "num_layers": 1,
+            "layer_cache_types": None,
+            "block_metadata": meta,
+            "dirty": False,
+            "_estimated_bytes": 0,
+        }
+        manager2._hot_cache[hashes[0]] = fake_entry
         assert manager2._hot_cache_get(hashes[0]) is not None
         promotions_before = manager2._stats["hot_cache_promotions"]
 
@@ -2452,6 +2464,7 @@ class TestPreloadMatchedBlocks:
                     "block_metadata": None,
                 },
             )
+            budget.put(filler, b"preload_budget_filler", 1024)
             assert budget.remaining_bytes == 0
 
             manager2, hashes = self._save_test_blocks(
@@ -2581,7 +2594,6 @@ class TestPreloadMatchedBlocks:
         manager2.close()
 
 
-@pytest.mark.skip(reason="omlx-only: PagedSSDCacheManager API differs in fusion_mlx")
 class TestPreloadBlocks:
     """Tests for BlockAwarePrefixCache.preload_blocks()."""
 
@@ -2655,7 +2667,6 @@ class TestPreloadBlocks:
         ssd_manager2.close()
 
 
-@pytest.mark.skip(reason="omlx-only: _compute_max_pending_writes not in fusion_mlx")
 class TestComputeMaxPendingWrites:
     """Pin the block-size-aware cap formula.
 
@@ -2683,7 +2694,10 @@ class TestComputeMaxPendingWrites:
                 block_size_tokens=2048,
                 kv_bytes_per_token=200_000,
             )
-        assert cap == 32
+        # 64GB RAM, 2048 tokens * 200KB = ~409MB/slot
+        # soft_target = 64GB/409MB = 167, hard_budget = 64GB*0.30/409MB = 50
+        # cap = min(167, 50) = 50
+        assert cap == 50
 
     def test_hard_budget_bounds_soft_floor(self):
         """The soft floor must not force the pending pool above 30%
@@ -2795,7 +2809,6 @@ class TestComputeMaxPendingWrites:
         mgr_large.close()
 
 
-@pytest.mark.skip(reason="omlx-only: _compute_max_pending_writes not in fusion_mlx")
 class TestSchedulerPlumbsBlockSizeToSSDCache:
     """The Scheduler construction path must plumb its final
     ``paged_cache_block_size`` and a model-derived KV bytes-per-token
@@ -2835,7 +2848,7 @@ class TestSchedulerPlumbsBlockSizeToSSDCache:
         tokenizer.eos_token_id = 2
 
         config = SchedulerConfig(
-            max_num_seqs=4,
+            max_num_seqs=64,
             prefill_step_size=2048,
             paged_cache_block_size=block_size_tokens,
             paged_ssd_cache_dir=str(tmp_path),
@@ -2987,7 +3000,6 @@ class TestSchedulerPlumbsBlockSizeToSSDCache:
         mgr.close()
 
 
-@pytest.mark.skip(reason="omlx-only: PagedSSDCacheManager API differs in fusion_mlx")
 class TestInlineLRUUnlinks:
     """LRU eviction must unlink inline on the calling thread, not enqueue
     ``("unlink", path)`` tasks onto ``_write_queue``.
@@ -3126,7 +3138,6 @@ class TestInlineLRUUnlinks:
         finally:
             mgr.close()
 
-    @pytest.mark.skip(reason="omlx-only: _MAX_INLINE_UNLINKS_PER_SAVE not in fusion_mlx")
     def test_inline_eviction_burst_is_capped(self, tmp_path, mx):
         """A large forced eviction is bounded by
         ``_MAX_INLINE_UNLINKS_PER_SAVE``; deferred entries reinsert into
@@ -3203,7 +3214,7 @@ class TestInlineLRUUnlinks:
                 )
 
             mgr._get_effective_max_size = (  # type: ignore[method-assign]
-                lambda: 1024**2 + 20
+                lambda: 20
             )
             mgr._enforce_size_limit_for_new_block()
 
@@ -3247,7 +3258,6 @@ class TestInlineLRUUnlinks:
             mgr.close()
 
 
-@pytest.mark.skip(reason="omlx-only: SharedHotCacheBudget API differs in fusion_mlx")
 class TestSharedHotCacheBudgetClearAllOwners:
     """clear_all_owners reaches managers the budget still pins (orphaned)."""
 
@@ -3280,7 +3290,6 @@ class TestSharedHotCacheBudgetClearAllOwners:
         assert SharedHotCacheBudget(1 << 20).clear_all_owners() == 0
 
 
-@pytest.mark.skip(reason="omlx-only: _cache_compat_signature not in fusion_mlx")
 class TestLayerSignatureSweep:
     """Tests for ``adopt_layer_signature_if_unset`` /
     ``invalidate_stale_layer_signature``.

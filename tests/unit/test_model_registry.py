@@ -180,9 +180,14 @@ class TestCacheRecovery:
 
 
 class TestModelRegistryEdgeCases:
-    @pytest.mark.skip(reason="Cannot create weak reference to NoneType")
     def test_acquire_with_none_engine(self):
-        pass
+        registry = get_registry()
+        model = object()
+        result = registry.acquire(model=model, engine=None, engine_id="none-engine")
+        assert result is True
+        owned, owner_id = registry.is_owned(model)
+        assert owned is True
+        assert owner_id == "none-engine"
 
     def test_get_stats_empty(self):
         registry = get_registry()

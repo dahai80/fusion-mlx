@@ -121,9 +121,13 @@ class TestHardLimitCalculation:
 
     def test_hard_limit_above_ceiling(self):
         enforcer = _make_enforcer()
-        ceiling = enforcer.get_final_ceiling()
         hard_limit = enforcer._get_hard_limit_bytes()
-        assert hard_limit >= ceiling
+        ceiling = enforcer.get_final_ceiling()
+        # Both derive from the same dynamic system query; allow tiny
+        # drift (< 10 MB) from memory state changing between calls.
+        assert hard_limit >= ceiling - 10 * 1024**2, (
+            f"hard_limit {hard_limit:,} too far below ceiling {ceiling:,}"
+        )
 
 
 class TestAbortLimitCalculation:
@@ -155,13 +159,17 @@ class TestCheckTTL:
 
 
 class TestCurrentUsageBytes:
-    @pytest.mark.skip(reason="Mock comparison issue with MagicMock")
     def test_current_usage_returns_int(self):
-        pass
+        enforcer = _make_enforcer()
+        with patch.object(enforcer, "_has_active_requests", return_value=False):
+            usage = enforcer._current_usage_bytes()
+        assert isinstance(usage, int)
 
-    @pytest.mark.skip(reason="Mock comparison issue with MagicMock")
     def test_current_usage_reasonable_value(self):
-        pass
+        enforcer = _make_enforcer()
+        with patch.object(enforcer, "_has_active_requests", return_value=False):
+            usage = enforcer._current_usage_bytes()
+        assert usage >= 0
 
 
 class TestGetPressureLevel:
@@ -218,26 +226,63 @@ class TestIsRunning:
         enforcer = _make_enforcer()
         assert enforcer.is_running is False
 
-    @pytest.mark.skip(reason="start() calls _apply_metal_wired_limit which fails in tests")
-    def test_running_after_start(self):
-        pass
+    @pytest.mark.asyncio
+    async def test_running_after_start(self):
+        enforcer = _make_enforcer()
+        with patch(
+            "fusion_mlx.pool.memory_enforcer._apply_metal_wired_limit",
+            return_value=(0, None),
+        ):
+            enforcer.start()
+        try:
+            assert enforcer.is_running is True
+        finally:
+            await enforcer.stop()
 
 
 class TestStartStop:
-    @pytest.mark.skip(reason="start() calls _apply_metal_wired_limit which fails in tests")
-    def test_start(self):
-        pass
+    @pytest.mark.asyncio
+    async def test_start(self):
+        enforcer = _make_enforcer()
+        with patch(
+            "fusion_mlx.pool.memory_enforcer._apply_metal_wired_limit",
+            return_value=(0, None),
+        ):
+            enforcer.start()
+        try:
+            assert enforcer.is_running is True
+            assert enforcer._task is not None
+        finally:
+            await enforcer.stop()
 
-    @pytest.mark.skip(reason="start() calls _apply_metal_wired_limit which fails in tests")
     @pytest.mark.asyncio
     async def test_stop(self):
-        pass
+        enforcer = _make_enforcer()
+        with patch(
+            "fusion_mlx.pool.memory_enforcer._apply_metal_wired_limit",
+            return_value=(0, None),
+        ):
+            enforcer.start()
+        await enforcer.stop()
+        assert enforcer.is_running is False
+        assert enforcer._task is None
 
 
 class TestWake:
-    @pytest.mark.skip(reason="start() calls _apply_metal_wired_limit which fails in tests")
-    def test_wake_when_running(self):
-        pass
+    @pytest.mark.asyncio
+    async def test_wake_when_running(self):
+        enforcer = _make_enforcer()
+        with patch(
+            "fusion_mlx.pool.memory_enforcer._apply_metal_wired_limit",
+            return_value=(0, None),
+        ):
+            enforcer.start()
+        try:
+            await asyncio.sleep(0.05)
+            enforcer.wake()
+            assert enforcer.is_running is True
+        finally:
+            await enforcer.stop()
 
     def test_wake_when_not_running(self):
         enforcer = _make_enforcer()
@@ -312,25 +357,25 @@ class TestCustomCeiling:
 
 
 class TestThresholds:
-    @pytest.mark.skip(reason="soft_threshold is not a public attribute")
     def test_soft_threshold_default(self):
-        pass
+        enforcer = _make_enforcer()
+        assert enforcer.soft_threshold == 0.90
 
-    @pytest.mark.skip(reason="hard_threshold is not a public attribute")
     def test_hard_threshold_default(self):
-        pass
+        enforcer = _make_enforcer()
+        assert enforcer.hard_threshold == 0.95
 
 
 class TestPrefillSafeZone:
-    @pytest.mark.skip(reason="prefill_safe_zone_ratio is not a public attribute")
     def test_prefill_safe_zone_ratio_default(self):
-        pass
+        enforcer = _make_enforcer()
+        assert enforcer.prefill_safe_zone_ratio == 0.89
 
 
 class TestPrefillMinChunkTokens:
-    @pytest.mark.skip(reason="prefill_min_chunk_tokens is not a public attribute")
     def test_prefill_min_chunk_tokens_default(self):
-        pass
+        enforcer = _make_enforcer()
+        assert enforcer.prefill_min_chunk_tokens == 256
 
 
 class TestHotCacheMethods:
@@ -442,9 +487,9 @@ class TestFindLRUBusyNonPinnedVictim:
 
 
 class TestResolveScheduler:
-    @pytest.mark.skip(reason="_resolve_scheduler does not accept None")
     def test_resolve_scheduler_none(self):
-        pass
+        result = ProcessMemoryEnforcer._resolve_scheduler(None)
+        assert result is None
 
     def test_resolve_scheduler_with_entry(self):
         enforcer = _make_enforcer()

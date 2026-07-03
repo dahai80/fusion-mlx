@@ -231,7 +231,6 @@ class TestApplyWindowPadding:
         assert result == 4
 
 
-@pytest.mark.skip(reason="omlx-only: API differs in fusion_mlx")
 class TestExtractBlockTensorSliceLastBlock:
     """Tests for _extract_block_tensor_slice with is_last_block parameter."""
 
@@ -368,7 +367,6 @@ class TestExtractBlockTensorSliceLastBlock:
         assert block3[1][0].shape == (1, 8, 256, 64)  # Full state
 
 
-@pytest.mark.skip(reason="omlx-only: API differs in fusion_mlx")
 class TestValidateBlockCacheDataPlaceholder:
     """Tests for _validate_block_cache_data with RotatingKVCache placeholders."""
 
@@ -620,7 +618,6 @@ class TestFetchCachePrefixMatching:
         assert remaining == extended_tokens[256:]
 
 
-@pytest.mark.skip(reason="omlx-only: API differs in fusion_mlx")
 class TestCreateEmptyRotatingCache:
     """Tests for _create_empty_rotating_cache method."""
 
@@ -740,7 +737,6 @@ class TestCreateEmptyRotatingCache:
         assert cache.size() == 64
 
 
-@pytest.mark.skip(reason="omlx-only: API differs in fusion_mlx")
 class TestPrefillReadyMergeBehavior:
     """Tests for correct merge behavior with _PrefillReadyRotatingKVCache.
 
@@ -817,7 +813,6 @@ class TestPrefillReadyMergeBehavior:
             BatchRotatingKVCache.merge([old_cache])
 
 
-@pytest.mark.skip(reason="omlx-only: API differs in fusion_mlx")
 class TestFindKVShapeRef:
     """Tests for _find_kv_shape_ref helper."""
 
@@ -859,7 +854,6 @@ class TestFindKVShapeRef:
         assert prefix_cache._find_kv_shape_ref([], None) is None
 
 
-@pytest.mark.skip(reason="omlx-only: API differs in fusion_mlx")
 class TestReconstructCachePartialRestore:
     """Tests for reconstruct_cache with partial restore (placeholder handling)."""
 
