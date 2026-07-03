@@ -30,6 +30,107 @@ from .openai_models import FunctionCall, ResponseFormat, ToolCall
 logger = logging.getLogger(__name__)
 
 
+def _decode_json_like(value: Any) -> Any:
+    if not isinstance(value, str):
+        return value
+    current: Any = value.strip()
+    for _ in range(3):
+        if not isinstance(current, str):
+            return current
+        stripped = current.strip()
+        if not stripped or stripped[0] not in '[{"':
+            return current
+        try:
+            parsed = json.loads(stripped)
+        except (json.JSONDecodeError, TypeError, ValueError):
+            return current
+        if parsed == current:
+            return parsed
+        current = parsed
+    return current
+
+
+def _get_tool_param_config(
+    tool_name: str | None, request: dict[str, Any] | None
+) -> dict[str, Any]:
+    if not tool_name or not isinstance(request, dict):
+        return {}
+    tools = request.get("tools")
+    if not isinstance(tools, list):
+        return {}
+    for tool in tools:
+        if not isinstance(tool, dict):
+            continue
+        function = tool.get("function")
+        if not isinstance(function, dict) or function.get("name") != tool_name:
+            continue
+        parameters = function.get("parameters")
+        if not isinstance(parameters, dict):
+            return {}
+        properties = parameters.get("properties")
+        if isinstance(properties, dict):
+            return properties
+        return parameters
+    return {}
+
+
+def _schema_type(schema: Any) -> str | None:
+    if isinstance(schema, str):
+        return schema.strip().lower()
+    if not isinstance(schema, dict):
+        return None
+    schema_type = schema.get("type")
+    if isinstance(schema_type, list):
+        schema_type = next((item for item in schema_type if item != "null"), None)
+    if isinstance(schema_type, str):
+        return schema_type.strip().lower()
+    for key in ("anyOf", "oneOf", "allOf"):
+        options = schema.get(key)
+        if isinstance(options, list):
+            for option in options:
+                option_type = _schema_type(option)
+                if option_type and option_type != "null":
+                    return option_type
+    if "items" in schema:
+        return "array"
+    if "properties" in schema or "additionalProperties" in schema:
+        return "object"
+    if "enum" in schema:
+        return "string"
+    return None
+
+
+def _coerce_schema_value(value: Any, schema: Any) -> Any:
+    value = _decode_json_like(value)
+    schema_type = _schema_type(schema)
+    if schema_type is None:
+        return value
+    if value is None:
+        return None
+    if schema_type in ("string", "str", "text", "varchar", "char", "enum"):
+        if isinstance(value, str):
+            return value
+        return json.dumps(value, ensure_ascii=False)
+    if schema_type in ("array", "object"):
+        return value
+    if not isinstance(value, str):
+        return value
+    stripped = value.strip()
+    try:
+        if schema_type in ("integer", "int"):
+            return int(stripped)
+        if schema_type in ("number", "float"):
+            return float(stripped)
+    except (TypeError, ValueError):
+        return value
+    if schema_type in ("boolean", "bool"):
+        if stripped.lower() == "true":
+            return True
+        if stripped.lower() == "false":
+            return False
+    return value
+
+
 def _tool_parser_result_to_dict(p: Any) -> dict:
     """Normalize tool parser output to a dict with 'name' and 'arguments'.
 

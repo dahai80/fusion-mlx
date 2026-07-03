@@ -120,7 +120,6 @@ def test_mllm_batch_generator_init_does_not_call_new_stream(monkeypatch):
         MLLMBatchGenerator._stream = None
 
 
-@pytest.mark.skip(reason="rapid-mlx-only: fusion_mlx._next() returns empty list")
 def test_mllm_next_evals_outgoing_logprobs_before_response(monkeypatch):
     import mlx.core as mx
 

@@ -156,7 +156,6 @@ def test_v4_all_blocks_stored_with_snapshots(mx):
     assert mock_ssd.save_block.call_count == num_blocks
 
 
-@pytest.mark.skip(reason="omlx-only: prefix_cache store_cache API differs in fusion_mlx")
 def test_continuity_check_still_blocks_when_no_snapshot(mx):
     """Same V4-shape cache without snapshots → continuity check still fires.
 
@@ -186,7 +185,6 @@ def test_continuity_check_still_blocks_when_no_snapshot(mx):
     ), f"expected continuity break after 1 block, got {len(result.block_ids)}"
 
 
-@pytest.mark.skip(reason="omlx-only: prefix_cache store_cache API differs in fusion_mlx")
 def test_kvcache_only_unaffected(mx):
     """Llama-style cache (full sliceable KVCache) — step 1 finds full
     seq_len; bypass path never engages; behavior unchanged.
@@ -209,7 +207,6 @@ def test_kvcache_only_unaffected(mx):
     assert len(result.block_ids) == num_blocks
 
 
-@pytest.mark.skip(reason="omlx-only: prefix_cache store_cache API differs in fusion_mlx")
 def test_hybrid_kvcache_rotating_unaffected(mx):
     """Gemma3-style hybrid (KVCache + RotatingKVCache) — step 1 still
     picks up the full-attention KVCache layer's seq_len; rotating

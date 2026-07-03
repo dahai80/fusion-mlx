@@ -142,6 +142,7 @@ class EngineCore:
         self._engine_id = engine_id or str(uuid.uuid4())
         self._owns_model = False
         self._closed = False
+        self._idle_event = None
 
         registry = get_registry()
         registry.acquire(model=model, engine=self, engine_id=self._engine_id, force=force_model_ownership)
@@ -862,6 +863,8 @@ class EngineCore:
                         "compile cache clear timed out after "
                         f"{FATAL_TEARDOWN_TIMEOUT_S}s"
                     )
+                except RuntimeError:
+                    pass
             else:
                 _immortal_mlx_executors.append(self._mlx_executor)
                 if self._mlx_stream is not None:

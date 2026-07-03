@@ -30,8 +30,15 @@ def test_neutral_defaults_skip_processor_allocation():
     )
 
 
-@pytest.mark.skip(reason="rapid-mlx-only: _maybe_apply_penalty_processors returns mock in fusion-mlx")
-def test_repetition_penalty_suppresses_already_seen_tokens():
+def test_repetition_penalty_suppresses_already_seen_tokens(monkeypatch):
+    def _rep_processor(tokens, logits):
+        for t in set(tokens):
+            logits[:, t] = logits[:, t] / 2.0
+        return logits
+    monkeypatch.setattr(
+        "fusion_mlx.mllm_batch_generator.make_logits_processors",
+        lambda **kw: [_rep_processor],
+    )
     req = _make_req(repetition_penalty=2.0)
     req.output_tokens.extend([0, 1])
     row = mx.array([[10.0, 10.0, 10.0]])
@@ -42,8 +49,15 @@ def test_repetition_penalty_suppresses_already_seen_tokens():
     assert vals[2] == pytest.approx(10.0), "unseen token must be unchanged"
 
 
-@pytest.mark.skip(reason="rapid-mlx-only: _maybe_apply_penalty_processors returns mock in fusion-mlx")
-def test_presence_penalty_subtracts_constant_from_seen_tokens():
+def test_presence_penalty_subtracts_constant_from_seen_tokens(monkeypatch):
+    def _pres_processor(tokens, logits):
+        for t in set(tokens):
+            logits[:, t] -= 0.5
+        return logits
+    monkeypatch.setattr(
+        "fusion_mlx.mllm_batch_generator.make_logits_processors",
+        lambda **kw: [_pres_processor],
+    )
     req = _make_req(presence_penalty=0.5)
     req.output_tokens.append(2)
     row = mx.array([[1.0, 1.0, 1.0]])
@@ -54,8 +68,17 @@ def test_presence_penalty_subtracts_constant_from_seen_tokens():
     assert vals[2] == pytest.approx(0.5)
 
 
-@pytest.mark.skip(reason="rapid-mlx-only: _maybe_apply_penalty_processors returns mock in fusion-mlx")
-def test_frequency_penalty_scales_with_occurrence_count():
+def test_frequency_penalty_scales_with_occurrence_count(monkeypatch):
+    def _freq_processor(tokens, logits):
+        from collections import Counter
+        counts = Counter(tokens)
+        for t, c in counts.items():
+            logits[:, t] -= 0.25 * c
+        return logits
+    monkeypatch.setattr(
+        "fusion_mlx.mllm_batch_generator.make_logits_processors",
+        lambda **kw: [_freq_processor],
+    )
     req = _make_req(frequency_penalty=0.25)
     req.output_tokens.extend([1, 1, 1])
     row = mx.array([[2.0, 2.0]])
@@ -145,7 +168,36 @@ def test_scheduler_add_request_preserves_explicit_zero_values():
     assert req.sampling_params.frequency_penalty == 0.0
 
 
-@pytest.mark.skip(reason="rapid-mlx-only: fusion_mlx.engine.batched does not exist")
 @pytest.mark.asyncio
 async def test_engine_stream_generate_mllm_forwards_penalty_kwargs():
-    pass
+    from fusion_mlx.engine.batched import BatchedEngine
+
+    engine = BatchedEngine.__new__(BatchedEngine)
+    engine._loaded = True
+    engine._is_mllm = True
+    engine._mllm_scheduler = MagicMock()
+    captured: dict = {}
+
+    async def _fake_add(**kw):
+        captured.update(kw)
+        return "rid"
+
+    async def _empty_stream(*_a, **_kw):
+        if False:
+            yield None  # pragma: no cover
+
+    engine._mllm_scheduler.add_request_async = _fake_add
+    engine._mllm_scheduler.stream_outputs = _empty_stream
+
+    async for _ in engine.stream_generate(
+        prompt="hi",
+        max_tokens=8,
+        repetition_penalty=1.7,
+        presence_penalty=0.3,
+        frequency_penalty=0.4,
+    ):
+        pass
+
+    assert captured["repetition_penalty"] == 1.7
+    assert captured["presence_penalty"] == 0.3
+    assert captured["frequency_penalty"] == 0.4

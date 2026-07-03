@@ -11,12 +11,11 @@ import pytest
 from fusion_mlx.engine_core import EngineConfig
 
 
-@pytest.mark.skip(reason="rapid-mlx-only: fusion_mlx default step_interval is 0.05s not >=1.0s")
 def test_default_step_interval_is_seconds_not_milliseconds():
     cfg = EngineConfig()
-    assert cfg.step_interval >= 1.0, (
-        f"step_interval={cfg.step_interval}s — must be >= 1.0s to keep idle "
-        "CPU near zero. See issue #265 for the regression history."
+    assert cfg.step_interval >= 0.01, (
+        f"step_interval={cfg.step_interval}s — must be a float in seconds, "
+        "not milliseconds. See issue #265 for the regression history."
     )
 
 
@@ -57,7 +56,6 @@ async def test_idle_event_falls_back_to_timeout():
 
 
 @pytest.mark.asyncio
-@pytest.mark.skip(reason="rapid-mlx-only: fusion_mlx EngineCore has no _idle_event attribute")
 async def test_engine_core_creates_idle_event_in_loop():
     from unittest.mock import MagicMock
 

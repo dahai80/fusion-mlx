@@ -44,9 +44,16 @@ from .paged_cache import (
 
 # Paged SSD cache implementations
 from .paged_ssd_cache import (
+    _CACHE_FORMAT_VERSION,
+    _MAX_INLINE_UNLINKS_PER_SAVE,
+    _cache_compat_signature,
+    _canonicalize_layer_cache_types,
+    _compute_max_pending_writes,
     PagedSSDBlockMetadata,
     PagedSSDCacheIndex,
     PagedSSDCacheManager,
+    PagedSSDCacheStats as SSDCacheStatsData,
+    SharedHotCacheBudget,
     parse_size,
 )
 
@@ -74,6 +81,8 @@ from .type_handlers import (
     CacheTypeHandler,
     DefaultCacheHandler,
     KVCacheHandler,
+    MiniMaxM3BatchKVCacheHandler,
+    MiniMaxM3KVCacheHandler,
     RotatingKVCacheHandler,
     SizedArraysCache,
 )
@@ -115,6 +124,12 @@ __all__ = [
     "PagedSSDBlockMetadata",
     "PagedSSDCacheIndex",
     "parse_size",
+    "_CACHE_FORMAT_VERSION",
+    "_MAX_INLINE_UNLINKS_PER_SAVE",
+    "_cache_compat_signature",
+    "_canonicalize_layer_cache_types",
+    "_compute_max_pending_writes",
+    "SharedHotCacheBudget",
     # Vision feature cache
     "VisionFeatureSSDCache",
     "VisionFeatureSSDEntry",
@@ -139,6 +154,8 @@ __all__ = [
     "CacheListHandler",
     "DefaultCacheHandler",
     "SizedArraysCache",
+    "MiniMaxM3KVCacheHandler",
+    "MiniMaxM3BatchKVCacheHandler",
     # Type registry
     "CacheTypeRegistry",
     # Hybrid cache config

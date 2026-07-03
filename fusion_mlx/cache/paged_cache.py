@@ -567,12 +567,13 @@ class PagedCacheManager(CacheManager):
             free_blocks=initial_count - 1,
         )
 
-        # Thread safety — sharded locks to reduce contention under high
-        # completion_batch_size.  Lock order (when multiple needed):
-        # _block_table_lock > _hash_map_lock > _free_queue_lock
-        self._block_table_lock = threading.Lock()
-        self._hash_map_lock = threading.Lock()
-        self._free_queue_lock = threading.Lock()
+        # Thread safety — RLock allows reentrant acquisition from the same
+        # thread (e.g. delete_block_table holds all 3 locks then calls
+        # free_block which also acquires them).  Lock order (when multiple
+        # needed): _block_table_lock > _hash_map_lock > _free_queue_lock
+        self._block_table_lock = threading.RLock()
+        self._hash_map_lock = threading.RLock()
+        self._free_queue_lock = threading.RLock()
 
         # paged SSD cache manager for storage (set via set_paged_ssd_cache_manager)
         self._paged_ssd_cache_manager: Any | None = None
@@ -733,11 +734,11 @@ class PagedCacheManager(CacheManager):
         if block.block_hash is None:
             return False
 
-        evicted = self.cached_block_hash_to_block.pop(
-            block.block_hash, block.block_id
+        evicted_id = self.cached_block_hash_to_block.pop(
+            block.block_hash, None
         )
 
-        if evicted:
+        if evicted_id is not None:
             block.reset_hash()
             self.stats.evictions += 1
             return True
@@ -765,7 +766,9 @@ class PagedCacheManager(CacheManager):
             if block.ref_count <= 0:
                 # Remove from hash cache
                 if block.block_hash is not None:
-                    self.cached_block_hash_to_block.pop(block.block_hash, block.block_id)
+                    self.cached_block_hash_to_block.pop(
+                        block.block_hash, block.block_id
+                    )
 
                 # Remove from allocated
                 del self.allocated_blocks[block_id]
@@ -1309,7 +1312,8 @@ class PagedCacheManager(CacheManager):
                 curr = curr.next_free_block
                 continue
             if curr.block_hash is not None:
-                self.cached_block_hash_to_block.pop(curr.block_hash, curr.block_id)
+                self.cached_block_hash_to_block.pop(curr.block_hash, None)
+            self.stats.total_tokens_cached -= curr.token_count
             curr.reset_hash()
             curr.token_count = 0
             if curr.block_id in self.allocated_blocks:

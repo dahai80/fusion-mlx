@@ -706,7 +706,7 @@ class BoundarySnapshotSSDStore:
                         if not hasattr(elem, "shape"):
                             info[f"sub_{j}_missing_{k}"] = "1"
                             continue
-                        if _has_zero_dim(elem):
+                        if _has_zero_dim(elem.shape):
                             arrays[f"layer_{i}_sub_{j}_state_{k}"] = mx.zeros((1,))
                             info[f"sub_{j}_zero_dim_{k}"] = _encode_shape(elem.shape)
                         else:
@@ -725,7 +725,7 @@ class BoundarySnapshotSSDStore:
                             # _deserialize can restore the gap.
                             info[f"missing_{k}"] = "1"
                             continue
-                        if _has_zero_dim(elem):
+                        if _has_zero_dim(elem.shape):
                             arrays[f"layer_{i}_state_{k}"] = mx.zeros((1,))
                             info[f"zero_dim_{k}"] = _encode_shape(elem.shape)
                         else:

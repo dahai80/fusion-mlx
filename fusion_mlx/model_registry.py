@@ -43,7 +43,10 @@ class ModelRegistry:
                         raise ModelOwnershipError(
                             f"Model already owned by engine {owner_id}"
                         )
-            self._owners[model_id] = (weakref.ref(engine), engine_id)
+            if engine is not None:
+                self._owners[model_id] = (weakref.ref(engine), engine_id)
+            else:
+                self._owners[model_id] = (None, engine_id)
             return True
 
     def release(self, model: Any, engine_id: str) -> bool:
@@ -61,7 +64,7 @@ class ModelRegistry:
         with self._registry_lock:
             if model_id in self._owners:
                 weak_ref, owner_id = self._owners[model_id]
-                if weak_ref() is not None:
+                if weak_ref is None or weak_ref() is not None:
                     return (True, owner_id)
                 else:
                     del self._owners[model_id]
@@ -77,7 +80,7 @@ class ModelRegistry:
     def cleanup(self) -> int:
         cleaned = 0
         with self._registry_lock:
-            stale = [k for k, (r, _) in self._owners.items() if r() is None]
+            stale = [k for k, (r, _) in self._owners.items() if r is not None and r() is None]
             for k in stale:
                 del self._owners[k]
                 cleaned += 1
@@ -85,7 +88,7 @@ class ModelRegistry:
 
     def get_stats(self) -> dict[str, Any]:
         with self._registry_lock:
-            active = sum(1 for _, (r, _) in self._owners.items() if r() is not None)
+            active = sum(1 for _, (r, _) in self._owners.items() if r is None or r() is not None)
             return {"total_entries": len(self._owners), "active_owners": active}
 
 

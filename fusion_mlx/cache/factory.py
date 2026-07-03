@@ -120,6 +120,7 @@ class CacheFactory:
         return PagedSSDCacheManager(
             cache_dir=cache_dir,
             max_cache_size=config.max_paged_ssd_cache_size,
+            expected_block_size_tokens=config.block_size,
         )
 
     @staticmethod

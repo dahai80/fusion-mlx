@@ -4,6 +4,9 @@ generator."""
 
 from __future__ import annotations
 
+import sys
+from unittest.mock import MagicMock
+
 import pytest
 
 from fusion_mlx.mllm_batch_generator import MLLMBatchGenerator, MLLMBatchRequest
@@ -49,16 +52,19 @@ def _bypass_process_image(monkeypatch):
 
 
 def _install_prepare_inputs_stub(monkeypatch, raiser):
-    import mlx_vlm.utils as mlx_vlm_utils
-
     from fusion_mlx import mllm_batch_generator as gen_mod
 
-    monkeypatch.setattr(mlx_vlm_utils, "prepare_inputs", raiser)
+    # Ensure mlx_vlm.utils is in sys.modules (conftest mocks mlx_vlm but
+    # not the submodule). The source does ``from mlx_vlm.utils import
+    # prepare_inputs`` which fails if the submodule isn't registered.
+    if "mlx_vlm.utils" not in sys.modules:
+        sys.modules["mlx_vlm.utils"] = MagicMock()
+
+    monkeypatch.setattr(sys.modules["mlx_vlm.utils"], "prepare_inputs", raiser)
     if hasattr(gen_mod, "prepare_inputs"):
         monkeypatch.setattr(gen_mod, "prepare_inputs", raiser)
 
 
-@pytest.mark.skip(reason="rapid-mlx-only: mlx_vlm.utils module not available in fusion-mlx")
 def test_preprocess_wraps_pil_oserror_as_failed_to_process_image(monkeypatch):
     _bypass_process_image(monkeypatch)
 
@@ -76,7 +82,6 @@ def test_preprocess_wraps_pil_oserror_as_failed_to_process_image(monkeypatch):
     assert "broken data stream" in str(exc_info.value)
 
 
-@pytest.mark.skip(reason="rapid-mlx-only: mlx_vlm.utils module not available in fusion-mlx")
 def test_preprocess_wraps_pil_unidentified_image_as_failed_to_process_image(
     monkeypatch,
 ):
@@ -98,7 +103,6 @@ def test_preprocess_wraps_pil_unidentified_image_as_failed_to_process_image(
     assert "cannot identify image file" in str(exc_info.value)
 
 
-@pytest.mark.skip(reason="rapid-mlx-only: mlx_vlm.utils module not available in fusion-mlx")
 def test_preprocess_normalizes_failed_to_load_image_to_failed_to_process_image(
     monkeypatch,
 ):
@@ -123,7 +127,6 @@ def test_preprocess_normalizes_failed_to_load_image_to_failed_to_process_image(
     assert "cannot identify image file" in msg
 
 
-@pytest.mark.skip(reason="rapid-mlx-only: mlx_vlm.utils module not available in fusion-mlx")
 def test_preprocess_preserves_canonical_message_unchanged(monkeypatch):
     _bypass_process_image(monkeypatch)
 
@@ -143,7 +146,6 @@ def test_preprocess_preserves_canonical_message_unchanged(monkeypatch):
     )
 
 
-@pytest.mark.skip(reason="rapid-mlx-only: mlx_vlm.utils module not available in fusion-mlx")
 def test_preprocess_propagates_internal_bugs_unchanged(monkeypatch):
     _bypass_process_image(monkeypatch)
 
@@ -162,7 +164,6 @@ def test_preprocess_propagates_internal_bugs_unchanged(monkeypatch):
     assert exc_info.value is sentinel
 
 
-@pytest.mark.skip(reason="rapid-mlx-only: mlx_vlm.utils module not available in fusion-mlx")
 def test_preprocess_propagates_typeerror_unchanged(monkeypatch):
     _bypass_process_image(monkeypatch)
 

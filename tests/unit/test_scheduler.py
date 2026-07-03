@@ -609,7 +609,7 @@ class TestFormatBytes:
 
     def test_units(self):
         from fusion_mlx.scheduler.sched_misc import _format_bytes
-        assert "B" in _format_bytes(0)
-        assert "KB" in _format_bytes(1500)
-        assert "MB" in _format_bytes(1500000)
-        assert "GB" in _format_bytes(1500000000)
+        assert "B" in _format_bytes(None, 0)
+        assert "KB" in _format_bytes(None, 1500)
+        assert "MB" in _format_bytes(None, 1500000)
+        assert "GB" in _format_bytes(None, 1500000000)

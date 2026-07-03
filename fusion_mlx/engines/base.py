@@ -35,6 +35,13 @@ class GenerationOutput:
     tool_calls: list[dict[str, Any]] | None = None
     cached_tokens: int = 0
     kv_state: dict[str, Any] | None = None
+    prompt_tps: float = 0.0
+    generation_tps: float = 0.0
+    diffusion_canvas_tokens: int = 0
+    diffusion_denoising_steps: int = 0
+    diffusion_work_tokens: int = 0
+    diffusion_canvas_tps: float = 0.0
+    diffusion_work_tps: float = 0.0
 
 
 
@@ -61,6 +68,18 @@ def _fallback_parse_tool_calls(gen: GenerationOutput, tokenizer: Any, tools: lis
     except Exception as e:
         logger.debug(f"_fallback_parse_tool_calls failed: {e}")
     return gen
+
+_warn_scheduler_logged = set()
+
+def _warn_scheduler_unreachable_once(engine, context: str) -> None:
+    key = (engine.model_name, context)
+    if key not in _warn_scheduler_logged:
+        _warn_scheduler_logged.add(key)
+        logger.warning(
+            "Scheduler unreachable in %s for %s; skipping preflight check",
+            context,
+            engine.model_name,
+        )
 
 class BaseEngine(ABC):
     @property

@@ -19,6 +19,15 @@ from typing import Any
 
 import mlx.core as mx
 
+from ..cache.paged_ssd_cache import PagedSSDCacheManager
+
+try:
+    from ..cache.boundary_snapshot_store import BoundarySnapshotSSDStore
+    HAS_TIERED_CACHE = True
+except ImportError:
+    BoundarySnapshotSSDStore = None
+    HAS_TIERED_CACHE = False
+
 # Module-level alias so Scheduler.__init__ can fall back to mlx-lm's default
 # stream when no per-engine stream is provided.
 
@@ -147,8 +156,8 @@ def _set_model_info_for_monitor(self) -> None:
                 num_layers=num_layers,
                 num_kv_heads=num_kv_heads,
                 head_dim=head_dim,
-                dtype_size=dtype_size,
-                num_attention_heads=num_attention_heads,
+                dtype_bytes=dtype_size,
+                num_query_heads=num_attention_heads,
                 num_kv_cache_layers=num_kv_cache_layers,
             )
             logger.debug(
@@ -206,6 +215,11 @@ def _init_tiered_cache(self) -> None:
             else 0
         )
 
+        expected_block_size_tokens = self.config.paged_cache_block_size
+        expected_kv_bytes_per_token = 200_000  # default
+        if self.memory_monitor is not None and self.memory_monitor.has_model_info():
+            expected_kv_bytes_per_token = self.memory_monitor.estimate_block_memory(1)
+
         # Initialize paged SSD cache manager for SSD storage
         self.paged_ssd_cache_manager = PagedSSDCacheManager(
             cache_dir=cache_dir,
@@ -214,6 +228,8 @@ def _init_tiered_cache(self) -> None:
             hot_cache_only=self.config.hot_cache_only,
             expected_model_name=self.config.model_name or "",
             expected_num_layers=expected_num_layers,
+            expected_block_size_tokens=expected_block_size_tokens,
+            expected_kv_bytes_per_token=expected_kv_bytes_per_token,
         )
 
         # Connect paged SSD cache manager to PagedCacheManager
@@ -490,9 +506,7 @@ def get_ssd_cache_stats(self) -> dict[str, Any] | None:
 # Alias for backwards compatibility
 get_tiered_cache_stats = get_ssd_cache_stats
 
-@staticmethod
-def _format_bytes(bytes_value: int) -> str:
-    """Format bytes as human-readable string."""
+def _format_bytes(self, bytes_value: int) -> str:
     if bytes_value >= 1024**3:
         return f"{bytes_value / 1024**3:.2f} GB"
     elif bytes_value >= 1024**2:
