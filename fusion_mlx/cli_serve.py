@@ -1048,6 +1048,53 @@ def serve_command(args):
             )
             sys.exit(1)
 
+    # DSpark — DeepSeek DeepSpec lossless block spec-decode. The generator is
+    # self-contained (loads its own target + converted MLX draft, taps the
+    # target's own hidden states — no mlx-vlm hook, no BatchedEngine), so this
+    # is an EARLY fork that returns before _ensure_model_downloaded / pflash /
+    # parser detection, exactly like the audio-mode fork below. Single-user
+    # serial (1-worker pool) — same concurrency contract as DFlash.
+    _wants_dspark = getattr(args, "enable_dspark", False) or (
+        getattr(args, "spec_decode", "none") == "dspark"
+    )
+    if _wants_dspark:
+        from .speculative.dspark.eligibility import have_runtime as _dspark_have_runtime
+
+        if not _dspark_have_runtime():
+            print(
+                "\n  Error: --enable-dspark (and --spec-decode dspark) requires "
+                "dspark-metal (DeepSeek DeepSpec MLX port). Install with "
+                "`pip install -e /path/to/dspark-metal` or `uv add dspark-metal`.\n"
+            )
+            sys.exit(1)
+
+        _dspark_drafter = getattr(args, "dspark_drafter_path", "")
+        if not _dspark_drafter:
+            print(
+                "\n  Error: --enable-dspark requires --dspark-drafter-path "
+                "<path-to-converted-mlx-draft>. Convert one with:\n"
+                "    dspark-metal-convert deepseek-ai/dspark_qwen3_8b_block7 "
+                "--target mlx-community/Qwen3-8B-bf16\n"
+            )
+            sys.exit(1)
+
+        from .speculative.dspark.server import run_dspark_server
+
+        if not hasattr(args, "_original_alias") or args._original_alias is None:
+            args._original_alias = args.model
+        run_dspark_server(
+            target_model_repo=args.model,
+            drafter_path=_dspark_drafter,
+            draft_quant_bits=getattr(args, "dspark_draft_quant_bits", 8),
+            host=args.host,
+            port=args.port,
+            served_model_name=args._original_alias or args.model,
+            default_max_tokens=effective_max_tokens,
+            uvicorn_log_level=getattr(args, "log_level", "info"),
+            enable_thinking=False,
+        )
+        return
+
     # R10-C1: AUDIO-SERVE-MODE FORK. The boot guard above only checks
     # that the ``[audio]`` extra is installed — it doesn't route the
     # alias anywhere. Pre-R10 every short alias (``kokoro``, ``whisper``,

@@ -581,7 +581,7 @@ Examples:
     serve_parser.add_argument(
         "--spec-decode",
         dest="spec_decode",
-        choices=["none", "mtp", "dflash"],
+        choices=["none", "mtp", "dflash", "dspark"],
         default="none",
         help=(
             "R15-P1 model-side speculative decode. "
@@ -610,6 +610,40 @@ Examples:
             "the drafter for the loaded alias. Only consulted when "
             "--spec-decode dflash is set; ignored otherwise."
         ),
+    )
+    # DSpark — DeepSeek DeepSpec lossless block speculative decoder.
+    # Self-contained DSparkGenerator loads its own target + converted MLX
+    # draft (drafter taps the target's own hidden states) and runs a
+    # propose→verify loop with distribution-preserving rejection sampling
+    # (lossless). Draft checkpoints: deepseek-ai/dspark_qwen3_{4b,8b,14b}
+    # _block7; targets must be Qwen3 4B/8B/14B bf16. Early-forks the serve
+    # path into a dedicated single-user-serial DSpark server (like audio
+    # mode). PoC target: ~1.7x on Qwen3-8B-bf16 + q8 draft.
+    serve_parser.add_argument(
+        "--enable-dspark",
+        action="store_true",
+        default=False,
+        help="Enable DSpark speculative decoding (DeepSeek DeepSpec lossless "
+        "block spec-decode, single-user serial mode). Requires a Qwen3 "
+        "bf16 target (4B/8B/14B) and a converted MLX draft — pass "
+        "--dspark-drafter-path. Convert a draft with "
+        "``dspark-metal-convert deepseek-ai/dspark_qwen3_8b_block7 "
+        "--target mlx-community/Qwen3-8B-bf16``.",
+    )
+    serve_parser.add_argument(
+        "--dspark-drafter-path",
+        dest="dspark_drafter_path",
+        default="",
+        help="Path to the converted MLX DSpark draft directory (produced by "
+        "dspark-metal-convert). Required when --enable-dspark is set.",
+    )
+    serve_parser.add_argument(
+        "--dspark-draft-quant-bits",
+        dest="dspark_draft_quant_bits",
+        type=int,
+        default=8,
+        help="Quantization bits for the DSpark draft model (default 8). "
+        "Lower bits speed the drafter forward at some acceptance cost.",
     )
     # SuffixDecoding — drafter-free spec-decode using a suffix tree over
     # generated tokens. Big wins on agent/tool/JSON workloads (3-5x);
