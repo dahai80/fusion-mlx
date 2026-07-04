@@ -40,6 +40,7 @@ class AliasProfile:
     supports_spec_decode: bool = True
     supports_mllm: bool = False
     is_audio: bool = False
+    supports_dspark: bool = False
 
 
 def _load_aliases() -> dict[str, str]:
@@ -79,6 +80,7 @@ def list_profiles() -> list[AliasProfile]:
                 is_hybrid=hf_path.get("is_hybrid", False),
                 supports_spec_decode=hf_path.get("supports_spec_decode", True),
                 supports_mllm=hf_path.get("supports_mllm", False),
+                supports_dspark=hf_path.get("supports_dspark", False),
             ))
     return profiles
 
