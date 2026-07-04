@@ -24,7 +24,7 @@ Ollama / vLLM 的直接替代 —— 基于 MLX 原生运行在 Metal 上
 | | fusion-mlx | omlx | Ollama |
 |---|---|---|---|
 | Continuous batching | ✅ | ✅ | ❌ |
-| 2× 并发吞吐量 | ✅ 36 vs 17.9 tok/s | 基准线 | — |
+| 2-bit 量化配方 | ✅ 最高 +167% 速度 | — | — |
 | TurboQuant KV (4-bit) | ✅ | ✅ (高级配置) | ❌ |
 | Speculative decoding | ✅ 4 种方法 | ❌ | ❌ |
 | OpenAI + Anthropic API | ✅ 双协议 | ✅ 双协议 | ✅ 双协议 |
@@ -240,19 +240,30 @@ fusion-mlx launch copilot
 
 ## 性能
 
-Apple M5 Max (128 GB RAM) 基准测试：
+Apple M5 Max (128 GB RAM, 40 GPU 核心)，MLX 0.32.0.dev — 2026-07-04。
+单流解码，Qwen3.6-27B-mxfp8（100 tokens，5 次预热）：
 
-| 模型 | 量化 | PP (tok/s) | TG (tok/s) | TTFT (ms) |
-|-------|-------|-----------|-----------|-----------|
-| Qwen3.6-27B | mxfp8 | 264 | 29.8 | ~1000 |
-| Qwen2.5-3B | Q4_K_M | 580 | 32 | ~500 |
+| 引擎 | TG 均值 (tok/s) | 中位数 | 标准差 | CV | 步长 (ms) |
+|---|---|---|---|---|---|
+| fusion-mlx | 18.46 | 18.52 | 0.18 | 1.0% | 54.17 |
+| omlx | 18.49 | 18.53 | 0.18 | 1.0% | 54.09 |
 
-并发吞吐量 (Qwen3.6-27B-mxfp8, 4 个并发请求)：
+比值 0.998 — 完全持平。对 GatedDeltaNet 混合模型自动关闭投机解码以保持输出连贯。
 
-| 指标 | fusion-mlx | omlx |
-|---|---|---|
-| 聚合 TG | 36.0 tok/s | 17.9 tok/s |
-| 单请求 TG | ~9 tok/s | ~9 tok/s |
+预填充吞吐量 (tok/s)：
+
+| Prompt tokens | 64 | 128 | 256 | 512 | 1024 | 2048 |
+|---|---|---|---|---|---|---|
+| tok/s | 421 | 657 | 733 | 669 | 692 | 722 |
+
+批量解码，fusion-mlx（聚合 / 单请求 tok/s）：
+
+| Batch size | 1 | 2 | 4 |
+|---|---|---|---|
+| 聚合 TG | 18.09 | 17.75 | 16.61 |
+| 单请求 TG | 18.09 | 8.87 | 4.15 |
+
+> 早期 README 数据（TG 29.8 tok/s、并发 36.0 tok/s）是在开启投机解码时测得的，对该混合循环模型的输出造成了损坏。以上数据为连贯输出（自动关闭投机解码）下的真实可用吞吐量。M5 Max 上 27B mxfp8 的连贯上限约为 18.5 tok/s。
 
 欢迎提交你的基准测试结果到 [bench.dpdns.org](https://bench.dpdns.org/)。
 

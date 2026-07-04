@@ -24,7 +24,7 @@ Drop-in replacement for Ollama / vLLM — runs natively on Metal via MLX
 | | fusion-mlx | omlx | Ollama |
 |---|---|---|---|
 | Continuous batching | ✅ | ✅ | ❌ |
-| 2× concurrent throughput | ✅ 36 vs 17.9 tok/s | Baseline | — |
+| 2-bit quant recipes | ✅ up to +167% speed | — | — |
 | TurboQuant KV (4-bit) | ✅ | ✅ (advanced) | ❌ |
 | Speculative decoding | ✅ 4 methods | ❌ | ❌ |
 | OpenAI + Anthropic API | ✅ Both | ✅ Both | ✅ Both |
@@ -227,19 +227,30 @@ Download from [GitHub Releases](https://github.com/dahai80/fusion-mlx/releases).
 
 ## Performance
 
-Benchmarks on Apple M5 Max (128 GB RAM):
+Benchmarks on Apple M5 Max (128 GB RAM, 40 GPU cores), MLX 0.32.0.dev — 2026-07-04.
+Single-stream decode, Qwen3.6-27B-mxfp8 (100 tokens, 5 warmup steps):
 
-| Model | Quant | PP (tok/s) | TG (tok/s) | TTFT (ms) |
-|-------|-------|-----------|-----------|-----------|
-| Qwen3.6-27B | mxfp8 | 264 | 29.8 | ~1000 |
-| Qwen2.5-3B | Q4_K_M | 580 | 32 | ~500 |
+| Engine | TG mean (tok/s) | median | std | CV | step (ms) |
+|---|---|---|---|---|---|
+| fusion-mlx | 18.46 | 18.52 | 0.18 | 1.0% | 54.17 |
+| omlx | 18.49 | 18.53 | 0.18 | 1.0% | 54.09 |
 
-Concurrent throughput (Qwen3.6-27B-mxfp8, 4 requests):
+Ratio 0.998 — full parity. Speculative decoding is auto-gated off for GatedDeltaNet hybrid models to preserve coherence.
 
-| Metric | fusion-mlx | omlx |
-|---|---|---|
-| Aggregate TG | 36.0 tok/s | 17.9 tok/s |
-| Per-request TG | ~9 tok/s | ~9 tok/s |
+Prefill throughput (tok/s):
+
+| Prompt tokens | 64 | 128 | 256 | 512 | 1024 | 2048 |
+|---|---|---|---|---|---|---|
+| tok/s | 421 | 657 | 733 | 669 | 692 | 722 |
+
+Batched decode, fusion-mlx (aggregate / per-request tok/s):
+
+| Batch size | 1 | 2 | 4 |
+|---|---|---|---|
+| Aggregate TG | 18.09 | 17.75 | 16.61 |
+| Per-request TG | 18.09 | 8.87 | 4.15 |
+
+> Earlier README figures (TG 29.8 tok/s, concurrent 36.0 tok/s) were measured with speculative decoding enabled, which corrupted output on this hybrid recurrent model. The numbers above are coherent (spec decode auto-gated off) and reflect real usable throughput. M5 Max coherent ceiling for 27B mxfp8 is ~18.5 tok/s.
 
 Submit your own benchmarks at [bench.dpdns.org](https://bench.dpdns.org/).
 
