@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.4.2] - 2026-07-04
+
+### Added
+- **DSpark block speculative decoding** (DeepSeek DeepSpec). New lossless spec-decode
+  mode: `fusion-mlx serve <model> --enable-dspark --dspark-drafter-path <draft>
+  --dspark-draft-quant-bits 8`. Self-contained server forked early from normal serve
+  init. A 5-layer context-injected drafter taps the target's own hidden states, proposes
+  a 7-token block per round, and the target verifies it in a single forward pass via
+  distribution-preserving rejection sampling (lossless). STS-calibrated confidence head
+  (ECE 0.0846 -> 0.0184, AUROC preserved; `confidence_threshold=0.0` keeps STS inert,
+  pruning monotonically hurts). New `supports_dspark` profile flag in `model_aliases`.
+
+### Benchmark
+- **Qwen3-8B-bf16 on Apple M5 Max 128GB** (median of 3 end-to-end HTTP serve runs):
+  baseline vanilla serve 28.39 tok/s -> DSpark serve 48.15 tok/s = **+69.6%** (target
+  was +50%). Lossless; greedy output is semantically equivalent to baseline. Results
+  published to bench.dpdns.org (baseline id 2, DSpark id 3). See
+  `docs/dspark-benchmark.md` for the full report.
+
 ## [0.4.1] - 2026-07-04
 
 ### Fixed

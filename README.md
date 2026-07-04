@@ -6,7 +6,7 @@
 
 Drop-in replacement for Ollama / vLLM — runs natively on Metal via MLX
 
-[![Version](https://img.shields.io/badge/v0.4.1-blue.svg)](https://github.com/dahai80/fusion-mlx/releases)
+[![Version](https://img.shields.io/badge/v0.4.2-blue.svg)](https://github.com/dahai80/fusion-mlx/releases)
 [![Python](https://img.shields.io/badge/Python-3.11+-3776AB.svg)](https://www.python.org/)
 [![License](https://img.shields.io/badge/License-Apache--2.0-green.svg)](LICENSE)
 [![Tests](https://img.shields.io/badge/Tests-1200+-success.svg)](tests/)
