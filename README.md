@@ -6,7 +6,7 @@
 
 Drop-in replacement for Ollama / vLLM — runs natively on Metal via MLX
 
-[![Version](https://img.shields.io/badge/v0.4.1-blue.svg)](https://github.com/dahai80/fusion-mlx/releases)
+[![Version](https://img.shields.io/badge/v0.4.2-blue.svg)](https://github.com/dahai80/fusion-mlx/releases)
 [![Python](https://img.shields.io/badge/Python-3.11+-3776AB.svg)](https://www.python.org/)
 [![License](https://img.shields.io/badge/License-Apache--2.0-green.svg)](LICENSE)
 [![Tests](https://img.shields.io/badge/Tests-1200+-success.svg)](tests/)
@@ -58,7 +58,7 @@ Key optimizations: quant2/quant2_128/quant2_flat ultra-aggressive 2-bit quantiza
 - **8 engine types** — LLM, VLM, Embedding, Reranker, STT, TTS, STS, ImageGen (Flux 2)
 - **OpenAI + Anthropic API** — one server, two API flavors, fully compatible
 - **Continuous batching** — vLLM-style scheduler with chunked prefill, preemption, priority queues
-- **Speculative decoding** — SuffixDecoding, DFlash, MTP, VLM MTP (2–5× faster generation)
+- **Speculative decoding** — SuffixDecoding, DFlash, DSpark, MTP, VLM MTP (2–5× faster generation)
 - **TurboQuant KV** — 4-bit KV cache quantization, 4× less memory traffic
 - **40+ quant formats** — GGUF (Q2_K → Q8_0), Imatrix (IQ1_M → IQ4_XS), TurboQuant (TQ1_0/TQ2_0), MLX (mxfp4/mxfp8/6bit/4bit/8bit/F16/BF16/F32)
 - **Paged KV cache** — SSD cold layer, block-aware prefix caching with COW sharing
@@ -267,7 +267,7 @@ fusion-mlx/
 │    ├── pool/            # EnginePool, MemoryEnforcer, ModelDiscovery, PriorityScheduler
 │    ├── router/          # RequestRouter, CloudRouter, SmartRouter
 │    ├── scheduler/       # 25-module scheduler (admission, batching, cache, step, etc.)
-│    ├── speculative/     # SuffixDecoding, DFlash, MTP, VLM MTP
+│    ├── speculative/     # SuffixDecoding, DFlash, DSpark, MTP, VLM MTP
 │    └── admin/           # Web panel routes, benchmarking, downloads, settings
 ├── apps/fusion-mac/      # SwiftUI macOS app (~80 Swift files)
 ├── docs/                 # API reference, architecture, CLI guide, configuration
@@ -312,5 +312,6 @@ Apache-2.0
 - [omlx](https://github.com/jundot/omlx) — Continuous batching and tiered KV caching
 - [Rapid-MLX](https://github.com/raullenchai/Rapid-MLX) — Speculative decoding, multi-modal, cloud routing
 - [dflash-mlx](https://github.com/bstnxbt/dflash-mlx) — Block diffusion speculative decoding
+- [DeepSpec (DSpark)](https://github.com/deepseek-ai/DeepSpec) — Lossless block speculative decoding
 - [mlx-embeddings](https://github.com/Blaizzy/mlx-embeddings) — Embedding model support
 - [venvstacks](https://venvstacks.lmstudio.ai) — Portable Python environment layering for the macOS app
