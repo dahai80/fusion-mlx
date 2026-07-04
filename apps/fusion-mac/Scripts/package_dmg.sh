@@ -109,7 +109,7 @@ ln -s /Applications "$DMG_STAGING/Applications"
 log "Setting DMG window layout…"
 DMG_RW="${DIST_DIR}/${DMG_NAME}-rw.dmg"
 DMG_SIZE=$(du -sm "$DMG_STAGING" | cut -f1)
-DMG_SIZE=$((DMG_SIZE + 64))  # padding
+DMG_SIZE=$((DMG_SIZE + 512))  # padding (HFS+ overhead needs ample slack on 2GB+ bundles)
 
 hdiutil create \
     -srcfolder "$DMG_STAGING" \
