@@ -6,7 +6,7 @@
 
 Ollama / vLLM 的直接替代 —— 基于 MLX 原生运行在 Metal 上
 
-[![Version](https://img.shields.io/badge/v0.4.1-blue.svg)](https://github.com/dahai80/fusion-mlx/releases)
+[![Version](https://img.shields.io/badge/v0.4.2-blue.svg)](https://github.com/dahai80/fusion-mlx/releases)
 [![Python](https://img.shields.io/badge/Python-3.11+-3776AB.svg)](https://www.python.org/)
 [![License](https://img.shields.io/badge/License-Apache--2.0-green.svg)](LICENSE)
 [![Tests](https://img.shields.io/badge/Tests-1200+-success.svg)](tests/)
