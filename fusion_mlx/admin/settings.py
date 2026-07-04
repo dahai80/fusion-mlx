@@ -33,6 +33,7 @@ from .helpers import (
     _apply_sampling_settings_runtime,
     _format_cache_size,
     _get_global_settings,
+    _get_rich_global_settings,
     _schedule_self_terminate,
     get_ssd_disk_info,
     get_system_memory_info,
@@ -62,9 +63,7 @@ async def get_server_info(is_admin: bool = Depends(require_admin)):
     Raises:
         HTTPException: 401 if not authenticated, 503 if server not initialized.
     """
-    from ..utils.network import detect_server_aliases
-
-    global_settings = _get_global_settings()
+    global_settings = _get_rich_global_settings()
     if global_settings is None:
         raise HTTPException(status_code=503, detail="Server not initialized")
 
@@ -72,8 +71,12 @@ async def get_server_info(is_admin: bool = Depends(require_admin)):
     if configured:
         aliases = configured
     else:
-        # Fall back to live detection if persisted list is empty.
-        aliases = detect_server_aliases(host=global_settings.server.host)
+        try:
+            from ..utils.network import detect_server_aliases
+
+            aliases = detect_server_aliases(host=global_settings.server.host)
+        except ImportError:
+            aliases = []
 
     return {
         "host": global_settings.server.host,
@@ -137,7 +140,7 @@ async def get_global_settings(is_admin: bool = Depends(require_admin)):
     Raises:
         HTTPException: 401 if not authenticated, 503 if server not initialized.
     """
-    global_settings = _get_global_settings()
+    global_settings = _get_rich_global_settings()
 
     if global_settings is None:
         raise HTTPException(status_code=503, detail="Server not initialized")
@@ -282,7 +285,7 @@ async def update_global_settings(
                         400 if validation fails.
     """
 
-    global_settings = _get_global_settings()
+    global_settings = _get_rich_global_settings()
 
     if global_settings is None:
         raise HTTPException(status_code=503, detail="Server not initialized")

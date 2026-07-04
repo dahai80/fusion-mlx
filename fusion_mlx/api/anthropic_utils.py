@@ -128,6 +128,7 @@ def convert_anthropic_to_internal(
     tokenizer: Any | None = None,
     preserve_images: bool = False,
     native_reasoning_content: bool = False,
+    consolidate_system_messages: bool = True,
 ) -> list[dict[str, Any]]:
     """
     Convert Anthropic Messages API format to internal format.
@@ -162,7 +163,9 @@ def convert_anthropic_to_internal(
     # Normalize: extract any role="system" entries from messages[] and merge
     # with the canonical request.system field (claude-code 2.1.154+ sends
     # system content inline instead of using the separate field).
-    system_text, normalized_messages = _normalize_in_messages_system(request)
+    system_text, normalized_messages = _normalize_in_messages_system(
+        request, consolidate_system_messages=consolidate_system_messages
+    )
     if system_text:
         processed_messages.append({"role": "system", "content": system_text})
 
@@ -380,7 +383,9 @@ def convert_anthropic_to_internal_harmony(
     # Normalize: extract any role="system" entries from messages[] and merge
     # with the canonical request.system field (claude-code 2.1.154+ sends
     # system content inline instead of using the separate field).
-    system_text, normalized_messages = _normalize_in_messages_system(request)
+    system_text, normalized_messages = _normalize_in_messages_system(
+        request, consolidate_system_messages=consolidate_system_messages
+    )
     if system_text:
         processed_messages.append({"role": "system", "content": system_text})
 
@@ -571,6 +576,7 @@ def _extract_system_text(system: str | list[SystemContent]) -> str:
 
 def _normalize_in_messages_system(
     request: MessagesRequest,
+    consolidate_system_messages: bool = True,
 ) -> tuple[str, list[AnthropicMessage]]:
     """Extract role="system" entries from messages[] and merge with request.system.
 
@@ -579,6 +585,10 @@ def _normalize_in_messages_system(
     field. Returns the combined system text and the message list with system
     entries removed, so downstream conversion sees the canonical shape.
     """
+    if not consolidate_system_messages:
+        base = _extract_system_text(request.system) if request.system else ""
+        return base, list(request.messages)
+
     extracted_parts: list[str] = []
     filtered_messages: list[AnthropicMessage] = []
     for msg in request.messages:

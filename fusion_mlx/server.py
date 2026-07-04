@@ -23,6 +23,7 @@ from fastapi import Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
+from ._version import __version__
 from .admin.auth import require_admin
 from .admin.routes import router as admin_router
 from .api.anthropic_routes import router as anthropic_router
@@ -68,6 +69,233 @@ from .settings import Settings
 logger = logging.getLogger(__name__)
 
 _server_state: dict[str, Any] = {}
+_server_instance: "Server | None" = None
+
+app = None
+
+# Module-level server state — cli_serve.py reads/writes these directly
+_api_key: str | None = None
+_model_alias: str | None = None
+_model_name: str | None = None
+_model_path: str | None = None
+_default_timeout: float = 1800.0
+_max_request_bytes: int | None = None
+_rate_limiter = None
+_gc_control: bool = True
+_no_thinking: bool = False
+_pin_system_prompt: bool = False
+_enable_auto_tool_choice: bool = False
+_tool_call_parser: str | None = None
+_enable_tool_logits_bias: bool = False
+_default_temperature: float | None = None
+_default_top_p: float | None = None
+_default_top_k: int | None = None
+_default_min_p: float | None = None
+_default_repetition_penalty: float | None = None
+_default_presence_penalty: float | None = None
+_default_frequency_penalty: float | None = None
+_reasoning_parser = None
+_reasoning_parser_name: str | None = None
+_enable_audio_lane: bool = False
+_sse_keepalive_seconds: float = 0.0
+# Staged single-model request from ``serve --model <X>``. ``load_model``
+# populates this before uvicorn starts; ``Server._startup`` loads + registers
+# the engine into the pool once the pool exists. None on the multi-model
+# ``--model-dir`` path (which discovers into the pool directly).
+_pending_single_model: dict | None = None
+
+
+def _sync_config() -> None:
+    # Copy staged server globals into the config singleton + auth. Bridges the
+    # global-variable staging pattern (cli_serve sets ``server._api_key`` etc.
+    # before uvicorn starts) with the config object middleware reads. Idempotent
+    # — every assignment is a straight overwrite. Best-effort: ServerConfig
+    # only carries a subset of these fields, so guard each with hasattr.
+    try:
+        from .config import get_config
+
+        cfg = get_config()
+    except Exception:
+        cfg = None
+    if cfg is not None:
+        for _attr, _val in (
+            ("model_name", _model_name),
+            ("model_path", _model_path),
+            ("model_alias", _model_alias),
+            ("api_key", _api_key),
+            ("max_request_bytes", _max_request_bytes),
+            ("default_timeout", _default_timeout),
+            ("gc_control", _gc_control),
+            ("no_thinking", _no_thinking),
+            ("pin_system_prompt", _pin_system_prompt),
+            ("enable_auto_tool_choice", _enable_auto_tool_choice),
+            ("tool_call_parser", _tool_call_parser),
+            ("enable_tool_logits_bias", _enable_tool_logits_bias),
+            ("reasoning_parser", _reasoning_parser),
+            ("reasoning_parser_name", _reasoning_parser_name),
+            ("enable_audio_lane", _enable_audio_lane),
+            ("sse_keepalive_seconds", _sse_keepalive_seconds),
+            ("default_temperature", _default_temperature),
+            ("default_top_p", _default_top_p),
+            ("default_top_k", _default_top_k),
+            ("default_min_p", _default_min_p),
+            ("default_repetition_penalty", _default_repetition_penalty),
+            ("default_presence_penalty", _default_presence_penalty),
+            ("default_frequency_penalty", _default_frequency_penalty),
+            ("rate_limiter", _rate_limiter),
+        ):
+            if hasattr(cfg, _attr):
+                try:
+                    setattr(cfg, _attr, _val)
+                except Exception:
+                    logger.debug("_sync_config: setattr %s failed (non-fatal)", _attr)
+    # Auth: propagate ``--api-key`` to the admin.auth module global the
+    # middleware checks. Settings.json api_key is wired in Server.__init__;
+    # this covers the CLI override for the single-model ``serve --model`` path.
+    if _api_key:
+        try:
+            from .admin.auth import set_api_key
+
+            set_api_key(_api_key)
+        except Exception:
+            logger.debug("set_api_key propagation failed (non-fatal)", exc_info=True)
+
+
+def configure_logging(log_level: str) -> str:
+    import logging as _logging
+    level = getattr(_logging, log_level.upper(), _logging.INFO)
+    _logging.basicConfig(level=level, format="%(levelname)s %(name)s: %(message)s")
+    return log_level.upper()
+
+
+def _resolve_api_key(argv_api_key: str | None = None) -> str | None:
+    global _api_key
+    import os
+    if argv_api_key:
+        return argv_api_key
+    if _api_key:
+        return _api_key
+    return os.environ.get("FUSION_MLX_API_KEY")
+
+
+def configure_cors_from_env(app_instance, cors_origins=None):
+    pass
+
+
+def register_audio_routes_if_enabled(*args, **kwargs):
+    pass
+
+
+def load_embedding_model(*args, **kwargs):
+    raise NotImplementedError("Embedding models not available in this build")
+
+
+def get_app():
+    global _server_instance, app
+    if _server_instance is None:
+        _server_instance = Server()
+    if app is None:
+        app = _server_instance.app
+    return app
+
+
+def _resolve_single_model_path(name: str) -> str:
+    # Resolve a model name to a loadable path/id. Reuses the omlx
+    # model-discovery advantage: a bare name like ``Qwen3.6-27B-mxfp8``
+    # resolves to a local model directory under the standard model dirs
+    # instead of falling through to a HuggingFace lookup that 404s (the
+    # released ``serve --model Qwen3-4B-Q4_K_M`` form). Exact aliases,
+    # slash-names (HF repos), and existing local paths pass through.
+    from .model_aliases import resolve_model
+
+    resolved = resolve_model(name)
+    if Path(resolved).exists():
+        return resolved
+    if "/" in resolved:
+        return resolved
+    home = Path.home()
+    for cand in (
+        home / ".omlx" / "models" / "mlx-community" / resolved,
+        home / ".omlx" / "models" / resolved,
+        home / ".fusion-mlx" / "models" / resolved,
+    ):
+        if cand.exists():
+            return str(cand)
+    hf_cache = home / ".cache" / "huggingface" / "hub"
+    if hf_cache.exists():
+        norm = resolved.replace("/", "--")
+        for snap in (hf_cache / f"models--{norm}").glob("snapshots/*"):
+            return str(snap)
+    return resolved
+
+
+def load_model(
+    model_name: str,
+    scheduler_config=None,
+    stream_interval: int = 1,
+    max_tokens: int | None = None,
+    gpu_memory_utilization: float = 0.90,
+    cloud_model: str | None = None,
+    cloud_threshold: int = 20000,
+    cloud_api_base: str | None = None,
+    cloud_api_key: str | None = None,
+    served_model_name: str | None = None,
+    mtp: bool = False,
+    *,
+    max_tokens_is_explicit: bool | None = None,
+    force_mllm: bool = False,
+    force_text: bool = False,
+    force_hybrid: bool = False,
+    no_hybrid: bool = False,
+    force_spec_decode: bool = False,
+    no_spec_decode: bool = False,
+    force_openai_harmony_streaming: bool = False,
+    no_openai_harmony_streaming: bool = False,
+):
+    # ``serve --model <X>`` single-model entry. The migration left this as a
+    # NotImplementedError stub, which broke even full local paths. We stage the
+    # resolved model + scheduler config on a module global; ``Server._startup``
+    # loads + registers the engine into the pool once the pool exists (it is
+    # created in the lifespan, after this call). Routes then resolve the engine
+    # through the pool like the multi-model ``--model-dir`` path.
+    global _model_name, _model_path, _model_alias, _pending_single_model
+
+    resolved = _resolve_single_model_path(model_name)
+    _model_path = resolved
+    _model_name = served_model_name or resolved
+    if not _model_alias:
+        _model_alias = model_name
+    _pending_single_model = {
+        "model_path": resolved,
+        "original_name": model_name,
+        "scheduler_config": scheduler_config,
+        "stream_interval": stream_interval,
+        "served_model_name": served_model_name,
+        "mtp": mtp,
+        "force_mllm": force_mllm,
+        "force_text": force_text,
+        "force_hybrid": force_hybrid,
+        "no_hybrid": no_hybrid,
+        "force_spec_decode": force_spec_decode,
+        "no_spec_decode": no_spec_decode,
+        "gpu_memory_utilization": gpu_memory_utilization,
+        "cloud_model": cloud_model,
+        "cloud_threshold": cloud_threshold,
+        "cloud_api_base": cloud_api_base,
+        "cloud_api_key": cloud_api_key,
+        "max_tokens": max_tokens,
+        "max_tokens_is_explicit": max_tokens_is_explicit,
+    }
+    # Ensure the singleton Server + app exist so _startup will pick up the
+    # staged model when uvicorn starts the lifespan.
+    get_app()
+    _sync_config()
+    logger.info(
+        "load_model: staged single model %s (resolved=%s, served=%s)",
+        model_name,
+        resolved,
+        _model_name,
+    )
 
 
 def resolve_model_id(model_id: str) -> str:
@@ -119,7 +347,7 @@ class Server:
         app = FastAPI(
             title="fusion-mlx",
             description="Unified local model management for Apple Silicon",
-            version="0.1.0",
+            version=__version__,
             lifespan=lifespan,
         )
 
@@ -169,7 +397,7 @@ class Server:
                 engines_list = status.get("models", [])
             return {
                 "status": "ok",
-                "version": "0.1.0",
+                "version": __version__,
                 "engines": engines_list,
                 "mx_memory": {
                      "active": f"{mx.get_active_memory() / 1e9:.2f} GB",
@@ -216,12 +444,12 @@ class Server:
                         models_loading += 1
             return {
                 "status": "ok",
-                "version": "0.1.0",
+                "version": __version__,
                 "uptime_seconds": metrics.get("total_requests", 0),
                 "models_discovered": models_discovered,
                 "models_loaded": models_loaded,
                 "models_loading": models_loading,
-                "default_model": self.config.default_model,
+                "default_model": _server_state.get("default_model"),
                 "loaded_models": loaded_models,
                 "total_requests": metrics.get("total_requests", 0),
                 "total_prompt_tokens": metrics.get("total_tokens_prompt", 0),
@@ -375,6 +603,14 @@ class Server:
             self.pool.discover_models(self.config.model_dir)
             logger.info("Discovered %d models in %s", self.pool.model_count, self.config.model_dir)
 
+        # Single-model ``serve --model <X>`` path: load_model() staged the
+        # resolved model on ``_pending_single_model`` before uvicorn started.
+        # The pool now exists, so load + register the engine via the same
+        # AsyncEngineCore single-engine path the benchmark uses (preserves the
+        # rich scheduler config: kv quant, prefix cache, spec-decode knobs).
+        if _pending_single_model:
+            await self._load_single_model(_pending_single_model)
+
          # Initialize GUI database (for compat layer)
         if get_database_manager:
             try:
@@ -433,6 +669,37 @@ class Server:
         if self.pool:
             self.pool.unload_engine(model_id)
         logger.info("Unloaded model %s from pool", model_id)
+
+    async def _load_single_model(self, pending: dict) -> None:
+        # Load the staged single model (``serve --model <X>``) into the pool.
+        # Runs in _startup after the pool exists. Uses BatchedEngine — the
+        # same wrapper the multi-model serve path uses — so the engine
+        # exposes .chat()/.stream_chat() (which /v1/* routes call) and
+        # inherits the rich scheduler config, TurboQuant KV, and spec-decode
+        # wiring. Then registers it under the served name + original name so
+        # routes resolve it via the pool exactly like a discovered model.
+        from .engines.batched import BatchedEngine
+
+        model_path = pending["model_path"]
+        served = pending.get("served_model_name") or model_path
+        scheduler_config = pending.get("scheduler_config")
+        stream_interval = pending.get("stream_interval", 1)
+        logger.info("Loading single model: %s", model_path)
+        engine = BatchedEngine(
+            model_name=model_path,
+            scheduler_config=scheduler_config,
+            stream_interval=stream_interval,
+        )
+        await engine.start()
+        self.pool.register_engine(served, engine)
+        orig = pending.get("original_name")
+        if orig and orig != served:
+            self.pool.register_engine(orig, engine)
+        # Track for unload/shutdown (unload_model calls core.stop()).
+        self.engine_cores[served] = engine
+        logger.info(
+            "Single model registered: %s (engine=%s)", served, type(engine).__name__
+        )
 
 
 

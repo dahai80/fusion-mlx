@@ -29,6 +29,7 @@ PRESET_REMOTE_URL = "http://bench.dpdns.org/assets/omlx_preset.json"
 from .helpers import (
     _get_engine_pool,
     _get_global_settings,
+    _get_rich_global_settings,
     _get_settings_manager,
     format_size,
     get_system_memory_info,
@@ -247,7 +248,7 @@ async def get_hf_model_info(
 @_router.get("/api/hf/models")
 async def list_hf_models(is_admin: bool = Depends(require_admin)):
     """List models in all model directories with disk size info."""
-    global_settings = _get_global_settings()
+    global_settings = _get_rich_global_settings()
     if global_settings is None:
         raise HTTPException(status_code=503, detail="Server not initialized")
 
@@ -310,7 +311,7 @@ async def delete_hf_model(
     is_admin: bool = Depends(require_admin),
 ):
     """Delete a downloaded model from disk and refresh the model pool."""
-    global_settings = _get_global_settings()
+    global_settings = _get_rich_global_settings()
     engine_pool = _get_engine_pool()
 
     if global_settings is None:

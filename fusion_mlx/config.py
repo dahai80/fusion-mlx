@@ -45,6 +45,12 @@ class SchedulerConfig:
 
     # Chunked prefill
     chunked_prefill_tokens: int = 2048  # >0 = enabled, value = chunk size
+    # Runtime bool mirror. The rapid-MLX Scheduler reads ``config.chunked_prefill``
+    # (bool) while the released CLI sets ``chunked_prefill_tokens`` (int). Kept as
+    # a real field so ``server._convert_scheduler_config`` can still pass
+    # ``chunked_prefill=<bool>`` explicitly; ``__post_init__`` syncs it from the
+    # int knob when the CLI omits it.
+    chunked_prefill: bool = False
     # Mid-prefill cache saving every N tokens (from Rapid-MLX)
     mid_prefill_save_interval: int = 8192
 
@@ -88,6 +94,42 @@ class SchedulerConfig:
     # Admission control
     max_concurrent_requests: int = 256
 
+    # R15-P1 additions
+    prefix_cache_index: str = "radix"
+    spec_decode: str = "none"
+    dflash_drafter_path: str = ""
+    kv_cache_dtype: str = "bf16"
+    kv_disk_checkpoint_interval: int = 256
+    kv_cache_turboquant_mode: str = "v4"
+    pflash_config: Any = None
+    gpu_memory_utilization: float = 0.90
+
+    # --- Rapid-MLX runtime fields (read directly by the Scheduler runtime in
+    # fusion_mlx/scheduler/core.py + sched_*.py and by the engine layer). Folded
+    # in from the minimal scheduler/config.py SchedulerConfig so the single
+    # merged class serves BOTH the released CLI knobs above AND the runtime
+    # field reads. The rapid-MLX migration had split these into a separate
+    # minimal dataclass; ``from .scheduler import SchedulerConfig`` resolved to
+    # that minimal one, so the single-model ``serve --model`` / ``bench`` CLI
+    # paths (which build the rich config) raised TypeError. One class now.
+    # Model identification (cache isolation between different models).
+    model_name: str = ""
+    # Per-forward embedding input chunk size.
+    embedding_batch_size: int = 32
+    # Paged cache runtime sizing.
+    initial_cache_blocks: int = 256
+    # Paged SSD cache (oMLX prefix-reuse layer); None = disabled.
+    paged_ssd_cache_dir: str | None = None
+    hot_cache_only: bool = False
+    paged_ssd_cache_max_size: int = 100 * 1024 * 1024 * 1024  # 100 GiB
+    hot_cache_max_size: int = 0  # bytes; 0 = disabled
+    # GC / cache-clear cadence (steps between calls).
+    gc_cleanup_interval: int = 0  # 0 = disabled
+    mlx_cache_cleanup_interval: int = 8192
+    memory_check_interval: int = 64
+    admin_snapshot_interval: int = 32
+    decode_clear_interval: int = 16384
+
 
     def __post_init__(self):
          # Validate mutual exclusivity
@@ -108,6 +150,13 @@ class SchedulerConfig:
             self.suffix_min_confidence = 0.3
         if self.kv_cache_quantization_bits not in (4, 8, 16):
             self.kv_cache_quantization_bits = 8
+        # Sync the runtime bool from the released int knob. The Scheduler
+        # runtime reads ``config.chunked_prefill`` (bool); the released CLI
+        # sets ``chunked_prefill_tokens`` (int). Respect an explicit True
+        # (the multi-model converter passes one).
+        self.chunked_prefill = self.chunked_prefill or (
+            self.chunked_prefill_tokens > 0
+        )
 
 @dataclass
 class MemoryConfig:
@@ -219,3 +268,19 @@ def _load_model_config() -> dict[str, Any]:
 
 _model_config = _load_model_config()
 DEFAULT_ALIASES: dict[str, str] = _model_config.get("aliases", {})
+
+# Global config singleton
+_config: ServerConfig | None = None
+
+
+def get_config() -> ServerConfig:
+    global _config
+    if _config is None:
+        _config = ServerConfig()
+    return _config
+
+
+def reset_config() -> ServerConfig:
+    global _config
+    _config = ServerConfig()
+    return _config

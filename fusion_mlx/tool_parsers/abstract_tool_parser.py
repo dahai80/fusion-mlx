@@ -15,7 +15,10 @@ from dataclasses import dataclass
 from functools import cached_property
 from typing import Any
 
-from transformers import PreTrainedTokenizerBase
+try:
+    from transformers import PreTrainedTokenizerBase
+except ImportError:
+    PreTrainedTokenizerBase = object
 
 # Pattern to match and strip think tags
 # Handles two cases:

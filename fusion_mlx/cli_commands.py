@@ -125,10 +125,12 @@ def _print_cached_models() -> None:
 
     # Reverse-map HF repo path → alias name so the alias column matches the
     # user's mental model (``qwen3.5-4b-4bit`` not ``mlx-community/Qwen3.5-4B...``).
+    # list_profiles() returns list[AliasProfile] (released contract), not a
+    # dict — iterate the list directly to build the HF-path→alias reverse map.
     profiles = list_profiles()
     hf_to_alias: dict[str, str] = {}
-    for alias, p in profiles.items():
-        hf_to_alias.setdefault(p.hf_path, alias)
+    for p in profiles:
+        hf_to_alias.setdefault(p.hf_path, p.name)
 
     cols = (
         ("Alias", 22),
@@ -174,20 +176,24 @@ def _print_cached_models() -> None:
 
 
 def models_command(args):
-    """List available model aliases with their per-model profile capabilities.
+    # Released 1.0/2.0/3.0 contract (docs/cli-reference.md "models"): query the
+    # running server's /v1/models and list discovered model IDs + types, then
+    # print DEFAULT_ALIASES. Restored after the Rapid-MLX migration replaced
+    # this with a local alias-capability table that depended on a missing
+    # aliases.json and a non-existent AliasProfile.suffix_decoding_tier field
+    # (it crashed on `profiles.keys()` because list_profiles() returns a list,
+    # not a dict). The `--cached` / top-level `ls` path (Rapid-MLX additions,
+    # absent from the released guide) scans the local HuggingFace cache via
+    # _print_cached_models and is kept — it does not conflict with the released
+    # `models` server query.
+    import json as _json
+    import sys
+    from pathlib import Path
 
-    Default view pulls from ``list_profiles()`` so every alias's
-    ``tool_call_parser`` / ``reasoning_parser`` / ``is_hybrid`` /
-    ``supports_spec_decode`` / ``suffix_decoding_tier`` shows up — letting
-    users pick a model on capabilities, not just on name.
+    import requests
 
-    ``--cached`` swaps to a disk-only view: scans the HuggingFace cache,
-    cross-references against the alias registry, and renders
-    ``Alias | HF repo | Size on disk | Last modified``. Also reachable as
-    the top-level ``fusion-mlx ls`` alias.
-    """
     from fusion_mlx._version_check import print_staleness_warning_if_any
-    from fusion_mlx.model_aliases import list_profiles
+    from fusion_mlx.config import DEFAULT_ALIASES
 
     print_staleness_warning_if_any()
 
@@ -195,105 +201,69 @@ def models_command(args):
         _print_cached_models()
         return
 
-    profiles = list_profiles()
-    print()
-    print(f"  Available models ({len(profiles)} aliases)")
+    host = getattr(args, "host", None) or "localhost"
+    port = int(getattr(args, "port", None) or 8000)
+    base = f"http://{host}:{port}"
 
-    # Alias width is computed from the actual registry so new long names
-    # (e.g. ``deepseek-coder-v2-lite-16b-4bit``, 31 chars) don't push the
-    # rest of their row out of column alignment. 24 is the historical
-    # floor — never shrink below it so short rows still feel padded.
-    # Other widths sized to fit values currently in aliases.json:
-    # tool 16 (qwen3_coder_xml + 1 pad), reasoning 12 (deepseek_r1 + 1),
-    # spec 10 ("✗ hybrid"), tier 11, dflash 7.
-    alias_width = max(24, max((len(a) for a in profiles), default=0) + 2)
-    cols = (
-        ("Alias", alias_width),
-        ("Tools", 16),
-        ("Reasoning", 12),
-        ("Spec-Decode", 10),
-        ("Suffix Tier", 11),
-        ("DFlash", 7),
-    )
-    width = sum(w for _, w in cols) + len(cols) - 1
-    sep = "  " + "─" * width
-    header = "  " + " ".join(f"{name:<{w}}" for name, w in cols)
-    print(sep)
-    print(header)
-    print(sep)
-
-    for alias in sorted(profiles.keys()):
-        p = profiles[alias]
-        tools = p.tool_call_parser or "—"
-        reasoning = p.reasoning_parser or "—"
-        if p.is_hybrid:
-            # Hybrid models cannot use spec-decode or suffix-decode regardless
-            # of the supports_spec_decode flag (mlx-lm BatchGenerator gate).
-            spec = "✗ hybrid"
-            tier = "n/a"
-        else:
-            spec = "✓" if p.supports_spec_decode else "✗"
-            tier = p.suffix_decoding_tier
-        # DFlash column — eligible aliases show ✓, everything else "—" so
-        # the visual scan immediately surfaces what supports it. We don't
-        # re-run the eligibility gate here (which would also check that
-        # mlx-vlm 0.5.0+ is installed) — that's a runtime concern; the
-        # registry column is pure declarative state.
-        dflash = "✓" if p.supports_dflash else "—"
-        row = (
-            f"  {alias:<{alias_width}} {tools:<16} {reasoning:<12} "
-            f"{spec:<10} {tier:<11} {dflash:<7}"
-        )
-        print(row)
-
-    print(sep)
-
-    # R10-C1: audio alias section. Pre-R10 ``fusion-mlx models`` listed
-    # zero audio aliases because they don't live in ``aliases.json``
-    # (which only carries text-LM profiles). Users had no in-tool way
-    # to discover ``kokoro`` / ``whisper-large-v3`` / ``parakeet`` —
-    # they had to read the docs site. Now the audio registry
-    # (fusion_mlx/audio/aliases.json) feeds the same table so
-    # ``fusion-mlx models`` is the canonical "what can I serve?" view
-    # across every lane.
+    data = None
     try:
-        from fusion_mlx.audio.registry import list_audio_aliases
+        r = requests.get(base + "/v1/models", timeout=5)
+        if r.status_code == 200:
+            data = r.json()
+    except requests.RequestException:
+        data = None
 
-        audio_entries = list_audio_aliases()
-    except Exception:
-        # A malformed audio registry must NOT break the text alias
-        # listing — silently degrade by skipping the audio section.
-        audio_entries = []
+    if not data:
+        # Released _discover_server fallback: saved server info first, then
+        # common ports (incl. 11434/11435 for Ollama-style setups) so
+        # `fusion-mlx models` finds a server started on a non-default port
+        # without requiring --port.
+        candidates = []
+        info_path = Path.home() / ".fusion-mlx" / "server.json"
+        if info_path.exists():
+            try:
+                info = _json.loads(info_path.read_text())
+                s_host = info.get("host", "localhost")
+                s_port = info.get("port")
+                if s_port:
+                    candidates.append(f"http://{s_host}:{s_port}")
+            except (ValueError, OSError):
+                pass
+        for p in (8000, 11434, 11435, 8001, 3000):
+            if p != port:
+                candidates.append(f"http://localhost:{p}")
+        for cand in candidates:
+            try:
+                rc = requests.get(cand + "/v1/models", timeout=2)
+                if rc.status_code == 200:
+                    print(f"Auto-detected server at {cand}")
+                    data = rc.json()
+                    break
+            except requests.RequestException:
+                continue
 
-    if audio_entries:
-        audio_alias_width = max(
-            24, max((len(e.alias) for e in audio_entries), default=0) + 2
-        )
+    if not data:
+        print("Error: cannot reach server. Is fusion-mlx running?")
+        print("  Start it with: fusion-mlx serve --model-dir <dir> --port <port>")
+        sys.exit(1)
+
+    models = data.get("data", [])
+    if not models:
+        print("No models found.")
+        return
+
+    print(f"{'MODEL ID':<50} {'TYPE':<12}")
+    print("-" * 65)
+    for m in models:
+        mid = m.get("id", "?")[:47]
+        mtype = m.get("type", "llm")
+        print(f"{mid:<50} {mtype:<12}")
+
+    if DEFAULT_ALIASES:
         print()
-        print(f"  Audio models ({len(audio_entries)} aliases)")
-        audio_sep = "  " + "─" * width
-        print(audio_sep)
-        audio_header = (
-            f"  {'Alias':<{audio_alias_width}} {'Kind':<10} "
-            f"{'Family':<12} {'HF id':<40}"
-        )
-        print(audio_header)
-        print(audio_sep)
-        for entry in audio_entries:
-            kind_tag = f"[audio:{entry.type}]"
-            print(
-                f"  {entry.alias:<{audio_alias_width}} {kind_tag:<10} "
-                f"{entry.family:<12} {entry.hf_id:<40}"
-            )
-        print(audio_sep)
-
-    print()
-    print("  Tip: `fusion-mlx info <alias>` for the full per-model profile")
-    print("       `fusion-mlx pull <alias>` to download")
-    print("       `fusion-mlx chat <alias>` for an interactive REPL")
-    print("       `fusion-mlx serve <alias>` for an OpenAI-compatible server")
-    if audio_entries:
-        print("       `fusion-mlx serve kokoro|whisper-large-v3|parakeet` for audio")
+        print("Default aliases:")
+        for alias, real in DEFAULT_ALIASES.items():
+            print(f"     {alias:<25} -> {real}")
     print()
 
 

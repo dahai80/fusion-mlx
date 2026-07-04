@@ -1,10 +1,16 @@
 # SPDX-License-Identifier: Apache-2.0
 """Multi-modal LLM utilities for video/image processing."""
 
+import sys
 from typing import Any
 
 MAX_FRAMES = 16
 DEFAULT_FPS = 0.5
+
+
+def require_mlx_vlm_or_exit():
+    print("VLM (vision-language model) is not available in this build", file=sys.stderr)
+    sys.exit(1)
 
 
 def process_image_input(image_data: Any) -> Any | None:

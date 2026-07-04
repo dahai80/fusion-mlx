@@ -786,7 +786,6 @@ class EnginePool:
         """Register an externally-created engine in the pool."""
         entry = self._entries.get(model_id)
         if entry is None:
-            from .model_discovery import ModelInfo
             entry = EngineEntry(
                 model_id=model_id,
                 model_path="",
@@ -1215,15 +1214,18 @@ class EnginePool:
             ModelLoadingError: If model is already being loaded
         """
         entry = self._entries[model_id]
-        if entry.is_loading:
-            raise ModelLoadingError(model_id)
-
-        entry.is_loading = True
-        entry.loading_started_at = time.monotonic()
+        # get_engine phase 1 reserves the loading slot under the lock before
+        # calling us; the admin reload path (models_route) arrives here without
+        # a reservation after _unload_engine. Only reserve when no one has;
+        # re-raising here would reject our own phase-1 reservation and every
+        # first load would fail with "already being loaded".
+        if not entry.is_loading:
+            entry.is_loading = True
+            entry.loading_started_at = time.monotonic()
+            entry.abort_loading = False
         self._wake_process_memory_enforcer(active=True)
         load_started_at = entry.loading_started_at
         load_completed = False
-        entry.abort_loading = False
         pre_load_memory = max(mx.get_active_memory(), get_phys_footprint())
         try:
             effective_type = entry.engine_type

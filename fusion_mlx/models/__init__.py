@@ -1,1 +1,1 @@
-"""Models — model adapters for fusion-mlx."""
+"""Models module."""

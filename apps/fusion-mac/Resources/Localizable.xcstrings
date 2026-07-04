@@ -5665,6 +5665,30 @@
         }
       }
     },
+    "quant.mode.oq" : {
+      "comment" : "Mode tab label for oQ sensitivity-based quantization",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "oQ Online"
+          }
+        }
+      }
+    },
+    "quant.mode.recipe" : {
+      "comment" : "Mode tab label for MLX recipe quantization",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "MLX Recipe"
+          }
+        }
+      }
+    },
     "quant.queue.cancel.help" : {
       "comment" : "Tooltip on the X button for an active quant task",
       "extractionState" : "manual",
@@ -5761,6 +5785,18 @@
         }
       }
     },
+    "quant.source.option.select_recipe" : {
+      "comment" : "Placeholder option in the recipe dropdown",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Select a recipe…"
+          }
+        }
+      }
+    },
     "quant.source.row.level.label" : {
       "comment" : "Row label for the oQ level picker",
       "extractionState" : "manual",
@@ -5781,6 +5817,30 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Lower bits = smaller, faster, less accurate"
+          }
+        }
+      }
+    },
+    "quant.source.row.recipe.label" : {
+      "comment" : "Row label for the MLX recipe picker",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Recipe"
+          }
+        }
+      }
+    },
+    "quant.source.row.recipe.sub" : {
+      "comment" : "Row sublabel explaining the recipe picker",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Pre-tuned mixed-bit quantization plan"
           }
         }
       }

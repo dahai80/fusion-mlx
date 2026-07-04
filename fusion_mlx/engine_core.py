@@ -62,6 +62,10 @@ _executor_config: dict[str, dict[str, Any]] = {
 _global_executors: dict[str, concurrent.futures.ThreadPoolExecutor] = {}
 
 
+def _init_mlx_step_thread() -> None:
+    pass
+
+
 def _init_mlx_thread() -> None:
     stream = mx.new_thread_local_stream(mx.default_device())
     import sys

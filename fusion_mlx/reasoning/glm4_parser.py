@@ -14,7 +14,7 @@ in the prompt — the model decides autonomously whether to reason. So:
   overrides that one branch.
 
 GLM-4.6V additionally wraps content in
-``<|begin_of_box|>...<|end_of_box|>`` container markers; we strip them
+``<|box_begin|>...<|box_end|>`` container markers; we strip them
 so the user-facing content stays clean.
 
 Adapted from upstream waybarrios/rapid-mlx#295 (``Glm4ReasoningParser``).
@@ -26,8 +26,8 @@ divergence is the same — only the override surface differs.
 from .base import DeltaMessage
 from .think_parser import BaseThinkingReasoningParser
 
-_BOX_START = "<|begin_of_box|>"
-_BOX_END = "<|end_of_box|>"
+_BOX_START = "<|box_begin|>"
+_BOX_END = "<|box_end|>"
 
 
 class Glm4ReasoningParser(BaseThinkingReasoningParser):
@@ -38,7 +38,7 @@ class Glm4ReasoningParser(BaseThinkingReasoningParser):
     is pure content. The base class defaults to reasoning for that
     branch (correct for Qwen3-style prompt injection, wrong here).
 
-    Also strips GLM-4.6V ``<|begin_of_box|>`` / ``<|end_of_box|>``
+    Also strips GLM-4.6V ``<|box_begin|>`` / ``<|box_end|>``
     container markers in both the streaming and non-streaming paths.
     """
 

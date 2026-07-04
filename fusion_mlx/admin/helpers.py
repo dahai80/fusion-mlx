@@ -295,7 +295,7 @@ async def _reload_models() -> tuple[bool, str]:
     if _server_state.engine_pool is None:
         return False, "Engine pool not initialized"
 
-    global_settings = _get_global_settings()
+    global_settings = _get_rich_global_settings()
     if global_settings is None:
         return False, "Global settings not initialized"
 
@@ -502,37 +502,71 @@ def _apply_sampling_settings_runtime(
 # State Getters (set by server.py)
 # =============================================================================
 
-_get_server_state = None
-_get_engine_pool = None
-_get_settings_manager = None
-_get_global_settings = None
+# Mutable registry populated by set_admin_getters during server startup.
+# The ``_get_*`` names below are STABLE callables that read this registry at
+# call time. This matters because admin route modules bind them with
+# ``from .helpers import _get_global_settings`` — that captures the VALUE at
+# import time. The previous implementation left these as ``None`` globals
+# and rebound them in set_admin_getters, so every captured import stayed
+# ``None`` forever and every admin route crashed with
+# ``TypeError: 'NoneType' object is not callable``. Stable callables + a
+# registry make the captured bindings observe late-registered getters.
+_admin_getters = {
+    "server_state": None,
+    "engine_pool": None,
+    "settings_manager": None,
+    "global_settings": None,
+}
+
+
+def _get_server_state():
+    g = _admin_getters["server_state"]
+    return g() if g is not None else None
+
+
+def _get_engine_pool():
+    g = _admin_getters["engine_pool"]
+    return g() if g is not None else None
+
+
+def _get_settings_manager():
+    g = _admin_getters["settings_manager"]
+    return g() if g is not None else None
+
+
+def _get_global_settings():
+    g = _admin_getters["global_settings"]
+    return g() if g is not None else None
+
+
+def _get_rich_global_settings():
+    # The released v0.4.0 server registers the flat Settings as the
+    # global_settings getter (so auth routes can read auth.api_key). The flat
+    # Settings lacks the rich nested shape (server/model/cache/sampling/...)
+    # that merged admin routes expect. Rich routes must treat the flat Settings
+    # as "not initialized" and fall through their existing 503 branch — matching
+    # the released contract — instead of crashing with AttributeError 500.
+    gs = _get_global_settings()
+    if gs is None or not hasattr(gs, "cache") or not hasattr(gs, "server"):
+        return None
+    return gs
+
 
 def get_engine_pool():
-    """Lazy accessor that always returns current engine pool getter result."""
-    if _get_engine_pool is None:
-        return None
     return _get_engine_pool()
 
 
 def get_server_state():
-    """Lazy accessor that always returns current server state."""
-    if _get_server_state is None:
-        return None
     return _get_server_state()
 
 
 def get_global_settings():
-    """Lazy accessor that always returns current global settings."""
-    if _get_global_settings is None:
-        return None
     return _get_global_settings()
 
 
 def get_settings_manager():
-    """Lazy accessor that always returns current settings manager."""
-    if _get_settings_manager is None:
-        return None
     return _get_settings_manager()
+
 
 _hf_downloader = None
 _ms_downloader = None
@@ -546,23 +580,10 @@ def set_admin_getters(
     settings_manager_getter,
     global_settings_getter,
 ):
-    """
-    Set the getter functions for accessing server state.
-
-    This function must be called during server initialization to provide
-    access to the server state objects.
-
-    Args:
-        state_getter: Function that returns the ServerState instance.
-        pool_getter: Function that returns the EnginePool instance.
-        settings_manager_getter: Function that returns the ModelSettingsManager.
-        global_settings_getter: Function that returns the GlobalSettings.
-    """
-    global _get_server_state, _get_engine_pool, _get_settings_manager, _get_global_settings
-    _get_server_state = state_getter
-    _get_engine_pool = pool_getter
-    _get_settings_manager = settings_manager_getter
-    _get_global_settings = global_settings_getter
+    _admin_getters["server_state"] = state_getter
+    _admin_getters["engine_pool"] = pool_getter
+    _admin_getters["settings_manager"] = settings_manager_getter
+    _admin_getters["global_settings"] = global_settings_getter
 
 
 def set_hf_downloader(downloader):
