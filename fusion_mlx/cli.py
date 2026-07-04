@@ -21,6 +21,9 @@ import sys
 
 from fusion_mlx._cli_base import (
     MIRROR_DEFAULT,
+    _listen_fd_arg,
+    _log_level_choice,
+    _port_arg,
     _print_unknown_model_help,
     alias_completer,
 )
@@ -87,8 +90,50 @@ Examples:
         allow_abbrev=False,
     )
     serve_parser.add_argument(
-        "model", type=str, help="Model to serve"
+        "model",
+        nargs="?",
+        type=str,
+        default=None,
+        help="Model to serve (alias or HF repo). Omit when using --model-dir.",
     ).completer = alias_completer
+    # Released 1.0/2.0/3.0 contract: `serve --model-dir <dir>` boots the
+    # multi-model engine-pool server that auto-discovers every model in
+    # <dir> via create_app(ServerConfig(model_dir)). Mutually exclusive
+    # with the positional <model> (Rapid-MLX single-model path). Restored
+    # after the Rapid-MLX migration rerouted `serve` to `serve <model>`;
+    # existing docs/scripts keep working.
+    serve_parser.add_argument(
+        "--model-dir",
+        default=None,
+        help="Directory containing MLX models (multi-model server). "
+        "Mutually exclusive with positional <model>.",
+    )
+    # FusionMLX macOS app / omlx-style launch: the app spawns
+    # `serve --base-path <dir> --port <port>` where <dir> is the app's data
+    # home (default ~/.fusion-mlx). Models live at <base-path>/models, so this
+    # is an alias for `--model-dir <base-path>/models` routed to the
+    # multi-model engine-pool server. Restored after the Rapid-MLX migration
+    # dropped it; without it argparse (allow_abbrev=False) rejects --base-path
+    # and the app cannot start its server subprocess.
+    serve_parser.add_argument(
+        "--base-path",
+        default=None,
+        help="Base data directory (FusionMLX app / omlx style); serves "
+        "<base-path>/models via the multi-model server. Mutually exclusive "
+        "with <model>/--model/--model-dir.",
+    )
+    # Released 1.0/2.0/3.0 contract: `serve --model <name>` (docs/cli-reference.md
+    # documents `fusion-mlx serve --model Qwen3-4B-Q4_K_M`). The Rapid-MLX
+    # migration replaced this with a positional <model>; keep both so released
+    # scripts and the positional form both work. dest=model_flag avoids clashing
+    # with the positional's dest=model; serve_command folds them together.
+    serve_parser.add_argument(
+        "--model",
+        dest="model_flag",
+        default=None,
+        help="Model to serve (alias or HF repo). Released 1.0/2.0/3.0 "
+        "contract; positional <model> is also accepted.",
+    )
     serve_parser.add_argument(
         "--served-model-name",
         type=str,
@@ -1191,6 +1236,16 @@ Examples:
         help="Only list models that are downloaded to the local HuggingFace "
         "cache (alias, HF repo, size on disk, last modified).",
     )
+    # Released 1.0/2.0/3.0 `models` contract (docs/cli-reference.md): the
+    # default view queries the running server's /v1/models, so --host/--port
+    # target it. Restored after the Rapid-MLX migration dropped them; defaults
+    # match the released parser (localhost:8000).
+    models_parser.add_argument(
+        "--host", default="localhost", help="Server host (default: localhost)"
+    )
+    models_parser.add_argument(
+        "--port", type=int, default=8000, help="Server port (default: 8000)"
+    )
     subparsers.add_parser(
         "ls",
         help="List models in the local HuggingFace cache (alias for `models --cached`)",
@@ -1463,18 +1518,22 @@ Examples:
     )
 
     # Share subcommand — expose a local serve behind a public fusionmlx.com URL.
-    from fusion_mlx.share.cli import register as _register_share
-
-    _register_share(subparsers)
+    try:
+        from fusion_mlx.share.cli import register as _register_share
+        _register_share(subparsers)
+    except ModuleNotFoundError:
+        pass
 
     # Launch subcommand — one-shot bootstrap that patches IDE/agent
     # client configs (Cline, Claude Code, Continue, Cursor) to route
     # at the local fusion-mlx server. See GH issue #566 for motivation.
     # Registered AFTER share so the help-text ordering reads
     # serve→…→share→launch, matching the rough "more common first" flow.
-    from fusion_mlx.launch.cli import register as _register_launch
-
-    _register_launch(subparsers)
+    try:
+        from fusion_mlx.launch.cli import register as _register_launch
+        _register_launch(subparsers)
+    except ModuleNotFoundError:
+        pass
 
     # Shell tab completion via argcomplete. Must fire before parse_args:
     # when the shell completion handler invokes us with the
@@ -1845,11 +1904,9 @@ Examples:
         telemetry_command(args)
     elif args.command == "share":
         from fusion_mlx.share.cli import share_command
-
         share_command(args)
     elif args.command == "launch":
         from fusion_mlx.launch.cli import launch_command
-
         launch_command(args)
     else:
         parser.print_help()

@@ -11,7 +11,7 @@ from fastapi import HTTPException, Request
 
 logger = logging.getLogger(__name__)
 
-SESSION_COOKIE_NAME = "session_token"
+SESSION_COOKIE_NAME = "omlx_admin_session"
 SESSION_MAX_AGE = 3600          # 1 hour
 REMEMBER_ME_MAX_AGE = 86400     # 24 hours
 

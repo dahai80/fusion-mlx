@@ -1,13 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Admin panel routes for oMLX server configuration.
-
-This module provides HTTP routes for the admin panel including:
-- Login/logout with API key authentication
-- Dashboard for server monitoring
-- Model settings management (per-model sampling parameters, pinning, default)
-- Global settings management
-"""
-
+import hashlib
 import logging
 import secrets
 from datetime import UTC, datetime
@@ -25,7 +17,6 @@ logger = logging.getLogger(__name__)
 PRESET_REMOTE_URL = "http://bench.dpdns.org/assets/omlx_preset.json"
 
 
-
 from .helpers import (
     _get_global_settings,
 )
@@ -36,38 +27,23 @@ from .models import (
 
 _router = APIRouter()
 
-# =============================================================================
-# Sub Key Management Routes
-# =============================================================================
+
+def _hash_key(key: str) -> str:
+    return hashlib.sha256(key.encode()).hexdigest()
 
 
 @_router.post("/api/sub-keys")
 async def create_sub_key(
     request: CreateSubKeyRequest, is_admin: bool = Depends(require_admin)
 ):
-    """Create a new sub API key.
-
-    Sub keys can only be used for API authentication, not admin login.
-
-    Args:
-        request: CreateSubKeyRequest with key and optional name.
-
-    Returns:
-        JSON with the created sub key entry.
-
-    Raises:
-        HTTPException: 400 if validation fails or key already exists.
-    """
     global_settings = _get_global_settings()
     if global_settings is None:
         raise HTTPException(status_code=503, detail="Server not initialized")
 
-    # Validate key format
     is_valid, error_msg = validate_api_key(request.key)
     if not is_valid:
         raise HTTPException(status_code=400, detail=error_msg)
 
-    # Check for duplicate (against main key and existing sub keys)
     if global_settings.auth.api_key and secrets.compare_digest(
         request.key, global_settings.auth.api_key
     ):
@@ -75,15 +51,16 @@ async def create_sub_key(
             status_code=400, detail="Sub key cannot be the same as the main key"
         )
 
+    new_hash = _hash_key(request.key)
     for sk in global_settings.auth.sub_keys:
-        if sk.key and secrets.compare_digest(request.key, sk.key):
+        if sk.key_hash == new_hash:
             raise HTTPException(
                 status_code=400, detail="This key already exists"
             )
 
     entry = SubKeyEntry(
-        key=request.key,
         name=request.name or "",
+        key_hash=new_hash,
         created_at=datetime.now(UTC).isoformat(),
     )
     global_settings.auth.sub_keys.append(entry)
@@ -91,38 +68,26 @@ async def create_sub_key(
     try:
         global_settings.save()
     except Exception as e:
-        # Rollback
         global_settings.auth.sub_keys.pop()
         raise HTTPException(
             status_code=500, detail=f"Failed to save settings: {e}"
         )
 
     logger.info(f"Sub key created: {request.name or '(unnamed)'}")
-    return {"success": True, "sub_key": entry.to_dict()}
+    return {"success": True, "sub_key": {"name": entry.name, "created_at": entry.created_at}}
 
 
 @_router.delete("/api/sub-keys")
 async def delete_sub_key(
     request: DeleteSubKeyRequest, is_admin: bool = Depends(require_admin)
 ):
-    """Delete a sub API key.
-
-    Args:
-        request: DeleteSubKeyRequest with the key to delete.
-
-    Returns:
-        JSON with success status.
-
-    Raises:
-        HTTPException: 404 if key not found.
-    """
     global_settings = _get_global_settings()
     if global_settings is None:
         raise HTTPException(status_code=503, detail="Server not initialized")
 
-    # Find and remove the key
+    request_hash = _hash_key(request.key)
     for i, sk in enumerate(global_settings.auth.sub_keys):
-        if sk.key and secrets.compare_digest(request.key, sk.key):
+        if sk.key_hash == request_hash:
             removed = global_settings.auth.sub_keys.pop(i)
             try:
                 global_settings.save()
@@ -135,7 +100,6 @@ async def delete_sub_key(
             return {"success": True}
 
     raise HTTPException(status_code=404, detail="Sub key not found")
-
 
 
 router = _router

@@ -655,6 +655,21 @@ def _ensure_model_downloaded(model_name: str) -> None:
     """
     if os.path.exists(model_name):
         return
+    # Bare names (e.g. ``Qwen3.5-9B-4bit``) already cached in the omlx /
+    # fusion-mlx / HF-snapshot model dirs need no HuggingFace fetch. Reuse
+    # the same resolver the server's load_model uses so ``serve --model
+    # <bare-name>`` does not attempt a doomed HF lookup for a model that
+    # is already on disk locally. Slash-names and genuine HF repos fall
+    # through unchanged (resolver returns them as-is when no local path
+    # exists).
+    try:
+        from . import server as _server_mod
+
+        resolved = _server_mod._resolve_single_model_path(model_name)
+        if os.path.exists(resolved):
+            return
+    except Exception:
+        pass
     # Reuse the same weight-file-presence probe as ``is_repo_cached``:
     # the older ``try_to_load_from_cache('config.json')`` check
     # short-circuits on a partial cache (metadata downloaded, weight
@@ -834,11 +849,94 @@ def _build_benchmark_context(target_tokens: int) -> str:
     return (block * repeats).strip()
 
 
+def _serve_from_model_dir(args):
+    # Released --model-dir multi-model server path (1.0/2.0/3.0 contract).
+    # Boots the engine-pool server that auto-discovers every model in the
+    # directory via create_app(ServerConfig(model_dir)). Mirrors the
+    # pre-Rapid-MLX-migration serve_command; kept as the compat path so
+    # existing docs/scripts (`serve --model-dir <dir>`) keep working while
+    # the Rapid-MLX single-model path (`serve <model>`) remains the default
+    # for explicit model selection.
+    import logging
+
+    logger = logging.getLogger(__name__)
+
+    from .config import ServerConfig
+    from .server import create_app
+
+    host = getattr(args, "host", "0.0.0.0") or "0.0.0.0"
+    port = int(getattr(args, "port", 8000) or 8000)
+    config = ServerConfig(host=host, port=port, model_dir=args.model_dir)
+
+    logger.info(
+        "serve --model-dir=%s host=%s port=%d (multi-model engine-pool server)",
+        args.model_dir,
+        host,
+        port,
+    )
+    print(f"fusion-mlx: serving models from {args.model_dir} on {host}:{port}")
+
+    app = create_app(config)
+
+    import uvicorn
+
+    log_level = getattr(args, "log_level", "INFO")
+    if not isinstance(log_level, str):
+        log_level = "INFO"
+    uvicorn.run(app, host=host, port=port, log_level=log_level.lower())
+
+
 def serve_command(args):
     """Start the OpenAI-compatible server."""
     import logging
     import os
     import sys
+
+    # Released 1.0/2.0/3.0 contract: `serve --model-dir <dir>` boots the
+    # multi-model engine-pool server via create_app(ServerConfig(model_dir)).
+    # The Rapid-MLX migration rerouted `serve` to the single-model Scheduler
+    # path (`serve <model>`); this branch restores the released --model-dir
+    # contract so existing docs/scripts keep working. The Rapid-MLX
+    # single-model path below is unchanged.
+
+    # Released --model flag (docs/cli-reference.md: `serve --model X`) folds
+    # into the same single-model path as the positional <model>. The parser
+    # keeps both forms (dest=model_flag vs positional dest=model).
+    if getattr(args, "model_flag", None):
+        if getattr(args, "model", None):
+            print("Error: --model and a positional <model> are mutually exclusive.")
+            sys.exit(1)
+        args.model = args.model_flag
+
+    # FusionMLX macOS app / omlx-style launch: `serve --base-path <dir>` serves
+    # <dir>/models via the multi-model engine-pool server (the app spawns this
+    # with --base-path ~/.fusion-mlx). Mutually exclusive with model selection.
+    base_path = getattr(args, "base_path", None)
+    if base_path:
+        if getattr(args, "model_dir", None) or getattr(args, "model", None):
+            print("Error: --base-path is mutually exclusive with <model>/--model/--model-dir.")
+            sys.exit(1)
+        args.model_dir = os.path.join(base_path, "models")
+        try:
+            os.makedirs(args.model_dir, exist_ok=True)
+        except OSError as exc:
+            print(f"Error: cannot create model dir {args.model_dir}: {exc}")
+            sys.exit(1)
+        return _serve_from_model_dir(args)
+
+    if getattr(args, "model_dir", None):
+        if getattr(args, "model", None):
+            print("Error: --model-dir and a positional <model> are mutually exclusive.")
+            print("  Use either: fusion-mlx serve --model-dir <dir>")
+            print("       or:    fusion-mlx serve <model>")
+            sys.exit(1)
+        return _serve_from_model_dir(args)
+    if not getattr(args, "model", None):
+        print("Error: serve requires a model or --model-dir/--base-path <dir>.")
+        print("  fusion-mlx serve --model Qwen3-4B-Q4_K_M --port 8000")
+        print("  fusion-mlx serve --model-dir ~/.omlx/models --port 11435")
+        print("  fusion-mlx serve --base-path ~/.fusion-mlx --port 8000")
+        sys.exit(1)
 
     # Parent-PID watchdog (rapid-desktop issue #449): if the supervisor
     # passed its own PID via ``--watchdog-ppid`` or
@@ -2030,6 +2128,12 @@ def serve_command(args):
         else:
             print(f"\n  Error loading model: {e}")
         sys.exit(1)
+
+    # load_model() above called get_app(), which instantiated the singleton
+    # Server and set the module-level ``server.app``. The local ``app``
+    # imported at the top of serve_command is stale (None at import time) —
+    # rebind to the real FastAPI app before handing it to uvicorn.
+    app = server.app
 
     # Task #292 / codex r1 BLOCKING defense-in-depth: ``load_model``
     # already invokes ``register_audio_routes_if_enabled`` at its tail.

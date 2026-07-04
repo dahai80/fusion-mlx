@@ -26,6 +26,7 @@ PRESET_REMOTE_URL = "http://bench.dpdns.org/assets/omlx_preset.json"
 
 from .helpers import (
     _get_global_settings,
+    _get_rich_global_settings,
 )
 
 _router = APIRouter()
@@ -114,7 +115,7 @@ async def get_logs(
         HTTPException: 401 if not authenticated, 503 if server not initialized,
                         400 if invalid file name, 404 if log file not found.
     """
-    global_settings = _get_global_settings()
+    global_settings = _get_rich_global_settings()
 
     if global_settings is None:
         raise HTTPException(status_code=503, detail="Server not initialized")

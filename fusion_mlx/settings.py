@@ -19,6 +19,33 @@ class SubKeyEntry:
     is_active: bool = True
 
 
+class _SettingsAuthView:
+    # Live view exposing the released flat Settings auth fields under the
+    # nested .auth shape that merged admin routes (auth_routes/subkey/stats/
+    # settings/helpers) expect. Backed by the parent Settings so mutations
+    # (api_key assign, sub_keys append/pop) propagate and persist on save.
+    __slots__ = ("_settings",)
+
+    def __init__(self, settings: "Settings") -> None:
+        self._settings = settings
+
+    @property
+    def api_key(self) -> str | None:
+        return self._settings.api_key
+
+    @api_key.setter
+    def api_key(self, value: str | None) -> None:
+        self._settings.api_key = value
+
+    @property
+    def sub_keys(self) -> list[SubKeyEntry]:
+        return self._settings.sub_keys
+
+    @property
+    def skip_api_key_verification(self) -> bool:
+        return bool(self._settings.global_settings.get("skip_api_key_verification", False))
+
+
 @dataclass
 class Settings:
     """Persistent server settings."""
@@ -27,6 +54,12 @@ class Settings:
     sub_keys: list[SubKeyEntry] = field(default_factory=list)
     model_settings: dict[str, Any] = field(default_factory=dict)
     global_settings: dict[str, Any] = field(default_factory=dict)
+
+    @property
+    def auth(self) -> _SettingsAuthView:
+        # Compatibility shim: admin routes access global_settings.auth.api_key
+        # and .auth.sub_keys; the released Settings stores these flat.
+        return _SettingsAuthView(self)
 
     def _save_sync(self, path: Path) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)

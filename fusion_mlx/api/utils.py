@@ -10,6 +10,10 @@ from typing import Any
 
 from .openai_models import Message
 
+def is_mllm_model(name) -> bool:
+    return False
+
+
 # =============================================================================
 # Partial Mode Detection
 # =============================================================================
@@ -50,6 +54,13 @@ SPECIAL_TOKENS_PATTERN = re.compile(
     r"</s>|<s>|<pad>|\[PAD\]|\[SEP\]|\[CLS\]"
 )
 
+_HARMONY_CHANNEL_PATTERN = re.compile(
+    r"<\|channel\|>[^<]*"
+    r"(?:<\|constrain\|>[^<]*)?"
+    r"<\|message\|>"
+)
+_HARMONY_RETURN_PATTERN = re.compile(r"<\|return\|>")
+
 
 def clean_special_tokens(text: str) -> str:
     """Clean model output by removing only special tokens.
@@ -74,21 +85,56 @@ def remove_special_tokens_preserve_whitespace(text: str) -> str:
 
 
 def clean_output_text(text: str) -> str:
-    """Clean model output by removing special tokens and thinking blocks.
-
-    Args:
-        text: Raw model output
-
-    Returns:
-        Cleaned text with special tokens and <think> blocks removed
-    """
     if not text:
         return text
     text = SPECIAL_TOKENS_PATTERN.sub("", text)
+    if "<|channel|>" in text:
+        has_commentary = "commentary" in text and "<|channel|>commentary" in text
+        if has_commentary:
+            # Keep commentary channel tags for tool parser,
+            # but strip analysis-only channel tags and content
+            text = _strip_analysis_channels(text)
+        else:
+            # Extract final channel content, strip all channel markup
+            final_parts = []
+            for m in _HARMONY_CHANNEL_PATTERN.finditer(text):
+                channel_tag = m.group()
+                ch_start = channel_tag.index("<|channel|>") + len("<|channel|>")
+                ch_end = channel_tag.index("<|message|>")
+                channel_name = channel_tag[ch_start:ch_end].strip()
+                if channel_name == "final":
+                    rest = text[m.end():]
+                    ret_pos = rest.find("<|return|>")
+                    if ret_pos >= 0:
+                        final_parts.append(rest[:ret_pos])
+                    else:
+                        final_parts.append(rest)
+            if final_parts:
+                text = "".join(final_parts)
+            else:
+                text = _HARMONY_CHANNEL_PATTERN.sub("", text)
+            text = _HARMONY_RETURN_PATTERN.sub("", text)
     from .thinking import extract_thinking
 
     _, content = extract_thinking(text)
     return content.strip()
+
+
+_ANALYSIS_CHANNEL_PATTERN = re.compile(
+    r"<\|channel\|>analysis<\|message\|>[^<]*(?:<\|end\|>)?"
+)
+
+
+def _strip_analysis_channels(text: str) -> str:
+    """Strip analysis channel content, preserve commentary channels."""
+    # Remove analysis channel blocks: <|channel|>analysis<|message|>...<|end|>
+    # or <|channel|>analysis<|message|>... until next channel tag
+    result = re.sub(
+        r"<\|channel\|>analysis<\|message\|>[^<]*<\|end\|>",
+        "",
+        text,
+    )
+    return result
 
 
 # =============================================================================
@@ -178,6 +224,15 @@ def _extract_multimodal_content_list(content: list) -> list:
                             "image_url": {
                                 "url": f"data:{media_type};base64,{data}",
                             },
+                        }
+                    )
+            elif item_type == "input_audio":
+                audio_data = item.get("input_audio")
+                if isinstance(audio_data, dict) and audio_data.get("data"):
+                    parts.append(
+                        {
+                            "type": "input_audio",
+                            "input_audio": audio_data,
                         }
                     )
     return parts
@@ -327,29 +382,43 @@ def _apply_reasoning_reconstruction(
     reasoning: str | None,
     native: bool,
 ) -> tuple[Any, str | None]:
-    """Reconstruct reasoning on a historical assistant message.
-
-    External clients echo reasoning back via the OpenAI ``reasoning_content``
-    field (or Anthropic ``thinking`` blocks).  Chat templates fall into two
-    camps:
-
-    * ``native=True`` — template understands ``message.reasoning_content``
-        as a top-level field (Qwen 3.6+).  Content stays clean and reasoning
-        travels separately.
-    * ``native=False`` — template only parses ``<think>...</think>`` embedded
-        in content.  Reasoning is inlined into content as a fallback.
-
-    Returns ``(new_content, reasoning_out)`` where ``reasoning_out`` is the
-    string to attach as a ``reasoning_content`` field, or ``None`` to skip.
-    """
-    if role != "assistant" or not reasoning:
+    if role != "assistant":
         return content, None
     text = content if isinstance(content, str) else ""
     if isinstance(content, list):
         text = _extract_text_from_content_list(content)
-    if native:
-        return text, reasoning
-    return f"<think>\n{reasoning}\n</think>\n\n{text}", None
+    # If reasoning is already provided, use it directly
+    if reasoning:
+        if native:
+            return text, reasoning
+        return f"<think>\n{reasoning}\n</think>\n\n{text}", None
+    # No explicit reasoning but content may contain inline thinking tags
+    # that need to be extracted when native mode is on.
+    if native and isinstance(text, str) and text:
+        extracted_reasoning, extracted_content = _extract_inline_thinking(text)
+        if extracted_reasoning is not None:
+            return extracted_content, extracted_reasoning
+    return content, None
+
+
+_THINK_PATTERNS = [
+    # Standard <think>...</think> tags
+    (re.compile(r"^<think>\s*(.*?)\s*</think>\s*", re.DOTALL), None),
+    # MiniMax <mm:think>...</mm:think> tags
+    (re.compile(r"^<mm:think>\s*(.*?)\s*</mm:think>\s*", re.DOTALL), None),
+]
+
+
+def _extract_inline_thinking(text: str) -> tuple[str | None, str]:
+    """Extract inline thinking tags from text, return (reasoning, content)."""
+    for pattern, _ in _THINK_PATTERNS:
+        m = pattern.match(text)
+        if m:
+            reasoning = m.group(1).strip()
+            content = text[m.end():].strip()
+            return reasoning, content
+    return None, text
+
 
 
 def extract_text_content(
@@ -558,11 +627,24 @@ def extract_multimodal_content(
     processed_messages = []
 
     for msg in messages:
-        role = msg.role
-        content = msg.content
+        if isinstance(msg, dict):
+            role = msg.get("role", "user")
+            content = msg.get("content")
+            reasoning = msg.get("reasoning_content")
+            tool_call_id_val = msg.get("tool_call_id", "")
+            tool_calls_val = msg.get("tool_calls")
+            name_val = msg.get("name")
+            partial_val = msg.get("partial", False)
+        else:
+            role = msg.role
+            content = msg.content
+            reasoning = getattr(msg, "reasoning_content", None)
+            tool_call_id_val = getattr(msg, "tool_call_id", None) or ""
+            tool_calls_val = getattr(msg, "tool_calls", None) if hasattr(msg, "tool_calls") else None
+            name_val = getattr(msg, "name", None)
+            partial_val = getattr(msg, "partial", False)
 
         # Reconstruct reasoning (see extract_text_content).
-        reasoning = getattr(msg, "reasoning_content", None)
         content, reasoning_out = _apply_reasoning_reconstruction(
             role, content, reasoning, native_reasoning_content
         )
@@ -572,7 +654,7 @@ def extract_multimodal_content(
 
         # Tool response messages - same as extract_text_content
         if role == "tool":
-            tool_call_id = getattr(msg, "tool_call_id", None) or ""
+            tool_call_id = tool_call_id_val
             # Convert list content to string if needed
             if isinstance(content, list):
                 tool_content = _extract_text_from_content_list(content)
@@ -603,20 +685,20 @@ def extract_multimodal_content(
             continue
 
         # Assistant with tool_calls - same as extract_text_content
-        if role == "assistant" and hasattr(msg, "tool_calls") and msg.tool_calls:
+        if role == "assistant" and tool_calls_val:
             if isinstance(content, list):
                 content = _extract_text_from_content_list(content)
             msg_dict = {"role": role, "content": content if content else ""}
             if reasoning_out is not None:
                 msg_dict["reasoning_content"] = reasoning_out
-            if getattr(msg, "name", None):
-                msg_dict["name"] = msg.name
-            if getattr(msg, "partial", False):
+            if name_val:
+                msg_dict["name"] = name_val
+            if partial_val:
                 msg_dict["partial"] = True
 
             if _chat_template_supports_tool_role(tokenizer):
                 tool_calls_list = []
-                for tc in msg.tool_calls:
+                for tc in tool_calls_val:
                     if isinstance(tc, dict):
                         func = tc.get("function", {})
                         tool_calls_list.append(
@@ -652,7 +734,7 @@ def extract_multimodal_content(
                 msg_dict["tool_calls"] = tool_calls_list
             else:
                 tool_calls_text = []
-                for tc in msg.tool_calls:
+                for tc in tool_calls_val:
                     if isinstance(tc, dict):
                         func = tc.get("function", {})
                         name = func.get("name", "unknown")
@@ -669,9 +751,9 @@ def extract_multimodal_content(
 
         # Build optional extra fields from the source message
         _extra: dict = {}
-        if getattr(msg, "name", None):
-            _extra["name"] = msg.name
-        if getattr(msg, "partial", False):
+        if name_val:
+            _extra["name"] = name_val
+        if partial_val:
             _extra["partial"] = True
         if reasoning_out is not None:
             _extra["reasoning_content"] = reasoning_out
@@ -683,10 +765,12 @@ def extract_multimodal_content(
         if isinstance(content, str):
             processed_messages.append({"role": role, "content": content, **_extra})
         elif isinstance(content, list):
-            # Preserve image_url parts for VLM processing
+            # Preserve image_url and input_audio parts for VLM processing
             multimodal_parts = _extract_multimodal_content_list(content)
-            has_images = any(p.get("type") == "image_url" for p in multimodal_parts)
-            if has_images:
+            has_multimodal = any(
+                p.get("type") in ("image_url", "input_audio") for p in multimodal_parts
+            )
+            if has_multimodal:
                 # Keep as content list for VLM engine
                 processed_messages.append(
                     {"role": role, "content": multimodal_parts, **_extra}
@@ -937,3 +1021,118 @@ def extract_harmony_messages(
     return _merge_consecutive_roles(
         _drop_void_assistant_messages(_consolidate_system_messages(processed_messages))
     )
+
+
+_SPECIAL_TOKEN_CHARS = frozenset("<[]")
+
+_FINAL_SANITIZER = re.compile(
+    r"<\|tool_call>.*?<tool_call\|>"
+    r"|<\|[a-z_\"]+>|<[a-z_\"]+\|>"
+    r"|<\|[a-z_]+\|>"
+    r"|\[Calling\s+tool[^\]]*\]?"
+    r"|</think>|<think>",
+    re.DOTALL,
+)
+
+_REASONING_CHANNEL_TAG_RE = re.compile(r"</?think>")
+
+
+def sanitize_output(text: str) -> str | None:
+    if not text:
+        return text
+    for ch in text:
+        if ch in _SPECIAL_TOKEN_CHARS:
+            cleaned = _FINAL_SANITIZER.sub("", text).strip()
+            return cleaned or None
+    return text
+
+
+def sanitize_reasoning_content(text: str | None) -> str | None:
+    if not text:
+        return text
+    for ch in text:
+        if ch in _SPECIAL_TOKEN_CHARS:
+            cleaned = _FINAL_SANITIZER.sub("", text).strip()
+            return cleaned or None
+    return text
+
+
+def strip_reasoning_channel_markup(text: str) -> str:
+    if not text:
+        return text
+    return _REASONING_CHANNEL_TAG_RE.sub("", text)
+
+
+def strip_special_tokens(text: str) -> str:
+    if not text:
+        return text
+    for ch in text:
+        if ch in _SPECIAL_TOKEN_CHARS:
+            return SPECIAL_TOKENS_PATTERN.sub("", text)
+    return text
+
+
+class StreamingThinkRouter:
+    def __init__(self, start_in_thinking: bool = False):
+        self._buffer = ""
+        self._in_think = start_in_thinking
+
+    def process(self, delta: str) -> list[tuple[str, str]]:
+        self._buffer += delta
+        pieces = []
+        self._extract_pieces(pieces)
+        return pieces
+
+    def _extract_pieces(self, pieces: list[tuple[str, str]]) -> None:
+        while True:
+            if self._in_think:
+                idx = self._buffer.find("</think>")
+                if idx >= 0:
+                    thinking = self._buffer[:idx]
+                    self._buffer = self._buffer[idx + len("</think>"):]
+                    self._in_think = False
+                    if thinking:
+                        pieces.append(("thinking", thinking))
+                    continue
+                else:
+                    for plen in range(min(len("</think>"), len(self._buffer)), 0, -1):
+                        if self._buffer.endswith("</think>"[:plen]):
+                            emit = self._buffer[:-plen]
+                            self._buffer = self._buffer[-plen:]
+                            if emit:
+                                pieces.append(("thinking", emit))
+                            return
+                    if self._buffer:
+                        pieces.append(("thinking", self._buffer))
+                        self._buffer = ""
+                    return
+            else:
+                idx = self._buffer.find("<think>")
+                if idx >= 0:
+                    before = self._buffer[:idx]
+                    self._buffer = self._buffer[idx + len("<think>"):]
+                    self._in_think = True
+                    if before:
+                        pieces.append(("text", before))
+                    continue
+                else:
+                    for plen in range(min(len("<think>"), len(self._buffer)), 0, -1):
+                        if self._buffer.endswith("<think>"[:plen]):
+                            emit = self._buffer[:-plen]
+                            self._buffer = self._buffer[-plen:]
+                            if emit:
+                                pieces.append(("text", emit))
+                            return
+                    if self._buffer:
+                        pieces.append(("text", self._buffer))
+                        self._buffer = ""
+                    return
+
+    def flush(self) -> list[tuple[str, str]]:
+        pieces = []
+        if self._buffer:
+            block_type = "thinking" if self._in_think else "text"
+            pieces.append((block_type, self._buffer))
+            self._buffer = ""
+        self._in_think = False
+        return pieces

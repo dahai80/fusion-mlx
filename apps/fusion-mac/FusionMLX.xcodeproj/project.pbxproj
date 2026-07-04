@@ -542,6 +542,7 @@
 				1EEEEEEEEEEEEEEEEEEEEEE1 /* Sources */,
 				1EEEEEEEEEEEEEEEEEEEEEE2 /* Frameworks */,
 				1EEEEEEEEEEEEEEEEEEEEEE3 /* Resources */,
+				9F26FFF92FF8830300D1EFB3 /* Run Script */,
 			);
 			buildRules = (
 			);
@@ -624,6 +625,27 @@
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXResourcesBuildPhase section */
+
+/* Begin PBXShellScriptBuildPhase section */
+		9F26FFF92FF8830300D1EFB3 /* Run Script */ = {
+			isa = PBXShellScriptBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "Run Script";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "# Type a script or drag a script file from your workspace to insert its path.\n";
+		};
+/* End PBXShellScriptBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
 		1EEEEEEEEEEEEEEEEEEEEEE1 /* Sources */ = {
@@ -895,7 +917,7 @@
 				);
 				MACOSX_DEPLOYMENT_TARGET = 15.0;
 				MARKETING_VERSION = 0.4.0;
-				PRODUCT_BUNDLE_IDENTIFIER = app.fusion-mlx;
+				PRODUCT_BUNDLE_IDENTIFIER = "app.fusion-mlx";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_VERSION = 6.0;
@@ -921,7 +943,7 @@
 				);
 				MACOSX_DEPLOYMENT_TARGET = 15.0;
 				MARKETING_VERSION = 0.4.0;
-				PRODUCT_BUNDLE_IDENTIFIER = app.fusion-mlx;
+				PRODUCT_BUNDLE_IDENTIFIER = "app.fusion-mlx";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_VERSION = 6.0;

@@ -1,0 +1,570 @@
+# SPDX-License-Identifier: Apache-2.0
+"""Tests for memory-aware prefix cache (migrated from Rapid-MLX)."""
+
+from unittest.mock import MagicMock, patch
+
+import pytest
+
+try:
+    import mlx_lm  # noqa: F401
+
+    _has_mlx_lm = True
+except ImportError:
+    _has_mlx_lm = False
+
+from fusion_mlx.memory_cache import (
+    CacheStats,
+    MemoryAwarePrefixCache,
+    MemoryCacheConfig,
+    _array_memory,
+    _CacheEntry,
+    _get_available_memory,
+    estimate_kv_cache_memory,
+)
+
+
+class TestMemoryCacheConfig:
+
+    def test_default_config(self):
+        config = MemoryCacheConfig()
+        assert config.max_memory_mb is None
+        assert config.max_memory_percent == 0.20
+        assert config.max_entries == 1000
+        assert config.enable_memory_tracking is True
+
+    def test_custom_config(self):
+        config = MemoryCacheConfig(
+            max_memory_mb=2048,
+            max_memory_percent=0.5,
+            max_entries=100,
+        )
+        assert config.max_memory_mb == 2048
+        assert config.max_memory_percent == 0.5
+        assert config.max_entries == 100
+
+    def test_invalid_memory_percent_zero(self):
+        with pytest.raises(ValueError, match="max_memory_percent"):
+            MemoryCacheConfig(max_memory_percent=0.0)
+
+    def test_invalid_memory_percent_negative(self):
+        with pytest.raises(ValueError, match="max_memory_percent"):
+            MemoryCacheConfig(max_memory_percent=-0.1)
+
+    def test_invalid_memory_percent_over_one(self):
+        with pytest.raises(ValueError, match="max_memory_percent"):
+            MemoryCacheConfig(max_memory_percent=1.5)
+
+    def test_invalid_max_entries(self):
+        with pytest.raises(ValueError, match="max_entries"):
+            MemoryCacheConfig(max_entries=0)
+
+    def test_compute_memory_limit_explicit(self):
+        config = MemoryCacheConfig(max_memory_mb=1024)
+        assert config.compute_memory_limit() == 1024 * 1024 * 1024
+
+    def test_compute_memory_limit_auto(self):
+        with patch(
+            "fusion_mlx.memory_cache._get_available_memory",
+            return_value=8 * 1024 * 1024 * 1024,
+        ):
+            config = MemoryCacheConfig(max_memory_percent=0.25)
+            limit = config.compute_memory_limit()
+            assert limit == 2 * 1024 * 1024 * 1024
+
+    def test_compute_memory_limit_fallback(self):
+        with patch(
+            "fusion_mlx.memory_cache._get_available_memory",
+            return_value=0,
+        ):
+            config = MemoryCacheConfig(max_memory_percent=0.25)
+            limit = config.compute_memory_limit()
+            assert limit == 2 * 1024 * 1024 * 1024
+
+
+class TestCacheStats:
+
+    def test_initial_stats(self):
+        stats = CacheStats()
+        assert stats.hits == 0
+        assert stats.misses == 0
+        assert stats.hit_rate == 0.0
+
+    def test_hit_rate_calculation(self):
+        stats = CacheStats(hits=3, misses=1)
+        assert stats.hit_rate == 0.75
+
+    def test_hit_rate_no_queries(self):
+        stats = CacheStats(hits=0, misses=0)
+        assert stats.hit_rate == 0.0
+
+    def test_memory_utilization(self):
+        stats = CacheStats(
+            current_memory_bytes=500 * 1024 * 1024,
+            max_memory_bytes=1000 * 1024 * 1024,
+        )
+        assert stats.memory_utilization == 0.5
+
+    def test_to_dict(self):
+        stats = CacheStats(hits=10, misses=5, evictions=2)
+        d = stats.to_dict()
+        assert d["hits"] == 10
+        assert d["misses"] == 5
+        assert d["evictions"] == 2
+        assert "hit_rate" in d
+        assert "memory_utilization" in d
+
+
+class MockArray:
+
+    def __init__(self, nbytes: int):
+        self.nbytes = nbytes
+
+
+class MockDtype:
+
+    def __init__(self, size: int):
+        self.size = size
+
+
+class MockShapeArray:
+
+    def __init__(self, shape: tuple, dtype_size: int):
+        self.shape = shape
+        self.dtype = MockDtype(dtype_size)
+
+
+class MockKVCache:
+
+    def __init__(self, key_bytes: int, value_bytes: int):
+        self.keys = MockArray(key_bytes)
+        self.values = MockArray(value_bytes)
+
+
+class MockStateCache:
+
+    def __init__(self, key_bytes: int, value_bytes: int):
+        self._keys = MockArray(key_bytes)
+        self._values = MockArray(value_bytes)
+
+    @property
+    def state(self):
+        return (self._keys, self._values)
+
+
+class TestArrayMemory:
+
+    def test_shape_dtype_estimation(self):
+        arr = MockShapeArray(shape=(2, 16, 128, 64), dtype_size=2)
+        assert _array_memory(arr) == 2 * 16 * 128 * 64 * 2
+
+    def test_fallback_to_nbytes(self):
+        arr = MockArray(nbytes=4096)
+        assert _array_memory(arr) == 4096
+
+    def test_zero_for_unknown_object(self):
+        assert _array_memory(42) == 0
+        assert _array_memory("string") == 0
+
+    def test_shape_dtype_preferred_over_nbytes(self):
+
+        class DualArray:
+            def __init__(self):
+                self.shape = (10,)
+                self.dtype = MockDtype(4)
+                self.nbytes = 9999
+
+        arr = DualArray()
+        assert _array_memory(arr) == 40
+
+    def test_estimate_uses_shape_based_for_dict_state(self):
+        keys = MockShapeArray(shape=(1, 8, 100, 64), dtype_size=2)
+        values = MockShapeArray(shape=(1, 8, 100, 64), dtype_size=2)
+        layer = {"state": (keys, values)}
+        expected = 2 * (1 * 8 * 100 * 64 * 2)
+        assert estimate_kv_cache_memory([layer]) == expected
+
+
+class TestEstimateKvCacheMemory:
+
+    def test_empty_cache(self):
+        assert estimate_kv_cache_memory([]) == 0
+        assert estimate_kv_cache_memory(None) == 0
+
+    def test_cache_with_nbytes_attribute(self):
+        layer = MockKVCache(1000, 1000)
+        assert estimate_kv_cache_memory([layer]) == 2000
+
+    def test_cache_with_state_property(self):
+        layer = MockStateCache(500, 500)
+        assert estimate_kv_cache_memory([layer]) == 1000
+
+    def test_cache_with_dict_state(self):
+        keys = MockArray(300)
+        values = MockArray(300)
+        layer = {"state": (keys, values)}
+        assert estimate_kv_cache_memory([layer]) == 600
+
+    def test_multiple_layers(self):
+        layers = [MockKVCache(100, 100) for _ in range(4)]
+        assert estimate_kv_cache_memory(layers) == 800
+
+
+class TestCacheEntry:
+
+    def test_create_entry(self):
+        cache = [MockKVCache(100, 100)]
+        entry = _CacheEntry.create([1, 2, 3], cache)
+        assert entry.tokens == (1, 2, 3)
+        assert entry.cache is cache
+        assert entry.memory_bytes == 200
+
+
+class TestMemoryAwarePrefixCache:
+
+    @pytest.fixture
+    def model(self):
+        return MagicMock()
+
+    @pytest.fixture
+    def small_cache(self, model):
+        config = MemoryCacheConfig(max_memory_mb=1, max_entries=10)
+        return MemoryAwarePrefixCache(model, config)
+
+    @pytest.fixture
+    def mock_kv_cache(self):
+
+        def _create(size_bytes: int):
+            return [MockKVCache(size_bytes // 2, size_bytes // 2)]
+
+        return _create
+
+    def test_initialization(self, model):
+        config = MemoryCacheConfig(max_memory_mb=100)
+        cache = MemoryAwarePrefixCache(model, config)
+        assert len(cache) == 0
+        assert cache.memory_limit_mb == 100.0
+
+    def test_store_and_fetch_exact_match(self, small_cache, mock_kv_cache):
+        tokens = [1, 2, 3, 4, 5]
+        kv = mock_kv_cache(1000)
+
+        assert small_cache.store(tokens, kv) is True
+        assert len(small_cache) == 1
+
+        result, remaining = small_cache.fetch(tokens)
+        assert result is not kv
+        assert remaining == []
+
+    def test_fetch_prefix_match(self, small_cache, mock_kv_cache):
+        short_tokens = [1, 2, 3]
+        kv = mock_kv_cache(1000)
+        small_cache.store(short_tokens, kv)
+
+        long_tokens = [1, 2, 3, 4, 5, 6]
+        result, remaining = small_cache.fetch(long_tokens)
+
+        assert result is not kv
+        assert remaining == [4, 5, 6]
+
+    def test_fetch_miss(self, small_cache, mock_kv_cache):
+        tokens = [1, 2, 3]
+        kv = mock_kv_cache(1000)
+        small_cache.store(tokens, kv)
+
+        result, remaining = small_cache.fetch([7, 8, 9])
+        assert result is None
+        assert remaining == [7, 8, 9]
+
+    def test_lru_eviction_on_memory_pressure(self, model, mock_kv_cache):
+        config = MemoryCacheConfig(max_memory_mb=0.5, max_entries=100)
+        cache = MemoryAwarePrefixCache(model, config)
+
+        for i in range(5):
+            tokens = list(range(i * 10, (i + 1) * 10))
+            kv = mock_kv_cache(200 * 1024)
+            cache.store(tokens, kv)
+
+        assert cache.memory_usage_mb <= 0.5
+        stats = cache.get_stats()
+        assert stats["evictions"] > 0
+
+    def test_lru_order_updated_on_fetch(self, small_cache, mock_kv_cache):
+        tokens1 = [1, 2, 3]
+        tokens2 = [4, 5, 6]
+        kv1 = mock_kv_cache(100 * 1024)
+        kv2 = mock_kv_cache(100 * 1024)
+
+        small_cache.store(tokens1, kv1)
+        small_cache.store(tokens2, kv2)
+
+        small_cache.fetch(tokens1)
+
+        big_kv = mock_kv_cache(900 * 1024)
+        small_cache.store([7, 8, 9], big_kv)
+
+        assert tokens1 in small_cache or len(small_cache) == 1
+
+    def test_entry_too_large_rejected(self, small_cache, mock_kv_cache):
+        tokens = [1, 2, 3]
+        huge_kv = mock_kv_cache(10 * 1024 * 1024)
+
+        result = small_cache.store(tokens, huge_kv)
+        assert result is False
+        assert len(small_cache) == 0
+
+    def test_store_empty_rejected(self, small_cache, mock_kv_cache):
+        assert small_cache.store([], mock_kv_cache(100)) is False
+        assert small_cache.store([1, 2, 3], []) is False
+        assert small_cache.store([1, 2, 3], None) is False
+
+    def test_remove_entry(self, small_cache, mock_kv_cache):
+        tokens = [1, 2, 3]
+        kv = mock_kv_cache(1000)
+        small_cache.store(tokens, kv)
+        assert len(small_cache) == 1
+
+        assert small_cache.remove(tokens) is True
+        assert len(small_cache) == 0
+        assert small_cache.remove(tokens) is False
+
+    def test_clear(self, small_cache, mock_kv_cache):
+        for i in range(3):
+            small_cache.store([i], mock_kv_cache(1000))
+
+        assert len(small_cache) == 3
+        small_cache.clear()
+        assert len(small_cache) == 0
+        assert small_cache.memory_usage_mb == 0
+
+    def test_contains(self, small_cache, mock_kv_cache):
+        tokens = [1, 2, 3]
+        assert tokens not in small_cache
+        small_cache.store(tokens, mock_kv_cache(1000))
+        assert tokens in small_cache
+
+    def test_stats_tracking(self, small_cache, mock_kv_cache):
+        tokens1 = [1, 2, 3]
+        tokens2 = [4, 5, 6]
+        kv = mock_kv_cache(1000)
+
+        small_cache.store(tokens1, kv)
+        small_cache.fetch(tokens1)
+        small_cache.fetch(tokens2)
+
+        stats = small_cache.get_stats()
+        assert stats["hits"] == 1
+        assert stats["misses"] == 1
+        assert stats["entry_count"] == 1
+
+    def test_reset_stats(self, small_cache, mock_kv_cache):
+        small_cache.store([1, 2, 3], mock_kv_cache(1000))
+        small_cache.fetch([1, 2, 3])
+        small_cache.fetch([4, 5, 6])
+
+        small_cache.reset_stats()
+        stats = small_cache.get_stats()
+
+        assert stats["hits"] == 0
+        assert stats["misses"] == 0
+        assert stats["entry_count"] == 1
+
+    def test_duplicate_store_updates_lru(self, small_cache, mock_kv_cache):
+        tokens = [1, 2, 3]
+        kv = mock_kv_cache(1000)
+
+        small_cache.store(tokens, kv)
+        initial_len = len(small_cache)
+
+        small_cache.store(tokens, kv)
+
+        assert len(small_cache) == initial_len
+
+    def test_max_entries_limit(self, model, mock_kv_cache):
+        config = MemoryCacheConfig(max_memory_mb=100, max_entries=3)
+        cache = MemoryAwarePrefixCache(model, config)
+
+        for i in range(5):
+            cache.store([i], mock_kv_cache(100))
+
+        assert len(cache) <= 3
+
+
+class TestCacheListTrimmability:
+
+    class TrimmableLayer:
+
+        def __init__(self, key_bytes: int, value_bytes: int, offset: int = 10):
+            self.keys = MockArray(key_bytes)
+            self.values = MockArray(value_bytes)
+            self._offset = offset
+
+        @property
+        def offset(self):
+            return self._offset
+
+        @offset.setter
+        def offset(self, val):
+            self._offset = val
+
+        def is_trimmable(self) -> bool:
+            return True
+
+    class NonTrimmableLayer:
+
+        def __init__(self, nbytes: int = 100):
+            self.keys = MockArray(nbytes)
+            self.values = MockArray(nbytes)
+
+        def is_trimmable(self) -> bool:
+            return False
+
+    @pytest.fixture
+    def model(self):
+        return MagicMock()
+
+    @pytest.fixture
+    def cache(self, model):
+        config = MemoryCacheConfig(max_memory_mb=10, max_entries=10)
+        return MemoryAwarePrefixCache(model, config)
+
+    @pytest.mark.skipif(not _has_mlx_lm, reason="mlx_lm not available (Linux CI)")
+    def test_supersequence_trimmable_cachelist_hits(self, cache):
+        long_tokens = [1, 2, 3, 4, 5, 6, 7, 8]
+        kv = [self.TrimmableLayer(500, 500, offset=8)]
+        cache.store(long_tokens, kv)
+
+        short_tokens = [1, 2, 3, 4, 5]
+        result, remaining = cache.fetch(short_tokens)
+
+        assert result is not None, (
+            "Supersequence match was skipped — CacheList misclassified as non-trimmable"
+        )
+        assert remaining == []
+
+    def test_supersequence_non_trimmable_skipped(self, cache):
+        long_tokens = [1, 2, 3, 4, 5, 6, 7, 8]
+        kv = [self.NonTrimmableLayer()]
+        cache.store(long_tokens, kv)
+
+        short_tokens = [1, 2, 3, 4, 5]
+        result, remaining = cache.fetch(short_tokens)
+
+        assert result is None
+        assert remaining == short_tokens
+
+    @pytest.mark.skipif(not _has_mlx_lm, reason="mlx_lm not available (Linux CI)")
+    def test_lcp_trimmable_cachelist_hits(self, cache):
+        stored = [1, 2, 3, 4, 5, 10, 11, 12]
+        kv = [self.TrimmableLayer(500, 500, offset=8)]
+        cache.store(stored, kv)
+
+        requested = [1, 2, 3, 4, 5, 20, 21]
+        result, remaining = cache.fetch(requested)
+
+        assert result is not None, (
+            "LCP match was skipped — CacheList misclassified as non-trimmable"
+        )
+        assert remaining == [20, 21]
+
+    def test_lcp_non_trimmable_skipped(self, cache):
+        stored = [1, 2, 3, 4, 5, 10, 11, 12]
+        kv = [self.NonTrimmableLayer()]
+        cache.store(stored, kv)
+
+        requested = [1, 2, 3, 4, 5, 20, 21]
+        result, remaining = cache.fetch(requested)
+
+        assert result is None
+        assert remaining == requested
+
+
+class TestGetAvailableMemory:
+
+    def test_with_psutil(self):
+        try:
+            from importlib.util import find_spec
+
+            if find_spec("psutil") is None:
+                pytest.skip("psutil not installed")
+            mem = _get_available_memory()
+            assert mem > 0
+        except ImportError:
+            pytest.skip("psutil not installed")
+
+    def test_without_psutil(self):
+        with patch.dict("sys.modules", {"psutil": None}):
+            pass
+
+
+class TestConcurrentAccess:
+
+    def _make_cache(self):
+        config = MemoryCacheConfig(max_memory_mb=64, max_entries=64)
+        return MemoryAwarePrefixCache(MagicMock(), config)
+
+    def test_lock_present(self):
+        cache = self._make_cache()
+        assert hasattr(cache, "_lock")
+
+    def test_concurrent_fetch_and_store_no_keyerror(self):
+        import threading
+
+        cache = self._make_cache()
+        for i in range(40):
+            cache.store(list(range(i, i + 16)), [MockKVCache(8, 4)])
+
+        errors: list[BaseException] = []
+        stop = threading.Event()
+
+        def writer():
+            i = 100
+            while not stop.is_set():
+                try:
+                    cache.store(list(range(i, i + 16)), [MockKVCache(8, 4)])
+                    i += 1
+                except BaseException as exc:  # noqa: BLE001
+                    errors.append(exc)
+
+        def reader():
+            while not stop.is_set():
+                try:
+                    for i in range(0, 80, 3):
+                        cache.fetch(list(range(i, i + 16)))
+                except BaseException as exc:  # noqa: BLE001
+                    errors.append(exc)
+
+        threads = [
+            threading.Thread(target=writer),
+            threading.Thread(target=reader),
+            threading.Thread(target=reader),
+        ]
+        for t in threads:
+            t.start()
+        threading.Event().wait(0.5)
+        stop.set()
+        for t in threads:
+            t.join(timeout=2)
+
+        assert errors == [], f"Concurrent access raised: {errors[:3]}"
+
+    def test_eviction_orders_remove_before_pop(self):
+        cache = self._make_cache()
+        cache.store([1, 2, 3], [MockKVCache(8, 4)])
+
+        order: list[str] = []
+        orig_remove = cache._remove_from_sorted
+        orig_pop = cache._entries.pop
+
+        def trace_remove(key):
+            order.append("remove_sorted")
+            orig_remove(key)
+
+        def trace_pop(key, *a, **kw):
+            order.append("pop_entries")
+            return orig_pop(key, *a, **kw)
+
+        cache._remove_from_sorted = trace_remove
+        cache._entries.pop = trace_pop
+
+        cache.remove([1, 2, 3])
+        assert order == ["remove_sorted", "pop_entries"], order

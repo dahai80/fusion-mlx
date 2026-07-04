@@ -1,0 +1,1994 @@
+"""Tests for VLM (Vision-Language Model) engine logic.
+
+Tests cover:
+- Tool calling injection from mlx-lm into VLM tokenizer
+- Chat template application with tools and thinking
+- OCR prompt substitution
+- Message processing (image vs text-only paths)
+- Vision input preparation with tools
+- Token counting
+- Engine stop safety (close() exception guard)
+"""
+
+import base64
+import io
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
+
+try:
+    import mlx.core as mx
+
+    HAS_MLX = True
+except ImportError:
+    HAS_MLX = False
+
+
+# ---------------------------------------------------------------------------
+# Mock helpers
+# ---------------------------------------------------------------------------
+
+
+class MockVLMTokenizer:
+    """Mock that mimics mlx-vlm's TokenizerWrapper __getattr__ delegation.
+
+    mlx-vlm TokenizerWrapper delegates unknown attributes to the HF tokenizer
+    via __getattr__. This mock reproduces that behavior so we can test that
+    _inject_tool_calling() sets instance attributes that take precedence.
+    """
+
+    def __init__(self, chat_template=None, vocab=None):
+        self.eos_token_id = 0
+        self.chat_template = chat_template
+        self._vocab = vocab or {}
+
+    def __getattr__(self, attr):
+        # Mimic mlx-vlm: delegate to HF tokenizer (which doesn't have
+        # tool calling attrs), raising AttributeError
+        raise AttributeError(f"'{type(self).__name__}' has no attribute '{attr}'")
+
+    def get_vocab(self):
+        return self._vocab
+
+    def apply_chat_template(self, messages, **kwargs):
+        return "<formatted>"
+
+    def encode(self, text, **kwargs):
+        return list(range(max(1, len(text.split()))))
+
+    def decode(self, ids, **kwargs):
+        return "decoded text"
+
+
+def _make_engine(**overrides):
+    """Create a VLMBatchedEngine instance without loading a model."""
+    from fusion_mlx.engine.vlm import VLMBatchedEngine
+
+    engine = VLMBatchedEngine(
+        model_name=overrides.pop("model_name", "test-vlm"),
+        **overrides,
+    )
+    return engine
+
+
+def _make_loaded_engine(model_type=None, tokenizer=None, **overrides):
+    """Create a VLMBatchedEngine with mocked internals (no actual model load)."""
+    engine = _make_engine(**overrides)
+
+    # Set up mock model config
+    mock_config = MagicMock()
+    mock_config.model_type = model_type
+
+    mock_vlm_model = MagicMock()
+    mock_vlm_model.config = mock_config
+
+    engine._vlm_model = mock_vlm_model
+    engine._tokenizer = tokenizer or MockVLMTokenizer()
+    engine._loaded = True
+    engine._engine = MagicMock()
+
+    return engine
+
+
+class FakeStreamingCore:
+    """Minimal async engine core for VLM stream cleanup tests."""
+
+    def __init__(self):
+        self.aborted_request_id = None
+
+    async def add_request(self, **kwargs):
+        return "vlm-request-1"
+
+    async def stream_outputs(self, request_id):
+        yield SimpleNamespace(
+            output_text="partial",
+            new_text="partial",
+            prompt_tokens=1,
+            completion_tokens=1,
+            finished=False,
+            finish_reason=None,
+            tool_calls=None,
+            cached_tokens=0,
+        )
+
+    async def abort_request(self, request_id):
+        self.aborted_request_id = request_id
+
+
+# ---------------------------------------------------------------------------
+# Test stream cleanup
+# ---------------------------------------------------------------------------
+
+
+class TestVLMStreamingCleanup:
+    """Tests for streaming generator cleanup paths."""
+
+    @pytest.mark.asyncio
+    @pytest.mark.skipif(
+        not HAS_MLX, reason="mlx is required to import VLMBatchedEngine"
+    )
+    async def test_stream_abort_uses_captured_engine_if_engine_cleared(self):
+        """Generator finalization aborts on the original engine reference."""
+        fake_engine = FakeStreamingCore()
+        engine = _make_loaded_engine(model_type="test-vlm")
+        engine._engine = fake_engine
+
+        stream = engine.stream_generate("hello")
+        first = await stream.__anext__()
+        assert first.text == "partial"
+
+        engine._engine = None
+        await stream.aclose()
+
+        assert fake_engine.aborted_request_id == "vlm-request-1"
+
+
+class TestVLMDiffusionLane:
+    """Tests for DiffusionGemma routing in VLMBatchedEngine."""
+
+    @pytest.mark.asyncio
+    @pytest.mark.skipif(
+        not HAS_MLX, reason="mlx is required to import VLMBatchedEngine"
+    )
+    async def test_stream_chat_uses_diffusion_lane(self, monkeypatch):
+        from fusion_mlx.engine.base import GenerationOutput
+
+        engine = _make_loaded_engine(model_type="diffusion_gemma")
+        engine._diffusion_family = "block"
+        engine._prepare_vision_inputs = MagicMock(
+            side_effect=AssertionError("AR VLM path should not run")
+        )
+        engine._process_diffusion_chat_messages = MagicMock(
+            return_value={"prompt_tokens": 2}
+        )
+
+        def fake_iter(diffusion_inputs, **kwargs):
+            yield GenerationOutput(
+                text="hello",
+                new_text="hello",
+                prompt_tokens=2,
+                completion_tokens=5,
+                finished=False,
+                finish_reason=None,
+            )
+            yield GenerationOutput(
+                text="hello",
+                new_text="",
+                prompt_tokens=2,
+                completion_tokens=5,
+                finished=True,
+                finish_reason="stop",
+            )
+
+        monkeypatch.setattr(engine, "_iter_diffusion_outputs_sync", fake_iter)
+
+        outputs = [
+            output
+            async for output in engine.stream_chat(
+                [{"role": "user", "content": "hi"}],
+                max_tokens=8,
+                temperature=0.0,
+            )
+        ]
+
+        assert [output.new_text for output in outputs] == ["hello", ""]
+        assert outputs[-1].finished is True
+        assert outputs[-1].finish_reason == "stop"
+        engine._prepare_vision_inputs.assert_not_called()
+        engine._process_diffusion_chat_messages.assert_called_once()
+
+    @pytest.mark.asyncio
+    @pytest.mark.skipif(
+        not HAS_MLX, reason="mlx is required to import VLMBatchedEngine"
+    )
+    async def test_diffusion_chat_collects_streamed_blocks(self, monkeypatch):
+        from fusion_mlx.engine.base import GenerationOutput
+
+        engine = _make_loaded_engine(model_type="diffusion_gemma")
+        engine._diffusion_family = "block"
+        engine._process_diffusion_chat_messages = MagicMock(
+            return_value={"prompt_tokens": 3}
+        )
+
+        def fake_iter(diffusion_inputs, **kwargs):
+            yield GenerationOutput(
+                text="A",
+                new_text="A",
+                prompt_tokens=3,
+                completion_tokens=1,
+                finished=False,
+                finish_reason=None,
+            )
+            yield GenerationOutput(
+                text="AB",
+                new_text="B",
+                prompt_tokens=3,
+                completion_tokens=2,
+                finished=True,
+                finish_reason="length",
+            )
+
+        monkeypatch.setattr(engine, "_iter_diffusion_outputs_sync", fake_iter)
+
+        output = await engine.chat(
+            [{"role": "user", "content": "hi"}],
+            max_tokens=2,
+            temperature=0.0,
+        )
+
+        assert output.text == "AB"
+        assert output.prompt_tokens == 3
+        assert output.completion_tokens == 2
+        assert output.finish_reason == "length"
+        assert output.cached_tokens == 0
+
+    @pytest.mark.asyncio
+    @pytest.mark.skipif(
+        not HAS_MLX, reason="mlx is required to import VLMBatchedEngine"
+    )
+    async def test_diffusion_preflight_rejects_tools(self):
+        """Tools rejected when no tool parser matched the chat template."""
+        from fusion_mlx.exceptions import InvalidRequestError
+
+        engine = _make_loaded_engine(model_type="diffusion_gemma")
+        engine._diffusion_family = "block"
+
+        with pytest.raises(InvalidRequestError, match="Tool calling"):
+            await engine.preflight_chat(
+                [{"role": "user", "content": "hi"}],
+                tools=[{"type": "function", "function": {"name": "lookup"}}],
+            )
+
+    @pytest.mark.asyncio
+    @pytest.mark.skipif(
+        not HAS_MLX, reason="mlx is required to import VLMBatchedEngine"
+    )
+    async def test_diffusion_preflight_allows_tools_with_parser(self):
+        """Tools accepted when the tokenizer has an injected tool parser."""
+        tokenizer = MockVLMTokenizer()
+        tokenizer.has_tool_calling = True
+        tokenizer.tool_call_start = "<|tool_call>"
+        tokenizer.tool_call_end = "<tool_call|>"
+        tokenizer.tool_parser = lambda text, tools=None: {
+            "name": "lookup",
+            "arguments": "{}",
+        }
+
+        engine = _make_loaded_engine(
+            model_type="diffusion_gemma", tokenizer=tokenizer
+        )
+        engine._diffusion_family = "block"
+
+        assert engine.supports_tool_calling is True
+        # Must not raise
+        await engine.preflight_chat(
+            [{"role": "user", "content": "hi"}],
+            tools=[{"type": "function", "function": {"name": "lookup"}}],
+        )
+
+    @pytest.mark.skipif(
+        not HAS_MLX, reason="mlx is required to import VLMBatchedEngine"
+    )
+    def test_diffusion_supports_tool_calling_false_without_parser(self):
+        engine = _make_loaded_engine(model_type="diffusion_gemma")
+        engine._diffusion_family = "block"
+        assert engine.supports_tool_calling is False
+
+    @pytest.mark.skipif(
+        not HAS_MLX, reason="mlx is required to import VLMBatchedEngine"
+    )
+    def test_diffusion_validation_rejects_audio(self):
+        from fusion_mlx.exceptions import InvalidRequestError
+
+        engine = _make_loaded_engine(model_type="diffusion_gemma")
+        engine._diffusion_family = "block"
+
+        with pytest.raises(InvalidRequestError, match="Audio input"):
+            engine._validate_diffusion_request(audio=[object()])
+
+    @pytest.mark.asyncio
+    @pytest.mark.skipif(
+        not HAS_MLX, reason="mlx is required to import VLMBatchedEngine"
+    )
+    async def test_diffusion_stream_generate_rejects_precomputed_vlm_inputs(self):
+        from fusion_mlx.exceptions import InvalidRequestError
+
+        engine = _make_loaded_engine(model_type="diffusion_gemma")
+        engine._diffusion_family = "block"
+
+        with pytest.raises(InvalidRequestError, match="Precomputed VLM embeddings"):
+            async for _ in engine.stream_generate(
+                "hello",
+                vlm_inputs_embeds=object(),
+            ):
+                pass
+
+    @pytest.mark.asyncio
+    @pytest.mark.skipif(
+        not HAS_MLX, reason="mlx is required to import VLMBatchedEngine"
+    )
+    async def test_diffusion_abort_all_requests_sets_cancel_events(self):
+        import threading
+
+        engine = _make_loaded_engine(model_type="diffusion_gemma")
+        engine._diffusion_family = "block"
+        cancel_event = threading.Event()
+        engine._diffusion_cancel_events = {cancel_event}
+
+        assert await engine.abort_all_requests() == 1
+        assert cancel_event.is_set()
+
+    @pytest.mark.skipif(
+        not HAS_MLX, reason="mlx is required to import VLMBatchedEngine"
+    )
+    def test_diffusion_iter_ignores_stale_final_text(self, monkeypatch):
+        import importlib
+
+        engine = _make_loaded_engine(model_type="diffusion_gemma")
+        engine._diffusion_family = "block"
+
+        diffusion_module = importlib.import_module("mlx_vlm.generate.diffusion")
+        stream_kwargs = {}
+
+        def fake_stream_diffusion_generate(*args, **kwargs):
+            stream_kwargs.update(kwargs)
+            yield SimpleNamespace(
+                text="Hello",
+                generation_tokens=1,
+                prompt_tokens=2,
+                finish_reason=None,
+                diffusion_block_complete=False,
+                is_draft=False,
+            )
+            yield SimpleNamespace(
+                text="",
+                generation_tokens=1,
+                prompt_tokens=2,
+                finish_reason=None,
+                diffusion_block_complete=True,
+                is_draft=False,
+            )
+            yield SimpleNamespace(
+                text="Hello",
+                generation_tokens=1,
+                prompt_tokens=2,
+                finish_reason="length",
+                diffusion_block_complete=False,
+                is_draft=False,
+            )
+
+        monkeypatch.setattr(
+            diffusion_module,
+            "stream_diffusion_generate",
+            fake_stream_diffusion_generate,
+        )
+
+        outputs = list(
+            engine._iter_diffusion_outputs_sync(
+                {"input_ids": object(), "prompt_tokens": 2},
+                max_tokens=1,
+                temperature=0.0,
+            )
+        )
+
+        assert [output.new_text for output in outputs] == ["Hello", ""]
+        assert outputs[-1].text == "Hello"
+        assert outputs[-1].finished is True
+        assert outputs[-1].finish_reason == "length"
+
+    @pytest.mark.skipif(
+        not HAS_MLX, reason="mlx is required to import VLMBatchedEngine"
+    )
+    def test_diffusion_iter_flushes_final_detokenizer_segment(self, monkeypatch):
+        import importlib
+
+        engine = _make_loaded_engine(model_type="diffusion_gemma")
+        engine._diffusion_family = "block"
+
+        diffusion_module = importlib.import_module("mlx_vlm.generate.diffusion")
+        stream_kwargs = {}
+
+        def fake_stream_diffusion_generate(*args, **kwargs):
+            stream_kwargs.update(kwargs)
+            yield SimpleNamespace(
+                text="Hello",
+                generation_tokens=1,
+                prompt_tokens=2,
+                finish_reason=None,
+                diffusion_block_complete=False,
+                is_draft=False,
+            )
+            yield SimpleNamespace(
+                text="",
+                generation_tokens=2,
+                prompt_tokens=2,
+                finish_reason=None,
+                diffusion_block_complete=True,
+                is_draft=False,
+            )
+            yield SimpleNamespace(
+                text="!",
+                generation_tokens=2,
+                prompt_tokens=2,
+                finish_reason="stop",
+                diffusion_block_complete=False,
+                is_draft=False,
+                prompt_tps=123.0,
+                generation_tps=45.0,
+                diffusion_canvas_tokens=64,
+                diffusion_denoising_steps=7,
+                diffusion_work_tokens=448,
+                diffusion_canvas_tps=90.0,
+                diffusion_work_tps=630.0,
+            )
+
+        monkeypatch.setattr(
+            diffusion_module,
+            "stream_diffusion_generate",
+            fake_stream_diffusion_generate,
+        )
+
+        outputs = list(
+            engine._iter_diffusion_outputs_sync(
+                {"input_ids": object(), "prompt_tokens": 2},
+                max_tokens=2,
+                temperature=0.0,
+            )
+        )
+
+        assert [output.new_text for output in outputs] == ["Hello", "!"]
+        assert outputs[-1].text == "Hello!"
+        assert outputs[-1].finished is True
+        assert outputs[-1].finish_reason == "stop"
+        assert stream_kwargs["prefill_step_size"] == 2048
+        assert outputs[-1].prompt_tps == 123.0
+        assert outputs[-1].generation_tps == 45.0
+        assert outputs[-1].diffusion_canvas_tokens == 64
+        assert outputs[-1].diffusion_denoising_steps == 7
+        assert outputs[-1].diffusion_work_tokens == 448
+        assert outputs[-1].diffusion_canvas_tps == 90.0
+        assert outputs[-1].diffusion_work_tps == 630.0
+
+    @pytest.mark.skipif(
+        not HAS_MLX, reason="mlx is required to import VLMBatchedEngine"
+    )
+    def test_diffusion_iter_preserves_leading_space_across_blocks(self, monkeypatch):
+        import importlib
+
+        engine = _make_loaded_engine(model_type="diffusion_gemma")
+        engine._diffusion_family = "block"
+
+        diffusion_module = importlib.import_module("mlx_vlm.generate.diffusion")
+
+        def fake_stream_diffusion_generate(*args, **kwargs):
+            yield SimpleNamespace(
+                text="Hello",
+                generation_tokens=1,
+                prompt_tokens=2,
+                finish_reason=None,
+                diffusion_block_complete=False,
+                is_draft=False,
+            )
+            yield SimpleNamespace(
+                text="",
+                generation_tokens=1,
+                prompt_tokens=2,
+                finish_reason=None,
+                diffusion_block_complete=True,
+                is_draft=False,
+            )
+            yield SimpleNamespace(
+                text=" world",
+                generation_tokens=2,
+                prompt_tokens=2,
+                finish_reason=None,
+                diffusion_block_complete=False,
+                is_draft=False,
+            )
+            yield SimpleNamespace(
+                text="",
+                generation_tokens=2,
+                prompt_tokens=2,
+                finish_reason="stop",
+                diffusion_block_complete=False,
+                is_draft=False,
+            )
+
+        monkeypatch.setattr(
+            diffusion_module,
+            "stream_diffusion_generate",
+            fake_stream_diffusion_generate,
+        )
+
+        outputs = list(
+            engine._iter_diffusion_outputs_sync(
+                {"input_ids": object(), "prompt_tokens": 2},
+                max_tokens=2,
+                temperature=0.0,
+            )
+        )
+
+        assert [output.new_text for output in outputs] == ["Hello", " world"]
+        assert outputs[-1].text == "Hello world"
+        assert outputs[-1].finished is True
+        assert outputs[-1].finish_reason == "stop"
+
+
+# ---------------------------------------------------------------------------
+# TestInjectToolCalling
+# ---------------------------------------------------------------------------
+
+
+class TestInjectToolCalling:
+    """Tests for VLMBatchedEngine._inject_tool_calling()."""
+
+    def test_injects_attributes_for_json_tools(self):
+        """Chat template with <tool_call> + tool_call.name → json_tools parser."""
+        engine = _make_engine()
+        tokenizer = MockVLMTokenizer(
+            chat_template="some template with <tool_call> and tool_call.name",
+            vocab={"<tool_call>": 100, "</tool_call>": 101},
+        )
+
+        engine._inject_tool_calling(tokenizer)
+
+        assert tokenizer.has_tool_calling is True
+        assert tokenizer.tool_call_start == "<tool_call>"
+        assert tokenizer.tool_call_end == "</tool_call>"
+        assert callable(tokenizer.tool_parser)
+
+    def test_injects_attributes_for_qwen3_coder(self):
+        """Chat template with <tool_call>\\n<function= → qwen3_coder parser."""
+        engine = _make_engine()
+        tokenizer = MockVLMTokenizer(
+            chat_template="prefix <tool_call>\n<function= suffix",
+            vocab={"<tool_call>": 100, "</tool_call>": 101},
+        )
+
+        engine._inject_tool_calling(tokenizer)
+
+        assert tokenizer.has_tool_calling is True
+        assert tokenizer.tool_call_start == "<tool_call>"
+
+    def test_skips_when_no_chat_template(self):
+        """No chat template → no injection."""
+        engine = _make_engine()
+        tokenizer = MockVLMTokenizer(chat_template=None)
+
+        engine._inject_tool_calling(tokenizer)
+
+        assert (
+            not hasattr(tokenizer, "has_tool_calling")
+            or getattr(tokenizer, "has_tool_calling", False) is False
+        )
+
+    def test_skips_when_no_tool_markers(self):
+        """Chat template without any tool markers → no injection."""
+        engine = _make_engine()
+        tokenizer = MockVLMTokenizer(
+            chat_template="A plain chat template without tool markers",
+            vocab={},
+        )
+
+        engine._inject_tool_calling(tokenizer)
+
+        # has_tool_calling should not be set as instance attr, and
+        # __getattr__ will raise AttributeError → getattr default False
+        assert getattr(tokenizer, "has_tool_calling", False) is False
+
+    def test_skips_when_tokens_not_in_vocab(self):
+        """Tool tokens not in vocab → no injection (same as mlx-lm behavior)."""
+        engine = _make_engine()
+        tokenizer = MockVLMTokenizer(
+            chat_template="<tool_call> tool_call.name </tool_call>",
+            vocab={},  # Empty vocab — tokens not present
+        )
+
+        engine._inject_tool_calling(tokenizer)
+
+        assert getattr(tokenizer, "has_tool_calling", False) is False
+
+    def test_skips_when_mlx_lm_not_available(self):
+        """When neither parser backend is available, injection is skipped."""
+        engine = _make_engine()
+        tokenizer = MockVLMTokenizer(
+            chat_template="<tool_call> tool_call.name",
+            vocab={"<tool_call>": 100, "</tool_call>": 101},
+        )
+
+        with patch.dict(
+            "sys.modules",
+            {
+                "mlx_vlm.tool_parsers": None,
+                "mlx_lm": None,
+                "mlx_lm.tokenizer_utils": None,
+            },
+        ):
+            engine._inject_tool_calling(tokenizer)
+
+        # Should not crash, attributes not set
+        assert getattr(tokenizer, "has_tool_calling", False) is False
+
+    def test_instance_attrs_override_getattr(self):
+        """After injection, instance attrs override __getattr__ delegation."""
+        engine = _make_engine()
+        tokenizer = MockVLMTokenizer(
+            chat_template="<tool_call> tool_call.name </tool_call>",
+            vocab={"<tool_call>": 100, "</tool_call>": 101},
+        )
+
+        # Before injection, accessing has_tool_calling raises AttributeError
+        with pytest.raises(AttributeError):
+            _ = tokenizer.has_tool_calling
+
+        engine._inject_tool_calling(tokenizer)
+
+        # After injection, instance attribute takes precedence
+        assert tokenizer.has_tool_calling is True
+        assert isinstance(tokenizer.tool_call_start, str)
+
+
+# ---------------------------------------------------------------------------
+# TestApplyChatTemplate
+# ---------------------------------------------------------------------------
+
+
+class TestApplyChatTemplate:
+    """Tests for VLMBatchedEngine._apply_chat_template()."""
+
+    def test_applies_template_with_tools(self):
+        """Tools are passed to apply_chat_template kwargs."""
+        tokenizer = MagicMock()
+        tokenizer.apply_chat_template.return_value = "<prompt with tools>"
+        engine = _make_loaded_engine(tokenizer=tokenizer)
+
+        tools = [{"type": "function", "function": {"name": "get_weather"}}]
+        messages = [{"role": "user", "content": "Hello"}]
+
+        result = engine._apply_chat_template(messages, tools=tools)
+
+        assert result == "<prompt with tools>"
+        call_kwargs = tokenizer.apply_chat_template.call_args[1]
+        assert call_kwargs["tools"] == tools
+        assert call_kwargs["tokenize"] is False
+        assert call_kwargs["add_generation_prompt"] is True
+
+    def test_applies_template_without_tools(self):
+        """tools=None → 'tools' key not in kwargs."""
+        tokenizer = MagicMock()
+        tokenizer.apply_chat_template.return_value = "<prompt>"
+        engine = _make_loaded_engine(tokenizer=tokenizer)
+
+        messages = [{"role": "user", "content": "Hello"}]
+        engine._apply_chat_template(messages, tools=None)
+
+        call_kwargs = tokenizer.apply_chat_template.call_args[1]
+        assert "tools" not in call_kwargs
+
+    def test_applies_enable_thinking(self):
+        """enable_thinking is forwarded to template kwargs."""
+        tokenizer = MagicMock()
+        tokenizer.apply_chat_template.return_value = "<prompt>"
+        engine = _make_loaded_engine(tokenizer=tokenizer, enable_thinking=True)
+
+        messages = [{"role": "user", "content": "Hello"}]
+        engine._apply_chat_template(messages)
+
+        call_kwargs = tokenizer.apply_chat_template.call_args[1]
+        assert call_kwargs["enable_thinking"] is True
+
+    def test_minimax_m3_maps_enable_thinking_to_thinking_mode(self):
+        """MiniMax M3 templates use thinking_mode instead of enable_thinking."""
+        tokenizer = MagicMock()
+        tokenizer.apply_chat_template.return_value = "<prompt>"
+        engine = _make_loaded_engine(
+            model_type="minimax_m3_vl",
+            tokenizer=tokenizer,
+            enable_thinking=False,
+        )
+
+        messages = [{"role": "user", "content": "Hello"}]
+        engine._apply_chat_template(messages)
+
+        call_kwargs = tokenizer.apply_chat_template.call_args[1]
+        assert "enable_thinking" not in call_kwargs
+        assert call_kwargs["thinking_mode"] == "disabled"
+
+    def test_minimax_m3_preserves_explicit_thinking_mode(self):
+        tokenizer = MagicMock()
+        tokenizer.apply_chat_template.return_value = "<prompt>"
+        engine = _make_loaded_engine(
+            model_type="minimax_m3_vl",
+            tokenizer=tokenizer,
+            enable_thinking=False,
+        )
+
+        messages = [{"role": "user", "content": "Hello"}]
+        engine._apply_chat_template(
+            messages,
+            chat_template_kwargs={"thinking_mode": "adaptive"},
+        )
+
+        call_kwargs = tokenizer.apply_chat_template.call_args[1]
+        assert "enable_thinking" not in call_kwargs
+        assert call_kwargs["thinking_mode"] == "adaptive"
+
+    def test_minimax_m3_maps_request_enable_thinking_kwarg(self):
+        tokenizer = MagicMock()
+        tokenizer.apply_chat_template.return_value = "<prompt>"
+        engine = _make_loaded_engine(
+            model_type="minimax_m3_vl",
+            tokenizer=tokenizer,
+        )
+
+        messages = [{"role": "user", "content": "Hello"}]
+        engine._apply_chat_template(
+            messages,
+            chat_template_kwargs={"enable_thinking": True},
+        )
+
+        call_kwargs = tokenizer.apply_chat_template.call_args[1]
+        assert "enable_thinking" not in call_kwargs
+        assert call_kwargs["thinking_mode"] == "enabled"
+
+    def test_fallback_when_no_template(self):
+        """Tokenizer without apply_chat_template → manual concatenation."""
+        tokenizer = MagicMock(spec=[])  # spec=[] prevents auto-creating attributes
+        engine = _make_loaded_engine(tokenizer=tokenizer)
+
+        messages = [
+            {"role": "user", "content": "Hello"},
+            {"role": "assistant", "content": "Hi"},
+        ]
+        result = engine._apply_chat_template(messages)
+
+        assert "user: Hello" in result
+        assert "assistant: Hi" in result
+        assert result.endswith("assistant:")
+
+    def test_chat_template_kwargs_override(self):
+        """Additional chat_template_kwargs are merged into template kwargs."""
+        tokenizer = MagicMock()
+        tokenizer.apply_chat_template.return_value = "<prompt>"
+        engine = _make_loaded_engine(tokenizer=tokenizer)
+
+        messages = [{"role": "user", "content": "Hello"}]
+        engine._apply_chat_template(
+            messages, chat_template_kwargs={"reasoning_effort": "high"}
+        )
+
+        call_kwargs = tokenizer.apply_chat_template.call_args[1]
+        assert call_kwargs["reasoning_effort"] == "high"
+
+    def test_type_error_fallback_strips_custom_kwargs(self):
+        """TypeError from template → retry without custom kwargs."""
+        tokenizer = MagicMock()
+        tokenizer.apply_chat_template.side_effect = [
+            TypeError("unexpected kwarg"),
+            "<fallback prompt>",
+        ]
+        engine = _make_loaded_engine(tokenizer=tokenizer, enable_thinking=True)
+
+        messages = [{"role": "user", "content": "Hello"}]
+        tools = [{"type": "function", "function": {"name": "test"}}]
+        result = engine._apply_chat_template(messages, tools=tools)
+
+        assert result == "<fallback prompt>"
+        # Second call should not have tools or enable_thinking
+        second_call_kwargs = tokenizer.apply_chat_template.call_args_list[1][1]
+        assert "tools" not in second_call_kwargs
+        assert "enable_thinking" not in second_call_kwargs
+
+
+# ---------------------------------------------------------------------------
+# TestApplyOcrPrompt
+# ---------------------------------------------------------------------------
+
+
+class TestApplyOcrPrompt:
+    """Tests for VLMBatchedEngine._apply_ocr_prompt()."""
+
+    def _make_image_messages(self, text="Describe this"):
+        return [
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": "data:image/png;base64,abc"},
+                    },
+                    {"type": "text", "text": text},
+                ],
+            }
+        ]
+
+    def test_preserves_user_prompt_for_dots_ocr(self):
+        """dots_ocr model + user text → user prompt preserved."""
+        engine = _make_loaded_engine(model_type="dots_ocr")
+        messages = self._make_image_messages("What is this?")
+
+        result = engine._apply_ocr_prompt(messages)
+
+        text_parts = [
+            p
+            for p in result[0]["content"]
+            if isinstance(p, dict) and p.get("type") == "text"
+        ]
+        assert len(text_parts) == 1
+        assert text_parts[0]["text"] == "What is this?"
+
+    def test_preserves_user_prompt_for_deepseekocr(self):
+        """deepseekocr model + user text → user prompt preserved."""
+        engine = _make_loaded_engine(model_type="deepseekocr")
+        messages = self._make_image_messages("Read this document")
+
+        result = engine._apply_ocr_prompt(messages)
+
+        text_parts = [
+            p
+            for p in result[0]["content"]
+            if isinstance(p, dict) and p.get("type") == "text"
+        ]
+        assert text_parts[0]["text"] == "Read this document"
+
+    def test_injects_default_prompt_when_no_text(self):
+        """OCR model + image-only → default OCR prompt injected."""
+        engine = _make_loaded_engine(model_type="dots_ocr")
+        messages = [
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": "data:image/png;base64,abc"},
+                    },
+                ],
+            }
+        ]
+
+        result = engine._apply_ocr_prompt(messages)
+
+        assert result[0]["content"][0]["type"] == "text"
+        assert "Markdown" in result[0]["content"][0]["text"]
+
+    def test_injects_default_prompt_when_empty_text(self):
+        """OCR model + empty text + image → default OCR prompt injected."""
+        engine = _make_loaded_engine(model_type="glm_ocr")
+        messages = self._make_image_messages("")
+
+        result = engine._apply_ocr_prompt(messages)
+
+        text_parts = [
+            p
+            for p in result[0]["content"]
+            if isinstance(p, dict) and p.get("type") == "text"
+        ]
+        assert text_parts[0]["text"] == "Text Recognition:"
+
+    def test_injects_default_prompt_when_whitespace_only(self):
+        """OCR model + whitespace-only text + image → default OCR prompt injected."""
+        engine = _make_loaded_engine(model_type="deepseekocr")
+        messages = self._make_image_messages("   ")
+
+        result = engine._apply_ocr_prompt(messages)
+
+        text_parts = [
+            p
+            for p in result[0]["content"]
+            if isinstance(p, dict) and p.get("type") == "text"
+        ]
+        assert text_parts[0]["text"] == "Convert the document to markdown."
+
+    def test_no_change_for_non_ocr_model(self):
+        """Non-OCR VLM model → messages returned unchanged."""
+        engine = _make_loaded_engine(model_type="qwen2_5_vl")
+        original = self._make_image_messages("Describe this image")
+
+        result = engine._apply_ocr_prompt(original)
+
+        # Content should be identical
+        assert result[0]["content"] == original[0]["content"]
+
+    def test_preserves_image_parts(self):
+        """OCR prompt injection preserves image_url parts."""
+        engine = _make_loaded_engine(model_type="dots_ocr")
+        messages = [
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": "data:image/png;base64,abc"},
+                    },
+                ],
+            }
+        ]
+
+        result = engine._apply_ocr_prompt(messages)
+
+        image_parts = [
+            p
+            for p in result[0]["content"]
+            if isinstance(p, dict) and p.get("type") == "image_url"
+        ]
+        assert len(image_parts) == 1
+
+    def test_deepcopy_no_mutation(self):
+        """Original messages are not mutated."""
+        engine = _make_loaded_engine(model_type="dots_ocr")
+        messages = self._make_image_messages("Original prompt")
+        original_text = messages[0]["content"][1]["text"]
+
+        engine._apply_ocr_prompt(messages)
+
+        assert messages[0]["content"][1]["text"] == original_text
+
+
+# ---------------------------------------------------------------------------
+# TestProcessChatMessages
+# ---------------------------------------------------------------------------
+
+
+class TestProcessChatMessages:
+    """Tests for VLMBatchedEngine._process_chat_messages()."""
+
+    @patch("omlx.engine.vlm.extract_images_from_messages")
+    def test_text_only_uses_vlm_prepare_path(self, mock_extract):
+        """Text-only turns on a VLM model still use _prepare_vision_inputs()."""
+        text_msgs = [{"role": "user", "content": "Hello"}]
+        mock_extract.return_value = (text_msgs, [], [])
+
+        engine = _make_loaded_engine()
+        engine._prepare_vision_inputs = MagicMock(
+            return_value=([1, 2, 3], None, None, None, 0, [])
+        )
+
+        messages = [{"role": "user", "content": "Hello"}]
+        result = engine._process_chat_messages(messages, tools=None, kwargs={})
+
+        (
+            token_ids,
+            vlm_embeds,
+            vlm_kwargs,
+            image_hash,
+            image_cache_key_start,
+            image_cache_key_ranges,
+        ) = result
+        assert token_ids == [1, 2, 3]
+        assert vlm_embeds is None
+        assert vlm_kwargs is None
+        assert image_hash is None
+        assert image_cache_key_start == 0
+        assert image_cache_key_ranges == []
+        engine._prepare_vision_inputs.assert_called_once_with(
+            text_msgs,
+            [],
+            audio=None,
+            chat_template_kwargs=None,
+            tools=None,
+        )
+
+    @patch("omlx.engine.vlm.extract_images_from_messages")
+    def test_text_only_passes_tools_to_prepare_vision(self, mock_extract):
+        """Text-only + tools still convert and pass tools through VLM path."""
+        text_msgs = [{"role": "user", "content": "Hello"}]
+        mock_extract.return_value = (text_msgs, [], [])
+
+        engine = _make_loaded_engine()
+        engine._prepare_vision_inputs = MagicMock(
+            return_value=([1, 2, 3], None, None, None, 0, [])
+        )
+
+        tools = [{"type": "function", "function": {"name": "test", "parameters": {}}}]
+        messages = [{"role": "user", "content": "Hello"}]
+
+        with patch("omlx.engine.vlm.convert_tools_for_template") as mock_convert:
+            mock_convert.return_value = [{"converted": True}]
+            engine._process_chat_messages(messages, tools=tools, kwargs={})
+
+        mock_convert.assert_called_once_with(tools)
+        call_kwargs = engine._prepare_vision_inputs.call_args[1]
+        assert call_kwargs["tools"] == [{"converted": True}]
+
+    @patch("omlx.engine.vlm.extract_images_from_messages")
+    def test_image_path_calls_prepare_vision(self, mock_extract):
+        """Messages with images → _prepare_vision_inputs() called."""
+        from PIL import Image
+
+        mock_image = Image.new("RGB", (4, 4), "red")
+        text_msgs = [{"role": "user", "content": "Describe"}]
+        mock_extract.return_value = (text_msgs, [mock_image], [])
+
+        engine = _make_loaded_engine()
+        engine._apply_ocr_prompt = MagicMock(return_value=text_msgs)
+        engine._prepare_vision_inputs = MagicMock(
+            return_value=([1, 2, 3], MagicMock(), {}, "hash123", 12, [(12, "hash123")])
+        )
+
+        messages = [
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": "data:image/png;base64,x"},
+                    },
+                    {"type": "text", "text": "Describe"},
+                ],
+            }
+        ]
+
+        result = engine._process_chat_messages(messages, tools=None, kwargs={})
+
+        engine._prepare_vision_inputs.assert_called_once()
+        (
+            token_ids,
+            vlm_embeds,
+            vlm_kwargs,
+            image_hash,
+            image_cache_key_start,
+            image_cache_key_ranges,
+        ) = result
+        assert token_ids == [1, 2, 3]
+        assert image_hash == "hash123"
+        assert image_cache_key_start == 12
+        assert image_cache_key_ranges == [(12, "hash123")]
+
+    @patch("omlx.engine.vlm.extract_images_from_messages")
+    def test_image_path_passes_tools(self, mock_extract):
+        """Image + tools → tools converted and passed to _prepare_vision_inputs()."""
+        from PIL import Image
+
+        mock_image = Image.new("RGB", (4, 4), "red")
+        text_msgs = [{"role": "user", "content": "Describe"}]
+        mock_extract.return_value = (text_msgs, [mock_image], [])
+
+        engine = _make_loaded_engine()
+        engine._apply_ocr_prompt = MagicMock(return_value=text_msgs)
+        engine._prepare_vision_inputs = MagicMock(
+            return_value=([1, 2, 3], None, None, None, 0, [])
+        )
+
+        tools = [
+            {"type": "function", "function": {"name": "analyze", "parameters": {}}}
+        ]
+        messages = [{"role": "user", "content": "Describe"}]
+
+        with patch("omlx.engine.vlm.convert_tools_for_template") as mock_convert:
+            mock_convert.return_value = [{"converted": True}]
+            engine._process_chat_messages(messages, tools=tools, kwargs={})
+
+        # Verify tools were converted and passed
+        mock_convert.assert_called_once_with(tools)
+        call_kwargs = engine._prepare_vision_inputs.call_args[1]
+        assert call_kwargs["tools"] == [{"converted": True}]
+
+    @patch("omlx.engine.vlm.extract_images_from_messages")
+    def test_image_path_without_tools(self, mock_extract):
+        """Image + tools=None → _prepare_vision_inputs(tools=None)."""
+        from PIL import Image
+
+        mock_image = Image.new("RGB", (4, 4), "red")
+        text_msgs = [{"role": "user", "content": "Describe"}]
+        mock_extract.return_value = (text_msgs, [mock_image], [])
+
+        engine = _make_loaded_engine()
+        engine._apply_ocr_prompt = MagicMock(return_value=text_msgs)
+        engine._prepare_vision_inputs = MagicMock(
+            return_value=([1, 2, 3], None, None, None, 0, [])
+        )
+
+        messages = [{"role": "user", "content": "Describe"}]
+        engine._process_chat_messages(messages, tools=None, kwargs={})
+
+        call_kwargs = engine._prepare_vision_inputs.call_args[1]
+        assert call_kwargs["tools"] is None
+
+
+# ---------------------------------------------------------------------------
+# TestPrepareVisionInputs
+# ---------------------------------------------------------------------------
+
+
+class TestPrepareVisionInputs:
+    """Tests for VLMBatchedEngine._prepare_vision_inputs()."""
+
+    def _setup_engine_for_vision(self, model_type="qwen2_5_vl"):
+        """Create engine with mocked VLM internals for vision input testing."""
+        engine = _make_loaded_engine(model_type=model_type)
+
+        # Mock processor with apply_chat_template
+        mock_processor = MagicMock()
+        mock_processor.apply_chat_template.return_value = "<vision prompt>"
+        mock_processor.tokenizer = engine._tokenizer
+        engine._processor = mock_processor
+
+        return engine
+
+    @pytest.mark.skipif(not HAS_MLX, reason="MLX not available")
+    @patch("mlx_vlm.utils.prepare_inputs")
+    @patch("mlx_vlm.prompt_utils.apply_chat_template")
+    def test_tools_added_to_template_kwargs(self, mock_vlm_act, mock_prepare):
+        """When tools are provided, they appear in template_kwargs."""
+        engine = self._setup_engine_for_vision()
+
+        # Mock apply_chat_template (mlx-vlm) returning formatted messages
+        mock_vlm_act.return_value = [{"role": "user", "content": "formatted"}]
+
+        # Mock prepare_inputs returning minimal inputs
+        mock_prepare.return_value = {
+            "input_ids": mx.array([[1, 2, 3]]),
+            "pixel_values": None,
+        }
+
+        messages = [{"role": "user", "content": "Describe"}]
+        from PIL import Image
+
+        images = [Image.new("RGB", (4, 4), "red")]
+        tools = [{"type": "function", "function": {"name": "test"}}]
+
+        engine._prepare_vision_inputs(messages, images, tools=tools)
+
+        # Verify the processor's apply_chat_template was called with tools
+        proc_call = engine._processor.apply_chat_template
+        call_kwargs = proc_call.call_args[1]
+        assert call_kwargs.get("tools") == tools
+
+    @pytest.mark.skipif(not HAS_MLX, reason="MLX not available")
+    @patch("mlx_vlm.utils.prepare_inputs")
+    @patch("mlx_vlm.prompt_utils.apply_chat_template")
+    def test_tools_not_added_when_none(self, mock_vlm_act, mock_prepare):
+        """When tools=None, 'tools' key not in template_kwargs."""
+        engine = self._setup_engine_for_vision()
+
+        mock_vlm_act.return_value = [{"role": "user", "content": "formatted"}]
+        mock_prepare.return_value = {
+            "input_ids": mx.array([[1, 2, 3]]),
+            "pixel_values": None,
+        }
+
+        messages = [{"role": "user", "content": "Describe"}]
+        from PIL import Image
+
+        images = [Image.new("RGB", (4, 4), "red")]
+
+        engine._prepare_vision_inputs(messages, images, tools=None)
+
+        proc_call = engine._processor.apply_chat_template
+        call_kwargs = proc_call.call_args[1]
+        assert "tools" not in call_kwargs
+
+    def test_single_image_model_rejects_multi(self):
+        """SINGLE_IMAGE_ONLY_MODELS raise ValueError for multiple images."""
+        engine = _make_loaded_engine(model_type="paligemma")
+        engine._processor = MagicMock()
+
+        from PIL import Image
+
+        images = [Image.new("RGB", (4, 4), "red"), Image.new("RGB", (4, 4), "blue")]
+        messages = [{"role": "user", "content": "Describe"}]
+
+        with pytest.raises(ValueError, match="does not support multi-image"):
+            engine._prepare_vision_inputs(messages, images)
+
+    @pytest.mark.skipif(not HAS_MLX, reason="MLX not available")
+    @patch("mlx_vlm.utils.prepare_inputs")
+    @patch("mlx_vlm.prompt_utils.apply_chat_template")
+    def test_audio_passed_to_prepare_inputs(self, mock_vlm_act, mock_prepare):
+        """When audio is provided, it's passed to prepare_inputs."""
+        engine = self._setup_engine_for_vision(model_type="gemma4")
+
+        mock_vlm_act.return_value = [{"role": "user", "content": "formatted"}]
+        mock_prepare.return_value = {
+            "input_ids": mx.array([[1, 2, 3]]),
+            "pixel_values": None,
+        }
+
+        from PIL import Image
+
+        messages = [{"role": "user", "content": "Describe this recording"}]
+        images = [Image.new("RGB", (4, 4), "red")]
+        audio = [("fake_audio_array", 16000)]
+
+        engine._prepare_vision_inputs(messages, images, audio=audio)
+
+        # prepare_inputs should have been called with audio
+        mock_prepare.assert_called_once()
+        # First positional arg is images, second is processor, third is audio or config
+        # For gemma4, audio=audio kwarg should be present
+        call_kwargs = mock_prepare.call_args[1]
+        assert call_kwargs.get("audio") == audio
+
+    @pytest.mark.skipif(not HAS_MLX, reason="MLX not available")
+    @patch("mlx_vlm.utils.prepare_inputs")
+    @patch("mlx_vlm.prompt_utils.apply_chat_template")
+    def test_bytesio_audio_survives_missing_resample_export(
+        self, mock_vlm_act, mock_prepare, monkeypatch
+    ):
+        """BytesIO input_audio uses the compatibility export before load_audio."""
+        np = pytest.importorskip("numpy")
+        audio_utils = pytest.importorskip("mlx_audio.utils")
+        audio_io = pytest.importorskip("mlx_audio.audio_io")
+
+        monkeypatch.delattr(audio_utils, "resample_audio", raising=False)
+
+        read_calls = []
+
+        def fake_read(file, dtype="float32"):
+            read_calls.append((file, dtype))
+            return np.zeros((32,), dtype=np.float32), 16000
+
+        monkeypatch.setattr(audio_io, "read", fake_read)
+
+        engine = self._setup_engine_for_vision(model_type="gemma4")
+        mock_vlm_act.return_value = [{"role": "user", "content": "formatted"}]
+        mock_prepare.return_value = {
+            "input_ids": mx.array([[1, 2, 3]]),
+            "pixel_values": None,
+        }
+
+        audio_stream = io.BytesIO(b"not-a-real-wav")
+        messages = [{"role": "user", "content": "Transcribe this recording"}]
+
+        engine._prepare_vision_inputs(messages, [], audio=[audio_stream])
+
+        assert read_calls == [(audio_stream, "float32")]
+        call_audio = mock_prepare.call_args[1].get("audio")
+        assert len(call_audio) == 1
+        assert isinstance(call_audio[0], np.ndarray)
+
+    @pytest.mark.skipif(not HAS_MLX, reason="MLX not available")
+    @patch("mlx_vlm.utils.prepare_inputs")
+    @patch("mlx_vlm.prompt_utils.apply_chat_template")
+    def test_audio_none_not_passed(self, mock_vlm_act, mock_prepare):
+        """When audio is None, it is not passed to prepare_inputs."""
+        engine = self._setup_engine_for_vision(model_type="gemma4")
+
+        mock_vlm_act.return_value = [{"role": "user", "content": "formatted"}]
+        mock_prepare.return_value = {
+            "input_ids": mx.array([[1, 2, 3]]),
+            "pixel_values": None,
+        }
+
+        from PIL import Image
+
+        messages = [{"role": "user", "content": "Hello"}]
+        images = [Image.new("RGB", (4, 4), "red")]
+
+        engine._prepare_vision_inputs(messages, images, audio=None)
+
+        call_kwargs = mock_prepare.call_args[1]
+        assert call_kwargs.get("audio") is None
+
+    @pytest.mark.skipif(not HAS_MLX, reason="MLX not available")
+    @patch("mlx_vlm.utils.prepare_inputs")
+    @patch("mlx_vlm.prompt_utils.apply_chat_template")
+    def test_audio_empty_list_not_passed(self, mock_vlm_act, mock_prepare):
+        """Empty audio list is equivalent to None."""
+        engine = self._setup_engine_for_vision(model_type="gemma4")
+
+        mock_vlm_act.return_value = [{"role": "user", "content": "formatted"}]
+        mock_prepare.return_value = {
+            "input_ids": mx.array([[1, 2, 3]]),
+            "pixel_values": None,
+        }
+
+        from PIL import Image
+
+        messages = [{"role": "user", "content": "Hello"}]
+        images = [Image.new("RGB", (4, 4), "red")]
+
+        engine._prepare_vision_inputs(messages, images, audio=[])
+
+        call_kwargs = mock_prepare.call_args[1]
+        assert call_kwargs.get("audio") is None
+
+
+class TestFormatMessagesForVLMTemplate:
+    """Tests for VLMBatchedEngine._format_messages_for_vlm_template()."""
+
+    @staticmethod
+    def _count_image_placeholders(formatted_messages):
+        count = 0
+        for msg in formatted_messages:
+            content = msg.get("content")
+            if isinstance(content, list):
+                for part in content:
+                    if isinstance(part, dict) and part.get("type") in {
+                        "image",
+                        "image_url",
+                        "input_image",
+                    }:
+                        count += 1
+            elif isinstance(content, str):
+                count += content.count("<image>")
+                count += content.count("<start_of_image>")
+                count += content.count("<|image_1|>")
+        return count
+
+    def test_assigns_placeholder_to_late_user_image_turn(self):
+        """system→assistant→user(image) still places image token on user turn."""
+        engine = _make_loaded_engine(model_type="qwen3_5")
+        messages = [
+            {"role": "system", "content": "You are helpful."},
+            {"role": "assistant", "content": "Hello"},
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "What is this image?"},
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": "data:image/png;base64,abc"},
+                    },
+                ],
+            },
+        ]
+
+        formatted, image_ranges = engine._format_messages_for_vlm_template(
+            messages, num_images=1
+        )
+
+        assert self._count_image_placeholders(formatted) == 1
+        assert self._count_image_placeholders([formatted[-1]]) == 1
+        assert image_ranges == [(2, 1)]
+
+    def test_caps_placeholders_by_loaded_image_count(self):
+        """Do not add more placeholders than successfully loaded images."""
+        engine = _make_loaded_engine(model_type="qwen3_5")
+        messages = [
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": "data:image/png;base64,a"},
+                    },
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": "data:image/png;base64,b"},
+                    },
+                    {"type": "text", "text": "Compare"},
+                ],
+            },
+        ]
+
+        formatted, image_ranges = engine._format_messages_for_vlm_template(
+            messages, num_images=1
+        )
+
+        assert self._count_image_placeholders(formatted) == 1
+        assert image_ranges == [(0, 1)]
+
+    def test_fallback_inserts_first_user_when_no_explicit_parts(self):
+        """Legacy path: num_images without explicit image parts still injects once."""
+        engine = _make_loaded_engine(model_type="qwen3_5")
+        messages = [{"role": "user", "content": "Describe this"}]
+
+        formatted, image_ranges = engine._format_messages_for_vlm_template(
+            messages, num_images=1
+        )
+
+        assert self._count_image_placeholders(formatted) == 1
+        assert image_ranges == [(0, 1)]
+
+    def test_text_only_messages_have_string_content(self):
+        """Text-only messages should have string content, not list.
+
+        Regression test for #796: get_message_json() wraps text in list
+        format which breaks simplified chat templates.
+        """
+        engine = _make_loaded_engine(model_type="qwen3_5_moe")
+        messages = [
+            {"role": "system", "content": "You are helpful."},
+            {"role": "user", "content": "Hello"},
+            {"role": "assistant", "content": "Hi there"},
+            {"role": "user", "content": "How are you?"},
+        ]
+
+        formatted, image_ranges = engine._format_messages_for_vlm_template(
+            messages, num_images=0
+        )
+
+        assert image_ranges == []
+        for msg in formatted:
+            assert isinstance(msg["content"], str), (
+                f"Expected string content for {msg['role']} message, "
+                f"got {type(msg['content'])}: {msg['content']}"
+            )
+
+    def test_image_messages_retain_list_content(self):
+        """Image-bearing messages should keep list content with image tokens."""
+        engine = _make_loaded_engine(model_type="qwen3_5_moe")
+        messages = [
+            {"role": "system", "content": "You are helpful."},
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "What is this?"},
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": "data:image/png;base64,abc"},
+                    },
+                ],
+            },
+        ]
+
+        formatted, image_ranges = engine._format_messages_for_vlm_template(
+            messages, num_images=1
+        )
+
+        assert image_ranges == [(1, 1)]
+        # System message should be string (text-only)
+        assert isinstance(formatted[0]["content"], str)
+        # User message with image should be list
+        assert isinstance(formatted[1]["content"], list)
+        assert self._count_image_placeholders([formatted[1]]) == 1
+
+    def test_reasoning_content_preserved_verbatim(self):
+        """Assistant messages with reasoning_content must skip get_message_json.
+
+        Qwen 3.6+ VLM models read reasoning_content as a top-level field in
+        the chat template. get_message_json() only forwards (content, role)
+        and drops every other key, so preserve-verbatim is required or the
+        native reasoning path is broken end-to-end.
+        """
+        engine = _make_loaded_engine(model_type="qwen3_5_moe")
+        messages = [
+            {"role": "user", "content": "Q"},
+            {
+                "role": "assistant",
+                "content": "A",
+                "reasoning_content": "R",
+            },
+        ]
+
+        formatted, image_ranges = engine._format_messages_for_vlm_template(
+            messages, num_images=0
+        )
+
+        assert image_ranges == []
+        assert formatted[1]["role"] == "assistant"
+        assert formatted[1]["content"] == "A"
+        assert formatted[1]["reasoning_content"] == "R"
+
+    def test_reasoning_content_coexists_with_tool_calls(self):
+        """OR-connected whitelist must still preserve when both fields present."""
+        engine = _make_loaded_engine(model_type="qwen3_5_moe")
+        messages = [
+            {
+                "role": "assistant",
+                "content": "calling",
+                "tool_calls": [
+                    {
+                        "id": "c1",
+                        "function": {"name": "fn", "arguments": "{}"},
+                    }
+                ],
+                "reasoning_content": "R",
+            },
+        ]
+
+        formatted, _ = engine._format_messages_for_vlm_template(messages, num_images=0)
+
+        assert formatted[0]["reasoning_content"] == "R"
+        assert formatted[0]["tool_calls"][0]["function"]["name"] == "fn"
+
+    def test_no_reasoning_content_uses_get_message_json(self):
+        """Assistant msgs without reasoning_content keep the default path.
+
+        Regression guard: the whitelist must not accidentally steal plain
+        assistant messages from get_message_json, which handles image-token
+        placement and string/list content normalization.
+        """
+        engine = _make_loaded_engine(model_type="qwen3_5_moe")
+        messages = [
+            {"role": "user", "content": "Q"},
+            {"role": "assistant", "content": "A"},
+        ]
+
+        formatted, _ = engine._format_messages_for_vlm_template(messages, num_images=0)
+
+        # Default path flattens text-only list content to string (see #796),
+        # so if we accidentally preserve verbatim the content may stay as-is
+        # instead of being normalized. Checking the type confirms the
+        # correct branch ran.
+        assert isinstance(formatted[1]["content"], str)
+        assert "reasoning_content" not in formatted[1]
+
+    def test_format_messages_with_audio_parts(self):
+        """Messages with input_audio parts retain audio type after formatting."""
+        engine = _make_loaded_engine(model_type="gemma4")
+        messages = [
+            {"role": "system", "content": "You are helpful."},
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "What is in this recording?"},
+                    {
+                        "type": "input_audio",
+                        "input_audio": {"data": "abc", "format": "wav"},
+                    },
+                ],
+            },
+        ]
+
+        formatted, image_ranges = engine._format_messages_for_vlm_template(
+            messages, num_images=0, num_audios=1
+        )
+
+        # System message should be string content
+        assert isinstance(formatted[0]["content"], str)
+        # User message with audio should be list content
+        assert isinstance(formatted[1]["content"], list)
+        types = [p.get("type") for p in formatted[1]["content"] if isinstance(p, dict)]
+        # get_message_json() converts "input_audio" to "audio" type markers
+        assert "audio" in types
+        assert image_ranges == []
+
+    def test_audio_parts_capped_by_num_audios(self):
+        """Only load up to num_audios audio parts even if more are in message."""
+        engine = _make_loaded_engine(model_type="gemma4")
+        messages = [
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "input_audio",
+                        "input_audio": {"data": "a", "format": "wav"},
+                    },
+                    {
+                        "type": "input_audio",
+                        "input_audio": {"data": "b", "format": "wav"},
+                    },
+                    {"type": "text", "text": "Compare these recordings"},
+                ],
+            },
+        ]
+
+        formatted, image_ranges = engine._format_messages_for_vlm_template(
+            messages, num_images=0, num_audios=1
+        )
+
+        # Should have exactly 1 audio marker (get_message_json converts to "audio" type)
+        audio_count = 0
+        for part in formatted[0]["content"]:
+            if isinstance(part, dict) and part.get("type") == "audio":
+                audio_count += 1
+        assert audio_count == 1
+
+    def test_audio_and_image_in_same_message(self):
+        """Both audio and image placeholders coexist in the same user turn."""
+        engine = _make_loaded_engine(model_type="gemma4")
+        messages = [
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": "data:image/png;base64,abc"},
+                    },
+                    {
+                        "type": "input_audio",
+                        "input_audio": {"data": "xyz", "format": "wav"},
+                    },
+                    {"type": "text", "text": "Describe this image and audio"},
+                ],
+            },
+        ]
+
+        formatted, image_ranges = engine._format_messages_for_vlm_template(
+            messages, num_images=1, num_audios=1
+        )
+
+        content = formatted[0]["content"]
+        types = [p.get("type") for p in content if isinstance(p, dict)]
+        assert "image" in types or "image_url" in types
+        assert "audio" in types
+        # Image range should be recorded
+        assert len(image_ranges) == 1
+
+    def test_text_only_messages_with_zero_audio(self):
+        """Text-only messages with num_audios=0 should produce string content."""
+        engine = _make_loaded_engine(model_type="gemma4")
+        messages = [
+            {"role": "system", "content": "You are helpful."},
+            {"role": "user", "content": "Hello"},
+        ]
+
+        formatted, image_ranges = engine._format_messages_for_vlm_template(
+            messages, num_images=0, num_audios=0
+        )
+
+        assert image_ranges == []
+        for msg in formatted:
+            assert isinstance(msg["content"], str), (
+                f"Expected string content for {msg['role']} message, "
+                f"got {type(msg['content'])}"
+            )
+
+    def test_user_reasoning_content_is_ignored(self):
+        """reasoning_content on user messages is not preserved verbatim.
+
+        The Qwen template only reads reasoning_content on assistant turns,
+        and user messages may carry image tokens that require placeholder
+        injection. So user messages always go through get_message_json,
+        dropping any stray reasoning_content field (matches template
+        semantics).
+        """
+        engine = _make_loaded_engine(model_type="qwen3_5_moe")
+        messages = [
+            {
+                "role": "user",
+                "content": "Q",
+                "reasoning_content": "R",
+            },
+        ]
+
+        formatted, _ = engine._format_messages_for_vlm_template(messages, num_images=0)
+
+        assert "reasoning_content" not in formatted[0]
+
+
+# ---------------------------------------------------------------------------
+# TestCountChatTokens
+# ---------------------------------------------------------------------------
+
+
+class TestCountChatTokens:
+    """Tests for VLMBatchedEngine.count_chat_tokens()."""
+
+    def test_counts_text_tokens(self):
+        """Returns token count for text messages."""
+        tokenizer = MagicMock()
+        tokenizer.apply_chat_template.return_value = "Hello World"
+        tokenizer.encode.return_value = [1, 2]
+
+        engine = _make_loaded_engine(tokenizer=tokenizer)
+
+        messages = [{"role": "user", "content": "Hello World"}]
+        count = engine.count_chat_tokens(messages)
+
+        assert count == 2
+
+    def test_strips_images_from_count(self):
+        """Image parts are removed before counting tokens."""
+        tokenizer = MagicMock()
+        tokenizer.apply_chat_template.return_value = "Describe"
+        tokenizer.encode.return_value = [1]
+
+        engine = _make_loaded_engine(tokenizer=tokenizer)
+
+        messages = [
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": "data:image/png;base64,abc"},
+                    },
+                    {"type": "text", "text": "Describe"},
+                ],
+            }
+        ]
+        count = engine.count_chat_tokens(messages)
+
+        # Should count text tokens only
+        assert count == 1
+
+
+# ---------------------------------------------------------------------------
+# TestPartialModeVLM
+# ---------------------------------------------------------------------------
+
+
+class TestPartialModeVLM:
+    """Tests for partial mode in VLM engine — always ignored."""
+
+    def test_apply_chat_template_partial_ignored(self):
+        """VLM _apply_chat_template strips partial but always uses add_generation_prompt=True."""
+        mock_tokenizer = MagicMock()
+        mock_tokenizer.apply_chat_template.return_value = "<formatted>"
+        engine = _make_loaded_engine(tokenizer=mock_tokenizer)
+
+        messages = [
+            {"role": "user", "content": "Hello"},
+            {"role": "assistant", "content": "{", "partial": True},
+        ]
+
+        engine._apply_chat_template(messages)
+
+        call_kwargs = mock_tokenizer.apply_chat_template.call_args[1]
+        assert call_kwargs["add_generation_prompt"] is True
+        assert "continue_final_message" not in call_kwargs
+
+        # partial field should be stripped from messages
+        call_msgs = mock_tokenizer.apply_chat_template.call_args[0][0]
+        for msg in call_msgs:
+            assert "partial" not in msg
+
+
+# ---------------------------------------------------------------------------
+# TestGetStats
+# ---------------------------------------------------------------------------
+
+
+class TestGetStats:
+    """Tests for VLMBatchedEngine.get_stats()."""
+
+    def test_returns_vlm_engine_type(self):
+        """Stats include engine_type='vlm'."""
+        engine = _make_loaded_engine()
+        engine._engine.get_stats.return_value = {}
+
+        stats = engine.get_stats()
+
+        assert stats["engine_type"] == "vlm"
+        assert stats["model_name"] == "test-vlm"
+        assert stats["loaded"] is True
+
+
+# ---------------------------------------------------------------------------
+# TestSplitVisionFeatures
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.skipif(not HAS_MLX, reason="mlx not installed")
+class TestSplitVisionFeatures:
+    """Tests for VLMBatchedEngine._split_vision_features()."""
+
+    def test_single_image_returns_whole(self):
+        """Single image returns the feature tensor as-is in a list."""
+        engine = _make_loaded_engine()
+        features = mx.ones((1, 10, 64))
+        result = engine._split_vision_features(features, 1, {})
+        assert len(result) == 1
+        assert result[0].shape == (1, 10, 64)
+
+    def test_batch_dim_split_gemma_llava(self):
+        """Features with batch dim = num_images are split along axis 0."""
+        engine = _make_loaded_engine(model_type="gemma4")
+        features = mx.ones((3, 10, 64))
+        result = engine._split_vision_features(features, 3, {})
+        assert result is not None
+        assert len(result) == 3
+        for f in result:
+            assert f.shape == (1, 10, 64)
+
+    def test_qwen_flat_split(self):
+        """Qwen flat (total_tokens, dim) features are split using grid_thw."""
+        engine = _make_loaded_engine(model_type="qwen3_5")
+        # Mock spatial_merge_size on vision_tower
+        engine._vlm_model.vision_tower = MagicMock()
+        engine._vlm_model.vision_tower.spatial_merge_size = 2
+
+        # 2 images: image1 has grid (1, 4, 4) → 16 patches / 4 = 4 merged
+        #           image2 has grid (1, 4, 8) → 32 patches / 4 = 8 merged
+        grid_thw = mx.array([[1, 4, 4], [1, 4, 8]])
+        features = mx.ones((12, 128))  # 4 + 8 = 12 total merged tokens
+
+        result = engine._split_vision_features(
+            features, 2, {"image_grid_thw": grid_thw}
+        )
+        assert result is not None
+        assert len(result) == 2
+        assert result[0].shape == (4, 128)
+        assert result[1].shape == (8, 128)
+
+    def test_qwen_mismatch_returns_none(self):
+        """Returns None if computed token count doesn't match feature shape."""
+        engine = _make_loaded_engine(model_type="qwen3_5")
+        engine._vlm_model.vision_tower = MagicMock()
+        engine._vlm_model.vision_tower.spatial_merge_size = 2
+
+        grid_thw = mx.array([[1, 4, 4]])  # → 4 merged tokens
+        features = mx.ones((99, 128))  # Mismatch
+
+        result = engine._split_vision_features(
+            features, 1, {"image_grid_thw": grid_thw}
+        )
+        # Single image: returns [features] regardless of shape
+        assert result is not None
+
+    def test_unsupported_returns_none(self):
+        """Unknown model with non-matching dimensions returns None."""
+        engine = _make_loaded_engine(model_type="unknown_vlm")
+        features = mx.ones((100, 128))  # 2D, non-Qwen
+        result = engine._split_vision_features(features, 3, {})
+        assert result is None
+
+
+# ---------------------------------------------------------------------------
+# TestStopSafety
+# ---------------------------------------------------------------------------
+
+
+class TestStopSafety:
+    """Tests for VLMBatchedEngine.stop() exception safety."""
+
+    @pytest.mark.asyncio
+    async def test_stop_completes_when_close_raises(self):
+        """stop() should complete even if engine.close() raises an exception."""
+        engine = _make_loaded_engine()
+
+        mock_inner_engine = MagicMock()
+        mock_inner_engine.close.side_effect = RuntimeError("close failed")
+        engine._engine.stop = AsyncMock()
+        engine._engine.engine = mock_inner_engine
+
+        await engine.stop()
+
+        assert engine._engine is None
+        assert engine._vlm_model is None
+        assert engine._tokenizer is None
+        assert engine._loaded is False
+
+    @pytest.mark.asyncio
+    async def test_stop_completes_when_engine_has_no_engine_attr(self):
+        """stop() should complete when _engine has no 'engine' attribute."""
+        engine = _make_loaded_engine()
+        engine._engine = MagicMock(spec=["stop"])
+        engine._engine.stop = AsyncMock()
+
+        await engine.stop()
+
+        assert engine._engine is None
+        assert engine._loaded is False
+
+    @pytest.mark.asyncio
+    async def test_stop_calls_close_on_success(self):
+        """stop() calls engine.close() when no exception occurs."""
+        engine = _make_loaded_engine()
+        mock_inner_engine = MagicMock()
+        engine._engine.stop = AsyncMock()
+        engine._engine.engine = mock_inner_engine
+
+        await engine.stop()
+
+        mock_inner_engine.close.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# TestPreflightImageTokenCount
+# ---------------------------------------------------------------------------
+
+
+# Qwen3.x-VL / Qwen2.5-VL image-processor defaults used across these tests.
+_QWEN_IP = SimpleNamespace(
+    patch_size=16, merge_size=2, min_pixels=65536, max_pixels=16777216
+)
+_QWEN_PROC = SimpleNamespace(image_processor=_QWEN_IP)
+
+
+def _png_data_uri(width: int, height: int) -> str:
+    """Build a ``data:`` base64 PNG of the given pixel size."""
+    from PIL import Image
+
+    buf = io.BytesIO()
+    Image.new("RGB", (width, height)).save(buf, format="PNG")
+    return "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode()
+
+
+def _image_part(width: int, height: int) -> dict:
+    return {"type": "image_url", "image_url": {"url": _png_data_uri(width, height)}}
+
+
+class TestSmartResizeTokens:
+    """`_smart_resize_tokens` must match the Qwen processor's grid -> token math."""
+
+    @pytest.mark.parametrize(
+        "w,h,expected",
+        [
+            (512, 512, 256),     # exact multiple of patch*merge (32)
+            (336, 336, 100),     # 336 -> 336 grid 21x21 -> 441//4... rounds via factor
+            (510, 680, 336),     # non-multiple, rounded to nearest factor
+            (100, 100, 64),      # below min_pixels -> upscaled to min
+            (4000, 3000, 11750),  # above max_pixels -> downscaled to cap
+            (2791, 16, 106),     # thin image: branch on raw rounded dims
+        ],
+    )
+    def test_matches_known_grid(self, w, h, expected):
+        from fusion_mlx.engine.vlm import _smart_resize_tokens
+
+        got = _smart_resize_tokens(
+            h, w, _QWEN_IP.patch_size, _QWEN_IP.merge_size,
+            _QWEN_IP.min_pixels, _QWEN_IP.max_pixels,
+        )
+        assert got == expected
+
+    def test_zero_dims_return_zero(self):
+        from fusion_mlx.engine.vlm import _smart_resize_tokens
+
+        assert _smart_resize_tokens(0, 512, 16, 2, 65536, 16777216) == 0
+
+
+class TestReadImageDims:
+    """`_read_image_dims` reads dimensions decode-free, or returns None safely."""
+
+    def test_reads_data_uri(self):
+        from fusion_mlx.engine.vlm import _read_image_dims
+
+        assert _read_image_dims(_image_part(640, 480)) == (640, 480)
+
+    def test_http_url_returns_none(self):
+        from fusion_mlx.engine.vlm import _read_image_dims
+
+        part = {"type": "image_url",
+                "image_url": {"url": "https://example.com/x.jpg"}}
+        assert _read_image_dims(part) is None
+
+    def test_garbage_returns_none(self):
+        from fusion_mlx.engine.vlm import _read_image_dims
+
+        part = {"type": "image_url",
+                "image_url": {"url": "data:image/png;base64,not-base64!!"}}
+        assert _read_image_dims(part) is None
+
+
+class TestCountImageTokensReal:
+    """`_count_image_tokens_real` charges actual size, not the max_pixels ceiling."""
+
+    def test_counts_real_size_not_upper_bound(self):
+        from fusion_mlx.engine.vlm import _count_image_tokens_real
+
+        # 20 down-sized 512x512 frames (livestream client shape).
+        content = [_image_part(512, 512) for _ in range(20)]
+        content.append({"type": "text", "text": "describe"})
+        messages = [{"role": "user", "content": content}]
+
+        total = _count_image_tokens_real(messages, _QWEN_PROC, upper_bound=16384)
+        assert total == 20 * 256  # 5120, not 20 * 16384 = 327680
+
+    def test_counts_thin_image_without_undercounting(self):
+        from fusion_mlx.engine.vlm import _count_image_tokens_real
+
+        messages = [{"role": "user", "content": [_image_part(2791, 16)]}]
+
+        total = _count_image_tokens_real(messages, _QWEN_PROC, upper_bound=16384)
+        assert total == 106  # Qwen grid_thw=[1, 2, 212]
+
+    def test_falls_back_to_upper_bound_for_unreadable(self):
+        from fusion_mlx.engine.vlm import _count_image_tokens_real
+
+        messages = [{"role": "user", "content": [
+            {"type": "image_url",
+             "image_url": {"url": "https://example.com/x.jpg"}},
+            {"type": "text", "text": "hi"},
+        ]}]
+        total = _count_image_tokens_real(messages, _QWEN_PROC, upper_bound=16384)
+        assert total == 16384
+
+    def test_falls_back_when_processor_not_qwen_style(self):
+        from fusion_mlx.engine.vlm import _count_image_tokens_real
+
+        # Processor missing patch/merge/min/max -> never under-count.
+        messages = [{"role": "user", "content": [_image_part(512, 512)]}]
+        total = _count_image_tokens_real(messages, SimpleNamespace(),
+                                         upper_bound=16384)
+        assert total == 16384
+
+    def test_no_images_returns_zero(self):
+        from fusion_mlx.engine.vlm import _count_image_tokens_real
+
+        messages = [{"role": "user", "content": "just text"}]
+        assert _count_image_tokens_real(messages, _QWEN_PROC) == 0

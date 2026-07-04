@@ -71,13 +71,13 @@ class DraftModelDecoder:
         logger.info("draft_model: on_new_request req=%s prompt_tokens=%d", request_id[:8], len(prompt_tokens) if prompt_tokens else 0)
         if self.model is not None and prompt_tokens:
             try:
+                from mlx_lm.models.cache import KVCache
                 with mx.stream(mx.default_stream(mx.gpu)):
                     input_ids = mx.array(prompt_tokens, mx.uint32)
-                    self.model(input_ids[None])
-                    self._draft_cache = self.model.make_cache()
+                    self._draft_cache = [KVCache() for _ in self.model.layers]
                     self.model(input_ids[None], cache=self._draft_cache)
                     mx.eval(self._draft_cache)
-                    logger.info("draft_model: prefill success, cache=%s", type(self._draft_cache).__name__)
+                    logger.info("draft_model: prefill success, cache=%s, layers=%d", type(self._draft_cache[0]).__name__, len(self._draft_cache))
             except Exception as e:
                 logger.warning("draft_model: prefill failed: %s", e)
                 self._draft_cache = None

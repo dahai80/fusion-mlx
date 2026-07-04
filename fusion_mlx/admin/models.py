@@ -1,6 +1,13 @@
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
+from pydantic.alias_generators import to_camel
+
+# Request models accept BOTH snake_case (server-internal) and camelCase
+# (the released macOS app's Swift Encodable payload, e.g. `apiKey`,
+# `maxTokens`, `modelDirs`). populate_by_name keeps snake_case working while
+# alias_generator=to_camel adds the camelCase aliases the app sends.
+CAMEL_REQUEST = ConfigDict(populate_by_name=True, alias_generator=to_camel)
 
 # =============================================================================
 # Pydantic Models
@@ -10,6 +17,7 @@ from pydantic import BaseModel, Field
 class LoginRequest(BaseModel):
     """Request model for admin login."""
 
+    model_config = CAMEL_REQUEST
     api_key: str
     remember: bool = False
 
@@ -17,6 +25,7 @@ class LoginRequest(BaseModel):
 class SetupApiKeyRequest(BaseModel):
     """Request model for initial API key setup."""
 
+    model_config = CAMEL_REQUEST
     api_key: str
     api_key_confirm: str
 
@@ -53,6 +62,7 @@ class CacheProbeRequest(BaseModel):
 class ModelSettingsRequest(BaseModel):
     """Request model for updating per-model settings."""
 
+    model_config = CAMEL_REQUEST
     model_alias: str | None = None
     model_type_override: str | None = None
     max_context_window: int | None = None
@@ -147,6 +157,8 @@ class UpdateTemplateRequest(BaseModel):
 
 class GlobalSettingsRequest(BaseModel):
     """Request model for updating global server settings."""
+
+    model_config = CAMEL_REQUEST
 
     # Server settings
     host: str | None = None

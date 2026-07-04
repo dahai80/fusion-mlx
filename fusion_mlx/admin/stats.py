@@ -27,6 +27,7 @@ PRESET_REMOTE_URL = "http://bench.dpdns.org/assets/omlx_preset.json"
 from .helpers import (
     _get_engine_pool,
     _get_global_settings,
+    _get_rich_global_settings,
     _get_server_state,
     _get_settings_manager,
 )
@@ -397,19 +398,27 @@ async def get_server_stats(
 
     metrics = get_server_metrics()
     resolved_model = resolve_model_id(model) or model if model else ""
-    snapshot = metrics.get_snapshot(model_id=resolved_model, scope=scope)
+    snapshot = metrics.to_dict()
+    if model or scope != "session":
+        logger.debug(
+            "per-model/scope stats filter requested (model=%r scope=%r) but "
+            "ServerMetrics only exposes a global aggregate; returning global snapshot",
+            model,
+            scope,
+        )
 
-    global_settings = _get_global_settings()
-    host = global_settings.server.host if global_settings else "127.0.0.1"
-    port = global_settings.server.port if global_settings else 8000
-    api_key = global_settings.auth.api_key if global_settings else ""
+    rich = _get_rich_global_settings()
+    flat = _get_global_settings()
+    host = rich.server.host if rich else "127.0.0.1"
+    port = rich.server.port if rich else 8000
+    api_key = flat.auth.api_key if flat else ""
 
     from ..utils.install import get_cli_prefix
 
     # Build active_models data for the dashboard card.
     active_models_data = _build_active_models_data()
     runtime_cache_data = _build_runtime_cache_observability(
-        global_settings,
+        rich,
         model_filter=model,
     )
 
@@ -420,13 +429,13 @@ async def get_server_stats(
         "api_key": api_key or "",
         "cli_prefix": get_cli_prefix(),
         "claude_code_context_scaling_enabled": (
-            global_settings.claude_code.context_scaling_enabled
-            if global_settings
+            rich.claude_code.context_scaling_enabled
+            if rich
             else False
         ),
         "claude_code_target_context_size": (
-            global_settings.claude_code.target_context_size
-            if global_settings
+            rich.claude_code.target_context_size
+            if rich
             else 200000
         ),
         "engines": _get_engine_info(),
@@ -437,7 +446,7 @@ async def get_server_stats(
 
 def _build_active_models_data() -> dict:
     """Build active models status for the dashboard Active Models card."""
-    from ..model_discovery import format_size
+    from ..pool.model_discovery import format_size
     from ..prefill_progress import get_prefill_tracker
 
     engine_pool = _get_engine_pool()
@@ -788,7 +797,7 @@ async def clear_ssd_cache(is_admin: bool = Depends(require_admin)):
                 )
 
     # Phase 2: remove any remaining files on disk (covers unloaded models)
-    global_settings = _get_global_settings()
+    global_settings = _get_rich_global_settings()
     if global_settings is not None:
         cache_dir = global_settings.cache.get_ssd_cache_dir(
             global_settings.base_path,

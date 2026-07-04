@@ -70,6 +70,13 @@ class ContentBlockDocument(BaseModel):
     cache_control: dict[str, str] | None = None
 
 
+class ContentBlockInputAudio(BaseModel):
+    """Audio input content block."""
+
+    type: Literal["input_audio"] = "input_audio"
+    source: dict[str, Any]  # {"type": "base64", "media_type": "audio/wav", "data": "..."}
+
+
 # Union type for all content blocks
 ContentBlock = (
     ContentBlockText
@@ -78,6 +85,7 @@ ContentBlock = (
     | ContentBlockToolResult
     | ContentBlockThinking
     | ContentBlockDocument
+    | ContentBlockInputAudio
 )
 
 

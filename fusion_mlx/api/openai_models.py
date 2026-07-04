@@ -13,7 +13,7 @@ These models define the request and response schemas for:
 import json
 from typing import Any
 
-from pydantic import AliasChoices, BaseModel, Field, field_validator
+from pydantic import AliasChoices, BaseModel, Field, field_validator, model_validator
 
 from fusion_mlx.api.shared_models import (
     BaseUsage,
@@ -39,10 +39,12 @@ class ContentPart(BaseModel):
     Supports:
     - text: Plain text content
     - image_url: Image input for vision models
+    - file: File attachment (PDF, etc.)
     """
-    type: str  # "text" or "image_url"
+    type: str  # "text", "image_url", or "file"
     text: str | None = None
     image_url: ImageURL | None = None
+    file: dict | None = None
 
 
 # =============================================================================
@@ -144,6 +146,13 @@ class FunctionCall(BaseModel):
     """A function call with name and arguments."""
     name: str
     arguments: str  # JSON string
+
+    @field_validator("name", mode="before")
+    @classmethod
+    def _strip_name_whitespace(cls, v: Any) -> str:
+        if isinstance(v, str):
+            return v.strip()
+        return v
 
     @field_validator("arguments", mode="before")
     @classmethod
@@ -261,10 +270,19 @@ class ChatCompletionRequest(BaseModel):
     @field_validator("stop", mode="before")
     @classmethod
     def coerce_stop(cls, v):
-        """Accept stop as a single string (OpenAI compat) and wrap in a list."""
         if isinstance(v, str):
             return [v]
         return v
+
+    @model_validator(mode="before")
+    @classmethod
+    def _alias_max_completion_tokens(cls, values: Any) -> Any:
+        if isinstance(values, dict):
+            if "max_completion_tokens" in values and "max_tokens" not in values:
+                values["max_tokens"] = values.pop("max_completion_tokens")
+            elif "max_completion_tokens" in values:
+                values.pop("max_completion_tokens")
+        return values
 
 
 class AssistantMessage(BaseModel):

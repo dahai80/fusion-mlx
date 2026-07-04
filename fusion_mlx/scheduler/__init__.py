@@ -4,6 +4,12 @@
 from . import monkeypatches  # noqa: F401
 from .config import SchedulerConfig, SchedulerOutput, SchedulingPolicy
 from .core import Scheduler
+from .types import (
+    _PrefillAbortedError,
+    _PrefillState,
+    _StoreCacheGate,
+    _VLMMTPDecodeState,
+)
 
 
 class BackpressureError(Exception):

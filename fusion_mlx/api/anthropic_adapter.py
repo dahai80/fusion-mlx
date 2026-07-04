@@ -14,11 +14,13 @@ import uuid
 
 from .anthropic_models import (
     AnthropicMessage,
-    AnthropicRequest,
-    AnthropicResponse,
-    AnthropicResponseContentBlock,
-    AnthropicToolDef,
+    AnthropicTool,
     AnthropicUsage,
+    ContentBlockText,
+    ContentBlockThinking,
+    ContentBlockToolUse,
+    MessagesRequest,
+    MessagesResponse,
 )
 from .models import (
     ChatCompletionRequest,
@@ -28,7 +30,7 @@ from .models import (
 )
 
 
-def anthropic_to_openai(request: AnthropicRequest) -> ChatCompletionRequest:
+def anthropic_to_openai(request: MessagesRequest) -> ChatCompletionRequest:
     """
     Convert an Anthropic Messages API request to OpenAI Chat Completions format.
 
@@ -51,11 +53,13 @@ def anthropic_to_openai(request: AnthropicRequest) -> ChatCompletionRequest:
         if isinstance(request.system, str):
             system_text = request.system
         elif isinstance(request.system, list):
-            # System can be a list of content blocks
+            # System can be a list of SystemContent models or dicts
             parts = []
             for block in request.system:
                 if isinstance(block, dict) and block.get("type") == "text":
                     parts.append(block.get("text", ""))
+                elif hasattr(block, "type") and block.type == "text":
+                    parts.append(getattr(block, "text", ""))
                 elif isinstance(block, str):
                     parts.append(block)
             system_text = "\n".join(parts)
@@ -104,7 +108,7 @@ def anthropic_to_openai(request: AnthropicRequest) -> ChatCompletionRequest:
 def openai_to_anthropic(
     response: ChatCompletionResponse,
     model: str,
-) -> AnthropicResponse:
+) -> MessagesResponse:
     """
     Convert an OpenAI Chat Completions response to Anthropic Messages API format.
 
@@ -125,8 +129,7 @@ def openai_to_anthropic(
         # disappear from the non-streaming response — issue #413.
         if choice.message.reasoning_content:
             content.append(
-                AnthropicResponseContentBlock(
-                    type="thinking",
+                ContentBlockThinking(
                     thinking=choice.message.reasoning_content,
                 )
             )
@@ -134,8 +137,7 @@ def openai_to_anthropic(
         # Add text content
         if choice.message.content:
             content.append(
-                AnthropicResponseContentBlock(
-                    type="text",
+                ContentBlockText(
                     text=choice.message.content,
                 )
             )
@@ -159,8 +161,7 @@ def openai_to_anthropic(
                     tool_input = {}
 
                 content.append(
-                    AnthropicResponseContentBlock(
-                        type="tool_use",
+                    ContentBlockToolUse(
                         id=tc_id,
                         name=func_name,
                         input=tool_input,
@@ -173,9 +174,9 @@ def openai_to_anthropic(
 
     # If no content blocks, add empty text
     if not content:
-        content.append(AnthropicResponseContentBlock(type="text", text=""))
+        content.append(ContentBlockText(text=""))
 
-    return AnthropicResponse(
+    return MessagesResponse(
         model=model,
         content=content,
         stop_reason=stop_reason,
@@ -285,7 +286,7 @@ def _convert_message(msg: AnthropicMessage) -> list[Message]:
     return messages
 
 
-def _convert_tool(tool: AnthropicToolDef) -> ToolDefinition:
+def _convert_tool(tool: AnthropicTool) -> ToolDefinition:
     """
     Convert an Anthropic tool definition to OpenAI format.
 
@@ -302,14 +303,19 @@ def _convert_tool(tool: AnthropicToolDef) -> ToolDefinition:
     )
 
 
-def _convert_tool_choice(tool_choice: dict) -> str | dict | None:
+def _convert_tool_choice(tool_choice: dict | object) -> str | dict | None:
     """
     Convert Anthropic tool_choice to OpenAI format.
 
     Anthropic: {"type": "auto"} | {"type": "any"} | {"type": "tool", "name": "..."}
     OpenAI: "auto" | "none" | "required" | {"type": "function", "function": {"name": "..."}}
     """
-    choice_type = tool_choice.get("type", "auto")
+    if isinstance(tool_choice, dict):
+        choice_type = tool_choice.get("type", "auto")
+        choice_name = tool_choice.get("name", "")
+    else:
+        choice_type = getattr(tool_choice, "type", "auto")
+        choice_name = getattr(tool_choice, "name", "") or ""
 
     if choice_type == "auto":
         return "auto"
@@ -318,7 +324,7 @@ def _convert_tool_choice(tool_choice: dict) -> str | dict | None:
     elif choice_type == "tool":
         return {
             "type": "function",
-            "function": {"name": tool_choice.get("name", "")},
+            "function": {"name": choice_name},
         }
     elif choice_type == "none":
         return "none"
