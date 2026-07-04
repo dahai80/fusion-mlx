@@ -178,9 +178,30 @@ class EngineCore:
         _fut.result()
         self.scheduler = _sched_result[0]
 
+        # Speculative decode safety gate: the batched verify forward
+        # (model([D1..DK], cache)) derails recurrent state on hybrid
+        # architectures (GatedDeltaNet / Mamba / ArraysCache layers) —
+        # the recurrent cache must update sequentially, but the batch
+        # verify computes it in parallel, corrupting generation into
+        # repetition (e.g. "useruseruser"). Probe the model's cache and
+        # skip BOTH spec paths when recurrent layers are present. Uses
+        # the shared ``model_has_recurrent_cache`` helper (same probe
+        # ``enrich_model_config`` runs) so the boot gate and config gate
+        # can't drift apart. ``get_profile`` never receives the loaded
+        # model during boot, so without this gate the safety net that
+        # ``enrich_model_config`` provides is dead code on the serve path.
+        from .model_auto_config import model_has_recurrent_cache
+        spec_eligible = not model_has_recurrent_cache(model)
+        if not spec_eligible:
+            logger.warning(
+                "Speculative decode disabled: model has recurrent "
+                "(ArraysCache) layers — batched verify corrupts "
+                "GatedDeltaNet state. Using coherent pure decode."
+            )
+
         # Initialize speculative decode draft model on the executor thread
         from .scheduler.spec_decode import SpecDecodeState, SPEC_DRAFT_MODEL_ENABLED
-        if SPEC_DRAFT_MODEL_ENABLED:
+        if spec_eligible and SPEC_DRAFT_MODEL_ENABLED:
             def _init_draft():
                 from .speculative.draft_model import DraftModelDecoder
                 draft = DraftModelDecoder()
@@ -195,7 +216,7 @@ class EngineCore:
 
         # Initialize n-gram speculative decode (CPU-side, zero GPU overhead)
         from .scheduler.ngram_spec import NGramSpecState, NGRAM_SPEC_ENABLED
-        if NGRAM_SPEC_ENABLED:
+        if spec_eligible and NGRAM_SPEC_ENABLED:
             self.scheduler._ngram_spec_state = NGramSpecState()
             logger.info("N-gram speculative decode: enabled (order=%d, num_draft=%d)",
                         self.scheduler._ngram_spec_state.predictor.order,

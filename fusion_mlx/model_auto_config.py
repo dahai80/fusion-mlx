@@ -1025,6 +1025,27 @@ def warn_misbound_deepseek_v3_parser(
     )
 
 
+def model_has_recurrent_cache(model: Any) -> bool:
+    """Return True if ``model`` uses recurrent (ArraysCache) layers.
+
+    Recurrent architectures (GatedDeltaNet, Mamba, Jamba, Qwen3-Next)
+    hold sequential state in ``ArraysCache``. The batched spec-verify
+    forward (``model([D1..DK], cache)``) computes that state in parallel
+    and derails generation into repetition, so spec decode must be
+    disabled for these models. This probe is the single source of truth
+    used by both ``enrich_model_config`` (config-level gate) and
+    ``engine_core`` (boot-level gate that never initializes the drafter).
+    """
+    try:
+        if hasattr(model, "make_cache"):
+            from mlx_lm.models.cache import ArraysCache
+
+            return any(isinstance(c, ArraysCache) for c in model.make_cache())
+    except Exception as e:  # noqa: BLE001
+        logger.debug("recurrent-cache probe failed (non-fatal): %r", e)
+    return False
+
+
 def enrich_model_config(cfg: ModelConfig | None, model: Any) -> ModelConfig:
     """Runtime-enrich a ``ModelConfig`` from a loaded mlx-lm model.
 
@@ -1059,27 +1080,23 @@ def enrich_model_config(cfg: ModelConfig | None, model: Any) -> ModelConfig:
     # ``is_hybrid=false`` were silently re-promoted to hybrid at boot,
     # which is the path that wedges metal::malloc on the 4B variant.
     try:
-        if hasattr(model, "make_cache"):
-            from mlx_lm.models.cache import ArraysCache
-
-            test_cache = model.make_cache()
-            if any(isinstance(c, ArraysCache) for c in test_cache):
-                if cfg.is_hybrid_explicit:
-                    if cfg.supports_spec_decode:
-                        logger.info(
-                            "Runtime probe: model has ArraysCache layers — "
-                            "honouring is_hybrid_explicit=True (keeping "
-                            "is_hybrid=%s), forcing supports_spec_decode=False",
-                            cfg.is_hybrid,
-                        )
-                        cfg = replace(cfg, supports_spec_decode=False)
-                else:
-                    if not cfg.is_hybrid or cfg.supports_spec_decode:
-                        logger.info(
-                            "Runtime probe: model has ArraysCache layers — "
-                            "marking as hybrid, disabling spec decode"
-                        )
-                    cfg = replace(cfg, is_hybrid=True, supports_spec_decode=False)
+        if model_has_recurrent_cache(model):
+            if cfg.is_hybrid_explicit:
+                if cfg.supports_spec_decode:
+                    logger.info(
+                        "Runtime probe: model has ArraysCache layers — "
+                        "honouring is_hybrid_explicit=True (keeping "
+                        "is_hybrid=%s), forcing supports_spec_decode=False",
+                        cfg.is_hybrid,
+                    )
+                    cfg = replace(cfg, supports_spec_decode=False)
+            else:
+                if not cfg.is_hybrid or cfg.supports_spec_decode:
+                    logger.info(
+                        "Runtime probe: model has ArraysCache layers — "
+                        "marking as hybrid, disabling spec decode"
+                    )
+                cfg = replace(cfg, is_hybrid=True, supports_spec_decode=False)
     except Exception as e:  # noqa: BLE001
         logger.debug(f"ArraysCache probe failed (non-fatal): {e!r}")
 
