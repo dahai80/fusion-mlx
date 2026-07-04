@@ -318,13 +318,14 @@ async def stream_events(session_id: str):
 
         session = _sessions.get(session_id)
         if session:
-            yield f"data: {json.dumps({
+            state = {
                 'type': 'session_state',
                 'session_id': session_id,
                 'turn_count': session['turn_count'],
                 'active': session['active'],
                 'messages_count': len(session['messages']),
-            })}\n\n"
+            }
+            yield f"data: {json.dumps(state)}\n\n"
 
         try:
             while True:
