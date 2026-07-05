@@ -306,9 +306,7 @@ async def _stream_chat_generator(request: ChatCompletionRequest) -> AsyncIterato
                         completion_tokens=gen.completion_tokens,
                         cached_tokens=gen.cached_tokens,
                     )
-                    yield _adapter.format_stream_chunk(
-                        chunk, request, encoder=encoder
-                    )
+                    yield _adapter.format_stream_chunk(chunk, request, encoder=encoder)
                 if thinking_delta:
                     rchunk = StreamChunk(
                         text="",
@@ -317,9 +315,7 @@ async def _stream_chat_generator(request: ChatCompletionRequest) -> AsyncIterato
                         completion_tokens=gen.completion_tokens,
                         cached_tokens=gen.cached_tokens,
                     )
-                    yield _adapter.format_stream_chunk(
-                        rchunk, request, encoder=encoder
-                    )
+                    yield _adapter.format_stream_chunk(rchunk, request, encoder=encoder)
                 prompt_tokens = gen.prompt_tokens or prompt_tokens
                 completion_tokens = gen.completion_tokens or completion_tokens
                 cached_tokens = gen.cached_tokens or cached_tokens

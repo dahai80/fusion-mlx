@@ -82,7 +82,11 @@ class _NoThinkEngine:
             text="Hello", new_text="Hello", completion_tokens=1, finished=False
         )
         yield GenerationOutput(
-            text="Hello world", new_text=" world", completion_tokens=2, finished=True, finish_reason="stop"
+            text="Hello world",
+            new_text=" world",
+            completion_tokens=2,
+            finished=True,
+            finish_reason="stop",
         )
 
     async def abort_request(self, request_id):
@@ -155,24 +159,24 @@ def test_streaming_splits_thinking_into_reasoning_content():
     reasoning = "".join(d.get("reasoning_content", "") for d in deltas)
     content = "".join(d.get("content", "") or "" for d in deltas)
 
-    assert "Let me think." in reasoning, (
-        f"thinking text leaked out of reasoning_content; reasoning={reasoning!r}"
-    )
+    assert (
+        "Let me think." in reasoning
+    ), f"thinking text leaked out of reasoning_content; reasoning={reasoning!r}"
     assert "Hi!" in content, f"real answer missing from content; content={content!r}"
     # Thinking text must NOT appear in content.
-    assert "Let me think." not in content, (
-        f"#21 regression: thinking text in content; content={content!r}"
-    )
+    assert (
+        "Let me think." not in content
+    ), f"#21 regression: thinking text in content; content={content!r}"
     # Raw think tags must not leak into either channel.
-    assert _OPEN_TAG not in content, (
-        f"open tag leaked into content; content={content!r}"
-    )
-    assert _CLOSE_TAG not in content, (
-        f"close tag leaked into content; content={content!r}"
-    )
-    assert _OPEN_TAG not in reasoning, (
-        f"open tag leaked into reasoning; reasoning={reasoning!r}"
-    )
+    assert (
+        _OPEN_TAG not in content
+    ), f"open tag leaked into content; content={content!r}"
+    assert (
+        _CLOSE_TAG not in content
+    ), f"close tag leaked into content; content={content!r}"
+    assert (
+        _OPEN_TAG not in reasoning
+    ), f"open tag leaked into reasoning; reasoning={reasoning!r}"
 
 
 def test_streaming_plain_content_no_reasoning():
@@ -197,6 +201,6 @@ def test_streaming_plain_content_no_reasoning():
     reasoning = "".join(d.get("reasoning_content", "") for d in deltas)
 
     assert content == "Hello world", f"plain content corrupted; got {content!r}"
-    assert reasoning == "", (
-        f"no-think output must not emit reasoning_content; got {reasoning!r}"
-    )
+    assert (
+        reasoning == ""
+    ), f"no-think output must not emit reasoning_content; got {reasoning!r}"
