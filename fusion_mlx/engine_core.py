@@ -191,26 +191,23 @@ class EngineCore:
         _fut.result()
         self.scheduler = _sched_result[0]
 
-        # Speculative decode safety gate: the batched verify forward
-        # (model([D1..DK], cache)) derails recurrent state on hybrid
-        # architectures (GatedDeltaNet / Mamba / ArraysCache layers) —
-        # the recurrent cache must update sequentially, but the batch
-        # verify computes it in parallel, corrupting generation into
-        # repetition (e.g. "useruseruser"). Probe the model's cache and
-        # skip BOTH spec paths when recurrent layers are present. Uses
-        # the shared ``model_has_recurrent_cache`` helper (same probe
-        # ``enrich_model_config`` runs) so the boot gate and config gate
-        # can't drift apart. ``get_profile`` never receives the loaded
-        # model during boot, so without this gate the safety net that
-        # ``enrich_model_config`` provides is dead code on the serve path.
+        # Draft-model speculative decode safety gate. The draft-model verify
+        # path (``model([D1..DK], cache)``) has not been audited for hybrid
+        # recurrent architectures (GatedDeltaNet / Mamba / ArraysCache layers),
+        # so it stays disabled for recurrent models until its rejection path is
+        # audited the same way n-gram spec's was (see the n-gram block below).
+        # N-gram spec is NOT gated here — its rejection path is GDN-safe after
+        # the trim + resample fixes. Uses the shared
+        # ``model_has_recurrent_cache`` helper (same probe
+        # ``enrich_model_config`` runs) so the boot gate and config gate can't
+        # drift apart.
         from .model_auto_config import model_has_recurrent_cache
 
         spec_eligible = not model_has_recurrent_cache(model)
         if not spec_eligible:
-            logger.warning(
-                "Speculative decode disabled: model has recurrent "
-                "(ArraysCache) layers — batched verify corrupts "
-                "GatedDeltaNet state. Using coherent pure decode."
+            logger.info(
+                "Draft-model speculative decode disabled: model has recurrent "
+                "(ArraysCache) layers. N-gram spec remains enabled (GDN-safe)."
             )
 
         # Initialize speculative decode draft model on the executor thread
@@ -238,10 +235,29 @@ class EngineCore:
             _fut = self._mlx_executor.submit(_init_draft)
             _fut.result()
 
-        # Initialize n-gram speculative decode (CPU-side, zero GPU overhead)
+        # Initialize n-gram speculative decode (CPU-side, zero GPU overhead).
+        # GDN-safe: the batched verify ``model([D1..DK], cache)`` and the GDN
+        # layer/kernel are correct for multi-token forwards (proven by layer
+        # isolation tests — batched S=K equals sequential K×S=1 for conv_state,
+        # ssm_state and output). The earlier corruption ("1,2,...,11,21,24,93"
+        # repetition on count tasks) was traced to TWO rejection-path bugs in
+        # ``_verify_drafts`` / ``ngram_spec_step``, both now fixed:
+        #   (1) KVCache was not trimmed on rejection —
+        #       ``mlx_cache.trim_prompt_cache`` is a no-op when ANY cache is
+        #       non-trimmable (hybrid GDN models have ArraysCache layers), and
+        #       it trimmed ``n_rejected`` instead of ``K`` (the replay writes
+        #       ``n_accepted`` duplicate entries that must also be dropped). The
+        #       rejection path now trims each trimmable cache directly by ``K``.
+        #   (2) The bonus token used ``resample_idx = min(n_accepted, K-1)``,
+        #       which on rejection selects the prediction AFTER the first
+        #       rejected draft; the correct index is ``n_accepted - 1`` (pred
+        #       after the last ACCEPTED draft).
+        # With both fixed, n-gram spec is token-for-token coherent with pure
+        # decode on the GDN model (verified standalone, K=3, count-1-to-50).
+        # Losslessness is covered by tests/integration/test_ngram_spec_gdn_coherence.py.
         from .scheduler.ngram_spec import NGRAM_SPEC_ENABLED, NGramSpecState
 
-        if spec_eligible and NGRAM_SPEC_ENABLED:
+        if NGRAM_SPEC_ENABLED:
             self.scheduler._ngram_spec_state = NGramSpecState()
             logger.info(
                 "N-gram speculative decode: enabled (order=%d, num_draft=%d)",

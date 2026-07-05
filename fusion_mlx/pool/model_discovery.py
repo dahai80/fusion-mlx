@@ -84,6 +84,7 @@ VLM_ARCHITECTURES = {
     "LlavaNextForConditionalGeneration",
     "Qwen2VLForConditionalGeneration",
     "Qwen2_5_VLForConditionalGeneration",
+    "Qwen3_5ForConditionalGeneration",  # Qwen3.5/3.6 dense hybrid-recurrent VLM wrapper; text-only quants keep the arch but drop vision_config
     "MllamaForConditionalGeneration",
     "Gemma3ForConditionalGeneration",
     "Gemma4ForConditionalGeneration",

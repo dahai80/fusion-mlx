@@ -199,8 +199,12 @@ def _run_spec_verify(
     else:
         n_accepted = K
 
-    # Build verified list: accepted drafts + resampled token
-    resample_idx = min(n_accepted, K - 1)
+    # Build verified list: accepted drafts + resampled token. The bonus is
+    # the model's prediction AFTER the last ACCEPTED draft (sampled[n_accepted-1]),
+    # NOT after the first rejected draft (sampled[n_accepted]). Using the
+    # latter emits a token conditioned on a rejected draft — a correctness
+    # bug on any rejection, pure-attention or hybrid. Mirrors ngram_spec.
+    resample_idx = max(0, n_accepted - 1)
     verified = draft_tokens[:n_accepted]
     verified.append(sampled_list[resample_idx])
 
@@ -260,11 +264,12 @@ def spec_decode_step(
     prompt_cache = gen.prompt_cache
     model = gen.model
 
-    # Capture regular step's sampled token for D1 verification
+    # Capture regular step's sampled token for D1 verification.
+    # mx arrays expose ``.item()`` (not ``.flat``).
     sampled_from_regular = None
     if gen._next_tokens is not None:
         try:
-            sampled_from_regular = int(gen._next_tokens.flat[0])
+            sampled_from_regular = int(gen._next_tokens.item())
         except Exception:
             pass
 

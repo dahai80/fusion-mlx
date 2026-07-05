@@ -33,13 +33,38 @@ NGRAM_SPEC_WARMUP = int(__import__("os").environ.get("FUSION_NGRAM_SPEC_WARMUP",
 NGRAM_SPEC_MIN_ACCEPT = float(
     __import__("os").environ.get("FUSION_NGRAM_SPEC_MIN_ACCEPT", "0.05")
 )
+# Conservative break-even used until real T_verify/T_decode is measured.
+# GDN verify forwards are expensive (recurrent layers don't batch), so a
+# model-specific V/K is computed online; this default just keeps spec off
+# until V is known on workloads where D1 match rate is mediocre.
+NGRAM_SPEC_DEFAULT_BREAK_EVEN = float(
+    __import__("os").environ.get("FUSION_NGRAM_SPEC_BREAK_EVEN", "0.5")
+)
+# Predictor geometry. order=5 needs a 5-token exact repeat before firing,
+# which is too strict for short repetitive patterns (code, lists) where spec
+# otherwise wins big. order=3 fires ~4x more often with no false-accept cost
+# (rejected drafts are bounded by K). Tunable without code changes.
+NGRAM_SPEC_ORDER = int(__import__("os").environ.get("FUSION_NGRAM_SPEC_ORDER", "5"))
+NGRAM_SPEC_NUM_DRAFT = int(
+    __import__("os").environ.get("FUSION_NGRAM_SPEC_NUM_DRAFT", "3")
+)
 
 
 class NGramSpecState:
-    """Per-scheduler n-gram speculative decode state."""
+    """Per-scheduler n-gram speculative decode state.
+
+    Adaptive gating: the verify forward costs Vx a regular decode (V varies
+    by model — GDN recurrent layers don't batch, so V is high). Spec only
+    wins when per-step acceptance exceeds V/K. We measure V from real
+    verify/decode timings and pause spec when acceptance falls below that
+    break-even, so n-gram spec never regresses throughput on hostile
+    workloads (diverse text) while still accelerating repetitive ones.
+    """
 
     def __init__(self, predictor: NGramPredictor | None = None):
-        self.predictor = predictor or NGramPredictor()
+        self.predictor = predictor or NGramPredictor(
+            order=NGRAM_SPEC_ORDER, num_draft=NGRAM_SPEC_NUM_DRAFT
+        )
         self.steps = 0
         self.total_spec_steps = 0
         self.total_draft_proposed = 0
@@ -47,7 +72,25 @@ class NGramSpecState:
         self._last_request_id = None
         self._recent_rates = []
         self._paused = False
-        self._window = 20
+        self._window = 12
+        # D1 match rate (cheap, no GPU): how often the n-gram's top-1
+        # prediction agrees with the model's own next token. Upper-bounds
+        # K-draft acceptance, so D1 rate < break-even means spec would
+        # certainly regress — gate spec on it BEFORE spending a GPU verify.
+        self._d1_rates = []
+        self._d1_min_samples = 6
+        # EMA of GPU timings (seconds) for dynamic break-even. verify is the
+        # spec verify forward; decode is the regular 1-token forward.
+        self._verify_dt_ema = None
+        self._decode_dt_ema = None
+        self._last_K = 3
+        self._alpha = 0.3
+        # Probe-based resume: while paused, run one spec step every
+        # _probe_interval regular steps to re-check acceptance. A probe that
+        # beats break-even resumes spec; otherwise spec stays paused.
+        self._probe_interval = 64
+        self._probe_counter = 0
+        self._probing = False
 
     def reset(self):
         self.predictor.reset()
@@ -61,45 +104,137 @@ class NGramSpecState:
             self.steps = 0
             self._paused = False
             self._recent_rates.clear()
+            self._d1_rates.clear()
+            self._probe_counter = 0
+            self._probing = False
 
     def add_token(self, token: int):
+        # Reset per-step; should_speculate sets it True when allowing a probe.
+        self._probing = False
         self.steps += 1
         self.predictor.add_token(token)
+
+    def track_d1_match(self, model_token: int | None):
+        """Record whether the n-gram's top-1 matches the model's last token.
+
+        Cheap (CPU-only): one hash lookup, no GPU. ``model_token`` is the
+        token the model just produced (already a Python int from
+        ``resp.token`` — zero sync). Call this BEFORE ``add_token`` so
+        ``predict_top1`` predicts exactly ``model_token`` from the prior
+        history. The resulting D1 match rate upper-bounds K-draft
+        acceptance, so D1 rate < break-even means spec would certainly
+        regress — gate spec on it BEFORE spending a GPU verify.
+        """
+        if model_token is None:
+            return
+        d1 = self.predictor.predict_top1()
+        # No n-gram hit -> spec wouldn't emit anyway; count as a miss so a
+        # sparse table keeps spec disabled.
+        matched = 1 if (d1 is not None and d1 == model_token) else 0
+        self._d1_rates.append(matched)
+        if len(self._d1_rates) > self._window:
+            self._d1_rates.pop(0)
 
     def should_speculate(self) -> bool:
         if self.steps < NGRAM_SPEC_WARMUP:
             return False
+        # D1 gate: until we have enough cheap D1 samples, stay off (no GPU
+        # spent probing). Once we do, require D1 rate >= break-even.
+        if len(self._d1_rates) >= self._d1_min_samples:
+            d1_rate = sum(self._d1_rates) / len(self._d1_rates)
+            if d1_rate < self._break_even():
+                return False
         if self._paused:
+            if self._probe_counter <= 0:
+                self._probe_counter = self._probe_interval
+                self._probing = True
+                return True
+            self._probe_counter -= 1
             return False
         return True
 
     def get_drafts(self) -> list[int]:
         return self.predictor.predict()
 
-    def record_result(self, n_accepted: int, n_total: int):
+    def _break_even(self) -> float:
+        """Acceptance threshold below which spec regresses.
+
+        Spec wins iff n_accepted > V where V = T_verify / T_decode. Per-step
+        acceptance = n_accepted / K, so the break-even rate = V / K. Until
+        both timings are measured, fall back to a conservative default so
+        spec stays off on mediocre-D1 workloads instead of probing blindly.
+        """
+        if self._verify_dt_ema is None or self._decode_dt_ema is None:
+            return NGRAM_SPEC_DEFAULT_BREAK_EVEN
+        v = self._verify_dt_ema / max(self._decode_dt_ema, 1e-6)
+        return min(0.9, max(NGRAM_SPEC_MIN_ACCEPT, v / max(self._last_K, 1)))
+
+    def record_result(
+        self,
+        n_accepted: int,
+        n_total: int,
+        verify_dt: float | None = None,
+        decode_dt: float | None = None,
+    ):
         self.total_spec_steps += 1
         self.total_draft_proposed += n_total
         self.total_draft_accepted += n_accepted
         self.predictor.record_accepted(n_accepted)
 
         if n_total > 0:
-            self._recent_rates.append(n_accepted / n_total)
+            self._last_K = n_total
+        if verify_dt is not None and verify_dt > 0:
+            if self._verify_dt_ema is None:
+                self._verify_dt_ema = verify_dt
+            else:
+                self._verify_dt_ema = (
+                    1 - self._alpha
+                ) * self._verify_dt_ema + self._alpha * verify_dt
+        if decode_dt is not None and decode_dt > 0:
+            if self._decode_dt_ema is None:
+                self._decode_dt_ema = decode_dt
+            else:
+                self._decode_dt_ema = (
+                    1 - self._alpha
+                ) * self._decode_dt_ema + self._alpha * decode_dt
+
+        rate = n_accepted / n_total if n_total > 0 else 0.0
+
+        # A probe step resumes only if its own acceptance beats break-even.
+        # Probe samples are sparse by design (1 per _probe_interval) so they
+        # are not folded into the rolling window — they would skew the mean.
+        if self._probing:
+            threshold = self._break_even()
+            if rate >= threshold:
+                self._paused = False
+                self._recent_rates.clear()
+                logger.info(
+                    "ngram_spec: resuming after probe rate %.0f%% >= %.0f%%",
+                    rate * 100,
+                    threshold * 100,
+                )
+            return
+
+        if n_total > 0:
+            self._recent_rates.append(rate)
         if len(self._recent_rates) > self._window:
             self._recent_rates.pop(0)
 
         if len(self._recent_rates) >= self._window:
             avg_rate = sum(self._recent_rates) / len(self._recent_rates)
-            if avg_rate < NGRAM_SPEC_MIN_ACCEPT and not self._paused:
+            threshold = self._break_even()
+            if avg_rate < threshold and not self._paused:
                 self._paused = True
-                logger.info(
-                    "ngram_spec: pausing — avg rate %.1f%% < %.1f%%",
-                    avg_rate * 100,
-                    NGRAM_SPEC_MIN_ACCEPT * 100,
+                v_ratio = (self._verify_dt_ema or 0) / max(
+                    self._decode_dt_ema or 1e-6, 1e-6
                 )
-            elif avg_rate >= NGRAM_SPEC_MIN_ACCEPT and self._paused:
-                self._paused = False
                 logger.info(
-                    "ngram_spec: resuming — avg rate %.1f%% recovered", avg_rate * 100
+                    "ngram_spec: pausing — avg rate %.1f%% < break-even %.1f%% "
+                    "(V=%.2fx, K=%d)",
+                    avg_rate * 100,
+                    threshold * 100,
+                    v_ratio,
+                    self._last_K,
                 )
 
     def get_stats(self) -> dict:
@@ -130,6 +265,51 @@ def _snapshot_non_trimmable(prompt_cache: list) -> list | None:
 def _restore_non_trimmable(prompt_cache: list, snapshots: list):
     for i, snapshot in snapshots:
         prompt_cache[i] = snapshot
+
+
+def _trim_trimmable(prompt_cache: list, num_tokens: int):
+    """Trim each trimmable cache (KVCache) by ``num_tokens`` in place.
+
+    Unlike ``mlx_cache.trim_prompt_cache`` this is NOT a no-op when the cache
+    list contains non-trimmable layers (hybrid GDN models have ArraysCache
+    layers): it trims the trimmable caches and skips the rest. Used by the
+    n-gram rejection path to drop the rejected drafts (and the duplicates the
+    replay wrote) from KVCache layers.
+    """
+    for c in prompt_cache:
+        if getattr(c, "is_trimmable", None) and c.is_trimmable():
+            c.trim(num_tokens)
+
+
+def _rollback_spec_cache(
+    prompt_cache: list,
+    snapshots,
+    draft_tokens: list[int],
+    n_accepted: int,
+    cache_tokens_processed: int,
+    model,
+    stream,
+):
+    """Roll back cache state after a rejected n-gram verify pass.
+
+    Verify wrote all ``cache_tokens_processed`` (= K) drafts to every cache.
+    On rejection only ``n_accepted`` of them should be kept. Non-trimmable
+    recurrent caches (ArraysCache) were snapshotted before verify and are
+    restored, then the accepted prefix is replayed to re-derive their state.
+    Trimmable caches (KVCache) end up with K + n_accepted entries (the K
+    drafts plus ``n_accepted`` duplicates from the replay); trimming by K
+    leaves exactly the n_accepted accepted drafts.
+    """
+    if snapshots is not None:
+        _restore_non_trimmable(prompt_cache, snapshots)
+        if n_accepted > 0:
+            accepted_prefix = draft_tokens[:n_accepted]
+            replay_input = mx.array(accepted_prefix, mx.uint32)
+            with mx.stream(stream):
+                replay_logits = model(replay_input[None], cache=prompt_cache)
+                mx.eval(replay_logits)
+    if cache_tokens_processed > 0:
+        _trim_trimmable(prompt_cache, cache_tokens_processed)
 
 
 def _verify_drafts(
@@ -171,8 +351,11 @@ def _verify_drafts(
     else:
         n_accepted = K
 
-    # Build verified list
-    resample_idx = min(n_accepted, K - 1)
+    # Build verified list. The bonus token is the model's prediction AFTER the
+    # last accepted draft, i.e. sampled[n_accepted - 1] (sampled[i] is the pred
+    # after draft_tokens[i]). Using min(n_accepted, K-1) picks the pred after
+    # the first REJECTED draft on rejection paths, which corrupts the bonus.
+    resample_idx = max(0, n_accepted - 1)
     verified = draft_tokens[:n_accepted]
     verified.append(sampled_list[resample_idx])
 
@@ -197,6 +380,11 @@ def ngram_spec_step(
     if spec_state._last_request_id != request_id:
         spec_state.on_new_request(request_id)
 
+    # Free D1 gate (no GPU sync): current_token is already a Python int
+    # (resp.token). predict_top1 reads history as it stood BEFORE this
+    # token, so it predicts exactly current_token — the right comparison.
+    # Must run BEFORE add_token advances the history.
+    spec_state.track_d1_match(current_token)
     spec_state.add_token(current_token)
 
     if not spec_state.should_speculate():
@@ -219,14 +407,32 @@ def ngram_spec_step(
     prompt_cache = gen.prompt_cache
     model = gen.model
 
+    # ``gen._next_tokens`` is the regular step's freshly-sampled token (the
+    # one the next _step would process). Reading it lets us validate D1
+    # WITHOUT a GPU forward: if the n-gram's first draft already disagrees
+    # with the model's own prediction, we skip verify entirely and just
+    # emit the regular token. mx arrays expose ``.item()`` (not ``.flat``).
+    # This is a GPU sync, so it ONLY runs when should_speculate already
+    # approved spec (rare on hostile workloads) — never per-step.
     sampled_from_regular = None
     if gen._next_tokens is not None:
         try:
-            sampled_from_regular = int(gen._next_tokens.flat[0])
+            sampled_from_regular = int(gen._next_tokens.item())
         except Exception:
             pass
 
-    non_trimmable_snapshots = _snapshot_non_trimmable(prompt_cache)
+    # Only the K>=2 verify path mutates the cache (it feeds all K drafts
+    # through the model, appending to every cache). The K=1 path and the
+    # D1-mismatch path both return WITHOUT a GPU forward and WITHOUT cache
+    # mutation, so they need no snapshot. Snapshots deepcopy all ~48
+    # ArraysCache recurrent states — doing that unconditionally on every
+    # step is the dominant overhead at low acceptance, so gate it here.
+    d1 = draft_tokens[0]
+    d1_matches = (sampled_from_regular is None) or (d1 == sampled_from_regular)
+    needs_snapshot = (K >= 2) and d1_matches
+    non_trimmable_snapshots = (
+        _snapshot_non_trimmable(prompt_cache) if needs_snapshot else None
+    )
 
     with mx.stream(scheduler._stream):
         t0 = time.perf_counter()
@@ -240,21 +446,25 @@ def ngram_spec_step(
 
     # Cache rollback for rejected tokens
     if cache_tokens_processed > 0 and n_accepted < K:
-        n_rejected = cache_tokens_processed - n_accepted
-        if non_trimmable_snapshots is not None:
-            _restore_non_trimmable(prompt_cache, non_trimmable_snapshots)
-            if n_accepted > 0:
-                accepted_prefix = draft_tokens[:n_accepted]
-                replay_input = mx.array(accepted_prefix, mx.uint32)
-                with mx.stream(scheduler._stream):
-                    replay_logits = model(replay_input[None], cache=prompt_cache)
-                    mx.eval(replay_logits)
-        if n_rejected > 0:
-            from mlx_lm.models import cache as mlx_cache
+        _rollback_spec_cache(
+            prompt_cache,
+            non_trimmable_snapshots,
+            draft_tokens,
+            n_accepted,
+            cache_tokens_processed,
+            model,
+            scheduler._stream,
+        )
 
-            mlx_cache.trim_prompt_cache(prompt_cache, n_rejected)
-
-    spec_state.record_result(n_accepted, K)
+    spec_state.record_result(
+        n_accepted,
+        K,
+        # Only real GPU verifies (K>=2, D1 match) contribute to the verify
+        # EMA. K=1 / D1-mismatch paths skip the GPU (dt ~ 0) and would
+        # falsely deflate V if folded in.
+        verify_dt=dt if cache_tokens_processed > 0 else None,
+        decode_dt=scheduler._last_decode_dt,
+    )
 
     if spec_state.total_spec_steps % 50 == 1:
         stats = spec_state.get_stats()
@@ -332,6 +542,17 @@ def ngram_spec_step(
                 else RequestStatus.FINISHED_LENGTH_CAPPED
             )
             out.output_token_ids = list(request.output_token_ids)
+            # Non-streaming responses read ``output_text`` off the final
+            # RequestOutput (``engine_core.generate`` returns the last
+            # output). The regular finalize path in ``sched_response``
+            # that normally sets ``output_text`` is bypassed when the
+            # spec path finishes the request, so mirror it here — decode
+            # the full token list, leaving special-token scrubbing to
+            # the engine layer (``clean_special_tokens``). Without this
+            # the non-streaming ``content`` comes back empty while
+            # streaming (which uses ``new_text``) stays correct.
+            out.output_text = scheduler.tokenizer.decode(request.output_token_ids)
+            request.output_text = out.output_text
 
         outputs.append(out)
         if is_finished:

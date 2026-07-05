@@ -23,8 +23,8 @@ from fusion_mlx._cli_base import (
     _log_level_choice,
     _port_arg,
     _print_unknown_model_help,
-    alias_completer,
 )
+from fusion_mlx._completion import alias_completer
 from fusion_mlx.cli_commands import (
     agents_command,
     chat_command,
