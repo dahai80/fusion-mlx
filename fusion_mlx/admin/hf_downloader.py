@@ -155,10 +155,14 @@ def _get_hf_api() -> tuple[HfApi, str | None]:
     """
     endpoint: str | None = None
     try:
-        from ..settings import get_settings
+        from .helpers import _get_settings_manager
 
-        endpoint = get_settings().huggingface.endpoint or None
-    except (RuntimeError, AttributeError):
+        sm = _get_settings_manager()
+        if sm and sm.settings:
+            hf_cfg = sm.settings.global_settings.get("huggingface", {})
+            if isinstance(hf_cfg, dict):
+                endpoint = hf_cfg.get("endpoint") or None
+    except (RuntimeError, AttributeError, TypeError):
         endpoint = None
 
     if endpoint:

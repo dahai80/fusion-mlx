@@ -296,9 +296,13 @@ async def update_model_settings(
             # Reset to auto-detected type
             from pathlib import Path
 
-            from ..model_discovery import detect_model_type
+            try:
+                from ..model_discovery import detect_model_type
 
-            detected_type = detect_model_type(Path(entry.model_path))
+                detected_type = detect_model_type(Path(entry.model_path))
+            except ImportError:
+                detected_type = entry.engine_type or "batched"
+                logger.warning("detect_model_type not available, using %s", detected_type)
             entry.model_type = detected_type
             entry.engine_type = type_to_engine.get(detected_type, "batched")
     if "max_context_window" in sent:
@@ -371,9 +375,13 @@ async def update_model_settings(
     if "dflash_enabled" in sent:
         new_dflash_enabled = bool(request.dflash_enabled)
         if new_dflash_enabled:
-            from ..engine.dflash import is_dflash_compatible
+            try:
+                from ..engine.dflash import is_dflash_compatible
 
-            compat_ok, compat_reason = is_dflash_compatible(entry.model_path)
+                compat_ok, compat_reason = is_dflash_compatible(entry.model_path)
+            except ImportError:
+                compat_ok, compat_reason = False, "dflash module not available"
+                logger.warning("is_dflash_compatible not available")
             if not compat_ok:
                 raise HTTPException(status_code=400, detail=compat_reason)
         current_settings.dflash_enabled = new_dflash_enabled
@@ -513,44 +521,18 @@ async def update_model_settings(
             import json
             from pathlib import Path
 
-            from ..utils.model_loading import _is_mtp_compatible
-
-            cfg_path = Path(entry.model_path) / "config.json"
-            if not cfg_path.exists():
-                raise HTTPException(
-                    status_code=400,
-                    detail=(
-                        f"MTP enabled but config.json missing at {cfg_path}; "
-                        "cannot verify MTP compatibility."
-                    ),
-                )
             try:
-                cfg = json.loads(cfg_path.read_text())
-            except Exception as e:
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"MTP enabled but failed to read model config: {e}",
-                )
-            model_type = cfg.get("model_type")
-            if not _is_mtp_compatible(cfg, model_type):
-                raise HTTPException(
-                    status_code=400,
-                    detail=(
-                        f"Model is not MTP-compatible (model_type={model_type!r}, "
-                        f"mtp_num_hidden_layers={cfg.get('mtp_num_hidden_layers', 0)}). "
-                        "Native MTP requires Qwen3.5/3.6 or DeepSeek-V4 with MTP heads."
-                    ),
-                )
-            if not _model_has_mtp_weight_tensors(Path(entry.model_path)):
-                raise HTTPException(
-                    status_code=400,
-                    detail=(
-                        "Config declares MTP layers but the converted weights are "
-                        "missing mtp.* tensors. Re-convert from HF with a converter "
-                        "that preserves MTP weights. The default "
-                        "mlx-lm sanitize() path strips them."
-                    ),
-                )
+                from .helpers import _mtp_compat_for_model
+
+                model_info = {"model_path": entry.model_path}
+                compat_ok, compat_reason = _mtp_compat_for_model(model_info)
+                if not compat_ok:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Model is not MTP-compatible: {compat_reason}",
+                    )
+            except ImportError:
+                logger.warning("_mtp_compat_for_model not available, skipping MTP compat check")
             # Mutual exclusion with DFlash / TurboQuant — ModelSettings.__post_init__
             # also enforces this, but we surface a clearer error here.
             dflash_after = (
