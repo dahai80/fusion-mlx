@@ -142,7 +142,7 @@ async def setup_api_key(
 
     # Apply to settings and runtime
     global_settings.auth.api_key = request.api_key
-    _server_state.api_key = request.api_key
+    _server_state["api_key"] = request.api_key
 
     # Persist to file
     try:

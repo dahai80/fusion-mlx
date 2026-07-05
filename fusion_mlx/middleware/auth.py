@@ -172,15 +172,17 @@ async def check_rate_limit_or_x_api_key(request: Request):
 
 def _get_configured_api_key() -> str | None:
     try:
-        from ..settings import Settings
+        from ..admin.helpers import _get_global_settings
 
-        settings = Settings.get_instance()
+        settings = _get_global_settings()
         if settings is None:
             return None
-        if hasattr(settings, "auth") and settings.auth:
-            return getattr(settings.auth, "api_key", None)
-        return getattr(settings, "api_key", None)
+        auth = getattr(settings, "auth", None)
+        if auth is None:
+            return None
+        return getattr(auth, "api_key", None)
     except Exception:
+        logger.debug("Failed to read configured API key", exc_info=True)
         return None
 
 
