@@ -58,6 +58,10 @@ class ModelSettings:
     vlm_mtp_enabled: bool | None = None
     vlm_mtp_draft_model: str | None = None
     vlm_mtp_draft_block_size: int | None = None
+    ngram_spec_enabled: bool | None = None
+    ngram_spec_order: int | None = None
+    ngram_spec_num_draft: int | None = None
+    ngram_spec_break_even: float | None = None
     reasoning_parser: str | None = None
     is_pinned: bool | None = None
     is_default: bool | None = None
@@ -80,6 +84,7 @@ MODEL_SPECIFIC_PROFILE_FIELDS: list[str] = [
     "dflash_enabled",
     "mtp_enabled",
     "vlm_mtp_enabled",
+    "ngram_spec_enabled",
 ]
 
 UNIVERSAL_PROFILE_FIELDS: list[str] = [

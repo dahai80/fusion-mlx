@@ -61,9 +61,19 @@ class NGramSpecState:
     workloads (diverse text) while still accelerating repetitive ones.
     """
 
-    def __init__(self, predictor: NGramPredictor | None = None):
+    def __init__(
+        self,
+        predictor: NGramPredictor | None = None,
+        order: int | None = None,
+        num_draft: int | None = None,
+        break_even: float | None = None,
+    ):
         self.predictor = predictor or NGramPredictor(
-            order=NGRAM_SPEC_ORDER, num_draft=NGRAM_SPEC_NUM_DRAFT
+            order=order if order is not None else NGRAM_SPEC_ORDER,
+            num_draft=num_draft if num_draft is not None else NGRAM_SPEC_NUM_DRAFT,
+        )
+        self._break_even_default = (
+            break_even if break_even is not None else NGRAM_SPEC_DEFAULT_BREAK_EVEN
         )
         self.steps = 0
         self.total_spec_steps = 0
@@ -165,7 +175,7 @@ class NGramSpecState:
         spec stays off on mediocre-D1 workloads instead of probing blindly.
         """
         if self._verify_dt_ema is None or self._decode_dt_ema is None:
-            return NGRAM_SPEC_DEFAULT_BREAK_EVEN
+            return self._break_even_default
         v = self._verify_dt_ema / max(self._decode_dt_ema, 1e-6)
         return min(0.9, max(NGRAM_SPEC_MIN_ACCEPT, v / max(self._last_K, 1)))
 

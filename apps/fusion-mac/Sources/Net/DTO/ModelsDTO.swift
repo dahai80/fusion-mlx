@@ -112,6 +112,11 @@ struct ModelSettingsDTO: Codable, Equatable, Sendable {
     let vlmMtpEnabled: Bool?
     let vlmMtpDraftModel: String?
     let vlmMtpDraftBlockSize: Int?
+    // Experimental: N-gram self-speculative decode (per-model override of FUSION_NGRAM_SPEC_* env)
+    let ngramSpecEnabled: Bool?
+    let ngramSpecOrder: Int?
+    let ngramSpecNumDraft: Int?
+    let ngramSpecBreakEven: Double?
 }
 
 /// Patch body for PUT /admin/api/models/{id}/settings. Flat snake-cased
@@ -173,6 +178,11 @@ struct ModelSettingsPatch: Encodable, Equatable, Sendable {
     var vlmMtpEnabled: Bool? = nil
     var vlmMtpDraftModel: String? = nil
     var vlmMtpDraftBlockSize: Int? = nil
+    // Experimental: N-gram self-speculative decode
+    var ngramSpecEnabled: Bool? = nil
+    var ngramSpecOrder: Int? = nil
+    var ngramSpecNumDraft: Int? = nil
+    var ngramSpecBreakEven: Double? = nil
 }
 
 /// Generic acknowledgment shape returned by non-streaming admin endpoints
