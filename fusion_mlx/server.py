@@ -29,6 +29,7 @@ from .admin.routes import router as admin_router
 from .api.anthropic_routes import router as anthropic_router
 from .api.anthropic_routes import set_anthropic_context
 from .api.audio_routes import router as audio_router
+from .api.audio_routes import set_audio_context
 from .api.images import router as images_router
 from .api.images import set_images_context
 from .api.mcp_routes import router as mcp_router
@@ -646,6 +647,7 @@ class Server:
         set_openai_context(self.pool, self.request_router)
         set_anthropic_context(self.pool)
         set_images_context(self.pool)
+        set_audio_context(self.pool)
         set_openclaw_agent_pool(self.pool)
         set_mcp_manager_getter(lambda: None)  # TODO: wire MCP manager
         set_embeddings_context(self.pool, _server_state)

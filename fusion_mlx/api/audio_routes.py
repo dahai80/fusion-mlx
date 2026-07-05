@@ -20,12 +20,21 @@ from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from fastapi.responses import Response, StreamingResponse
 
 from ..engines.audio_utils import wav_bytes_to_pcm_frames, wav_header
+from ..pool import EnginePool
 from ..server_metrics import get_server_metrics
 from .audio_models import AudioSpeechRequest, AudioTranscriptionResponse
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+_pool: EnginePool | None = None
+
+
+def set_audio_context(pool: EnginePool) -> None:
+    """Inject engine pool into this module."""
+    global _pool
+    _pool = pool
 
 # Maximum upload size for audio files (100 MB).
 MAX_AUDIO_UPLOAD_BYTES = 100 * 1024 * 1024
@@ -51,18 +60,13 @@ _VIDEO_CONTAINERS = {".mp4", ".mkv", ".mov", ".m4v", ".webm", ".avi"}
 
 
 def _get_engine_pool():
-    """Return the active EnginePool from server state.
+    """Return the active EnginePool injected via set_audio_context.
 
-    Imported lazily to avoid a circular import at module load time.
     Can be replaced in tests via patch('fusion_mlx.api.audio_routes._get_engine_pool').
     """
-    # Import here to avoid circular imports at module load
-    from fusion_mlx.server import _server_state
-
-    pool = _server_state.engine_pool
-    if pool is None:
+    if _pool is None:
         raise HTTPException(status_code=503, detail="Server not initialized")
-    return pool
+    return _pool
 
 
 def _resolve_model(model_id: str) -> str:
