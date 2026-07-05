@@ -153,6 +153,10 @@ enum ProfileSettingsKey {
     static let vlmMtpEnabled = "vlm_mtp_enabled"
     static let vlmMtpDraftModel = "vlm_mtp_draft_model"
     static let vlmMtpDraftBlockSize = "vlm_mtp_draft_block_size"
+    static let ngramSpecEnabled = "ngram_spec_enabled"
+    static let ngramSpecOrder = "ngram_spec_order"
+    static let ngramSpecNumDraft = "ngram_spec_num_draft"
+    static let ngramSpecBreakEven = "ngram_spec_break_even"
 }
 
 /// Resolves the *display* scope for the model's currently active profile.

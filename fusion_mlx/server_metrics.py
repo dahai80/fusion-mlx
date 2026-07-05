@@ -1,8 +1,53 @@
 """Server metrics tracking for fusion-mlx."""
 
+import logging
 import threading
 from dataclasses import dataclass, field
 from typing import Any
+
+logger = logging.getLogger(__name__)
+
+_KV_CACHE_DTYPE_KNOWN = ("bf16", "int8", "int4")
+
+
+def _resolve_kv_cache_dtype() -> str:
+    # Effective KV cache dtype for /metrics observability. Priority:
+    #   1. ServerConfig.kv_cache_dtype stash — set by cli_serve after the
+    #      safelist resolves --kv-cache-dtype, or after the legacy
+    #      --kv-cache-quantization synthesis. Primary source.
+    #   2. Legacy fallback — if the stash is unset / at the bf16 default
+    #      but ServerConfig.scheduler carries kv_cache_quantization=True,
+    #      derive from kv_cache_quantization_bits (programmatic callers
+    #      that bypass the serve CLI).
+    #   3. Default "bf16" — the only no-op value, so observability never
+    #      lies about quantization status.
+    # Adapted from rapid-mlx's _render_kv_cache_dtype_gauge: fusion uses an
+    # engine POOL (no single engine on cfg), so rapid-mlx's "engine
+    # scheduler_config wins over stale stash" step is dropped — fusion's
+    # stash is set post-resolution pre-load, so stash == engine value with
+    # no stale-stash race.
+    dtype: str | None = None
+    try:
+        from .config import get_config
+
+        cfg = get_config()
+        dtype = getattr(cfg, "kv_cache_dtype", None)
+        if dtype in (None, "bf16"):
+            scheduler = getattr(cfg, "scheduler", None)
+            if scheduler is not None and getattr(
+                scheduler, "kv_cache_quantization", False
+            ):
+                bits = getattr(scheduler, "kv_cache_quantization_bits", None)
+                if bits == 4:
+                    dtype = "int4"
+                elif bits == 8:
+                    dtype = "int8"
+    except Exception as exc:
+        logger.warning("kv_cache_dtype resolution failed: %s", exc)
+        dtype = None
+    if dtype not in _KV_CACHE_DTYPE_KNOWN:
+        return "bf16"
+    return dtype
 
 
 @dataclass
@@ -78,6 +123,7 @@ class ServerMetrics:
             "total_cached_tokens": self.total_cached_tokens,
             "active_requests": self.active_requests,
             "model_stats": self.model_stats,
+            "kv_cache_dtype": _resolve_kv_cache_dtype(),
         }
 
 

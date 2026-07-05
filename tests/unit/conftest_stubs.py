@@ -32,7 +32,6 @@ def _install_stubs():
         "fusion_mlx.text_model_from_vlm": {"text_model_from_vlm": lambda *a, **k: None},
         "fusion_mlx.share": {},
         "fusion_mlx.logging_config": {"setup_logging": lambda *a, **k: None},
-        "fusion_mlx.launch": {"launch_server": lambda *a, **k: None},
         "fusion_mlx.process_title": {"set_process_title": lambda *a, **k: None},
         "fusion_mlx.positioned_kv_cache": {
             "PositionedKVCache": type("PositionedKVCache", (), {})
