@@ -55,7 +55,7 @@ async def validate_upload_token(
 async def list_upload_oq_models(is_admin: bool = Depends(require_admin)):
     """List local oQ models available for upload."""
     if _hf_uploader is None:
-        raise HTTPException(status_code=503, detail="HF Uploader not initialized")
+        return {"oq_models": [], "all_models": []}
     oq_models = await _hf_uploader.list_oq_models()
     all_models = await _hf_uploader.list_all_models()
     return {"oq_models": oq_models, "all_models": all_models}
@@ -88,7 +88,7 @@ async def start_upload(
 async def list_upload_tasks(is_admin: bool = Depends(require_admin)):
     """List all upload tasks."""
     if _hf_uploader is None:
-        raise HTTPException(status_code=503, detail="HF Uploader not initialized")
+        return {"tasks": []}
     return {"tasks": _hf_uploader.get_tasks()}
 
 

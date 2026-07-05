@@ -50,7 +50,7 @@ except ImportError:
     close_database = None
 
 # Import route modules
-from .admin.helpers import set_admin_getters
+from .admin.helpers import set_admin_getters, set_hf_downloader
 from .api.embeddings_routes import router as embeddings_router
 from .api.embeddings_routes import set_embeddings_context
 from .api.openai_routes import router as openai_router
@@ -69,7 +69,26 @@ from .settings import Settings
 
 logger = logging.getLogger(__name__)
 
-_server_state: dict[str, Any] = {}
+class _ServerState(dict):
+    """Dict subclass that also supports attribute access for admin helpers."""
+
+    def __getattr__(self, name):
+        try:
+            return self[name]
+        except KeyError:
+            raise AttributeError(name)
+
+    def __setattr__(self, name, value):
+        self[name] = value
+
+    def __delattr__(self, name):
+        try:
+            del self[name]
+        except KeyError:
+            raise AttributeError(name)
+
+
+_server_state = _ServerState()
 _server_instance: "Server | None" = None
 
 app = None
@@ -633,6 +652,23 @@ class Server:
             self.pool._process_memory_enforcer.get_final_ceiling
         )
 
+        # Populate _server_state so admin helpers that import it directly
+        # (instead of using getter functions) can find engine_pool etc.
+        _server_state["engine_pool"] = self.pool
+        _server_state["process_memory_enforcer"] = self.pool._process_memory_enforcer
+        _server_state["settings_manager"] = None  # flat Settings has no manager
+        _server_state["default_model"] = None  # set when a model is marked default
+        # Simple namespace for sampling defaults (read by admin helpers)
+        import types
+        _server_state["sampling"] = types.SimpleNamespace(
+            max_context_window=getattr(self.config, "max_context_window", 4096),
+            max_tokens=getattr(self.config, "max_tokens", 4096),
+            temperature=0.7,
+            top_p=0.9,
+            top_k=0,
+            repetition_penalty=1.0,
+        )
+
         # Create request router
         self.request_router = RequestRouter()
 
@@ -660,6 +696,17 @@ class Server:
             settings_manager_getter=lambda: None,
             global_settings_getter=lambda: self.settings,
         )
+
+        # Initialize HFDownloader so admin download routes work
+        if self.config.model_dir:
+            try:
+                from .admin.hf_downloader import HFDownloader
+
+                hf_dl = HFDownloader(model_dir=self.config.model_dir)
+                set_hf_downloader(hf_dl)
+                logger.info("HFDownloader initialized with model_dir=%s", self.config.model_dir)
+            except Exception as e:
+                logger.warning("Failed to initialize HFDownloader: %s", e)
 
         # Apply model aliases
         aliases = {**self.config.model_aliases}

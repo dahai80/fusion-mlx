@@ -68,9 +68,7 @@ async def start_ms_download(
 async def list_ms_tasks(is_admin: bool = Depends(require_admin)):
     """List all ModelScope download tasks."""
     if _ms_downloader is None:
-        raise HTTPException(
-            status_code=503, detail="ModelScope downloader not initialized"
-        )
+        return {"tasks": []}
 
     return {"tasks": _ms_downloader.get_tasks()}
 
@@ -139,9 +137,7 @@ async def get_ms_recommended_models(
 ):
     """Get recommended models from ModelScope filtered by system memory."""
     if _ms_downloader is None:
-        raise HTTPException(
-            status_code=503, detail="ModelScope downloader not initialized"
-        )
+        return {"models": []}
 
     memory_info = get_system_memory_info()
     max_memory = memory_info["total_bytes"] or 16 * 1024**3

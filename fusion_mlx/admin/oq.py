@@ -55,7 +55,7 @@ def _validate_model_path(model_path: str) -> str:
 async def list_oq_models(is_admin: bool = Depends(require_admin)):
     """List non-quantized models available for oQ quantization."""
     if _oq_manager is None:
-        raise HTTPException(status_code=503, detail="oQ quantizer not initialized")
+        return {"models": [], "all_models": []}
     source_models, all_models = await _oq_manager.list_quantizable_models()
     return {"models": source_models, "all_models": all_models}
 
@@ -230,7 +230,7 @@ async def start_oq_quantization(
 async def list_oq_tasks(is_admin: bool = Depends(require_admin)):
     """List all quantization tasks."""
     if _oq_manager is None:
-        raise HTTPException(status_code=503, detail="oQ quantizer not initialized")
+        return {"tasks": []}
     return {"tasks": _oq_manager.get_tasks()}
 
 
