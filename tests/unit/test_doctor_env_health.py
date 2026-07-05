@@ -48,9 +48,9 @@ def test_apple_silicon_detected():
         section = eh.section_system()
 
     labels = [c.label for c in section.checks]
-    assert any("Apple Silicon" in label and "M3 Pro" in label for label in labels), (
-        labels
-    )
+    assert any(
+        "Apple Silicon" in label and "M3 Pro" in label for label in labels
+    ), labels
     assert any("36 GB" in label for label in labels), labels
     assert all(
         c.status is eh.CheckStatus.OK
@@ -237,9 +237,9 @@ def test_hf_cache_resolves_hf_hub_cache_first(
     monkeypatch.setenv("HF_HOME", str(other_home))
 
     resolved = eh._hf_cache_dir()
-    assert resolved == hub, (
-        f"HF_HUB_CACHE should win over HF_HOME; resolved {resolved} != {hub}"
-    )
+    assert (
+        resolved == hub
+    ), f"HF_HUB_CACHE should win over HF_HOME; resolved {resolved} != {hub}"
 
 
 def test_hf_cache_default_includes_hub_subdir(monkeypatch: pytest.MonkeyPatch):
@@ -248,9 +248,9 @@ def test_hf_cache_default_includes_hub_subdir(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.delenv("HF_HUB_CACHE", raising=False)
     monkeypatch.delenv("HF_HOME", raising=False)
     resolved = eh._hf_cache_dir()
-    assert resolved.name == "hub", (
-        f"default cache dir should end in .../huggingface/hub; got {resolved}"
-    )
+    assert (
+        resolved.name == "hub"
+    ), f"default cache dir should end in .../huggingface/hub; got {resolved}"
 
 
 def test_dir_size_walk_aborts_on_budget(tmp_path: Path):
@@ -461,9 +461,9 @@ def test_run_all_returns_all_eight_sections():
         "Shell Integration",
         "Optional Tools",
     ]
-    assert titles == expected, (
-        f"sections drifted from spec order. got {titles}, expected {expected}"
-    )
+    assert (
+        titles == expected
+    ), f"sections drifted from spec order. got {titles}, expected {expected}"
 
 
 def test_run_all_crashing_probe_does_not_abort_report(monkeypatch):

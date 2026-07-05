@@ -37,7 +37,13 @@ def has_requests(self) -> bool:
     Without this, an idle server would never reach the target step and
     stale buffers would accumulate indefinitely.
     """
-    return bool(self.waiting or self.prefilling or self.running or self._deferred_clear_at is not None)
+    return bool(
+        self.waiting
+        or self.prefilling
+        or self.running
+        or self._deferred_clear_at is not None
+    )
+
 
 def fail_all_requests(self) -> list[str]:
     """Remove all running and waiting requests after unrecoverable error.
@@ -127,9 +133,11 @@ def fail_all_requests(self) -> list[str]:
         logger.warning(f"Metal cache clear failed during error recovery: {e}")
     return failed_ids
 
+
 def get_num_waiting(self) -> int:
     """Get number of waiting requests."""
     return len(self.waiting)
+
 
 def get_num_running(self) -> int:
     """Get number of running requests."""
@@ -182,7 +190,9 @@ def _memory_component_limit_for_rejection(self, component_limit: int) -> int:
     """Apply hot-cache headroom reservation to a component ceiling."""
     if component_limit <= 0:
         return 0
-    hot_reserved = max(0, int(getattr(self, "_memory_hot_cache_reserved_bytes", 0) or 0))
+    hot_reserved = max(
+        0, int(getattr(self, "_memory_hot_cache_reserved_bytes", 0) or 0)
+    )
     if hot_reserved <= 0:
         return component_limit
     return max(1, component_limit - hot_reserved)
@@ -231,7 +241,10 @@ def _format_rejection_message(
         binding.append("static")
     if dynamic and _memory_component_limit_for_rejection(self, dynamic) == hard_limit:
         binding.append("dynamic")
-    if metal_cap and _memory_component_limit_for_rejection(self, metal_cap) == hard_limit:
+    if (
+        metal_cap
+        and _memory_component_limit_for_rejection(self, metal_cap) == hard_limit
+    ):
         binding.append("metal_cap")
     binding_str = "/".join(binding) if binding else "effective"
 
@@ -453,8 +466,10 @@ def _estimate_prefill_peak(self, new_tokens: int) -> int:
                 break
         if first_weight is not None:
             dtype_map = {
-                mx.float16: 2, mx.bfloat16: 2,
-                mx.float32: 4, mx.int8: 1,
+                mx.float16: 2,
+                mx.bfloat16: 2,
+                mx.float32: 4,
+                mx.int8: 1,
             }
             dtype_bytes = dtype_map.get(first_weight.dtype, 2)
     except Exception:

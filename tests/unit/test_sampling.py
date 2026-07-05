@@ -134,7 +134,9 @@ def test_apply_xtc_advances_rng_state():
     mx.eval(logits)
 
     pre = _capture_rng()
-    out = apply_xtc(logits, xtc_probability=0.5, xtc_threshold=0.1, xtc_special_tokens=[])
+    out = apply_xtc(
+        logits, xtc_probability=0.5, xtc_threshold=0.1, xtc_special_tokens=[]
+    )
     mx.eval(out)
     post = _capture_rng()
     assert pre != post, "apply_xtc did not advance RNG"

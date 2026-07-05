@@ -22,12 +22,11 @@ On Qwen3 27B at B=1 this cuts sampling time ~40% vs mlx-lm's chain.
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable
 from functools import partial
 
 import mlx.core as mx
-
-import logging
 
 logger = logging.getLogger(__name__)
 
@@ -67,9 +66,11 @@ def is_fused_top_p_eligible(
 # sort → mask → sample chain into one GPU dispatch.
 # ---------------------------------------------------------------------------
 
+
 @partial(mx.compile, inputs=mx.random.state, outputs=mx.random.state)
-def _fused_sample_top_p(logprobs: mx.array, temp_inv: float,
-                         one_minus_p: float) -> mx.array:
+def _fused_sample_top_p(
+    logprobs: mx.array, temp_inv: float, one_minus_p: float
+) -> mx.array:
     """Top-p only fused sampler."""
     probs = mx.exp(logprobs)
     sorted_indices = mx.argsort(logprobs, axis=-1)
@@ -97,8 +98,9 @@ def _fused_sample_temp_only(logprobs: mx.array, temp_inv: float) -> mx.array:
 
 
 @partial(mx.compile, inputs=mx.random.state, outputs=mx.random.state)
-def _fused_sample_top_p_min_p(logprobs: mx.array, temp_inv: float,
-                               one_minus_p: float, min_p_val: float) -> mx.array:
+def _fused_sample_top_p_min_p(
+    logprobs: mx.array, temp_inv: float, one_minus_p: float, min_p_val: float
+) -> mx.array:
     """Top-p + min-p fused sampler."""
     probs = mx.exp(logprobs)
     # Top-p: sort ascending, cumulative sum, mask
@@ -125,8 +127,9 @@ def _fused_sample_top_p_min_p(logprobs: mx.array, temp_inv: float,
 
 
 @partial(mx.compile, inputs=mx.random.state, outputs=mx.random.state)
-def _fused_sample_top_k(logprobs: mx.array, temp_inv: float,
-                         top_k_val: int) -> mx.array:
+def _fused_sample_top_k(
+    logprobs: mx.array, temp_inv: float, top_k_val: int
+) -> mx.array:
     """Top-k only fused sampler."""
     mask_idx = mx.argpartition(-logprobs, kth=top_k_val - 1, axis=-1)[..., top_k_val:]
     masked = mx.put_along_axis(
@@ -136,8 +139,9 @@ def _fused_sample_top_k(logprobs: mx.array, temp_inv: float,
 
 
 @partial(mx.compile, inputs=mx.random.state, outputs=mx.random.state)
-def _fused_sample_top_k_top_p(logprobs: mx.array, temp_inv: float,
-                               top_k_val: int, one_minus_p: float) -> mx.array:
+def _fused_sample_top_k_top_p(
+    logprobs: mx.array, temp_inv: float, top_k_val: int, one_minus_p: float
+) -> mx.array:
     """Top-k + top-p fused sampler."""
     # Apply top-k first (narrow the field before sorting for top-p)
     mask_idx = mx.argpartition(-logprobs, kth=top_k_val - 1, axis=-1)[..., top_k_val:]
@@ -165,8 +169,13 @@ def _fused_sample_top_k_top_p(logprobs: mx.array, temp_inv: float,
 
 
 @partial(mx.compile, inputs=mx.random.state, outputs=mx.random.state)
-def _fused_sample_all(logprobs: mx.array, temp_inv: float, top_k_val: int,
-                       one_minus_p: float, min_p_val: float) -> mx.array:
+def _fused_sample_all(
+    logprobs: mx.array,
+    temp_inv: float,
+    top_k_val: int,
+    one_minus_p: float,
+    min_p_val: float,
+) -> mx.array:
     """Top-k + top-p + min-p fused sampler."""
     # Top-k first (reduces vocab before expensive sort)
     mask_idx = mx.argpartition(-logprobs, kth=top_k_val - 1, axis=-1)[..., top_k_val:]
@@ -228,32 +237,46 @@ def make_fused_sampler(
     # Each combination gets its own @mx.compile'd function for
     # maximum kernel fusion within the compiled graph.
     if not use_top_k and not use_top_p and not use_min_p:
+
         def sampler(logprobs: mx.array) -> mx.array:
             return _fused_sample_temp_only(logprobs, temp_inv)
+
     elif use_top_k and not use_top_p and not use_min_p:
+
         def sampler(logprobs: mx.array) -> mx.array:
             return _fused_sample_top_k(logprobs, temp_inv, top_k_val)
+
     elif not use_top_k and use_top_p and not use_min_p:
+
         def sampler(logprobs: mx.array) -> mx.array:
             return _fused_sample_top_p(logprobs, temp_inv, one_minus_p)
+
     elif not use_top_k and not use_top_p and use_min_p:
         # min-p only — use top_p_min_p with top_p=1.0
         def sampler(logprobs: mx.array) -> mx.array:
             return _fused_sample_top_p_min_p(logprobs, temp_inv, 0.0, min_p_val)
+
     elif use_top_k and use_top_p and not use_min_p:
+
         def sampler(logprobs: mx.array) -> mx.array:
             return _fused_sample_top_k_top_p(logprobs, temp_inv, top_k_val, one_minus_p)
+
     elif not use_top_k and use_top_p and use_min_p:
+
         def sampler(logprobs: mx.array) -> mx.array:
             return _fused_sample_top_p_min_p(logprobs, temp_inv, one_minus_p, min_p_val)
+
     elif use_top_k and not use_top_p and use_min_p:
         # top_k + min_p — use the full function with top_p=1.0
         def sampler(logprobs: mx.array) -> mx.array:
             return _fused_sample_all(logprobs, temp_inv, top_k_val, 0.0, min_p_val)
+
     else:
         # top_k + top_p + min_p
         def sampler(logprobs: mx.array) -> mx.array:
-            return _fused_sample_all(logprobs, temp_inv, top_k_val, one_minus_p, min_p_val)
+            return _fused_sample_all(
+                logprobs, temp_inv, top_k_val, one_minus_p, min_p_val
+            )
 
     return sampler
 

@@ -1,5 +1,4 @@
 from itertools import accumulate
-from typing import Optional
 
 import mlx.core as mx
 import mlx.nn as nn
@@ -86,7 +85,7 @@ class MiniMaxVisionAttention(nn.Module):
         self,
         hidden_states: mx.array,
         cu_seqlens: mx.array,
-        rotary_pos_emb: Optional[mx.array] = None,
+        rotary_pos_emb: mx.array | None = None,
     ) -> mx.array:
         seq_length = hidden_states.shape[0]
         q = self.q_proj(hidden_states).reshape(seq_length, self.num_heads, -1)

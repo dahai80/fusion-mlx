@@ -7,15 +7,15 @@ Merged from omlx/tool_parser + Rapid-MLX tool logits bias.
 from .gemma4 import Gemma4Parser
 from .harmony import HarmonyParser
 from .output_parser import (
-        OutputParserFactory,
-        OutputParserSession,
-        detect_output_parser,
+    OutputParserFactory,
+    OutputParserSession,
+    detect_output_parser,
 )
 
 __all__ = [
-        "OutputParserFactory",
-        "OutputParserSession",
-        "detect_output_parser",
-        "Gemma4Parser",
-        "HarmonyParser",
+    "OutputParserFactory",
+    "OutputParserSession",
+    "detect_output_parser",
+    "Gemma4Parser",
+    "HarmonyParser",
 ]

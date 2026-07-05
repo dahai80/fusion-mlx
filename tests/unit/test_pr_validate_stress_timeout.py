@@ -129,9 +129,9 @@ def test_golden_models_yaml_diffusiongemma_has_override() -> None:
                     break
             break
 
-    assert diffusion_candidate is not None, (
-        "diffusion-gemma family / candidate missing from golden_models.yaml"
-    )
+    assert (
+        diffusion_candidate is not None
+    ), "diffusion-gemma family / candidate missing from golden_models.yaml"
     assert diffusion_candidate.get("stress_timeout_s") == 1800, (
         "diffusiongemma stress_timeout_s must be 1800s (text-diffusion "
         "denoise per step is ~2x autoregressive per-token wall-clock — "

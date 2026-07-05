@@ -11,7 +11,6 @@ Usage:
 import argparse
 import json
 import time
-from collections import Counter
 
 import httpx
 
@@ -81,7 +80,9 @@ def run_e2e_test(max_tokens: int = 4096, temperature: float = 0.7):
                     break
                 try:
                     data = json.loads(data_str)
-                    content = data.get("choices", [{}])[0].get("delta", {}).get("content", "")
+                    content = (
+                        data.get("choices", [{}])[0].get("delta", {}).get("content", "")
+                    )
                     if content:
                         if first_token_time is None:
                             first_token_time = time.time() - gen_start
@@ -109,7 +110,9 @@ def run_e2e_test(max_tokens: int = 4096, temperature: float = 0.7):
 
     # Calculate TPOT from token times
     if len(token_times) >= 2:
-        inter_token = [token_times[i] - token_times[i - 1] for i in range(1, len(token_times))]
+        inter_token = [
+            token_times[i] - token_times[i - 1] for i in range(1, len(token_times))
+        ]
         avg_tpot = sum(inter_token) / len(inter_token)
         sorted_tpot = sorted(inter_token)
         p95_idx = int(len(sorted_tpot) * 0.95)
@@ -131,10 +134,16 @@ def run_e2e_test(max_tokens: int = 4096, temperature: float = 0.7):
         "Has type hints": "-> " in full_text or ": " in full_text,
         "Has error handling": "try:" in full_text or "except" in full_text,
         "Has logging": "logging" in full_text or "logger" in full_text,
-        "Has TTFT measurement": "ttft" in full_text.lower() or "first token" in full_text.lower(),
-        "Has TPOT measurement": "tpot" in full_text.lower() or "token per" in full_text.lower(),
-        "Has concurrency test": "concurrent" in full_text.lower() or "thread" in full_text.lower() or "asyncio" in full_text,
-        "Has statistics": "mean" in full_text.lower() or "median" in full_text.lower() or "percentile" in full_text.lower(),
+        "Has TTFT measurement": "ttft" in full_text.lower()
+        or "first token" in full_text.lower(),
+        "Has TPOT measurement": "tpot" in full_text.lower()
+        or "token per" in full_text.lower(),
+        "Has concurrency test": "concurrent" in full_text.lower()
+        or "thread" in full_text.lower()
+        or "asyncio" in full_text,
+        "Has statistics": "mean" in full_text.lower()
+        or "median" in full_text.lower()
+        or "percentile" in full_text.lower(),
         "Minimum length (1000 chars)": len(full_text) >= 1000,
         "Minimum length (3000 chars)": len(full_text) >= 3000,
         "Minimum length (5000 chars)": len(full_text) >= 5000,
@@ -152,7 +161,9 @@ def run_e2e_test(max_tokens: int = 4096, temperature: float = 0.7):
 
     if passed_checks >= total_checks * 0.8:
         results["passed"].append(f"Completed {passed_checks}/{total_checks} checks")
-        print("\n  >>> TEST PASSED: Model generated a complete, comprehensive response <<<")
+        print(
+            "\n  >>> TEST PASSED: Model generated a complete, comprehensive response <<<"
+        )
     else:
         results["failed"].append(f"Only {passed_checks}/{total_checks} checks passed")
         print("\n  >>> TEST FAILED: Response incomplete or truncated <<<")

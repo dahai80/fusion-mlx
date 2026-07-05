@@ -192,9 +192,9 @@ class TestResponseFormatHonored:
             restore()
         assert r.status_code == 200, r.text
         ctype = r.headers["content-type"]
-        assert ctype.startswith("text/plain"), (
-            f"response_format=text must yield text/plain, got {ctype!r}"
-        )
+        assert ctype.startswith(
+            "text/plain"
+        ), f"response_format=text must yield text/plain, got {ctype!r}"
         # PlainTextResponse returns the raw text body, not a JSON envelope.
         assert r.text == "hello world goodbye world", r.text
 

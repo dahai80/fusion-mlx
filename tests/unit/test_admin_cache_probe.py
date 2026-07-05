@@ -7,9 +7,8 @@ from unittest.mock import MagicMock, patch
 import pytest
 from fastapi import HTTPException
 
-from fusion_mlx.cache.paged_cache import compute_block_hash
 import fusion_mlx.admin.stats as admin_stats
-
+from fusion_mlx.cache.paged_cache import compute_block_hash
 
 BLOCK_SIZE = 4
 MODEL_ID = "test-model"

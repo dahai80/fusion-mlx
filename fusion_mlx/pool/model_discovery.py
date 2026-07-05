@@ -25,8 +25,12 @@ from typing import Literal
 
 logger = logging.getLogger(__name__)
 
-ModelType = Literal["llm", "vlm", "embedding", "reranker", "audio_stt", "audio_tts", "audio_sts"]
-EngineType = Literal["batched", "vlm", "embedding", "reranker", "audio_stt", "audio_tts", "audio_sts"]
+ModelType = Literal[
+    "llm", "vlm", "embedding", "reranker", "audio_stt", "audio_tts", "audio_sts"
+]
+EngineType = Literal[
+    "batched", "vlm", "embedding", "reranker", "audio_stt", "audio_tts", "audio_sts"
+]
 
 # Known VLM (Vision-Language Model) types from mlx-vlm
 VLM_MODEL_TYPES = {
@@ -173,7 +177,9 @@ UNSUPPORTED_RERANKER_ARCHITECTURES = {
 }
 
 # All known reranker architectures (for model type detection)
-RERANKER_ARCHITECTURES = SUPPORTED_RERANKER_ARCHITECTURES | UNSUPPORTED_RERANKER_ARCHITECTURES
+RERANKER_ARCHITECTURES = (
+    SUPPORTED_RERANKER_ARCHITECTURES | UNSUPPORTED_RERANKER_ARCHITECTURES
+)
 
 # Unsupported model types — detected and skipped during discovery.
 # Only top-level config fields are checked; nested audio_config/tts_config in
@@ -217,16 +223,21 @@ def _build_audio_detection_sets():
         def _dir_names(subdir: str) -> set:
             d = _base / subdir / "models"
             if d.is_dir():
-                return {p.name for p in d.iterdir()
-                        if p.is_dir() and not p.name.startswith("__")}
+                return {
+                    p.name
+                    for p in d.iterdir()
+                    if p.is_dir() and not p.name.startswith("__")
+                }
             return set()
 
         # TTS: MODEL_REMAPPING keys + model dir names
         from mlx_audio.tts.utils import MODEL_REMAPPING as _tts_remap
+
         tts = set(_tts_remap.keys()) | _dir_names("tts")
 
         # STT: MODEL_REMAPPING keys + model dir names
         from mlx_audio.stt.utils import MODEL_REMAPPING as _stt_remap
+
         stt = set(_stt_remap.keys()) | _dir_names("stt")
 
         # STS: model dir names only (no unified utils/remapping)
@@ -237,8 +248,10 @@ def _build_audio_detection_sets():
         stt -= _LLM_TYPE_COLLISIONS
 
         logger.debug(
-            "Audio detection sets loaded from mlx-audio: "
-            "STT=%d, TTS=%d, STS=%d", len(stt), len(tts), len(sts),
+            "Audio detection sets loaded from mlx-audio: " "STT=%d, TTS=%d, STS=%d",
+            len(stt),
+            len(tts),
+            len(sts),
         )
         return stt, tts, sts
 
@@ -246,7 +259,15 @@ def _build_audio_detection_sets():
         logger.debug("mlx-audio not available — using static audio detection sets")
         # Static fallback so model discovery still works without mlx-audio
         _stt = {"whisper", "qwen3_asr", "parakeet", "qwen2_audio"}
-        _tts = {"qwen3_tts", "kokoro", "chatterbox", "vibevoice", "vibevoice_streaming", "kugelaudio", "audiodit"}
+        _tts = {
+            "qwen3_tts",
+            "kokoro",
+            "chatterbox",
+            "vibevoice",
+            "vibevoice_streaming",
+            "kugelaudio",
+            "audiodit",
+        }
         _sts = {"deepfilternet", "mossformer2_se", "sam_audio", "lfm_audio"}
         return _stt, _tts, _sts
 
@@ -290,10 +311,18 @@ class DiscoveredModel:
     model_type: ModelType  # "llm", "vlm", "embedding", or "reranker"
     engine_type: EngineType  # "batched", "vlm", "embedding", or "reranker"
     estimated_size: int  # Estimated memory usage in bytes
-    config_model_type: str = ""  # Raw model_type from config.json (e.g., "deepseekocr_2")
-    thinking_default: bool | None = None  # True if model thinks by default, False if not, None if unknown
-    preserve_thinking_default: bool | None = None  # True when template supports preserve_thinking (Qwen 3.6+)
-    model_context_length: int | None = None  # Declared context length from config.json (None if unknown)
+    config_model_type: str = (
+        ""  # Raw model_type from config.json (e.g., "deepseekocr_2")
+    )
+    thinking_default: bool | None = (
+        None  # True if model thinks by default, False if not, None if unknown
+    )
+    preserve_thinking_default: bool | None = (
+        None  # True when template supports preserve_thinking (Qwen 3.6+)
+    )
+    model_context_length: int | None = (
+        None  # Declared context length from config.json (None if unknown)
+    )
     source_type: str = "local"  # "local" or "hf_cache"
     source_repo_id: str | None = None  # HuggingFace repo id for cache-backed models
 
@@ -325,7 +354,7 @@ def _is_unsupported_model(model_path: Path) -> bool:
     try:
         with open(config_path) as f:
             config = json.load(f)
-    except (json.JSONDecodeError, IOError):
+    except (OSError, json.JSONDecodeError):
         return False
 
     architectures = config.get("architectures", [])
@@ -335,7 +364,9 @@ def _is_unsupported_model(model_path: Path) -> bool:
 
     model_type = config.get("model_type", "")
     normalized = model_type.lower().replace("-", "_")
-    return normalized in UNSUPPORTED_MODEL_TYPES or model_type in UNSUPPORTED_MODEL_TYPES
+    return (
+        normalized in UNSUPPORTED_MODEL_TYPES or model_type in UNSUPPORTED_MODEL_TYPES
+    )
 
 
 def _is_causal_lm_reranker(model_path: Path) -> bool:
@@ -379,16 +410,14 @@ def _has_sentence_transformers_embedding_pipeline(model_path: Path) -> bool:
     try:
         with open(modules_path) as f:
             modules = json.load(f)
-    except (json.JSONDecodeError, IOError):
+    except (OSError, json.JSONDecodeError):
         return False
 
     if not isinstance(modules, list):
         return False
 
     module_types = {
-        module.get("type", "")
-        for module in modules
-        if isinstance(module, dict)
+        module.get("type", "") for module in modules if isinstance(module, dict)
     }
     if "sentence_transformers.models.Transformer" not in module_types:
         return False
@@ -515,7 +544,7 @@ def detect_model_type(model_path: Path) -> ModelType:
     try:
         with open(config_path) as f:
             config = json.load(f)
-    except (json.JSONDecodeError, IOError):
+    except (OSError, json.JSONDecodeError):
         return "llm"
 
     # Check architectures field for reranker first (more specific)
@@ -545,9 +574,13 @@ def detect_model_type(model_path: Path) -> ModelType:
     # directory name heuristic. Must come before VLM detection below so
     # the reranker/embedding hint wins over default VLM classification.
     for arch in architectures:
-        if arch in MULTIMODAL_RERANKER_ARCHITECTURES and _is_causal_lm_reranker(model_path):
+        if arch in MULTIMODAL_RERANKER_ARCHITECTURES and _is_causal_lm_reranker(
+            model_path
+        ):
             return "reranker"
-        if arch in MULTIMODAL_EMBEDDING_ARCHITECTURES and _is_causal_lm_embedding(model_path):
+        if arch in MULTIMODAL_EMBEDDING_ARCHITECTURES and _is_causal_lm_embedding(
+            model_path
+        ):
             return "embedding"
 
     if _has_sentence_transformers_embedding_pipeline(model_path):
@@ -580,9 +613,7 @@ def detect_model_type(model_path: Path) -> ModelType:
         )
 
     if normalized_type in VLM_NATIVE_TEXT_MODEL_TYPES:
-        logger.info(
-            f"{model_type} detected as mlx-vlm native text model"
-        )
+        logger.info(f"{model_type} detected as mlx-vlm native text model")
         return "vlm"
 
     # Check for VLM: architectures field
@@ -610,9 +641,7 @@ def detect_model_type(model_path: Path) -> ModelType:
     # vision_config presence in config.json.
     if normalized_type in VLM_MODEL_TYPES:
         if normalized_type in {"gemma4_unified", "diffusion_gemma"}:
-            logger.info(
-                f"{model_type} detected as VLM (mlx-vlm native model)"
-            )
+            logger.info(f"{model_type} detected as VLM (mlx-vlm native model)")
             return "vlm"
         if _has_vision_subconfig(config):
             return "vlm"
@@ -660,7 +689,10 @@ def detect_model_type(model_path: Path) -> ModelType:
     # mlx-audio LFM STS may use an "lfm*" model_type without a known architecture
     # string yet. Liquid LFM *text* checkpoints share that prefix — disambiguate
     # with CausalLM architecture names (LFM2 / LFM2.5 MoE, future lfm* LMs).
-    if normalized_type.startswith("lfm") and normalized_type not in EMBEDDING_MODEL_TYPES:
+    if (
+        normalized_type.startswith("lfm")
+        and normalized_type not in EMBEDDING_MODEL_TYPES
+    ):
         if _architecture_indicates_causal_lm(architectures):
             return "llm"
         return "audio_sts"
@@ -884,10 +916,7 @@ def model_directory_access_error(path: Path) -> str | None:
             return f"Model directory is not a directory: {path}"
         next(path.iterdir(), None)
     except OSError as e:
-        return (
-            f"Model directory is not readable: {path} "
-            f"({type(e).__name__}: {e})"
-        )
+        return f"Model directory is not readable: {path} " f"({type(e).__name__}: {e})"
     return None
 
 
@@ -902,10 +931,7 @@ def model_directory_write_error(path: Path, *, create: bool = False) -> str | No
         if not path.is_dir():
             return f"Model directory is not a directory: {path}"
     except OSError as e:
-        return (
-            f"Model directory is not writable: {path} "
-            f"({type(e).__name__}: {e})"
-        )
+        return f"Model directory is not writable: {path} " f"({type(e).__name__}: {e})"
 
     access_error = model_directory_access_error(path)
     if access_error is not None:
@@ -920,10 +946,7 @@ def model_directory_write_error(path: Path, *, create: bool = False) -> str | No
             f.write(b"")
             f.flush()
     except OSError as e:
-        return (
-            f"Model directory is not writable: {path} "
-            f"({type(e).__name__}: {e})"
-        )
+        return f"Model directory is not writable: {path} " f"({type(e).__name__}: {e})"
 
     return None
 
@@ -963,7 +986,7 @@ def _decode_hf_cache_model_id(path: Path) -> tuple[str, str] | None:
     if not name.startswith("models--"):
         return None
 
-    encoded = name[len("models--"):]
+    encoded = name[len("models--") :]
     if not encoded:
         return None
 
@@ -1040,7 +1063,9 @@ def _is_hf_cache_mlx_compatible(model_dir: Path, source_repo_id: str) -> bool:
     if not _is_model_dir(model_dir):
         return False
     if not list(model_dir.glob("model*.safetensors")):
-        logger.debug(f"Skipping HF cache model without model*.safetensors: {source_repo_id}")
+        logger.debug(
+            f"Skipping HF cache model without model*.safetensors: {source_repo_id}"
+        )
         return False
     if _safetensors_has_mlx_metadata(model_dir):
         return True
@@ -1091,6 +1116,7 @@ def _register_model(
         config_model_type = ""
         try:
             import json
+
             with open(model_dir / "config.json") as f:
                 config_model_type = json.load(f).get("model_type", "")
         except Exception:
@@ -1194,10 +1220,9 @@ def discover_models(model_dir: Path) -> dict[str, DiscoveredModel]:
             # Level 2: organization folder — scan children
             has_children = False
             for child in _iter_readable_entries(subdir, "model group"):
-                if (
-                    not _is_readable_dir(child, "model group entry")
-                    or child.name.startswith(".")
-                ):
+                if not _is_readable_dir(
+                    child, "model group entry"
+                ) or child.name.startswith("."):
                     continue
                 if _is_adapter_dir(child):
                     logger.info(
@@ -1281,4 +1306,9 @@ class ModelDiscovery:
 
     def discover(self) -> dict:
         from pathlib import Path
-        return discover_models_from_dirs([Path(self.model_dir)]) if Path(self.model_dir).exists() else {}
+
+        return (
+            discover_models_from_dirs([Path(self.model_dir)])
+            if Path(self.model_dir).exists()
+            else {}
+        )

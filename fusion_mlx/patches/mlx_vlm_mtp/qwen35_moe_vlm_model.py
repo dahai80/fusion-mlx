@@ -55,9 +55,7 @@ def apply() -> bool:
             weights[f"{prefix}.switch_mlp.up_proj.weight"] = up_weights
             down_key = f"{prefix}.experts.down_proj"
             if down_key in weights:
-                weights[f"{prefix}.switch_mlp.down_proj.weight"] = weights.pop(
-                    down_key
-                )
+                weights[f"{prefix}.switch_mlp.down_proj.weight"] = weights.pop(down_key)
 
         for layer_idx in range(self.config.text_config.num_hidden_layers):
             _unfuse_layer_experts(f"model.language_model.layers.{layer_idx}.mlp")
@@ -125,10 +123,7 @@ def apply() -> bool:
         # for full-precision Qwen3.6 sources where MTP norm conventions are
         # mixed.
         def _is_oq_tracked_tensor(_w):
-            return (
-                _w.__class__.__name__ == "_TrackedTensor"
-                and hasattr(_w, "_clone")
-            )
+            return _w.__class__.__name__ == "_TrackedTensor" and hasattr(_w, "_clone")
 
         def _mark_mtp_norm_conditional_add(_w):
             return _w._clone(transform="add_if_mean_lt_0_5")
@@ -143,9 +138,7 @@ def apply() -> bool:
         for key, value in weights.items():
             if "model" in key:
                 if "model.language_model" in key:
-                    key = key.replace(
-                        "model.language_model", "language_model.model"
-                    )
+                    key = key.replace("model.language_model", "language_model.model")
                 elif "model.visual" in key:
                     key = key.replace("model.visual", "vision_tower")
             elif "lm_head" in key:
@@ -156,7 +149,7 @@ def apply() -> bool:
                 key = "language_model." + key
 
             if key.startswith("language_model.model.visual."):
-                key = "vision_tower." + key[len("language_model.model.visual."):]
+                key = "vision_tower." + key[len("language_model.model.visual.") :]
 
             if "conv1d.weight" in key and value.shape[-1] != 1:
                 # mx.moveaxis goes through the streaming-discovery

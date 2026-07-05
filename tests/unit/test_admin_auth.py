@@ -9,8 +9,8 @@ from fastapi import HTTPException
 
 from fusion_mlx.admin import auth as admin_auth
 from fusion_mlx.admin import auth_routes as admin_auth_routes
-from fusion_mlx.admin import html_routes as admin_html_routes
 from fusion_mlx.admin import helpers as admin_helpers
+from fusion_mlx.admin import html_routes as admin_html_routes
 from fusion_mlx.admin import update_check as admin_update_check
 
 
@@ -181,12 +181,8 @@ class TestLoginPage:
         original_tpl, mock_templates = _inject_templates()
         try:
             mock_request = MagicMock()
-            with patch(
-                "fusion_mlx.admin.auth.verify_session", return_value=False
-            ):
-                asyncio.run(
-                    admin_html_routes.login_page(request=mock_request)
-                )
+            with patch("fusion_mlx.admin.auth.verify_session", return_value=False):
+                asyncio.run(admin_html_routes.login_page(request=mock_request))
                 mock_templates.TemplateResponse.assert_called_once_with(
                     mock_request,
                     "login.html",
@@ -203,9 +199,7 @@ class TestDashboardPage:
         try:
             mock_request = MagicMock()
             asyncio.run(
-                admin_html_routes.dashboard_page(
-                    request=mock_request, is_admin=True
-                )
+                admin_html_routes.dashboard_page(request=mock_request, is_admin=True)
             )
             mock_templates.TemplateResponse.assert_called_once_with(
                 mock_request, "dashboard.html", {}
@@ -222,9 +216,7 @@ class TestChatPageApiKeyInjection:
         try:
             mock_request = MagicMock()
             asyncio.run(
-                admin_html_routes.chat_page(
-                    request=mock_request, is_admin=True
-                )
+                admin_html_routes.chat_page(request=mock_request, is_admin=True)
             )
             mock_templates.TemplateResponse.assert_called_once_with(
                 mock_request,
@@ -242,9 +234,7 @@ class TestChatPageApiKeyInjection:
         try:
             mock_request = MagicMock()
             asyncio.run(
-                admin_html_routes.chat_page(
-                    request=mock_request, is_admin=True
-                )
+                admin_html_routes.chat_page(request=mock_request, is_admin=True)
             )
             call_args = mock_templates.TemplateResponse.call_args
             context = call_args[0][2]
@@ -259,9 +249,7 @@ class TestChatPageApiKeyInjection:
         try:
             mock_request = MagicMock()
             asyncio.run(
-                admin_html_routes.chat_page(
-                    request=mock_request, is_admin=True
-                )
+                admin_html_routes.chat_page(request=mock_request, is_admin=True)
             )
             call_args = mock_templates.TemplateResponse.call_args
             context = call_args[0][2]
@@ -310,12 +298,8 @@ class TestSkipAdminAuth:
         original_gs = _patch_getter_on_module(admin_html_routes, gs)
         try:
             mock_request = MagicMock()
-            with patch(
-                "fusion_mlx.admin.auth.verify_session", return_value=False
-            ):
-                result = asyncio.run(
-                    admin_html_routes.login_page(request=mock_request)
-                )
+            with patch("fusion_mlx.admin.auth.verify_session", return_value=False):
+                result = asyncio.run(admin_html_routes.login_page(request=mock_request))
                 assert result.status_code == 302
                 assert result.headers["location"] == "/admin/dashboard"
         finally:
@@ -333,15 +317,11 @@ class TestInitAuth:
     def test_init_auth_sets_serializer(self):
         pass
 
-    @pytest.mark.skip(
-        reason="fusion-mlx uses dict-based sessions, no SECRET_KEY"
-    )
+    @pytest.mark.skip(reason="fusion-mlx uses dict-based sessions, no SECRET_KEY")
     def test_init_auth_env_var_takes_priority(self):
         pass
 
-    @pytest.mark.skip(
-        reason="fusion-mlx uses dict-based sessions, no SECRET_KEY"
-    )
+    @pytest.mark.skip(reason="fusion-mlx uses dict-based sessions, no SECRET_KEY")
     def test_init_auth_uses_provided_key_when_no_env(self):
         pass
 
@@ -417,16 +397,19 @@ class TestCheckUpdate:
     async def test_prerelease_not_shown(self):
         fake_resp = _FakeResponse(
             200,
-            [{
-                "tag_name": "v99.0.0.dev1",
-                "html_url": "https://github.com/jundot/omlx/releases/tag/v99.0.0.dev1",
-            }],
+            [
+                {
+                    "tag_name": "v99.0.0.dev1",
+                    "html_url": "https://github.com/jundot/omlx/releases/tag/v99.0.0.dev1",
+                }
+            ],
         )
-        with patch(
-            "fusion_mlx.admin.update_check.asyncio"
-        ) as mock_asyncio, patch(
-            "fusion_mlx.utils.release_check.select_latest_stable_release",
-            return_value=None,
+        with (
+            patch("fusion_mlx.admin.update_check.asyncio") as mock_asyncio,
+            patch(
+                "fusion_mlx.utils.release_check.select_latest_stable_release",
+                return_value=None,
+            ),
         ):
             mock_asyncio.to_thread = _make_async_return(fake_resp)
             result = await admin_update_check.check_update(is_admin=True)
@@ -438,23 +421,28 @@ class TestCheckUpdate:
     async def test_stable_version_shown(self):
         fake_resp = _FakeResponse(
             200,
-            [{
-                "tag_name": "v99.0.0",
-                "html_url": "https://github.com/jundot/omlx/releases/tag/v99.0.0",
-            }],
+            [
+                {
+                    "tag_name": "v99.0.0",
+                    "html_url": "https://github.com/jundot/omlx/releases/tag/v99.0.0",
+                }
+            ],
         )
         stable_data = {
             "tag_name": "v99.0.0",
             "html_url": "https://github.com/jundot/omlx/releases/tag/v99.0.0",
         }
-        with patch(
-            "fusion_mlx.admin.update_check.asyncio"
-        ) as mock_asyncio, patch(
-            "fusion_mlx.utils.release_check.select_latest_stable_release",
-            return_value=stable_data,
-        ), patch(
-            "fusion_mlx.admin.update_check._omlx_version", "0.1.0",
-            create=True,
+        with (
+            patch("fusion_mlx.admin.update_check.asyncio") as mock_asyncio,
+            patch(
+                "fusion_mlx.utils.release_check.select_latest_stable_release",
+                return_value=stable_data,
+            ),
+            patch(
+                "fusion_mlx.admin.update_check._omlx_version",
+                "0.1.0",
+                create=True,
+            ),
         ):
             mock_asyncio.to_thread = _make_async_return(fake_resp)
             result = await admin_update_check.check_update(is_admin=True)
@@ -466,16 +454,19 @@ class TestCheckUpdate:
     async def test_rc_not_shown(self):
         fake_resp = _FakeResponse(
             200,
-            [{
-                "tag_name": "v99.0.0rc1",
-                "html_url": "https://github.com/jundot/omlx/releases/tag/v99.0.0rc1",
-            }],
+            [
+                {
+                    "tag_name": "v99.0.0rc1",
+                    "html_url": "https://github.com/jundot/omlx/releases/tag/v99.0.0rc1",
+                }
+            ],
         )
-        with patch(
-            "fusion_mlx.admin.update_check.asyncio"
-        ) as mock_asyncio, patch(
-            "fusion_mlx.utils.release_check.select_latest_stable_release",
-            return_value=None,
+        with (
+            patch("fusion_mlx.admin.update_check.asyncio") as mock_asyncio,
+            patch(
+                "fusion_mlx.utils.release_check.select_latest_stable_release",
+                return_value=None,
+            ),
         ):
             mock_asyncio.to_thread = _make_async_return(fake_resp)
             result = await admin_update_check.check_update(is_admin=True)

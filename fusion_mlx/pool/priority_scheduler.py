@@ -54,19 +54,21 @@ class PriorityLevel(IntEnum):
     Maps to TaskPriority from smart_router but uses IntEnum for
     natural sorting (lower = more urgent).
     """
-    REALTIME = 0        # Claude Code, interactive - Metal queue 0
-    BATCH = 1             # OpenClaw, agents - Metal queue 1
-    BACKGROUND = 2        # Embedding, offline - Metal queue 2
+
+    REALTIME = 0  # Claude Code, interactive - Metal queue 0
+    BATCH = 1  # OpenClaw, agents - Metal queue 1
+    BACKGROUND = 2  # Embedding, offline - Metal queue 2
 
 
 @dataclass
 class PriorityRequest:
     """Wrapper around Request with priority metadata."""
+
     request: Request
     priority: PriorityLevel
     queued_at: float = field(default_factory=time.time)
-    deadline: float | None = None      # Optional deadline (unix timestamp)
-    source_tag: str = ""                # "claude_code", "openclaw", etc.
+    deadline: float | None = None  # Optional deadline (unix timestamp)
+    source_tag: str = ""  # "claude_code", "openclaw", etc.
 
     @property
     def is_expired(self) -> bool:
@@ -115,6 +117,7 @@ class PrioritySchedulerConfig:
 @dataclass
 class ScheduleDecision:
     """Result of one scheduling cycle."""
+
     scheduled_request_ids: list[str]
     preempted_request_ids: list[str]
     rejected_outputs: list[RequestOutput]
@@ -156,7 +159,7 @@ class PriorityScheduler:
         base_scheduler: SchedulerProtocol,
         config: PrioritySchedulerConfig | None = None,
         memory_pool: Any | None = None,
-         ):
+    ):
         self.base = base_scheduler
         self.config = config or PrioritySchedulerConfig()
         self.memory_pool = memory_pool
@@ -167,7 +170,7 @@ class PriorityScheduler:
             PriorityLevel.REALTIME: deque(),
             PriorityLevel.BATCH: deque(),
             PriorityLevel.BACKGROUND: deque(),
-         }
+        }
 
         # Metal streams per priority (command queues)
         self._streams: dict[PriorityLevel, Any] = {}
@@ -183,7 +186,7 @@ class PriorityScheduler:
             PriorityLevel.REALTIME: 0,
             PriorityLevel.BATCH: 0,
             PriorityLevel.BACKGROUND: 0,
-         }
+        }
 
         # Stats
         self._total_preemptions = 0
@@ -198,8 +201,8 @@ class PriorityScheduler:
         priority: TaskPriority | PriorityLevel = TaskPriority.BATCH,
         source_tag: str = "",
         deadline: float | None = None,
-         **kwargs,
-         ) -> str:
+        **kwargs,
+    ) -> str:
         if isinstance(priority, TaskPriority):
             priority = self._task_to_priority(priority)
 
@@ -213,14 +216,14 @@ class PriorityScheduler:
             request_id=request_id,
             prompt=prompt,
             sampling_params=sampling_params,
-         )
+        )
 
         pri_req = PriorityRequest(
             request=req,
             priority=priority,
             source_tag=source_tag,
             deadline=deadline,
-         )
+        )
 
         with self._lock:
             self._queues[priority].append(pri_req)
@@ -228,7 +231,7 @@ class PriorityScheduler:
         logger.debug(
             f"[PriorityScheduler] queued {request_id} @ {priority.name}, "
             f"queue_depth={depth}"
-         )
+        )
         return request_id
 
     def submit_to_base(
@@ -237,16 +240,23 @@ class PriorityScheduler:
         sampling_params: SamplingParams | None = None,
         request_id: str | None = None,
         priority: TaskPriority | PriorityLevel = TaskPriority.BATCH,
-         **kwargs,
-         ) -> str:
+        **kwargs,
+    ) -> str:
         rid = self.submit(
             prompt=prompt,
             sampling_params=sampling_params,
             request_id=request_id,
             priority=priority,
-             **kwargs,
-         )
-        self._drain_to_base(max_requests=1, priority_filter=priority if isinstance(priority, PriorityLevel) else self._task_to_priority(priority))
+            **kwargs,
+        )
+        self._drain_to_base(
+            max_requests=1,
+            priority_filter=(
+                priority
+                if isinstance(priority, PriorityLevel)
+                else self._task_to_priority(priority)
+            ),
+        )
         return rid
 
     def step(self) -> Any:
@@ -269,13 +279,16 @@ class PriorityScheduler:
             if rt_waiting and pl != PriorityLevel.REALTIME:
                 max_req = min(
                     max_req,
-                    self.config.max_batch_per_step_when_rt_waiting if pl == PriorityLevel.BATCH
-                    else self.config.max_background_per_step_when_rt_waiting,
+                    (
+                        self.config.max_batch_per_step_when_rt_waiting
+                        if pl == PriorityLevel.BATCH
+                        else self.config.max_background_per_step_when_rt_waiting
+                    ),
                 )
             n = self._drain_to_base(
                 max_requests=max_req,
                 priority_filter=pl,
-             )
+            )
             scheduled_this_step += n
             with self._lock:
                 if n > 0:
@@ -297,20 +310,24 @@ class PriorityScheduler:
     def get_stats(self) -> dict[str, Any]:
         with self._lock:
             return {
-                 "queue_depths": {pl.name: len(q) for pl, q in self._queues.items()},
-                 "running_count": len(self.base.running),
-                 "steps": self._steps,
-                 "total_preemptions": self._total_preemptions,
-                 "total_starvation_rescues": self._total_starvation_rescues,
-                 "steps_since_served": {pl.name: c for pl, c in self._steps_since_served.items()},
-                 "streams": {pl.name: str(s) for pl, s in self._streams.items()},
-              }
+                "queue_depths": {pl.name: len(q) for pl, q in self._queues.items()},
+                "running_count": len(self.base.running),
+                "steps": self._steps,
+                "total_preemptions": self._total_preemptions,
+                "total_starvation_rescues": self._total_starvation_rescues,
+                "steps_since_served": {
+                    pl.name: c for pl, c in self._steps_since_served.items()
+                },
+                "streams": {pl.name: str(s) for pl, s in self._streams.items()},
+            }
 
     # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
     # Internal - queue draining, preemption, starvation
     # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 
-    def _drain_to_base(self, max_requests: int = 1, priority_filter: PriorityLevel | None = None) -> int:
+    def _drain_to_base(
+        self, max_requests: int = 1, priority_filter: PriorityLevel | None = None
+    ) -> int:
         if not hasattr(self.base, "add_request"):
             return 0
 
@@ -329,8 +346,8 @@ class PriorityScheduler:
                     pri_req = q[0]
                     max_seqs = self._get_max_for_level(pl)
                     running_at_level = sum(
-                          1 for p in self._request_priorities.values() if p == pl
-                        )
+                        1 for p in self._request_priorities.values() if p == pl
+                    )
                     if running_at_level >= max_seqs:
                         break
                     pri_req = q.popleft()
@@ -343,7 +360,9 @@ class PriorityScheduler:
                 try:
                     self.base.add_request(pri_req.request)
                 except Exception as e:
-                    logger.warning(f"[PriorityScheduler] failed to schedule {pri_req.request.request_id}: {e}")
+                    logger.warning(
+                        f"[PriorityScheduler] failed to schedule {pri_req.request.request_id}: {e}"
+                    )
                     with self._lock:
                         self._request_priorities.pop(pri_req.request.request_id, None)
 
@@ -362,14 +381,14 @@ class PriorityScheduler:
             self.config.preempt_background_for_any
             and running_counts[PriorityLevel.BACKGROUND] > 0
             and (rt_has or batch_has)
-           ):
+        ):
             self._preempt_at_level(PriorityLevel.BACKGROUND)
 
         if (
             self.config.preempt_batch_for_realtime
             and running_counts[PriorityLevel.BATCH] > 0
             and rt_has
-           ):
+        ):
             if len(self._queues[PriorityLevel.REALTIME]) >= 2:
                 self._preempt_at_level(PriorityLevel.BATCH)
 
@@ -382,9 +401,8 @@ class PriorityScheduler:
         """
         with self._lock:
             to_preempt = [
-                rid for rid, pl in self._request_priorities.items()
-                if pl == level
-              ]
+                rid for rid, pl in self._request_priorities.items() if pl == level
+            ]
             for rid in to_preempt:
                 del self._request_priorities[rid]
                 self._total_preemptions += 1
@@ -398,7 +416,7 @@ class PriorityScheduler:
             logger.warning(
                 f"[PriorityScheduler] preempted {len(to_preempt)} "
                 f"{level.name} requests for higher priority"
-                  )
+            )
 
     def _evict_kv_for_request(self, request_id: str) -> None:
         """Coordinate with UnifiedMemoryPool to free KV cache on preemption."""
@@ -446,9 +464,11 @@ class PriorityScheduler:
                     logger.debug(
                         f"[PriorityScheduler] BATCH request {rid} has {token_est} tokens, "
                         f"chunked prefill active (chunk={self.config.prefill_chunk_size})"
-                     )
+                    )
                     if hasattr(self.base, "set_max_tokens_per_step"):
-                        self.base.set_max_tokens_per_step(self.config.prefill_chunk_size)
+                        self.base.set_max_tokens_per_step(
+                            self.config.prefill_chunk_size
+                        )
             except Exception:
                 pass
 
@@ -463,7 +483,7 @@ class PriorityScheduler:
             PriorityLevel.REALTIME: self.config.metal_queue_priority_realtime,
             PriorityLevel.BATCH: self.config.metal_queue_priority_batch,
             PriorityLevel.BACKGROUND: self.config.metal_queue_priority_background,
-         }
+        }
         pri = priority_map.get(level)
         if pri is not None and hasattr(stream, "set_priority"):
             try:
@@ -475,7 +495,10 @@ class PriorityScheduler:
         """Force-schedule starved low-priority requests."""
         for pl in [PriorityLevel.BACKGROUND, PriorityLevel.BATCH]:
             with self._lock:
-                starved = self._steps_since_served[pl] >= self.config.starvation_threshold_steps
+                starved = (
+                    self._steps_since_served[pl]
+                    >= self.config.starvation_threshold_steps
+                )
                 has_q = bool(self._queues[pl])
                 steps = self._steps_since_served[pl]
             if starved and has_q:
@@ -486,28 +509,59 @@ class PriorityScheduler:
                     logger.info(
                         f"[PriorityScheduler] starvation rescue: "
                         f"scheduled 1 {pl.name} request after {steps} steps"
-                          )
+                    )
 
     def _get_reserved_slots(self) -> dict[PriorityLevel, int]:
         """Calculate minimum slot reservation per priority based on config shares."""
         with self._lock:
             running = len(self._request_priorities)
-            rt_running = sum(1 for p in self._request_priorities.values() if p == PriorityLevel.REALTIME)
-            bt_running = sum(1 for p in self._request_priorities.values() if p == PriorityLevel.BATCH)
-            bg_running = sum(1 for p in self._request_priorities.values() if p == PriorityLevel.BACKGROUND)
-        total_capacity = self.config.max_realtime_seqs + self.config.max_batch_seqs + self.config.max_background_seqs
+            rt_running = sum(
+                1
+                for p in self._request_priorities.values()
+                if p == PriorityLevel.REALTIME
+            )
+            bt_running = sum(
+                1 for p in self._request_priorities.values() if p == PriorityLevel.BATCH
+            )
+            bg_running = sum(
+                1
+                for p in self._request_priorities.values()
+                if p == PriorityLevel.BACKGROUND
+            )
+        total_capacity = (
+            self.config.max_realtime_seqs
+            + self.config.max_batch_seqs
+            + self.config.max_background_seqs
+        )
         available = max(0, total_capacity - running)
-        bg_reserve = max(0, int(available * self.config.min_background_share) - bg_running)
+        bg_reserve = max(
+            0, int(available * self.config.min_background_share) - bg_running
+        )
         bt_reserve = max(0, int(available * self.config.min_batch_share) - bt_running)
         rt_available = max(0, available - bg_reserve - bt_reserve)
         return {
-            PriorityLevel.REALTIME: max(0, min(
-                self.config.max_realtime_seqs - rt_running, rt_available + self.config.max_realtime_seqs)),
-            PriorityLevel.BATCH: max(0, min(
-                self.config.max_batch_seqs - bt_running, bt_reserve + self.config.max_batch_seqs)),
-            PriorityLevel.BACKGROUND: max(0, min(
-                self.config.max_background_seqs - bg_running, bg_reserve + self.config.max_background_seqs)),
-          }
+            PriorityLevel.REALTIME: max(
+                0,
+                min(
+                    self.config.max_realtime_seqs - rt_running,
+                    rt_available + self.config.max_realtime_seqs,
+                ),
+            ),
+            PriorityLevel.BATCH: max(
+                0,
+                min(
+                    self.config.max_batch_seqs - bt_running,
+                    bt_reserve + self.config.max_batch_seqs,
+                ),
+            ),
+            PriorityLevel.BACKGROUND: max(
+                0,
+                min(
+                    self.config.max_background_seqs - bg_running,
+                    bg_reserve + self.config.max_background_seqs,
+                ),
+            ),
+        }
 
     def _get_max_for_level(self, level: PriorityLevel) -> int:
         if level == PriorityLevel.REALTIME:
@@ -530,7 +584,7 @@ class PriorityScheduler:
             TaskPriority.REALTIME: PriorityLevel.REALTIME,
             TaskPriority.BATCH: PriorityLevel.BATCH,
             TaskPriority.BACKGROUND: PriorityLevel.BACKGROUND,
-         }
+        }
         return mapping.get(task, PriorityLevel.BATCH)
 
     # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
@@ -540,9 +594,6 @@ class PriorityScheduler:
     def cleanup_finished(self) -> None:
         """Clean up priority tracking for finished requests."""
         active_ids = set(self.base.running.keys())
-        to_remove = [
-            rid for rid in self._request_priorities
-            if rid not in active_ids
-         ]
+        to_remove = [rid for rid in self._request_priorities if rid not in active_ids]
         for rid in to_remove:
             del self._request_priorities[rid]

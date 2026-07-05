@@ -214,7 +214,9 @@ def post_batch(events: list[dict[str, Any]]) -> bool:
                     "user-agent": _user_agent(),
                 },
             )
-            with urlopen(req, timeout=TIMEOUT_S) as resp:  # noqa: S310 — URL is constant.
+            with urlopen(
+                req, timeout=TIMEOUT_S
+            ) as resp:  # noqa: S310 — URL is constant.
                 status = getattr(resp, "status", None)
                 if status is None:
                     status = resp.getcode()

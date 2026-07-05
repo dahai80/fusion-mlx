@@ -1,14 +1,13 @@
 # SPDX-License-Identifier: Apache-2.0
-import pytest
 
 from fusion_mlx.mcp.tools import (
     extract_tool_calls,
     format_tool_result,
     format_tool_results,
     has_tool_calls,
-    merge_tools,
     mcp_tool_to_openai,
     mcp_tools_to_openai,
+    merge_tools,
     openai_call_to_mcp,
 )
 from fusion_mlx.mcp.types import MCPTool, MCPToolResult
@@ -148,6 +147,7 @@ class TestFormatToolResult:
         result = MCPToolResult(tool_name="t", content={"key": "value"})
         msg = format_tool_result(result, "call_3")
         import json
+
         assert json.loads(msg["content"]) == {"key": "value"}
 
 
@@ -244,11 +244,7 @@ class TestExtractToolCalls:
 
 class TestHasToolCalls:
     def test_true(self):
-        response = {
-            "choices": [
-                {"message": {"tool_calls": [{"id": "tc_1"}]}}
-            ]
-        }
+        response = {"choices": [{"message": {"tool_calls": [{"id": "tc_1"}]}}]}
         assert has_tool_calls(response) is True
 
     def test_false(self):

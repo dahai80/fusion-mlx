@@ -37,8 +37,7 @@ class HermesIntegration(Integration):
         self, port: int, api_key: str, model: str, host: str = "127.0.0.1"
     ) -> str:
         return (
-            f"{get_cli_prefix()} "
-            f"launch hermes --model {model or 'select-a-model'}"
+            f"{get_cli_prefix()} " f"launch hermes --model {model or 'select-a-model'}"
         )
 
     def _read_config(self, config_path: Path) -> dict:

@@ -1,8 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 """Tests for fusion_mlx.utils.formatting module."""
 
-import pytest
-
 from fusion_mlx.utils.formatting import format_bytes
 
 

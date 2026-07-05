@@ -1,8 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 """Tests for fusion_mlx.request module."""
 
-import pytest
-
 from fusion_mlx.request import (
     Request,
     RequestOutput,
@@ -51,7 +49,9 @@ class TestRequestStatus:
         )
 
     def test_get_finish_reason_aborted(self):
-        assert RequestStatus.get_finish_reason(RequestStatus.FINISHED_ABORTED) == "abort"
+        assert (
+            RequestStatus.get_finish_reason(RequestStatus.FINISHED_ABORTED) == "abort"
+        )
 
     def test_status_ordering(self):
         assert RequestStatus.WAITING < RequestStatus.RUNNING
@@ -343,7 +343,11 @@ class TestRequestOutput:
             completion_tokens=5,
         )
         usage = output.usage
-        assert usage == {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15}
+        assert usage == {
+            "prompt_tokens": 10,
+            "completion_tokens": 5,
+            "total_tokens": 15,
+        }
 
     def test_output_with_logprobs(self):
         logprobs_data = [{"token_id": 1, "logprob": -0.5}]

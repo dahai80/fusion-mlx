@@ -47,7 +47,8 @@ def _cleanup_expired_sessions() -> None:
     now = time.time()
     # Remove expired sessions
     expired = [
-        sid for sid, s in _sessions.items()
+        sid
+        for sid, s in _sessions.items()
         if now - s["last_accessed"] > _SESSION_TTL_SECONDS
     ]
     for sid in expired:
@@ -60,8 +61,10 @@ def _cleanup_expired_sessions() -> None:
 
 # ── Request/Response Models ──────────────────────────────────────────────
 
+
 class TurnRequest(BaseModel):
     """Agent turn request with optional tool definitions."""
+
     messages: list[dict[str, Any]] = Field(..., description="Conversation messages")
     tools: list[dict[str, Any]] | None = None
     max_tokens: int = Field(default=4096, ge=1, le=131072)
@@ -71,6 +74,7 @@ class TurnRequest(BaseModel):
 
 class TurnResponse(BaseModel):
     """Agent turn response with content and optional tool calls."""
+
     content: str = ""
     tool_calls: list[dict[str, Any]] = []
     usage: dict[str, int] = {"prompt_tokens": 0, "completion_tokens": 0}
@@ -79,6 +83,7 @@ class TurnResponse(BaseModel):
 
 class SessionCreateRequest(BaseModel):
     """Create a new agent session."""
+
     system_prompt: str | None = None
     tools: list[dict[str, Any]] | None = None
     model: str | None = None
@@ -86,6 +91,7 @@ class SessionCreateRequest(BaseModel):
 
 class SessionInfo(BaseModel):
     """Agent session metadata."""
+
     session_id: str
     turn_count: int = 0
     active: bool = False
@@ -95,6 +101,7 @@ class SessionInfo(BaseModel):
 
 class SteerRequest(BaseModel):
     """Inject a steering message into an active agent turn."""
+
     session_id: str
     message: dict[str, Any] = Field(..., description="Message to inject")
     mode: str = Field(
@@ -105,12 +112,14 @@ class SteerRequest(BaseModel):
 
 class ToolResultRequest(BaseModel):
     """Submit tool execution results back to the agent."""
+
     session_id: str
     tool_call_id: str
     result: str
 
 
 # ── Session Management ───────────────────────────────────────────────────
+
 
 @router.post("/sessions", response_model=SessionInfo)
 async def create_session(req: SessionCreateRequest):
@@ -123,7 +132,12 @@ async def create_session(req: SessionCreateRequest):
         session["tools"] = req.tools
     session["tools_count"] = len(req.tools or [])
     _sessions[session_id] = session
-    logger.info("Created agent session %s (model=%s, tools=%d)", session_id, req.model, session["tools_count"])
+    logger.info(
+        "Created agent session %s (model=%s, tools=%d)",
+        session_id,
+        req.model,
+        session["tools_count"],
+    )
     return SessionInfo(
         session_id=session_id,
         turn_count=0,
@@ -161,17 +175,20 @@ async def list_sessions() -> list[SessionInfo]:
     _cleanup_expired_sessions()
     result = []
     for sid, s in _sessions.items():
-        result.append(SessionInfo(
-            session_id=sid,
-            turn_count=s["turn_count"],
-            active=s["active"],
-            model=s.get("model"),
-            tools_count=len(s.get("tools", [])),
-        ))
+        result.append(
+            SessionInfo(
+                session_id=sid,
+                turn_count=s["turn_count"],
+                active=s["active"],
+                model=s.get("model"),
+                tools_count=len(s.get("tools", [])),
+            )
+        )
     return result
 
 
 # ── Agent Turn Execution ─────────────────────────────────────────────────
+
 
 @router.post("/turns", response_model=TurnResponse)
 async def execute_turn(session_id: str, req: TurnRequest):
@@ -250,7 +267,10 @@ async def _call_chat_completion(pool, body: dict) -> TurnResponse:
         return TurnResponse(
             content=content,
             tool_calls=tool_calls,
-            usage={"prompt_tokens": prompt_tokens, "completion_tokens": completion_tokens},
+            usage={
+                "prompt_tokens": prompt_tokens,
+                "completion_tokens": completion_tokens,
+            },
             session_id="",
         )
     except (HTTPException, RuntimeError):
@@ -262,6 +282,7 @@ async def _call_chat_completion(pool, body: dict) -> TurnResponse:
 
 # ── Tool Result Submission ───────────────────────────────────────────────
 
+
 @router.post("/tool-results")
 async def submit_tool_result(req: ToolResultRequest):
     """Submit tool execution results back to the agent."""
@@ -269,16 +290,23 @@ async def submit_tool_result(req: ToolResultRequest):
         raise HTTPException(404, f"Session {req.session_id} not found")
 
     session = _sessions[req.session_id]
-    session["messages"].append({
-        "role": "tool",
-        "tool_call_id": req.tool_call_id,
-        "content": req.result,
-    })
-    logger.info("Tool result submitted for session %s, tool %s", req.session_id, req.tool_call_id)
+    session["messages"].append(
+        {
+            "role": "tool",
+            "tool_call_id": req.tool_call_id,
+            "content": req.result,
+        }
+    )
+    logger.info(
+        "Tool result submitted for session %s, tool %s",
+        req.session_id,
+        req.tool_call_id,
+    )
     return {"accepted": True, "messages_count": len(session["messages"])}
 
 
 # ── Agent Steering ───────────────────────────────────────────────────────
+
 
 @router.post("/steer")
 async def steer_agent(req: SteerRequest):
@@ -307,6 +335,7 @@ async def steer_agent(req: SteerRequest):
 
 # ── SSE Event Stream ────────────────────────────────────────────────────
 
+
 @router.get("/stream/{session_id}")
 async def stream_events(session_id: str):
     """SSE stream of agent events for a session."""
@@ -319,11 +348,11 @@ async def stream_events(session_id: str):
         session = _sessions.get(session_id)
         if session:
             state = {
-                'type': 'session_state',
-                'session_id': session_id,
-                'turn_count': session['turn_count'],
-                'active': session['active'],
-                'messages_count': len(session['messages']),
+                "type": "session_state",
+                "session_id": session_id,
+                "turn_count": session["turn_count"],
+                "active": session["active"],
+                "messages_count": len(session["messages"]),
             }
             yield f"data: {json.dumps(state)}\n\n"
 
@@ -350,6 +379,7 @@ async def stream_events(session_id: str):
 
 
 # ── Context Injection ────────────────────────────────────────────────────
+
 
 def set_openclaw_agent_pool(pool) -> None:
     """Inject engine pool for internal chat completion calls."""

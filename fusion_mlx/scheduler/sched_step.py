@@ -28,8 +28,8 @@ from ..request import Request, RequestOutput, RequestStatus
 # stream when no per-engine stream is provided.
 from .config import SchedulerOutput
 from .helpers import (
-    _sync_and_clear_cache,
     _should_clear_on_fragmentation,
+    _sync_and_clear_cache,
 )
 from .monkeypatches import _unregister_uid_rows_for_model
 from .types import (
@@ -54,19 +54,31 @@ def step(self) -> SchedulerOutput:
         and not self._pending_abort_ids
         and not self._pending_async_removes
     ):
-        self._pure_decode_count = getattr(self, '_pure_decode_count', 0) + 1
+        self._pure_decode_count = getattr(self, "_pure_decode_count", 0) + 1
         if self._pure_decode_count <= 3 or self._pure_decode_count % 50 == 0:
-            logger.info("step(%d): pure_decode path (#%d)", self._step_counter, self._pure_decode_count)
+            logger.info(
+                "step(%d): pure_decode path (#%d)",
+                self._step_counter,
+                self._pure_decode_count,
+            )
         return self._step_pure_decode(output)
 
     # --- Full step path ---
-    logger.debug("step(%d): waiting=%d, running=%d, prefilling=%d",
-            self._step_counter, len(self.waiting), len(self.running), len(self.prefilling))
+    logger.debug(
+        "step(%d): waiting=%d, running=%d, prefilling=%d",
+        self._step_counter,
+        len(self.waiting),
+        len(self.running),
+        len(self.prefilling),
+    )
 
     self._process_pending_aborts()
     self._drain_pending_async_removes()
 
-    if self.memory_monitor is not None and self._step_counter % self.config.memory_check_interval == 0:
+    if (
+        self.memory_monitor is not None
+        and self._step_counter % self.config.memory_check_interval == 0
+    ):
         self._check_memory_pressure()
 
     try:
@@ -158,7 +170,9 @@ def step(self) -> SchedulerOutput:
                 output.finished_request_ids = finished_ids
                 self._cleanup_finished(finished_ids)
                 if finished_ids:
-                    logger.info("step(%d): finished=%s", self._step_counter, finished_ids)
+                    logger.info(
+                        "step(%d): finished=%s", self._step_counter, finished_ids
+                    )
             elif self.running and not scheduled:
                 # Empty responses with running requests = stale.
                 # Model batch cleared them silently (finished length/EOS
@@ -173,7 +187,8 @@ def step(self) -> SchedulerOutput:
                 logger.warning(
                     "step(%d): empty responses with %d running requests — "
                     "rescheduling as stale",
-                    self._step_counter, len(self.running),
+                    self._step_counter,
+                    len(self.running),
                 )
                 for rid in list(self.running.keys()):
                     req = self.running.pop(rid)
@@ -219,16 +234,21 @@ def step(self) -> SchedulerOutput:
                 # we never disrupt prefill activation buffers.
                 self._tokens_since_clear_cache += len(responses)
                 if self._tokens_since_clear_cache >= self.config.decode_clear_interval:
-                    frag = getattr(self, '_fragmentation_ratio', 0.0)
+                    frag = getattr(self, "_fragmentation_ratio", 0.0)
                     cache_mem = mx.get_cache_memory()
                     cache_threshold = self._periodic_clear_threshold_bytes()
-                    if _should_clear_on_fragmentation(frag) and cache_mem > cache_threshold:
+                    if (
+                        _should_clear_on_fragmentation(frag)
+                        and cache_mem > cache_threshold
+                    ):
                         _sync_and_clear_cache(self._stream)
                     else:
                         logger.debug(
                             "step(%d): skipping clear_cache — frag=%.2f cache_mem=%dMB threshold=%dMB",
-                            self._step_counter, frag,
-                            cache_mem // (1024*1024), cache_threshold // (1024*1024),
+                            self._step_counter,
+                            frag,
+                            cache_mem // (1024 * 1024),
+                            cache_threshold // (1024 * 1024),
                         )
                     self._tokens_since_clear_cache = 0
 
@@ -279,8 +299,7 @@ def step(self) -> SchedulerOutput:
                         finished=True,
                         finish_reason="error",
                         error=(
-                            f"Cache corruption not recoverable "
-                            f"after retries: {e}"
+                            f"Cache corruption not recoverable " f"after retries: {e}"
                         ),
                     )
                 )
@@ -310,7 +329,7 @@ def step(self) -> SchedulerOutput:
         should_clear = True
         self._deferred_clear_at = None
     if should_clear:
-        frag = getattr(self, '_fragmentation_ratio', 0.0)
+        frag = getattr(self, "_fragmentation_ratio", 0.0)
         cache_mem = mx.get_cache_memory()
         cache_threshold = self._periodic_clear_threshold_bytes()
         if _should_clear_on_fragmentation(frag) and cache_mem > cache_threshold:
@@ -318,8 +337,10 @@ def step(self) -> SchedulerOutput:
         else:
             logger.debug(
                 "step(%d): skipping periodic clear_cache — frag=%.2f cache_mem=%dMB threshold=%dMB",
-                self._step_counter, frag,
-                cache_mem // (1024*1024), cache_threshold // (1024*1024),
+                self._step_counter,
+                frag,
+                cache_mem // (1024 * 1024),
+                cache_threshold // (1024 * 1024),
             )
     if (
         self.config.gc_cleanup_interval > 0
@@ -331,6 +352,7 @@ def step(self) -> SchedulerOutput:
         self._publish_admin_snapshot()
 
     return output
+
 
 def _publish_admin_snapshot(self) -> None:
     """Atomically publish a fresh admin-visible snapshot.
@@ -344,6 +366,7 @@ def _publish_admin_snapshot(self) -> None:
         "waiting": list(self.waiting),
     }
 
+
 def snapshot_for_admin(self) -> dict[str, Any]:
     """Return the most recently published admin snapshot.
 
@@ -353,13 +376,16 @@ def snapshot_for_admin(self) -> dict[str, Any]:
     """
     return self._admin_snapshot
 
-def get_request(    self, request_id: str) -> Request | None:
+
+def get_request(self, request_id: str) -> Request | None:
     """Get a request by ID."""
     return self.requests.get(request_id)
 
-def remove_finished_request(    self, request_id: str) -> Request | None:
+
+def remove_finished_request(self, request_id: str) -> Request | None:
     """Remove a finished request from tracking."""
     return self.requests.pop(request_id, None)
+
 
 def get_stats(self) -> dict[str, Any]:
     """Get scheduler statistics."""
@@ -387,6 +413,7 @@ def get_stats(self) -> dict[str, Any]:
     if self.block_aware_cache is not None:
         stats["ssd_cache"] = self.block_aware_cache.get_stats()
     return stats
+
 
 def get_cache_stats(self) -> dict[str, Any] | None:
     """Get cache statistics."""
@@ -482,16 +509,21 @@ def _try_spec_decode(
         return []
 
     # N-gram spec decode (CPU-side, zero GPU overhead for drafting)
-    ngram_state = getattr(self, '_ngram_spec_state', None)
+    ngram_state = getattr(self, "_ngram_spec_state", None)
     if ngram_state is not None:
         from .ngram_spec import ngram_spec_step
+
         result = ngram_spec_step(self, output, current_token, request_id)
         if result:
             return result
 
     # Draft-model spec decode (GPU-side, requires loaded draft model)
-    if self._spec_decode_state is not None and self._spec_decode_state.draft_model is not None:
+    if (
+        self._spec_decode_state is not None
+        and self._spec_decode_state.draft_model is not None
+    ):
         from .spec_decode import spec_decode_step
+
         return spec_decode_step(self, output, current_token, request_id)
 
     return []
@@ -546,6 +578,7 @@ def reset(self) -> None:
     # Cancel any pending deferred Metal cache clear
     self._deferred_clear_at = None
 
+
 def deep_reset(self) -> None:
     """
     Deep reset that clears ALL cache state including model-level caches.
@@ -585,6 +618,7 @@ def deep_reset(self) -> None:
     gc.collect()
 
     logger.info("Deep reset completed - all caches cleared")
+
 
 def shutdown(self) -> None:
     """

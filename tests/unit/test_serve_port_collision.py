@@ -102,19 +102,19 @@ def test_run_uvicorn_exits_nonzero_on_eaddrinuse(monkeypatch, capsys):
         with pytest.raises(SystemExit) as excinfo:
             cli._run_uvicorn(object(), ns, "error")
 
-        assert excinfo.value.code == 1, (
-            f"expected SystemExit(1) on EADDRINUSE, got code={excinfo.value.code!r}"
-        )
+        assert (
+            excinfo.value.code == 1
+        ), f"expected SystemExit(1) on EADDRINUSE, got code={excinfo.value.code!r}"
 
         captured = capsys.readouterr()
         # The supervisor / operator-facing message: must call out the
         # colliding port so triage doesn't need to grep server logs.
-        assert str(port) in captured.err, (
-            f"expected port {port} in stderr error message, got: {captured.err!r}"
-        )
-        assert "already in use" in captured.err.lower(), (
-            f"expected friendly 'already in use' phrase, got: {captured.err!r}"
-        )
+        assert (
+            str(port) in captured.err
+        ), f"expected port {port} in stderr error message, got: {captured.err!r}"
+        assert (
+            "already in use" in captured.err.lower()
+        ), f"expected friendly 'already in use' phrase, got: {captured.err!r}"
     finally:
         sock.close()
 
@@ -137,9 +137,9 @@ def test_run_uvicorn_reraises_unrelated_oserror(monkeypatch):
     with pytest.raises(OSError) as excinfo:
         cli._run_uvicorn(object(), ns, "error")
 
-    assert excinfo.value.errno == errno.EACCES, (
-        f"expected EACCES to propagate, got errno={excinfo.value.errno!r}"
-    )
+    assert (
+        excinfo.value.errno == errno.EACCES
+    ), f"expected EACCES to propagate, got errno={excinfo.value.errno!r}"
 
 
 def test_run_uvicorn_eaddrinuse_socket_level_discriminator(monkeypatch, capsys):
@@ -219,9 +219,9 @@ def test_run_uvicorn_systemexit_from_uvicorn_eaddrinuse_reemits_message(
         with pytest.raises(SystemExit) as excinfo:
             cli._run_uvicorn(object(), ns, "error")
 
-        assert excinfo.value.code == 1, (
-            f"expected SystemExit(1) to propagate, got code={excinfo.value.code!r}"
-        )
+        assert (
+            excinfo.value.code == 1
+        ), f"expected SystemExit(1) to propagate, got code={excinfo.value.code!r}"
         captured = capsys.readouterr()
         assert str(port) in captured.err
         assert "already in use" in captured.err.lower()
@@ -260,9 +260,9 @@ def test_run_uvicorn_probe_failure_does_not_mask_systemexit(monkeypatch):
 
     # The original SystemExit from uvicorn must propagate untouched —
     # NOT the TypeError the probe raised.
-    assert excinfo.value.code == 1, (
-        f"expected uvicorn SystemExit(1) to propagate, got code={excinfo.value.code!r}"
-    )
+    assert (
+        excinfo.value.code == 1
+    ), f"expected uvicorn SystemExit(1) to propagate, got code={excinfo.value.code!r}"
 
 
 def test_port_is_busy_returns_false_on_probe_side_exception():
@@ -344,9 +344,9 @@ def test_run_uvicorn_listen_fd_eaddrinuse_uses_fd_specific_message(monkeypatch, 
     captured = capsys.readouterr()
     # The fd-mode message must NOT include a port-specific lsof hint
     # since args.port has no relationship to the inherited socket.
-    assert "lsof -i :8000" not in captured.err, (
-        f"--listen-fd mode must not reference args.port; got: {captured.err!r}"
-    )
+    assert (
+        "lsof -i :8000" not in captured.err
+    ), f"--listen-fd mode must not reference args.port; got: {captured.err!r}"
     assert (
         "listen-fd" in captured.err.lower()
         or "supervisor" in captured.err.lower()

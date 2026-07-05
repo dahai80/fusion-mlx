@@ -236,7 +236,6 @@ def test_enforce_over_cap_raises_400_context_length_exceeded():
     ``context_length_exceeded`` envelope. This is the load-bearing
     test — without this we go right back to the F-007 silent hang."""
     from fastapi import HTTPException
-
     from fusion_mlx.service.helpers import enforce_context_length
 
     eng = _StubEngine(model=_StubModel(args=_StubArgs(max_position_embeddings=2048)))
@@ -261,7 +260,6 @@ def test_enforce_includes_max_tokens_in_budget():
     OpenAI's own ``context_length_exceeded`` fires in this case so we
     mirror it — rejecting now avoids a mid-generation truncation."""
     from fastapi import HTTPException
-
     from fusion_mlx.service.helpers import enforce_context_length
 
     eng = _StubEngine(model=_StubModel(args=_StubArgs(max_position_embeddings=4096)))
@@ -299,13 +297,14 @@ def test_enforce_for_messages_template_error_raises_400():
     OpenAI-style ``invalid_request_error`` envelope.
     """
     from fastapi import HTTPException
-
     from fusion_mlx.service.helpers import enforce_context_length_for_messages
 
     class _TemplateErrorEngine:
         is_mllm = False
 
-        def build_prompt(self, messages, tools=None, enable_thinking=None):  # noqa: ARG002
+        def build_prompt(
+            self, messages, tools=None, enable_thinking=None
+        ):  # noqa: ARG002
             # Mirrors the error shape Jinja raises when a chat template
             # references an undefined variable like ``user``.
             raise ValueError("TemplateError: 'user' is undefined in chat template")
@@ -329,13 +328,14 @@ def test_enforce_for_messages_template_error_lowercase_match():
     handler at ``routes/chat.py``.
     """
     from fastapi import HTTPException
-
     from fusion_mlx.service.helpers import enforce_context_length_for_messages
 
     class _LowercaseTemplateEngine:
         is_mllm = False
 
-        def build_prompt(self, messages, tools=None, enable_thinking=None):  # noqa: ARG002
+        def build_prompt(
+            self, messages, tools=None, enable_thinking=None
+        ):  # noqa: ARG002
             raise RuntimeError("Unknown template tag at line 42")
 
     with pytest.raises(HTTPException) as excinfo:
@@ -363,7 +363,9 @@ def test_enforce_for_messages_non_template_exception_silent_fallthrough():
     class _GenericFailureEngine:
         is_mllm = False
 
-        def build_prompt(self, messages, tools=None, enable_thinking=None):  # noqa: ARG002
+        def build_prompt(
+            self, messages, tools=None, enable_thinking=None
+        ):  # noqa: ARG002
             raise AttributeError("'BatchedEngine' object has no attribute '_model'")
 
     # No exception — fall through silently. Caller (route) goes on to
@@ -381,13 +383,14 @@ def test_enforce_for_messages_http_exception_passes_through():
     deliberate HTTP status must win.
     """
     from fastapi import HTTPException
-
     from fusion_mlx.service.helpers import enforce_context_length_for_messages
 
     class _HttpEngine:
         is_mllm = False
 
-        def build_prompt(self, messages, tools=None, enable_thinking=None):  # noqa: ARG002
+        def build_prompt(
+            self, messages, tools=None, enable_thinking=None
+        ):  # noqa: ARG002
             raise HTTPException(status_code=503, detail="model not loaded")
 
     with pytest.raises(HTTPException) as excinfo:

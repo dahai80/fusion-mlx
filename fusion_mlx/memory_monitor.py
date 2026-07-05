@@ -20,10 +20,10 @@ import threading
 import time
 from ctypes import CDLL, byref, c_uint32, c_uint64, c_void_p
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Optional
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from fusion_mlx.cache.paged_cache import PagedCacheManager
+    pass
 
 logger = logging.getLogger(__name__)
 
@@ -74,9 +74,7 @@ def _get_vm_stat_fast() -> dict[str, int]:
         page_size = _get_host_page_size()
         stat = (c_uint64 * _VM_STAT_FIELDS)()
         count = c_uint32(_VM_STAT_FIELDS)
-        ret = _get_libsystem().host_statistics64(
-            host, 2, c_void_p(stat), byref(count)
-        )
+        ret = _get_libsystem().host_statistics64(host, 2, c_void_p(stat), byref(count))
         if ret != 0:
             return {}
         return {
@@ -140,6 +138,7 @@ class MemoryMonitor:
         self._closed = False
         try:
             import psutil
+
             self._ps = psutil
             self._has_psutil = True
         except ImportError:
@@ -151,16 +150,16 @@ class MemoryMonitor:
             self._total_memory = sys_mem.get("total", 0)
 
         # Model info for memory estimation (set by scheduler)
-        self._num_layers: Optional[int] = None
-        self._num_kv_heads: Optional[int] = None
-        self._head_dim: Optional[int] = None
+        self._num_layers: int | None = None
+        self._num_kv_heads: int | None = None
+        self._head_dim: int | None = None
         # KV storage width; may be fractional with TurboQuant.
         self._dtype_size: float = 2
-        self._kv_bytes_per_token_override: Optional[float] = None
+        self._kv_bytes_per_token_override: float | None = None
         # SDPA score-matrix width = model compute/activation dtype
         self._score_dtype_size: float = _SDPA_FALLBACK_SCORE_DTYPE_SIZE
-        self._num_attention_heads: Optional[int] = None
-        self._num_kv_cache_layers: Optional[int] = None
+        self._num_attention_heads: int | None = None
+        self._num_kv_cache_layers: int | None = None
 
         # Baseline memory (model weights) - set after model load
         self._baseline_memory: int = 0
@@ -170,7 +169,7 @@ class MemoryMonitor:
         self._waiting_requests: int = 0
 
         self._last_check_time: float = 0.0
-        self._last_memory_info: Optional[MemoryInfo] = None
+        self._last_memory_info: MemoryInfo | None = None
         self._lock = threading.Lock()
 
     def set_paged_cache_manager(self, paged_cache_manager: Any) -> None:
@@ -187,6 +186,7 @@ class MemoryMonitor:
     def _parse_vm_stat(self) -> dict[str, int]:
         """Parse vm_stat output into page counts."""
         import subprocess
+
         try:
             result = subprocess.run(
                 ["vm_stat"], capture_output=True, text=True, timeout=5
@@ -213,6 +213,7 @@ class MemoryMonitor:
     def _get_sysctl_memory(self) -> dict[str, int]:
         """Get system memory from sysctl."""
         import subprocess
+
         keys = {"hw.memsize": "total"}
         result = {}
         for k, name in keys.items():
@@ -229,6 +230,7 @@ class MemoryMonitor:
         """Get max_recommended_working_set_size from MLX Metal."""
         try:
             import mlx.core as mx
+
             if mx.metal.is_available():
                 return mx.metal.get_recommended_max_working_set_size()
         except Exception:
@@ -244,6 +246,7 @@ class MemoryMonitor:
         """
         try:
             import mlx.core as mx
+
             if mx.metal.is_available():
                 self._baseline_memory = mx.get_active_memory()
                 logger.info(f"Baseline memory set: {_fmt_bytes(self._baseline_memory)}")
@@ -269,11 +272,11 @@ class MemoryMonitor:
         num_layers: int,
         head_dim: int,
         num_kv_heads: int,
-        num_query_heads: Optional[int] = None,
+        num_query_heads: int | None = None,
         dtype_bytes: float = 2,
-        num_kv_cache_layers: Optional[int] = None,
-        compute_dtype_size: Optional[float] = None,
-        kv_bytes_per_token: Optional[float] = None,
+        num_kv_cache_layers: int | None = None,
+        compute_dtype_size: float | None = None,
+        kv_bytes_per_token: float | None = None,
     ) -> None:
         """Cache model architecture params for memory estimation.
 
@@ -321,10 +324,16 @@ class MemoryMonitor:
         """Return current memory usage snapshot."""
         if self._closed:
             return {
-                "total": 0, "available": 0, "wired": 0,
-                "compressed": 0, "active": 0, "inactive": 0,
-                "mlx_cache": 0, "mlx_peak": 0,
-                "paged_cache_blocks": 0, "paged_cache_hit_rate": 0.0,
+                "total": 0,
+                "available": 0,
+                "wired": 0,
+                "compressed": 0,
+                "active": 0,
+                "inactive": 0,
+                "mlx_cache": 0,
+                "mlx_peak": 0,
+                "paged_cache_blocks": 0,
+                "paged_cache_hit_rate": 0.0,
             }
 
         if self._has_psutil:
@@ -361,6 +370,7 @@ class MemoryMonitor:
         mlx_peak = 0
         try:
             import mlx.core as mx
+
             mlx_cache = mx.get_cache_memory()
             mlx_peak = mx.get_peak_memory()
         except Exception:
@@ -374,7 +384,9 @@ class MemoryMonitor:
                 paged_blocks = p.get("blocks_allocated", 0)
                 total_lookups = p.get("total_lookups", 0)
                 total_hits = p.get("total_hits", 0)
-                paged_hit_rate = total_hits / total_lookups if total_lookups > 0 else 0.0
+                paged_hit_rate = (
+                    total_hits / total_lookups if total_lookups > 0 else 0.0
+                )
             except Exception:
                 pass
 
@@ -429,6 +441,7 @@ class MemoryMonitor:
             return 0
         try:
             import mlx.core as mx
+
             active = mx.get_active_memory()
         except Exception:
             active = 0
@@ -513,9 +526,7 @@ class MemoryMonitor:
 
         return hd in _SDPA_FULL_SUPPORTED_HEAD_DIMS
 
-    def _estimate_sdpa_activation_bytes(
-        self, query_tokens: int, kv_len: int
-    ) -> int:
+    def _estimate_sdpa_activation_bytes(self, query_tokens: int, kv_len: int) -> int:
         """Estimate SDPA activation peak for one attention layer.
 
         Fused path: only the weighted-output buffer
@@ -541,10 +552,10 @@ class MemoryMonitor:
     def estimate_block_memory(
         self,
         block_size: int,
-        num_layers: Optional[int] = None,
-        num_kv_heads: Optional[int] = None,
-        head_dim: Optional[int] = None,
-        dtype_size: Optional[float] = None,
+        num_layers: int | None = None,
+        num_kv_heads: int | None = None,
+        head_dim: int | None = None,
+        dtype_size: float | None = None,
     ) -> float:
         """Estimate memory usage for a KV cache block."""
         layers = num_layers or self._num_layers or 32
@@ -616,8 +627,16 @@ class MemoryMonitor:
         kv_heads = self._num_kv_heads or 0
 
         if self._kv_bytes_per_token_override is not None:
-            new_kv = int(new_tokens * self._kv_bytes_per_token_override) if new_tokens > 0 else 0
-            cached_kv = int(cached_tokens * self._kv_bytes_per_token_override) if cached_tokens > 0 else 0
+            new_kv = (
+                int(new_tokens * self._kv_bytes_per_token_override)
+                if new_tokens > 0
+                else 0
+            )
+            cached_kv = (
+                int(cached_tokens * self._kv_bytes_per_token_override)
+                if cached_tokens > 0
+                else 0
+            )
             return (new_kv, cached_kv)
 
         new_kv = 0
@@ -625,7 +644,9 @@ class MemoryMonitor:
             new_kv = int(2 * layers * new_tokens * kv_heads * hd * self._dtype_size)
         cached_kv = 0
         if cached_tokens > 0:
-            cached_kv = int(2 * layers * cached_tokens * kv_heads * hd * self._dtype_size)
+            cached_kv = int(
+                2 * layers * cached_tokens * kv_heads * hd * self._dtype_size
+            )
         return (new_kv, cached_kv)
 
     def estimate_decode_kv_bytes(self, total_tokens: int) -> int:
@@ -699,7 +720,7 @@ def estimate_mla_kv_bytes_per_token(
     config: Any,
     cache_list: Any,
     dtype_size: float,
-) -> Optional[float]:
+) -> float | None:
     """Estimate exact resident KV bytes/token for MLA-style caches.
 
     GLM/DeepSeek MLA models do not store expanded num_kv_heads * head_dim
@@ -790,6 +811,7 @@ def set_model_info_from_model(monitor: MemoryMonitor, model: Any) -> None:
         dtype_size = 2
         try:
             import mlx.core as mx
+
             if hasattr(model, "dtype"):
                 if model.dtype == mx.float32:
                     dtype_size = 4
@@ -857,7 +879,7 @@ def set_model_info_from_model(monitor: MemoryMonitor, model: Any) -> None:
 
 
 def raise_if_prefill_exceeds(
-    monitor: Optional[MemoryMonitor],
+    monitor: MemoryMonitor | None,
     *,
     prefill_memory_guard: bool,
     hard_limit_bytes: int,
@@ -865,7 +887,7 @@ def raise_if_prefill_exceeds(
     prefill_step_size: int,
     num_prompt_tokens: int,
     cached_tokens: int = 0,
-    request_id: Optional[str] = None,
+    request_id: str | None = None,
 ) -> None:
     """Raise PrefillMemoryExceededError if a prompt's prefill peak would
     push memory past hard_limit_bytes.
@@ -909,11 +931,15 @@ def raise_if_prefill_exceeds(
 
     if not request_id:
         import uuid as _uuid
+
         request_id = f"preflight-{_uuid.uuid4().hex[:8]}"
 
     logger.warning(
         "Preflight rejected (%d tokens, cached=%d, request_id=%s): %s",
-        num_prompt_tokens, cached_tokens, request_id, message,
+        num_prompt_tokens,
+        cached_tokens,
+        request_id,
+        message,
     )
     raise PrefillMemoryExceededError(
         message=message,

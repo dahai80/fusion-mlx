@@ -167,10 +167,13 @@ def test_shared_helper_uses_caller_supplied_usage_without_mlx_probe():
     monitor = MemoryMonitor(max_kv_cache_memory=None, eviction_enabled=False)
     set_model_info_from_model(monitor, _make_target_model())
 
-    with patch(
-        "omlx.memory_monitor.mx.get_active_memory",
-        side_effect=AssertionError("preflight must not read MLX directly"),
-    ), pytest.raises(PrefillMemoryExceededError):
+    with (
+        patch(
+            "omlx.memory_monitor.mx.get_active_memory",
+            side_effect=AssertionError("preflight must not read MLX directly"),
+        ),
+        pytest.raises(PrefillMemoryExceededError),
+    ):
         raise_if_prefill_exceeds(
             monitor,
             prefill_memory_guard=True,

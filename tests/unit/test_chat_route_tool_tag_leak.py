@@ -16,8 +16,9 @@ reasoning parser to recover reasoning_text from the raw output.
 
 from types import SimpleNamespace
 
-from fusion_mlx.reasoning.qwen3_parser import Qwen3ReasoningParser
 from fusion_mlx.service.helpers import _finalize_content_and_reasoning
+
+from fusion_mlx.reasoning.qwen3_parser import Qwen3ReasoningParser
 from fusion_mlx.tool_parsers.hermes_tool_parser import HermesToolParser
 
 
@@ -76,9 +77,9 @@ def _assert_no_leak(content: str | None) -> None:
     if not content:
         return
     leaks = [m for m in _LEAK_MARKERS if m in content]
-    assert not leaks, (
-        f"Tool tags leaked into user content: {leaks!r} (content={content!r})"
-    )
+    assert (
+        not leaks
+    ), f"Tool tags leaked into user content: {leaks!r} (content={content!r})"
 
 
 class TestToolTagLeakRegression:
@@ -244,9 +245,9 @@ class TestBareThinkingProcessLeakRegression:
         assert "Portland" in reasoning
         # ``content`` must be cleared so the leak does not reach the
         # user-facing ``choices[0].message.content`` field.
-        assert not cleaned, (
-            f"chain-of-thought leaked into user-facing content: {cleaned!r}"
-        )
+        assert (
+            not cleaned
+        ), f"chain-of-thought leaked into user-facing content: {cleaned!r}"
 
     def test_bare_thinking_preamble_via_full_chat_route_pipeline(self):
         # Drive the same pipeline the OpenAI ``/v1/chat/completions``
@@ -258,9 +259,9 @@ class TestBareThinkingProcessLeakRegression:
         )
         assert not tool_calls
         assert reasoning is not None and "thinking process" in reasoning
-        assert content is None, (
-            f"expected empty content (full output was reasoning), got {content!r}"
-        )
+        assert (
+            content is None
+        ), f"expected empty content (full output was reasoning), got {content!r}"
 
     def test_normal_answer_with_let_me_think_mid_sentence_not_reclassified(self):
         # Mid-sentence mentions of "let me think" must not trigger the

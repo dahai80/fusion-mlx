@@ -3,7 +3,7 @@
 
 import time
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 
@@ -40,10 +40,15 @@ class TestCheckUpdate:
     @pytest.mark.asyncio
     async def test_update_available(self):
         """Should return update_available=True when newer version exists."""
-        fake_resp = _FakeResponse(200, [{
-            "tag_name": "v99.0.0",
-            "html_url": "https://github.com/jundot/omlx/releases/tag/v99.0.0",
-        }])
+        fake_resp = _FakeResponse(
+            200,
+            [
+                {
+                    "tag_name": "v99.0.0",
+                    "html_url": "https://github.com/jundot/omlx/releases/tag/v99.0.0",
+                }
+            ],
+        )
 
         with patch("omlx.admin.routes.asyncio") as mock_asyncio:
             mock_asyncio.to_thread = _make_async_return(fake_resp)
@@ -57,10 +62,15 @@ class TestCheckUpdate:
     @pytest.mark.asyncio
     async def test_no_update(self):
         """Should return update_available=False when current version is latest."""
-        fake_resp = _FakeResponse(200, [{
-            "tag_name": "v0.0.1",
-            "html_url": "https://github.com/jundot/omlx/releases/tag/v0.0.1",
-        }])
+        fake_resp = _FakeResponse(
+            200,
+            [
+                {
+                    "tag_name": "v0.0.1",
+                    "html_url": "https://github.com/jundot/omlx/releases/tag/v0.0.1",
+                }
+            ],
+        )
 
         with patch("omlx.admin.routes.asyncio") as mock_asyncio:
             mock_asyncio.to_thread = _make_async_return(fake_resp)
@@ -99,10 +109,15 @@ class TestCheckUpdate:
     @pytest.mark.asyncio
     async def test_cache_is_used(self):
         """Should not call GitHub API again within TTL window."""
-        fake_resp = _FakeResponse(200, [{
-            "tag_name": "v99.0.0",
-            "html_url": "https://github.com/jundot/omlx/releases/tag/v99.0.0",
-        }])
+        fake_resp = _FakeResponse(
+            200,
+            [
+                {
+                    "tag_name": "v99.0.0",
+                    "html_url": "https://github.com/jundot/omlx/releases/tag/v99.0.0",
+                }
+            ],
+        )
 
         call_count = 0
 
@@ -126,10 +141,15 @@ class TestCheckUpdate:
     @pytest.mark.asyncio
     async def test_cache_expires(self):
         """Should call GitHub API again after TTL expires."""
-        fake_resp = _FakeResponse(200, [{
-            "tag_name": "v99.0.0",
-            "html_url": "https://github.com/jundot/omlx/releases/tag/v99.0.0",
-        }])
+        fake_resp = _FakeResponse(
+            200,
+            [
+                {
+                    "tag_name": "v99.0.0",
+                    "html_url": "https://github.com/jundot/omlx/releases/tag/v99.0.0",
+                }
+            ],
+        )
 
         call_count = 0
 

@@ -1,33 +1,18 @@
 # SPDX-License-Identifier: Apache-2.0
 """Tests for fusion_mlx.utils.hardware module."""
 
-import subprocess
-import sys
 from unittest.mock import MagicMock, patch
-
-import pytest
 
 from fusion_mlx.utils.hardware import (
     DEFAULT_MEMORY_BYTES,
-    HAS_MLX,
     HardwareInfo,
-    compute_owner_hash,
-    detect_hardware,
     format_bytes,
     get_chip_name,
-    get_gpu_core_count,
-    get_io_platform_uuid,
     get_max_working_set_bytes,
-    get_mlx_device_name,
-    get_mlx_lm_version,
-    get_mlx_version,
-    get_mlx_vlm_version,
-    get_os_version,
     get_total_memory_bytes,
     get_total_memory_gb,
     is_apple_silicon,
     is_mlx_available,
-    parse_chip_info,
 )
 
 
@@ -67,7 +52,9 @@ class TestGetChipName:
     def test_get_chip_name_success(self):
         mock_result = MagicMock()
         mock_result.stdout = "Apple M4 Pro\n"
-        with patch("fusion_mlx.utils.hardware.subprocess.run", return_value=mock_result):
+        with patch(
+            "fusion_mlx.utils.hardware.subprocess.run", return_value=mock_result
+        ):
             assert get_chip_name() == "Apple M4 Pro"
 
     def test_get_chip_name_fallback(self):
@@ -81,15 +68,20 @@ class TestGetTotalMemoryBytes:
     def test_get_total_memory_bytes_sysctl_success(self):
         mock_result = MagicMock()
         mock_result.stdout = "34359738368\n"  # 32 GB
-        with patch("fusion_mlx.utils.hardware.subprocess.run", return_value=mock_result):
+        with patch(
+            "fusion_mlx.utils.hardware.subprocess.run", return_value=mock_result
+        ):
             assert get_total_memory_bytes() == 34359738368
 
     def test_get_total_memory_bytes_default_fallback(self):
-        with patch(
-            "fusion_mlx.utils.hardware.subprocess.run", side_effect=OSError("no sysctl")
+        with (
+            patch(
+                "fusion_mlx.utils.hardware.subprocess.run",
+                side_effect=OSError("no sysctl"),
+            ),
+            patch("fusion_mlx.utils.hardware.HAS_MLX", False),
         ):
-            with patch("fusion_mlx.utils.hardware.HAS_MLX", False):
-                assert get_total_memory_bytes() == DEFAULT_MEMORY_BYTES
+            assert get_total_memory_bytes() == DEFAULT_MEMORY_BYTES
 
 
 class TestGetTotalMemoryGb:
@@ -97,14 +89,18 @@ class TestGetTotalMemoryGb:
         bytes_val = 16 * 1024**3
         mock_result = MagicMock()
         mock_result.stdout = f"{bytes_val}\n"
-        with patch("fusion_mlx.utils.hardware.subprocess.run", return_value=mock_result):
+        with patch(
+            "fusion_mlx.utils.hardware.subprocess.run", return_value=mock_result
+        ):
             assert get_total_memory_gb() == 16.0
 
     def test_get_total_memory_gb_fractional(self):
         bytes_val = 18 * 1024**3
         mock_result = MagicMock()
         mock_result.stdout = f"{bytes_val}\n"
-        with patch("fusion_mlx.utils.hardware.subprocess.run", return_value=mock_result):
+        with patch(
+            "fusion_mlx.utils.hardware.subprocess.run", return_value=mock_result
+        ):
             assert get_total_memory_gb() == 18.0
 
 
@@ -121,12 +117,12 @@ class TestGetMaxWorkingSetBytes:
         bytes_val = 16 * 1024**3
         mock_result = MagicMock()
         mock_result.stdout = f"{bytes_val}\n"
-        with patch("fusion_mlx.utils.hardware.HAS_MLX", False):
-            with patch(
-                "fusion_mlx.utils.hardware.subprocess.run", return_value=mock_result
-            ):
-                result = get_max_working_set_bytes()
-                assert result == int(bytes_val * 0.75)
+        with (
+            patch("fusion_mlx.utils.hardware.HAS_MLX", False),
+            patch("fusion_mlx.utils.hardware.subprocess.run", return_value=mock_result),
+        ):
+            result = get_max_working_set_bytes()
+            assert result == int(bytes_val * 0.75)
 
 
 class TestIsAppleSilicon:

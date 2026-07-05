@@ -582,9 +582,10 @@ class TestMLLMSchedulerStepThread:
         await scheduler._process_loop()
 
         assert len(threads) == 2, f"Expected 2 step calls, got {len(threads)}"
-        assert waiting_seen == [True, False], (
-            f"Expected iter 1 with waiting + iter 2 without, got {waiting_seen}"
-        )
+        assert waiting_seen == [
+            True,
+            False,
+        ], f"Expected iter 1 with waiting + iter 2 without, got {waiting_seen}"
         for i, name in enumerate(threads):
             assert name.startswith("mllm-step"), (
                 f"step #{i + 1} (waiting={waiting_seen[i]}) ran on {name!r}, "

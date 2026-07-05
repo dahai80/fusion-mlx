@@ -360,9 +360,10 @@ class TestModelsListingReflectsAudioGate:
         return new_app
 
     def test_audio_lane_snapshot_none_on_text_only_app(self, monkeypatch, fresh_app):
+        from fusion_mlx.routes.models import _audio_lane_snapshot
+
         from fusion_mlx import server
         from fusion_mlx.config import get_config
-        from fusion_mlx.routes.models import _audio_lane_snapshot
 
         # Force the routes-mounted predicate to False by ensuring the
         # gate doesn't see audio + flag + routes.
@@ -409,8 +410,9 @@ class TestModelsListingReflectsAudioGate:
         advertise ``audio_lanes`` while ``/v1/audio/*`` still 404s —
         the exact contradictory state this PR was opened to eliminate.
         """
-        from fusion_mlx.config import get_config
         from fusion_mlx.routes.models import _audio_routes_mounted
+
+        from fusion_mlx.config import get_config
 
         cfg = get_config()
         old_flag = cfg.enable_audio_lane
@@ -757,9 +759,9 @@ class TestCliServeCommandWiresEnableAudioFlag:
             for attr, value in cfg_snapshot.items():
                 setattr(cfg, attr, value)
 
-        assert "load_model" in call_order, (
-            f"load_model was not invoked by serve_command; call order: {call_order}"
-        )
+        assert (
+            "load_model" in call_order
+        ), f"load_model was not invoked by serve_command; call order: {call_order}"
         assert "register_hook" in call_order, (
             f"register_audio_routes_if_enabled was not invoked by "
             f"serve_command; call order: {call_order}"
@@ -769,13 +771,13 @@ class TestCliServeCommandWiresEnableAudioFlag:
         # the inline call inside it doesn't run, so the explicit
         # serve_command call site is the ONE that fires — and it must
         # come AFTER load_model.
-        assert call_order.index("load_model") < call_order.index("register_hook"), (
-            f"register_hook ran BEFORE load_model — wrong order: {call_order}"
-        )
+        assert call_order.index("load_model") < call_order.index(
+            "register_hook"
+        ), f"register_hook ran BEFORE load_model — wrong order: {call_order}"
         if "uvicorn" in call_order:
-            assert call_order.index("register_hook") < call_order.index("uvicorn"), (
-                f"register_hook must run BEFORE uvicorn; call order: {call_order}"
-            )
+            assert call_order.index("register_hook") < call_order.index(
+                "uvicorn"
+            ), f"register_hook must run BEFORE uvicorn; call order: {call_order}"
 
     def test_load_model_invokes_register_hook(self, monkeypatch):
         """``load_model`` is the SHARED loader between

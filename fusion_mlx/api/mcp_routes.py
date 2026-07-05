@@ -53,12 +53,14 @@ async def list_mcp_tools() -> MCPToolsResponse:
 
     tools = []
     for tool in manager.get_all_tools():
-        tools.append(MCPToolInfo(
-            name=tool.full_name,
-            description=tool.description,
-            server=tool.server_name,
-            parameters=tool.input_schema,
-        ))
+        tools.append(
+            MCPToolInfo(
+                name=tool.full_name,
+                description=tool.description,
+                server=tool.server_name,
+                parameters=tool.input_schema,
+            )
+        )
 
     return MCPToolsResponse(tools=tools, count=len(tools))
 
@@ -72,13 +74,15 @@ async def list_mcp_servers() -> MCPServersResponse:
 
     servers = []
     for status in manager.get_server_status():
-        servers.append(MCPServerInfo(
-            name=status.name,
-            state=status.state.value,
-            transport=status.transport.value,
-            tools_count=status.tools_count,
-            error=status.error,
-        ))
+        servers.append(
+            MCPServerInfo(
+                name=status.name,
+                state=status.state.value,
+                transport=status.transport.value,
+                tools_count=status.tools_count,
+                error=status.error,
+            )
+        )
 
     return MCPServersResponse(servers=servers)
 
@@ -89,8 +93,7 @@ async def execute_mcp_tool(request: MCPExecuteRequest) -> MCPExecuteResponse:
     manager = _get_manager()
     if manager is None:
         raise HTTPException(
-            status_code=503,
-            detail="MCP not configured. Start server with --mcp-config"
+            status_code=503, detail="MCP not configured. Start server with --mcp-config"
         )
 
     result = await manager.execute_tool(

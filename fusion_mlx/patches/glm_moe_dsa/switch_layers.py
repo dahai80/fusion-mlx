@@ -4,8 +4,8 @@ import math
 
 import mlx.core as mx
 import mlx.nn as nn
-
 from mlx_lm.models.activations import swiglu
+
 from .kernels import fast as glm_fast
 
 

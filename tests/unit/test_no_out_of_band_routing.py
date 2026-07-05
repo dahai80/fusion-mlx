@@ -1307,9 +1307,9 @@ def test_environb_detection_catches_bare_name_form():
         "bare-name `environb` reference must be detected — DeepSeek "
         "regression: `from os import environb` strips the os. prefix."
     )
-    assert _count_environb_hits(attribute_form_source) >= 1, (
-        "`os.environb` reference must still be detected (existing path)."
-    )
+    assert (
+        _count_environb_hits(attribute_form_source) >= 1
+    ), "`os.environb` reference must still be detected (existing path)."
 
 
 def test_routing_write_dedup_is_location_based():
@@ -1385,9 +1385,9 @@ def test_conftest_deselect_gate_scoped_to_pytest_hook():
         "gate must NOT fire on a local `items` list inside an unrelated "
         "helper function — DeepSeek false-positive regression."
     )
-    assert _gated_offenders(hook_source) == 1, (
-        "gate MUST still fire on items.remove() inside pytest_collection_modifyitems."
-    )
+    assert (
+        _gated_offenders(hook_source) == 1
+    ), "gate MUST still fire on items.remove() inside pytest_collection_modifyitems."
 
 
 def test_func_is_method_of_class_distinguishes_real_constructors():

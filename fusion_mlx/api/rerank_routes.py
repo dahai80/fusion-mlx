@@ -10,8 +10,8 @@ from fastapi import APIRouter, HTTPException
 from ..server_metrics import get_server_metrics
 from .rerank_models import (
     RerankRequest,
-    RerankResult,
     RerankResponse,
+    RerankResult,
     RerankUsage,
 )
 
@@ -37,6 +37,7 @@ async def get_reranker_engine(model_id: str) -> Any:
     if engine is None:
         raise HTTPException(status_code=404, detail=f"Model not found: {model_id}")
     from ..engines.reranker import RerankerEngine
+
     if not isinstance(engine, RerankerEngine):
         raise HTTPException(
             status_code=400,
@@ -95,7 +96,9 @@ async def create_rerank(request: RerankRequest) -> RerankResponse:
     elapsed = time.perf_counter() - start_time
     logger.info(
         "Rerank: %d docs, %d tokens in %.3fs",
-        len(documents_raw), output.total_tokens, elapsed,
+        len(documents_raw),
+        output.total_tokens,
+        elapsed,
     )
     get_server_metrics().record_request_complete(
         prompt_tokens=output.total_tokens,

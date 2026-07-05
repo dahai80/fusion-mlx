@@ -72,6 +72,7 @@ def _invoke_rm(
 
         def fake_input(_prompt: str) -> str:
             raise EOFError
+
     else:
 
         def fake_input(_prompt: str) -> str:

@@ -65,7 +65,7 @@ class NGramPredictor:
         # Update n-gram tables for all orders
         for n, table in self._tables.items():
             if len(self._history) > n:
-                key = tuple(self._history[-(n + 1):-1])
+                key = tuple(self._history[-(n + 1) : -1])
                 next_tok = self._history[-1]
                 entry = table[key]
                 entry[next_tok] += 1
@@ -153,7 +153,9 @@ class NGramPredictor:
             if removed >= target:
                 break
         self._total_entries -= removed
-        logger.debug("ngram: evicted %d entries, total=%d", removed, self._total_entries)
+        logger.debug(
+            "ngram: evicted %d entries, total=%d", removed, self._total_entries
+        )
 
     def get_stats(self) -> dict:
         rate = (

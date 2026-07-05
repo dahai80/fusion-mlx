@@ -49,18 +49,18 @@ from unittest.mock import patch
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-
-from fusion_mlx.api import response_format_metrics
-from fusion_mlx.api.models import ChatCompletionRequest
 from fusion_mlx.api.responses_adapter import responses_to_openai
-from fusion_mlx.api.responses_models import ResponsesRequest
-from fusion_mlx.config import reset_config
-from fusion_mlx.engine.base import GenerationOutput
-from fusion_mlx.middleware.exception_handlers import install_exception_handlers
 from fusion_mlx.service.helpers import (
     _resolve_enable_thinking,
     maybe_auto_disable_thinking_for_tools,
 )
+
+from fusion_mlx.api import response_format_metrics
+from fusion_mlx.api.models import ChatCompletionRequest
+from fusion_mlx.api.responses_models import ResponsesRequest
+from fusion_mlx.config import reset_config
+from fusion_mlx.engine.base import GenerationOutput
+from fusion_mlx.middleware.exception_handlers import install_exception_handlers
 
 # ---------------------------------------------------------------------------
 # (1) Helper-level: maybe_auto_disable_thinking_for_tools
@@ -861,13 +861,13 @@ def test_responses_strict_with_tools_still_rejects_with_400(_rate_limiter_state)
     code = body.get("error", {}).get("code") or body.get("detail", {}).get(
         "error", {}
     ).get("code")
-    assert code == "strict_with_tools_unsupported", (
-        f"expected strict_with_tools_unsupported, got body={body!r}"
-    )
+    assert (
+        code == "strict_with_tools_unsupported"
+    ), f"expected strict_with_tools_unsupported, got body={body!r}"
     # And no engine call happened — the route bailed at the gate.
-    assert not engine.chat_calls, (
-        "strict+tools must reject at the gate without dispatching to the engine"
-    )
+    assert (
+        not engine.chat_calls
+    ), "strict+tools must reject at the gate without dispatching to the engine"
 
 
 def test_chat_strict_with_tools_still_rejects_with_400(_rate_limiter_state):
@@ -899,7 +899,7 @@ def test_chat_strict_with_tools_still_rejects_with_400(_rate_limiter_state):
     code = body.get("error", {}).get("code") or body.get("detail", {}).get(
         "error", {}
     ).get("code")
-    assert code == "strict_with_tools_unsupported", (
-        f"expected strict_with_tools_unsupported, got body={body!r}"
-    )
+    assert (
+        code == "strict_with_tools_unsupported"
+    ), f"expected strict_with_tools_unsupported, got body={body!r}"
     assert not engine.chat_calls

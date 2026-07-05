@@ -263,7 +263,6 @@ def test_driver_accept_stats_reads_drafter_lists(monkeypatch, stub_mlx_vlm) -> N
     accidentally clear the lists post-iteration.
     """
     import mlx_vlm
-
     from fusion_mlx.spec_decode.dflash.drafter import MlxVlmDFlashDriver
 
     driver = MlxVlmDFlashDriver(

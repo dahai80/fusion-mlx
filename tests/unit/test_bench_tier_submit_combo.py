@@ -27,7 +27,7 @@ These tests pin the wiring contract:
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from unittest.mock import patch
 
@@ -167,9 +167,9 @@ def test_run_tier_returns_payload_when_requested():
             skip_speed=True,
         )
 
-    assert isinstance(result, tuple), (
-        "return_results=True must change the return type to a tuple"
-    )
+    assert isinstance(
+        result, tuple
+    ), "return_results=True must change the return type to a tuple"
     rc, payload = result
     assert rc == 0, f"happy path should exit 0; got {rc}"
     assert payload["smoke_result"] == _SMOKE_PAYLOAD
@@ -193,9 +193,9 @@ def test_run_tier_default_signature_unchanged():
 
         result = run_tier(model="qwen3.5-4b-4bit", tier="smoke")
 
-    assert isinstance(result, int), (
-        "default ``run_tier`` MUST return int, not tuple — back-compat"
-    )
+    assert isinstance(
+        result, int
+    ), "default ``run_tier`` MUST return int, not tuple — back-compat"
     assert result == 0
 
 
@@ -228,9 +228,9 @@ def test_run_tier_returns_payload_with_none_for_missing_tiers():
 
     assert rc == 0
     assert payload["smoke_result"] == _SMOKE_PAYLOAD
-    assert payload["harness_result"] is None, (
-        "harness didn't run for tier=smoke; harness_result MUST be None"
-    )
+    assert (
+        payload["harness_result"] is None
+    ), "harness didn't run for tier=smoke; harness_result MUST be None"
 
 
 def test_run_tier_skip_speed_avoids_lightweight_probe():
@@ -282,12 +282,13 @@ def test_run_tier_skip_speed_avoids_lightweight_probe():
             skip_speed=True,
         )
 
-    assert "speed" not in calls, (
-        f"skip_speed=True must skip the lightweight speed probe; calls={calls}"
-    )
-    assert calls == ["smoke", "harness"], (
-        f"--tier all skip_speed must run smoke → harness; got {calls}"
-    )
+    assert (
+        "speed" not in calls
+    ), f"skip_speed=True must skip the lightweight speed probe; calls={calls}"
+    assert calls == [
+        "smoke",
+        "harness",
+    ], f"--tier all skip_speed must run smoke → harness; got {calls}"
 
 
 def test_run_tier_skip_speed_ignored_for_non_all_tier():
@@ -348,7 +349,7 @@ def test_tier_all_submit_payload_shape():
         hf_path="mlx-community/Qwen3.5-9B-4bit",
         bench=bench,
         notes="PR5 tier=all combo",
-        now=datetime(2026, 6, 17, 10, 30, 0, tzinfo=timezone.utc),
+        now=datetime(2026, 6, 17, 10, 30, 0, tzinfo=UTC),
         tier="all",
         smoke_result=_SMOKE_PAYLOAD,
         harness_result=_HARNESS_PAYLOAD,
@@ -396,16 +397,16 @@ def test_tier_smoke_submit_populates_smoke_result_only():
         hf_path="mlx-community/Qwen3.5-9B-4bit",
         bench=bench,
         notes=None,
-        now=datetime(2026, 6, 17, tzinfo=timezone.utc),
+        now=datetime(2026, 6, 17, tzinfo=UTC),
         tier="smoke",
         smoke_result=_SMOKE_PAYLOAD,
     )
 
     assert payload["tier"] == "smoke"
     assert payload["smoke_result"] == _SMOKE_PAYLOAD
-    assert "harness_result" not in payload, (
-        "tier=smoke MUST NOT emit harness_result (schema forbids it)"
-    )
+    assert (
+        "harness_result" not in payload
+    ), "tier=smoke MUST NOT emit harness_result (schema forbids it)"
 
     schema = json.loads(SCHEMA_PATH.read_text())
     jsonschema.validate(instance=payload, schema=schema)
@@ -426,7 +427,7 @@ def test_tier_harness_submit_populates_harness_result_only():
         hf_path="mlx-community/Qwen3.5-9B-4bit",
         bench=bench,
         notes=None,
-        now=datetime(2026, 6, 17, tzinfo=timezone.utc),
+        now=datetime(2026, 6, 17, tzinfo=UTC),
         tier="harness",
         harness_result=_HARNESS_PAYLOAD,
     )
@@ -680,9 +681,9 @@ def test_smoke_passes_when_only_reasoning_content_streams():
     )
     assert r.payload is not None
     assert r.payload["first_prompt_ok"] is True
-    assert r.payload["first_token_latency_ms"] > 0, (
-        "TTFT must be measured from the first reasoning chunk, not 0.0"
-    )
+    assert (
+        r.payload["first_token_latency_ms"] > 0
+    ), "TTFT must be measured from the first reasoning chunk, not 0.0"
     assert "[reasoning]" in r.payload["response_excerpt"], (
         "When only reasoning content streamed, response_excerpt MUST be "
         "tagged so the corpus / log reader knows it came from "
@@ -730,8 +731,8 @@ def test_tier_submit_routes_through_unified_flow(monkeypatch):
     with pytest.raises(SystemExit) as excinfo:
         cli.bench_command(args)
     assert excinfo.value.code == 0
-    assert captured.get("called") is True, (
-        "bench_command MUST route --tier+--submit to the combined flow"
-    )
+    assert (
+        captured.get("called") is True
+    ), "bench_command MUST route --tier+--submit to the combined flow"
     assert captured["tier"] == "all"
     assert captured["submit"] is True

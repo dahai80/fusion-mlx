@@ -125,9 +125,7 @@ class HarmonyOutputParserSession:
                 if self._parser.current_channel == "final":
                     visible_text += final_text
 
-        _, analysis_text, tool_calls = parse_tool_calls_from_tokens(
-            self._raw_token_ids
-        )
+        _, analysis_text, tool_calls = parse_tool_calls_from_tokens(self._raw_token_ids)
         finish_reason = "tool_calls" if tool_calls else None
 
         output_text_prefix = (

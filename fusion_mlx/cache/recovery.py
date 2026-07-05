@@ -72,7 +72,7 @@ class CacheRecoveryManager:
         """
         # Clear batch generator (this is the source of the corruption)
         batch_generator_holder.batch_generator = None
-        if hasattr(batch_generator_holder, '_current_sampler_params'):
+        if hasattr(batch_generator_holder, "_current_sampler_params"):
             batch_generator_holder._current_sampler_params = None
 
         # Clear cache

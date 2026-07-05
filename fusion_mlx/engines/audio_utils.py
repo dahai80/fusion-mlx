@@ -17,21 +17,37 @@ def wav_header(sample_rate: int, channels: int = 1, sample_width: int = 2) -> by
     bits_per_sample = sample_width * 8
     return struct.pack(
         "<4sI4s4sIHHIIHH4sI",
-        b"RIFF", _MAX_WAV_CHUNK_SIZE, b"WAVE", b"fmt ",
-        16, 1, channels, sample_rate, byte_rate, block_align, bits_per_sample,
-        b"data", _MAX_WAV_CHUNK_SIZE,
-        )
+        b"RIFF",
+        _MAX_WAV_CHUNK_SIZE,
+        b"WAVE",
+        b"fmt ",
+        16,
+        1,
+        channels,
+        sample_rate,
+        byte_rate,
+        block_align,
+        bits_per_sample,
+        b"data",
+        _MAX_WAV_CHUNK_SIZE,
+    )
 
 
 def wav_bytes_to_pcm_frames(wav_bytes: bytes) -> tuple[int, int, int, bytes]:
     with wave.open(io.BytesIO(wav_bytes), "rb") as wf:
-        return wf.getframerate(), wf.getnchannels(), wf.getsampwidth(), wf.readframes(wf.getnframes())
+        return (
+            wf.getframerate(),
+            wf.getnchannels(),
+            wf.getsampwidth(),
+            wf.readframes(wf.getnframes()),
+        )
 
 
 def audio_to_wav_bytes(audio_array, sample_rate: int) -> bytes:
     if not isinstance(audio_array, np.ndarray):
         if hasattr(audio_array, "dtype"):
             import mlx.core as mx
+
             if audio_array.dtype == mx.bfloat16:
                 audio_array = audio_array.astype(mx.float32)
         audio_array = np.array(audio_array)

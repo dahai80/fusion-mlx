@@ -25,9 +25,9 @@ def test_neutral_defaults_skip_processor_allocation():
     row = mx.ones((1, 8))
     out = _maybe_apply_penalty_processors(req, row)
     assert out is row, "neutral knobs must return the input row unchanged"
-    assert not hasattr(req, "_cached_penalty_processors"), (
-        "neutral defaults must not allocate processor cache"
-    )
+    assert not hasattr(
+        req, "_cached_penalty_processors"
+    ), "neutral defaults must not allocate processor cache"
 
 
 def test_repetition_penalty_suppresses_already_seen_tokens(monkeypatch):
@@ -35,6 +35,7 @@ def test_repetition_penalty_suppresses_already_seen_tokens(monkeypatch):
         for t in set(tokens):
             logits[:, t] = logits[:, t] / 2.0
         return logits
+
     monkeypatch.setattr(
         "fusion_mlx.mllm_batch_generator.make_logits_processors",
         lambda **kw: [_rep_processor],
@@ -54,6 +55,7 @@ def test_presence_penalty_subtracts_constant_from_seen_tokens(monkeypatch):
         for t in set(tokens):
             logits[:, t] -= 0.5
         return logits
+
     monkeypatch.setattr(
         "fusion_mlx.mllm_batch_generator.make_logits_processors",
         lambda **kw: [_pres_processor],
@@ -71,10 +73,12 @@ def test_presence_penalty_subtracts_constant_from_seen_tokens(monkeypatch):
 def test_frequency_penalty_scales_with_occurrence_count(monkeypatch):
     def _freq_processor(tokens, logits):
         from collections import Counter
+
         counts = Counter(tokens)
         for t, c in counts.items():
             logits[:, t] -= 0.25 * c
         return logits
+
     monkeypatch.setattr(
         "fusion_mlx.mllm_batch_generator.make_logits_processors",
         lambda **kw: [_freq_processor],
@@ -161,9 +165,9 @@ def test_scheduler_add_request_preserves_explicit_zero_values():
         frequency_penalty=0.0,
     )
     req = scheduler.requests[rid]
-    assert req.sampling_params.repetition_penalty == 0.0, (
-        "explicit repetition_penalty=0.0 must NOT be coerced to 1.0"
-    )
+    assert (
+        req.sampling_params.repetition_penalty == 0.0
+    ), "explicit repetition_penalty=0.0 must NOT be coerced to 1.0"
     assert req.sampling_params.presence_penalty == 0.0
     assert req.sampling_params.frequency_penalty == 0.0
 

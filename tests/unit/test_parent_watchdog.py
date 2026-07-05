@@ -245,9 +245,9 @@ class TestServeCommandWiring:
             "install_parent_watchdog missing from serve_command — see "
             "test_serve_command_installs_watchdog for the actionable hint."
         )
-        assert idx_download != -1, (
-            "_ensure_model_downloaded fixture moved; update this test."
-        )
+        assert (
+            idx_download != -1
+        ), "_ensure_model_downloaded fixture moved; update this test."
         assert idx_install < idx_download, (
             "rapid-desktop #449 regression: install_parent_watchdog fires "
             "AFTER _ensure_model_downloaded. Move the install to the TOP "

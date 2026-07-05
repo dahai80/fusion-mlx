@@ -33,9 +33,9 @@ class TestStreamingDetokenizer:
         # Batch decode
         batch_result = qwen_tokenizer.decode(tokens)
 
-        assert streaming_result == batch_result, (
-            f"Streaming: {repr(streaming_result)}\nBatch: {repr(batch_result)}"
-        )
+        assert (
+            streaming_result == batch_result
+        ), f"Streaming: {repr(streaming_result)}\nBatch: {repr(batch_result)}"
 
     def test_last_segment_incremental(self, qwen_tokenizer):
         """Verify last_segment returns only new text."""

@@ -274,9 +274,11 @@ class HermesToolParser(ToolParser):
                         return (
                             m.end(),
                             name,
-                            json.dumps(arguments, ensure_ascii=False)
-                            if isinstance(arguments, dict)
-                            else str(arguments),
+                            (
+                                json.dumps(arguments, ensure_ascii=False)
+                                if isinstance(arguments, dict)
+                                else str(arguments)
+                            ),
                         )
             # Shape #2: <tool_call><function=NAME>...</function></tool_call>
             m = cls.NEMOTRON_PATTERN.match(text, pos)

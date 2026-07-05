@@ -25,10 +25,10 @@ the malformation — no model download required, runs in <100 ms in CI.
 from __future__ import annotations
 
 import pytest
+from fusion_mlx.utils.decode import IncrementalDecoder
 from tokenizers import Tokenizer, decoders, models, pre_tokenizers
 from transformers import PreTrainedTokenizerFast
 
-from fusion_mlx.utils.decode import IncrementalDecoder
 from fusion_mlx.utils.tokenizer import (
     _BYTE_LEVEL_MOJIBAKE_MARKERS,
     repair_byte_level_decoder,
@@ -305,9 +305,9 @@ class TestIncrementalDecoderNoLeak:
         emitted = ""
         for tid in _REASONING_SEQUENCE_IDS:
             emitted += decoder.add_token(tid)
-        assert any(m in emitted for m in _BYTE_LEVEL_MOJIBAKE_MARKERS), (
-            f"expected mojibake in unrepaired streaming output, got {emitted!r}"
-        )
+        assert any(
+            m in emitted for m in _BYTE_LEVEL_MOJIBAKE_MARKERS
+        ), f"expected mojibake in unrepaired streaming output, got {emitted!r}"
 
 
 # ---------------------------------------------------------------------------

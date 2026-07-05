@@ -6,8 +6,9 @@ config shape matches what Codex CLI's TOML parser actually expects —
 catches refactor-time breakage of `rapid-mlx agents codex --setup`.
 """
 
-import pytest
 import tomllib
+
+import pytest
 
 from fusion_mlx.agents import get_profile, list_profiles
 

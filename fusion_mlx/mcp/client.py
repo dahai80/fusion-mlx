@@ -285,7 +285,7 @@ class MCPClient:
                 is_error=result.isError if hasattr(result, "isError") else False,
             )
 
-        except asyncio.TimeoutError:
+        except TimeoutError:
             return MCPToolResult(
                 tool_name=tool_name,
                 content=None,

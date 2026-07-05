@@ -1,8 +1,9 @@
 # SPDX-License-Identifier: Apache-2.0
 import logging
+from collections.abc import Callable
 from functools import lru_cache
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -34,6 +35,7 @@ def apply_qwen3_fix(
 
 def _read_json_file(path: Path) -> dict[str, Any] | None:
     import json
+
     try:
         with open(path, encoding="utf-8") as f:
             data = json.load(f)
@@ -60,6 +62,7 @@ def _find_tokenizer_json(
             return tokenizer_file
         try:
             from huggingface_hub import try_to_load_from_cache
+
             cached = try_to_load_from_cache(str(candidate), "tokenizer.json")
         except Exception:
             cached = None
@@ -92,6 +95,7 @@ def _detokenizer_factory_from_tokenizer_json(
         return SPMStreamingDetokenizer
     if _is_spm_decoder_no_space(decoder):
         from functools import partial
+
         return partial(SPMStreamingDetokenizer, trim_space=False)
     if _is_bpe_decoder(decoder):
         return BPEStreamingDetokenizer

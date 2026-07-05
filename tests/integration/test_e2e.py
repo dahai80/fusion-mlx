@@ -21,20 +21,31 @@ class TestChatRequestFlow:
         from fusion_mlx.router.smart_router import SmartRouter
 
         engine = AsyncMock()
-        engine.chat = AsyncMock(return_value=MagicMock(
-             output_text="Hello! How can I help?",
-             prompt_tokens=10, completion_tokens=8, finish_reason="stop",
-             tool_calls=[], cached_tokens=0,
-           ))
-        engine.stream_chat = AsyncMock(return_value=iter([
-            MagicMock(text="Hello", new_text="Hello", finished=False),
-            MagicMock(text="!", new_text="!", finished=True),
-         ]))
+        engine.chat = AsyncMock(
+            return_value=MagicMock(
+                output_text="Hello! How can I help?",
+                prompt_tokens=10,
+                completion_tokens=8,
+                finish_reason="stop",
+                tool_calls=[],
+                cached_tokens=0,
+            )
+        )
+        engine.stream_chat = AsyncMock(
+            return_value=iter(
+                [
+                    MagicMock(text="Hello", new_text="Hello", finished=False),
+                    MagicMock(text="!", new_text="!", finished=True),
+                ]
+            )
+        )
 
         router = SmartRouter(llm_engine=engine, rapid_engine=engine)
         result = await router.route_chat(
-             [{"role": "user", "content": "Hello"}], {}, prompt_length=3,
-           )
+            [{"role": "user", "content": "Hello"}],
+            {},
+            prompt_length=3,
+        )
         assert result is not None
 
     @pytest.mark.skip(reason="Requires running MLX engine")
@@ -48,17 +59,19 @@ class TestChatRequestFlow:
         engine = AsyncMock()
 
         async def fake_stream():
-             yield 'data: {"choices":[{"delta":{"content":"Hello"}}]}\n\n'
-             yield 'data: {"choices":[{"delta":{"content":"!"}}]}\n\n'
-             yield 'data: [DONE]\n\n'
+            yield 'data: {"choices":[{"delta":{"content":"Hello"}}]}\n\n'
+            yield 'data: {"choices":[{"delta":{"content":"!"}}]}\n\n'
+            yield "data: [DONE]\n\n"
 
         engine.stream_chat = fake_stream
 
         router = SmartRouter(llm_engine=engine, rapid_engine=engine)
         chunks = []
         async for chunk in router.route_stream_chat(
-             [{"role": "user", "content": "Hello"}], {}, prompt_length=3,
-           ):
+            [{"role": "user", "content": "Hello"}],
+            {},
+            prompt_length=3,
+        ):
             chunks.append(chunk)
         assert len(chunks) == 3
 
@@ -79,15 +92,16 @@ class TestCloudFallbackFlow:
 
         cloud = MagicMock()
         cloud.should_route_to_cloud = MagicMock(return_value=True)
-        cloud.completion = AsyncMock(return_value={
-             "choices": [{"message": {"content": "cloud response"}}]
-           })
+        cloud.completion = AsyncMock(
+            return_value={"choices": [{"message": {"content": "cloud response"}}]}
+        )
         cloud.cloud_model = "gpt-4"
 
         router = RequestRouter(llm_engine=llm, cloud_router=cloud)
         result = await router.route_chat(
-             [{"role": "user", "content": "x" * 10000}], {},
-           )
+            [{"role": "user", "content": "x" * 10000}],
+            {},
+        )
         cloud.completion.assert_called_once()
         assert "cloud response" in str(result)
 
@@ -104,28 +118,34 @@ class TestPhaseSplitFlow:
 
         prefill_engine = AsyncMock()
         prefill_engine.supports_prefill_only = True
-        prefill_engine.chat = AsyncMock(return_value=MagicMock(
-             kv_state={"block_table": MagicMock(), "num_computed_tokens": 1000},
-           ))
+        prefill_engine.chat = AsyncMock(
+            return_value=MagicMock(
+                kv_state={"block_table": MagicMock(), "num_computed_tokens": 1000},
+            )
+        )
 
         decode_engine = AsyncMock()
         decode_engine.supports_kv_handoff = True
 
         async def fake_decode_stream():
-             yield 'data: {"choices":[{"delta":{"content":"decoded"}}]}\n\n'
-             yield 'data: [DONE]\n\n'
+            yield 'data: {"choices":[{"delta":{"content":"decoded"}}]}\n\n'
+            yield "data: [DONE]\n\n"
 
         decode_engine.stream_chat = fake_decode_stream
 
-           # Set up router with low split threshold to trigger phase split
+        # Set up router with low split threshold to trigger phase split
         config = RouterConfig(phase_split_threshold=10, cloud_fallback_threshold=999999)
         router = SmartRouter(
-             config=config, llm_engine=prefill_engine, rapid_engine=decode_engine,
-           )
+            config=config,
+            llm_engine=prefill_engine,
+            rapid_engine=decode_engine,
+        )
         chunks = []
         async for chunk in router.route_stream_chat(
-             [{"role": "user", "content": "x" * 100}], {},
-             prompt_length=100, cache_hit_rate=0.0,
-           ):
+            [{"role": "user", "content": "x" * 100}],
+            {},
+            prompt_length=100,
+            cache_hit_rate=0.0,
+        ):
             chunks.append(chunk)
         assert len(chunks) >= 1

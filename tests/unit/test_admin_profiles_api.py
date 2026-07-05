@@ -1,10 +1,9 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import logging
-from dataclasses import asdict, dataclass, field, fields
+from dataclasses import asdict, dataclass, fields
 from pathlib import Path
 from typing import Any
-from unittest.mock import MagicMock
 
 import pytest
 from fastapi import FastAPI
@@ -125,11 +124,7 @@ class _FakeSettingsManager:
         return dict(self._settings)
 
     def get_pinned_model_ids(self) -> list[str]:
-        return [
-            mid
-            for mid, s in self._settings.items()
-            if s.is_pinned
-        ]
+        return [mid for mid, s in self._settings.items() if s.is_pinned]
 
     def list_profiles(self, model_id: str) -> list[dict]:
         return list(self._profiles.get(model_id, {}).values())
@@ -178,9 +173,7 @@ class _FakeSettingsManager:
         profile = profiles[name]
         if new_name is not None and new_name != name:
             if " " in new_name:
-                raise InvalidProfileNameError(
-                    f"Invalid profile name: {new_name}"
-                )
+                raise InvalidProfileNameError(f"Invalid profile name: {new_name}")
             del profiles[name]
             profile["name"] = new_name
             profile["api_name"] = new_name
@@ -333,11 +326,21 @@ class _FakeServerState:
 
 def _patch_model_profiles(monkeypatch):
     import fusion_mlx.model_profiles as mp
-    monkeypatch.setattr(mp, "InvalidProfileNameError", InvalidProfileNameError, raising=False)
-    monkeypatch.setattr(mp, "filter_universal_fields", filter_universal_fields, raising=False)
-    monkeypatch.setattr(mp, "UNIVERSAL_PROFILE_FIELDS", UNIVERSAL_PROFILE_FIELDS, raising=False)
+
     monkeypatch.setattr(
-        mp, "MODEL_SPECIFIC_PROFILE_FIELDS", MODEL_SPECIFIC_PROFILE_FIELDS, raising=False
+        mp, "InvalidProfileNameError", InvalidProfileNameError, raising=False
+    )
+    monkeypatch.setattr(
+        mp, "filter_universal_fields", filter_universal_fields, raising=False
+    )
+    monkeypatch.setattr(
+        mp, "UNIVERSAL_PROFILE_FIELDS", UNIVERSAL_PROFILE_FIELDS, raising=False
+    )
+    monkeypatch.setattr(
+        mp,
+        "MODEL_SPECIFIC_PROFILE_FIELDS",
+        MODEL_SPECIFIC_PROFILE_FIELDS,
+        raising=False,
     )
 
 
@@ -422,8 +425,8 @@ def client(tmp_path, monkeypatch):
 
     monkeypatch.setattr(admin_auth, "require_admin", _fake_require_admin)
 
-    from fusion_mlx.admin import profile as admin_profile
     from fusion_mlx.admin import models_route as admin_models_route
+    from fusion_mlx.admin import profile as admin_profile
 
     app = FastAPI()
     app.include_router(admin_profile._router, prefix="/admin")
@@ -759,9 +762,7 @@ class TestExposeAsModelAPI:
     def test_profile_requests_accept_expose_as_model_flag(self):
         pass
 
-    @pytest.mark.skip(
-        reason="fusion-mlx lacks expose_as_model in profiles"
-    )
+    @pytest.mark.skip(reason="fusion-mlx lacks expose_as_model in profiles")
     def test_create_exposed_profile_surfaces_in_list(self, client):
         pass
 
@@ -771,9 +772,7 @@ class TestExposeAsModelAPI:
     def test_exposed_profile_surfaces_in_model_list(self, client):
         pass
 
-    @pytest.mark.skip(
-        reason="fusion-mlx lacks expose_as_model in UpdateProfileRequest"
-    )
+    @pytest.mark.skip(reason="fusion-mlx lacks expose_as_model in UpdateProfileRequest")
     def test_put_toggles_exposure_without_touching_settings(self, client):
         pass
 
@@ -783,9 +782,7 @@ class TestExposeAsModelAPI:
     def test_rename_exposed_profile_preserves_model_id(self, client):
         pass
 
-    @pytest.mark.skip(
-        reason="fusion-mlx lacks api_name in UpdateProfileRequest"
-    )
+    @pytest.mark.skip(reason="fusion-mlx lacks api_name in UpdateProfileRequest")
     def test_api_name_update_changes_exposed_model_id(self, client):
         pass
 
@@ -807,14 +804,10 @@ class TestExposeAsModelAPI:
     def test_model_alias_rejects_profile_id_created_by_new_alias(self, client):
         pass
 
-    @pytest.mark.skip(
-        reason="fusion-mlx lacks expose_as_model in UpdateProfileRequest"
-    )
+    @pytest.mark.skip(reason="fusion-mlx lacks expose_as_model in UpdateProfileRequest")
     def test_settings_only_put_preserves_exposure(self, client):
         pass
 
-    @pytest.mark.skip(
-        reason="fusion-mlx admin UI static files differ from omlx"
-    )
+    @pytest.mark.skip(reason="fusion-mlx admin UI static files differ from omlx")
     def test_dashboard_profile_ui_round_trips_expose_as_model_flag(self):
         pass

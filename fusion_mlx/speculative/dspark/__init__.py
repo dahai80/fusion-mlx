@@ -18,7 +18,13 @@
 # repo), so the drafter is operator-supplied via --dspark-drafter-path
 # rather than a per-alias registry field.
 
-from .eligibility import DSparkUnavailable, check, eligible_aliases, have_runtime, report
+from .eligibility import (
+    DSparkUnavailable,
+    check,
+    eligible_aliases,
+    have_runtime,
+    report,
+)
 from .runtime import DSparkRuntime, load_runtime
 
 __all__ = [

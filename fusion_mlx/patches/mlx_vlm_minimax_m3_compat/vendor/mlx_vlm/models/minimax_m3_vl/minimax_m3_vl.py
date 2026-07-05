@@ -1,5 +1,3 @@
-from typing import Optional
-
 import mlx.core as mx
 import mlx.nn as nn
 import numpy as np
@@ -80,8 +78,8 @@ def _sanitize_moe_weights(weights: dict, args):
                 if has_all([*down_keys, shared_down_key]):
                     down = pop_stack(down_keys)
                     shared_down = mx.expand_dims(weights.pop(shared_down_key), axis=0)
-                    weights[f"{prefix}.switch_mlp.down_proj.{suffix}"] = (
-                        mx.concatenate([down, shared_down], axis=0)
+                    weights[f"{prefix}.switch_mlp.down_proj.{suffix}"] = mx.concatenate(
+                        [down, shared_down], axis=0
                     )
                 continue
 
@@ -195,7 +193,7 @@ class Model(nn.Module):
     def encode_image(
         self,
         pixel_values: mx.array,
-        image_grid_thw: Optional[mx.array] = None,
+        image_grid_thw: mx.array | None = None,
     ) -> mx.array:
         if image_grid_thw is None:
             raise ValueError("MiniMax M3 VL image cache requires image_grid_thw")
@@ -204,7 +202,7 @@ class Model(nn.Module):
     def encode_video(
         self,
         pixel_values: mx.array,
-        video_grid_thw: Optional[mx.array] = None,
+        video_grid_thw: mx.array | None = None,
     ) -> mx.array:
         if video_grid_thw is None:
             raise ValueError("MiniMax M3 VL video cache requires video_grid_thw")
@@ -234,16 +232,16 @@ class Model(nn.Module):
 
     def get_input_embeddings(
         self,
-        input_ids: Optional[mx.array] = None,
-        pixel_values: Optional[mx.array] = None,
+        input_ids: mx.array | None = None,
+        pixel_values: mx.array | None = None,
         **kwargs,
     ):
-        image_grid_thw = kwargs.get("image_grid_thw", None)
-        video_grid_thw = kwargs.get("video_grid_thw", None)
+        image_grid_thw = kwargs.get("image_grid_thw")
+        video_grid_thw = kwargs.get("video_grid_thw")
 
-        pixel_values_videos = kwargs.get("pixel_values_videos", None)
-        cached = kwargs.get("cached_image_features", None)
-        cached_video = kwargs.get("cached_video_features", None)
+        pixel_values_videos = kwargs.get("pixel_values_videos")
+        cached = kwargs.get("cached_image_features")
+        cached_video = kwargs.get("cached_video_features")
 
         self.language_model._position_ids = None
         self.language_model._rope_deltas = None
@@ -365,9 +363,9 @@ class Model(nn.Module):
     def __call__(
         self,
         input_ids: mx.array,
-        pixel_values: Optional[mx.array] = None,
-        inputs_embeds: Optional[mx.array] = None,
-        mask: Optional[mx.array] = None,
+        pixel_values: mx.array | None = None,
+        inputs_embeds: mx.array | None = None,
+        mask: mx.array | None = None,
         cache=None,
         **kwargs,
     ):

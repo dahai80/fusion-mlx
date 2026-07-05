@@ -26,7 +26,6 @@ logger = logging.getLogger(__name__)
 PRESET_REMOTE_URL = "http://bench.dpdns.org/assets/omlx_preset.json"
 
 
-
 from .helpers import (
     _get_global_settings,
 )
@@ -92,7 +91,9 @@ async def login(request: LoginRequest, response: Response):
 
 
 @_router.post("/api/setup-api-key")
-async def setup_api_key(request: SetupApiKeyRequest, response: Response, fastapi_request: Request):
+async def setup_api_key(
+    request: SetupApiKeyRequest, response: Response, fastapi_request: Request
+):
     """
     Set up the initial API key when none is configured.
 
@@ -147,9 +148,7 @@ async def setup_api_key(request: SetupApiKeyRequest, response: Response, fastapi
     try:
         global_settings.save()
     except Exception as e:
-        raise HTTPException(
-            status_code=500, detail=f"Failed to save settings: {e}"
-        )
+        raise HTTPException(status_code=500, detail=f"Failed to save settings: {e}")
 
     logger.info("API key configured via initial setup")
 
@@ -223,7 +222,6 @@ async def auto_login(fastapi_request: Request, redirect: str = "/admin/dashboard
         max_age=86400,
     )
     return response
-
 
 
 router = _router

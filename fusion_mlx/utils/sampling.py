@@ -164,9 +164,7 @@ def make_sampler(
         if top_p > 0 and top_p < 1.0:
             sampling_methods.append(lambda x: apply_top_p(x, top_p))
         if min_p != 0.0:
-            sampling_methods.append(
-                lambda x: apply_min_p(x, min_p, min_tokens_to_keep)
-            )
+            sampling_methods.append(lambda x: apply_min_p(x, min_p, min_tokens_to_keep))
         if xtc_probability > 0.0:
             sampling_methods.append(
                 lambda x: apply_xtc(

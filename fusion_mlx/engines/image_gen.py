@@ -47,7 +47,7 @@ class ImageGenEngine(BaseNonStreamingEngine):
                 from flux import FluxPipeline
             except ImportError as exc:
                 raise ImportError(
-                    'Flux image generation requires mlx-examples flux module. '
+                    "Flux image generation requires mlx-examples flux module. "
                     'Install with: pip install "fusion-mlx[image]"'
                 ) from exc
 
@@ -57,7 +57,8 @@ class ImageGenEngine(BaseNonStreamingEngine):
 
         loop = asyncio.get_running_loop()
         self._pipeline = await asyncio.wait_for(
-            loop.run_in_executor(get_executor("io"), _load), timeout=120.0)
+            loop.run_in_executor(get_executor("io"), _load), timeout=120.0
+        )
         logger.info("ImageGen engine loaded: %s", self._model_name)
 
     async def stop(self) -> None:
@@ -67,7 +68,11 @@ class ImageGenEngine(BaseNonStreamingEngine):
         gc.collect()
         loop = asyncio.get_running_loop()
         await asyncio.wait_for(
-            loop.run_in_executor(get_executor("image"), lambda: (mx.synchronize(), mx.clear_cache())), timeout=5.0)
+            loop.run_in_executor(
+                get_executor("image"), lambda: (mx.synchronize(), mx.clear_cache())
+            ),
+            timeout=5.0,
+        )
 
     async def generate(
         self,
@@ -91,12 +96,19 @@ class ImageGenEngine(BaseNonStreamingEngine):
         pipeline = self._pipeline
         latent_size = _to_latent_size((height, width))
         t0 = time.monotonic()
-        activity_id = self._begin_activity("generating images", metadata={"prompt_len": len(prompt), "n_images": n_images})
+        activity_id = self._begin_activity(
+            "generating images",
+            metadata={"prompt_len": len(prompt), "n_images": n_images},
+        )
 
         def _generate():
             latents = pipeline.generate_latents(
-                prompt, n_images=n_images, num_steps=steps,
-                latent_size=latent_size, guidance=guidance, seed=seed or 0,
+                prompt,
+                n_images=n_images,
+                num_steps=steps,
+                latent_size=latent_size,
+                guidance=guidance,
+                seed=seed or 0,
             )
             mx.eval(next(latents))
             xt = None
@@ -112,6 +124,7 @@ class ImageGenEngine(BaseNonStreamingEngine):
             for i in range(min(n_images, decoded.shape[0])):
                 img = Image.fromarray(np.array(decoded[i]))
                 import io
+
                 buf = io.BytesIO()
                 img.save(buf, format=output_format)
                 images.append(buf.getvalue())
@@ -120,7 +133,8 @@ class ImageGenEngine(BaseNonStreamingEngine):
         try:
             loop = asyncio.get_running_loop()
             result = await asyncio.wait_for(
-                loop.run_in_executor(get_executor("image"), _generate), timeout=120.0)
+                loop.run_in_executor(get_executor("image"), _generate), timeout=120.0
+            )
             elapsed = time.monotonic() - t0
             self._update_activity(activity_id, elapsed_seconds=elapsed)
             return result

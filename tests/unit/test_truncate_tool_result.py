@@ -16,7 +16,6 @@ from fusion_mlx.api.anthropic_utils import (
     truncate_tool_result,
 )
 
-
 # =============================================================================
 # Mock Tokenizer
 # =============================================================================
@@ -227,7 +226,9 @@ class TestExtractToolResultContent:
     def test_no_truncation_when_max_tokens_none(self, tokenizer):
         """Truncation is skipped when max_tokens is None."""
         text = "one two three four five six seven eight nine ten"
-        result = _extract_tool_result_content(text, max_tokens=None, tokenizer=tokenizer)
+        result = _extract_tool_result_content(
+            text, max_tokens=None, tokenizer=tokenizer
+        )
         assert result == text  # Unchanged
 
 
@@ -449,7 +450,9 @@ class TestWrapTruncatedForHarmony:
     def test_extracts_truncation_metadata(self):
         from fusion_mlx.api.utils import _wrap_truncated_for_harmony
 
-        text = '{\n  "key": "val\n\n<truncated total_tokens="5000" shown_tokens="1000" />'
+        text = (
+            '{\n  "key": "val\n\n<truncated total_tokens="5000" shown_tokens="1000" />'
+        )
         result = _wrap_truncated_for_harmony(text)
         assert isinstance(result, dict)
         assert result["output"] == '{\n  "key": "val'

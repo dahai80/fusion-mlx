@@ -46,7 +46,7 @@ class CloudRouter:
         self.api_key = api_key
         self._litellm = None
 
-         # Circuit breaker state - prevents local/cloud oscillation
+        # Circuit breaker state - prevents local/cloud oscillation
         self._circuit_open = False
         self._circuit_failure_count = 0
         self._circuit_failure_threshold = 5
@@ -62,13 +62,15 @@ class CloudRouter:
             self._litellm = litellm
         return self._litellm
 
-
     def report_local_failure(self) -> None:
         self._circuit_failure_count += 1
         if self._circuit_failure_count >= self._circuit_failure_threshold:
             self._circuit_open = True
             self._circuit_open_at = time.time()
-            logger.warning("[CLOUD] Circuit breaker OPENED after %d consecutive local failures", self._circuit_failure_count)
+            logger.warning(
+                "[CLOUD] Circuit breaker OPENED after %d consecutive local failures",
+                self._circuit_failure_count,
+            )
 
     def report_local_success(self) -> None:
         if self._circuit_open and self._circuit_reset_on_success:
@@ -90,7 +92,10 @@ class CloudRouter:
             elapsed = time.time() - self._circuit_open_at
             if elapsed > self._half_open_timeout:
                 self._circuit_open = False  # half-open: allow one probe
-                logger.info("[CLOUD] Circuit breaker HALF-OPEN after %.0fs — allowing probe", elapsed)
+                logger.info(
+                    "[CLOUD] Circuit breaker HALF-OPEN after %.0fs — allowing probe",
+                    elapsed,
+                )
         return self._circuit_open or new_tokens > self.threshold
 
     async def completion(
@@ -201,7 +206,7 @@ class CloudRouter:
             except (TimeoutError, Exception) as e:
                 last_error = e
                 if attempt < 2:
-                    wait = 1.0 * (2 ** attempt)
+                    wait = 1.0 * (2**attempt)
                     logger.warning(
                         f"[CLOUD] Attempt {attempt + 1}/3 failed ({type(e).__name__}, "
                         f"{self.cloud_model}) — retrying in {wait:.0f}s"

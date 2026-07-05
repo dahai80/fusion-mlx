@@ -1,15 +1,15 @@
+import logging
 import os
 import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from fusion_mlx.telemetry.consent import maybe_prompt_for_consent
 from fusion_mlx.telemetry.redact import (
     bucket_memory_gb,
     bucket_tokens,
-    bucket_ttft_ms,
     bucket_tps,
+    bucket_ttft_ms,
     fingerprint_traceback,
     hash_flag_names,
     normalize_model_path,
@@ -22,8 +22,6 @@ from fusion_mlx.telemetry.schema import (
     sample_preview_payload,
 )
 from fusion_mlx.telemetry.state import (
-    ConsentState,
-    consent_path,
     get_consent_state,
     is_enabled,
     record_consent,
@@ -31,7 +29,6 @@ from fusion_mlx.telemetry.state import (
     set_cli_kill_switch,
 )
 
-import logging
 logger = logging.getLogger(__name__)
 
 
@@ -51,6 +48,7 @@ class TestConsent(unittest.TestCase):
         set_cli_kill_switch(False)
         # Reset the module-level kill switch
         import fusion_mlx.telemetry.state as _state_mod
+
         _state_mod._cli_kill_switch_active = False
 
     def tearDown(self):

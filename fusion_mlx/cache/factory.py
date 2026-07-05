@@ -9,6 +9,7 @@ Note: oMLX supports both pure-memory paged caching and SSD-backed caching.
 Memory KV cache is managed by mlx-lm's BatchGenerator. When paged_ssd_cache_dir
 is None, a pure-memory PagedCacheManager is created with LRU eviction.
 """
+
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Optional
@@ -211,7 +212,7 @@ class CacheFactory:
         prefix_cache = None
         memory_monitor = None
 
-           # Create paged cache (always), SSD cache (when configured)
+        # Create paged cache (always), SSD cache (when configured)
         paged_cache = CacheFactory.create_paged_cache(config, num_layers)
         paged_ssd_cache = CacheFactory.create_paged_ssd_cache(config, config.model_name)
 

@@ -179,9 +179,9 @@ class TestSTTShortWhisperAlias:
         # …and resolve via the shared helper (the same helper STT and
         # translations call).
         resolved = _resolve_stt_model("whisper")
-        assert "whisper-large-v3" in resolved.lower(), (
-            f"Expected `whisper` to resolve to the largest variant, got {resolved!r}"
-        )
+        assert (
+            "whisper-large-v3" in resolved.lower()
+        ), f"Expected `whisper` to resolve to the largest variant, got {resolved!r}"
 
     def test_whisper_1_legacy_alias_resolves(self):
         """OpenAI's legacy ``whisper-1`` placeholder maps to the same
@@ -568,9 +568,9 @@ class TestMlxAudioVersionPin:
             cfg = tomllib.load(f)
         audio_deps = cfg["project"]["optional-dependencies"]["audio"]
         mlx_audio_specs = [d for d in audio_deps if d.startswith("mlx-audio")]
-        assert len(mlx_audio_specs) == 1, (
-            f"Expected exactly one mlx-audio pin, found {mlx_audio_specs}"
-        )
+        assert (
+            len(mlx_audio_specs) == 1
+        ), f"Expected exactly one mlx-audio pin, found {mlx_audio_specs}"
         spec = mlx_audio_specs[0]
         # Both the floor AND the upper-bound matter. The floor is
         # historical; the upper-bound is the R7-H3 fix.

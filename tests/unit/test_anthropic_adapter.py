@@ -7,7 +7,6 @@ import pytest
 from fusion_mlx.api.adapters.anthropic import AnthropicAdapter
 from fusion_mlx.api.adapters.base import (
     BaseAdapter,
-    InternalMessage,
     InternalRequest,
     InternalResponse,
     StreamChunk,
@@ -33,7 +32,6 @@ from fusion_mlx.api.models import (
     ChatCompletionChoice,
     ChatCompletionResponse,
     FunctionCall,
-    Message,
     ToolCall,
     Usage,
 )
@@ -553,8 +551,8 @@ class TestAnthropicStreamingEvents:
 
 class TestAnthropicToolUseConversion:
     def test_tool_use_block_converted_to_calling_tool_format(self):
+        from fusion_mlx.api.anthropic_models import AnthropicMessage, MessagesRequest
         from fusion_mlx.api.anthropic_utils import convert_anthropic_to_internal
-        from fusion_mlx.api.anthropic_models import MessagesRequest, AnthropicMessage
 
         request = MessagesRequest(
             model="test-model",
@@ -598,14 +596,15 @@ class TestAnthropicToolUseConversion:
 
 class TestAnthropicAudioConversion:
     def test_input_audio_block_dropped_with_preserve_images(self):
-        from fusion_mlx.api.anthropic_utils import convert_anthropic_to_internal
+        import base64
+
         from fusion_mlx.api.anthropic_models import (
-            MessagesRequest,
             AnthropicMessage,
             ContentBlockInputAudio,
+            MessagesRequest,
         )
+        from fusion_mlx.api.anthropic_utils import convert_anthropic_to_internal
 
-        import base64
         fake_audio = base64.b64encode(b"\x00" * 100).decode()
 
         request = MessagesRequest(
@@ -628,9 +627,7 @@ class TestAnthropicAudioConversion:
             ],
         )
 
-        messages = convert_anthropic_to_internal(
-            request, preserve_images=True
-        )
+        messages = convert_anthropic_to_internal(request, preserve_images=True)
 
         assert len(messages) == 1
         content = messages[0]["content"]
@@ -639,14 +636,15 @@ class TestAnthropicAudioConversion:
         assert "input_audio" not in content.lower()
 
     def test_input_audio_block_dropped_without_preserve_images(self):
-        from fusion_mlx.api.anthropic_utils import convert_anthropic_to_internal
+        import base64
+
         from fusion_mlx.api.anthropic_models import (
-            MessagesRequest,
             AnthropicMessage,
             ContentBlockInputAudio,
+            MessagesRequest,
         )
+        from fusion_mlx.api.anthropic_utils import convert_anthropic_to_internal
 
-        import base64
         fake_audio = base64.b64encode(b"\x00" * 100).decode()
 
         request = MessagesRequest(
@@ -669,23 +667,22 @@ class TestAnthropicAudioConversion:
             ],
         )
 
-        messages = convert_anthropic_to_internal(
-            request, preserve_images=False
-        )
+        messages = convert_anthropic_to_internal(request, preserve_images=False)
 
         content = messages[0]["content"]
         assert isinstance(content, str)
         assert "input_audio" not in content.lower()
 
     def test_audio_only_message(self):
-        from fusion_mlx.api.anthropic_utils import convert_anthropic_to_internal
+        import base64
+
         from fusion_mlx.api.anthropic_models import (
-            MessagesRequest,
             AnthropicMessage,
             ContentBlockInputAudio,
+            MessagesRequest,
         )
+        from fusion_mlx.api.anthropic_utils import convert_anthropic_to_internal
 
-        import base64
         fake_audio = base64.b64encode(b"\x00" * 100).decode()
 
         request = MessagesRequest(
@@ -707,9 +704,7 @@ class TestAnthropicAudioConversion:
             ],
         )
 
-        messages = convert_anthropic_to_internal(
-            request, preserve_images=True
-        )
+        messages = convert_anthropic_to_internal(request, preserve_images=True)
 
         assert len(messages) == 1
 
@@ -1358,9 +1353,9 @@ class TestAnthropicResponseExcludesNullFields:
         )
         result = openai_to_anthropic(resp, "default")
         wire_json = result.model_dump_json(exclude_none=True)
-        assert ": null" not in wire_json and ":null" not in wire_json, (
-            f"wire JSON leaked a literal null: {wire_json[:500]}"
-        )
+        assert (
+            ": null" not in wire_json and ":null" not in wire_json
+        ), f"wire JSON leaked a literal null: {wire_json[:500]}"
 
     def test_tool_use_response_has_no_null_fields(self):
         tc = ToolCall(
@@ -1375,6 +1370,6 @@ class TestAnthropicResponseExcludesNullFields:
         resp = ChatCompletionResponse(model="default", choices=[choice], usage=Usage())
         result = openai_to_anthropic(resp, "default")
         wire_json = result.model_dump_json(exclude_none=True)
-        assert ": null" not in wire_json and ":null" not in wire_json, (
-            f"tool_use wire JSON leaked a null: {wire_json[:500]}"
-        )
+        assert (
+            ": null" not in wire_json and ":null" not in wire_json
+        ), f"tool_use wire JSON leaked a null: {wire_json[:500]}"

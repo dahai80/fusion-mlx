@@ -626,9 +626,9 @@ class TestStreamForcedReasoningEndToEnd:
         # only "every emitted call is valid" which would accept
         # duplicate valid calls; the spec requires a single tool_call
         # per forced ``tool_choice``.
-        assert len(all_calls) == 1, (
-            f"expected exactly 1 surviving tool_call, got {len(all_calls)}: {all_calls!r}"
-        )
+        assert (
+            len(all_calls) == 1
+        ), f"expected exactly 1 surviving tool_call, got {len(all_calls)}: {all_calls!r}"
         tc = all_calls[0]
         fn = tc.get("function") or {}
         assert fn.get("name") == "get_weather"
@@ -736,9 +736,9 @@ class TestStreamForcedReasoningEndToEnd:
             if ev.type == "tool_call"
             for tc in (ev.tool_calls or [])
         ]
-        assert len(all_calls) == 1, (
-            f"required-mode finalize leaked a scratch call: {all_calls!r}"
-        )
+        assert (
+            len(all_calls) == 1
+        ), f"required-mode finalize leaked a scratch call: {all_calls!r}"
         fn = all_calls[0].get("function") or {}
         parsed = json.loads(fn["arguments"])
         assert isinstance(parsed, dict)
@@ -848,16 +848,16 @@ class TestR11AInvariantFilterEmptyDoesNotPromiseToolCalls:
         state = _collect_terminal_state(events)
         # Invariant: zero tool_call deltas reached the wire AND no
         # finish_reason==tool_calls was promised.
-        assert state["tool_call_delta_count"] == 0, (
-            f"filter should have dropped the scratch call but tool_call deltas leaked: {state!r}"
-        )
-        assert "tool_calls" not in state["finish_reasons"], (
-            f"R11-V1 regression: finish_reason=tool_calls emitted with zero deltas: {state!r}"
-        )
+        assert (
+            state["tool_call_delta_count"] == 0
+        ), f"filter should have dropped the scratch call but tool_call deltas leaked: {state!r}"
+        assert (
+            "tool_calls" not in state["finish_reasons"]
+        ), f"R11-V1 regression: finish_reason=tool_calls emitted with zero deltas: {state!r}"
         # Downgrade target: engine's natural finish_reason ("stop").
-        assert "stop" in state["finish_reasons"], (
-            f"terminal finish_reason missing or wrong: {state!r}"
-        )
+        assert (
+            "stop" in state["finish_reasons"]
+        ), f"terminal finish_reason missing or wrong: {state!r}"
         # Wire-truth counter MUST be zero.
         assert pp._tool_calls_emitted_to_wire == 0
 
@@ -889,9 +889,9 @@ class TestR11AInvariantFilterEmptyDoesNotPromiseToolCalls:
 
         state = _collect_terminal_state(events)
         assert state["tool_call_delta_count"] == 0
-        assert "tool_calls" not in state["finish_reasons"], (
-            f"R11-V1 regression on next-chunk early-exit: {state!r}"
-        )
+        assert (
+            "tool_calls" not in state["finish_reasons"]
+        ), f"R11-V1 regression on next-chunk early-exit: {state!r}"
         assert "stop" in state["finish_reasons"]
 
     def test_required_mode_real_call_keeps_tool_calls(self):
@@ -915,12 +915,12 @@ class TestR11AInvariantFilterEmptyDoesNotPromiseToolCalls:
         events.extend(pp.finalize())
 
         state = _collect_terminal_state(events)
-        assert state["tool_call_delta_count"] >= 1, (
-            f"valid required-mode call must surface a tool_call delta: {state!r}"
-        )
-        assert "tool_calls" in state["finish_reasons"], (
-            f"valid required-mode call must keep finish=tool_calls: {state!r}"
-        )
+        assert (
+            state["tool_call_delta_count"] >= 1
+        ), f"valid required-mode call must surface a tool_call delta: {state!r}"
+        assert (
+            "tool_calls" in state["finish_reasons"]
+        ), f"valid required-mode call must keep finish=tool_calls: {state!r}"
         assert pp._tool_calls_emitted_to_wire >= 1
 
     def test_finalize_recovery_increments_wire_counter(self):
@@ -993,9 +993,9 @@ class TestR11AInvariantHoldsAcrossSuite:
             # Core invariant — same assertion the route-level prompt
             # spells out: ``finish_reason=="tool_calls" ⇒ tool_call_delta_count >= 1``.
             if "tool_calls" in state["finish_reasons"]:
-                assert state["tool_call_delta_count"] >= 1, (
-                    f"R11-A invariant violated on {label!r}: {state!r}"
-                )
+                assert (
+                    state["tool_call_delta_count"] >= 1
+                ), f"R11-A invariant violated on {label!r}: {state!r}"
             # And the wire-truth counter must always match the emitted
             # count (no orphan increments / decrements).
             assert pp._tool_calls_emitted_to_wire == state["tool_call_delta_count"], (
@@ -1032,9 +1032,9 @@ class TestR11V2ExactlyOneFinishReason:
             _make_output(text=scratch, finished=True, finish_reason="stop")
         )
         finish_events = [e for e in events if e.type == "finish"]
-        assert finish_events, (
-            "filter-drop on finished chunk must still emit a finish event"
-        )
+        assert (
+            finish_events
+        ), "filter-drop on finished chunk must still emit a finish event"
         # And the lone finish carries a non-None reason.
         assert all(e.finish_reason for e in finish_events)
 
@@ -1052,9 +1052,9 @@ class TestR11V2ExactlyOneFinishReason:
         events.extend(pp.finalize())
         state = _collect_terminal_state(events)
         # Exactly one finish_reason across the stream (R11-V2 spec).
-        assert len(state["finish_reasons"]) == 1, (
-            f"expected exactly one finish_reason but got {state['finish_reasons']!r}"
-        )
+        assert (
+            len(state["finish_reasons"]) == 1
+        ), f"expected exactly one finish_reason but got {state['finish_reasons']!r}"
         assert state["finish_reasons"][0] == "tool_calls"
 
 
@@ -1094,10 +1094,10 @@ class TestR11ARegressionFromDogfoodSSE:
         events.extend(pp.finalize())
 
         state = _collect_terminal_state(events)
-        assert state["tool_call_delta_count"] == 0, (
-            f"byte-streamed repro leaked a tool_call delta: {state!r}"
-        )
-        assert "tool_calls" not in state["finish_reasons"], (
-            f"R11-V1 byte-stream regression: {state!r}"
-        )
+        assert (
+            state["tool_call_delta_count"] == 0
+        ), f"byte-streamed repro leaked a tool_call delta: {state!r}"
+        assert (
+            "tool_calls" not in state["finish_reasons"]
+        ), f"R11-V1 byte-stream regression: {state!r}"
         assert "stop" in state["finish_reasons"]

@@ -54,9 +54,7 @@ async def create_sub_key(
     new_hash = _hash_key(request.key)
     for sk in global_settings.auth.sub_keys:
         if sk.key_hash == new_hash:
-            raise HTTPException(
-                status_code=400, detail="This key already exists"
-            )
+            raise HTTPException(status_code=400, detail="This key already exists")
 
     entry = SubKeyEntry(
         name=request.name or "",
@@ -69,12 +67,13 @@ async def create_sub_key(
         global_settings.save()
     except Exception as e:
         global_settings.auth.sub_keys.pop()
-        raise HTTPException(
-            status_code=500, detail=f"Failed to save settings: {e}"
-        )
+        raise HTTPException(status_code=500, detail=f"Failed to save settings: {e}")
 
     logger.info(f"Sub key created: {request.name or '(unnamed)'}")
-    return {"success": True, "sub_key": {"name": entry.name, "created_at": entry.created_at}}
+    return {
+        "success": True,
+        "sub_key": {"name": entry.name, "created_at": entry.created_at},
+    }
 
 
 @_router.delete("/api/sub-keys")

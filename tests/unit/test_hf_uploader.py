@@ -3,13 +3,10 @@
 
 import asyncio
 import json
-import os
-import time
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import patch
 
 import pytest
-
 from fusion_mlx.admin.hf_uploader import (
     HFUploader,
     UploadStatus,
@@ -19,7 +16,6 @@ from fusion_mlx.admin.hf_uploader import (
     _has_meaningful_readme,
     _is_oq_model,
 )
-
 
 # =============================================================================
 # Helper Tests
@@ -39,9 +35,7 @@ class TestIsOqModel:
         # Suffixes longer than 3 chars after 'oQ' must still be detected.
         assert _is_oq_model("Qwen3.6-27B-oQ3.5e") is True
         assert (
-            _is_oq_model(
-                "Qwen3.6-35B-A3B-Claude-4.7-Opus-Reasoning-Distilled-oQ3.5e"
-            )
+            _is_oq_model("Qwen3.6-35B-A3B-Claude-4.7-Opus-Reasoning-Distilled-oQ3.5e")
             is True
         )
 
@@ -193,20 +187,28 @@ def model_dirs(tmp_path):
     # oQ model
     oq_model = model_dir / "Llama-3B-oQ4"
     oq_model.mkdir()
-    (oq_model / "config.json").write_text(json.dumps({
-        "model_type": "llama",
-        "quantization": {"bits": 4, "group_size": 64},
-    }))
+    (oq_model / "config.json").write_text(
+        json.dumps(
+            {
+                "model_type": "llama",
+                "quantization": {"bits": 4, "group_size": 64},
+            }
+        )
+    )
     # Create a fake safetensors file
     (oq_model / "model.safetensors").write_bytes(b"\x00" * 1024)
 
     # Another oQ model
     oq_model2 = model_dir / "Qwen-7B-oQ3"
     oq_model2.mkdir()
-    (oq_model2 / "config.json").write_text(json.dumps({
-        "model_type": "qwen2",
-        "quantization": {"bits": 3, "group_size": 64},
-    }))
+    (oq_model2 / "config.json").write_text(
+        json.dumps(
+            {
+                "model_type": "qwen2",
+                "quantization": {"bits": 3, "group_size": 64},
+            }
+        )
+    )
     (oq_model2 / "model.safetensors").write_bytes(b"\x00" * 2048)
 
     # Non-oQ model (has README)
@@ -277,10 +279,14 @@ class TestHFUploaderListModels:
         extra_dir.mkdir()
         extra_model = extra_dir / "Phi-3B-oQ4"
         extra_model.mkdir()
-        (extra_model / "config.json").write_text(json.dumps({
-            "model_type": "phi",
-            "quantization": {"bits": 4, "group_size": 64},
-        }))
+        (extra_model / "config.json").write_text(
+            json.dumps(
+                {
+                    "model_type": "phi",
+                    "quantization": {"bits": 4, "group_size": 64},
+                }
+            )
+        )
         (extra_model / "model.safetensors").write_bytes(b"\x00" * 1024)
 
         uploader.update_model_dirs(model_dirs + [str(extra_dir)])
@@ -508,6 +514,7 @@ class TestHFUploaderReadme:
 
             # Capture what upload_folder receives
             uploaded_files = []
+
             def fake_upload(**kwargs):
                 folder = Path(kwargs["folder_path"])
                 uploaded_files.extend([f.name for f in folder.iterdir()])
@@ -539,6 +546,7 @@ class TestHFUploaderReadme:
             mock_api.create_repo.return_value = None
 
             readme_contents = []
+
             def fake_upload(**kwargs):
                 folder = Path(kwargs["folder_path"])
                 readme = folder / "README.md"
@@ -575,6 +583,7 @@ class TestHFUploaderReadme:
             mock_api.create_repo.return_value = None
 
             readme_contents = []
+
             def fake_upload(**kwargs):
                 folder = Path(kwargs["folder_path"])
                 readme = folder / "README.md"

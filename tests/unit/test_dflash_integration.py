@@ -58,9 +58,9 @@ def test_serve_parser_exposes_enable_dflash() -> None:
     assert "--enable-dflash" in out.stdout, "serve --help should list --enable-dflash"
     # Help text mentions the install path so users know how to enable
     # the feature when it's missing.
-    assert "[dflash]" in out.stdout, (
-        "help text should reference the rapid-mlx[dflash] extras"
-    )
+    assert (
+        "[dflash]" in out.stdout
+    ), "help text should reference the rapid-mlx[dflash] extras"
 
 
 # =============================================================================
@@ -652,9 +652,9 @@ def test_stream_completion_surfaces_constructor_exception(monkeypatch) -> None:
     # Must still get a clean [DONE] terminator + the error block.
     # finish_reason is OpenAI-spec-compliant ``"length"`` (see the
     # generator-exception test above for full rationale).
-    assert "data: [DONE]" in body, (
-        f"constructor-time crash must still terminate the stream; got:\n{body}"
-    )
+    assert (
+        "data: [DONE]" in body
+    ), f"constructor-time crash must still terminate the stream; got:\n{body}"
     assert '"finish_reason": "length"' in body
     assert "dflash_runtime_error" in body
     assert "simulated OOM at generator construction" in body
@@ -705,12 +705,12 @@ def test_stream_completion_reports_length_when_max_tokens_hit(monkeypatch) -> No
     body = b"".join(chunks).decode()
     # The penultimate SSE event carries the final finish_reason — must be
     # "length", not "stop", since we hit the token budget.
-    assert '"finish_reason": "length"' in body, (
-        f"max_tokens hit should report finish_reason=length; got:\n{body}"
-    )
-    assert '"finish_reason": "stop"' not in body, (
-        f"must not also emit finish_reason=stop on the final event; got:\n{body}"
-    )
+    assert (
+        '"finish_reason": "length"' in body
+    ), f"max_tokens hit should report finish_reason=length; got:\n{body}"
+    assert (
+        '"finish_reason": "stop"' not in body
+    ), f"must not also emit finish_reason=stop on the final event; got:\n{body}"
 
 
 @_skip_without_mlx_vlm
@@ -768,9 +768,9 @@ def test_stream_completion_reports_stop_when_eos_lands_at_max_tokens(
         "EOS at exactly max_tokens must be classified as stop, not length; "
         f"got:\n{body}"
     )
-    assert '"finish_reason": "length"' not in body, (
-        f"must not also emit length when last token is EOS; got:\n{body}"
-    )
+    assert (
+        '"finish_reason": "length"' not in body
+    ), f"must not also emit length when last token is EOS; got:\n{body}"
 
 
 @_skip_without_mlx_vlm
@@ -903,9 +903,9 @@ def test_dflashruntime_accept_lens_tolerates_wrong_type(caplog) -> None:
 
     with caplog.at_level(logging.WARNING, logger="vllm_mlx.speculative.dflash.runtime"):
         rt.reset_accept_lens()
-    assert any("unexpected type" in rec.message for rec in caplog.records), (
-        "reset_accept_lens should warn (not crash) when accept_lens isn't a list"
-    )
+    assert any(
+        "unexpected type" in rec.message for rec in caplog.records
+    ), "reset_accept_lens should warn (not crash) when accept_lens isn't a list"
     # Snapshot also degrades gracefully — empty list, not raise.
     assert rt.accept_lens_snapshot() == []
 

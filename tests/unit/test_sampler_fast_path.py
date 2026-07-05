@@ -24,12 +24,11 @@ from __future__ import annotations
 
 import mlx.core as mx
 import pytest
-from mlx_lm.sample_utils import make_sampler
-
 from fusion_mlx._sampler_fast_path import (
     is_fused_top_p_eligible,
     make_fused_top_p_temp_sampler,
 )
+from mlx_lm.sample_utils import make_sampler
 
 
 class TestEligibility:
@@ -401,12 +400,12 @@ class TestDistributionalEquivalence:
         # Exactly ONE of the tied tokens (10 or 13) is in each kept set.
         tied_in_fused = {10, 13} & set(fused_counts.keys())
         tied_in_chain = {10, 13} & set(chain_counts.keys())
-        assert len(tied_in_fused) == 1, (
-            f"exactly one tied token expected in fused kept set, got {tied_in_fused}"
-        )
-        assert len(tied_in_chain) == 1, (
-            f"exactly one tied token expected in mlx-lm kept set, got {tied_in_chain}"
-        )
+        assert (
+            len(tied_in_fused) == 1
+        ), f"exactly one tied token expected in fused kept set, got {tied_in_fused}"
+        assert (
+            len(tied_in_chain) == 1
+        ), f"exactly one tied token expected in mlx-lm kept set, got {tied_in_chain}"
 
     def test_top_p_plus_top_k_kept_set_matches_mlx_lm(self):
         """When both top_p and top_k are active the fused sampler must
@@ -442,6 +441,6 @@ class TestDistributionalEquivalence:
         )
         # Sanity-check the intersection actually constrained the set:
         # top_k=3 means at most 3 tokens are sampleable.
-        assert len(fused_counts) <= 3, (
-            f"top_k=3 should cap kept set at 3, got {len(fused_counts)}"
-        )
+        assert (
+            len(fused_counts) <= 3
+        ), f"top_k=3 should cap kept set at 3, got {len(fused_counts)}"

@@ -19,7 +19,6 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
-
 from fusion_mlx.launch import (
     ADAPTERS,
     _common,

@@ -9,6 +9,15 @@ dependency. Mirrors the test shape of test_anthropic_adapter.py.
 import json
 
 import pytest
+from fusion_mlx.api.responses_adapter import (
+    _convert_status,
+    _convert_text_format,
+    _convert_tool_choice,
+    _convert_tools,
+    _merge_system_messages,
+    openai_to_responses,
+    responses_to_openai,
+)
 
 from fusion_mlx.api.models import (
     AssistantMessage,
@@ -19,15 +28,6 @@ from fusion_mlx.api.models import (
     PromptTokensDetails,
     ToolCall,
     Usage,
-)
-from fusion_mlx.api.responses_adapter import (
-    _convert_status,
-    _convert_text_format,
-    _convert_tool_choice,
-    _convert_tools,
-    _merge_system_messages,
-    openai_to_responses,
-    responses_to_openai,
 )
 from fusion_mlx.api.responses_models import (
     ResponsesContentItem,

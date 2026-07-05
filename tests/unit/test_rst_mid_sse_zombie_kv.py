@@ -173,15 +173,15 @@ async def test_add_request_cancellation_aborts_after_executor_completes():
         # Per-request state (collectors, finished events, stream state)
         # MUST be released. Otherwise the dicts grow unbounded under
         # a RST storm.
-        assert not eng._output_collectors, (
-            "output collector left behind after cancellation cleanup"
-        )
-        assert not eng._finished_events, (
-            "finished event left behind after cancellation cleanup"
-        )
-        assert not eng._stream_states, (
-            "stream state left behind after cancellation cleanup"
-        )
+        assert (
+            not eng._output_collectors
+        ), "output collector left behind after cancellation cleanup"
+        assert (
+            not eng._finished_events
+        ), "finished event left behind after cancellation cleanup"
+        assert (
+            not eng._stream_states
+        ), "stream state left behind after cancellation cleanup"
 
 
 @pytest.mark.asyncio
@@ -370,9 +370,9 @@ async def test_add_request_pure_cancellation_before_executor_runs():
 
         # ``scheduler.add_request`` was never invoked — the cf was
         # cancelled before it ran.
-        assert not eng.scheduler.add_request.called, (
-            "executor job ran despite cancellation — test setup is wrong"
-        )
+        assert (
+            not eng.scheduler.add_request.called
+        ), "executor job ran despite cancellation — test setup is wrong"
         # And we MUST NOT have asked the scheduler to abort a request
         # that was never admitted.
         assert not eng.scheduler.abort_request.called, (
@@ -381,12 +381,12 @@ async def test_add_request_pure_cancellation_before_executor_runs():
             " must branch on _future.cancelled()."
         )
         # Per-request state MUST still be released.
-        assert not eng._output_collectors, (
-            "output collector leaked on cancelled-before-run path"
-        )
-        assert not eng._finished_events, (
-            "finished event leaked on cancelled-before-run path"
-        )
+        assert (
+            not eng._output_collectors
+        ), "output collector leaked on cancelled-before-run path"
+        assert (
+            not eng._finished_events
+        ), "finished event leaked on cancelled-before-run path"
     finally:
         block.set()
         pool.shutdown(wait=False, cancel_futures=True)

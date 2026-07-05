@@ -14,23 +14,16 @@ Usage:
     fusion-mlx chat qwen3.5-4b-4bit
 """
 
-
 import argparse
 import os
 import sys
 
 from fusion_mlx._cli_base import (
-    MIRROR_DEFAULT,
     _listen_fd_arg,
     _log_level_choice,
     _port_arg,
     _print_unknown_model_help,
     alias_completer,
-)
-from fusion_mlx.cli_serve import (
-    _add_pflash_args,
-    bench_command,
-    serve_command,
 )
 from fusion_mlx.cli_commands import (
     agents_command,
@@ -43,6 +36,11 @@ from fusion_mlx.cli_commands import (
     rm_command,
     telemetry_command,
     upgrade_command,
+)
+from fusion_mlx.cli_serve import (
+    _add_pflash_args,
+    bench_command,
+    serve_command,
 )
 
 
@@ -1554,6 +1552,7 @@ Examples:
     # Share subcommand — expose a local serve behind a public fusionmlx.com URL.
     try:
         from fusion_mlx.share.cli import register as _register_share
+
         _register_share(subparsers)
     except ModuleNotFoundError:
         pass
@@ -1565,6 +1564,7 @@ Examples:
     # serve→…→share→launch, matching the rough "more common first" flow.
     try:
         from fusion_mlx.launch.cli import register as _register_launch
+
         _register_launch(subparsers)
     except ModuleNotFoundError:
         pass
@@ -1938,9 +1938,11 @@ Examples:
         telemetry_command(args)
     elif args.command == "share":
         from fusion_mlx.share.cli import share_command
+
         share_command(args)
     elif args.command == "launch":
         from fusion_mlx.launch.cli import launch_command
+
         launch_command(args)
     else:
         parser.print_help()

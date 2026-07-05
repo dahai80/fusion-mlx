@@ -52,8 +52,9 @@ def client_factory():
     Cache routes don't touch the engine for the happy path; the mock
     satisfies the 503-check guard in the route handlers.
     """
-    from fusion_mlx.config import get_config
     from fusion_mlx.routes.health import admin_router, router
+
+    from fusion_mlx.config import get_config
 
     cfg = get_config()
     prev = {
@@ -342,9 +343,9 @@ def test_cache_import_501_envelope_does_not_leak_operator_path(
     body = r.json()
     # The resolved source path is the most direct leak the 501 stub
     # could surface — exact-string check before the substring sweep.
-    assert str(tmp_path) not in r.text, (
-        f"resolved source path {str(tmp_path)!r} leaked into 501 body: {r.text!r}"
-    )
+    assert (
+        str(tmp_path) not in r.text
+    ), f"resolved source path {str(tmp_path)!r} leaked into 501 body: {r.text!r}"
     for needle in ("/Users/", ".cache", "cache_exports"):
         assert needle not in r.text, f"{needle!r} leaked into 501 body: {r.text!r}"
     assert "secret-org-model" not in r.text
@@ -411,9 +412,9 @@ def test_cache_info_does_not_leak_operator_path(
 
     r = client.get("/v1/cache/info")
     assert r.status_code == 200, r.text
-    assert needle not in r.text, (
-        f"{needle!r} leaked into /v1/cache/info 200 body: {r.text!r}"
-    )
+    assert (
+        needle not in r.text
+    ), f"{needle!r} leaked into /v1/cache/info 200 body: {r.text!r}"
 
 
 def test_cache_info_returns_canonical_shape_without_path_field(

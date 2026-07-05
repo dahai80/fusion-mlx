@@ -11,6 +11,7 @@ Three comparisons on a real model:
 Skips when the model is not cached. Run directly to write the report:
     python tests/test_turboquant_batch_memory.py
 """
+
 import importlib.util
 from pathlib import Path
 
@@ -58,8 +59,11 @@ def _prompts(tokenizer):
         "List two kinds of fruit.",
     ]
     return [
-        list(tokenizer.apply_chat_template(
-            [{"role": "user", "content": m}], add_generation_prompt=True))
+        list(
+            tokenizer.apply_chat_template(
+                [{"role": "user", "content": m}], add_generation_prompt=True
+            )
+        )
         for m in msgs
     ]
 
@@ -69,8 +73,11 @@ def _convert_to_tq(cache, bits, skip_last=True):
     kv = [i for i, c in enumerate(cache) if isinstance(c, KVCache)]
     last = kv[-1] if (skip_last and len(kv) > 1) else -1
     return [
-        (c if (not isinstance(c, KVCache) or i == last)
-         else TurboQuantKVCache.from_cache(c, bits=bits))
+        (
+            c
+            if (not isinstance(c, KVCache) or i == last)
+            else TurboQuantKVCache.from_cache(c, bits=bits)
+        )
         for i, c in enumerate(cache)
     ]
 
@@ -103,8 +110,8 @@ def _gather():
     # --- occupancy at a controlled length (over-alloc slack cancels) ---
     occ_fp16 = _occupancy_at(model, OCC_LEN)
     occ_tq = _occupancy_at(model, OCC_LEN, bits=TQ_BITS)
-    bpt_fp16 = occ_fp16 / OCC_LEN          # bytes per token, fp16
-    bpt_tq = occ_tq / OCC_LEN              # bytes per token, TQ
+    bpt_fp16 = occ_fp16 / OCC_LEN  # bytes per token, fp16
+    bpt_tq = occ_tq / OCC_LEN  # bytes per token, TQ
     # batch (B requests, left-padded to max len): analytical, no over-alloc noise
     max_len = max(lens)
     batch_bytes_tq = len(lens) * max_len * bpt_tq
@@ -112,30 +119,62 @@ def _gather():
     pad_waste = (len(lens) * max_len - sum(lens)) * bpt_tq
 
     # --- accuracy + live peak (through the real scheduler) ---
-    (single_tq, peak_single_tq) = _peak(
-        lambda: [helpers._generate_tokens(model, tokenizer, p, max_tokens=MAX_TOKENS, turboquant_bits=TQ_BITS)[0] for p in prompts])
-    (_, peak_single_fp) = _peak(
-        lambda: [helpers._generate_tokens(model, tokenizer, p, max_tokens=MAX_TOKENS)[0] for p in prompts])
-    (_, peak_batch_fp) = _peak(
-        lambda: helpers._generate_batch(model, tokenizer, prompts, mode="concurrent", max_tokens=MAX_TOKENS))
-    (batch_tq_res, peak_batch_tq) = _peak(
-        lambda: helpers._generate_batch(model, tokenizer, prompts, mode="concurrent", max_tokens=MAX_TOKENS, turboquant_bits=TQ_BITS))
+    single_tq, peak_single_tq = _peak(
+        lambda: [
+            helpers._generate_tokens(
+                model, tokenizer, p, max_tokens=MAX_TOKENS, turboquant_bits=TQ_BITS
+            )[0]
+            for p in prompts
+        ]
+    )
+    _, peak_single_fp = _peak(
+        lambda: [
+            helpers._generate_tokens(model, tokenizer, p, max_tokens=MAX_TOKENS)[0]
+            for p in prompts
+        ]
+    )
+    _, peak_batch_fp = _peak(
+        lambda: helpers._generate_batch(
+            model, tokenizer, prompts, mode="concurrent", max_tokens=MAX_TOKENS
+        )
+    )
+    batch_tq_res, peak_batch_tq = _peak(
+        lambda: helpers._generate_batch(
+            model,
+            tokenizer,
+            prompts,
+            mode="concurrent",
+            max_tokens=MAX_TOKENS,
+            turboquant_bits=TQ_BITS,
+        )
+    )
 
     batch_tq = {rid: toks for rid, toks, _ in batch_tq_res}
     matches = []
     for i in range(len(prompts)):
         s, b = single_tq[i], batch_tq.get(f"batch-{i}", [])
         n = min(len(s), len(b))
-        matches.append(100.0 * sum(1 for k in range(n) if s[k] == b[k]) / n if n else 0.0)
+        matches.append(
+            100.0 * sum(1 for k in range(n) if s[k] == b[k]) / n if n else 0.0
+        )
 
     return dict(
-        lens=lens, occ_len=OCC_LEN,
-        occ_fp16=occ_fp16, occ_tq=occ_tq, bpt_fp16=bpt_fp16, bpt_tq=bpt_tq,
-        batch_bytes_tq=batch_bytes_tq, batch_bytes_fp16=batch_bytes_fp16,
-        pad_waste=pad_waste, max_len=max_len,
-        peak_single_fp=peak_single_fp, peak_single_tq=peak_single_tq,
-        peak_batch_fp=peak_batch_fp, peak_batch_tq=peak_batch_tq,
-        batch_tq=batch_tq, matches=matches,
+        lens=lens,
+        occ_len=OCC_LEN,
+        occ_fp16=occ_fp16,
+        occ_tq=occ_tq,
+        bpt_fp16=bpt_fp16,
+        bpt_tq=bpt_tq,
+        batch_bytes_tq=batch_bytes_tq,
+        batch_bytes_fp16=batch_bytes_fp16,
+        pad_waste=pad_waste,
+        max_len=max_len,
+        peak_single_fp=peak_single_fp,
+        peak_single_tq=peak_single_tq,
+        peak_batch_fp=peak_batch_fp,
+        peak_batch_tq=peak_batch_tq,
+        batch_tq=batch_tq,
+        matches=matches,
     )
 
 
@@ -152,7 +191,9 @@ def _metrics():
 def test_batch_tq_coherent_and_tracks_single():
     m = _metrics()
     for i in range(len(m["lens"])):
-        assert len(m["batch_tq"].get(f"batch-{i}", [])) >= 5, f"batch req {i} degenerate"
+        assert (
+            len(m["batch_tq"].get(f"batch-{i}", [])) >= 5
+        ), f"batch req {i} degenerate"
     assert max(m["matches"]) >= 50.0, f"no request tracked single-seq: {m['matches']}"
 
 
@@ -165,7 +206,9 @@ def test_occupancy_tq_below_fp16():
 def test_batch_occupancy_beats_fp16_and_pad_nonnegative():
     m = _metrics()
     # same lengths, so the batch saving equals the per-token ratio (<0.6)
-    assert m["batch_bytes_tq"] < 0.6 * m["batch_bytes_fp16"], "batch TQ not saving vs fp16"
+    assert (
+        m["batch_bytes_tq"] < 0.6 * m["batch_bytes_fp16"]
+    ), "batch TQ not saving vs fp16"
     assert m["pad_waste"] >= 0
 
 
@@ -176,7 +219,7 @@ def test_peaks_recorded():
 
 
 def _write_report(m, path="tq_batch_memory.md"):
-    gb, kb = 1024 ** 3, 1024
+    gb, kb = 1024**3, 1024
     nb = len(m["lens"])
     ratio = m["occ_tq"] / m["occ_fp16"]
     # project savings at a long context where KV (not weights) dominates

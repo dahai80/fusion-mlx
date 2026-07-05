@@ -1,7 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 """Tests for omlx.utils.proc_memory.get_phys_footprint."""
 
-import ctypes
 import os
 import sys
 

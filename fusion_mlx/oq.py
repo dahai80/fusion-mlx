@@ -16,9 +16,10 @@ import re
 import shutil
 import tempfile
 import time as _time
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable, Optional, Union
+from typing import Any
 
 try:
     import mlx.core as mx
@@ -127,7 +128,7 @@ class QuantPlan:
 
 def universal_quant_predicate(
     path: str, module, config: dict, oq_level: int = 4
-) -> Union[bool, dict]:
+) -> bool | dict:
     """Per-tensor quantization decision based on GGUF/unsloth/llama.cpp rules.
 
     Protection levels vary by oQ level:
@@ -1957,7 +1958,7 @@ def _sensitivity_lm_config_override(config: dict) -> dict | None:
 def make_predicate(config: dict, oq_level: int = 4) -> Callable:
     """Create a quant_predicate closure for mlx-lm's quantize_model."""
 
-    def predicate(path: str, module) -> Union[bool, dict]:
+    def predicate(path: str, module) -> bool | dict:
         return universal_quant_predicate(path, module, config, oq_level)
 
     return predicate
@@ -3149,7 +3150,7 @@ def quantize_oq_streaming(
     output_path: str,
     oq_level: int,
     group_size: int = 64,
-    progress_callback: Optional[Callable[[str, float], None]] = None,
+    progress_callback: Callable[[str, float], None] | None = None,
     text_only: bool = False,
     target_bpw: float | None = None,
     hard_cap_bpw: float | None = None,
@@ -3224,7 +3225,7 @@ def quantize_oq_streaming(
     cb("loading", 8.0)
 
     all_weights = _LazyTensorIndex(weight_files)
-    if preserve_mtp and not any(_is_mtp_tensor(k) for k in all_weights.keys()):
+    if preserve_mtp and not any(_is_mtp_tensor(k) for k in all_weights):
         logger.warning(
             "Preserve MTP requested for %s, but no mtp.* tensors were found "
             "in the checkpoint; disabling MTP preservation",
@@ -4654,7 +4655,10 @@ def _measure_sensitivity_from_quantized_model(
         if is_vlm:
             if _has_mtp_heads(config) and has_mtp_weights:
                 try:
-                    from fusion_mlx.patches.mlx_lm_mtp import is_mtp_active, set_mtp_active
+                    from fusion_mlx.patches.mlx_lm_mtp import (
+                        is_mtp_active,
+                        set_mtp_active,
+                    )
                     from fusion_mlx.patches.mlx_vlm_mtp import (
                         apply_mlx_vlm_mtp_patch,
                         apply_mlx_vlm_mtp_runtime_patch,

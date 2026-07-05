@@ -232,8 +232,7 @@ class TestServePortCollisionExitCode:
             # ``serve_command`` calls before any heavy boot work;
             # surfacing its exit code via a subprocess is the
             # supervisor-side contract.
-            script = textwrap.dedent(
-                f"""
+            script = textwrap.dedent(f"""
                 import sys
                 from fusion_mlx.cli import _port_preflight_or_die
                 _port_preflight_or_die("127.0.0.1", {port}, model="stub")
@@ -241,8 +240,7 @@ class TestServePortCollisionExitCode:
                 # so the test sees a passing subprocess and fails the
                 # ``returncode != 0`` assertion.
                 sys.exit(0)
-                """
-            )
+                """)
             env = os.environ.copy()
             # Inherit PYTHONPATH so the spawned interpreter resolves
             # the in-worktree package, not whatever ``pip install``
@@ -351,9 +349,9 @@ class TestResponsesUnknownRole:
             )
         # ``loc`` on the first error must point at the offending field.
         errs = ei.value.errors()
-        assert any("role" in str(e.get("loc", ())) for e in errs), (
-            f"expected error loc to reference 'role'; got {errs!r}"
-        )
+        assert any(
+            "role" in str(e.get("loc", ())) for e in errs
+        ), f"expected error loc to reference 'role'; got {errs!r}"
 
 
 # ---------------------------------------------------------------------------
@@ -677,9 +675,9 @@ class TestChatLogprobsBaseSemantic:
             f"got {body['choices'][0]!r}"
         )
         content = lp.get("content")
-        assert content, (
-            f"choice.logprobs.content must be non-empty when logprobs=true; got {lp!r}"
-        )
+        assert (
+            content
+        ), f"choice.logprobs.content must be non-empty when logprobs=true; got {lp!r}"
         first = content[0]
         # Sampled-token fields must be populated.
         assert "token" in first and "logprob" in first

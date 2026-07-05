@@ -205,7 +205,8 @@ class TestHealthRoutes:
     def test_head_root_returns_200(self):
         """HEAD / is explicitly registered on probe_router (no auth) alongside GET /.
         This test pins the contract so a future refactor that moves the route or
-        changes its methods doesn't silently break the Claude Code connectivity probe."""
+        changes its methods doesn't silently break the Claude Code connectivity probe.
+        """
         orig = self._patch_config(engine=None, mcp_manager=None, model_name=None)
         try:
             app = self._make_app()
@@ -781,9 +782,9 @@ class TestModelsRoutes:
             alias_entry = next(
                 (e for e in entries if e["id"] == "qwen3.5-4b-4bit"), None
             )
-            assert alias_entry is not None, (
-                "qwen3.5-4b-4bit must appear in the list endpoint"
-            )
+            assert (
+                alias_entry is not None
+            ), "qwen3.5-4b-4bit must appear in the list endpoint"
             # r6-A R6-C1: qwen3.5-4b-4bit alias flipped to non-hybrid
             # (see ``test_retrieve_known_alias_populates_extensions``
             # for the rationale block).
@@ -851,9 +852,9 @@ class TestModelsRoutes:
             assert r.status_code == 200
             entries = r.json()["data"]
             vl_entry = next((e for e in entries if e["id"] == "qwen3-vl-2b-4bit"), None)
-            assert vl_entry is not None, (
-                "qwen3-vl-2b-4bit must appear in the list endpoint"
-            )
+            assert (
+                vl_entry is not None
+            ), "qwen3-vl-2b-4bit must appear in the list endpoint"
             assert vl_entry["modality"] == "image", (
                 f"F-067 list-endpoint regression: VL alias reports "
                 f"modality={vl_entry['modality']!r} (expected 'image')"
@@ -1031,9 +1032,9 @@ class TestModelsRoutes:
                 r = client.get(f"/v1/models/{alias}")
                 assert r.status_code == 200
                 body = r.json()
-                assert body["context_window"] == ctx, (
-                    f"{alias}: expected context_window={ctx}, got {body['context_window']!r}"
-                )
+                assert (
+                    body["context_window"] == ctx
+                ), f"{alias}: expected context_window={ctx}, got {body['context_window']!r}"
                 assert isinstance(body["context_window"], int)
                 assert body["context_window"] > 0
             finally:

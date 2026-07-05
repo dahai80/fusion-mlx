@@ -18,23 +18,19 @@ from typing import Any
 
 import mlx.core as mx
 
+# Module-level alias so Scheduler.__init__ can fall back to mlx-lm's default
+# stream when no per-engine stream is provided.
 from .helpers import (
     _safe_sync_stream,
 )
 from .monkeypatches import _unregister_uid_row
-
-# Module-level alias so Scheduler.__init__ can fall back to mlx-lm's default
-# stream when no per-engine stream is provided.
-from .helpers import (
-    _get_attr_or_key,
-    _model_declares_llama4,
-)
 from .types import (
     _mx_buffer_access_lock,
 )
 
 try:
     from ..cache.hybrid_cache import ModelCacheConfig
+
     HAS_CACHE_TYPE_HANDLERS = True
 except ImportError:
     ModelCacheConfig = None
@@ -63,6 +59,7 @@ def _is_turboquant_kv_cache(cache_obj):
 
 def _is_turboquant_kv_family_cache(cache_obj):
     from mlx_lm.models.cache import KVCache
+
     return isinstance(cache_obj, KVCache) or _is_turboquant_kv_cache(cache_obj)
 
 
@@ -111,7 +108,9 @@ def _collect_arrays_from_extracted_cache(
                         arrays.append(val)
     return arrays
 
-def _async_store_cache_worker(    self,
+
+def _async_store_cache_worker(
+    self,
     request_id: str,
     token_sequence_to_store: list[int],
     cache_to_store: list[Any],
@@ -177,6 +176,7 @@ def _async_store_cache_worker(    self,
     except Exception as e:
         logger.warning("Async store_cache failed for %s: %s", request_id, e)
 
+
 def _drain_pending_async_removes(self) -> None:
     """Process deferred batch_generator.remove() calls from prior steps.
 
@@ -199,9 +199,7 @@ def _drain_pending_async_removes(self) -> None:
         if future is not None:
             exc = future.exception()
             if exc is not None:
-                logger.warning(
-                    "Async store_cache for %s raised: %s", request_id, exc
-                )
+                logger.warning("Async store_cache for %s raised: %s", request_id, exc)
         # Run batch_generator.remove on the inference thread.
         try:
             _safe_sync_stream(self._stream)
@@ -235,6 +233,7 @@ def _drain_pending_async_removes(self) -> None:
             req_to_remove._extracted_cache = None
             req_to_remove.prompt_cache = None
 
+
 def _calculate_max_blocks(self) -> int:
     """
     Calculate maximum cache blocks for paged SSD-only mode.
@@ -256,7 +255,9 @@ def _calculate_max_blocks(self) -> int:
 
     return max_blocks
 
-def _collect_rotating_window_sizes(    self,
+
+def _collect_rotating_window_sizes(
+    self,
     cache_obj: Any,
     window_sizes: set[int],
 ) -> None:
@@ -271,6 +272,7 @@ def _collect_rotating_window_sizes(    self,
         max_size = getattr(cache_obj, "max_size", 0)
         if isinstance(max_size, int) and max_size > 0:
             window_sizes.add(max_size)
+
 
 def _detect_rotating_window_sizes(self) -> set[int]:
     """Detect rotating window sizes from model.make_cache() if available."""
@@ -292,12 +294,14 @@ def _detect_rotating_window_sizes(self) -> set[int]:
 
     return window_sizes
 
+
 # Target range for RotatingKVCache block size alignment.
 # Using a multiple of window_size within this range reduces SSD I/O
 # overhead (fewer, larger block files) while keeping cache restore
 # reprocessing reasonable.
 _ROTATING_BLOCK_SIZE_MIN = 512
 _ROTATING_BLOCK_SIZE_MAX = 1024
+
 
 def _align_block_size_with_rotating_window(self) -> None:
     """
@@ -355,11 +359,13 @@ def _align_block_size_with_rotating_window(self) -> None:
         )
         self.config.paged_cache_block_size = target_block_size
 
+
 # Default block size for ArraysCache-only hybrid models.
 # Match prefill_step_size (2048) so that boundary caching ON/OFF
 # produces identical prefill chunk sizes, eliminating float32↔dtype
 # roundtrip differences in GatedDeltaNet recurrent state.
 _ARRAYS_CACHE_BLOCK_SIZE = 2048
+
 
 def _enlarge_block_size_for_arrays_cache(self) -> None:
     """Enlarge block size for ArraysCache-only hybrid models.
@@ -410,14 +416,13 @@ def _enlarge_block_size_for_arrays_cache(self) -> None:
     )
     self.config.paged_cache_block_size = target
 
+
 @staticmethod
 def _cache_tree_has_arrays_cache(cache_obj: Any) -> bool:
     """Return True if cache_obj contains ArraysCache (recursively)."""
     sub_caches = getattr(cache_obj, "caches", None)
     if isinstance(sub_caches, (list, tuple)):
-        return any(
-            Scheduler._cache_tree_has_arrays_cache(sub) for sub in sub_caches
-        )
+        return any(_cache_tree_has_arrays_cache(sub) for sub in sub_caches)
     return type(cache_obj).__name__ in ("ArraysCache", "SizedArraysCache")
 
 
@@ -464,8 +469,7 @@ def _trim_cache_tree_by_tokens(self, cache_obj: Any, n: int) -> bool:
     sub_caches = getattr(cache_obj, "caches", None)
     if isinstance(sub_caches, (list, tuple)):
         return all(
-            self._trim_cache_tree_by_tokens(sub_cache, n)
-            for sub_cache in sub_caches
+            self._trim_cache_tree_by_tokens(sub_cache, n) for sub_cache in sub_caches
         )
     trim_fn = getattr(cache_obj, "trim", None)
     if not callable(trim_fn):
@@ -504,10 +508,7 @@ def _align_minimax_m3_partial_cache_to_prefill_step(
     prompt_tokens = request.prompt_token_ids or []
     if not cache_list or block_table is None or not block_table.block_ids:
         return False
-    if (
-        block_table.num_tokens <= 0
-        or block_table.num_tokens >= len(prompt_tokens)
-    ):
+    if block_table.num_tokens <= 0 or block_table.num_tokens >= len(prompt_tokens):
         return False
 
     has_minimax_m3 = any(

@@ -12,9 +12,7 @@ from fusion_mlx.model_settings import ModelSettings
 class TestGetMaxContextWindow:
     """Tests for get_max_context_window() priority logic."""
 
-    def _make_server_state(
-        self, global_max_ctx=32768, policy_cap=None
-    ):
+    def _make_server_state(self, global_max_ctx=32768, policy_cap=None):
         """Create a mock server state with given global
         ``max_context_window`` fallback and optional
         ``max_context_window_policy`` cap."""
@@ -80,15 +78,11 @@ class TestGetMaxContextWindow:
             result = get_max_context_window(None)
             assert result == 16384
 
-    def _mount_native_and_policy(
-        self, native_ctx: int | None, policy_cap: int | None
-    ):
+    def _mount_native_and_policy(self, native_ctx: int | None, policy_cap: int | None):
         """Mount a server state with a model that has the given native
         context length, the policy field set to ``policy_cap``, and no
         per-model override."""
-        state = self._make_server_state(
-            global_max_ctx=32768, policy_cap=policy_cap
-        )
+        state = self._make_server_state(global_max_ctx=32768, policy_cap=policy_cap)
         mock_manager = MagicMock()
         mock_manager.get_settings_for_request.return_value = ModelSettings(
             max_context_window=None
@@ -108,9 +102,7 @@ class TestGetMaxContextWindow:
         installs see no behavior change after this PR."""
         from fusion_mlx.server import get_max_context_window
 
-        state = self._mount_native_and_policy(
-            native_ctx=262_144, policy_cap=None
-        )
+        state = self._mount_native_and_policy(native_ctx=262_144, policy_cap=None)
         with patch("omlx.server._server_state", state):
             assert get_max_context_window("big-model") == 262_144
 
@@ -119,22 +111,18 @@ class TestGetMaxContextWindow:
         natively declares 256 K, the effective cap is the policy."""
         from fusion_mlx.server import get_max_context_window
 
-        state = self._mount_native_and_policy(
-            native_ctx=262_144, policy_cap=128_000
-        )
+        state = self._mount_native_and_policy(native_ctx=262_144, policy_cap=128_000)
         with patch("omlx.server._server_state", state):
-            assert get_max_context_window("big-model") == 128_000, (
-                "Policy of 128k must clamp a model that natively declares 256k"
-            )
+            assert (
+                get_max_context_window("big-model") == 128_000
+            ), "Policy of 128k must clamp a model that natively declares 256k"
 
     def test_policy_set_native_below_policy_wins(self):
         """When the model's native length is already below the policy,
         the native value wins — policy is a ceiling, not a floor."""
         from fusion_mlx.server import get_max_context_window
 
-        state = self._mount_native_and_policy(
-            native_ctx=32_768, policy_cap=128_000
-        )
+        state = self._mount_native_and_policy(native_ctx=32_768, policy_cap=128_000)
         with patch("omlx.server._server_state", state):
             assert get_max_context_window("small-model") == 32_768
 
@@ -145,18 +133,16 @@ class TestGetMaxContextWindow:
         exceed the policy."""
         from fusion_mlx.server import get_max_context_window
 
-        state = self._mount_native_and_policy(
-            native_ctx=100_000, policy_cap=64_000
-        )
+        state = self._mount_native_and_policy(native_ctx=100_000, policy_cap=64_000)
         # Add a per-model override above both native and policy
         state.settings_manager = MagicMock()
         state.settings_manager.get_settings_for_request.return_value = ModelSettings(
             max_context_window=200_000
         )
         with patch("omlx.server._server_state", state):
-            assert get_max_context_window("override-model") == 200_000, (
-                "Per-model override must escape the policy clamp"
-            )
+            assert (
+                get_max_context_window("override-model") == 200_000
+            ), "Per-model override must escape the policy clamp"
 
     def test_policy_does_not_apply_to_fallback_path(self):
         """When the model has no discoverable native context AND no
@@ -168,9 +154,7 @@ class TestGetMaxContextWindow:
         from fusion_mlx.server import get_max_context_window
 
         # native_ctx=None: model config doesn't expose a context length
-        state = self._mount_native_and_policy(
-            native_ctx=None, policy_cap=16_000
-        )
+        state = self._mount_native_and_policy(native_ctx=None, policy_cap=16_000)
         with patch("omlx.server._server_state", state):
             # Fallback (32768) returned, not the policy (16_000).
             assert get_max_context_window("no-native-model") == 32_768

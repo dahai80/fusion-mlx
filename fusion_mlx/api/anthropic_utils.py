@@ -64,25 +64,31 @@ def _content_block_to_dict(block: Any) -> dict[str, Any] | None:
     return None
 
 
-def _append_anthropic_image_part(image_parts: list[dict], block_dict: dict[str, Any]) -> None:
+def _append_anthropic_image_part(
+    image_parts: list[dict], block_dict: dict[str, Any]
+) -> None:
     """Convert Anthropic image blocks to OpenAI-style image_url parts."""
     source = block_dict.get("source", {})
     if source.get("type") == "base64":
         media_type = source.get("media_type", "image/jpeg")
         data = source.get("data", "")
-        image_parts.append({
-            "type": "image_url",
-            "image_url": {
-                "url": f"data:{media_type};base64,{data}",
-            },
-        })
+        image_parts.append(
+            {
+                "type": "image_url",
+                "image_url": {
+                    "url": f"data:{media_type};base64,{data}",
+                },
+            }
+        )
     elif source.get("type") == "url":
-        image_parts.append({
-            "type": "image_url",
-            "image_url": {
-                "url": source.get("url", ""),
-            },
-        })
+        image_parts.append(
+            {
+                "type": "image_url",
+                "image_url": {
+                    "url": source.get("url", ""),
+                },
+            }
+        )
 
 
 def _extract_images_from_tool_result_content(
@@ -106,16 +112,19 @@ def _build_message_from_parts(
     if image_parts:
         content_parts = list(image_parts)
         if text_parts:
-            content_parts.append({
-                "type": "text",
-                "text": "\n".join(text_parts),
-            })
+            content_parts.append(
+                {
+                    "type": "text",
+                    "text": "\n".join(text_parts),
+                }
+            )
         return {"role": role, "content": content_parts}
 
     if text_parts:
         return {"role": role, "content": "\n".join(text_parts)}
 
     return None
+
 
 # =============================================================================
 # Message Conversion: Anthropic -> Internal
@@ -200,13 +209,17 @@ def convert_anthropic_to_internal(
                                     tool_input = json.loads(tool_input)
                                 except (json.JSONDecodeError, ValueError):
                                     pass
-                            tool_calls.append({
-                                "id": block_dict.get("id", f"call_{uuid.uuid4().hex[:8]}"),
-                                "function": {
-                                    "name": block_dict.get("name", ""),
-                                    "arguments": tool_input,
-                                },
-                            })
+                            tool_calls.append(
+                                {
+                                    "id": block_dict.get(
+                                        "id", f"call_{uuid.uuid4().hex[:8]}"
+                                    ),
+                                    "function": {
+                                        "name": block_dict.get("name", ""),
+                                        "arguments": tool_input,
+                                    },
+                                }
+                            )
                         elif block_type == "thinking":
                             # Native mode: collect for reasoning_content field.
                             # Fallback: inline as <think>...</think> in source
@@ -217,10 +230,14 @@ def convert_anthropic_to_internal(
                                 if native_reasoning_content:
                                     thinking_parts.append(thinking_text)
                                 else:
-                                    text_parts.append(f"<think>\n{thinking_text}\n</think>")
+                                    text_parts.append(
+                                        f"<think>\n{thinking_text}\n</think>"
+                                    )
                         elif block_type == "document":
                             text_parts.append(_decode_document_block(block_dict))
-                    msg_dict = _build_message_from_parts(role, text_parts, image_parts) or {
+                    msg_dict = _build_message_from_parts(
+                        role, text_parts, image_parts
+                    ) or {
                         "role": role,
                         "content": "",
                     }
@@ -246,21 +263,25 @@ def convert_anthropic_to_internal(
                         elif block_type == "image" and preserve_images:
                             _append_anthropic_image_part(image_parts, block_dict)
                         elif block_type == "tool_result":
-                            msg_dict = _build_message_from_parts(role, text_parts, image_parts)
+                            msg_dict = _build_message_from_parts(
+                                role, text_parts, image_parts
+                            )
                             if msg_dict:
                                 processed_messages.append(msg_dict)
                             text_parts = []
                             image_parts = []
                             saw_tool_result = True
-                            processed_messages.append({
-                                "role": "tool",
-                                "tool_call_id": block_dict.get("tool_use_id", ""),
-                                "content": _extract_tool_result_content(
-                                    block_dict.get("content", ""),
-                                    max_tokens=max_tool_result_tokens,
-                                    tokenizer=tokenizer,
-                                ),
-                            })
+                            processed_messages.append(
+                                {
+                                    "role": "tool",
+                                    "tool_call_id": block_dict.get("tool_use_id", ""),
+                                    "content": _extract_tool_result_content(
+                                        block_dict.get("content", ""),
+                                        max_tokens=max_tool_result_tokens,
+                                        tokenizer=tokenizer,
+                                    ),
+                                }
+                            )
                             if preserve_images:
                                 _extract_images_from_tool_result_content(
                                     block_dict.get("content", ""), image_parts
@@ -361,6 +382,7 @@ def convert_anthropic_to_internal_harmony(
     request: MessagesRequest,
     max_tool_result_tokens: int | None = None,
     tokenizer: Any | None = None,
+    consolidate_system_messages: bool = True,
 ) -> list[dict[str, Any]]:
     """
     Convert Anthropic Messages API format to internal format for Harmony (gpt-oss) models.
@@ -428,13 +450,15 @@ def convert_anthropic_to_internal_harmony(
                             tool_input = json.loads(tool_input)
                         except (json.JSONDecodeError, ValueError):
                             pass
-                    tool_calls.append({
-                        "id": tool_id,
-                        "function": {
-                            "name": tool_name,
-                            "arguments": tool_input,  # dict, not string
+                    tool_calls.append(
+                        {
+                            "id": tool_id,
+                            "function": {
+                                "name": tool_name,
+                                "arguments": tool_input,  # dict, not string
+                            },
                         }
-                    })
+                    )
 
                 elif block_type == "tool_result":
                     # Tool result - will be converted to role="tool" message
@@ -449,9 +473,15 @@ def convert_anthropic_to_internal_harmony(
                         except (json.JSONDecodeError, ValueError):
                             pass
 
-                        if parsed_json is not None and max_tool_result_tokens and tokenizer:
+                        if (
+                            parsed_json is not None
+                            and max_tool_result_tokens
+                            and tokenizer
+                        ):
                             # Valid JSON - pretty-print for better line-based truncation
-                            pretty = json.dumps(parsed_json, indent=2, ensure_ascii=False)
+                            pretty = json.dumps(
+                                parsed_json, indent=2, ensure_ascii=False
+                            )
                             truncated = truncate_tool_result(
                                 pretty, max_tool_result_tokens, tokenizer
                             )
@@ -460,9 +490,7 @@ def convert_anthropic_to_internal_harmony(
                                 # Harmony |tojson compatibility
                                 from ..utils import _wrap_truncated_for_harmony
 
-                                result_content = _wrap_truncated_for_harmony(
-                                    truncated
-                                )
+                                result_content = _wrap_truncated_for_harmony(truncated)
                             else:
                                 # Not truncated - pass as parsed object
                                 result_content = parsed_json
@@ -484,30 +512,31 @@ def convert_anthropic_to_internal_harmony(
                             tokenizer=tokenizer,
                         )
                         # Only try json.loads if content was NOT truncated
-                        if isinstance(extracted, str) and "<truncated " not in extracted:
+                        if (
+                            isinstance(extracted, str)
+                            and "<truncated " not in extracted
+                        ):
                             try:
                                 result_content = json.loads(extracted)
                             except (json.JSONDecodeError, ValueError):
                                 result_content = extracted
                         elif isinstance(extracted, str) and "<truncated " in extracted:
                             # Check if pre-truncation content was JSON-like
-                            content_part = extracted.split(
-                                "\n\n<truncated"
-                            )[0].strip()
+                            content_part = extracted.split("\n\n<truncated")[0].strip()
                             if content_part and content_part[0] in "{[":
                                 from ..utils import _wrap_truncated_for_harmony
 
-                                result_content = _wrap_truncated_for_harmony(
-                                    extracted
-                                )
+                                result_content = _wrap_truncated_for_harmony(extracted)
                             else:
                                 result_content = extracted
                         else:
                             result_content = extracted
-                    tool_results.append({
-                        "tool_use_id": tool_use_id,
-                        "content": result_content,
-                    })
+                    tool_results.append(
+                        {
+                            "tool_use_id": tool_use_id,
+                            "content": result_content,
+                        }
+                    )
 
                 elif block_type == "thinking":
                     # Thinking blocks are ignored (reasoning content is not passed to model)
@@ -519,7 +548,10 @@ def convert_anthropic_to_internal_harmony(
             # Build message(s) based on what we found
             if role == "assistant":
                 # Assistant message with potential tool_calls
-                msg_dict = {"role": "assistant", "content": "\n".join(text_parts) if text_parts else ""}
+                msg_dict = {
+                    "role": "assistant",
+                    "content": "\n".join(text_parts) if text_parts else "",
+                }
                 if tool_calls:
                     msg_dict["tool_calls"] = tool_calls
                 processed_messages.append(msg_dict)
@@ -527,18 +559,27 @@ def convert_anthropic_to_internal_harmony(
                 # User message - may contain tool_results
                 # First add any text content
                 if text_parts:
-                    processed_messages.append({"role": "user", "content": "\n".join(text_parts)})
+                    processed_messages.append(
+                        {"role": "user", "content": "\n".join(text_parts)}
+                    )
 
                 # Add each tool_result as a separate role="tool" message
                 for tr in tool_results:
-                    processed_messages.append({
-                        "role": "tool",
-                        "tool_call_id": tr["tool_use_id"],
-                        "content": tr["content"],  # dict or string
-                    })
+                    processed_messages.append(
+                        {
+                            "role": "tool",
+                            "tool_call_id": tr["tool_use_id"],
+                            "content": tr["content"],  # dict or string
+                        }
+                    )
             else:
                 # Other roles
-                processed_messages.append({"role": role, "content": "\n".join(text_parts) if text_parts else ""})
+                processed_messages.append(
+                    {
+                        "role": role,
+                        "content": "\n".join(text_parts) if text_parts else "",
+                    }
+                )
         else:
             # Unknown format
             processed_messages.append({"role": role, "content": str(content)})
@@ -664,8 +705,8 @@ def truncate_tool_result(
     )
 
     notice = (
-        f"\n\n<truncated total_tokens=\"{total_tokens}\" "
-        f"shown_tokens=\"{shown_tokens}\" />"
+        f'\n\n<truncated total_tokens="{total_tokens}" '
+        f'shown_tokens="{shown_tokens}" />'
     )
 
     return truncated_text + notice
@@ -852,11 +893,13 @@ def convert_internal_to_anthropic_response(
     # the signature will still reject, but the common Claude Code SDK
     # only checks that the field is present and non-empty.
     if thinking and thinking.strip():
-        content.append(ContentBlockThinking(
-            type="thinking",
-            thinking=thinking,
-            signature="omlx-reasoning",
-        ))
+        content.append(
+            ContentBlockThinking(
+                type="thinking",
+                thinking=thinking,
+                signature="omlx-reasoning",
+            )
+        )
 
     # Add text content block if present and not empty
     if text and text.strip():

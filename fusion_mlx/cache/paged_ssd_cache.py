@@ -23,15 +23,24 @@ _MAX_INLINE_UNLINKS_PER_SAVE = 32
 
 try:
     import mlx.core as mx
+
     HAS_MLX = True
 except ImportError:
     HAS_MLX = False
 
 if HAS_MLX:
     _MX_DTYPE_MAP = {
-        "float16": ("F16", 2), "float32": ("F32", 4), "bfloat16": ("BF16", 2),
-        "int8": ("I8", 1), "int16": ("I16", 2), "int32": ("I32", 4), "int64": ("I64", 8),
-        "uint8": ("U8", 1), "uint16": ("U16", 2), "uint32": ("U32", 4), "uint64": ("U64", 8),
+        "float16": ("F16", 2),
+        "float32": ("F32", 4),
+        "bfloat16": ("BF16", 2),
+        "int8": ("I8", 1),
+        "int16": ("I16", 2),
+        "int32": ("I32", 4),
+        "int64": ("I64", 8),
+        "uint8": ("U8", 1),
+        "uint16": ("U16", 2),
+        "uint32": ("U32", 4),
+        "uint64": ("U64", 8),
     }
     _MX_TO_ST_DTYPE = {}
     _ST_TO_MX_DTYPE = {}
@@ -71,7 +80,9 @@ def _cache_compat_signature(
         "model_name": model_name or "",
         "num_layers": int(num_layers or 0),
         "block_size": int(block_size or 0),
-        "layer_cache_types": list(_canonicalize_layer_cache_types(layer_cache_types) or []),
+        "layer_cache_types": list(
+            _canonicalize_layer_cache_types(layer_cache_types) or []
+        ),
     }
     return json.dumps(payload, sort_keys=True, separators=(",", ":"))
 
@@ -101,12 +112,18 @@ def parse_size(size_str: str) -> int:
     if not size_str:
         raise ValueError("empty size string")
     factors = {
-        "TB": 1024**4, "GB": 1024**3, "MB": 1024**2, "KB": 1024,
-        "T": 1024**4, "G": 1024**3, "M": 1024**2, "K": 1024,
+        "TB": 1024**4,
+        "GB": 1024**3,
+        "MB": 1024**2,
+        "KB": 1024,
+        "T": 1024**4,
+        "G": 1024**3,
+        "M": 1024**2,
+        "K": 1024,
     }
     for suffix in sorted(factors.keys(), key=len, reverse=True):
         if size_str.endswith(suffix):
-            num_part = size_str[:-len(suffix)]
+            num_part = size_str[: -len(suffix)]
             if not num_part:
                 raise ValueError(f"invalid size format: {size_str!r}")
             try:
@@ -159,7 +176,11 @@ class PagedSSDBlockMetadata:
     @classmethod
     def from_dict(cls, d: dict) -> "PagedSSDBlockMetadata":
         return cls(
-            block_hash=bytes.fromhex(d["block_hash"]) if isinstance(d.get("block_hash"), str) else d.get("block_hash", b""),
+            block_hash=(
+                bytes.fromhex(d["block_hash"])
+                if isinstance(d.get("block_hash"), str)
+                else d.get("block_hash", b"")
+            ),
             file_path=Path(d.get("file_path", "")),
             file_size=d.get("file_size", 0),
             token_count=d.get("token_count", 0),
@@ -170,14 +191,20 @@ class PagedSSDBlockMetadata:
             block_size=d.get("block_size", 0),
             cache_signature=d.get("cache_signature", ""),
             layer_cache_types=d.get("layer_cache_types"),
-            layer_meta_states=[tuple(s) for s in d["layer_meta_states"]] if d.get("layer_meta_states") is not None else None,
+            layer_meta_states=(
+                [tuple(s) for s in d["layer_meta_states"]]
+                if d.get("layer_meta_states") is not None
+                else None
+            ),
         )
 
 
 @dataclass
 class PagedSSDCacheIndex:
     max_size_bytes: int = 0
-    blocks: OrderedDict[bytes, PagedSSDBlockMetadata] = field(default_factory=OrderedDict)
+    blocks: OrderedDict[bytes, PagedSSDBlockMetadata] = field(
+        default_factory=OrderedDict
+    )
     _total_size: int = 0
     _lock: threading.RLock = field(default_factory=threading.RLock, repr=False)
 
@@ -226,16 +253,12 @@ class PagedSSDCacheIndex:
 
     def get_lru_entries(self, count: int) -> list[PagedSSDBlockMetadata]:
         with self._lock:
-            sorted_entries = sorted(
-                self.blocks.values(), key=lambda m: m.last_access
-            )
+            sorted_entries = sorted(self.blocks.values(), key=lambda m: m.last_access)
             return sorted_entries[:count]
 
     def sort_lru(self) -> None:
         with self._lock:
-            sorted_items = sorted(
-                self.blocks.items(), key=lambda kv: kv[1].last_access
-            )
+            sorted_items = sorted(self.blocks.items(), key=lambda kv: kv[1].last_access)
             self.blocks.clear()
             for k, v in sorted_items:
                 self.blocks[k] = v
@@ -244,7 +267,9 @@ class PagedSSDCacheIndex:
         evicted = []
         with self._lock:
             while self._total_size > target_size and self.blocks:
-                lru_hash = min(self.blocks.keys(), key=lambda h: self.blocks[h].last_access)
+                lru_hash = min(
+                    self.blocks.keys(), key=lambda h: self.blocks[h].last_access
+                )
                 meta = self.blocks.pop(lru_hash)
                 self._total_size = max(0, self._total_size - meta.file_size)
                 evicted.append(meta)
@@ -318,10 +343,9 @@ def _restore_tensor_from_bytes(data: bytes, dtype_str: str, shape: list[int]):
         if len(shape) > 0 and any(d == 0 for d in shape):
             return mx.zeros(shape, dtype=mx_dtype)
         import numpy as np
+
         if _is_bfloat16(mx_dtype):
-            raw_uint16 = mx.array(
-                np.frombuffer(data, dtype=np.uint16)
-            ).reshape(shape)
+            raw_uint16 = mx.array(np.frombuffer(data, dtype=np.uint16)).reshape(shape)
             arr = raw_uint16.view(mx.bfloat16)
         else:
             np_dtype_map = {
@@ -356,7 +380,11 @@ def _write_safetensors_no_mx(
     offset = 0
     chunks = []
     for name, (raw, dtype_str, sh) in sorted(tensors.items()):
-        header[name] = {"dtype": dtype_str, "shape": sh, "data_offsets": [offset, offset + len(raw)]}
+        header[name] = {
+            "dtype": dtype_str,
+            "shape": sh,
+            "data_offsets": [offset, offset + len(raw)],
+        }
         offset += len(raw)
         chunks.append(raw)
     if metadata:
@@ -383,7 +411,9 @@ class _HotCacheBudgetEntry:
 class SharedHotCacheBudget:
     def __init__(self, max_bytes: int):
         self.max_bytes = max(0, int(max_bytes))
-        self._entries: OrderedDict[tuple[int, bytes], _HotCacheBudgetEntry] = OrderedDict()
+        self._entries: OrderedDict[tuple[int, bytes], _HotCacheBudgetEntry] = (
+            OrderedDict()
+        )
         self._total_bytes = 0
         self._lock = threading.RLock()
 
@@ -437,10 +467,14 @@ class SharedHotCacheBudget:
                 try:
                     cleared += fn()
                 except Exception:
-                    logger.warning("clear_hot_cache failed for an orphaned owner", exc_info=True)
+                    logger.warning(
+                        "clear_hot_cache failed for an orphaned owner", exc_info=True
+                    )
         return cleared
 
-    def shrink_to(self, target_bytes: int, protected_hashes: set[bytes] | None = None) -> int:
+    def shrink_to(
+        self, target_bytes: int, protected_hashes: set[bytes] | None = None
+    ) -> int:
         target_bytes = max(0, int(target_bytes))
         protected_hashes = protected_hashes or set()
         victims: list[tuple[Any, bytes, int]] = []
@@ -466,7 +500,9 @@ class SharedHotCacheBudget:
                 owner._handle_hot_cache_eviction(block_hash, evicted)
         return freed
 
-    def put(self, owner: Any, block_hash: bytes, size_bytes: int) -> list[tuple[Any, bytes]]:
+    def put(
+        self, owner: Any, block_hash: bytes, size_bytes: int
+    ) -> list[tuple[Any, bytes]]:
         victims: list[tuple[Any, bytes]] = []
         size_bytes = max(0, int(size_bytes))
         with self._lock:
@@ -475,7 +511,9 @@ class SharedHotCacheBudget:
             if old is not None:
                 self._total_bytes = max(0, self._total_bytes - old.size_bytes)
             self._entries[key] = _HotCacheBudgetEntry(
-                owner=owner, block_hash=block_hash, size_bytes=size_bytes,
+                owner=owner,
+                block_hash=block_hash,
+                size_bytes=size_bytes,
             )
             self._total_bytes += size_bytes
             while self._total_bytes > self.max_bytes and self._entries:
@@ -541,10 +579,14 @@ class PagedSSDCacheManager:
         self._expected_model_name = expected_model_name
         self._expected_num_layers = expected_num_layers
         self._expected_block_size = expected_block_size or expected_block_size_tokens
-        self._expected_block_size_tokens = expected_block_size_tokens or expected_block_size
+        self._expected_block_size_tokens = (
+            expected_block_size_tokens or expected_block_size
+        )
         self._expected_kv_bytes_per_token = expected_kv_bytes_per_token
         self._expected_layer_cache_types = (
-            list(expected_layer_cache_types) if expected_layer_cache_types is not None else None
+            list(expected_layer_cache_types)
+            if expected_layer_cache_types is not None
+            else None
         )
         self._signature_sweep_completed = False
         self._hot_cache_only = hot_cache_only
@@ -565,10 +607,20 @@ class PagedSSDCacheManager:
         self._state_lock = threading.RLock()
 
         self._stats: dict[str, int | float] = {
-            "hits": 0, "misses": 0, "saves": 0, "saves_persisted": 0,
-            "loads": 0, "errors": 0, "hot_cache_hits": 0, "hot_cache_promotions": 0,
-            "hot_cache_evictions": 0, "preload_blocks_loaded": 0, "preload_calls": 0,
-            "preload_time_ms": 0.0, "evict_unlink_failures": 0, "ssd_write_drops": 0,
+            "hits": 0,
+            "misses": 0,
+            "saves": 0,
+            "saves_persisted": 0,
+            "loads": 0,
+            "errors": 0,
+            "hot_cache_hits": 0,
+            "hot_cache_promotions": 0,
+            "hot_cache_evictions": 0,
+            "preload_blocks_loaded": 0,
+            "preload_calls": 0,
+            "preload_time_ms": 0.0,
+            "evict_unlink_failures": 0,
+            "ssd_write_drops": 0,
             "ssd_inline_write_fallbacks": 0,
         }
 
@@ -587,7 +639,9 @@ class PagedSSDCacheManager:
         self._scan_disk_index()
 
         self._writer_thread = threading.Thread(
-            target=self._background_writer, daemon=True, name="ssd-cache-writer",
+            target=self._background_writer,
+            daemon=True,
+            name="ssd-cache-writer",
         )
         self._writer_thread.start()
 
@@ -659,7 +713,11 @@ class PagedSSDCacheManager:
             "token_count": str(token_count),
             "num_layers": str(len(cache_data)),
             "model_name": model_name or self._expected_model_name,
-            "block_size": str(self._expected_block_size or self._expected_block_size_tokens or token_count),
+            "block_size": str(
+                self._expected_block_size
+                or self._expected_block_size_tokens
+                or token_count
+            ),
             "created_at": str(time.time()),
         }
         if layer_cache_types is not None:
@@ -672,7 +730,9 @@ class PagedSSDCacheManager:
         sig = _cache_compat_signature(
             model_name=model_name or self._expected_model_name,
             num_layers=len(cache_data),
-            block_size=self._expected_block_size or self._expected_block_size_tokens or token_count,
+            block_size=self._expected_block_size
+            or self._expected_block_size_tokens
+            or token_count,
             layer_cache_types=layer_cache_types,
         )
         file_metadata["cache_signature"] = sig
@@ -699,8 +759,12 @@ class PagedSSDCacheManager:
                             elements = [sub_state]
                             sub_class = None
                         for k, item in enumerate(elements):
-                            tensors_raw[f"layer_{i}_sub_{j}_state_{k}"] = _extract_tensor_bytes(item)
-                        file_metadata[f"layer_{i}_sub_{j}_state_count"] = str(len(elements))
+                            tensors_raw[f"layer_{i}_sub_{j}_state_{k}"] = (
+                                _extract_tensor_bytes(item)
+                            )
+                        file_metadata[f"layer_{i}_sub_{j}_state_count"] = str(
+                            len(elements)
+                        )
                         if sub_class is not None:
                             file_metadata[f"layer_{i}_sub_{j}_class"] = sub_class
                         total_states += len(elements)
@@ -737,7 +801,9 @@ class PagedSSDCacheManager:
             last_access=time.time(),
             num_layers=len(cache_data),
             model_name=model_name or self._expected_model_name,
-            block_size=self._expected_block_size or self._expected_block_size_tokens or token_count,
+            block_size=self._expected_block_size
+            or self._expected_block_size_tokens
+            or token_count,
             cache_signature=sig,
             layer_cache_types=layer_cache_types,
             layer_meta_states=layer_meta_states,
@@ -770,19 +836,27 @@ class PagedSSDCacheManager:
                 timeout=1.0,
             )
         except queue.Full:
-            logger.debug("SSD write queue full, writing block inline: %s", block_hash.hex()[:16])
+            logger.debug(
+                "SSD write queue full, writing block inline: %s", block_hash.hex()[:16]
+            )
             self._stats["ssd_inline_write_fallbacks"] += 1
-            self._write_block_inline(block_hash, tensors_raw, file_metadata, block_metadata)
+            self._write_block_inline(
+                block_hash, tensors_raw, file_metadata, block_metadata
+            )
 
         self._enforce_size_limit_for_new_block()
         return True
 
-    def _write_block_inline(self, block_hash, tensors_raw, file_metadata, block_metadata):
+    def _write_block_inline(
+        self, block_hash, tensors_raw, file_metadata, block_metadata
+    ):
         file_path = self._get_file_path(block_hash)
         try:
             file_path.parent.mkdir(parents=True, exist_ok=True)
             temp_path = file_path.with_suffix(".tmp")
-            actual_size = _write_safetensors_no_mx(str(temp_path), tensors_raw, file_metadata)
+            actual_size = _write_safetensors_no_mx(
+                str(temp_path), tensors_raw, file_metadata
+            )
             temp_path.replace(file_path)
             with self._state_lock:
                 old_meta = self._index.get(block_hash)
@@ -792,7 +866,9 @@ class PagedSSDCacheManager:
                     block_metadata.file_size = actual_size
             self._stats["saves_persisted"] += 1
         except Exception as e:
-            logger.error("Inline write failed for block %s: %s", block_hash.hex()[:16], e)
+            logger.error(
+                "Inline write failed for block %s: %s", block_hash.hex()[:16], e
+            )
             self._stats["errors"] += 1
             with self._state_lock:
                 self._index.remove(block_hash)
@@ -822,7 +898,9 @@ class PagedSSDCacheManager:
 
         file_path = self._get_file_path(block_hash)
         if not file_path.exists():
-            logger.debug("SSD cache miss (file missing): block %s", block_hash.hex()[:16])
+            logger.debug(
+                "SSD cache miss (file missing): block %s", block_hash.hex()[:16]
+            )
             with self._state_lock:
                 self._index.remove(block_hash)
             self._stats["misses"] += 1
@@ -842,11 +920,15 @@ class PagedSSDCacheManager:
                         "layer_cache_types": None,
                         "block_metadata": meta_obj,
                         "dirty": False,
-                        "_estimated_bytes": sum(len(r) for r, _, _ in tensors_raw.values()),
+                        "_estimated_bytes": sum(
+                            len(r) for r, _, _ in tensors_raw.values()
+                        ),
                     }
                     if "layer_cache_types" in file_metadata:
                         try:
-                            hot_entry["layer_cache_types"] = json.loads(file_metadata["layer_cache_types"])
+                            hot_entry["layer_cache_types"] = json.loads(
+                                file_metadata["layer_cache_types"]
+                            )
                         except (json.JSONDecodeError, TypeError):
                             pass
                     self._hot_cache_put(block_hash, hot_entry)
@@ -870,7 +952,9 @@ class PagedSSDCacheManager:
             self._stats["misses"] += 1
             return None
 
-    def load_block_with_metadata(self, block_hash: bytes) -> tuple[list | None, dict | None]:
+    def load_block_with_metadata(
+        self, block_hash: bytes
+    ) -> tuple[list | None, dict | None]:
         with self._pending_write_hashes_lock:
             pending = self._pending_writes.get(block_hash)
         if pending is not None:
@@ -911,8 +995,16 @@ class PagedSSDCacheManager:
             "model_name": fm.get("model_name", ""),
             "block_size": int(fm.get("block_size", 0)),
             "cache_signature": fm.get("cache_signature", ""),
-            "layer_cache_types": json.loads(fm["layer_cache_types"]) if "layer_cache_types" in fm else None,
-            "layer_meta_states": [tuple(s) for s in json.loads(fm["layer_meta_states"])] if "layer_meta_states" in fm else None,
+            "layer_cache_types": (
+                json.loads(fm["layer_cache_types"])
+                if "layer_cache_types" in fm
+                else None
+            ),
+            "layer_meta_states": (
+                [tuple(s) for s in json.loads(fm["layer_meta_states"])]
+                if "layer_meta_states" in fm
+                else None
+            ),
         }
 
     def _restore_from_pending(self, entry: dict) -> list | None:
@@ -927,9 +1019,13 @@ class PagedSSDCacheManager:
                 layer_cache_types = json.loads(file_metadata["layer_cache_types"])
             except (json.JSONDecodeError, TypeError):
                 pass
-        return self._reconstruct_layers(tensors_raw, file_metadata, num_layers, layer_cache_types)
+        return self._reconstruct_layers(
+            tensors_raw, file_metadata, num_layers, layer_cache_types
+        )
 
-    def _reconstruct_layers(self, tensors_raw, file_metadata, num_layers, layer_cache_types=None):
+    def _reconstruct_layers(
+        self, tensors_raw, file_metadata, num_layers, layer_cache_types=None
+    ):
         if not HAS_MLX:
             return None
         layers = []
@@ -955,9 +1051,7 @@ class PagedSSDCacheManager:
                                 if arr is not None:
                                     items.append(arr)
                         if sub_state_count >= 3 and sub_class:
-                            sub_list.append(
-                                ("__nstate__", sub_class, items)
-                            )
+                            sub_list.append(("__nstate__", sub_class, items))
                         elif len(items) == 2:
                             sub_list.append((items[0], items[1]))
                         elif len(items) == 1:
@@ -985,9 +1079,7 @@ class PagedSSDCacheManager:
                         if arr is not None:
                             items.append(arr)
                 if state_count >= 3 and nstate_class:
-                    layers.append(
-                        ("__nstate__", nstate_class, items)
-                    )
+                    layers.append(("__nstate__", nstate_class, items))
                 elif len(items) == 2:
                     layers.append((items[0], items[1]))
                 elif len(items) == 1:
@@ -1024,7 +1116,9 @@ class PagedSSDCacheManager:
             logger.debug("Failed to load safetensors file %s: %s", path, e)
             return None
 
-    def _reconstruct_layers_from_arrays(self, arrays, meta, num_layers, layer_cache_types=None):
+    def _reconstruct_layers_from_arrays(
+        self, arrays, meta, num_layers, layer_cache_types=None
+    ):
         layers = []
         for i in range(num_layers):
             is_cache_list = False
@@ -1046,9 +1140,7 @@ class PagedSSDCacheManager:
                             if key in arrays:
                                 items.append(arrays[key])
                         if sub_state_count >= 3 and sub_class:
-                            sub_list.append(
-                                ("__nstate__", sub_class, items)
-                            )
+                            sub_list.append(("__nstate__", sub_class, items))
                         elif len(items) == 2:
                             sub_list.append((items[0], items[1]))
                         elif len(items) == 1:
@@ -1072,9 +1164,7 @@ class PagedSSDCacheManager:
                     if key in arrays:
                         items.append(arrays[key])
                 if state_count >= 3 and nstate_class:
-                    layers.append(
-                        ("__nstate__", nstate_class, items)
-                    )
+                    layers.append(("__nstate__", nstate_class, items))
                 elif len(items) == 2:
                     layers.append((items[0], items[1]))
                 elif len(items) == 1:
@@ -1105,7 +1195,9 @@ class PagedSSDCacheManager:
             logger.debug("Failed to read raw safetensors %s: %s", path, e)
             return None
 
-    def _reconstruct_from_raw(self, tensors_raw: dict, file_metadata: dict) -> list | None:
+    def _reconstruct_from_raw(
+        self, tensors_raw: dict, file_metadata: dict
+    ) -> list | None:
         if not HAS_MLX:
             return None
         arrays = {}
@@ -1384,17 +1476,29 @@ class PagedSSDCacheManager:
             self._hot_cache[block_hash] = entry
             self._hot_cache_total_bytes += est_bytes
 
-            while self._hot_cache_max_bytes > 0 and self._hot_cache_total_bytes > self._hot_cache_max_bytes and len(self._hot_cache) > 1:
+            while (
+                self._hot_cache_max_bytes > 0
+                and self._hot_cache_total_bytes > self._hot_cache_max_bytes
+                and len(self._hot_cache) > 1
+            ):
                 evict_hash, evict_entry = self._hot_cache.popitem(last=False)
-                self._hot_cache_total_bytes = max(0, self._hot_cache_total_bytes - evict_entry.get("_estimated_bytes", 0))
+                self._hot_cache_total_bytes = max(
+                    0,
+                    self._hot_cache_total_bytes
+                    - evict_entry.get("_estimated_bytes", 0),
+                )
                 if self._hot_cache_budget is not None:
                     self._hot_cache_budget.forget(self, evict_hash)
 
-    def _hot_cache_remove(self, block_hash: bytes, update_budget: bool = True) -> dict | None:
+    def _hot_cache_remove(
+        self, block_hash: bytes, update_budget: bool = True
+    ) -> dict | None:
         with self._hot_cache_lock:
             entry = self._hot_cache.pop(block_hash, None)
             if entry is not None:
-                self._hot_cache_total_bytes = max(0, self._hot_cache_total_bytes - entry.get("_estimated_bytes", 0))
+                self._hot_cache_total_bytes = max(
+                    0, self._hot_cache_total_bytes - entry.get("_estimated_bytes", 0)
+                )
         if update_budget and entry is not None and self._hot_cache_budget is not None:
             self._hot_cache_budget.forget(self, block_hash)
         return entry
@@ -1402,14 +1506,18 @@ class PagedSSDCacheManager:
     def _handle_hot_cache_eviction(self, block_hash: bytes, entry: dict):
         pass
 
-    def _enqueue_ssd_write(self, block_hash, tensors_raw, file_metadata, block_metadata):
+    def _enqueue_ssd_write(
+        self, block_hash, tensors_raw, file_metadata, block_metadata
+    ):
         try:
             self._write_queue.put(
                 (block_hash, tensors_raw, file_metadata, block_metadata),
                 timeout=1.0,
             )
         except queue.Full:
-            logger.debug("SSD write queue full on enqueue, dropping: %s", block_hash.hex()[:16])
+            logger.debug(
+                "SSD write queue full on enqueue, dropping: %s", block_hash.hex()[:16]
+            )
             self._stats["ssd_write_drops"] += 1
 
     def _background_writer(self):
@@ -1427,7 +1535,9 @@ class PagedSSDCacheManager:
                 file_path = self._get_file_path(block_hash)
                 file_path.parent.mkdir(parents=True, exist_ok=True)
                 temp_path = file_path.with_suffix(".tmp")
-                actual_size = _write_safetensors_no_mx(str(temp_path), tensors_raw, file_metadata)
+                actual_size = _write_safetensors_no_mx(
+                    str(temp_path), tensors_raw, file_metadata
+                )
                 temp_path.replace(file_path)
                 with self._state_lock:
                     old_meta = self._index.get(block_hash)
@@ -1438,14 +1548,23 @@ class PagedSSDCacheManager:
                 self._stats["saves_persisted"] += 1
             except OSError as e:
                 if e.errno == errno.ENOSPC:
-                    logger.warning("SSD cache disk full, dropping block write: %s", block_hash.hex()[:16])
+                    logger.warning(
+                        "SSD cache disk full, dropping block write: %s",
+                        block_hash.hex()[:16],
+                    )
                 else:
-                    logger.error("Background write failed for block %s: %s", block_hash.hex()[:16], e)
+                    logger.error(
+                        "Background write failed for block %s: %s",
+                        block_hash.hex()[:16],
+                        e,
+                    )
                 with self._state_lock:
                     self._index.remove(block_hash)
                 self._stats["errors"] += 1
             except Exception as e:
-                logger.error("Background write error for block %s: %s", block_hash.hex()[:16], e)
+                logger.error(
+                    "Background write error for block %s: %s", block_hash.hex()[:16], e
+                )
                 with self._state_lock:
                     self._index.remove(block_hash)
                 self._stats["errors"] += 1
@@ -1492,7 +1611,9 @@ class PagedSSDCacheManager:
                         )
                     except OSError:
                         scan_file_size = 0
-                        scan_last_access = float(file_metadata.get("last_access", time.time()))
+                        scan_last_access = float(
+                            file_metadata.get("last_access", time.time())
+                        )
                     meta = PagedSSDBlockMetadata(
                         block_hash=block_hash,
                         file_path=f,
@@ -1504,8 +1625,19 @@ class PagedSSDCacheManager:
                         model_name=file_metadata.get("model_name", ""),
                         block_size=int(file_metadata.get("block_size", 0)),
                         cache_signature=file_metadata.get("cache_signature", ""),
-                        layer_cache_types=json.loads(file_metadata["layer_cache_types"]) if "layer_cache_types" in file_metadata else None,
-                        layer_meta_states=[tuple(s) for s in json.loads(file_metadata["layer_meta_states"])] if "layer_meta_states" in file_metadata else None,
+                        layer_cache_types=(
+                            json.loads(file_metadata["layer_cache_types"])
+                            if "layer_cache_types" in file_metadata
+                            else None
+                        ),
+                        layer_meta_states=(
+                            [
+                                tuple(s)
+                                for s in json.loads(file_metadata["layer_meta_states"])
+                            ]
+                            if "layer_meta_states" in file_metadata
+                            else None
+                        ),
                     )
                     if not self._is_compatible_block(meta):
                         self._add_to_incompatible_index(f, file_metadata)
@@ -1519,7 +1651,8 @@ class PagedSSDCacheManager:
 
         logger.info(
             "SSD cache scan complete: %d compatible, skipped_incompatible=%d blocks",
-            self._index.count, skipped_incompatible,
+            self._index.count,
+            skipped_incompatible,
         )
 
     def _add_to_incompatible_index(self, file_path: Path, file_metadata: dict):
@@ -1554,7 +1687,9 @@ class PagedSSDCacheManager:
 
     def _enforce_incompatible_at_startup(self):
         effective = self._get_effective_max_size()
-        while self._tracked_ssd_size() > effective and self._incompatible_index.count > 0:
+        while (
+            self._tracked_ssd_size() > effective and self._incompatible_index.count > 0
+        ):
             lru = self._incompatible_index.get_lru_entries(1)
             if not lru:
                 break
@@ -1570,12 +1705,25 @@ class PagedSSDCacheManager:
     def _is_compatible_block(self, meta: PagedSSDBlockMetadata) -> bool:
         if not self._expected_model_name:
             return True
-        if self._expected_num_layers > 0 and meta.num_layers != self._expected_num_layers:
+        if (
+            self._expected_num_layers > 0
+            and meta.num_layers != self._expected_num_layers
+        ):
             return False
-        if self._expected_model_name and meta.model_name and meta.model_name != self._expected_model_name:
+        if (
+            self._expected_model_name
+            and meta.model_name
+            and meta.model_name != self._expected_model_name
+        ):
             return False
-        expected_block_size = self._expected_block_size or self._expected_block_size_tokens
-        if expected_block_size > 0 and meta.block_size > 0 and meta.block_size != expected_block_size:
+        expected_block_size = (
+            self._expected_block_size or self._expected_block_size_tokens
+        )
+        if (
+            expected_block_size > 0
+            and meta.block_size > 0
+            and meta.block_size != expected_block_size
+        ):
             return False
         if self._expected_layer_cache_types and meta.cache_signature:
             expected_sig = _cache_compat_signature(
@@ -1589,7 +1737,10 @@ class PagedSSDCacheManager:
 
     def _get_effective_max_size(self) -> int:
         now = time.time()
-        if self._disk_usage_cache_value is not None and (now - self._disk_usage_cache_time) < 30.0:
+        if (
+            self._disk_usage_cache_value is not None
+            and (now - self._disk_usage_cache_time) < 30.0
+        ):
             cached = self._disk_usage_cache_value
         else:
             try:
@@ -1609,7 +1760,8 @@ class PagedSSDCacheManager:
         if effective < self._configured_max_size * 0.10:
             logger.warning(
                 "SSD cache disk pressure: disk nearly full, effective max %d < 10%% of configured %d",
-                effective, self._configured_max_size,
+                effective,
+                self._configured_max_size,
             )
         with self._state_lock:
             if self._tracked_ssd_size() <= effective:
@@ -1717,7 +1869,11 @@ class PagedSSDCacheManager:
                 "tensors_raw": tensors_raw,
                 "file_metadata": file_metadata,
                 "num_layers": int(file_metadata.get("num_layers", 0)),
-                "layer_cache_types": json.loads(file_metadata["layer_cache_types"]) if "layer_cache_types" in file_metadata else None,
+                "layer_cache_types": (
+                    json.loads(file_metadata["layer_cache_types"])
+                    if "layer_cache_types" in file_metadata
+                    else None
+                ),
                 "block_metadata": meta,
                 "dirty": False,
             }
@@ -1730,7 +1886,9 @@ class PagedSSDCacheManager:
         self._stats["preload_time_ms"] += elapsed_ms
         return loaded
 
-    def adopt_layer_signature_if_unset(self, layer_cache_types: list[str] | None) -> bool:
+    def adopt_layer_signature_if_unset(
+        self, layer_cache_types: list[str] | None
+    ) -> bool:
         if not layer_cache_types:
             return False
         if self._expected_layer_cache_types is not None:
@@ -1756,7 +1914,9 @@ class PagedSSDCacheManager:
                     continue
                 if meta.layer_cache_types is None:
                     continue
-                if not self._signatures_match(meta.layer_cache_types, self._expected_layer_cache_types):
+                if not self._signatures_match(
+                    meta.layer_cache_types, self._expected_layer_cache_types
+                ):
                     self._index.remove(block_hash)
                     dropped += 1
         self._signature_sweep_completed = True
@@ -1765,7 +1925,11 @@ class PagedSSDCacheManager:
     def set_expected_layer_signature(self, layer_cache_types: list[str] | None) -> bool:
         if not layer_cache_types:
             return False
-        current_canon = _canonicalize_layer_cache_types(self._expected_layer_cache_types) if self._expected_layer_cache_types else None
+        current_canon = (
+            _canonicalize_layer_cache_types(self._expected_layer_cache_types)
+            if self._expected_layer_cache_types
+            else None
+        )
         new_canon = _canonicalize_layer_cache_types(layer_cache_types)
         is_canonical_match = current_canon == new_canon
         self._expected_layer_cache_types = list(layer_cache_types)
@@ -1790,7 +1954,9 @@ class PagedSSDCacheManager:
         with self._state_lock:
             self._index.remove(block_hash)
 
-    def store_block(self, block_id: int, layers: list[Any], metadata: dict | None = None) -> bool:
+    def store_block(
+        self, block_id: int, layers: list[Any], metadata: dict | None = None
+    ) -> bool:
         if not layers:
             return False
         block_hash = str(block_id).encode().ljust(20, b"_")[:20]

@@ -108,9 +108,9 @@ def test_logprobs_path_preserves_channel_split():
     assert resp.status_code == 200, resp.text
     body = resp.json()
     msg = body["choices"][0]["message"]
-    assert msg["content"] == "4", (
-        f"content must contain ONLY the content-channel text; got {msg['content']!r}"
-    )
+    assert (
+        msg["content"] == "4"
+    ), f"content must contain ONLY the content-channel text; got {msg['content']!r}"
     assert msg.get("reasoning_content") == "The user wants 2+2. That equals 4.", (
         f"reasoning_content must contain reasoning-channel text; "
         f"got {msg.get('reasoning_content')!r}"

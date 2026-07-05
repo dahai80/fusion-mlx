@@ -1215,13 +1215,9 @@ class MiniMaxM3KVCacheHandler(_MiniMaxM3CacheHandlerBase):
             return {}
 
         keys_list = [s.get("keys") for s in states if s.get("keys") is not None]
-        values_list = [
-            s.get("values") for s in states if s.get("values") is not None
-        ]
+        values_list = [s.get("values") for s in states if s.get("values") is not None]
         index_list = [
-            s.get("index_keys")
-            for s in states
-            if s.get("index_keys") is not None
+            s.get("index_keys") for s in states if s.get("index_keys") is not None
         ]
         if not keys_list or not values_list:
             return {}

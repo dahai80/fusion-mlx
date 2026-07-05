@@ -101,7 +101,9 @@ class BoundarySnapshotSSDStore:
         self._cancelled_lock = threading.Lock()
 
         # Background writer thread.
-        self._write_queue: queue.Queue = queue.Queue(maxsize=_DEFAULT_MAX_PENDING_WRITES)
+        self._write_queue: queue.Queue = queue.Queue(
+            maxsize=_DEFAULT_MAX_PENDING_WRITES
+        )
         self._shutdown = threading.Event()
         # Held by the writer for the duration of each item's processing.
         # cleanup_all() acquires it after draining the queue so the writer
@@ -178,24 +180,28 @@ class BoundarySnapshotSSDStore:
             # Backpressure check: warn at 80% capacity so caller can
             # throttle new prefills before the hard cap drops snapshots.
             qsize = self._write_queue.qsize()
-            soft_limit = int(_MAX_PENDING_WRITES * _SOFT_LIMIT_PCT)
+            soft_limit = int(_DEFAULT_MAX_PENDING_WRITES * _SOFT_LIMIT_PCT)
             if qsize >= soft_limit:
                 logger.warning(
-                     "Boundary snapshot write queue at %d/%d (%.0f%%) — "
-                     "backpressure active; consider reducing concurrent prefills",
-                    qsize, _MAX_PENDING_WRITES,
-                    qsize / _MAX_PENDING_WRITES * 100,
-                 )
+                    "Boundary snapshot write queue at %d/%d (%.0f%%) — "
+                    "backpressure active; consider reducing concurrent prefills",
+                    qsize,
+                    _DEFAULT_MAX_PENDING_WRITES,
+                    qsize / _DEFAULT_MAX_PENDING_WRITES * 100,
+                )
 
             # 5. Enqueue for background write (dynamic capacity check).
             max_bound = self._get_dynamic_queue_bound()
             if qsize >= max_bound:
-                 # Queue at dynamic capacity — drop snapshot to protect memory
+                # Queue at dynamic capacity — drop snapshot to protect memory
                 logger.warning(
-                     "Boundary snapshot queue at dynamic capacity (%d/%d), "
-                     "dropping snapshot %s/%d",
-                    qsize, max_bound, request_id, token_count
-                 )
+                    "Boundary snapshot queue at dynamic capacity (%d/%d), "
+                    "dropping snapshot %s/%d",
+                    qsize,
+                    max_bound,
+                    request_id,
+                    token_count,
+                )
                 with self._pending_lock:
                     self._pending_writes.pop(pw_key, None)
                 with self._registry_lock:
@@ -218,8 +224,7 @@ class BoundarySnapshotSSDStore:
                 # only" promise was already broken because cleanup
                 # discards the in-memory copy anyway.
                 logger.warning(
-                    "Boundary snapshot write queue full, dropping "
-                    "snapshot %s/%d",
+                    "Boundary snapshot write queue full, dropping " "snapshot %s/%d",
                     request_id,
                     token_count,
                 )
@@ -380,9 +385,7 @@ class BoundarySnapshotSSDStore:
         # pulled. If it's genuinely stuck (slow disk, dead thread) fall
         # back to the cancelled-counter rescue rather than blocking the
         # caller.
-        acquired = self._writer_busy.acquire(
-            timeout=self._CLEANUP_REQUEST_TIMEOUT_S
-        )
+        acquired = self._writer_busy.acquire(timeout=self._CLEANUP_REQUEST_TIMEOUT_S)
         try:
             # Remove files.
             req_dir = self._snapshot_dir / request_id
@@ -447,9 +450,7 @@ class BoundarySnapshotSSDStore:
                         # If cleanup_all is the LAST call before process
                         # exit without an explicit shutdown(), the writer
                         # thread will only be reaped on daemon teardown.
-                        logger.debug(
-                            "cleanup_all: dropped writer-sentinel on Full"
-                        )
+                        logger.debug("cleanup_all: dropped writer-sentinel on Full")
                     break
             except queue.Empty:
                 break
@@ -462,9 +463,7 @@ class BoundarySnapshotSSDStore:
         # path. After the timeout we proceed anyway: the worst case is
         # an orphaned file in the recreated directory, which next
         # startup's cleanup_all() will clear.
-        acquired = self._writer_busy.acquire(
-            timeout=self._CLEANUP_ALL_TIMEOUT_S
-        )
+        acquired = self._writer_busy.acquire(timeout=self._CLEANUP_ALL_TIMEOUT_S)
         try:
             if not acquired:
                 logger.warning(
@@ -490,9 +489,7 @@ class BoundarySnapshotSSDStore:
                 try:
                     shutil.rmtree(self._snapshot_dir)
                 except Exception as e:
-                    logger.debug(
-                        "Failed to clean up all boundary snapshots: %s", e
-                    )
+                    logger.debug("Failed to clean up all boundary snapshots: %s", e)
             self._snapshot_dir.mkdir(parents=True, exist_ok=True)
         finally:
             if acquired:
@@ -586,7 +583,9 @@ class BoundarySnapshotSSDStore:
                 if req_dir.exists():
                     shutil.rmtree(req_dir)
             except Exception:
-                logger.debug("swallowed exception at fusion_mlx/cache/boundary_snapshot_store.py:555")
+                logger.debug(
+                    "swallowed exception at fusion_mlx/cache/boundary_snapshot_store.py:555"
+                )
 
                 pass
             self._dec_cancelled(pw_key[0])
@@ -604,7 +603,9 @@ class BoundarySnapshotSSDStore:
                     if temp_path.exists():
                         temp_path.unlink()
                 except Exception:
-                    logger.debug("swallowed exception at fusion_mlx/cache/boundary_snapshot_store.py:572")
+                    logger.debug(
+                        "swallowed exception at fusion_mlx/cache/boundary_snapshot_store.py:572"
+                    )
 
                     pass
                 with self._pending_lock:
@@ -620,7 +621,9 @@ class BoundarySnapshotSSDStore:
                     if file_path.exists():
                         file_path.unlink()
                 except Exception:
-                    logger.debug("swallowed exception at fusion_mlx/cache/boundary_snapshot_store.py:587")
+                    logger.debug(
+                        "swallowed exception at fusion_mlx/cache/boundary_snapshot_store.py:587"
+                    )
 
                     pass
                 req_dir = file_path.parent
@@ -628,7 +631,9 @@ class BoundarySnapshotSSDStore:
                     if req_dir.exists():
                         shutil.rmtree(req_dir)
                 except Exception:
-                    logger.debug("swallowed exception at fusion_mlx/cache/boundary_snapshot_store.py:594")
+                    logger.debug(
+                        "swallowed exception at fusion_mlx/cache/boundary_snapshot_store.py:594"
+                    )
 
                     pass
                 self._dec_cancelled(pw_key[0])
@@ -639,7 +644,9 @@ class BoundarySnapshotSSDStore:
                     if p is not None and p.exists():
                         p.unlink()
                 except Exception:
-                    logger.debug("swallowed exception at fusion_mlx/cache/boundary_snapshot_store.py:604")
+                    logger.debug(
+                        "swallowed exception at fusion_mlx/cache/boundary_snapshot_store.py:604"
+                    )
 
                     pass
             # Same bookkeeping invariant as the early-return path: if

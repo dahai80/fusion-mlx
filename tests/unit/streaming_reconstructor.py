@@ -153,9 +153,9 @@ class StreamingToolReconstructor:
     def _append_tool_call_delta(self, call_delta: dict[str, Any]) -> None:
         # R3: type must be absent or "function".
         delta_type = call_delta.get("type")
-        assert delta_type is None or delta_type == "function", (
-            f"Streaming tool calls must emit type='function'; got type={delta_type!r}"
-        )
+        assert (
+            delta_type is None or delta_type == "function"
+        ), f"Streaming tool calls must emit type='function'; got type={delta_type!r}"
 
         index = call_delta.get("index")
         assert isinstance(index, int) and index >= 0, (

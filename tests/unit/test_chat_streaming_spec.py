@@ -223,9 +223,9 @@ def test_non_guided_streaming_usage_only_in_dedicated_chunk_when_include_usage_t
         "finish chunk MUST NOT carry usage when include_usage=True — "
         "double emission causes aggregating clients to double-count"
     )
-    assert len(usage_only_events) == 1, (
-        "expected exactly one dedicated usage chunk when include_usage=True"
-    )
+    assert (
+        len(usage_only_events) == 1
+    ), "expected exactly one dedicated usage chunk when include_usage=True"
 
 
 def test_non_guided_streaming_omits_usage_when_include_usage_unset():
@@ -263,9 +263,9 @@ def test_non_guided_streaming_omits_usage_when_include_usage_unset():
         "finish chunk MUST NOT carry usage when include_usage is unset — "
         "OpenAI streaming spec requires opt-in via stream_options"
     )
-    assert usage_only_events == [], (
-        "no dedicated usage chunk when include_usage is unset"
-    )
+    assert (
+        usage_only_events == []
+    ), "no dedicated usage chunk when include_usage is unset"
     # Stronger: the ``usage`` KEY must be absent from every chunk —
     # a regression that serializes ``"usage": null`` would slip past a
     # truthiness check but is itself non-spec for the unset path
@@ -426,9 +426,9 @@ def test_finalize_no_op_when_no_tool_calls_present():
     list(processor.process_chunk(output))
 
     finalize_events = processor.finalize()
-    assert finalize_events == [], (
-        "no tool calls in text → finalize must return empty list, not spurious events"
-    )
+    assert (
+        finalize_events == []
+    ), "no tool calls in text → finalize must return empty list, not spurious events"
     assert not processor.tool_calls_detected
 
 
@@ -607,6 +607,7 @@ def test_synthetic_terminal_chunk_does_not_replay_accumulated_text(monkeypatch):
     would double-send the entire reply via the synthetic chunk.
     """
     from fusion_mlx.domain.events import StreamEvent
+
     from fusion_mlx.service import postprocessor as pp_mod
 
     # Force the defensive branch:

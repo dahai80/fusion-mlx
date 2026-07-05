@@ -3,10 +3,9 @@
 from unittest.mock import MagicMock, patch
 
 import mlx.core as mx
-import pytest
 
 from fusion_mlx.engine_core import EngineCore
-from fusion_mlx.scheduler import Scheduler, SchedulerConfig
+from fusion_mlx.scheduler import Scheduler
 
 
 class TestSchedulerStreamParam:
@@ -54,23 +53,28 @@ class TestSchedulerStreamIsolation:
         import re
 
         import fusion_mlx.scheduler as sched_mod
+
         source = inspect.getsource(sched_mod.Scheduler)
 
         # Find bare generation_stream references that aren't:
         # - _default_generation_stream (the import alias)
         # - Part of a larger word
         bare_refs = re.findall(
-            r'(?<!_default_)(?<!self\._)(?<!\w)generation_stream(?!\w)',
+            r"(?<!_default_)(?<!self\._)(?<!\w)generation_stream(?!\w)",
             source,
         )
         # Filter out string literals and comments by checking lines
         code_refs = []
         for line in source.splitlines():
             stripped = line.strip()
-            if stripped.startswith('#') or stripped.startswith('"') or stripped.startswith("'"):
+            if (
+                stripped.startswith("#")
+                or stripped.startswith('"')
+                or stripped.startswith("'")
+            ):
                 continue
             matches = re.findall(
-                r'(?<!_default_)(?<!self\._)(?<!\w)generation_stream(?!\w)',
+                r"(?<!_default_)(?<!self\._)(?<!\w)generation_stream(?!\w)",
                 line,
             )
             code_refs.extend(matches)
@@ -97,6 +101,7 @@ class TestMtpStreamIsolation:
     def test_mtp_source_no_module_level_stream_read(self):
         """MTP patch source must not read sys.modules generation_stream."""
         import inspect
+
         import fusion_mlx.patches.mlx_lm_mtp.batch_generator as mtp_mod
 
         source = inspect.getsource(mtp_mod)
@@ -155,9 +160,11 @@ class TestPerEngineExecutor:
         mock_tokenizer = MagicMock()
         mock_tokenizer.eos_token_id = 0
 
-        with patch("omlx.engine_core.get_registry") as mock_registry, patch(
-            "omlx.engine_core.compile_cache_clear_available", return_value=True
-        ), patch("omlx.engine_core.clear_thread_compile_cache") as mock_clear:
+        with (
+            patch("omlx.engine_core.get_registry") as mock_registry,
+            patch("omlx.engine_core.compile_cache_clear_available", return_value=True),
+            patch("omlx.engine_core.clear_thread_compile_cache") as mock_clear,
+        ):
             mock_registry.return_value.acquire.return_value = True
 
             engine = EngineCore(mock_model, mock_tokenizer)
@@ -182,8 +189,9 @@ class TestPerEngineExecutor:
         mock_tokenizer = MagicMock()
         mock_tokenizer.eos_token_id = 0
 
-        with patch("omlx.engine_core.get_registry") as mock_registry, patch(
-            "omlx.engine_core.compile_cache_clear_available", return_value=False
+        with (
+            patch("omlx.engine_core.get_registry") as mock_registry,
+            patch("omlx.engine_core.compile_cache_clear_available", return_value=False),
         ):
             mock_registry.return_value.acquire.return_value = True
 
@@ -251,4 +259,5 @@ class TestConcurrentStreamIsolation:
         )
 
         from fusion_mlx.scheduler import _default_generation_stream as current
+
         assert id(current) == original_id

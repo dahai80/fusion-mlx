@@ -28,7 +28,7 @@ from .helpers import (
 from .monkeypatches import _unregister_uid_row
 
 
-def _trim_prompt_cache_for_generation(    self, cache_list: list[Any]) -> bool:
+def _trim_prompt_cache_for_generation(self, cache_list: list[Any]) -> bool:
     """Trim each cache layer by one token for exact-hit generation kickoff."""
     if not cache_list:
         return False
@@ -38,13 +38,12 @@ def _trim_prompt_cache_for_generation(    self, cache_list: list[Any]) -> bool:
             return False
     return True
 
-def _trim_cache_tree_by_one(    self, cache_obj: Any) -> bool:
+
+def _trim_cache_tree_by_one(self, cache_obj: Any) -> bool:
     """Trim one token from cache object (recursively for CacheList)."""
     sub_caches = getattr(cache_obj, "caches", None)
     if isinstance(sub_caches, (list, tuple)):
-        return all(
-            self._trim_cache_tree_by_one(sub_cache) for sub_cache in sub_caches
-        )
+        return all(self._trim_cache_tree_by_one(sub_cache) for sub_cache in sub_caches)
 
     trim_fn = getattr(cache_obj, "trim", None)
     if not callable(trim_fn):
@@ -58,7 +57,8 @@ def _trim_cache_tree_by_one(    self, cache_obj: Any) -> bool:
     except Exception:
         return False
 
-def _remove_uid_from_active_batch(    self, uid: int) -> None:
+
+def _remove_uid_from_active_batch(self, uid: int) -> None:
     """Remove UID from BatchGenerator safely.
 
     vlm_mtp uses negative uids that BatchGenerator never sees; the
@@ -72,7 +72,8 @@ def _remove_uid_from_active_batch(    self, uid: int) -> None:
 
     self.batch_generator.remove([uid])
 
-def _check_pending_aborts_for_uids(    self, uids: list[int]) -> list[int]:
+
+def _check_pending_aborts_for_uids(self, uids: list[int]) -> list[int]:
     """Return UIDs that have pending aborts.
 
     Called during prefill to detect aborted
@@ -88,7 +89,8 @@ def _check_pending_aborts_for_uids(    self, uids: list[int]) -> list[int]:
             aborted.append(uid)
     return aborted
 
-def abort_request(    self, request_id: str) -> bool:
+
+def abort_request(self, request_id: str) -> bool:
     """
     Enqueue a request for deferred abort.
 
@@ -106,6 +108,7 @@ def abort_request(    self, request_id: str) -> bool:
     logger.debug(f"Enqueued deferred abort for request {request_id}")
     return True
 
+
 def _process_pending_aborts(self) -> None:
     """Drain and process pending abort requests.
 
@@ -116,7 +119,8 @@ def _process_pending_aborts(self) -> None:
         request_id = self._pending_abort_ids.pop()
         self._do_abort_request(request_id)
 
-def _do_abort_request(    self, request_id: str) -> bool:
+
+def _do_abort_request(self, request_id: str) -> bool:
     """
     Actually abort a request. Must be called from the step() context.
 

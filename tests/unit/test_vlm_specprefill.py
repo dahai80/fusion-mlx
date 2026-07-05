@@ -17,7 +17,9 @@ async def test_vlm_chat_forwards_specprefill_threshold_and_keep_pct():
     engine._vlm_model.config.model_type = "test"
     engine._tokenizer = MagicMock()
     engine._tokenizer.apply_chat_template.return_value = "<prompt>"
-    engine._tokenizer.encode.side_effect = lambda text, **kwargs: list(range(max(1, len(text.split()))))
+    engine._tokenizer.encode.side_effect = lambda text, **kwargs: list(
+        range(max(1, len(text.split())))
+    )
     engine._engine = MagicMock()
     engine._engine._mlx_executor = ThreadPoolExecutor(max_workers=1)
     engine._engine.add_request = AsyncMock(return_value="req-1")

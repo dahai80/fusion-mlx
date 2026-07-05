@@ -141,10 +141,11 @@ def _build_app(monkeypatch, *, with_handlers: bool = True):
 
     _install_lightweight_engine_modules(monkeypatch)
 
+    from fusion_mlx.routes.responses import router as responses_router
+
     from fusion_mlx.config import reset_config
     from fusion_mlx.middleware.auth import rate_limiter
     from fusion_mlx.routes.anthropic import router as anthropic_router
-    from fusion_mlx.routes.responses import router as responses_router
 
     cfg = reset_config()
     cfg.api_key = None  # turn off auth so the test focuses on validation
@@ -217,9 +218,9 @@ def test_malformed_json_returns_400_with_clean_envelope(client, path):
         content=b"not json",
         headers={"Content-Type": "application/json"},
     )
-    assert response.status_code == 400, (
-        f"{path}: expected 400, got {response.status_code} body={response.text!r}"
-    )
+    assert (
+        response.status_code == 400
+    ), f"{path}: expected 400, got {response.status_code} body={response.text!r}"
     body = response.json()
     assert "error" in body
     err = body["error"]
@@ -433,7 +434,6 @@ def test_audio_resolve_stt_model_rejects_bogus_name():
     """F-165: bogus aliases (no slash, not in the curated map) must
     raise a structured 404 BEFORE any STT engine load is attempted."""
     from fastapi import HTTPException
-
     from fusion_mlx.routes.audio import _resolve_stt_model
 
     with pytest.raises(HTTPException) as exc_info:
@@ -507,7 +507,6 @@ def test_audio_route_form_field_overrides_query(monkeypatch):
 
 def test_audio_resolve_stt_model_rejects_empty_string():
     from fastapi import HTTPException
-
     from fusion_mlx.routes.audio import _resolve_stt_model
 
     with pytest.raises(HTTPException) as exc_info:

@@ -22,7 +22,7 @@ or — worse — silently mislabelled.
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -69,7 +69,7 @@ def _build(tier=None, smoke_result=None, harness_result=None) -> dict:
         hf_path="mlx-community/Qwen3.5-9B-4bit",
         bench=bench,
         notes="unit test",
-        now=datetime(2026, 6, 15, 10, 30, 0, tzinfo=timezone.utc),
+        now=datetime(2026, 6, 15, 10, 30, 0, tzinfo=UTC),
         tier=tier,
         smoke_result=smoke_result,
         harness_result=harness_result,

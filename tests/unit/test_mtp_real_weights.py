@@ -111,12 +111,11 @@ def loaded_model(baseline_tokens):
     completes (and releases its model) before this fixture mutates a
     fresh copy via ``inject_mtp_support``.
     """
-    from mlx_lm import load
-
     from fusion_mlx.spec_decode.mtp.qwen3_5_inject import (
         inject_mtp_support,
         validate_mtp_support,
     )
+    from mlx_lm import load
 
     model, tokenizer = load(_BASE_MODEL)
     injected = inject_mtp_support(model, mtp_sidecar=_MTP_SIDECAR)
@@ -168,9 +167,9 @@ def test_inject_loads_real_sidecar_weights(loaded_model):
             break
         except Exception:
             continue
-    assert weights_file is not None, (
-        f"No model.safetensors or model-mtp.safetensors found in {sidecar_dir}"
-    )
+    assert (
+        weights_file is not None
+    ), f"No model.safetensors or model-mtp.safetensors found in {sidecar_dir}"
 
     raw = _mx.load(weights_file)
 
@@ -208,9 +207,9 @@ def test_inject_loads_real_sidecar_weights(loaded_model):
     for k in sorted(expected_keys):
         on_disk = sidecar_norm[k]
         in_module = flat_module[k]
-        assert on_disk.shape == in_module.shape, (
-            f"{k}: shape mismatch (disk {on_disk.shape} vs module {in_module.shape})"
-        )
+        assert (
+            on_disk.shape == in_module.shape
+        ), f"{k}: shape mismatch (disk {on_disk.shape} vs module {in_module.shape})"
         diff = _mx.sum(on_disk != in_module).item()
         if diff != 0:
             mismatched.append((k, int(diff)))
@@ -268,7 +267,6 @@ def test_mtp_lossless_byte_equal_against_baseline(loaded_model, baseline_tokens)
     test is the canonical guard for it on a real checkpoint.
     """
     import mlx.core as _mx
-
     from fusion_mlx.spec_decode.mtp import MTPAcceptCounter
     from fusion_mlx.spec_decode.mtp.generator import mtp_generate_step
 

@@ -294,8 +294,9 @@ class TestDefaultTimeout:
         """If someone bumps one default and forgets the other, the
         CLI and the route layer disagree and timeouts get applied at
         whichever lower default the request happens to hit first."""
-        import fusion_mlx.server as srv
         from fusion_mlx.config.server_config import ServerConfig
+
+        import fusion_mlx.server as srv
 
         assert srv._default_timeout == ServerConfig().default_timeout
 

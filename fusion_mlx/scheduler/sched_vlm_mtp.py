@@ -27,7 +27,8 @@ from .types import (
 )
 
 
-def _route_to_vlm_mtp(    self,
+def _route_to_vlm_mtp(
+    self,
     request: Request,
     prefilled_cache: list[Any],
     last_tokens: list[int],
@@ -49,18 +50,17 @@ def _route_to_vlm_mtp(    self,
     if drafter is None:
         return None
 
-     # Replaced: single-request gate swapped for batched MTP routing.
-     # Eligible requests are accumulated into a batch and run together
-     # via _mtp_rounds_batch, eliminating the serialization bottleneck.
+    # Replaced: single-request gate swapped for batched MTP routing.
+    # Eligible requests are accumulated into a batch and run together
+    # via _mtp_rounds_batch, eliminating the serialization bottleneck.
     from .sched_vlm_mtp_batched import _vlm_mtp_try_enqueue
+
     return _vlm_mtp_try_enqueue(
         self, request, prefilled_cache, last_tokens, sampler, state_machine
-       )
+    )
 
 
-def _log_vlm_mtp_stats(
-    self, state: "_VLMMTPDecodeState", finish_reason: str
-) -> None:
+def _log_vlm_mtp_stats(self, state: "_VLMMTPDecodeState", finish_reason: str) -> None:
     """Emit one INFO line per finished vlm_mtp request with the drafter
     acceptance rate measured for that request.
 
@@ -107,8 +107,9 @@ def _log_vlm_mtp_stats(
         block_size,
     )
 
+
 def _step_vlm_mtp(self) -> list[_VLMMTPResponse]:
     """Advance all active vlm_mtp batches by one yield."""
     from .sched_vlm_mtp_batched import _step_vlm_mtp_batched
-    return _step_vlm_mtp_batched(self)
 
+    return _step_vlm_mtp_batched(self)

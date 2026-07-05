@@ -50,9 +50,9 @@ def test_youtube_cookie_check_is_gone_from_network_section(monkeypatch):
             f"Network section still mentions YouTube: {c.label!r}. "
             "0.9.7 ripped this vestigial Trio-project check."
         )
-        assert "youtube" not in (c.detail or "").lower(), (
-            f"Network section detail still mentions youtube: {c.detail!r}"
-        )
+        assert (
+            "youtube" not in (c.detail or "").lower()
+        ), f"Network section detail still mentions youtube: {c.detail!r}"
 
 
 def test_youtube_cookie_check_gone_even_when_env_var_is_set(monkeypatch):
@@ -114,9 +114,9 @@ def test_dflash_row_ok_when_mlx_vlm_at_min_version():
         "Optional Packages section is missing the DFlash row — "
         f"got rows: {[c.label for c in section.checks]}"
     )
-    assert dflash.status is eh.CheckStatus.OK, (
-        f"DFlash row should be OK at mlx-vlm 0.5.0; got {dflash.status!r}"
-    )
+    assert (
+        dflash.status is eh.CheckStatus.OK
+    ), f"DFlash row should be OK at mlx-vlm 0.5.0; got {dflash.status!r}"
     assert "0.5.0+" in dflash.label and "dflash extras" in dflash.label
 
 

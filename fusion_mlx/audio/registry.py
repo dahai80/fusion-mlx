@@ -1,7 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 """Audio model registry (stub — no audio models in this build)."""
 
-
 _AUDIO_ALIASES: dict[str, str] = {}
 
 

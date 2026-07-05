@@ -1,7 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 """Tests for _with_sse_keepalive SSE wrapper."""
 
-import asyncio
 import json
 
 import pytest
@@ -209,7 +208,9 @@ class TestResolveKeepalive:
         try:
             self._set_mode("chunk")
             assert _resolve_keepalive("openai_chat") == _KEEPALIVE_CHAT_CHUNK
-            assert _resolve_keepalive("openai_completion") == _KEEPALIVE_COMPLETION_CHUNK
+            assert (
+                _resolve_keepalive("openai_completion") == _KEEPALIVE_COMPLETION_CHUNK
+            )
             assert _resolve_keepalive("anthropic") == _KEEPALIVE_ANTHROPIC_PING
             # Responses API has no official ping; chunk mode disables keepalive
             assert _resolve_keepalive("openai_responses") is None
@@ -217,14 +218,23 @@ class TestResolveKeepalive:
             _server_state.global_settings.server.sse_keepalive_mode = original
 
     def test_comment_mode_returns_legacy_comment(self):
-        from fusion_mlx.server import _KEEPALIVE_COMMENT, _resolve_keepalive, _server_state
+        from fusion_mlx.server import (
+            _KEEPALIVE_COMMENT,
+            _resolve_keepalive,
+            _server_state,
+        )
 
         if _server_state.global_settings is None:
             pytest.skip("global_settings not initialized")
         original = _server_state.global_settings.server.sse_keepalive_mode
         try:
             self._set_mode("comment")
-            for protocol in ("openai_chat", "openai_completion", "anthropic", "openai_responses"):
+            for protocol in (
+                "openai_chat",
+                "openai_completion",
+                "anthropic",
+                "openai_responses",
+            ):
                 assert _resolve_keepalive(protocol) == _KEEPALIVE_COMMENT
         finally:
             _server_state.global_settings.server.sse_keepalive_mode = original
@@ -237,7 +247,12 @@ class TestResolveKeepalive:
         original = _server_state.global_settings.server.sse_keepalive_mode
         try:
             self._set_mode("off")
-            for protocol in ("openai_chat", "openai_completion", "anthropic", "openai_responses"):
+            for protocol in (
+                "openai_chat",
+                "openai_completion",
+                "anthropic",
+                "openai_responses",
+            ):
                 assert _resolve_keepalive(protocol) is None
         finally:
             _server_state.global_settings.server.sse_keepalive_mode = original

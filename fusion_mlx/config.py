@@ -132,16 +132,15 @@ class SchedulerConfig:
     admin_snapshot_interval: int = 32
     decode_clear_interval: int = 16384
 
-
     def __post_init__(self):
-         # Validate mutual exclusivity
+        # Validate mutual exclusivity
         if self.chunked_prefill_tokens > 0 and self.use_paged_cache:
             logger.warning(
-                 "chunked_prefill_tokens and use_paged_cache both enabled — "
-                 "disabling paged cache to avoid conflicts"
-             )
+                "chunked_prefill_tokens and use_paged_cache both enabled — "
+                "disabling paged cache to avoid conflicts"
+            )
             self.use_paged_cache = False
-         # Validate ranges
+        # Validate ranges
         if self.max_num_seqs < 1:
             self.max_num_seqs = 1
         if self.max_num_batched_tokens < self.max_num_seqs:
@@ -156,9 +155,8 @@ class SchedulerConfig:
         # runtime reads ``config.chunked_prefill`` (bool); the released CLI
         # sets ``chunked_prefill_tokens`` (int). Respect an explicit True
         # (the multi-model converter passes one).
-        self.chunked_prefill = self.chunked_prefill or (
-            self.chunked_prefill_tokens > 0
-        )
+        self.chunked_prefill = self.chunked_prefill or (self.chunked_prefill_tokens > 0)
+
 
 @dataclass
 class MemoryConfig:
@@ -177,15 +175,14 @@ class MemoryConfig:
     soft_threshold: float = 0.85
     hard_threshold: float = 0.95
 
-
     def __post_init__(self):
         if self.per_engine_pct < 0 or self.per_engine_pct > 1:
             self.per_engine_pct = 0.7
         if self.ssd_cache_max_bytes < 1024 * 1024:
-             # Min 1 MB for SSD cache
+            # Min 1 MB for SSD cache
             self.ssd_cache_max_bytes = 1024 * 1024
         if self.custom_limit_mb is not None and self.custom_limit_mb < 100:
-             # Min 100 MB for custom limit
+            # Min 100 MB for custom limit
             self.custom_limit_mb = 100
         # Clamp thresholds to valid range
         if self.soft_threshold < 0.1 or self.soft_threshold > 0.99:
@@ -195,6 +192,7 @@ class MemoryConfig:
         # Ensure soft < hard
         if self.soft_threshold >= self.hard_threshold:
             self.hard_threshold = min(0.99, self.soft_threshold + 0.1)
+
 
 @dataclass
 class ServerConfig:
@@ -228,7 +226,6 @@ class ServerConfig:
             self.settings_dir = str(Path.home() / ".fusion-mlx")
 
 
-
 # Model config loader
 def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
     merged = dict(base)
@@ -248,7 +245,9 @@ def _load_model_config() -> dict[str, Any]:
             with open(pkg_config) as f:
                 config.update(json.load(f))
         except json.JSONDecodeError as e:
-            logger.warning(f"pkg model-config.json invalid JSON: {e}. Skipping pkg defaults.")
+            logger.warning(
+                f"pkg model-config.json invalid JSON: {e}. Skipping pkg defaults."
+            )
         except Exception as e:
             logger.warning(f"Failed to read pkg model-config.json: {e}")
 
@@ -259,7 +258,9 @@ def _load_model_config() -> dict[str, Any]:
                 user_data = json.load(f)
             config = _deep_merge(config, user_data)
         except json.JSONDecodeError as e:
-            logger.warning(f"User model-config.json invalid JSON: {e}. Using pkg defaults only.")
+            logger.warning(
+                f"User model-config.json invalid JSON: {e}. Using pkg defaults only."
+            )
         except Exception as e:
             logger.warning(f"Failed to read user model-config.json: {e}")
 

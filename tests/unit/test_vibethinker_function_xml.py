@@ -71,9 +71,10 @@ def test_case03_function_then_tool_call_wire_order(parser: HermesToolParser) -> 
     result = parser.extract_tool_calls(text)
     assert result.tools_called is True
     assert len(result.tool_calls) == 2
-    assert [c["name"] for c in result.tool_calls] == ["a", "b"], (
-        f"Expected wire order [a, b]; got {[c['name'] for c in result.tool_calls]}"
-    )
+    assert [c["name"] for c in result.tool_calls] == [
+        "a",
+        "b",
+    ], f"Expected wire order [a, b]; got {[c['name'] for c in result.tool_calls]}"
 
 
 def test_case04_tool_call_then_function_wire_order(parser: HermesToolParser) -> None:
@@ -92,9 +93,10 @@ def test_case04_tool_call_then_function_wire_order(parser: HermesToolParser) -> 
     result = parser.extract_tool_calls(text)
     assert result.tools_called is True
     assert len(result.tool_calls) == 2
-    assert [c["name"] for c in result.tool_calls] == ["b", "a"], (
-        f"Expected [b, a]; got {[c['name'] for c in result.tool_calls]}"
-    )
+    assert [c["name"] for c in result.tool_calls] == [
+        "b",
+        "a",
+    ], f"Expected [b, a]; got {[c['name'] for c in result.tool_calls]}"
 
 
 def test_case05_function_then_bare_function_mixed_shapes(
@@ -286,9 +288,9 @@ def test_case13_stream_partial_opener_at_tail_holds_back(
     )
     # delta1 should be either None (held entirely) or content="" (no new safe bytes).
     if delta1 is not None and "content" in delta1:
-        assert "<func" not in delta1["content"], (
-            f"Partial opener leaked as content: {delta1['content']!r}"
-        )
+        assert (
+            "<func" not in delta1["content"]
+        ), f"Partial opener leaked as content: {delta1['content']!r}"
 
     # Stage 2: completion to a real named-XML opener should claim the
     # held bytes as part of the tool-call block, NOT emit them as content.

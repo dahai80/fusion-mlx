@@ -4,9 +4,7 @@ import logging
 
 import pytest
 from fastapi import FastAPI
-from fastapi.exceptions import RequestValidationError
 from fastapi.testclient import TestClient
-from pydantic import BaseModel
 
 from fusion_mlx.middleware import (
     install_exception_handlers,
@@ -96,6 +94,7 @@ class TestExceptionHandlers:
         @app.get("/v1/not-found")
         async def not_found():
             from fastapi import HTTPException
+
             raise HTTPException(status_code=404, detail="Model not found")
 
         tc = TestClient(app, raise_server_exceptions=False)
@@ -128,20 +127,22 @@ class TestMiddlewareExports:
             install_request_body_depth_middleware,
             install_request_body_limit_middleware,
         )
+
         assert callable(install_exception_handlers)
         assert callable(install_request_body_depth_middleware)
         assert callable(install_request_body_limit_middleware)
 
     def test_auth_exports_available(self):
         from fusion_mlx.middleware import (
-            verify_api_key,
-            verify_api_key_or_x_api_key,
+            RateLimiter,
             check_rate_limit,
             check_rate_limit_or_x_api_key,
-            rate_limiter,
             configure_rate_limiter,
-            RateLimiter,
+            rate_limiter,
+            verify_api_key,
+            verify_api_key_or_x_api_key,
         )
+
         assert callable(verify_api_key)
         assert callable(verify_api_key_or_x_api_key)
         assert callable(check_rate_limit)

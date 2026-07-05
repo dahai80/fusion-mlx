@@ -205,12 +205,17 @@ class RequestBodyDepthMiddleware:
         except _json.JSONDecodeError:
             return await self.app(scope, _replay_buffered(body, receive), send)
         except RecursionError:
-            logger.warning("json.loads RecursionError — body depth cap rejection (depth>%d)", max_depth)
+            logger.warning(
+                "json.loads RecursionError — body depth cap rejection (depth>%d)",
+                max_depth,
+            )
             await _send_400_depth(send, max_depth=max_depth)
             return
 
         if _json_nesting_depth_exceeds(parsed, max_depth):
-            logger.info("Rejecting request: JSON depth exceeds %d (path=%s)", max_depth, path)
+            logger.info(
+                "Rejecting request: JSON depth exceeds %d (path=%s)", max_depth, path
+            )
             await _send_400_depth(send, max_depth=max_depth)
             return
 
@@ -247,5 +252,7 @@ def _replay_with_disconnect(chunks: list[bytes]):
 
 
 def install_request_body_depth_middleware(app: Any) -> None:
-    logger.info("Installing RequestBodyDepthMiddleware (default cap=%d)", DEFAULT_MAX_BODY_DEPTH)
+    logger.info(
+        "Installing RequestBodyDepthMiddleware (default cap=%d)", DEFAULT_MAX_BODY_DEPTH
+    )
     app.add_middleware(RequestBodyDepthMiddleware)

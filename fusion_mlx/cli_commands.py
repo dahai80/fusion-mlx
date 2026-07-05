@@ -2,20 +2,19 @@
 # SPDX-License-Identifier: Apache-2.0
 """CLI commands for fusion-mlx (models, pull, rm, ps, chat, info, agents, upgrade, telemetry)."""
 
-import argparse
 import os
 import sys
 
 from fusion_mlx._cli_base import (
-    MIRROR_DEFAULT,
     _has_seen_tip,
     _mark_tip_seen,
     _print_unknown_model_help,
-    alias_completer,
 )
 from fusion_mlx.cli_serve import (
     _ensure_model_downloaded,
+    _try_mirror_prefetch,
 )
+
 
 def _format_bytes(n: int) -> str:
     """Render a byte count as a 1-decimal IEC-suffixed string (GiB/MiB/KiB).
@@ -538,7 +537,6 @@ def ps_command(_args):
     for pid, port, model, uptime in sorted(rows, key=lambda r: int(r[1])):
         print(f"  {pid:<8}{port:<8}{model:<40}{uptime:<10}")
     print()
-
 
 
 def _spawn_chat_server(
@@ -2293,4 +2291,5 @@ def doctor_command(args):
     logger = logging.getLogger(__name__)
     logger.info("running doctor env-health checks")
     from fusion_mlx.doctor.cli import doctor_command as _doctor_command
+
     _doctor_command(args)

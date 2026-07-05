@@ -18,6 +18,7 @@ must satisfy:
 
 These tests pin those invariants by exercising the real mlx-lm classes.
 """
+
 from __future__ import annotations
 
 import pytest

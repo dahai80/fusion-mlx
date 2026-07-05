@@ -16,7 +16,7 @@ def detect_cpu_name() -> str:
             capture_output=True,
             text=True,
             timeout=5,
-         )
+        )
         if result.returncode == 0 and result.stdout.strip():
             return result.stdout.strip()
     except (FileNotFoundError, subprocess.TimeoutExpired):
@@ -27,6 +27,7 @@ def detect_cpu_name() -> str:
 def detect_cpu_cores() -> int:
     try:
         import psutil
+
         return psutil.cpu_count(logical=True) or 0
     except Exception:
         return 0

@@ -3,8 +3,6 @@
 
 from unittest.mock import MagicMock, patch
 
-import pytest
-
 from fusion_mlx.utils.hardware import (
     _OWNER_HASH_ALPHABET,
     compute_owner_hash,

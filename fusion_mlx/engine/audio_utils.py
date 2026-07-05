@@ -6,7 +6,9 @@ from io import BytesIO
 import numpy as np
 
 
-def wav_header(duration_seconds: float, sample_rate: int = 24000, channels: int = 1) -> bytes:
+def wav_header(
+    duration_seconds: float, sample_rate: int = 24000, channels: int = 1
+) -> bytes:
     """Generate a minimal WAV file header.
 
     Args:
@@ -28,7 +30,9 @@ def wav_header(duration_seconds: float, sample_rate: int = 24000, channels: int 
     return buf.getvalue()
 
 
-def wav_bytes_to_pcm_frames(wav_data: bytes, sample_rate: int = 24000) -> np.ndarray | None:
+def wav_bytes_to_pcm_frames(
+    wav_data: bytes, sample_rate: int = 24000
+) -> np.ndarray | None:
     """Decode WAV bytes to PCM frames as a numpy array.
 
     Args:

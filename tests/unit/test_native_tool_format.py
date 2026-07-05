@@ -51,12 +51,12 @@ class TestNativeToolFormatCapability:
             SeedOssToolParser,
         ]
         for parser_cls in native_parsers:
-            assert parser_cls.SUPPORTS_NATIVE_TOOL_FORMAT is True, (
-                f"{parser_cls.__name__} should support native format"
-            )
-            assert parser_cls.supports_native_format() is True, (
-                f"{parser_cls.__name__}.supports_native_format() should return True"
-            )
+            assert (
+                parser_cls.SUPPORTS_NATIVE_TOOL_FORMAT is True
+            ), f"{parser_cls.__name__} should support native format"
+            assert (
+                parser_cls.supports_native_format() is True
+            ), f"{parser_cls.__name__}.supports_native_format() should return True"
 
     def test_parsers_without_native_support(self):
         non_native_parsers = [
@@ -69,12 +69,12 @@ class TestNativeToolFormatCapability:
             UiTarsToolParser,
         ]
         for parser_cls in non_native_parsers:
-            assert parser_cls.SUPPORTS_NATIVE_TOOL_FORMAT is False, (
-                f"{parser_cls.__name__} should not support native format"
-            )
-            assert parser_cls.supports_native_format() is False, (
-                f"{parser_cls.__name__}.supports_native_format() should return False"
-            )
+            assert (
+                parser_cls.SUPPORTS_NATIVE_TOOL_FORMAT is False
+            ), f"{parser_cls.__name__} should not support native format"
+            assert (
+                parser_cls.supports_native_format() is False
+            ), f"{parser_cls.__name__}.supports_native_format() should return False"
 
     def test_via_manager(self):
         for name in [
@@ -94,9 +94,9 @@ class TestNativeToolFormatCapability:
             "seed_oss",
         ]:
             parser_cls = ToolParserManager.get_tool_parser(name)
-            assert parser_cls.supports_native_format() is True, (
-                f"Parser '{name}' should support native format"
-            )
+            assert (
+                parser_cls.supports_native_format() is True
+            ), f"Parser '{name}' should support native format"
 
         for name in [
             "qwen",
@@ -108,9 +108,9 @@ class TestNativeToolFormatCapability:
             "ui_tars",
         ]:
             parser_cls = ToolParserManager.get_tool_parser(name)
-            assert parser_cls.supports_native_format() is False, (
-                f"Parser '{name}' should not support native format"
-            )
+            assert (
+                parser_cls.supports_native_format() is False
+            ), f"Parser '{name}' should not support native format"
 
 
 class TestExtractMultimodalContentNativeFormat:
@@ -160,9 +160,7 @@ class TestExtractMultimodalContentNativeFormat:
         assert processed[3]["role"] == "user"
         assert processed[3]["content"] == "Thanks!"
 
-    @pytest.mark.skip(
-        reason="preserve_native_format param not available in fusion_mlx"
-    )
+    @pytest.mark.skip(reason="preserve_native_format param not available in fusion_mlx")
     def test_preserve_native_format_true(self, messages_with_tool_calls):
         processed, images, videos = extract_multimodal_content(
             messages_with_tool_calls, preserve_native_format=True
@@ -195,9 +193,7 @@ class TestExtractMultimodalContentNativeFormat:
         assert processed[0]["role"] == "user"
         assert "[Tool Result ()]" in processed[0]["content"]
 
-    @pytest.mark.skip(
-        reason="preserve_native_format param not available in fusion_mlx"
-    )
+    @pytest.mark.skip(reason="preserve_native_format param not available in fusion_mlx")
     def test_empty_tool_call_id_native_mode(self):
         messages = [
             {"role": "tool", "content": "result without id"},
@@ -209,9 +205,7 @@ class TestExtractMultimodalContentNativeFormat:
         assert processed[0]["tool_call_id"] == ""
         assert processed[0]["content"] == "result without id"
 
-    @pytest.mark.skip(
-        reason="preserve_native_format param not available in fusion_mlx"
-    )
+    @pytest.mark.skip(reason="preserve_native_format param not available in fusion_mlx")
     def test_multiple_tool_calls(self):
         messages = [
             {"role": "user", "content": "Get weather and time"},
@@ -282,9 +276,7 @@ class TestExtractMultimodalContentNativeFormat:
 
 class TestEdgeCases:
 
-    @pytest.mark.skip(
-        reason="preserve_native_format param not available in fusion_mlx"
-    )
+    @pytest.mark.skip(reason="preserve_native_format param not available in fusion_mlx")
     def test_none_content_in_tool_message(self):
         messages = [
             {"role": "tool", "tool_call_id": "call_1", "content": None},
@@ -295,9 +287,7 @@ class TestEdgeCases:
         )
         assert processed[0]["content"] == ""
 
-    @pytest.mark.skip(
-        reason="preserve_native_format param not available in fusion_mlx"
-    )
+    @pytest.mark.skip(reason="preserve_native_format param not available in fusion_mlx")
     def test_pydantic_v2_model_tool_calls(self):
         class MockToolCallV2:
             def model_dump(self):
@@ -321,9 +311,7 @@ class TestEdgeCases:
         assert processed[0]["tool_calls"][0]["id"] == "call_v2"
         assert processed[0]["tool_calls"][0]["function"]["name"] == "v2_fn"
 
-    @pytest.mark.skip(
-        reason="preserve_native_format param not available in fusion_mlx"
-    )
+    @pytest.mark.skip(reason="preserve_native_format param not available in fusion_mlx")
     def test_pydantic_v1_model_tool_calls(self):
         class MockToolCallV1:
             def dict(self):
@@ -347,9 +335,7 @@ class TestEdgeCases:
         assert processed[0]["tool_calls"][0]["id"] == "call_v1"
         assert processed[0]["tool_calls"][0]["function"]["name"] == "v1_fn"
 
-    @pytest.mark.skip(
-        reason="preserve_native_format param not available in fusion_mlx"
-    )
+    @pytest.mark.skip(reason="preserve_native_format param not available in fusion_mlx")
     def test_images_and_videos_extracted_with_native_format(self):
         messages = [
             {

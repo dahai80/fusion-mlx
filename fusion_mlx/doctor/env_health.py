@@ -620,7 +620,9 @@ _HF_PROBE_TIMEOUT_S = 2.0
 
 def _probe_hf(timeout: float = _HF_PROBE_TIMEOUT_S) -> tuple[CheckStatus, str]:
     """Return (status, detail) for the huggingface.co HEAD probe."""
-    req = urllib.request.Request(_HF_PROBE_URL, method="HEAD")  # noqa: S310 — https only
+    req = urllib.request.Request(
+        _HF_PROBE_URL, method="HEAD"
+    )  # noqa: S310 — https only
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:  # noqa: S310
             return (

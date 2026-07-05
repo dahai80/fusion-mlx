@@ -32,13 +32,13 @@ import json
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from fusion_mlx.routes.responses import router as responses_router
 
 from fusion_mlx.api import response_format_metrics
 from fusion_mlx.config import reset_config
 from fusion_mlx.engine.base import GenerationOutput
 from fusion_mlx.middleware.exception_handlers import install_exception_handlers
 from fusion_mlx.routes.chat import router as chat_router
-from fusion_mlx.routes.responses import router as responses_router
 
 # ---------------------------------------------------------------------------
 # Stubs — modelled after the constraint-matrix file but with a real
@@ -346,9 +346,9 @@ def test_repair_skipped_when_repair_prompt_exceeds_context():
     assert details.get("reason") == "schema_violation"
 
     # Engine MUST NOT have been called a second time.
-    assert len(engine.chat_calls) == 1, (
-        f"repair was skipped → expected 1 chat call, got {len(engine.chat_calls)}"
-    )
+    assert (
+        len(engine.chat_calls) == 1
+    ), f"repair was skipped → expected 1 chat call, got {len(engine.chat_calls)}"
 
     snap = response_format_metrics.snapshot()
     # Skip counter ticked exactly once.

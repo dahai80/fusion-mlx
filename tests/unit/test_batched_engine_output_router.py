@@ -173,9 +173,9 @@ async def test_stream_chat_routed_outputs_preserve_cached_tokens():
     # source's cached_tokens through.
     assert outputs, "router should emit at least one output"
     cached = [o.cached_tokens for o in outputs]
-    assert cached == [128] * len(outputs), (
-        f"cached_tokens must propagate to every routed output; got {cached!r}"
-    )
+    assert cached == [128] * len(
+        outputs
+    ), f"cached_tokens must propagate to every routed output; got {cached!r}"
 
 
 @pytest.mark.asyncio
@@ -459,9 +459,9 @@ async def test_router_tool_call_body_preserved_single_token_flush(family):
     )
 
     tool_call_outputs = [o for o in outputs if o.channel == "tool_call"]
-    assert len(tool_call_outputs) == 1, (
-        f"{family}: expected exactly 1 TOOL_CALL event, got {len(tool_call_outputs)}"
-    )
+    assert (
+        len(tool_call_outputs) == 1
+    ), f"{family}: expected exactly 1 TOOL_CALL event, got {len(tool_call_outputs)}"
     body = tool_call_outputs[0].new_text
     for needle in expected:
         assert needle in body, f"{family}: {needle!r} dropped from body: {body!r}"

@@ -194,9 +194,9 @@ class TestGate2SyntheticHybrid:
         repair_byte_level_decoder(tok)
         # No metaspace marker leakage post-repair.
         decoded = tok.decode(ids)
-        assert _METASPACE_MARKER not in decoded, (
-            f"space corruption regression: decoded={decoded!r}"
-        )
+        assert (
+            _METASPACE_MARKER not in decoded
+        ), f"space corruption regression: decoded={decoded!r}"
         assert decoded == "the quick brown fox"
 
     def test_repair_leaves_decoder_unchanged_on_synthetic_hybrid(self) -> None:
@@ -267,9 +267,9 @@ class TestGate2RealGemma4:
         ]:
             ids = tok.encode(text, add_special_tokens=False)
             decoded = tok.decode(ids)
-            assert _METASPACE_MARKER not in decoded, (
-                f"metaspace leaked for {text!r}: decoded={decoded!r}"
-            )
+            assert (
+                _METASPACE_MARKER not in decoded
+            ), f"metaspace leaked for {text!r}: decoded={decoded!r}"
 
     def test_gemma4_decoder_not_mutated(self, gemma4_tokenizer) -> None:
         """Gate 2: the real Gemma 4 decoder object must remain
@@ -316,9 +316,9 @@ class TestPR793PathStillRepairs:
         # Pre-repair: the ``Ġ`` mojibake leaks because the SP decoder
         # doesn't know how to invert GPT-2 pretty-byte tokens.
         broken = tok.decode(ids)
-        assert "Ġ" in broken, (
-            f"reproducer didn't break Qwen3 decoder as expected: {broken!r}"
-        )
+        assert (
+            "Ġ" in broken
+        ), f"reproducer didn't break Qwen3 decoder as expected: {broken!r}"
         # Post-repair: swap fires, mojibake is gone.
         assert repair_byte_level_decoder(tok) is True
         repaired = tok.decode(ids)
@@ -403,9 +403,9 @@ class TestGate3SpacedSampleVerification:
         assert result is False, "gate 3 should have caught metaspace leak"
 
         # Decoder reverted to original state — not left as ByteLevel.
-        assert tok.backend_tokenizer.decoder.__getstate__() == original_state, (
-            "gate 3 must revert decoder when spaced-sample verify fails"
-        )
+        assert (
+            tok.backend_tokenizer.decoder.__getstate__() == original_state
+        ), "gate 3 must revert decoder when spaced-sample verify fails"
 
         # And of course the spaces still round-trip cleanly.
         assert tok.decode([4, 5, 6, 7]) == "the quick brown fox"

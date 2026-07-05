@@ -37,7 +37,9 @@ def export_kv_state(self, request_id: str) -> dict[str, Any] | None:
     if len(remaining) > 0:
         logger.debug(
             "export_kv_state: request %s still has %d remaining prefill tokens, "
-            "deferring export", request_id, len(remaining)
+            "deferring export",
+            request_id,
+            len(remaining),
         )
         return None
 
@@ -55,7 +57,8 @@ def export_kv_state(self, request_id: str) -> dict[str, Any] | None:
 
     logger.info(
         "[KVHandoff] Exported %s: %d computed tokens, %d prefix blocks",
-        request_id, kv_state["num_computed_tokens"],
+        request_id,
+        kv_state["num_computed_tokens"],
         kv_state["shared_prefix_blocks"],
     )
     return kv_state
@@ -96,7 +99,8 @@ def import_kv_state(self, request_id: str, kv_state: dict[str, Any]) -> None:
 
     logger.info(
         "[KVHandoff] Imported into %s: %d computed tokens, block_table=%s",
-        request_id, request.num_computed_tokens,
+        request_id,
+        request.num_computed_tokens,
         "yes" if block_table is not None else "none",
     )
 

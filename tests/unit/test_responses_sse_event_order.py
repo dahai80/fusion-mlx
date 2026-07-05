@@ -125,10 +125,11 @@ def responses_client(monkeypatch):
 
     _install_lightweight_engine_modules(monkeypatch)
 
+    from fusion_mlx.routes.responses import router
+
     from fusion_mlx.config import reset_config
     from fusion_mlx.middleware.auth import rate_limiter
     from fusion_mlx.middleware.exception_handlers import install_exception_handlers
-    from fusion_mlx.routes.responses import router
 
     cfg = reset_config()
     cfg.api_key = "test-secret"
@@ -221,9 +222,9 @@ class TestResponsesStreamEventOrder:
         events = _parse_sse(body)
         names = [n for n, _ in events]
 
-        assert "response.in_progress" in names, (
-            f"response.in_progress missing from stream. Events seen: {names}"
-        )
+        assert (
+            "response.in_progress" in names
+        ), f"response.in_progress missing from stream. Events seen: {names}"
 
         created_idx = names.index("response.created")
         in_progress_idx = names.index("response.in_progress")

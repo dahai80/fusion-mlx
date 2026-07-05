@@ -14,8 +14,6 @@ import sys
 import textwrap
 import threading
 
-import pytest
-
 
 def _read_ready_with_timeout(proc: subprocess.Popen, *, timeout: float = 10.0) -> str:
     fd = proc.stdout.fileno()
@@ -94,8 +92,7 @@ def test_install_chains_to_sig_dfl_via_restore_and_raise():
 
     so._reset_for_tests()
 
-    program = textwrap.dedent(
-        """
+    program = textwrap.dedent("""
         import faulthandler, logging, os, signal, sys, time
         logging.basicConfig(level=logging.WARNING, stream=sys.stderr,
                             format="%(levelname)s %(name)s: %(message)s")
@@ -106,8 +103,7 @@ def test_install_chains_to_sig_dfl_via_restore_and_raise():
         os.kill(os.getpid(), signal.SIGUSR1)
         time.sleep(2.0)
         os._exit(99)
-        """
-    ).strip()
+        """).strip()
 
     proc = subprocess.Popen(
         [sys.executable, "-c", program],
@@ -125,9 +121,7 @@ def test_install_chains_to_sig_dfl_via_restore_and_raise():
             proc.communicate()
 
     assert "received signal SIGUSR1" in stderr, stderr
-    assert proc.returncode != 99, (
-        f"chain swallowed the signal; stderr={stderr!r}"
-    )
+    assert proc.returncode != 99, f"chain swallowed the signal; stderr={stderr!r}"
 
 
 def test_install_returns_false_when_no_signals_could_be_installed():
@@ -207,8 +201,7 @@ def test_faulthandler_is_enabled_after_install():
 
 
 def test_subprocess_sigterm_emits_warning_and_stack_dump():
-    program = textwrap.dedent(
-        """
+    program = textwrap.dedent("""
         import logging, os, signal, sys, time
         logging.basicConfig(level=logging.WARNING, stream=sys.stderr,
                             format="%(levelname)s %(name)s: %(message)s")
@@ -225,8 +218,7 @@ def test_subprocess_sigterm_emits_warning_and_stack_dump():
 
         for _ in range(50):
             time.sleep(0.1)
-        """
-    ).strip()
+        """).strip()
 
     proc = subprocess.Popen(
         [sys.executable, "-c", program],
@@ -249,8 +241,7 @@ def test_subprocess_sigterm_emits_warning_and_stack_dump():
 
 
 def test_subprocess_sighup_default_disposition_dumps_and_stays_alive():
-    program = textwrap.dedent(
-        """
+    program = textwrap.dedent("""
         import logging, os, signal, sys, time
         logging.basicConfig(level=logging.WARNING, stream=sys.stderr,
                             format="%(levelname)s %(name)s: %(message)s")
@@ -262,8 +253,7 @@ def test_subprocess_sighup_default_disposition_dumps_and_stays_alive():
             time.sleep(0.1)
         sys.stdout.write("ALIVE\\n"); sys.stdout.flush()
         os._exit(0)
-        """
-    ).strip()
+        """).strip()
 
     proc = subprocess.Popen(
         [sys.executable, "-c", program],
@@ -283,15 +273,16 @@ def test_subprocess_sighup_default_disposition_dumps_and_stays_alive():
 
     assert "received signal SIGHUP" in stderr, stderr
     assert "Thread" in stderr or "Current thread" in stderr, stderr
-    assert proc.returncode == 0, (
-        f"SIGHUP terminated the process; returncode={proc.returncode}"
-    )
-    assert "ALIVE" in stdout, f"SIGHUP did not allow subprocess to continue; stdout={stdout!r}"
+    assert (
+        proc.returncode == 0
+    ), f"SIGHUP terminated the process; returncode={proc.returncode}"
+    assert (
+        "ALIVE" in stdout
+    ), f"SIGHUP did not allow subprocess to continue; stdout={stdout!r}"
 
 
 def test_subprocess_sigterm_default_disposition_still_terminates():
-    program = textwrap.dedent(
-        """
+    program = textwrap.dedent("""
         import logging, os, signal, sys, time
         logging.basicConfig(level=logging.WARNING, stream=sys.stderr,
                             format="%(levelname)s %(name)s: %(message)s")
@@ -302,8 +293,7 @@ def test_subprocess_sigterm_default_disposition_still_terminates():
         os.kill(os.getpid(), signal.SIGUSR1)
         time.sleep(2.0)
         os._exit(99)
-        """
-    ).strip()
+        """).strip()
 
     proc = subprocess.Popen(
         [sys.executable, "-c", program],
@@ -321,6 +311,4 @@ def test_subprocess_sigterm_default_disposition_still_terminates():
             proc.communicate()
 
     assert "received signal SIGUSR1" in stderr, stderr
-    assert proc.returncode != 99, (
-        f"non-SIGHUP signal was swallowed; stderr={stderr!r}"
-    )
+    assert proc.returncode != 99, f"non-SIGHUP signal was swallowed; stderr={stderr!r}"

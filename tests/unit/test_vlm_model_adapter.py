@@ -235,7 +235,6 @@ class TestVLMModelAdapter:
         vlm.get_input_embeddings.assert_called_once_with(input_ids, pixel_values)
         assert result is expected
 
-
     def test_forward_with_inputs_embeds_kwarg(self):
         """Test batched VLM path: inputs_embeds kwarg passed to language_model."""
         from fusion_mlx.models.vlm import VLMModelAdapter

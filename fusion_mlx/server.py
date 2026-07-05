@@ -38,29 +38,29 @@ from .middleware import (
     install_request_body_depth_middleware,
     install_request_body_limit_middleware,
 )
+
 # GUI compatibility layer
 try:
+    from fusion_gui.database import close_database, get_database_manager
     from fusion_gui.server import get_gui_compat_router
-    from fusion_gui.database import get_database_manager, close_database
 except ImportError:
     get_gui_compat_router = None
     get_database_manager = None
     close_database = None
 
 # Import route modules
-from .api.openai_routes import router as openai_router
-from .api.openai_routes import set_openai_context
+from .admin.helpers import set_admin_getters
 from .api.embeddings_routes import router as embeddings_router
 from .api.embeddings_routes import set_embeddings_context
-from .api.rerank_routes import router as rerank_router
-from .api.rerank_routes import set_rerank_context
-from .admin.helpers import set_admin_getters
+from .api.openai_routes import router as openai_router
+from .api.openai_routes import set_openai_context
 from .api.openclaw_routes import router as openclaw_router
 from .api.openclaw_routes import set_openclaw_agent_pool
 from .api.recommend_routes import router as recommend_router
-from .config import SchedulerConfig as FusionSchedulerConfig
+from .api.rerank_routes import router as rerank_router
+from .api.rerank_routes import set_rerank_context
 from .config import ServerConfig
-from .engine_core import AsyncEngineCore, EngineConfig
+from .engine_core import AsyncEngineCore
 from .pool import EnginePool, ProcessMemoryEnforcer
 from .router import CloudRouter, RequestRouter
 from .server_metrics import get_server_metrics
@@ -163,6 +163,7 @@ def _sync_config() -> None:
 
 def configure_logging(log_level: str) -> str:
     import logging as _logging
+
     level = getattr(_logging, log_level.upper(), _logging.INFO)
     _logging.basicConfig(level=level, format="%(levelname)s %(name)s: %(message)s")
     return log_level.upper()
@@ -171,6 +172,7 @@ def configure_logging(log_level: str) -> str:
 def _resolve_api_key(argv_api_key: str | None = None) -> str | None:
     global _api_key
     import os
+
     if argv_api_key:
         return argv_api_key
     if _api_key:
@@ -301,13 +303,14 @@ def load_model(
 def resolve_model_id(model_id: str) -> str:
     """Resolve a model alias to its real ID."""
     from .config import DEFAULT_ALIASES
+
     resolved = DEFAULT_ALIASES.get(model_id)
     if resolved:
         return resolved
-     # Only strip known provider prefixes — preserve HF paths
+    # Only strip known provider prefixes — preserve HF paths
     for prefix in ["omlx/", "fusion/"]:
         if model_id.startswith(prefix):
-            return model_id[len(prefix):]
+            return model_id[len(prefix) :]
     return model_id
 
 
@@ -324,6 +327,7 @@ class Server:
         self.settings = Settings.load(Path(self.config.settings_dir) / "settings.json")
 
         from .admin.auth import set_api_key
+
         if self.settings.api_key:
             set_api_key(self.settings.api_key)
 
@@ -378,7 +382,7 @@ class Server:
         app.include_router(rerank_router)
         app.include_router(admin_router)
 
-         # Register GUI compatibility router (discovery, settings, manager, admin UI)
+        # Register GUI compatibility router (discovery, settings, manager, admin UI)
         if get_gui_compat_router:
             app.include_router(get_gui_compat_router())
 
@@ -400,12 +404,13 @@ class Server:
                 "version": __version__,
                 "engines": engines_list,
                 "mx_memory": {
-                     "active": f"{mx.get_active_memory() / 1e9:.2f} GB",
-                     "cached": f"{mx.get_cache_memory() / 1e9:.2f} GB",
-                      "peak": f"{mx.get_peak_memory() / 1e9:.2f} GB",
-                  },
-                 "model_dir": self.config.model_dir,
-              }
+                    "active": f"{mx.get_active_memory() / 1e9:.2f} GB",
+                    "cached": f"{mx.get_cache_memory() / 1e9:.2f} GB",
+                    "peak": f"{mx.get_peak_memory() / 1e9:.2f} GB",
+                },
+                "model_dir": self.config.model_dir,
+            }
+
         # Stats endpoint (combined pool + metrics)
         @app.get("/stats")
         async def stats():
@@ -421,6 +426,7 @@ class Server:
         @app.get("/api/status")
         async def api_status():
             from .pool.model_discovery import format_size
+
             metrics = get_server_metrics().to_dict()
             models_discovered = 0
             models_loaded = 0
@@ -456,8 +462,12 @@ class Server:
                 "total_completion_tokens": metrics.get("total_tokens_generated", 0),
                 "model_memory_used": model_memory_used,
                 "model_memory_max": model_memory_max,
-                "model_memory_used_formatted": format_size(model_memory_used) if model_memory_used else "0B",
-                "model_memory_max_formatted": format_size(model_memory_max) if model_memory_max else "unlimited",
+                "model_memory_used_formatted": (
+                    format_size(model_memory_used) if model_memory_used else "0B"
+                ),
+                "model_memory_max_formatted": (
+                    format_size(model_memory_max) if model_memory_max else "unlimited"
+                ),
             }
 
         @app.get("/v1/models/status")
@@ -468,31 +478,49 @@ class Server:
             return status
 
         @app.post("/v1/models/{model_id}/load")
-        async def load_model_public(model_id: str, is_admin: bool = Depends(require_admin)):
+        async def load_model_public(
+            model_id: str, is_admin: bool = Depends(require_admin)
+        ):
             if self.pool is None:
                 raise HTTPException(status_code=503, detail="Server not initialized")
             resolved = resolve_model_id(model_id)
             entry = self.pool.get_entry(resolved)
             if entry is None:
-                raise HTTPException(status_code=404, detail=f"Model not found: {model_id}")
+                raise HTTPException(
+                    status_code=404, detail=f"Model not found: {model_id}"
+                )
             if getattr(entry, "engine", None) is not None:
-                return {"status": "ok", "model_id": model_id, "message": f"Already loaded: {model_id}"}
+                return {
+                    "status": "ok",
+                    "model_id": model_id,
+                    "message": f"Already loaded: {model_id}",
+                }
             try:
                 await self.pool.get_engine(resolved)
             except Exception as e:
                 raise HTTPException(status_code=500, detail=str(e))
-            return {"status": "ok", "model_id": model_id, "message": f"Loaded {model_id}"}
+            return {
+                "status": "ok",
+                "model_id": model_id,
+                "message": f"Loaded {model_id}",
+            }
 
         @app.post("/v1/models/{model_id}/unload")
-        async def unload_model_public(model_id: str, is_admin: bool = Depends(require_admin)):
+        async def unload_model_public(
+            model_id: str, is_admin: bool = Depends(require_admin)
+        ):
             if self.pool is None:
                 raise HTTPException(status_code=503, detail="Server not initialized")
             resolved = resolve_model_id(model_id)
             entry = self.pool.get_entry(resolved)
             if entry is None:
-                raise HTTPException(status_code=404, detail=f"Model not found: {model_id}")
+                raise HTTPException(
+                    status_code=404, detail=f"Model not found: {model_id}"
+                )
             if getattr(entry, "engine", None) is None:
-                raise HTTPException(status_code=400, detail=f"Model not loaded: {model_id}")
+                raise HTTPException(
+                    status_code=400, detail=f"Model not loaded: {model_id}"
+                )
             await self.pool._unload_engine(resolved)
             return {"status": "ok", "model_id": model_id}
 
@@ -501,6 +529,7 @@ class Server:
     def _convert_scheduler_config(self):
         """Convert ServerConfig.scheduler to scheduler SchedulerConfig."""
         from .scheduler.config import SchedulerConfig as SchedConfig
+
         src = self.config.scheduler
         return SchedConfig(
             max_num_seqs=src.max_num_seqs,
@@ -533,7 +562,8 @@ class Server:
         # Telemetry: check consent state at server startup so we can log
         # the current status for operators auditing their install.
         try:
-            from fusion_mlx.telemetry import is_enabled, consent_source
+            from fusion_mlx.telemetry import consent_source, is_enabled
+
             src = consent_source()
             enabled = is_enabled()
             logger.info("telemetry consent: enabled=%s source=%s", enabled, src)
@@ -544,11 +574,18 @@ class Server:
         mem_cfg = self.config.memory
         if mem_cfg.ssd_cache_enabled:
             avail_mb = _available_ram_mb()
-            limit_mb = (mem_cfg.cache_memory_mb if mem_cfg.cache_memory_mb
-                         else int(mem_cfg.cache_memory_percent * avail_mb))
+            limit_mb = (
+                mem_cfg.cache_memory_mb
+                if mem_cfg.cache_memory_mb
+                else int(mem_cfg.cache_memory_percent * avail_mb)
+            )
             if limit_mb > 0:
                 mx.set_memory_limit(limit_mb)
-                logger.info("MLX memory limit set to %d MB (available: %d MB)", limit_mb, avail_mb)
+                logger.info(
+                    "MLX memory limit set to %d MB (available: %d MB)",
+                    limit_mb,
+                    avail_mb,
+                )
 
         # Create engine pool with scheduler config from ServerConfig
         self.pool = EnginePool(scheduler_config=self._convert_scheduler_config())
@@ -564,7 +601,9 @@ class Server:
             hard_threshold=mem_cfg.hard_threshold,
         )
         self.pool._process_memory_enforcer.start()
-        self.pool._get_final_ceiling = self.pool._process_memory_enforcer.get_final_ceiling
+        self.pool._get_final_ceiling = (
+            self.pool._process_memory_enforcer.get_final_ceiling
+        )
 
         # Create request router
         self.request_router = RequestRouter()
@@ -598,10 +637,14 @@ class Server:
         if aliases:
             logger.info("Applied %d model aliases", len(aliases))
 
-          # Auto-discover and register models in pool
+        # Auto-discover and register models in pool
         if self.config.model_dir:
             self.pool.discover_models(self.config.model_dir)
-            logger.info("Discovered %d models in %s", self.pool.model_count, self.config.model_dir)
+            logger.info(
+                "Discovered %d models in %s",
+                self.pool.model_count,
+                self.config.model_dir,
+            )
 
         # Single-model ``serve --model <X>`` path: load_model() staged the
         # resolved model on ``_pending_single_model`` before uvicorn started.
@@ -611,7 +654,7 @@ class Server:
         if _pending_single_model:
             await self._load_single_model(_pending_single_model)
 
-         # Initialize GUI database (for compat layer)
+        # Initialize GUI database (for compat layer)
         if get_database_manager:
             try:
                 get_database_manager()
@@ -632,15 +675,19 @@ class Server:
         # the second invocation (atexit fallback) a no-op.
         try:
             from fusion_mlx.telemetry.emit import fire_session_end_hook
+
             fire_session_end_hook()
         except Exception:
             logger.debug("telemetry session_end hook failed (non-fatal)", exc_info=True)
 
-         # Cleanup GUI resources
+        # Cleanup GUI resources
         if close_database:
             try:
+                from fusion_gui.inference_queue_manager import (
+                    shutdown_inference_manager,
+                )
                 from fusion_gui.model_manager import shutdown_model_manager
-                from fusion_gui.inference_queue_manager import shutdown_inference_manager
+
                 shutdown_inference_manager()
                 shutdown_model_manager()
                 close_database()
@@ -659,7 +706,9 @@ class Server:
         async with self._load_lock:
             resolved = resolve_model_id(model_id)
             engine = await self.pool.get_engine(resolved)
-            logger.info("Loaded model %s into pool (engine=%s)", model_id, type(engine).__name__)
+            logger.info(
+                "Loaded model %s into pool (engine=%s)", model_id, type(engine).__name__
+            )
 
     async def unload_model(self, model_id: str):
         """Unload a model from the pool."""
@@ -702,17 +751,16 @@ class Server:
         )
 
 
-
-
 def _available_ram_mb() -> int:
     """Get truly available system RAM in MB, using psutil."""
     try:
         import psutil
+
         vm = psutil.virtual_memory()
-          # Reserve 4 GB for OS + other processes as a safety margin
+        # Reserve 4 GB for OS + other processes as a safety margin
         return max(0, int(vm.available // (1024 * 1024)) - 4096)
     except Exception:
-        return 16 * 1024    # fallback: 12 GB effective (16 - 4 GB reserve)
+        return 16 * 1024  # fallback: 12 GB effective (16 - 4 GB reserve)
 
 
 def create_app(config: ServerConfig | None = None) -> FastAPI:
@@ -729,10 +777,18 @@ def main():
     parser.add_argument("--host", default="0.0.0.0", help="Bind address")
     parser.add_argument("--port", type=int, default=8000, help="Port")
     parser.add_argument("--model-dir", default=None, help="Model directory")
-    parser.add_argument("--memory-tier", choices=["safe", "balanced", "aggressive", "custom"],
-                        default="balanced", help="Memory enforcement tier")
-    parser.add_argument("--ssd-cache", action="store_true", help="Enable SSD cold layer")
-    parser.add_argument("--cloud-router", action="store_true", help="Enable cloud fallback")
+    parser.add_argument(
+        "--memory-tier",
+        choices=["safe", "balanced", "aggressive", "custom"],
+        default="balanced",
+        help="Memory enforcement tier",
+    )
+    parser.add_argument(
+        "--ssd-cache", action="store_true", help="Enable SSD cold layer"
+    )
+    parser.add_argument(
+        "--cloud-router", action="store_true", help="Enable cloud fallback"
+    )
     parser.add_argument("--cloud-api-key", default=None, help="Cloud router API key")
     args = parser.parse_args()
 
@@ -741,7 +797,9 @@ def main():
         port=args.port,
         model_dir=args.model_dir,
     )
-    config.memory.tier = getattr(config.memory.tier.__class__, args.memory_tier, config.memory.tier)
+    config.memory.tier = getattr(
+        config.memory.tier.__class__, args.memory_tier, config.memory.tier
+    )
     config.memory.ssd_cache_enabled = args.ssd_cache
     config.cloud_router_enabled = args.cloud_router
     if args.cloud_api_key:

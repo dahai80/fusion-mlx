@@ -45,7 +45,7 @@ class TestRestartServerRoute:
         assert body["supervisor"] == "menubar"
         assert body["expected_downtime_seconds"] > 0
         spy.assert_called_once()
-        ((delay,), _kwargs) = spy.call_args
+        (delay,), _kwargs = spy.call_args
         assert delay > 0
 
     def test_supervisor_label_round_trips(self, client, monkeypatch):

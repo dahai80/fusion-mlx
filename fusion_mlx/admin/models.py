@@ -121,6 +121,7 @@ class ModelSettingsRequest(BaseModel):
 
 class CreateProfileRequest(BaseModel):
     """Request body for creating a per-model profile."""
+
     name: str
     display_name: str
     description: str | None = None
@@ -131,6 +132,7 @@ class CreateProfileRequest(BaseModel):
 
 class UpdateProfileRequest(BaseModel):
     """Request body for updating/renaming a per-model profile."""
+
     new_name: str | None = None
     display_name: str | None = None
     description: str | None = None
@@ -141,6 +143,7 @@ class UpdateProfileRequest(BaseModel):
 
 class CreateTemplateRequest(BaseModel):
     """Request body for creating a global template."""
+
     name: str
     display_name: str
     description: str | None = None
@@ -149,6 +152,7 @@ class CreateTemplateRequest(BaseModel):
 
 class UpdateTemplateRequest(BaseModel):
     """Request body for updating/renaming a global template."""
+
     new_name: str | None = None
     display_name: str | None = None
     description: str | None = None
@@ -174,8 +178,12 @@ class GlobalSettingsRequest(BaseModel):
 
     # Memory enforcement
     memory_prefill_memory_guard: bool | None = None
-    memory_guard_tier: str | None = None  # "safe" / "balanced" / "aggressive" / "custom"
-    memory_guard_custom_ceiling_gb: float | None = None  # only used when tier == "custom"
+    memory_guard_tier: str | None = (
+        None  # "safe" / "balanced" / "aggressive" / "custom"
+    )
+    memory_guard_custom_ceiling_gb: float | None = (
+        None  # only used when tier == "custom"
+    )
 
     # Scheduler settings
     max_concurrent_requests: int | None = None
@@ -228,7 +236,9 @@ class GlobalSettingsRequest(BaseModel):
     integrations_openclaw_model: str | None = None
     integrations_hermes_model: str | None = None
     integrations_pi_model: str | None = None
-    integrations_openclaw_tools_profile: Literal["minimal", "coding", "messaging", "full"] | None = None
+    integrations_openclaw_tools_profile: (
+        Literal["minimal", "coding", "messaging", "full"] | None
+    ) = None
 
     # UI settings
     ui_language: str | None = None
@@ -297,4 +307,3 @@ class HFValidateTokenRequest(BaseModel):
     """Request model for validating a HuggingFace token."""
 
     hf_token: str
-

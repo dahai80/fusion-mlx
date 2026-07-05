@@ -51,7 +51,9 @@ class VLMModelAdapter(nn.Module):
 
     @property
     def model_type(self) -> str:
-        if hasattr(self._vlm_model, "config") and hasattr(self._vlm_model.config, "model_type"):
+        if hasattr(self._vlm_model, "config") and hasattr(
+            self._vlm_model.config, "model_type"
+        ):
             return self._vlm_model.config.model_type
         return "vlm"
 
@@ -70,6 +72,7 @@ class VLMModelAdapter(nn.Module):
         if hasattr(self._language_model, "make_cache"):
             return self._language_model.make_cache()
         from mlx_lm.models.cache import KVCache
+
         return [KVCache() for _ in range(len(self.layers))]
 
     def set_pending_embeddings(
@@ -96,7 +99,9 @@ class VLMModelAdapter(nn.Module):
         text_config = getattr(config, "text_config", None)
         if not text_config:
             return False
-        rope_cfg = getattr(text_config, "rope_scaling", None) or getattr(text_config, "rope_parameters", None)
+        rope_cfg = getattr(text_config, "rope_scaling", None) or getattr(
+            text_config, "rope_parameters", None
+        )
         if not isinstance(rope_cfg, dict):
             return False
         return "mrope_section" in rope_cfg or rope_cfg.get("type") == "mrope"
@@ -132,11 +137,21 @@ class VLMModelAdapter(nn.Module):
         vlm_extra.pop("_captured_rope_deltas", None)
 
         if inputs_embeds is not None:
-            result = self._language_model(input_ids, inputs_embeds=inputs_embeds, cache=cache, **vlm_extra, **kwargs)
+            result = self._language_model(
+                input_ids,
+                inputs_embeds=inputs_embeds,
+                cache=cache,
+                **vlm_extra,
+                **kwargs,
+            )
         elif self._pending_embeds is not None:
             result = self._forward_with_embeddings(input_ids, cache, **kwargs)
         else:
-            if self._uses_mrope and self._batch_rope_deltas is not None and cache is not None:
+            if (
+                self._uses_mrope
+                and self._batch_rope_deltas is not None
+                and cache is not None
+            ):
                 offsets = None
                 for c in cache:
                     if hasattr(c, "offset"):
@@ -144,22 +159,34 @@ class VLMModelAdapter(nn.Module):
                         break
                 B, L = input_ids.shape
                 deltas = self._batch_rope_deltas
-                if offsets is not None and isinstance(offsets, mx.array) and deltas.shape[-1] == B:
+                if (
+                    offsets is not None
+                    and isinstance(offsets, mx.array)
+                    and deltas.shape[-1] == B
+                ):
                     positions = offsets + deltas
                     position_ids = mx.broadcast_to(positions[None, :, None], (3, B, L))
-                    result = self._language_model(input_ids, cache=cache, position_ids=position_ids, **kwargs)
+                    result = self._language_model(
+                        input_ids, cache=cache, position_ids=position_ids, **kwargs
+                    )
                 else:
                     result = self._language_model(input_ids, cache=cache, **kwargs)
             elif self._uses_mrope and cache is not None:
                 offsets = None
                 for c in cache:
-                    if hasattr(c, "offset") and isinstance(c.offset, mx.array) and c.offset.ndim > 0:
+                    if (
+                        hasattr(c, "offset")
+                        and isinstance(c.offset, mx.array)
+                        and c.offset.ndim > 0
+                    ):
                         offsets = c.offset
                         break
                 if offsets is not None:
                     B, L = input_ids.shape
                     position_ids = mx.broadcast_to(offsets[None, :, None], (3, B, L))
-                    result = self._language_model(input_ids, cache=cache, position_ids=position_ids, **kwargs)
+                    result = self._language_model(
+                        input_ids, cache=cache, position_ids=position_ids, **kwargs
+                    )
                 else:
                     result = self._language_model(input_ids, cache=cache, **kwargs)
             else:
@@ -178,9 +205,15 @@ class VLMModelAdapter(nn.Module):
         chunk_len = input_ids.shape[1]
         total_len = self._pending_embeds.shape[1]
         end_offset = min(self._embed_offset + chunk_len, total_len)
-        chunk_embeds = self._pending_embeds[:, self._embed_offset:end_offset, :]
+        chunk_embeds = self._pending_embeds[:, self._embed_offset : end_offset, :]
 
-        result = self._language_model(input_ids, inputs_embeds=chunk_embeds, cache=cache, **self._pending_kwargs, **kwargs)
+        result = self._language_model(
+            input_ids,
+            inputs_embeds=chunk_embeds,
+            cache=cache,
+            **self._pending_kwargs,
+            **kwargs,
+        )
         self._embed_offset = end_offset
         if self._embed_offset >= total_len:
             self.clear_pending_embeddings()

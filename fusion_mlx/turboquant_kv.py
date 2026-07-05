@@ -11,12 +11,9 @@ from __future__ import annotations
 
 import logging
 import math
-from typing import List, Optional
 
 import mlx.core as mx
 from mlx_lm.models.cache import (
-    KVCache,
-    _BaseCache,
     create_attention_mask,
     create_causal_mask,
     dynamic_roll,
@@ -32,13 +29,9 @@ from mlx_vlm.turboquant import (
     _build_codec,
     _concat_state,
     _QuantizedStateProxy,
-    _reserve_state_capacity,
     _slice_state,
     _slice_state_range,
     _state_length,
-    _state_nbytes,
-    _validate_bits,
-    _write_state,
     turboquant_enabled,
 )
 
@@ -234,7 +227,7 @@ class BatchTurboQuantKVCache(TurboQuantKVCache):
     overrides make_mask for per-request left_padding support.
     """
 
-    def __init__(self, left_padding: List[int], bits: float = 4.0, seed: int = 0):
+    def __init__(self, left_padding: list[int], bits: float = 4.0, seed: int = 0):
         super().__init__(bits=bits, seed=seed)
         self.group_size = 0
         self.left_padding = mx.array(left_padding)
@@ -286,7 +279,7 @@ class BatchTurboQuantKVCache(TurboQuantKVCache):
         self,
         N: int,
         return_array: bool = False,
-        window_size: Optional[int] = None,
+        window_size: int | None = None,
     ):
         offset = self.offset
         if isinstance(offset, int):
@@ -354,7 +347,7 @@ class BatchTurboQuantKVCache(TurboQuantKVCache):
         self._cached_state = None
         self._cached_state_offset = -1
 
-    def extend(self, other: "BatchTurboQuantKVCache"):
+    def extend(self, other: BatchTurboQuantKVCache):
         if not isinstance(other, BatchTurboQuantKVCache):
             raise TypeError(
                 "BatchTurboQuantKVCache.extend expected BatchTurboQuantKVCache, "
@@ -430,7 +423,7 @@ class BatchTurboQuantKVCache(TurboQuantKVCache):
         return tq
 
     @classmethod
-    def merge(cls, caches: List[TurboQuantKVCache]) -> "BatchTurboQuantKVCache":
+    def merge(cls, caches: list[TurboQuantKVCache]) -> BatchTurboQuantKVCache:
         for cache in caches:
             if not isinstance(cache, TurboQuantKVCache):
                 raise TypeError(

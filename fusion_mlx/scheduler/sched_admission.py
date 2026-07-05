@@ -27,7 +27,7 @@ from .types import _CacheFreshnessWait, _InflightStoreInfo
 # stream when no per-engine stream is provided.
 
 
-def add_request(    self, request: Request) -> None:
+def add_request(self, request: Request) -> None:
     """
     Add a new request to the scheduler.
 
@@ -91,9 +91,7 @@ def add_request(    self, request: Request) -> None:
                 # Reusing cache state at N and feeding the last token again
                 # shifts the model state and can change greedy output.
                 if len(request.remaining_tokens) == 0 and request.cached_tokens > 0:
-                    if self._cache_list_needs_boundary_snapshot(
-                        request.prompt_cache
-                    ):
+                    if self._cache_list_needs_boundary_snapshot(request.prompt_cache):
                         # Stateful non-sliceable caches (Rotating/Arrays)
                         # cannot be safely converted from N to N-1 state
                         # without cache-type-specific logic.
@@ -111,9 +109,7 @@ def add_request(    self, request: Request) -> None:
                             f"stateful cache type, falling back to full prefill "
                             f"for deterministic kickoff"
                         )
-                    elif self._trim_prompt_cache_for_generation(
-                        request.prompt_cache
-                    ):
+                    elif self._trim_prompt_cache_for_generation(request.prompt_cache):
                         request.cached_tokens = max(0, request.cached_tokens - 1)
                         request.remaining_tokens = request.prompt_token_ids[-1:]
                         logger.debug(
@@ -167,9 +163,9 @@ def add_request(    self, request: Request) -> None:
         # No paged SSD cache configured - process all tokens
         request.remaining_tokens = request.prompt_token_ids
 
-     # SpecPrefill scoring is deferred to _schedule_waiting (executor thread).
-     # Scoring is a full draft-model forward pass (10-30s for 128k tokens)
-     # and must not block the FastAPI event loop.
+    # SpecPrefill scoring is deferred to _schedule_waiting (executor thread).
+    # Scoring is a full draft-model forward pass (10-30s for 128k tokens)
+    # and must not block the FastAPI event loop.
 
     # Add to tracking
     self.requests[request.request_id] = request
@@ -178,6 +174,7 @@ def add_request(    self, request: Request) -> None:
     logger.debug(
         f"Added request {request.request_id} with {request.num_prompt_tokens} prompt tokens"
     )
+
 
 def set_specprefill_draft_model(
     self, draft_model: Any, draft_model_name: str | None = None
@@ -222,7 +219,9 @@ def set_specprefill_draft_model(
     else:
         logger.info("SpecPrefill: draft model set (no SSD cache)")
 
-def set_vlm_mtp_drafter(    self,
+
+def set_vlm_mtp_drafter(
+    self,
     drafter: VLMMTPDrafter | None,
     draft_block_size: int | None = None,
 ) -> None:
@@ -252,6 +251,7 @@ _CACHE_FRESHNESS_WAIT_TIMEOUT_S = 4.0
 
 # ── Admission blocker helpers ────────────────────────────────────────────
 
+
 def _clear_memory_admission_blocker(self, request_id: str | None = None) -> None:
     if (
         request_id is not None
@@ -262,9 +262,7 @@ def _clear_memory_admission_blocker(self, request_id: str | None = None) -> None
     self._memory_admission_blocked_since = 0.0
 
 
-def _clear_store_cache_admission_blocker(
-    self, request_id: str | None = None
-) -> None:
+def _clear_store_cache_admission_blocker(self, request_id: str | None = None) -> None:
     if (
         request_id is not None
         and request_id != self._store_cache_admission_blocked_request_id
@@ -399,6 +397,7 @@ def _store_cache_admission_stall_output(
 
 # ── Cache freshness helpers ──────────────────────────────────────────────
 
+
 def _common_prefix_len(a: list[int], b: list[int]) -> int:
     n = min(len(a), len(b))
     for i in range(n):
@@ -413,8 +412,7 @@ def _store_extra_keys_match(
 ) -> bool:
     return (
         info.extra_keys == request.vlm_extra_keys_for_cache
-        and info.extra_key_token_start
-        == request.vlm_extra_key_token_start_for_cache
+        and info.extra_key_token_start == request.vlm_extra_key_token_start_for_cache
         and info.extra_key_ranges == request.vlm_extra_key_ranges_for_cache
     )
 
@@ -450,8 +448,7 @@ def _find_relevant_inflight_store(
         return None
     if not (
         best_common >= _CACHE_FRESHNESS_WAIT_MIN_COMMON_TOKENS
-        or best_common / len(prompt)
-        >= _CACHE_FRESHNESS_WAIT_MIN_PROMPT_RATIO
+        or best_common / len(prompt) >= _CACHE_FRESHNESS_WAIT_MIN_PROMPT_RATIO
     ):
         return None
 
@@ -562,9 +559,7 @@ def _prepare_prefix_cache_for_request(self, request: Request) -> None:
                     block_table,
                 )
             else:
-                reconstructed = self.block_aware_cache.reconstruct_cache(
-                    block_table
-                )
+                reconstructed = self.block_aware_cache.reconstruct_cache(block_table)
             if reconstructed:
                 request.prompt_cache = reconstructed
                 request.block_table = block_table
@@ -574,9 +569,7 @@ def _prepare_prefix_cache_for_request(self, request: Request) -> None:
                     block_table.num_tokens :
                 ]
                 if len(request.remaining_tokens) == 0 and request.cached_tokens > 0:
-                    if self._cache_list_needs_boundary_snapshot(
-                        request.prompt_cache
-                    ):
+                    if self._cache_list_needs_boundary_snapshot(request.prompt_cache):
                         if self.paged_cache_manager is not None:
                             self.paged_cache_manager.delete_block_table(
                                 request.request_id
@@ -591,9 +584,7 @@ def _prepare_prefix_cache_for_request(self, request: Request) -> None:
                             f"stateful cache type, falling back to full prefill "
                             f"for deterministic kickoff"
                         )
-                    elif self._trim_prompt_cache_for_generation(
-                        request.prompt_cache
-                    ):
+                    elif self._trim_prompt_cache_for_generation(request.prompt_cache):
                         request.cached_tokens = max(0, request.cached_tokens - 1)
                         request.remaining_tokens = request.prompt_token_ids[-1:]
                         logger.debug(

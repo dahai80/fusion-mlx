@@ -275,9 +275,7 @@ class TestVLMDiffusionLane:
             "arguments": "{}",
         }
 
-        engine = _make_loaded_engine(
-            model_type="diffusion_gemma", tokenizer=tokenizer
-        )
+        engine = _make_loaded_engine(model_type="diffusion_gemma", tokenizer=tokenizer)
         engine._diffusion_family = "block"
 
         assert engine.supports_tool_calling is True
@@ -1899,20 +1897,24 @@ class TestSmartResizeTokens:
     @pytest.mark.parametrize(
         "w,h,expected",
         [
-            (512, 512, 256),     # exact multiple of patch*merge (32)
-            (336, 336, 100),     # 336 -> 336 grid 21x21 -> 441//4... rounds via factor
-            (510, 680, 336),     # non-multiple, rounded to nearest factor
-            (100, 100, 64),      # below min_pixels -> upscaled to min
+            (512, 512, 256),  # exact multiple of patch*merge (32)
+            (336, 336, 100),  # 336 -> 336 grid 21x21 -> 441//4... rounds via factor
+            (510, 680, 336),  # non-multiple, rounded to nearest factor
+            (100, 100, 64),  # below min_pixels -> upscaled to min
             (4000, 3000, 11750),  # above max_pixels -> downscaled to cap
-            (2791, 16, 106),     # thin image: branch on raw rounded dims
+            (2791, 16, 106),  # thin image: branch on raw rounded dims
         ],
     )
     def test_matches_known_grid(self, w, h, expected):
         from fusion_mlx.engine.vlm import _smart_resize_tokens
 
         got = _smart_resize_tokens(
-            h, w, _QWEN_IP.patch_size, _QWEN_IP.merge_size,
-            _QWEN_IP.min_pixels, _QWEN_IP.max_pixels,
+            h,
+            w,
+            _QWEN_IP.patch_size,
+            _QWEN_IP.merge_size,
+            _QWEN_IP.min_pixels,
+            _QWEN_IP.max_pixels,
         )
         assert got == expected
 
@@ -1933,15 +1935,16 @@ class TestReadImageDims:
     def test_http_url_returns_none(self):
         from fusion_mlx.engine.vlm import _read_image_dims
 
-        part = {"type": "image_url",
-                "image_url": {"url": "https://example.com/x.jpg"}}
+        part = {"type": "image_url", "image_url": {"url": "https://example.com/x.jpg"}}
         assert _read_image_dims(part) is None
 
     def test_garbage_returns_none(self):
         from fusion_mlx.engine.vlm import _read_image_dims
 
-        part = {"type": "image_url",
-                "image_url": {"url": "data:image/png;base64,not-base64!!"}}
+        part = {
+            "type": "image_url",
+            "image_url": {"url": "data:image/png;base64,not-base64!!"},
+        }
         assert _read_image_dims(part) is None
 
 
@@ -1970,11 +1973,18 @@ class TestCountImageTokensReal:
     def test_falls_back_to_upper_bound_for_unreadable(self):
         from fusion_mlx.engine.vlm import _count_image_tokens_real
 
-        messages = [{"role": "user", "content": [
-            {"type": "image_url",
-             "image_url": {"url": "https://example.com/x.jpg"}},
-            {"type": "text", "text": "hi"},
-        ]}]
+        messages = [
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": "https://example.com/x.jpg"},
+                    },
+                    {"type": "text", "text": "hi"},
+                ],
+            }
+        ]
         total = _count_image_tokens_real(messages, _QWEN_PROC, upper_bound=16384)
         assert total == 16384
 
@@ -1983,8 +1993,7 @@ class TestCountImageTokensReal:
 
         # Processor missing patch/merge/min/max -> never under-count.
         messages = [{"role": "user", "content": [_image_part(512, 512)]}]
-        total = _count_image_tokens_real(messages, SimpleNamespace(),
-                                         upper_bound=16384)
+        total = _count_image_tokens_real(messages, SimpleNamespace(), upper_bound=16384)
         assert total == 16384
 
     def test_no_images_returns_zero(self):

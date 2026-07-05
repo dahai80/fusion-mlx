@@ -74,7 +74,7 @@ import math
 from collections import deque
 from dataclasses import dataclass, field
 from types import SimpleNamespace
-from typing import Any, Deque, Dict, List, Optional, Tuple
+from typing import Any
 
 from . import cache_rollback as _rollback_mod
 
@@ -460,23 +460,23 @@ class _MtpState:
     # (token_id_int, logprobs_1d, source_label). source_label is one of
     # "init", "draft", "bonus", "verify" — used to bucket stats correctly
     # when the queue is drained.
-    queue: Deque[Tuple[int, Any, str]] = field(default_factory=deque)
+    queue: deque[tuple[int, Any, str]] = field(default_factory=deque)
 
     # Cache for the MTP head (separate from gen_batch.prompt_cache).
-    mtp_cache: Optional[List[Any]] = None
+    mtp_cache: list[Any] | None = None
 
     # First input token of the next verify forward. Tracked as a 1-element
     # mx.array (uint32) so it can be concatenated with `draft_tok` cheaply.
-    next_main: Optional[Any] = None
+    next_main: Any | None = None
 
     # Draft logprobs (vocab,) needed by stochastic acceptance / residual sampling.
-    draft_tok: Optional[Any] = None  # (1,) uint32
-    draft_lp: Optional[Any] = None  # (vocab,) float
+    draft_tok: Any | None = None  # (1,) uint32
+    draft_lp: Any | None = None  # (vocab,) float
     # Filtered (sampler-applied) draft logprobs reused by the next cycle's
     # acceptance ratio + residual sampling. Mirrors PR 990's accept_lp,
     # adapted to FusionMLX's callable-sampler contract via metadata-introspection.
     # None when the sampler exposes no metadata (raw-lp fallback path).
-    draft_accept_lp: Optional[Any] = None  # (vocab,) float
+    draft_accept_lp: Any | None = None  # (vocab,) float
     # Host-side int copy of draft_tok. Cached at draft creation time so the
     # verify cycle can compare draft vs verify ids without a separate
     # GPU→CPU sync (`int(draft_tok.tolist()[0])` would force a stall).
@@ -490,7 +490,7 @@ class _MtpState:
 class _MtpBatchState:
     """Experimental row-wise MTP state for a multi-sequence GenerationBatch."""
 
-    states: Dict[Any, _MtpState] = field(default_factory=dict)
+    states: dict[Any, _MtpState] = field(default_factory=dict)
 
 
 # ---------------------------------------------------------------------------
@@ -512,7 +512,7 @@ def _is_greedy(gen_batch):
     return True
 
 
-def _proc_list(gen_batch: Any) -> Optional[List[Any]]:
+def _proc_list(gen_batch: Any) -> list[Any] | None:
     if gen_batch.logits_processors and gen_batch.logits_processors[0]:
         return gen_batch.logits_processors[0]
     return None
@@ -534,7 +534,7 @@ def _has_grammar_processors(gen_batch: Any) -> bool:
     )
 
 
-def _mtp_state_valid_for_batch(gen_batch: Any, state: Optional[_MtpState]) -> bool:
+def _mtp_state_valid_for_batch(gen_batch: Any, state: _MtpState | None) -> bool:
     """MTP state may only represent one uid in one current singleton slot."""
     if state is None:
         return False
@@ -547,7 +547,7 @@ def _drop_mtp_state(
     reason: str,
     *,
     log_stats: bool = False,
-) -> Optional[_MtpState]:
+) -> _MtpState | None:
     """Delete attached MTP state, optionally surfacing stats for external finish."""
     state = getattr(gen_batch, "_fusion_mlx_mtp_state", None)
     if state is None:
@@ -574,7 +574,7 @@ def _drop_invalid_mtp_state(
     reason: str,
     *,
     log_empty: bool = False,
-) -> Optional[_MtpState]:
+) -> _MtpState | None:
     """Drop state after a batch reshape unless ownership still matches."""
     state = getattr(gen_batch, "_fusion_mlx_mtp_state", None)
     if state is None:
@@ -590,7 +590,7 @@ def _drop_invalid_mtp_state(
 
 
 def _mtp_batch_state_valid_for_batch(
-    gen_batch: Any, batch_state: Optional[_MtpBatchState]
+    gen_batch: Any, batch_state: _MtpBatchState | None
 ) -> bool:
     if batch_state is None:
         return False
@@ -605,7 +605,7 @@ def _drop_mtp_batch_state(
     reason: str,
     *,
     log_stats: bool = False,
-) -> Optional[_MtpBatchState]:
+) -> _MtpBatchState | None:
     batch_state = getattr(gen_batch, "_fusion_mlx_mtp_batch_state", None)
     if batch_state is None:
         return None
@@ -631,9 +631,9 @@ def _drop_invalid_mtp_batch_state(
     gen_batch: Any,
     reason: str,
     *,
-    old_uids: Optional[List[Any]] = None,
+    old_uids: list[Any] | None = None,
     log_empty: bool = False,
-) -> Optional[_MtpBatchState]:
+) -> _MtpBatchState | None:
     batch_state = getattr(gen_batch, "_fusion_mlx_mtp_batch_state", None)
     if batch_state is None:
         return None
@@ -666,7 +666,7 @@ def _drop_invalid_mtp_batch_state(
     return _drop_mtp_batch_state(gen_batch, reason)
 
 
-def _row_value(values: Optional[List[Any]], idx: int, default: Any = None) -> Any:
+def _row_value(values: list[Any] | None, idx: int, default: Any = None) -> Any:
     if values is None:
         return default
     try:
@@ -681,8 +681,8 @@ def _make_row_batch(
     gen_batch: Any,
     idx: int,
     *,
-    prompt_cache: Optional[List[Any]] = None,
-    state: Optional[_MtpState] = None,
+    prompt_cache: list[Any] | None = None,
+    state: _MtpState | None = None,
 ) -> Any:
     if prompt_cache is None:
         prompt_cache = gen_batch.extract_cache(idx)
@@ -716,7 +716,7 @@ def _make_row_batch(
     return row
 
 
-def _merge_row_caches(row_caches: List[List[Any]]) -> List[Any]:
+def _merge_row_caches(row_caches: list[list[Any]]) -> list[Any]:
     if not row_caches:
         return []
     merged = []
@@ -733,7 +733,7 @@ def _merge_row_caches(row_caches: List[List[Any]]) -> List[Any]:
 
 def _replace_cache_rows(
     gen_batch: Any,
-    replacements: Dict[int, List[Any]],
+    replacements: dict[int, list[Any]],
 ) -> None:
     if not replacements:
         return
@@ -744,7 +744,7 @@ def _replace_cache_rows(
     gen_batch.prompt_cache = _merge_row_caches(row_caches)
 
 
-def _prepare_mtp_batch_state_for_next(gen_batch: Any) -> Optional[_MtpBatchState]:
+def _prepare_mtp_batch_state_for_next(gen_batch: Any) -> _MtpBatchState | None:
     """Return a valid row-wise MTP state, lazily initializing every row."""
     batch_state = getattr(gen_batch, "_fusion_mlx_mtp_batch_state", None)
     if _mtp_batch_state_valid_for_batch(gen_batch, batch_state):
@@ -752,9 +752,9 @@ def _prepare_mtp_batch_state_for_next(gen_batch: Any) -> Optional[_MtpBatchState
     if batch_state is not None:
         _drop_mtp_batch_state(gen_batch, "stale-batch-owner")
 
-    replacements: Dict[int, List[Any]] = {}
-    token_context_updates: Dict[int, Any] = {}
-    states: Dict[Any, _MtpState] = {}
+    replacements: dict[int, list[Any]] = {}
+    token_context_updates: dict[int, Any] = {}
+    states: dict[Any, _MtpState] = {}
 
     for idx, uid in enumerate(gen_batch.uids):
         row = _make_row_batch(gen_batch, idx)
@@ -790,10 +790,10 @@ def _reconcile_mtp_batch_to_standard(gen_batch: Any) -> bool:
 
     import mlx.core as mx
 
-    row_caches: Dict[int, List[Any]] = {}
+    row_caches: dict[int, list[Any]] = {}
     next_tokens = []
     next_logprobs = []
-    token_context_updates: Dict[int, Any] = {}
+    token_context_updates: dict[int, Any] = {}
 
     try:
         for idx, uid in enumerate(gen_batch.uids):
@@ -827,7 +827,7 @@ def _reconcile_mtp_batch_to_standard(gen_batch: Any) -> bool:
         return False
 
 
-def _prepare_mtp_state_for_next(gen_batch: Any) -> Optional[_MtpState]:
+def _prepare_mtp_state_for_next(gen_batch: Any) -> _MtpState | None:
     """Return a valid singleton MTP state, lazily initializing if needed."""
     state = getattr(gen_batch, "_fusion_mlx_mtp_state", None)
     if _mtp_state_valid_for_batch(gen_batch, state):
@@ -867,7 +867,7 @@ def _set_singleton_mrope_delta(gen_batch: Any) -> None:
         model.set_batch_rope_deltas(mx.array([delta]))
 
 
-def _rebuild_singleton_cache(model: Any) -> Optional[List[Any]]:
+def _rebuild_singleton_cache(model: Any) -> list[Any] | None:
     """Build a fresh single-sequence batch-aware cache (left_padding=[0]).
 
     Reuses mlx-lm's own ``_make_cache`` so the per-layer types match exactly
@@ -1014,7 +1014,7 @@ def _trim_token_buffer(gen_batch: Any, n: int) -> None:
     buf._size = max(0, buf._size - n)
 
 
-def _restore_or_trim_caches(prompt_cache: List[Any]) -> bool:
+def _restore_or_trim_caches(prompt_cache: list[Any]) -> bool:
     """Roll back one token from each layer cache after a draft rejection.
 
     SSM / linear-attention layers expose ``rollback_state`` populated by the
@@ -1050,8 +1050,8 @@ def _restore_or_trim_caches(prompt_cache: List[Any]) -> bool:
 
 def _rollback_after_reject(
     model: Any,
-    prompt_cache: List[Any],
-    gdn_states: Optional[list],
+    prompt_cache: list[Any],
+    gdn_states: list | None,
     accepted: int = 0,
     block_size: int = 2,
 ) -> bool:
@@ -1085,9 +1085,9 @@ def _rollback_after_reject(
 def _call_backbone(
     model: Any,
     inputs: Any,
-    cache: List[Any],
+    cache: list[Any],
     n_confirmed: int = 0,
-) -> Tuple[Any, Any, Optional[list]]:
+) -> tuple[Any, Any, list | None]:
     """Run the backbone with ``return_hidden=True`` and normalise the result.
 
     Returns ``(logits, hidden_pre_norm, gdn_states_or_None)``:
@@ -1129,7 +1129,7 @@ def _call_backbone(
     raise TypeError(f"backbone returned unexpected shape: {type(result).__name__}")
 
 
-def _clear_rollback(prompt_cache: List[Any]) -> None:
+def _clear_rollback(prompt_cache: list[Any]) -> None:
     """Drop rollback snapshots after a draft is accepted."""
     for c in prompt_cache:
         if hasattr(c, "rollback_state") and c.rollback_state is not None:
@@ -1261,8 +1261,8 @@ def _mtp_batch_next(gen_batch: Any, batch_state: _MtpBatchState) -> Any:
     if not getattr(gen_batch, "uids", None):
         return []
 
-    replacements: Dict[int, List[Any]] = {}
-    token_context_updates: Dict[int, Any] = {}
+    replacements: dict[int, list[Any]] = {}
+    token_context_updates: dict[int, Any] = {}
 
     for idx, uid in enumerate(list(gen_batch.uids)):
         state = batch_state.states.get(uid)
@@ -1291,7 +1291,7 @@ def _mtp_batch_next(gen_batch: Any, batch_state: _MtpBatchState) -> Any:
     return _emit_batch_responses(gen_batch, batch_state)
 
 
-def _emit_batch_responses(gen_batch: Any, batch_state: _MtpBatchState) -> List[Any]:
+def _emit_batch_responses(gen_batch: Any, batch_state: _MtpBatchState) -> list[Any]:
     Response = type(gen_batch).Response
 
     keep = []
@@ -1306,7 +1306,7 @@ def _emit_batch_responses(gen_batch: Any, batch_state: _MtpBatchState) -> List[A
         token_id, logprobs_1d, source = state.queue.popleft()
         _bump_emit_stat(state, source)
 
-        finish_reason: Optional[str] = None
+        finish_reason: str | None = None
         match_sequence = None
 
         gen_batch.tokens[idx].append(token_id)
@@ -1380,7 +1380,7 @@ def _mtp_next(gen_batch: Any, state: _MtpState) -> Any:
     return _emit_response(gen_batch, token_id, logprobs_1d, state.stats)
 
 
-def _log_mtp_stats(uid: Any, stats: "_MtpStats", finish_reason: str) -> None:
+def _log_mtp_stats(uid: Any, stats: _MtpStats, finish_reason: str) -> None:
     """Emit a one-line summary of MTP draft/verify activity for a finished sequence.
 
     Format chosen to match PR 990's headline metrics, plus component timings
@@ -1615,9 +1615,9 @@ def _step_mtp(
     gen_batch: Any,
     hidden_at_position: Any,
     next_main_tok: Any,
-    prev_buf: Optional[Any],
-    stats: Optional["_MtpStats"] = None,
-) -> Tuple[Any, Any]:
+    prev_buf: Any | None,
+    stats: _MtpStats | None = None,
+) -> tuple[Any, Any]:
     """Run one MTP-head forward + sample. Returns ``(draft_tok, draft_lp)``.
 
     Side effect: caches the host-side int copy of the new draft on
@@ -1657,7 +1657,7 @@ def _step_mtp(
     return _ensure_uint32(new_tok), new_lp.squeeze(0)
 
 
-def _residual_sample(verify_lp_2d: Any, draft_lp_1d: Any) -> Tuple[int, Any]:
+def _residual_sample(verify_lp_2d: Any, draft_lp_1d: Any) -> tuple[int, Any]:
     """Sample from ``max(p_target - p_draft, 0)`` (Leviathan et al. 2022).
 
     On degenerate input (residual all zero) falls back to the target
@@ -1690,8 +1690,8 @@ def _emit_response(
     gen_batch: Any,
     token_id: int,
     logprobs_1d: Any,
-    stats: Optional["_MtpStats"] = None,
-) -> List[Any]:
+    stats: _MtpStats | None = None,
+) -> list[Any]:
     """Produce a single-element response list, applying the standard
     epilogue (token append + max_tokens / matcher checks) so external
     callers (BatchGenerator, scheduler, response stream) see the same
@@ -1699,7 +1699,7 @@ def _emit_response(
     """
     Response = type(gen_batch).Response
 
-    finish_reason: Optional[str] = None
+    finish_reason: str | None = None
     match_sequence = None
 
     gen_batch.tokens[0].append(token_id)

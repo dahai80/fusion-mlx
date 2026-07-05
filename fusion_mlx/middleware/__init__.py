@@ -10,7 +10,10 @@ from .auth import (
     verify_api_key,
     verify_api_key_or_x_api_key,
 )
-from .body_depth import RequestBodyDepthMiddleware, install_request_body_depth_middleware
+from .body_depth import (
+    RequestBodyDepthMiddleware,
+    install_request_body_depth_middleware,
+)
 from .body_size import RequestBodyLimitMiddleware, install_request_body_limit_middleware
 from .exception_handlers import install_exception_handlers
 

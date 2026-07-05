@@ -10,6 +10,7 @@ from typing import Any
 
 from .openai_models import Message
 
+
 def is_mllm_model(name) -> bool:
     return False
 
@@ -55,9 +56,7 @@ SPECIAL_TOKENS_PATTERN = re.compile(
 )
 
 _HARMONY_CHANNEL_PATTERN = re.compile(
-    r"<\|channel\|>[^<]*"
-    r"(?:<\|constrain\|>[^<]*)?"
-    r"<\|message\|>"
+    r"<\|channel\|>[^<]*" r"(?:<\|constrain\|>[^<]*)?" r"<\|message\|>"
 )
 _HARMONY_RETURN_PATTERN = re.compile(r"<\|return\|>")
 
@@ -103,7 +102,7 @@ def clean_output_text(text: str) -> str:
                 ch_end = channel_tag.index("<|message|>")
                 channel_name = channel_tag[ch_start:ch_end].strip()
                 if channel_name == "final":
-                    rest = text[m.end():]
+                    rest = text[m.end() :]
                     ret_pos = rest.find("<|return|>")
                     if ret_pos >= 0:
                         final_parts.append(rest[:ret_pos])
@@ -415,10 +414,9 @@ def _extract_inline_thinking(text: str) -> tuple[str | None, str]:
         m = pattern.match(text)
         if m:
             reasoning = m.group(1).strip()
-            content = text[m.end():].strip()
+            content = text[m.end() :].strip()
             return reasoning, content
     return None, text
-
 
 
 def extract_text_content(
@@ -640,7 +638,9 @@ def extract_multimodal_content(
             content = msg.content
             reasoning = getattr(msg, "reasoning_content", None)
             tool_call_id_val = getattr(msg, "tool_call_id", None) or ""
-            tool_calls_val = getattr(msg, "tool_calls", None) if hasattr(msg, "tool_calls") else None
+            tool_calls_val = (
+                getattr(msg, "tool_calls", None) if hasattr(msg, "tool_calls") else None
+            )
             name_val = getattr(msg, "name", None)
             partial_val = getattr(msg, "partial", False)
 
@@ -992,9 +992,11 @@ def extract_harmony_messages(
                             {
                                 "id": getattr(tc, "id", ""),
                                 "function": {
-                                    "name": getattr(tc.function, "name", "")
-                                    if hasattr(tc, "function")
-                                    else "",
+                                    "name": (
+                                        getattr(tc.function, "name", "")
+                                        if hasattr(tc, "function")
+                                        else ""
+                                    ),
                                     "arguments": _try_parse_json(args_str),
                                 },
                             }
@@ -1089,7 +1091,7 @@ class StreamingThinkRouter:
                 idx = self._buffer.find("</think>")
                 if idx >= 0:
                     thinking = self._buffer[:idx]
-                    self._buffer = self._buffer[idx + len("</think>"):]
+                    self._buffer = self._buffer[idx + len("</think>") :]
                     self._in_think = False
                     if thinking:
                         pieces.append(("thinking", thinking))
@@ -1110,7 +1112,7 @@ class StreamingThinkRouter:
                 idx = self._buffer.find("<think>")
                 if idx >= 0:
                     before = self._buffer[:idx]
-                    self._buffer = self._buffer[idx + len("<think>"):]
+                    self._buffer = self._buffer[idx + len("<think>") :]
                     self._in_think = True
                     if before:
                         pieces.append(("text", before))

@@ -68,6 +68,7 @@ def _resolve_limit() -> int:
         pass
     try:
         from ..config import ServerConfig
+
         sc = ServerConfig()
         cap = getattr(sc, "max_request_bytes", _DEFAULT_MAX_REQUEST_BYTES)
         if cap > 0:
@@ -118,7 +119,9 @@ class RequestBodyLimitMiddleware:
                 break
 
         if limit > 0 and advertised is not None and advertised > limit:
-            logger.info("Rejecting oversized request: advertised=%d limit=%d", advertised, limit)
+            logger.info(
+                "Rejecting oversized request: advertised=%d limit=%d", advertised, limit
+            )
             await _send_413(send, advertised=advertised, limit=limit, streaming=False)
             return
 
@@ -133,11 +136,13 @@ class RequestBodyLimitMiddleware:
             if receive_timeout > 0 and not body_complete["value"]:
                 try:
                     msg = await asyncio.wait_for(receive(), timeout=receive_timeout)
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     timeout_tripped["value"] = True
                     timeout_tripped["streamed"] = total["bytes"]
                     timeout_tripped["timeout"] = receive_timeout
-                    raise _BodyReceiveTimeoutError(total["bytes"], receive_timeout) from None
+                    raise _BodyReceiveTimeoutError(
+                        total["bytes"], receive_timeout
+                    ) from None
             else:
                 msg = await receive()
             if msg.get("type") == "http.request":
@@ -170,7 +175,9 @@ class RequestBodyLimitMiddleware:
                         ],
                     }
                     await send(msg)
-                    await send({"type": "http.response.body", "body": body, "more_body": False})
+                    await send(
+                        {"type": "http.response.body", "body": body, "more_body": False}
+                    )
                     downstream_completed_response["value"] = True
                     response_replaced["value"] = True
                     return
@@ -189,41 +196,68 @@ class RequestBodyLimitMiddleware:
             if downstream_completed_response["value"]:
                 logger.debug(
                     "body-receive timeout after downstream completed (streamed=%d, timeout=%.1fs)",
-                    exc.streamed_bytes, exc.timeout,
+                    exc.streamed_bytes,
+                    exc.timeout,
                 )
                 return
             if downstream_started_response["value"]:
                 logger.warning(
                     "body-receive timeout (%.1fs) after downstream started; %d bytes streamed",
-                    exc.timeout, exc.streamed_bytes,
+                    exc.timeout,
+                    exc.streamed_bytes,
                 )
                 try:
-                    await send({"type": "http.response.body", "body": b"", "more_body": False})
+                    await send(
+                        {"type": "http.response.body", "body": b"", "more_body": False}
+                    )
                 except Exception:
-                    logger.debug("terminal body frame send failed after receive timeout", exc_info=True)
+                    logger.debug(
+                        "terminal body frame send failed after receive timeout",
+                        exc_info=True,
+                    )
                 return
-            logger.info("Sending 408: no body bytes for %.1fs (streamed=%d)", exc.timeout, exc.streamed_bytes)
+            logger.info(
+                "Sending 408: no body bytes for %.1fs (streamed=%d)",
+                exc.timeout,
+                exc.streamed_bytes,
+            )
             await _send_408(send, timeout=exc.timeout, streamed=exc.streamed_bytes)
             return
         except _BodyTooLargeError as exc:
             if downstream_completed_response["value"]:
                 logger.debug(
                     "body cap tripped after downstream completed (streamed=%d, limit=%d)",
-                    exc.streamed_bytes, limit,
+                    exc.streamed_bytes,
+                    limit,
                 )
                 return
             if downstream_started_response["value"]:
                 logger.warning(
                     "request body cap (%d) tripped after downstream started; %d bytes streamed",
-                    limit, exc.streamed_bytes,
+                    limit,
+                    exc.streamed_bytes,
                 )
                 try:
-                    await send({"type": "http.response.body", "body": b"", "more_body": False})
+                    await send(
+                        {"type": "http.response.body", "body": b"", "more_body": False}
+                    )
                 except Exception:
-                    logger.debug("terminal body frame send failed after cap trip", exc_info=True)
+                    logger.debug(
+                        "terminal body frame send failed after cap trip", exc_info=True
+                    )
                 return
-            logger.info("Sending 413: body cap %d exceeded (streamed=%d)", limit, exc.streamed_bytes)
-            await _send_413(send, advertised=None, limit=limit, streaming=True, streamed=exc.streamed_bytes)
+            logger.info(
+                "Sending 413: body cap %d exceeded (streamed=%d)",
+                limit,
+                exc.streamed_bytes,
+            )
+            await _send_413(
+                send,
+                advertised=None,
+                limit=limit,
+                streaming=True,
+                streamed=exc.streamed_bytes,
+            )
 
 
 def _format_message(
@@ -291,7 +325,9 @@ async def _send_413(
     streaming: bool,
     streamed: int | None = None,
 ) -> None:
-    message = _format_message(advertised=advertised, limit=limit, streaming=streaming, streamed=streamed)
+    message = _format_message(
+        advertised=advertised, limit=limit, streaming=streaming, streamed=streamed
+    )
     body = _json.dumps(
         {
             "error": {

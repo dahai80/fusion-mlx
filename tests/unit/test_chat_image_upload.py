@@ -1,10 +1,10 @@
 # SPDX-License-Identifier: Apache-2.0
 """Tests for chat image upload functionality."""
+
 import json
 from pathlib import Path
 
 import pytest
-
 
 I18N_DIR = Path(__file__).parent.parent / "omlx" / "admin" / "i18n"
 
@@ -62,9 +62,11 @@ class TestChatImageUpload:
         ]
         # Simulate the stripping logic from saveCurrentChat()
         stripped = [
-            {"type": "image_url", "image_url": {"url": ""}}
-            if p["type"] == "image_url"
-            else p
+            (
+                {"type": "image_url", "image_url": {"url": ""}}
+                if p["type"] == "image_url"
+                else p
+            )
             for p in content
         ]
         assert stripped[0]["image_url"]["url"] == ""
@@ -115,9 +117,7 @@ class TestChatEditImagePreservation:
         if isinstance(content, str):
             return content
         if isinstance(content, list):
-            return "\n".join(
-                p["text"] for p in content if p.get("type") == "text"
-            )
+            return "\n".join(p["text"] for p in content if p.get("type") == "text")
         return ""
 
     @staticmethod

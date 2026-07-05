@@ -316,9 +316,9 @@ def test_user_agent_is_self_identifying():
     from fusion_mlx.telemetry import transport
 
     ua = transport._user_agent()
-    assert re.search(r"\brapid-mlx/\S+", ua), (
-        f"UA must follow 'rapid-mlx/<version>' shape, got {ua!r}"
-    )
+    assert re.search(
+        r"\brapid-mlx/\S+", ua
+    ), f"UA must follow 'rapid-mlx/<version>' shape, got {ua!r}"
     assert "Python-urllib" not in ua
 
 
@@ -340,9 +340,9 @@ def test_post_sends_self_identifying_user_agent():
     with mock.patch.object(transport, "urlopen", fake_urlopen):
         assert transport.post_batch([{"x": 1}]) is True
     ua = {k.lower(): v for k, v in captured["headers"].items()}["user-agent"]
-    assert re.search(r"\brapid-mlx/\S+", ua), (
-        f"UA must follow 'rapid-mlx/<version>' shape, got {ua!r}"
-    )
+    assert re.search(
+        r"\brapid-mlx/\S+", ua
+    ), f"UA must follow 'rapid-mlx/<version>' shape, got {ua!r}"
     assert "Python-urllib" not in ua
 
 

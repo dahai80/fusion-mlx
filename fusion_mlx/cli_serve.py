@@ -2,12 +2,10 @@
 # SPDX-License-Identifier: Apache-2.0
 """CLI serve and bench commands for fusion-mlx."""
 
-import argparse
 import os
 import sys
 
 from fusion_mlx._cli_base import (
-    MIRROR_DEFAULT,
     _apply_body_receive_timeout_env,
     _auth_feature_str,
     _embedding_not_found_exception_classes,
@@ -16,8 +14,8 @@ from fusion_mlx._cli_base import (
     _resolve_audio_model_for_serve,
     _resolve_embedding_alias,
     _run_uvicorn,
-    alias_completer,
 )
+
 
 def _serve_audio_mode(args, entry) -> None:
     """Bind the audio-only serve path for a resolved registry entry.
@@ -914,7 +912,9 @@ def serve_command(args):
     base_path = getattr(args, "base_path", None)
     if base_path:
         if getattr(args, "model_dir", None) or getattr(args, "model", None):
-            print("Error: --base-path is mutually exclusive with <model>/--model/--model-dir.")
+            print(
+                "Error: --base-path is mutually exclusive with <model>/--model/--model-dir."
+            )
             sys.exit(1)
         args.model_dir = os.path.join(base_path, "models")
         try:
@@ -2071,9 +2071,9 @@ def serve_command(args):
         _profile = resolve_profile(_alias_name)
         # The eligibility check at top of serve_command guarantees this
         # passes — assert to be defensive against future refactors.
-        assert _profile is not None and _profile.supports_dflash, (
-            f"DFlash profile invariant violated for {_alias_name!r}"
-        )
+        assert (
+            _profile is not None and _profile.supports_dflash
+        ), f"DFlash profile invariant violated for {_alias_name!r}"
         # ``--dflash-drafter-path`` override stays valid through both
         # ``--enable-dflash`` and the ``--spec-decode dflash`` redirect
         # path (#318): an operator-supplied path wins over the profile

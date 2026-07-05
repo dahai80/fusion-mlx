@@ -28,14 +28,24 @@ def _log_completion_summary(request, output):
     # Calculate timing
     now = time.monotonic()
     total_time = (now - request.arrival_time) if request.arrival_time else 0
-    gen_time = (now - request.generation_started_at) if request.generation_started_at else total_time
+    gen_time = (
+        (now - request.generation_started_at)
+        if request.generation_started_at
+        else total_time
+    )
     ttft = (now - request.first_token_at) if request.first_token_at else 0
 
     # Token-per-second (Ollama style: ms/token)
     prompt_ms_per_token = (ttft * 1000 / prompt_tokens) if prompt_tokens > 0 else 0
-    completion_ms_per_token = ((gen_time - ttft) * 1000 / max(completion_tokens - 1, 1)) if gen_time > ttft else 0
+    completion_ms_per_token = (
+        ((gen_time - ttft) * 1000 / max(completion_tokens - 1, 1))
+        if gen_time > ttft
+        else 0
+    )
     prompt_tps = (prompt_tokens / ttft) if ttft > 0 else 0
-    completion_tps = (completion_tokens / max(gen_time - ttft, 0.001)) if gen_time > ttft else 0
+    completion_tps = (
+        (completion_tokens / max(gen_time - ttft, 0.001)) if gen_time > ttft else 0
+    )
 
     logger.info(
         "| completed | prompt_tokens=%d | completion_tokens=%d | cached_tokens=%d | "
@@ -52,6 +62,7 @@ def _log_completion_summary(request, output):
         total_time,
         finish_reason,
     )
+
 
 import mlx.core as mx
 
@@ -214,7 +225,7 @@ def _process_batch_responses(
             output.finish_reason = response.finish_reason
             finished_ids.add(request_id)
 
-             # Ollama-style completion summary
+            # Ollama-style completion summary
             _log_completion_summary(request, output)
 
             if parser_session is not None:
@@ -295,8 +306,10 @@ def _process_batch_responses(
 
             logger.info(
                 "Request %s finished: %s, %d tokens",
-                request_id, response.finish_reason, request.num_output_tokens,
-                )
+                request_id,
+                response.finish_reason,
+                request.num_output_tokens,
+            )
             logger.debug(
                 f"Request {request_id} finished: {response.finish_reason}, "
                 f"{request.num_output_tokens} tokens"
@@ -309,7 +322,8 @@ def _process_batch_responses(
 
     return outputs, finished_ids
 
-def _release_paged_cache_for_request(    self, request_id: str) -> None:
+
+def _release_paged_cache_for_request(self, request_id: str) -> None:
     """Drop a request's paged-cache footprint on rejection paths.
 
     ``add_request`` routes through ``block_aware_cache.fetch_cache``
@@ -327,7 +341,8 @@ def _release_paged_cache_for_request(    self, request_id: str) -> None:
     elif self.paged_cache_manager is not None:
         self.paged_cache_manager.delete_block_table(request_id)
 
-def _cleanup_finished(    self, finished_ids: set[str]) -> None:
+
+def _cleanup_finished(self, finished_ids: set[str]) -> None:
     """Clean up finished requests and store caches for reuse."""
     # Synchronize pending engine stream operations before cache storage.
     # store_cache -> mx.save_safetensors triggers implicit mx.eval() which
@@ -633,9 +648,11 @@ def _cleanup_finished(    self, finished_ids: set[str]) -> None:
         if self._deferred_clear_at is None or target > self._deferred_clear_at:
             self._deferred_clear_at = target
 
-def _is_cache_corruption_error(    self, error: Exception) -> bool:
+
+def _is_cache_corruption_error(self, error: Exception) -> bool:
     """Check if an error indicates cache corruption."""
     return is_cache_corruption_error(error)
+
 
 def _recover_from_cache_error(self) -> None:
     """Recover from cache corruption error."""
@@ -675,6 +692,7 @@ def _recover_from_cache_error(self) -> None:
     self._output_parser_sessions.clear()
 
     logger.info("Cache recovery completed")
+
 
 def _reschedule_running_requests(
     self, is_corruption: bool = False, max_corruption_retries: int = 3

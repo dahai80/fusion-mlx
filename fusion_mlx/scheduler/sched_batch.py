@@ -42,7 +42,8 @@ from .types import (
 )
 
 
-def _do_external_prefill(    self,
+def _do_external_prefill(
+    self,
     request: "Request",
     tokens: list[int],
     existing_cache: list[Any] | None,
@@ -105,9 +106,7 @@ def _do_external_prefill(    self,
         and self.block_aware_cache is not None
         and _prompt_cache_needs_snapshots(prompt_cache)
     )
-    all_boundaries = (
-        boundary_enabled  # always stop at every boundary for hybrid models
-    )
+    all_boundaries = boundary_enabled  # always stop at every boundary for hybrid models
     base_size = _cache_base_sizes(prompt_cache) if boundary_enabled else 0
     # Sanity check: base_size from cache offsets should match the number
     # of tokens actually cached. A mismatch indicates stale meta_state
@@ -253,8 +252,7 @@ def _do_external_prefill(    self,
                     current / 1024**3,
                     _soft / 1024**3,
                     _hard / 1024**3,
-                    "OVER_HARD" if _hard > 0 and current > _hard
-                    else "OVER_SOFT",
+                    "OVER_HARD" if _hard > 0 and current > _hard else "OVER_SOFT",
                 )
             if (
                 self._memory_hard_limit_bytes > 0
@@ -300,9 +298,7 @@ def _do_external_prefill(    self,
             and total_tokens % block_size == 0
             and emitted_boundaries.get(request.request_id, -1) < total_tokens
         ):
-            self._emit_prefill_boundary_snapshot(
-                request, prompt_cache, total_tokens
-            )
+            self._emit_prefill_boundary_snapshot(request, prompt_cache, total_tokens)
 
     _sync_and_clear_cache(self._stream)
 
@@ -311,6 +307,7 @@ def _do_external_prefill(    self,
         self.model._language_model._rope_deltas = _saved_rope_deltas
 
     return prompt_cache, last_token
+
 
 # ------------------------------------------------------------------
 # Adaptive prefill throttle
@@ -322,7 +319,9 @@ def _do_external_prefill(    self,
 # headroom for the next chunk's intermediates.
 _PREFILL_STEP_TIERS: tuple[int, ...] = (1024, 512, 256, 128)
 
-def _adaptive_chunk_size(    self,
+
+def _adaptive_chunk_size(
+    self,
     requested: int,
     *,
     request_id: str,
@@ -378,13 +377,13 @@ def _adaptive_chunk_size(    self,
     over_ratio = max(0.0, min(1.0, (current - soft_watermark) / band))
 
     if over_ratio < 0.25:
-        target = _PREFILL_STEP_TIERS[0]    # 1024
+        target = _PREFILL_STEP_TIERS[0]  # 1024
     elif over_ratio < 0.50:
-        target = _PREFILL_STEP_TIERS[1]    # 512
+        target = _PREFILL_STEP_TIERS[1]  # 512
     elif over_ratio < 0.75:
-        target = _PREFILL_STEP_TIERS[2]    # 256
+        target = _PREFILL_STEP_TIERS[2]  # 256
     else:
-        target = _PREFILL_STEP_TIERS[3]    # 128
+        target = _PREFILL_STEP_TIERS[3]  # 128
 
     target = max(target, self._prefill_min_chunk_tokens)
     if requested <= target:
@@ -404,7 +403,9 @@ def _adaptive_chunk_size(    self,
     )
     return target
 
-def _record_chunk_transient(    self,
+
+def _record_chunk_transient(
+    self,
     n_tokens: int,
     pre_bytes: int,
     post_bytes: int,
@@ -436,11 +437,14 @@ def _record_chunk_transient(    self,
         self._prefill_transient_tracker.samples,
     )
 
+
 # ------------------------------------------------------------------
 # Chunked prefill helpers (used when config.chunked_prefill=True)
 # ------------------------------------------------------------------
 
-def _begin_prefill(    self,
+
+def _begin_prefill(
+    self,
     request: "Request",
     tokens: list[int],
     existing_cache: "list[Any] | None",
@@ -453,7 +457,9 @@ def _begin_prefill(    self,
     if hasattr(self.model, "clear_vlm_position_state"):
         self.model.clear_vlm_position_state()
 
-    prompt_cache = existing_cache if existing_cache is not None else make_prompt_cache(self.model)
+    prompt_cache = (
+        existing_cache if existing_cache is not None else make_prompt_cache(self.model)
+    )
     if existing_cache is None and hasattr(self.model, "prealloc_caches"):
         self.model.prealloc_caches(prompt_cache)
 
@@ -496,7 +502,8 @@ def _begin_prefill(    self,
         total_length=len(tokens),
     )
 
-def _step_prefill_chunk(    self, state: _PrefillState) -> bool:
+
+def _step_prefill_chunk(self, state: _PrefillState) -> bool:
     """Process one prefill chunk from *state*.
 
     Runs the model on at most prefill_step_size tokens, evals the cache,
@@ -557,7 +564,9 @@ def _step_prefill_chunk(    self, state: _PrefillState) -> bool:
             and total_tokens % state.block_size == 0
             and state.emitted_boundaries.get(rid, -1) < total_tokens
         ):
-            self._emit_prefill_boundary_snapshot(state.request, state.cache, total_tokens)
+            self._emit_prefill_boundary_snapshot(
+                state.request, state.cache, total_tokens
+            )
             state.emitted_boundaries[rid] = total_tokens
 
     # Progress callback so the admin UI prefilling list advances during
@@ -568,9 +577,11 @@ def _step_prefill_chunk(    self, state: _PrefillState) -> bool:
         state.request.request_id,
         state.tokens_processed,
         state.total_length - 1,
-        os.path.basename(self.config.model_name.rstrip("/"))
-        if self.config.model_name
-        else "",
+        (
+            os.path.basename(self.config.model_name.rstrip("/"))
+            if self.config.model_name
+            else ""
+        ),
     )
 
     # Memory monitoring — use max(active, phys_footprint) so MLX cache
@@ -595,8 +606,7 @@ def _step_prefill_chunk(    self, state: _PrefillState) -> bool:
                 current / 1024**3,
                 _soft / 1024**3,
                 _hard / 1024**3,
-                "OVER_HARD" if _hard > 0 and current > _hard
-                else "OVER_SOFT",
+                "OVER_HARD" if _hard > 0 and current > _hard else "OVER_SOFT",
             )
         if (
             self._memory_hard_limit_bytes > 0
@@ -616,13 +626,13 @@ def _step_prefill_chunk(    self, state: _PrefillState) -> bool:
                 f"{self._memory_limit_bytes / 1024**3:.1f}GB "
                 f"(ceiling: "
                 f"{self._memory_hard_limit_bytes / 1024**3:.1f}GB)"
-             )
+            )
 
-     # Only sync+clear at boundary snapshot points or on the final
-     # chunk.  Calling mx.synchronize() + mx.clear_cache() on every
-     # chunk stalls the GPU pipeline — a 128k prompt at 2048-step
-     # size would produce 64 full syncs.  Intermediate chunks already
-     # have mx.eval(c.state) above to ensure states are materialized.
+    # Only sync+clear at boundary snapshot points or on the final
+    # chunk.  Calling mx.synchronize() + mx.clear_cache() on every
+    # chunk stalls the GPU pipeline — a 128k prompt at 2048-step
+    # size would produce 64 full syncs.  Intermediate chunks already
+    # have mx.eval(c.state) above to ensure states are materialized.
     is_final = state.tokens_remaining.shape[1] == 0
     had_boundary_snapshot = (
         state.boundary_enabled
@@ -633,7 +643,8 @@ def _step_prefill_chunk(    self, state: _PrefillState) -> bool:
         _sync_and_clear_cache(self._stream)
     return is_final
 
-def _emit_final_boundary_if_needed(    self, state: _PrefillState) -> None:
+
+def _emit_final_boundary_if_needed(self, state: _PrefillState) -> None:
     """Emit a final boundary snapshot if the prefill landed on a boundary."""
     if not state.boundary_enabled:
         return
@@ -646,7 +657,9 @@ def _emit_final_boundary_if_needed(    self, state: _PrefillState) -> None:
     ):
         self._emit_prefill_boundary_snapshot(state.request, state.cache, total_tokens)
 
-def _insert_prefilled_request(    self,
+
+def _insert_prefilled_request(
+    self,
     request: "Request",
     state: _PrefillState,
     scheduled: "list[Request]",
@@ -696,11 +709,16 @@ def _insert_prefilled_request(    self,
         logger.debug(
             "Scheduled chunked-prefill request %s (uid=%d) "
             "with %d tokens (%d total)%s",
-            request.request_id, uid,
-            len(state.last_token), request.num_prompt_tokens, cache_info,
+            request.request_id,
+            uid,
+            len(state.last_token),
+            request.num_prompt_tokens,
+            cache_info,
         )
 
-def _advance_chunked_prefills(    self,
+
+def _advance_chunked_prefills(
+    self,
     scheduled: "list[Request]",
     rejected: "list[RequestOutput]",
 ) -> None:
@@ -777,7 +795,8 @@ def _advance_chunked_prefills(    self,
             # Unlikely, but if BG creation fails put request back.
             logger.error(
                 "BatchGenerator unavailable at chunked-prefill completion "
-                "for %s; requeueing.", rid
+                "for %s; requeueing.",
+                rid,
             )
             still_prefilling.append(request)
             self._prefill_states[rid] = state

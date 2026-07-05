@@ -63,6 +63,11 @@ from unittest.mock import patch
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from fusion_mlx.service.helpers import (
+    _resolve_enable_thinking,
+    maybe_auto_disable_thinking_for_casual_chat,
+    maybe_auto_disable_thinking_for_tools,
+)
 
 from fusion_mlx.api import response_format_metrics
 from fusion_mlx.api.models import ChatCompletionRequest
@@ -70,11 +75,6 @@ from fusion_mlx.api.responses_models import ResponsesRequest
 from fusion_mlx.config import reset_config
 from fusion_mlx.engine.base import GenerationOutput
 from fusion_mlx.middleware.exception_handlers import install_exception_handlers
-from fusion_mlx.service.helpers import (
-    _resolve_enable_thinking,
-    maybe_auto_disable_thinking_for_casual_chat,
-    maybe_auto_disable_thinking_for_tools,
-)
 
 # ---------------------------------------------------------------------------
 # (1) Helper-level: maybe_auto_disable_thinking_for_casual_chat
@@ -1105,7 +1105,9 @@ class TestResponsesAdapterCasualChatRoundTrip:
         # Adapter does not forward ``reasoning`` (the field is not on
         # ChatCompletionRequest), and the chat shape's
         # ``reasoning_max_tokens`` is also None.
-        assert not hasattr(chat_req, "reasoning") or chat_req.reasoning is None  # noqa: E501
+        assert (
+            not hasattr(chat_req, "reasoning") or chat_req.reasoning is None
+        )  # noqa: E501
         # Without extra_signals threading the helper would mistakenly
         # fire — confirm that the threaded signal blocks it.
         assert (

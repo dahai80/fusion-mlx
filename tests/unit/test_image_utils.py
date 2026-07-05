@@ -15,12 +15,14 @@ from fusion_mlx.utils.image import (
     load_image,
 )
 
-
 # =============================================================================
 # Helper: create small test images
 # =============================================================================
 
-def _make_test_image(width: int = 4, height: int = 4, color: str = "red") -> Image.Image:
+
+def _make_test_image(
+    width: int = 4, height: int = 4, color: str = "red"
+) -> Image.Image:
     """Create a small solid-color test image."""
     return Image.new("RGB", (width, height), color)
 
@@ -35,6 +37,7 @@ def _image_to_base64(img: Image.Image, fmt: str = "PNG") -> str:
 # =============================================================================
 # Tests: load_image
 # =============================================================================
+
 
 class TestLoadImage:
     """Tests for load_image()."""
@@ -106,6 +109,7 @@ class TestLoadImage:
 # Tests: extract_images_from_messages
 # =============================================================================
 
+
 class TestExtractImagesFromMessages:
     """Tests for extract_images_from_messages()."""
 
@@ -173,8 +177,14 @@ class TestExtractImagesFromMessages:
             {
                 "role": "user",
                 "content": [
-                    {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{b64_1}"}},
-                    {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{b64_2}"}},
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": f"data:image/png;base64,{b64_1}"},
+                    },
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": f"data:image/png;base64,{b64_2}"},
+                    },
                     {"type": "text", "text": "Compare these"},
                 ],
             },
@@ -192,7 +202,10 @@ class TestExtractImagesFromMessages:
             {
                 "role": "user",
                 "content": [
-                    {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{b64}"}},
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": f"data:image/png;base64,{b64}"},
+                    },
                     {"type": "text", "text": "Describe this"},
                 ],
             },
@@ -259,10 +272,13 @@ class TestExtractImagesFromMessages:
             {
                 "role": "user",
                 "content": [
-                    {"type": "input_audio", "input_audio": {
-                        "data": "data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEARKwAABCxAgAEABAAZGF0YQAAAAA=",
-                        "format": "wav",
-                    }},
+                    {
+                        "type": "input_audio",
+                        "input_audio": {
+                            "data": "data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEARKwAABCxAgAEABAAZGF0YQAAAAA=",
+                            "format": "wav",
+                        },
+                    },
                     {"type": "text", "text": "What do you hear?"},
                 ],
             },
@@ -276,6 +292,7 @@ class TestExtractImagesFromMessages:
     def test_input_audio_raw_base64(self):
         """Messages with raw base64 input_audio extract audio."""
         import base64
+
         raw_bytes = b"\x00\x01\x02\x03" * 16
         b64 = base64.b64encode(raw_bytes).decode()
 
@@ -283,10 +300,13 @@ class TestExtractImagesFromMessages:
             {
                 "role": "user",
                 "content": [
-                    {"type": "input_audio", "input_audio": {
-                        "data": b64,
-                        "format": "wav",
-                    }},
+                    {
+                        "type": "input_audio",
+                        "input_audio": {
+                            "data": b64,
+                            "format": "wav",
+                        },
+                    },
                 ],
             },
         ]
@@ -302,10 +322,13 @@ class TestExtractImagesFromMessages:
             {
                 "role": "user",
                 "content": [
-                    {"type": "input_audio", "input_audio": {
-                        "data": raw_bytes,
-                        "format": "wav",
-                    }},
+                    {
+                        "type": "input_audio",
+                        "input_audio": {
+                            "data": raw_bytes,
+                            "format": "wav",
+                        },
+                    },
                 ],
             },
         ]
@@ -319,10 +342,13 @@ class TestExtractImagesFromMessages:
             {
                 "role": "user",
                 "content": [
-                    {"type": "input_audio", "input_audio": {
-                        "data": "/tmp/audio.wav",
-                        "format": "wav",
-                    }},
+                    {
+                        "type": "input_audio",
+                        "input_audio": {
+                            "data": "/tmp/audio.wav",
+                            "format": "wav",
+                        },
+                    },
                 ],
             },
         ]
@@ -338,10 +364,13 @@ class TestExtractImagesFromMessages:
             {
                 "role": "user",
                 "content": [
-                    {"type": "input_audio", "input_audio": {
-                        "data": "data:audio/wav;base64,!!!not_valid_base64!!!",
-                        "format": "wav",
-                    }},
+                    {
+                        "type": "input_audio",
+                        "input_audio": {
+                            "data": "data:audio/wav;base64,!!!not_valid_base64!!!",
+                            "format": "wav",
+                        },
+                    },
                     {"type": "text", "text": "test"},
                 ],
             },
@@ -354,6 +383,7 @@ class TestExtractImagesFromMessages:
         img = _make_test_image(4, 4)
         b64 = _image_to_base64(img)
         import base64 as b64_mod
+
         raw_bytes = b"\x00\x01\x02\x03" * 16
         audio_b64 = b64_mod.b64encode(raw_bytes).decode()
 
@@ -361,11 +391,17 @@ class TestExtractImagesFromMessages:
             {
                 "role": "user",
                 "content": [
-                    {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{b64}"}},
-                    {"type": "input_audio", "input_audio": {
-                        "data": audio_b64,
-                        "format": "wav",
-                    }},
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": f"data:image/png;base64,{b64}"},
+                    },
+                    {
+                        "type": "input_audio",
+                        "input_audio": {
+                            "data": audio_b64,
+                            "format": "wav",
+                        },
+                    },
                     {"type": "text", "text": "Describe this image and audio"},
                 ],
             },
@@ -380,6 +416,7 @@ class TestExtractImagesFromMessages:
 # =============================================================================
 # Tests: compute_image_hash
 # =============================================================================
+
 
 class TestComputeImageHash:
     """Tests for compute_image_hash()."""

@@ -22,6 +22,7 @@ from __future__ import annotations
 from unittest.mock import MagicMock
 
 import pytest
+from fusion_mlx.service.helpers import _finalize_content_and_reasoning
 from pydantic import ValidationError
 
 from fusion_mlx.api.anthropic_adapter import (
@@ -35,7 +36,6 @@ from fusion_mlx.api.anthropic_models import (
 )
 from fusion_mlx.api.models import ChatCompletionRequest
 from fusion_mlx.api.responses_models import ResponsesRequest
-from fusion_mlx.service.helpers import _finalize_content_and_reasoning
 from fusion_mlx.service.postprocessor import StreamingPostProcessor
 
 # ---------------------------------------------------------------------------
@@ -695,9 +695,9 @@ class TestTextParserReasoningCap:
         # Chunk 1: cap fires AND in-chunk flip injects ``</think>``.
         pp.process_chunk(_make_output("x" * 40))
         assert pp._reasoning_close_injected is True
-        assert injection_count == 1, (
-            "in-chunk flip must inject </think> exactly once on cap-crossing"
-        )
+        assert (
+            injection_count == 1
+        ), "in-chunk flip must inject </think> exactly once on cap-crossing"
         # Chunk 2: ordinary content delta, parser sees no marker.
         pp.process_chunk(_make_output("more"))
         assert injection_count == 1, "second chunk must not re-inject"
@@ -824,9 +824,9 @@ class TestTextParserReasoningCap:
         )
         # Chunk 2 — retries injection, succeeds.
         events = pp.process_chunk(_make_output("more"))
-        assert pp._reasoning_close_injected is True, (
-            "latch must flip after the retry succeeds"
-        )
+        assert (
+            pp._reasoning_close_injected is True
+        ), "latch must flip after the retry succeeds"
         # The retry released the recovered content.
         content_events = [e for e in events if e.type == "content"]
         recovered = [e for e in content_events if "recovered" in e.content]
@@ -959,9 +959,9 @@ class TestTextParserReasoningCap:
             f"chunking changed cap position: kept_a={kept_a} "
             f"kept_b={kept_b} kept_c={kept_c}"
         )
-        assert hit_a and hit_b and hit_c, (
-            "exact-boundary chunking variants must all latch the cap"
-        )
+        assert (
+            hit_a and hit_b and hit_c
+        ), "exact-boundary chunking variants must all latch the cap"
 
     def test_streaming_and_non_streaming_cap_agree_on_5_chars(self):
         """End-to-end agreement: a 5-char reasoning chunk over a

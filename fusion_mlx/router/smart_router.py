@@ -27,22 +27,25 @@ logger = logging.getLogger(__name__)
 
 class TaskPriority(enum.Enum):
     """Request priority levels, mapped to Metal command queues."""
-    REALTIME = "realtime"      # Claude Code — low latency, high priority
-    BATCH = "batch"             # OpenClaw — throughput-oriented
-    BACKGROUND = "background"    # Embedding, reranking, offline
+
+    REALTIME = "realtime"  # Claude Code — low latency, high priority
+    BATCH = "batch"  # OpenClaw — throughput-oriented
+    BACKGROUND = "background"  # Embedding, reranking, offline
 
 
 class EngineBackend(enum.Enum):
     """Available inference backends."""
-    OMLX = "omlx"              # omlx — strong matmul, heavy batching
-    RAPID = "rapid"            # Rapid-MLX — lightweight KV, low latency
-    AUTO = "auto"              # Let SmartRouter decide
-    CLOUD = "cloud"            # Cloud fallback
+
+    OMLX = "omlx"  # omlx — strong matmul, heavy batching
+    RAPID = "rapid"  # Rapid-MLX — lightweight KV, low latency
+    AUTO = "auto"  # Let SmartRouter decide
+    CLOUD = "cloud"  # Cloud fallback
 
 
 @dataclass
 class RouteDecision:
     """The result of a routing decision."""
+
     prefill_backend: EngineBackend
     decode_backend: EngineBackend
     reason: str
@@ -56,12 +59,13 @@ class RouteDecision:
 @dataclass
 class BenchmarkResult:
     """Kernel benchmark result for a model + backend combo."""
+
     model_id: str
     backend: EngineBackend
     quant_format: str
-    tps: float                    # tokens per second
-    latency_p50: float           # ms
-    latency_p99: float           # ms
+    tps: float  # tokens per second
+    latency_p50: float  # ms
+    latency_p99: float  # ms
     memory_peak_bytes: int
     timestamp: float = field(default_factory=time.time)
 
@@ -104,10 +108,11 @@ class PhaseHandoff:
     Contains the block table and Metal buffer pointers from the prefill
     engine, ready to be wrapped (zero-copy) by the decode engine.
     """
+
     request_id: str
-    block_table: Any                    # List of block IDs from prefill engine
+    block_table: Any  # List of block IDs from prefill engine
     kv_buffers: list[tuple[Any, tuple, str]]  # (mx.array, shape, dtype) list
-    meta_states: list[tuple]           # Per-layer meta_state tuples
+    meta_states: list[tuple]  # Per-layer meta_state tuples
     model_name: str
     num_tokens: int
     prefill_backend: EngineBackend
@@ -147,8 +152,8 @@ class SmartRouter:
         self.cloud_router = cloud_router
 
         # Engine registry — keep both old names (for compatibility) and new
-        self.llm_engine = llm_engine         # omlx BatchedEngine
-        self.rapid_engine = rapid_engine     # Rapid-MLX engine
+        self.llm_engine = llm_engine  # omlx BatchedEngine
+        self.rapid_engine = rapid_engine  # Rapid-MLX engine
         self.vlm_engine = vlm_engine
         self.stt_engine = stt_engine
         self.tts_engine = tts_engine
@@ -206,10 +211,7 @@ class SmartRouter:
             )
 
         # 2. Cloud fallback for massive uncached context
-        if (
-            self.cloud_router
-            and new_tokens > self.config.cloud_fallback_threshold
-        ):
+        if self.cloud_router and new_tokens > self.config.cloud_fallback_threshold:
             with self._lock:
                 self._cloud_count += 1
             self._record_route("cloud", False)
@@ -226,7 +228,9 @@ class SmartRouter:
 
         # 4. Benchmark-based routing — skip for REALTIME (latency > throughput)
         if priority != TaskPriority.REALTIME:
-            benchmark_decision = self._benchmark_route(model_id, quant_format, new_tokens)
+            benchmark_decision = self._benchmark_route(
+                model_id, quant_format, new_tokens
+            )
             if benchmark_decision is not None:
                 self._record_route(
                     benchmark_decision.prefill_backend.value,
@@ -352,12 +356,15 @@ class SmartRouter:
         decode_engine = self.rapid_engine or self.llm_engine
         request_id = request_data.get("request_id", "")
 
-        if not (getattr(prefill_engine, "supports_prefill_only", False)
-        and getattr(decode_engine, "supports_kv_handoff", False)):
-                # Fallback: if engines don't support handoff, use unified streaming
+        if not (
+            getattr(prefill_engine, "supports_prefill_only", False)
+            and getattr(decode_engine, "supports_kv_handoff", False)
+        ):
+            # Fallback: if engines don't support handoff, use unified streaming
             logger.info(
                 "[SmartRouter] Phase split fallback: engines lack handoff support, "
-                "streaming on %s", decision.prefill_backend.value,
+                "streaming on %s",
+                decision.prefill_backend.value,
             )
             async for chunk in prefill_engine.stream_chat(messages, **kwargs):
                 yield chunk
@@ -365,11 +372,14 @@ class SmartRouter:
 
         logger.info(
             "[SmartRouter] Phase split: prefill=%s, decode=%s",
-            decision.prefill_backend.value, decision.decode_backend.value,
+            decision.prefill_backend.value,
+            decision.decode_backend.value,
         )
 
         # Step 1: Prefill on omlx — get KV state
-        prefill_result = await prefill_engine.chat(messages, prefill_only=True, **kwargs)
+        prefill_result = await prefill_engine.chat(
+            messages, prefill_only=True, **kwargs
+        )
         kv_state = prefill_result.kv_state or {}
 
         # Step 2: Create PhaseHandoff from KV state
@@ -388,7 +398,9 @@ class SmartRouter:
 
         # Step 3: Decode on Rapid-MLX with KV handoff — stream SSE chunks
         try:
-            async for chunk in decode_engine.stream_chat(messages, kv_handoff=handoff, **kwargs):
+            async for chunk in decode_engine.stream_chat(
+                messages, kv_handoff=handoff, **kwargs
+            ):
                 yield chunk
         finally:
             with self._lock:
@@ -471,7 +483,9 @@ class SmartRouter:
             return TaskPriority.BACKGROUND
         return self.config.default_priority
 
-    def _parse_backend_override(self, request_data: dict[str, Any]) -> EngineBackend | None:
+    def _parse_backend_override(
+        self, request_data: dict[str, Any]
+    ) -> EngineBackend | None:
         """Parse explicit backend override from request."""
         override = request_data.get("backend_override")
         if not override:
@@ -488,7 +502,6 @@ class SmartRouter:
     def _estimate_tokens(self, messages: list[dict]) -> int:
         """Rough token estimate with CJK-aware counting."""
 
-
         cjk_chars = 0
         ascii_chars = 0
         for msg in messages:
@@ -504,13 +517,16 @@ class SmartRouter:
                 text = ""
             for ch in text:
                 cp = ord(ch)
-                if (0x4e00 <= cp <= 0x9fff or
-                    0x3040 <= cp <= 0x30ff or
-                    0xac00 <= cp <= 0xd7af):
+                if (
+                    0x4E00 <= cp <= 0x9FFF
+                    or 0x3040 <= cp <= 0x30FF
+                    or 0xAC00 <= cp <= 0xD7AF
+                ):
                     cjk_chars += 1
                 else:
                     ascii_chars += 1
         return max(1, int(cjk_chars * 1.5) + ascii_chars // 3)
+
     def _has_images(self, messages: list[dict]) -> bool:
         for msg in messages:
             content = msg.get("content", "")
@@ -550,7 +566,9 @@ class SmartRouter:
     # Graph pre-warm — prevent JIT stall on phase handoff
     # ================================================================
 
-    def warmup_graphs(self, model_name: str, prompt_template: str | None = None) -> None:
+    def warmup_graphs(
+        self, model_name: str, prompt_template: str | None = None
+    ) -> None:
         """Pre-compile compute graphs on both engines for common batch sizes.
 
         Must be called at startup or model load time. Without this,
@@ -658,17 +676,23 @@ class SmartRouter:
         # Infer from model name — common patterns
         name_lower = model_id.lower()
         for suffix, params in [
-            ("70b", 70_000_000_000), ("72b", 72_000_000_000),
-            ("35b", 35_000_000_000), ("32b", 32_000_000_000),
-            ("14b", 14_000_000_000), ("13b", 13_000_000_000),
+            ("70b", 70_000_000_000),
+            ("72b", 72_000_000_000),
+            ("35b", 35_000_000_000),
+            ("32b", 32_000_000_000),
+            ("14b", 14_000_000_000),
+            ("13b", 13_000_000_000),
             ("10b", 10_000_000_000),
-            ("7b", 7_000_000_000), ("8b", 8_000_000_000),
+            ("7b", 7_000_000_000),
+            ("8b", 8_000_000_000),
             ("4b", 4_000_000_000),
             ("3b", 3_000_000_000),
             ("2b", 2_000_000_000),
             ("1b", 1_000_000_000),
-            ("760m", 760_000_000), ("460m", 460_000_000),
-            ("350m", 350_000_000), ("260m", 260_000_000),
+            ("760m", 760_000_000),
+            ("460m", 460_000_000),
+            ("350m", 350_000_000),
+            ("260m", 260_000_000),
         ]:
             if suffix in name_lower:
                 return params
@@ -716,17 +740,19 @@ class SmartRouter:
                 )
                 # Weight prior by (20 - observations) / 20
                 prior_weight = max(0.0, (20 - observation_count) / 20.0)
-                effective_tps = (
-                    prior_weight * prior_tps
-                    + (1 - prior_weight) * (alpha * prev.get("tps", prior_tps) + (1 - alpha) * br.tps)
+                effective_tps = prior_weight * prior_tps + (1 - prior_weight) * (
+                    alpha * prev.get("tps", prior_tps) + (1 - alpha) * br.tps
                 )
-                effective_lat = (
-                    prior_weight * prior_lat
-                    + (1 - prior_weight) * (alpha * prev.get("latency_p50", prior_lat) + (1 - alpha) * br.latency_p50)
+                effective_lat = prior_weight * prior_lat + (1 - prior_weight) * (
+                    alpha * prev.get("latency_p50", prior_lat)
+                    + (1 - alpha) * br.latency_p50
                 )
             else:
                 effective_tps = alpha * prev.get("tps", br.tps) + (1 - alpha) * br.tps
-                effective_lat = alpha * prev.get("latency_p50", br.latency_p50) + (1 - alpha) * br.latency_p50
+                effective_lat = (
+                    alpha * prev.get("latency_p50", br.latency_p50)
+                    + (1 - alpha) * br.latency_p50
+                )
             ema_state[backend_name] = {
                 "tps": effective_tps,
                 "latency_p50": effective_lat,
@@ -754,8 +780,14 @@ class SmartRouter:
         # Only split if the difference is meaningful (>15%)
         min_tps = min(b.tps for b in smoothed.values())
         max_lat = max(b.latency_p50 for b in smoothed.values())
-        tps_diff = (best_prefill[1].tps - min_tps) / best_prefill[1].tps if best_prefill[1].tps > 0 else 0
-        latency_diff = (max_lat - best_decode[1].latency_p50) / max_lat if max_lat > 0 else 0
+        tps_diff = (
+            (best_prefill[1].tps - min_tps) / best_prefill[1].tps
+            if best_prefill[1].tps > 0
+            else 0
+        )
+        latency_diff = (
+            (max_lat - best_decode[1].latency_p50) / max_lat if max_lat > 0 else 0
+        )
 
         split = tps_diff > 0.15 or latency_diff > 0.15
 
@@ -779,6 +811,7 @@ class SmartRouter:
             ),
             split_phases=split,
         )
+
     # Stats helpers
     # ================================================================
 

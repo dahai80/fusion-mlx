@@ -6,8 +6,6 @@ from collections import deque
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
-import pytest
-
 from fusion_mlx.scheduler import Scheduler
 
 

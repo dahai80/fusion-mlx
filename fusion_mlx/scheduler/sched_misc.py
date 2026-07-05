@@ -23,6 +23,7 @@ from ..cache.paged_ssd_cache import PagedSSDCacheManager
 
 try:
     from ..cache.boundary_snapshot_store import BoundarySnapshotSSDStore
+
     HAS_TIERED_CACHE = True
 except ImportError:
     BoundarySnapshotSSDStore = None
@@ -32,7 +33,7 @@ except ImportError:
 # stream when no per-engine stream is provided.
 
 
-def adjust_store_cache_cap(    self, pressure_level: str) -> None:
+def adjust_store_cache_cap(self, pressure_level: str) -> None:
     """Resize the store-cache gate based on memory pressure (#1383).
 
     Called from ProcessMemoryEnforcer on every poll. The cap walks one
@@ -58,9 +59,11 @@ def adjust_store_cache_cap(    self, pressure_level: str) -> None:
             pressure_level,
         )
 
+
 # =========================================================================
 # SSD Cache Methods
 # =========================================================================
+
 
 def _set_model_info_for_monitor(self) -> None:
     """Extract model info and set it on memory monitor for estimation."""
@@ -94,8 +97,7 @@ def _set_model_info_for_monitor(self) -> None:
         for sub_attr in ("text_config", "language_config", "llm_config"):
             sub = getattr(config, sub_attr, None)
             if sub is not None and (
-                getattr(sub, "num_hidden_layers", None)
-                or getattr(sub, "n_layer", None)
+                getattr(sub, "num_hidden_layers", None) or getattr(sub, "n_layer", None)
             ):
                 config = sub
                 break
@@ -141,13 +143,13 @@ def _set_model_info_for_monitor(self) -> None:
                 cache_list = self.model.make_cache()
                 from mlx_lm.models.cache import KVCache
 
-                num_kv_cache_layers = sum(
-                    1 for c in cache_list if type(c) is KVCache
-                )
+                num_kv_cache_layers = sum(1 for c in cache_list if type(c) is KVCache)
                 if num_kv_cache_layers == 0:
                     num_kv_cache_layers = num_layers  # fallback
             except Exception:
-                logger.debug("swallowed exception at fusion_mlx/scheduler/sched_misc.py:181")
+                logger.debug(
+                    "swallowed exception at fusion_mlx/scheduler/sched_misc.py:181"
+                )
 
                 pass
 
@@ -175,6 +177,7 @@ def _set_model_info_for_monitor(self) -> None:
     except Exception as e:
         logger.debug(f"Failed to extract model info: {e}")
 
+
 def _init_tiered_cache(self) -> None:
     """Initialize paged SSD cache components if configured.
 
@@ -193,9 +196,7 @@ def _init_tiered_cache(self) -> None:
 
     # In paged SSD-only mode, paged_ssd_cache_dir is required
     if not self.config.paged_ssd_cache_dir:
-        logger.debug(
-            "paged SSD cache not configured (no --ssd-cache-dir specified)"
-        )
+        logger.debug("paged SSD cache not configured (no --ssd-cache-dir specified)")
         return
 
     try:
@@ -253,9 +254,7 @@ def _init_tiered_cache(self) -> None:
                     base_dir=Path(self.config.paged_ssd_cache_dir)
                 )
             except Exception as e:
-                logger.debug(
-                    "Failed to initialize boundary snapshot SSD store: %s", e
-                )
+                logger.debug("Failed to initialize boundary snapshot SSD store: %s", e)
 
         logger.info(
             f"paged SSD cache enabled: "
@@ -268,6 +267,7 @@ def _init_tiered_cache(self) -> None:
         logger.error(f"Failed to initialize paged SSD cache: {e}")
         self.paged_ssd_cache_manager = None
 
+
 def _check_memory_pressure(self) -> None:
     """Check memory and evict blocks if needed.
 
@@ -278,7 +278,8 @@ def _check_memory_pressure(self) -> None:
     # All KV cache data is on paged SSD, so no GPU memory pressure from PagedCache
     pass
 
-def _evict_blocks_permanently(    self, bytes_to_free: int) -> int:
+
+def _evict_blocks_permanently(self, bytes_to_free: int) -> int:
     """
     Evict LRU blocks permanently (metadata cleanup).
 
@@ -327,7 +328,8 @@ def _evict_blocks_permanently(    self, bytes_to_free: int) -> int:
 
     return freed
 
-def _evict_blocks_to_cold(    self, bytes_to_free: int) -> int:
+
+def _evict_blocks_to_cold(self, bytes_to_free: int) -> int:
     """
     Evict LRU blocks (with paged SSD cache configured).
 
@@ -381,7 +383,8 @@ def _evict_blocks_to_cold(    self, bytes_to_free: int) -> int:
 
     return estimated_freed
 
-def _restore_block_from_cold(    self, block_id: int, block_hash: bytes) -> bool:
+
+def _restore_block_from_cold(self, block_id: int, block_hash: bytes) -> bool:
     """
     Restore a block from cold storage (deprecated in paged SSD-only mode).
 
@@ -419,7 +422,8 @@ def _restore_block_from_cold(    self, block_id: int, block_hash: bytes) -> bool
     )
     return True
 
-def restore_cold_blocks_for_request(    self, request_id: str) -> int:
+
+def restore_cold_blocks_for_request(self, request_id: str) -> int:
     """
     Verify all blocks needed for a request exist on paged SSD.
 
@@ -452,6 +456,7 @@ def restore_cold_blocks_for_request(    self, request_id: str) -> int:
 
     return verified
 
+
 def _collect_cache_counters(self) -> dict[str, int] | None:
     if self.block_aware_cache is None:
         return None
@@ -470,16 +475,19 @@ def _collect_cache_counters(self) -> dict[str, int] | None:
         ssd = self.paged_ssd_cache_manager.get_stats()
         hot_hits = ssd.hot_cache_hits
         total_loads = ssd.loads
-        counters.update({
-            "ssd_hot_hits": hot_hits,
-            "ssd_disk_loads": max(0, total_loads - hot_hits),
-            "ssd_saves": ssd.saves,
-            "ssd_errors": ssd.errors,
-            "hot_cache_evictions": ssd.hot_cache_evictions,
-            "hot_cache_promotions": ssd.hot_cache_promotions,
-        })
+        counters.update(
+            {
+                "ssd_hot_hits": hot_hits,
+                "ssd_disk_loads": max(0, total_loads - hot_hits),
+                "ssd_saves": ssd.saves,
+                "ssd_errors": ssd.errors,
+                "hot_cache_evictions": ssd.hot_cache_evictions,
+                "hot_cache_promotions": ssd.hot_cache_promotions,
+            }
+        )
 
     return counters
+
 
 def get_ssd_cache_stats(self) -> dict[str, Any] | None:
     """Get paged SSD + prefix cache observability statistics."""
@@ -497,14 +505,14 @@ def get_ssd_cache_stats(self) -> dict[str, Any] | None:
 
     counters = self._collect_cache_counters()
     if counters:
-        stats["cache_rates"] = self._cache_rate_tracker.snapshot_and_get_rates(
-            counters
-        )
+        stats["cache_rates"] = self._cache_rate_tracker.snapshot_and_get_rates(counters)
 
     return stats if stats else None
 
+
 # Alias for backwards compatibility
 get_tiered_cache_stats = get_ssd_cache_stats
+
 
 def _format_bytes(self, bytes_value: int) -> str:
     if bytes_value >= 1024**3:
@@ -515,6 +523,7 @@ def _format_bytes(self, bytes_value: int) -> str:
         return f"{bytes_value / 1024:.2f} KB"
     else:
         return f"{bytes_value} B"
+
 
 def _bypass_hot_cache_under_pressure(self) -> bool:
     if not self._prefill_memory_guard:

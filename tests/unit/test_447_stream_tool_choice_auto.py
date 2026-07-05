@@ -162,12 +162,12 @@ class TestNemotronShapeEnvelopeReachesParser:
             ],
         )
         # The outer opener must not have leaked.
-        assert "tool_call>" not in result["content"], (
-            f"split outer opener leaked into content channel: {result['content']!r}"
-        )
-        assert "tool_call>" not in result["reasoning"], (
-            f"split outer opener leaked into reasoning channel: {result['reasoning']!r}"
-        )
+        assert (
+            "tool_call>" not in result["content"]
+        ), f"split outer opener leaked into content channel: {result['content']!r}"
+        assert (
+            "tool_call>" not in result["reasoning"]
+        ), f"split outer opener leaked into reasoning channel: {result['reasoning']!r}"
         # And the structured call must surface.
         assert len(result["tool_calls"]) == 1
         assert result["tool_calls"][0]["function"]["name"] == "get_weather"

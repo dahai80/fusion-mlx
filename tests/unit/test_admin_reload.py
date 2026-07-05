@@ -4,8 +4,6 @@ import asyncio
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
-import pytest
-
 import fusion_mlx.admin.helpers as admin_helpers
 
 
@@ -228,9 +226,7 @@ class TestApplyModelDirsRuntime:
 
         with patch("fusion_mlx.server._server_state", mock_server_state):
             success, msg = asyncio.run(
-                admin_helpers._apply_model_dirs_runtime(
-                    [str(primary), str(secondary)]
-                )
+                admin_helpers._apply_model_dirs_runtime([str(primary), str(secondary)])
             )
 
         assert success is True

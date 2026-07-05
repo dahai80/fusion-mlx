@@ -34,9 +34,9 @@ def test_info_resolves_alias_to_hf_path() -> None:
     out = _run_info("qwen3.5-4b-4bit")
     assert "qwen3.5-4b-4bit" in out
     assert "→" in out, f"expected alias-resolution arrow in output, got:\n{out}"
-    assert "mlx-community/Qwen3.5-4B-MLX-4bit" in out, (
-        f"expected resolved HF path in output, got:\n{out}"
-    )
+    assert (
+        "mlx-community/Qwen3.5-4B-MLX-4bit" in out
+    ), f"expected resolved HF path in output, got:\n{out}"
 
 
 def test_info_passes_full_hf_path_through() -> None:

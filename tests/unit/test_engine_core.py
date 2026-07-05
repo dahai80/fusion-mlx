@@ -76,7 +76,9 @@ class TestEngineCoreInitialization:
                 stream_interval=3,
             )
             engine = EngineCore(
-                model=mock_model, tokenizer=mock_tokenizer, config=config,
+                model=mock_model,
+                tokenizer=mock_tokenizer,
+                config=config,
             )
             try:
                 assert engine.config.model_name == "custom-model"
@@ -491,7 +493,9 @@ class TestEngineCoreClose:
             executor.submit.return_value = future
             engine._mlx_executor = executor
             with (
-                patch("fusion_mlx.engine_core.fatal_exit", side_effect=SystemExit) as fatal,
+                patch(
+                    "fusion_mlx.engine_core.fatal_exit", side_effect=SystemExit
+                ) as fatal,
                 pytest.raises(SystemExit),
             ):
                 engine.close()
@@ -513,8 +517,13 @@ class TestEngineCoreClose:
             executor.submit.side_effect = [ok_future, ok_future, timeout_future]
             engine._mlx_executor = executor
             with (
-                patch("fusion_mlx.engine_core.compile_cache_clear_available", return_value=True),
-                patch("fusion_mlx.engine_core.fatal_exit", side_effect=SystemExit) as fatal,
+                patch(
+                    "fusion_mlx.engine_core.compile_cache_clear_available",
+                    return_value=True,
+                ),
+                patch(
+                    "fusion_mlx.engine_core.fatal_exit", side_effect=SystemExit
+                ) as fatal,
                 pytest.raises(SystemExit),
             ):
                 engine.close()
@@ -779,7 +788,8 @@ class TestAsyncEngineCore:
         with patch("fusion_mlx.engine_core.get_registry") as mock_registry:
             mock_registry.return_value.acquire.return_value = True
             async with AsyncEngineCore(
-                model=mock_model, tokenizer=mock_tokenizer,
+                model=mock_model,
+                tokenizer=mock_tokenizer,
             ) as engine:
                 assert engine.engine._running is True
             assert engine.engine._running is False
@@ -789,7 +799,8 @@ class TestAsyncEngineCore:
         with patch("fusion_mlx.engine_core.get_registry") as mock_registry:
             mock_registry.return_value.acquire.return_value = True
             async with AsyncEngineCore(
-                model=mock_model, tokenizer=mock_tokenizer,
+                model=mock_model,
+                tokenizer=mock_tokenizer,
             ) as engine:
                 request_id = await engine.add_request(prompt="Hello")
                 assert request_id is not None
@@ -799,7 +810,8 @@ class TestAsyncEngineCore:
         with patch("fusion_mlx.engine_core.get_registry") as mock_registry:
             mock_registry.return_value.acquire.return_value = True
             async with AsyncEngineCore(
-                model=mock_model, tokenizer=mock_tokenizer,
+                model=mock_model,
+                tokenizer=mock_tokenizer,
             ) as engine:
                 request_id = await engine.add_request(prompt="Hello")
                 result = await engine.abort_request(request_id)
@@ -808,20 +820,20 @@ class TestAsyncEngineCore:
     @pytest.mark.asyncio
     async def test_abort_request_after_close_returns_false(self):
         async_engine = AsyncEngineCore.__new__(AsyncEngineCore)
-        setattr(async_engine, "engine", None)
+        async_engine.engine = None
         result = await async_engine.abort_request("request-after-close")
         assert result is False
 
     @pytest.mark.asyncio
     async def test_context_manager_exit_after_close_does_not_raise(self):
         async_engine = AsyncEngineCore.__new__(AsyncEngineCore)
-        setattr(async_engine, "engine", None)
+        async_engine.engine = None
         await async_engine.__aexit__(None, None, None)
 
     @pytest.mark.asyncio
     async def test_abort_all_requests_after_close_returns_zero(self):
         async_engine = AsyncEngineCore.__new__(AsyncEngineCore)
-        setattr(async_engine, "engine", None)
+        async_engine.engine = None
         count = await async_engine.abort_all_requests()
         assert count == 0
 
@@ -830,7 +842,8 @@ class TestAsyncEngineCore:
         with patch("fusion_mlx.engine_core.get_registry") as mock_registry:
             mock_registry.return_value.acquire.return_value = True
             async with AsyncEngineCore(
-                model=mock_model, tokenizer=mock_tokenizer,
+                model=mock_model,
+                tokenizer=mock_tokenizer,
             ) as engine:
                 engine.engine.scheduler.get_stats = MagicMock(return_value={})
                 stats = engine.get_stats()
@@ -842,7 +855,8 @@ class TestAsyncEngineCore:
         with patch("fusion_mlx.engine_core.get_registry") as mock_registry:
             mock_registry.return_value.acquire.return_value = True
             async with AsyncEngineCore(
-                model=mock_model, tokenizer=mock_tokenizer,
+                model=mock_model,
+                tokenizer=mock_tokenizer,
             ) as engine:
                 engine.engine.scheduler.get_cache_stats = MagicMock(return_value=None)
                 stats = engine.get_cache_stats()
@@ -850,8 +864,10 @@ class TestAsyncEngineCore:
 
     @pytest.mark.asyncio
     async def test_start_stores_task_reference(self):
-        with patch("fusion_mlx.engine_core.EngineCore") as MockEngine, \
-             patch("fusion_mlx.engine_core.mx") as mock_mx:
+        with (
+            patch("fusion_mlx.engine_core.EngineCore") as MockEngine,
+            patch("fusion_mlx.engine_core.mx") as mock_mx,
+        ):
             mock_engine = MagicMock()
             mock_engine.start = MagicMock(return_value=asyncio.sleep(0))
             MockEngine.return_value = mock_engine
@@ -970,8 +986,10 @@ class TestGlobalMLXExecutor:
         ]
         results = await asyncio.gather(*tasks)
         assert set(results) == {
-            "engine_a_step1", "engine_b_step1",
-            "engine_a_step2", "engine_b_step2",
+            "engine_a_step1",
+            "engine_b_step1",
+            "engine_a_step2",
+            "engine_b_step2",
         }
         assert max_concurrent == 1, (
             f"Expected max 1 concurrent task, got {max_concurrent}. "
@@ -1002,6 +1020,7 @@ class TestGlobalMLXExecutor:
                 with lock:
                     active_count -= 1
                 return SchedulerOutput(outputs=[])
+
             return tracked_step
 
         with patch("fusion_mlx.engine_core.get_registry") as mock_registry:
@@ -1022,9 +1041,9 @@ class TestGlobalMLXExecutor:
                 engine1.close()
                 engine2.close()
         assert total_steps >= 4, f"Expected at least 4 steps, got {total_steps}"
-        assert max_concurrent >= 2, (
-            f"Expected concurrent execution (max_concurrent >= 2), got {max_concurrent}."
-        )
+        assert (
+            max_concurrent >= 2
+        ), f"Expected concurrent execution (max_concurrent >= 2), got {max_concurrent}."
 
 
 class TestEngineCoreCloseReleasesSSDManager:
@@ -1165,7 +1184,9 @@ class TestStepBurst:
                 return_value=_make_step_output(has_work=True)
             )
             engine.scheduler.has_requests = MagicMock(return_value=True)
-            with patch("fusion_mlx.engine_core.time.monotonic", side_effect=[100.0, 200.0]):
+            with patch(
+                "fusion_mlx.engine_core.time.monotonic", side_effect=[100.0, 200.0]
+            ):
                 outs = engine._step_burst()
             assert len(outs) == 1
             assert engine.scheduler.step.call_count == 1

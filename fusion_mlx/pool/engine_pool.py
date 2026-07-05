@@ -19,7 +19,7 @@ import json
 import logging
 import time
 from contextlib import asynccontextmanager
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal
 
 if TYPE_CHECKING:
@@ -56,17 +56,44 @@ class EngineEntry:
 
     model_id: str  # Directory name (e.g., "llama-3b")
     model_path: str  # Full path to model directory
-    model_type: Literal["llm", "vlm", "embedding", "reranker", "audio_stt", "audio_tts", "audio_sts"]  # Model type
-    engine_type: Literal["batched", "simple", "embedding", "reranker", "vlm", "audio_stt", "audio_tts", "audio_sts"]  # Engine type to use
+    model_type: Literal[
+        "llm", "vlm", "embedding", "reranker", "audio_stt", "audio_tts", "audio_sts"
+    ]  # Model type
+    engine_type: Literal[
+        "batched",
+        "simple",
+        "embedding",
+        "reranker",
+        "vlm",
+        "audio_stt",
+        "audio_tts",
+        "audio_sts",
+    ]  # Engine type to use
     estimated_size: int  # Pre-calculated from safetensors (bytes)
     actual_size: int | None = None  # Observed process-memory delta after load settles
-    config_model_type: str = ""  # Raw model_type from config.json (e.g., "deepseekocr_2")
-    thinking_default: bool | None = None  # True if model thinks by default, False if not, None if unknown
-    preserve_thinking_default: bool | None = None  # True when template supports preserve_thinking (Qwen 3.6+)
-    model_context_length: int | None = None  # Declared context length from config.json (None if unknown)
+    config_model_type: str = (
+        ""  # Raw model_type from config.json (e.g., "deepseekocr_2")
+    )
+    thinking_default: bool | None = (
+        None  # True if model thinks by default, False if not, None if unknown
+    )
+    preserve_thinking_default: bool | None = (
+        None  # True when template supports preserve_thinking (Qwen 3.6+)
+    )
+    model_context_length: int | None = (
+        None  # Declared context length from config.json (None if unknown)
+    )
     source_type: str = "local"
     source_repo_id: str | None = None
-    engine: BaseEngine | EmbeddingEngine | RerankerEngine | STTEngine | STSEngine | TTSEngine | None = None  # Loaded engine instance
+    engine: (
+        BaseEngine
+        | EmbeddingEngine
+        | RerankerEngine
+        | STTEngine
+        | STSEngine
+        | TTSEngine
+        | None
+    ) = None  # Loaded engine instance
     last_access: float = 0.0  # Timestamp for LRU (0 if never loaded)
     is_loading: bool = False  # Prevent concurrent loads
     loading_started_at: float | None = None  # Timestamp when current load started
@@ -352,7 +379,9 @@ class EnginePool:
                     estimated_size=info.estimated_size,
                     config_model_type=getattr(info, "config_model_type", ""),
                     thinking_default=getattr(info, "thinking_default", None),
-                    preserve_thinking_default=getattr(info, "preserve_thinking_default", None),
+                    preserve_thinking_default=getattr(
+                        info, "preserve_thinking_default", None
+                    ),
                     model_context_length=getattr(info, "model_context_length", None),
                     source_type=getattr(info, "source_type", "local"),
                     source_repo_id=getattr(info, "source_repo_id", None),
@@ -390,9 +419,7 @@ class EnginePool:
         "audio_sts": "audio_sts",
     }
 
-    def apply_settings_overrides(
-        self, settings_manager: ModelSettingsManager
-    ) -> None:
+    def apply_settings_overrides(self, settings_manager: ModelSettingsManager) -> None:
         """Apply model_type_override from persisted settings to discovered entries."""
         for model_id, entry in self._entries.items():
             settings = settings_manager.get_settings(model_id)
@@ -711,9 +738,7 @@ class EnginePool:
                 async with self._lock:
                     entry.is_loading = False
                 if entry.estimated_size > ceiling:
-                    raise ModelTooLargeError(
-                        model_id, entry.estimated_size, ceiling
-                    )
+                    raise ModelTooLargeError(model_id, entry.estimated_size, ceiling)
                 raise InsufficientMemoryError(
                     required=entry.estimated_size,
                     current=current,
@@ -807,8 +832,8 @@ class EnginePool:
             entry.last_access = 0.0
             if self._process_memory_enforcer is not None:
                 self._process_memory_enforcer.update_loaded_model_bytes(
-                     -int(entry.estimated_size)
-                 )
+                    -int(entry.estimated_size)
+                )
             logger.info(f"Unregistered engine '{model_id}' from pool")
 
     def _find_lru_victim(self) -> str | None:
@@ -852,6 +877,7 @@ class EnginePool:
             try:
                 entry.engine.clear_kv_cache()
                 import mx
+
                 loop = asyncio.get_running_loop()
                 await loop.run_in_executor(
                     get_mlx_executor(), lambda: (mx.synchronize(), mx.clear_cache())
@@ -861,7 +887,6 @@ class EnginePool:
             except Exception as e:
                 logger.warning(f"Phase 1 eviction failed for {model_id}: {e}")
         return False
-
 
     async def _unload_engine(self, model_id: str) -> None:
         """
@@ -1389,7 +1414,9 @@ class EnginePool:
                     try:
                         await engine.stop()
                     except Exception:
-                        logger.debug("swallowed exception at fusion_mlx/pool/engine_pool.py:693")
+                        logger.debug(
+                            "swallowed exception at fusion_mlx/pool/engine_pool.py:693"
+                        )
 
                         pass
                     gc.collect()
@@ -1442,7 +1469,9 @@ class EnginePool:
                     try:
                         await engine.stop()
                     except Exception:
-                        logger.debug("swallowed exception at fusion_mlx/pool/engine_pool.py:739")
+                        logger.debug(
+                            "swallowed exception at fusion_mlx/pool/engine_pool.py:739"
+                        )
 
                         pass
                     gc.collect()
@@ -1482,7 +1511,9 @@ class EnginePool:
                     try:
                         await engine.stop()
                     except Exception:
-                        logger.debug("swallowed exception at fusion_mlx/pool/engine_pool.py:775")
+                        logger.debug(
+                            "swallowed exception at fusion_mlx/pool/engine_pool.py:775"
+                        )
 
                         pass
                     gc.collect()
@@ -1512,23 +1543,18 @@ class EnginePool:
                     entry.model_type = "llm"
                     entry.engine_type = "batched"
                     logger.info(
-                        f"Successfully loaded {model_id} as LLM "
-                        f"(fallback from VLM)"
+                        f"Successfully loaded {model_id} as LLM " f"(fallback from VLM)"
                     )
                 else:
                     raise
 
             # Check if memory enforcer requested abort during loading
             if entry.abort_loading:
-                logger.warning(
-                    f"Model load aborted by memory enforcer: {model_id}"
-                )
+                logger.warning(f"Model load aborted by memory enforcer: {model_id}")
                 try:
                     await engine.stop()
                 except Exception as e:
-                    logger.warning(
-                        f"Error stopping aborted engine for {model_id}: {e}"
-                    )
+                    logger.warning(f"Error stopping aborted engine for {model_id}: {e}")
                 gc.collect()
                 loop = asyncio.get_running_loop()
                 await loop.run_in_executor(
@@ -1537,8 +1563,7 @@ class EnginePool:
                 )
                 raise ModelLoadingError(
                     model_id,
-                    f"Model {model_id} load aborted: "
-                    f"process memory limit exceeded",
+                    f"Model {model_id} load aborted: " f"process memory limit exceeded",
                 )
 
             entry.engine = engine
@@ -1560,12 +1585,11 @@ class EnginePool:
             ):
                 drafter_id = model_settings.vlm_mtp_draft_model
                 drafter_entry = self._entries.get(drafter_id)
-                drafter_path = (
-                    drafter_entry.model_path if drafter_entry else drafter_id
-                )
+                drafter_path = drafter_entry.model_path if drafter_entry else drafter_id
 
                 def _load_drafter_sync(path: str = drafter_path):
                     from .speculative.vlm_mtp import load_vlm_mtp_drafter
+
                     return load_vlm_mtp_drafter(path)
 
                 loop = asyncio.get_running_loop()
@@ -1581,9 +1605,7 @@ class EnginePool:
                     drafter = None
                 if drafter is not None:
                     engine.set_vlm_mtp_drafter(drafter)
-                    logger.info(
-                        f"VLM MTP enabled for {model_id}, drafter={drafter_id}"
-                    )
+                    logger.info(f"VLM MTP enabled for {model_id}, drafter={drafter_id}")
                 else:
                     logger.warning(
                         f"VLM MTP toggle on for {model_id} but drafter "
@@ -1623,9 +1645,13 @@ class EnginePool:
                 f"total: {format_size(self._current_model_memory)})"
             )
         finally:
-            if load_completed and load_started_at is not None and entry.estimated_size > 0:
+            if (
+                load_completed
+                and load_started_at is not None
+                and entry.estimated_size > 0
+            ):
                 elapsed = max(0.0, time.monotonic() - load_started_at)
-                size_gb = entry.estimated_size / (1024 ** 3)
+                size_gb = entry.estimated_size / (1024**3)
                 if size_gb > 0 and elapsed > 0:
                     sample = elapsed / size_gb
                     if self._load_seconds_per_gb_ema is None:
@@ -1686,7 +1712,9 @@ class EnginePool:
             "final_ceiling": self._current_ceiling(),
             "current_model_memory": self._current_model_memory,
             "model_count": len(self._entries),
-            "loaded_count": sum(1 for e in self._entries.values() if e.engine is not None),
+            "loaded_count": sum(
+                1 for e in self._entries.values() if e.engine is not None
+            ),
             "load_seconds_per_gb_estimate": self._load_seconds_per_gb_ema,
             "load_time_observations": self._load_time_observations,
             "models": [
