@@ -890,6 +890,15 @@ def serve_command(args):
     import os
     import sys
 
+    # Install the M5 hardware-compat shim BEFORE any `from .server import`
+    # (line ~1150), which transitively imports mlx_lm.generate -- that module
+    # captures mx.new_thread_local_stream at module-import time, and on M5
+    # single-stream GPUs the captured stream is unusable (#404). Idempotent,
+    # no-op on hardware where the original API works. Mirrors bench_command.
+    from . import _mlx_compat as _mlx_compat
+
+    _mlx_compat.install()
+
     # Released 1.0/2.0/3.0 contract: `serve --model-dir <dir>` boots the
     # multi-model engine-pool server via create_app(ServerConfig(model_dir)).
     # The Rapid-MLX migration rerouted `serve` to the single-model Scheduler

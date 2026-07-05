@@ -436,6 +436,10 @@ def __init__(
     # are likely causing bimodal latency (3-4x slowdown observed).
     self._step_time_window: list[float] = []
     self._step_time_window_size: int = 20
+    # Most recent pure-decode forward time (seconds, GPU-synced). Feeds the
+    # n-gram spec dynamic break-even (T_verify / T_decode). Set in
+    # _step_pure_decode; None until the first decode step.
+    self._last_decode_dt: float | None = None
     self._contention_cv_threshold: float = 0.15
     self._contention_detected: bool = False
     self._contention_log_interval: int = 50  # log every N steps when contended
