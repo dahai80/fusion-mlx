@@ -12,14 +12,13 @@ and discovery wiring are tested.
 import json
 from pathlib import Path
 
+from fusion_mlx.pool.engine_pool import EnginePool
 from fusion_mlx.pool.model_discovery import (
     _is_image_model,
     _is_model_dir,
     detect_model_type,
     discover_models,
 )
-from fusion_mlx.pool.engine_pool import EnginePool
-
 
 # ---------------------------------------------------------------------------
 # Helpers
