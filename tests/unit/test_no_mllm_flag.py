@@ -236,9 +236,9 @@ def test_force_text_overrides_auto_detection(monkeypatch):
         force_text=True,
     )
 
-    assert engine._is_mllm is False, (
-        "force_text=True must override auto-detection to False"
-    )
+    assert (
+        engine._is_mllm is False
+    ), "force_text=True must override auto-detection to False"
     assert probe_calls == [], (
         "force_text=True should short-circuit the probe entirely; "
         f"is_mllm_model was called for: {probe_calls}"
@@ -323,9 +323,9 @@ def test_load_model_alias_resolver_handles_every_import_shape():
     bare = "load_model('q')\n"
     tree = ast.parse(bare)
     direct, module, pkg = _load_model_aliases_in_tree(tree)
-    assert not direct and not module and not pkg, (
-        "load_model without an import is NOT our entrypoint."
-    )
+    assert (
+        not direct and not module and not pkg
+    ), "load_model without an import is NOT our entrypoint."
 
 
 def test_no_star_imports_from_vllm_mlx_server():
@@ -392,9 +392,9 @@ def test_force_text_is_keyword_only_in_load_model():
     from fusion_mlx.engine.batched import BatchedEngine
 
     sig = inspect.signature(BatchedEngine.__init__)
-    assert sig.parameters["force_text"].kind == inspect.Parameter.KEYWORD_ONLY, (
-        "BatchedEngine.__init__ force_text must be KEYWORD_ONLY too."
-    )
+    assert (
+        sig.parameters["force_text"].kind == inspect.Parameter.KEYWORD_ONLY
+    ), "BatchedEngine.__init__ force_text must be KEYWORD_ONLY too."
 
 
 def test_force_text_and_force_mllm_mutually_exclusive_in_load_model():
@@ -463,13 +463,13 @@ def test_friendly_error_on_missing_vision_tensors(monkeypatch):
             inst.load()
 
         msg = str(excinfo.value)
-        assert "--no-mllm" in msg, (
-            f"Friendly error must mention --no-mllm; got: {msg!r}"
-        )
+        assert (
+            "--no-mllm" in msg
+        ), f"Friendly error must mention --no-mllm; got: {msg!r}"
         assert "#393" in msg, "Friendly error must reference #393 for searchability"
-        assert "60 vision tensors missing" in msg, (
-            "Friendly error must surface the count from the underlying error"
-        )
+        assert (
+            "60 vision tensors missing" in msg
+        ), "Friendly error must surface the count from the underlying error"
     finally:
         # Restore original mlx_vlm so subsequent tests aren't poisoned.
         sys.modules["mlx_vlm"] = real_mlx_vlm
@@ -2177,8 +2177,12 @@ def test_param_is_bool_handles_pep604_unions():
     # forms AND the PEP 604 forms are detected — that's the point.
     assert _param_is_bool(_param_with(bool))
     assert _param_is_bool(_param_with(bool | None, default=None))
-    assert _param_is_bool(_param_with(typing.Optional[bool], default=None))  # noqa: UP045
-    assert _param_is_bool(_param_with(typing.Union[bool, str], default=False))  # noqa: UP007
+    assert _param_is_bool(
+        _param_with(typing.Optional[bool], default=None)  # noqa: UP045
+    )
+    assert _param_is_bool(
+        _param_with(typing.Union[bool, str], default=False)  # noqa: UP007
+    )
 
     # Stringified.
     assert _param_is_bool(_param_with("bool"))
@@ -2290,9 +2294,9 @@ def test_routing_override_kwargs_are_keyword_only_in_load_model():
             f"load_model({kwarg}=...) must be KEYWORD_ONLY to preserve "
             "positional-arg compatibility. See codex R2 on PR #407."
         )
-        assert batched_sig.parameters[kwarg].kind == inspect.Parameter.KEYWORD_ONLY, (
-            f"BatchedEngine.__init__({kwarg}=...) must be KEYWORD_ONLY too."
-        )
+        assert (
+            batched_sig.parameters[kwarg].kind == inspect.Parameter.KEYWORD_ONLY
+        ), f"BatchedEngine.__init__({kwarg}=...) must be KEYWORD_ONLY too."
 
 
 def _make_engine_core_for_override_test(monkeypatch, cfg, *, base=None):

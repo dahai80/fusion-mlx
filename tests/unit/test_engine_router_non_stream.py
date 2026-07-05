@@ -101,9 +101,9 @@ def test_truncated_analysis_drops_content_and_recovers_reasoning(engine):
     reasoning, content, tool_calls = engine._route_tokens_for_channels(
         token_ids, fallback_text="Reasoning"
     )
-    assert reasoning == "Reasoning", (
-        f"#442: router did not recover reasoning from truncated analysis: {reasoning!r}"
-    )
+    assert (
+        reasoning == "Reasoning"
+    ), f"#442: router did not recover reasoning from truncated analysis: {reasoning!r}"
     assert content == "", f"#442: analysis body leaked into content: {content!r}"
     assert tool_calls is None
 
@@ -358,9 +358,10 @@ def test_identical_structured_calls_twice_both_survive(engine, monkeypatch):
     reasoning, content, tool_calls = engine._route_tokens_for_channels(
         [200005], fallback_text=""
     )
-    assert tool_calls == [same_call, same_call], (
-        f"identical-twice calls must both survive; got {tool_calls!r}"
-    )
+    assert tool_calls == [
+        same_call,
+        same_call,
+    ], f"identical-twice calls must both survive; got {tool_calls!r}"
 
 
 def test_router_exception_falls_back_cleanly(engine, monkeypatch):

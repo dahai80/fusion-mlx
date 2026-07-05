@@ -230,9 +230,9 @@ class TestWhisperProcessorPatch:
                 # Verify the integration layer requested the OpenAI repo,
                 # not the broken mlx-community one. This is the
                 # behavioral pin.
-                assert name.startswith("openai/whisper"), (
-                    f"Expected OpenAI counterpart, got {name!r}"
-                )
+                assert name.startswith(
+                    "openai/whisper"
+                ), f"Expected OpenAI counterpart, got {name!r}"
                 return sentinel_processor
 
         # Inject our fakes into the stt module's lazy-import sites.
@@ -328,9 +328,9 @@ class TestWhisperProcessorPatch:
         engine = stt_mod.STTEngine("mlx-community/parakeet-tdt-0.6b-v2")
         engine.load()
 
-        assert _FakeProcessor.calls == 0, (
-            "Parakeet path must not invoke the Whisper processor patch."
-        )
+        assert (
+            _FakeProcessor.calls == 0
+        ), "Parakeet path must not invoke the Whisper processor patch."
 
 
 # ---------------------------------------------------------------------------
@@ -720,9 +720,9 @@ class TestWhisperProcessorPatchIsWhisperOnly:
         )
         # And the fake model's _processor stays None — rapid-mlx did
         # not mutate a non-Whisper engine.
-        assert fake_model._processor is None, (
-            "Patch must not have attached a processor to a non-Whisper engine."
-        )
+        assert (
+            fake_model._processor is None
+        ), "Patch must not have attached a processor to a non-Whisper engine."
 
 
 # ---------------------------------------------------------------------------
@@ -788,13 +788,13 @@ class TestKokoroMisakiGate:
         if isinstance(detail, dict):
             detail = detail.get("error", {}).get("message", "")
         detail_lower = detail.lower()
-        assert "misaki" in detail_lower, (
-            f"503 envelope should mention misaki. Got: {detail}"
-        )
+        assert (
+            "misaki" in detail_lower
+        ), f"503 envelope should mention misaki. Got: {detail}"
         # Install hint is actionable.
-        assert "rapid-mlx[audio]" in detail_lower or "pip install" in detail_lower, (
-            f"503 envelope should include an install hint. Got: {detail}"
-        )
+        assert (
+            "rapid-mlx[audio]" in detail_lower or "pip install" in detail_lower
+        ), f"503 envelope should include an install hint. Got: {detail}"
 
     def test_non_kokoro_tts_does_not_require_misaki(
         self, monkeypatch, _reset_audio_probe
@@ -1034,9 +1034,10 @@ class TestDeepProbeSurfacesDegradedLane:
         report ``ok`` even when ``whisper-large-v3`` requests are
         silently 500'ing.
         """
+        from fusion_mlx.audio.stt import DEFAULT_WHISPER_MODEL
+
         from fusion_mlx.audio import probe
         from fusion_mlx.audio import stt as stt_mod
-        from fusion_mlx.audio.stt import DEFAULT_WHISPER_MODEL
 
         observed: list[str] = []
 

@@ -4,26 +4,36 @@ import threading
 import time
 from unittest.mock import patch
 
-import pytest
-
 from fusion_mlx.cache.observability import CacheRateTracker
 
 logger = logging.getLogger(__name__)
 
 
 def _make_counters(
-    prefix_hits=0, prefix_misses=0, prefix_tokens_matched=0,
-    prefix_tokens_requested=0, prefix_tokens_saved=0, evictions=0,
-    ssd_hot_hits=0, ssd_disk_loads=0, ssd_saves=0, ssd_errors=0,
-    hot_cache_evictions=0, hot_cache_promotions=0,
+    prefix_hits=0,
+    prefix_misses=0,
+    prefix_tokens_matched=0,
+    prefix_tokens_requested=0,
+    prefix_tokens_saved=0,
+    evictions=0,
+    ssd_hot_hits=0,
+    ssd_disk_loads=0,
+    ssd_saves=0,
+    ssd_errors=0,
+    hot_cache_evictions=0,
+    hot_cache_promotions=0,
 ):
     return {
-        "prefix_hits": prefix_hits, "prefix_misses": prefix_misses,
+        "prefix_hits": prefix_hits,
+        "prefix_misses": prefix_misses,
         "prefix_tokens_matched": prefix_tokens_matched,
         "prefix_tokens_requested": prefix_tokens_requested,
-        "prefix_tokens_saved": prefix_tokens_saved, "evictions": evictions,
-        "ssd_hot_hits": ssd_hot_hits, "ssd_disk_loads": ssd_disk_loads,
-        "ssd_saves": ssd_saves, "ssd_errors": ssd_errors,
+        "prefix_tokens_saved": prefix_tokens_saved,
+        "evictions": evictions,
+        "ssd_hot_hits": ssd_hot_hits,
+        "ssd_disk_loads": ssd_disk_loads,
+        "ssd_saves": ssd_saves,
+        "ssd_errors": ssd_errors,
         "hot_cache_evictions": hot_cache_evictions,
         "hot_cache_promotions": hot_cache_promotions,
     }
@@ -61,14 +71,22 @@ class TestCacheRateTrackerRates:
     def _tracker_with_two_snapshots(self, old_counters, new_counters, elapsed=60.0):
         tracker = CacheRateTracker(min_interval=0.0)
         fake_time = [1000.0]
+
         def mock_monotonic():
             return fake_time[0]
-        with patch("fusion_mlx.cache.observability.time.monotonic", side_effect=mock_monotonic):
+
+        with patch(
+            "fusion_mlx.cache.observability.time.monotonic", side_effect=mock_monotonic
+        ):
             tracker.maybe_snapshot(old_counters)
         fake_time[0] = 1000.0 + elapsed
-        with patch("fusion_mlx.cache.observability.time.monotonic", side_effect=mock_monotonic):
+        with patch(
+            "fusion_mlx.cache.observability.time.monotonic", side_effect=mock_monotonic
+        ):
             tracker.maybe_snapshot(new_counters)
-        with patch("fusion_mlx.cache.observability.time.monotonic", return_value=fake_time[0]):
+        with patch(
+            "fusion_mlx.cache.observability.time.monotonic", return_value=fake_time[0]
+        ):
             return tracker.get_rates(windows=(60, 300, 900))
 
     def test_steady_state_prefix_hit_rate(self):
@@ -114,6 +132,7 @@ class TestCacheRateTrackerThreadSafety:
         tracker = CacheRateTracker(min_interval=0.0)
         errors = []
         stop = threading.Event()
+
         def writer():
             i = 0
             while not stop.is_set():
@@ -122,12 +141,14 @@ class TestCacheRateTrackerThreadSafety:
                     i += 1
                 except Exception as e:
                     errors.append(e)
+
         def reader():
             while not stop.is_set():
                 try:
                     tracker.get_rates()
                 except Exception as e:
                     errors.append(e)
+
         threads = [threading.Thread(target=writer), threading.Thread(target=reader)]
         for t in threads:
             t.start()

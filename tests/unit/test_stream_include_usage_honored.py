@@ -262,9 +262,9 @@ def test_chat_stream_emits_dedicated_usage_chunk_when_include_usage_true():
         "finish chunk MUST NOT carry usage when include_usage=true "
         "(double-emission breaks aggregating clients)"
     )
-    assert len(dedicated) == 1, (
-        f"expected exactly one dedicated usage chunk; got {len(dedicated)}"
-    )
+    assert (
+        len(dedicated) == 1
+    ), f"expected exactly one dedicated usage chunk; got {len(dedicated)}"
     usage = dedicated[0]["usage"]
     assert usage["prompt_tokens"] >= 1
     assert usage["completion_tokens"] >= 1

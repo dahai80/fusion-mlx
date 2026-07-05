@@ -7,12 +7,14 @@ generation into repetition. ``model_has_recurrent_cache`` is the single
 probe used by both the config-level gate (``enrich_model_config``) and the
 boot-level gate (``engine_core``) to disable spec decode for these models.
 """
+
+from mlx_lm.models.cache import ArraysCache, KVCache
+
 from fusion_mlx.model_auto_config import (
     ModelConfig,
     enrich_model_config,
     model_has_recurrent_cache,
 )
-from mlx_lm.models.cache import ArraysCache, KVCache
 
 
 class _RecurrentModel:

@@ -192,15 +192,15 @@ def test_run_uvicorn_passes_fd_when_listen_fd_set(monkeypatch):
     cli._run_uvicorn(sentinel_app, ns, "info")
 
     assert captured_kwargs.get("app") is sentinel_app
-    assert captured_kwargs.get("fd") == 7, (
-        f"expected fd=7 in uvicorn.run kwargs, got {captured_kwargs!r}"
-    )
-    assert "host" not in captured_kwargs, (
-        f"host must NOT be passed when fd is set, got {captured_kwargs!r}"
-    )
-    assert "port" not in captured_kwargs, (
-        f"port must NOT be passed when fd is set, got {captured_kwargs!r}"
-    )
+    assert (
+        captured_kwargs.get("fd") == 7
+    ), f"expected fd=7 in uvicorn.run kwargs, got {captured_kwargs!r}"
+    assert (
+        "host" not in captured_kwargs
+    ), f"host must NOT be passed when fd is set, got {captured_kwargs!r}"
+    assert (
+        "port" not in captured_kwargs
+    ), f"port must NOT be passed when fd is set, got {captured_kwargs!r}"
     assert captured_kwargs.get("log_level") == "info"
     assert captured_kwargs.get("timeout_keep_alive") == 30
 
@@ -321,15 +321,15 @@ def test_serve_command_dispatches_uvicorn_with_fd_when_listen_fd_set(
     ns = _minimal_serve_ns(listen_fd=7)
     cli.serve_command(ns)
 
-    assert captured.get("fd") == 7, (
-        f"expected fd=7 in the real uvicorn.run call, got {captured!r}"
-    )
-    assert "host" not in captured, (
-        f"host must NOT be passed in the listen-fd branch, got {captured!r}"
-    )
-    assert "port" not in captured, (
-        f"port must NOT be passed in the listen-fd branch, got {captured!r}"
-    )
+    assert (
+        captured.get("fd") == 7
+    ), f"expected fd=7 in the real uvicorn.run call, got {captured!r}"
+    assert (
+        "host" not in captured
+    ), f"host must NOT be passed in the listen-fd branch, got {captured!r}"
+    assert (
+        "port" not in captured
+    ), f"port must NOT be passed in the listen-fd branch, got {captured!r}"
     # And the Ready-banner source of truth must be wired up.
     from fusion_mlx.config import get_config
 
@@ -422,9 +422,9 @@ def test_serve_command_skips_port_preflight_when_listen_fd_set(
         # is correctly skipped in the listen-fd branch.
         cli.serve_command(ns)
 
-    assert captured.get("fd") == 11, (
-        f"expected uvicorn.run(fd=11, ...), got {captured!r}"
-    )
+    assert (
+        captured.get("fd") == 11
+    ), f"expected uvicorn.run(fd=11, ...), got {captured!r}"
     assert "host" not in captured
     assert "port" not in captured
 

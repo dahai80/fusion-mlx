@@ -23,9 +23,7 @@ logger = logging.getLogger(__name__)
 PRESET_REMOTE_URL = "http://bench.dpdns.org/assets/omlx_preset.json"
 
 
-
 from .helpers import (
-    _get_global_settings,
     _get_rich_global_settings,
 )
 
@@ -153,7 +151,6 @@ async def get_logs(
         "log_file": log_file.name,
         "available_files": available_files,
     }
-
 
 
 router = _router

@@ -83,14 +83,24 @@ def _build_sampling_params(req: ChatCompletionRequest) -> SamplingParams:
         top_p=req.top_p if req.top_p is not None else 0.9,
         top_k=getattr(req, "top_k", 0) or 0,
         min_p=getattr(req, "min_p", 0.0) or 0.0,
-        presence_penalty=req.presence_penalty if req.presence_penalty is not None else 0.0,
-        frequency_penalty=req.frequency_penalty if req.frequency_penalty is not None else 0.0,
-        stop=req.stop if isinstance(req.stop, list) else ([req.stop] if req.stop else None),
+        presence_penalty=(
+            req.presence_penalty if req.presence_penalty is not None else 0.0
+        ),
+        frequency_penalty=(
+            req.frequency_penalty if req.frequency_penalty is not None else 0.0
+        ),
+        stop=(
+            req.stop
+            if isinstance(req.stop, list)
+            else ([req.stop] if req.stop else None)
+        ),
         stop_token_ids=getattr(req, "stop_token_ids", None),
     )
 
 
-def _gen_to_internal(gen: GenerationOutput, model: str, request_id: str) -> InternalResponse:
+def _gen_to_internal(
+    gen: GenerationOutput, model: str, request_id: str
+) -> InternalResponse:
     """Convert GenerationOutput to InternalResponse for the adapter."""
     return InternalResponse(
         text=gen.text,
@@ -110,6 +120,7 @@ async def _run_chat(request: ChatCompletionRequest) -> ChatCompletionResponse:
         raise HTTPException(450, "Engine pool not initialized")
 
     from ..server import resolve_model_id
+
     model_name = resolve_model_id(request.model)
     engine = await _pool.get_engine(model_name, _lease=True)
     if engine is None:
@@ -122,8 +133,20 @@ async def _run_chat(request: ChatCompletionRequest) -> ChatCompletionResponse:
             content = getattr(msg, "content", "")
             if isinstance(content, list):
                 for part in content:
-                    pt = part.get("type", "") if isinstance(part, dict) else getattr(part, "type", "")
-                    if pt in ("image_url", "image", "video", "video_url", "audio_url", "audio", "input_audio"):
+                    pt = (
+                        part.get("type", "")
+                        if isinstance(part, dict)
+                        else getattr(part, "type", "")
+                    )
+                    if pt in (
+                        "image_url",
+                        "image",
+                        "video",
+                        "video_url",
+                        "audio_url",
+                        "audio",
+                        "input_audio",
+                    ):
                         await _pool.release_engine(model_name)
                         raise HTTPException(
                             status_code=400,
@@ -133,9 +156,7 @@ async def _run_chat(request: ChatCompletionRequest) -> ChatCompletionResponse:
                             ),
                         )
 
-    messages = [
-        {"role": m.role, "content": _extract_text(m)} for m in request.messages
-    ]
+    messages = [{"role": m.role, "content": _extract_text(m)} for m in request.messages]
     sampling = _build_sampling_params(request)
     request_id = f"chatcmpl-{uuid.uuid4().hex[:12]}"
 
@@ -158,7 +179,11 @@ async def _run_chat(request: ChatCompletionRequest) -> ChatCompletionResponse:
         )
         # Honor parallel_tool_calls=false by capping to 1 call
         tool_calls = gen.tool_calls
-        if tool_calls and len(tool_calls) > 1 and getattr(request, "parallel_tool_calls", None) is False:
+        if (
+            tool_calls
+            and len(tool_calls) > 1
+            and getattr(request, "parallel_tool_calls", None) is False
+        ):
             tool_calls = tool_calls[:1]
         internal = _gen_to_internal(gen, model_name, request_id)
         if tool_calls is not None:
@@ -168,7 +193,7 @@ async def _run_chat(request: ChatCompletionRequest) -> ChatCompletionResponse:
         raise
     except Exception as exc:
         err_msg = str(exc)
-         # VLM image/video fetch failures -> 400
+        # VLM image/video fetch failures -> 400
         if "Failed to process image" in err_msg or "Failed to process video" in err_msg:
             raise HTTPException(status_code=400, detail=err_msg)
         logger.exception("Non-streaming chat failed for %s", request_id)
@@ -183,38 +208,50 @@ async def _stream_chat_generator(request: ChatCompletionRequest) -> AsyncIterato
         raise HTTPException(450, "Engine pool not initialized")
 
     from ..server import resolve_model_id
+
     model_name = resolve_model_id(request.model)
     engine = await _pool.get_engine(model_name, _lease=True)
     if engine is None:
         await _pool.release_engine(model_name)
         raise HTTPException(404, f"Model {model_name} not available")
 
-# Reject multimodal content on text-only models
+    # Reject multimodal content on text-only models
     if not getattr(engine, "is_mllm", False):
         for msg in request.messages:
             content = getattr(msg, "content", "")
             if isinstance(content, list):
                 for part in content:
-                    pt = part.get("type", "") if isinstance(part, dict) else getattr(part, "type", "")
-                    if pt in ("image_url", "image", "video", "video_url", "audio_url", "audio", "input_audio"):
+                    pt = (
+                        part.get("type", "")
+                        if isinstance(part, dict)
+                        else getattr(part, "type", "")
+                    )
+                    if pt in (
+                        "image_url",
+                        "image",
+                        "video",
+                        "video_url",
+                        "audio_url",
+                        "audio",
+                        "input_audio",
+                    ):
                         await _pool.release_engine(model_name)
                         raise HTTPException(
                             status_code=400,
                             detail=(
                                 f"Model '{model_name}' does not support "
-                                 "image, video, or audio inputs."
-                             ),
-                         )
+                                "image, video, or audio inputs."
+                            ),
+                        )
 
-    messages = [
-        {"role": m.role, "content": _extract_text(m)} for m in request.messages
-    ]
+    messages = [{"role": m.role, "content": _extract_text(m)} for m in request.messages]
     sampling = _build_sampling_params(request)
     request_id = f"chatcmpl-{uuid.uuid4().hex[:12]}"
 
     # Create StreamingJSONEncoder for fast-path SSE encoding (avoids per-token
     # Pydantic model construction + model_dump_json overhead)
     from .streaming import StreamingJSONEncoder
+
     encoder = StreamingJSONEncoder(
         response_id=request_id,
         model=request.model,
@@ -224,8 +261,11 @@ async def _stream_chat_generator(request: ChatCompletionRequest) -> AsyncIterato
     try:
         # First chunk with role
         first_chunk = StreamChunk(
-            text="", is_first=True,
-            prompt_tokens=0, completion_tokens=0, cached_tokens=0,
+            text="",
+            is_first=True,
+            prompt_tokens=0,
+            completion_tokens=0,
+            cached_tokens=0,
         )
         yield _adapter.format_stream_chunk(first_chunk, request)
 
@@ -271,24 +311,32 @@ async def _stream_chat_generator(request: ChatCompletionRequest) -> AsyncIterato
                     finish_reason = "tool_calls"
                     for idx, tc in enumerate(gen.tool_calls):
                         tc_chunk = StreamChunk(
-                            tool_call_delta=[{
-                                "index": idx,
-                                "id": tc.get("id", ""),
-                                "type": tc.get("type", "function"),
-                                "function": {
-                                    "name": tc.get("function", {}).get("name", ""),
-                                    "arguments": tc.get("function", {}).get("arguments", "{}"),
-                                },
-                            }],
+                            tool_call_delta=[
+                                {
+                                    "index": idx,
+                                    "id": tc.get("id", ""),
+                                    "type": tc.get("type", "function"),
+                                    "function": {
+                                        "name": tc.get("function", {}).get("name", ""),
+                                        "arguments": tc.get("function", {}).get(
+                                            "arguments", "{}"
+                                        ),
+                                    },
+                                }
+                            ],
                             prompt_tokens=prompt_tokens,
                             completion_tokens=completion_tokens,
                             cached_tokens=cached_tokens,
                         )
-                        yield _adapter.format_stream_chunk(tc_chunk, request, encoder=encoder)
+                        yield _adapter.format_stream_chunk(
+                            tc_chunk, request, encoder=encoder
+                        )
 
         # Final chunk with finish_reason
         last_chunk = StreamChunk(
-            text="", is_last=True, finish_reason=finish_reason,
+            text="",
+            is_last=True,
+            finish_reason=finish_reason,
             prompt_tokens=prompt_tokens,
             completion_tokens=completion_tokens,
             cached_tokens=cached_tokens,
@@ -306,7 +354,7 @@ async def _stream_chat_generator(request: ChatCompletionRequest) -> AsyncIterato
         raise
     except Exception as exc:
         err_msg = str(exc)
-         # VLM image/video fetch failures -> 400
+        # VLM image/video fetch failures -> 400
         if "Failed to process image" in err_msg or "Failed to process video" in err_msg:
             yield f'data: {{"error": {{"message": {err_msg!r}, "status": 400}}}}\n\n'
         else:
@@ -328,20 +376,20 @@ async def _stream_chat(request: ChatCompletionRequest) -> StreamingResponse:
 @router.post("/chat/completions")
 async def chat_completions(request: ChatCompletionRequest) -> Any:
     """Handle OpenAI-compatible chat completion requests."""
-        # Log request entry (Ollama-style)
+    # Log request entry (Ollama-style)
     prompt_preview = ""
     if request.messages:
         last_msg = request.messages[-1]
         c = getattr(last_msg, "content", "") if last_msg else ""
         prompt_preview = str(c)[:120] if c else ""
     logger.info(
-            "OpenAI /chat: model=%s, stream=%s, max_tokens=%s, "
-             "temp=%s, prompt=%r",
-        request.model, request.stream,
+        "OpenAI /chat: model=%s, stream=%s, max_tokens=%s, " "temp=%s, prompt=%r",
+        request.model,
+        request.stream,
         getattr(request, "max_tokens", None),
         getattr(request, "temperature", 0.7) or 0.7,
         getattr(request, "temperature", None),
-        )
+    )
     try:
         if request.stream:
             return await _stream_chat(request)

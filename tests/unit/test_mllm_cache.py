@@ -11,7 +11,6 @@ import tempfile
 from pathlib import Path
 
 import pytest
-
 from fusion_mlx.mllm_cache import (
     MLLMCacheStats,
     MLLMPrefixCacheEntry,
@@ -147,9 +146,9 @@ class TestImageHashing:
             # Order matters: image sequence affects vision embeddings/KV state
             hash_a = compute_images_hash([path1, path2])
             hash_b = compute_images_hash([path2, path1])
-            assert hash_a != hash_b, (
-                "Different image orders must produce different hashes"
-            )
+            assert (
+                hash_a != hash_b
+            ), "Different image orders must produce different hashes"
             # Same order is deterministic
             hash_c = compute_images_hash([path1, path2])
             assert hash_a == hash_c
@@ -553,10 +552,6 @@ if __name__ == "__main__":
         """
         Test MLLM cache with real model's KV cache and real images/videos.
         """
-        from huggingface_hub import snapshot_download
-        from mlx_vlm.models import cache as vlm_cache
-        from mlx_vlm.utils import load_config, load_model
-
         from fusion_mlx.benchmark import (
             MLLM_TEST_IMAGE_URLS,
             VLM_TEST_VIDEO_URLS,
@@ -564,6 +559,9 @@ if __name__ == "__main__":
             download_video,
             get_video_info,
         )
+        from huggingface_hub import snapshot_download
+        from mlx_vlm.models import cache as vlm_cache
+        from mlx_vlm.utils import load_config, load_model
 
         print_header("MLLM KV CACHE TEST")
         print(f"\n  Model: {VLM_MODEL}")

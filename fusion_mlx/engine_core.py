@@ -7,17 +7,17 @@ import logging
 import os
 import time
 import uuid
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import suppress
 from dataclasses import dataclass, field
-from typing import Any, Awaitable, Callable
+from typing import Any
 
 import mlx.core as mx
 
+from .exceptions import PrefillMemoryExceededError
 from .model_registry import get_registry
 from .output_collector import RequestOutputCollector, RequestStreamState
 from .request import Request, RequestOutput, SamplingParams
-from .scheduler.types import PrefillMemoryExceededError
 from .utils.compile_cache import (
     clear_thread_compile_cache,
     compile_cache_clear_available,
@@ -69,6 +69,7 @@ def _init_mlx_step_thread() -> None:
 def _init_mlx_thread() -> None:
     stream = mx.new_thread_local_stream(mx.default_device())
     import sys
+
     gen_mod = sys.modules.get("mlx_lm.generate")
     if gen_mod is not None:
         gen_mod.generation_stream = stream
@@ -81,7 +82,9 @@ def _init_mlx_thread() -> None:
 def get_executor(pool_type: str = "llm") -> concurrent.futures.ThreadPoolExecutor:
     if pool_type in _global_executors:
         return _global_executors[pool_type]
-    cfg = _executor_config.get(pool_type, {"max_workers": 1, "prefix": f"mlx-{pool_type}"})
+    cfg = _executor_config.get(
+        pool_type, {"max_workers": 1, "prefix": f"mlx-{pool_type}"}
+    )
     exec_ = concurrent.futures.ThreadPoolExecutor(
         max_workers=cfg["max_workers"],
         thread_name_prefix=cfg["prefix"],
@@ -149,7 +152,12 @@ class EngineCore:
         self._idle_event = None
 
         registry = get_registry()
-        registry.acquire(model=model, engine=self, engine_id=self._engine_id, force=force_model_ownership)
+        registry.acquire(
+            model=model,
+            engine=self,
+            engine_id=self._engine_id,
+            force=force_model_ownership,
+        )
         self._owns_model = True
 
         # Per-engine executor with dedicated mx.Stream (#1248).
@@ -164,16 +172,21 @@ class EngineCore:
         # Scheduler must be created on the executor thread so it uses the
         # thread-local MLX stream (not the main thread's stream).
         from .scheduler import Scheduler, SchedulerConfig
+
         scheduler_config = self.config.scheduler_config or SchedulerConfig()
         self.scheduler: Scheduler | None = None
         _sched_result: list = []
+
         def _make_scheduler():
-            _sched_result.append(Scheduler(
-                model=model,
-                tokenizer=tokenizer,
-                config=scheduler_config,
-                stream=self._mlx_stream,
-            ))
+            _sched_result.append(
+                Scheduler(
+                    model=model,
+                    tokenizer=tokenizer,
+                    config=scheduler_config,
+                    stream=self._mlx_stream,
+                )
+            )
+
         _fut = self._mlx_executor.submit(_make_scheduler)
         _fut.result()
         self.scheduler = _sched_result[0]
@@ -191,6 +204,7 @@ class EngineCore:
         # model during boot, so without this gate the safety net that
         # ``enrich_model_config`` provides is dead code on the serve path.
         from .model_auto_config import model_has_recurrent_cache
+
         spec_eligible = not model_has_recurrent_cache(model)
         if not spec_eligible:
             logger.warning(
@@ -200,27 +214,40 @@ class EngineCore:
             )
 
         # Initialize speculative decode draft model on the executor thread
-        from .scheduler.spec_decode import SpecDecodeState, SPEC_DRAFT_MODEL_ENABLED
+        from .scheduler.spec_decode import SPEC_DRAFT_MODEL_ENABLED, SpecDecodeState
+
         if spec_eligible and SPEC_DRAFT_MODEL_ENABLED:
+
             def _init_draft():
                 from .speculative.draft_model import DraftModelDecoder
+
                 draft = DraftModelDecoder()
                 loaded = draft.load()
                 if loaded:
-                    self.scheduler._spec_decode_state = SpecDecodeState(draft_model_decoder=draft)
-                    logger.info("Speculative decode: draft model enabled (%s)", draft.model_path)
+                    self.scheduler._spec_decode_state = SpecDecodeState(
+                        draft_model_decoder=draft
+                    )
+                    logger.info(
+                        "Speculative decode: draft model enabled (%s)", draft.model_path
+                    )
                 else:
-                    logger.info("Speculative decode: draft model failed to load, disabled")
+                    logger.info(
+                        "Speculative decode: draft model failed to load, disabled"
+                    )
+
             _fut = self._mlx_executor.submit(_init_draft)
             _fut.result()
 
         # Initialize n-gram speculative decode (CPU-side, zero GPU overhead)
-        from .scheduler.ngram_spec import NGramSpecState, NGRAM_SPEC_ENABLED
+        from .scheduler.ngram_spec import NGRAM_SPEC_ENABLED, NGramSpecState
+
         if spec_eligible and NGRAM_SPEC_ENABLED:
             self.scheduler._ngram_spec_state = NGramSpecState()
-            logger.info("N-gram speculative decode: enabled (order=%d, num_draft=%d)",
-                        self.scheduler._ngram_spec_state.predictor.order,
-                        self.scheduler._ngram_spec_state.predictor.num_draft)
+            logger.info(
+                "N-gram speculative decode: enabled (order=%d, num_draft=%d)",
+                self.scheduler._ngram_spec_state.predictor.order,
+                self.scheduler._ngram_spec_state.predictor.num_draft,
+            )
 
         self._active_contexts: dict[str, RequestContext] = {}
 
@@ -380,9 +407,7 @@ class EngineCore:
                     # Yield to event loop so SSE handlers can flush queued
                     # outputs. For streaming (deque-based collector), this must
                     # happen after every burst to avoid buffering all tokens.
-                    if has_streaming_consumer or any(
-                        o.outputs for o in step_outputs
-                    ):
+                    if has_streaming_consumer or any(o.outputs for o in step_outputs):
                         await asyncio.sleep(0)
 
                     if eviction_request is not None:
@@ -430,15 +455,15 @@ class EngineCore:
                         if self.scheduler.has_requests():
                             continue
                         with suppress(TimeoutError):
-                            await asyncio.wait_for(
-                                event.wait(), timeout=step_interval
-                            )
+                            await asyncio.wait_for(event.wait(), timeout=step_interval)
 
             except asyncio.CancelledError:
                 break
             except Exception as e:
                 import traceback
+
                 logger.error("Engine loop error: %s\n%s", e, traceback.format_exc())
+
                 # Fail all requests and remove from scheduler to prevent
                 # infinite loop (has_requests() must return False).
                 def _safe_fail():
@@ -446,19 +471,21 @@ class EngineCore:
                         return self.scheduler.fail_all_requests()
                     except Exception:
                         return []
-                failed_ids = await loop.run_in_executor(
-                    self._mlx_executor, _safe_fail
-                )
+
+                failed_ids = await loop.run_in_executor(self._mlx_executor, _safe_fail)
                 for rid in failed_ids:
                     ctx = self._active_contexts.get(rid)
                     if ctx is not None:
-                        ctx.collector.put(RequestOutput(
-                            request_id=rid, finished=True,
-                            finish_reason="error", error=str(e)
-                        ))
+                        ctx.collector.put(
+                            RequestOutput(
+                                request_id=rid,
+                                finished=True,
+                                finish_reason="error",
+                                error=str(e),
+                            )
+                        )
                     self._mark_request_finished(rid)
                 await asyncio.sleep(0.1)
-
 
     async def add_request(
         self,
@@ -484,15 +511,23 @@ class EngineCore:
             sampling_params = SamplingParams()
 
         request = Request(
-            request_id=request_id, prompt=prompt, sampling_params=sampling_params,
-            images=images, videos=videos,
-            vlm_inputs_embeds=vlm_inputs_embeds, vlm_extra_kwargs=vlm_extra_kwargs,
-            vlm_image_hash=vlm_image_hash, vlm_cache_key_start=vlm_cache_key_start,
+            request_id=request_id,
+            prompt=prompt,
+            sampling_params=sampling_params,
+            images=images,
+            videos=videos,
+            vlm_inputs_embeds=vlm_inputs_embeds,
+            vlm_extra_kwargs=vlm_extra_kwargs,
+            vlm_image_hash=vlm_image_hash,
+            vlm_cache_key_start=vlm_cache_key_start,
             vlm_cache_key_ranges=vlm_cache_key_ranges,
         )
         if specprefill is not None:
             request._specprefill_enabled = specprefill
-        elif self.scheduler and getattr(self.scheduler, "_specprefill_draft_model", None) is not None:
+        elif (
+            self.scheduler
+            and getattr(self.scheduler, "_specprefill_draft_model", None) is not None
+        ):
             request._specprefill_enabled = True
         if specprefill_keep_pct is not None:
             request._specprefill_keep_pct = specprefill_keep_pct
@@ -502,13 +537,16 @@ class EngineCore:
             request.specprefill_system_end = specprefill_system_end
 
         logger.info(
-              "add_request: id=%s, prompt=%r, max_tokens=%d",
-            request_id, str(prompt)[:100] if isinstance(prompt, str) else f"tokens({len(prompt)})",
+            "add_request: id=%s, prompt=%r, max_tokens=%d",
+            request_id,
+            str(prompt)[:100] if isinstance(prompt, str) else f"tokens({len(prompt)})",
             sampling_params.max_tokens,
-              )
+        )
         self._active_contexts[request_id] = RequestContext(
             collector=RequestOutputCollector(aggregate=not streaming),
-            stream_state=RequestStreamState(stream_interval=self.config.stream_interval),
+            stream_state=RequestStreamState(
+                stream_interval=self.config.stream_interval
+            ),
             finished_event=asyncio.Event(),
         )
 
@@ -531,7 +569,8 @@ class EngineCore:
                 except Exception as abort_exc:
                     logger.debug(
                         "Abort of partial insert for %s failed: %s",
-                        request_id, abort_exc,
+                        request_id,
+                        abort_exc,
                     )
                 self._cleanup_request(request_id)
                 raise
@@ -549,10 +588,14 @@ class EngineCore:
         result = scheduler.abort_request(request_id)
         ctx = self._active_contexts.get(request_id)
         if ctx is not None:
-            ctx.collector.put(RequestOutput(
-                request_id=request_id, finished=True,
-                finish_reason="abort", error="Request aborted",
-            ))
+            ctx.collector.put(
+                RequestOutput(
+                    request_id=request_id,
+                    finished=True,
+                    finish_reason="abort",
+                    error="Request aborted",
+                )
+            )
         self._mark_request_finished(request_id)
         self._wake_engine_loop()
         return result
@@ -584,13 +627,20 @@ class EngineCore:
                         "Reduce context size or lower memory_guard_tier."
                     )
                 )
-                ctx.collector.put(RequestOutput(
-                    request_id=rid, finished=True, finish_reason="error",
-                    new_text=f"\n\n[Error: {error_msg}]", error=error_msg,
-                ))
+                ctx.collector.put(
+                    RequestOutput(
+                        request_id=rid,
+                        finished=True,
+                        finish_reason="error",
+                        new_text=f"\n\n[Error: {error_msg}]",
+                        error=error_msg,
+                    )
+                )
             self._mark_request_finished(rid)
         if request_ids:
-            logger.warning("Aborted %d requests due to memory pressure", len(request_ids))
+            logger.warning(
+                "Aborted %d requests due to memory pressure", len(request_ids)
+            )
             self._wake_engine_loop()
         return len(request_ids)
 
@@ -628,11 +678,14 @@ class EngineCore:
         if stale:
             logger.debug(
                 "Reaped %d orphaned output collector(s) after disconnect: %s",
-                len(stale), stale,
+                len(stale),
+                stale,
             )
         return len(stale)
 
-    async def stream_outputs(self, request_id: str, timeout: float | None = None) -> AsyncIterator[RequestOutput]:
+    async def stream_outputs(
+        self, request_id: str, timeout: float | None = None
+    ) -> AsyncIterator[RequestOutput]:
         ctx = self._active_contexts.get(request_id)
         if ctx is None:
             return
@@ -655,11 +708,12 @@ class EngineCore:
                     if output.finished:
                         logger.info(
                             "stream_outputs done: %s, finish=%s, tokens=%d",
-                            request_id, output.finish_reason,
+                            request_id,
+                            output.finish_reason,
                             output.completion_tokens,
                         )
                         break
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     logger.warning("Timeout waiting for request %s", request_id)
                     break
         finally:
@@ -673,8 +727,10 @@ class EngineCore:
         **kwargs,
     ) -> RequestOutput:
         request_id = await self.add_request(
-            prompt=prompt, sampling_params=sampling_params,
-            request_id=request_id, **kwargs,
+            prompt=prompt,
+            sampling_params=sampling_params,
+            request_id=request_id,
+            **kwargs,
         )
         ctx = self._active_contexts.get(request_id)
         if ctx is None:
@@ -714,7 +770,9 @@ class EngineCore:
         request_ids = []
         for prompt in prompts:
             rid = str(uuid.uuid4())
-            req = Request(request_id=rid, prompt=prompt, sampling_params=sampling_params)
+            req = Request(
+                request_id=rid, prompt=prompt, sampling_params=sampling_params
+            )
             if self.scheduler:
                 self.scheduler.add_request(req)
             request_ids.append(rid)
@@ -734,7 +792,7 @@ class EngineCore:
         self,
         prompts: list[str | list[int]],
         sampling_params: SamplingParams | None = None,
-      ) -> list[RequestOutput]:
+    ) -> list[RequestOutput]:
         """Non-blocking batch generation via asyncio.gather."""
         tasks = [self.generate(prompt, sampling_params) for prompt in prompts]
         results = await asyncio.gather(*tasks, return_exceptions=True)
@@ -753,19 +811,23 @@ class EngineCore:
     ) -> dict[str, Any]:
         """Run prefill only: process prompt tokens, export KV state, skip decode."""
         request_id = await self.add_request(
-            prompt=prompt, sampling_params=sampling_params,
+            prompt=prompt,
+            sampling_params=sampling_params,
             request_id=str(uuid.uuid4()),
         )
         sched = self.scheduler
         if not sched:
             raise RuntimeError("No scheduler for prefill")
+
         def _prefill_loop():
             for _ in range(1000):
                 sched.step()
                 req = sched.requests.get(request_id)
                 if req is None:
                     break
-                remaining = req.remaining_tokens if req.remaining_tokens is not None else []
+                remaining = (
+                    req.remaining_tokens if req.remaining_tokens is not None else []
+                )
                 if len(remaining) == 0:
                     break
 
@@ -801,7 +863,7 @@ class EngineCore:
             prompt=prompt_token_ids,
             sampling_params=sampling_params or SamplingParams(),
             request_id=request_id,
-         )
+        )
         sched = self.scheduler
         if sched and kv_state:
             sched.import_kv_state(request_id, kv_state)
@@ -829,15 +891,16 @@ class EngineCore:
             _raise_request_output_error(final_output)
         return final_output
 
-
     def get_stats(self) -> dict[str, Any]:
         scheduler_stats = self.scheduler.get_stats() if self.scheduler else {}
         uptime = time.time() - self._start_time if self._start_time else 0
         return {
-            "running": self._running, "uptime_seconds": uptime,
+            "running": self._running,
+            "uptime_seconds": uptime,
             "steps_executed": self._steps_executed,
             "active_requests": len(self._active_contexts),
-            "stream_interval": self.config.stream_interval, **scheduler_stats,
+            "stream_interval": self.config.stream_interval,
+            **scheduler_stats,
         }
 
     def get_cache_stats(self) -> dict[str, Any] | None:
@@ -858,11 +921,13 @@ class EngineCore:
                 mgr.close()
             except Exception:
                 logger.debug("SSD cache manager close failed", exc_info=True)
-        for fn in (self.scheduler.shutdown, self.scheduler.deep_reset) if self.scheduler else ():
+        for fn in (
+            (self.scheduler.shutdown, self.scheduler.deep_reset)
+            if self.scheduler
+            else ()
+        ):
             try:
-                self._mlx_executor.submit(fn).result(
-                    timeout=FATAL_TEARDOWN_TIMEOUT_S
-                )
+                self._mlx_executor.submit(fn).result(timeout=FATAL_TEARDOWN_TIMEOUT_S)
             except concurrent.futures.TimeoutError:
                 fatal_exit(
                     f"scheduler teardown timed out after {FATAL_TEARDOWN_TIMEOUT_S}s"
@@ -880,9 +945,9 @@ class EngineCore:
         if self._mlx_executor is not None:
             if compile_cache_clear_available():
                 try:
-                    self._mlx_executor.submit(
-                        clear_thread_compile_cache
-                    ).result(timeout=FATAL_TEARDOWN_TIMEOUT_S)
+                    self._mlx_executor.submit(clear_thread_compile_cache).result(
+                        timeout=FATAL_TEARDOWN_TIMEOUT_S
+                    )
                 except concurrent.futures.TimeoutError:
                     fatal_exit(
                         "compile cache clear timed out after "
@@ -948,8 +1013,19 @@ class AsyncEngineCore:
             return
         await engine.stop()
 
-    async def add_request(self, prompt: str | list[int], sampling_params: SamplingParams | None = None, request_id: str | None = None, **kwargs) -> str:
-        return await self.engine.add_request(prompt=prompt, sampling_params=sampling_params, request_id=request_id, **kwargs)
+    async def add_request(
+        self,
+        prompt: str | list[int],
+        sampling_params: SamplingParams | None = None,
+        request_id: str | None = None,
+        **kwargs,
+    ) -> str:
+        return await self.engine.add_request(
+            prompt=prompt,
+            sampling_params=sampling_params,
+            request_id=request_id,
+            **kwargs,
+        )
 
     async def abort_request(self, request_id: str) -> bool:
         engine = getattr(self, "engine", None)
@@ -963,12 +1039,21 @@ class AsyncEngineCore:
             return 0
         return await engine.abort_all_requests()
 
-    async def stream_outputs(self, request_id: str, timeout: float | None = None) -> AsyncIterator[RequestOutput]:
+    async def stream_outputs(
+        self, request_id: str, timeout: float | None = None
+    ) -> AsyncIterator[RequestOutput]:
         async for output in self.engine.stream_outputs(request_id, timeout):
             yield output
 
-    async def generate(self, prompt: str | list[int], sampling_params: SamplingParams | None = None, **kwargs) -> RequestOutput:
-        return await self.engine.generate(prompt=prompt, sampling_params=sampling_params, **kwargs)
+    async def generate(
+        self,
+        prompt: str | list[int],
+        sampling_params: SamplingParams | None = None,
+        **kwargs,
+    ) -> RequestOutput:
+        return await self.engine.generate(
+            prompt=prompt, sampling_params=sampling_params, **kwargs
+        )
 
     def get_stats(self) -> dict[str, Any]:
         return self.engine.get_stats()

@@ -171,9 +171,9 @@ def test_preflight_rejects_wildcard_when_loopback_already_bound(capsys):
     assert exc.value.code == 1
     err_out = capsys.readouterr().out
     assert "already in use" in err_out
-    assert "127.0.0.1" in err_out, (
-        f"pre-flight error must name the colliding host 127.0.0.1, got: {err_out!r}"
-    )
+    assert (
+        "127.0.0.1" in err_out
+    ), f"pre-flight error must name the colliding host 127.0.0.1, got: {err_out!r}"
 
 
 def test_preflight_rejects_empty_host_when_loopback_already_bound(capsys):
@@ -301,9 +301,9 @@ def test_legacy_server_argparse_host_default_is_loopback():
     # And the 0.0.0.0 default must be gone — guards against a future
     # refactor that adds a second --host block without dropping the old
     # one.
-    assert 'default="0.0.0.0"' not in server_src, (
-        "vllm_mlx/server.py must not retain the legacy 0.0.0.0 default"
-    )
+    assert (
+        'default="0.0.0.0"' not in server_src
+    ), "vllm_mlx/server.py must not retain the legacy 0.0.0.0 default"
 
 
 # ---------------------------------------------------------------------------

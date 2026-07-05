@@ -1135,7 +1135,7 @@ class ProcessMemoryEnforcer:
         try:
             _lock_acquired = await asyncio.wait_for(
                 self._engine_pool._lock.acquire(), timeout=2.0
-             )
+            )
         except TimeoutError:
             victim = self._engine_pool._find_lru_victim()
             if victim:
@@ -1146,7 +1146,7 @@ class ProcessMemoryEnforcer:
                     logger.warning(
                         f"Marked loading model '{victim}' for eviction "
                         f"(pressure={new_level}, lock timeout)"
-                     )
+                    )
             if new_level == "hard":
                 for entry in self._engine_pool._entries.values():
                     if entry.is_loading and not entry.abort_loading:
@@ -1154,11 +1154,15 @@ class ProcessMemoryEnforcer:
                         logger.warning(
                             f"Aborting load '{entry.model_id}' "
                             f"(hard pressure, lock timeout)"
-                         )
+                        )
             post_current = self._current_usage_bytes()
             post_ceiling = self._get_hard_limit_bytes()
-            post_soft = int(post_ceiling * self._soft_threshold) if post_ceiling > 0 else 0
-            post_hard = int(post_ceiling * self._hard_threshold) if post_ceiling > 0 else 0
+            post_soft = (
+                int(post_ceiling * self._soft_threshold) if post_ceiling > 0 else 0
+            )
+            post_hard = (
+                int(post_ceiling * self._hard_threshold) if post_ceiling > 0 else 0
+            )
             if post_ceiling <= 0 or post_current < post_soft:
                 post_level = "ok"
             elif post_current < post_hard:
@@ -1192,7 +1196,7 @@ class ProcessMemoryEnforcer:
                             mid
                             for mid, e in self._engine_pool._entries.items()
                             if e.engine is not None and not e.is_pinned
-                         ]
+                        ]
                         if new_level == "hard" or len(loaded_non_pinned) > 1:
                             entry = self._engine_pool._entries.get(victim)
                             if (
@@ -1206,10 +1210,10 @@ class ProcessMemoryEnforcer:
                                     logger.warning(
                                         f"Aborted {aborted} requests on "
                                         f"'{victim}' before eviction"
-                                     )
+                                    )
                             logger.warning(
                                 f"Evicting model '{victim}' (pressure={new_level})"
-                              )
+                            )
                             self._engine_pool._lock.release()
                             _lock_held = False
                             await self._engine_pool._unload_engine(victim)
@@ -1258,14 +1262,14 @@ class ProcessMemoryEnforcer:
                                 logger.warning(
                                     f"Aborting in-progress load of "
                                     f"'{entry.model_id}' (hard memory pressure)"
-                                 )
+                                )
                                 entry.abort_loading = True
                                 aborted_any = True
                         if not aborted_any:
                             has_loaded = any(
                                 e.engine is not None
                                 for e in self._engine_pool._entries.values()
-                             )
+                            )
                             if has_loaded:
                                 if emergency:
                                     emergency_current = self._current_usage_bytes()
@@ -1302,13 +1306,14 @@ class ProcessMemoryEnforcer:
                                     requested,
                                 )
                             else:
-                                logger.warning("Hard memory pressure but no models loaded.")
+                                logger.warning(
+                                    "Hard memory pressure but no models loaded."
+                                )
                     break
 
             finally:
                 if _lock_held:
                     self._engine_pool._lock.release()
-
 
         post_current = self._current_usage_bytes()
         post_ceiling = self._get_hard_limit_bytes()

@@ -364,6 +364,7 @@ class TestQwen35MoeSanitize:
     @pytest.fixture()
     def moe_model(self):
         from types import SimpleNamespace
+
         from mlx_lm.models import qwen3_5_moe as moe
 
         args = SimpleNamespace(
@@ -611,10 +612,10 @@ class TestBatchGeneratorDispatch:
 
     def test_decode_eligibility_reads_model_instance_flag_not_global(self):
         from fusion_mlx.patches.mlx_lm_mtp import (
+            batch_generator,
             is_mtp_active,
             set_mtp_active,
         )
-        from fusion_mlx.patches.mlx_lm_mtp import batch_generator
 
         model = SimpleNamespace(
             mtp=object(),
@@ -667,10 +668,10 @@ class TestBatchGeneratorDispatch:
 
     def test_is_mtp_eligible_requires_mtp_forward_and_solo_batch(self):
         from fusion_mlx.patches.mlx_lm_mtp import (
+            batch_generator,
             is_mtp_active,
             set_mtp_active,
         )
-        from fusion_mlx.patches.mlx_lm_mtp import batch_generator
 
         _is_mtp_eligible = batch_generator._is_mtp_eligible
 
@@ -734,10 +735,10 @@ class TestBatchGeneratorDispatch:
 
     def test_singleton_activation_waits_for_batch_generator_safe_point(self):
         from fusion_mlx.patches.mlx_lm_mtp import (
+            batch_generator,
             is_mtp_active,
             set_mtp_active,
         )
-        from fusion_mlx.patches.mlx_lm_mtp import batch_generator
 
         class _MtpModel:
             def __init__(self):
@@ -764,8 +765,11 @@ class TestBatchGeneratorDispatch:
             set_mtp_active(prior_active)
 
     def test_singleton_activation_blocked_after_standard_multirow_decode(self):
-        from fusion_mlx.patches.mlx_lm_mtp import is_mtp_active, set_mtp_active
-        from fusion_mlx.patches.mlx_lm_mtp import batch_generator
+        from fusion_mlx.patches.mlx_lm_mtp import (
+            batch_generator,
+            is_mtp_active,
+            set_mtp_active,
+        )
 
         class _MtpModel:
             def __init__(self):
@@ -943,8 +947,11 @@ class TestBatchGeneratorDispatch:
         assert batch_generator._generation_batch_has_active_mtp(_EmptyBatch()) is False
 
     def test_rowwise_batch_eligibility_requires_safe_activation(self):
-        from fusion_mlx.patches.mlx_lm_mtp import is_mtp_active, set_mtp_active
-        from fusion_mlx.patches.mlx_lm_mtp import batch_generator
+        from fusion_mlx.patches.mlx_lm_mtp import (
+            batch_generator,
+            is_mtp_active,
+            set_mtp_active,
+        )
 
         class _MtpModel:
             def __init__(self):
@@ -977,8 +984,11 @@ class TestBatchGeneratorDispatch:
             set_mtp_active(prior_active)
 
     def test_rowwise_batch_new_activation_requires_aligned_offsets(self):
-        from fusion_mlx.patches.mlx_lm_mtp import is_mtp_active, set_mtp_active
-        from fusion_mlx.patches.mlx_lm_mtp import batch_generator
+        from fusion_mlx.patches.mlx_lm_mtp import (
+            batch_generator,
+            is_mtp_active,
+            set_mtp_active,
+        )
 
         class _Offset:
             def __init__(self, values):
@@ -1014,8 +1024,8 @@ class TestBatchGeneratorDispatch:
 
     def test_mtp_state_valid_requires_single_matching_uid(self):
         from fusion_mlx.patches.mlx_lm_mtp.batch_generator import (
-            _MtpState,
             _mtp_state_valid_for_batch,
+            _MtpState,
         )
 
         state = _MtpState(uid=7)
@@ -1028,8 +1038,8 @@ class TestBatchGeneratorDispatch:
 
     def test_drop_invalid_mtp_state_after_batch_reshape(self):
         from fusion_mlx.patches.mlx_lm_mtp.batch_generator import (
-            _MtpState,
             _drop_invalid_mtp_state,
+            _MtpState,
         )
 
         batch = SimpleNamespace(uids=[1, 2], _omlx_mtp_state=_MtpState(uid=1))
@@ -1041,8 +1051,8 @@ class TestBatchGeneratorDispatch:
 
     def test_drop_invalid_mtp_state_keeps_matching_singleton(self):
         from fusion_mlx.patches.mlx_lm_mtp.batch_generator import (
-            _MtpState,
             _drop_invalid_mtp_state,
+            _MtpState,
         )
 
         state = _MtpState(uid=1)
@@ -1685,7 +1695,9 @@ class TestRestoreOrTrimAtomicity:
     layer's cache)."""
 
     def test_partial_trim_is_rolled_back_to_noop(self):
-        from fusion_mlx.patches.mlx_lm_mtp.batch_generator import _restore_or_trim_caches
+        from fusion_mlx.patches.mlx_lm_mtp.batch_generator import (
+            _restore_or_trim_caches,
+        )
 
         good_a = _FakeTrimmable()
         bad = _FakeTrimmable(trimmable=False)
@@ -1695,7 +1707,9 @@ class TestRestoreOrTrimAtomicity:
         assert good_b.trimmed == 0
 
     def test_all_trimmable_trims_all(self):
-        from fusion_mlx.patches.mlx_lm_mtp.batch_generator import _restore_or_trim_caches
+        from fusion_mlx.patches.mlx_lm_mtp.batch_generator import (
+            _restore_or_trim_caches,
+        )
 
         caches = [_FakeTrimmable(), _FakeTrimmable()]
         assert _restore_or_trim_caches(caches) is True
@@ -1771,8 +1785,8 @@ class TestRotatingCacheMtpUndo:
 
     def test_unarmed_update_keeps_stock_semantics(self):
         import mlx.core as mx
-
         from mlx_lm.models.cache import RotatingKVCache
+
         from fusion_mlx.patches.mlx_lm_mtp import cache_rollback
 
         cache_rollback.apply()
@@ -1784,9 +1798,9 @@ class TestRotatingCacheMtpUndo:
         assert cache.trim(1) == 0
 
     def test_grow_mode_trim_unchanged(self):
-        import mlx.core as mx
 
         from mlx_lm.models.cache import RotatingKVCache
+
         from fusion_mlx.patches.mlx_lm_mtp import cache_rollback
 
         cache_rollback.apply()

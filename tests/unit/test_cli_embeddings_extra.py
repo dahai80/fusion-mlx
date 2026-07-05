@@ -121,13 +121,8 @@ def test_pyproject_declares_embeddings_extra():
     ``[vision]``). Without this, the install hint above would point
     at a non-existent extra and the user could never recover.
     """
-    import sys
+    import tomllib
     from pathlib import Path
-
-    if sys.version_info >= (3, 11):
-        import tomllib
-    else:  # pragma: no cover — 3.10 floor
-        import tomli as tomllib
 
     pyproject = Path(__file__).resolve().parents[1] / "pyproject.toml"
     with pyproject.open("rb") as fh:
@@ -140,9 +135,9 @@ def test_pyproject_declares_embeddings_extra():
         "the hint is a dead-end."
     )
     deps = extras["embeddings"]
-    assert any(d.startswith("mlx-embeddings") for d in deps), (
-        f"[embeddings] extra must include mlx-embeddings; got {deps!r}"
-    )
+    assert any(
+        d.startswith("mlx-embeddings") for d in deps
+    ), f"[embeddings] extra must include mlx-embeddings; got {deps!r}"
 
 
 if __name__ == "__main__":  # pragma: no cover — convenience only

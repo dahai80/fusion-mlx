@@ -22,6 +22,7 @@ from fusion_mlx.api.openai_models import StructuredOutputOptions
 
 try:
     import xgrammar  # noqa: F401
+
     HAS_XGRAMMAR = True
 except ImportError:
     HAS_XGRAMMAR = False
@@ -35,6 +36,7 @@ requires_xgrammar = pytest.mark.skipif(
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _make_engine(*, grammar_compiler=None, tokenizer=None):
     """Create a lightweight mock engine."""
     engine = MagicMock()
@@ -43,9 +45,15 @@ def _make_engine(*, grammar_compiler=None, tokenizer=None):
     return engine
 
 
-def _make_tokenizer(*, think_start_id=None, think_end_id=None,
-                     think_start="<think>", think_end="</think>",
-                     unk_token_id=0, convert_map=None):
+def _make_tokenizer(
+    *,
+    think_start_id=None,
+    think_end_id=None,
+    think_start="<think>",
+    think_end="</think>",
+    unk_token_id=0,
+    convert_map=None,
+):
     """Create a mock tokenizer with optional thinking attributes."""
     tok = MagicMock()
     tok.think_start_id = think_start_id
@@ -64,12 +72,14 @@ def _make_tokenizer(*, think_start_id=None, think_end_id=None,
 # _build_format_element
 # =========================================================================
 
+
 class TestBuildFormatElement:
     """Tests for _build_format_element."""
 
     @staticmethod
     def _call(**kwargs):
         from fusion_mlx.server import _build_format_element
+
         return _build_format_element(**kwargs)
 
     def test_none_when_no_args(self):
@@ -110,13 +120,18 @@ class TestBuildFormatElement:
         assert result == {"type": "grammar", "grammar": ebnf}
 
     def test_response_format_json_schema(self):
-        result = self._call(response_format={
-            "type": "json_schema",
-            "json_schema": {
-                "name": "test",
-                "schema": {"type": "object", "properties": {"a": {"type": "string"}}},
-            },
-        })
+        result = self._call(
+            response_format={
+                "type": "json_schema",
+                "json_schema": {
+                    "name": "test",
+                    "schema": {
+                        "type": "object",
+                        "properties": {"a": {"type": "string"}},
+                    },
+                },
+            }
+        )
         assert result["type"] == "json_schema"
         assert result["json_schema"]["type"] == "object"
 
@@ -144,6 +159,7 @@ class TestBuildFormatElement:
 # =========================================================================
 # _normalize_structured_outputs / _settings_guided_grammar
 # =========================================================================
+
 
 class TestNormalizeStructuredOutputs:
     """Tests for guided_grammar compatibility normalization."""
@@ -206,38 +222,51 @@ class TestEffectiveGuidedGrammar:
     def test_request_guided_grammar_wins(self):
         from fusion_mlx.server import _effective_guided_grammar
 
-        assert _effective_guided_grammar(
-            request_guided_grammar='root ::= "REQ"',
-            settings_guided_grammar='root ::= "SETTINGS"',
-        ) == 'root ::= "REQ"'
+        assert (
+            _effective_guided_grammar(
+                request_guided_grammar='root ::= "REQ"',
+                settings_guided_grammar='root ::= "SETTINGS"',
+            )
+            == 'root ::= "REQ"'
+        )
 
     def test_settings_guided_grammar_used_when_request_unstructured(self):
         from fusion_mlx.server import _effective_guided_grammar
 
-        assert _effective_guided_grammar(
-            settings_guided_grammar='root ::= "SETTINGS"',
-        ) == 'root ::= "SETTINGS"'
+        assert (
+            _effective_guided_grammar(
+                settings_guided_grammar='root ::= "SETTINGS"',
+            )
+            == 'root ::= "SETTINGS"'
+        )
 
     def test_settings_guided_grammar_skipped_for_response_format(self):
         from fusion_mlx.server import _effective_guided_grammar
 
-        assert _effective_guided_grammar(
-            response_format={"type": "json_object"},
-            settings_guided_grammar='root ::= "SETTINGS"',
-        ) is None
+        assert (
+            _effective_guided_grammar(
+                response_format={"type": "json_object"},
+                settings_guided_grammar='root ::= "SETTINGS"',
+            )
+            is None
+        )
 
     def test_settings_guided_grammar_skipped_for_structured_outputs(self):
         from fusion_mlx.server import _effective_guided_grammar
 
-        assert _effective_guided_grammar(
-            structured_outputs={"regex": r"\d+"},
-            settings_guided_grammar='root ::= "SETTINGS"',
-        ) is None
+        assert (
+            _effective_guided_grammar(
+                structured_outputs={"regex": r"\d+"},
+                settings_guided_grammar='root ::= "SETTINGS"',
+            )
+            is None
+        )
 
 
 # =========================================================================
 # _patch_output_format
 # =========================================================================
+
 
 class TestPatchOutputFormat:
     """Tests for _patch_output_format."""
@@ -245,6 +274,7 @@ class TestPatchOutputFormat:
     @staticmethod
     def _call(tag_dict, user_grammar):
         from fusion_mlx.server import _patch_output_format
+
         return _patch_output_format(tag_dict, user_grammar)
 
     def test_replaces_top_level_any_text(self):
@@ -264,7 +294,12 @@ class TestPatchOutputFormat:
             "format": {
                 "type": "sequence",
                 "elements": [
-                    {"type": "tag", "begin": "<think>", "content": {"type": "any_text"}, "end": "</think>"},
+                    {
+                        "type": "tag",
+                        "begin": "<think>",
+                        "content": {"type": "any_text"},
+                        "end": "</think>",
+                    },
                     {"type": "any_text", "excludes": ["<think>"]},
                 ],
             },
@@ -281,8 +316,18 @@ class TestPatchOutputFormat:
             "format": {
                 "type": "tags_with_separator",
                 "tags": [
-                    {"type": "tag", "begin": "<|channel|>analysis<|message|>", "content": {"type": "any_text"}, "end": "<|end|>"},
-                    {"type": "tag", "begin": "<|channel|>final<|message|>", "content": {"type": "any_text"}, "end": "<|end|>"},
+                    {
+                        "type": "tag",
+                        "begin": "<|channel|>analysis<|message|>",
+                        "content": {"type": "any_text"},
+                        "end": "<|end|>",
+                    },
+                    {
+                        "type": "tag",
+                        "begin": "<|channel|>final<|message|>",
+                        "content": {"type": "any_text"},
+                        "end": "<|end|>",
+                    },
                 ],
                 "separator": "<|start|>assistant",
             },
@@ -299,7 +344,12 @@ class TestPatchOutputFormat:
             "format": {
                 "type": "tags_with_separator",
                 "tags": [
-                    {"type": "tag", "begin": "<output>", "content": {"type": "any_text"}, "end": "</output>"},
+                    {
+                        "type": "tag",
+                        "begin": "<output>",
+                        "content": {"type": "any_text"},
+                        "end": "</output>",
+                    },
                 ],
                 "separator": "",
             },
@@ -318,13 +368,17 @@ class TestPatchOutputFormat:
 # _compile_with_structural_tag / _compile_bare_grammar
 # =========================================================================
 
+
 class TestCompileWithStructuralTag:
     """Tests for _compile_with_structural_tag."""
 
     @staticmethod
     def _call(compiler, fmt, reasoning_parser, chat_template_kwargs=None):
         from fusion_mlx.server import _compile_with_structural_tag
-        return _compile_with_structural_tag(compiler, fmt, reasoning_parser, chat_template_kwargs)
+
+        return _compile_with_structural_tag(
+            compiler, fmt, reasoning_parser, chat_template_kwargs
+        )
 
     @requires_xgrammar
     @patch("xgrammar.get_builtin_structural_tag")
@@ -381,7 +435,12 @@ class TestCompileWithStructuralTag:
             "format": {
                 "type": "sequence",
                 "elements": [
-                    {"type": "tag", "begin": "<think>", "content": {"type": "any_text"}, "end": "</think>"},
+                    {
+                        "type": "tag",
+                        "begin": "<think>",
+                        "content": {"type": "any_text"},
+                        "end": "</think>",
+                    },
                     {"type": "any_text", "excludes": []},
                 ],
             },
@@ -404,6 +463,7 @@ class TestCompileBareGrammar:
     @staticmethod
     def _call(compiler, fmt):
         from fusion_mlx.server import _compile_bare_grammar
+
         return _compile_bare_grammar(compiler, fmt)
 
     def test_json_schema(self):
@@ -440,12 +500,14 @@ class TestCompileBareGrammar:
 # _compile_grammar_for_request
 # =========================================================================
 
+
 class TestCompileGrammarForRequest:
     """Tests for _compile_grammar_for_request."""
 
     @staticmethod
     def _call(engine, **kwargs):
         from fusion_mlx.server import _compile_grammar_for_request
+
         return _compile_grammar_for_request(engine, **kwargs)
 
     def test_returns_none_when_no_grammar_requested(self):
@@ -454,6 +516,7 @@ class TestCompileGrammarForRequest:
 
     def test_raises_when_no_compiler_and_structured_outputs(self):
         from fastapi import HTTPException
+
         engine = _make_engine(grammar_compiler=None)
         with pytest.raises(HTTPException) as exc_info:
             self._call(engine, structured_outputs={"regex": r"\d+"})
@@ -472,9 +535,12 @@ class TestCompileGrammarForRequest:
         compiler.compile_json_schema.return_value = "compiled_json"
         engine = _make_engine(grammar_compiler=compiler)
 
-        result = self._call(engine, structured_outputs={
-            "json": {"type": "object", "properties": {"x": {"type": "integer"}}},
-        })
+        result = self._call(
+            engine,
+            structured_outputs={
+                "json": {"type": "object", "properties": {"x": {"type": "integer"}}},
+            },
+        )
         assert result == "compiled_json"
         compiler.compile_json_schema.assert_called_once()
 
@@ -572,6 +638,7 @@ class TestCompileGrammarForRequest:
 
     def test_compilation_error_raises_for_structured_outputs(self):
         from fastapi import HTTPException
+
         compiler = MagicMock()
         compiler.compile_json_schema.side_effect = RuntimeError("bad schema")
         engine = _make_engine(grammar_compiler=compiler)
@@ -587,10 +654,13 @@ class TestCompileGrammarForRequest:
         compiler.compile_json_schema.side_effect = RuntimeError("bad")
         engine = _make_engine(grammar_compiler=compiler)
 
-        result = self._call(engine, response_format={
-            "type": "json_schema",
-            "json_schema": {"name": "t", "schema": {"type": "object"}},
-        })
+        result = self._call(
+            engine,
+            response_format={
+                "type": "json_schema",
+                "json_schema": {"name": "t", "schema": {"type": "object"}},
+            },
+        )
         assert result is None
 
     # ---- #1241: strict json_schema response_format is a hard constraint ----
@@ -623,10 +693,13 @@ class TestCompileGrammarForRequest:
     def test_returns_none_when_no_compiler_and_response_format_strict_absent(self):
         """response_format without a strict flag defaults to best-effort (None)."""
         engine = _make_engine(grammar_compiler=None)
-        result = self._call(engine, response_format={
-            "type": "json_schema",
-            "json_schema": {"name": "t", "schema": {"type": "object"}},
-        })
+        result = self._call(
+            engine,
+            response_format={
+                "type": "json_schema",
+                "json_schema": {"name": "t", "schema": {"type": "object"}},
+            },
+        )
         assert result is None
 
     def test_compilation_error_strict_response_format_degrades_not_raises(self):
@@ -647,6 +720,7 @@ class TestResponseFormatRequestsStrict:
     @staticmethod
     def _call(response_format):
         from fusion_mlx.server import _response_format_requests_strict
+
         return _response_format_requests_strict(response_format)
 
     def test_none(self):
@@ -659,25 +733,44 @@ class TestResponseFormatRequestsStrict:
         assert self._call({"type": "text"}) is False
 
     def test_json_schema_strict_true(self):
-        assert self._call({
-            "type": "json_schema",
-            "json_schema": {"name": "t", "strict": True, "schema": {}},
-        }) is True
+        assert (
+            self._call(
+                {
+                    "type": "json_schema",
+                    "json_schema": {"name": "t", "strict": True, "schema": {}},
+                }
+            )
+            is True
+        )
 
     def test_json_schema_strict_false(self):
-        assert self._call({
-            "type": "json_schema",
-            "json_schema": {"name": "t", "strict": False, "schema": {}},
-        }) is False
+        assert (
+            self._call(
+                {
+                    "type": "json_schema",
+                    "json_schema": {"name": "t", "strict": False, "schema": {}},
+                }
+            )
+            is False
+        )
 
     def test_json_schema_strict_absent(self):
-        assert self._call({
-            "type": "json_schema",
-            "json_schema": {"name": "t", "schema": {}},
-        }) is False
+        assert (
+            self._call(
+                {
+                    "type": "json_schema",
+                    "json_schema": {"name": "t", "schema": {}},
+                }
+            )
+            is False
+        )
 
     def test_pydantic_model_strict_true(self):
-        from fusion_mlx.api.openai_models import ResponseFormat, ResponseFormatJsonSchema
+        from fusion_mlx.api.openai_models import (
+            ResponseFormat,
+            ResponseFormatJsonSchema,
+        )
+
         rf = ResponseFormat(
             type="json_schema",
             json_schema=ResponseFormatJsonSchema(name="t", strict=True, schema={}),
@@ -695,6 +788,7 @@ class TestResponseFormatRequestsGrammar:
     @staticmethod
     def _call(response_format):
         from fusion_mlx.server import _response_format_requests_grammar
+
         return _response_format_requests_grammar(response_format)
 
     def test_none(self):
@@ -708,16 +802,23 @@ class TestResponseFormatRequestsGrammar:
         assert self._call({"type": "json_object"}) is True
 
     def test_json_schema(self):
-        assert self._call({
-            "type": "json_schema",
-            "json_schema": {"name": "t", "schema": {}},
-        }) is True
+        assert (
+            self._call(
+                {
+                    "type": "json_schema",
+                    "json_schema": {"name": "t", "schema": {}},
+                }
+            )
+            is True
+        )
 
     def test_json_schema_without_schema_maps_to_nothing(self):
         # A json_schema that carries no schema compiles to no grammar, so it
         # must not earn a Warning header claiming decoding was unavailable.
         # Keeps the header in sync with what _build_format_element builds.
-        assert self._call({"type": "json_schema", "json_schema": {"name": "t"}}) is False
+        assert (
+            self._call({"type": "json_schema", "json_schema": {"name": "t"}}) is False
+        )
         assert self._call({"type": "json_schema"}) is False
 
     def test_unknown_type_does_not_request_grammar(self):
@@ -725,10 +826,15 @@ class TestResponseFormatRequestsGrammar:
 
     def test_pydantic_text_model(self):
         from fusion_mlx.api.openai_models import ResponseFormat
+
         assert self._call(ResponseFormat(type="text")) is False
 
     def test_pydantic_json_schema_model(self):
-        from fusion_mlx.api.openai_models import ResponseFormat, ResponseFormatJsonSchema
+        from fusion_mlx.api.openai_models import (
+            ResponseFormat,
+            ResponseFormatJsonSchema,
+        )
+
         rf = ResponseFormat(
             type="json_schema",
             json_schema=ResponseFormatJsonSchema(name="t", schema={}),
@@ -743,6 +849,7 @@ class TestResponseFormatWarningHeader:
     @staticmethod
     def _call(response_format):
         from fusion_mlx.server import _response_format_warning_header
+
         return _response_format_warning_header(response_format)
 
     @staticmethod
@@ -781,6 +888,7 @@ class TestResponseFormatWarningHeader:
 # =========================================================================
 # GrammarConstraintProcessor
 # =========================================================================
+
 
 class TestGrammarConstraintProcessor:
     """Tests for GrammarConstraintProcessor using real xgrammar."""
@@ -863,6 +971,7 @@ class TestGrammarConstraintProcessor:
 # Scheduler grammar path
 # =========================================================================
 
+
 class TestSchedulerGrammarPath:
     """Tests for grammar processor construction in _build_sampler_and_processors."""
 
@@ -892,11 +1001,16 @@ class TestSchedulerGrammarPath:
 
         sched, sp, req = self._make_scheduler()
         sched._get_model_vocab_size = Scheduler._get_model_vocab_size.__get__(sched)
-        sched._build_sampler_and_processors = Scheduler._build_sampler_and_processors.__get__(sched)
+        sched._build_sampler_and_processors = (
+            Scheduler._build_sampler_and_processors.__get__(sched)
+        )
 
         _, processors = sched._build_sampler_and_processors(sp, req)
         from fusion_mlx.api.grammar import GrammarConstraintProcessor
-        grammar_procs = [p for p in processors if isinstance(p, GrammarConstraintProcessor)]
+
+        grammar_procs = [
+            p for p in processors if isinstance(p, GrammarConstraintProcessor)
+        ]
         assert len(grammar_procs) == 0
 
     def test_grammar_processor_added_when_compiled_grammar(self):
@@ -911,11 +1025,16 @@ class TestSchedulerGrammarPath:
 
         sched, sp, req = self._make_scheduler(vocab_size=256, compiled_grammar=cg)
         sched._get_model_vocab_size = Scheduler._get_model_vocab_size.__get__(sched)
-        sched._build_sampler_and_processors = Scheduler._build_sampler_and_processors.__get__(sched)
+        sched._build_sampler_and_processors = (
+            Scheduler._build_sampler_and_processors.__get__(sched)
+        )
 
         _, processors = sched._build_sampler_and_processors(sp, req)
         from fusion_mlx.api.grammar import GrammarConstraintProcessor
-        grammar_procs = [p for p in processors if isinstance(p, GrammarConstraintProcessor)]
+
+        grammar_procs = [
+            p for p in processors if isinstance(p, GrammarConstraintProcessor)
+        ]
         assert len(grammar_procs) == 1
 
     def test_skipped_when_vocab_size_unavailable(self):
@@ -931,17 +1050,23 @@ class TestSchedulerGrammarPath:
         sched, sp, req = self._make_scheduler(compiled_grammar=cg)
         sched.model = MagicMock(spec=[])
         sched._get_model_vocab_size = Scheduler._get_model_vocab_size.__get__(sched)
-        sched._build_sampler_and_processors = Scheduler._build_sampler_and_processors.__get__(sched)
+        sched._build_sampler_and_processors = (
+            Scheduler._build_sampler_and_processors.__get__(sched)
+        )
 
         _, processors = sched._build_sampler_and_processors(sp, req)
         from fusion_mlx.api.grammar import GrammarConstraintProcessor
-        grammar_procs = [p for p in processors if isinstance(p, GrammarConstraintProcessor)]
+
+        grammar_procs = [
+            p for p in processors if isinstance(p, GrammarConstraintProcessor)
+        ]
         assert len(grammar_procs) == 0
 
 
 # =========================================================================
 # GrammarConstraintProcessor.advance (batched mode)
 # =========================================================================
+
 
 class TestGrammarProcessorAdvance:
     """Tests for the advance() method used in batched bitmask filling."""
@@ -958,12 +1083,14 @@ class TestGrammarProcessorAdvance:
 
     def test_advance_returns_true_on_first_call(self, compiler):
         from fusion_mlx.api.grammar import GrammarConstraintProcessor
+
         comp, vs = compiler
         proc = GrammarConstraintProcessor(comp.compile_grammar('root ::= "ab"'), vs)
         assert proc.advance(mx.array([])) is True
 
     def test_advance_accepts_token(self, compiler):
         from fusion_mlx.api.grammar import GrammarConstraintProcessor
+
         comp, vs = compiler
         proc = GrammarConstraintProcessor(comp.compile_grammar('root ::= "ab"'), vs)
         proc.advance(mx.array([]))
@@ -971,6 +1098,7 @@ class TestGrammarProcessorAdvance:
 
     def test_advance_returns_false_when_terminated(self, compiler):
         from fusion_mlx.api.grammar import GrammarConstraintProcessor
+
         comp, vs = compiler
         proc = GrammarConstraintProcessor(comp.compile_grammar('root ::= "a"'), vs)
         proc.advance(mx.array([]))
@@ -981,6 +1109,7 @@ class TestGrammarProcessorAdvance:
         """advance + batch_fill_next_token_bitmask produces correct mask."""
         xgr = pytest.importorskip("xgrammar")
         from fusion_mlx.api.grammar import GrammarConstraintProcessor
+
         comp, vs = compiler
 
         proc1 = GrammarConstraintProcessor(comp.compile_grammar('root ::= "a"'), vs)
@@ -993,7 +1122,8 @@ class TestGrammarProcessorAdvance:
         bitmask = np.full((2, bitmask_width), -1, dtype=np.int32)
         batch_matcher = xgr.BatchGrammarMatcher()
         batch_matcher.batch_fill_next_token_bitmask(
-            [proc1.matcher, proc2.matcher], bitmask,
+            [proc1.matcher, proc2.matcher],
+            bitmask,
         )
 
         def is_allowed(bm_row, token_id):
@@ -1007,6 +1137,7 @@ class TestGrammarProcessorAdvance:
 
     def test_matcher_property(self, compiler):
         from fusion_mlx.api.grammar import GrammarConstraintProcessor
+
         xgr = pytest.importorskip("xgrammar")
         comp, vs = compiler
         proc = GrammarConstraintProcessor(comp.compile_grammar('root ::= "x"'), vs)
@@ -1016,6 +1147,7 @@ class TestGrammarProcessorAdvance:
 # =========================================================================
 # _apply_batched_grammar (scheduler _step integration)
 # =========================================================================
+
 
 class TestApplyBatchedGrammar:
     """Tests for the batched grammar path in _step."""
@@ -1032,17 +1164,23 @@ class TestApplyBatchedGrammar:
         comp = xgr.GrammarCompiler(ti)
         return comp, len(vocab)
 
-    @pytest.mark.skip(reason="Batched grammar optimization removed in mlx-lm BatchGenerator refactor. Grammar now runs via per-request logits_processors in GenerationBatch._step().")
+    @pytest.mark.skip(
+        reason="Batched grammar optimization removed in mlx-lm BatchGenerator refactor. Grammar now runs via per-request logits_processors in GenerationBatch._step()."
+    )
     def test_batched_grammar_masks_logits(self, setup):
         """Batched grammar correctly masks logits for multiple requests."""
         pass
 
-    @pytest.mark.skip(reason="Batched grammar optimization removed in mlx-lm BatchGenerator refactor. Grammar now runs via per-request logits_processors in GenerationBatch._step().")
+    @pytest.mark.skip(
+        reason="Batched grammar optimization removed in mlx-lm BatchGenerator refactor. Grammar now runs via per-request logits_processors in GenerationBatch._step()."
+    )
     def test_non_grammar_processors_still_run(self, setup):
         """ThinkingBudgetProcessor and other processors still run per-request."""
         pass
 
-    @pytest.mark.skip(reason="Batched grammar optimization removed in mlx-lm BatchGenerator refactor. Grammar now runs via per-request logits_processors in GenerationBatch._step().")
+    @pytest.mark.skip(
+        reason="Batched grammar optimization removed in mlx-lm BatchGenerator refactor. Grammar now runs via per-request logits_processors in GenerationBatch._step()."
+    )
     def test_terminated_processors_skipped(self, setup):
         """Terminated grammar processors don't participate in batch fill."""
         pass
@@ -1052,12 +1190,14 @@ class TestApplyBatchedGrammar:
 # _get_model_vocab_size
 # =========================================================================
 
+
 class TestGetModelVocabSize:
     """Tests for Scheduler._get_model_vocab_size."""
 
     @staticmethod
     def _call(model):
         from fusion_mlx.scheduler import Scheduler
+
         sched = MagicMock()
         sched.model = model
         return Scheduler._get_model_vocab_size(sched)
@@ -1088,6 +1228,7 @@ class TestListGrammarParsers:
     def client(self):
         from fastapi import FastAPI
         from starlette.testclient import TestClient
+
         from fusion_mlx.admin.auth import require_admin
         from fusion_mlx.admin.routes import router
 

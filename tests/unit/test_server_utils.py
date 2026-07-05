@@ -537,9 +537,9 @@ class TestBuildUsageReasoningBreakdown:
         )
         usage = _build_usage(output, "reason")
         rt = usage.completion_tokens_details.reasoning_tokens
-        assert rt >= 1, (
-            f"reasoning_tokens must be >= 1 when reasoning happened, got {rt}"
-        )
+        assert (
+            rt >= 1
+        ), f"reasoning_tokens must be >= 1 when reasoning happened, got {rt}"
         assert rt < usage.completion_tokens, (
             f"reasoning_tokens ({rt}) must leave room for content "
             f"(completion_tokens={usage.completion_tokens})"
@@ -844,9 +844,10 @@ class TestExtractStreamingTokenLogprobs:
         # The sampled token decoded for each entry must come from
         # new_token_ids, not from chunk.tokens[-1] (= 21 for both).
         sampled = [tid for tid in observed_token_ids if tid in (20, 21)]
-        assert sampled == [20, 21], (
-            f"Per-step token IDs must come from new_token_ids; got {sampled}"
-        )
+        assert sampled == [
+            20,
+            21,
+        ], f"Per-step token IDs must come from new_token_ids; got {sampled}"
 
     def test_empty_chunk_returns_empty(self):
         from fusion_mlx.service.helpers import _extract_streaming_token_logprobs
@@ -885,8 +886,9 @@ class TestExtractStreamingTokenLogprobs:
         Surfaced on 2026-05-23 fresh-PyPI v0.6.65 onboarding sweep
         against ``unsloth/Qwen3.6-27B-MLX-8bit``.
         """
-        from fusion_mlx.engine.base import GenerationOutput
         from fusion_mlx.service.helpers import _extract_streaming_token_logprobs
+
+        from fusion_mlx.engine.base import GenerationOutput
 
         assert not hasattr(GenerationOutput, "new_token_ids"), (
             "If new_token_ids was added to GenerationOutput, update this "
@@ -923,8 +925,9 @@ class TestExtractStreamingTokenLogprobs:
         post-fix the ``chunk.tokens`` fallback supplies the per-step
         token list correctly.
         """
-        from fusion_mlx.engine.base import GenerationOutput
         from fusion_mlx.service.helpers import _extract_streaming_token_logprobs
+
+        from fusion_mlx.engine.base import GenerationOutput
 
         mock_a, arr_a = self._make_logprob_array()
         mock_b, arr_b = self._make_logprob_array()
@@ -942,9 +945,9 @@ class TestExtractStreamingTokenLogprobs:
         with patch("numpy.array", side_effect=[arr_a, arr_b, arr_c]):
             result = _extract_streaming_token_logprobs(chunk, tok, top_k=3)
 
-        assert len(result) == 3, (
-            f"3-token delta must yield 3 TokenLogProb entries; got {len(result)}"
-        )
+        assert (
+            len(result) == 3
+        ), f"3-token delta must yield 3 TokenLogProb entries; got {len(result)}"
 
 
 # ---------------------------------------------------------------------------
@@ -1307,8 +1310,9 @@ class TestBuildUsageCachedTokens:
     """
 
     def test_cached_tokens_alongside_reasoning_breakdown(self, monkeypatch):
-        from fusion_mlx.config import get_config
         from fusion_mlx.service.helpers import _build_usage
+
+        from fusion_mlx.config import get_config
 
         cfg = get_config()
         monkeypatch.setattr(cfg, "reasoning_parser_name", "harmony", raising=False)
@@ -1327,8 +1331,9 @@ class TestBuildUsageCachedTokens:
         assert usage.prompt_tokens_details.cached_tokens == 256
 
     def test_cached_tokens_in_no_reasoning_branch(self, monkeypatch):
-        from fusion_mlx.config import get_config
         from fusion_mlx.service.helpers import _build_usage
+
+        from fusion_mlx.config import get_config
 
         cfg = get_config()
         monkeypatch.setattr(cfg, "reasoning_parser_name", None, raising=False)
@@ -1346,8 +1351,9 @@ class TestBuildUsageCachedTokens:
         assert usage.prompt_tokens_details.cached_tokens == 256
 
     def test_no_cache_hit_leaves_details_absent_with_reasoning(self, monkeypatch):
-        from fusion_mlx.config import get_config
         from fusion_mlx.service.helpers import _build_usage
+
+        from fusion_mlx.config import get_config
 
         cfg = get_config()
         monkeypatch.setattr(cfg, "reasoning_parser_name", "harmony", raising=False)
@@ -1369,8 +1375,9 @@ class TestBuildUsageCachedTokens:
         ``cached_tokens`` — the builder must fall back gracefully to
         "no cache hit reported" instead of raising AttributeError.
         """
-        from fusion_mlx.config import get_config
         from fusion_mlx.service.helpers import _build_usage
+
+        from fusion_mlx.config import get_config
 
         cfg = get_config()
         monkeypatch.setattr(cfg, "reasoning_parser_name", None, raising=False)

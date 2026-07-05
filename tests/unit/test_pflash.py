@@ -289,9 +289,9 @@ class TestResolvePFlashModeDefault:
         assert verified, "no verified aliases — see PR #649 / aliases.json"
         for alias in verified:
             mode = resolve_pflash_mode_default(self._ns(None), model_name=alias)
-            assert mode == "always", (
-                f"{alias}: tier=verified but resolver returned {mode!r}"
-            )
+            assert (
+                mode == "always"
+            ), f"{alias}: tier=verified but resolver returned {mode!r}"
 
     def test_config_from_args_treats_none_mode_as_off(self):
         # Defensive: config_from_args is the public surface other tests

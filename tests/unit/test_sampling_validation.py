@@ -239,18 +239,18 @@ def _assert_invalid_request_envelope(r, field: str, expected_status: int = 400) 
         f"body={r.text[:200]}"
     )
     body = r.json()
-    assert isinstance(body, dict) and "error" in body, (
-        f"missing top-level ``error`` key in {field} response: {r.text[:200]}"
-    )
+    assert (
+        isinstance(body, dict) and "error" in body
+    ), f"missing top-level ``error`` key in {field} response: {r.text[:200]}"
     err = body["error"]
-    assert err.get("type") == "invalid_request_error", (
-        f"wrong error type for {field}: {err}"
-    )
+    assert (
+        err.get("type") == "invalid_request_error"
+    ), f"wrong error type for {field}: {err}"
     assert err.get("code") == "invalid_request", f"wrong error code for {field}: {err}"
     msg = err.get("message", "")
-    assert isinstance(msg, str) and field in msg, (
-        f"error message for {field} missing field name: {msg!r}"
-    )
+    assert (
+        isinstance(msg, str) and field in msg
+    ), f"error message for {field} missing field name: {msg!r}"
 
 
 @pytest.mark.parametrize("field,value", NONFINITE_SHAPES)
@@ -434,9 +434,9 @@ def test_chat_valid_sampling_param_reaches_route_dispatch(
         f"chat dispatch never invoked for {field}={value!r}; "
         f"status={r.status_code} body={r.text[:200]}"
     )
-    assert r.status_code == 200, (
-        f"valid {field}={value!r} rejected with {r.status_code}: {r.text[:200]}"
-    )
+    assert (
+        r.status_code == 200
+    ), f"valid {field}={value!r} rejected with {r.status_code}: {r.text[:200]}"
     # And pin that the typed value survived to the request object
     # exactly as sent — catches a future regression where the
     # validator coerces or drops the field silently.

@@ -24,7 +24,6 @@ logger = logging.getLogger(__name__)
 PRESET_REMOTE_URL = "http://bench.dpdns.org/assets/omlx_preset.json"
 
 
-
 from .helpers import (
     _apply_cache_settings_runtime,
     _apply_log_level_runtime,
@@ -32,7 +31,6 @@ from .helpers import (
     _apply_model_dirs_runtime,
     _apply_sampling_settings_runtime,
     _format_cache_size,
-    _get_global_settings,
     _get_rich_global_settings,
     _schedule_self_terminate,
     get_ssd_disk_info,
@@ -83,8 +81,6 @@ async def get_server_info(is_admin: bool = Depends(require_admin)):
         "port": global_settings.server.port,
         "aliases": aliases,
     }
-
-
 
 
 @_router.post("/api/server/restart")
@@ -165,9 +161,12 @@ async def get_global_settings(is_admin: bool = Depends(require_admin)):
         },
         "model": {
             "model_dirs": [
-                str(d) for d in global_settings.model.get_model_dirs(global_settings.base_path)
+                str(d)
+                for d in global_settings.model.get_model_dirs(global_settings.base_path)
             ],
-            "model_dir": str(global_settings.model.get_model_dir(global_settings.base_path)),
+            "model_dir": str(
+                global_settings.model.get_model_dir(global_settings.base_path)
+            ),
             "model_fallback": global_settings.model.model_fallback,
         },
         "memory": {
@@ -185,7 +184,9 @@ async def get_global_settings(is_admin: bool = Depends(require_admin)):
             "ssd_cache_dir": cache_dir,
             # Resolve "auto" to actual value (10% of SSD capacity)
             "ssd_cache_max_size": _format_cache_size(
-                global_settings.cache.get_ssd_cache_max_size_bytes(global_settings.base_path)
+                global_settings.cache.get_ssd_cache_max_size_bytes(
+                    global_settings.base_path
+                )
             ),
             "hot_cache_only": global_settings.cache.hot_cache_only,
             "hot_cache_max_size": global_settings.cache.hot_cache_max_size,
@@ -358,8 +359,7 @@ async def update_global_settings(
                 logger.info(msg)
             else:
                 raise HTTPException(
-                    status_code=400,
-                    detail=f"Failed to change model directories: {msg}"
+                    status_code=400, detail=f"Failed to change model directories: {msg}"
                 )
 
     if request.model_fallback is not None:
@@ -372,9 +372,7 @@ async def update_global_settings(
         or request.memory_guard_custom_ceiling_gb is not None
     ):
         if request.memory_guard_tier is not None:
-            global_settings.memory.memory_guard_tier = (
-                request.memory_guard_tier
-            )
+            global_settings.memory.memory_guard_tier = request.memory_guard_tier
         if request.memory_guard_custom_ceiling_gb is not None:
             global_settings.memory.memory_guard_custom_ceiling_gb = float(
                 request.memory_guard_custom_ceiling_gb
@@ -435,8 +433,14 @@ async def update_global_settings(
                 if entry is None or entry.engine is None:
                     continue
                 async_core = getattr(entry.engine, "_engine", None)
-                core = getattr(async_core, "engine", None) if async_core is not None else None
-                scheduler = getattr(core, "scheduler", None) if core is not None else None
+                core = (
+                    getattr(async_core, "engine", None)
+                    if async_core is not None
+                    else None
+                )
+                scheduler = (
+                    getattr(core, "scheduler", None) if core is not None else None
+                )
                 if scheduler is not None and hasattr(scheduler, "config"):
                     scheduler.config.chunked_prefill = request.chunked_prefill
         runtime_applied.append("chunked_prefill")
@@ -479,7 +483,9 @@ async def update_global_settings(
 
     # Apply MCP settings (restart required)
     if request.mcp_config is not None:
-        global_settings.mcp.config_path = request.mcp_config if request.mcp_config else None
+        global_settings.mcp.config_path = (
+            request.mcp_config if request.mcp_config else None
+        )
 
     # Apply HuggingFace settings (Live - immediately applied via env var)
     if request.hf_endpoint is not None:
@@ -490,8 +496,7 @@ async def update_global_settings(
             del os.environ["HF_ENDPOINT"]
         runtime_applied.append("hf_endpoint")
         logger.info(
-            f"HuggingFace endpoint updated to: "
-            f"{request.hf_endpoint or '(default)'}"
+            f"HuggingFace endpoint updated to: " f"{request.hf_endpoint or '(default)'}"
         )
 
     # Apply ModelScope settings (Live - immediately applied via env var)
@@ -503,8 +508,7 @@ async def update_global_settings(
             del os.environ["MODELSCOPE_DOMAIN"]
         runtime_applied.append("ms_endpoint")
         logger.info(
-            f"ModelScope endpoint updated to: "
-            f"{request.ms_endpoint or '(default)'}"
+            f"ModelScope endpoint updated to: " f"{request.ms_endpoint or '(default)'}"
         )
 
     # Apply network settings (Live - immediately applied via env vars)
@@ -556,7 +560,9 @@ async def update_global_settings(
     # Apply sampling settings (Live - immediately applied)
     sampling_changed = False
     if request.sampling_max_context_window is not None:
-        global_settings.sampling.max_context_window = request.sampling_max_context_window
+        global_settings.sampling.max_context_window = (
+            request.sampling_max_context_window
+        )
         sampling_changed = True
     if request.sampling_max_tokens is not None:
         global_settings.sampling.max_tokens = request.sampling_max_tokens
@@ -571,7 +577,9 @@ async def update_global_settings(
         global_settings.sampling.top_k = request.sampling_top_k
         sampling_changed = True
     if request.sampling_repetition_penalty is not None:
-        global_settings.sampling.repetition_penalty = request.sampling_repetition_penalty
+        global_settings.sampling.repetition_penalty = (
+            request.sampling_repetition_penalty
+        )
         sampling_changed = True
 
     if sampling_changed:
@@ -674,7 +682,6 @@ async def update_global_settings(
     if request.ui_language is not None:
         global_settings.ui.language = request.ui_language
         runtime_applied.append("ui_language")
-        _refresh_i18n_globals()
         logger.info(f"UI language changed to: {request.ui_language}")
 
     # Apply idle timeout settings (Live)
@@ -702,7 +709,9 @@ async def update_global_settings(
         logger.info("API key updated via admin settings")
 
     if request.skip_api_key_verification is not None:
-        global_settings.auth.skip_api_key_verification = request.skip_api_key_verification
+        global_settings.auth.skip_api_key_verification = (
+            request.skip_api_key_verification
+        )
         runtime_applied.append("skip_api_key_verification")
 
     if pending_embedding_batch_size is not None:
@@ -713,7 +722,9 @@ async def update_global_settings(
     errors = global_settings.validate()
     if errors:
         if previous_embedding_batch_size is not None:
-            global_settings.scheduler.embedding_batch_size = previous_embedding_batch_size
+            global_settings.scheduler.embedding_batch_size = (
+                previous_embedding_batch_size
+            )
         raise HTTPException(status_code=400, detail=errors)
 
     # Persist to file
@@ -721,7 +732,9 @@ async def update_global_settings(
         global_settings.save()
     except Exception as e:
         if previous_embedding_batch_size is not None:
-            global_settings.scheduler.embedding_batch_size = previous_embedding_batch_size
+            global_settings.scheduler.embedding_batch_size = (
+                previous_embedding_batch_size
+            )
         raise HTTPException(status_code=500, detail=f"Failed to save settings: {e}")
 
     if pending_embedding_batch_size is not None:
@@ -741,7 +754,6 @@ async def update_global_settings(
         "message": message,
         "runtime_applied": runtime_applied,
     }
-
 
 
 router = _router

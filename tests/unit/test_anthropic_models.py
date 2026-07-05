@@ -1,5 +1,4 @@
 # SPDX-License-Identifier: Apache-2.0
-import json
 import pytest
 from pydantic import ValidationError
 
@@ -19,10 +18,10 @@ from fusion_mlx.api.anthropic_models import (
     ErrorEvent,
     InputJsonDelta,
     MessageDeltaEvent,
-    MessageStartEvent,
-    MessageStopEvent,
     MessagesRequest,
     MessagesResponse,
+    MessageStartEvent,
+    MessageStopEvent,
     PingEvent,
     SystemContent,
     TextDelta,

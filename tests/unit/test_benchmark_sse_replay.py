@@ -17,23 +17,25 @@ yield, repeat.
 """
 
 import asyncio
-from typing import Optional
 
 import pytest
 
+from fusion_mlx.admin.accuracy_benchmark import (
+    AccuracyBenchmarkRequest,
+    AccuracyBenchmarkRun,
+)
+from fusion_mlx.admin.accuracy_benchmark import (
+    _send_event as acc_send_event,
+)
 from fusion_mlx.admin.benchmark import (
     BenchmarkRequest,
     BenchmarkRun,
     _benchmark_runs,
-    _send_event as bench_send_event,
     get_active_run,
 )
-from fusion_mlx.admin.accuracy_benchmark import (
-    AccuracyBenchmarkRequest,
-    AccuracyBenchmarkRun,
-    _send_event as acc_send_event,
+from fusion_mlx.admin.benchmark import (
+    _send_event as bench_send_event,
 )
-
 
 # --- Test helpers -----------------------------------------------------------
 
@@ -41,7 +43,7 @@ from fusion_mlx.admin.accuracy_benchmark import (
 async def _drain(
     run,
     *,
-    max_events: Optional[int] = None,
+    max_events: int | None = None,
     timeout: float = 1.0,
 ) -> list[dict]:
     """Read the run's event log replay-then-attach style.
@@ -57,7 +59,7 @@ async def _drain(
             while seen >= len(run.events) and not run.terminal:
                 try:
                     await asyncio.wait_for(run.cond.wait(), timeout=timeout)
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     break
             new = list(run.events[seen:])
             seen = len(run.events)
@@ -348,10 +350,13 @@ class TestConcurrentStartRejection:
         existing.status = "running"
         _benchmark_runs[existing.bench_id] = existing
 
-        r = bench_client.post("/admin/api/bench/start", json={
-            "model_id": "model-x",
-            "prompt_lengths": [1024],
-        })
+        r = bench_client.post(
+            "/admin/api/bench/start",
+            json={
+                "model_id": "model-x",
+                "prompt_lengths": [1024],
+            },
+        )
         assert r.status_code == 409
         body = r.json()
         assert "already running" in body["detail"].lower()
@@ -378,8 +383,11 @@ class TestConcurrentStartRejection:
 
         monkeypatch.setattr(bench_module, "run_benchmark", _noop)
 
-        r = bench_client.post("/admin/api/bench/start", json={
-            "model_id": "model-x",
-            "prompt_lengths": [1024],
-        })
+        r = bench_client.post(
+            "/admin/api/bench/start",
+            json={
+                "model_id": "model-x",
+                "prompt_lengths": [1024],
+            },
+        )
         assert r.status_code == 200, r.text

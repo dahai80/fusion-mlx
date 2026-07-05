@@ -7,7 +7,11 @@ from fusion_mlx.admin import routes as admin_routes
 class FakePool:
     def __init__(self, scheduler, loading_started_at=None):
         core = SimpleNamespace(
-            _output_collectors={"gen-1": object(), "prefill-1": object(), "wait-1": object()},
+            _output_collectors={
+                "gen-1": object(),
+                "prefill-1": object(),
+                "wait-1": object(),
+            },
             scheduler=scheduler,
         )
         engine = SimpleNamespace(_engine=SimpleNamespace(engine=core))
@@ -59,11 +63,16 @@ def test_active_models_generation_includes_activity_and_waiting_rows():
     )
 
     with (
-        patch.object(admin_routes, "_get_engine_pool", return_value=FakePool(scheduler)),
+        patch.object(
+            admin_routes, "_get_engine_pool", return_value=FakePool(scheduler)
+        ),
         patch("omlx.admin.routes._get_server_state", return_value=None),
         patch.object(admin_routes, "_get_settings_manager", return_value=None),
         patch.object(admin_routes, "_get_global_settings", return_value=None),
-        patch("omlx.prefill_progress.get_prefill_tracker", return_value=FakePrefillTracker()),
+        patch(
+            "omlx.prefill_progress.get_prefill_tracker",
+            return_value=FakePrefillTracker(),
+        ),
         patch("time.monotonic", return_value=110.0),
     ):
         data = admin_routes._build_active_models_data()
@@ -110,11 +119,16 @@ def test_active_models_does_not_count_waiting_collectors_as_active():
     )
 
     with (
-        patch.object(admin_routes, "_get_engine_pool", return_value=FakePool(scheduler)),
+        patch.object(
+            admin_routes, "_get_engine_pool", return_value=FakePool(scheduler)
+        ),
         patch("omlx.admin.routes._get_server_state", return_value=None),
         patch.object(admin_routes, "_get_settings_manager", return_value=None),
         patch.object(admin_routes, "_get_global_settings", return_value=None),
-        patch("omlx.prefill_progress.get_prefill_tracker", return_value=EmptyPrefillTracker()),
+        patch(
+            "omlx.prefill_progress.get_prefill_tracker",
+            return_value=EmptyPrefillTracker(),
+        ),
         patch("time.monotonic", return_value=110.0),
     ):
         data = admin_routes._build_active_models_data()
@@ -141,7 +155,10 @@ def test_active_models_loading_includes_elapsed_and_percent_estimate():
         patch("omlx.admin.routes._get_server_state", return_value=None),
         patch.object(admin_routes, "_get_settings_manager", return_value=None),
         patch.object(admin_routes, "_get_global_settings", return_value=None),
-        patch("omlx.prefill_progress.get_prefill_tracker", return_value=FakePrefillTracker()),
+        patch(
+            "omlx.prefill_progress.get_prefill_tracker",
+            return_value=FakePrefillTracker(),
+        ),
         patch("time.monotonic", return_value=110.0),
     ):
         data = admin_routes._build_active_models_data()
@@ -172,7 +189,9 @@ class FakeNonStreamingEngine:
 
 class FakeNonStreamingPool:
     def __init__(self):
-        self._entries = {"embed-model": SimpleNamespace(engine=FakeNonStreamingEngine())}
+        self._entries = {
+            "embed-model": SimpleNamespace(engine=FakeNonStreamingEngine())
+        }
 
     def get_status(self):
         return {
@@ -196,11 +215,16 @@ def test_active_models_includes_non_streaming_activity_rows():
             return []
 
     with (
-        patch.object(admin_routes, "_get_engine_pool", return_value=FakeNonStreamingPool()),
+        patch.object(
+            admin_routes, "_get_engine_pool", return_value=FakeNonStreamingPool()
+        ),
         patch("omlx.admin.routes._get_server_state", return_value=None),
         patch.object(admin_routes, "_get_settings_manager", return_value=None),
         patch.object(admin_routes, "_get_global_settings", return_value=None),
-        patch("omlx.prefill_progress.get_prefill_tracker", return_value=EmptyPrefillTracker()),
+        patch(
+            "omlx.prefill_progress.get_prefill_tracker",
+            return_value=EmptyPrefillTracker(),
+        ),
         patch("time.monotonic", return_value=110.0),
     ):
         data = admin_routes._build_active_models_data()
@@ -271,10 +295,17 @@ def test_idle_seconds_computed_from_last_access():
     """idle_seconds = time.time() - last_access for a loaded model."""
     with (
         patch("omlx.admin.routes._get_server_state", return_value=None),
-        patch.object(admin_routes, "_get_engine_pool", return_value=FakeIdlePool(last_access=100.0)),
+        patch.object(
+            admin_routes,
+            "_get_engine_pool",
+            return_value=FakeIdlePool(last_access=100.0),
+        ),
         patch.object(admin_routes, "_get_settings_manager", return_value=None),
         patch.object(admin_routes, "_get_global_settings", return_value=None),
-        patch("omlx.prefill_progress.get_prefill_tracker", return_value=EmptyPrefillTracker()),
+        patch(
+            "omlx.prefill_progress.get_prefill_tracker",
+            return_value=EmptyPrefillTracker(),
+        ),
         patch("time.time", return_value=115.0),
         patch("time.monotonic", return_value=115.0),
     ):
@@ -289,10 +320,15 @@ def test_idle_seconds_none_when_no_last_access():
     """idle_seconds is None when last_access is missing or 0."""
     with (
         patch("omlx.admin.routes._get_server_state", return_value=None),
-        patch.object(admin_routes, "_get_engine_pool", return_value=FakeIdlePool(last_access=0)),
+        patch.object(
+            admin_routes, "_get_engine_pool", return_value=FakeIdlePool(last_access=0)
+        ),
         patch.object(admin_routes, "_get_settings_manager", return_value=None),
         patch.object(admin_routes, "_get_global_settings", return_value=None),
-        patch("omlx.prefill_progress.get_prefill_tracker", return_value=EmptyPrefillTracker()),
+        patch(
+            "omlx.prefill_progress.get_prefill_tracker",
+            return_value=EmptyPrefillTracker(),
+        ),
         patch("time.time", return_value=115.0),
         patch("time.monotonic", return_value=115.0),
     ):
@@ -305,14 +341,21 @@ def test_ttl_remaining_from_per_model_setting():
     """TTL countdown uses per-model ttl_seconds when available."""
     with (
         patch("omlx.admin.routes._get_server_state", return_value=None),
-        patch.object(admin_routes, "_get_engine_pool", return_value=FakeIdlePool(last_access=100.0)),
+        patch.object(
+            admin_routes,
+            "_get_engine_pool",
+            return_value=FakeIdlePool(last_access=100.0),
+        ),
         patch.object(
             admin_routes,
             "_get_settings_manager",
             return_value=_make_settings_manager(ttl_seconds=30),
         ),
         patch.object(admin_routes, "_get_global_settings", return_value=None),
-        patch("omlx.prefill_progress.get_prefill_tracker", return_value=EmptyPrefillTracker()),
+        patch(
+            "omlx.prefill_progress.get_prefill_tracker",
+            return_value=EmptyPrefillTracker(),
+        ),
         patch("time.time", return_value=115.0),
         patch("time.monotonic", return_value=115.0),
     ):
@@ -328,7 +371,11 @@ def test_ttl_remaining_falls_back_to_global_idle_timeout():
     """When per-model ttl_seconds is None, global idle_timeout is used."""
     with (
         patch("omlx.admin.routes._get_server_state", return_value=None),
-        patch.object(admin_routes, "_get_engine_pool", return_value=FakeIdlePool(last_access=100.0)),
+        patch.object(
+            admin_routes,
+            "_get_engine_pool",
+            return_value=FakeIdlePool(last_access=100.0),
+        ),
         patch.object(
             admin_routes,
             "_get_settings_manager",
@@ -339,7 +386,10 @@ def test_ttl_remaining_falls_back_to_global_idle_timeout():
             "_get_global_settings",
             return_value=_make_global_settings(idle_timeout_seconds=60),
         ),
-        patch("omlx.prefill_progress.get_prefill_tracker", return_value=EmptyPrefillTracker()),
+        patch(
+            "omlx.prefill_progress.get_prefill_tracker",
+            return_value=EmptyPrefillTracker(),
+        ),
         patch("time.time", return_value=115.0),
         patch("time.monotonic", return_value=115.0),
     ):
@@ -355,7 +405,11 @@ def test_ttl_remaining_per_model_takes_priority():
     """Per-model ttl_seconds overrides global idle_timeout."""
     with (
         patch("omlx.admin.routes._get_server_state", return_value=None),
-        patch.object(admin_routes, "_get_engine_pool", return_value=FakeIdlePool(last_access=100.0)),
+        patch.object(
+            admin_routes,
+            "_get_engine_pool",
+            return_value=FakeIdlePool(last_access=100.0),
+        ),
         patch.object(
             admin_routes,
             "_get_settings_manager",
@@ -366,7 +420,10 @@ def test_ttl_remaining_per_model_takes_priority():
             "_get_global_settings",
             return_value=_make_global_settings(idle_timeout_seconds=300),
         ),
-        patch("omlx.prefill_progress.get_prefill_tracker", return_value=EmptyPrefillTracker()),
+        patch(
+            "omlx.prefill_progress.get_prefill_tracker",
+            return_value=EmptyPrefillTracker(),
+        ),
         patch("time.time", return_value=115.0),
         patch("time.monotonic", return_value=115.0),
     ):
@@ -381,14 +438,21 @@ def test_ttl_remaining_clamped_to_zero():
     """ttl_remaining_seconds floors at 0 when TTL has expired."""
     with (
         patch("omlx.admin.routes._get_server_state", return_value=None),
-        patch.object(admin_routes, "_get_engine_pool", return_value=FakeIdlePool(last_access=100.0)),
+        patch.object(
+            admin_routes,
+            "_get_engine_pool",
+            return_value=FakeIdlePool(last_access=100.0),
+        ),
         patch.object(
             admin_routes,
             "_get_settings_manager",
             return_value=_make_settings_manager(ttl_seconds=10),
         ),
         patch.object(admin_routes, "_get_global_settings", return_value=None),
-        patch("omlx.prefill_progress.get_prefill_tracker", return_value=EmptyPrefillTracker()),
+        patch(
+            "omlx.prefill_progress.get_prefill_tracker",
+            return_value=EmptyPrefillTracker(),
+        ),
         patch("time.time", return_value=130.0),  # 30s idle, 10s TTL → expired
         patch("time.monotonic", return_value=130.0),
     ):
@@ -399,6 +463,7 @@ def test_ttl_remaining_clamped_to_zero():
 
 def test_idle_and_ttl_not_computed_for_loading_model():
     """Loading models have no idle/ttl fields set (both None)."""
+
     class LoadingPool:
         def __init__(self):
             self._entries = {"model-a": SimpleNamespace(engine=None)}  # not loaded yet
@@ -425,7 +490,10 @@ def test_idle_and_ttl_not_computed_for_loading_model():
         patch.object(admin_routes, "_get_engine_pool", return_value=LoadingPool()),
         patch.object(admin_routes, "_get_settings_manager", return_value=None),
         patch.object(admin_routes, "_get_global_settings", return_value=None),
-        patch("omlx.prefill_progress.get_prefill_tracker", return_value=EmptyPrefillTracker()),
+        patch(
+            "omlx.prefill_progress.get_prefill_tracker",
+            return_value=EmptyPrefillTracker(),
+        ),
         patch("time.time", return_value=115.0),
         patch("time.monotonic", return_value=115.0),
     ):

@@ -4,7 +4,6 @@
 import json
 
 import pytest
-
 from fusion_mlx.admin.oq_manager import OQManager
 
 

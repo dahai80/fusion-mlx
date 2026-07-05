@@ -18,6 +18,7 @@ logger = logging.getLogger(__name__)
 
 class EngineStatus(str, Enum):
     """Engine lifecycle states for safe eviction."""
+
     READY = "ready"
     CLOSING = "closing"
     UNLOADED = "unloaded"
@@ -44,23 +45,27 @@ class GenerationOutput:
     diffusion_work_tps: float = 0.0
 
 
-
-def _fallback_parse_tool_calls(gen: GenerationOutput, tokenizer: Any, tools: list[dict]) -> GenerationOutput:
+def _fallback_parse_tool_calls(
+    gen: GenerationOutput, tokenizer: Any, tools: list[dict]
+) -> GenerationOutput:
     """Fallback tool call extraction when the scheduler has no parser session."""
     try:
         from ..api.tool_calling import parse_tool_calls
+
         cleaned, tc_list = parse_tool_calls(gen.text, tokenizer, tools)
         if tc_list:
             tc_dicts = []
             for tc in tc_list:
-                tc_dicts.append({
-                     "id": tc.id,
-                     "type": tc.type,
-                     "function": {
-                         "name": tc.function.name,
-                         "arguments": tc.function.arguments,
-                     },
-                 })
+                tc_dicts.append(
+                    {
+                        "id": tc.id,
+                        "type": tc.type,
+                        "function": {
+                            "name": tc.function.name,
+                            "arguments": tc.function.arguments,
+                        },
+                    }
+                )
             gen = copy.deepcopy(gen)
             gen.tool_calls = tc_dicts
             if cleaned.strip() and cleaned.strip() != gen.text.strip():
@@ -69,7 +74,9 @@ def _fallback_parse_tool_calls(gen: GenerationOutput, tokenizer: Any, tools: lis
         logger.debug(f"_fallback_parse_tool_calls failed: {e}")
     return gen
 
+
 _warn_scheduler_logged = set()
+
 
 def _warn_scheduler_unreachable_once(engine, context: str) -> None:
     key = (engine.model_name, context)
@@ -80,6 +87,7 @@ def _warn_scheduler_unreachable_once(engine, context: str) -> None:
             context,
             engine.model_name,
         )
+
 
 class BaseEngine(ABC):
     @property
@@ -94,7 +102,7 @@ class BaseEngine(ABC):
 
     @property
     def is_mllm(self) -> bool:
-        pass
+        return False
 
     @abstractmethod
     async def start(self) -> None:
@@ -106,37 +114,65 @@ class BaseEngine(ABC):
 
     @abstractmethod
     async def generate(
-        self, prompt: str, max_tokens: int = 4096, temperature: float = 0.7,
-        top_p: float = 0.9, top_k: int = 0, min_p: float = 0.0,
-        repetition_penalty: float = 1.0, presence_penalty: float = 0.0,
-        stop: list[str] | None = None, **kwargs,
+        self,
+        prompt: str,
+        max_tokens: int = 4096,
+        temperature: float = 0.7,
+        top_p: float = 0.9,
+        top_k: int = 0,
+        min_p: float = 0.0,
+        repetition_penalty: float = 1.0,
+        presence_penalty: float = 0.0,
+        stop: list[str] | None = None,
+        **kwargs,
     ) -> GenerationOutput:
         pass
 
     @abstractmethod
     async def stream_generate(
-        self, prompt: str, max_tokens: int = 4096, temperature: float = 0.7,
-        top_p: float = 0.9, top_k: int = 0, min_p: float = 0.0,
-        repetition_penalty: float = 1.0, presence_penalty: float = 0.0,
-        stop: list[str] | None = None, **kwargs,
+        self,
+        prompt: str,
+        max_tokens: int = 4096,
+        temperature: float = 0.7,
+        top_p: float = 0.9,
+        top_k: int = 0,
+        min_p: float = 0.0,
+        repetition_penalty: float = 1.0,
+        presence_penalty: float = 0.0,
+        stop: list[str] | None = None,
+        **kwargs,
     ) -> AsyncIterator[GenerationOutput]:
         pass
 
     @abstractmethod
     async def chat(
-        self, messages: list[dict[str, Any]], max_tokens: int = 4096,
-        temperature: float = 0.7, top_p: float = 0.9, top_k: int = 0,
-        min_p: float = 0.0, repetition_penalty: float = 1.0,
-        presence_penalty: float = 0.0, tools: list[dict] | None = None, **kwargs,
+        self,
+        messages: list[dict[str, Any]],
+        max_tokens: int = 4096,
+        temperature: float = 0.7,
+        top_p: float = 0.9,
+        top_k: int = 0,
+        min_p: float = 0.0,
+        repetition_penalty: float = 1.0,
+        presence_penalty: float = 0.0,
+        tools: list[dict] | None = None,
+        **kwargs,
     ) -> GenerationOutput:
         pass
 
     @abstractmethod
     async def stream_chat(
-        self, messages: list[dict[str, Any]], max_tokens: int = 4096,
-        temperature: float = 0.7, top_p: float = 0.9, top_k: int = 0,
-        min_p: float = 0.0, repetition_penalty: float = 1.0,
-        presence_penalty: float = 0.0, tools: list[dict] | None = None, **kwargs,
+        self,
+        messages: list[dict[str, Any]],
+        max_tokens: int = 4096,
+        temperature: float = 0.7,
+        top_p: float = 0.9,
+        top_k: int = 0,
+        min_p: float = 0.0,
+        repetition_penalty: float = 1.0,
+        presence_penalty: float = 0.0,
+        tools: list[dict] | None = None,
+        **kwargs,
     ) -> AsyncIterator[GenerationOutput]:
         pass
 
@@ -181,12 +217,11 @@ class BaseEngine(ABC):
         if remaining > 0:
             logger.info(
                 "Engine evicting: draining %d active streams (timeout=%.0fs)",
-                remaining, timeout,
+                remaining,
+                timeout,
             )
         try:
-            await asyncio.wait_for(
-                self._wait_streams_drained(), timeout=timeout
-            )
+            await asyncio.wait_for(self._wait_streams_drained(), timeout=timeout)
         except TimeoutError:
             logger.warning(
                 "Engine eviction timeout: %d streams still active, forcing stop",
@@ -210,6 +245,8 @@ class BaseEngine(ABC):
     @abstractmethod
     def get_cache_stats(self) -> dict[str, Any] | None:
         pass
+
+
 class BaseNonStreamingEngine(ABC):
     def __init__(self):
         self._active_count = 0
@@ -220,19 +257,43 @@ class BaseNonStreamingEngine(ABC):
         with self._active_lock:
             return self._active_count > 0
 
-    _ACTIVITY_RESERVED_KEYS = {"request_id", "kind", "detail", "started_at", "last_activity_at", "total_items"}
+    _ACTIVITY_RESERVED_KEYS = {
+        "request_id",
+        "kind",
+        "detail",
+        "started_at",
+        "last_activity_at",
+        "total_items",
+    }
 
-    def _sanitize_activity_metadata(self, metadata: dict[str, Any] | None) -> dict[str, Any]:
+    def _sanitize_activity_metadata(
+        self, metadata: dict[str, Any] | None
+    ) -> dict[str, Any]:
         if not metadata:
             return {}
-        return {k: v for k, v in metadata.items() if k not in self._ACTIVITY_RESERVED_KEYS}
+        return {
+            k: v for k, v in metadata.items() if k not in self._ACTIVITY_RESERVED_KEYS
+        }
 
-    def _begin_activity(self, kind: str, detail: str | None = None, total_items: int | None = None, metadata: dict[str, Any] | None = None) -> str:
+    def _begin_activity(
+        self,
+        kind: str,
+        detail: str | None = None,
+        total_items: int | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> str:
         activity_id = str(uuid.uuid4())
         now = time.monotonic()
         with self._active_lock:
             self._active_count += 1
-            activity = {"request_id": activity_id, "kind": kind, "detail": detail or kind, "started_at": now, "last_activity_at": now, "total_items": total_items}
+            activity = {
+                "request_id": activity_id,
+                "kind": kind,
+                "detail": detail or kind,
+                "started_at": now,
+                "last_activity_at": now,
+                "total_items": total_items,
+            }
             activity.update(self._sanitize_activity_metadata(metadata))
             self._activities[activity_id] = activity
         return activity_id
@@ -249,7 +310,9 @@ class BaseNonStreamingEngine(ABC):
         with self._active_lock:
             removed = self._activities.pop(activity_id, None)
             if removed is None:
-                raise RuntimeError(f"Activity {activity_id} ended more than once or was never started")
+                raise RuntimeError(
+                    f"Activity {activity_id} ended more than once or was never started"
+                )
             self._active_count -= 1
             if self._active_count < 0:
                 raise RuntimeError("Active request count became negative")
@@ -265,8 +328,14 @@ class BaseNonStreamingEngine(ABC):
                 item = dict(activity)
                 started_at = item.pop("started_at", None)
                 last_activity_at = item.pop("last_activity_at", None)
-                item["elapsed_seconds"] = max(0.0, now - started_at) if started_at is not None else None
-                item["last_activity_age_seconds"] = max(0.0, now - last_activity_at) if last_activity_at is not None else None
+                item["elapsed_seconds"] = (
+                    max(0.0, now - started_at) if started_at is not None else None
+                )
+                item["last_activity_age_seconds"] = (
+                    max(0.0, now - last_activity_at)
+                    if last_activity_at is not None
+                    else None
+                )
                 activities.append(item)
             return {"active_requests": self._active_count, "activities": activities}
 

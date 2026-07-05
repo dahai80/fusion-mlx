@@ -29,7 +29,9 @@ class ModelRegistry:
         self._owners: dict[int, tuple[weakref.ref, str]] = {}
         self._registry_lock = threading.Lock()
 
-    def acquire(self, model: Any, engine: Any, engine_id: str, force: bool = False) -> bool:
+    def acquire(
+        self, model: Any, engine: Any, engine_id: str, force: bool = False
+    ) -> bool:
         model_id = id(model)
         with self._registry_lock:
             if model_id in self._owners:
@@ -37,7 +39,9 @@ class ModelRegistry:
                 owner = weak_ref()
                 if owner is not None and owner_id != engine_id:
                     if force:
-                        logger.warning(f"Model ownership transfer: {owner_id} -> {engine_id}")
+                        logger.warning(
+                            f"Model ownership transfer: {owner_id} -> {engine_id}"
+                        )
                         self._reset_owner(owner)
                     else:
                         raise ModelOwnershipError(
@@ -72,7 +76,7 @@ class ModelRegistry:
 
     def _reset_owner(self, owner: Any) -> None:
         try:
-            if hasattr(owner, 'scheduler'):
+            if hasattr(owner, "scheduler"):
                 owner.scheduler.deep_reset()
         except Exception as e:
             logger.warning(f"Failed to reset previous owner: {e}")
@@ -80,7 +84,9 @@ class ModelRegistry:
     def cleanup(self) -> int:
         cleaned = 0
         with self._registry_lock:
-            stale = [k for k, (r, _) in self._owners.items() if r is not None and r() is None]
+            stale = [
+                k for k, (r, _) in self._owners.items() if r is not None and r() is None
+            ]
             for k in stale:
                 del self._owners[k]
                 cleaned += 1
@@ -88,11 +94,14 @@ class ModelRegistry:
 
     def get_stats(self) -> dict[str, Any]:
         with self._registry_lock:
-            active = sum(1 for _, (r, _) in self._owners.items() if r is None or r() is not None)
+            active = sum(
+                1 for _, (r, _) in self._owners.items() if r is None or r() is not None
+            )
             return {"total_entries": len(self._owners), "active_owners": active}
 
 
 _registry = ModelRegistry()
+
 
 def get_registry() -> ModelRegistry:
     return _registry

@@ -719,9 +719,9 @@ class TestHarmonyRouting:
             ]
         )
         assert result["reasoning"] == "Reasoning"
-        assert result["content"] == "Answer", (
-            f"role token leaked into content: {result['content']!r}"
-        )
+        assert (
+            result["content"] == "Answer"
+        ), f"role token leaked into content: {result['content']!r}"
 
     def test_feed_sequence_separates_analysis_and_final(self):
         """Batch routing separates Harmony analysis and final channels."""

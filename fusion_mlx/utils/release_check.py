@@ -1,7 +1,6 @@
 """Release checking utilities for fusion-mlx."""
 
 
-
 def select_latest_stable_release(version_list: list[str] | None = None) -> str:
     """Select the latest stable release from a list of versions.
 

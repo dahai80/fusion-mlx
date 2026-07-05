@@ -32,13 +32,12 @@ import pytest
 
 mx = pytest.importorskip("mlx.core")
 
-from mlx_lm.models.cache import KVCache, QuantizedKVCache  # noqa: E402
-
 from fusion_mlx.positioned_kv_cache import (  # noqa: E402
     PositionedKVCache,
     PositionedQuantizedKVCache,
     positioned_update_and_fetch,
 )
+from mlx_lm.models.cache import KVCache, QuantizedKVCache  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Test fixtures

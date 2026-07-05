@@ -6,7 +6,6 @@ from __future__ import annotations
 from unittest.mock import MagicMock
 
 import mlx.core as mx
-import pytest
 
 from fusion_mlx.mllm_batch_generator import (
     MLLMBatch,

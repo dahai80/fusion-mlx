@@ -237,9 +237,9 @@ def test_stream_response_format_without_logprobs_strips_fences_in_buffered_chunk
     text_chunks = [
         e for e in events if e.get("choices") and e["choices"][0].get("text")
     ]
-    assert len(text_chunks) >= 1, (
-        f"expected at least one text-carrying chunk; got events={events!r}"
-    )
+    assert (
+        len(text_chunks) >= 1
+    ), f"expected at least one text-carrying chunk; got events={events!r}"
     # The buffered emit is the LAST text-carrying chunk; its text
     # field must be the fence-stripped payload.
     final = text_chunks[-1]

@@ -8,9 +8,10 @@ import sys
 import types
 from types import SimpleNamespace
 
+from fusion_mlx.adapter.output_parser import detect_output_parser
+
 from fusion_mlx.adapter.gemma4 import Gemma4OutputParserSession
 from fusion_mlx.adapter.harmony import load_harmony_gpt_oss_encoding
-from fusion_mlx.adapter.output_parser import detect_output_parser
 
 
 class FakeDetokenizer:
@@ -253,13 +254,17 @@ class TestCohere2MoeOutputParserSession:
                         name="edit",
                         arguments=literal_newline_args,
                     )
-                    return SimpleNamespace(content=None, reasoning=None, tool_calls=[tc])
+                    return SimpleNamespace(
+                        content=None, reasoning=None, tool_calls=[tc]
+                    )
                 return SimpleNamespace(content=None, reasoning=None, tool_calls=[])
 
             def flush_partials(self):
                 return SimpleNamespace(content=None, reasoning=None, tool_calls=[])
 
-        import types, json as _json
+        import json as _json
+        import types
+
         module = types.ModuleType("cohere_melody")
         module.PyFilter = _FakeMelodyFilterLiteralNewline
         module.PyFilterOptions = _FakeMelodyOptions
@@ -267,6 +272,7 @@ class TestCohere2MoeOutputParserSession:
 
         tokenizer = CohereTokenizer({"TC": "TC"})
         from fusion_mlx.adapter.output_parser import Cohere2MoeOutputParserSession
+
         session = Cohere2MoeOutputParserSession.__new__(Cohere2MoeOutputParserSession)
         session._tokenizer = tokenizer
         session._melody = _FakeMelodyFilterLiteralNewline(None)

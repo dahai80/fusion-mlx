@@ -53,9 +53,7 @@ _HARMONY_SPECIAL_TOKENS = [
 ]
 
 
-def preprocess_harmony_messages(
-    messages: list[dict[str, Any]]
-) -> list[dict[str, Any]]:
+def preprocess_harmony_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """
     Preprocess messages for Harmony (gpt-oss) models.
 
@@ -96,7 +94,9 @@ def preprocess_harmony_messages(
                     msg = {**msg, "content": content}
             elif content is not None:
                 # Non-string content (e.g., list) - log but don't modify
-                logger.debug(f"Assistant message has non-string content: {type(content)}")
+                logger.debug(
+                    f"Assistant message has non-string content: {type(content)}"
+                )
 
             result.append(msg)
 
@@ -198,9 +198,7 @@ class HarmonyStreamingParser:
         for t in start_tokens:
             parser.process(t)
 
-    def process_token(
-        self, token_id: int
-    ) -> tuple[str, int | None, int | None, bool]:
+    def process_token(self, token_id: int) -> tuple[str, int | None, int | None, bool]:
         """
         Process a single token and return routing information.
 
@@ -322,7 +320,9 @@ class HarmonyStreamingParser:
         except Exception as e:
             # Can fail if message is incomplete (e.g., missing <|end|>)
             # This is expected in some cases, so just log and continue
-            logger.debug(f"Harmony parser process_eos failed (expected for incomplete messages): {e}")
+            logger.debug(
+                f"Harmony parser process_eos failed (expected for incomplete messages): {e}"
+            )
 
         if self._in_think_tag:
             self._in_think_tag = False
@@ -383,7 +383,9 @@ def parse_tool_calls_from_tokens(
 
         # Decode tokens for debugging
         decoded_text = encoding.decode(full_token_ids)
-        logger.info(f"parse_tool_calls input ({len(full_token_ids)} tokens): {decoded_text[:300]}...")
+        logger.info(
+            f"parse_tool_calls input ({len(full_token_ids)} tokens): {decoded_text[:300]}..."
+        )
 
         messages = encoding.parse_messages_from_completion_tokens(
             full_token_ids,

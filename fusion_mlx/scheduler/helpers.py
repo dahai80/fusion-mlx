@@ -6,9 +6,7 @@ from .monkeypatches import _default_generation_stream
 from .types import _mx_buffer_access_lock
 
 
-def _should_clear_on_fragmentation(
-    frag_ratio: float, threshold: float = 0.7
-) -> bool:
+def _should_clear_on_fragmentation(frag_ratio: float, threshold: float = 0.7) -> bool:
     """Return False when fragmentation is too high to safely clear cache.
 
     Clearing the Metal buffer cache on a highly fragmented heap forces

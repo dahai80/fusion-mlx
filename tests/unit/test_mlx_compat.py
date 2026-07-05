@@ -341,9 +341,9 @@ def test_fallback_engages_when_probe_raises(monkeypatch):
     fallback = mx.new_thread_local_stream(device)
     expected = mx.default_stream(device)
     # mx.default_stream is comparable by repr; compare structurally.
-    assert repr(fallback) == repr(expected), (
-        f"M5 fallback should return mx.default_stream({device!r}); got {fallback!r}"
-    )
+    assert repr(fallback) == repr(
+        expected
+    ), f"M5 fallback should return mx.default_stream({device!r}); got {fallback!r}"
 
 
 def test_fallback_does_not_engage_on_unrelated_runtime_error(monkeypatch):

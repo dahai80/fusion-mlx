@@ -16,13 +16,13 @@ Usage:
         logger.error(f"Scheduler error: {e}")
 """
 
-from typing import Any, Optional
+from typing import Any
 
 
 class FusionMLXError(Exception):
     """Base exception for all fusion-mlx errors."""
 
-    def __init__(self, message: str, details: Optional[dict] = None):
+    def __init__(self, message: str, details: dict | None = None):
         super().__init__(message)
         self.message = message
         self.details = details or {}
@@ -71,9 +71,9 @@ class CacheCorruptionError(CacheError):
     def __init__(
         self,
         message: str,
-        request_id: Optional[str] = None,
-        block_id: Optional[int] = None,
-        details: Optional[dict] = None,
+        request_id: str | None = None,
+        block_id: int | None = None,
+        details: dict | None = None,
     ):
         super().__init__(message, details)
         self.request_id = request_id
@@ -90,8 +90,8 @@ class CacheMissError(CacheError):
     def __init__(
         self,
         message: str,
-        key: Optional[Any] = None,
-        details: Optional[dict] = None,
+        key: Any | None = None,
+        details: dict | None = None,
     ):
         super().__init__(message, details)
         self.key = key
@@ -118,9 +118,9 @@ class CacheStorageError(CacheError):
     def __init__(
         self,
         message: str,
-        path: Optional[str] = None,
-        operation: Optional[str] = None,
-        details: Optional[dict] = None,
+        path: str | None = None,
+        operation: str | None = None,
+        details: dict | None = None,
     ):
         super().__init__(message, details)
         self.path = path
@@ -157,8 +157,8 @@ class RequestError(SchedulerError):
     def __init__(
         self,
         message: str,
-        request_id: Optional[str] = None,
-        details: Optional[dict] = None,
+        request_id: str | None = None,
+        details: dict | None = None,
     ):
         super().__init__(message, details)
         self.request_id = request_id
@@ -204,7 +204,7 @@ class SchedulerQueueFullError(SchedulerError):
         self,
         current_depth: int,
         max_depth: int,
-        details: Optional[dict] = None,
+        details: dict | None = None,
     ):
         super().__init__(
             f"Scheduler waiting queue full: {current_depth} >= {max_depth}",
@@ -248,8 +248,8 @@ class ModelLoadError(ModelError):
     def __init__(
         self,
         message: str,
-        model_name: Optional[str] = None,
-        details: Optional[dict] = None,
+        model_name: str | None = None,
+        details: dict | None = None,
     ):
         super().__init__(message, details)
         self.model_name = model_name
@@ -289,8 +289,8 @@ class InvalidRequestError(APIError):
     def __init__(
         self,
         message: str,
-        field: Optional[str] = None,
-        details: Optional[dict] = None,
+        field: str | None = None,
+        details: dict | None = None,
     ):
         super().__init__(message, details)
         self.field = field
@@ -324,8 +324,8 @@ class ConfigurationError(OMLXError):
     def __init__(
         self,
         message: str,
-        config_key: Optional[str] = None,
-        details: Optional[dict] = None,
+        config_key: str | None = None,
+        details: dict | None = None,
     ):
         super().__init__(message, details)
         self.config_key = config_key
@@ -347,9 +347,9 @@ class OutOfMemoryError(OMLXMemoryError):
     def __init__(
         self,
         message: str,
-        requested_bytes: Optional[int] = None,
-        available_bytes: Optional[int] = None,
-        details: Optional[dict] = None,
+        requested_bytes: int | None = None,
+        available_bytes: int | None = None,
+        details: dict | None = None,
     ):
         super().__init__(message, details)
         self.requested_bytes = requested_bytes
@@ -374,10 +374,10 @@ class PrefillMemoryExceededError(OMLXMemoryError):
     def __init__(
         self,
         message: str,
-        request_id: Optional[str] = None,
-        estimated_bytes: Optional[int] = None,
-        limit_bytes: Optional[int] = None,
-        details: Optional[dict] = None,
+        request_id: str | None = None,
+        estimated_bytes: int | None = None,
+        limit_bytes: int | None = None,
+        details: dict | None = None,
     ):
         super().__init__(message, details)
         self.request_id = request_id
@@ -402,20 +402,17 @@ class ModelNotFoundError(EnginePoolError):
     def __init__(
         self,
         model_id: str,
-        available_models: Optional[list[str]] = None,
-        message: Optional[str] = None,
+        available_models: list[str] | None = None,
+        message: str | None = None,
     ):
         self.model_id = model_id
         self.available_models = available_models or []
         if message is None:
             models_str = (
-                ", ".join(self.available_models)
-                if self.available_models
-                else "(none)"
+                ", ".join(self.available_models) if self.available_models else "(none)"
             )
             message = (
-                f"Model '{model_id}' not found. "
-                f"Available models: {models_str}"
+                f"Model '{model_id}' not found. " f"Available models: {models_str}"
             )
         super().__init__(message)
 
@@ -428,7 +425,7 @@ class ModelTooLargeError(EnginePoolError):
         model_id: str,
         model_size: int,
         ceiling: int,
-        message: Optional[str] = None,
+        message: str | None = None,
     ):
         self.model_id = model_id
         self.model_size = model_size
@@ -452,22 +449,19 @@ class InsufficientMemoryError(EnginePoolError):
         self,
         required: int = 0,
         current: int = 0,
-        message: Optional[str] = None,
+        message: str | None = None,
     ):
         self.required = required
         self.current = current
         if message is None:
-            message = (
-                f"Insufficient memory: required {required}, "
-                f"current {current}"
-            )
+            message = f"Insufficient memory: required {required}, " f"current {current}"
         super().__init__(message)
 
 
 class ModelLoadingError(EnginePoolError):
     """Raised when a model is already being loaded."""
 
-    def __init__(self, model_id: str, message: Optional[str] = None):
+    def __init__(self, model_id: str, message: str | None = None):
         self.model_id = model_id
         if message is None:
             message = f"Model '{model_id}' is already being loaded"

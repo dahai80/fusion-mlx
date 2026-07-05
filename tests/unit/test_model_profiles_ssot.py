@@ -63,9 +63,9 @@ def test_every_alias_has_explicit_profile_fields() -> None:
         raw = json.load(f)
     for alias, value in raw.items():
         assert "is_hybrid" in value, f"{alias!r}: missing is_hybrid"
-        assert "supports_spec_decode" in value, (
-            f"{alias!r}: missing supports_spec_decode"
-        )
+        assert (
+            "supports_spec_decode" in value
+        ), f"{alias!r}: missing supports_spec_decode"
         assert isinstance(value["is_hybrid"], bool)
         assert isinstance(value["supports_spec_decode"], bool)
 
@@ -235,9 +235,9 @@ def test_detect_model_config_alias_wins_over_regex_when_they_disagree() -> None:
     with patch.dict(ma._aliases, {"qwen3.5-4b-4bit": forged}):
         cfg = detect_model_config("qwen3.5-4b-4bit")
     assert cfg is not None
-    assert cfg.tool_call_parser == "ALIAS_WINS", (
-        "regex shadowed the alias profile — alias-first lookup is broken"
-    )
+    assert (
+        cfg.tool_call_parser == "ALIAS_WINS"
+    ), "regex shadowed the alias profile — alias-first lookup is broken"
 
 
 # ---- Backward compat with legacy bare-string form ------------------------
@@ -355,9 +355,9 @@ def test_qwen35_family_split_dense_vs_moe_hybrid_flag() -> None:
     # Every dense alias must pin is_hybrid_explicit=True so the runtime
     # probe respects the JSON declaration.
     missing_explicit = [a for a in dense if not family[a].is_hybrid_explicit]
-    assert not missing_explicit, (
-        f"qwen3.5-* dense aliases missing is_hybrid_explicit=True: {missing_explicit}"
-    )
+    assert (
+        not missing_explicit
+    ), f"qwen3.5-* dense aliases missing is_hybrid_explicit=True: {missing_explicit}"
 
 
 def test_per_alias_schema_allows_independent_overrides() -> None:

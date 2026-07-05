@@ -13,7 +13,6 @@ import logging
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
 
 from .auth import (
     require_admin,
@@ -24,8 +23,8 @@ logger = logging.getLogger(__name__)
 PRESET_REMOTE_URL = "http://bench.dpdns.org/assets/omlx_preset.json"
 
 
-
 from .helpers import (
+    _oq_manager,
     _paroquant_compat_for_model,
 )
 from .models import (
@@ -46,6 +45,7 @@ def _validate_model_path(model_path: str) -> str:
         )
     return str(resolved)
 
+
 # =============================================================================
 # oQ Quantization API Routes
 # =============================================================================
@@ -55,9 +55,7 @@ def _validate_model_path(model_path: str) -> str:
 async def list_oq_models(is_admin: bool = Depends(require_admin)):
     """List non-quantized models available for oQ quantization."""
     if _oq_manager is None:
-        raise HTTPException(
-            status_code=503, detail="oQ quantizer not initialized"
-        )
+        raise HTTPException(status_code=503, detail="oQ quantizer not initialized")
     source_models, all_models = await _oq_manager.list_quantizable_models()
     return {"models": source_models, "all_models": all_models}
 
@@ -189,9 +187,7 @@ async def start_oq_quantization(
 ):
     """Start an oQ quantization task (or MLX recipe-based conversion)."""
     if _oq_manager is None:
-        raise HTTPException(
-            status_code=503, detail="oQ quantizer not initialized"
-        )
+        raise HTTPException(status_code=503, detail="oQ quantizer not initialized")
     is_recipe = bool(request.recipe)
     if not is_recipe and request.oq_level not in (2, 3, 3.5, 4, 5, 6, 8):
         raise HTTPException(
@@ -234,45 +230,30 @@ async def start_oq_quantization(
 async def list_oq_tasks(is_admin: bool = Depends(require_admin)):
     """List all quantization tasks."""
     if _oq_manager is None:
-        raise HTTPException(
-            status_code=503, detail="oQ quantizer not initialized"
-        )
+        raise HTTPException(status_code=503, detail="oQ quantizer not initialized")
     return {"tasks": _oq_manager.get_tasks()}
 
 
 @_router.post("/api/oq/cancel/{task_id}")
-async def cancel_oq_task(
-    task_id: str, is_admin: bool = Depends(require_admin)
-):
+async def cancel_oq_task(task_id: str, is_admin: bool = Depends(require_admin)):
     """Cancel an active quantization task."""
     if _oq_manager is None:
-        raise HTTPException(
-            status_code=503, detail="oQ quantizer not initialized"
-        )
+        raise HTTPException(status_code=503, detail="oQ quantizer not initialized")
     success = await _oq_manager.cancel_quantization(task_id)
     if not success:
-        raise HTTPException(
-            status_code=404, detail="Task not found or not cancellable"
-        )
+        raise HTTPException(status_code=404, detail="Task not found or not cancellable")
     return {"success": True}
 
 
 @_router.delete("/api/oq/task/{task_id}")
-async def remove_oq_task(
-    task_id: str, is_admin: bool = Depends(require_admin)
-):
+async def remove_oq_task(task_id: str, is_admin: bool = Depends(require_admin)):
     """Remove a completed/failed/cancelled task."""
     if _oq_manager is None:
-        raise HTTPException(
-            status_code=503, detail="oQ quantizer not initialized"
-        )
+        raise HTTPException(status_code=503, detail="oQ quantizer not initialized")
     success = _oq_manager.remove_task(task_id)
     if not success:
-        raise HTTPException(
-            status_code=404, detail="Task not found or still active"
-        )
+        raise HTTPException(status_code=404, detail="Task not found or still active")
     return {"success": True}
-
 
 
 router = _router

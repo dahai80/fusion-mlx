@@ -7,6 +7,7 @@ OpenAI and Anthropic API formats.
 """
 
 import json
+
 import pytest
 
 from fusion_mlx.api.adapters.sse_formatter import (
@@ -99,15 +100,7 @@ class TestOpenAISSEFormatter:
 
     def test_format_event_nested_objects(self, formatter):
         """Test formatting event with deeply nested objects."""
-        data = {
-            "level1": {
-                "level2": {
-                    "level3": {
-                        "value": "deep"
-                    }
-                }
-            }
-        }
+        data = {"level1": {"level2": {"level3": {"value": "deep"}}}}
 
         result = formatter.format_event("", data)
 

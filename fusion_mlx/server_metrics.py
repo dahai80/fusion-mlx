@@ -63,7 +63,9 @@ class ServerMetrics:
                 if prefill_duration > 0 and prompt_tokens > 0:
                     tps = prompt_tokens / prefill_duration
                     old_avg = stats["avg_prefill_tps"]
-                    stats["avg_prefill_tps"] = (old_avg * (stats["requests"] - 1) + tps) / stats["requests"]
+                    stats["avg_prefill_tps"] = (
+                        old_avg * (stats["requests"] - 1) + tps
+                    ) / stats["requests"]
 
     def to_dict(self) -> dict:
         """Return a JSON-safe dict, excluding internal lock."""

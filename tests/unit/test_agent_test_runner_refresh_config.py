@@ -26,6 +26,7 @@ from fusion_mlx.agents.base import (
     AgentStreamingSpec,
     AgentTestingSpec,
 )
+
 from fusion_mlx.agents.testing import AgentTestRunner
 
 

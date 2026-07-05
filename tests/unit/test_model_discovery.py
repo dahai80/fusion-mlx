@@ -1,7 +1,6 @@
-import pytest
-from pathlib import Path
-from unittest.mock import Mock, patch, MagicMock
 import json
+
+import pytest
 
 from fusion_mlx.pool.model_discovery import (
     DiscoveredModel,
@@ -61,7 +60,10 @@ class TestDetectModelType:
     def test_detect_audio_stt_model(self, tmp_path):
         model_dir = tmp_path / "test-audio"
         model_dir.mkdir()
-        config = {"model_type": "whisper", "architectures": ["WhisperForConditionalGeneration"]}
+        config = {
+            "model_type": "whisper",
+            "architectures": ["WhisperForConditionalGeneration"],
+        }
         (model_dir / "config.json").write_text(json.dumps(config))
         result = detect_model_type(model_dir)
         assert result in ("audio_stt", "audio_tts", "audio_sts", "llm")

@@ -19,7 +19,6 @@ logger = logging.getLogger(__name__)
 PRESET_REMOTE_URL = "http://bench.dpdns.org/assets/omlx_preset.json"
 
 
-
 # =============================================================================
 # Router and Templates
 # =============================================================================

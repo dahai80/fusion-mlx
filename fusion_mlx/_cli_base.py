@@ -4,9 +4,8 @@ import argparse
 import os
 import sys
 
-from fusion_mlx._completion import alias_completer
-
 MIRROR_DEFAULT = "https://models.fusionmlx.com"
+
 
 def _log_level_choice(value: str) -> str:
     """Argparse ``type`` callable: normalize to upper-case so

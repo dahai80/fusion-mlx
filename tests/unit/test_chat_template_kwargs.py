@@ -22,11 +22,12 @@ from __future__ import annotations
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from fusion_mlx.api.models import ChatCompletionRequest
 from fusion_mlx.service.helpers import (
     _extract_thinking_from_request,
     _resolve_enable_thinking,
 )
+
+from fusion_mlx.api.models import ChatCompletionRequest
 
 
 def _fake_cfg(no_thinking: bool = False) -> SimpleNamespace:

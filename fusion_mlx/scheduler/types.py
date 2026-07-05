@@ -4,8 +4,6 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
-from ..exceptions import PrefillMemoryExceededError
-
 
 @dataclass
 class _VLMMTPDecodeState:
@@ -16,7 +14,7 @@ class _VLMMTPDecodeState:
     into ``_process_batch_responses`` via a synthesized ``_VLMMTPResponse``.
     """
 
-    generator: Any   # Generator[int, None, None] from run_vlm_mtp_decode
+    generator: Any  # Generator[int, None, None] from run_vlm_mtp_decode
     request: Any
     prompt_cache: list[Any]
     sampler: Callable[[Any], Any]
@@ -138,8 +136,6 @@ class _PreflightRejection:
     limit_bytes: int
 
 
-
-
 @dataclass
 class _PrefillState:
     """Intermediate state for a request undergoing chunked prefill.
@@ -150,15 +146,15 @@ class _PrefillState:
     """
 
     request: Any
-    cache: list   # Accumulated prompt_cache (mutated in-place by each chunk)
-    tokens_remaining: Any   # mx.array shape (1, N) — tokens not yet prefilled
-    last_token: list   # tokens[-1:] — passed to batch_generator.insert()
-    tokens_processed: int   # Cumulative count for boundary snapshot math
-    base_size: int   # Prefix cache offset at prefill start (for alignment)
-    emitted_boundaries: dict   # {request_id: int} — last emitted boundary count
-    boundary_enabled: bool   # Whether boundary snapshots are active
-    block_size: int   # Copied from config.paged_cache_block_size
-    total_length: int   # len(original tokens) for completeness
+    cache: list  # Accumulated prompt_cache (mutated in-place by each chunk)
+    tokens_remaining: Any  # mx.array shape (1, N) — tokens not yet prefilled
+    last_token: list  # tokens[-1:] — passed to batch_generator.insert()
+    tokens_processed: int  # Cumulative count for boundary snapshot math
+    base_size: int  # Prefix cache offset at prefill start (for alignment)
+    emitted_boundaries: dict  # {request_id: int} — last emitted boundary count
+    boundary_enabled: bool  # Whether boundary snapshots are active
+    block_size: int  # Copied from config.paged_cache_block_size
+    total_length: int  # len(original tokens) for completeness
     # Pre-built insert-time params (set by _schedule_waiting before enqueuing)
     sampler: Any = None
     sm: Any = None
@@ -176,11 +172,11 @@ class _BoundarySnapshotProvider:
 
     def __init__(
         self,
-        store: Any,   # Optional[BoundarySnapshotSSDStore]
+        store: Any,  # Optional[BoundarySnapshotSSDStore]
         request_id: str,
         valid_tcs: list[int],
         in_memory_snapshots: dict[int, Any],
-        extract_fn: Any,   # Callable — Scheduler._extract_cache_states
+        extract_fn: Any,  # Callable — Scheduler._extract_cache_states
     ) -> None:
         self._store = store
         self._request_id = request_id

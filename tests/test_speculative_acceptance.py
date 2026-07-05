@@ -1,5 +1,3 @@
-
-
 from fusion_mlx.speculative.prompt_lookup import (
     PromptLookupDecoder,
 )
@@ -153,12 +151,13 @@ class TestNggramMatching:
 
     def test_best_continuation_selected(self):
         dec = PromptLookupDecoder(num_draft_tokens=3, ngram_size=2, min_matches=1)
-          # (1,2) at pos 0 -> continuation [3,4,5]
-          # (1,2) at pos 6 -> continuation empty
+        # (1,2) at pos 0 -> continuation [3,4,5]
+        # (1,2) at pos 6 -> continuation empty
         dec.add_prompt_tokens([1, 2, 3, 4, 5, 6, 1, 2])
         drafts = dec.get_draft_tokens()
-          # Best continuation is [3,4,5] (length 3, from pos 0)
+        # Best continuation is [3,4,5] (length 3, from pos 0)
         assert drafts == [3, 4, 5]
+
     def test_draft_capped_at_num_draft_tokens(self):
         dec = PromptLookupDecoder(num_draft_tokens=2, ngram_size=2, min_matches=1)
         dec.add_prompt_tokens([1, 2, 3, 4, 5, 1, 2])

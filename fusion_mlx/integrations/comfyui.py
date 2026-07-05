@@ -165,7 +165,9 @@ NODE_DISPLAY_NAME = "Fusion MLX Image Generate"
     ) -> None:
         """Install the custom node and generate default workflow."""
         if not self._comfyui_dir:
-            print("Warning: ComfyUI directory not found. Installing node to ~/.fusion-mlx/comfyui-node/")
+            print(
+                "Warning: ComfyUI directory not found. Installing node to ~/.fusion-mlx/comfyui-node/"
+            )
             node_dir = Path.home() / ".fusion-mlx" / "comfyui-node"
             node_dir.mkdir(parents=True, exist_ok=True)
         else:

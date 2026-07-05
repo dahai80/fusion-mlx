@@ -122,7 +122,7 @@ def test_is_gemma4_model_uses_hf_hub_download_not_snapshot(monkeypatch) -> None:
     # Hand in a HF repo id (not a local path) so the cache-miss branch fires.
     gemma_mod.is_gemma4_model("mlx-community/Qwen3.5-35B-A3B-8bit")
 
-    assert called.get("filename") == "config.json", (
-        f"Expected hf_hub_download with filename='config.json'; got called={called}"
-    )
+    assert (
+        called.get("filename") == "config.json"
+    ), f"Expected hf_hub_download with filename='config.json'; got called={called}"
     assert called.get("repo_id") == "mlx-community/Qwen3.5-35B-A3B-8bit"

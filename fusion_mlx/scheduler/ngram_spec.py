@@ -18,7 +18,6 @@ Token flow:
 import copy
 import logging
 import time
-from typing import Any
 
 import mlx.core as mx
 
@@ -27,9 +26,13 @@ from ..speculative.ngram_predictor import NGramPredictor
 
 logger = logging.getLogger(__name__)
 
-NGRAM_SPEC_ENABLED = __import__("os").environ.get("FUSION_NGRAM_SPEC_ENABLED", "1") == "1"
+NGRAM_SPEC_ENABLED = (
+    __import__("os").environ.get("FUSION_NGRAM_SPEC_ENABLED", "1") == "1"
+)
 NGRAM_SPEC_WARMUP = int(__import__("os").environ.get("FUSION_NGRAM_SPEC_WARMUP", "5"))
-NGRAM_SPEC_MIN_ACCEPT = float(__import__("os").environ.get("FUSION_NGRAM_SPEC_MIN_ACCEPT", "0.05"))
+NGRAM_SPEC_MIN_ACCEPT = float(
+    __import__("os").environ.get("FUSION_NGRAM_SPEC_MIN_ACCEPT", "0.05")
+)
 
 
 class NGramSpecState:
@@ -88,13 +91,23 @@ class NGramSpecState:
             avg_rate = sum(self._recent_rates) / len(self._recent_rates)
             if avg_rate < NGRAM_SPEC_MIN_ACCEPT and not self._paused:
                 self._paused = True
-                logger.info("ngram_spec: pausing — avg rate %.1f%% < %.1f%%", avg_rate * 100, NGRAM_SPEC_MIN_ACCEPT * 100)
+                logger.info(
+                    "ngram_spec: pausing — avg rate %.1f%% < %.1f%%",
+                    avg_rate * 100,
+                    NGRAM_SPEC_MIN_ACCEPT * 100,
+                )
             elif avg_rate >= NGRAM_SPEC_MIN_ACCEPT and self._paused:
                 self._paused = False
-                logger.info("ngram_spec: resuming — avg rate %.1f%% recovered", avg_rate * 100)
+                logger.info(
+                    "ngram_spec: resuming — avg rate %.1f%% recovered", avg_rate * 100
+                )
 
     def get_stats(self) -> dict:
-        rate = self.total_draft_accepted / self.total_draft_proposed if self.total_draft_proposed > 0 else 0.0
+        rate = (
+            self.total_draft_accepted / self.total_draft_proposed
+            if self.total_draft_proposed > 0
+            else 0.0
+        )
         stats = {
             "spec_steps": self.total_spec_steps,
             "draft_proposed": self.total_draft_proposed,
@@ -218,7 +231,9 @@ def ngram_spec_step(
     with mx.stream(scheduler._stream):
         t0 = time.perf_counter()
         verified, n_accepted, cache_tokens_processed = _verify_drafts(
-            model, draft_tokens, prompt_cache,
+            model,
+            draft_tokens,
+            prompt_cache,
             sampled_from_regular=sampled_from_regular,
         )
     dt = time.perf_counter() - t0
@@ -236,6 +251,7 @@ def ngram_spec_step(
                     mx.eval(replay_logits)
         if n_rejected > 0:
             from mlx_lm.models import cache as mlx_cache
+
             mlx_cache.trim_prompt_cache(prompt_cache, n_rejected)
 
     spec_state.record_result(n_accepted, K)
@@ -245,9 +261,13 @@ def ngram_spec_step(
         logger.info(
             "ngram_spec: step=%d, K=%d, accepted=%d/%d (%.1f%%), "
             "verify=%.1fms, rate=%.1f%%",
-            spec_state.total_spec_steps, K,
-            n_accepted, K, 100.0 * n_accepted / K if K else 0,
-            dt * 1000, stats["acceptance_rate"] * 100,
+            spec_state.total_spec_steps,
+            K,
+            n_accepted,
+            K,
+            100.0 * n_accepted / K if K else 0,
+            dt * 1000,
+            stats["acceptance_rate"] * 100,
         )
 
     if not verified:
@@ -281,7 +301,11 @@ def ngram_spec_step(
         else:
             new_text = scheduler.tokenizer.decode([token])
 
-        eos_ids = scheduler.tokenizer.eos_token_id if hasattr(scheduler.tokenizer, "eos_token_id") else []
+        eos_ids = (
+            scheduler.tokenizer.eos_token_id
+            if hasattr(scheduler.tokenizer, "eos_token_id")
+            else []
+        )
         if isinstance(eos_ids, int):
             eos_ids = [eos_ids]
         is_eos = token in eos_ids
@@ -301,8 +325,10 @@ def ngram_spec_step(
 
         if is_finished:
             from ..request import RequestStatus
+
             request.set_finished(
-                RequestStatus.FINISHED_STOPPED if is_eos
+                RequestStatus.FINISHED_STOPPED
+                if is_eos
                 else RequestStatus.FINISHED_LENGTH_CAPPED
             )
             out.output_token_ids = list(request.output_token_ids)

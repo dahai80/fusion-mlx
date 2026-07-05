@@ -26,7 +26,8 @@ from __future__ import annotations
 import inspect
 import logging
 import math
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from collections.abc import Callable
+from typing import Any
 
 import mlx.core as mx
 
@@ -167,16 +168,14 @@ def _nemotron_h_extract_queries(attn, x, cache=None, **kwargs):
 # ---------------------------------------------------------------------------
 
 
-def _find_attention_layers(model) -> List[Tuple[int, Any]]:
+def _find_attention_layers(model) -> list[tuple[int, Any]]:
     """Find all full-attention layers across architectures.
 
     Supports self_attn (standard) and block_type=="*" (Nemotron-H).
     """
     results = []
     for idx, layer in enumerate(model.layers):
-        if hasattr(layer, "self_attn"):
-            results.append((idx, layer))
-        elif getattr(layer, "block_type", None) == "*":
+        if hasattr(layer, "self_attn") or getattr(layer, "block_type", None) == "*":
             results.append((idx, layer))
     return results
 
@@ -198,7 +197,7 @@ def _set_attn_module(layer, module):
         layer.mixer = module
 
 
-def _build_layer_to_cache_map(model) -> Dict[int, int]:
+def _build_layer_to_cache_map(model) -> dict[int, int]:
     """Build layer_idx → cache_idx mapping.
 
     Standard models: identity. Nemotron-H: compacted (only M/* layers).
@@ -229,14 +228,14 @@ def _build_layer_to_cache_map(model) -> Dict[int, int]:
     return layer_to_cache
 
 
-def _linear_output_dims(linear) -> Optional[int]:
+def _linear_output_dims(linear) -> int | None:
     """Best-effort output dimension lookup for Linear / QuantizedLinear layers."""
     if linear is None:
         return None
     if hasattr(linear, "out_features"):
-        return getattr(linear, "out_features")
+        return linear.out_features
     if hasattr(linear, "output_dims"):
-        return getattr(linear, "output_dims")
+        return linear.output_dims
     weight = getattr(linear, "weight", None)
     if weight is not None and getattr(weight, "shape", None):
         return weight.shape[0]
@@ -453,10 +452,10 @@ def score_tokens(
     temp: float = 0.6,
     top_p: float = 0.95,
     prefill_step_size: int = 2048,
-    query_extractor: Optional[Callable] = None,
-    existing_cache: Optional[List[Any]] = None,
-    progress_callback: Optional[Callable[[int, int, str], None]] = None,
-) -> Tuple[mx.array, Any]:
+    query_extractor: Callable | None = None,
+    existing_cache: list[Any] | None = None,
+    progress_callback: Callable[[int, int, str], None] | None = None,
+) -> tuple[mx.array, Any]:
     """Score token importance using attention patterns on a draft model.
 
     Pipeline:
@@ -514,7 +513,11 @@ def score_tokens(
                 cache,
                 step_size=prefill_step_size,
                 progress_callback=(
-                    (lambda processed, total: progress_callback(cached_len + processed, n_prompt, "scoring"))
+                    (
+                        lambda processed, total: progress_callback(
+                            cached_len + processed, n_prompt, "scoring"
+                        )
+                    )
                     if progress_callback is not None
                     else None
                 ),
@@ -531,7 +534,11 @@ def score_tokens(
             cache,
             step_size=prefill_step_size,
             progress_callback=(
-                (lambda processed, total: progress_callback(processed, total, "scoring"))
+                (
+                    lambda processed, total: progress_callback(
+                        processed, total, "scoring"
+                    )
+                )
                 if progress_callback is not None
                 else None
             ),
@@ -766,7 +773,7 @@ def sparse_prefill(
     cache,
     step_size: int = 2048,
     position_offset: int = 0,
-    progress_callback: Optional[Callable[[int, int], None]] = None,
+    progress_callback: Callable[[int, int], None] | None = None,
 ) -> mx.array:
     """Prefill model cache with selected tokens at their original positions.
 

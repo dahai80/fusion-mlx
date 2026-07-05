@@ -37,7 +37,7 @@ from __future__ import annotations
 import os
 import uuid
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 import yaml
@@ -128,7 +128,7 @@ def record_consent(consent: bool, *, rapid_mlx_version: str) -> ConsentState:
     """
     state = ConsentState(
         consent=consent,
-        prompted_at=datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        prompted_at=datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
         prompted_version=rapid_mlx_version,
     )
     path = consent_path()

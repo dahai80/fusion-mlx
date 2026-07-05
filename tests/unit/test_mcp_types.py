@@ -285,7 +285,10 @@ class TestMCPTool:
         assert openai_format["type"] == "function"
         assert openai_format["function"]["name"] == "weather__get_forecast"
         assert openai_format["function"]["description"] == "Get weather forecast"
-        assert openai_format["function"]["parameters"]["properties"]["city"]["type"] == "string"
+        assert (
+            openai_format["function"]["parameters"]["properties"]["city"]["type"]
+            == "string"
+        )
 
 
 class TestMCPToolResult:

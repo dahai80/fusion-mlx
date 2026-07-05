@@ -23,7 +23,6 @@ logger = logging.getLogger(__name__)
 PRESET_REMOTE_URL = "http://bench.dpdns.org/assets/omlx_preset.json"
 
 
-
 from .helpers import (
     _dflash_compat_for_model,
     _get_engine_pool,
@@ -100,7 +99,9 @@ async def list_models(is_admin: bool = Depends(require_admin)):
             "loaded": model_info.get("loaded", False),
             "is_loading": model_info.get("is_loading", False),
             "estimated_size": model_info.get("estimated_size", 0),
-            "estimated_size_formatted": format_size(model_info.get("estimated_size", 0)),
+            "estimated_size_formatted": format_size(
+                model_info.get("estimated_size", 0)
+            ),
             "actual_size": model_info.get("actual_size") or 0,
             "actual_size_formatted": (
                 format_size(model_info.get("actual_size", 0))
@@ -108,7 +109,9 @@ async def list_models(is_admin: bool = Depends(require_admin)):
                 else None
             ),
             "pinned": model_info.get("pinned", False),
-            "is_default": server_state.default_model == model_id if server_state else False,
+            "is_default": (
+                server_state.default_model == model_id if server_state else False
+            ),
             "engine_type": model_info.get("engine_type", "batched"),
             "model_type": model_info.get("model_type", "llm"),
             "config_model_type": model_info.get("config_model_type", ""),
@@ -154,8 +157,6 @@ async def unload_model(
     return {"status": "ok", "model_id": model_id, "message": f"Unloaded {model_id}"}
 
 
-
-
 @_router.post("/api/models/{model_id}/load")
 async def load_model(
     model_id: str,
@@ -170,9 +171,15 @@ async def load_model(
     if entry is None:
         raise HTTPException(status_code=404, detail=f"Model not found: {model_id}")
     if entry.engine is not None:
-        return {"status": "ok", "model_id": model_id, "message": f"Already loaded: {model_id}"}
+        return {
+            "status": "ok",
+            "model_id": model_id,
+            "message": f"Already loaded: {model_id}",
+        }
     if entry.is_loading:
-        raise HTTPException(status_code=409, detail=f"Model is already loading: {model_id}")
+        raise HTTPException(
+            status_code=409, detail=f"Model is already loading: {model_id}"
+        )
 
     try:
         await engine_pool.get_engine(model_id)
@@ -253,7 +260,15 @@ async def update_model_settings(
                     )
         current_settings.model_alias = alias_value
     if "model_type_override" in sent:
-        valid_types = {"llm", "vlm", "embedding", "reranker", "audio_stt", "audio_tts", "audio_sts"}
+        valid_types = {
+            "llm",
+            "vlm",
+            "embedding",
+            "reranker",
+            "audio_stt",
+            "audio_tts",
+            "audio_sts",
+        }
         # Treat empty string as None (auto-detect)
         override_value = request.model_type_override or None
         if override_value is not None and override_value not in valid_types:
@@ -305,15 +320,21 @@ async def update_model_settings(
     if "max_tool_result_tokens" in sent:
         # 0 means disable (reset to None)
         current_settings.max_tool_result_tokens = (
-            request.max_tool_result_tokens if request.max_tool_result_tokens and request.max_tool_result_tokens > 0 else None
+            request.max_tool_result_tokens
+            if request.max_tool_result_tokens and request.max_tool_result_tokens > 0
+            else None
         )
     if "enable_thinking" in sent:
         current_settings.enable_thinking = request.enable_thinking
     if "thinking_budget_enabled" in sent:
-        current_settings.thinking_budget_enabled = request.thinking_budget_enabled or False
+        current_settings.thinking_budget_enabled = (
+            request.thinking_budget_enabled or False
+        )
     if "thinking_budget_tokens" in sent:
         current_settings.thinking_budget_tokens = (
-            request.thinking_budget_tokens if request.thinking_budget_tokens and request.thinking_budget_tokens > 0 else None
+            request.thinking_budget_tokens
+            if request.thinking_budget_tokens and request.thinking_budget_tokens > 0
+            else None
         )
     if "chat_template_kwargs" in sent:
         current_settings.chat_template_kwargs = request.chat_template_kwargs
@@ -337,7 +358,9 @@ async def update_model_settings(
     if "specprefill_enabled" in sent:
         current_settings.specprefill_enabled = request.specprefill_enabled or False
     if "specprefill_draft_model" in sent:
-        current_settings.specprefill_draft_model = request.specprefill_draft_model or None
+        current_settings.specprefill_draft_model = (
+            request.specprefill_draft_model or None
+        )
     if "specprefill_keep_pct" in sent:
         current_settings.specprefill_keep_pct = request.specprefill_keep_pct or None
     if "specprefill_threshold" in sent:
@@ -355,13 +378,29 @@ async def update_model_settings(
     if "dflash_draft_model" in sent:
         current_settings.dflash_draft_model = request.dflash_draft_model or None
     if "dflash_draft_quant_enabled" in sent:
-        current_settings.dflash_draft_quant_enabled = bool(request.dflash_draft_quant_enabled) if request.dflash_draft_quant_enabled is not None else None
+        current_settings.dflash_draft_quant_enabled = (
+            bool(request.dflash_draft_quant_enabled)
+            if request.dflash_draft_quant_enabled is not None
+            else None
+        )
     if "dflash_draft_quant_weight_bits" in sent:
-        current_settings.dflash_draft_quant_weight_bits = int(request.dflash_draft_quant_weight_bits) if request.dflash_draft_quant_weight_bits is not None else None
+        current_settings.dflash_draft_quant_weight_bits = (
+            int(request.dflash_draft_quant_weight_bits)
+            if request.dflash_draft_quant_weight_bits is not None
+            else None
+        )
     if "dflash_draft_quant_activation_bits" in sent:
-        current_settings.dflash_draft_quant_activation_bits = int(request.dflash_draft_quant_activation_bits) if request.dflash_draft_quant_activation_bits is not None else None
+        current_settings.dflash_draft_quant_activation_bits = (
+            int(request.dflash_draft_quant_activation_bits)
+            if request.dflash_draft_quant_activation_bits is not None
+            else None
+        )
     if "dflash_draft_quant_group_size" in sent:
-        current_settings.dflash_draft_quant_group_size = int(request.dflash_draft_quant_group_size) if request.dflash_draft_quant_group_size is not None else None
+        current_settings.dflash_draft_quant_group_size = (
+            int(request.dflash_draft_quant_group_size)
+            if request.dflash_draft_quant_group_size is not None
+            else None
+        )
     if "dflash_max_ctx" in sent:
         # 0/None means "unlimited" — the engine treats None as no fallback threshold
         value = request.dflash_max_ctx
@@ -373,7 +412,10 @@ async def update_model_settings(
         current_settings.dflash_in_memory_cache_max_entries = (
             int(value) if value and value > 0 else 4
         )
-    if "dflash_in_memory_cache_max_bytes" in sent and request.dflash_in_memory_cache_max_bytes:
+    if (
+        "dflash_in_memory_cache_max_bytes" in sent
+        and request.dflash_in_memory_cache_max_bytes
+    ):
         current_settings.dflash_in_memory_cache_max_bytes = int(
             request.dflash_in_memory_cache_max_bytes
         )
@@ -592,7 +634,8 @@ async def update_model_settings(
                 current_settings.active_profile_name = None
             else:
                 new_fields = {
-                    k: v for k, v in candidate.items()
+                    k: v
+                    for k, v in candidate.items()
                     if k not in profile_settings and k not in EXCLUDED_FROM_PROFILES
                 }
                 if new_fields:
@@ -609,27 +652,24 @@ async def update_model_settings(
 
     # Auto-unload (and re-load if pinned) when a setting that only takes
     # effect at engine construction time is changed on a loaded model.
-    requires_reload = (
-        entry.engine is not None
-        and (
-            ("model_type_override" in sent and entry.engine_type != prev_engine_type)
-            or "index_cache_freq" in sent
-            or "dflash_enabled" in sent
-            or "dflash_draft_model" in sent
-            or "dflash_draft_quant_enabled" in sent
-            or "dflash_draft_quant_weight_bits" in sent
-            or "dflash_draft_quant_activation_bits" in sent
-            or "dflash_draft_quant_group_size" in sent
-            or "dflash_max_ctx" in sent
-            or "dflash_in_memory_cache" in sent
-            or "dflash_in_memory_cache_max_entries" in sent
-            or "dflash_in_memory_cache_max_bytes" in sent
-            or "dflash_ssd_cache" in sent
-            or "dflash_ssd_cache_max_bytes" in sent
-            # trust_remote_code is plumbed at model load time; toggling it on
-            # an already-loaded engine has no effect until reload.
-            or "trust_remote_code" in sent
-        )
+    requires_reload = entry.engine is not None and (
+        ("model_type_override" in sent and entry.engine_type != prev_engine_type)
+        or "index_cache_freq" in sent
+        or "dflash_enabled" in sent
+        or "dflash_draft_model" in sent
+        or "dflash_draft_quant_enabled" in sent
+        or "dflash_draft_quant_weight_bits" in sent
+        or "dflash_draft_quant_activation_bits" in sent
+        or "dflash_draft_quant_group_size" in sent
+        or "dflash_max_ctx" in sent
+        or "dflash_in_memory_cache" in sent
+        or "dflash_in_memory_cache_max_entries" in sent
+        or "dflash_in_memory_cache_max_bytes" in sent
+        or "dflash_ssd_cache" in sent
+        or "dflash_ssd_cache_max_bytes" in sent
+        # trust_remote_code is plumbed at model load time; toggling it on
+        # an already-loaded engine has no effect until reload.
+        or "trust_remote_code" in sent
     )
     auto_unloaded = False
     auto_reloaded = False
@@ -661,7 +701,6 @@ async def update_model_settings(
         "auto_unloaded": auto_unloaded,
         "auto_reloaded": auto_reloaded,
     }
-
 
 
 router = _router

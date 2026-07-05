@@ -9,15 +9,15 @@ from unittest.mock import patch
 import pytest
 
 from fusion_mlx.config import (
-    parse_size,
-    ServerConfig,
-    ModelConfig,
-    GenerationConfig,
-    SchedulerConfig,
     CacheConfig,
-    PagedSSDCacheConfig,
+    GenerationConfig,
     MCPConfig,
+    ModelConfig,
     OMLXConfig,
+    PagedSSDCacheConfig,
+    SchedulerConfig,
+    ServerConfig,
+    parse_size,
 )
 
 

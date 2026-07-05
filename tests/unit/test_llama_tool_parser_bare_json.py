@@ -66,9 +66,9 @@ class TestBareJsonShape:
     def test_f008_repro_chinese_greeting(self, parser: LlamaToolParser):
         text = '{"name": "web_search", "parameters": {"query": "你好"}}'
         result = parser.extract_tool_calls(text)
-        assert result.tools_called, (
-            "Bare JSON tool-call leaked as content — F-008 regression"
-        )
+        assert (
+            result.tools_called
+        ), "Bare JSON tool-call leaked as content — F-008 regression"
         assert result.tool_calls[0]["name"] == "web_search"
         assert json.loads(result.tool_calls[0]["arguments"]) == {"query": "你好"}
         assert result.content is None

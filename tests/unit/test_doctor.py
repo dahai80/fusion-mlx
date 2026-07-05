@@ -1,8 +1,6 @@
-import os
-import tempfile
+import logging
 import unittest
-from pathlib import Path
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 
 from fusion_mlx.doctor.env_health import (
     Check,
@@ -10,17 +8,16 @@ from fusion_mlx.doctor.env_health import (
     Report,
     Section,
     run_all,
-    section_system,
-    section_python,
-    section_required_packages,
-    section_optional_packages,
     section_hf_cache,
     section_network,
-    section_shell_integration,
+    section_optional_packages,
     section_optional_tools,
+    section_python,
+    section_required_packages,
+    section_shell_integration,
+    section_system,
 )
 
-import logging
 logger = logging.getLogger(__name__)
 
 
@@ -87,9 +84,7 @@ class TestSectionPython(unittest.TestCase):
         self.assertIsInstance(s, Section)
         self.assertTrue(len(s.checks) > 0)
         # Python version check should pass on 3.10+
-        import sys
-        if sys.version_info >= (3, 10):
-            self.assertEqual(s.checks[0].status, CheckStatus.OK)
+        self.assertEqual(s.checks[0].status, CheckStatus.OK)
 
 
 class TestSectionRequiredPackages(unittest.TestCase):
@@ -131,7 +126,9 @@ class TestSectionNetwork(unittest.TestCase):
 class TestSectionShellIntegration(unittest.TestCase):
     def test_injected_which(self):
         s = section_shell_integration(
-            which=lambda name: "/usr/local/bin/fusion-mlx" if name == "fusion-mlx" else None,
+            which=lambda name: (
+                "/usr/local/bin/fusion-mlx" if name == "fusion-mlx" else None
+            ),
             rcs=[],
         )
         self.assertIsInstance(s, Section)
@@ -171,6 +168,7 @@ class TestRunAll(unittest.TestCase):
     def test_run_all_catches_crashes(self):
         def _crash():
             raise RuntimeError("boom")
+
         with patch(
             "fusion_mlx.doctor.env_health._SECTION_BUILDERS",
             (_crash,),

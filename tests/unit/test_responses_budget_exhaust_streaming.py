@@ -392,10 +392,11 @@ def responses_client(monkeypatch):
 
     _install_lightweight_engine_modules(monkeypatch)
 
+    from fusion_mlx.routes.responses import router
+
     from fusion_mlx.config import reset_config
     from fusion_mlx.middleware.auth import rate_limiter
     from fusion_mlx.middleware.exception_handlers import install_exception_handlers
-    from fusion_mlx.routes.responses import router
 
     cfg = reset_config()
     cfg.api_key = "test-secret"
@@ -456,10 +457,11 @@ def reasoning_then_message_client(monkeypatch):
 
     _install_lightweight_engine_modules(monkeypatch)
 
+    from fusion_mlx.routes.responses import router
+
     from fusion_mlx.config import reset_config
     from fusion_mlx.middleware.auth import rate_limiter
     from fusion_mlx.middleware.exception_handlers import install_exception_handlers
-    from fusion_mlx.routes.responses import router
 
     cfg = reset_config()
     cfg.api_key = "test-secret"
@@ -518,10 +520,11 @@ def reasoning_message_tool_client(monkeypatch):
 
     _install_lightweight_engine_modules(monkeypatch)
 
+    from fusion_mlx.routes.responses import router
+
     from fusion_mlx.config import reset_config
     from fusion_mlx.middleware.auth import rate_limiter
     from fusion_mlx.middleware.exception_handlers import install_exception_handlers
-    from fusion_mlx.routes.responses import router
 
     cfg = reset_config()
     cfg.api_key = "test-secret"
@@ -580,10 +583,11 @@ def reasoning_tool_length_client(monkeypatch):
 
     _install_lightweight_engine_modules(monkeypatch)
 
+    from fusion_mlx.routes.responses import router
+
     from fusion_mlx.config import reset_config
     from fusion_mlx.middleware.auth import rate_limiter
     from fusion_mlx.middleware.exception_handlers import install_exception_handlers
-    from fusion_mlx.routes.responses import router
 
     cfg = reset_config()
     cfg.api_key = "test-secret"
@@ -794,9 +798,9 @@ class TestStreamingBudgetExhaustEmitsReasoningItem:
         # Pre-fix duplication regression guard: the reasoning text must
         # appear EXACTLY ONCE — the original bug had finalize and the
         # in-loop accumulator both contributing the same bytes.
-        assert summary_text.count("Okay, the user said") == 1, (
-            f"reasoning text duplicated:\n  {summary_text!r}"
-        )
+        assert (
+            summary_text.count("Okay, the user said") == 1
+        ), f"reasoning text duplicated:\n  {summary_text!r}"
 
     def test_output_index_aligns_with_completed_output_position(self, responses_client):
         """R11-B codex r1 HIGH #1 regression guard. ``output_index`` on a
@@ -824,9 +828,9 @@ class TestStreamingBudgetExhaustEmitsReasoningItem:
                 continue
             idx = payload["output_index"]
             ev_item_id = payload["item"]["id"]
-            assert 0 <= idx < len(output), (
-                f"output_index={idx} out of range for output[] of len {len(output)}"
-            )
+            assert (
+                0 <= idx < len(output)
+            ), f"output_index={idx} out of range for output[] of len {len(output)}"
             assert output[idx]["id"] == ev_item_id, (
                 f"output_index/array mismatch at idx={idx}: "
                 f"event item id={ev_item_id!r}, output[{idx}].id="
@@ -882,9 +886,9 @@ class TestStreamingBudgetExhaustEmitsReasoningItem:
         completed = next(d for n, d in events if n == "response.completed")
         output = completed["response"]["output"]
         types = [item["type"] for item in output]
-        assert "reasoning" in types, (
-            f"reasoning item missing from output; got types={types}"
-        )
+        assert (
+            "reasoning" in types
+        ), f"reasoning item missing from output; got types={types}"
         assert "message" in types, (
             f"streaming rescue message item missing; got types={types} "
             f"(non-stream surface emits one for the same cutoff shape)"
@@ -894,9 +898,9 @@ class TestStreamingBudgetExhaustEmitsReasoningItem:
         rescue_text = message_item["content"][0]["text"]
         from fusion_mlx.service.helpers import REASONING_CUTOFF_SENTINEL
 
-        assert rescue_text.startswith(REASONING_CUTOFF_SENTINEL), (
-            f"rescue message must lead with the sentinel; got {rescue_text!r}"
-        )
+        assert rescue_text.startswith(
+            REASONING_CUTOFF_SENTINEL
+        ), f"rescue message must lead with the sentinel; got {rescue_text!r}"
         # And the SSE ladder MUST emit the canonical message-item
         # event sequence — added → content_part.added → output_text.delta
         # → output_text.done → content_part.done → output_item.done.
@@ -946,10 +950,11 @@ class TestStreamingBudgetExhaustEmitsReasoningItem:
                 getattr(module, attr, _MISSING) if module is not None else _MISSING
             )
         _install_lightweight_engine_modules(monkeypatch)
+        from fusion_mlx.routes.responses import router
+
         from fusion_mlx.config import reset_config
         from fusion_mlx.middleware.auth import rate_limiter
         from fusion_mlx.middleware.exception_handlers import install_exception_handlers
-        from fusion_mlx.routes.responses import router
 
         cfg = reset_config()
         cfg.api_key = "test-secret"
@@ -1122,12 +1127,12 @@ class TestReasoningPlusMessageOutputIndexAlignment:
 
         # Sanity: at least one message and one reasoning item shipped.
         types_seen = [item["type"] for item in output]
-        assert "reasoning" in types_seen, (
-            f"reasoning item missing from output[]; types={types_seen}"
-        )
-        assert "message" in types_seen, (
-            f"message item missing from output[]; types={types_seen}"
-        )
+        assert (
+            "reasoning" in types_seen
+        ), f"reasoning item missing from output[]; types={types_seen}"
+        assert (
+            "message" in types_seen
+        ), f"message item missing from output[]; types={types_seen}"
 
         # R11-B codex r2 BLOCKING regression guard: when message body
         # shipped, reasoning ``status`` must be ``completed`` even
@@ -1190,9 +1195,9 @@ class TestReasoningPlusMessageOutputIndexAlignment:
             for ev_name, payload in events
             if ev_name == "response.output_item.done"
         ]
-        assert len(done_indices) == len(set(done_indices)), (
-            f"duplicate output_index in output_item.done events: {done_indices}"
-        )
+        assert len(done_indices) == len(
+            set(done_indices)
+        ), f"duplicate output_index in output_item.done events: {done_indices}"
 
 
 # =============================================================================
@@ -1262,12 +1267,12 @@ class TestReasoningToolOutputIndexAlignment:
         # reasoning slot and the tool slot land without index
         # collision.)
         types_seen = [item["type"] for item in output]
-        assert "reasoning" in types_seen, (
-            f"reasoning item missing from output[]; types={types_seen}"
-        )
-        assert "function_call" in types_seen, (
-            f"function_call item missing from output[]; types={types_seen}"
-        )
+        assert (
+            "reasoning" in types_seen
+        ), f"reasoning item missing from output[]; types={types_seen}"
+        assert (
+            "function_call" in types_seen
+        ), f"function_call item missing from output[]; types={types_seen}"
 
         # Every ``output_item.done`` event's ``output_index`` matches
         # the array position of its ``item.id`` in the terminal
@@ -1294,9 +1299,9 @@ class TestReasoningToolOutputIndexAlignment:
             for ev_name, payload in events
             if ev_name == "response.output_item.done"
         ]
-        assert len(done_indices) == len(set(done_indices)), (
-            f"duplicate output_index in output_item.done events: {done_indices}"
-        )
+        assert len(done_indices) == len(
+            set(done_indices)
+        ), f"duplicate output_index in output_item.done events: {done_indices}"
 
 
 # =============================================================================
@@ -1371,9 +1376,9 @@ class TestReasoningCompletedWhenToolCallOnlyAfterThink:
         # Sanity: reasoning + function_call shipped.
         types_seen = [item["type"] for item in output]
         assert "reasoning" in types_seen, f"reasoning item missing; types={types_seen}"
-        assert "function_call" in types_seen, (
-            f"function_call item missing; types={types_seen}"
-        )
+        assert (
+            "function_call" in types_seen
+        ), f"function_call item missing; types={types_seen}"
 
         # The headline assertion: reasoning is ``completed`` even
         # though ``finish_reason="length"`` and ``accumulated_text``
@@ -1431,12 +1436,12 @@ class TestReasoningCompletedWhenToolCallOnlyAfterThink:
         body = resp.json()
         output = body["output"]
         types_seen = [item["type"] for item in output]
-        assert "reasoning" in types_seen, (
-            f"non-stream reasoning item missing; types={types_seen}"
-        )
-        assert "function_call" in types_seen, (
-            f"non-stream function_call item missing; types={types_seen}"
-        )
+        assert (
+            "reasoning" in types_seen
+        ), f"non-stream reasoning item missing; types={types_seen}"
+        assert (
+            "function_call" in types_seen
+        ), f"non-stream function_call item missing; types={types_seen}"
         reasoning_item = next(item for item in output if item["type"] == "reasoning")
         assert reasoning_item["status"] == "completed", (
             f"non-stream reasoning must be ``completed`` when "

@@ -43,6 +43,7 @@ async def get_embedding_engine(model_id: str) -> Any:
     if engine is None:
         raise HTTPException(status_code=404, detail=f"Model not found: {model_id}")
     from ..engines.embedding import EmbeddingEngine
+
     if not isinstance(engine, EmbeddingEngine):
         raise HTTPException(
             status_code=400,
@@ -79,7 +80,9 @@ async def create_embeddings(request: EmbeddingRequest):
     if not embedding_inputs:
         raise HTTPException(status_code=400, detail="Input cannot be empty")
 
-    max_length = get_embedding_max_length(request.model, getattr(request, "max_length", None))
+    max_length = get_embedding_max_length(
+        request.model, getattr(request, "max_length", None)
+    )
     truncation = getattr(request, "truncation", True)
 
     start_time = time.perf_counter()
@@ -96,7 +99,11 @@ async def create_embeddings(request: EmbeddingRequest):
     elapsed = time.perf_counter() - start_time
     logger.info(
         "Embedding: %d inputs, %d dims, %d tokens, max_length=%d in %.3fs",
-        len(embedding_inputs), output.dimensions, output.total_tokens, max_length, elapsed,
+        len(embedding_inputs),
+        output.dimensions,
+        output.total_tokens,
+        max_length,
+        elapsed,
     )
     get_server_metrics().record_request_complete(
         prompt_tokens=output.total_tokens,

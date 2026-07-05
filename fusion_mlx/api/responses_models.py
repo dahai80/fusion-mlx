@@ -184,9 +184,7 @@ class ResponseUsage(BaseModel):
     input_tokens: int = 0
     output_tokens: int = 0
     total_tokens: int = 0
-    input_tokens_details: InputTokensDetails = Field(
-        default_factory=InputTokensDetails
-    )
+    input_tokens_details: InputTokensDetails = Field(default_factory=InputTokensDetails)
     output_tokens_details: OutputTokensDetails = Field(
         default_factory=OutputTokensDetails
     )

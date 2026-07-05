@@ -77,8 +77,7 @@ _BARE_THINK_PREFIX_RE = re.compile(
     # is excluded because the same ``reasoning`` over-broadening that
     # bit the ``Here's`` alternation also bites here on the legacy
     # ``enable_thinking=None`` path (codex r4 BLOCKING).
-    r"|(?:My\s+thought\s+process\s*:)"
-    r")",
+    r"|(?:My\s+thought\s+process\s*:)" r")",
     re.IGNORECASE,
 )
 

@@ -79,7 +79,6 @@ def _reset_mtp_module_state():
     import sys
 
     import mlx.core as mx
-
     from fusion_mlx.spec_decode.mtp.accept_counter import (
         reset_global_counter_for_tests,
     )
@@ -358,13 +357,12 @@ def test_cache_patch_installs_rollback_state_slot():
     """The patch lifts ``rollback_state`` from missing to a class
     attribute defaulting to ``None``.
     """
-    from mlx_lm.models.cache import ArraysCache
-
     from fusion_mlx.spec_decode.mtp.cache_patch import (
         _is_patched_for_tests,
         _unpatch_for_tests,
         patch_arrays_cache_rollback_state,
     )
+    from mlx_lm.models.cache import ArraysCache
 
     _unpatch_for_tests()
     assert "rollback_state" not in ArraysCache.__dict__
@@ -754,9 +752,9 @@ def test_inject_mtp_support_refuses_no_sidecar_by_default():
         pytest.skip(f"Qwen3.5 TextModelArgs schema mismatch: {exc}")
 
     # No sidecar, no allow_random_init → must fail closed.
-    assert inject_mtp_support(model) is False, (
-        "Default inject_mtp_support without sidecar should return False"
-    )
+    assert (
+        inject_mtp_support(model) is False
+    ), "Default inject_mtp_support without sidecar should return False"
     # And the model must NOT have been patched — validate_mtp_support
     # checks the four surfaces, none should land on a failed inject.
     assert validate_mtp_support(model) is False
@@ -794,13 +792,12 @@ def test_inject_mtp_support_loads_synthetic_sidecar():
     from pathlib import Path
 
     import mlx.core as _mx
-    from mlx.utils import tree_flatten
-
     from fusion_mlx.spec_decode.mtp.head import build_mtp_module
     from fusion_mlx.spec_decode.mtp.qwen3_5_inject import (
         inject_mtp_support,
         validate_mtp_support,
     )
+    from mlx.utils import tree_flatten
 
     try:
         model_a = _build_tiny_qwen3_5_text_model()
@@ -862,10 +859,9 @@ def test_inject_mtp_support_refuses_synthetic_sidecar_missing_tensor():
     from pathlib import Path
 
     import mlx.core as _mx
-    from mlx.utils import tree_flatten
-
     from fusion_mlx.spec_decode.mtp.head import build_mtp_module
     from fusion_mlx.spec_decode.mtp.qwen3_5_inject import inject_mtp_support
+    from mlx.utils import tree_flatten
 
     try:
         model = _build_tiny_qwen3_5_text_model()

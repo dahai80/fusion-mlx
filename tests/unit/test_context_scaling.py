@@ -4,8 +4,6 @@
 from dataclasses import dataclass, field
 from unittest.mock import MagicMock, patch
 
-import pytest
-
 from fusion_mlx.settings import ClaudeCodeSettings, GlobalSettings
 
 
@@ -14,7 +12,9 @@ class MockServerState:
     """Mock server state for testing."""
 
     global_settings: GlobalSettings | None = None
-    sampling: MagicMock = field(default_factory=lambda: MagicMock(max_context_window=32768))
+    sampling: MagicMock = field(
+        default_factory=lambda: MagicMock(max_context_window=32768)
+    )
     settings_manager: object | None = None
 
 

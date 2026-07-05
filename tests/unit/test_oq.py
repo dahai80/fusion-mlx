@@ -36,7 +36,6 @@ from fusion_mlx.oq import (
     _get_predicate_bits,
     _is_audio_tensor,
     _is_moe_router,
-    _is_vision_tensor,
     _LazyTensorIndex,
     _measure_sensitivity,
     _measure_sensitivity_from_quantized_model,
@@ -1254,9 +1253,9 @@ class TestLevelBudgetPlan:
         plan = _build_quant_plan(
             named_shapes, config, 2, target_bpw=2.8, hard_cap_bpw=3.0
         )
-        assert plan.effective_bpw >= 2.7, (
-            f"Expected bpw >= 2.7, got {plan.effective_bpw:.2f}"
-        )
+        assert (
+            plan.effective_bpw >= 2.7
+        ), f"Expected bpw >= 2.7, got {plan.effective_bpw:.2f}"
         assert plan.effective_bpw <= 3.0
         # Attention should be boosted via protection floor
         attn_boosts = [k for k in plan.boost_map if "q_proj" in k or "v_proj" in k]
@@ -2889,7 +2888,7 @@ class TestQuantizeOqStreamingFp8:
 
         for sf in out.glob("*.safetensors"):
             with safe_open(str(sf), framework="numpy") as f:
-                for k in f.keys():
+                for k in f:
                     assert not k.endswith(".scale"), f"scale key leaked: {k}"
                     assert not k.endswith("_scale_inv"), f"scale_inv key leaked: {k}"
 
@@ -2968,7 +2967,7 @@ class TestQuantizeOqStreamingFp8:
         dp = _DiscoveredPlan(plan, idx)
         # pop a renamed FP8 tensor — should dequant via _materialize_source
         renamed_key = None
-        for k in dp.keys():
+        for k in dp:
             if "q_proj" in k:
                 renamed_key = k
                 break
@@ -3131,9 +3130,9 @@ class TestQuantizeOqStreamingFp8:
 
         idx = _LazyTensorIndex([str(src / "model.safetensors")])
         assert len(idx._fp8_pairs) == 0, "BF16 weight should not pair with .scale"
-        assert "model.layers.0.self_attn.q_proj.scale" in idx, (
-            "scale key must remain visible"
-        )
+        assert (
+            "model.layers.0.self_attn.q_proj.scale" in idx
+        ), "scale key must remain visible"
 
 
 # =============================================================================

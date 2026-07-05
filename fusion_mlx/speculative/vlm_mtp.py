@@ -44,6 +44,7 @@ import mlx.nn as nn
 try:
     from mlx_vlm.speculative import load_drafter as _vlm_load_drafter
     from mlx_vlm.speculative.utils import _mtp_rounds, _mtp_rounds_batch
+
     HAS_MLX_VLM = True
 except ImportError:
     _vlm_load_drafter = None

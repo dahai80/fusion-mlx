@@ -5,8 +5,6 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock
 
-import pytest
-
 from fusion_mlx.mllm_scheduler import MLLMScheduler, MLLMSchedulerConfig
 from fusion_mlx.request import RequestStatus
 

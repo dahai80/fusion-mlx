@@ -1,6 +1,5 @@
 # Copyright © 2026 Apple Inc.
 
-from typing import Tuple
 
 import mlx.core as mx
 import mlx.nn as nn
@@ -188,7 +187,7 @@ def _hc_split_sinkhorn_ops(
     hc_mult: int,
     sinkhorn_iters: int,
     eps: float,
-) -> Tuple[mx.array, mx.array, mx.array]:
+) -> tuple[mx.array, mx.array, mx.array]:
     mixes = mixes.astype(mx.float32)
     scale = scale.astype(mx.float32)
     base = base.astype(mx.float32)

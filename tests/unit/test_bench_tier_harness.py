@@ -93,9 +93,9 @@ def test_harness_invokes_all_five_in_documented_order(
     invocations = patch_harness_environment
 
     assert rc == 0, f"all-pass harness sweep should exit 0; got {rc}"
-    assert tuple(invocations) == HARNESS_PROFILES, (
-        f"harness order mismatch: got {invocations}, want {HARNESS_PROFILES}"
-    )
+    assert (
+        tuple(invocations) == HARNESS_PROFILES
+    ), f"harness order mismatch: got {invocations}, want {HARNESS_PROFILES}"
 
     captured = capsys.readouterr()
     # Each harness name should appear in the per-tier detail block.
@@ -148,9 +148,9 @@ def test_harness_single_failure_marks_tier_failed(capsys):
         rc = run_tier(model="qwen3.5-4b-4bit", tier="harness")
 
     assert rc == 1, "harness with hermes FAIL should exit 1"
-    assert tuple(invocations) == HARNESS_PROFILES, (
-        "all 5 harnesses must still run even when one fails"
-    )
+    assert (
+        tuple(invocations) == HARNESS_PROFILES
+    ), "all 5 harnesses must still run even when one fails"
 
     captured = capsys.readouterr()
     assert "[FAIL] tier=harness" in captured.out
@@ -314,9 +314,9 @@ def test_harness_dead_server_between_profiles_reboots(capsys):
         _ = _time.time() - t0  # touched for clarity; harness sweep is mocked
 
     # All 5 profiles must have been visited despite the mid-sweep death.
-    assert tuple(invocations) == HARNESS_PROFILES, (
-        f"cascade fix must keep iterating after a server reboot; got {invocations}"
-    )
+    assert (
+        tuple(invocations) == HARNESS_PROFILES
+    ), f"cascade fix must keep iterating after a server reboot; got {invocations}"
 
     # At least 2 serve() calls: initial boot + 1 reboot between profiles.
     assert len(serve_calls) >= 2, (
@@ -326,9 +326,9 @@ def test_harness_dead_server_between_profiles_reboots(capsys):
 
     captured = capsys.readouterr()
     # The session must announce the reboot so gauntlet operators see it.
-    assert "rebooted" in captured.out or "restart" in captured.out.lower(), (
-        f"expected reboot notice in tier output; got:\n{captured.out}"
-    )
+    assert (
+        "rebooted" in captured.out or "restart" in captured.out.lower()
+    ), f"expected reboot notice in tier output; got:\n{captured.out}"
     # Tier exit code is 0 because we recovered cleanly.
     assert rc == 0, f"recovered sweep should pass; got rc={rc}"
 
@@ -392,14 +392,14 @@ def test_harness_dead_server_no_reboot_when_attached_url(capsys):
 
     captured = capsys.readouterr()
     # Every profile records a server-not-healthy FAIL.
-    assert "cannot restart attached" in captured.out, (
-        f"expected attach-mode skip notice; got:\n{captured.out}"
-    )
+    assert (
+        "cannot restart attached" in captured.out
+    ), f"expected attach-mode skip notice; got:\n{captured.out}"
     # No AgentTestRunner.run() ever got dispatched because the server
     # was unhealthy before every profile.
-    assert invocations == [], (
-        f"attached + unhealthy → no profile should run; got {invocations}"
-    )
+    assert (
+        invocations == []
+    ), f"attached + unhealthy → no profile should run; got {invocations}"
     assert rc == 1
 
 
@@ -456,13 +456,13 @@ def test_harness_profile_timeout_does_not_block_next_profile(capsys):
     captured = capsys.readouterr()
     # Every profile still got tried — the hung codex didn't block the
     # next four.
-    assert tuple(invocations) == HARNESS_PROFILES, (
-        f"per-profile timeout must let the sweep continue; got {invocations}"
-    )
+    assert (
+        tuple(invocations) == HARNESS_PROFILES
+    ), f"per-profile timeout must let the sweep continue; got {invocations}"
     # Codex must surface as a FAIL with the timeout marker.
-    assert "timed out" in captured.out, (
-        f"expected per-profile timeout marker; got:\n{captured.out}"
-    )
+    assert (
+        "timed out" in captured.out
+    ), f"expected per-profile timeout marker; got:\n{captured.out}"
     assert "FAIL codex" in captured.out
     # Tier exits 1 because of the codex FAIL.
     assert rc == 1
@@ -540,9 +540,9 @@ def test_harness_timeout_forces_server_restart_isolation(capsys):
     captured = capsys.readouterr()
     # The restart notice surfaces in the tier output so operators know
     # the next profile's numbers are on a fresh server.
-    assert "rebooted" in captured.out or "restart" in captured.out.lower(), (
-        f"expected server restart announcement after timeout; got:\n{captured.out}"
-    )
+    assert (
+        "rebooted" in captured.out or "restart" in captured.out.lower()
+    ), f"expected server restart announcement after timeout; got:\n{captured.out}"
 
 
 def test_harness_restart_tears_down_old_server_before_booting_new(capsys):
@@ -614,15 +614,15 @@ def test_harness_restart_tears_down_old_server_before_booting_new(capsys):
     # preceded by a "kill" of server N-1 — otherwise two servers
     # coexist.
     boot_events = [t for t in timeline if t[0] == "boot"]
-    assert len(boot_events) >= 2, (
-        f"expected initial boot + at least one restart-boot; got {timeline}"
-    )
+    assert (
+        len(boot_events) >= 2
+    ), f"expected initial boot + at least one restart-boot; got {timeline}"
 
     initial_port = boot_events[0][1]
     restart_port = boot_events[1][1]
-    assert initial_port != restart_port, (
-        f"restart should use a fresh port; both = {initial_port}"
-    )
+    assert (
+        initial_port != restart_port
+    ), f"restart should use a fresh port; both = {initial_port}"
 
     initial_kill_idx = next(
         (i for i, t in enumerate(timeline) if t == ("kill", initial_port)),
@@ -632,9 +632,9 @@ def test_harness_restart_tears_down_old_server_before_booting_new(capsys):
         (i for i, t in enumerate(timeline) if t == ("boot", restart_port)),
         None,
     )
-    assert initial_kill_idx is not None, (
-        f"initial server must be killed; timeline={timeline}"
-    )
+    assert (
+        initial_kill_idx is not None
+    ), f"initial server must be killed; timeline={timeline}"
     assert restart_boot_idx is not None
     assert initial_kill_idx < restart_boot_idx, (
         "kill-before-boot violated: initial server still alive when "
@@ -718,9 +718,9 @@ def test_harness_restart_refuses_when_old_server_teardown_fails(capsys):
         f"serve() calls ({serve_calls})"
     )
     captured = capsys.readouterr()
-    assert "refused to reboot" in captured.out, (
-        f"expected refusal note in tier output; got:\n{captured.out}"
-    )
+    assert (
+        "refused to reboot" in captured.out
+    ), f"expected refusal note in tier output; got:\n{captured.out}"
 
 
 def test_harness_timeout_with_failed_restart_surfaces_isolation_failure(capsys):
@@ -808,9 +808,9 @@ def test_harness_profile_timeout_env_var_respected(monkeypatch):
     monkeypatch.setenv("HARNESS_PROFILE_TIMEOUT_S", "42")
     importlib.reload(tr)
     try:
-        assert tr.HARNESS_PROFILE_TIMEOUT_S == 42, (
-            f"env var must override default; got {tr.HARNESS_PROFILE_TIMEOUT_S}"
-        )
+        assert (
+            tr.HARNESS_PROFILE_TIMEOUT_S == 42
+        ), f"env var must override default; got {tr.HARNESS_PROFILE_TIMEOUT_S}"
 
         # Invalid values fall back to 300 with a stderr warning.
         monkeypatch.setenv("HARNESS_PROFILE_TIMEOUT_S", "not-a-number")

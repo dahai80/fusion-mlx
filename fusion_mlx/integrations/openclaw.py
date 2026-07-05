@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import socket
 import subprocess
@@ -12,6 +13,8 @@ from pathlib import Path
 
 from fusion_mlx.integrations.base import Integration
 from fusion_mlx.utils.install import get_cli_prefix
+
+logger = logging.getLogger(__name__)
 
 DEFAULT_GATEWAY_PORT = 18789
 
@@ -59,7 +62,7 @@ class OpenClawIntegration(Integration):
                         "id": model,
                         "name": model,
                         "api": "openai-completions",
-                 "agentProtocolUrl": f"http://{host}:{port}/v1/openclaw/agent",
+                        "agentProtocolUrl": f"http://{host}:{port}/v1/openclaw/agent",
                         "reasoning": False,
                         "input": ["text"],
                         "cost": {
@@ -76,9 +79,9 @@ class OpenClawIntegration(Integration):
 
             # Set as default model
             if model:
-                config.setdefault("agents", {}).setdefault(
-                    "defaults", {}
-                ).setdefault("model", {})
+                config.setdefault("agents", {}).setdefault("defaults", {}).setdefault(
+                    "model", {}
+                )
                 config["agents"]["defaults"]["model"]["primary"] = f"omlx/{model}"
 
             # Set tools profile

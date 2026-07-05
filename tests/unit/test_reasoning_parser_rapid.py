@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 import logging
+
 import pytest
 
 from fusion_mlx.reasoning import (
@@ -41,6 +42,7 @@ class TestParserRegistry:
         class CustomParser(ReasoningParser):
             def extract_reasoning(self, model_output):
                 return None, model_output
+
             def extract_reasoning_streaming(self, prev, curr, delta):
                 return DeltaMessage(content=delta)
 
@@ -56,7 +58,12 @@ class TestQwen3Parser:
         return get_parser("qwen3")()
 
     def test_extract_with_both_tags(self, parser):
-        output = THINK_OPEN + "Let me analyze this problem" + THINK_CLOSE + "The answer is 42."
+        output = (
+            THINK_OPEN
+            + "Let me analyze this problem"
+            + THINK_CLOSE
+            + "The answer is 42."
+        )
         reasoning, content = parser.extract_reasoning(output)
         assert reasoning == "Let me analyze this problem"
         assert content == "The answer is 42."

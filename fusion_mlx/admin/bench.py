@@ -22,7 +22,6 @@ logger = logging.getLogger(__name__)
 PRESET_REMOTE_URL = "http://bench.dpdns.org/assets/omlx_preset.json"
 
 
-
 from .helpers import get_engine_pool
 
 _router = APIRouter()
@@ -259,7 +258,6 @@ async def get_device_info(
         "gpu_cores": gpu_cores,
         "owner_hash": owner_hash,
     }
-
 
 
 router = _router

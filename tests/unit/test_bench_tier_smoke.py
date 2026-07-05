@@ -232,9 +232,9 @@ def test_normalize_base_url_honors_user_host_and_scheme():
 
     # User passes scheme + host but NO port — falls back to the boot port.
     # (Unlikely in practice, but the contract should be predictable.)
-    assert _normalize_openai_base("http://my-rig.local", 8500).endswith("/v1"), (
-        "trailing /v1 must be preserved"
-    )
+    assert _normalize_openai_base("http://my-rig.local", 8500).endswith(
+        "/v1"
+    ), "trailing /v1 must be preserved"
 
 
 def test_smoke_skips_role_only_chunk_for_ttft(capsys):

@@ -188,7 +188,7 @@ def _walk_loc_with_root(
 
 
 def _peek_next_field_hint(loc_list: list, idx: int) -> str | None:
-    for nxt in loc_list[idx + 1:]:
+    for nxt in loc_list[idx + 1 :]:
         if (
             isinstance(nxt, str)
             and nxt != "body"
@@ -207,7 +207,7 @@ def _extract_field_from_value_error_msg(
     stripped = msg
     prefix = "Value error, "
     if stripped.startswith(prefix):
-        stripped = stripped[len(prefix):]
+        stripped = stripped[len(prefix) :]
     first = stripped.split(None, 1)[0] if stripped else ""
     while first and not (first[-1].isalnum() or first[-1] == "_"):
         first = first[:-1]

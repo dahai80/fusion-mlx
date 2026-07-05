@@ -30,8 +30,18 @@ from .types import (
     _BoundarySnapshotProvider,
 )
 
+try:
+    from ..cache.hybrid_cache import ModelCacheConfig
+    from ..cache.type_registry import CacheTypeRegistry
 
-def _cache_list_needs_boundary_snapshot(    self, cache_list: list[Any]) -> bool:
+    HAS_CACHE_TYPE_HANDLERS = True
+except ImportError:
+    CacheTypeRegistry = None
+    ModelCacheConfig = None
+    HAS_CACHE_TYPE_HANDLERS = False
+
+
+def _cache_list_needs_boundary_snapshot(self, cache_list: list[Any]) -> bool:
     """Return True if any layer cache requires boundary snapshots."""
     if not cache_list:
         return False
@@ -40,7 +50,9 @@ def _cache_list_needs_boundary_snapshot(    self, cache_list: list[Any]) -> bool
         for layer_cache in cache_list
     )
 
-def _on_prefill_boundary_snapshot(    self,
+
+def _on_prefill_boundary_snapshot(
+    self,
     request_id: str,
     snapshot_cache: list[Any],
     token_count: int,
@@ -94,6 +106,7 @@ def _on_prefill_boundary_snapshot(    self,
         token_count,
     )
 
+
 def _detect_boundary_snapshot_need(self) -> bool:
     """
     Determine whether boundary snapshots are needed for the current model.
@@ -136,7 +149,8 @@ def _detect_boundary_snapshot_need(self) -> bool:
 
     return self._boundary_snapshot_required
 
-def _extract_boundary_snapshot(    self, uid: int) -> list[Any] | None:
+
+def _extract_boundary_snapshot(self, uid: int) -> list[Any] | None:
     """Extract a per-request prompt cache snapshot via extract_cache().
 
     Uses BatchGenerator.extract_cache() which returns
@@ -167,12 +181,11 @@ def _extract_boundary_snapshot(    self, uid: int) -> list[Any] | None:
                     for c in cache_list
                 ]
     except Exception as e:
-        logger.debug(
-            f"Failed to extract boundary cache snapshot for uid={uid}: {e}"
-        )
+        logger.debug(f"Failed to extract boundary cache snapshot for uid={uid}: {e}")
         return None
 
-def _maybe_capture_boundary_snapshot(    self, request: Request, uid: int) -> None:
+
+def _maybe_capture_boundary_snapshot(self, request: Request, uid: int) -> None:
     """Capture cache snapshot exactly at block boundaries for safe reuse."""
     if self.block_aware_cache is None:
         return
@@ -220,7 +233,9 @@ def _maybe_capture_boundary_snapshot(    self, request: Request, uid: int) -> No
         f"{total_tokens} tokens"
     )
 
-def _get_boundary_store_override(    self,
+
+def _get_boundary_store_override(
+    self,
     request_id: str,
     full_token_sequence: list[int],
 ) -> (
@@ -249,9 +264,7 @@ def _get_boundary_store_override(    self,
 
     # Find all valid boundary-aligned snapshot token counts
     valid_counts = sorted(
-        tc
-        for tc in snapshots.keys()
-        if 0 < tc <= total_tokens and tc % block_size == 0
+        tc for tc in snapshots if 0 < tc <= total_tokens and tc % block_size == 0
     )
     if not valid_counts:
         return None
@@ -315,6 +328,7 @@ def _get_boundary_store_override(    self,
         intermediate_snapshots,
     )
 
+
 @staticmethod
 def _merge_boundary_with_full_cache(
     boundary_cache: list[dict[str, Any]],
@@ -341,7 +355,8 @@ def _merge_boundary_with_full_cache(
             merged.append(bc)
     return merged
 
-def _validate_cache(    self, cache: Any) -> bool:
+
+def _validate_cache(self, cache: Any) -> bool:
     """
     Validate that a cache object is usable.
 
@@ -388,7 +403,9 @@ def _validate_cache(    self, cache: Any) -> bool:
 
     return True
 
-def _normalize_rotating_snapshot_state(    self,
+
+def _normalize_rotating_snapshot_state(
+    self,
     layer_cache: Any,
     state: tuple[Any, Any],
     meta_state: Any,
@@ -481,7 +498,9 @@ def _normalize_rotating_snapshot_state(    self,
             normalized_keys = mx.contiguous(normalized_keys)
             normalized_values = mx.contiguous(normalized_values)
         except Exception:
-            logger.debug("swallowed exception at fusion_mlx/scheduler/sched_boundary.py:519")
+            logger.debug(
+                "swallowed exception at fusion_mlx/scheduler/sched_boundary.py:519"
+            )
 
             pass
 
@@ -519,7 +538,9 @@ def _normalize_rotating_snapshot_state(    self,
 
     return (normalized_keys, normalized_values), normalized_meta
 
-def _extract_cache_states(    self,
+
+def _extract_cache_states(
+    self,
     raw_cache: list[Any],
 ) -> tuple[list[dict[str, Any]], Optional["ModelCacheConfig"]]:
     """
@@ -549,11 +570,7 @@ def _extract_cache_states(    self,
     # cache objects and would log noisy NoneType warnings.
     model_cache_config = None
     has_none_layers = any(c is None for c in raw_cache)
-    if (
-        HAS_CACHE_TYPE_HANDLERS
-        and ModelCacheConfig is not None
-        and not has_none_layers
-    ):
+    if HAS_CACHE_TYPE_HANDLERS and ModelCacheConfig is not None and not has_none_layers:
         try:
             model_cache_config = ModelCacheConfig.from_cache_list(
                 raw_cache,
@@ -587,7 +604,9 @@ def _extract_cache_states(    self,
                     cache_type = CacheTypeRegistry.detect_cache_type(layer_cache)
                     cache_type_name = cache_type.value
                 except Exception:
-                    logger.debug("swallowed exception at fusion_mlx/scheduler/sched_boundary.py:625")
+                    logger.debug(
+                        "swallowed exception at fusion_mlx/scheduler/sched_boundary.py:625"
+                    )
 
                     pass
 
@@ -730,9 +749,7 @@ def _extract_cache_states(    self,
                 continue
 
         except Exception as e:
-            logger.debug(
-                f"Failed to extract state from cache layer {layer_idx}: {e}"
-            )
+            logger.debug(f"Failed to extract state from cache layer {layer_idx}: {e}")
             continue
 
     if len(extracted) != len(raw_cache):

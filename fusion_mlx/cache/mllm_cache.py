@@ -90,10 +90,10 @@ class MLLMPrefixCacheEntry:
     num_image_tokens: int = 0  # e.g., 256 for Gemma 3
     num_text_tokens: int = 0
     prompt_tokens: int = 0  # Total prompt tokens (for stats)
-    is_vision_placeholder: bool = False   # True when token_ids are dummy values
+    is_vision_placeholder: bool = False  # True when token_ids are dummy values
 
-      # Structural metadata for shape-validation on fetch
-    image_meta: dict = field(default_factory=dict)       # grid_thw, vision_patch_size, etc.
+    # Structural metadata for shape-validation on fetch
+    image_meta: dict = field(default_factory=dict)  # grid_thw, vision_patch_size, etc.
     actual_vision_token_len: int = 0
     # Metadata
     created_at: float = field(default_factory=time.time)
@@ -129,7 +129,7 @@ class MLLMPrefixCacheEntry:
         we can skip computing KV states for those N tokens.
         """
         if self.is_vision_placeholder:
-            return 0   # Skip prefix matching for vision-only placeholder entries
+            return 0  # Skip prefix matching for vision-only placeholder entries
         match_length = 0
         for i, (cached, new) in enumerate(zip(self.token_ids, new_token_ids)):
             if cached != new:
@@ -263,6 +263,7 @@ class MLLMPrefixCacheManager:
         # holds huge free-list fragments that never returned to the OS.
         try:
             import mlx.core as mx
+
             mlx_used = mx.get_cache_memory()
             threshold = self.max_memory * 0.9
             while mlx_used > threshold and self._cache:

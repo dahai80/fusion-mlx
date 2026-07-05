@@ -1,11 +1,10 @@
-import pytest
-import time
 from unittest.mock import patch
+
 from fusion_mlx.api.shared_models import (
+    BaseUsage,
     IDPrefix,
     generate_id,
     get_unix_timestamp,
-    BaseUsage,
 )
 
 
@@ -34,14 +33,14 @@ class TestGenerateId:
     def test_generate_id_format(self):
         result = generate_id(IDPrefix.CHAT_COMPLETION)
         assert result.startswith("chatcmpl-")
-        suffix = result[len("chatcmpl-"):]
+        suffix = result[len("chatcmpl-") :]
         assert len(suffix) == 8
         assert all(c.isalnum() for c in suffix)
 
     def test_generate_id_with_completion_prefix(self):
         result = generate_id(IDPrefix.COMPLETION)
         assert result.startswith("cmpl-")
-        suffix = result[len("cmpl-"):]
+        suffix = result[len("cmpl-") :]
         assert len(suffix) == 8
 
     def test_generate_id_with_embedding_prefix(self):
@@ -55,25 +54,25 @@ class TestGenerateId:
     def test_generate_id_with_message_prefix(self):
         result = generate_id(IDPrefix.MESSAGE)
         assert result.startswith("msg_")
-        suffix = result[len("msg_"):]
+        suffix = result[len("msg_") :]
         assert len(suffix) == 24
 
     def test_generate_id_with_response_prefix(self):
         result = generate_id(IDPrefix.RESPONSE)
         assert result.startswith("resp_")
-        suffix = result[len("resp_"):]
+        suffix = result[len("resp_") :]
         assert len(suffix) == 24
 
     def test_generate_id_with_function_call_prefix(self):
         result = generate_id(IDPrefix.FUNCTION_CALL)
         assert result.startswith("fc_")
-        suffix = result[len("fc_"):]
+        suffix = result[len("fc_") :]
         assert len(suffix) == 8
 
     def test_generate_id_with_reasoning_prefix(self):
         result = generate_id(IDPrefix.REASONING)
         assert result.startswith("rs_")
-        suffix = result[len("rs_"):]
+        suffix = result[len("rs_") :]
         assert len(suffix) == 24
 
     def test_generate_id_uniqueness(self):
@@ -82,7 +81,7 @@ class TestGenerateId:
 
     def test_generate_id_custom_length(self):
         result = generate_id(IDPrefix.CHAT_COMPLETION, length=12)
-        suffix = result[len("chatcmpl-"):]
+        suffix = result[len("chatcmpl-") :]
         assert len(suffix) == 12
 
     def test_generate_id_zero_length(self):
@@ -91,13 +90,13 @@ class TestGenerateId:
 
     def test_generate_id_large_length(self):
         result = generate_id(IDPrefix.CHAT_COMPLETION, length=32)
-        suffix = result[len("chatcmpl-"):]
+        suffix = result[len("chatcmpl-") :]
         assert len(suffix) == 32
 
     def test_generate_id_alphanumeric_only(self):
         for _ in range(50):
             result = generate_id(IDPrefix.CHAT_COMPLETION)
-            suffix = result[len("chatcmpl-"):]
+            suffix = result[len("chatcmpl-") :]
             assert all(c.isalnum() for c in suffix)
 
 

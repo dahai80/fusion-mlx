@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 import json
+
 import pytest
 
 from fusion_mlx.api.adapters.base import (
@@ -13,7 +14,6 @@ from fusion_mlx.api.adapters.openai import OpenAIAdapter
 from fusion_mlx.api.openai_models import (
     ChatCompletionRequest,
     ChatCompletionResponse,
-    ContentPart,
     Message,
     ToolDefinition,
 )

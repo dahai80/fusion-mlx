@@ -111,9 +111,7 @@ class TestServerMetrics:
 
     def test_no_model_id_no_per_model_entry(self):
         metrics = ServerMetrics()
-        metrics.record_request_complete(
-            prompt_tokens=100, completion_tokens=50
-        )
+        metrics.record_request_complete(prompt_tokens=100, completion_tokens=50)
         assert metrics.model_stats == {}
 
     def test_thread_safety(self):

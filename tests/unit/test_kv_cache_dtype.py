@@ -3,4 +3,6 @@
 
 import pytest
 
-pytestmark = pytest.mark.skip(reason="fusion_mlx.kv_cache_dtype module does not exist in fusion-mlx")
+pytestmark = pytest.mark.skip(
+    reason="fusion_mlx.kv_cache_dtype module does not exist in fusion-mlx"
+)

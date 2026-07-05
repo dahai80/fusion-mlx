@@ -27,7 +27,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -319,7 +319,7 @@ def test_aggregate_is_deterministic(tmp_path):
         _row(sub_id="b2" * 6, short_decode=120.0),
     ]
     sub_dir = _write_rows(tmp_path, rows)
-    fixed = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    fixed = datetime(2026, 1, 1, tzinfo=UTC)
 
     out1 = tmp_path / "out1.json"
     out2 = tmp_path / "out2.json"

@@ -761,9 +761,9 @@ class TestEngineAsync:
         assert len(puts) == 3, f"expected 3 puts, got {len(puts)}: {puts!r}"
 
         # Concatenated new_text across all puts must equal sum of step deltas.
-        assert "".join(p.new_text for p in puts) == "hello world!.", (
-            f"new_text mismatch: {[p.new_text for p in puts]!r}"
-        )
+        assert (
+            "".join(p.new_text for p in puts) == "hello world!."
+        ), f"new_text mismatch: {[p.new_text for p in puts]!r}"
 
         # Concatenated new_token_ids across all puts must equal full token
         # order. Pre-fix, 3 of 6 token ids were dropped.
@@ -779,9 +779,14 @@ class TestEngineAsync:
         flat_lp: list = []
         for p in puts:
             flat_lp.extend(p.logprobs or [])
-        assert flat_lp == ["lp1", "lp2", "lp3", "lp4", "lp5", "lp6"], (
-            f"logprobs not preserved across stream_interval merges: {flat_lp!r}"
-        )
+        assert flat_lp == [
+            "lp1",
+            "lp2",
+            "lp3",
+            "lp4",
+            "lp5",
+            "lp6",
+        ], f"logprobs not preserved across stream_interval merges: {flat_lp!r}"
 
         # finished=True must always flush, even if the buffer is otherwise
         # empty (it is here — step 5 already drained it).

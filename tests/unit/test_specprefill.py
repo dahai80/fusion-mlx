@@ -549,7 +549,7 @@ class TestEngineCorePropagation:
 
     def _make_engine_core(self, draft_model=None):
         """Create a minimal EngineCore for testing add_request propagation."""
-        from unittest.mock import AsyncMock, MagicMock
+        from unittest.mock import MagicMock
 
         from fusion_mlx.engine_core import EngineCore
 

@@ -23,12 +23,12 @@ When ``final_content`` is empty/None AND no ``tool_calls`` fired AND
 from __future__ import annotations
 
 import pytest
-
-from fusion_mlx.reasoning.gemma4_parser import Gemma4ReasoningParser
 from fusion_mlx.service.helpers import (
     _finalize_content_and_reasoning,
     _rescue_silent_drop_from_reasoning,
 )
+
+from fusion_mlx.reasoning.gemma4_parser import Gemma4ReasoningParser
 
 # ── Unit tests for the rescue helper ─────────────────────────────────
 
@@ -44,9 +44,9 @@ def test_rescue_fires_when_content_none_no_tools_with_reasoning():
         reasoning_text="The user wants weather for SF. I should call get_weather",
         tool_calls=None,
     )
-    assert rescued == ("The user wants weather for SF. I should call get_weather"), (
-        "rescue must surface reasoning trace when content+tool_calls are both empty"
-    )
+    assert rescued == (
+        "The user wants weather for SF. I should call get_weather"
+    ), "rescue must surface reasoning trace when content+tool_calls are both empty"
 
 
 def test_rescue_fires_when_content_empty_string():
@@ -74,9 +74,9 @@ def test_rescue_noop_when_content_present():
         reasoning_text="I thought about it carefully...",
         tool_calls=None,
     )
-    assert rescued == "The answer is 42.", (
-        "rescue must not clobber legitimate content with reasoning"
-    )
+    assert (
+        rescued == "The answer is 42."
+    ), "rescue must not clobber legitimate content with reasoning"
 
 
 def test_rescue_noop_when_tool_calls_fired():
@@ -92,9 +92,9 @@ def test_rescue_noop_when_tool_calls_fired():
         reasoning_text="I'll call get_weather for SF",
         tool_calls=fake_tool_calls,
     )
-    assert rescued is None, (
-        "tool-call turns must keep content=None; rescue must not fire"
-    )
+    assert (
+        rescued is None
+    ), "tool-call turns must keep content=None; rescue must not fire"
 
 
 def test_rescue_noop_when_reasoning_also_empty():
@@ -140,9 +140,9 @@ def test_rescue_noop_when_reasoning_is_whitespace_only():
         reasoning_text="   \n\t  ",
         tool_calls=None,
     )
-    assert rescued is None, (
-        f"whitespace-only reasoning must not promote to content; got {rescued!r}"
-    )
+    assert (
+        rescued is None
+    ), f"whitespace-only reasoning must not promote to content; got {rescued!r}"
 
 
 def test_rescue_noop_when_final_content_is_whitespace_only():
@@ -304,9 +304,9 @@ def test_finalize_plus_rescue_preserves_happy_path():
     rescued = _rescue_silent_drop_from_reasoning(
         cleaned_text, reasoning_text, tool_calls=None
     )
-    assert rescued == "The answer is 42.", (
-        "happy-path content must NOT be overwritten by the reasoning trace"
-    )
+    assert (
+        rescued == "The answer is 42."
+    ), "happy-path content must NOT be overwritten by the reasoning trace"
 
 
 def test_finalize_plus_rescue_preserves_tool_call_path():
@@ -386,9 +386,9 @@ def test_assistant_message_non_empty_when_only_reasoning_fired(fake_chat_finaliz
         reasoning_text="The user wants weather. I should call get_weather",
         tool_calls=None,
     )
-    assert content is not None and content != "", (
-        "issue #569: assistant turn must not be silently empty"
-    )
+    assert (
+        content is not None and content != ""
+    ), "issue #569: assistant turn must not be silently empty"
     assert "weather" in content
     assert reasoning == "The user wants weather. I should call get_weather"
 
@@ -1251,9 +1251,9 @@ def test_streaming_rescue_still_fires_for_gemma4_stuck_thought_shape():
         # because ``_saw_any_tag`` was False on the (non-think) parser.
         raw_text=trace,
     )
-    assert rescued == trace, (
-        f"gemma-4 #569 failure mode must still rescue — got rescued={rescued!r}"
-    )
+    assert (
+        rescued == trace
+    ), f"gemma-4 #569 failure mode must still rescue — got rescued={rescued!r}"
 
 
 # Bug C / Bug 3 cross-cut: PR #715 bundle live-test repro for

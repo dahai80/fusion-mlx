@@ -142,8 +142,29 @@ target-version = ["py311", "py312", "py313"]
 
 [tool.ruff]
 line-length = 88
+# patches/ holds upstream-derived model/patch code (mlx_vlm vendor, mlx_lm_mtp,
+# deepseek_v4, glm_moe_dsa). Not authored here; linting it creates merge churn.
+extend-exclude = ["fusion_mlx/patches"]
+
+[tool.ruff.lint]
 select = ["E", "F", "W", "I", "N", "UP", "B", "SIM"]
-ignore = ["E402", "E501", "E731", "F811", "F841", "B004", "B007", "B008", "B011", "B017", "B905", "N801", "N806", "SIM103", "SIM108", "SIM110", "SIM222", "UP028", "SIM102", "SIM105", "SIM115", "B904"]
+# Naming (N8xx), str-Enum modernization (UP042), and ambiguous short var (E741)
+# are pre-existing in mature modules (math/tensor `N`/`l` idiom, intentional
+# `str, Enum` classes whose str() semantics must not change). Ignored to match
+# the codebase's established permissive style; correctness rules stay active.
+ignore = ["E402", "E501", "E731", "F811", "F841", "B004", "B007", "B008", "B011", "B017", "B905", "N801", "N806", "SIM103", "SIM108", "SIM110", "SIM117", "SIM222", "UP028", "SIM102", "SIM105", "SIM115", "B904", "UP042", "E741", "N802", "N803", "N807", "N811", "N814", "N818", "SIM113", "SIM116"]
+
+[tool.ruff.lint.per-file-ignores]
+# Package re-export surfaces: F401 (re-exports) is the __init__.py purpose.
+"__init__.py" = ["F401"]
+# core.py re-assembles the split Scheduler via `from .sched_X import *`
+# (F403 noqa'd inline). F405 follows from that intentional star-import hub.
+"fusion_mlx/scheduler/core.py" = ["F405"]
+# Synchronous progress-callback closures defined per-iteration capture loop
+# vars; they are invoked within the same iteration (not deferred), so B023
+# (loop-variable capture) is a false positive here.
+"fusion_mlx/scheduler/sched_schedule.py" = ["B023"]
+"fusion_mlx/cache/prefix_cache.py" = ["B023"]
 
 [tool.mypy]
 python_version = "3.11"

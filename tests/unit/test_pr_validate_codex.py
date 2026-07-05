@@ -24,7 +24,6 @@ import json
 import os
 
 import pytest
-
 from scripts.pr_validate.steps.codex_review import (
     CODEX_MODEL,
     CodexReviewStep,
@@ -373,9 +372,9 @@ class TestModelPinning:
         # Adjacent ``--model`` + value pair must appear together.
         assert "--model" in cmd, f"missing --model in {cmd}"
         idx = cmd.index("--model")
-        assert cmd[idx + 1] == CODEX_MODEL, (
-            f"expected --model {CODEX_MODEL}, got {cmd[idx + 1]}"
-        )
+        assert (
+            cmd[idx + 1] == CODEX_MODEL
+        ), f"expected --model {CODEX_MODEL}, got {cmd[idx + 1]}"
 
 
 class TestBackwardsCompatOptOut:
@@ -524,9 +523,9 @@ class TestPromptInjectionGuards:
         diff_idx = prompt.find("+content")
         assert begin_idx >= 0, "missing BEGIN marker"
         assert end_idx > begin_idx, "missing/misordered END marker"
-        assert begin_idx < diff_idx < end_idx, (
-            "diff content must sit between the diff's BEGIN/END markers"
-        )
+        assert (
+            begin_idx < diff_idx < end_idx
+        ), "diff content must sit between the diff's BEGIN/END markers"
 
     def test_codex_subprocess_runs_in_isolated_cwd(self, monkeypatch, tmp_path):
         """Defence-in-depth: ``--sandbox read-only`` still permits reads,
@@ -713,9 +712,9 @@ class TestNonZeroExitDiscrimination:
         ctx.diff_path = diff_path
 
         result = CodexReviewStep().run(ctx)
-        assert result.status == expected, (
-            f"expected {expected}, got {result.status}: {result.summary}"
-        )
+        assert (
+            result.status == expected
+        ), f"expected {expected}, got {result.status}: {result.summary}"
 
 
 class TestZeroExitEmptyContentFails:
@@ -908,9 +907,9 @@ class TestRepoDirURLEncoding:
         # of the URL, before the genuine ``?ref=`` delimiter.
         ref_idx = url_arg.index("?ref=")
         path_portion = url_arg[:ref_idx]
-        assert "weird%3Fdir/sub" in path_portion, (
-            f"path component must be URL-encoded; got {path_portion!r}"
-        )
+        assert (
+            "weird%3Fdir/sub" in path_portion
+        ), f"path component must be URL-encoded; got {path_portion!r}"
 
     def test_normal_path_still_works(self, monkeypatch):
         """Regression: ordinary paths like ``scripts/pr_validate`` must
@@ -1052,9 +1051,9 @@ class TestPRMetadataFencedAsUntrusted:
         for sentinel in (title_sentinel, author_sentinel):
             sidx = prompt.find(sentinel)
             assert sidx >= 0, f"{sentinel} must appear in prompt"
-            assert any(begin < sidx < end for begin, end in fences), (
-                f"{sentinel} must sit inside an UNTRUSTED USER INPUT fence"
-            )
+            assert any(
+                begin < sidx < end for begin, end in fences
+            ), f"{sentinel} must sit inside an UNTRUSTED USER INPUT fence"
 
 
 class TestCleanPhrasePatternIsStrict:
@@ -1067,9 +1066,9 @@ class TestCleanPhrasePatternIsStrict:
     def test_loose_looks_good_phrasing_no_longer_clean(self):
         from scripts.pr_validate.steps.codex_review import _is_clean_review
 
-        assert _is_clean_review("Looks good, but I could not review this") is False, (
-            "the loose 'Looks good' pattern was the round-7 bypass — must NOT pass"
-        )
+        assert (
+            _is_clean_review("Looks good, but I could not review this") is False
+        ), "the loose 'Looks good' pattern was the round-7 bypass — must NOT pass"
 
     def test_canonical_clean_phrase_still_recognized(self):
         from scripts.pr_validate.steps.codex_review import _is_clean_review
@@ -1103,9 +1102,9 @@ class TestCleanPhrasePatternIsStrict:
             "No issues found in the parts I could inspect, but I cannot "
             "review this fully due to redacted content."
         )
-        assert _is_clean_review(hedged_refusal) is False, (
-            "the round-8 hedge-clause bypass must not pass"
-        )
+        assert (
+            _is_clean_review(hedged_refusal) is False
+        ), "the round-8 hedge-clause bypass must not pass"
 
         # A few related shapes that the previous regex also accepted —
         # these must all fail now.
@@ -1186,9 +1185,9 @@ class TestNonceFencedAuthorContent:
         diff_begin = _re.search(r"BEGIN-UNTRUSTED-DIFF-([0-9a-f]{32})", prompt)
         diff_end = _re.search(r"END-UNTRUSTED-DIFF-([0-9a-f]{32})", prompt)
 
-        assert meta_begin and meta_end and diff_begin and diff_end, (
-            "all four nonce-suffixed markers must be present"
-        )
+        assert (
+            meta_begin and meta_end and diff_begin and diff_end
+        ), "all four nonce-suffixed markers must be present"
         # All four nonces are the SAME per invocation (we mint once).
         assert (
             meta_begin.group(1)
@@ -1275,9 +1274,9 @@ class TestRound9CleanPhraseMustBeLastLine:
         from scripts.pr_validate.steps.codex_review import _is_clean_review
 
         refusal = "No blocking issues found.\nI could not review this diff."
-        assert _is_clean_review(refusal) is False, (
-            "round-9 bypass: clean phrase + trailing refusal must fail"
-        )
+        assert (
+            _is_clean_review(refusal) is False
+        ), "round-9 bypass: clean phrase + trailing refusal must fail"
 
     def test_clean_phrase_with_heading_above_no_longer_passes(self):
         """Round-14 BLOCKER closure: any heading content (even a benign
@@ -1442,9 +1441,9 @@ class TestRound9DirectoryContextFenced:
         dirs = _re.search(r"BEGIN-UNTRUSTED-DIRS-([0-9a-f]{32})", prompt)
         diff = _re.search(r"BEGIN-UNTRUSTED-DIFF-([0-9a-f]{32})", prompt)
         assert meta and dirs and diff
-        assert meta.group(1) == dirs.group(1) == diff.group(1), (
-            "all three fence kinds share one per-invocation nonce"
-        )
+        assert (
+            meta.group(1) == dirs.group(1) == diff.group(1)
+        ), "all three fence kinds share one per-invocation nonce"
 
 
 class TestRound10TransientMarkersAreStructured:
@@ -1483,9 +1482,9 @@ class TestRound10TransientMarkersAreStructured:
         ],
     )
     def test_structured_marker_discriminator(self, stderr, expected):
-        assert _is_transient_codex_failure(stderr) is expected, (
-            f"stderr {stderr!r} expected transient={expected}"
-        )
+        assert (
+            _is_transient_codex_failure(stderr) is expected
+        ), f"stderr {stderr!r} expected transient={expected}"
 
 
 class TestRound12PromptEmbeddedAsConstant:
@@ -1506,9 +1505,9 @@ class TestRound12PromptEmbeddedAsConstant:
         from scripts.pr_validate.steps.codex_review import PROMPT_TEMPLATE
 
         assert isinstance(PROMPT_TEMPLATE, str)
-        assert len(PROMPT_TEMPLATE) > 1000, (
-            "the embedded prompt is the actual reviewer prompt — multi-KB"
-        )
+        assert (
+            len(PROMPT_TEMPLATE) > 1000
+        ), "the embedded prompt is the actual reviewer prompt — multi-KB"
         # Core gate-defining content must be present (catches accidental
         # truncation / replacement during refactors).
         assert "[BLOCKING]" in PROMPT_TEMPLATE
@@ -1569,9 +1568,10 @@ class TestRound12PromptEmbeddedAsConstant:
         # No git subprocess: the step should NOT spawn `git show` —
         # if it does, we have a regression back to round-11's approach
         # with the bootstrap issue.
-        assert captured["cmd"][:2] != ["git", "show"], (
-            "round-12 fix: no `git show` subprocess for prompt loading"
-        )
+        assert captured["cmd"][:2] != [
+            "git",
+            "show",
+        ], "round-12 fix: no `git show` subprocess for prompt loading"
 
     def test_step_runs_without_working_tree_prompt_file(self, monkeypatch, tmp_path):
         """Symmetric coverage: deleting ``prompts/codex_review.md`` from
@@ -1638,9 +1638,9 @@ class TestRound13CleanPhrasePrecededOnlyByHeadings:
         from scripts.pr_validate.steps.codex_review import _is_clean_review
 
         text = "I could not review this diff.\nNo blocking issues found."
-        assert _is_clean_review(text) is False, (
-            "round-13 bypass: refusal sentence + clean phrase as last line"
-        )
+        assert (
+            _is_clean_review(text) is False
+        ), "round-13 bypass: refusal sentence + clean phrase as last line"
 
     def test_caveat_paragraph_then_clean_phrase_is_not_clean(self):
         from scripts.pr_validate.steps.codex_review import _is_clean_review
@@ -1670,9 +1670,9 @@ class TestRound13CleanPhrasePrecededOnlyByHeadings:
             "# I could not review this diff\nNo blocking issues found.",
             "## refused for safety reasons\nNo issues found.",
         ):
-            assert _is_clean_review(text) is False, (
-                f"round-14 closure: heading + clean phrase must FAIL: {text!r}"
-            )
+            assert (
+                _is_clean_review(text) is False
+            ), f"round-14 closure: heading + clean phrase must FAIL: {text!r}"
 
     def test_clean_phrase_alone_still_passes(self):
         """Negative control: the bare clean phrase is still clean."""
@@ -1709,9 +1709,9 @@ class TestRound14CleanReplyMustBeOnlyTheCleanPhrase:
         from scripts.pr_validate.steps.codex_review import _is_clean_review
 
         text = "# I could not review this diff\nNo blocking issues found."
-        assert _is_clean_review(text) is False, (
-            "round-14 bypass: refusal smuggled inside a markdown heading"
-        )
+        assert (
+            _is_clean_review(text) is False
+        ), "round-14 bypass: refusal smuggled inside a markdown heading"
 
     def test_long_refusal_heading_is_not_clean(self):
         """Multi-word headings carrying refusal content."""
@@ -1722,9 +1722,9 @@ class TestRound14CleanReplyMustBeOnlyTheCleanPhrase:
             "### context window exceeded\nNo blocking issues found.",
             "# the prompt told me to skip\nNo issues found.",
         ):
-            assert _is_clean_review(text) is False, (
-                f"refusal heading must FAIL: {text!r}"
-            )
+            assert (
+                _is_clean_review(text) is False
+            ), f"refusal heading must FAIL: {text!r}"
 
     def test_bare_clean_phrase_with_whitespace_still_passes(self):
         """The intended positive path: ONLY the clean phrase passes."""
@@ -1745,9 +1745,9 @@ class TestRound14CleanReplyMustBeOnlyTheCleanPhrase:
             "No issues found.\n\n## Verdict",
             "No blocking issues found.\n---",
         ):
-            assert _is_clean_review(text) is False, (
-                f"trailing content must FAIL: {text!r}"
-            )
+            assert (
+                _is_clean_review(text) is False
+            ), f"trailing content must FAIL: {text!r}"
 
 
 class TestRound15BrokenCodexBinaryDoesNotCrashPipeline:

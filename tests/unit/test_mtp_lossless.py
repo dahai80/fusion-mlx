@@ -96,7 +96,6 @@ def _reset_mtp_module_state():
     import sys
 
     import mlx.core as mx
-
     from fusion_mlx.spec_decode.mtp.accept_counter import (
         reset_global_counter_for_tests,
     )

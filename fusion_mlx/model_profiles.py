@@ -1,6 +1,5 @@
 """Model profile definitions for fusion-mlx."""
 
-
 # Models that should not be included in auto-profile detection
 EXCLUDED_FROM_PROFILES: list[str] = [
     "google/t5-v1_1-xxl",

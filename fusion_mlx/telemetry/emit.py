@@ -28,7 +28,7 @@ from __future__ import annotations
 import itertools
 import threading
 from collections.abc import Iterable
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 from urllib.parse import urlsplit
 
@@ -201,7 +201,7 @@ def _reset_for_tests() -> None:
 
 
 def _utc_now_iso() -> str:
-    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def _envelope(event: str) -> dict[str, Any]:

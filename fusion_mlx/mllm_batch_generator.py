@@ -28,8 +28,8 @@ from mlx_lm.sample_utils import make_logits_processors
 
 from .cache.vision_embedding_cache import VisionEmbeddingCache
 from .multimodal_processor import MultimodalProcessor
-from .scheduler.sampler_fast_path import make_fused_sampler
 from .request import get_default_max_tokens
+from .scheduler.sampler_fast_path import make_fused_sampler
 
 logger = logging.getLogger(__name__)
 
@@ -136,7 +136,9 @@ class MLLMBatch:
     uids: list[int]
     request_ids: list[str]
     y: mx.array  # Current token(s) for each request [batch_size]
-    logprobs: list[mx.array | None]  # Log probs for each request (None when not requested)
+    logprobs: list[
+        mx.array | None
+    ]  # Log probs for each request (None when not requested)
     max_tokens: list[int]  # Max tokens per request
     num_tokens: list[int]  # Tokens generated per request
     cache: list[Any]  # BatchKVCache for language model
@@ -189,8 +191,12 @@ class MLLMBatch:
             if c is None or o is None or not hasattr(c, "extend"):
                 continue
             try:
-                if hasattr(c, "keys") and c.keys is not None \
-                        and hasattr(o, "keys") and o.keys is not None:
+                if (
+                    hasattr(c, "keys")
+                    and c.keys is not None
+                    and hasattr(o, "keys")
+                    and o.keys is not None
+                ):
                     if c.keys.ndim != o.keys.ndim:
                         logger.warning(
                             "Skipping cache extend layer %d: dim mismatch",
@@ -416,7 +422,9 @@ class MLLMBatchGenerator:
         self.max_tokens = max_tokens
         self.stop_tokens = stop_tokens or set()
         self.sampler = sampler or (lambda x: mx.argmax(x, axis=-1))
-        self._shared_batch_sampler: tuple[tuple[float, float, int, float], Callable] | None = None
+        self._shared_batch_sampler: (
+            tuple[tuple[float, float, int, float], Callable] | None
+        ) = None
 
         self.prefill_batch_size = prefill_batch_size
         self.completion_batch_size = max(completion_batch_size, prefill_batch_size)
@@ -483,6 +491,7 @@ class MLLMBatchGenerator:
                 logger.debug(f"mx.synchronize skipped during close: {e}")
             mx.set_wired_limit(self._old_wired_limit)
             self._old_wired_limit = None
+
     def __del__(self):
         try:
             self.close()
@@ -1061,12 +1070,8 @@ class MLLMBatchGenerator:
         _any_logprobs = requests and any(
             getattr(r, "logprobs_requested", False) for r in requests
         )
-        _needs_top_p = requests and any(
-            0.0 < r.top_p < 1.0 for r in requests
-        )
-        _needs_min_p = requests and any(
-            r.min_p > 0.0 for r in requests
-        )
+        _needs_top_p = requests and any(0.0 < r.top_p < 1.0 for r in requests)
+        _needs_min_p = requests and any(r.min_p > 0.0 for r in requests)
         if _any_logprobs or _needs_top_p or _needs_min_p:
             logprobs = logits - mx.logsumexp(logits, axis=-1, keepdims=True)
             sampler_input = logprobs
@@ -1077,8 +1082,12 @@ class MLLMBatchGenerator:
             sampler_input = logits
 
         if requests and len(requests) == sampler_input.shape[0]:
-            first_key = (requests[0].temperature, requests[0].top_p,
-                         requests[0].top_k, requests[0].min_p)
+            first_key = (
+                requests[0].temperature,
+                requests[0].top_p,
+                requests[0].top_k,
+                requests[0].min_p,
+            )
             homogeneous = all(
                 (r.temperature, r.top_p, r.top_k, r.min_p) == first_key
                 for r in requests
@@ -1251,9 +1260,7 @@ class MLLMBatchGenerator:
                     # them), pass None to avoid a cross-thread stream
                     # lookup on a non-existent tensor.
                     logprobs=(
-                        outgoing_logprobs[i]
-                        if outgoing_logprobs is not None
-                        else None
+                        outgoing_logprobs[i] if outgoing_logprobs is not None else None
                     ),
                     finish_reason=finish_reason,
                     token_is_stop_token=token_is_stop_token,

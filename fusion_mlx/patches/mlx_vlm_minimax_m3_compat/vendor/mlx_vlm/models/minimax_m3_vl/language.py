@@ -1,5 +1,5 @@
 from functools import partial
-from typing import Any, List, Optional
+from typing import Any
 
 import mlx.core as mx
 import mlx.nn as nn
@@ -671,7 +671,7 @@ class MiniMaxAttention(nn.Module):
         B: int,
         L: int,
         q_start: int,
-        q_positions: Optional[mx.array] = None,
+        q_positions: mx.array | None = None,
     ):
         if q_positions is None:
             positions = mx.arange(q_start, q_start + L)
@@ -701,10 +701,10 @@ class MiniMaxAttention(nn.Module):
         idx_queries: mx.array,
         idx_keys: mx.array,
         q_start: int,
-        mask: Optional[mx.array] = None,
+        mask: mx.array | None = None,
         return_block_indices: bool = False,
         build_token_mask: bool = True,
-        q_positions: Optional[mx.array] = None,
+        q_positions: mx.array | None = None,
     ):
         B, H_idx, L, _ = idx_queries.shape
         total_len = idx_keys.shape[2]
@@ -839,7 +839,7 @@ class MiniMaxAttention(nn.Module):
         idx_queries: mx.array,
         idx_keys: mx.array,
         q_start: int,
-        q_positions: Optional[mx.array] = None,
+        q_positions: mx.array | None = None,
     ):
         B, H_idx, L, _ = idx_queries.shape
         total_len = idx_keys.shape[2]
@@ -942,7 +942,7 @@ class MiniMaxAttention(nn.Module):
 
     @staticmethod
     def _normalize_attention_mask(
-        mask: Optional[mx.array],
+        mask: mx.array | None,
         B: int,
         L: int,
         total_len: int,
@@ -985,7 +985,7 @@ class MiniMaxAttention(nn.Module):
 
     @staticmethod
     def _selection_valid_mask(
-        mask: Optional[mx.array], B: int, H_idx: int, L: int, total_len: int
+        mask: mx.array | None, B: int, H_idx: int, L: int, total_len: int
     ):
         valid = MiniMaxAttention._normalize_attention_mask(mask, B, L, total_len)
         if valid is None or isinstance(valid, str):
@@ -1002,7 +1002,7 @@ class MiniMaxAttention(nn.Module):
         return valid
 
     @staticmethod
-    def _merge_sparse_mask(sparse_mask: mx.array, mask: Optional[mx.array]):
+    def _merge_sparse_mask(sparse_mask: mx.array, mask: mx.array | None):
         B, _, L, total_len = sparse_mask.shape
         mask = MiniMaxAttention._normalize_attention_mask(mask, B, L, total_len)
         if mask is None or isinstance(mask, str):
@@ -1020,7 +1020,7 @@ class MiniMaxAttention(nn.Module):
         self,
         queries: mx.array,
         keys: mx.array,
-        original_mask: Optional[mx.array],
+        original_mask: mx.array | None,
     ) -> bool:
         B, H, L, _ = queries.shape
         _, K, total_len, _ = keys.shape
@@ -1062,7 +1062,7 @@ class MiniMaxAttention(nn.Module):
         q_start: int,
         *,
         topk_all_valid: bool = False,
-        q_positions: Optional[mx.array] = None,
+        q_positions: mx.array | None = None,
     ):
         B, H, L, D = queries.shape
         _, K, total_len, _ = keys.shape
@@ -1097,9 +1097,7 @@ class MiniMaxAttention(nn.Module):
                 positions.dtype
             )
             valid = (
-                valid
-                & (positions < total_len)
-                & (positions <= qpos[:, None, :, None])
+                valid & (positions < total_len) & (positions <= qpos[:, None, :, None])
             )
             positions = mx.where(
                 valid, positions, mx.array(total_len, dtype=positions.dtype)
@@ -1128,9 +1126,9 @@ class MiniMaxAttention(nn.Module):
     def __call__(
         self,
         x: mx.array,
-        mask: Optional[mx.array] = None,
-        cache: Optional[KVCache] = None,
-        position_ids: Optional[mx.array] = None,
+        mask: mx.array | None = None,
+        cache: KVCache | None = None,
+        position_ids: mx.array | None = None,
     ) -> mx.array:
         B, L, _ = x.shape
         offset = 0 if cache is None else cache.offset
@@ -1370,9 +1368,9 @@ class MiniMaxDecoderLayer(nn.Module):
     def __call__(
         self,
         x: mx.array,
-        mask: Optional[mx.array] = None,
-        cache: Optional[KVCache] = None,
-        position_ids: Optional[mx.array] = None,
+        mask: mx.array | None = None,
+        cache: KVCache | None = None,
+        position_ids: mx.array | None = None,
     ) -> mx.array:
         h = x + self.self_attn(
             self.input_layernorm(x), mask, cache, position_ids=position_ids
@@ -1397,12 +1395,12 @@ class MiniMaxM3Model(nn.Module):
     def __call__(
         self,
         inputs: mx.array,
-        inputs_embeds: Optional[mx.array] = None,
-        mask: Optional[mx.array] = None,
+        inputs_embeds: mx.array | None = None,
+        mask: mx.array | None = None,
         cache=None,
-        capture_layer_ids: Optional[List[int]] = None,
-        hidden_sink: Optional[list] = None,
-        position_ids: Optional[mx.array] = None,
+        capture_layer_ids: list[int] | None = None,
+        hidden_sink: list | None = None,
+        position_ids: mx.array | None = None,
     ) -> mx.array:
         h = self.embed_tokens(inputs) if inputs_embeds is None else inputs_embeds
         if cache is None:
@@ -1425,7 +1423,7 @@ class MiniMaxM3Model(nn.Module):
 
 
 class LanguageModel(nn.Module):
-    def __init__(self, args: TextConfig, config: Optional[ModelConfig] = None):
+    def __init__(self, args: TextConfig, config: ModelConfig | None = None):
         super().__init__()
         self.args = args
         self.config = config
@@ -1439,9 +1437,9 @@ class LanguageModel(nn.Module):
     def get_rope_index(
         self,
         input_ids: mx.array,
-        image_grid_thw: Optional[mx.array] = None,
-        video_grid_thw: Optional[mx.array] = None,
-        attention_mask: Optional[mx.array] = None,
+        image_grid_thw: mx.array | None = None,
+        video_grid_thw: mx.array | None = None,
+        attention_mask: mx.array | None = None,
     ):
         del image_grid_thw, video_grid_thw
         batch_size, seq_length = input_ids.shape
@@ -1450,9 +1448,7 @@ class LanguageModel(nn.Module):
 
         if attention_mask is not None:
             seen_token = mx.cumsum(attention_mask.astype(mx.int32), axis=-1) > 0
-            left_padding = seq_length - mx.sum(
-                seen_token.astype(mx.int32), axis=-1
-            )
+            left_padding = seq_length - mx.sum(seen_token.astype(mx.int32), axis=-1)
             positions = positions - left_padding.astype(positions.dtype)[:, None]
 
         rope_deltas = mx.zeros((batch_size, 1), dtype=positions.dtype)
@@ -1515,8 +1511,8 @@ class LanguageModel(nn.Module):
     def __call__(
         self,
         inputs: mx.array,
-        inputs_embeds: Optional[mx.array] = None,
-        mask: Optional[mx.array] = None,
+        inputs_embeds: mx.array | None = None,
+        mask: mx.array | None = None,
         cache=None,
         **kwargs,
     ) -> LanguageModelOutput:
@@ -1537,10 +1533,7 @@ class LanguageModel(nn.Module):
         ):
             mask = attention_mask
 
-        if (
-            position_ids is None
-            and inputs.shape[0] > 1
-        ):
+        if position_ids is None and inputs.shape[0] > 1:
             first_cache = self._first_cache(cache)
             cache_offset = 0
             cache_offsets = None
@@ -1646,7 +1639,7 @@ class LanguageModel(nn.Module):
 
     def rollback_speculative_cache(
         self,
-        caches: List[Any],
+        caches: list[Any],
         gdn_states: Any,
         accepted: Any,
         block_size: int,
@@ -1738,7 +1731,7 @@ class LanguageModel(nn.Module):
 
         return predicate
 
-    def shard(self, group: Optional[mx.distributed.Group] = None):
+    def shard(self, group: mx.distributed.Group | None = None):
         group = group or mx.distributed.init()
         n = group.size()
 

@@ -2,7 +2,6 @@
 """Tests for PrefillProgressTracker."""
 
 import threading
-import time
 from unittest.mock import patch
 
 from fusion_mlx.prefill_progress import PrefillProgressTracker

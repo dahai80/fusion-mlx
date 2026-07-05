@@ -42,10 +42,7 @@ class TestInstallDetection:
             patch("omlx.utils.install.shutil.which", return_value=None),
         ):
             assert is_app_bundle()
-            assert (
-                get_cli_prefix()
-                == "/Users/me/Apps/oMLX.app/Contents/MacOS/omlx-cli"
-            )
+            assert get_cli_prefix() == "/Users/me/Apps/oMLX.app/Contents/MacOS/omlx-cli"
 
     def test_app_bundle_uses_full_path_when_user_shim_is_not_on_path(self, tmp_path):
         """Installed app should not render bare omlx unless PATH resolves it."""
@@ -75,7 +72,9 @@ class TestInstallDetection:
         ):
             assert get_cli_prefix() == "omlx"
 
-    def test_app_bundle_uses_bare_omlx_when_path_resolves_public_symlink(self, tmp_path):
+    def test_app_bundle_uses_bare_omlx_when_path_resolves_public_symlink(
+        self, tmp_path
+    ):
         """Public symlink to the user shim is app-managed."""
         fake = "/Applications/oMLX.app/Contents/Resources/omlx/utils/install.py"
         shim = tmp_path / ".omlx" / "bin" / "omlx"

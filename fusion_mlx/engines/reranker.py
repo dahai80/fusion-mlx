@@ -35,9 +35,15 @@ class MLXRerankerModel:
             from mlx_embeddings import load as load_embedding
         except ImportError:
             from mlx_lm import load
-            self._model, self._processor = load(self._model_name, tokenizer_config={"trust_remote_code": self._trust_remote_code})
+
+            self._model, self._processor = load(
+                self._model_name,
+                tokenizer_config={"trust_remote_code": self._trust_remote_code},
+            )
             return
-        self._model, self._processor = load_embedding(self._model_name, trust_remote_code=self._trust_remote_code)
+        self._model, self._processor = load_embedding(
+            self._model_name, trust_remote_code=self._trust_remote_code
+        )
 
     @property
     def processor(self):
@@ -52,7 +58,12 @@ class MLXRerankerModel:
         except AttributeError:
             return None
 
-    def rerank(self, query: "str | dict", documents: "list[str] | list[dict]", max_length: int | None = None) -> RerankOutput:
+    def rerank(
+        self,
+        query: "str | dict",
+        documents: "list[str] | list[dict]",
+        max_length: int | None = None,
+    ) -> RerankOutput:
         if isinstance(query, dict):
             query_text = query.get("text", "")
         else:
@@ -106,10 +117,13 @@ class RerankerEngine(BaseNonStreamingEngine):
         if self._model is not None:
             return
         logger.info(f"Starting reranker engine: {self._model_name}")
-        self._model = MLXRerankerModel(self._model_name, trust_remote_code=self._trust_remote_code)
+        self._model = MLXRerankerModel(
+            self._model_name, trust_remote_code=self._trust_remote_code
+        )
         loop = asyncio.get_running_loop()
         await asyncio.wait_for(
-            loop.run_in_executor(get_executor("llm"), self._model.load), timeout=120.0)
+            loop.run_in_executor(get_executor("llm"), self._model.load), timeout=120.0
+        )
 
     async def stop(self) -> None:
         if self._model is None:
@@ -118,28 +132,50 @@ class RerankerEngine(BaseNonStreamingEngine):
         gc.collect()
         loop = asyncio.get_running_loop()
         from ..scheduler.helpers import _safe_clear_cache_for_non_llm
-        await asyncio.wait_for(
-            loop.run_in_executor(get_executor("llm"), _safe_clear_cache_for_non_llm), timeout=5.0)
 
-    async def rerank(self, query: "str | dict", documents: "list[str] | list[dict]", top_n: int | None = None, max_length: int | None = None) -> RerankOutput:
+        await asyncio.wait_for(
+            loop.run_in_executor(get_executor("llm"), _safe_clear_cache_for_non_llm),
+            timeout=5.0,
+        )
+
+    async def rerank(
+        self,
+        query: "str | dict",
+        documents: "list[str] | list[dict]",
+        top_n: int | None = None,
+        max_length: int | None = None,
+    ) -> RerankOutput:
         if self._model is None:
             raise RuntimeError("Engine not started.")
         activity_id = self._begin_activity("reranking", total_items=len(documents))
         try:
             loop = asyncio.get_running_loop()
+
             def _rerank():
-                return self._model.rerank(query=query, documents=documents, max_length=max_length)
+                return self._model.rerank(
+                    query=query, documents=documents, max_length=max_length
+                )
+
             output = await asyncio.wait_for(
-                loop.run_in_executor(get_executor("llm"), _rerank), timeout=30.0)
+                loop.run_in_executor(get_executor("llm"), _rerank), timeout=30.0
+            )
             self._update_activity(activity_id, token_count=output.total_tokens)
             if top_n is not None and top_n < len(output.indices):
-                return RerankOutput(scores=output.scores, indices=output.indices[:top_n], total_tokens=output.total_tokens)
+                return RerankOutput(
+                    scores=output.scores,
+                    indices=output.indices[:top_n],
+                    total_tokens=output.total_tokens,
+                )
             return output
         finally:
             await self._finish_activity(activity_id)
 
     def get_stats(self) -> dict[str, Any]:
-        return {"model_name": self._model_name, "loaded": self._model is not None, "num_labels": self.num_labels}
+        return {
+            "model_name": self._model_name,
+            "loaded": self._model is not None,
+            "num_labels": self.num_labels,
+        }
 
     def __repr__(self) -> str:
         status = "running" if self._model is not None else "stopped"

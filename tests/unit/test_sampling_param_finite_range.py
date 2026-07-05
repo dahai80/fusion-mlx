@@ -331,27 +331,28 @@ def _assert_invalid_request_envelope(r, wire_field: str) -> None:
     which embeds the bad value in ``input_value`` and crashes on
     NaN serialization — that's the F-011 silent-500 cause this
     PR closes for every sampling param at once."""
-    assert r.status_code == 400, (
-        f"expected 400 for {wire_field}; got {r.status_code} body={r.text[:200]}"
-    )
+    assert (
+        r.status_code == 400
+    ), f"expected 400 for {wire_field}; got {r.status_code} body={r.text[:200]}"
     body = r.json()
-    assert isinstance(body, dict) and "error" in body, (
-        f"missing top-level ``error`` key for {wire_field}: {r.text[:200]}"
-    )
+    assert (
+        isinstance(body, dict) and "error" in body
+    ), f"missing top-level ``error`` key for {wire_field}: {r.text[:200]}"
     err = body["error"]
-    assert err.get("type") == "invalid_request_error", (
-        f"wrong error type for {wire_field}: {err}"
-    )
+    assert (
+        err.get("type") == "invalid_request_error"
+    ), f"wrong error type for {wire_field}: {err}"
     # Code is either ``"invalid_request"`` (OpenAI route validation
     # handler) or ``None`` (Anthropic route's catch-and-rethrow path).
     # Tighten this when M-10 unifies envelopes across routes.
-    assert err.get("code") in ("invalid_request", None), (
-        f"unexpected code for {wire_field}: {err}"
-    )
+    assert err.get("code") in (
+        "invalid_request",
+        None,
+    ), f"unexpected code for {wire_field}: {err}"
     msg = err.get("message", "")
-    assert isinstance(msg, str) and wire_field in msg, (
-        f"error message for {wire_field} missing field name: {msg!r}"
-    )
+    assert (
+        isinstance(msg, str) and wire_field in msg
+    ), f"error message for {wire_field} missing field name: {msg!r}"
 
 
 # ---------------------------------------------------------------------------

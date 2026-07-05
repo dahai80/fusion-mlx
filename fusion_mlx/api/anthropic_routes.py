@@ -17,24 +17,6 @@ from fastapi.responses import StreamingResponse
 
 from ..api.adapters.anthropic import AnthropicAdapter
 from ..api.adapters.base import InternalResponse, StreamChunk
-from ..api.anthropic_utils import (
-    create_content_block_start_event,
-    create_content_block_stop_event,
-    create_input_json_delta_event,
-    create_message_delta_event,
-    create_message_stop_event,
-    create_tool_name_delta_event,
-    map_finish_reason_to_stop_reason,
-)
-from ..api.anthropic_utils import (
-    create_content_block_start_event,
-    create_content_block_stop_event,
-    create_input_json_delta_event,
-    create_message_delta_event,
-    create_message_stop_event,
-    create_tool_name_delta_event,
-    map_finish_reason_to_stop_reason,
-)
 from ..api.anthropic_models import (
     MessagesRequest as AnthropicMessagesRequest,
 )
@@ -44,6 +26,15 @@ from ..api.anthropic_models import (
 from ..api.anthropic_models import (
     TokenCountRequest,
     TokenCountResponse,
+)
+from ..api.anthropic_utils import (
+    create_content_block_start_event,
+    create_content_block_stop_event,
+    create_input_json_delta_event,
+    create_message_delta_event,
+    create_message_stop_event,
+    create_tool_name_delta_event,
+    map_finish_reason_to_stop_reason,
 )
 from ..pool import EnginePool
 from ..request import SamplingParams
@@ -136,7 +127,9 @@ def _anthropic_to_messages(
 def _build_sampling_params(req: AnthropicMessagesRequest) -> SamplingParams:
     """Convert Anthropic request to SamplingParams."""
     max_tokens = getattr(req, "max_tokens", 2048) or 2048
-    temperature = getattr(req, "temperature", 0.7) if hasattr(req, "temperature") else 0.7
+    temperature = (
+        getattr(req, "temperature", 0.7) if hasattr(req, "temperature") else 0.7
+    )
     top_p = getattr(req, "top_p", None) if hasattr(req, "top_p") else None
     if top_p is None:
         top_p = 0.9
@@ -146,39 +139,56 @@ def _build_sampling_params(req: AnthropicMessagesRequest) -> SamplingParams:
         temperature=temperature,
         top_p=top_p,
         stop=stop if isinstance(stop, list) else ([stop] if stop else None),
-        )
+    )
 
 
-async def _run_anthropic_messages(req: AnthropicMessagesRequest) -> AnthropicMessagesResponse:
+async def _run_anthropic_messages(
+    req: AnthropicMessagesRequest,
+) -> AnthropicMessagesResponse:
     """Execute a non-streaming Anthropic messages request."""
     if _pool is None:
         raise HTTPException(450, "Engine pool not initialized")
 
     from ..server import resolve_model_id
+
     model_name = resolve_model_id(req.model)
     engine = await _pool.get_engine(model_name, _lease=True)
     if engine is None:
         await _pool.release_engine(model_name)
         raise HTTPException(404, f"Model {model_name} not available")
 
-# Reject multimodal content on text-only models
+    # Reject multimodal content on text-only models
     if not getattr(engine, "is_mllm", False):
         for msg in req.messages:
             content = getattr(msg, "content", "") if msg else None
             if isinstance(content, list):
                 for part in content:
-                    pt = part.get("type", "") if isinstance(part, dict) else getattr(part, "type", "")
-                    if pt in ("image_url", "image", "video", "video_url", "audio_url", "audio", "input_audio"):
+                    pt = (
+                        part.get("type", "")
+                        if isinstance(part, dict)
+                        else getattr(part, "type", "")
+                    )
+                    if pt in (
+                        "image_url",
+                        "image",
+                        "video",
+                        "video_url",
+                        "audio_url",
+                        "audio",
+                        "input_audio",
+                    ):
                         await _pool.release_engine(model_name)
                         raise HTTPException(
                             status_code=400,
                             detail=(
                                 f"Model '{model_name}' does not support "
-                                  "image, video, or audio inputs."
-                              ),
-                          )
+                                "image, video, or audio inputs."
+                            ),
+                        )
 
-    tokenizer = getattr(engine, "_tokenizer", None) or getattr(engine, "tokenizer", None)
+    tokenizer = getattr(engine, "_tokenizer", None) or getattr(
+        engine, "tokenizer", None
+    )
     messages = _anthropic_to_messages(req, tokenizer=tokenizer)
     sampling = _build_sampling_params(req)
     request_id = f"msg-{uuid.uuid4().hex[:12]}"
@@ -197,13 +207,16 @@ async def _run_anthropic_messages(req: AnthropicMessagesRequest) -> AnthropicMes
             chat_template_kwargs=ct_kwargs if ct_kwargs else None,
         )
 
-         # Log completion (Ollama-style)
+        # Log completion (Ollama-style)
         logger.info(
-                "Non-stream done: %s, finish=%s, prompt_tok=%d, "
-                "completion_tok=%d, cached=%d",
-              request_id, gen.finish_reason,
-              gen.prompt_tokens, gen.completion_tokens, gen.cached_tokens,
-           )
+            "Non-stream done: %s, finish=%s, prompt_tok=%d, "
+            "completion_tok=%d, cached=%d",
+            request_id,
+            gen.finish_reason,
+            gen.prompt_tokens,
+            gen.completion_tokens,
+            gen.cached_tokens,
+        )
 
         # Convert to InternalResponse, then through adapter
         internal = InternalResponse(
@@ -221,7 +234,7 @@ async def _run_anthropic_messages(req: AnthropicMessagesRequest) -> AnthropicMes
         raise
     except Exception as exc:
         err_msg = str(exc)
-          # VLM image/video fetch failures -> 400
+        # VLM image/video fetch failures -> 400
         if "Failed to process image" in err_msg or "Failed to process video" in err_msg:
             raise HTTPException(status_code=400, detail=err_msg)
         logger.exception("Anthropic messages failed for %s", request_id)
@@ -230,46 +243,63 @@ async def _run_anthropic_messages(req: AnthropicMessagesRequest) -> AnthropicMes
         await _pool.release_engine(model_name)
 
 
-async def _stream_anthropic_generator(req: AnthropicMessagesRequest) -> AsyncIterator[str]:
+async def _stream_anthropic_generator(
+    req: AnthropicMessagesRequest,
+) -> AsyncIterator[str]:
     """Generate SSE events for a streaming Anthropic messages request."""
     if _pool is None:
         raise HTTPException(450, "Engine pool not initialized")
 
     from ..server import resolve_model_id
+
     model_name = resolve_model_id(req.model)
     engine = await _pool.get_engine(model_name, _lease=True)
     if engine is None:
         await _pool.release_engine(model_name)
         raise HTTPException(404, f"Model {model_name} not available")
 
-# Reject multimodal content on text-only models
+    # Reject multimodal content on text-only models
     if not getattr(engine, "is_mllm", False):
         for msg in req.messages:
             content = getattr(msg, "content", "") if msg else None
             if isinstance(content, list):
                 for part in content:
-                    pt = part.get("type", "") if isinstance(part, dict) else getattr(part, "type", "")
-                    if pt in ("image_url", "image", "video", "video_url", "audio_url", "audio", "input_audio"):
+                    pt = (
+                        part.get("type", "")
+                        if isinstance(part, dict)
+                        else getattr(part, "type", "")
+                    )
+                    if pt in (
+                        "image_url",
+                        "image",
+                        "video",
+                        "video_url",
+                        "audio_url",
+                        "audio",
+                        "input_audio",
+                    ):
                         await _pool.release_engine(model_name)
                         raise HTTPException(
                             status_code=400,
                             detail=(
                                 f"Model '{model_name}' does not support "
-                                  "image, video, or audio inputs."
-                              ),
-                          )
+                                "image, video, or audio inputs."
+                            ),
+                        )
 
-    tokenizer = getattr(engine, "_tokenizer", None) or getattr(engine, "tokenizer", None)
+    tokenizer = getattr(engine, "_tokenizer", None) or getattr(
+        engine, "tokenizer", None
+    )
     messages = _anthropic_to_messages(req, tokenizer=tokenizer)
     sampling = _build_sampling_params(req)
     request_id = f"msg-{uuid.uuid4().hex[:12]}"
 
-
     logger.info(
-           "Stream start: %s, max_tokens=%d, prompt=%r",
-        request_id, sampling.max_tokens,
+        "Stream start: %s, max_tokens=%d, prompt=%r",
+        request_id,
+        sampling.max_tokens,
         messages[-1].get("content", "")[:120] if messages else "",
-       )
+    )
     try:
         # Send message_start
         yield _adapter.format_stream_chunk(
@@ -299,13 +329,16 @@ async def _stream_anthropic_generator(req: AnthropicMessagesRequest) -> AsyncIte
                 yield _adapter.format_stream_chunk(chunk, req)
 
             if gen.finished:
-                    # Log completion (Ollama-style)
+                # Log completion (Ollama-style)
                 logger.info(
-                        "Stream done: %s, finish=%s, prompt_tok=%d, "
-                        "completion_tok=%d, cached=%d",
-                      request_id, gen.finish_reason,
-                      gen.prompt_tokens, gen.completion_tokens, gen.cached_tokens,
-                    )
+                    "Stream done: %s, finish=%s, prompt_tok=%d, "
+                    "completion_tok=%d, cached=%d",
+                    request_id,
+                    gen.finish_reason,
+                    gen.prompt_tokens,
+                    gen.completion_tokens,
+                    gen.cached_tokens,
+                )
 
                 # Emit tool_use content blocks if tool calls present
                 if gen.tool_calls:
@@ -315,7 +348,10 @@ async def _stream_anthropic_generator(req: AnthropicMessagesRequest) -> AsyncIte
                         tc_args = tc.get("function", {}).get("arguments", "{}")
                         block_index = 1 + i
                         yield create_content_block_start_event(
-                            block_index, "tool_use", id=tc_id, name=tc_name,
+                            block_index,
+                            "tool_use",
+                            id=tc_id,
+                            name=tc_name,
                         )
                         yield create_tool_name_delta_event(block_index, tc_name)
                         yield create_input_json_delta_event(block_index, tc_args)
@@ -323,7 +359,8 @@ async def _stream_anthropic_generator(req: AnthropicMessagesRequest) -> AsyncIte
 
                 # Send message_delta and message_stop
                 stop_reason = map_finish_reason_to_stop_reason(
-                    gen.finish_reason, bool(gen.tool_calls),
+                    gen.finish_reason,
+                    bool(gen.tool_calls),
                 )
                 yield create_message_delta_event(
                     stop_reason=stop_reason,
@@ -334,18 +371,21 @@ async def _stream_anthropic_generator(req: AnthropicMessagesRequest) -> AsyncIte
 
     except Exception as exc:
         err_msg = str(exc)
-          # VLM image/video fetch failures -> 400
-            # Log EVERY error with full details (Ollama-style)
+        # VLM image/video fetch failures -> 400
+        # Log EVERY error with full details (Ollama-style)
         logger.error(
-                "Stream ERROR %s: %s\n  type=%s\n  model=%s",
-            request_id, err_msg, type(exc).__name__, model_name,
+            "Stream ERROR %s: %s\n  type=%s\n  model=%s",
+            request_id,
+            err_msg,
+            type(exc).__name__,
+            model_name,
             exc_info=True,
-           )
+        )
         if "Failed to process image" in err_msg or "Failed to process video" in err_msg:
-            yield f"event: error\ndata: {{\"error\": {err_msg!r}, \"status\": 400}}\n\n"
+            yield f'event: error\ndata: {{"error": {err_msg!r}, "status": 400}}\n\n'
         else:
             pass
-            yield f"event: error\ndata: {{\"error\": {err_msg!r}}}\n\n"
+            yield f'event: error\ndata: {{"error": {err_msg!r}}}\n\n'
     finally:
         await _pool.release_engine(model_name)
 
@@ -353,7 +393,7 @@ async def _stream_anthropic_generator(req: AnthropicMessagesRequest) -> AsyncIte
 @router.post("/messages")
 async def anthropic_messages(request: AnthropicMessagesRequest) -> Any:
     """Handle Anthropic Messages API requests."""
-       # Log request entry (Ollama-style)
+    # Log request entry (Ollama-style)
     prompt_preview = ""
     if request.messages:
         first = request.messages[0]
@@ -366,21 +406,22 @@ async def anthropic_messages(request: AnthropicMessagesRequest) -> Any:
                     prompt_preview = p.get("text", "")[:120]
                     break
     logger.info(
-           "Anthropic /messages: model=%s, stream=%s, max_tokens=%d, "
-            "temp=%s, top_p=%s, prompt=%r",
-        request.model, request.stream,
+        "Anthropic /messages: model=%s, stream=%s, max_tokens=%d, "
+        "temp=%s, top_p=%s, prompt=%r",
+        request.model,
+        request.stream,
         getattr(request, "max_tokens", 2048) or 2048,
         getattr(request, "temperature", None),
         getattr(request, "top_p", None),
         prompt_preview,
-       )
+    )
     try:
         if request.stream:
             return StreamingResponse(
                 _stream_anthropic_generator(request),
                 media_type="text/event-stream",
                 headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
-                )
+            )
         return await _run_anthropic_messages(request)
     except HTTPException:
         raise

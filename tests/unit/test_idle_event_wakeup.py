@@ -27,7 +27,7 @@ async def test_idle_event_unblocks_immediately_when_set():
         start = time.perf_counter()
         try:
             await asyncio.wait_for(event.wait(), timeout=30.0)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             return -1.0
         return time.perf_counter() - start
 
@@ -36,9 +36,9 @@ async def test_idle_event_unblocks_immediately_when_set():
         event.set()
 
     elapsed, _ = await asyncio.gather(waiter(), setter())
-    assert 0 <= elapsed < 0.1, (
-        f"event-driven wakeup took {elapsed * 1000:.1f}ms; should be << 100ms"
-    )
+    assert (
+        0 <= elapsed < 0.1
+    ), f"event-driven wakeup took {elapsed * 1000:.1f}ms; should be << 100ms"
 
 
 @pytest.mark.asyncio
@@ -47,12 +47,12 @@ async def test_idle_event_falls_back_to_timeout():
     start = time.perf_counter()
     try:
         await asyncio.wait_for(event.wait(), timeout=0.05)
-    except asyncio.TimeoutError:
+    except TimeoutError:
         pass
     elapsed = time.perf_counter() - start
-    assert 0.04 <= elapsed < 0.5, (
-        f"timeout fallback took {elapsed * 1000:.1f}ms; expected ~50ms"
-    )
+    assert (
+        0.04 <= elapsed < 0.5
+    ), f"timeout fallback took {elapsed * 1000:.1f}ms; expected ~50ms"
 
 
 @pytest.mark.asyncio
@@ -71,9 +71,9 @@ async def test_engine_core_creates_idle_event_in_loop():
         pytest.skip("EngineCore construction needs more mock setup")
         return
 
-    assert hasattr(engine, "_idle_event"), (
-        "EngineCore must declare the _idle_event slot — see issue #265"
-    )
+    assert hasattr(
+        engine, "_idle_event"
+    ), "EngineCore must declare the _idle_event slot — see issue #265"
     assert engine._idle_event is None, (
         "_idle_event must start as None and be created inside _engine_loop "
         "to bind to the right asyncio loop"

@@ -245,9 +245,9 @@ class TestStopMidThinkExplicitOpener:
         )
         # Some reasoning must have streamed; what matters is that the
         # text channel does NOT also receive the trace.
-        assert "Let me think" in thinking, (
-            f"[{name}] streaming did not route reasoning: thinking={thinking!r}"
-        )
+        assert (
+            "Let me think" in thinking
+        ), f"[{name}] streaming did not route reasoning: thinking={thinking!r}"
         assert not text, (
             f"[{name}] D-STOP-THINK regression — bytes duplicated into the "
             f"text channel.\n  thinking={thinking!r}\n  text={text!r}"
@@ -405,9 +405,9 @@ class TestStopMidThinkExplicitOpener:
             matched_stop="STOP",
             prompt_thinking_active=False,
         )
-        assert result is not None, (
-            f"[{name}] codex r11 BLOCKING #1: no correction emitted"
-        )
+        assert (
+            result is not None
+        ), f"[{name}] codex r11 BLOCKING #1: no correction emitted"
         assert result.content is None, (
             f"[{name}] codex r11 BLOCKING #1 regression — model-"
             f"spontaneous <think>...STOP leaked into content: "
@@ -488,9 +488,9 @@ class TestStopMidThinkNoOpener:
             "I pick the largest. ",
         ]
         thinking, text = _simulate_anthropic_stream(parser, chunks)
-        assert "thinking process" in thinking, (
-            f"[{name}] bare-preamble must surface as reasoning: thinking={thinking!r}"
-        )
+        assert (
+            "thinking process" in thinking
+        ), f"[{name}] bare-preamble must surface as reasoning: thinking={thinking!r}"
         assert not text, (
             f"[{name}] D-STOP-THINK regression — bare-preamble "
             f"duplicated into text: text={text!r}"
@@ -633,9 +633,9 @@ class TestPromptInjectedMidThinkDiscriminator:
                     prompt_thinking_active=thinking,
                     finish_reason=finish,
                 )
-                assert result is not None, (
-                    f"[{name}] thinking={thinking} finish={finish!r}: no rescue emitted"
-                )
+                assert (
+                    result is not None
+                ), f"[{name}] thinking={thinking} finish={finish!r}: no rescue emitted"
                 assert result.content == trace, (
                     f"[{name}] thinking={thinking} finish={finish!r}: "
                     f"#569 regression — natural-EOS answer "
@@ -674,9 +674,9 @@ class TestPromptInjectedMidThinkDiscriminator:
             prompt_thinking_active=True,
             finish_reason="length",
         )
-        assert result is not None, (
-            f"[{name}] max_tokens-mid-think: no correction emitted"
-        )
+        assert (
+            result is not None
+        ), f"[{name}] max_tokens-mid-think: no correction emitted"
         assert result.content is None, (
             f"[{name}] D-STOP-THINK round-6 regression — "
             f"max_tokens-mid-think duplicated into content: "
@@ -771,9 +771,9 @@ class TestMaxTokensMidThink:
             finish_reason="length",
             prompt_thinking_active=True,
         )
-        assert "5+7" in thinking, (
-            f"[{name}] expected reasoning routing; thinking={thinking!r}"
-        )
+        assert (
+            "5+7" in thinking
+        ), f"[{name}] expected reasoning routing; thinking={thinking!r}"
         assert not text, f"[{name}] D-STOP-THINK regression — text={text!r}"
 
 
@@ -891,9 +891,9 @@ class TestGemma4ChannelGrammar:
         assert "Let me think" in reasoning
         # No channel-marker leak into content
         if content:
-            assert "<|channel>" not in content, (
-                f"channel marker leaked into content: {content!r}"
-            )
+            assert (
+                "<|channel>" not in content
+            ), f"channel marker leaked into content: {content!r}"
             assert "thought" not in content or content.startswith(
                 ("Sure", "Okay", "Let")
             ), f"thought-trace bytes leaked into content: {content!r}"
@@ -934,19 +934,19 @@ class TestGemma4ChannelGrammar:
             f"codex r13 BLOCKING #2 regression — unterminated thought "
             f"body must surface as reasoning: reasoning={reasoning!r}"
         )
-        assert content is not None, (
-            f"downstream content channel must still surface: content={content!r}"
-        )
+        assert (
+            content is not None
+        ), f"downstream content channel must still surface: content={content!r}"
         assert "secret" not in content, (
             f"codex r13 BLOCKING #1 regression — thought body leaked into "
             f"content: content={content!r}"
         )
-        assert "answer is 12" in content, (
-            f"downstream content body lost: content={content!r}"
-        )
-        assert "<|channel>" not in content, (
-            f"channel marker leaked into content: {content!r}"
-        )
+        assert (
+            "answer is 12" in content
+        ), f"downstream content body lost: content={content!r}"
+        assert (
+            "<|channel>" not in content
+        ), f"channel marker leaked into content: {content!r}"
 
     def test_unterminated_thought_unknown_downstream_channel_is_reasoning(self):
         """Unknown downstream channels are not user-visible answer text."""
@@ -1002,9 +1002,9 @@ class TestHermesWithReasoningComposition:
             prompt_thinking_active=True,
         )
         assert "Let me reason" in thinking
-        assert not text, (
-            f"D-STOP-THINK regression under hermes composition: text={text!r}"
-        )
+        assert (
+            not text
+        ), f"D-STOP-THINK regression under hermes composition: text={text!r}"
 
 
 class TestNonStreamingHelperSymmetry:
@@ -1033,17 +1033,18 @@ class TestNonStreamingHelperSymmetry:
             enable_thinking=True,
         )
         # Reasoning must carry the trace; content must NOT duplicate it.
-        assert reasoning and "Let me think" in reasoning, (
-            f"[{name}] reasoning missing: reasoning={reasoning!r}"
-        )
+        assert (
+            reasoning and "Let me think" in reasoning
+        ), f"[{name}] reasoning missing: reasoning={reasoning!r}"
         assert not (content and content.strip() == (reasoning or "").strip()), (
             f"[{name}] D-STOP-THINK regression — content duplicates "
             f"reasoning.\n  content={content!r}\n  reasoning={reasoning!r}"
         )
 
     def test_gemma4_non_streaming_mid_thought(self):
-        from fusion_mlx.api.utils import clean_output_text, strip_thinking_tags
         from fusion_mlx.service.helpers import _finalize_content_and_reasoning
+
+        from fusion_mlx.api.utils import clean_output_text, strip_thinking_tags
 
         raw_text = "<|channel>thought\nLet me think about 5+7. The answer is "
         cleaned_text = raw_text

@@ -39,7 +39,12 @@ from .mllm_batch_generator import (
     MLLMBatchResponse,
 )
 from .multimodal_processor import MultimodalProcessor
-from .request import RequestOutput, RequestStatus, SamplingParams, get_default_max_tokens
+from .request import (
+    RequestOutput,
+    RequestStatus,
+    SamplingParams,
+    get_default_max_tokens,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -168,9 +173,7 @@ def _detokenize_response(
         detok.finalize()
         detok_finalized = True
         finalized_text = detok.text
-        if isinstance(finalized_text, str) and finalized_text.startswith(
-            baseline_text
-        ):
+        if isinstance(finalized_text, str) and finalized_text.startswith(baseline_text):
             new_text = finalized_text[len(baseline_text) :]
             if baseline_text:
                 new_text = baseline_text[len(baseline_prefix) :] + new_text
@@ -661,7 +664,8 @@ class MLLMScheduler:
             if len(uids) != len(scheduled):
                 logger.warning(
                     "batch_generator.insert returned %d UIDs for %d scheduled requests",
-                    len(uids), len(scheduled),
+                    len(uids),
+                    len(scheduled),
                 )
 
             for uid, request in zip(uids, scheduled):
@@ -936,9 +940,9 @@ class MLLMScheduler:
             outputs.append(
                 RequestOutput(
                     request_id=request_id,
-                    new_token_ids=[]
-                    if token_is_control_stop_token
-                    else [response.token],
+                    new_token_ids=(
+                        [] if token_is_control_stop_token else [response.token]
+                    ),
                     new_text=output_new_text,
                     output_token_ids=request.output_tokens,
                     output_text=output_output_text,

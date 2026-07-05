@@ -57,6 +57,7 @@ class TestExtractThinking:
         path treats the body as content (matching the streaming
         recovery in ThinkingParser.finish())."""
         from fusion_mlx.api.thinking import extract_thinking
+
         thinking, content = extract_thinking("<think>\nthe whole answer body")
         assert thinking == ""
         assert content == "the whole answer body"
@@ -106,9 +107,7 @@ class TestExtractThinking:
     def test_close_tag_only_partial_tail_branch(self):
         """Prompt pre-opened ``<think>``; model emits ``body</think>answer``
         (no opening tag in output). Partial-tail branch splits correctly."""
-        thinking, content = extract_thinking(
-            "thought process</think>visible answer"
-        )
+        thinking, content = extract_thinking("thought process</think>visible answer")
         assert thinking == "thought process"
         assert content == "visible answer"
 
@@ -389,25 +388,29 @@ class TestCleanSpecialTokens:
 
     def test_preserves_think_tags(self):
         from fusion_mlx.api.utils import clean_special_tokens
+
         result = clean_special_tokens("<think>reasoning</think>Answer")
-        assert "<think>reasoning</think>Answer" == result
+        assert result == "<think>reasoning</think>Answer"
 
     def test_removes_special_tokens(self):
         from fusion_mlx.api.utils import clean_special_tokens
+
         result = clean_special_tokens("<|im_end|>Hello<|endoftext|>")
         assert result == "Hello"
 
     def test_removes_minimax_m3_special_tokens(self):
         from fusion_mlx.api.utils import clean_special_tokens
+
         result = clean_special_tokens("]~!b[]~b]Hello[e~[]!p~[]!d~[")
         assert result == "Hello"
 
     def test_removes_special_preserves_think(self):
         from fusion_mlx.api.utils import clean_special_tokens
+
         result = clean_special_tokens(
             "<|im_start|><think>reasoning</think>Answer<|im_end|>"
         )
-        assert "<think>reasoning</think>Answer" == result
+        assert result == "<think>reasoning</think>Answer"
 
 
 class TestCleanOutputTextBackwardCompat:
@@ -415,15 +418,18 @@ class TestCleanOutputTextBackwardCompat:
 
     def test_still_removes_thinking(self):
         from fusion_mlx.api.utils import clean_output_text
+
         result = clean_output_text("<think>reasoning</think>Answer")
         assert result == "Answer"
 
     def test_still_removes_partial_think(self):
         from fusion_mlx.api.utils import clean_output_text
+
         result = clean_output_text("reasoning content</think>Answer")
         assert result == "Answer"
 
     def test_still_removes_special_tokens(self):
         from fusion_mlx.api.utils import clean_output_text
+
         result = clean_output_text("<|im_end|>Hello<|endoftext|>")
         assert result == "Hello"

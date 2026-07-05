@@ -142,7 +142,6 @@ def _make_sampling_request(uid: int, temperature: float, top_p: float):
 
 
 def test_step_homogeneous_requests_calls_fused_sampler_once(monkeypatch):
-    from fusion_mlx.scheduler.sampler_fast_path import make_fused_sampler
 
     make_sampler_calls = []
     shared_sampler_invocations = []
@@ -461,9 +460,9 @@ def test_resolve_mllm_prefill_step_size_bumps_text_default_to_mllm_default():
             f"honored as-is; got {_resolved(explicit_val)}"
         )
 
-    assert _resolved(None) == mllm_default, (
-        "missing attribute / no scheduler_config must default to MLLM-tuned"
-    )
+    assert (
+        _resolved(None) == mllm_default
+    ), "missing attribute / no scheduler_config must default to MLLM-tuned"
 
     cfg_without_attr = SimpleNamespace()
     resolved_missing = _resolve_mllm_prefill_step_size(
@@ -492,15 +491,15 @@ def test_per_batch_cap_fires_on_oversized_batch_with_actionable_message(
         MLLMBatchGenerator._process_prompts(gen, [request])
 
     msg = str(excinfo.value)
-    assert "exceeds the per-batch cap" in msg, (
-        f"cap error must keep the marker substring; got: {msg}"
-    )
-    assert "downscale the image" in msg, (
-        f"cap error must suggest image downscale; got: {msg}"
-    )
-    assert "--prefill-step-size" in msg, (
-        f"cap error must mention --prefill-step-size for the text path; got: {msg}"
-    )
+    assert (
+        "exceeds the per-batch cap" in msg
+    ), f"cap error must keep the marker substring; got: {msg}"
+    assert (
+        "downscale the image" in msg
+    ), f"cap error must suggest image downscale; got: {msg}"
+    assert (
+        "--prefill-step-size" in msg
+    ), f"cap error must mention --prefill-step-size for the text path; got: {msg}"
 
 
 def test_per_batch_cap_does_not_fail_at_default_on_typical_screenshot(

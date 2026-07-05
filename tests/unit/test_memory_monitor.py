@@ -4,12 +4,12 @@
 import pytest
 
 from fusion_mlx.memory_monitor import (
-    MemoryInfo,
-    MemoryMonitor,
     _SDPA_FALLBACK_SCORE_DTYPE_SIZE,
     _SDPA_FULL_SUPPORTED_HEAD_DIMS,
     _SDPA_VECTOR_QUERY_TOKEN_THRESHOLD,
     _SDPA_VECTOR_SUPPORTED_HEAD_DIMS,
+    MemoryInfo,
+    MemoryMonitor,
 )
 
 
@@ -76,7 +76,12 @@ class TestMemoryInfo:
     """MemoryInfo dataclass tests."""
 
     def test_memory_info_creation(self):
-        info = MemoryInfo(total_bytes=16 * 1024**3, used_bytes=8 * 1024**3, available_bytes=8 * 1024**3, utilization=0.5)
+        info = MemoryInfo(
+            total_bytes=16 * 1024**3,
+            used_bytes=8 * 1024**3,
+            available_bytes=8 * 1024**3,
+            utilization=0.5,
+        )
         assert info.total_bytes == 16 * 1024**3
         assert info.used_bytes == 8 * 1024**3
         assert info.available_bytes == 8 * 1024**3

@@ -17,7 +17,6 @@ Token flow:
 import copy
 import logging
 import time
-from typing import Any
 
 import mlx.core as mx
 
@@ -25,11 +24,19 @@ from ..request import RequestOutput
 
 logger = logging.getLogger(__name__)
 
-SPEC_NUM_DRAFT_TOKENS = int(__import__("os").environ.get("FUSION_SPEC_DRAFT_TOKENS", "3"))
+SPEC_NUM_DRAFT_TOKENS = int(
+    __import__("os").environ.get("FUSION_SPEC_DRAFT_TOKENS", "3")
+)
 SPEC_WARMUP_STEPS = int(__import__("os").environ.get("FUSION_SPEC_WARMUP_STEPS", "2"))
-SPEC_DRAFT_MODEL_ENABLED = __import__("os").environ.get("FUSION_DRAFT_MODEL_ENABLED", "1") == "1"
-SPEC_MIN_ACCEPT_RATE = float(__import__("os").environ.get("FUSION_SPEC_MIN_ACCEPT_RATE", "0.10"))
-SPEC_ADAPTIVE_WINDOW = int(__import__("os").environ.get("FUSION_SPEC_ADAPTIVE_WINDOW", "20"))
+SPEC_DRAFT_MODEL_ENABLED = (
+    __import__("os").environ.get("FUSION_DRAFT_MODEL_ENABLED", "1") == "1"
+)
+SPEC_MIN_ACCEPT_RATE = float(
+    __import__("os").environ.get("FUSION_SPEC_MIN_ACCEPT_RATE", "0.10")
+)
+SPEC_ADAPTIVE_WINDOW = int(
+    __import__("os").environ.get("FUSION_SPEC_ADAPTIVE_WINDOW", "20")
+)
 
 
 class SpecDecodeState:
@@ -94,7 +101,8 @@ class SpecDecodeState:
                 self._spec_paused = True
                 logger.info(
                     "spec_decode: pausing — acceptance %.1f%% < %.1f%%",
-                    recent_rate * 100, SPEC_MIN_ACCEPT_RATE * 100,
+                    recent_rate * 100,
+                    SPEC_MIN_ACCEPT_RATE * 100,
                 )
             elif recent_rate >= SPEC_MIN_ACCEPT_RATE and self._spec_paused:
                 self._spec_paused = False
@@ -106,7 +114,8 @@ class SpecDecodeState:
     def get_stats(self) -> dict:
         rate = (
             self.total_draft_accepted / self.total_draft_proposed
-            if self.total_draft_proposed > 0 else 0.0
+            if self.total_draft_proposed > 0
+            else 0.0
         )
         stats = {
             "spec_steps": self.total_spec_steps,
@@ -159,7 +168,11 @@ def _run_spec_verify(
 
     # Verify D1 against the regular step's prediction
     if sampled_from_regular is not None and draft_tokens[0] != sampled_from_regular:
-        logger.debug("spec_verify: D1 rejected — draft=%d sampled=%d", draft_tokens[0], sampled_from_regular)
+        logger.debug(
+            "spec_verify: D1 rejected — draft=%d sampled=%d",
+            draft_tokens[0],
+            sampled_from_regular,
+        )
         return [sampled_from_regular], 0, 0
 
     # D1 accepted
@@ -221,14 +234,17 @@ def spec_decode_step(
         if spec_state.steps_since_start <= 3:
             logger.info(
                 "spec_decode: warming up step=%d/%d",
-                spec_state.steps_since_start, SPEC_WARMUP_STEPS,
+                spec_state.steps_since_start,
+                SPEC_WARMUP_STEPS,
             )
         return []
 
     draft_tokens = spec_state.get_drafts(current_token)
     if not draft_tokens:
         if spec_state.total_spec_steps == 0:
-            logger.info("spec_decode: no draft tokens generated for token=%d", current_token)
+            logger.info(
+                "spec_decode: no draft tokens generated for token=%d", current_token
+            )
         return []
 
     K = len(draft_tokens)
@@ -257,7 +273,10 @@ def spec_decode_step(
     with mx.stream(scheduler._stream):
         t0 = time.perf_counter()
         verified, n_accepted, cache_tokens_processed = _run_spec_verify(
-            model, current_token, draft_tokens, prompt_cache,
+            model,
+            current_token,
+            draft_tokens,
+            prompt_cache,
             sampled_from_regular=sampled_from_regular,
         )
     dt = time.perf_counter() - t0
@@ -275,11 +294,14 @@ def spec_decode_step(
                     mx.eval(replay_logits)
             logger.debug(
                 "spec_decode: restored %d non-trimmable caches, %d/%d rejected",
-                len(non_trimmable_snapshots), n_rejected, K,
+                len(non_trimmable_snapshots),
+                n_rejected,
+                K,
             )
         # Trim trimmable caches
         if n_rejected > 0:
             from mlx_lm.models import cache as mlx_cache
+
             mlx_cache.trim_prompt_cache(prompt_cache, n_rejected)
 
     spec_state.record_accepted(n_accepted, K)
@@ -289,9 +311,13 @@ def spec_decode_step(
         logger.info(
             "spec_decode: step=%d, K=%d, accepted=%d/%d (%.1f%%), "
             "verify=%.1fms, rate=%.1f%%",
-            spec_state.total_spec_steps, K,
-            n_accepted, K, 100.0 * n_accepted / K if K else 0,
-            dt * 1000, stats["acceptance_rate"] * 100,
+            spec_state.total_spec_steps,
+            K,
+            n_accepted,
+            K,
+            100.0 * n_accepted / K if K else 0,
+            dt * 1000,
+            stats["acceptance_rate"] * 100,
         )
 
     if not verified:
@@ -323,7 +349,11 @@ def spec_decode_step(
         else:
             new_text = scheduler.tokenizer.decode([token])
 
-        eos_ids = scheduler.tokenizer.eos_token_id if hasattr(scheduler.tokenizer, "eos_token_id") else []
+        eos_ids = (
+            scheduler.tokenizer.eos_token_id
+            if hasattr(scheduler.tokenizer, "eos_token_id")
+            else []
+        )
         if isinstance(eos_ids, int):
             eos_ids = [eos_ids]
         is_eos = token in eos_ids
@@ -343,8 +373,10 @@ def spec_decode_step(
 
         if is_finished:
             from ..request import RequestStatus
+
             request.set_finished(
-                RequestStatus.FINISHED_STOPPED if is_eos
+                RequestStatus.FINISHED_STOPPED
+                if is_eos
                 else RequestStatus.FINISHED_LENGTH_CAPPED
             )
             out.output_token_ids = list(request.output_token_ids)

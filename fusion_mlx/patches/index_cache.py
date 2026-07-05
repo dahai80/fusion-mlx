@@ -18,7 +18,7 @@ of this post-load optimization.
 from __future__ import annotations
 
 import logging
-from typing import Any, Optional
+from typing import Any
 
 try:
     import mlx.core as mx
@@ -96,8 +96,8 @@ def _make_patched_attention_call(original_call):
     def patched_call(
         self,
         x: mx.array,
-        mask: Optional[mx.array] = None,
-        cache: Optional[Any] = None,
+        mask: mx.array | None = None,
+        cache: Any | None = None,
     ) -> mx.array:
         # If this instance has no IndexCache flags, run original
         if not hasattr(self, "_ic_is_full"):
@@ -111,12 +111,8 @@ def _make_patched_attention_call(original_call):
         q = q.reshape(B, L, self.num_heads, self.q_head_dim).transpose(0, 2, 1, 3)
         q_nope, q_pe = mx.split(q, [self.qk_nope_head_dim], axis=-1)
         compressed_kv = self.kv_a_proj_with_mqa(x)
-        compressed_kv, k_pe = mx.split(
-            compressed_kv, [self.kv_lora_rank], axis=-1
-        )
-        k_pe = k_pe.reshape(B, L, 1, self.qk_rope_head_dim).transpose(
-            0, 2, 1, 3
-        )
+        compressed_kv, k_pe = mx.split(compressed_kv, [self.kv_lora_rank], axis=-1)
+        k_pe = k_pe.reshape(B, L, 1, self.qk_rope_head_dim).transpose(0, 2, 1, 3)
         kv_latent = self.kv_a_layernorm(compressed_kv)
 
         offset = cache[0].offset if cache is not None else 0
@@ -133,14 +129,10 @@ def _make_patched_attention_call(original_call):
         # --- IndexCache: conditionally skip indexer ---
         if self._ic_is_full:
             topk_indices = self.indexer(x, qr, mask, cache=cache[1])
-            self._ic_model_ref._index_cache_state[
-                "last_topk_indices"
-            ] = topk_indices
+            self._ic_model_ref._index_cache_state["last_topk_indices"] = topk_indices
         else:
             _update_indexer_cache_only(self.indexer, x, cache[1])
-            topk_indices = self._ic_model_ref._index_cache_state[
-                "last_topk_indices"
-            ]
+            topk_indices = self._ic_model_ref._index_cache_state["last_topk_indices"]
         # --- end IndexCache ---
 
         if topk_indices is not None:
@@ -148,9 +140,7 @@ def _make_patched_attention_call(original_call):
                 idx = topk_indices[:, :, 0, :, None]
                 kv_latent = mx.take_along_axis(
                     kv_latent,
-                    mx.broadcast_to(
-                        idx, idx.shape[:-1] + (kv_latent.shape[-1],)
-                    ),
+                    mx.broadcast_to(idx, idx.shape[:-1] + (kv_latent.shape[-1],)),
                     axis=2,
                 )
                 k_pe = mx.take_along_axis(
@@ -172,9 +162,7 @@ def _make_patched_attention_call(original_call):
 
         # Ensure the indexer cache is evaluated even if unused
         if cache is not None and cache[0] is not None:
-            cache[0].keys = mx.depends(
-                cache[0].keys, (cache[1].keys, cache[1].values)
-            )
+            cache[0].keys = mx.depends(cache[0].keys, (cache[1].keys, cache[1].values))
 
         pe_scores = (q_pe * self.scale) @ k_pe.swapaxes(-1, -2)
         if mask is not None:
@@ -218,15 +206,11 @@ def apply_index_cache(model: Any, index_cache_freq: int) -> bool:
 
     model_type = _get_model_type(model)
     if model_type not in _SUPPORTED_MODEL_TYPES:
-        logger.debug(
-            f"IndexCache: model_type '{model_type}' not supported, skipping"
-        )
+        logger.debug(f"IndexCache: model_type '{model_type}' not supported, skipping")
         return False
 
     if index_cache_freq < 2:
-        logger.warning(
-            f"IndexCache: freq={index_cache_freq} < 2, no layers to skip"
-        )
+        logger.warning(f"IndexCache: freq={index_cache_freq} < 2, no layers to skip")
         return False
 
     # Get the inner model (model.model is DeepseekV32Model)
@@ -264,9 +248,7 @@ def apply_index_cache(model: Any, index_cache_freq: int) -> bool:
 
         # Patch Attention.__call__
         original_attn_call = DeepseekV32Attention.__call__
-        DeepseekV32Attention.__call__ = _make_patched_attention_call(
-            original_attn_call
-        )
+        DeepseekV32Attention.__call__ = _make_patched_attention_call(original_attn_call)
 
         # Patch Model.__call__ to reset shared state each forward pass
         original_model_call = DeepseekV32Model.__call__

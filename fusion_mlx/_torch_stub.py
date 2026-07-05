@@ -55,6 +55,7 @@ _TARGET_TVM_FFI_VERSIONS = ("0.1.11",)
 _INSTALL_LOCK = threading.Lock()
 _INSTALLED = False
 
+
 class _LazyMockModule(types.ModuleType):
     """Module that auto-creates _LazyMockObject for any attribute access.
 
@@ -182,8 +183,15 @@ _DTYPE_ALIASES: tuple[tuple[str, tuple[str, ...]], ...] = (
 )
 
 _TENSOR_ALIASES = (
-    "Tensor", "LongTensor", "FloatTensor", "IntTensor", "ByteTensor",
-    "DoubleTensor", "HalfTensor", "BoolTensor", "ShortTensor",
+    "Tensor",
+    "LongTensor",
+    "FloatTensor",
+    "IntTensor",
+    "ByteTensor",
+    "DoubleTensor",
+    "HalfTensor",
+    "BoolTensor",
+    "ShortTensor",
 )
 
 
@@ -193,15 +201,21 @@ _TENSOR_ALIASES = (
 # name per process) with diagnostics that aren't actually actionable.
 # Demote known-probed names to DEBUG; everything else stays WARNING so
 # genuinely-missing attributes surface in operator logs.
-_KNOWN_PROBE_NAMES: frozenset[str] = frozenset({
-    # Integer dtypes added post-torch-2.0 that tvm_ffi.dtypes enumerates
-    "uint16", "uint32", "uint64",
-    # FP8 / FP4 dtypes (probed by tvm_ffi.dtypes' dtype-mapping table)
-    "float8_e4m3fn", "float8_e4m3fnuz",
-    "float8_e5m2", "float8_e5m2fnuz",
-    "float8_e8m0fnu",
-    "float4_e2m1fn_x2",
-})
+_KNOWN_PROBE_NAMES: frozenset[str] = frozenset(
+    {
+        # Integer dtypes added post-torch-2.0 that tvm_ffi.dtypes enumerates
+        "uint16",
+        "uint32",
+        "uint64",
+        # FP8 / FP4 dtypes (probed by tvm_ffi.dtypes' dtype-mapping table)
+        "float8_e4m3fn",
+        "float8_e4m3fnuz",
+        "float8_e5m2",
+        "float8_e5m2fnuz",
+        "float8_e8m0fnu",
+        "float4_e2m1fn_x2",
+    }
+)
 
 
 def _make_top_level_torch_getattr() -> callable:
@@ -326,9 +340,9 @@ def install() -> bool:
             return True
 
         if "torch" in sys.modules:
-            already_stub = getattr(
-                sys.modules["torch"], "__version__", ""
-            ).endswith("+fusion-mlx-stub")
+            already_stub = getattr(sys.modules["torch"], "__version__", "").endswith(
+                "+fusion-mlx-stub"
+            )
             _INSTALLED = already_stub
             return already_stub
 

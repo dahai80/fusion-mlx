@@ -58,7 +58,9 @@ def dtype_to_quantization_bits(dtype: str) -> tuple[bool, int | None]:
     return mapping.get(dtype, (False, None))
 
 
-def log_kv_cache_decision(decision: KVCacheDtypeDecision, *, model_name: str = "") -> None:
+def log_kv_cache_decision(
+    decision: KVCacheDtypeDecision, *, model_name: str = ""
+) -> None:
     logger.info(
         "KV cache dtype: %s (requested=%s, reason=%s, model=%s)",
         decision.dtype,

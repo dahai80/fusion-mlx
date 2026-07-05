@@ -22,10 +22,10 @@ logger = logging.getLogger(__name__)
 PRESET_REMOTE_URL = "http://bench.dpdns.org/assets/omlx_preset.json"
 
 
-
 from .helpers import (
     _get_global_settings,
 )
+from .routes import static_dir, templates
 
 _router = APIRouter()
 
@@ -54,10 +54,7 @@ async def login_page(request: Request):
     global_settings = _get_global_settings()
 
     # Skip login page when skip_api_key_verification is enabled
-    if (
-        global_settings is not None
-        and global_settings.auth.skip_api_key_verification
-    ):
+    if global_settings is not None and global_settings.auth.skip_api_key_verification:
         return RedirectResponse(url="/admin/dashboard", status_code=302)
 
     api_key_configured = bool(global_settings and global_settings.auth.api_key)
@@ -96,9 +93,7 @@ async def chat_page(request: Request, is_admin: bool = Depends(require_admin)):
     """
     global_settings = _get_global_settings()
     api_key = global_settings.auth.api_key if global_settings else ""
-    return templates.TemplateResponse(
-        request, "chat.html", {"api_key": api_key or ""}
-    )
+    return templates.TemplateResponse(request, "chat.html", {"api_key": api_key or ""})
 
 
 @_router.get("/static/{path:path}")
@@ -121,7 +116,6 @@ async def admin_static(path: str):
     }
     media_type = media_types.get(file_path.suffix, "application/octet-stream")
     return FileResponse(file_path, media_type=media_type)
-
 
 
 router = _router

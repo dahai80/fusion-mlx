@@ -22,8 +22,8 @@ logger = logging.getLogger(__name__)
 PRESET_REMOTE_URL = "http://bench.dpdns.org/assets/omlx_preset.json"
 
 
-
 from .helpers import (
+    _ms_downloader,
     get_system_memory_info,
 )
 from .models import (
@@ -51,12 +51,12 @@ async def start_ms_download(
 ):
     """Start downloading a model from ModelScope."""
     if _ms_downloader is None:
-        raise HTTPException(status_code=503, detail="ModelScope downloader not initialized")
+        raise HTTPException(
+            status_code=503, detail="ModelScope downloader not initialized"
+        )
 
     try:
-        task = await _ms_downloader.start_download(
-            request.model_id, request.ms_token
-        )
+        task = await _ms_downloader.start_download(request.model_id, request.ms_token)
         return {"success": True, "task": task.to_dict()}
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -68,7 +68,9 @@ async def start_ms_download(
 async def list_ms_tasks(is_admin: bool = Depends(require_admin)):
     """List all ModelScope download tasks."""
     if _ms_downloader is None:
-        raise HTTPException(status_code=503, detail="ModelScope downloader not initialized")
+        raise HTTPException(
+            status_code=503, detail="ModelScope downloader not initialized"
+        )
 
     return {"tasks": _ms_downloader.get_tasks()}
 
@@ -80,13 +82,13 @@ async def cancel_ms_download(
 ):
     """Cancel an active ModelScope download."""
     if _ms_downloader is None:
-        raise HTTPException(status_code=503, detail="ModelScope downloader not initialized")
+        raise HTTPException(
+            status_code=503, detail="ModelScope downloader not initialized"
+        )
 
     success = await _ms_downloader.cancel_download(task_id)
     if not success:
-        raise HTTPException(
-            status_code=404, detail="Task not found or not cancellable"
-        )
+        raise HTTPException(status_code=404, detail="Task not found or not cancellable")
     return {"success": True}
 
 
@@ -102,7 +104,9 @@ async def retry_ms_download(
 ):
     """Retry a failed or cancelled ModelScope download."""
     if _ms_downloader is None:
-        raise HTTPException(status_code=503, detail="ModelScope downloader not initialized")
+        raise HTTPException(
+            status_code=503, detail="ModelScope downloader not initialized"
+        )
 
     try:
         task = await _ms_downloader.retry_download(task_id, request.ms_token)
@@ -118,13 +122,13 @@ async def remove_ms_task(
 ):
     """Remove a completed, failed, or cancelled ModelScope task."""
     if _ms_downloader is None:
-        raise HTTPException(status_code=503, detail="ModelScope downloader not initialized")
+        raise HTTPException(
+            status_code=503, detail="ModelScope downloader not initialized"
+        )
 
     success = _ms_downloader.remove_task(task_id)
     if not success:
-        raise HTTPException(
-            status_code=404, detail="Task not found or still active"
-        )
+        raise HTTPException(status_code=404, detail="Task not found or still active")
     return {"success": True}
 
 
@@ -135,7 +139,9 @@ async def get_ms_recommended_models(
 ):
     """Get recommended models from ModelScope filtered by system memory."""
     if _ms_downloader is None:
-        raise HTTPException(status_code=503, detail="ModelScope downloader not initialized")
+        raise HTTPException(
+            status_code=503, detail="ModelScope downloader not initialized"
+        )
 
     memory_info = get_system_memory_info()
     max_memory = memory_info["total_bytes"] or 16 * 1024**3
@@ -216,7 +222,6 @@ async def get_ms_model_info(
                 status_code=404, detail=f"Model '{model_id.strip()}' not found"
             )
         raise HTTPException(status_code=502, detail=str(e))
-
 
 
 router = _router

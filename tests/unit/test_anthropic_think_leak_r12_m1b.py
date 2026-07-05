@@ -44,12 +44,15 @@ Mira r12 dogfood report path:
 from __future__ import annotations
 
 import pytest
-
-from fusion_mlx.api.anthropic_adapter import _thinking_block_content, openai_to_anthropic
 from fusion_mlx.api.constants import (
     REASONING_CUTOFF_SENTINEL,
     RESCUE_TAIL_LENGTH,
     is_rescue_payload,
+)
+
+from fusion_mlx.api.anthropic_adapter import (
+    _thinking_block_content,
+    openai_to_anthropic,
 )
 from fusion_mlx.api.models import (
     AssistantMessage,
@@ -204,13 +207,13 @@ class TestThinkLiteralLeak:
         # either the thinking field or the text field.
         for block in anth.content:
             if block.type == "thinking":
-                assert "<think>" not in (block.thinking or ""), (
-                    f"<think> literal leaked into thinking block: {block.thinking!r}"
-                )
+                assert "<think>" not in (
+                    block.thinking or ""
+                ), f"<think> literal leaked into thinking block: {block.thinking!r}"
             elif block.type == "text":
-                assert "<think>" not in (block.text or ""), (
-                    f"<think> literal leaked into text block: {block.text!r}"
-                )
+                assert "<think>" not in (
+                    block.text or ""
+                ), f"<think> literal leaked into text block: {block.text!r}"
 
     def test_max_tokens_1_thinking_block_suppressed_when_all_markup(self, monkeypatch):
         """When the entire ``reasoning_text`` collapses to nothing after
@@ -275,9 +278,9 @@ class TestRescueTailNoDuplication:
         reasoning_text = prefix + " ... " + tail_marker + " conclusion."
         final_content = _make_rescue_payload(reasoning_text)
         # Confirm the marker landed in the rescue payload (sanity).
-        assert tail_marker in final_content, (
-            "test setup invariant: marker must be inside the rescue tail slice"
-        )
+        assert (
+            tail_marker in final_content
+        ), "test setup invariant: marker must be inside the rescue tail slice"
         resp = ChatCompletionResponse(
             model="qwen3-0.6b-bf16",
             choices=[
@@ -297,16 +300,16 @@ class TestRescueTailNoDuplication:
         anth = openai_to_anthropic(resp, "qwen3-0.6b-bf16", reasoning_enabled=True)
         text_blocks = [b for b in anth.content if b.type == "text"]
         thinking_blocks = [b for b in anth.content if b.type == "thinking"]
-        assert len(text_blocks) == 1, (
-            f"expected exactly one text block: {anth.content!r}"
-        )
-        assert len(thinking_blocks) == 1, (
-            f"expected exactly one thinking block: {anth.content!r}"
-        )
+        assert (
+            len(text_blocks) == 1
+        ), f"expected exactly one text block: {anth.content!r}"
+        assert (
+            len(thinking_blocks) == 1
+        ), f"expected exactly one thinking block: {anth.content!r}"
         # The marker must be in the text block …
-        assert tail_marker in (text_blocks[0].text or ""), (
-            f"rescue tail marker missing from text block: {text_blocks[0].text!r}"
-        )
+        assert tail_marker in (
+            text_blocks[0].text or ""
+        ), f"rescue tail marker missing from text block: {text_blocks[0].text!r}"
         # … and MUST NOT appear in the thinking block (the dedupe).
         assert tail_marker not in (thinking_blocks[0].thinking or ""), (
             f"rescue tail leaked into thinking block (duplication): "
@@ -358,12 +361,12 @@ class TestRescueTailNoDuplication:
             if b.type == "thinking" and rescue_tail in (b.thinking or "")
         )
         # The text block has the tail (rescue) AND no thinking block carries it.
-        assert text_hits == 1, (
-            f"rescue tail must surface in exactly one text block; got {text_hits}"
-        )
-        assert thinking_hits == 0, (
-            f"rescue tail must NOT appear in any thinking block; got {thinking_hits}"
-        )
+        assert (
+            text_hits == 1
+        ), f"rescue tail must surface in exactly one text block; got {text_hits}"
+        assert (
+            thinking_hits == 0
+        ), f"rescue tail must NOT appear in any thinking block; got {thinking_hits}"
 
     def test_thinking_block_carries_prefix_when_reasoning_longer_than_tail(
         self, monkeypatch
@@ -399,9 +402,9 @@ class TestRescueTailNoDuplication:
         thinking_blocks = [b for b in anth.content if b.type == "thinking"]
         assert len(thinking_blocks) == 1
         # Prefix marker must survive in the thinking block.
-        assert "BEGINNING THOUGHT PROCESS HERE." in thinking_blocks[0].thinking, (
-            f"thinking block lost the prefix: {thinking_blocks[0].thinking!r}"
-        )
+        assert (
+            "BEGINNING THOUGHT PROCESS HERE." in thinking_blocks[0].thinking
+        ), f"thinking block lost the prefix: {thinking_blocks[0].thinking!r}"
 
     def test_thinking_block_suppressed_when_reasoning_entirely_in_rescue_tail(
         self, monkeypatch
@@ -413,9 +416,9 @@ class TestRescueTailNoDuplication:
         """
         monkeypatch.setenv("RAPID_MLX_REASONING_RESCUE", "on")
         reasoning_text = "short reasoning trace under the tail length"
-        assert len(reasoning_text) <= RESCUE_TAIL_LENGTH, (
-            "test invariant: reasoning must be shorter than the tail length"
-        )
+        assert (
+            len(reasoning_text) <= RESCUE_TAIL_LENGTH
+        ), "test invariant: reasoning must be shorter than the tail length"
         final_content = _make_rescue_payload(reasoning_text)
         resp = ChatCompletionResponse(
             model="qwen3-0.6b-bf16",
@@ -499,9 +502,9 @@ class TestRescueSurfacesToAnthropic:
         )
         # Verify it is in fact the rescue payload shape (sentinel +
         # \\n\\n + tail) and not just a model echo of the sentinel.
-        assert is_rescue_payload(text_payload), (
-            f"rescue text block payload failed the canonical shape gate: {text_payload!r}"
-        )
+        assert is_rescue_payload(
+            text_payload
+        ), f"rescue text block payload failed the canonical shape gate: {text_payload!r}"
 
     def test_opt_out_path_adapter_emits_only_thinking_block(self):
         """When the operator opts out of the rescue (the route helper
@@ -591,11 +594,13 @@ class TestThinkingBlockContentHelper:
         text = REASONING_CUTOFF_SENTINEL + "\n\n" + "Y" * RESCUE_TAIL_LENGTH
         out = _thinking_block_content(reasoning, text, finish_reason="length")
         assert out is not None
-        assert "PREFIX_KEEP_ME" in out, (
-            f"prefix lost when deduping rescue tail: {out!r}"
-        )
+        assert (
+            "PREFIX_KEEP_ME" in out
+        ), f"prefix lost when deduping rescue tail: {out!r}"
         # The trimmed suffix should NOT appear in the thinking block.
-        assert ("Y" * RESCUE_TAIL_LENGTH) not in out, (
+        assert (
+            "Y" * RESCUE_TAIL_LENGTH
+        ) not in out, (
             f"rescue tail still present in thinking block (dedupe failed): {out!r}"
         )
 
@@ -787,9 +792,9 @@ class TestMarkupOnlyDelta:
             "text block must carry the sanitized payload, not the raw "
             f"input with markup; got {text_blocks[0].text!r}"
         )
-        assert "</think>" not in (text_blocks[0].text or ""), (
-            f"</think> leaked into text block: {text_blocks[0].text!r}"
-        )
+        assert "</think>" not in (
+            text_blocks[0].text or ""
+        ), f"</think> leaked into text block: {text_blocks[0].text!r}"
 
 
 class TestSliceBisectsThinkTag:
@@ -860,12 +865,12 @@ class TestSliceBisectsThinkTag:
         # No partial think fragment in either block on the wire.
         for block in anth.content:
             body = block.thinking if block.type == "thinking" else (block.text or "")
-            assert "<think>" not in (body or ""), (
-                f"<think> literal leaked into {block.type}: {body!r}"
-            )
-            assert "</think>" not in (body or ""), (
-                f"</think> literal leaked into {block.type}: {body!r}"
-            )
+            assert "<think>" not in (
+                body or ""
+            ), f"<think> literal leaked into {block.type}: {body!r}"
+            assert "</think>" not in (
+                body or ""
+            ), f"</think> literal leaked into {block.type}: {body!r}"
             # The partial-fragment failure mode: regex misses the
             # bisected tail / head bytes.
             assert "ink>" not in (body or ""), (

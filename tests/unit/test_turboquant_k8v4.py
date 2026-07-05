@@ -9,16 +9,14 @@ API surface. Tests requiring those symbols are skipped.
 
 from __future__ import annotations
 
-import argparse
 import subprocess
 import sys
 
-import mlx.core as mx
-import numpy as np
 import pytest
 
 try:
-    from fusion_mlx.turboquant_kv import TurboQuantKVCache
+    from fusion_mlx.turboquant_kv import TurboQuantKVCache  # noqa: F401
+
     _HAS_TQ = True
 except ImportError:
     _HAS_TQ = False
@@ -29,37 +27,51 @@ pytestmark = pytest.mark.skipif(
 )
 
 
-@pytest.mark.skip(reason="missing-feature: TurboQuantConfig not in fusion_mlx.turboquant_kv")
+@pytest.mark.skip(
+    reason="missing-feature: TurboQuantConfig not in fusion_mlx.turboquant_kv"
+)
 class TestV4BackwardCompat:
     pass
 
 
-@pytest.mark.skip(reason="missing-feature: walsh_hadamard_transform not in fusion_mlx.turboquant_kv")
+@pytest.mark.skip(
+    reason="missing-feature: walsh_hadamard_transform not in fusion_mlx.turboquant_kv"
+)
 class TestWalshHadamardRotation:
     pass
 
 
-@pytest.mark.skip(reason="missing-feature: turboquant_k8_encode not in fusion_mlx.turboquant_kv")
+@pytest.mark.skip(
+    reason="missing-feature: turboquant_k8_encode not in fusion_mlx.turboquant_kv"
+)
 class TestK8Roundtrip:
     pass
 
 
-@pytest.mark.skip(reason="missing-feature: TurboQuantConfig not in fusion_mlx.turboquant_kv")
+@pytest.mark.skip(
+    reason="missing-feature: TurboQuantConfig not in fusion_mlx.turboquant_kv"
+)
 class TestK8V4Cache:
     pass
 
 
-@pytest.mark.skip(reason="missing-feature: TurboQuantConfig not in fusion_mlx.turboquant_kv")
+@pytest.mark.skip(
+    reason="missing-feature: TurboQuantConfig not in fusion_mlx.turboquant_kv"
+)
 class TestConfigValidation:
     pass
 
 
-@pytest.mark.skip(reason="missing-feature: fused_kernel_status not in fusion_mlx.turboquant_kv")
+@pytest.mark.skip(
+    reason="missing-feature: fused_kernel_status not in fusion_mlx.turboquant_kv"
+)
 class TestFusedKernel:
     pass
 
 
-@pytest.mark.skip(reason="missing-feature: is_incompatible_with_turboquant not in fusion_mlx.turboquant_kv")
+@pytest.mark.skip(
+    reason="missing-feature: is_incompatible_with_turboquant not in fusion_mlx.turboquant_kv"
+)
 class TestSkipList:
     pass
 
@@ -74,12 +86,16 @@ class TestMetrics:
     pass
 
 
-@pytest.mark.skip(reason="missing-feature: resolve_turboquant_mode_default not in fusion_mlx.turboquant_kv")
+@pytest.mark.skip(
+    reason="missing-feature: resolve_turboquant_mode_default not in fusion_mlx.turboquant_kv"
+)
 class TestResolveTurboquantModeDefault:
     pass
 
 
-@pytest.mark.skip(reason="missing-feature: TurboQuantConfig not in fusion_mlx.turboquant_kv")
+@pytest.mark.skip(
+    reason="missing-feature: TurboQuantConfig not in fusion_mlx.turboquant_kv"
+)
 def test_codec_preserves_input_dtype():
     pass
 

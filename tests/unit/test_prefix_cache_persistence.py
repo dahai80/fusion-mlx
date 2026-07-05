@@ -905,9 +905,9 @@ def test_incompatible_skipped_does_not_count_as_corruption(tmp_path, caplog):
 
     text = caplog.text
     assert "incompatible" in text, "summary should mention incompatible skips"
-    assert "may need cleanup" not in text, (
-        "config-change skips must not surface as corruption warnings"
-    )
+    assert (
+        "may need cleanup" not in text
+    ), "config-change skips must not surface as corruption warnings"
 
 
 # --------------------------------------------------------------------------
@@ -1369,9 +1369,9 @@ def test_save_prefix_cache_to_disk_respects_budget(tmp_path, monkeypatch):
 
     _cache_mod.save_prefix_cache_to_disk(budget_sec=0.1)
     pred = captured["pred"]
-    assert pred is not None, (
-        "save_prefix_cache_to_disk must pass a should_abort predicate"
-    )
+    assert (
+        pred is not None
+    ), "save_prefix_cache_to_disk must pass a should_abort predicate"
     assert pred() is True, "deadline-backed predicate should be tripped after sleep"
 
 
@@ -1634,9 +1634,9 @@ def test_adapt_should_abort_handles_keyword_only_and_args_kwargs():
 
     adapted = _adapt_should_abort(kw_only_pred)
     assert adapted(2.5) is False
-    assert captured == [2.5], (
-        f"**kwargs predicate must receive predicted_sec by keyword, got {captured}"
-    )
+    assert captured == [
+        2.5
+    ], f"**kwargs predicate must receive predicted_sec by keyword, got {captured}"
 
     # Keyword-only ``predicted_sec=...`` — same routing as **kwargs.
     captured = []
@@ -2056,9 +2056,9 @@ def test_r10d_multi_cycle_roundtrip_preserves_all_entries(tmp_path):
     # Final reload — every entry across all 5 cycles must come back.
     final = fresh_cache()
     loaded_final = final.load_from_disk(str(cache_dir))
-    assert loaded_final == len(cumulative), (
-        f"final reload: {loaded_final}/{len(cumulative)} — multi-cycle drift!"
-    )
+    assert loaded_final == len(
+        cumulative
+    ), f"final reload: {loaded_final}/{len(cumulative)} — multi-cycle drift!"
     final_keys = {e.tokens for e in final._entries.values()}
     expected_keys = {tuple(t) for t in cumulative}
     assert final_keys == expected_keys
@@ -2090,9 +2090,9 @@ def test_r10d_save_uuid_mismatch_skips_entry_with_metric(tmp_path):
     loaded = c2.load_from_disk(str(cache_dir))
     assert loaded == 0, "loader must reject all 3 entries on save_uuid mismatch"
     stats = c2.get_stats()
-    assert stats["load_skipped"] == 3, (
-        f"load_skipped should track all 3 rejected entries, got {stats['load_skipped']}"
-    )
+    assert (
+        stats["load_skipped"] == 3
+    ), f"load_skipped should track all 3 rejected entries, got {stats['load_skipped']}"
 
 
 def test_r10d_length_prefix_drift_is_caught(tmp_path):
@@ -2213,9 +2213,9 @@ def test_r10d_writer_stamps_v3_format_with_save_uuid(tmp_path):
         on_disk_uuid = tb[
             _TOKENS_HEADER_FIXED_LEN : _TOKENS_HEADER_FIXED_LEN + 32
         ].decode()
-        assert on_disk_uuid == save_uuid, (
-            f"entry_{i}: tokens.bin uuid {on_disk_uuid!r} != index {save_uuid!r}"
-        )
+        assert (
+            on_disk_uuid == save_uuid
+        ), f"entry_{i}: tokens.bin uuid {on_disk_uuid!r} != index {save_uuid!r}"
 
 
 # --------------------------------------------------------------------------
@@ -2407,9 +2407,9 @@ def _stomp_tokens_bin_uuid(path, new_uuid_hex: str) -> None:
     _, uuid_len = struct.unpack(
         "<II", raw[len(_TOKENS_MAGIC) : _TOKENS_HEADER_FIXED_LEN]
     )
-    assert len(new_uuid_hex) == uuid_len, (
-        "test helper expects same-length replacement uuid"
-    )
+    assert (
+        len(new_uuid_hex) == uuid_len
+    ), "test helper expects same-length replacement uuid"
     raw[_TOKENS_HEADER_FIXED_LEN : _TOKENS_HEADER_FIXED_LEN + uuid_len] = (
         new_uuid_hex.encode("ascii")
     )
@@ -2476,9 +2476,9 @@ def test_r12_five_cycle_sigterm_stress(tmp_path):
     for cycle in range(2, 6):  # cycles 2,3,4,5
         c = fresh_cache()
         loaded = c.load_from_disk(str(cache_dir))
-        assert loaded == len(cumulative), (
-            f"cycle {cycle} load: {loaded} != {len(cumulative)} — SIGTERM drift!"
-        )
+        assert loaded == len(
+            cumulative
+        ), f"cycle {cycle} load: {loaded} != {len(cumulative)} — SIGTERM drift!"
         # Add 2 more entries per cycle (mutates state, mirrors Talia's
         # "a few new requests per cycle" repro).
         for j in range(2):
@@ -2631,17 +2631,17 @@ def test_r12_post_write_verify_aborts_when_all_drift(tmp_path, monkeypatch):
 
     monkeypatch.setattr(_mc, "_peek_tokens_bin_header", _spy_peek_all_bad)
 
-    assert c2.save_to_disk(str(cache_dir)) is False, (
-        "all-drift case must abort the save and preserve cache_dir"
-    )
+    assert (
+        c2.save_to_disk(str(cache_dir)) is False
+    ), "all-drift case must abort the save and preserve cache_dir"
     assert c2.get_stats()["save_drift_drops"] == 3
 
     # cache_dir still holds session 1's snapshot, untouched.
     assert (cache_dir / "index.json").exists()
     surviving = json.loads((cache_dir / "index.json").read_text())
-    assert surviving["save_uuid"] == orig_uuid, (
-        "aborted save must preserve cache_dir's previous good snapshot"
-    )
+    assert (
+        surviving["save_uuid"] == orig_uuid
+    ), "aborted save must preserve cache_dir's previous good snapshot"
 
     # Load from cache_dir still produces session 1's content.
     c3 = fresh_cache()
@@ -2771,7 +2771,7 @@ def test_r12_metrics_exposes_save_drift_drops():
     from fusion_mlx.routes.metrics import _coerce_number  # noqa: F401 — import probe
 
     src = Path(metrics_mod.__file__).read_text()
-    assert "rapid_mlx_prefix_cache_save_drift_drops_total" in src, (
-        "metrics route lost the R12-T1 counter wiring"
-    )
+    assert (
+        "rapid_mlx_prefix_cache_save_drift_drops_total" in src
+    ), "metrics route lost the R12-T1 counter wiring"
     assert "save_drift_drops" in src

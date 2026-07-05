@@ -59,7 +59,9 @@ class TestNestedNStateElements:
         block_hash = b"nested_tuple_elem___"
 
         keys = mx.arange(1 * 1 * 16 * 8, dtype=mx.float32).reshape(1, 1, 16, 8)
-        values = (mx.arange(1 * 1 * 16 * 8, dtype=mx.float32) + 7.0).reshape(1, 1, 16, 8)
+        values = (mx.arange(1 * 1 * 16 * 8, dtype=mx.float32) + 7.0).reshape(
+            1, 1, 16, 8
+        )
         mx.eval(keys, values)
 
         layer_marker = ("__nstate__", "DeepSeekV4Composite", [(keys, values)])

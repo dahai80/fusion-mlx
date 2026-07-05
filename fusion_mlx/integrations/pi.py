@@ -17,6 +17,7 @@ def _get_agent_dir() -> Path:
         return Path(env_dir).expanduser()
     return Path.home() / ".pi" / "agent"
 
+
 class PiIntegration(Integration):
     """Pi integration that configures the pi agent config directory."""
 
@@ -36,10 +37,7 @@ class PiIntegration(Integration):
     def get_command(
         self, port: int, api_key: str, model: str, host: str = "127.0.0.1"
     ) -> str:
-        return (
-            f"{get_cli_prefix()} "
-            f"launch pi --model {model or 'select-a-model'}"
-        )
+        return f"{get_cli_prefix()} " f"launch pi --model {model or 'select-a-model'}"
 
     @staticmethod
     def _is_reasoning_model(model: str | None) -> bool:
@@ -91,7 +89,9 @@ class PiIntegration(Integration):
         self._write_json_config(self.MODELS_PATH, update_models)
         self._write_json_config(self.SETTINGS_PATH, update_settings)
 
-    def launch(self, port: int, api_key: str, model: str, host: str = "127.0.0.1", **kwargs) -> None:
+    def launch(
+        self, port: int, api_key: str, model: str, host: str = "127.0.0.1", **kwargs
+    ) -> None:
         context_window = kwargs.pop("context_window", None)
         max_tokens = kwargs.pop("max_tokens", None)
         model_type = kwargs.pop("model_type", None)

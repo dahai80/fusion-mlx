@@ -8,7 +8,7 @@ https://github.com/huggingface/transformers/tree/main/src/transformers/models/mi
 import json
 import math
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any
 
 import numpy as np
 from PIL import Image
@@ -64,10 +64,10 @@ def smart_resize(
     factor: int = 28,
     min_pixels: int = DEFAULT_MIN_PIXELS,
     max_pixels: int = DEFAULT_IMAGE_MAX_PIXELS,
-    max_long_side_pixel: Optional[int] = None,
-    max_total_pixels: Optional[int] = None,
+    max_long_side_pixel: int | None = None,
+    max_total_pixels: int | None = None,
     min_short_side_pixel: int = DEFAULT_MIN_SHORT_SIDE_PIXEL,
-) -> Tuple[int, int]:
+) -> tuple[int, int]:
     if max(height, width) / min(height, width) > MAX_RATIO:
         raise ValueError(
             "absolute aspect ratio must be smaller than "
@@ -171,8 +171,8 @@ def _normalize_pixels(
     do_rescale: bool,
     rescale_factor: float,
     do_normalize: bool,
-    image_mean: List[float],
-    image_std: List[float],
+    image_mean: list[float],
+    image_std: list[float],
 ) -> np.ndarray:
     pixels = pixels.astype(np.float32, copy=False)
     if do_rescale:
@@ -192,9 +192,7 @@ def _patchify(
 
     pad = (-pixels.shape[0]) % temporal_patch_size
     if pad:
-        pixels = np.concatenate(
-            [pixels, np.repeat(pixels[-1:], pad, axis=0)], axis=0
-        )
+        pixels = np.concatenate([pixels, np.repeat(pixels[-1:], pad, axis=0)], axis=0)
 
     frames, channels, height, width = pixels.shape
     factor = patch_size * merge_size
@@ -289,19 +287,19 @@ class MiniMaxM3VLImageProcessor(ImageProcessingMixin):
         self,
         do_resize: bool = True,
         resample=Image.Resampling.BICUBIC,
-        size: Optional[Dict[str, int]] = None,
+        size: dict[str, int] | None = None,
         do_rescale: bool = True,
         rescale_factor: float = 1 / 255.0,
         do_normalize: bool = True,
-        image_mean: Optional[List[float]] = None,
-        image_std: Optional[List[float]] = None,
+        image_mean: list[float] | None = None,
+        image_std: list[float] | None = None,
         do_convert_rgb: bool = True,
         patch_size: int = 14,
         temporal_patch_size: int = 2,
         merge_size: int = 2,
         min_pixels: int = DEFAULT_MIN_PIXELS,
         max_pixels: int = DEFAULT_IMAGE_MAX_PIXELS,
-        max_long_side_pixel: Optional[int] = None,
+        max_long_side_pixel: int | None = None,
         min_short_side_pixel: int = DEFAULT_MIN_SHORT_SIDE_PIXEL,
         max_total_pixels: int = DEFAULT_IMAGE_MAX_TOTAL_PIXELS,
         **kwargs,
@@ -324,7 +322,7 @@ class MiniMaxM3VLImageProcessor(ImageProcessingMixin):
         self.min_short_side_pixel = min_short_side_pixel
         self.max_total_pixels = max_total_pixels
 
-    def _process_one(self, image, **kwargs) -> Tuple[np.ndarray, List[int]]:
+    def _process_one(self, image, **kwargs) -> tuple[np.ndarray, list[int]]:
         do_resize = kwargs.get("do_resize", self.do_resize)
         resample = kwargs.get("resample", self.resample)
         do_rescale = kwargs.get("do_rescale", self.do_rescale)
@@ -386,9 +384,7 @@ class MiniMaxM3VLImageProcessor(ImageProcessingMixin):
 
         pixel_values = []
         grid_thw = []
-        image_kwargs = {
-            k: v for k, v in kwargs.items() if k in _IMAGE_PROCESSOR_KWARGS
-        }
+        image_kwargs = {k: v for k, v in kwargs.items() if k in _IMAGE_PROCESSOR_KWARGS}
         for image in images:
             patches, thw = self._process_one(image, **image_kwargs)
             pixel_values.append(patches)
@@ -411,9 +407,7 @@ class MiniMaxM3VLImageProcessor(ImageProcessingMixin):
         max_long_side_pixel = images_kwargs.get(
             "max_long_side_pixel", self.max_long_side_pixel
         )
-        max_total_pixels = images_kwargs.get(
-            "max_total_pixels", self.max_total_pixels
-        )
+        max_total_pixels = images_kwargs.get("max_total_pixels", self.max_total_pixels)
         height, width = smart_resize(
             height,
             width,
@@ -426,7 +420,7 @@ class MiniMaxM3VLImageProcessor(ImageProcessingMixin):
         )
         return (height // patch_size) * (width // patch_size)
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "image_processor_type": self.__class__.__name__,
             "do_resize": self.do_resize,
@@ -452,12 +446,12 @@ class MiniMaxM3VLVideoProcessor(BaseVideoProcessor):
         self,
         do_resize: bool = True,
         resample=Image.Resampling.BICUBIC,
-        size: Optional[Dict[str, int]] = None,
+        size: dict[str, int] | None = None,
         do_rescale: bool = True,
         rescale_factor: float = 1 / 255.0,
         do_normalize: bool = True,
-        image_mean: Optional[List[float]] = None,
-        image_std: Optional[List[float]] = None,
+        image_mean: list[float] | None = None,
+        image_std: list[float] | None = None,
         do_convert_rgb: bool = True,
         do_sample_frames: bool = False,
         patch_size: int = 14,
@@ -469,7 +463,7 @@ class MiniMaxM3VLVideoProcessor(BaseVideoProcessor):
         fps: float = 1.0,
         min_frames: int = 4,
         max_frames: int = 768,
-        max_long_side_pixel: Optional[int] = None,
+        max_long_side_pixel: int | None = None,
         min_short_side_pixel: int = DEFAULT_MIN_SHORT_SIDE_PIXEL,
         max_total_pixels: int = DEFAULT_VIDEO_MAX_TOTAL_PIXELS,
         **kwargs,
@@ -497,7 +491,7 @@ class MiniMaxM3VLVideoProcessor(BaseVideoProcessor):
         self.min_short_side_pixel = min_short_side_pixel
         self.max_total_pixels = max_total_pixels
 
-    def _process_one(self, video, **kwargs) -> Tuple[np.ndarray, List[int]]:
+    def _process_one(self, video, **kwargs) -> tuple[np.ndarray, list[int]]:
         do_resize = kwargs.get("do_resize", self.do_resize)
         resample = kwargs.get("resample", self.resample)
         do_rescale = kwargs.get("do_rescale", self.do_rescale)
@@ -570,9 +564,7 @@ class MiniMaxM3VLVideoProcessor(BaseVideoProcessor):
                 tensor_type=None,
             )
 
-        video_kwargs = {
-            k: v for k, v in kwargs.items() if k in _VIDEO_PROCESSOR_KWARGS
-        }
+        video_kwargs = {k: v for k, v in kwargs.items() if k in _VIDEO_PROCESSOR_KWARGS}
         pixel_values = []
         grid_thw = []
         for video in videos:
@@ -619,7 +611,7 @@ class MiniMaxM3VLVideoProcessor(BaseVideoProcessor):
         grid_t = padded_frames // temporal_patch_size
         return grid_t * (height // patch_size) * (width // patch_size)
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "video_processor_type": self.__class__.__name__,
             "do_resize": self.do_resize,
@@ -645,7 +637,7 @@ class MiniMaxM3VLVideoProcessor(BaseVideoProcessor):
 
 def _load_json(
     pretrained_model_name_or_path, relative_name: str
-) -> Optional[Dict[str, Any]]:
+) -> dict[str, Any] | None:
     local_path = Path(pretrained_model_name_or_path) / relative_name
     if local_path.exists():
         return json.loads(local_path.read_text(encoding="utf-8"))
@@ -658,7 +650,7 @@ def _load_json(
         return None
 
 
-def _component_kwargs(raw: Dict[str, Any], allowed: set, defaults: Dict[str, Any]):
+def _component_kwargs(raw: dict[str, Any], allowed: set, defaults: dict[str, Any]):
     out = dict(defaults)
     size = raw.get("size") or {}
     if "height" in size and "width" in size and "max_pixels" not in raw:
@@ -674,7 +666,7 @@ def _component_kwargs(raw: Dict[str, Any], allowed: set, defaults: Dict[str, Any
     return out
 
 
-def _vision_defaults(pretrained_model_name_or_path) -> Dict[str, Any]:
+def _vision_defaults(pretrained_model_name_or_path) -> dict[str, Any]:
     config = _load_json(pretrained_model_name_or_path, "config.json") or {}
     vision_config = config.get("vision_config") or {}
     compression = (
@@ -696,7 +688,7 @@ def _vision_defaults(pretrained_model_name_or_path) -> Dict[str, Any]:
     return defaults
 
 
-def _image_kwargs(pretrained_model_name_or_path) -> Dict[str, Any]:
+def _image_kwargs(pretrained_model_name_or_path) -> dict[str, Any]:
     proc_cfg = _load_json(pretrained_model_name_or_path, "processor_config.json") or {}
     raw = _load_json(pretrained_model_name_or_path, "preprocessor_config.json") or {}
     raw.update(proc_cfg.get("image_processor", {}) or {})
@@ -707,7 +699,7 @@ def _image_kwargs(pretrained_model_name_or_path) -> Dict[str, Any]:
     )
 
 
-def _video_kwargs(pretrained_model_name_or_path) -> Dict[str, Any]:
+def _video_kwargs(pretrained_model_name_or_path) -> dict[str, Any]:
     proc_cfg = _load_json(pretrained_model_name_or_path, "processor_config.json") or {}
     raw = _load_json(pretrained_model_name_or_path, "video_preprocessor_config.json")
     if raw is None:
@@ -842,21 +834,20 @@ class MiniMaxM3VLProcessor(ProcessorMixin):
 
     def __call__(
         self,
-        images: Optional[Any] = None,
-        text: Optional[
-            Union[
-                TextInput,
-                PreTokenizedInput,
-                List[TextInput],
-                List[PreTokenizedInput],
-            ]
-        ] = None,
-        videos: Optional[Any] = None,
+        images: Any | None = None,
+        text: (
+            TextInput
+            | PreTokenizedInput
+            | list[TextInput]
+            | list[PreTokenizedInput]
+            | None
+        ) = None,
+        videos: Any | None = None,
         padding: bool = True,
-        padding_side: Optional[str] = None,
+        padding_side: str | None = None,
         add_special_tokens: bool = False,
-        return_tensors: Optional[str] = "mlx",
-        return_mm_token_type_ids: Optional[bool] = None,
+        return_tensors: str | None = "mlx",
+        return_mm_token_type_ids: bool | None = None,
         **kwargs,
     ) -> BatchFeature:
         image_inputs = {}
@@ -895,9 +886,7 @@ class MiniMaxM3VLProcessor(ProcessorMixin):
             for i, prompt in enumerate(text):
                 while self.IMAGE_TOKEN in prompt:
                     if image_idx >= num_images:
-                        raise ValueError(
-                            "More image tokens were provided than images."
-                        )
+                        raise ValueError("More image tokens were provided than images.")
                     prompt = prompt.replace(
                         self.IMAGE_TOKEN,
                         self.replace_image_token(image_inputs, image_idx).replace(
@@ -915,9 +904,7 @@ class MiniMaxM3VLProcessor(ProcessorMixin):
             for i, prompt in enumerate(text):
                 while self.VIDEO_TOKEN in prompt:
                     if video_idx >= num_videos:
-                        raise ValueError(
-                            "More video tokens were provided than videos."
-                        )
+                        raise ValueError("More video tokens were provided than videos.")
                     prompt = prompt.replace(
                         self.VIDEO_TOKEN,
                         self.replace_video_token(video_inputs, video_idx).replace(

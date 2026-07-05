@@ -10,6 +10,7 @@ import pytest
 def _clear_backup_state():
     """Reset the backup table before / after each test."""
     from fusion_mlx.patches import dflash_lifecycle as life
+
     life._DFLASH_BACKUP.clear()
     yield
     life._DFLASH_BACKUP.clear()
@@ -25,20 +26,24 @@ def _make_fake_dflash_module():
 
     def fake_installer(linear_attn):
         cls = type(linear_attn)
+
         # Mimic dflash: overwrite cls.__call__ and set its idempotency flag.
         def fake_speculative_call(self, inputs, mask=None, cache=None):
             return inputs
+
         cls.__call__ = fake_speculative_call
         cls._dflash_speculative_call_installed = True
         captures.append(linear_attn)
 
     def fake_gqa_installer(attn):
         cls = type(attn)
+
         # Mimic dflash 0.1.7's full-attention GQA hook: overwrite __call__
         # and set its idempotency flag. The real hook's first line does
         # int(cache.offset), which is what crashes on batched offsets.
         def fake_attention_call(self, x, mask=None, cache=None):
             return x
+
         cls.__call__ = fake_attention_call
         cls._dflash_full_attention_gqa_installed = True
         captures.append(attn)
@@ -54,7 +59,7 @@ def _make_fake_dflash_module():
 class TestWrapInstaller:
     def test_wrap_records_pre_dflash_call(self, _clear_backup_state):
         """Wrapped installer must snapshot cls.__call__ before dflash overwrites."""
-        from fusion_mlx.patches.dflash_lifecycle import _wrap_installer, _DFLASH_BACKUP
+        from fusion_mlx.patches.dflash_lifecycle import _DFLASH_BACKUP, _wrap_installer
 
         mod = _make_fake_dflash_module()
 
@@ -132,6 +137,7 @@ class TestRestore:
     def test_restore_empty_table_is_noop(self, _clear_backup_state):
         """Restore with no backup recorded must not raise."""
         from fusion_mlx.patches.dflash_lifecycle import restore_dflash_class_patches
+
         restore_dflash_class_patches()  # no-op
 
 
@@ -174,6 +180,7 @@ class TestRoundTrip:
         # Simulate a Native MTP patch replacing __call__.
         def mtp_call(self, x, mask=None, cache=None, n_confirmed=0):
             return ("mtp", n_confirmed)
+
         FakeLinearAttn.__call__ = mtp_call
 
         # Round 2: dflash arms again. The wrap should capture mtp_call as
@@ -231,6 +238,7 @@ class TestRealDflashIntegration:
 
     def test_install_wrap_against_real_dflash(self, _clear_backup_state):
         from fusion_mlx.patches.dflash_lifecycle import install_dflash_lifecycle_wrap
+
         try:
             from dflash_mlx.engine import target_qwen_gdn
         except ImportError:

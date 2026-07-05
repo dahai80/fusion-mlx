@@ -166,9 +166,9 @@ def test_stop_sequences_none_when_omitted_non_stream():
     )
     assert resp.status_code == 200, resp.text
     forwarded_stop = engine.chat_calls[0]["kwargs"].get("stop")
-    assert forwarded_stop is None, (
-        f"omitted stop_sequences must forward as None; got {forwarded_stop!r}"
-    )
+    assert (
+        forwarded_stop is None
+    ), f"omitted stop_sequences must forward as None; got {forwarded_stop!r}"
 
 
 # ---------------------------------------------------------------------------

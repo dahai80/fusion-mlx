@@ -566,11 +566,13 @@ class TestScheduleWaitingChunkedFork:
         # step_size=4, prompt=3 tokens → not long enough to trigger chunked fork
         sched, req = self._setup(n_tokens=3, step_size=4)
 
-        with patch.object(
-            sched, "_do_external_prefill", return_value=([], [0])
-        ) as mock_ep:
-            with patch.object(sched, "_begin_prefill") as mock_bp:
-                sched._schedule_waiting()
+        with (
+            patch.object(
+                sched, "_do_external_prefill", return_value=([], [0])
+            ) as mock_ep,
+            patch.object(sched, "_begin_prefill") as mock_bp,
+        ):
+            sched._schedule_waiting()
 
         mock_ep.assert_called_once()
         mock_bp.assert_not_called()
@@ -580,11 +582,13 @@ class TestScheduleWaitingChunkedFork:
         # step_size=4, 10 tokens → triggers chunked path
         sched, req = self._setup(n_tokens=10, step_size=4)
 
-        with patch.object(
-            sched, "_begin_prefill", return_value=_make_prefill_state(sched, req)
-        ) as mock_bp:
-            with patch.object(sched, "_step_prefill_chunk", return_value=False):
-                sched._schedule_waiting()
+        with (
+            patch.object(
+                sched, "_begin_prefill", return_value=_make_prefill_state(sched, req)
+            ) as mock_bp,
+            patch.object(sched, "_step_prefill_chunk", return_value=False),
+        ):
+            sched._schedule_waiting()
 
         mock_bp.assert_called_once()
         assert req.request_id in sched._prefill_states
@@ -635,11 +639,13 @@ class TestScheduleWaitingChunkedFork:
         """chunked_prefill=False always uses the full-prefill path."""
         sched, req = self._setup(n_tokens=100, chunked=False, step_size=4)
 
-        with patch.object(
-            sched, "_do_external_prefill", return_value=([], [0])
-        ) as mock_ep:
-            with patch.object(sched, "_begin_prefill") as mock_bp:
-                sched._schedule_waiting()
+        with (
+            patch.object(
+                sched, "_do_external_prefill", return_value=([], [0])
+            ) as mock_ep,
+            patch.object(sched, "_begin_prefill") as mock_bp,
+        ):
+            sched._schedule_waiting()
 
         mock_ep.assert_called_once()
         mock_bp.assert_not_called()
@@ -772,19 +778,21 @@ class TestScheduleWaitingChunkedFork:
         assert tracker.get_model_progress("test"), "tracker entry not set up"
 
         try:
-            with patch.object(
-                sched,
-                "_begin_prefill",
-                return_value=_make_prefill_state(sched, req),
-            ):
-                with patch.object(
+            with (
+                patch.object(
+                    sched,
+                    "_begin_prefill",
+                    return_value=_make_prefill_state(sched, req),
+                ),
+                patch.object(
                     sched,
                     "_step_prefill_chunk",
                     side_effect=RuntimeError(
                         "Memory limit exceeded during chunked prefill"
                     ),
-                ):
-                    scheduled, rejected = sched._schedule_waiting()
+                ),
+            ):
+                scheduled, rejected = sched._schedule_waiting()
 
             assert rid not in sched.requests
             assert rid not in sched._prefill_states
@@ -906,17 +914,19 @@ class TestPrefillRejectionReleasesPagedCache:
         sched.add_request(req)
         sched.block_aware_cache.reset_mock()
 
-        with patch.object(
-            sched,
-            "_begin_prefill",
-            return_value=_make_prefill_state(sched, req),
-        ):
-            with patch.object(
+        with (
+            patch.object(
+                sched,
+                "_begin_prefill",
+                return_value=_make_prefill_state(sched, req),
+            ),
+            patch.object(
                 sched,
                 "_step_prefill_chunk",
                 side_effect=RuntimeError("kernel panic"),
-            ):
-                sched._schedule_waiting()
+            ),
+        ):
+            sched._schedule_waiting()
 
         sched.block_aware_cache.release_cache.assert_called_once_with("oom-first-chunk")
 

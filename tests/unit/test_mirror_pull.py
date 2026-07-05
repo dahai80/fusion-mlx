@@ -698,9 +698,9 @@ def test_resume_sends_range_header_for_partial_part_file(
     file_requests = [r for r in router.requests if "/model.safetensors" in r["url"]]
     assert len(file_requests) == 1
     headers_lower = {k.lower(): v for k, v in file_requests[0]["headers"].items()}
-    assert "range" in headers_lower, (
-        f"missing Range header: {file_requests[0]['headers']}"
-    )
+    assert (
+        "range" in headers_lower
+    ), f"missing Range header: {file_requests[0]['headers']}"
     assert headers_lower["range"] == "bytes=50-"
     # Final file is the concatenation of the 50 pre-staged + 150 resumed
     # bytes — 200 total.
@@ -1310,9 +1310,9 @@ def test_custom_mirror_with_5xx_catalog_skips_direct_layout(
         for r in router.requests
         if r["url"] != "https://custom.example.com/api/models"
     ]
-    assert r2_file_calls == [], (
-        f"5xx catalog must not trigger direct-layout, got: {r2_file_calls}"
-    )
+    assert (
+        r2_file_calls == []
+    ), f"5xx catalog must not trigger direct-layout, got: {r2_file_calls}"
 
 
 # ---------------------------------------------------------------------------
@@ -1502,9 +1502,9 @@ def test_zero_byte_file_handled_correctly(
         for r in router2.requests
         if r["url"] != "https://models.rapidmlx.com/api/models"
     ]
-    assert r2_file_calls == [], (
-        f"0-byte cached file should not be re-fetched, got: {r2_file_calls}"
-    )
+    assert (
+        r2_file_calls == []
+    ), f"0-byte cached file should not be re-fetched, got: {r2_file_calls}"
 
 
 # ---------------------------------------------------------------------------
@@ -1792,9 +1792,9 @@ def test_custom_mirror_catalog_4xx_uses_direct_layout(
     ):
         ok = _mirror.download_with_mirror_fallback(repo_id, cache_dir=tmp_path)
 
-    assert ok, (
-        f"4xx={catalog_status} on custom mirror should fall back to direct-layout"
-    )
+    assert (
+        ok
+    ), f"4xx={catalog_status} on custom mirror should fall back to direct-layout"
     assert hf_mock.call_count == 0
     snap = tmp_path / "models--mlx-community--Qwen3-0.6B-4bit" / "snapshots" / revision
     assert (snap / "config.json").read_bytes() == b"x" * 100
@@ -2006,9 +2006,9 @@ def test_cached_lfs_file_with_wrong_sha_is_refetched(
     # R2 served the refetch (so an R2 file request happened — i.e.
     # the cached-as-"cached" short-circuit was NOT taken).
     r2_file_calls = [r for r in router.requests if "model.safetensors" in r["url"]]
-    assert len(r2_file_calls) == 1, (
-        f"expected exactly one R2 refetch, got {r2_file_calls}"
-    )
+    assert (
+        len(r2_file_calls) == 1
+    ), f"expected exactly one R2 refetch, got {r2_file_calls}"
     # HF was not asked to do anything — R2 had it.
     assert hf_mock.call_count == 0
 
@@ -2328,9 +2328,9 @@ def test_sidecar_dir_holds_part_and_lock_not_snapshot(
     assert sidecar.is_dir()
     sidecar_contents = sorted(p.name for p in sidecar.iterdir() if p.is_file())
     # Lock stays; ``.part`` was renamed to target on success.
-    assert all(n.endswith(".lock") or n.endswith(".part") for n in sidecar_contents), (
-        f"unexpected sidecar contents: {sidecar_contents}"
-    )
+    assert all(
+        n.endswith(".lock") or n.endswith(".part") for n in sidecar_contents
+    ), f"unexpected sidecar contents: {sidecar_contents}"
 
 
 def test_sidecar_key_collision_safe_with_hidden_repo_files(
@@ -2518,9 +2518,9 @@ def test_snap_dir_as_symlink_is_refused(
     # R2 must NOT have been hit for this file (the per-file _do_file
     # returned "skip-symlink-snapdir" before R2 attempt).
     r2_file_calls = [r for r in router.requests if "config.json" in r["url"]]
-    assert r2_file_calls == [], (
-        f"R2 was probed despite symlinked snap_dir: {r2_file_calls}"
-    )
+    assert (
+        r2_file_calls == []
+    ), f"R2 was probed despite symlinked snap_dir: {r2_file_calls}"
 
 
 # ---------------------------------------------------------------------------
@@ -2653,9 +2653,9 @@ def test_r2_lfs_download_writes_blob_and_symlink(
     # diverges from HF's layout, so codify "relative" here.
     assert snap_file.is_symlink()
     link_target = os.readlink(snap_file)
-    assert not os.path.isabs(link_target), (
-        f"snapshot symlink must be relative, got {link_target!r}"
-    )
+    assert not os.path.isabs(
+        link_target
+    ), f"snapshot symlink must be relative, got {link_target!r}"
     # Resolves to the blob.
     assert snap_file.resolve() == blob.resolve()
     # And reading through the symlink still yields the payload.
@@ -2750,9 +2750,9 @@ def test_warm_r2_pull_uses_blob_name_shortcut(
     assert file_reqs == [], f"warm pull refetched LFS file: {file_reqs}"
     # And — the load-bearing assertion — no sha256 hasher was created
     # during the warm pull. The blob-name shortcut fired.
-    assert hasher_calls == [], (
-        f"warm pull rehashed the LFS blob ({len(hasher_calls)} hashers)"
-    )
+    assert (
+        hasher_calls == []
+    ), f"warm pull rehashed the LFS blob ({len(hasher_calls)} hashers)"
 
 
 # ---------------------------------------------------------------------------
@@ -2926,9 +2926,9 @@ def test_progress_lines_print_in_expected_format(
         assert marker in plain, f"missing progress marker {marker} in:\n{plain}"
         assert fname in plain, f"missing filename {fname} in progress output"
     # R2 tag appears on every per-file line (3 files, all R2 hits).
-    assert plain.count("R2 (") == len(files), (
-        f"expected one ``R2 (`` tag per file, got:\n{plain}"
-    )
+    assert plain.count("R2 (") == len(
+        files
+    ), f"expected one ``R2 (`` tag per file, got:\n{plain}"
     # Up-front file-count line — the user's #651 complaint was "no
     # feedback after the banner" — this is the first signal.
     assert f"Found {len(files)} files" in plain
@@ -2972,13 +2972,13 @@ def test_progress_no_ansi_escapes_when_stdout_not_a_tty(
     assert ok
     captured = capsys.readouterr()
     # No ANSI escapes anywhere in the output.
-    assert "\x1b[" not in captured.out, (
-        f"non-TTY output must not contain ANSI escapes, got:\n{captured.out!r}"
-    )
+    assert (
+        "\x1b[" not in captured.out
+    ), f"non-TTY output must not contain ANSI escapes, got:\n{captured.out!r}"
     # No carriage-return animation either — only newlines.
-    assert "\r" not in captured.out, (
-        f"non-TTY output must not use carriage returns, got:\n{captured.out!r}"
-    )
+    assert (
+        "\r" not in captured.out
+    ), f"non-TTY output must not use carriage returns, got:\n{captured.out!r}"
 
 
 def test_progress_file_count_matches_downloaded_files(
@@ -3115,9 +3115,9 @@ def test_bytes_heartbeat_emitted_during_r2_pull(
     import re
 
     matches = re.findall(r"\[bytes\] (\d+)/(\d+)", captured.out)
-    assert matches, (
-        f"expected at least one '[bytes] D/T' heartbeat in stdout:\n{captured.out}"
-    )
+    assert (
+        matches
+    ), f"expected at least one '[bytes] D/T' heartbeat in stdout:\n{captured.out}"
     planned_total = sum(s for _, s in files)
     # Every heartbeat uses the same denominator — the snapshot total.
     for done_s, total_s in matches:
@@ -3191,9 +3191,9 @@ def test_bytes_heartbeat_skipped_when_total_unknown(
 
     assert ok
     captured = capsys.readouterr()
-    assert "[bytes]" not in captured.out, (
-        f"heartbeat must stay silent when total is unknown:\n{captured.out}"
-    )
+    assert (
+        "[bytes]" not in captured.out
+    ), f"heartbeat must stay silent when total is unknown:\n{captured.out}"
 
 
 def test_progress_tracker_is_per_pull_not_global(
@@ -3509,9 +3509,9 @@ def test_progress_tracker_clamps_display_at_total():
         assert matches, f"no heartbeat: {out!r}"
         for done_s, total_s in matches:
             assert int(total_s) == 1000
-            assert int(done_s) <= 1000, (
-                f"display exceeded total: done={done_s} total={total_s}"
-            )
+            assert (
+                int(done_s) <= 1000
+            ), f"display exceeded total: done={done_s} total={total_s}"
         # Final heartbeat lands at exactly 1000.
         assert int(matches[-1][0]) == 1000
     finally:

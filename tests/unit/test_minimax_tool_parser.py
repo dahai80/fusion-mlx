@@ -164,9 +164,7 @@ class TestExtractToolCalls:
             assert result.tool_calls[0]["name"] == "get_weather"
 
     def test_truncated_parameter_no_closing_tag(self, parser):
-        text = (
-            '<invoke name="search">\n<parameter name="query">partial value'
-        )
+        text = '<invoke name="search">\n<parameter name="query">partial value'
         result = parser.extract_tool_calls(text)
 
         if result.tools_called:

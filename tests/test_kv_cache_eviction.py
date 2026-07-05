@@ -177,7 +177,7 @@ class TestTwoPhaseEviction:
         b.block_hash = h
         mgr.cached_block_hash_to_block.insert(h, b)
         mgr.free_block(b.block_id)
-          # Re-insert after free since free_block clears hash cache
+        # Re-insert after free since free_block clears hash cache
         mgr.cached_block_hash_to_block.insert(h, b)
 
         assert mgr.evict(h) is True

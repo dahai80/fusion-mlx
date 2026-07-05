@@ -26,12 +26,12 @@ from typing import Any
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from fusion_mlx.service.helpers import _resolve_reasoning_enabled
 
 from fusion_mlx.config import reset_config
 from fusion_mlx.engine.base import GenerationOutput
 from fusion_mlx.routes.anthropic import router as anthropic_router
 from fusion_mlx.runtime.model_registry import ModelEntry, ModelRegistry
-from fusion_mlx.service.helpers import _resolve_reasoning_enabled
 
 
 class _NonStreamingEngineEmittingReasoning:
@@ -188,9 +188,9 @@ def test_non_stream_route_suppresses_thinking_for_non_thinking_alias():
     assert resp.status_code == 200, resp.text
     body = resp.json()
     block_types = [b["type"] for b in body["content"]]
-    assert "thinking" not in block_types, (
-        f"non-thinking alias must NOT emit a thinking block; got blocks={block_types!r}"
-    )
+    assert (
+        "thinking" not in block_types
+    ), f"non-thinking alias must NOT emit a thinking block; got blocks={block_types!r}"
     # Text block survives so the assistant turn isn't silently empty.
     text_blocks = [b for b in body["content"] if b["type"] == "text"]
     assert len(text_blocks) == 1
@@ -305,9 +305,9 @@ def test_stream_route_demotes_reasoning_channel_for_non_thinking_alias():
     text_starts = [
         e for e in starts if e.get("content_block", {}).get("type") == "text"
     ]
-    assert text_starts, (
-        f"expected at least one text content_block_start; got events={events!r}"
-    )
+    assert (
+        text_starts
+    ), f"expected at least one text content_block_start; got events={events!r}"
 
 
 class _StreamingEngineNoChannelTags:
@@ -570,9 +570,9 @@ def test_stream_route_wire_format_event_prefix_and_terminator():
 
     # The body must end with a terminator. Trailing-newline tolerance
     # mirrors what Anthropic's reference SSE parser expects.
-    assert body.endswith("\n\n"), (
-        f"SSE body missing trailing terminator: tail={body[-20:]!r}"
-    )
+    assert body.endswith(
+        "\n\n"
+    ), f"SSE body missing trailing terminator: tail={body[-20:]!r}"
 
     for raw in _split_raw_sse(body):
         lines = raw.splitlines()
@@ -590,9 +590,9 @@ def test_stream_route_wire_format_event_prefix_and_terminator():
         # check (they have neither ``event:`` nor ``data:`` lines).
         if all(line.startswith(":") for line in lines):
             continue
-        assert lines[0].startswith("event: "), (
-            f"first SSE line must start with 'event: ': {lines[0]!r}"
-        )
+        assert lines[0].startswith(
+            "event: "
+        ), f"first SSE line must start with 'event: ': {lines[0]!r}"
         data_line = next((line for line in lines if line.startswith("data: ")), None)
         assert data_line is not None, f"SSE chunk missing 'data:' line: {lines!r}"
         json.loads(data_line.removeprefix("data: "))
@@ -741,9 +741,9 @@ def test_stream_route_drops_whitespace_only_reasoning_delta():
         and e.get("delta", {}).get("type") == "text_delta"
     ]
     assembled = "".join(text_deltas)
-    assert assembled == "answer", (
-        f"expected 'answer' to surface; got {assembled!r} from {text_deltas!r}"
-    )
+    assert (
+        assembled == "answer"
+    ), f"expected 'answer' to surface; got {assembled!r} from {text_deltas!r}"
 
     reset_config()
 
@@ -952,9 +952,9 @@ def test_stream_route_demoted_text_keeps_intra_block_whitespace():
         if e.get("type") == "content_block_start"
         and e.get("content_block", {}).get("type") == "thinking"
     ]
-    assert thinking_starts == [], (
-        f"non-thinking alias opened a thinking block: {thinking_starts!r}"
-    )
+    assert (
+        thinking_starts == []
+    ), f"non-thinking alias opened a thinking block: {thinking_starts!r}"
 
     text_deltas = [
         e["delta"]["text"]

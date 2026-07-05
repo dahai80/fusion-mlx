@@ -15,9 +15,17 @@ from .base import BaseNonStreamingEngine
 logger = logging.getLogger(__name__)
 
 _ISO_TO_STT_LANG: dict[str, str] = {
-    "zh": "chinese", "yue": "cantonese", "en": "english", "de": "german",
-    "es": "spanish", "fr": "french", "it": "italian", "pt": "portuguese",
-    "ru": "russian", "ko": "korean", "ja": "japanese",
+    "zh": "chinese",
+    "yue": "cantonese",
+    "en": "english",
+    "de": "german",
+    "es": "spanish",
+    "fr": "french",
+    "it": "italian",
+    "pt": "portuguese",
+    "ru": "russian",
+    "ko": "korean",
+    "ja": "japanese",
 }
 
 
@@ -40,8 +48,13 @@ def _missing_processor_hint(model_name: str) -> str:
 
 def _wrap_stt_load_error(model_name: str, exc: Exception) -> Exception:
     msg = str(exc).lower()
-    if any(h in msg for h in ("preprocessor_config.json", "feature extractor", "featureextractor")):
-        return RuntimeError(f"{_missing_processor_hint(model_name)} Original error: {exc}")
+    if any(
+        h in msg
+        for h in ("preprocessor_config.json", "feature extractor", "featureextractor")
+    ):
+        return RuntimeError(
+            f"{_missing_processor_hint(model_name)} Original error: {exc}"
+        )
     return exc
 
 
@@ -72,16 +85,20 @@ class STTEngine(BaseNonStreamingEngine):
         try:
             from mlx_audio.stt.utils import load_model as _load_model
         except ImportError as exc:
-            raise ImportError('mlx-audio required for STT. Install with: pip install "fusion-mlx[audio]"') from exc
+            raise ImportError(
+                'mlx-audio required for STT. Install with: pip install "fusion-mlx[audio]"'
+            ) from exc
 
         model_name = self._model_name
+
         def _load_sync():
             return _load_model(model_name)
 
         loop = asyncio.get_running_loop()
         try:
             model = await asyncio.wait_for(
-                loop.run_in_executor(get_executor("audio"), _load_sync), timeout=120.0)
+                loop.run_in_executor(get_executor("audio"), _load_sync), timeout=120.0
+            )
         except Exception as exc:
             raise _wrap_stt_load_error(model_name, exc) from exc
 
@@ -95,9 +112,15 @@ class STTEngine(BaseNonStreamingEngine):
         gc.collect()
         loop = asyncio.get_running_loop()
         await asyncio.wait_for(
-            loop.run_in_executor(get_executor("audio"), lambda: (mx.synchronize(), mx.clear_cache())), timeout=5.0)
+            loop.run_in_executor(
+                get_executor("audio"), lambda: (mx.synchronize(), mx.clear_cache())
+            ),
+            timeout=5.0,
+        )
 
-    async def transcribe(self, audio_path: str, language: str | None = None, **kwargs) -> dict[str, Any]:
+    async def transcribe(
+        self, audio_path: str, language: str | None = None, **kwargs
+    ) -> dict[str, Any]:
         if self._model is None:
             raise RuntimeError("Engine not started.")
         model = self._model
@@ -107,6 +130,7 @@ class STTEngine(BaseNonStreamingEngine):
             if isinstance(s, dict):
                 return s
             import dataclasses
+
             if dataclasses.is_dataclass(s) and not isinstance(s, type):
                 return dataclasses.asdict(s)
             if hasattr(s, "__dict__"):
@@ -127,17 +151,31 @@ class STTEngine(BaseNonStreamingEngine):
                 gen_kwargs["language"] = gl
             result = model.generate(audio_path, **gen_kwargs)
             if hasattr(result, "text"):
-                raw_lang = _normalize_language(getattr(result, "language", None)) or language
+                raw_lang = (
+                    _normalize_language(getattr(result, "language", None)) or language
+                )
                 raw_segs = getattr(result, "segments", None)
                 segments = [_normalize_segment(s) for s in raw_segs] if raw_segs else []
-                return {"text": result.text or "", "language": raw_lang, "segments": segments, "duration": getattr(result, "total_time", 0.0)}
-            return {"text": str(result), "language": language, "segments": [], "duration": 0.0}
+                return {
+                    "text": result.text or "",
+                    "language": raw_lang,
+                    "segments": segments,
+                    "duration": getattr(result, "total_time", 0.0),
+                }
+            return {
+                "text": str(result),
+                "language": language,
+                "segments": [],
+                "duration": 0.0,
+            }
 
         activity_id = self._begin_activity("transcribing", detail="Transcribing")
         try:
             loop = asyncio.get_running_loop()
             result = await asyncio.wait_for(
-                loop.run_in_executor(get_executor("audio"), _transcribe_sync), timeout=60.0)
+                loop.run_in_executor(get_executor("audio"), _transcribe_sync),
+                timeout=60.0,
+            )
             return result
         finally:
             await self._finish_activity(activity_id)

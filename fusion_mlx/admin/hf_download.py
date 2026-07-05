@@ -25,12 +25,11 @@ logger = logging.getLogger(__name__)
 PRESET_REMOTE_URL = "http://bench.dpdns.org/assets/omlx_preset.json"
 
 
-
 from .helpers import (
     _get_engine_pool,
-    _get_global_settings,
     _get_rich_global_settings,
     _get_settings_manager,
+    _hf_downloader,
     format_size,
     get_system_memory_info,
 )
@@ -56,9 +55,7 @@ async def start_hf_download(
         raise HTTPException(status_code=503, detail="Downloader not initialized")
 
     try:
-        task = await _hf_downloader.start_download(
-            request.repo_id, request.hf_token
-        )
+        task = await _hf_downloader.start_download(request.repo_id, request.hf_token)
         return {"success": True, "task": task.to_dict()}
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -84,9 +81,7 @@ async def cancel_hf_download(
 
     success = await _hf_downloader.cancel_download(task_id)
     if not success:
-        raise HTTPException(
-            status_code=404, detail="Task not found or not cancellable"
-        )
+        raise HTTPException(status_code=404, detail="Task not found or not cancellable")
     return {"success": True}
 
 
@@ -122,9 +117,7 @@ async def remove_hf_task(
 
     success = _hf_downloader.remove_task(task_id)
     if not success:
-        raise HTTPException(
-            status_code=404, detail="Task not found or still active"
-        )
+        raise HTTPException(status_code=404, detail="Task not found or still active")
     return {"success": True}
 
 
@@ -260,9 +253,7 @@ async def list_hf_models(is_admin: bool = Depends(require_admin)):
         if model_name in seen_names:
             return
         seen_names.add(model_name)
-        total_size = sum(
-            f.stat().st_size for f in model_path.rglob("*") if f.is_file()
-        )
+        total_size = sum(f.stat().st_size for f in model_path.rglob("*") if f.is_file())
         models.append(
             {
                 "name": model_name,
@@ -376,7 +367,7 @@ async def delete_hf_model(
         raise exc
 
     def _handle_onerror(func, path, exc_info):
-        if exc_info[0] == FileNotFoundError and Path(path).name.startswith("._"):
+        if exc_info[0] is FileNotFoundError and Path(path).name.startswith("._"):
             logger.debug(f"Ignoring missing resource fork file: {path}")
             return
         raise exc_info[1].with_traceback(exc_info[2])
@@ -394,11 +385,7 @@ async def delete_hf_model(
     # If the model was inside an org folder (organized layout) and that
     # folder is now empty, drop it so the listing stays tidy.
     parent = model_path.parent
-    if (
-        parent != parent_model_dir
-        and parent.exists()
-        and not any(parent.iterdir())
-    ):
+    if parent != parent_model_dir and parent.exists() and not any(parent.iterdir()):
         try:
             parent.rmdir()
             logger.info(f"Removed empty org folder: {parent}")
@@ -417,15 +404,12 @@ async def delete_hf_model(
         # so they can be reused by another model.
         if settings_manager:
             settings_manager.delete_settings(model_name)
-        engine_pool.discover_models(
-            [str(d) for d in model_dirs], pinned_models
-        )
+        engine_pool.discover_models([str(d) for d in model_dirs], pinned_models)
         if settings_manager:
             engine_pool.apply_settings_overrides(settings_manager)
         logger.info("Model pool refreshed after deletion")
 
     return {"success": True, "message": f"Model '{model_name}' deleted"}
-
 
 
 router = _router

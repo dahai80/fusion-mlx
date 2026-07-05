@@ -21,7 +21,6 @@ logger = logging.getLogger(__name__)
 PRESET_REMOTE_URL = "http://bench.dpdns.org/assets/omlx_preset.json"
 
 
-
 from .helpers import (
     _require_model,
     _require_settings_manager,
@@ -38,8 +37,6 @@ _router = APIRouter()
 # =============================================================================
 # Profile & Template endpoints
 # =============================================================================
-
-
 
 
 @_router.get("/api/models/{model_id}/profiles")
@@ -233,7 +230,6 @@ async def delete_template(
     if not mgr.delete_template(name):
         raise HTTPException(status_code=404, detail=f"Template not found: {name}")
     return {"deleted": True, "name": name}
-
 
 
 router = _router

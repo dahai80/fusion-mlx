@@ -12,7 +12,6 @@ import logging
 import os
 import queue
 import shutil
-import threading
 import time
 from pathlib import Path
 from unittest.mock import patch
@@ -1524,10 +1523,13 @@ class TestAsyncWriteAndTimeoutLoad:
         # load_block tries _load_safetensors_raw first, then
         # _load_safetensors_file; both must fail so the outer
         # except triggers _recover_from_block_error.
-        with patch.object(
-            ssd_cache, "_load_safetensors_raw", return_value=None
-        ), patch.object(
-            ssd_cache, "_load_safetensors_file", side_effect=OSError("corrupted file")
+        with (
+            patch.object(ssd_cache, "_load_safetensors_raw", return_value=None),
+            patch.object(
+                ssd_cache,
+                "_load_safetensors_file",
+                side_effect=OSError("corrupted file"),
+            ),
         ):
             loaded = ssd_cache.load_block(block_hash)
             assert loaded is None  # Should return None, not raise
@@ -2689,7 +2691,9 @@ class TestComputeMaxPendingWrites:
                 return (64 * 1024**3) // 4096
             raise ValueError(name)
 
-        with patch("fusion_mlx.cache.paged_ssd_cache.os.sysconf", side_effect=fake_sysconf):
+        with patch(
+            "fusion_mlx.cache.paged_ssd_cache.os.sysconf", side_effect=fake_sysconf
+        ):
             cap = _compute_max_pending_writes(
                 block_size_tokens=2048,
                 kv_bytes_per_token=200_000,
@@ -2711,7 +2715,9 @@ class TestComputeMaxPendingWrites:
                 return (64 * 1024**3) // 4096
             raise ValueError(name)
 
-        with patch("fusion_mlx.cache.paged_ssd_cache.os.sysconf", side_effect=fake_sysconf):
+        with patch(
+            "fusion_mlx.cache.paged_ssd_cache.os.sysconf", side_effect=fake_sysconf
+        ):
             cap = _compute_max_pending_writes(
                 block_size_tokens=2048,
                 kv_bytes_per_token=500_000,
@@ -3213,9 +3219,7 @@ class TestInlineLRUUnlinks:
                     )
                 )
 
-            mgr._get_effective_max_size = (  # type: ignore[method-assign]
-                lambda: 20
-            )
+            mgr._get_effective_max_size = lambda: 20  # type: ignore[method-assign]
             mgr._enforce_size_limit_for_new_block()
 
             remaining_lru = [

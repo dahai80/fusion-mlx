@@ -318,9 +318,10 @@ def test_mtp_generate_step_survives_worker_pollution_via_fixture(
     # ``test_mtp_generator_reads_generation_stream_at_call_time``).
     _pollute_generation_stream_from_worker()
 
-    from tests.test_mtp_spec_decode import _MockedQwen35Model
     from fusion_mlx.spec_decode.mtp.accept_counter import MTPAcceptCounter
     from fusion_mlx.spec_decode.mtp.generator import mtp_generate_step
+
+    from tests.test_mtp_spec_decode import _MockedQwen35Model
 
     mod = __import__(test_module_name, fromlist=["_reset_mtp_module_state"])
     fixture_func = _unwrap_fixture_func(mod._reset_mtp_module_state)

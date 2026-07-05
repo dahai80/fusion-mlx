@@ -144,9 +144,9 @@ def test_default_does_not_log_wildcard_warning(
     caplog.set_level(logging.INFO, logger="vllm_mlx.server")
     _server_mod().configure_cors_from_env(cli_origins=None)
     warnings = [r for r in caplog.records if r.levelno >= logging.WARNING]
-    assert not warnings, (
-        f"Default wildcard should not log WARNING; got {[r.message for r in warnings]!r}"
-    )
+    assert (
+        not warnings
+    ), f"Default wildcard should not log WARNING; got {[r.message for r in warnings]!r}"
 
 
 # ──────────────────────────────────────────────────────────────────────
@@ -214,13 +214,15 @@ def test_default_methods_do_not_include_destructive_verbs(
     assert r.status_code == 200
     methods = r.headers.get("access-control-allow-methods", "")
     method_set = {m.strip().upper() for m in methods.split(",") if m.strip()}
-    assert method_set == {"POST", "GET", "OPTIONS"}, (
-        f"Expected POST/GET/OPTIONS only; got {method_set!r}"
-    )
+    assert method_set == {
+        "POST",
+        "GET",
+        "OPTIONS",
+    }, f"Expected POST/GET/OPTIONS only; got {method_set!r}"
     for forbidden in ("DELETE", "PATCH", "PUT", "HEAD"):
-        assert forbidden not in method_set, (
-            f"{forbidden} leaked into the default Access-Control-Allow-Methods"
-        )
+        assert (
+            forbidden not in method_set
+        ), f"{forbidden} leaked into the default Access-Control-Allow-Methods"
 
 
 def test_env_methods_override(
@@ -264,9 +266,9 @@ def test_wildcard_logs_warning_and_works(
     with caplog.at_level("WARNING", logger="vllm_mlx.server"):
         origins = _server_mod().configure_cors_from_env(cli_origins=None)
     assert origins == ["*"]
-    assert any("wildcard" in rec.message.lower() for rec in caplog.records), (
-        f"Expected a wildcard-CORS warning; got {[r.message for r in caplog.records]!r}"
-    )
+    assert any(
+        "wildcard" in rec.message.lower() for rec in caplog.records
+    ), f"Expected a wildcard-CORS warning; got {[r.message for r in caplog.records]!r}"
 
     client = TestClient(fresh_app)
     r = client.post(
@@ -324,9 +326,9 @@ def test_malformed_max_age_falls_back_to_default(
     monkeypatch.setenv("RAPID_MLX_CORS_MAX_AGE", "not-a-number")
     with caplog.at_level("WARNING", logger="vllm_mlx.server"):
         _server_mod().configure_cors_from_env(cli_origins=None)
-    assert any("RAPID_MLX_CORS_MAX_AGE" in rec.message for rec in caplog.records), (
-        f"Expected a malformed-max-age warning; got {[r.message for r in caplog.records]!r}"
-    )
+    assert any(
+        "RAPID_MLX_CORS_MAX_AGE" in rec.message for rec in caplog.records
+    ), f"Expected a malformed-max-age warning; got {[r.message for r in caplog.records]!r}"
 
     client = TestClient(fresh_app)
     r = client.options(
@@ -537,9 +539,9 @@ def test_env_origins_path_applies_f091_narrowing(
     assert "*" not in allowed
     # The narrowed default is still echoed.
     for expected in ("content-type", "authorization", "x-rapid-mlx-internal"):
-        assert expected in allowed, (
-            f"Expected {expected!r} in narrowed default headers; got {allowed!r}"
-        )
+        assert (
+            expected in allowed
+        ), f"Expected {expected!r} in narrowed default headers; got {allowed!r}"
 
 
 # ──────────────────────────────────────────────────────────────────────

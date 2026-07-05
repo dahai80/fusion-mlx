@@ -254,7 +254,10 @@ async def test_vlm_preflight_chat_adds_image_token_budget(monkeypatch):
     """Each image-bearing content part must add
     ``_IMAGE_TOKEN_UPPER_BOUND_FALLBACK`` to the prompt size the scheduler sees,
     so image-heavy borderline requests can't slip past."""
-    from fusion_mlx.engine.vlm import _IMAGE_TOKEN_UPPER_BOUND_FALLBACK, VLMBatchedEngine
+    from fusion_mlx.engine.vlm import (
+        _IMAGE_TOKEN_UPPER_BOUND_FALLBACK,
+        VLMBatchedEngine,
+    )
 
     scheduler = _make_scheduler()
     engine = _build_engine_with_stub_scheduler(VLMBatchedEngine, scheduler)

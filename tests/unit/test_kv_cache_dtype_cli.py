@@ -108,6 +108,6 @@ def test_serve_rejects_reasoning_plus_legacy_kv_cache_quantization_bits_4():
         f"expected non-zero exit, got rc={proc.returncode}; "
         f"stdout={proc.stdout!r}, stderr={proc.stderr!r}"
     )
-    assert "--reasoning" in combined and "--kv-cache-quantization-bits 4" in combined, (
-        f"expected actionable error mentioning the conflict; got: {combined!r}"
-    )
+    assert (
+        "--reasoning" in combined and "--kv-cache-quantization-bits 4" in combined
+    ), f"expected actionable error mentioning the conflict; got: {combined!r}"

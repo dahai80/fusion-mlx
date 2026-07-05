@@ -217,9 +217,9 @@ def test_chat_streaming_with_include_usage_carries_cached_tokens_in_dedicated_ch
     assert resp.status_code == 200, resp.text
     events = _parse_sse_events(resp.text)
     usage_chunks = [e for e in events if not e.get("choices") and e.get("usage")]
-    assert len(usage_chunks) == 1, (
-        f"expected exactly one dedicated usage chunk; got {len(usage_chunks)}"
-    )
+    assert (
+        len(usage_chunks) == 1
+    ), f"expected exactly one dedicated usage chunk; got {len(usage_chunks)}"
     usage = usage_chunks[0]["usage"]
     details = usage.get("prompt_tokens_details")
     assert details is not None
@@ -257,9 +257,9 @@ def test_chat_streaming_without_include_usage_omits_usage_block_entirely():
         e for e in events for c in e.get("choices", []) if c.get("finish_reason")
     ]
     assert len(finish_events) == 1
-    assert finish_events[0].get("usage") is None, (
-        "finish chunk MUST NOT carry usage when include_usage is unset"
-    )
+    assert (
+        finish_events[0].get("usage") is None
+    ), "finish chunk MUST NOT carry usage when include_usage is unset"
     any_usage_key = [e for e in events if "usage" in e]
     assert any_usage_key == [], (
         f"no SSE chunk may carry the usage KEY when include_usage is "
@@ -301,16 +301,16 @@ def test_completions_streaming_dedicated_usage_chunk_omits_null_detail_fields():
     assert resp.status_code == 200, resp.text
     events = _parse_sse_events(resp.text)
     final_chunks = [e for e in events if e.get("usage")]
-    assert len(final_chunks) == 1, (
-        f"expected exactly one chunk with usage; got {len(final_chunks)}"
-    )
+    assert (
+        len(final_chunks) == 1
+    ), f"expected exactly one chunk with usage; got {len(final_chunks)}"
     usage = final_chunks[0]["usage"]
-    assert "prompt_tokens_details" not in usage, (
-        f"null prompt_tokens_details must be excluded; got {usage!r}"
-    )
-    assert "completion_tokens_details" not in usage, (
-        f"null completion_tokens_details must be excluded; got {usage!r}"
-    )
+    assert (
+        "prompt_tokens_details" not in usage
+    ), f"null prompt_tokens_details must be excluded; got {usage!r}"
+    assert (
+        "completion_tokens_details" not in usage
+    ), f"null completion_tokens_details must be excluded; got {usage!r}"
     # Sanity-check that the non-null keys survived the exclude_none.
     assert usage["prompt_tokens"] == 200
     assert usage["total_tokens"] == 202

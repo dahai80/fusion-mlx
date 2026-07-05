@@ -345,9 +345,9 @@ async def test_ten_disconnects_on_prod_shape_yield_ten_ten():
         f"expected 10 aborts (lifetime-persistent ledger dedupes the "
         f"two abort paths per disconnect); got {stats}"
     )
-    assert stats["num_requests_cancelled_via_disconnect"] == 10, (
-        f"expected 10 disconnect-attributed aborts, got {stats}"
-    )
+    assert (
+        stats["num_requests_cancelled_via_disconnect"] == 10
+    ), f"expected 10 disconnect-attributed aborts, got {stats}"
     assert (
         stats["num_requests_cancelled_via_disconnect"]
         <= stats["num_requests_cancelled"]
@@ -417,9 +417,9 @@ def test_mllm_scheduler_admit_below_cap_does_not_attributeerror_on_lock():
 
     # Constructor-invariant pin: the lock MUST be present and a
     # real Lock before any admit runs.
-    assert hasattr(sched, "_cancel_counter_lock"), (
-        "MLLMScheduler.__init__ MUST initialise _cancel_counter_lock"
-    )
+    assert hasattr(
+        sched, "_cancel_counter_lock"
+    ), "MLLMScheduler.__init__ MUST initialise _cancel_counter_lock"
     assert hasattr(sched._cancel_counter_lock, "acquire")
 
     # Below-cap admit through the REAL add_request so the
@@ -502,8 +502,9 @@ def test_unresolved_engine_shape_logs_explicit_warning(caplog):
     """
     import logging
 
-    from fusion_mlx.service import helpers as _helpers
     from fusion_mlx.service.helpers import _record_disconnect_abort_on_scheduler
+
+    from fusion_mlx.service import helpers as _helpers
 
     # Use a name unique to this test so the once-per-engine-type
     # dedupe in the helper doesn't suppress us due to a previous
@@ -558,8 +559,9 @@ def test_unresolved_engine_warning_keyed_by_module_qualname(caplog):
     """
     import logging
 
-    from fusion_mlx.service import helpers as _helpers
     from fusion_mlx.service.helpers import _record_disconnect_abort_on_scheduler
+
+    from fusion_mlx.service import helpers as _helpers
 
     class _SameLeafA:
         _is_mllm = False
@@ -605,8 +607,9 @@ def test_unresolved_engine_warning_dedupes_per_engine_type(caplog):
     """
     import logging
 
-    from fusion_mlx.service import helpers as _helpers
     from fusion_mlx.service.helpers import _record_disconnect_abort_on_scheduler
+
+    from fusion_mlx.service import helpers as _helpers
 
     class _NakedEngineForDedupeTest:
         _is_mllm = False
