@@ -84,9 +84,9 @@ struct CopyIconButton: View {
 
 #Preview("CodeChip") {
     VStack(alignment: .leading, spacing: 10) {
-        CodeChip(value: "http://127.0.0.1:8000/v1")
-        CodeChip(value: "http://127.0.0.1:8000/health")
-        CodeChip(value: "OPENAI_BASE_URL=http://127.0.0.1:8000/v1", maxWidth: 280)
+        CodeChip(value: "http://127.0.0.1:11435/v1")
+        CodeChip(value: "http://127.0.0.1:11435/health")
+        CodeChip(value: "OPENAI_BASE_URL=http://127.0.0.1:11435/v1", maxWidth: 280)
         CopyIconButton(value: "mlx-community/Qwen3-8B-4bit")
     }
     .padding(24)

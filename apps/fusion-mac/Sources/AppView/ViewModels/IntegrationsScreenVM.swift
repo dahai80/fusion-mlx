@@ -51,7 +51,7 @@ final class IntegrationsScreenVM {
     // the running server actually advertises (instead of the local config,
     // which can drift after a hot-reload).
     private(set) var serverHost: String = "127.0.0.1"
-    private(set) var serverPort: Int = 8000
+    private(set) var serverPort: Int = 11435
     private(set) var serverApiKey: String = ""
     private(set) var cliPrefix: String = "fusion"
 
@@ -175,7 +175,7 @@ final class IntegrationsScreenVM {
 
             // Stats — host/port/api_key/cli_prefix for the command builders.
             // Failure here is non-fatal: the screen still works against the
-            // default `fusion` prefix and 127.0.0.1:8000.
+            // default `fusion` prefix and 127.0.0.1:11435.
             if let stats = try? await client.getStats() {
                 if let host = stats.host, !host.isEmpty { self.serverHost = host }
                 if let port = stats.port               { self.serverPort = port }

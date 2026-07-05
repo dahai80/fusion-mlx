@@ -83,7 +83,7 @@ struct AppConfig: Sendable, Equatable, Codable {
         let modelDir = defaultModelDir(forBasePath: base)
         return AppConfig(
             bindAddress: "127.0.0.1",
-            port: 8000,
+            port: 11435,
             autoStartOnLaunch: true,
             apiKey: nil,
             basePath: base,
