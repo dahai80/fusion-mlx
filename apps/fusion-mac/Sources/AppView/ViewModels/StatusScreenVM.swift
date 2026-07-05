@@ -48,7 +48,7 @@ final class StatusScreenVM {
     var endpointText: String {
         guard let s = stats else { return "—" }
         let host = s.host ?? "127.0.0.1"
-        let port = s.port ?? 8000
+        let port = s.port ?? 11435
         return "\(host):\(port)"
     }
 

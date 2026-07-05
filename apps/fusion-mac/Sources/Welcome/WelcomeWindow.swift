@@ -563,7 +563,7 @@ private struct WelcomeSetupBody: View {
                                       defaultValue: "Port",
                                       comment: "Row label for the server port field in Welcome wizard"),
                         subtitle: String(localized: "welcome.storage.port.sub",
-                                         defaultValue: "Default 8000. Change this only if the port is already in use.",
+                                         defaultValue: "Default 11435. Change this only if the port is already in use.",
                                          comment: "Sublabel for the port field with the recommended default")
                     ) {
                         TextInput(text: $vm.portText, mono: true, width: 96)

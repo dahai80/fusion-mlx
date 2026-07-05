@@ -35,7 +35,7 @@ final class AppControlServer: @unchecked Sendable {
                 state: AppControlServer.describe(state),
                 pid: server?.pid,
                 host: server?.host ?? "127.0.0.1",
-                port: server?.port ?? 8000,
+                port: server?.port ?? 11435,
                 message: message
             )
         }
@@ -52,7 +52,7 @@ final class AppControlServer: @unchecked Sendable {
                 state: AppControlServer.describe(state),
                 pid: server?.pid,
                 host: server?.host ?? "127.0.0.1",
-                port: server?.port ?? 8000,
+                port: server?.port ?? 11435,
                 message: message
             )
         }
@@ -166,7 +166,7 @@ final class AppControlServer: @unchecked Sendable {
                     state: "unknown",
                     pid: nil,
                     host: "127.0.0.1",
-                    port: 8000,
+                    port: 11435,
                     message: "Unknown command: \(req.command)"
                 )
                 writeResponse(response, fd: clientFD)
@@ -184,7 +184,7 @@ final class AppControlServer: @unchecked Sendable {
                         state: "unknown",
                         pid: nil,
                         host: "127.0.0.1",
-                        port: 8000,
+                        port: 11435,
                         message: "App control handler unavailable"
                     )
                 }
@@ -197,7 +197,7 @@ final class AppControlServer: @unchecked Sendable {
                 state: "unknown",
                 pid: nil,
                 host: "127.0.0.1",
-                port: 8000,
+                port: 11435,
                 message: "Command timed out"
             )
         } catch {
@@ -207,7 +207,7 @@ final class AppControlServer: @unchecked Sendable {
                 state: "unknown",
                 pid: nil,
                 host: "127.0.0.1",
-                port: 8000,
+                port: 11435,
                 message: "Invalid request: \(error)"
             )
         }

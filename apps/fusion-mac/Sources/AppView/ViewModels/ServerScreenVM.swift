@@ -4,7 +4,7 @@ import SwiftUI
 @Observable
 final class ServerScreenVM {
     var host: String = "127.0.0.1"
-    var portText: String = "8000"
+    var portText: String = "11435"
     var logLevel: String = "info"
     var autoStartOnLaunch: Bool = true
 
@@ -36,7 +36,7 @@ final class ServerScreenVM {
     /// Last applied (effective) values used to build endpoint URLs. Distinct
     /// from `host`/`portText` so the URLs don't flicker mid-edit.
     var effectiveHost: String = "127.0.0.1"
-    var effectivePort: Int = 8000
+    var effectivePort: Int = 11435
     var appliedBindAddress: String = "127.0.0.1"
 
     /// Apply-button baselines: snapshots of each Apply-managed draft taken
@@ -46,7 +46,7 @@ final class ServerScreenVM {
     ///
     /// Listen Address / Log Level / SSE Keep-Alive Mode auto-apply via the
     /// `bind()` wrapper and don't need baselines here.
-    private var baselinePortText: String = "8000"
+    private var baselinePortText: String = "11435"
     private var baselineSamplingContextText: String = "32768"
     private var baselineSamplingMaxTokensText: String = "32768"
     private var baselineSamplingTemperatureText: String = "1.0"
