@@ -9373,6 +9373,102 @@
         }
       }
     },
+    "settings.experimental.ngram_spec.break_even.label" : {
+      "comment" : "Row label for the N-gram spec break-even field",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Break-even Accept Rate"
+          }
+        }
+      }
+    },
+    "settings.experimental.ngram_spec.break_even.sub" : {
+      "comment" : "Sublabel for the N-gram spec break-even field",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Accept-rate threshold below which n-gram spec disables itself (0–1). Default 0.5."
+          }
+        }
+      }
+    },
+    "settings.experimental.ngram_spec.label" : {
+      "comment" : "Row label for the N-gram self-speculative decode toggle",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "N-gram Speculative"
+          }
+        }
+      }
+    },
+    "settings.experimental.ngram_spec.num_draft.label" : {
+      "comment" : "Row label for the N-gram spec num-draft field",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Draft Tokens"
+          }
+        }
+      }
+    },
+    "settings.experimental.ngram_spec.num_draft.sub" : {
+      "comment" : "Sublabel for the N-gram spec num-draft field",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Maximum draft tokens proposed per step. Default 3."
+          }
+        }
+      }
+    },
+    "settings.experimental.ngram_spec.order.label" : {
+      "comment" : "Row label for the N-gram spec order field",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "N-gram Order"
+          }
+        }
+      }
+    },
+    "settings.experimental.ngram_spec.order.sub" : {
+      "comment" : "Sublabel for the N-gram spec order field",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "N-gram length used to predict the next tokens. Default 5."
+          }
+        }
+      }
+    },
+    "settings.experimental.ngram_spec.sub" : {
+      "comment" : "Sublabel describing the N-gram speculative decode feature",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Scheduler n-gram self-speculative decode. Overrides FUSION_NGRAM_SPEC_* env per model."
+          }
+        }
+      }
+    },
     "settings.experimental.specprefill.draft.label" : {
       "comment" : "Row label for the SpecPrefill draft-model picker",
       "extractionState" : "manual",
