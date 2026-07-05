@@ -22,6 +22,7 @@ PRESET_REMOTE_URL = "http://bench.dpdns.org/assets/omlx_preset.json"
 
 
 from .helpers import (
+    _get_settings_manager,
     _require_model,
     _require_settings_manager,
 )
@@ -44,8 +45,10 @@ async def list_model_profiles(
     model_id: str,
     is_admin: bool = Depends(require_admin),
 ):
-    mgr = _require_settings_manager()
+    mgr = _get_settings_manager()
     _require_model(model_id)
+    if mgr is None:
+        return {"profiles": []}
     return {"profiles": mgr.list_profiles(model_id)}
 
 
@@ -169,7 +172,9 @@ async def get_profile_fields(is_admin: bool = Depends(require_admin)):
 
 @_router.get("/api/profile-templates")
 async def list_templates(is_admin: bool = Depends(require_admin)):
-    mgr = _require_settings_manager()
+    mgr = _get_settings_manager()
+    if mgr is None:
+        return {"templates": []}
     return {"templates": mgr.list_templates()}
 
 
