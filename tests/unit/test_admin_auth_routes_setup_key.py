@@ -38,16 +38,12 @@ class TestSetupApiKeyUnit:
         from fusion_mlx.admin.auth_routes import setup_api_key
         from fusion_mlx.admin.models import SetupApiKeyRequest
 
-        request_data = SetupApiKeyRequest(
-            api_key="key-one", api_key_confirm="key-two"
-        )
+        request_data = SetupApiKeyRequest(api_key="key-one", api_key_confirm="key-two")
         response = MagicMock()
         fastapi_request = AsyncMock(spec=Request)
         fastapi_request.client.host = "127.0.0.1"
 
-        with patch(
-            "fusion_mlx.admin.auth_routes._get_global_settings"
-        ) as mock_gs:
+        with patch("fusion_mlx.admin.auth_routes._get_global_settings") as mock_gs:
             settings = MagicMock()
             settings.auth.api_key = None
             mock_gs.return_value = settings
@@ -69,9 +65,7 @@ class TestSetupApiKeyUnit:
         fastapi_request = AsyncMock(spec=Request)
         fastapi_request.client.host = "127.0.0.1"
 
-        with patch(
-            "fusion_mlx.admin.auth_routes._get_global_settings"
-        ) as mock_gs:
+        with patch("fusion_mlx.admin.auth_routes._get_global_settings") as mock_gs:
             settings = MagicMock()
             settings.auth.api_key = None
             mock_gs.return_value = settings
@@ -96,9 +90,7 @@ class TestSetupApiKeyUnit:
         fastapi_request = AsyncMock(spec=Request)
         fastapi_request.client.host = "127.0.0.1"
 
-        with patch(
-            "fusion_mlx.admin.auth_routes._get_global_settings"
-        ) as mock_gs:
+        with patch("fusion_mlx.admin.auth_routes._get_global_settings") as mock_gs:
             settings = MagicMock()
             settings.auth.api_key = None
             mock_gs.return_value = settings
@@ -122,9 +114,7 @@ class TestSetupApiKeyUnit:
         fastapi_request = AsyncMock(spec=Request)
         fastapi_request.client.host = "127.0.0.1"
 
-        with patch(
-            "fusion_mlx.admin.auth_routes._get_global_settings"
-        ) as mock_gs:
+        with patch("fusion_mlx.admin.auth_routes._get_global_settings") as mock_gs:
             settings = MagicMock()
             settings.auth.api_key = "already-set"
             mock_gs.return_value = settings
@@ -149,9 +139,7 @@ class TestSetupApiKeyUnit:
         fastapi_request.client.host = "127.0.0.1"
 
         with (
-            patch(
-                "fusion_mlx.admin.auth_routes._get_global_settings"
-            ) as mock_gs,
+            patch("fusion_mlx.admin.auth_routes._get_global_settings") as mock_gs,
             patch(
                 "fusion_mlx.server._server_state",
                 {},
@@ -162,9 +150,7 @@ class TestSetupApiKeyUnit:
             settings.save.return_value = None
             mock_gs.return_value = settings
 
-            result = await setup_api_key(
-                request_data, response, fastapi_request
-            )
+            result = await setup_api_key(request_data, response, fastapi_request)
             assert result["success"] is True
             assert settings.auth.api_key == "valid-key-1234"
             settings.save.assert_called_once()
@@ -174,9 +160,7 @@ class TestSetupApiKeyUnit:
         from fusion_mlx.admin.auth_routes import setup_api_key
         from fusion_mlx.admin.models import SetupApiKeyRequest
 
-        request_data = SetupApiKeyRequest(
-            api_key="any-key", api_key_confirm="any-key"
-        )
+        request_data = SetupApiKeyRequest(api_key="any-key", api_key_confirm="any-key")
         response = MagicMock()
         fastapi_request = AsyncMock(spec=Request)
         fastapi_request.client.host = "192.168.1.1"  # non-loopback

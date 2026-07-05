@@ -25,14 +25,18 @@ class TestGetConfiguredApiKey:
     def test_returns_configured_key(self):
         """Real key on settings.auth.api_key is returned."""
         settings = SimpleNamespace(auth=SimpleNamespace(api_key="sk-real-1234"))
-        with patch("fusion_mlx.admin.helpers._get_global_settings", return_value=settings):
+        with patch(
+            "fusion_mlx.admin.helpers._get_global_settings", return_value=settings
+        ):
             result = _get_configured_api_key()
         assert result == "sk-real-1234"
 
     def test_returns_none_when_auth_missing(self):
         """settings.auth is None -> None."""
         settings = SimpleNamespace(auth=None)
-        with patch("fusion_mlx.admin.helpers._get_global_settings", return_value=settings):
+        with patch(
+            "fusion_mlx.admin.helpers._get_global_settings", return_value=settings
+        ):
             result = _get_configured_api_key()
         assert result is None
 
