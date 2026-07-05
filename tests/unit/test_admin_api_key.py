@@ -9,11 +9,11 @@ from unittest.mock import MagicMock, patch
 import pytest
 from pydantic import ValidationError
 
-from fusion_mlx.admin.auth import validate_api_key, verify_api_key
 import fusion_mlx.admin.auth_routes as auth_routes
 import fusion_mlx.admin.models as admin_models
-import fusion_mlx.admin.subkey as subkey_routes
 import fusion_mlx.admin.stats as stats_route
+import fusion_mlx.admin.subkey as subkey_routes
+from fusion_mlx.admin.auth import validate_api_key, verify_api_key
 
 
 class TestValidateApiKey:
@@ -110,7 +110,9 @@ class TestSubKeyCRUD:
         mock_settings = self._mock_global_settings(api_key="main-key")
         original = self._patch_getter(mock_settings)
         try:
-            request = subkey_routes.CreateSubKeyRequest(key="new-sub-key", name="My Sub Key")
+            request = subkey_routes.CreateSubKeyRequest(
+                key="new-sub-key", name="My Sub Key"
+            )
             result = asyncio.run(subkey_routes.create_sub_key(request, is_admin=True))
             assert result["success"] is True
             assert len(mock_settings.auth.sub_keys) == 1
@@ -160,7 +162,9 @@ class TestSubKeyCRUD:
         finally:
             self._restore_getter(original)
 
-    @pytest.mark.skip(reason="secrets.compare_digest rejects lone surrogates, subkey.py not yet migrated")
+    @pytest.mark.skip(
+        reason="secrets.compare_digest rejects lone surrogates, subkey.py not yet migrated"
+    )
     def test_delete_sub_key_lone_surrogate_returns_404(self):
         import json
 
@@ -186,7 +190,7 @@ class TestSubKeyCRUD:
         from fastapi import HTTPException
 
         mock_settings = self._mock_global_settings(api_key="main-key")
-        mock_settings.save.side_effect = IOError("disk full")
+        mock_settings.save.side_effect = OSError("disk full")
         original = self._patch_getter(mock_settings)
         try:
             request = subkey_routes.CreateSubKeyRequest(key="new-sub-key")
@@ -266,7 +270,9 @@ class TestSetupApiKeyEndpoint:
             mock_fastapi_req = MagicMock()
             mock_fastapi_req.client.host = "127.0.0.1"
             with pytest.raises(HTTPException) as exc_info:
-                asyncio.run(auth_routes.setup_api_key(request, MagicMock(), mock_fastapi_req))
+                asyncio.run(
+                    auth_routes.setup_api_key(request, MagicMock(), mock_fastapi_req)
+                )
             assert exc_info.value.status_code == 400
             assert "already configured" in exc_info.value.detail
         finally:
@@ -284,7 +290,9 @@ class TestSetupApiKeyEndpoint:
             mock_fastapi_req = MagicMock()
             mock_fastapi_req.client.host = "127.0.0.1"
             with pytest.raises(HTTPException) as exc_info:
-                asyncio.run(auth_routes.setup_api_key(request, MagicMock(), mock_fastapi_req))
+                asyncio.run(
+                    auth_routes.setup_api_key(request, MagicMock(), mock_fastapi_req)
+                )
             assert exc_info.value.status_code == 400
             assert "do not match" in exc_info.value.detail
         finally:
@@ -302,7 +310,9 @@ class TestSetupApiKeyEndpoint:
             mock_fastapi_req = MagicMock()
             mock_fastapi_req.client.host = "127.0.0.1"
             with pytest.raises(HTTPException) as exc_info:
-                asyncio.run(auth_routes.setup_api_key(request, MagicMock(), mock_fastapi_req))
+                asyncio.run(
+                    auth_routes.setup_api_key(request, MagicMock(), mock_fastapi_req)
+                )
             assert exc_info.value.status_code == 400
             assert "at least 4" in exc_info.value.detail
         finally:
@@ -373,11 +383,22 @@ class TestStatsSecurity:
         }
 
         with (
-            patch.object(stats_route, "_get_global_settings", return_value=mock_settings),
-            patch("fusion_mlx.server_metrics.get_server_metrics", return_value=mock_metrics),
+            patch.object(
+                stats_route, "_get_global_settings", return_value=mock_settings
+            ),
+            patch(
+                "fusion_mlx.server_metrics.get_server_metrics",
+                return_value=mock_metrics,
+            ),
             patch.object(stats_route, "_get_engine_info", return_value={}),
-            patch.object(stats_route, "_build_active_models_data", return_value={"models": []}),
-            patch.object(stats_route, "_build_runtime_cache_observability", return_value={"models": []}),
+            patch.object(
+                stats_route, "_build_active_models_data", return_value={"models": []}
+            ),
+            patch.object(
+                stats_route,
+                "_build_runtime_cache_observability",
+                return_value={"models": []},
+            ),
         ):
             result = asyncio.run(stats_route.get_server_stats(is_admin=True))
 
@@ -425,12 +446,23 @@ class TestStatsSecurity:
         }
 
         with (
-            patch.object(stats_route, "_get_global_settings", return_value=mock_settings),
-            patch("fusion_mlx.server_metrics.get_server_metrics", return_value=mock_metrics),
+            patch.object(
+                stats_route, "_get_global_settings", return_value=mock_settings
+            ),
+            patch(
+                "fusion_mlx.server_metrics.get_server_metrics",
+                return_value=mock_metrics,
+            ),
             patch("fusion_mlx.server.resolve_model_id", return_value="real-id"),
             patch.object(stats_route, "_get_engine_info", return_value={}),
-            patch.object(stats_route, "_build_active_models_data", return_value={"models": []}),
-            patch.object(stats_route, "_build_runtime_cache_observability", return_value={"models": []}),
+            patch.object(
+                stats_route, "_build_active_models_data", return_value={"models": []}
+            ),
+            patch.object(
+                stats_route,
+                "_build_runtime_cache_observability",
+                return_value={"models": []},
+            ),
         ):
             asyncio.run(stats_route.get_server_stats(model="my-alias", is_admin=True))
 
@@ -457,12 +489,23 @@ class TestStatsSecurity:
         }
 
         with (
-            patch.object(stats_route, "_get_global_settings", return_value=mock_settings),
-            patch("fusion_mlx.server_metrics.get_server_metrics", return_value=mock_metrics),
+            patch.object(
+                stats_route, "_get_global_settings", return_value=mock_settings
+            ),
+            patch(
+                "fusion_mlx.server_metrics.get_server_metrics",
+                return_value=mock_metrics,
+            ),
             patch("fusion_mlx.server.resolve_model_id") as mock_resolve,
             patch.object(stats_route, "_get_engine_info", return_value={}),
-            patch.object(stats_route, "_build_active_models_data", return_value={"models": []}),
-            patch.object(stats_route, "_build_runtime_cache_observability", return_value={"models": []}),
+            patch.object(
+                stats_route, "_build_active_models_data", return_value={"models": []}
+            ),
+            patch.object(
+                stats_route,
+                "_build_runtime_cache_observability",
+                return_value={"models": []},
+            ),
         ):
             asyncio.run(stats_route.get_server_stats(is_admin=True))
 
@@ -525,16 +568,12 @@ class TestRuntimeCacheObservability:
 
         entry_a = SimpleNamespace(
             engine=SimpleNamespace(
-                _engine=SimpleNamespace(
-                    engine=SimpleNamespace(scheduler=scheduler_a)
-                )
+                _engine=SimpleNamespace(engine=SimpleNamespace(scheduler=scheduler_a))
             )
         )
         entry_b = SimpleNamespace(
             engine=SimpleNamespace(
-                _engine=SimpleNamespace(
-                    engine=SimpleNamespace(scheduler=scheduler_b)
-                )
+                _engine=SimpleNamespace(engine=SimpleNamespace(scheduler=scheduler_b))
             )
         )
 
@@ -689,9 +728,7 @@ class TestRuntimeCacheObservability:
 
         bad_entry = SimpleNamespace(
             engine=SimpleNamespace(
-                _engine=SimpleNamespace(
-                    engine=SimpleNamespace(scheduler=bad_scheduler)
-                )
+                _engine=SimpleNamespace(engine=SimpleNamespace(scheduler=bad_scheduler))
             )
         )
         good_entry = SimpleNamespace(
@@ -748,9 +785,7 @@ class TestRuntimeCacheObservability:
 
         entry = SimpleNamespace(
             engine=SimpleNamespace(
-                _engine=SimpleNamespace(
-                    engine=SimpleNamespace(scheduler=scheduler)
-                )
+                _engine=SimpleNamespace(engine=SimpleNamespace(scheduler=scheduler))
             )
         )
 

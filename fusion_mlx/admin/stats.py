@@ -23,7 +23,6 @@ logger = logging.getLogger(__name__)
 PRESET_REMOTE_URL = "http://bench.dpdns.org/assets/omlx_preset.json"
 
 
-
 from .helpers import (
     _get_engine_pool,
     _get_global_settings,
@@ -146,9 +145,7 @@ def _load_fallback_commits(packages: dict[str, str]) -> dict:
     return {}
 
 
-def _parse_commits_from_pyproject(
-    pyproject_path, packages: dict[str, str]
-) -> dict:
+def _parse_commits_from_pyproject(pyproject_path, packages: dict[str, str]) -> dict:
     """Extract commit SHAs from git+https:// URLs in pyproject.toml."""
     import re
     from pathlib import Path
@@ -262,7 +259,9 @@ def _build_runtime_cache_observability(
             ssd_stats = {}
 
         ssd_manager = getattr(scheduler, "paged_ssd_cache_manager", None)
-        scheduler_model_name = getattr(getattr(scheduler, "config", None), "model_name", "")
+        scheduler_model_name = getattr(
+            getattr(scheduler, "config", None), "model_name", ""
+        )
         if ssd_manager is not None and hasattr(ssd_manager, "get_stats_for_model"):
             try:
                 scoped_ssd_stats = ssd_manager.get_stats_for_model(
@@ -429,14 +428,10 @@ async def get_server_stats(
         "api_key": api_key or "",
         "cli_prefix": get_cli_prefix(),
         "claude_code_context_scaling_enabled": (
-            rich.claude_code.context_scaling_enabled
-            if rich
-            else False
+            rich.claude_code.context_scaling_enabled if rich else False
         ),
         "claude_code_target_context_size": (
-            rich.claude_code.target_context_size
-            if rich
-            else 200000
+            rich.claude_code.target_context_size if rich else 200000
         ),
         "engines": _get_engine_info(),
         "active_models": active_models_data,
@@ -544,9 +539,7 @@ def _build_active_models_data() -> dict:
                             _decode_step_time_ms = sched_stats.get(
                                 "decode_step_time_ms"
                             )
-                            _decode_step_cv_pct = sched_stats.get(
-                                "decode_step_cv_pct"
-                            )
+                            _decode_step_cv_pct = sched_stats.get("decode_step_cv_pct")
                         except Exception:
                             pass
             elif hasattr(entry.engine, "get_activity_snapshot"):
@@ -590,7 +583,7 @@ def _build_active_models_data() -> dict:
         loading_estimated_seconds = None
         loading_remaining_seconds_estimate = None
         if loading_elapsed_seconds is not None:
-            estimated_size_gb = model_info.get("estimated_size", 0) / (1024 ** 3)
+            estimated_size_gb = model_info.get("estimated_size", 0) / (1024**3)
             # Model loaders do not expose byte-level progress, so use a
             # deliberately conservative elapsed-time estimate and cap below
             # complete until the model is actually loaded.
@@ -609,7 +602,9 @@ def _build_active_models_data() -> dict:
                     )
 
         # Compute idle time and TTL remaining for loaded models.
-        is_loaded = model_info.get("loaded") and entry is not None and entry.engine is not None
+        is_loaded = (
+            model_info.get("loaded") and entry is not None and entry.engine is not None
+        )
         last_access = model_info.get("last_access")
         idle_seconds: float | None = None
         ttl_remaining_seconds: float | None = None
@@ -622,7 +617,10 @@ def _build_active_models_data() -> dict:
         settings_manager = _get_settings_manager()
         if is_loaded and settings_manager is not None:
             model_settings = settings_manager.get_settings(model_id)
-            if model_settings is not None and getattr(model_settings, "ttl_seconds", None) is not None:
+            if (
+                model_settings is not None
+                and getattr(model_settings, "ttl_seconds", None) is not None
+            ):
                 effective_ttl = model_settings.ttl_seconds
         if effective_ttl is None:
             global_settings = _get_global_settings()
@@ -634,35 +632,37 @@ def _build_active_models_data() -> dict:
         if is_loaded and effective_ttl is not None and idle_seconds is not None:
             ttl_remaining_seconds = max(0.0, effective_ttl - idle_seconds)
 
-        models.append({
-            "id": model_id,
-            "estimated_size": model_info.get("estimated_size", 0),
-            "estimated_size_formatted": format_size(
-                model_info.get("estimated_size", 0)
-            ),
-            "actual_size": model_info.get("actual_size") or 0,
-            "actual_size_formatted": (
-                format_size(model_info.get("actual_size", 0))
-                if model_info.get("actual_size")
-                else None
-            ),
-            "pinned": model_info.get("pinned", False),
-            "is_loading": model_info.get("is_loading", False),
-            "loading_elapsed_seconds": loading_elapsed_seconds,
-            "loading_estimated_seconds": loading_estimated_seconds,
-            "loading_remaining_seconds_estimate": loading_remaining_seconds_estimate,
-            "active_requests": active_requests,
-            "waiting_requests": waiting_requests,
-            "waiting": waiting,
-            "activities": activities,
-            "prefilling": prefilling,
-            "generating": generating,
-            "idle_seconds": idle_seconds,
-            "ttl_remaining_seconds": ttl_remaining_seconds,
-            "gpu_contention_detected": _contention_detected,
-            "decode_step_time_ms": _decode_step_time_ms,
-            "decode_step_cv_pct": _decode_step_cv_pct,
-        })
+        models.append(
+            {
+                "id": model_id,
+                "estimated_size": model_info.get("estimated_size", 0),
+                "estimated_size_formatted": format_size(
+                    model_info.get("estimated_size", 0)
+                ),
+                "actual_size": model_info.get("actual_size") or 0,
+                "actual_size_formatted": (
+                    format_size(model_info.get("actual_size", 0))
+                    if model_info.get("actual_size")
+                    else None
+                ),
+                "pinned": model_info.get("pinned", False),
+                "is_loading": model_info.get("is_loading", False),
+                "loading_elapsed_seconds": loading_elapsed_seconds,
+                "loading_estimated_seconds": loading_estimated_seconds,
+                "loading_remaining_seconds_estimate": loading_remaining_seconds_estimate,
+                "active_requests": active_requests,
+                "waiting_requests": waiting_requests,
+                "waiting": waiting,
+                "activities": activities,
+                "prefilling": prefilling,
+                "generating": generating,
+                "idle_seconds": idle_seconds,
+                "ttl_remaining_seconds": ttl_remaining_seconds,
+                "gpu_contention_detected": _contention_detected,
+                "decode_step_time_ms": _decode_step_time_ms,
+                "decode_step_cv_pct": _decode_step_cv_pct,
+            }
+        )
 
         total_active += active_requests
         total_waiting += waiting_requests
@@ -679,9 +679,7 @@ def _build_active_models_data() -> dict:
         memory_max = status.get("final_ceiling", 0)
     # Aggregate GPU contention across all models
     any_contention = any(m.get("gpu_contention_detected", False) for m in models)
-    max_cv = max(
-        (m.get("decode_step_cv_pct") or 0.0 for m in models), default=0.0
-    )
+    max_cv = max((m.get("decode_step_cv_pct") or 0.0 for m in models), default=0.0)
 
     return {
         "models": models,
@@ -917,6 +915,7 @@ async def probe_cache(
             messages = engine._preprocess_messages(messages)
         try:
             from ..api.tool_calling import convert_tools_for_template  # type: ignore
+
             template_tools = (
                 convert_tools_for_template(request.tools) if request.tools else None
             )
@@ -1024,7 +1023,6 @@ async def probe_cache(
         "ssd_hit_tokens": ssd_hit_tokens,
         "cold_tokens": max(total_tokens - ssd_hit_tokens, 0),
     }
-
 
 
 router = _router

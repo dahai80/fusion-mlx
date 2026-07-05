@@ -24,7 +24,6 @@ logger = logging.getLogger(__name__)
 PRESET_REMOTE_URL = "http://bench.dpdns.org/assets/omlx_preset.json"
 
 
-
 from .helpers import (
     _get_engine_pool,
 )
@@ -106,7 +105,9 @@ async def get_generation_config(
             # Temperature: if do_sample is false, effective temperature is 0
             do_sample = gen_config.get("do_sample", True)
             if "temperature" in gen_config:
-                result["temperature"] = 0.0 if not do_sample else gen_config["temperature"]
+                result["temperature"] = (
+                    0.0 if not do_sample else gen_config["temperature"]
+                )
 
             if "top_p" in gen_config:
                 result["top_p"] = gen_config["top_p"]
@@ -118,7 +119,9 @@ async def get_generation_config(
                 result["repetition_penalty"] = gen_config["repetition_penalty"]
 
         except (json_module.JSONDecodeError, OSError) as e:
-            logger.warning(f"Failed to parse generation_config.json for {model_id}: {e}")
+            logger.warning(
+                f"Failed to parse generation_config.json for {model_id}: {e}"
+            )
 
     # Read config.json for max_position_embeddings → max_context_window
     config_path = model_path / "config.json"
@@ -158,7 +161,6 @@ async def get_generation_config(
         )
 
     return result
-
 
 
 router = _router

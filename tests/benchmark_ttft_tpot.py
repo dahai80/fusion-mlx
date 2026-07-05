@@ -44,6 +44,7 @@ DEFAULT_RUNS = 3
 # Data
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class BenchmarkResult:
     prompt_tokens: int
@@ -73,24 +74,27 @@ class BenchmarkPlan:
             actuals = [r.actual_output_tokens for r in runs if not r.error]
             if not ttfts:
                 continue
-            summary.append({
-                "prompt_tokens": pt,
-                "output_tokens": ot,
-                "ttft_mean_s": f"{sum(ttfts) / len(ttfts):.3f}",
-                "ttft_min_s": f"{min(ttfts):.3f}",
-                "ttft_max_s": f"{max(ttfts):.3f}",
-                "tpot_mean_s": f"{sum(tpos) / len(tpos):.6f}",
-                "tpot_min_s": f"{min(tpos):.6f}",
-                "tpot_max_s": f"{max(tpos):.6f}",
-                "total_mean_s": f"{sum(totals) / len(totals):.3f}",
-                "actual_tokens_mean": f"{sum(actuals) / len(actuals):.0f}",
-            })
+            summary.append(
+                {
+                    "prompt_tokens": pt,
+                    "output_tokens": ot,
+                    "ttft_mean_s": f"{sum(ttfts) / len(ttfts):.3f}",
+                    "ttft_min_s": f"{min(ttfts):.3f}",
+                    "ttft_max_s": f"{max(ttfts):.3f}",
+                    "tpot_mean_s": f"{sum(tpos) / len(tpos):.6f}",
+                    "tpot_min_s": f"{min(tpos):.6f}",
+                    "tpot_max_s": f"{max(tpos):.6f}",
+                    "total_mean_s": f"{sum(totals) / len(totals):.3f}",
+                    "actual_tokens_mean": f"{sum(actuals) / len(actuals):.0f}",
+                }
+            )
         return summary
 
 
 # ---------------------------------------------------------------------------
 # Prompt builder
 # ---------------------------------------------------------------------------
+
 
 def _build_prompt(target_tokens: int) -> str:
     """Generate a prompt that tokenizes to roughly target_tokens tokens.
@@ -106,6 +110,7 @@ def _build_prompt(target_tokens: int) -> str:
 # ---------------------------------------------------------------------------
 # SSE stream parser
 # ---------------------------------------------------------------------------
+
 
 async def run_single_benchmark(
     url: str,
@@ -139,8 +144,12 @@ async def run_single_benchmark(
         chunk_times: list[float] = []
         total_content = ""
 
-        async with httpx.AsyncClient(timeout=httpx.Timeout(600.0, connect=30.0)) as client:
-            async with client.stream("POST", f"{url}/v1/chat/completions", json=payload, headers=headers) as resp:
+        async with httpx.AsyncClient(
+            timeout=httpx.Timeout(600.0, connect=30.0)
+        ) as client:
+            async with client.stream(
+                "POST", f"{url}/v1/chat/completions", json=payload, headers=headers
+            ) as resp:
                 if resp.status_code != 200:
                     body = await resp.aread()
                     result.error = f"HTTP {resp.status_code}: {body[:200]}"
@@ -162,7 +171,11 @@ async def run_single_benchmark(
 
                             try:
                                 data = json.loads(data_str)
-                                content = data.get("choices", [{}])[0].get("delta", {}).get("content", "")
+                                content = (
+                                    data.get("choices", [{}])[0]
+                                    .get("delta", {})
+                                    .get("content", "")
+                                )
                             except json.JSONDecodeError:
                                 continue
 
@@ -190,7 +203,9 @@ async def run_single_benchmark(
 
     # TPOT: average time between chunks
     if len(chunk_times) > 1:
-        intervals = [chunk_times[i + 1] - chunk_times[i] for i in range(len(chunk_times) - 1)]
+        intervals = [
+            chunk_times[i + 1] - chunk_times[i] for i in range(len(chunk_times) - 1)
+        ]
         result.tpot_sec = round(sum(intervals) / len(intervals), 6)
     elif chunk_times:
         result.tpot_sec = 0.0
@@ -201,6 +216,7 @@ async def run_single_benchmark(
 # ---------------------------------------------------------------------------
 # Terminal table
 # ---------------------------------------------------------------------------
+
 
 def print_table(summary: list[dict[str, Any]]) -> None:
     """Print benchmark results as a formatted terminal table."""
@@ -235,23 +251,38 @@ def write_csv(results: list[BenchmarkResult], csv_path: str) -> None:
     """Write raw results to CSV."""
     with open(csv_path, "w", newline="") as f:
         writer = csv.writer(f)
-        writer.writerow([
-            "prompt_tokens", "output_tokens", "run_index",
-            "ttft_sec", "tpot_sec", "total_sec",
-            "actual_output_tokens", "error",
-        ])
+        writer.writerow(
+            [
+                "prompt_tokens",
+                "output_tokens",
+                "run_index",
+                "ttft_sec",
+                "tpot_sec",
+                "total_sec",
+                "actual_output_tokens",
+                "error",
+            ]
+        )
         for r in results:
-            writer.writerow([
-                r.prompt_tokens, r.output_tokens, r.run_index,
-                f"{r.ttft_sec:.4f}", f"{r.tpot_sec:.6f}", f"{r.total_sec:.4f}",
-                r.actual_output_tokens, r.error or "",
-            ])
+            writer.writerow(
+                [
+                    r.prompt_tokens,
+                    r.output_tokens,
+                    r.run_index,
+                    f"{r.ttft_sec:.4f}",
+                    f"{r.tpot_sec:.6f}",
+                    f"{r.total_sec:.4f}",
+                    r.actual_output_tokens,
+                    r.error or "",
+                ]
+            )
     print(f"Raw results written to: {csv_path}")
 
 
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
+
 
 async def run_benchmark(
     url: str,
@@ -266,7 +297,7 @@ async def run_benchmark(
     total_tests = len(prompt_token_sizes) * len(output_token_sizes) * runs
     completed = 0
 
-    print(f"Benchmark config:")
+    print("Benchmark config:")
     print(f"  URL:         {url}")
     print(f"  Model:       {model}")
     print(f"  Prompt sizes: {prompt_token_sizes}")
@@ -281,13 +312,15 @@ async def run_benchmark(
             resp = await client.get(f"{url}/v1/models")
             if resp.status_code == 200:
                 models_data = resp.json()
-                model_names = [m.get("id", m.get("name", "?")) for m in models_data.get("data", [])]
+                model_names = [
+                    m.get("id", m.get("name", "?")) for m in models_data.get("data", [])
+                ]
                 print(f"  Server models: {model_names}")
             else:
                 print(f"  Warning: /v1/models returned {resp.status_code}")
     except Exception as e:
         print(f"  Warning: Cannot reach server at {url}: {e}")
-        print(f"  Continuing anyway — benchmarks will likely fail.")
+        print("  Continuing anyway — benchmarks will likely fail.")
 
     for pt in prompt_token_sizes:
         prompt = _build_prompt(pt)
@@ -322,10 +355,29 @@ def main():
     parser = argparse.ArgumentParser(description="TTFT/TPOT Benchmark for fusion-mlx")
     parser.add_argument("--url", default=DEFAULT_URL, help="fusion-mlx API URL")
     parser.add_argument("--model", default=DEFAULT_MODEL, help="Model name")
-    parser.add_argument("--prompt-tokens", type=int, nargs="+", default=DEFAULT_PROMPT_TOKENS, help="Prompt token sizes to test")
-    parser.add_argument("--output-tokens", type=int, nargs="+", default=DEFAULT_OUTPUT_TOKENS, help="Output token sizes to test")
-    parser.add_argument("--runs", type=int, default=DEFAULT_RUNS, help="Number of runs per combination")
-    parser.add_argument("--output-dir", type=str, default="./benchmark-results", help="Output directory for CSV")
+    parser.add_argument(
+        "--prompt-tokens",
+        type=int,
+        nargs="+",
+        default=DEFAULT_PROMPT_TOKENS,
+        help="Prompt token sizes to test",
+    )
+    parser.add_argument(
+        "--output-tokens",
+        type=int,
+        nargs="+",
+        default=DEFAULT_OUTPUT_TOKENS,
+        help="Output token sizes to test",
+    )
+    parser.add_argument(
+        "--runs", type=int, default=DEFAULT_RUNS, help="Number of runs per combination"
+    )
+    parser.add_argument(
+        "--output-dir",
+        type=str,
+        default="./benchmark-results",
+        help="Output directory for CSV",
+    )
     args = parser.parse_args()
 
     output_dir = Path(args.output_dir)
@@ -333,13 +385,15 @@ def main():
     timestamp = time.strftime("%Y%m%d-%H%M%S")
     csv_file = output_dir / f"benchmark-{timestamp}.csv"
 
-    plan = asyncio.run(run_benchmark(
-        url=args.url,
-        model=args.model,
-        prompt_token_sizes=args.prompt_tokens,
-        output_token_sizes=args.output_tokens,
-        runs=args.runs,
-    ))
+    plan = asyncio.run(
+        run_benchmark(
+            url=args.url,
+            model=args.model,
+            prompt_token_sizes=args.prompt_tokens,
+            output_token_sizes=args.output_tokens,
+            runs=args.runs,
+        )
+    )
 
     summary = plan.summary()
     print_table(summary)

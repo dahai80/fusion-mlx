@@ -6,7 +6,6 @@ This adapter handles conversion between Anthropic Messages API format and the
 internal request/response format used by the inference engine.
 """
 
-import json
 import uuid
 
 from ..anthropic_models import (
@@ -145,9 +144,14 @@ class AnthropicAdapter(BaseAdapter):
             tc_id = chunk.tool_call_delta.get("id", "")
             tc_name = chunk.tool_call_delta.get("function", {}).get("name", "")
             tc_args = chunk.tool_call_delta.get("function", {}).get("arguments", "{}")
-            events.append(create_content_block_start_event(
-                0, "tool_use", id=tc_id, name=tc_name,
-            ))
+            events.append(
+                create_content_block_start_event(
+                    0,
+                    "tool_use",
+                    id=tc_id,
+                    name=tc_name,
+                )
+            )
             events.append(create_tool_name_delta_event(0, tc_name))
             events.append(create_input_json_delta_event(0, tc_args))
 

@@ -179,10 +179,11 @@ def make_client(monkeypatch):
 
     _install_lightweight_engine_modules(monkeypatch)
 
+    from fusion_mlx.routes.responses import router
+
     from fusion_mlx.config import reset_config
     from fusion_mlx.middleware.auth import rate_limiter
     from fusion_mlx.middleware.exception_handlers import install_exception_handlers
-    from fusion_mlx.routes.responses import router
 
     cfg = reset_config()
     cfg.api_key = "test-secret"
@@ -306,9 +307,9 @@ class TestLeadingItemOrdering:
         added = _assert_leading_items_before_message(events)
 
         added_types = [t for t, _ in added]
-        assert "message" in added_types, (
-            f"No message item emitted — events: {[n for n, _ in events]}"
-        )
+        assert (
+            "message" in added_types
+        ), f"No message item emitted — events: {[n for n, _ in events]}"
         assert "reasoning" in added_types, (
             "Empty-reasoning case: reasoning item MUST still be emitted "
             "before the message item per OpenAI Responses spec. "

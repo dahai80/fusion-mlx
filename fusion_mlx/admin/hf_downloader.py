@@ -211,9 +211,18 @@ class DownloadTask:
 
 
 _DTYPE_BYTES = {
-    "F64": 8, "F32": 4, "F16": 2, "BF16": 2,
-    "I64": 8, "I32": 4, "I16": 2, "I8": 1,
-    "U64": 8, "U32": 4, "U16": 2, "U8": 1,
+    "F64": 8,
+    "F32": 4,
+    "F16": 2,
+    "BF16": 2,
+    "I64": 8,
+    "I32": 4,
+    "I16": 2,
+    "I8": 1,
+    "U64": 8,
+    "U32": 4,
+    "U16": 2,
+    "U8": 1,
     "BOOL": 1,
 }
 
@@ -515,7 +524,9 @@ class HFDownloader:
         size = 0
         safetensors = getattr(info, "safetensors", None)
         if safetensors:
-            st_dict = dict(safetensors) if not isinstance(safetensors, dict) else safetensors
+            st_dict = (
+                dict(safetensors) if not isinstance(safetensors, dict) else safetensors
+            )
             if st_dict.get("parameters"):
                 params = _get_param_count(st_dict)
                 params_formatted = _format_param_count(params) if params > 0 else None
@@ -539,7 +550,7 @@ class HFDownloader:
                 if card_text.startswith("---"):
                     end = card_text.find("---", 3)
                     if end != -1:
-                        card_text = card_text[end + 3:].strip()
+                        card_text = card_text[end + 3 :].strip()
                 model_card = card_text
         except Exception:
             pass  # README not available
@@ -586,9 +597,7 @@ class HFDownloader:
         """Update the model directory path."""
         self._model_dir = Path(new_dir)
 
-    async def start_download(
-        self, repo_id: str, hf_token: str = ""
-    ) -> DownloadTask:
+    async def start_download(self, repo_id: str, hf_token: str = "") -> DownloadTask:
         """Start downloading a model from HuggingFace.
 
         Args:
@@ -610,12 +619,16 @@ class HFDownloader:
         # Prevent path traversal: reject ".." components and validate resolved path
         owner, model = repo_id.split("/", 1)
         if ".." in owner or ".." in model:
-            raise ValueError(f"Invalid repository ID: '{repo_id}' — path traversal not allowed")
+            raise ValueError(
+                f"Invalid repository ID: '{repo_id}' — path traversal not allowed"
+            )
         target_dir = self._model_dir / repo_id
         try:
             resolved = target_dir.resolve()
             if not str(resolved).startswith(str(self._model_dir.resolve())):
-                raise ValueError(f"Invalid repository ID: '{repo_id}' — resolves outside model directory")
+                raise ValueError(
+                    f"Invalid repository ID: '{repo_id}' — resolves outside model directory"
+                )
         except (OSError, ValueError):
             raise ValueError(f"Invalid repository ID: '{repo_id}'")
 
@@ -625,9 +638,7 @@ class HFDownloader:
                 DownloadStatus.PENDING,
                 DownloadStatus.DOWNLOADING,
             ):
-                raise ValueError(
-                    f"Download for '{repo_id}' is already in progress"
-                )
+                raise ValueError(f"Download for '{repo_id}' is already in progress")
 
         task_id = str(uuid.uuid4())
         task = DownloadTask(task_id=task_id, repo_id=repo_id)
@@ -694,9 +705,7 @@ class HFDownloader:
         self._cancelled.discard(task_id)
         return True
 
-    async def retry_download(
-        self, task_id: str, hf_token: str = ""
-    ) -> DownloadTask:
+    async def retry_download(self, task_id: str, hf_token: str = "") -> DownloadTask:
         """Retry a failed or cancelled download, resuming from existing files.
 
         Finalized shards are preserved on disk so snapshot_download will
@@ -809,9 +818,7 @@ class HFDownloader:
                             "consolidated.*.pth",
                         ]
                 except Exception as e:
-                    logger.warning(
-                        f"Could not fetch repo info for {task.repo_id}: {e}"
-                    )
+                    logger.warning(f"Could not fetch repo info for {task.repo_id}: {e}")
 
                 dl_kwargs: dict = {
                     "repo_id": task.repo_id,
@@ -865,9 +872,7 @@ class HFDownloader:
                 # Success
                 task.status = DownloadStatus.COMPLETED
                 task.progress = 100.0
-                task.downloaded_size = task.total_size or self._get_dir_size(
-                    target_dir
-                )
+                task.downloaded_size = task.total_size or self._get_dir_size(target_dir)
                 task.completed_at = time.time()
 
                 logger.info(
@@ -880,9 +885,7 @@ class HFDownloader:
                     try:
                         await self._on_complete()
                     except Exception as e:
-                        logger.error(
-                            f"Error in download completion callback: {e}"
-                        )
+                        logger.error(f"Error in download completion callback: {e}")
 
         except (_DownloadCancelled, asyncio.CancelledError):
             if task.status not in (
@@ -952,9 +955,7 @@ class HFDownloader:
 
                 if task.total_size > 0:
                     # Cap at 99% until snapshot_download confirms completion
-                    task.progress = min(
-                        (current_size / task.total_size) * 100, 99.0
-                    )
+                    task.progress = min((current_size / task.total_size) * 100, 99.0)
 
                 # Activity detection: size change OR file mtime change
                 if current_size != last_size:
@@ -976,8 +977,7 @@ class HFDownloader:
                         "Try retrying the download."
                     )
                     logger.warning(
-                        f"Download stalled for {task.repo_id} "
-                        f"(task_id={task_id})"
+                        f"Download stalled for {task.repo_id} " f"(task_id={task_id})"
                     )
                     # Cancel the snapshot_download thread
                     active_task = self._active_tasks.get(task_id)

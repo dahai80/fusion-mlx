@@ -23,11 +23,11 @@ from mlx_lm.models.cache import make_prompt_cache
 from ..prefill_progress import get_prefill_tracker
 from ..request import Request, RequestOutput, RequestStatus
 from ..utils.proc_memory import get_phys_footprint
-from .sched_cache import _turboquant_eligible
 from .helpers import (
     _sync_and_clear_cache,
 )
 from .monkeypatches import _register_uid_rows
+from .sched_cache import _turboquant_eligible
 
 # Module-level alias so Scheduler.__init__ can fall back to mlx-lm's default
 # stream when no per-engine stream is provided.
@@ -46,7 +46,8 @@ def _release_multimodal_tensors(request: "Request") -> None:
         request.vlm_inputs_embeds = None
 
 
-def _schedule_waiting(    self,
+def _schedule_waiting(
+    self,
 ) -> tuple[list["Request"], list[RequestOutput]]:
     """
     Move requests from waiting queue to running.
@@ -72,15 +73,16 @@ def _schedule_waiting(    self,
     batch_specprefill_status: bool | None = None
 
     while self.waiting and len(self.running) < self.config.max_num_seqs:
-         # Token budget guard: max_num_batched_tokens bounds the total
-         # tokens (decode + prefill) in a single forward pass.
+        # Token budget guard: max_num_batched_tokens bounds the total
+        # tokens (decode + prefill) in a single forward pass.
         batched_tokens = len(self.running) + sum(
             len(
-                r.remaining_tokens if r.remaining_tokens is not None
+                r.remaining_tokens
+                if r.remaining_tokens is not None
                 else r.prompt_token_ids
-              )
+            )
             for r in scheduled
-          )
+        )
         if batched_tokens >= self.config.max_num_batched_tokens:
             break
 
@@ -120,11 +122,7 @@ def _schedule_waiting(    self,
         # when there isn't enough headroom for their KV cache + SDPA
         # temp allocations, avoiding Metal OOM during batch_generator.next().
         # First request always passes (self.running is empty).
-        if (
-            self._prefill_memory_guard
-            and self._memory_limit_bytes > 0
-            and self.running
-        ):
+        if self._prefill_memory_guard and self._memory_limit_bytes > 0 and self.running:
             current = max(mx.get_active_memory(), get_phys_footprint())
             _next = self.waiting[0]
             new_tokens = max(_next.num_prompt_tokens - (_next.cached_tokens or 0), 0)
@@ -142,8 +140,8 @@ def _schedule_waiting(    self,
 
         request = self.waiting.popleft()
 
-         # SpecPrefill: score remaining tokens on the executor thread
-         # (not in add_request, which runs on the FastAPI event loop)
+        # SpecPrefill: score remaining tokens on the executor thread
+        # (not in add_request, which runs on the FastAPI event loop)
         self._try_specprefill_scoring(request)
 
         # Ensure we have a batch generator
@@ -158,10 +156,7 @@ def _schedule_waiting(    self,
         # Note: Don't use `remaining_tokens or prompt_token_ids` because empty list
         # is falsy in Python. For exact cache match, remaining_tokens=[] but we should
         # pass just the last token so BatchGenerator can start generation.
-        if (
-            request.remaining_tokens is not None
-            and len(request.remaining_tokens) == 0
-        ):
+        if request.remaining_tokens is not None and len(request.remaining_tokens) == 0:
             # Exact cache match - pass only last token for generation kickoff
             tokens_to_process = request.prompt_token_ids[-1:]
         elif request.remaining_tokens:
@@ -308,9 +303,7 @@ def _schedule_waiting(    self,
                 # ends cleanly at 100%.
                 sel_list_pre = request.specprefill_indices.tolist()
                 m_pre = len(all_tokens) - sys_count
-                n_eff = len(sel_list_pre) - (
-                    1 if (m_pre - 1) in sel_list_pre else 0
-                )
+                n_eff = len(sel_list_pre) - (1 if (m_pre - 1) in sel_list_pre else 0)
                 total_pp = sys_count + n_eff
                 tracker.update(request.request_id, 0, total_pp, model_id)
 
@@ -332,13 +325,12 @@ def _schedule_waiting(    self,
                     spec_sparse_extra = {
                         "prompt_tokens": request.num_prompt_tokens,
                         "system_tokens": request.specprefill_system_end,
-                        "conversation_tokens": request.num_prompt_tokens - request.specprefill_system_end,
+                        "conversation_tokens": request.num_prompt_tokens
+                        - request.specprefill_system_end,
                         "cached_tokens": request.cached_tokens,
                         "scored_tokens": m_pre,
                         "selected_tokens": n_eff,
-                        "keep_percent": round(n_eff / m_pre * 100)
-                        if m_pre > 0
-                        else 0,
+                        "keep_percent": round(n_eff / m_pre * 100) if m_pre > 0 else 0,
                     }
                     while sys_arr.size > step:
                         _check_specprefill_abort(sys_processed)
@@ -428,12 +420,13 @@ def _schedule_waiting(    self,
                         extra={
                             "scored_tokens": M,
                             "selected_tokens": int(selected.shape[0]),
-                            "keep_percent": round(int(selected.shape[0]) / M * 100)
-                            if M > 0
-                            else 0,
+                            "keep_percent": (
+                                round(int(selected.shape[0]) / M * 100) if M > 0 else 0
+                            ),
                             "prompt_tokens": request.num_prompt_tokens,
                             "system_tokens": request.specprefill_system_end,
-                            "conversation_tokens": request.num_prompt_tokens - request.specprefill_system_end,
+                            "conversation_tokens": request.num_prompt_tokens
+                            - request.specprefill_system_end,
                             "cached_tokens": request.cached_tokens,
                         },
                     )
@@ -601,9 +594,9 @@ def _schedule_waiting(    self,
                 )
                 continue
 
-             # Clean up temp UID mapping (use .pop() because
-             # fail_all_requests may have already cleared the maps
-             # if a timeout fired while _do_external_prefill was running)
+            # Clean up temp UID mapping (use .pop() because
+            # fail_all_requests may have already cleared the maps
+            # if a timeout fired while _do_external_prefill was running)
             self.uid_to_request_id.pop(temp_uid, None)
             self.request_id_to_uid.pop(request.request_id, None)
             # Prefill complete: remove from progress tracker so dashboard
@@ -661,15 +654,14 @@ def _schedule_waiting(    self,
                 )
                 continue
 
-         # If _route_to_vlm_mtp returned None but the request is in the
+        # If _route_to_vlm_mtp returned None but the request is in the
         # pending queue (batch not full yet), skip the BatchGenerator
         # fallthrough. The request will be flushed by _vlm_mtp_drain_pending
         # at the end of this _schedule_waiting loop.
         pending_queue = getattr(self, "_vlm_mtp_pending_queue", None)
         if pending_queue and any(
-             p["request"].request_id == request.request_id
-            for p in pending_queue
-         ):
+            p["request"].request_id == request.request_id for p in pending_queue
+        ):
             continue
 
         # Insert into BatchGenerator with pre-filled cache + last token.
@@ -723,9 +715,7 @@ def _schedule_waiting(    self,
 
             self.total_prompt_tokens += request.num_prompt_tokens
             cache_info = (
-                f", {request.cached_tokens} cached"
-                if request.cached_tokens > 0
-                else ""
+                f", {request.cached_tokens} cached" if request.cached_tokens > 0 else ""
             )
             cache_used = "with cache" if cache_to_use else "no cache"
             logger.debug(
@@ -734,9 +724,10 @@ def _schedule_waiting(    self,
                 f"({request.num_prompt_tokens} total){cache_info}, {cache_used}"
             )
 
-      # Drain any pending vlm_mtp requests (batch not full but should flush)
+    # Drain any pending vlm_mtp requests (batch not full but should flush)
     if self._vlm_mtp_drafter is not None:
         from .sched_vlm_mtp_batched import _vlm_mtp_drain_pending
+
         lm = getattr(self.model, "_language_model", None)
         if lm is not None:
             for row in _vlm_mtp_drain_pending(self, lm, self._vlm_mtp_drafter):
@@ -751,6 +742,5 @@ def _schedule_waiting(    self,
                 self.running[rid] = row.request
                 scheduled.append(row.request)
                 self.total_prompt_tokens += row.request.num_prompt_tokens
-
 
     return scheduled, rejected_outputs

@@ -100,12 +100,12 @@ def test_require_mlx_vlm_or_exit_prints_hint_and_exits(monkeypatch, capsys):
     # User-facing hint must include the canonical install command,
     # the offending model name, and a "vision" marker so the message
     # is searchable in support threads.
-    assert "ui-tars-1.5-7b-4bit" in err, (
-        f"hint must name the offending model id, got: {err!r}"
-    )
-    assert "rapid-mlx[vision]" in err or "rapid-mlx[vision]" in err.replace("'", ""), (
-        f"hint must name the [vision] extra install path, got: {err!r}"
-    )
+    assert (
+        "ui-tars-1.5-7b-4bit" in err
+    ), f"hint must name the offending model id, got: {err!r}"
+    assert "rapid-mlx[vision]" in err or "rapid-mlx[vision]" in err.replace(
+        "'", ""
+    ), f"hint must name the [vision] extra install path, got: {err!r}"
     assert "mlx-vlm" in err, f"hint must name the dep, got: {err!r}"
 
 

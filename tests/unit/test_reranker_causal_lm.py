@@ -10,6 +10,7 @@ from safetensors.numpy import save_file
 
 try:
     import mlx.core as mx
+
     HAS_MLX = True
 except ImportError:
     HAS_MLX = False
@@ -23,8 +24,8 @@ class TestXLMRobertaReranker:
     @pytest.mark.skipif(not HAS_MLX, reason="MLX not available")
     def test_load_xlm_roberta_switches_to_eval_mode(self, tmp_path):
         """Native reranker load must disable dropout for deterministic scores."""
-        from mlx.utils import tree_flatten
         from fusion_mlx.models.xlm_roberta import Model, ModelArgs
+        from mlx.utils import tree_flatten
 
         config = {
             "model_type": "xlm-roberta",
@@ -133,7 +134,9 @@ class TestCausalLMReranker:
 
         model.model = MagicMock(side_effect=mock_forward)
 
-        result = model._rerank_causal_lm("test query", ["relevant doc", "irrelevant doc"])
+        result = model._rerank_causal_lm(
+            "test query", ["relevant doc", "irrelevant doc"]
+        )
 
         assert isinstance(result, RerankOutput)
         assert len(result.scores) == 2
@@ -165,7 +168,9 @@ class TestCausalLMReranker:
         model._loaded = True
 
         mock_result = RerankOutput(scores=[0.9], indices=[0], total_tokens=10)
-        with patch.object(model, "_rerank_causal_lm", return_value=mock_result) as mock_method:
+        with patch.object(
+            model, "_rerank_causal_lm", return_value=mock_result
+        ) as mock_method:
             result = model.rerank("query", ["doc"])
             mock_method.assert_called_once()
             assert result.scores == [0.9]
@@ -178,7 +183,9 @@ class TestCausalLMReranker:
         model._loaded = True
 
         mock_result = RerankOutput(scores=[0.5], indices=[0], total_tokens=10)
-        with patch.object(model, "_rerank_causal_lm", return_value=mock_result) as mock_method:
+        with patch.object(
+            model, "_rerank_causal_lm", return_value=mock_result
+        ) as mock_method:
             model.rerank("query", ["doc"])
             # max_length=None should use default 8192 for CausalLM
             args, _ = mock_method.call_args
@@ -192,7 +199,9 @@ class TestCausalLMReranker:
         model._loaded = True
 
         mock_result = RerankOutput(scores=[0.5], indices=[0], total_tokens=10)
-        with patch.object(model, "_rerank_causal_lm", return_value=mock_result) as mock_method:
+        with patch.object(
+            model, "_rerank_causal_lm", return_value=mock_result
+        ) as mock_method:
             model.rerank("query", ["doc"], max_length=1024)
             args, _ = mock_method.call_args
             assert args[2] == 1024
@@ -205,7 +214,9 @@ class TestCausalLMReranker:
         model._loaded = True
 
         mock_result = RerankOutput(scores=[0.5], indices=[0], total_tokens=10)
-        with patch.object(model, "_rerank_causal_lm", return_value=mock_result) as mock_method:
+        with patch.object(
+            model, "_rerank_causal_lm", return_value=mock_result
+        ) as mock_method:
             model.rerank("query", ["doc"], max_length=512)
             args, _ = mock_method.call_args
             assert args[2] == 512
@@ -516,9 +527,7 @@ class TestRerankerCompileFallback:
         model._loaded = True
         model._is_causal_lm = False
         model._is_compiled = True
-        model._compiled_seq_logits = MagicMock(
-            side_effect=RuntimeError("compile fail")
-        )
+        model._compiled_seq_logits = MagicMock(side_effect=RuntimeError("compile fail"))
 
         # Mock processor
         mock_processor = MagicMock()

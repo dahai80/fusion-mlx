@@ -12,8 +12,8 @@ from fastapi import HTTPException, Request
 logger = logging.getLogger(__name__)
 
 SESSION_COOKIE_NAME = "omlx_admin_session"
-SESSION_MAX_AGE = 3600          # 1 hour
-REMEMBER_ME_MAX_AGE = 86400     # 24 hours
+SESSION_MAX_AGE = 3600  # 1 hour
+REMEMBER_ME_MAX_AGE = 86400  # 24 hours
 
 _active_sessions: dict = {}
 _api_key: str = ""
@@ -118,6 +118,7 @@ async def require_admin(request: Request) -> bool:
     When skip_api_key_verification is enabled, always returns True.
     """
     from .helpers import _get_global_settings as _helpers_get_gs
+
     gs = _helpers_get_gs() if _helpers_get_gs else None
 
     if _is_skip_api_key_verification(gs):

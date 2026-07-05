@@ -6,8 +6,6 @@ import threading
 import time
 from unittest.mock import patch
 
-import pytest
-
 from fusion_mlx.cache.observability import CacheRateTracker
 
 
@@ -79,14 +77,20 @@ class TestCacheRateTrackerRates:
         def mock_monotonic():
             return fake_time[0]
 
-        with patch("omlx.cache.observability.time.monotonic", side_effect=mock_monotonic):
+        with patch(
+            "omlx.cache.observability.time.monotonic", side_effect=mock_monotonic
+        ):
             tracker.maybe_snapshot(old_counters)
 
         fake_time[0] = 1000.0 + elapsed
-        with patch("omlx.cache.observability.time.monotonic", side_effect=mock_monotonic):
+        with patch(
+            "omlx.cache.observability.time.monotonic", side_effect=mock_monotonic
+        ):
             tracker.maybe_snapshot(new_counters)
 
-        with patch("omlx.cache.observability.time.monotonic", return_value=fake_time[0]):
+        with patch(
+            "omlx.cache.observability.time.monotonic", return_value=fake_time[0]
+        ):
             return tracker.get_rates(windows=(60, 300, 900))
 
     def test_steady_state_prefix_hit_rate(self):

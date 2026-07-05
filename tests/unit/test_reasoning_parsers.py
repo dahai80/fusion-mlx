@@ -391,12 +391,12 @@ class TestThinkParserSSEBoundary:
             parser,
             ["<thi", "nk>", "Okay, ", "thinking.", "</think>", "Hello!"],
         )
-        assert "<thi" not in reasoning, (
-            f"partial start tag leaked into reasoning: {reasoning!r}"
-        )
-        assert "<thi" not in content, (
-            f"partial start tag leaked into content: {content!r}"
-        )
+        assert (
+            "<thi" not in reasoning
+        ), f"partial start tag leaked into reasoning: {reasoning!r}"
+        assert (
+            "<thi" not in content
+        ), f"partial start tag leaked into content: {content!r}"
         assert reasoning == "Okay, thinking."
         assert content == "Hello!"
 
@@ -415,9 +415,9 @@ class TestThinkParserSSEBoundary:
             parser,
             ["<think>", "thinking", "</thi", "nk>", "answer"],
         )
-        assert "</thi" not in reasoning, (
-            f"partial end tag leaked into reasoning: {reasoning!r}"
-        )
+        assert (
+            "</thi" not in reasoning
+        ), f"partial end tag leaked into reasoning: {reasoning!r}"
         assert "</thi" not in content
         assert reasoning == "thinking"
         assert content == "answer"
@@ -427,9 +427,9 @@ class TestThinkParserSSEBoundary:
         # Use the streaming interface directly so we don't hit the
         # NO_TAG_CONTENT_THRESHOLD path in the subclass.
         reasoning, _ = self._run_stream(parser, ["<", "angle bracket"])
-        assert reasoning == "<angle bracket", (
-            f"held '<' was dropped instead of flushed: {reasoning!r}"
-        )
+        assert (
+            reasoning == "<angle bracket"
+        ), f"held '<' was dropped instead of flushed: {reasoning!r}"
 
     def test_qwen3_sse_boundary_inherited(self):
         from fusion_mlx.reasoning.qwen3_parser import Qwen3ReasoningParser
@@ -507,9 +507,9 @@ class TestThinkParserSSEBoundary:
             f"split opener + split closer in same completing delta must "
             f"not leak partial-end-tag bytes — got reasoning={reasoning!r}"
         )
-        assert content == "ans", (
-            f"content after split closer must be clean — got content={content!r}"
-        )
+        assert (
+            content == "ans"
+        ), f"content after split closer must be clean — got content={content!r}"
 
 
 class TestMultiBlockThinkStreaming:
@@ -650,12 +650,12 @@ class TestMultiBlockThinkStreaming:
                 "tail",
             ],
         )
-        assert "<think>" not in content, (
-            f"split second-opener leaked into content: {content!r}"
-        )
-        assert "<thi" not in content, (
-            f"partial tag bytes leaked into content: {content!r}"
-        )
+        assert (
+            "<think>" not in content
+        ), f"split second-opener leaked into content: {content!r}"
+        assert (
+            "<thi" not in content
+        ), f"partial tag bytes leaked into content: {content!r}"
         assert "</think>" not in content
         assert reasoning == "R1R2"
         assert content == "answertail"
@@ -708,9 +708,9 @@ class TestMultiBlockThinkStreaming:
         # The withheld ``<thi`` is released as content alongside the
         # following ``x tail`` so the client doesn't see truncated
         # answer text.
-        assert content == "answer <thix tail", (
-            f"false partial bytes not released cleanly: {content!r}"
-        )
+        assert (
+            content == "answer <thix tail"
+        ), f"false partial bytes not released cleanly: {content!r}"
 
     def test_literal_closed_think_in_answer_preserved_non_streaming(self):
         from fusion_mlx.reasoning.deepseek_r1_parser import (
@@ -816,26 +816,26 @@ class TestResidualThinkTagSweep:
     def _check(self, parser, text, *, expected_content, expected_in_reasoning):
         reasoning, content = parser.extract_reasoning(text)
         # Hard guarantee: no literal tag bytes survive to either channel.
-        assert "<think>" not in (content or ""), (
-            f"<think> opener leaked into content: {content!r}"
-        )
-        assert "</think>" not in (content or ""), (
-            f"</think> closer leaked into content: {content!r}"
-        )
-        assert "<think>" not in (reasoning or ""), (
-            f"<think> opener leaked into reasoning: {reasoning!r}"
-        )
-        assert "</think>" not in (reasoning or ""), (
-            f"</think> closer leaked into reasoning: {reasoning!r}"
-        )
+        assert "<think>" not in (
+            content or ""
+        ), f"<think> opener leaked into content: {content!r}"
+        assert "</think>" not in (
+            content or ""
+        ), f"</think> closer leaked into content: {content!r}"
+        assert "<think>" not in (
+            reasoning or ""
+        ), f"<think> opener leaked into reasoning: {reasoning!r}"
+        assert "</think>" not in (
+            reasoning or ""
+        ), f"</think> closer leaked into reasoning: {reasoning!r}"
         if expected_content is not None:
-            assert content == expected_content, (
-                f"unexpected content: {content!r} (expected {expected_content!r})"
-            )
+            assert (
+                content == expected_content
+            ), f"unexpected content: {content!r} (expected {expected_content!r})"
         for needle in expected_in_reasoning:
-            assert needle in (reasoning or ""), (
-                f"expected {needle!r} in reasoning, got {reasoning!r}"
-            )
+            assert needle in (
+                reasoning or ""
+            ), f"expected {needle!r} in reasoning, got {reasoning!r}"
 
     def test_phi4_repro_second_unclosed_block_after_answer(self):
         from fusion_mlx.reasoning.deepseek_r1_parser import (
@@ -874,9 +874,9 @@ class TestResidualThinkTagSweep:
         # ``<think>`` in content has a matching ``</think>`` after it).
         last_open = content.rfind("<think>")
         if last_open >= 0:
-            assert "</think>" in content[last_open + 7 :], (
-                f"trailing unclosed <think> survived the sweep: content={content!r}"
-            )
+            assert (
+                "</think>" in content[last_open + 7 :]
+            ), f"trailing unclosed <think> survived the sweep: content={content!r}"
 
     def test_answer_text_before_trailing_unclosed_think_preserved(self):
         from fusion_mlx.reasoning.deepseek_r1_parser import (
@@ -913,9 +913,9 @@ class TestResidualThinkTagSweep:
         assert "</think>" in (content or "")
         # ``sanitize_output`` (the last-mile route filter) strips it.
         final = sanitize_output(content or "")
-        assert "</think>" not in (final or ""), (
-            f"downstream sanitiser failed to strip orphan closer: {final!r}"
-        )
+        assert "</think>" not in (
+            final or ""
+        ), f"downstream sanitiser failed to strip orphan closer: {final!r}"
 
     def test_qwen3_inherits_sweep(self):
         from fusion_mlx.reasoning.qwen3_parser import Qwen3ReasoningParser
@@ -970,19 +970,20 @@ class TestResidualThinkTagSweep:
         # strips it. After ``sanitize_output`` the content reads
         # cleanly without tag bytes.
         final = sanitize_output(content or "")
-        assert "</think>" not in (final or ""), (
-            f"downstream sanitiser failed to strip orphan closer: {final!r}"
-        )
+        assert "</think>" not in (
+            final or ""
+        ), f"downstream sanitiser failed to strip orphan closer: {final!r}"
         assert "answer" in (final or "")
         assert "tail" in (final or "")
 
     @pytest.mark.skip(reason="service.helpers unavailable: service package broken")
     def test_reasoning_max_tokens_cap_no_tag_leak(self):
-        from fusion_mlx.reasoning.deepseek_r1_parser import (
-            DeepSeekR1ReasoningParser,
-        )
         from fusion_mlx.service.helpers import (
             _finalize_content_and_reasoning,
+        )
+
+        from fusion_mlx.reasoning.deepseek_r1_parser import (
+            DeepSeekR1ReasoningParser,
         )
 
         parser = DeepSeekR1ReasoningParser()
@@ -1002,12 +1003,12 @@ class TestResidualThinkTagSweep:
             enable_thinking=True,
             reasoning_max_tokens=100,  # 100 * 4 = 400-char cap
         )
-        assert "<think>" not in (cleaned_text or ""), (
-            f"opener leaked through cap: cleaned_text={cleaned_text!r}"
-        )
-        assert "</think>" not in (cleaned_text or ""), (
-            f"closer leaked through cap: cleaned_text={cleaned_text!r}"
-        )
+        assert "<think>" not in (
+            cleaned_text or ""
+        ), f"opener leaked through cap: cleaned_text={cleaned_text!r}"
+        assert "</think>" not in (
+            cleaned_text or ""
+        ), f"closer leaked through cap: cleaned_text={cleaned_text!r}"
         # The final answer survives (somewhere — overflow may prepend
         # part of the reasoning tail, but ``\\boxed{Paris}`` is intact
         # because the sweep restitched the content segments).
@@ -1496,9 +1497,9 @@ class TestQwen3:
             "Step-by-step: first preheat the oven to 350F.",
         ]:
             reasoning, content = self.parser.extract_reasoning(answer)
-            assert reasoning is None, (
-                f"ambiguous phrase misclassified as reasoning: {answer!r}"
-            )
+            assert (
+                reasoning is None
+            ), f"ambiguous phrase misclassified as reasoning: {answer!r}"
             assert content == answer
 
     def test_bare_think_prefix_with_tool_call_markup_not_routed(self):
@@ -1541,9 +1542,9 @@ class TestQwen3:
         ]:
             text = f"Here's a thinking process:\n\nThinking. {tag}stuff"
             reasoning, content = self.parser.extract_reasoning(text)
-            assert reasoning is None, (
-                f"tool tag {tag!r} should suppress bare-text fallback"
-            )
+            assert (
+                reasoning is None
+            ), f"tool tag {tag!r} should suppress bare-text fallback"
             assert content == text
 
     def test_bare_thinking_prefix_with_close_tag_uses_normal_split(self):

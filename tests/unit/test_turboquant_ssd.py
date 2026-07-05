@@ -7,6 +7,7 @@ on a cache hit, so a hit reproduces the fresh run exactly — no double-quant
 
 Skips when the model is not cached locally.
 """
+
 import importlib.util
 import shutil
 import tempfile
@@ -66,11 +67,23 @@ def test_tq_ssd_single_hit_matches_fresh():
     tmp = tempfile.mkdtemp(prefix="ssd_tq_")
     try:
         fresh, c1 = helpers._generate_tokens(
-            model, tok, ids, max_tokens=16,
-            ssd_cache_dir=tmp, block_size=BLOCK, turboquant_bits=TQ_BITS)
+            model,
+            tok,
+            ids,
+            max_tokens=16,
+            ssd_cache_dir=tmp,
+            block_size=BLOCK,
+            turboquant_bits=TQ_BITS,
+        )
         cached, c2 = helpers._generate_tokens(
-            model, tok, ids, max_tokens=16,
-            ssd_cache_dir=tmp, block_size=BLOCK, turboquant_bits=TQ_BITS)
+            model,
+            tok,
+            ids,
+            max_tokens=16,
+            ssd_cache_dir=tmp,
+            block_size=BLOCK,
+            turboquant_bits=TQ_BITS,
+        )
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
@@ -83,12 +96,32 @@ def test_tq_ssd_single_hit_matches_fresh():
 def _batch_fresh_vs_hit(helpers, model, tok, prompts, bits):
     tmp = tempfile.mkdtemp(prefix="ssd_tq_batch_")
     try:
-        fresh = {rid: t for rid, t, _ in helpers._generate_batch(
-            model, tok, prompts, mode="concurrent", max_tokens=16,
-            ssd_cache_dir=tmp, block_size=BLOCK, turboquant_bits=bits)}
-        hit = {rid: (t, c) for rid, t, c in helpers._generate_batch(
-            model, tok, prompts, mode="concurrent", max_tokens=16,
-            ssd_cache_dir=tmp, block_size=BLOCK, turboquant_bits=bits)}
+        fresh = {
+            rid: t
+            for rid, t, _ in helpers._generate_batch(
+                model,
+                tok,
+                prompts,
+                mode="concurrent",
+                max_tokens=16,
+                ssd_cache_dir=tmp,
+                block_size=BLOCK,
+                turboquant_bits=bits,
+            )
+        }
+        hit = {
+            rid: (t, c)
+            for rid, t, c in helpers._generate_batch(
+                model,
+                tok,
+                prompts,
+                mode="concurrent",
+                max_tokens=16,
+                ssd_cache_dir=tmp,
+                block_size=BLOCK,
+                turboquant_bits=bits,
+            )
+        }
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
     return fresh, hit
@@ -106,7 +139,9 @@ def test_tq_ssd_batch_roundtrip_exact_at_high_bits():
         ft = fresh[f"batch-{i}"]
         ht, hc = hit[f"batch-{i}"]
         assert hc > 0, f"batch req {i} did not hit SSD cache"
-        assert ft == ht, f"8-bit batch req {i} hit diverged from fresh (round-trip drift)"
+        assert (
+            ft == ht
+        ), f"8-bit batch req {i} hit diverged from fresh (round-trip drift)"
 
 
 def test_tq_ssd_batch_coherent_at_low_bits():
@@ -126,4 +161,6 @@ def test_tq_ssd_batch_coherent_at_low_bits():
         assert hc > 0, f"batch req {i} did not hit SSD cache"
         n = min(len(ft), len(ht))
         match = sum(1 for k in range(n) if ft[k] == ht[k]) / n if n else 0.0
-        assert match >= 0.5, f"batch req {i} hit overlap {match:.0%} too low (not just a near-tie)"
+        assert (
+            match >= 0.5
+        ), f"batch req {i} hit overlap {match:.0%} too low (not just a near-tie)"

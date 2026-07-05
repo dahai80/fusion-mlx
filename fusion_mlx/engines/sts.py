@@ -19,10 +19,16 @@ from .base import BaseNonStreamingEngine
 logger = logging.getLogger(__name__)
 
 _CONFIG_TYPE_TO_FAMILY: dict[str, str] = {
-    "deepfilternet": "deepfilternet", "mossformer2_se": "mossformer2",
-    "sam_audio": "sam_audio", "lfm_audio": "lfm2", "lfm2_audio": "lfm2", "lfm2": "lfm2",
-    "DeepFilterNetModel": "deepfilternet", "MossFormer2SEModel": "mossformer2",
-    "SAMAudio": "sam_audio", "LFM2AudioModel": "lfm2",
+    "deepfilternet": "deepfilternet",
+    "mossformer2_se": "mossformer2",
+    "sam_audio": "sam_audio",
+    "lfm_audio": "lfm2",
+    "lfm2_audio": "lfm2",
+    "lfm2": "lfm2",
+    "DeepFilterNetModel": "deepfilternet",
+    "MossFormer2SEModel": "mossformer2",
+    "SAMAudio": "sam_audio",
+    "LFM2AudioModel": "lfm2",
 }
 
 
@@ -35,6 +41,7 @@ def _detect_sts_family(model_name: str, config_model_type: str = "") -> str:
     if os.path.isfile(config_path):
         try:
             import json
+
             with open(config_path) as f:
                 cfg = json.load(f)
             for arch in cfg.get("architectures", []):
@@ -62,23 +69,35 @@ def _detect_sts_family(model_name: str, config_model_type: str = "") -> str:
 # Family loaders
 def _load_deepfilternet(model_name: str):
     from mlx_audio.sts.models.deepfilternet import DeepFilterNetModel
+
     return DeepFilterNetModel.from_pretrained(model_name_or_path=model_name)
+
 
 def _load_mossformer2(model_name: str):
     from mlx_audio.sts.models.mossformer2_se import MossFormer2SEModel
+
     return MossFormer2SEModel.from_pretrained(model_name)
+
 
 def _load_sam_audio(model_name: str):
     from mlx_audio.sts.models.sam_audio import SAMAudio
+
     return SAMAudio.from_pretrained(model_name)
+
 
 def _load_lfm2(model_name: str):
     from mlx_audio.sts.models.lfm_audio import LFM2AudioModel, LFM2AudioProcessor
-    return LFM2AudioModel.from_pretrained(model_name), LFM2AudioProcessor.from_pretrained(model_name)
+
+    return LFM2AudioModel.from_pretrained(
+        model_name
+    ), LFM2AudioProcessor.from_pretrained(model_name)
+
 
 _FAMILY_LOADERS = {
-    "deepfilternet": _load_deepfilternet, "mossformer2": _load_mossformer2,
-    "sam_audio": _load_sam_audio, "lfm2": _load_lfm2,
+    "deepfilternet": _load_deepfilternet,
+    "mossformer2": _load_mossformer2,
+    "sam_audio": _load_sam_audio,
+    "lfm2": _load_lfm2,
 }
 
 
@@ -110,8 +129,10 @@ def _process_sam_audio(model, audio_path: str, **kwargs) -> bytes:
 
 def _process_lfm2(model_and_processor, audio_path: str, **kwargs) -> bytes:
     from mlx_audio.sts.models.lfm_audio import ChatState, LFMModality
+
     model, processor = model_and_processor
     from mlx_audio import audio_io
+
     audio_np, sr = audio_io.read(str(audio_path))
     audio_mx = mx.array(audio_np.flatten(), dtype=mx.float32)
     chat_state = ChatState(processor)
@@ -124,12 +145,17 @@ def _process_lfm2(model_and_processor, audio_path: str, **kwargs) -> bytes:
     audio_temperature = kwargs.get("audio_temperature", 0.8)
     audio_frames = []
     for token, modality in model.generate_from_chat_state(
-        chat_state, max_new_tokens=max_new_tokens, temperature=temperature, audio_temperature=audio_temperature,
+        chat_state,
+        max_new_tokens=max_new_tokens,
+        temperature=temperature,
+        audio_temperature=audio_temperature,
     ):
         if modality == LFMModality.AUDIO_OUT:
             audio_frames.append(token)
     if not audio_frames:
-        return _audio_to_wav_bytes(np.zeros(1600, dtype=np.float32), _DEFAULT_SAMPLE_RATE)
+        return _audio_to_wav_bytes(
+            np.zeros(1600, dtype=np.float32), _DEFAULT_SAMPLE_RATE
+        )
     codes = mx.stack(audio_frames, axis=0)
     if codes.ndim == 3:
         codes = codes.squeeze(1)
@@ -141,8 +167,10 @@ def _process_lfm2(model_and_processor, audio_path: str, **kwargs) -> bytes:
 
 
 _FAMILY_PROCESSORS = {
-    "deepfilternet": _process_deepfilternet, "mossformer2": _process_mossformer2,
-    "sam_audio": _process_sam_audio, "lfm2": _process_lfm2,
+    "deepfilternet": _process_deepfilternet,
+    "mossformer2": _process_mossformer2,
+    "sam_audio": _process_sam_audio,
+    "lfm2": _process_lfm2,
 }
 
 
@@ -165,16 +193,23 @@ class STSEngine(BaseNonStreamingEngine):
         logger.info(f"Starting STS engine: {self._model_name} (family={family})")
         loader = _FAMILY_LOADERS.get(family)
         if loader is None:
-            raise ValueError(f"Unsupported STS family: {family!r}. Supported: {sorted(_FAMILY_LOADERS)}")
+            raise ValueError(
+                f"Unsupported STS family: {family!r}. Supported: {sorted(_FAMILY_LOADERS)}"
+            )
         model_name = self._model_name
+
         def _load_sync():
             try:
                 return loader(model_name)
             except ImportError as exc:
-                raise ImportError('mlx-audio required for STS. Install with: pip install "fusion-mlx[audio]"') from exc
+                raise ImportError(
+                    'mlx-audio required for STS. Install with: pip install "fusion-mlx[audio]"'
+                ) from exc
+
         loop = asyncio.get_running_loop()
         self._model = await asyncio.wait_for(
-            loop.run_in_executor(get_executor("audio"), _load_sync), timeout=120.0)
+            loop.run_in_executor(get_executor("audio"), _load_sync), timeout=120.0
+        )
 
     async def stop(self) -> None:
         if self._model is None:
@@ -183,8 +218,11 @@ class STSEngine(BaseNonStreamingEngine):
         gc.collect()
         loop = asyncio.get_running_loop()
         from ..scheduler.helpers import _safe_clear_cache_for_non_llm
+
         await asyncio.wait_for(
-            loop.run_in_executor(get_executor("audio"), _safe_clear_cache_for_non_llm), timeout=5.0)
+            loop.run_in_executor(get_executor("audio"), _safe_clear_cache_for_non_llm),
+            timeout=5.0,
+        )
 
     async def process(self, audio_path: str, **kwargs) -> bytes:
         if self._model is None:
@@ -194,18 +232,27 @@ class STSEngine(BaseNonStreamingEngine):
         if processor_fn is None:
             raise ValueError(f"Unsupported STS family: {family!r}")
         model = self._model
+
         def _process_sync():
             return processor_fn(model, str(audio_path), **kwargs)
-        activity_id = self._begin_activity("processing audio", metadata={"family": family})
+
+        activity_id = self._begin_activity(
+            "processing audio", metadata={"family": family}
+        )
         try:
             loop = asyncio.get_running_loop()
             return await asyncio.wait_for(
-                loop.run_in_executor(get_executor("audio"), _process_sync), timeout=60.0)
+                loop.run_in_executor(get_executor("audio"), _process_sync), timeout=60.0
+            )
         finally:
             await self._finish_activity(activity_id)
 
     def get_stats(self) -> dict[str, Any]:
-        return {"model_name": self._model_name, "loaded": self._model is not None, "family": self._family}
+        return {
+            "model_name": self._model_name,
+            "loaded": self._model is not None,
+            "family": self._family,
+        }
 
     def __repr__(self) -> str:
         s = "running" if self._model is not None else "stopped"

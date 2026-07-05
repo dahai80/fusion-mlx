@@ -22,7 +22,6 @@ logger = logging.getLogger(__name__)
 PRESET_REMOTE_URL = "http://bench.dpdns.org/assets/omlx_preset.json"
 
 
-
 from .helpers import (
     _get_engine_pool,
 )
@@ -197,7 +196,6 @@ async def stream_accuracy_benchmark(
             "X-Accel-Buffering": "no",
         },
     )
-
 
 
 router = _router

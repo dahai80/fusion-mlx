@@ -454,9 +454,9 @@ class TestModelsListEmbeddingCapability:
         body = r.json()
 
         ids = [e["id"] for e in body["data"]]
-        assert embed_id in ids, (
-            f"Configured embedding model {embed_id} missing from /v1/models"
-        )
+        assert (
+            embed_id in ids
+        ), f"Configured embedding model {embed_id} missing from /v1/models"
 
         for entry in body["data"]:
             caps = entry.get("capabilities", [])
@@ -522,9 +522,9 @@ class TestModelsListEmbeddingCapability:
         assert r.status_code == 200, r.text
         body = r.json()
         ids = [e["id"] for e in body["data"]]
-        assert embed_id in ids, (
-            f"Configured HF-path embedding id {embed_id} missing from /v1/models"
-        )
+        assert (
+            embed_id in ids
+        ), f"Configured HF-path embedding id {embed_id} missing from /v1/models"
         for entry in body["data"]:
             if entry["id"] == embed_id:
                 assert "embedding" in entry.get("capabilities", [])
@@ -907,9 +907,9 @@ class TestEmbeddingModelAliasResolution:
             "Second statement must invoke `_load_embedding_model_or_exit` "
             "(not a wrapper / not a renamed copy)."
         )
-        assert len(call.args) == 2, (
-            "Helper invocation must pass exactly (args, load_embedding_model)."
-        )
+        assert (
+            len(call.args) == 2
+        ), "Helper invocation must pass exactly (args, load_embedding_model)."
         first_arg, second_arg = call.args
         assert isinstance(first_arg, ast.Name) and first_arg.id == "args"
         assert (

@@ -35,4 +35,4 @@ def detect_hardware() -> HardwareInfo:
         ram_bytes=ram_bytes,
         disk_free_bytes=disk_free,
         os=os_name,
-     )
+    )

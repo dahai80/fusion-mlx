@@ -18,9 +18,8 @@ transparently.
 
 import copy
 import json
-import re
 from inspect import isfunction
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any
 
 from transformers.utils.chat_template_utils import get_json_schema
 
@@ -107,7 +106,7 @@ def tool_calls_from_openai_format(tool_calls):
     ]
 
 
-def encode_arguments_to_dsml(tool_call: Dict[str, str]) -> str:
+def encode_arguments_to_dsml(tool_call: dict[str, str]) -> str:
     p_dsml_template = """<{dsml_token}parameter name="{key}" string="{is_str}">{value}</{dsml_token}parameter>"""
     P_dsml_strs = []
 
@@ -141,8 +140,8 @@ def encode_arguments_to_dsml(tool_call: Dict[str, str]) -> str:
 
 
 def decode_dsml_to_arguments(
-    tool_name: str, tool_args: Dict[str, Tuple[str, str]]
-) -> Dict[str, str]:
+    tool_name: str, tool_args: dict[str, tuple[str, str]]
+) -> dict[str, str]:
     def _decode_value(key: str, value: str, string: str):
         if string == "true":
             value = to_json(value)
@@ -158,7 +157,7 @@ def decode_dsml_to_arguments(
     return dict(name=tool_name, arguments=tool_args_json)
 
 
-def render_tools(tools: List[Dict[str, Union[str, Dict[str, Any]]]]) -> str:
+def render_tools(tools: list[dict[str, str | dict[str, Any]]]) -> str:
     tools_json = [to_json(t) for t in tools]
 
     return TOOLS_SYSTEM_TEMPLATE.format(
@@ -169,7 +168,7 @@ def render_tools(tools: List[Dict[str, Union[str, Dict[str, Any]]]]) -> str:
     )
 
 
-def find_last_user_index(messages: List[Dict[str, Any]]) -> int:
+def find_last_user_index(messages: list[dict[str, Any]]) -> int:
     last_user_index = -1
     for idx in range(len(messages) - 1, -1, -1):
         if messages[idx].get("role") in ["user", "developer"]:
@@ -180,7 +179,7 @@ def find_last_user_index(messages: List[Dict[str, Any]]) -> int:
 
 def render_message(
     index: int,
-    messages: List[Dict[str, Any]],
+    messages: list[dict[str, Any]],
     thinking_mode: str,
     tools: Any = None,
 ) -> str:
@@ -225,7 +224,7 @@ def render_message(
                 schema=to_json(response_format)
             )
 
-        content_developer += "\n\n# The user's message is: {}".format(content)
+        content_developer += f"\n\n# The user's message is: {content}"
 
         prompt += user_msg_template.format(content=content_developer)
         if index == last_user_idx and thinking_mode == "thinking":
@@ -314,9 +313,9 @@ def render_message(
 
 
 def drop_thinking_messages(
-    messages: List[Dict[str, Any]], last_user_idx: Optional[int] = None
-) -> List[Dict[str, Any]]:
-    messages_wo_thinking: List[Dict[str, Any]] = []
+    messages: list[dict[str, Any]], last_user_idx: int | None = None
+) -> list[dict[str, Any]]:
+    messages_wo_thinking: list[dict[str, Any]] = []
     last_user_idx = (
         find_last_user_index(messages) if last_user_idx is None else last_user_idx
     )
@@ -335,9 +334,9 @@ def drop_thinking_messages(
 
 
 def encode_messages(
-    messages: List[Dict[str, Any]],
+    messages: list[dict[str, Any]],
     thinking_mode: str = "thinking",
-    context: Optional[List[Dict[str, Any]]] = None,
+    context: list[dict[str, Any]] | None = None,
     drop_thinking: bool = True,
     add_default_bos_token: bool = True,
     tools: Any = None,

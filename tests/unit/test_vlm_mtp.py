@@ -29,9 +29,7 @@ def _fake_drafter_model(model_type: str = "gemma4_assistant") -> MagicMock:
 def test_load_vlm_mtp_drafter_happy_path():
     """Valid gemma4_assistant artifact returns a populated VLMMTPDrafter."""
     fake_model = _fake_drafter_model("gemma4_assistant")
-    with patch.object(
-        vlm_mtp, "_vlm_load_drafter", return_value=(fake_model, "mtp")
-    ):
+    with patch.object(vlm_mtp, "_vlm_load_drafter", return_value=(fake_model, "mtp")):
         drafter = vlm_mtp.load_vlm_mtp_drafter("/path/to/drafter")
     assert isinstance(drafter, vlm_mtp.VLMMTPDrafter)
     assert drafter.draft_kind == "mtp"
@@ -42,9 +40,7 @@ def test_load_vlm_mtp_drafter_happy_path():
 def test_load_vlm_mtp_drafter_accepts_unified_assistant():
     """Valid gemma4_unified_assistant artifact is accepted."""
     fake_model = _fake_drafter_model("gemma4_unified_assistant")
-    with patch.object(
-        vlm_mtp, "_vlm_load_drafter", return_value=(fake_model, "mtp")
-    ):
+    with patch.object(vlm_mtp, "_vlm_load_drafter", return_value=(fake_model, "mtp")):
         drafter = vlm_mtp.load_vlm_mtp_drafter("/path/to/drafter")
     assert isinstance(drafter, vlm_mtp.VLMMTPDrafter)
     assert drafter.model is fake_model
@@ -63,9 +59,7 @@ def test_load_vlm_mtp_drafter_rejects_dflash_kind():
 def test_load_vlm_mtp_drafter_accepts_qwen3_5_mtp():
     """qwen3_5_mtp model_type with kind='mtp' is accepted."""
     fake_model = _fake_drafter_model("qwen3_5_mtp")
-    with patch.object(
-        vlm_mtp, "_vlm_load_drafter", return_value=(fake_model, "mtp")
-    ):
+    with patch.object(vlm_mtp, "_vlm_load_drafter", return_value=(fake_model, "mtp")):
         drafter = vlm_mtp.load_vlm_mtp_drafter("/path/to/qwen-mtp")
     assert isinstance(drafter, vlm_mtp.VLMMTPDrafter)
     assert drafter.draft_kind == "mtp"
@@ -139,7 +133,9 @@ def test_run_vlm_mtp_decode_batch_dispatches_to_mtp_rounds_batch():
     first_bonus = mx.array([1, 2, 3])  # B=3
     yielded = [([1, None, 3], None), ([None, None, None], None)]
     with (
-        patch.object(vlm_mtp, "_mtp_rounds_batch", return_value=iter(yielded)) as m_batch,
+        patch.object(
+            vlm_mtp, "_mtp_rounds_batch", return_value=iter(yielded)
+        ) as m_batch,
         patch.object(vlm_mtp, "_mtp_rounds") as m_single,
         patch.object(vlm_mtp, "_buffer_mtp_target_cache") as m_buffer,
     ):
@@ -322,6 +318,7 @@ class TestMoeConfigPatch:
 def test_dense_vlm_runtime_return_hidden_uses_language_model_output_contract():
     """Dense Qwen3.5 VLM MTP verify must satisfy mlx-vlm's output contract."""
     from mlx_vlm.models.base import LanguageModelOutput
+
     from fusion_mlx.patches.mlx_vlm_mtp import qwen35_vlm_runtime
 
     logits = mx.zeros((1, 2, 16))
@@ -386,9 +383,9 @@ class TestCallBackbone:
 
     def test_tuple_2_return(self):
         """mlx-lm dense path returns (logits, hidden) 2-tuple."""
-        from fusion_mlx.patches.mlx_lm_mtp.batch_generator import _call_backbone
-
         import mlx.core as mx
+
+        from fusion_mlx.patches.mlx_lm_mtp.batch_generator import _call_backbone
 
         logits = mx.zeros((1, 1, 100))
         hidden = mx.zeros((1, 1, 64))
@@ -401,9 +398,9 @@ class TestCallBackbone:
 
     def test_tuple_3_return(self):
         """mlx-vlm MoE path returns (logits, hidden, gdn_states) 3-tuple."""
-        from fusion_mlx.patches.mlx_lm_mtp.batch_generator import _call_backbone
-
         import mlx.core as mx
+
+        from fusion_mlx.patches.mlx_lm_mtp.batch_generator import _call_backbone
 
         logits = mx.zeros((1, 1, 100))
         hidden = mx.zeros((1, 1, 64))
@@ -417,10 +414,10 @@ class TestCallBackbone:
 
     def test_language_model_output_return(self):
         """LanguageModelOutput is correctly unpacked."""
-        from fusion_mlx.patches.mlx_lm_mtp.batch_generator import _call_backbone
-
         import mlx.core as mx
         from mlx_vlm.models.base import LanguageModelOutput
+
+        from fusion_mlx.patches.mlx_lm_mtp.batch_generator import _call_backbone
 
         logits = mx.zeros((1, 1, 100))
         hidden = mx.zeros((1, 1, 64))

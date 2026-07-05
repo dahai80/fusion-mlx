@@ -182,7 +182,9 @@ class ModelCacheConfig:
         Returns:
             List of layer indices
         """
-        return [cfg.layer_idx for cfg in self.layer_configs if cfg.supports_block_slicing]
+        return [
+            cfg.layer_idx for cfg in self.layer_configs if cfg.supports_block_slicing
+        ]
 
     def get_non_sliceable_layers(self) -> list[int]:
         """Get indices of layers that don't support block slicing.
@@ -191,7 +193,9 @@ class ModelCacheConfig:
             List of layer indices (e.g., ArraysCache, RotatingKVCache layers)
         """
         return [
-            cfg.layer_idx for cfg in self.layer_configs if not cfg.supports_block_slicing
+            cfg.layer_idx
+            for cfg in self.layer_configs
+            if not cfg.supports_block_slicing
         ]
 
     def get_layer_type(self, layer_idx: int) -> CacheType:
@@ -307,7 +311,9 @@ class ModelCacheConfig:
         )
 
 
-def create_default_kvcache_config(num_layers: int, model_name: str = "") -> ModelCacheConfig:
+def create_default_kvcache_config(
+    num_layers: int, model_name: str = ""
+) -> ModelCacheConfig:
     """Create a default KVCache-only configuration.
 
     Convenience function for models that use only KVCache.

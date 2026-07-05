@@ -218,9 +218,9 @@ class TestAudioCapabilityShortCircuit:
             # ``text`` MUST NOT leak — the audio entry is audio-only on
             # the wire. (The capabilities list-equality above also pins
             # this, but the explicit check makes the failure clearer.)
-            assert "text" not in info.capabilities, (
-                f"R11-B-F4 regression: {model_id!r} leaked 'text' tag."
-            )
+            assert (
+                "text" not in info.capabilities
+            ), f"R11-B-F4 regression: {model_id!r} leaked 'text' tag."
 
     def test_text_model_still_advertises_text(self):
         """Regression guard: a text-only model id MUST keep
@@ -234,9 +234,9 @@ class TestAudioCapabilityShortCircuit:
         # so a future broadening of the audio short-circuit can't
         # accidentally paint audio onto chat models.
         for cap in info.capabilities:
-            assert not cap.startswith("audio."), (
-                f"text model leaked audio capability {cap!r}: {info.capabilities}"
-            )
+            assert not cap.startswith(
+                "audio."
+            ), f"text model leaked audio capability {cap!r}: {info.capabilities}"
 
 
 # ===========================================================================

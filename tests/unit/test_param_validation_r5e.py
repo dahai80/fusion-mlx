@@ -132,9 +132,9 @@ class TestTopKUpperBound:
             ChatCompletionRequest(model="x", messages=_user_msg(), top_k=-5)
         # Assert the validation error specifically cites top_k.
         errors = excinfo.value.errors()
-        assert any("top_k" in err.get("loc", ()) for err in errors), (
-            f"Expected top_k validation error, got: {errors}"
-        )
+        assert any(
+            "top_k" in err.get("loc", ()) for err in errors
+        ), f"Expected top_k validation error, got: {errors}"
 
 
 # ---------------------------------------------------------------------------

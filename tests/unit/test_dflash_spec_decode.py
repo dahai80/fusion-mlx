@@ -561,9 +561,8 @@ def test_verify_block_partial_accept_at_k_equals_2():
 
 def test_verify_block_rewinds_cache_offset_on_partial_accept():
     """Real KVCache: partial accept must rewind offset to the accepted end."""
-    from mlx_lm.models.cache import KVCache
-
     from fusion_mlx.spec_decode.dflash.verifier import _rewind_cache_to
+    from mlx_lm.models.cache import KVCache
 
     cache = KVCache()
     # Manually set offset to simulate "the model forward wrote 4 positions".

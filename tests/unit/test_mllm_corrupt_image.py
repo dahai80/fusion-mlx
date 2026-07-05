@@ -121,9 +121,9 @@ def test_preprocess_normalizes_failed_to_load_image_to_failed_to_process_image(
     with pytest.raises(ValueError) as exc_info:
         gen._preprocess_request(req)
     msg = str(exc_info.value)
-    assert msg.startswith("Failed to process image"), (
-        f"matcher would miss this message: {msg!r}"
-    )
+    assert msg.startswith(
+        "Failed to process image"
+    ), f"matcher would miss this message: {msg!r}"
     assert "cannot identify image file" in msg
 
 
@@ -141,9 +141,9 @@ def test_preprocess_preserves_canonical_message_unchanged(monkeypatch):
     with pytest.raises(ValueError) as exc_info:
         gen._preprocess_request(req)
     msg = str(exc_info.value)
-    assert msg == "Failed to process image: 404 Client Error", (
-        f"canonical message must pass through unchanged, got {msg!r}"
-    )
+    assert (
+        msg == "Failed to process image: 404 Client Error"
+    ), f"canonical message must pass through unchanged, got {msg!r}"
 
 
 def test_preprocess_propagates_internal_bugs_unchanged(monkeypatch):

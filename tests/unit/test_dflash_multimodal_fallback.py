@@ -23,6 +23,7 @@ from fusion_mlx.engine.dflash import DFlashEngine
 
 # -- Helpers ------------------------------------------------------------------
 
+
 def _text_only_messages():
     return [{"role": "user", "content": "What is 2+2?"}]
 
@@ -33,7 +34,10 @@ def _image_url_messages():
             "role": "user",
             "content": [
                 {"type": "text", "text": "Describe this image"},
-                {"type": "image_url", "image_url": {"url": "data:image/png;base64,abc"}},
+                {
+                    "type": "image_url",
+                    "image_url": {"url": "data:image/png;base64,abc"},
+                },
             ],
         }
     ]
@@ -57,7 +61,10 @@ def _input_image_messages():
             "role": "user",
             "content": [
                 {"type": "text", "text": "Analyze"},
-                {"type": "input_image", "image_url": {"url": "data:image/jpeg;base64,xyz"}},
+                {
+                    "type": "input_image",
+                    "image_url": {"url": "data:image/jpeg;base64,xyz"},
+                },
             ],
         }
     ]
@@ -70,7 +77,10 @@ def _mixed_history_messages():
             "role": "user",
             "content": [
                 {"type": "text", "text": "Look at this"},
-                {"type": "image_url", "image_url": {"url": "data:image/png;base64,abc"}},
+                {
+                    "type": "image_url",
+                    "image_url": {"url": "data:image/png;base64,abc"},
+                },
             ],
         },
         {"role": "assistant", "content": "I see a cat."},
@@ -79,6 +89,7 @@ def _mixed_history_messages():
 
 
 # -- supports_multimodal_fallback property ------------------------------------
+
 
 class TestSupportsMultimodalFallback:
     def test_vlm_fallback_returns_true(self):
@@ -106,6 +117,7 @@ class TestSupportsMultimodalFallback:
 
 
 # -- _has_multimodal_content detection ----------------------------------------
+
 
 class TestHasMultimodalContent:
     """Before: DFlash had no way to detect image content in messages.
@@ -139,6 +151,7 @@ class TestHasMultimodalContent:
 
 
 # -- chat()/stream_chat() multimodal fallback ---------------------------------
+
 
 class TestChatMultimodalFallback:
     """Before: chat() always applied text-only _apply_chat_template(), which
@@ -174,8 +187,12 @@ class TestChatMultimodalFallback:
         mock_fallback = AsyncMock()
         mock_fallback.chat = AsyncMock(return_value=mock_output)
 
-        with patch.object(vlm_dflash_engine, "_evict_dflash_and_start_fallback") as mock_evict:
-            mock_evict.side_effect = lambda: setattr(vlm_dflash_engine, "_fallback_engine", mock_fallback) or setattr(vlm_dflash_engine, "_in_fallback_mode", True)
+        with patch.object(
+            vlm_dflash_engine, "_evict_dflash_and_start_fallback"
+        ) as mock_evict:
+            mock_evict.side_effect = lambda: setattr(
+                vlm_dflash_engine, "_fallback_engine", mock_fallback
+            ) or setattr(vlm_dflash_engine, "_in_fallback_mode", True)
 
             result = await vlm_dflash_engine.chat(_image_url_messages())
 
@@ -192,7 +209,9 @@ class TestChatMultimodalFallback:
 
     @pytest.mark.asyncio
     async def test_chat_text_only_uses_normal_dflash_path(self, vlm_dflash_engine):
-        vlm_dflash_engine._apply_chat_template = MagicMock(return_value="formatted prompt")
+        vlm_dflash_engine._apply_chat_template = MagicMock(
+            return_value="formatted prompt"
+        )
         vlm_dflash_engine.generate = AsyncMock(return_value=MagicMock())
 
         await vlm_dflash_engine.chat(_text_only_messages())
@@ -224,7 +243,9 @@ class TestChatMultimodalFallback:
         mock_fallback.chat.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_chat_already_in_fallback_text_still_forwards(self, vlm_dflash_engine):
+    async def test_chat_already_in_fallback_text_still_forwards(
+        self, vlm_dflash_engine
+    ):
         """Once in fallback mode, even text-only messages go through the
         fallback engine (sticky fallback — no reload)."""
         mock_fallback = AsyncMock()
@@ -261,8 +282,12 @@ class TestStreamChatMultimodalFallback:
         mock_fallback = AsyncMock()
         mock_fallback.stream_chat = mock_stream
 
-        with patch.object(vlm_dflash_engine, "_evict_dflash_and_start_fallback") as mock_evict:
-            mock_evict.side_effect = lambda: setattr(vlm_dflash_engine, "_fallback_engine", mock_fallback) or setattr(vlm_dflash_engine, "_in_fallback_mode", True)
+        with patch.object(
+            vlm_dflash_engine, "_evict_dflash_and_start_fallback"
+        ) as mock_evict:
+            mock_evict.side_effect = lambda: setattr(
+                vlm_dflash_engine, "_fallback_engine", mock_fallback
+            ) or setattr(vlm_dflash_engine, "_in_fallback_mode", True)
 
             outputs = []
             async for out in vlm_dflash_engine.stream_chat(_image_url_messages()):
@@ -293,6 +318,7 @@ class TestStreamChatMultimodalFallback:
 
 # -- Concurrent fallback (lock correctness) -----------------------------------
 
+
 class TestFallbackLockSafety:
     """Verify _fallback_lock prevents double eviction from concurrent requests."""
 
@@ -316,7 +342,9 @@ class TestFallbackLockSafety:
             engine._fallback_engine.chat = AsyncMock(return_value=MagicMock())
             engine._in_fallback_mode = True
 
-        with patch.object(engine, "_evict_dflash_and_start_fallback", side_effect=mock_evict):
+        with patch.object(
+            engine, "_evict_dflash_and_start_fallback", side_effect=mock_evict
+        ):
             results = await asyncio.gather(
                 engine.chat(_image_url_messages()),
                 engine.chat(_image_url_messages()),
@@ -328,6 +356,7 @@ class TestFallbackLockSafety:
 
 
 # -- Server-side extraction routing (before/after) ----------------------------
+
 
 class TestServerExtractionRouting:
     """Before: server.py checked `isinstance(engine, VLMBatchedEngine)` only.
@@ -401,10 +430,14 @@ class TestServerExtractionRouting:
         """server.py uses getattr(engine, 'supports_multimodal_fallback', False)
         to avoid importing DFlashEngine directly."""
         engine_vlm = DFlashEngine(
-            model_name="test", draft_model_path="test", fallback_engine_type="vlm",
+            model_name="test",
+            draft_model_path="test",
+            fallback_engine_type="vlm",
         )
         engine_batched = DFlashEngine(
-            model_name="test", draft_model_path="test", fallback_engine_type="batched",
+            model_name="test",
+            draft_model_path="test",
+            fallback_engine_type="batched",
         )
         assert getattr(engine_vlm, "supports_multimodal_fallback", False) is True
         assert getattr(engine_batched, "supports_multimodal_fallback", False) is False

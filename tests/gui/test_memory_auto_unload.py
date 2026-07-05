@@ -5,12 +5,12 @@ Specifically tests the automatic LRU unloading when hitting concurrent model lim
 """
 
 import asyncio
+
 import httpx
-import time
-from typing import List, Dict
 
 BASE_URL = "http://localhost:8000"
 TIMEOUT = 60.0
+
 
 async def test_auto_unload_behavior():
     """Test that models are automatically unloaded when hitting concurrent limits."""
@@ -25,7 +25,7 @@ async def test_auto_unload_behavior():
             return False
 
         status = response.json()
-        max_concurrent = status.get('model_manager', {}).get('max_concurrent_models', 3)
+        max_concurrent = status.get("model_manager", {}).get("max_concurrent_models", 3)
         print(f"📊 System configured for max {max_concurrent} concurrent models")
 
         # Test models to load sequentially
@@ -34,10 +34,12 @@ async def test_auto_unload_behavior():
             "gemma-3-27b-it-qat-4bit",
             "gemma-3n-e4b-it-mlx-8bit",
             "qwen3-8b-6bit",  # This should trigger auto-unload
-            "qwen3-embedding-4b-4bit-dwq"  # This should also trigger auto-unload
+            "qwen3-embedding-4b-4bit-dwq",  # This should also trigger auto-unload
         ]
 
-        print(f"\n🔄 Loading {len(test_models)} models sequentially (exceeds limit of {max_concurrent})")
+        print(
+            f"\n🔄 Loading {len(test_models)} models sequentially (exceeds limit of {max_concurrent})"
+        )
 
         for i, model_name in enumerate(test_models):
             print(f"\n  📥 Loading model {i+1}/{len(test_models)}: {model_name}")
@@ -46,7 +48,11 @@ async def test_auto_unload_behavior():
             models_response = await client.get(f"{BASE_URL}/v1/manager/models")
             if models_response.status_code == 200:
                 models_data = models_response.json()
-                loaded_models = [m['name'] for m in models_data.get('models', []) if m.get('status') == 'loaded']
+                loaded_models = [
+                    m["name"]
+                    for m in models_data.get("models", [])
+                    if m.get("status") == "loaded"
+                ]
                 print(f"    📊 Before: {len(loaded_models)} loaded - {loaded_models}")
 
             # Load the model
@@ -59,23 +65,37 @@ async def test_auto_unload_behavior():
                 models_response = await client.get(f"{BASE_URL}/v1/manager/models")
                 if models_response.status_code == 200:
                     models_data = models_response.json()
-                    new_loaded_models = [m['name'] for m in models_data.get('models', []) if m.get('status') == 'loaded']
-                    print(f"    📊 After:  {len(new_loaded_models)} loaded - {new_loaded_models}")
+                    new_loaded_models = [
+                        m["name"]
+                        for m in models_data.get("models", [])
+                        if m.get("status") == "loaded"
+                    ]
+                    print(
+                        f"    📊 After:  {len(new_loaded_models)} loaded - {new_loaded_models}"
+                    )
 
                     # Check if auto-unloading happened
-                    if len(loaded_models) >= max_concurrent and len(new_loaded_models) <= max_concurrent:
+                    if (
+                        len(loaded_models) >= max_concurrent
+                        and len(new_loaded_models) <= max_concurrent
+                    ):
                         unloaded = set(loaded_models) - set(new_loaded_models)
                         if unloaded:
-                            print(f"    🔄 AUTO-UNLOADED: {list(unloaded)} (LRU eviction working!)")
+                            print(
+                                f"    🔄 AUTO-UNLOADED: {list(unloaded)} (LRU eviction working!)"
+                            )
                         else:
-                            print(f"    ⚠️  Expected auto-unload but none detected")
+                            print("    ⚠️  Expected auto-unload but none detected")
 
                     # Verify the new model is actually loaded and responding
-                    test_response = await client.post(f"{BASE_URL}/v1/chat/completions", json={
-                        "model": model_name,
-                        "messages": [{"role": "user", "content": "Hi"}],
-                        "max_tokens": 5
-                    })
+                    test_response = await client.post(
+                        f"{BASE_URL}/v1/chat/completions",
+                        json={
+                            "model": model_name,
+                            "messages": [{"role": "user", "content": "Hi"}],
+                            "max_tokens": 5,
+                        },
+                    )
 
                     if test_response.status_code == 200:
                         print(f"    ✅ Model {model_name} is responding to requests")
@@ -86,8 +106,10 @@ async def test_auto_unload_behavior():
                 error_detail = "Unknown error"
                 try:
                     error_data = load_response.json()
-                    error_detail = error_data.get('detail', str(load_response.status_code))
-                except:
+                    error_detail = error_data.get(
+                        "detail", str(load_response.status_code)
+                    )
+                except Exception:
                     error_detail = f"HTTP {load_response.status_code}"
                 print(f"    ❌ Failed to load {model_name}: {error_detail}")
 
@@ -95,38 +117,53 @@ async def test_auto_unload_behavior():
             await asyncio.sleep(1)
 
         # Final summary
-        print(f"\n📊 Final Summary:")
+        print("\n📊 Final Summary:")
         models_response = await client.get(f"{BASE_URL}/v1/manager/models")
         if models_response.status_code == 200:
             models_data = models_response.json()
-            final_loaded = [m['name'] for m in models_data.get('models', []) if m.get('status') == 'loaded']
+            final_loaded = [
+                m["name"]
+                for m in models_data.get("models", [])
+                if m.get("status") == "loaded"
+            ]
             print(f"    📈 Final loaded models: {len(final_loaded)} - {final_loaded}")
 
             if len(final_loaded) <= max_concurrent:
-                print(f"    ✅ SUCCESS: Model count ({len(final_loaded)}) respects limit ({max_concurrent})")
-                print(f"    ✅ AUTO-UNLOAD SYSTEM WORKING: Older models were automatically evicted")
+                print(
+                    f"    ✅ SUCCESS: Model count ({len(final_loaded)}) respects limit ({max_concurrent})"
+                )
+                print(
+                    "    ✅ AUTO-UNLOAD SYSTEM WORKING: Older models were automatically evicted"
+                )
                 return True
             else:
-                print(f"    ❌ FAILURE: Model count ({len(final_loaded)}) exceeds limit ({max_concurrent})")
+                print(
+                    f"    ❌ FAILURE: Model count ({len(final_loaded)}) exceeds limit ({max_concurrent})"
+                )
                 return False
         else:
-            print(f"    ❌ Could not get final model status")
+            print("    ❌ Could not get final model status")
             return False
+
 
 async def main():
     """Main test function."""
     try:
         success = await test_auto_unload_behavior()
         if success:
-            print(f"\n🎉 AUTO-UNLOAD TEST PASSED!")
-            print(f"✅ The system correctly unloads older models when hitting concurrent limits")
+            print("\n🎉 AUTO-UNLOAD TEST PASSED!")
+            print(
+                "✅ The system correctly unloads older models when hitting concurrent limits"
+            )
         else:
-            print(f"\n❌ AUTO-UNLOAD TEST FAILED!")
-            print(f"⚠️  The system is not properly managing concurrent model limits")
+            print("\n❌ AUTO-UNLOAD TEST FAILED!")
+            print("⚠️  The system is not properly managing concurrent model limits")
     except Exception as e:
         print(f"\n❌ Test failed with error: {e}")
         import traceback
+
         traceback.print_exc()
+
 
 if __name__ == "__main__":
     print("🚀 Starting fusion_gui Auto-Unload Test...")

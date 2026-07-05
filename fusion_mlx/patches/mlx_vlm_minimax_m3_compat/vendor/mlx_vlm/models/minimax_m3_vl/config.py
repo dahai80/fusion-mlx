@@ -1,6 +1,6 @@
 import inspect
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Union
+from typing import Any
 
 from ..base import BaseModelConfig
 
@@ -64,9 +64,9 @@ class TextConfig(BaseModelConfig):
     num_hidden_layers: int = 60
     rms_norm_eps: float = 1e-6
     rope_theta: float = 5000000
-    rotary_dim: Optional[int] = None
+    rotary_dim: int | None = None
     partial_rotary_factor: float = 0.5
-    rope_scaling: Optional[Dict[str, Any]] = None
+    rope_scaling: dict[str, Any] | None = None
     max_position_embeddings: int = 1048576
     vocab_size: int = 200064
     tie_word_embeddings: bool = False
@@ -83,17 +83,17 @@ class TextConfig(BaseModelConfig):
     scoring_func: str = "sigmoid"
     use_routing_bias: bool = True
     routed_scaling_factor: float = 2.0
-    moe_layer_freq: List[int] = field(default_factory=list)
-    mlp_layer_types: Optional[List[str]] = None
-    sparse_attention_config: Optional[Dict[str, Any]] = None
-    layer_types: Optional[List[str]] = None
-    index_n_heads: Optional[int] = None
-    index_head_dim: Optional[int] = None
-    index_block_size: Optional[int] = None
-    index_topk_blocks: Optional[int] = None
-    index_local_blocks: Optional[int] = None
+    moe_layer_freq: list[int] = field(default_factory=list)
+    mlp_layer_types: list[str] | None = None
+    sparse_attention_config: dict[str, Any] | None = None
+    layer_types: list[str] | None = None
+    index_n_heads: int | None = None
+    index_head_dim: int | None = None
+    index_block_size: int | None = None
+    index_topk_blocks: int | None = None
+    index_local_blocks: int | None = None
     attention_output_gate: bool = False
-    architectures: Optional[List[str]] = None
+    architectures: list[str] | None = None
 
     def __post_init__(self):
         if self.num_key_value_heads is None:
@@ -169,11 +169,11 @@ class TextConfig(BaseModelConfig):
                     sparse_freq.copy()
                 )
 
-    def _default_layer_frequency(self) -> List[int]:
+    def _default_layer_frequency(self) -> list[int]:
         dense_layers = min(3, self.num_hidden_layers)
         return [0] * dense_layers + [1] * (self.num_hidden_layers - dense_layers)
 
-    def _sparse_frequency_from_layer_types(self) -> Optional[List[int]]:
+    def _sparse_frequency_from_layer_types(self) -> list[int] | None:
         if self.layer_types is None:
             return None
         return [
@@ -228,7 +228,7 @@ class VisionConfig(BaseModelConfig):
     vision_segment_max_frames: int = 4
     initializer_range: float = 0.02
     initializer_factor: float = 1.0
-    img_token_compression_config: Dict[str, Any] = field(default_factory=dict)
+    img_token_compression_config: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self):
         compression = self.img_token_compression_config or {}
@@ -241,32 +241,32 @@ class ModelConfig(BaseModelConfig):
     text_config: TextConfig
     vision_config: VisionConfig
     model_type: str = "minimax_m3_vl"
-    architectures: Optional[List[str]] = None
-    auto_map: Optional[Dict[str, Any]] = None
+    architectures: list[str] | None = None
+    auto_map: dict[str, Any] | None = None
     image_token_index: int = 200025
     video_token_index: int = 200026
-    image_token_id: Optional[int] = None
-    video_token_id: Optional[int] = None
-    vision_start_token_id: Optional[int] = None
-    vision_end_token_id: Optional[int] = None
-    vision_token_id: Optional[int] = None
+    image_token_id: int | None = None
+    video_token_id: int | None = None
+    vision_start_token_id: int | None = None
+    vision_end_token_id: int | None = None
+    vision_token_id: int | None = None
     image_seq_length: int = 576
     process_image_mode: str = "dynamic_res"
     projector_hidden_act: str = "gelu"
     projector_hidden_size: int = 6144
-    img_token_compression_config: Dict[str, Any] = field(default_factory=dict)
+    img_token_compression_config: dict[str, Any] = field(default_factory=dict)
     multimodal_projector_bias: bool = True
     patch_merge_bias: bool = True
-    image_grid_pinpoints: Optional[Union[str, List[Any]]] = None
-    vision_feature_layer: Union[int, List[int]] = -1
+    image_grid_pinpoints: str | list[Any] | None = None
+    vision_feature_layer: int | list[int] = -1
     vision_feature_select_strategy: str = "full"
     ignore_index: int = -100
     vocab_size: int = 200064
-    eos_token_id: Optional[Union[int, List[int]]] = None
-    num_reward_heads: Optional[int] = None
-    transformers_version: Optional[str] = None
-    quantization: Optional[Dict[str, Any]] = None
-    quantization_config: Optional[Dict[str, Any]] = None
+    eos_token_id: int | list[int] | None = None
+    num_reward_heads: int | None = None
+    transformers_version: str | None = None
+    quantization: dict[str, Any] | None = None
+    quantization_config: dict[str, Any] | None = None
 
     def __post_init__(self):
         self.text_config = _maybe_deserialize_config(TextConfig, self.text_config)

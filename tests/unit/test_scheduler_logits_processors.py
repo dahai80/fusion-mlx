@@ -1,5 +1,3 @@
-import pytest
-
 from fusion_mlx.scheduler.sched_batch import Request, RequestOutput
 
 

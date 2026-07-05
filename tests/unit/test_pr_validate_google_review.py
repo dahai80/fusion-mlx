@@ -22,7 +22,6 @@ would have merged after one round of substantive fixes.
 from __future__ import annotations
 
 import pytest
-
 from scripts.pr_validate.context import Context
 from scripts.pr_validate.steps.cl_description_quality import (
     CLDescriptionQualityStep,
@@ -136,9 +135,9 @@ class TestSplitFindingsByTier:
             "4. [NIT] tests/test_y.py:9 — comment could be clearer.\n"
         )
         findings = _extract_findings(review)
-        assert len(findings) == 4, (
-            f"_extract_findings produced {len(findings)} findings, expected 4"
-        )
+        assert (
+            len(findings) == 4
+        ), f"_extract_findings produced {len(findings)} findings, expected 4"
 
         blocking, nits = _split_findings_by_tier(findings)
         # The contract: 2 blocking + 2 nits — NOT 4 blocking (which

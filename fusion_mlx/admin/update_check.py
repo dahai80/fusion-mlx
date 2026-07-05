@@ -16,6 +16,8 @@ from typing import Any
 import requests
 from fastapi import APIRouter, Depends
 
+from fusion_mlx._version import __version__ as _omlx_version
+
 from ..utils.release_check import select_latest_stable_release
 from .auth import (
     require_admin,
@@ -24,8 +26,6 @@ from .auth import (
 logger = logging.getLogger(__name__)
 
 PRESET_REMOTE_URL = "http://bench.dpdns.org/assets/omlx_preset.json"
-
-
 
 
 _router = APIRouter()
@@ -102,7 +102,6 @@ async def check_update(
         _update_cache_time = now
 
     return _update_cache
-
 
 
 router = _router

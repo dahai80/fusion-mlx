@@ -51,7 +51,7 @@ async def stream_completions(session, prompt, max_tokens=128, timeout=120):
                     tokens += 1
                     if ttft is None:
                         ttft = time.monotonic() - t0
-    except (asyncio.TimeoutError, aiohttp.ClientError) as e:
+    except (TimeoutError, aiohttp.ClientError) as e:
         print(f"  stream error after {tokens} tokens: {e}")
     elapsed = time.monotonic() - t0
     return tokens, elapsed, ttft
@@ -84,7 +84,7 @@ async def test_event_loop_responsiveness():
                     print("  PASS: Event loop responsive during decode")
                 else:
                     print(f"  FAIL: Event loop blocked ({latency:.1f}s)")
-        except asyncio.TimeoutError:
+        except TimeoutError:
             latency = time.monotonic() - t0
             print(f"  FAIL: GET /v1/models timed out ({latency:.1f}s)")
 

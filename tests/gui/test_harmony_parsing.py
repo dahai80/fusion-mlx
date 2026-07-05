@@ -5,6 +5,7 @@ Test the Harmony response parsing for gpt-oss models.
 
 import sys
 from pathlib import Path
+
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
 from fusion_gui.server import _parse_harmony_response
@@ -22,13 +23,15 @@ def test_harmony_basic():
     assert "Hey! What's up?" in result
     assert "<|channel|>" not in result
     assert "<|message|>" not in result
-    assert "analysis" not in result.lower() or "assist" in result.lower()  # 'analysis' shouldn't appear except maybe in context
+    assert (
+        "analysis" not in result.lower() or "assist" in result.lower()
+    )  # 'analysis' shouldn't appear except maybe in context
     print("✅ Basic Harmony parsing test passed!")
 
 
 def test_harmony_with_end_marker():
     """Test Harmony format with end marker in final channel."""
-    raw_response = '<|channel|>analysis<|message|>Thinking about this...<|end|><|start|>assistant<|channel|>final<|message|>Here is my response.<|end|>'
+    raw_response = "<|channel|>analysis<|message|>Thinking about this...<|end|><|start|>assistant<|channel|>final<|message|>Here is my response.<|end|>"
 
     result = _parse_harmony_response(raw_response)
 
@@ -54,13 +57,13 @@ def test_non_harmony_passthrough():
 
 def test_harmony_multiline():
     """Test Harmony format with multiline content."""
-    raw_response = '''<|channel|>analysis<|message|>The user is asking about Python programming.
+    raw_response = """<|channel|>analysis<|message|>The user is asking about Python programming.
 I should provide a clear explanation with examples.<|end|><|start|>assistant<|channel|>final<|message|>Python is a great language!
 
 Here's why:
 1. Easy to learn
 2. Powerful libraries
-3. Great community'''
+3. Great community"""
 
     result = _parse_harmony_response(raw_response)
 
@@ -75,7 +78,7 @@ Here's why:
 
 def test_harmony_no_final_channel():
     """Test fallback when no final channel is found."""
-    raw_response = '<|channel|>analysis<|message|>Some internal reasoning<|end|>'
+    raw_response = "<|channel|>analysis<|message|>Some internal reasoning<|end|>"
 
     result = _parse_harmony_response(raw_response)
 
@@ -115,5 +118,3 @@ if __name__ == "__main__":
     print("=" * 60)
     print("All tests passed! ✅")
     print("=" * 60)
-
-

@@ -16,9 +16,7 @@ from __future__ import annotations
 import pytest
 
 
-@pytest.mark.skip(
-    reason="fusion-mlx Scheduler lacks evict_prefix_cache_under_pressure"
-)
+@pytest.mark.skip(reason="fusion-mlx Scheduler lacks evict_prefix_cache_under_pressure")
 class TestPressureEvictionDispatch:
     def test_no_op_when_no_cache(self):
         pass
@@ -27,9 +25,7 @@ class TestPressureEvictionDispatch:
         pass
 
 
-@pytest.mark.skip(
-    reason="fusion-mlx Scheduler lacks evict_prefix_cache_under_pressure"
-)
+@pytest.mark.skip(reason="fusion-mlx Scheduler lacks evict_prefix_cache_under_pressure")
 class TestLegacyPrefixCacheEviction:
     def test_no_eviction_below_threshold(self):
         pass
@@ -55,9 +51,7 @@ class TestMemoryAwareCacheEviction:
         pass
 
 
-@pytest.mark.skip(
-    reason="fusion-mlx has no _render_prometheus in routes.metrics"
-)
+@pytest.mark.skip(reason="fusion-mlx has no _render_prometheus in routes.metrics")
 class TestPressureEvictionMetric:
     def test_get_stats_exposes_counter(self):
         pass
@@ -66,9 +60,7 @@ class TestPressureEvictionMetric:
         pass
 
 
-@pytest.mark.skip(
-    reason="fusion-mlx EngineCore lacks _run_pressure_evict_tick"
-)
+@pytest.mark.skip(reason="fusion-mlx EngineCore lacks _run_pressure_evict_tick")
 class TestEngineCoreInvokesPressureEvict:
     def test_pressure_tick_calls_scheduler_regardless_of_legacy_threshold(self):
         pass
@@ -80,9 +72,7 @@ class TestEngineCoreInvokesPressureEvict:
         pass
 
 
-@pytest.mark.skip(
-    reason="fusion-mlx Scheduler lacks evict_prefix_cache_under_pressure"
-)
+@pytest.mark.skip(reason="fusion-mlx Scheduler lacks evict_prefix_cache_under_pressure")
 class TestClearCacheFailurePropagation:
     def test_clear_cache_failure_propagates_to_engine_path(self):
         pass
@@ -91,9 +81,7 @@ class TestClearCacheFailurePropagation:
         pass
 
 
-@pytest.mark.skip(
-    reason="fusion-mlx Scheduler lacks evict_prefix_cache_under_pressure"
-)
+@pytest.mark.skip(reason="fusion-mlx Scheduler lacks evict_prefix_cache_under_pressure")
 class TestSchedulerPropagatesEvictionErrors:
     def test_memory_aware_cache_eviction_error_propagates(self):
         pass
@@ -113,9 +101,7 @@ class TestPressureEvictFractionClamp:
         pass
 
 
-@pytest.mark.skip(
-    reason="fusion-mlx Scheduler lacks mx.get_cache_memory stats wiring"
-)
+@pytest.mark.skip(reason="fusion-mlx Scheduler lacks mx.get_cache_memory stats wiring")
 class TestMetalCacheMemoryMetric:
     def test_get_stats_reads_live_cache_memory(self):
         pass

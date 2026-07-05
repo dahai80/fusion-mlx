@@ -338,9 +338,9 @@ def test_remove_finished_request_pops_under_lock():
     scheduler.remove_finished_request("req-atomic-cleanup")
 
     # The pop must have observed the lock held — codex r5 atomicity.
-    assert scheduler.requests.pop_lock_states == [True], (
-        scheduler.requests.pop_lock_states
-    )
+    assert scheduler.requests.pop_lock_states == [
+        True
+    ], scheduler.requests.pop_lock_states
     # Sanity: the actual cleanup happened on the request map.
     assert "req-atomic-cleanup" not in scheduler.requests
     # D-M01-2X: ledger is lifetime-persistent, NOT cleared by
@@ -1258,8 +1258,9 @@ def metrics_client():
     metrics.metrics_client`` so the M-01 counters are exercised
     through the same render path as every other series.
     """
-    from fusion_mlx.config import reset_config
     from fusion_mlx.routes.metrics import _reset_accumulator_for_tests, router
+
+    from fusion_mlx.config import reset_config
 
     cfg = reset_config()
     cfg.model_name = "qwen3-0.6b"
@@ -1305,26 +1306,26 @@ def _assert_prom_counter(
     # not substring.
     sample_lines = [line for line in lines if line.split(" ", 1)[:1] == [metric_name]]
 
-    assert len(help_lines) == 1, (
-        f"Expected exactly one HELP line for {metric_name}, got {help_lines}"
-    )
-    assert len(type_lines) == 1, (
-        f"Expected exactly one TYPE line for {metric_name}, got {type_lines}"
-    )
-    assert type_lines[0].endswith(" counter"), (
-        f"Expected TYPE line to end with ' counter', got {type_lines[0]!r}"
-    )
-    assert len(sample_lines) == 1, (
-        f"Expected exactly one sample line for {metric_name}, got {sample_lines}"
-    )
+    assert (
+        len(help_lines) == 1
+    ), f"Expected exactly one HELP line for {metric_name}, got {help_lines}"
+    assert (
+        len(type_lines) == 1
+    ), f"Expected exactly one TYPE line for {metric_name}, got {type_lines}"
+    assert type_lines[0].endswith(
+        " counter"
+    ), f"Expected TYPE line to end with ' counter', got {type_lines[0]!r}"
+    assert (
+        len(sample_lines) == 1
+    ), f"Expected exactly one sample line for {metric_name}, got {sample_lines}"
     assert sample_lines[0] == f"{metric_name} {expected_value}", (
         f"Expected sample line {metric_name} {expected_value!r}, "
         f"got {sample_lines[0]!r}"
     )
     if help_substr is not None:
-        assert help_substr in help_lines[0], (
-            f"Expected HELP line to contain {help_substr!r}, got {help_lines[0]!r}"
-        )
+        assert (
+            help_substr in help_lines[0]
+        ), f"Expected HELP line to contain {help_substr!r}, got {help_lines[0]!r}"
 
 
 _CANCEL_STATS = {

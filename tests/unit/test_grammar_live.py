@@ -59,6 +59,7 @@ OSS_MAX_TOKENS = 400  # Harmony needs room for analysis + final channels
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _headers():
     return {
         "Authorization": f"Bearer {API_KEY}",
@@ -66,9 +67,16 @@ def _headers():
     }
 
 
-def _chat_payload(model, prompt, *, structured_outputs=None,
-                  max_tokens=128, temperature=0.1, stream=False,
-                  extra_body=None):
+def _chat_payload(
+    model,
+    prompt,
+    *,
+    structured_outputs=None,
+    max_tokens=128,
+    temperature=0.1,
+    stream=False,
+    extra_body=None,
+):
     payload = {
         "model": model,
         "messages": [{"role": "user", "content": prompt}],
@@ -89,8 +97,9 @@ async def _complete(client, model, prompt, **kwargs):
     """Send a non-streaming chat completion and return (content, duration_s)."""
     payload = _chat_payload(model, prompt, **kwargs)
     t0 = time.perf_counter()
-    resp = await client.post(f"{BASE_URL}/v1/chat/completions",
-                             json=payload, headers=_headers(), timeout=120)
+    resp = await client.post(
+        f"{BASE_URL}/v1/chat/completions", json=payload, headers=_headers(), timeout=120
+    )
     dur = time.perf_counter() - t0
     resp.raise_for_status()
     data = resp.json()
@@ -113,8 +122,13 @@ async def _complete_streaming(client, model, prompt, **kwargs):
     chunks = []
     token_count = 0
     server_tokens = None
-    async with client.stream("POST", f"{BASE_URL}/v1/chat/completions",
-                             json=payload, headers=_headers(), timeout=180) as resp:
+    async with client.stream(
+        "POST",
+        f"{BASE_URL}/v1/chat/completions",
+        json=payload,
+        headers=_headers(),
+        timeout=180,
+    ) as resp:
         resp.raise_for_status()
         async for line in resp.aiter_lines():
             if not line.startswith("data: "):
@@ -162,6 +176,7 @@ pytestmark = pytest.mark.skipif(
 # Integration Tests: Grammar Correctness
 # =========================================================================
 
+
 def _max_tokens_for(family, default=200):
     """Harmony models need more tokens for analysis + final channels."""
     return OSS_MAX_TOKENS if family == "oss" else default
@@ -179,7 +194,9 @@ class TestGrammarJson:
     async def test_json_schema(self, client, family):
         model = MODELS[family]
         content, dur = await _complete(
-            client, model, PROMPT_JSON,
+            client,
+            model,
+            PROMPT_JSON,
             structured_outputs={"json": JSON_SCHEMA},
             max_tokens=_max_tokens_for(family),
         )
@@ -205,9 +222,12 @@ class TestGrammarRegex:
     @pytest.mark.parametrize("family", ["qwen", "gemma", "oss"])
     async def test_regex(self, client, family):
         import re
+
         model = MODELS[family]
         content, dur = await _complete(
-            client, model, PROMPT_REGEX,
+            client,
+            model,
+            PROMPT_REGEX,
             structured_outputs={"regex": REGEX_PATTERN},
             max_tokens=_max_tokens_for(family, 50),
         )
@@ -215,8 +235,9 @@ class TestGrammarRegex:
         print(f"\n[{family}] Regex output ({dur:.2f}s): {content}")
         # Harmony may produce multiple final channels whose content gets
         # concatenated, so check that the output starts with a valid match.
-        assert re.match(REGEX_PATTERN, content), \
-            f"Output '{content}' doesn't start with pattern '{REGEX_PATTERN}'"
+        assert re.match(
+            REGEX_PATTERN, content
+        ), f"Output '{content}' doesn't start with pattern '{REGEX_PATTERN}'"
 
 
 class TestGrammarChoice:
@@ -232,7 +253,9 @@ class TestGrammarChoice:
         model = MODELS[family]
         choices = ["yes", "no", "maybe"]
         content, dur = await _complete(
-            client, model, "Is the sky blue? Answer with yes, no, or maybe.",
+            client,
+            model,
+            "Is the sky blue? Answer with yes, no, or maybe.",
             structured_outputs={"choice": choices},
             max_tokens=_max_tokens_for(family, 10),
         )
@@ -240,8 +263,9 @@ class TestGrammarChoice:
         print(f"\n[{family}] Choice output ({dur:.2f}s): {content}")
         # Harmony may produce multiple final channels; check that output
         # starts with a valid choice.
-        assert any(content.startswith(c) for c in choices), \
-            f"Output '{content}' doesn't start with any of {choices}"
+        assert any(
+            content.startswith(c) for c in choices
+        ), f"Output '{content}' doesn't start with any of {choices}"
 
 
 class TestNoGrammar:
@@ -256,7 +280,9 @@ class TestNoGrammar:
     async def test_plain(self, client, family):
         model = MODELS[family]
         content, dur = await _complete(
-            client, model, PROMPT_PLAIN,
+            client,
+            model,
+            PROMPT_PLAIN,
             max_tokens=100,
         )
         print(f"\n[{family}] Plain output ({dur:.2f}s): {content[:200]}")
@@ -267,7 +293,9 @@ class TestNoGrammar:
         """OSS/Harmony needs more tokens; analysis channel may consume most of them."""
         model = MODELS["oss"]
         content, dur = await _complete(
-            client, model, PROMPT_PLAIN,
+            client,
+            model,
+            PROMPT_PLAIN,
             max_tokens=OSS_MAX_TOKENS,
         )
         print(f"\n[oss] Plain output ({dur:.2f}s): {content[:200]}")
@@ -310,8 +338,8 @@ def _mean_std(values):
 @dataclass
 class BenchResult:
     model: str
-    grammar: str       # "none" or "json"
-    thinking: str      # "on" or "off"
+    grammar: str  # "none" or "json"
+    thinking: str  # "on" or "off"
     concurrency: int
     durations: list = field(default_factory=list)
     ttfts: list = field(default_factory=list)
@@ -328,7 +356,9 @@ class BenchResult:
         return _mean_std(self.durations)
 
     def tps_stats(self):
-        tps_list = [t / d for t, d in zip(self.token_counts, self.durations) if d > 0 and t > 0]
+        tps_list = [
+            t / d for t, d in zip(self.token_counts, self.durations) if d > 0 and t > 0
+        ]
         return _mean_std(tps_list)
 
 
@@ -343,7 +373,9 @@ async def _run_one_bench(client, model, grammar, thinking, family):
     max_tok = _max_tokens_for(family, BENCH_MAX_TOKENS)
 
     _, ttft, total, tokens = await _complete_streaming(
-        client, model, BENCH_PROMPT,
+        client,
+        model,
+        BENCH_PROMPT,
         structured_outputs=so,
         max_tokens=max_tok,
         temperature=0.7,
@@ -355,7 +387,10 @@ async def _run_one_bench(client, model, grammar, thinking, family):
 async def _bench_timed(model, grammar, thinking, concurrency, duration, family):
     """Run requests for *duration* seconds at the given concurrency."""
     result = BenchResult(
-        model=model, grammar=grammar, thinking=thinking, concurrency=concurrency,
+        model=model,
+        grammar=grammar,
+        thinking=thinking,
+        concurrency=concurrency,
     )
     sem = asyncio.Semaphore(concurrency)
     stop = asyncio.Event()
@@ -367,7 +402,11 @@ async def _bench_timed(model, grammar, thinking, concurrency, duration, family):
                 return
             try:
                 ttft, dur, tokens = await _run_one_bench(
-                    client, model, grammar, thinking, family,
+                    client,
+                    model,
+                    grammar,
+                    thinking,
+                    family,
                 )
                 result.durations.append(dur)
                 result.ttfts.append(ttft)
@@ -401,16 +440,20 @@ def _fmt(mean, std):
 
 
 def _print_results(results):
-    hdr = (f"  {'Model':<25} {'Think':>5} {'Gram':>5} {'Conc':>4} {'Reqs':>5} "
-           f"{'TTFT (s)':>14} {'Dur (s)':>14} {'TPS':>14}")
+    hdr = (
+        f"  {'Model':<25} {'Think':>5} {'Gram':>5} {'Conc':>4} {'Reqs':>5} "
+        f"{'TTFT (s)':>14} {'Dur (s)':>14} {'TPS':>14}"
+    )
     print(hdr)
     print(f"  {'-'*25} {'-'*5} {'-'*5} {'-'*4} {'-'*5} {'-'*14} {'-'*14} {'-'*14}")
     for r in results:
         tm, ts = r.ttft_stats()
         dm, ds = r.dur_stats()
         pm, ps = r.tps_stats()
-        print(f"  {r.model:<25} {r.thinking:>5} {r.grammar:>5} {r.concurrency:>4} {r.n:>5} "
-              f"{_fmt(tm, ts):>14} {_fmt(dm, ds):>14} {_fmt(pm, ps):>14}")
+        print(
+            f"  {r.model:<25} {r.thinking:>5} {r.grammar:>5} {r.concurrency:>4} {r.n:>5} "
+            f"{_fmt(tm, ts):>14} {_fmt(dm, ds):>14} {_fmt(pm, ps):>14}"
+        )
 
 
 class TestPerformance:
@@ -445,10 +488,18 @@ class TestPerformance:
                 for conc in CONCURRENCY_LEVELS:
                     done += 1
                     label = f"think={thinking} grammar={grammar} conc={conc}"
-                    print(f"  [{done}/{total_combos}] {label} "
-                          f"({BENCH_DURATION}s)...", end="", flush=True)
+                    print(
+                        f"  [{done}/{total_combos}] {label} " f"({BENCH_DURATION}s)...",
+                        end="",
+                        flush=True,
+                    )
                     r = await _bench_timed(
-                        model, grammar, thinking, conc, BENCH_DURATION, family,
+                        model,
+                        grammar,
+                        thinking,
+                        conc,
+                        BENCH_DURATION,
+                        family,
                     )
                     print(f" {r.n} reqs")
                     results.append(r)
@@ -459,10 +510,16 @@ class TestPerformance:
         # Grammar overhead analysis
         print()
         for thinking in think_modes:
-            base = [r for r in results
-                    if r.grammar == "none" and r.thinking == thinking and r.concurrency == 1]
-            gram = [r for r in results
-                    if r.grammar == "json" and r.thinking == thinking and r.concurrency == 1]
+            base = [
+                r
+                for r in results
+                if r.grammar == "none" and r.thinking == thinking and r.concurrency == 1
+            ]
+            gram = [
+                r
+                for r in results
+                if r.grammar == "json" and r.thinking == thinking and r.concurrency == 1
+            ]
             if base and gram and base[0].n > 0 and gram[0].n > 0:
                 bm, _ = base[0].dur_stats()
                 gm, _ = gram[0].dur_stats()

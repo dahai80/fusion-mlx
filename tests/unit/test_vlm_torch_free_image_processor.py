@@ -63,7 +63,9 @@ def test_resolve_pil_class_from_torchvision_name():
                 )
             ]
         )
-        resolved = _resolve_pil_image_processor_class("FooImageProcessor", mapping_names)
+        resolved = _resolve_pil_image_processor_class(
+            "FooImageProcessor", mapping_names
+        )
         assert resolved is fake_cls
 
         # PIL-name path also works.
@@ -94,7 +96,9 @@ def test_resolve_pil_class_skips_dummy():
                 )
             ]
         )
-        resolved = _resolve_pil_image_processor_class("BarImageProcessor", mapping_names)
+        resolved = _resolve_pil_image_processor_class(
+            "BarImageProcessor", mapping_names
+        )
         assert resolved is None
     finally:
         sys.modules.pop(fake_module.__name__, None)
@@ -200,11 +204,15 @@ def test_build_processor_uses_pil_image_processor(tmp_path):
         ]
     )
 
-    with patch.object(vlm_mod, "_resolve_pil_image_processor_class", return_value=FakePilCls), \
-         patch(
-             "transformers.AutoTokenizer.from_pretrained",
-             return_value=fake_tokenizer,
-         ):
+    with (
+        patch.object(
+            vlm_mod, "_resolve_pil_image_processor_class", return_value=FakePilCls
+        ),
+        patch(
+            "transformers.AutoTokenizer.from_pretrained",
+            return_value=fake_tokenizer,
+        ),
+    ):
         out = _build_processor_via_pil_image_processor(
             FakeProcessorCls, str(tmp_path), trust_remote_code=True
         )
@@ -232,18 +240,18 @@ def test_build_processor_falls_back_to_preprocessor_config(tmp_path):
             self.tokenizer = tokenizer
 
     preproc_cfg = tmp_path / "preprocessor_config.json"
-    preproc_cfg.write_text(
-        json.dumps({"image_processor_type": "BarImageProcessor"})
-    )
+    preproc_cfg.write_text(json.dumps({"image_processor_type": "BarImageProcessor"}))
 
-    with patch.object(vlm_mod, "_resolve_pil_image_processor_class", return_value=FakePilCls), \
-         patch(
-             "transformers.AutoTokenizer.from_pretrained",
-             return_value=fake_tokenizer,
-         ):
-        out = _build_processor_via_pil_image_processor(
-            FakeProcessorCls, str(tmp_path)
-        )
+    with (
+        patch.object(
+            vlm_mod, "_resolve_pil_image_processor_class", return_value=FakePilCls
+        ),
+        patch(
+            "transformers.AutoTokenizer.from_pretrained",
+            return_value=fake_tokenizer,
+        ),
+    ):
+        out = _build_processor_via_pil_image_processor(FakeProcessorCls, str(tmp_path))
 
     assert isinstance(out, FakeProcessorCls)
     assert out.image_processor is fake_image_processor

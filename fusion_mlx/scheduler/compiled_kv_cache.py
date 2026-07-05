@@ -45,8 +45,8 @@ class CompiledKVCache:
             raise ValueError("Cannot create CompiledKVCache from empty KVCache")
         # Take only the filled portion (not the over-allocated buffer)
         return cls(
-            keys=kv_cache.keys[..., :kv_cache.offset, :],
-            values=kv_cache.values[..., :kv_cache.offset, :],
+            keys=kv_cache.keys[..., : kv_cache.offset, :],
+            values=kv_cache.values[..., : kv_cache.offset, :],
             offset=kv_cache.offset,
         )
 

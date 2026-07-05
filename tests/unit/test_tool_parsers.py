@@ -914,9 +914,9 @@ def _assert_no_empty_name_deltas(assembled: dict) -> None:
     so this test-side assertion fails loudly when that happens.
     """
     for idx, deltas in assembled["raw_name_deltas"].items():
-        assert all(d != "" for d in deltas), (
-            f"tool {idx}: empty-string name delta emitted (sequence={deltas!r})"
-        )
+        assert all(
+            d != "" for d in deltas
+        ), f"tool {idx}: empty-string name delta emitted (sequence={deltas!r})"
 
 
 class TestMistralDevstralStreaming:
@@ -971,9 +971,9 @@ class TestMistralDevstralStreaming:
         _assert_no_empty_name_deltas(assembled)
 
         tc = assembled["tool_calls"][0]
-        assert tc["name"] == "read", (
-            f"name clobbered by empty emit from [ARGS]{{ chunk; got {tc['name']!r}"
-        )
+        assert (
+            tc["name"] == "read"
+        ), f"name clobbered by empty emit from [ARGS]{{ chunk; got {tc['name']!r}"
         assert "[ARGS]" not in tc["arguments"]
         args = json.loads(tc["arguments"])
         assert args == {"file_path": "/tmp/foo.txt"}
@@ -1054,9 +1054,9 @@ class TestMistralDevstralStreaming:
         assembled = _run_mistral_streaming(parser, chunks)
         _assert_no_empty_name_deltas(assembled)
         # Nothing ever shipped as content; the opener never leaked.
-        assert assembled["content"] == "", (
-            f"partial opener leaked as content: {assembled['content']!r}"
-        )
+        assert (
+            assembled["content"] == ""
+        ), f"partial opener leaked as content: {assembled['content']!r}"
         tc = assembled["tool_calls"][0]
         assert tc["name"] == "read"
         assert json.loads(tc["arguments"]) == {}
@@ -1525,9 +1525,9 @@ class TestQwen3XmlAlias:
         from fusion_mlx.tool_parsers.qwen3coder_tool_parser import Qwen3CoderToolParser
 
         parser_cls = ToolParserManager.get_tool_parser("qwen3_coder_xml")
-        assert parser_cls is Qwen3CoderToolParser, (
-            "qwen3_coder_xml must remain bound to the Coder parser"
-        )
+        assert (
+            parser_cls is Qwen3CoderToolParser
+        ), "qwen3_coder_xml must remain bound to the Coder parser"
 
     def test_qwen3_xml_streaming_emits_tool_call(self):
         """Streaming path: feed reasoning-model output token-by-token through qwen3_xml.
@@ -1564,9 +1564,9 @@ class TestQwen3XmlAlias:
             if result and "tool_calls" in result:
                 emitted_tool_calls.extend(result["tool_calls"])
             prev = current
-        assert len(emitted_tool_calls) >= 1, (
-            "streaming qwen3_xml must emit at least one tool_call delta"
-        )
+        assert (
+            len(emitted_tool_calls) >= 1
+        ), "streaming qwen3_xml must emit at least one tool_call delta"
         assert emitted_tool_calls[-1]["function"]["name"] == "read"
         args = json.loads(emitted_tool_calls[-1]["function"]["arguments"])
         assert args["filePath"] == "/etc/hostname"
@@ -1921,9 +1921,9 @@ class TestTextFormatToolCallFallback:
 
     def _assert_tool_call(self, tc, name, **expected_args):
         """Assert a tool call dict has the expected name and arguments."""
-        assert tc["id"].startswith("call_"), (
-            f"Tool call id should start with 'call_', got {tc['id']}"
-        )
+        assert tc["id"].startswith(
+            "call_"
+        ), f"Tool call id should start with 'call_', got {tc['id']}"
         assert tc["name"] == name
         args = json.loads(tc["arguments"])
         for k, v in expected_args.items():

@@ -39,6 +39,10 @@ The no-regression contract: ``finish_reason="stop"`` (or
 from __future__ import annotations
 
 import pytest
+from fusion_mlx.service.helpers import (
+    _finalize_content_and_reasoning,
+    _rescue_silent_drop_from_reasoning,
+)
 
 from fusion_mlx.api.utils import clean_output_text, strip_thinking_tags
 from fusion_mlx.reasoning import finalize_truncation
@@ -50,10 +54,6 @@ from fusion_mlx.reasoning.gemma4_parser import Gemma4ReasoningParser
 from fusion_mlx.reasoning.glm4_parser import Glm4ReasoningParser
 from fusion_mlx.reasoning.minimax_parser import MiniMaxReasoningParser
 from fusion_mlx.reasoning.qwen3_parser import Qwen3ReasoningParser
-from fusion_mlx.service.helpers import (
-    _finalize_content_and_reasoning,
-    _rescue_silent_drop_from_reasoning,
-)
 
 
 def _route_end_to_end(parser, raw, finish_reason):
@@ -806,9 +806,9 @@ class TestLiteralSubstringPreservedInContent:
             f"reasoning must be the actual thought, not the literal "
             f"substring or a concatenation: {reasoning!r}"
         )
-        assert content == "The gemma4 format uses <|channel>thought tag", (
-            f"content with literal <|channel>thought must survive verbatim: {content!r}"
-        )
+        assert (
+            content == "The gemma4 format uses <|channel>thought tag"
+        ), f"content with literal <|channel>thought must survive verbatim: {content!r}"
 
     def test_gemma4_literal_channel_thought_in_content_preserved_length(self):
         """``finish_reason="length"`` mid-content: closed thought,
@@ -851,9 +851,9 @@ class TestLiteralSubstringPreservedInContent:
             f"literal <think> in answer must NOT promote answer to "
             f"reasoning: {reasoning!r}"
         )
-        assert content == raw, (
-            f"literal <think> substring must survive verbatim in content: {content!r}"
-        )
+        assert (
+            content == raw
+        ), f"literal <think> substring must survive verbatim in content: {content!r}"
 
     def test_minimax_literal_think_substring_in_answer_preserved_length(self):
         """``finish_reason="length"`` on the same shape — the route

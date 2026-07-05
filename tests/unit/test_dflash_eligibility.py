@@ -115,9 +115,9 @@ def test_check_message_lists_eligible_aliases() -> None:
         raise AssertionError("should have raised")
     except DFlashUnavailable as e:
         msg = str(e)
-        assert "qwen3.5-27b-8bit" in msg, (
-            f"error message should suggest a working alias; got:\n{msg}"
-        )
+        assert (
+            "qwen3.5-27b-8bit" in msg
+        ), f"error message should suggest a working alias; got:\n{msg}"
 
 
 # =============================================================================
@@ -183,6 +183,6 @@ def test_default_qwen3_5_27b_alias_fails_check_with_4bit_reason() -> None:
     with pytest.raises(DFlashUnavailable) as excinfo:
         check(profile, alias="qwen3.5-27b-4bit")
     msg = str(excinfo.value)
-    assert "4-bit" in msg, (
-        f"4-bit hint missing from DFlashUnavailable message; got:\n{msg}"
-    )
+    assert (
+        "4-bit" in msg
+    ), f"4-bit hint missing from DFlashUnavailable message; got:\n{msg}"

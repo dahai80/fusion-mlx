@@ -354,16 +354,16 @@ class TestScenario3_NoTagModel:
         """
         tokens = ["Hello ", "world!"]
         content, reasoning = simulate_server_streaming_reasoning_aware(tokens)
-        assert "".join(reasoning) == "Hello world!", (
-            f"reasoning lost bytes: {reasoning!r}"
-        )
+        assert (
+            "".join(reasoning) == "Hello world!"
+        ), f"reasoning lost bytes: {reasoning!r}"
         # Casual-answer content flip — the finalize correction is the
         # documented bridge between the streaming Case-3 default
         # (routes to reasoning) and the route consumer's
         # ``message.content`` surface.
-        assert "".join(content) == "Hello world!", (
-            f"casual-answer content flip missing: {content!r}"
-        )
+        assert (
+            "".join(content) == "Hello world!"
+        ), f"casual-answer content flip missing: {content!r}"
 
     def test_long_no_tag_output(self):
         """Long output (> 64 chars) with no tags — qwen3 has no
@@ -415,9 +415,9 @@ class TestScenario3_NoTagModel:
             f"reasoning channel does not equal source text: "
             f"got {len(full_reasoning)} chars, expected {len(text)}"
         )
-        assert full_content == text, (
-            f"content channel lost bytes: got {len(full_content)}, expected {len(text)}"
-        )
+        assert (
+            full_content == text
+        ), f"content channel lost bytes: got {len(full_content)}, expected {len(text)}"
 
     def test_no_tag_with_newlines(self):
         """No-tag output with markdown newlines — per-channel
@@ -662,9 +662,9 @@ class TestScenario5_EdgeCases:
         )
         full_reasoning = "".join(reasoning)
         full_content = "".join(content)
-        assert "Let me think" in full_reasoning, (
-            f"streaming should ship reasoning bytes: got reasoning={full_reasoning!r}"
-        )
+        assert (
+            "Let me think" in full_reasoning
+        ), f"streaming should ship reasoning bytes: got reasoning={full_reasoning!r}"
         assert full_content == "", (
             f"D-STOP-THINK suppression: text channel must stay empty "
             f"under matched_stop + prompt_thinking_active; got "
@@ -690,9 +690,9 @@ class TestScenario5_EdgeCases:
         )
         full_reasoning = "".join(reasoning)
         full_content = "".join(content)
-        assert "5+7" in full_reasoning, (
-            f"streaming should ship reasoning bytes: got reasoning={full_reasoning!r}"
-        )
+        assert (
+            "5+7" in full_reasoning
+        ), f"streaming should ship reasoning bytes: got reasoning={full_reasoning!r}"
         assert full_content == "", (
             f"D-STOP-THINK max_tokens suppression: text channel must "
             f"stay empty under finish_reason=length + "
@@ -759,9 +759,9 @@ class TestScenario6_NoParserThinkTagPassthrough:
         chunks = simulate_server_streaming_no_parser(emoji_tokens)
         full = "".join(chunks)
         # All emojis should be present
-        assert len(full) == len(emoji_tokens), (
-            f"Expected {len(emoji_tokens)} chars, got {len(full)}"
-        )
+        assert len(full) == len(
+            emoji_tokens
+        ), f"Expected {len(emoji_tokens)} chars, got {len(full)}"
         for e in emoji_tokens:
             assert e in full, f"Missing emoji: {e}"
 
@@ -979,6 +979,6 @@ class TestScenario8_RegressionNoParser:
         )
         chunks = simulate_server_streaming_no_parser(emojis)
         # Each emoji should be a separate chunk (not batched)
-        assert len(chunks) == len(emojis), (
-            f"Expected {len(emojis)} chunks (immediate streaming), got {len(chunks)}"
-        )
+        assert len(chunks) == len(
+            emojis
+        ), f"Expected {len(emojis)} chunks (immediate streaming), got {len(chunks)}"

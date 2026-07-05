@@ -613,7 +613,7 @@ class TestDFlashEngineInit:
             ),
         )
         ctx = engine._build_runtime_context()
-        runtime = getattr(ctx, "runtime")
+        runtime = ctx.runtime
         assert runtime.draft_window_size == 512
         assert runtime.draft_sink_size == 16
         assert runtime.verify_mode == "dflash"
@@ -630,7 +630,7 @@ class TestDFlashEngineInit:
             draft_model_path="test-draft",
         )
         ctx = engine._build_runtime_context()
-        runtime = getattr(ctx, "runtime")
+        runtime = ctx.runtime
         assert runtime.draft_window_size == 1024
         assert runtime.draft_sink_size == 64
         assert runtime.verify_mode == "adaptive"
@@ -654,7 +654,7 @@ class TestDFlashEngineInit:
             omlx_ssd_cache_dir=tmp_path,
         )
         ctx = engine._build_runtime_context()
-        runtime = getattr(ctx, "runtime")
+        runtime = ctx.runtime
         assert runtime.prefix_cache_l2_max_bytes == 5 * 1024**3
 
     def test_l2_max_bytes_defaults_to_20gib(self, tmp_path):
@@ -674,7 +674,7 @@ class TestDFlashEngineInit:
             omlx_ssd_cache_dir=tmp_path,
         )
         ctx = engine._build_runtime_context()
-        runtime = getattr(ctx, "runtime")
+        runtime = ctx.runtime
         assert runtime.prefix_cache_l2_max_bytes == 20 * 1024**3
 
 
@@ -1041,8 +1041,9 @@ class TestDFlashOutputParserWiring:
         ``create_session`` produces a ``Gemma4OutputParserSession``."""
         from unittest.mock import MagicMock
 
-        from fusion_mlx.adapter.gemma4 import Gemma4OutputParserSession
         from fusion_mlx.adapter.output_parser import detect_output_parser
+
+        from fusion_mlx.adapter.gemma4 import Gemma4OutputParserSession
 
         tokenizer = MagicMock()
         factory = detect_output_parser(

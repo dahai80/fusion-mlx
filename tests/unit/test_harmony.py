@@ -25,8 +25,13 @@ def tokenizer(encoding):
     tok = MagicMock()
     special_map = {}
     for name in [
-        "<|start|>", "<|end|>", "<|message|>", "<|channel|>",
-        "<|return|>", "<|call|>", "<|constrain|>",
+        "<|start|>",
+        "<|end|>",
+        "<|message|>",
+        "<|channel|>",
+        "<|return|>",
+        "<|call|>",
+        "<|constrain|>",
     ]:
         tokens = encoding.encode(name, allowed_special="all")
         if tokens:
@@ -191,8 +196,8 @@ class TestPassthroughMode:
         parser._passthrough_mode = True
 
         for token_id in [100, 200, 300]:
-            control_text, stream_token, visible_token, is_stop = (
-                parser.process_token(token_id)
+            control_text, stream_token, visible_token, is_stop = parser.process_token(
+                token_id
             )
             assert stream_token is None
             assert visible_token is None
@@ -285,16 +290,12 @@ class TestPreprocessHarmonyMessages:
     """preprocess_harmony_messages strips think tags from assistant content."""
 
     def test_strips_think_tags(self):
-        msgs = [
-            {"role": "assistant", "content": "<think>reasoning</think>answer"}
-        ]
+        msgs = [{"role": "assistant", "content": "<think>reasoning</think>answer"}]
         result = preprocess_harmony_messages(msgs)
         assert result[0]["content"] == "answer"
 
     def test_passes_tool_messages(self):
-        msgs = [
-            {"role": "tool", "tool_call_id": "123", "content": "result"}
-        ]
+        msgs = [{"role": "tool", "tool_call_id": "123", "content": "result"}]
         result = preprocess_harmony_messages(msgs)
         assert result == msgs
 
@@ -309,8 +310,7 @@ class TestParseToolCallsFromTokens:
         """Extracts function name and arguments from tool call tokens."""
         # Model output starts from <|channel|> (prompt includes <|start|>assistant)
         tokens = encoding.encode(
-            '<|channel|>commentary<|message|>{"path":"t.py"}<|end|>'
-            "<|return|>",
+            '<|channel|>commentary<|message|>{"path":"t.py"}<|end|>' "<|return|>",
             allowed_special="all",
         )
         # prepend_start=True adds <|start|>assistant

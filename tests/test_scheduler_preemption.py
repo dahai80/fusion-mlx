@@ -18,6 +18,7 @@ class TestSoftPreemption:
 
     def _make_scheduler(self):
         from fusion_mlx.scheduler.sched_response import _reschedule_running_requests
+
         s = MagicMock()
         s.running = {}
         s.waiting = deque()
@@ -136,12 +137,12 @@ class TestChunkedPrefillOrdering:
         assert call_order == ["ra", "rb"]
 
     def test_chunked_prefill_partial_done(self):
+        from unittest import mock
+
         from fusion_mlx.scheduler.sched_batch import (
             _advance_chunked_prefills,
             _insert_prefilled_request,
-            _sync_and_clear_cache as _sync_fn,
-         )
-        from unittest import mock
+        )
 
         s = MagicMock()
         req_a = Request("ra", "prompt a", SamplingParams())
@@ -176,18 +177,23 @@ class TestChunkedPrefillOrdering:
         s._ensure_batch_generator = MagicMock()
         s._emit_final_boundary_if_needed = MagicMock()
         s.model = MagicMock()
-           # Real dicts so _insert_prefilled_request can mutate them
+        # Real dicts so _insert_prefilled_request can mutate them
         s.running = {}
         s.request_id_to_uid = {}
         s.uid_to_request_id = {}
-           # Bind real _insert_prefilled_request so it executes
+
+        # Bind real _insert_prefilled_request so it executes
         def bind_insert(*a):
             return _insert_prefilled_request(s, *a)
+
         s._insert_prefilled_request = bind_insert
 
         scheduled = []
         rejected = []
-        with mock.patch("fusion_mlx.scheduler.sched_batch.get_prefill_tracker", return_value=MagicMock()):
+        with mock.patch(
+            "fusion_mlx.scheduler.sched_batch.get_prefill_tracker",
+            return_value=MagicMock(),
+        ):
             with mock.patch("fusion_mlx.scheduler.sched_batch._sync_and_clear_cache"):
                 _advance_chunked_prefills(s, scheduled, rejected)
 

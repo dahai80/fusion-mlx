@@ -176,7 +176,7 @@ async def run_streaming_bench(
                         t_first_token = time.perf_counter()
                     collected_text += content
 
-    except asyncio.TimeoutError:
+    except TimeoutError:
         result.error = "Timeout (300s)"
         return result
     except Exception as e:

@@ -13,7 +13,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from fastapi.testclient import TestClient
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -88,15 +87,11 @@ class TestModelsListAudio:
 
     @pytest.fixture
     def tts_entry(self):
-        return _make_engine_entry(
-            "qwen3-tts", "audio_tts", "tts", engine=None
-        )
+        return _make_engine_entry("qwen3-tts", "audio_tts", "tts", engine=None)
 
     @pytest.fixture
     def llm_entry(self):
-        return _make_engine_entry(
-            "llama-3b", "llm", "batched", engine=None
-        )
+        return _make_engine_entry("llama-3b", "llm", "batched", engine=None)
 
     @pytest.fixture
     def client_with_stt(self, stt_entry):

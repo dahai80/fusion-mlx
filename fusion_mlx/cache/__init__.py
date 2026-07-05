@@ -46,15 +46,17 @@ from .paged_cache import (
 from .paged_ssd_cache import (
     _CACHE_FORMAT_VERSION,
     _MAX_INLINE_UNLINKS_PER_SAVE,
-    _cache_compat_signature,
-    _canonicalize_layer_cache_types,
-    _compute_max_pending_writes,
     PagedSSDBlockMetadata,
     PagedSSDCacheIndex,
     PagedSSDCacheManager,
-    PagedSSDCacheStats as SSDCacheStatsData,
     SharedHotCacheBudget,
+    _cache_compat_signature,
+    _canonicalize_layer_cache_types,
+    _compute_max_pending_writes,
     parse_size,
+)
+from .paged_ssd_cache import (
+    PagedSSDCacheStats as SSDCacheStatsData,
 )
 
 # Prefix cache implementations

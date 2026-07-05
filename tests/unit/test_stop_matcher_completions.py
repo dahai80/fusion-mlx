@@ -180,9 +180,10 @@ def test_completions_non_stream_forwards_stop_to_engine(patched_config, monkeypa
     assert r.status_code == 200, r.text
     assert len(engine.generate_calls) == 1, "engine.generate not called"
     forwarded = engine.generate_calls[0].get("stop")
-    assert forwarded == ["STOP", "DONE"], (
-        f"`stop` list must reach engine.generate; got {forwarded!r}"
-    )
+    assert forwarded == [
+        "STOP",
+        "DONE",
+    ], f"`stop` list must reach engine.generate; got {forwarded!r}"
     body = r.json()
     # The engine stub returns trimmed text already; the route must
     # surface ``finish_reason="stop"`` on the choice.
@@ -245,9 +246,9 @@ def test_completions_stream_forwards_stop_to_engine(patched_config, monkeypatch)
 
     assert len(engine.stream_calls) == 1
     forwarded = engine.stream_calls[0].get("stop")
-    assert forwarded == ["STOP"], (
-        f"stream_generate must receive ``stop`` from the route; got {forwarded!r}"
-    )
+    assert forwarded == [
+        "STOP"
+    ], f"stream_generate must receive ``stop`` from the route; got {forwarded!r}"
     # The terminal chunk must carry ``finish_reason="stop"`` and the
     # response chunks must not echo the stop marker (scheduler-level
     # trim is responsible — we only pin the wire-shape here).
@@ -302,6 +303,6 @@ def test_completions_single_element_stop_list_forwarded(patched_config, monkeypa
     )
     assert r.status_code == 200
     forwarded = engine.generate_calls[0].get("stop")
-    assert forwarded == ["END"], (
-        f"single-element `stop` must reach the engine verbatim; got {forwarded!r}"
-    )
+    assert forwarded == [
+        "END"
+    ], f"single-element `stop` must reach the engine verbatim; got {forwarded!r}"

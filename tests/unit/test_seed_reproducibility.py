@@ -37,12 +37,12 @@ from __future__ import annotations
 
 import mlx.core as mx
 import pytest
+from fusion_mlx.service.helpers import build_extended_sampling_kwargs
 from pydantic import ValidationError
 
 from fusion_mlx._seeded_sampler import make_seeded_sampler
 from fusion_mlx.api.models import ChatCompletionRequest, CompletionRequest
 from fusion_mlx.request import SamplingParams
-from fusion_mlx.service.helpers import build_extended_sampling_kwargs
 
 # =============================================================================
 # Layer 1 — Pydantic models preserve the seed field
@@ -96,6 +96,7 @@ def test_responses_request_preserves_seed_through_adapter():
     sees the value.
     """
     from fusion_mlx.api.responses_adapter import responses_to_openai
+
     from fusion_mlx.api.responses_models import ResponsesRequest
 
     req = ResponsesRequest(model="qwen3-0.6b-8bit", input="hi", seed=42)
@@ -406,9 +407,9 @@ def test_seeded_sampler_five_runs_identical(logprobs_fixture):
         sequences.append(_sample_sequence(s, logprobs_fixture, 16))
     # All five must equal the first
     for i, seq in enumerate(sequences[1:], start=1):
-        assert seq == sequences[0], (
-            f"run {i} diverged from run 0 — seed parameter is non-functional"
-        )
+        assert (
+            seq == sequences[0]
+        ), f"run {i} diverged from run 0 — seed parameter is non-functional"
 
 
 def test_seeded_sampler_interleaved_concurrency_isolation(logprobs_fixture):
@@ -635,12 +636,20 @@ def test_apply_argmax_rescue_preserves_nonempty_mask_excluding_argmax():
     rescued_batched = _apply_argmax_rescue(batched_mask, batched_argmax)
     mx.eval(rescued_batched)
     rescued_batched_list = rescued_batched.tolist()
-    assert rescued_batched_list[0] == [False, True, False, True, False], (
-        "row 0 (non-empty) had argmax injected — batched gating leaked"
-    )
-    assert rescued_batched_list[1] == [False, False, True, False, False], (
-        "row 1 (empty) did not fall back to argmax — batched gating leaked"
-    )
+    assert rescued_batched_list[0] == [
+        False,
+        True,
+        False,
+        True,
+        False,
+    ], "row 0 (non-empty) had argmax injected — batched gating leaked"
+    assert rescued_batched_list[1] == [
+        False,
+        False,
+        True,
+        False,
+        False,
+    ], "row 1 (empty) did not fall back to argmax — batched gating leaked"
 
 
 def test_seeded_sampler_rescue_does_not_taint_nonempty_rows(logprobs_fixture):

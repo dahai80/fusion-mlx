@@ -28,10 +28,11 @@ the retry branch.
 
 from __future__ import annotations
 
+from fusion_mlx.service.helpers import _finalize_content_and_reasoning
+
 from fusion_mlx.reasoning.deepseek_r1_parser import DeepSeekR1ReasoningParser
 from fusion_mlx.reasoning.harmony_parser import HarmonyReasoningParser
 from fusion_mlx.reasoning.qwen3_parser import Qwen3ReasoningParser
-from fusion_mlx.service.helpers import _finalize_content_and_reasoning
 
 # A realistic gpt-oss-20b-mxfp4-q8 harmony non-stream response: analysis channel
 # (CoT) followed by final channel (answer), terminated with <|return|>.
@@ -66,9 +67,9 @@ def test_harmony_no_tools_recovers_reasoning_from_raw_text():
         "the engine-pre-cleaned cleaned_text has no channel markers, so "
         "the parser must be re-run on raw_text"
     )
-    assert "17 * 23" in reasoning, (
-        f"recovered reasoning is missing analysis-channel content: {reasoning!r}"
-    )
+    assert (
+        "17 * 23" in reasoning
+    ), f"recovered reasoning is missing analysis-channel content: {reasoning!r}"
     # cleaned_text retains the parser's final-channel extraction (or the
     # input cleaned_text if the parser produced no new cleaned value).
     assert cleaned and "391" in cleaned
@@ -210,11 +211,12 @@ def test_engine_reasoning_empty_falls_through_to_parser():
 # #575 — Case-4 leak plug + effective-thinking resolution + signature probe
 # ---------------------------------------------------------------------------
 
-from fusion_mlx.reasoning.glm4_parser import Glm4ReasoningParser
 from fusion_mlx.service.helpers import (
     _effective_enable_thinking,
     _parser_accepts_enable_thinking,
 )
+
+from fusion_mlx.reasoning.glm4_parser import Glm4ReasoningParser
 
 _QWEN3_TRUNCATED_THOUGHT = (
     "Here's my thinking process:\n"
@@ -620,9 +622,9 @@ def test_vibethinker_truncated_think_engine_routed_no_duplicate():
     assert reasoning == engine_reasoning
     # Content explicitly blanked — must NOT duplicate the trace
     # (the live-test bug signature).
-    assert not cleaned, (
-        f"truncated <think> trace leaked into engine-routed content: {cleaned!r}"
-    )
+    assert (
+        not cleaned
+    ), f"truncated <think> trace leaked into engine-routed content: {cleaned!r}"
 
 
 def test_engine_routed_closed_think_block_passes_through():
@@ -805,9 +807,9 @@ def test_qwen3_truncated_think_no_duplicate_content_reasoning():
     )
     assert reasoning is not None
     assert "Step 3" in reasoning
-    assert not cleaned, (
-        f"qwen3 truncated <think> trace leaked into content: {cleaned!r}"
-    )
+    assert (
+        not cleaned
+    ), f"qwen3 truncated <think> trace leaked into content: {cleaned!r}"
 
 
 def test_qwen3_truncated_think_with_enable_thinking_true():
@@ -843,9 +845,9 @@ def test_qwen3_engine_routed_truncated_think_no_duplicate():
         enable_thinking=None,
     )
     assert reasoning == engine_reasoning
-    assert not cleaned, (
-        f"qwen3 engine-routed truncated <think> trace leaked: {cleaned!r}"
-    )
+    assert (
+        not cleaned
+    ), f"qwen3 engine-routed truncated <think> trace leaked: {cleaned!r}"
 
 
 # ---------------------------------------------------------------------------

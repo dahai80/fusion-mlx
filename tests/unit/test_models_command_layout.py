@@ -103,6 +103,6 @@ def test_longest_real_alias_does_not_overflow(capsys):
     # The character immediately after the alias must be a space and
     # what follows must be the Tools column (not another part of the
     # alias name).
-    assert after_alias.startswith(" "), (
-        f"No padding between alias and Tools column for {longest_alias!r}"
-    )
+    assert after_alias.startswith(
+        " "
+    ), f"No padding between alias and Tools column for {longest_alias!r}"

@@ -318,9 +318,9 @@ class TestProbeCoversBothLanes:
 
         v = probe.mlx_audio_available("stt")
         assert v.ok is False, "STT-only breakage must trip the STT probe — F2 BLOCKING."
-        assert "stt" in v.reason.lower(), (
-            f"verdict reason should name the failing submodule, got {v.reason!r}"
-        )
+        assert (
+            "stt" in v.reason.lower()
+        ), f"verdict reason should name the failing submodule, got {v.reason!r}"
 
     def test_stt_breakage_does_not_trip_tts_lane(self, monkeypatch, _reset_audio_probe):
         """Codex r3 BLOCKING: an STT-only breakage must NOT 503 the

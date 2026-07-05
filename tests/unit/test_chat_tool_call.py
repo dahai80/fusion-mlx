@@ -30,11 +30,22 @@ class TestChatToolCallMessageFiltering:
         assert roles == ["user", "assistant"]
 
     def test_passes_tool_calls_and_tool_call_id(self):
-        tc = [{"id": "tc_1", "type": "function", "function": {"name": "t", "arguments": "{}"}}]
+        tc = [
+            {
+                "id": "tc_1",
+                "type": "function",
+                "function": {"name": "t", "arguments": "{}"},
+            }
+        ]
         messages = [
             {"role": "user", "content": "Search for X"},
             {"role": "assistant", "content": None, "tool_calls": tc, "_ui": False},
-            {"role": "tool", "tool_call_id": "tc_1", "content": "result...", "_ui": False},
+            {
+                "role": "tool",
+                "tool_call_id": "tc_1",
+                "content": "result...",
+                "_ui": False,
+            },
         ]
         api_msgs = self.build_messages_for_api(messages)
         assert len(api_msgs) == 3
@@ -62,18 +73,32 @@ class TestChatToolCallAccumulation:
             for tc in delta["tool_calls"]:
                 i = tc.get("index", 0)
                 if i not in tool_calls_map:
-                    tool_calls_map[i] = {"id": "", "type": "function", "function": {"name": "", "arguments": ""}}
+                    tool_calls_map[i] = {
+                        "id": "",
+                        "type": "function",
+                        "function": {"name": "", "arguments": ""},
+                    }
                 if tc.get("id"):
                     tool_calls_map[i]["id"] = tc["id"]
                 if tc.get("function", {}).get("name"):
                     tool_calls_map[i]["function"]["name"] += tc["function"]["name"]
                 if tc.get("function", {}).get("arguments"):
-                    tool_calls_map[i]["function"]["arguments"] += tc["function"]["arguments"]
+                    tool_calls_map[i]["function"]["arguments"] += tc["function"][
+                        "arguments"
+                    ]
         return list(tool_calls_map.values())
 
     def test_single_tool_call(self):
         deltas = [
-            {"tool_calls": [{"index": 0, "id": "tc_1", "function": {"name": "tavily__tavily_search"}}]},
+            {
+                "tool_calls": [
+                    {
+                        "index": 0,
+                        "id": "tc_1",
+                        "function": {"name": "tavily__tavily_search"},
+                    }
+                ]
+            },
             {"tool_calls": [{"index": 0, "function": {"arguments": '{"que'}}]},
             {"tool_calls": [{"index": 0, "function": {"arguments": 'ry":"test"}'}}]},
         ]
@@ -85,10 +110,22 @@ class TestChatToolCallAccumulation:
 
     def test_multiple_parallel_tool_calls(self):
         deltas = [
-            {"tool_calls": [{"index": 0, "id": "tc_1", "function": {"name": "search"}}]},
-            {"tool_calls": [{"index": 1, "id": "tc_2", "function": {"name": "extract"}}]},
+            {
+                "tool_calls": [
+                    {"index": 0, "id": "tc_1", "function": {"name": "search"}}
+                ]
+            },
+            {
+                "tool_calls": [
+                    {"index": 1, "id": "tc_2", "function": {"name": "extract"}}
+                ]
+            },
             {"tool_calls": [{"index": 0, "function": {"arguments": '{"q":"a"}'}}]},
-            {"tool_calls": [{"index": 1, "function": {"arguments": '{"urls":["http://x"]}'}}]},
+            {
+                "tool_calls": [
+                    {"index": 1, "function": {"arguments": '{"urls":["http://x"]}'}}
+                ]
+            },
         ]
         result = self.accumulate_tool_calls(deltas)
         assert len(result) == 2
@@ -107,7 +144,11 @@ class TestChatToolCallAccumulation:
 
     def test_missing_index_defaults_to_zero(self):
         deltas = [
-            {"tool_calls": [{"id": "tc_1", "function": {"name": "t", "arguments": "{}"}}]},
+            {
+                "tool_calls": [
+                    {"id": "tc_1", "function": {"name": "t", "arguments": "{}"}}
+                ]
+            },
         ]
         result = self.accumulate_tool_calls(deltas)
         assert len(result) == 1
@@ -152,12 +193,16 @@ class TestChatToolCallSafety:
         assert depth > self.MAX_TOOL_DEPTH
 
     def test_success_result_includes_tool_name(self):
-        result = self.build_tool_result("search results here", tool_name="tavily_search")
+        result = self.build_tool_result(
+            "search results here", tool_name="tavily_search"
+        )
         assert result["error"] is False
         assert result["toolName"] == "tavily_search"
 
     def test_error_result_includes_tool_name(self):
-        result = self.build_tool_result("Error: connection refused", error=True, tool_name="tavily_search")
+        result = self.build_tool_result(
+            "Error: connection refused", error=True, tool_name="tavily_search"
+        )
         assert result["error"] is True
         assert result["toolName"] == "tavily_search"
         assert result["content"].startswith("Error:")
@@ -167,7 +212,9 @@ class TestChatToolCallSafety:
         assert "30.0s" in msg
 
     def test_http_error_result_format(self):
-        result = self.build_tool_result("Error: HTTP 503", error=True, tool_name="broken_tool")
+        result = self.build_tool_result(
+            "Error: HTTP 503", error=True, tool_name="broken_tool"
+        )
         assert result["error"] is True
         assert "503" in result["content"]
 
@@ -184,7 +231,12 @@ class TestChatToolCallSafety:
     def test_error_indicators_excluded_from_api(self):
         messages = [
             {"role": "user", "content": "search for X"},
-            {"role": "tool_call", "content": "search failed", "_error": True, "_ui": True},
+            {
+                "role": "tool_call",
+                "content": "search failed",
+                "_error": True,
+                "_ui": True,
+            },
             {"role": "assistant", "content": "Sorry, the search failed."},
         ]
         valid_roles = {"user", "assistant", "tool", "system"}

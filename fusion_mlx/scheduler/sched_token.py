@@ -15,7 +15,7 @@ import logging
 
 logger = logging.getLogger(__name__)
 import os
-from typing import Any, Optional
+from typing import TYPE_CHECKING, Any, Optional
 
 from mlx_lm.generate import (
     BatchGenerator,
@@ -32,6 +32,9 @@ from mlx_lm.sample_utils import make_logits_processors
 from ..prefill_progress import get_prefill_tracker
 from ..request import SamplingParams
 from ..utils.sampling import make_sampler as omlx_make_sampler
+
+if TYPE_CHECKING:
+    from ..parsers.output_parser import OutputParserSession
 
 # Module-level alias so Scheduler.__init__ can fall back to mlx-lm's default
 # stream when no per-engine stream is provided.
@@ -53,9 +56,7 @@ def _load_generation_config_eos(self) -> set[int] | None:
             try:
                 from huggingface_hub import try_to_load_from_cache
 
-                cached = try_to_load_from_cache(
-                    model_path, "generation_config.json"
-                )
+                cached = try_to_load_from_cache(model_path, "generation_config.json")
                 if cached and isinstance(cached, str):
                     gc_path = cached
                 else:
@@ -91,6 +92,7 @@ def _load_generation_config_eos(self) -> set[int] | None:
         logger.debug(f"Could not load generation_config.json: {e}")
         return None
 
+
 def _get_stop_tokens(self) -> set[int]:
     """Get stop token IDs from tokenizer and generation_config."""
     stop_tokens = set()
@@ -124,10 +126,12 @@ def _get_stop_tokens(self) -> set[int]:
 
     return stop_tokens
 
+
 # _update_stop_tokens deleted — per-request stop tokens are now
 # handled via SequenceStateMachine passed to insert().
 
-def _get_detokenizer(    self, request_id: str):
+
+def _get_detokenizer(self, request_id: str):
     """Get or create a streaming detokenizer for a request.
 
     This enables proper UTF-8 handling for multi-byte characters
@@ -151,7 +155,8 @@ def _get_detokenizer(    self, request_id: str):
         self._request_detokenizers[request_id] = detok
     return self._request_detokenizers[request_id]
 
-def _cleanup_detokenizer(    self, request_id: str):
+
+def _cleanup_detokenizer(self, request_id: str):
     """Clean up detokenizer for a finished request.
 
     NOTE: Detokenizers are NOT pooled - each request gets a fresh instance
@@ -159,6 +164,7 @@ def _cleanup_detokenizer(    self, request_id: str):
     """
     detok = self._request_detokenizers.pop(request_id, None)
     # Let GC collect - no pooling to prevent state contamination
+
 
 def _get_output_parser_session(
     self, request_id: str
@@ -173,9 +179,11 @@ def _get_output_parser_session(
         )
     return self._output_parser_sessions[request_id]
 
-def _cleanup_output_parser_session(    self, request_id: str):
+
+def _cleanup_output_parser_session(self, request_id: str):
     """Remove any per-request protocol parser session."""
     self._output_parser_sessions.pop(request_id, None)
+
 
 def _get_xtc_special_tokens(self) -> list[int]:
     """Get special tokens to exclude from XTC sampling (newline + EOS).
@@ -187,9 +195,8 @@ def _get_xtc_special_tokens(self) -> list[int]:
     tokens.extend(self._get_stop_tokens())
     return tokens
 
-def _create_batch_generator(
-    self, sampling_params: SamplingParams
-) -> BatchGenerator:
+
+def _create_batch_generator(self, sampling_params: SamplingParams) -> BatchGenerator:
     """Create a BatchGenerator with the given sampling parameters."""
     sampler = omlx_make_sampler(
         temp=sampling_params.temperature,
@@ -227,10 +234,10 @@ def _create_batch_generator(
         stop_tokens_set.update(sampling_params.stop_token_ids)
     stop_tokens_seq = [[t] for t in stop_tokens_set] if stop_tokens_set else None
     logger.info(
-          "BatchGenerator: max_tokens=%d, stop_tokens=%s",
+        "BatchGenerator: max_tokens=%d, stop_tokens=%s",
         sampling_params.max_tokens,
         stop_tokens_seq,
-          )
+    )
 
     bg = BatchGenerator(
         model=self.model,
@@ -249,6 +256,7 @@ def _create_batch_generator(
     # works even when new GenerationBatch instances are created via
     # PromptProcessingBatch.generate().
     from .sampler_fast_path import get_or_create_fused_sampler
+
     fused = get_or_create_fused_sampler(
         temperature=sampling_params.temperature,
         top_p=sampling_params.top_p,
@@ -259,14 +267,17 @@ def _create_batch_generator(
         self.model._fused_sampler = fused
         logger.debug(
             "Fused sampler attached for temp=%.2f top_p=%.2f top_k=%d",
-            sampling_params.temperature, sampling_params.top_p, sampling_params.top_k,
+            sampling_params.temperature,
+            sampling_params.top_p,
+            sampling_params.top_k,
         )
     else:
         self.model._fused_sampler = None
 
     return bg
 
-def _on_prompt_progress(    self, updates: list[tuple[int, int, int]]) -> None:
+
+def _on_prompt_progress(self, updates: list[tuple[int, int, int]]) -> None:
     """Callback from BatchGenerator's prefill loop.
 
     Called once per prefill chunk (default 2048 tokens) with a list of
@@ -286,17 +297,21 @@ def _on_prompt_progress(    self, updates: list[tuple[int, int, int]]) -> None:
             processed=processed,
             total=total,
             model_id=model_id,
-         )
+        )
         logger.info(
-             "Prompt processing progress: model=%s, processed=%d, total=%d",
-            model_id, processed, total,
-         )
+            "Prompt processing progress: model=%s, processed=%d, total=%d",
+            model_id,
+            processed,
+            total,
+        )
+
 
 # ------------------------------------------------------------------
 # External prefill (composition pattern — replaces _process_prompts)
 # ------------------------------------------------------------------
 
-def _apply_turboquant_kv_empty(    self, prompt_cache: list[Any]) -> None:
+
+def _apply_turboquant_kv_empty(self, prompt_cache: list[Any]) -> None:
     """Replace KVCache with empty TurboQuantKVCache before prefill.
 
     merge() blocker resolved via monkeypatches.py (BatchTurboQuantKVCache.merge).
@@ -336,7 +351,8 @@ def _apply_turboquant_kv_empty(    self, prompt_cache: list[Any]) -> None:
             f"cache layers set to {bits}-bit{skip_msg}"
         )
 
-def _apply_turboquant_kv_convert(    self, prompt_cache: list[Any]) -> None:
+
+def _apply_turboquant_kv_convert(self, prompt_cache: list[Any]) -> None:
     """Convert existing KVCache data to TurboQuantKVCache via from_cache().
 
     merge() blocker resolved via monkeypatches.py (BatchTurboQuantKVCache.merge).

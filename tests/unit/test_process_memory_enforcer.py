@@ -1,6 +1,7 @@
-import pytest
 import asyncio
-from unittest.mock import Mock, MagicMock, patch
+from unittest.mock import Mock, patch
+
+import pytest
 
 from fusion_mlx.pool.memory_enforcer import ProcessMemoryEnforcer
 
@@ -125,9 +126,9 @@ class TestHardLimitCalculation:
         ceiling = enforcer.get_final_ceiling()
         # Both derive from the same dynamic system query; allow tiny
         # drift (< 10 MB) from memory state changing between calls.
-        assert hard_limit >= ceiling - 10 * 1024**2, (
-            f"hard_limit {hard_limit:,} too far below ceiling {ceiling:,}"
-        )
+        assert (
+            hard_limit >= ceiling - 10 * 1024**2
+        ), f"hard_limit {hard_limit:,} too far below ceiling {ceiling:,}"
 
 
 class TestAbortLimitCalculation:

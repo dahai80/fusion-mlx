@@ -1,15 +1,13 @@
 # SPDX-License-Identifier: Apache-2.0
 """Tests for fusion_mlx.utils.tokenizer — migrated from omlx."""
 
-import pytest
-
 from fusion_mlx.utils.tokenizer import (
-    is_gemma4_model,
-    is_harmony_model,
-    is_qwen3_model,
     apply_qwen3_fix,
     create_streaming_detokenizer,
     get_tokenizer_config,
+    is_gemma4_model,
+    is_harmony_model,
+    is_qwen3_model,
 )
 
 
@@ -73,6 +71,7 @@ class TestGetTokenizerConfig:
 class TestCreateStreamingDetokenizer:
     def test_uses_spm_decoder_from_tokenizer_json(self):
         from unittest.mock import MagicMock, PropertyMock
+
         tokenizer = MagicMock()
         type(tokenizer).detokenizer = PropertyMock(side_effect=AttributeError)
         result = create_streaming_detokenizer(tokenizer, model_path="/nonexistent")
@@ -80,6 +79,7 @@ class TestCreateStreamingDetokenizer:
 
     def test_uses_bpe_decoder_from_tokenizer_json(self):
         from unittest.mock import MagicMock, PropertyMock
+
         tokenizer = MagicMock()
         type(tokenizer).detokenizer = PropertyMock(side_effect=AttributeError)
         result = create_streaming_detokenizer(tokenizer, model_path="/nonexistent")
@@ -87,6 +87,7 @@ class TestCreateStreamingDetokenizer:
 
     def test_explicit_none_detokenizer_without_model_path_stays_none(self):
         from unittest.mock import MagicMock, PropertyMock
+
         tokenizer = MagicMock()
         type(tokenizer).detokenizer = PropertyMock(side_effect=AttributeError)
         result = create_streaming_detokenizer(tokenizer, model_path=None)
@@ -94,6 +95,7 @@ class TestCreateStreamingDetokenizer:
 
     def test_missing_tokenizer_json_uses_naive_fallback(self):
         from unittest.mock import MagicMock, PropertyMock
+
         tokenizer = MagicMock()
         type(tokenizer).detokenizer = PropertyMock(side_effect=AttributeError)
         result = create_streaming_detokenizer(tokenizer, model_path="/nonexistent/path")

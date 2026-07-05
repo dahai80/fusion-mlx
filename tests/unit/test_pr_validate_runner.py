@@ -21,7 +21,6 @@ from contextlib import contextmanager
 from pathlib import Path
 
 import pytest
-
 from scripts.pr_validate.base import Step, StepResult
 from scripts.pr_validate.context import Context
 from scripts.pr_validate.runner import run_pipeline

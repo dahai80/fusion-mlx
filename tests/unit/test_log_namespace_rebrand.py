@@ -14,12 +14,12 @@ from __future__ import annotations
 import logging
 
 import pytest
-
-from fusion_mlx import _log_namespace
 from fusion_mlx._log_namespace import (
     _rewrite_name,
     install_log_namespace_rebrand,
 )
+
+from fusion_mlx import _log_namespace
 
 
 @pytest.fixture
@@ -229,12 +229,12 @@ def test_install_rewraps_when_external_factory_is_swapped_in(
     install_log_namespace_rebrand()
     new_wrapper = logging.getLogRecordFactory()
 
-    assert new_wrapper is not our_wrapper, (
-        "install must produce a NEW wrapper when an external factory took over"
-    )
-    assert new_wrapper is not external_factory, (
-        "external factory must be wrapped, not active"
-    )
+    assert (
+        new_wrapper is not our_wrapper
+    ), "install must produce a NEW wrapper when an external factory took over"
+    assert (
+        new_wrapper is not external_factory
+    ), "external factory must be wrapped, not active"
 
     # Drive a record through the new chain: external_factory adds its
     # marker, our wrapper rebrands the name.

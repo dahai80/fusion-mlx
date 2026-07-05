@@ -18,7 +18,6 @@ import re
 import subprocess
 import sys
 from dataclasses import dataclass
-from typing import Optional
 
 try:
     import mlx.core as mx
@@ -49,7 +48,7 @@ class HardwareInfo:
     chip_name: str
     total_memory_gb: float
     max_working_set_bytes: int
-    mlx_device_name: Optional[str] = None
+    mlx_device_name: str | None = None
 
 
 # =============================================================================
@@ -154,7 +153,7 @@ def get_max_working_set_bytes() -> int:
     return DEFAULT_MEMORY_BYTES
 
 
-def get_mlx_device_name() -> Optional[str]:
+def get_mlx_device_name() -> str | None:
     """Get raw device name from MLX Metal API."""
     if HAS_MLX:
         try:
@@ -248,7 +247,7 @@ def get_mlx_vlm_version() -> str:
 _OWNER_HASH_ALPHABET = "0123456789abcdefghijklmnopqrstuvwxyz"
 
 
-def get_gpu_core_count() -> Optional[int]:
+def get_gpu_core_count() -> int | None:
     """Get GPU core count via system_profiler."""
     try:
         result = subprocess.run(
@@ -267,7 +266,7 @@ def get_gpu_core_count() -> Optional[int]:
     return None
 
 
-def get_io_platform_uuid() -> Optional[str]:
+def get_io_platform_uuid() -> str | None:
     """Get IOPlatformUUID from ioreg (unique per device)."""
     try:
         result = subprocess.run(
@@ -304,7 +303,7 @@ def parse_chip_info(chip_string: str) -> tuple[str, str]:
 
 
 def compute_owner_hash(
-    uuid: str, chip_name: str, gpu_cores: Optional[int], memory_gb: int
+    uuid: str, chip_name: str, gpu_cores: int | None, memory_gb: int
 ) -> str:
     """Compute owner_hash for omlx.ai benchmark submissions.
 

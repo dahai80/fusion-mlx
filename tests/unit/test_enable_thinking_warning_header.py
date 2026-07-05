@@ -33,7 +33,6 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 import pytest
-
 from fusion_mlx.service.helpers import (
     _THINKING_FLAG_HONORING_PARSERS,
     enable_thinking_warning_header,

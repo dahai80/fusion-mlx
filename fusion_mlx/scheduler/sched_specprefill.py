@@ -27,7 +27,7 @@ from .helpers import (
 # stream when no per-engine stream is provided.
 
 
-def _try_specprefill_scoring(    self, request: Request) -> None:
+def _try_specprefill_scoring(self, request: Request) -> None:
     """Score tokens with draft model if SpecPrefill is applicable.
 
     Uses paged SSD cache for the draft model: if the prompt prefix
@@ -51,9 +51,7 @@ def _try_specprefill_scoring(    self, request: Request) -> None:
     n_remaining = len(remaining)
     from ..patches.specprefill import DEFAULT_KEEP_RATE, DEFAULT_THRESHOLD
 
-    threshold = (
-        getattr(request, "_specprefill_threshold", None) or DEFAULT_THRESHOLD
-    )
+    threshold = getattr(request, "_specprefill_threshold", None) or DEFAULT_THRESHOLD
     keep_pct = getattr(request, "_specprefill_keep_pct", None) or DEFAULT_KEEP_RATE
 
     # Threshold check on TOTAL remaining (not after system exclusion)
@@ -103,7 +101,8 @@ def _try_specprefill_scoring(    self, request: Request) -> None:
         spec_extra = {
             "prompt_tokens": request.num_prompt_tokens,
             "system_tokens": request.specprefill_system_end,
-            "conversation_tokens": request.num_prompt_tokens - request.specprefill_system_end,
+            "conversation_tokens": request.num_prompt_tokens
+            - request.specprefill_system_end,
             "cached_tokens": request.cached_tokens,
         }
 
@@ -144,9 +143,7 @@ def _try_specprefill_scoring(    self, request: Request) -> None:
         n_selected = selected.shape[0]
         request.specprefill_indices = selected
         request.specprefill_total_tokens = n_to_score
-        request.specprefill_position_offset = (
-            request.cached_tokens + effective_system
-        )
+        request.specprefill_position_offset = request.cached_tokens + effective_system
         request._specprefill_system_tokens = effective_system
 
         extras = []
@@ -207,19 +204,16 @@ def _try_specprefill_scoring(    self, request: Request) -> None:
         tracker.update(request.request_id, n_to_score, n_to_score, model_id)
 
     except Exception as e:
-        logger.error(
-            f"SpecPrefill scoring failed, falling back to normal path: {e}"
-        )
+        logger.error(f"SpecPrefill scoring failed, falling back to normal path: {e}")
         request.specprefill_indices = None
         tracker.remove(request.request_id)
 
-def _cleanup_specprefill(    self, request_id: str) -> None:
+
+def _cleanup_specprefill(self, request_id: str) -> None:
     """Clean up SpecPrefill RoPE patches when a request finishes."""
     if self._specprefill_active_request_id == request_id:
         from ..patches.specprefill import cleanup_rope
 
         cleanup_rope(self.model)
         self._specprefill_active_request_id = None
-        logger.debug(
-            f"SpecPrefill: RoPE restored for finished request {request_id}"
-        )
+        logger.debug(f"SpecPrefill: RoPE restored for finished request {request_id}")

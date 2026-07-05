@@ -3,8 +3,6 @@
 
 import json
 
-import pytest
-
 from fusion_mlx.api.openai_models import (
     ChatCompletionChunk,
     ChatCompletionRequest,

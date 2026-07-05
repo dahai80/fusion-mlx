@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-from typing import Optional
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
@@ -22,7 +21,7 @@ class HardwareRequest(BaseModel):
     params: int
     quant_type: str = "Q4_K_M"
     context_length: int = 4096
-    max_context: Optional[int] = None
+    max_context: int | None = None
 
 
 @router.get("/v1/hardware")

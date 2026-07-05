@@ -11,7 +11,6 @@ small enough that sequential generation is fast).
 
 import logging
 import time
-from typing import Any
 
 import mlx.core as mx
 
@@ -28,7 +27,9 @@ DRAFT_TEMPERATURE = float(__import__("os").environ.get("FUSION_SPEC_DRAFT_TEMP",
 class DraftModelDecoder:
     """Small LM that drafts tokens for speculative decode verification."""
 
-    def __init__(self, model_path: str = DRAFT_MODEL_PATH, num_draft: int = DRAFT_NUM_TOKENS):
+    def __init__(
+        self, model_path: str = DRAFT_MODEL_PATH, num_draft: int = DRAFT_NUM_TOKENS
+    ):
         self.model_path = model_path
         self.num_draft = num_draft
         self.model = None
@@ -47,12 +48,15 @@ class DraftModelDecoder:
         try:
             t0 = time.perf_counter()
             import mlx_lm
+
             self.model, self.tokenizer = mlx_lm.load(self.model_path)
             dt = time.perf_counter() - t0
             self._loaded = True
             logger.info(
                 "draft_model: loaded %s in %.1fs, num_draft=%d",
-                self.model_path, dt, self.num_draft,
+                self.model_path,
+                dt,
+                self.num_draft,
             )
             return True
         except Exception as e:
@@ -68,16 +72,25 @@ class DraftModelDecoder:
     def on_new_request(self, request_id: str, prompt_tokens: list[int]):
         """Reset draft state for a new request."""
         self.reset()
-        logger.info("draft_model: on_new_request req=%s prompt_tokens=%d", request_id[:8], len(prompt_tokens) if prompt_tokens else 0)
+        logger.info(
+            "draft_model: on_new_request req=%s prompt_tokens=%d",
+            request_id[:8],
+            len(prompt_tokens) if prompt_tokens else 0,
+        )
         if self.model is not None and prompt_tokens:
             try:
                 from mlx_lm.models.cache import KVCache
+
                 with mx.stream(mx.default_stream(mx.gpu)):
                     input_ids = mx.array(prompt_tokens, mx.uint32)
                     self._draft_cache = [KVCache() for _ in self.model.layers]
                     self.model(input_ids[None], cache=self._draft_cache)
                     mx.eval(self._draft_cache)
-                    logger.info("draft_model: prefill success, cache=%s, layers=%d", type(self._draft_cache[0]).__name__, len(self._draft_cache))
+                    logger.info(
+                        "draft_model: prefill success, cache=%s, layers=%d",
+                        type(self._draft_cache[0]).__name__,
+                        len(self._draft_cache),
+                    )
             except Exception as e:
                 logger.warning("draft_model: prefill failed: %s", e)
                 self._draft_cache = None
@@ -91,7 +104,9 @@ class DraftModelDecoder:
         if self.model is None or not self._loaded:
             return []
         if self._draft_cache is None:
-            logger.info("draft_model: no cache, skipping draft for token=%d", current_token)
+            logger.info(
+                "draft_model: no cache, skipping draft for token=%d", current_token
+            )
             return []
 
         drafts = []
@@ -106,6 +121,7 @@ class DraftModelDecoder:
 
                     if DRAFT_TEMPERATURE > 0:
                         from mlx_lm.sample_utils import make_sampler
+
                         sampler = make_sampler(temp=DRAFT_TEMPERATURE)
                         next_token = sampler(logits)
                     else:
@@ -128,7 +144,9 @@ class DraftModelDecoder:
 
     def get_stats(self) -> dict:
         """Get draft model statistics."""
-        rate = self._total_accepted / self._total_drafts if self._total_drafts > 0 else 0.0
+        rate = (
+            self._total_accepted / self._total_drafts if self._total_drafts > 0 else 0.0
+        )
         return {
             "model_path": self.model_path,
             "num_draft": self.num_draft,

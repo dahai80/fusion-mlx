@@ -51,7 +51,9 @@ class PrefillProgressTracker:
             else:
                 prev = self._progress.get(request_id)
                 phase_changed = prev is not None and prev.get("phase") != phase
-                start_time = now if prev is None or phase_changed else prev["start_time"]
+                start_time = (
+                    now if prev is None or phase_changed else prev["start_time"]
+                )
 
                 if prev is not None and not phase_changed:
                     dt = now - prev["last_time"]

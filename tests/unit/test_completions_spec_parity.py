@@ -954,9 +954,9 @@ class TestStreamingCompletionIdStable:
         # The shared id still follows the canonical ``cmpl-XXXX``
         # prefix so OpenAI-shape-strict clients don't get surprised.
         sole_id = next(iter(ids))
-        assert sole_id.startswith("cmpl-"), (
-            f"shared id must keep the OpenAI ``cmpl-`` prefix, got {sole_id!r}"
-        )
+        assert sole_id.startswith(
+            "cmpl-"
+        ), f"shared id must keep the OpenAI ``cmpl-`` prefix, got {sole_id!r}"
 
     def test_all_stream_chunks_share_one_created_timestamp(
         self, patched_config, monkeypatch

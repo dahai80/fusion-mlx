@@ -5,12 +5,12 @@ from pathlib import Path
 from unittest.mock import patch
 
 import yaml
+from fusion_mlx.integrations.codex_app import CodexAppIntegration
 
 from fusion_mlx.integrations import get_integration, list_integrations
 from fusion_mlx.integrations.base import IntegrationContext
 from fusion_mlx.integrations.claude import ClaudeCodeIntegration
 from fusion_mlx.integrations.codex import CodexIntegration
-from fusion_mlx.integrations.codex_app import CodexAppIntegration
 from fusion_mlx.integrations.copilot import CopilotIntegration
 from fusion_mlx.integrations.hermes import HermesIntegration
 from fusion_mlx.integrations.openclaw import OpenClawIntegration

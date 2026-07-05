@@ -2,12 +2,11 @@
 
 import math
 from dataclasses import dataclass
-from typing import Any, Dict, Optional
+from typing import Any
 
 import mlx.core as mx
 import mlx.nn as nn
 from mlx.nn.layers.distributed import shard_inplace, shard_linear, sum_gradients
-
 from mlx_lm.models.activations import swiglu
 from mlx_lm.models.base import (
     BaseModelArgs,
@@ -17,10 +16,11 @@ from mlx_lm.models.base import (
 from mlx_lm.models.cache import CacheList, KVCache
 from mlx_lm.models.mla import MultiLinear
 from mlx_lm.models.rope_utils import initialize_rope
+
 from .kernels import fast as glm_fast
 from .sparse_mla import (
-    fused_indexer_scores,
     fused_index_score_reduce,
+    fused_indexer_scores,
 )
 from .switch_layers import SwitchGLU
 
@@ -82,8 +82,8 @@ class ModelArgs(BaseModelArgs):
     num_hidden_layers: int = 30
     num_attention_heads: int = 32
     num_key_value_heads: int = 32
-    n_shared_experts: Optional[int] = None
-    n_routed_experts: Optional[int] = None
+    n_shared_experts: int | None = None
+    n_routed_experts: int | None = None
     routed_scaling_factor: float = 1.0
     kv_lora_rank: int = 512
     q_lora_rank: int = 1536
@@ -101,7 +101,7 @@ class ModelArgs(BaseModelArgs):
     max_position_embeddings: int = 2048
     rms_norm_eps: float = 1e-6
     rope_theta: float = 10000.0
-    rope_scaling: Dict = None
+    rope_scaling: dict = None
     attention_bias: bool = False
 
 
@@ -157,8 +157,8 @@ class Indexer(nn.Module):
         self,
         x: mx.array,
         qr: mx.array,
-        mask: Optional[mx.array],
-        cache: Optional[Any] = None,
+        mask: mx.array | None,
+        cache: Any | None = None,
     ):
         # Computes top_k indices for attention
         b, s, _ = x.shape
@@ -207,10 +207,7 @@ class Indexer(nn.Module):
                     else indices
                 )
             if prefix_rows > 0:
-                if (
-                    indices is not None
-                    and self.default_block_sparse_sdpa
-                ):
+                if indices is not None and self.default_block_sparse_sdpa:
                     return indices, None, prefix_rows
                 prefix = causal_prefix_topk(prefix_rows)
                 return (
@@ -221,7 +218,7 @@ class Indexer(nn.Module):
             return indices
 
         def select_topk(
-            scores, prefix_rows: int = 0, causal_valid_prefix: Optional[bool] = None
+            scores, prefix_rows: int = 0, causal_valid_prefix: bool | None = None
         ):
             indices = None
             use_native_topk = (
@@ -282,11 +279,7 @@ class Indexer(nn.Module):
             )
             chunk_mb = int(default_chunk_mb)
             chunked_topk = None
-            if (
-                chunk_mb > 0
-                and use_fast_topk
-                and score_q.shape[2] > 64
-            ):
+            if chunk_mb > 0 and use_fast_topk and score_q.shape[2] > 64:
                 bytes_per_score = 2
                 max_scores = max(1, (chunk_mb * 1024 * 1024) // bytes_per_score)
                 chunk_rows = max(64, (max_scores // k.shape[2]) // 64 * 64)
@@ -414,8 +407,8 @@ class DeepseekV32Attention(nn.Module):
     def __call__(
         self,
         x: mx.array,
-        mask: Optional[mx.array] = None,
-        cache: Optional[Any] = None,
+        mask: mx.array | None = None,
+        cache: Any | None = None,
     ) -> mx.array:
         B, L, D = x.shape
 
@@ -667,8 +660,8 @@ class DeepseekV32DecoderLayer(nn.Module):
     def __call__(
         self,
         x: mx.array,
-        mask: Optional[mx.array] = None,
-        cache: Optional[Any] = None,
+        mask: mx.array | None = None,
+        cache: Any | None = None,
     ) -> mx.array:
         r = self.self_attn(self.input_layernorm(x), mask, cache)
         h = x + r
@@ -711,7 +704,7 @@ class DeepseekV32Model(nn.Module):
     def __call__(
         self,
         x: mx.array,
-        cache: Optional[Any] = None,
+        cache: Any | None = None,
     ) -> mx.array:
         h = self.embed_tokens(x)
 
@@ -756,7 +749,7 @@ class Model(nn.Module):
     def __call__(
         self,
         inputs: mx.array,
-        cache: Optional[Any] = None,
+        cache: Any | None = None,
     ):
         out = self.model(inputs, cache)
         return self.lm_head(out)
@@ -1024,7 +1017,7 @@ class Model(nn.Module):
 
         return weights
 
-    def shard(self, group: Optional[mx.distributed.Group] = None):
+    def shard(self, group: mx.distributed.Group | None = None):
         group = group or mx.distributed.init()
         N = group.size()
         rank = group.rank()

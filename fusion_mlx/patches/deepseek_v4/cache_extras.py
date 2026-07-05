@@ -10,10 +10,8 @@ by patches/deepseek_v4/__init__.py so DeepSeek V4 model code can do
 When mlx-lm merges PR 1192 upstream, this file should be deleted along
 with the rest of the deepseek_v4 patch directory.
 """
-from typing import List
 
 import mlx.core as mx
-
 from mlx_lm.models.cache import _BaseCache
 
 
@@ -235,7 +233,7 @@ class PoolingCache(_BaseCache):
 class BatchPoolingCache(_BaseCache):
     """Batched pooling cache with per-element variable-length tracking."""
 
-    def __init__(self, ratio: int, left_padding: List[int]):
+    def __init__(self, ratio: int, left_padding: list[int]):
         self.ratio = ratio
 
         if not all(p == 0 for p in left_padding):
@@ -589,7 +587,7 @@ class BatchPoolingCache(_BaseCache):
                 def pad_pool(pooled, B, P):
                     if pooled is None:
                         return mx.zeros((B, max_P, D), dtype=dt)
-                    if P < max_P:
+                    if max_P > P:
                         pad = mx.zeros((pooled.shape[0], max_P - P, D), dtype=dt)
                         return mx.concatenate([pooled, pad], axis=1)
                     return pooled
@@ -669,5 +667,3 @@ class BatchPoolingCache(_BaseCache):
             batch_cache.buf_gate = buf_gate
 
         return batch_cache
-
-

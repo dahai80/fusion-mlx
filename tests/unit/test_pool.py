@@ -16,7 +16,9 @@ class TestPrioritySchedulerSubmit:
     def _make_scheduler(self):
         base = MagicMock()
         base.has_requests = MagicMock(return_value=False)
-        return PriorityScheduler(base, PrioritySchedulerConfig(use_separate_streams=False))
+        return PriorityScheduler(
+            base, PrioritySchedulerConfig(use_separate_streams=False)
+        )
 
     def test_submit_to_realtime_queue(self):
         sched = self._make_scheduler()
@@ -42,6 +44,7 @@ class TestPrioritySchedulerSubmit:
 
     def test_submit_with_task_priority(self):
         from fusion_mlx.router.smart_router import TaskPriority
+
         sched = self._make_scheduler()
         rid = sched.submit("hello", priority=TaskPriority.REALTIME)
         assert len(sched._queues[PriorityLevel.REALTIME]) == 1
@@ -52,7 +55,9 @@ class TestPrioritySchedulerReservedSlots:
     def _make_scheduler(self, config=None):
         base = MagicMock()
         base.has_requests = MagicMock(return_value=False)
-        return PriorityScheduler(base, config or PrioritySchedulerConfig(use_separate_streams=False))
+        return PriorityScheduler(
+            base, config or PrioritySchedulerConfig(use_separate_streams=False)
+        )
 
     def test_reserved_slots_non_negative(self):
         sched = self._make_scheduler()
@@ -62,9 +67,11 @@ class TestPrioritySchedulerReservedSlots:
 
     def test_reserved_slots_respects_max_seqs(self):
         config = PrioritySchedulerConfig(
-            max_realtime_seqs=4, max_batch_seqs=8, max_background_seqs=2,
+            max_realtime_seqs=4,
+            max_batch_seqs=8,
+            max_background_seqs=2,
             use_separate_streams=False,
-          )
+        )
         sched = self._make_scheduler(config)
         slots = sched._get_reserved_slots()
         assert slots[PriorityLevel.REALTIME] >= 4
@@ -77,28 +84,36 @@ class TestPrioritySchedulerReservedSlots:
         sched._request_priorities["r2"] = PriorityLevel.REALTIME
         sched._request_priorities["r3"] = PriorityLevel.REALTIME
         slots = sched._get_reserved_slots()
-        assert all(v >= 0 for v in slots.values()), "Reserved slots should never be negative"
+        assert all(
+            v >= 0 for v in slots.values()
+        ), "Reserved slots should never be negative"
 
 
 class TestPriorityRequest:
 
     def test_is_expired_false_when_no_deadline(self):
         req = PriorityRequest(
-            request=MagicMock(), priority=PriorityLevel.BATCH, deadline=None,
-          )
+            request=MagicMock(),
+            priority=PriorityLevel.BATCH,
+            deadline=None,
+        )
         assert req.is_expired is False
 
     def test_is_expired_true_when_past_deadline(self):
         req = PriorityRequest(
-            request=MagicMock(), priority=PriorityLevel.BATCH, deadline=1000.0,
-          )
+            request=MagicMock(),
+            priority=PriorityLevel.BATCH,
+            deadline=1000.0,
+        )
         with patch("time.time", return_value=1001.0):
             assert req.is_expired is True
 
     def test_is_expired_false_when_not_yet(self):
         req = PriorityRequest(
-            request=MagicMock(), priority=PriorityLevel.BATCH, deadline=2000.0,
-          )
+            request=MagicMock(),
+            priority=PriorityLevel.BATCH,
+            deadline=2000.0,
+        )
         with patch("time.time", return_value=1500.0):
             assert req.is_expired is False
 

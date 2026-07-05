@@ -139,9 +139,9 @@ def test_hybrid_supersequence_still_skipped(cache):
     short_request = list(range(1000, 1100))
     result, remaining = cache.fetch(short_request)
 
-    assert result is None, (
-        "Trim-required match on non-trimmable hybrid layers must still skip"
-    )
+    assert (
+        result is None
+    ), "Trim-required match on non-trimmable hybrid layers must still skip"
     assert remaining == short_request
 
 

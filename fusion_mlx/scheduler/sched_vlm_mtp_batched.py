@@ -110,13 +110,15 @@ def _vlm_mtp_try_enqueue(
         self._vlm_mtp_pending_queue = []
         pending = self._vlm_mtp_pending_queue
 
-    pending.append({
+    pending.append(
+        {
             "request": request,
             "prefilled_cache": prefilled_cache,
             "last_tokens": last_tokens,
             "sampler": sampler,
             "state_machine": state_machine,
-    })
+        }
+    )
 
     max_batch = getattr(self, "_vlm_mtp_max_batch_size", DEFAULT_MTP_BATCH_SIZE)
     if len(pending) >= max_batch:
@@ -133,9 +135,7 @@ def _vlm_mtp_try_enqueue(
 # ---------------------------------------------------------------------------
 
 
-def _vlm_mtp_drain_pending(
-    self, lm: Any, drafter: Any
-) -> list[_VLMMTPBatchRow]:
+def _vlm_mtp_drain_pending(self, lm: Any, drafter: Any) -> list[_VLMMTPBatchRow]:
     """Flush all pending vlm_mtp requests.
 
     Called at the end of ``_schedule_waiting``. Returns a list of
@@ -197,7 +197,7 @@ def _vlm_mtp_flush_batch(
                 cache=batched_cache,
                 return_hidden=True,
                 return_shared_kv=True,
-                )
+            )
             mx.eval([c.state for c in batched_cache])
     except Exception as e:
         logger.warning("vlm_mtp batched prefill failed: %s", e)
@@ -212,7 +212,7 @@ def _vlm_mtp_flush_batch(
 
     first_bonus_list = []
     for i in range(B):
-        tok = queue[i]["sampler"](logits[i:i+1])
+        tok = queue[i]["sampler"](logits[i : i + 1])
         mx.eval(tok)
         first_bonus_list.append(int(tok.item()))
     batched_first_bonus = mx.array(first_bonus_list, dtype=mx.int32)
@@ -245,7 +245,7 @@ def _vlm_mtp_flush_batch(
             sampler=queue[0]["sampler"],
             draft_block_size=draft_block_size,
             token_dtype=mx.int32,
-            )
+        )
     except Exception as e:
         logger.warning("vlm_mtp batched generator setup failed: %s", e)
         return []
@@ -255,15 +255,17 @@ def _vlm_mtp_flush_batch(
     for i, item in enumerate(queue):
         uid = next_uid_base - i
         req = item["request"]
-        rows.append(_VLMMTPBatchRow(
-            uid=uid,
-            request=req,
-            prefilled_cache=item["prefilled_cache"],
-            sampler=item["sampler"],
-            state_machine=item["state_machine"],
-            max_tokens=req.sampling_params.max_tokens,
-            stop_token_ids=eos_sets[i],
-            ))
+        rows.append(
+            _VLMMTPBatchRow(
+                uid=uid,
+                request=req,
+                prefilled_cache=item["prefilled_cache"],
+                sampler=item["sampler"],
+                state_machine=item["state_machine"],
+                max_tokens=req.sampling_params.max_tokens,
+                stop_token_ids=eos_sets[i],
+            )
+        )
 
     # Register batch state
     batches = getattr(self, "_vlm_mtp_active_batches", {})
@@ -282,11 +284,13 @@ def _vlm_mtp_flush_batch(
             state_machine=row.state_machine,
             max_tokens=row.max_tokens,
             stop_token_ids=row.stop_token_ids,
-            )
+        )
 
     logger.info(
-            "vlm_mtp batch: id=%d rows=%d uids=%s",
-        batch_id, len(rows), [r.uid for r in rows],
+        "vlm_mtp batch: id=%d rows=%d uids=%s",
+        batch_id,
+        len(rows),
+        [r.uid for r in rows],
     )
 
     self._vlm_mtp_next_uid = next_uid_base - len(rows)
@@ -316,10 +320,14 @@ def _step_vlm_mtp_batched(self) -> list[_VLMMTPResponse]:
             for row in bs.rows:
                 if not row.finished:
                     row.finished = True
-                    responses.append(_VLMMTPResponse(
-                        uid=row.uid, token=0, finish_reason="length",
-                        prompt_cache=row.prefilled_cache,
-                     ))
+                    responses.append(
+                        _VLMMTPResponse(
+                            uid=row.uid,
+                            token=0,
+                            finish_reason="length",
+                            prompt_cache=row.prefilled_cache,
+                        )
+                    )
             bs.active = False
             del batches[bid]
             continue
@@ -329,27 +337,38 @@ def _step_vlm_mtp_batched(self) -> list[_VLMMTPResponse]:
 
         for i, row in enumerate(bs.rows):
             if i >= len(token_val):
-                  # Row didn't receive a token from this step — emit
-                  # a sentinel response so the scheduler doesn't lose track
-                  # of the request silently.
+                # Row didn't receive a token from this step — emit
+                # a sentinel response so the scheduler doesn't lose track
+                # of the request silently.
                 logger.warning(
                     "vlm_mtp step: row uid=%d bid=%d missed token "
-                     "(tokens=%d rows=%d) — emitting sentinel",
-                    row.uid, bid, len(token_val), len(bs.rows),
-                 )
-                responses.append(_VLMMTPResponse(
-                    uid=row.uid, token=0, finish_reason="length",
-                    prompt_cache=row.prefilled_cache,
-                 ))
+                    "(tokens=%d rows=%d) — emitting sentinel",
+                    row.uid,
+                    bid,
+                    len(token_val),
+                    len(bs.rows),
+                )
+                responses.append(
+                    _VLMMTPResponse(
+                        uid=row.uid,
+                        token=0,
+                        finish_reason="length",
+                        prompt_cache=row.prefilled_cache,
+                    )
+                )
                 row.finished = True
                 continue
             tok = token_val[i]
             if tok is None:
                 row.finished = True
-                responses.append(_VLMMTPResponse(
-                    uid=row.uid, token=0, finish_reason="length",
-                    prompt_cache=row.prefilled_cache,
-                ))
+                responses.append(
+                    _VLMMTPResponse(
+                        uid=row.uid,
+                        token=0,
+                        finish_reason="length",
+                        prompt_cache=row.prefilled_cache,
+                    )
+                )
                 continue
 
             token = int(tok)
@@ -361,12 +380,14 @@ def _step_vlm_mtp_batched(self) -> list[_VLMMTPResponse]:
             elif row.emitted >= row.max_tokens:
                 finish_reason = "length"
 
-            responses.append(_VLMMTPResponse(
-                uid=row.uid,
-                token=token,
-                finish_reason=finish_reason,
-                prompt_cache=(row.prefilled_cache if finish_reason else None),
-                ))
+            responses.append(
+                _VLMMTPResponse(
+                    uid=row.uid,
+                    token=token,
+                    finish_reason=finish_reason,
+                    prompt_cache=(row.prefilled_cache if finish_reason else None),
+                )
+            )
             if finish_reason:
                 row.finished = True
 
@@ -394,10 +415,14 @@ def _step_vlm_mtp_batched(self) -> list[_VLMMTPResponse]:
         except StopIteration:
             if hasattr(self, "_log_vlm_mtp_stats"):
                 self._log_vlm_mtp_stats(state, "length")
-            responses.append(_VLMMTPResponse(
-                uid=uid, token=0, finish_reason="length",
-                prompt_cache=state.prompt_cache,
-                ))
+            responses.append(
+                _VLMMTPResponse(
+                    uid=uid,
+                    token=0,
+                    finish_reason="length",
+                    prompt_cache=state.prompt_cache,
+                )
+            )
             state.finished = True
             continue
 
@@ -413,17 +438,20 @@ def _step_vlm_mtp_batched(self) -> list[_VLMMTPResponse]:
         if finish_reason and hasattr(self, "_log_vlm_mtp_stats"):
             self._log_vlm_mtp_stats(state, finish_reason)
 
-        responses.append(_VLMMTPResponse(
-            uid=uid,
-            token=token,
-            finish_reason=finish_reason,
-            prompt_cache=(state.prompt_cache if finish_reason else None),
-            ))
+        responses.append(
+            _VLMMTPResponse(
+                uid=uid,
+                token=token,
+                finish_reason=finish_reason,
+                prompt_cache=(state.prompt_cache if finish_reason else None),
+            )
+        )
         if finish_reason:
             state.finished = True
 
-    for uid in [u for u, s in getattr(self, "_vlm_mtp_active", {}).items()
-                    if s.finished]:
+    for uid in [
+        u for u, s in getattr(self, "_vlm_mtp_active", {}).items() if s.finished
+    ]:
         del self._vlm_mtp_active[uid]
 
     return responses
@@ -442,8 +470,8 @@ def _make_batched_cache(cache_lists: list[list[Any]]) -> list[Any]:
     B = len(cache_lists)
 
     return [
-            _BatchedCacheLayer([cache_lists[b][li] for b in range(B)])
-            for li in range(num_layers)
+        _BatchedCacheLayer([cache_lists[b][li] for b in range(B)])
+        for li in range(num_layers)
     ]
 
 
@@ -462,8 +490,8 @@ class _BatchedCacheLayer:
 
     def copy(self) -> _BatchedCacheLayer:
         return _BatchedCacheLayer(
-                [l.copy() if hasattr(l, "copy") else l for l in self._layers]
-            )
+            [l.copy() if hasattr(l, "copy") else l for l in self._layers]
+        )
 
     def save(self) -> _BatchedCacheLayer:
         return self.copy()
@@ -473,11 +501,21 @@ class _BatchedCacheLayer:
         for b in range(B):
             try:
                 k_b = kv[0][b] if isinstance(kv[0], (list, tuple)) else _slice(kv[0], b)
-                v_b = (kv[1][b] if isinstance(kv[1], (list, tuple)) else _slice(kv[1], b)
-                        if len(kv) > 1 else None)
-                tok_b = tokens[b] if isinstance(tokens, (list, tuple)) else _slice(tokens, b)
-                log_b = (logits[b] if isinstance(logits, (list, tuple))
-                         else _slice(logits, b))
+                v_b = (
+                    kv[1][b]
+                    if isinstance(kv[1], (list, tuple))
+                    else _slice(kv[1], b) if len(kv) > 1 else None
+                )
+                tok_b = (
+                    tokens[b]
+                    if isinstance(tokens, (list, tuple))
+                    else _slice(tokens, b)
+                )
+                log_b = (
+                    logits[b]
+                    if isinstance(logits, (list, tuple))
+                    else _slice(logits, b)
+                )
                 if v_b is not None:
                     self._layers[b].write(tok_b, log_b, (k_b, v_b))
                 else:
@@ -491,5 +529,5 @@ def _slice(arr, idx: int):
     if isinstance(arr, (list, tuple)):
         return arr[idx] if idx < len(arr) else arr[-1]
     if hasattr(arr, "shape"):
-        return arr[idx:idx+1]
+        return arr[idx : idx + 1]
     return arr

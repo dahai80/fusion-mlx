@@ -149,10 +149,11 @@ def responses_client(monkeypatch):
 
     _install_lightweight_engine_modules(monkeypatch)
 
+    from fusion_mlx.routes.responses import router
+
     from fusion_mlx.config import reset_config
     from fusion_mlx.middleware.auth import rate_limiter
     from fusion_mlx.middleware.exception_handlers import install_exception_handlers
-    from fusion_mlx.routes.responses import router
 
     cfg = reset_config()
     cfg.api_key = "test-secret"
@@ -396,15 +397,15 @@ class TestResponsesRouteInputTypeDefault:
             "use the tool please" in (m.get("content") or "") for m in messages
         ), f"leading user message lost during conversion: {messages}"
         joined = " ".join((m.get("content") or "") for m in messages)
-        assert "get_weather" in joined, (
-            f"function_call name was not propagated to the engine: {messages}"
-        )
-        assert "call_abc" in joined, (
-            f"function_call call_id was not propagated to the engine: {messages}"
-        )
-        assert "sunny" in joined, (
-            f"function_call_output payload not propagated: {messages}"
-        )
+        assert (
+            "get_weather" in joined
+        ), f"function_call name was not propagated to the engine: {messages}"
+        assert (
+            "call_abc" in joined
+        ), f"function_call call_id was not propagated to the engine: {messages}"
+        assert (
+            "sunny" in joined
+        ), f"function_call_output payload not propagated: {messages}"
 
     def test_role_only_no_content_still_400(self, responses_client):
         """We loosen the ``type`` default, NOT the content requirement.

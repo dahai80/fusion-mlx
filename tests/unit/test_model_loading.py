@@ -470,8 +470,8 @@ class TestCheckpointHasMtpWeights:
         assert model_loading._checkpoint_has_mtp_weights(str(tmp_path)) is False
 
     def test_returns_true_when_later_shard_has_mtp(self, tmp_path):
-        from safetensors.numpy import save_file
         import numpy as np
+        from safetensors.numpy import save_file
 
         save_file(
             {

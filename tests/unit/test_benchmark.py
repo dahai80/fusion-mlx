@@ -1,15 +1,12 @@
 # SPDX-License-Identifier: Apache-2.0
 """Tests for the admin benchmark module."""
 
-import asyncio
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from fusion_mlx.admin.benchmark import (
-    VALID_BATCH_SIZES,
-    VALID_PROMPT_LENGTHS,
     BenchmarkRequest,
     BenchmarkRun,
     _clean_model_name,
@@ -23,7 +20,6 @@ from fusion_mlx.admin.benchmark import (
     get_run,
     run_benchmark,
 )
-
 
 # =============================================================================
 # BenchmarkRequest validation tests
@@ -613,13 +609,16 @@ class TestSSEEventFormat:
             ),
         )
 
-        await _send_event(run, {
-            "type": "progress",
-            "phase": "single",
-            "message": "Testing",
-            "current": 1,
-            "total": 3,
-        })
+        await _send_event(
+            run,
+            {
+                "type": "progress",
+                "phase": "single",
+                "message": "Testing",
+                "current": 1,
+                "total": 3,
+            },
+        )
 
         # SSE delivery: events are appended to `run.events` (replay log).
         assert len(run.events) == 1
@@ -665,16 +664,12 @@ class TestSSEEventFormat:
 class TestDetectQuantization:
     def test_from_config_json(self, tmp_path):
         config = {"quantization_config": {"quant_method": "awq", "bits": 4}}
-        (tmp_path / "config.json").write_text(
-            __import__("json").dumps(config)
-        )
+        (tmp_path / "config.json").write_text(__import__("json").dumps(config))
         assert _detect_quantization(str(tmp_path)) == "4bit"
 
     def test_from_config_json_8bit(self, tmp_path):
         config = {"quantization_config": {"bits": 8}}
-        (tmp_path / "config.json").write_text(
-            __import__("json").dumps(config)
-        )
+        (tmp_path / "config.json").write_text(__import__("json").dumps(config))
         assert _detect_quantization(str(tmp_path)) == "8bit"
 
     def test_from_dirname_4bit(self, tmp_path):
@@ -711,9 +706,7 @@ class TestDetectQuantization:
         model_dir = tmp_path / "Model-4bit"
         model_dir.mkdir()
         config = {"quantization_config": {"bits": 8}}
-        (model_dir / "config.json").write_text(
-            __import__("json").dumps(config)
-        )
+        (model_dir / "config.json").write_text(__import__("json").dumps(config))
         assert _detect_quantization(str(model_dir)) == "8bit"
 
 
@@ -745,7 +738,10 @@ class TestCleanModelName:
         assert _clean_model_name("Qwen3-30B-A3B", "unknown") == "Qwen3-30B-A3B"
 
     def test_preserves_model_size(self):
-        assert _clean_model_name("DeepSeek-R1-0528-Qwen3-8B-4bit", "4bit") == "DeepSeek-R1-0528-Qwen3-8B"
+        assert (
+            _clean_model_name("DeepSeek-R1-0528-Qwen3-8B-4bit", "4bit")
+            == "DeepSeek-R1-0528-Qwen3-8B"
+        )
 
 
 # =============================================================================
@@ -989,8 +985,11 @@ class TestSanitizeUploadError:
     sanitizer must detect that case and surface an actionable message
     without dumping the full 5KB HTML body."""
 
-    def _resp(self, status=403, headers=None, text="", json_raises=True, json_data=None):
+    def _resp(
+        self, status=403, headers=None, text="", json_raises=True, json_data=None
+    ):
         from unittest.mock import MagicMock
+
         resp = MagicMock()
         resp.status_code = status
         resp.headers = headers or {}
@@ -1003,6 +1002,7 @@ class TestSanitizeUploadError:
 
     def test_cloudflare_challenge_via_header(self):
         from fusion_mlx.admin.benchmark import _sanitize_upload_error
+
         resp = self._resp(
             status=403,
             headers={"cf-mitigated": "challenge"},
@@ -1020,6 +1020,7 @@ class TestSanitizeUploadError:
         """Header missing but body still contains the interstitial — covers
         edge transports / proxies that strip cf-mitigated."""
         from fusion_mlx.admin.benchmark import _sanitize_upload_error
+
         resp = self._resp(status=403, headers={}, text=_CF_INTERSTITIAL)
         msg = _sanitize_upload_error(resp)
         assert "Cloudflare" in msg
@@ -1027,6 +1028,7 @@ class TestSanitizeUploadError:
 
     def test_json_error_field_extracted(self):
         from fusion_mlx.admin.benchmark import _sanitize_upload_error
+
         resp = self._resp(
             status=400,
             json_raises=False,
@@ -1037,6 +1039,7 @@ class TestSanitizeUploadError:
 
     def test_json_detail_field_extracted(self):
         from fusion_mlx.admin.benchmark import _sanitize_upload_error
+
         resp = self._resp(
             status=422,
             json_raises=False,
@@ -1048,6 +1051,7 @@ class TestSanitizeUploadError:
     def test_html_body_without_cf_signals_collapses_to_hint(self):
         """Non-CF HTML body (e.g. nginx 502 page) should not be dumped raw."""
         from fusion_mlx.admin.benchmark import _sanitize_upload_error
+
         resp = self._resp(
             status=502,
             text="<html><body>502 Bad Gateway</body></html>",
@@ -1058,10 +1062,12 @@ class TestSanitizeUploadError:
 
     def test_plain_text_short_body_passes_through(self):
         from fusion_mlx.admin.benchmark import _sanitize_upload_error
+
         resp = self._resp(status=500, text="upstream connection refused")
         assert _sanitize_upload_error(resp) == "upstream connection refused"
 
     def test_empty_body_falls_back_to_status(self):
         from fusion_mlx.admin.benchmark import _sanitize_upload_error
+
         resp = self._resp(status=503, text="")
         assert _sanitize_upload_error(resp) == "HTTP 503"

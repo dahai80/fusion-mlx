@@ -80,6 +80,7 @@ def _on_signal(signum: int, frame) -> None:
             )
         if terminate_failed:
             import os
+
             os._exit(128 + signum)
 
 

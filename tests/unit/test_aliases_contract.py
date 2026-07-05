@@ -95,12 +95,12 @@ def test_alias_hf_path_is_org_slash_repo(alias: str) -> None:
     )
     # The legacy short-form (``"alias": "hf_path"``) coerces to a profile
     # but we still want the path itself to look HuggingFace-shaped.
-    assert not profile.hf_path.startswith("/"), (
-        f"{alias}: hf_path looks like an absolute path, not an HF repo id"
-    )
-    assert " " not in profile.hf_path, (
-        f"{alias}: hf_path contains whitespace — copy-paste artifact?"
-    )
+    assert not profile.hf_path.startswith(
+        "/"
+    ), f"{alias}: hf_path looks like an absolute path, not an HF repo id"
+    assert (
+        " " not in profile.hf_path
+    ), f"{alias}: hf_path contains whitespace — copy-paste artifact?"
 
 
 # =============================================================================
@@ -346,9 +346,9 @@ def test_negative_control_hybrid_spec_decode_combination_is_caught() -> None:
         supports_spec_decode=True,  # contradiction
     )
     # Re-run the assertion logic on the synthetic profile.
-    assert bad.is_hybrid and bad.supports_spec_decode, (
-        "negative control malformed — should have hit the contradiction"
-    )
+    assert (
+        bad.is_hybrid and bad.supports_spec_decode
+    ), "negative control malformed — should have hit the contradiction"
     # The real guard would fail here:
     caught = bad.is_hybrid and bad.supports_spec_decode
     assert caught, "the test_hybrid_disables_spec_decode guard would miss this"
@@ -397,9 +397,9 @@ def test_dflash_requires_drafter(alias: str) -> None:
     server-start time and look like an unexplained perf regression."""
     profile = list_profiles()[alias]
     if profile.supports_dflash:
-        assert profile.dflash_draft_model, (
-            f"{alias}: supports_dflash=True but dflash_draft_model is empty"
-        )
+        assert (
+            profile.dflash_draft_model
+        ), f"{alias}: supports_dflash=True but dflash_draft_model is empty"
         assert "/" in profile.dflash_draft_model, (
             f"{alias}: dflash_draft_model={profile.dflash_draft_model!r} "
             f"must be 'org/repo' format"
@@ -690,9 +690,9 @@ def test_qwen3_4b_thinking_2507_wires_qwen3_reasoning_parser() -> None:
         f"variant emits `<think>` blocks autonomously. "
         f"Got {profiles[alias].reasoning_parser!r}."
     )
-    assert profiles[alias].is_hybrid is False, (
-        f"{alias}: Qwen3-4B is pure-attention, not hybrid."
-    )
+    assert (
+        profiles[alias].is_hybrid is False
+    ), f"{alias}: Qwen3-4B is pure-attention, not hybrid."
 
 
 @pytest.mark.parametrize(
@@ -767,9 +767,9 @@ def test_granite4_h_micro_inherits_family_hybrid_gates() -> None:
         "Granite 4 does NOT emit `<think>` blocks; setting a reasoning "
         "parser would route all output into reasoning_content."
     )
-    assert micro.is_hybrid and tiny.is_hybrid, (
-        "Granite 4 is hybrid Mamba2+Transformer — is_hybrid must be True."
-    )
+    assert (
+        micro.is_hybrid and tiny.is_hybrid
+    ), "Granite 4 is hybrid Mamba2+Transformer — is_hybrid must be True."
     assert not micro.supports_spec_decode, (
         "granite4-h-micro-4bit: hybrid arch + supports_spec_decode=True "
         "is a forbidden combination (see test_hybrid_disables_spec_decode)."
@@ -836,9 +836,9 @@ def test_phi_4_mini_reasoning_wires_deepseek_r1_reasoning_parser() -> None:
         f"reasoning emits `<think>` blocks autonomously (smoke-verified). "
         f"Got {profiles[alias].reasoning_parser!r}."
     )
-    assert profiles[alias].tool_call_parser == "hermes", (
-        f"{alias}: tool_call_parser must be 'hermes' (Phi family default)."
-    )
+    assert (
+        profiles[alias].tool_call_parser == "hermes"
+    ), f"{alias}: tool_call_parser must be 'hermes' (Phi family default)."
 
 
 def test_gemma_3n_multimodal_aliases_share_family_sampling() -> None:
@@ -861,12 +861,12 @@ def test_gemma_3n_multimodal_aliases_share_family_sampling() -> None:
             f"{alias}: temperature must be 1.0 per Google's Gemma chat "
             f"sampling guidance. Got {sampling.get('temperature')!r}."
         )
-        assert sampling.get("top_p") == 0.95, (
-            f"{alias}: top_p must be 0.95. Got {sampling.get('top_p')!r}."
-        )
-        assert sampling.get("top_k") == 64, (
-            f"{alias}: top_k must be 64. Got {sampling.get('top_k')!r}."
-        )
+        assert (
+            sampling.get("top_p") == 0.95
+        ), f"{alias}: top_p must be 0.95. Got {sampling.get('top_p')!r}."
+        assert (
+            sampling.get("top_k") == 64
+        ), f"{alias}: top_k must be 64. Got {sampling.get('top_k')!r}."
 
 
 @pytest.mark.parametrize(
@@ -1290,12 +1290,12 @@ def test_kimi_k26_wires_kimi_tool_parser_and_deepseek_r1_reasoning() -> None:
         f"Got {profile.reasoning_parser!r}."
     )
     assert profile.is_moe is True, "Kimi K2.6 is sparse-expert MoE."
-    assert profile.is_hybrid is False, (
-        "Kimi K2.6 is pure-attention (DeepseekV3 backbone), not hybrid."
-    )
-    assert profile.supports_spec_decode is False, (
-        "Kimi K2.6 is too large + MoE for spec-decode to be net-positive."
-    )
+    assert (
+        profile.is_hybrid is False
+    ), "Kimi K2.6 is pure-attention (DeepseekV3 backbone), not hybrid."
+    assert (
+        profile.supports_spec_decode is False
+    ), "Kimi K2.6 is too large + MoE for spec-decode to be net-positive."
     # codex r2 BLOCKING #1: explicit-pin the DFlash gate even though the
     # AliasProfile default already forbids it on MoE. Defense-in-depth —
     # if a future PR ever flips the dataclass default-False to default-True
@@ -1385,9 +1385,9 @@ def test_mistral_small_4_119b_family_follows_mistral_24b_precedent() -> None:
             f"`<think>` emission. reasoning_parser must be None. "
             f"Got {profile.reasoning_parser!r}."
         )
-        assert profile.is_hybrid is False, (
-            f"{alias}: mistral3 is dense + pure-attention, not hybrid."
-        )
+        assert (
+            profile.is_hybrid is False
+        ), f"{alias}: mistral3 is dense + pure-attention, not hybrid."
         assert profile.is_moe is False, (
             f"{alias}: Mistral-Small-4-119B-2603 is dense (NOT MoE). "
             f"Got is_moe={profile.is_moe!r}."
@@ -1415,9 +1415,9 @@ def test_bare_qwen3_short_aliases_follow_family_precedent(alias: str) -> None:
         f"{alias}: Qwen3 family default reasoning_parser is 'qwen3'. "
         f"Got {profile.reasoning_parser!r}."
     )
-    assert profile.is_hybrid is False, (
-        f"{alias}: vanilla Qwen3 (non-3.5 / non-3.6) is pure-attention, not hybrid."
-    )
+    assert (
+        profile.is_hybrid is False
+    ), f"{alias}: vanilla Qwen3 (non-3.5 / non-3.6) is pure-attention, not hybrid."
     assert profile.is_moe is False, (
         f"{alias}: vanilla Qwen3 0.6B/1.7B is dense (only A3B/A10B/A22B "
         f"siblings are MoE)."
@@ -1456,9 +1456,9 @@ def test_glm_5_2_reap50_alias_resolves_to_pipenetwork_4bit() -> None:
         "after REAP-50% prune, num_experts_per_tok=8). Mis-tagging as "
         "dense would mis-route DFlash / spec-decode gates."
     )
-    assert profile.is_hybrid is False, (
-        "glm-5.2-reap50: pure-attention (glm_moe_dsa backbone), not hybrid."
-    )
+    assert (
+        profile.is_hybrid is False
+    ), "glm-5.2-reap50: pure-attention (glm_moe_dsa backbone), not hybrid."
     assert profile.tool_call_parser == "glm47", (
         f"glm-5.2-reap50: GLM-5.2 shares the GLM-4.7 ``<tool_call>...`` "
         f"tool envelope. Got {profile.tool_call_parser!r}."

@@ -192,6 +192,7 @@ def test_body_never_reaches_handler_on_413():
     body message. If the middleware does its job, that count is 0.
     """
     from fusion_mlx.config.server_config import get_config
+
     from fusion_mlx.middleware.body_size import RequestBodyLimitMiddleware
 
     get_config().max_request_bytes = 1024
@@ -263,6 +264,7 @@ def test_chunked_streaming_body_aborts_mid_stream():
     Without this guard, a Transfer-Encoding: chunked client could
     stream gigabytes before any byte-count gate fired."""
     from fusion_mlx.config.server_config import get_config
+
     from fusion_mlx.middleware.body_size import RequestBodyLimitMiddleware
 
     get_config().max_request_bytes = 1024  # 1 KiB cap
@@ -350,6 +352,7 @@ def test_no_double_response_when_handler_already_sent_headers():
     silently let the response complete (logged warning, no double 413).
     """
     from fusion_mlx.config.server_config import get_config
+
     from fusion_mlx.middleware.body_size import RequestBodyLimitMiddleware
 
     get_config().max_request_bytes = 1024
@@ -422,9 +425,9 @@ def test_no_double_response_when_handler_already_sent_headers():
         for m in sent
         if m["type"] == "http.response.body" and not m.get("more_body", False)
     ]
-    assert len(terminal_bodies) == 1, (
-        f"response stream not terminated after cap trip — got {sent}"
-    )
+    assert (
+        len(terminal_bodies) == 1
+    ), f"response stream not terminated after cap trip — got {sent}"
 
 
 def test_get_request_is_not_capped():
@@ -462,6 +465,7 @@ def test_oversized_body_returns_413_before_auth_check():
     auth dependency will fail it and have to think about it.
     """
     from fusion_mlx.config.server_config import get_config
+
     from fusion_mlx.middleware.body_size import install_request_body_limit_middleware
 
     get_config().max_request_bytes = 1024  # 1 KiB cap
@@ -493,12 +497,12 @@ def test_oversized_body_returns_413_before_auth_check():
         json=oversized,
         # No Authorization header — auth would normally 401.
     )
-    assert resp.status_code == 413, (
-        f"expected 413 (body cap before auth), got {resp.status_code}"
-    )
-    assert auth_calls["n"] == 0, (
-        "auth dependency ran before the body cap — ordering regressed"
-    )
+    assert (
+        resp.status_code == 413
+    ), f"expected 413 (body cap before auth), got {resp.status_code}"
+    assert (
+        auth_calls["n"] == 0
+    ), "auth dependency ran before the body cap — ordering regressed"
 
 
 def test_cli_flag_overrides_config_default():
@@ -509,8 +513,9 @@ def test_cli_flag_overrides_config_default():
     wiring: writing the module global and calling ``_sync_config``
     propagates the value to the config singleton the middleware
     reads."""
-    import fusion_mlx.server as server_mod
     from fusion_mlx.config.server_config import get_config
+
+    import fusion_mlx.server as server_mod
 
     original = server_mod._max_request_bytes
     try:

@@ -137,13 +137,13 @@ def _omlx_realign_generation_batch_rows(self) -> None:
     self.samplers = new_samplers
 
 
-
 # ---------------------------------------------------------------------------
 # Version guard — warn when mlx-lm is outside tested range so operators
 # know patches may not apply correctly.
 # ---------------------------------------------------------------------------
 try:
     import importlib.metadata
+
     _mlx_lm_ver = importlib.metadata.version("mlx-lm")
 except Exception:
     _mlx_lm_ver = "unknown"
@@ -153,19 +153,27 @@ _MLX_LM_MIN_TESTED = "0.21"
 _MLX_LM_MAX_TESTED = "0.32"
 
 if _mlx_lm_ver != "unknown":
+
     def _ver_tuple(v):
         return tuple(int(x) for x in v.split(".")[:3])
+
     vt = _ver_tuple(_mlx_lm_ver)
     if vt < _ver_tuple(_MLX_LM_MIN_TESTED) or vt > _ver_tuple(_MLX_LM_MAX_TESTED):
         logger.warning(
             "mlx-lm %s is outside the tested range [%s, %s]. "
             "Monkeypatches may not apply correctly. "
             "Please verify after upgrading.",
-            _mlx_lm_ver, _MLX_LM_MIN_TESTED, _MLX_LM_MAX_TESTED,
+            _mlx_lm_ver,
+            _MLX_LM_MIN_TESTED,
+            _MLX_LM_MAX_TESTED,
         )
     else:
-        logger.debug("mlx-lm %s within tested range [%s, %s]",
-                      _mlx_lm_ver, _MLX_LM_MIN_TESTED, _MLX_LM_MAX_TESTED)
+        logger.debug(
+            "mlx-lm %s within tested range [%s, %s]",
+            _mlx_lm_ver,
+            _MLX_LM_MIN_TESTED,
+            _MLX_LM_MAX_TESTED,
+        )
 
 
 # Module-level alias so Scheduler.__init__ can fall back to mlx-lm's default
@@ -217,6 +225,7 @@ def _optimized_generation_batch_step(self):
     token_context = []
     if has_logits_processors:
         from ..api.grammar import GrammarConstraintProcessor
+
         has_grammar = any(
             isinstance(p, GrammarConstraintProcessor)
             for procs in self.logits_processors
@@ -407,6 +416,7 @@ try:
             _ng_src = ""
         # Only patch if the source contains the stream context manager.
         if "mx.stream" in _ng_src:
+
             def _patched_next_generated(self):
                 # Inline the stock logic without the stream context manager.
                 # Stock: with mx.stream(self._stream): <body>
@@ -477,13 +487,14 @@ try:
     _ckvcache_methods_skipped: list[str] = []
 
     if not hasattr(_CKVCache, "merge"):
+
         @classmethod
         def _ckvcache_merge_passthrough(cls, caches):
             if len(caches) == 1:
                 return caches[0]
             raise NotImplementedError(
-            "ChunkedKVCache.merge for batch_size > 1 is not implemented. "
-            "Run with --max-concurrent-requests 1 when serving Llama-4."
+                "ChunkedKVCache.merge for batch_size > 1 is not implemented. "
+                "Run with --max-concurrent-requests 1 when serving Llama-4."
             )
 
         _CKVCache.merge = _ckvcache_merge_passthrough
@@ -491,6 +502,7 @@ try:
         _ckvcache_methods_skipped.append("merge")
 
     if not hasattr(_CKVCache, "filter"):
+
         def _ckvcache_filter_passthrough(self, batch_indices):
             try:
                 n = len(batch_indices)
@@ -506,8 +518,8 @@ try:
                 return
             raise NotImplementedError(
                 f"ChunkedKVCache.filter with batch_size={n} > 1 is not "
-            "implemented. Run with --max-concurrent-requests 1 when "
-            "serving Llama-4."
+                "implemented. Run with --max-concurrent-requests 1 when "
+                "serving Llama-4."
             )
 
         _CKVCache.filter = _ckvcache_filter_passthrough
@@ -515,6 +527,7 @@ try:
         _ckvcache_methods_skipped.append("filter")
 
     if not hasattr(_CKVCache, "extract"):
+
         def _ckvcache_extract_passthrough(self, idx):
             return self
 
@@ -523,6 +536,7 @@ try:
         _ckvcache_methods_skipped.append("extract")
 
     if not hasattr(_CKVCache, "size"):
+
         def _ckvcache_size(self):
             return max(0, self.offset - self.start_position)
 
@@ -531,6 +545,7 @@ try:
         _ckvcache_methods_skipped.append("size")
 
     if not hasattr(_CKVCache, "extend"):
+
         def _ckvcache_extend_passthrough(self, other):
             if other is None or other.empty():
                 return
@@ -541,8 +556,8 @@ try:
                 self.start_position = other.start_position
                 return
             raise NotImplementedError(
-            "ChunkedKVCache.extend across non-empty caches is not "
-            "supported. Run with --max-concurrent-requests 1."
+                "ChunkedKVCache.extend across non-empty caches is not "
+                "supported. Run with --max-concurrent-requests 1."
             )
 
         _CKVCache.extend = _ckvcache_extend_passthrough
@@ -554,8 +569,7 @@ try:
         # Surface which ones so a regression in Llama-4 batching is visible
         # to operators without diffing the patch against installed mlx_lm.
         logger.info(
-            "ChunkedKVCache patch: methods already present upstream, "
-            "skipped: %s",
+            "ChunkedKVCache patch: methods already present upstream, " "skipped: %s",
             ", ".join(_ckvcache_methods_skipped),
         )
 except ImportError:

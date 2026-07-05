@@ -341,9 +341,7 @@ def _build_app(
             if kind == "delta":
                 event = payload
                 if event.delta:
-                    yield _sse_chunk(
-                        cid, created, served_model_name, delta=event.delta
-                    )
+                    yield _sse_chunk(cid, created, served_model_name, delta=event.delta)
                 if event.finished:
                     metrics = event.metrics or {}
                     avg_accept = metrics.get("avg_acceptance_length")

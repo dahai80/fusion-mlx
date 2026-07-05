@@ -161,9 +161,9 @@ def test_sub_patch_image_rejected_with_canonical_message(monkeypatch, tmp_path, 
         gen._preprocess_request(req)
 
     msg = str(exc_info.value)
-    assert msg.startswith("Failed to process image"), (
-        f"route matcher would miss this message: {msg!r}"
-    )
+    assert msg.startswith(
+        "Failed to process image"
+    ), f"route matcher would miss this message: {msg!r}"
     assert "image too small" in msg
     assert f"{w}x{h}" in msg
 

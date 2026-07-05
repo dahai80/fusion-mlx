@@ -12,7 +12,7 @@ builder here so that downstream wiring only needs to verify that it
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -74,7 +74,7 @@ def _build_full() -> dict:
         hf_path="mlx-community/Qwen3.5-9B-4bit",
         bench=bench,
         notes="full-tier smoke",
-        now=datetime(2026, 6, 15, 10, 30, 0, tzinfo=timezone.utc),
+        now=datetime(2026, 6, 15, 10, 30, 0, tzinfo=UTC),
         tier="all",
         smoke_result=_SMOKE,
         harness_result=_HARNESS,
@@ -114,7 +114,7 @@ def test_tier_smoke_alone_validates() -> None:
         hf_path="mlx-community/Qwen3.5-9B-4bit",
         bench=bench,
         notes=None,
-        now=datetime(2026, 6, 15, tzinfo=timezone.utc),
+        now=datetime(2026, 6, 15, tzinfo=UTC),
         tier="smoke",
         smoke_result=_SMOKE,
     )
@@ -137,7 +137,7 @@ def test_tier_harness_alone_validates() -> None:
         hf_path="mlx-community/Qwen3.5-9B-4bit",
         bench=bench,
         notes=None,
-        now=datetime(2026, 6, 15, tzinfo=timezone.utc),
+        now=datetime(2026, 6, 15, tzinfo=UTC),
         tier="harness",
         harness_result=_HARNESS,
     )

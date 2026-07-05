@@ -188,9 +188,7 @@ class BlockAwarePrefixCache(CacheManager):
                 if callable(sweep_fn):
                     sweep_fn()
             except Exception as e:
-                logger.warning(
-                    "SSD stale-signature sweep failed during attach: %s", e
-                )
+                logger.warning("SSD stale-signature sweep failed during attach: %s", e)
 
     def _forget_incompatible_ssd_block(self, block_hash: bytes | None) -> None:
         """Clear local SSD indexes for a mismatched block without deleting
@@ -979,9 +977,7 @@ class BlockAwarePrefixCache(CacheManager):
                                 self._clone_tensor(e) if hasattr(e, "shape") else e
                                 for e in elements
                             ]
-                            block_slices.append(
-                                ("__nstate__", cache_type_name, cloned)
-                            )
+                            block_slices.append(("__nstate__", cache_type_name, cloned))
                         continue
 
                     keys, values = state
@@ -1209,9 +1205,7 @@ class BlockAwarePrefixCache(CacheManager):
                                 )
                                 for elem in state
                             ]
-                            block_slices.append(
-                                ("__nstate__", cache_type_name, cloned)
-                            )
+                            block_slices.append(("__nstate__", cache_type_name, cloned))
                         elif isinstance(state, (list, tuple)) and len(state) >= 2:
                             conv_state = (
                                 state[0] if state[0] is not None else mx.array([])
@@ -1333,7 +1327,9 @@ class BlockAwarePrefixCache(CacheManager):
             try:
                 return tensor.copy()
             except Exception:
-                logger.debug("swallowed exception at fusion_mlx/cache/prefix_cache.py:1243")
+                logger.debug(
+                    "swallowed exception at fusion_mlx/cache/prefix_cache.py:1243"
+                )
 
                 pass
 
@@ -1644,9 +1640,7 @@ class BlockAwarePrefixCache(CacheManager):
 
                 # Extract type info from block metadata
                 if block_metadata:
-                    block_layer_cache_types = block_metadata.get(
-                        "layer_cache_types"
-                    )
+                    block_layer_cache_types = block_metadata.get("layer_cache_types")
 
                     if layer_cache_types is None:
                         layer_cache_types = block_layer_cache_types
@@ -1661,15 +1655,11 @@ class BlockAwarePrefixCache(CacheManager):
                                 None,
                             )
                             if isinstance(expected_types, (list, tuple)):
-                                canonical_block = (
-                                    self._canonical_layer_cache_types(
-                                        layer_cache_types
-                                    )
+                                canonical_block = self._canonical_layer_cache_types(
+                                    layer_cache_types
                                 )
-                                canonical_expected = (
-                                    self._canonical_layer_cache_types(
-                                        expected_types
-                                    )
+                                canonical_expected = self._canonical_layer_cache_types(
+                                    expected_types
                                 )
                                 if canonical_block != canonical_expected:
                                     logger.warning(
@@ -1690,10 +1680,8 @@ class BlockAwarePrefixCache(CacheManager):
                         canonical_first = self._canonical_layer_cache_types(
                             layer_cache_types
                         )
-                        canonical_current = (
-                            self._canonical_layer_cache_types(
-                                block_layer_cache_types
-                            )
+                        canonical_current = self._canonical_layer_cache_types(
+                            block_layer_cache_types
                         )
                         if canonical_first != canonical_current:
                             logger.info(
@@ -1702,9 +1690,7 @@ class BlockAwarePrefixCache(CacheManager):
                                 f"vs first block {layer_cache_types}. "
                                 f"Truncating at block {valid_block_count}."
                             )
-                            self._forget_incompatible_ssd_block(
-                                block.block_hash
-                            )
+                            self._forget_incompatible_ssd_block(block.block_hash)
                             self.paged_cache.cached_block_hash_to_block.pop(
                                 block.block_hash, block.block_id
                             )
@@ -1884,9 +1870,7 @@ class BlockAwarePrefixCache(CacheManager):
                     if (
                         last_block_meta_states
                         and layer_idx < len(last_block_meta_states)
-                        and isinstance(
-                            last_block_meta_states[layer_idx], (list, tuple)
-                        )
+                        and isinstance(last_block_meta_states[layer_idx], (list, tuple))
                         and len(last_block_meta_states[layer_idx]) >= 1
                         and isinstance(
                             last_block_meta_states[layer_idx][0], (list, tuple)
@@ -1986,9 +1970,7 @@ class BlockAwarePrefixCache(CacheManager):
                         adjusted_sub_metas = []
                         for j in range(num_sub_caches):
                             orig_sub_meta = (
-                                meta_state[1][j]
-                                if j < len(meta_state[1])
-                                else ""
+                                meta_state[1][j] if j < len(meta_state[1]) else ""
                             )
                             sub_class = (
                                 sub_class_names_for_layer[j]
@@ -2113,9 +2095,7 @@ class BlockAwarePrefixCache(CacheManager):
                         ):
                             _is_nstate = True
                             axis_info = handler.get_state_axis_info()
-                            _nstate_axis_names = [
-                                a.name for a in axis_info
-                            ]
+                            _nstate_axis_names = [a.name for a in axis_info]
                         break
 
                 layer_states = []
@@ -2139,7 +2119,10 @@ class BlockAwarePrefixCache(CacheManager):
                                 for i in range(min(2, len(elements)))
                             ):
                                 layer_states.append(state_dict)
-                        elif isinstance(layer_entry, (list, tuple)) and len(layer_entry) >= 2:
+                        elif (
+                            isinstance(layer_entry, (list, tuple))
+                            and len(layer_entry) >= 2
+                        ):
                             keys_slice, values_slice = layer_entry[0], layer_entry[1]
                             if keys_slice is not None and values_slice is not None:
                                 layer_states.append(
@@ -2209,9 +2192,7 @@ class BlockAwarePrefixCache(CacheManager):
                         nstate_elements = latest.get("states")
                         if nstate_elements is not None:
                             latest_state = dict(latest)
-                            cache = handler.reconstruct_cache(
-                                latest_state, meta_state
-                            )
+                            cache = handler.reconstruct_cache(latest_state, meta_state)
                         else:
                             logger.debug(
                                 f"N-tuple layer {layer_idx}: no states in "
@@ -2542,10 +2523,7 @@ class BlockAwarePrefixCache(CacheManager):
                         return False
                     # Check seq_len on first element (keys)
                     first_elem = elements[0] if elements else None
-                    if (
-                        hasattr(first_elem, "shape")
-                        and len(first_elem.shape) >= 3
-                    ):
+                    if hasattr(first_elem, "shape") and len(first_elem.shape) >= 3:
                         seq_len = first_elem.shape[2]
                         if expected_seq_len is None:
                             expected_seq_len = seq_len
@@ -2570,10 +2548,7 @@ class BlockAwarePrefixCache(CacheManager):
                     if cache_type in non_sliceable_types:
                         continue
                     first_elem = layer_data[0]
-                    if (
-                        hasattr(first_elem, "shape")
-                        and len(first_elem.shape) >= 3
-                    ):
+                    if hasattr(first_elem, "shape") and len(first_elem.shape) >= 3:
                         seq_len = first_elem.shape[2]
                         if expected_seq_len is None:
                             expected_seq_len = seq_len

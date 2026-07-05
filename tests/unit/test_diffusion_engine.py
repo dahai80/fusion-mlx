@@ -902,9 +902,9 @@ class TestStopSequenceHandling:
         _time.sleep(0.3)
         n_settled = consumed["n"]
         _time.sleep(0.5)
-        assert consumed["n"] == n_settled, (
-            f"Worker still iterating after cancel: {n_settled} → {consumed['n']}"
-        )
+        assert (
+            consumed["n"] == n_settled
+        ), f"Worker still iterating after cancel: {n_settled} → {consumed['n']}"
 
 
 class TestTerminationEdgeCases:
@@ -1256,9 +1256,9 @@ class TestConcurrentRequests:
         # All five wire marker ids are dropped (so detokenizer
         # surfaces them and the parser can extract tool_calls).
         for sid in marker_ids:
-            assert sid not in skip_ids, (
-                f"marker id {sid} ({marker_ids[sid]!r}) was not carved out"
-            )
+            assert (
+                sid not in skip_ids
+            ), f"marker id {sid} ({marker_ids[sid]!r}) was not carved out"
 
     def test_build_skip_special_token_ids_keeps_markers_without_request_tools(
         self, monkeypatch: pytest.MonkeyPatch
@@ -1834,9 +1834,9 @@ class TestConcurrentRequests:
 
         err = captured.get("err")
         assert err is not None, "request completed without raising"
-        assert isinstance(err, BackpressureError), (
-            f"expected BackpressureError, got {type(err).__name__}: {err}"
-        )
+        assert isinstance(
+            err, BackpressureError
+        ), f"expected BackpressureError, got {type(err).__name__}: {err}"
         assert "unhealthy" in str(err).lower()
 
     @pytest.mark.asyncio
@@ -1918,9 +1918,9 @@ class TestConcurrentRequests:
                 done_event,
             )
         )
-        assert done_event.wait(5.0), (
-            "worker should drain the pre-cancelled job within seconds"
-        )
+        assert done_event.wait(
+            5.0
+        ), "worker should drain the pre-cancelled job within seconds"
         assert engine._worker_stuck is False, (
             "worker-stuck flag must self-clear after a successful drain "
             "(issue #644 regression — engine was previously stuck until "
@@ -2709,9 +2709,9 @@ class TestTokenIdZeroNotSwallowed:
         non_finish = [o for o in outs if not o.finished]
         assert len(non_finish) == 2, outs
         # First block records 42 (sanity check on the priming step).
-        assert non_finish[0].tokens == [42], (
-            f"first block: expected tokens=[42]; got {non_finish[0].tokens}"
-        )
+        assert non_finish[0].tokens == [
+            42
+        ], f"first block: expected tokens=[42]; got {non_finish[0].tokens}"
         # Second block MUST record 0 verbatim — if the
         # ``or last_token`` regression returned, this would be [42].
         assert non_finish[1].tokens == [0], (
@@ -2999,9 +2999,9 @@ class TestChannelHeaderStrip:
             outs.append(out)
         # First emitted block had its ``thought\n`` prefix stripped.
         first_text = outs[0].new_text
-        assert not first_text.startswith("thought\n"), (
-            f"first block still leaks ``thought\\n`` prefix: {first_text!r}"
-        )
+        assert not first_text.startswith(
+            "thought\n"
+        ), f"first block still leaks ``thought\\n`` prefix: {first_text!r}"
         assert first_text.startswith("**Reasoning:**"), (
             f"strip removed too much; expected ``**Reasoning:**`` prefix, "
             f"got {first_text!r}"
@@ -3036,9 +3036,9 @@ class TestChannelHeaderStrip:
         ):
             outs.append(out)
         first_text = outs[0].new_text
-        assert first_text.startswith("The capital of France is Paris."), (
-            f"``final\\n`` prefix not stripped: {first_text!r}"
-        )
+        assert first_text.startswith(
+            "The capital of France is Paris."
+        ), f"``final\\n`` prefix not stripped: {first_text!r}"
 
     @pytest.mark.asyncio
     async def test_engine_does_not_strip_thought_from_second_block(
@@ -3074,9 +3074,9 @@ class TestChannelHeaderStrip:
         # because the leading-strip already fired on block 1.
         non_finish = [o for o in outs if not o.finished and o.new_text]
         assert len(non_finish) >= 2
-        assert "thought\nThis is a continuation" in non_finish[1].new_text, (
-            f"second block was wrongly stripped: {non_finish[1].new_text!r}"
-        )
+        assert (
+            "thought\nThis is a continuation" in non_finish[1].new_text
+        ), f"second block was wrongly stripped: {non_finish[1].new_text!r}"
 
     @pytest.mark.asyncio
     async def test_engine_strips_channel_header_on_short_response(
@@ -3102,9 +3102,9 @@ class TestChannelHeaderStrip:
         # The trailing-finish path emits the buffered text as a single
         # terminal chunk; verify the strip applied there too.
         combined = "".join(o.new_text for o in outs)
-        assert "thought\n" not in combined, (
-            f"channel header not stripped on trailing-finish path: {combined!r}"
-        )
+        assert (
+            "thought\n" not in combined
+        ), f"channel header not stripped on trailing-finish path: {combined!r}"
         assert "Yes." in combined
 
 

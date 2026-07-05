@@ -51,9 +51,7 @@ class TestPromptCacheSnapshot:
         pass
 
 
-@pytest.mark.skip(
-    reason="fusion-mlx Scheduler lacks _snapshot_boundary_segments"
-)
+@pytest.mark.skip(reason="fusion-mlx Scheduler lacks _snapshot_boundary_segments")
 class TestBoundarySnapshot:
     def test_snapshot_stores_at_prefix_boundary(self):
         pass

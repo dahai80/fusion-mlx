@@ -2,15 +2,14 @@
 
 from __future__ import annotations
 
-from functools import lru_cache
-from typing import Optional
+from functools import cache
 
 import mlx.core as mx
 
 from .kernels import fast as glm_fast
 
 
-@lru_cache(maxsize=None)
+@cache
 def _make_topk_indices_to_block_masks_kernel():
     if not mx.metal.is_available():
         return None
@@ -98,15 +97,15 @@ def _make_topk_indices_to_block_masks_kernel():
 def topk_indices_to_block_masks(
     topk_indices: mx.array,
     *,
-    L: Optional[int] = None,
+    L: int | None = None,
     K: int,
     q_block_size: int = 32,
     k_block_size: int = 16,
     causal: bool = True,
     causal_prefix_indices: bool = False,
     causal_prefix_rows: int = 0,
-    stream: Optional[mx.Stream] = None,
-) -> Optional[tuple[mx.array, mx.array]]:
+    stream: mx.Stream | None = None,
+) -> tuple[mx.array, mx.array] | None:
     """Build exact block and per-token masks for GLM DSA top-k attention."""
 
     if (
@@ -126,7 +125,7 @@ def topk_indices_to_block_masks(
         and causal_prefix_rows > 0
         and L_in == L - causal_prefix_rows
     )
-    if (L != L_in and not compact_prefix_topk) or K <= 0 or topk <= 0:
+    if (L_in != L and not compact_prefix_topk) or K <= 0 or topk <= 0:
         return None
 
     q_blocks = (L + q_block_size - 1) // q_block_size
@@ -177,8 +176,8 @@ def exact_block_token_attention(
     k_block_size: int = 8,
     causal_prefix_indices: bool = False,
     causal_prefix_rows: int = 0,
-    stream: Optional[mx.Stream] = None,
-) -> Optional[mx.array]:
+    stream: mx.Stream | None = None,
+) -> mx.array | None:
     """Run fork-default exact block-token SDPA when the native op is available."""
 
     if (
@@ -224,7 +223,7 @@ def exact_block_token_attention(
         return None
 
 
-@lru_cache(maxsize=None)
+@cache
 def _make_index_score_reduce_kernel():
     if not mx.metal.is_available():
         return None
@@ -270,8 +269,8 @@ def fused_index_score_reduce(
     weights: mx.array,
     *,
     causal: bool = False,
-    stream: Optional[mx.Stream] = None,
-) -> Optional[mx.array]:
+    stream: mx.Stream | None = None,
+) -> mx.array | None:
     """Fuse ReLU, per-head weighting, causal fill, and head reduction."""
 
     kernel = _make_index_score_reduce_kernel()
@@ -289,7 +288,7 @@ def fused_index_score_reduce(
     long_k_threshold = 32768
     long_k_threadgroup = 256
     threadgroup_size = (
-        long_k_threadgroup if K > long_k_threshold else short_k_threadgroup
+        long_k_threadgroup if long_k_threshold < K else short_k_threadgroup
     )
     return kernel(
         inputs=[head_scores, weights],
@@ -318,8 +317,8 @@ def fused_indexer_scores(
     unused_causal_prefix_topk: int = 0,
     skip_causal_future_store: bool = False,
     causal_q_offset: int = -1,
-    stream: Optional[mx.Stream] = None,
-) -> Optional[mx.array]:
+    stream: mx.Stream | None = None,
+) -> mx.array | None:
     """Compute GLM DSA indexer logits without materializing per-head scores.
 
     This is the MLX equivalent of the vLLM/SGLang MQA-logits indexer path:
@@ -391,10 +390,10 @@ def sparse_mla_attention(
     *,
     topk_valid_prefix: bool = False,
     causal_prefix_indices: bool = False,
-    topk_length: Optional[mx.array] = None,
+    topk_length: mx.array | None = None,
     causal_prefix_rows: int = 0,
-    stream: Optional[mx.Stream] = None,
-) -> Optional[mx.array]:
+    stream: mx.Stream | None = None,
+) -> mx.array | None:
     """Sparse MLA prefill over per-query DSA top-k indices.
 
     This mirrors the FlashMLA sparse prefill contract used by vLLM/SGLang:
@@ -482,9 +481,9 @@ def q8_vup_flat(
     x: mx.array,
     unembed_out,
     *,
-    key_length: Optional[int] = None,
-    stream: Optional[mx.Stream] = None,
-) -> Optional[mx.array]:
+    key_length: int | None = None,
+    stream: mx.Stream | None = None,
+) -> mx.array | None:
     """Project GLM sparse MLA latent output directly to [B, L, H * 256]."""
 
     if key_length is None or key_length < 32768 or key_length > 65536:

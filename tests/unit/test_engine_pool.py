@@ -4,7 +4,6 @@
 import asyncio
 import json
 import logging
-from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -13,7 +12,6 @@ from fusion_mlx.engine_pool import EngineEntry, EnginePool
 from fusion_mlx.exceptions import (
     InsufficientMemoryError,
     ModelBusyError,
-    ModelLoadingError,
     ModelNotFoundError,
     ModelTooLargeError,
 )
@@ -1041,6 +1039,7 @@ class TestEnginePoolAsync:
     async def test_apply_embedding_batch_size_updates_loaded_embedding_engines(self):
         """Runtime setting changes should update pool config and loaded embedding engines."""
         from fusion_mlx.engine.embedding import EmbeddingEngine
+
         from fusion_mlx.scheduler import SchedulerConfig
 
         engine = EmbeddingEngine("embed-model", batch_size=8)

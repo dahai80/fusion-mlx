@@ -58,15 +58,27 @@ def extract_images_from_messages(
 
         text_parts = []
         for part in content:
-            part_type = part.get("type", "") if isinstance(part, dict) else getattr(part, "type", "")
+            part_type = (
+                part.get("type", "")
+                if isinstance(part, dict)
+                else getattr(part, "type", "")
+            )
 
             if part_type == "text":
-                text = part.get("text", "") if isinstance(part, dict) else getattr(part, "text", "")
+                text = (
+                    part.get("text", "")
+                    if isinstance(part, dict)
+                    else getattr(part, "text", "")
+                )
                 if text:
                     text_parts.append(text)
 
             elif part_type in ("image_url", "input_image"):
-                image_url_obj = part.get("image_url") if isinstance(part, dict) else getattr(part, "image_url", None)
+                image_url_obj = (
+                    part.get("image_url")
+                    if isinstance(part, dict)
+                    else getattr(part, "image_url", None)
+                )
                 if image_url_obj is None and isinstance(part, dict):
                     image_url_obj = part.get("input_image")
 
@@ -85,7 +97,11 @@ def extract_images_from_messages(
                         logger.warning(f"Failed to load image: {e}")
 
             elif part_type == "input_audio":
-                input_audio = part.get("input_audio") if isinstance(part, dict) else getattr(part, "input_audio", None)
+                input_audio = (
+                    part.get("input_audio")
+                    if isinstance(part, dict)
+                    else getattr(part, "input_audio", None)
+                )
                 if input_audio and isinstance(input_audio, dict):
                     data = input_audio.get("data", "")
                     if isinstance(data, str):
@@ -94,12 +110,20 @@ def extract_images_from_messages(
                             prefix, separator, encoded = stripped.partition(",")
                             if separator == "," and ";base64" in prefix:
                                 try:
-                                    audio.append(io.BytesIO(base64.b64decode(encoded, validate=True)))
+                                    audio.append(
+                                        io.BytesIO(
+                                            base64.b64decode(encoded, validate=True)
+                                        )
+                                    )
                                 except (binascii.Error, ValueError) as exc:
-                                    logger.warning(f"Failed to decode input_audio base64: {exc}")
+                                    logger.warning(
+                                        f"Failed to decode input_audio base64: {exc}"
+                                    )
                                 continue
                         try:
-                            audio.append(io.BytesIO(base64.b64decode(stripped, validate=True)))
+                            audio.append(
+                                io.BytesIO(base64.b64decode(stripped, validate=True))
+                            )
                         except (binascii.Error, ValueError):
                             audio.append(stripped)
                     elif isinstance(data, bytes):

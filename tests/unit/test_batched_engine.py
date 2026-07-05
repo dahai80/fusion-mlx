@@ -13,10 +13,9 @@ Tests cover:
 Note: mlx_lm.load() is mocked to avoid loading real models.
 """
 
-from abc import ABC
 from types import SimpleNamespace
-from typing import Any, Dict, List, Optional
-from unittest.mock import MagicMock, patch, AsyncMock
+from typing import Any
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -161,7 +160,7 @@ class TestBaseEngine:
                 max_tokens: int = 256,
                 temperature: float = 0.7,
                 top_p: float = 0.9,
-                stop: Optional[List[str]] = None,
+                stop: list[str] | None = None,
                 **kwargs,
             ) -> GenerationOutput:
                 return GenerationOutput(text="test")
@@ -172,41 +171,41 @@ class TestBaseEngine:
                 max_tokens: int = 256,
                 temperature: float = 0.7,
                 top_p: float = 0.9,
-                stop: Optional[List[str]] = None,
+                stop: list[str] | None = None,
                 **kwargs,
             ):
                 yield GenerationOutput(text="test")
 
             async def chat(
                 self,
-                messages: List[Dict[str, Any]],
+                messages: list[dict[str, Any]],
                 max_tokens: int = 256,
                 temperature: float = 0.7,
                 top_p: float = 0.9,
-                tools: Optional[List[dict]] = None,
+                tools: list[dict] | None = None,
                 **kwargs,
             ) -> GenerationOutput:
                 return GenerationOutput(text="test")
 
             async def stream_chat(
                 self,
-                messages: List[Dict[str, Any]],
+                messages: list[dict[str, Any]],
                 max_tokens: int = 256,
                 temperature: float = 0.7,
                 top_p: float = 0.9,
-                tools: Optional[List[dict]] = None,
+                tools: list[dict] | None = None,
                 **kwargs,
             ):
                 yield GenerationOutput(text="test")
 
             @property
-            def model_type(self) -> Optional[str]:
+            def model_type(self) -> str | None:
                 return "test"
 
-            def get_stats(self) -> Dict[str, Any]:
+            def get_stats(self) -> dict[str, Any]:
                 return {}
 
-            def get_cache_stats(self) -> Optional[Dict[str, Any]]:
+            def get_cache_stats(self) -> dict[str, Any] | None:
                 return None
 
         engine = ConcreteEngine()

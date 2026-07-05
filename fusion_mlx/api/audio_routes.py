@@ -264,11 +264,18 @@ async def _stream_speech_response(
         ):
             logger.info(
                 "TTS native streaming start: model=%s, text_len=%d, voice=%s",
-                request.model, len(request.input), request.voice,
+                request.model,
+                len(request.input),
+                request.voice,
             )
             stream_format: tuple[int, int, int] | None = None
             try:
-                async for sample_rate, channels, sample_width, pcm_bytes in engine.stream_synthesize_pcm(
+                async for (
+                    sample_rate,
+                    channels,
+                    sample_width,
+                    pcm_bytes,
+                ) in engine.stream_synthesize_pcm(
                     request.input,
                     voice=request.voice,
                     speed=request.speed,
@@ -311,7 +318,10 @@ async def _stream_speech_response(
         segments = _split_tts_text(request.input)
         logger.info(
             "TTS streaming start: model=%s, text_len=%d, segments=%d, voice=%s",
-            request.model, len(request.input), len(segments), request.voice,
+            request.model,
+            len(request.input),
+            len(segments),
+            request.voice,
         )
 
         stream_format: tuple[int, int, int] | None = None
@@ -329,11 +339,17 @@ async def _stream_speech_response(
                 repetition_penalty=request.repetition_penalty,
                 max_tokens=request.max_tokens,
             )
-            sample_rate, channels, sample_width, pcm_bytes = wav_bytes_to_pcm_frames(wav_bytes)
+            sample_rate, channels, sample_width, pcm_bytes = wav_bytes_to_pcm_frames(
+                wav_bytes
+            )
             fmt = (sample_rate, channels, sample_width)
             if stream_format is None:
                 stream_format = fmt
-                yield wav_header(sample_rate=sample_rate, channels=channels, sample_width=sample_width)
+                yield wav_header(
+                    sample_rate=sample_rate,
+                    channels=channels,
+                    sample_width=sample_width,
+                )
             elif fmt != stream_format:
                 raise RuntimeError(
                     "Inconsistent WAV format across TTS segments: "
@@ -341,7 +357,10 @@ async def _stream_speech_response(
                 )
             logger.debug(
                 "TTS streaming segment %d/%d: text_len=%d, pcm_bytes=%d",
-                idx, len(segments), len(segment), len(pcm_bytes),
+                idx,
+                len(segments),
+                len(segment),
+                len(pcm_bytes),
             )
             if pcm_bytes:
                 yield pcm_bytes

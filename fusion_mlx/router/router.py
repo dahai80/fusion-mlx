@@ -66,15 +66,21 @@ class RequestRouter:
 
     def _is_sts_request(self, request_data: dict[str, Any]) -> bool:
         """Check if request is for speech-to-speech."""
-        return request_data.get("task") == "sts" or bool(request_data.get("audio_process"))
+        return request_data.get("task") == "sts" or bool(
+            request_data.get("audio_process")
+        )
 
     def _is_image_gen(self, request_data: dict[str, Any]) -> bool:
         """Check if request is for image generation."""
-        return request_data.get("task") == "image_gen" or request_data.get("generate_image")
+        return request_data.get("task") == "image_gen" or request_data.get(
+            "generate_image"
+        )
 
     def _is_embedding(self, request_data: dict[str, Any]) -> bool:
         """Check if request is for embedding."""
-        return request_data.get("task") == "embedding" or bool(request_data.get("embed"))
+        return request_data.get("task") == "embedding" or bool(
+            request_data.get("embed")
+        )
 
     def _is_rerank(self, request_data: dict[str, Any]) -> bool:
         """Check if request is for reranking."""
@@ -103,7 +109,9 @@ class RequestRouter:
         if self._has_images(messages):
             if self.vlm_engine:
                 return (self.vlm_engine, "vlm")
-            logger.warning("VLM requested but no VLM engine available, falling back to LLM")
+            logger.warning(
+                "VLM requested but no VLM engine available, falling back to LLM"
+            )
         if self.llm_engine:
             return (self.llm_engine, "llm")
 
@@ -124,12 +132,16 @@ class RequestRouter:
             and etype == "llm"
             and getattr(engine, "prefix_cache_enabled", False)
         ):
-            new_tokens = getattr(engine, "count_chat_tokens", lambda m, **_: 0)(messages)
+            new_tokens = getattr(engine, "count_chat_tokens", lambda m, **_: 0)(
+                messages
+            )
             if self.cloud_router.should_route_to_cloud(new_tokens):
-                logger.info(f"Routing {new_tokens}-token request to cloud ({self.cloud_router.cloud_model})")
+                logger.info(
+                    f"Routing {new_tokens}-token request to cloud ({self.cloud_router.cloud_model})"
+                )
                 return await self.cloud_router.completion(messages, **kwargs)
 
-         # Execute local inference with circuit breaker tracking
+        # Execute local inference with circuit breaker tracking
         try:
             result = await engine.chat(messages, **kwargs)
             if self.cloud_router:
@@ -155,7 +167,9 @@ class RequestRouter:
             and etype == "llm"
             and getattr(engine, "prefix_cache_enabled", False)
         ):
-            new_tokens = getattr(engine, "count_chat_tokens", lambda m, **_: 0)(messages)
+            new_tokens = getattr(engine, "count_chat_tokens", lambda m, **_: 0)(
+                messages
+            )
             if self.cloud_router.should_route_to_cloud(new_tokens):
                 logger.info(
                     f"Routing streaming {new_tokens}-token request to cloud "

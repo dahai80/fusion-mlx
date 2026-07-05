@@ -75,6 +75,7 @@ class TestExtractSessionToken:
 
 class _MockRequest(FastAPIRequest):
     """Minimal Request subclass that passes isinstance check without ASGI setup."""
+
     def __init__(self, token=None, auth_header=""):
         self.scope = {}
         self._cookies = MagicMock()
@@ -111,6 +112,7 @@ class TestRequireAdmin:
         set_api_key("Test1234key")
         mock_req = _MockRequest()
         from fastapi import HTTPException
+
         try:
             self.asyncio.run(require_admin(mock_req))
             assert False, "Should have raised"

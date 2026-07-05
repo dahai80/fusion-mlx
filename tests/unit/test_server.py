@@ -16,14 +16,14 @@ from fusion_mlx.server import (
     ServerState,
     _format_generation_speed_for_log,
     _reject_diffusion_structured_outputs,
-    _resolve_metric_durations,
     _reset_boundary_snapshots_for_server,
+    _resolve_metric_durations,
     app,
     get_engine,
     get_max_context_window,
     get_sampling_params,
 )
-from fusion_mlx.settings import GlobalSettings, ModelSettings as GlobalModelSettings
+from fusion_mlx.settings import GlobalSettings
 
 
 class TestBoundarySnapshotLifecycle:

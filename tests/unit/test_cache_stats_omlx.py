@@ -1,7 +1,9 @@
 # SPDX-License-Identifier: Apache-2.0
 import logging
+
 import pytest
 
+from fusion_mlx.cache.interface import CacheManager
 from fusion_mlx.cache.stats import (
     BaseCacheStats,
     PagedCacheStats,
@@ -9,7 +11,6 @@ from fusion_mlx.cache.stats import (
     PrefixCacheStats,
     VLMCacheStats,
 )
-from fusion_mlx.cache.interface import CacheManager
 
 logger = logging.getLogger(__name__)
 
@@ -118,8 +119,12 @@ class TestPagedCacheStats:
 
     def test_reset(self):
         stats = PagedCacheStats(
-            hits=100, misses=50, evictions=10,
-            total_blocks=1000, allocated_blocks=500, cow_copies=20,
+            hits=100,
+            misses=50,
+            evictions=10,
+            total_blocks=1000,
+            allocated_blocks=500,
+            cow_copies=20,
         )
         stats.reset()
         assert stats.hits == 0
@@ -163,8 +168,11 @@ class TestPagedSSDCacheStats:
 
     def test_with_values(self):
         stats = PagedSSDCacheStats(
-            saves=100, loads=50, errors=5,
-            total_size_bytes=1024 * 1024 * 100, num_files=150,
+            saves=100,
+            loads=50,
+            errors=5,
+            total_size_bytes=1024 * 1024 * 100,
+            num_files=150,
         )
         assert stats.saves == 100
         assert stats.loads == 50
@@ -196,8 +204,13 @@ class TestPagedSSDCacheStats:
 
     def test_reset(self):
         stats = PagedSSDCacheStats(
-            hits=100, misses=50, saves=80, loads=70, errors=5,
-            total_size_bytes=1024 * 1024, num_files=100,
+            hits=100,
+            misses=50,
+            saves=80,
+            loads=70,
+            errors=5,
+            total_size_bytes=1024 * 1024,
+            num_files=100,
         )
         stats.reset()
         assert stats.hits == 0
@@ -219,19 +232,26 @@ class TestCacheManagerInterface:
             def __init__(self, size, max_size):
                 self._size = size
                 self._max_size = max_size
+
             def fetch(self, key):
                 return None, False
+
             def store(self, key, value):
                 return True
+
             def evict(self, key):
                 return True
+
             def clear(self):
                 return 0
+
             def get_stats(self):
                 return BaseCacheStats()
+
             @property
             def size(self):
                 return self._size
+
             @property
             def max_size(self):
                 return self._max_size
@@ -266,7 +286,9 @@ class TestStatsIntegration:
         assert stats.hit_rate == pytest.approx(2 / 3)
 
     def test_paged_cache_block_tracking(self):
-        stats = PagedCacheStats(total_blocks=1000, allocated_blocks=100, free_blocks=900)
+        stats = PagedCacheStats(
+            total_blocks=1000, allocated_blocks=100, free_blocks=900
+        )
         stats.allocated_blocks += 50
         stats.free_blocks -= 50
         assert stats.allocated_blocks == 150

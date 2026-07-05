@@ -9,6 +9,7 @@ import logging
 
 try:
     import mlx.core as mx
+
     HAS_MLX = True
 except ImportError:
     HAS_MLX = False
@@ -16,6 +17,8 @@ except ImportError:
 from fusion_mlx.utils.hardware import (
     HardwareInfo,
     detect_hardware,
+)
+from fusion_mlx.utils.hardware import (
     get_total_memory_gb as get_system_memory_gb,
 )
 
@@ -46,7 +49,9 @@ def get_optimization_status() -> dict:
     if HAS_MLX:
         try:
             device_info = mx.device_info()
-            result["hardware"]["device_name"] = device_info.get("device_name", "Unknown")
+            result["hardware"]["device_name"] = device_info.get(
+                "device_name", "Unknown"
+            )
             result["mlx_memory"] = {
                 "active_bytes": mx.get_active_memory(),
                 "cache_bytes": mx.get_cache_memory(),

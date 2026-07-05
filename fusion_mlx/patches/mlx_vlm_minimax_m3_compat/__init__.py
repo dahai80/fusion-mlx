@@ -115,9 +115,7 @@ def _patch_get_model_and_args(vlm_utils: Any) -> None:
         return
 
     def patched_get_model_and_args(config: dict):
-        raw_model_type = (
-            config.get("model_type") if isinstance(config, dict) else None
-        )
+        raw_model_type = config.get("model_type") if isinstance(config, dict) else None
         if raw_model_type == "minimax_m3_vl":
             module, model_type = original(config)
             if model_type != "minimax_m3_vl":
@@ -171,8 +169,7 @@ def _patch_process_inputs(vlm_utils: Any) -> None:
         process_method = getattr(processor, "process", processor)
         parameters = inspect.signature(process_method).parameters
         accepts_kwargs = any(
-            param.kind == inspect.Parameter.VAR_KEYWORD
-            for param in parameters.values()
+            param.kind == inspect.Parameter.VAR_KEYWORD for param in parameters.values()
         )
 
         args = {
@@ -213,7 +210,9 @@ def _patch_process_inputs(vlm_utils: Any) -> None:
 
 def _patch_stopping_criteria(vlm_utils: Any) -> None:
     original_cls = getattr(vlm_utils, "StoppingCriteria", None)
-    if original_cls is None or getattr(original_cls, "_fusion_mlx_minimax_m3_compat", False):
+    if original_cls is None or getattr(
+        original_cls, "_fusion_mlx_minimax_m3_compat", False
+    ):
         return
 
     class PatchedStoppingCriteria(original_cls):
@@ -341,7 +340,9 @@ def _patch_nn_quantize_for_ignored_layers() -> None:
 
 
 def _is_ignored_layer(path: str, ignored_layers: tuple[str, ...]) -> bool:
-    return any(path == layer or path.startswith(f"{layer}.") for layer in ignored_layers)
+    return any(
+        path == layer or path.startswith(f"{layer}.") for layer in ignored_layers
+    )
 
 
 @contextlib.contextmanager

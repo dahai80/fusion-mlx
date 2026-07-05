@@ -1,7 +1,7 @@
-import pytest
 import gc
-import weakref
 from unittest.mock import MagicMock
+
+import pytest
 
 from fusion_mlx.model_registry import (
     ModelOwnershipError,

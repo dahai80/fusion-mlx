@@ -35,9 +35,8 @@ class _FastDispatch:
         return sorted(names)
 
     def has(self, name: str) -> bool:
-        return (
-            (_native_fast is not None and _native_fast.has_symbol(name))
-            or hasattr(mx.fast, name)
+        return (_native_fast is not None and _native_fast.has_symbol(name)) or hasattr(
+            mx.fast, name
         )
 
     def missing(self, required: tuple[str, ...]) -> list[str]:

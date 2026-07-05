@@ -11,8 +11,6 @@ The scheduler follows vLLM's design with:
 - Continuous batching via BatchGenerator
 """
 
-
-
 from .helpers import (
     _deferred_clear_delay,
 )
@@ -27,6 +25,7 @@ try:
         OutputParserSession,
         detect_output_parser,
     )
+
     HAS_OUTPUT_PARSER = True
 except ImportError:
     OutputParserFactory = None
@@ -109,6 +108,7 @@ from .sched_vlm_mtp import *  # noqa: F403
 
 class Scheduler:
     """Orchestrator — delegates to split modules."""
+
     _PREFILL_STEP_TIERS: tuple[int, ...] = (1024, 512, 256, 128)
     _ROTATING_BLOCK_SIZE_MIN: int = 512
     _ROTATING_BLOCK_SIZE_MAX: int = 1024
@@ -252,6 +252,7 @@ class Scheduler:
     def import_kv_state(self, *args, **kwargs):
         return import_kv_state(self, *args, **kwargs)
 
+
 # Bind the __init__ from sched_init.py as the Scheduler constructor
 Scheduler.__init__ = __init__
 
@@ -261,10 +262,21 @@ import inspect as _inspect
 import sys as _sys
 
 _sched_mod_names = (
-    "sched_admission", "sched_batch", "sched_boundary", "sched_cache",
-    "sched_init", "sched_misc", "sched_query", "sched_response",
-    "sched_schedule", "sched_specprefill", "sched_step", "sched_thinking",
-    "sched_token", "sched_trim", "sched_vlm_mtp",
+    "sched_admission",
+    "sched_batch",
+    "sched_boundary",
+    "sched_cache",
+    "sched_init",
+    "sched_misc",
+    "sched_query",
+    "sched_response",
+    "sched_schedule",
+    "sched_specprefill",
+    "sched_step",
+    "sched_thinking",
+    "sched_token",
+    "sched_trim",
+    "sched_vlm_mtp",
 )
 for _mod_name in _sched_mod_names:
     _mod = _sys.modules.get(__name__.rsplit(".", 1)[0] + "." + _mod_name)

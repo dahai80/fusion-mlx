@@ -6,8 +6,6 @@ Adapted from Rapid-MLX. Tests depending on ``fusion_mlx.engine.batched``,
 skipped as those modules don't exist in fusion-mlx.
 """
 
-from unittest.mock import AsyncMock, MagicMock
-
 import pytest
 
 
@@ -33,12 +31,16 @@ class _StubSyncMllmScheduler:
         return self._returns
 
 
-@pytest.mark.skip(reason="rapid-mlx-only: fusion_mlx.engine.batched.BatchedEngine does not exist")
+@pytest.mark.skip(
+    reason="rapid-mlx-only: fusion_mlx.engine.batched.BatchedEngine does not exist"
+)
 class TestBatchedEngineAbortRouting:
     pass
 
 
-@pytest.mark.skip(reason="rapid-mlx-only: fusion_mlx.engine.base.BaseEngine has no abort_request")
+@pytest.mark.skip(
+    reason="rapid-mlx-only: fusion_mlx.engine.base.BaseEngine has no abort_request"
+)
 class TestBaseEngineDefaultAbort:
     pass
 

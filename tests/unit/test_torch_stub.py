@@ -53,6 +53,7 @@ def stub_module():
         importlib.reload(sys.modules["omlx._torch_stub"])
         return sys.modules["omlx._torch_stub"]
     import fusion_mlx._torch_stub as m
+
     return m
 
 
@@ -60,9 +61,7 @@ def test_install_returns_true_and_populates_sys_modules(stub_module):
     # Force "no real torch": remove any existing torch import.
     for k in _TOUCHED:
         sys.modules.pop(k, None)
-    with mock.patch(
-        "importlib.util.find_spec", side_effect=lambda name: None
-    ):
+    with mock.patch("importlib.util.find_spec", side_effect=lambda name: None):
         applied = stub_module.install()
     assert applied is True
     for k in _TOUCHED:
@@ -71,9 +70,22 @@ def test_install_returns_true_and_populates_sys_modules(stub_module):
     assert torch.__version__.endswith("+omlx-stub")
     # The dtype set xgrammar/tvm_ffi look up at import time.
     for dt in (
-        "int8", "int16", "int32", "int", "int64", "long", "uint8",
-        "float16", "half", "float32", "float", "float64", "double",
-        "bfloat16", "bool", "short",
+        "int8",
+        "int16",
+        "int32",
+        "int",
+        "int64",
+        "long",
+        "uint8",
+        "float16",
+        "half",
+        "float32",
+        "float",
+        "float64",
+        "double",
+        "bfloat16",
+        "bool",
+        "short",
     ):
         assert hasattr(torch, dt), f"torch.{dt} missing"
     # Tensor aliases that xgrammar's contrib/hf.py uses in annotations.
@@ -239,9 +251,7 @@ def test_install_sets_tvm_ffi_dlpack_env_var(stub_module):
         sys.modules.pop(k, None)
     os.environ.pop("TVM_FFI_DISABLE_TORCH_C_DLPACK", None)
     try:
-        with mock.patch(
-            "importlib.util.find_spec", side_effect=lambda name: None
-        ):
+        with mock.patch("importlib.util.find_spec", side_effect=lambda name: None):
             stub_module.install()
         assert os.environ.get("TVM_FFI_DISABLE_TORCH_C_DLPACK") == "1"
     finally:
@@ -265,9 +275,9 @@ def test_install_does_not_touch_env_var_when_real_torch_present(stub_module):
         ):
             result = stub_module.install()
         assert result is False
-        assert "TVM_FFI_DISABLE_TORCH_C_DLPACK" not in os.environ, (
-            "real-torch path must leave the env var alone"
-        )
+        assert (
+            "TVM_FFI_DISABLE_TORCH_C_DLPACK" not in os.environ
+        ), "real-torch path must leave the env var alone"
     finally:
         os.environ.pop("TVM_FFI_DISABLE_TORCH_C_DLPACK", None)
 
@@ -291,8 +301,7 @@ def test_missing_top_level_attribute_raises_attributeerror_and_logs(
         with pytest.raises(AttributeError, match="torch.compile"):
             torch.compile  # noqa: B018
     assert any(
-        "missing attribute: torch.compile" in rec.message
-        for rec in caplog.records
+        "missing attribute: torch.compile" in rec.message for rec in caplog.records
     ), caplog.records
     # ``hasattr`` must continue to return False (i.e. the AttributeError
     # path is reachable) — regression for replacing the raise with a
@@ -325,21 +334,19 @@ def test_known_probe_names_log_at_debug_not_warning(stub_module, caplog):
             torch.totally_unknown_attr  # noqa: B018
 
     dtype_records = [
-        rec for rec in caplog.records
-        if "torch.float8_e4m3fn" in rec.message
+        rec for rec in caplog.records if "torch.float8_e4m3fn" in rec.message
     ]
     unknown_records = [
-        rec for rec in caplog.records
-        if "torch.totally_unknown_attr" in rec.message
+        rec for rec in caplog.records if "torch.totally_unknown_attr" in rec.message
     ]
     assert dtype_records, "known-probe name should still log at DEBUG"
     assert unknown_records, "unknown name should still log"
-    assert all(rec.levelname == "DEBUG" for rec in dtype_records), (
-        f"known probe must log at DEBUG, got {[r.levelname for r in dtype_records]}"
-    )
-    assert all(rec.levelname == "WARNING" for rec in unknown_records), (
-        f"unknown attr must log at WARNING, got {[r.levelname for r in unknown_records]}"
-    )
+    assert all(
+        rec.levelname == "DEBUG" for rec in dtype_records
+    ), f"known probe must log at DEBUG, got {[r.levelname for r in dtype_records]}"
+    assert all(
+        rec.levelname == "WARNING" for rec in unknown_records
+    ), f"unknown attr must log at WARNING, got {[r.levelname for r in unknown_records]}"
 
 
 def test_stub_modules_have_real_spec_and_loader(stub_module):
@@ -365,9 +372,9 @@ def test_stub_modules_have_real_spec_and_loader(stub_module):
     ):
         mod = sys.modules[name]
         assert mod.__spec__ is not None, f"{name} missing __spec__"
-        assert isinstance(mod.__spec__, importlib.machinery.ModuleSpec), (
-            f"{name}.__spec__ wrong type: {type(mod.__spec__)}"
-        )
+        assert isinstance(
+            mod.__spec__, importlib.machinery.ModuleSpec
+        ), f"{name}.__spec__ wrong type: {type(mod.__spec__)}"
         assert mod.__spec__.name == name
 
 
@@ -404,9 +411,7 @@ def test_install_is_thread_safe(stub_module):
     def worker():
         try:
             barrier.wait(timeout=2.0)
-            with mock.patch(
-                "importlib.util.find_spec", side_effect=lambda name: None
-            ):
+            with mock.patch("importlib.util.find_spec", side_effect=lambda name: None):
                 results.append(stub_module.install())
         except Exception as e:
             errors.append(e)

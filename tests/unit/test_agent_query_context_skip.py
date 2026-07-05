@@ -102,9 +102,9 @@ def test_agent_query_detects_context_refusal_as_skip():
         out, err = _agent_query(
             "hermes", "hermes chat -q '{query}' -Q", "hi", timeout=10
         )
-    assert out is None, (
-        "On refusal, output must be suppressed so downstream tests route via err"
-    )
+    assert (
+        out is None
+    ), "On refusal, output must be suppressed so downstream tests route via err"
     assert err is not None
     assert err.startswith("SKIP:"), (
         f"Refusal must be propagated with a SKIP: prefix so _test_e2e_* "
@@ -114,9 +114,9 @@ def test_agent_query_detects_context_refusal_as_skip():
     # counts — must survive into the SKIP message (codex NIT #659).
     # Without them, the user has to dig in the server log to learn what
     # the harness wanted vs what the model offered.
-    assert "Qwen3.5-9B-4bit" in err, (
-        f"SKIP message must carry the model name; got err={err!r}"
-    )
+    assert (
+        "Qwen3.5-9B-4bit" in err
+    ), f"SKIP message must carry the model name; got err={err!r}"
     assert "32,768" in err and "64,000" in err, (
         f"SKIP message must carry the advertised vs minimum context values; "
         f"got err={err!r}"
@@ -144,9 +144,9 @@ def test_agent_query_detects_context_refusal_when_phrase_is_line_wrapped():
             "hermes", "hermes chat -q '{query}' -Q", "hi", timeout=10
         )
     assert out is None
-    assert err is not None and err.startswith("SKIP:"), (
-        f"Wrapped-phrase refusal must STILL be detected; got err={err!r}"
-    )
+    assert err is not None and err.startswith(
+        "SKIP:"
+    ), f"Wrapped-phrase refusal must STILL be detected; got err={err!r}"
     # And the model name + numbers still survive into the message after
     # whitespace normalization.
     assert "Qwen3.5-9B-4bit" in err, f"model name lost; err={err!r}"

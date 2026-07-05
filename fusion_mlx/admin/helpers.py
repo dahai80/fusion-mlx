@@ -10,6 +10,8 @@ from fastapi import HTTPException, Request
 
 from .auth import verify_api_key, verify_session
 
+logger = logging.getLogger(__name__)
+
 # =============================================================================
 # Runtime Settings Application Functions
 # =============================================================================
@@ -17,16 +19,14 @@ from .auth import verify_api_key, verify_session
 
 def _format_cache_size(size_bytes: int) -> str:
     """Format cache size in bytes to human-readable string (e.g., '100GB')."""
-    gb = size_bytes / (1024 ** 3)
+    gb = size_bytes / (1024**3)
     if gb >= 1:
         return f"{gb:.0f}GB"
-    mb = size_bytes / (1024 ** 2)
+    mb = size_bytes / (1024**2)
     return f"{mb:.0f}MB"
 
 
-_PAROQUANT_REASON = (
-    "Not supported on paroquant models yet (compatibility not verified)"
-)
+_PAROQUANT_REASON = "Not supported on paroquant models yet (compatibility not verified)"
 
 
 def _paroquant_compat_for_model(model_info: dict) -> tuple[bool, str]:
@@ -150,7 +150,7 @@ def _model_has_mtp_weight_tensors(model_dir) -> bool:
         try:
             index = json.loads(index_path.read_text())
             weight_map = index.get("weight_map", {})
-            return any("mtp." in key for key in weight_map.keys())
+            return any("mtp." in key for key in weight_map)
         except Exception:
             return False
 
@@ -159,7 +159,7 @@ def _model_has_mtp_weight_tensors(model_dir) -> bool:
     for path in model_dir.glob("*.safetensors"):
         try:
             with safe_open(str(path), framework="numpy") as f:  # type: ignore[arg-type]
-                for key in f.keys():
+                for key in f:
                     if "mtp." in key:
                         return True
         except Exception:
@@ -170,7 +170,9 @@ def _model_has_mtp_weight_tensors(model_dir) -> bool:
 def _apply_log_level_runtime(level: str) -> None:
     """Apply log level change at runtime to all oMLX loggers and handlers."""
     level_name = level.upper()
-    log_level = 5 if level_name == "TRACE" else getattr(logging, level_name, logging.INFO)
+    log_level = (
+        5 if level_name == "TRACE" else getattr(logging, level_name, logging.INFO)
+    )
 
     # Update root logger level and all its handlers
     root_logger = logging.getLogger()
@@ -397,7 +399,9 @@ async def _apply_cache_settings_runtime(
         if ssd_cache_dir is not None:
             pool._scheduler_config.paged_ssd_cache_dir = ssd_cache_dir
         elif global_settings.cache.ssd_cache_dir:
-            pool._scheduler_config.paged_ssd_cache_dir = global_settings.cache.ssd_cache_dir
+            pool._scheduler_config.paged_ssd_cache_dir = (
+                global_settings.cache.ssd_cache_dir
+            )
         else:
             # Use default cache dir
             pool._scheduler_config.paged_ssd_cache_dir = str(
@@ -408,14 +412,20 @@ async def _apply_cache_settings_runtime(
             # Handle "auto" value
             if ssd_cache_max_size.lower() == "auto":
                 pool._scheduler_config.paged_ssd_cache_max_size = (
-                    global_settings.cache.get_ssd_cache_max_size_bytes(global_settings.base_path)
+                    global_settings.cache.get_ssd_cache_max_size_bytes(
+                        global_settings.base_path
+                    )
                 )
             else:
-                pool._scheduler_config.paged_ssd_cache_max_size = parse_size(ssd_cache_max_size)
+                pool._scheduler_config.paged_ssd_cache_max_size = parse_size(
+                    ssd_cache_max_size
+                )
         elif global_settings.cache.ssd_cache_max_size:
             # Use settings value (handles "auto")
             pool._scheduler_config.paged_ssd_cache_max_size = (
-                global_settings.cache.get_ssd_cache_max_size_bytes(global_settings.base_path)
+                global_settings.cache.get_ssd_cache_max_size_bytes(
+                    global_settings.base_path
+                )
             )
         elif global_settings.cache.ssd_cache_max_size:
             pool._scheduler_config.paged_ssd_cache_max_size = parse_size(
@@ -429,6 +439,7 @@ async def _apply_cache_settings_runtime(
         pool._scheduler_config.hot_cache_max_size = hot_bytes
         if hot_bytes != old_hot:
             from ..utils.formatting import format_bytes
+
             old_str = "Off" if old_hot == 0 else format_bytes(old_hot)
             new_str = "Off" if hot_bytes == 0 else format_bytes(hot_bytes)
             logger.info(f"Hot cache max size changed: {old_str} -> {new_str}")
@@ -495,7 +506,6 @@ def _apply_sampling_settings_runtime(
     if changes:
         return True, f"Sampling defaults updated: {', '.join(changes)}"
     return True, "No sampling changes"
-
 
 
 # =============================================================================
@@ -624,7 +634,6 @@ def set_hf_uploader(uploader):
     """
     global _hf_uploader
     _hf_uploader = uploader
-
 
 
 # =============================================================================
@@ -776,7 +785,6 @@ def get_system_memory_info() -> dict:
     }
 
 
-
 async def _require_admin_or_bearer(request: Request) -> bool:
     """Allow admin session OR a valid Bearer API key (for CLI use)."""
     gs = _get_global_settings() if _get_global_settings else None
@@ -807,6 +815,7 @@ async def _require_admin_or_bearer(request: Request) -> bool:
         headers={"WWW-Authenticate": "Bearer"},
     )
 
+
 def _require_settings_manager():
     mgr = _get_settings_manager()
     if mgr is None:
@@ -822,6 +831,7 @@ def _require_model(model_id: str):
     if entry is None:
         raise HTTPException(status_code=404, detail=f"Model not found: {model_id}")
     return entry
+
 
 def _schedule_self_terminate(delay: float = 0.5) -> None:
     """Schedule ``os.kill(getpid(), SIGTERM)`` on the running loop.

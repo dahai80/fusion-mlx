@@ -2,6 +2,7 @@ import logging
 
 import pytest
 
+from fusion_mlx.api.models import AssistantMessage, ChatCompletionChunkDelta
 from fusion_mlx.reasoning import (
     DeltaMessage,
     ReasoningParser,
@@ -9,7 +10,6 @@ from fusion_mlx.reasoning import (
     list_parsers,
     register_parser,
 )
-from fusion_mlx.api.models import AssistantMessage, ChatCompletionChunkDelta
 
 logger = logging.getLogger(__name__)
 
@@ -73,8 +73,7 @@ class TestQwen3Parser:
 
     def test_extract_multiline_reasoning(self, parser):
         output = (
-            "<think>Step 1: Analyze\nStep 2: Solve\nStep 3: Verify</think>"
-            "Result: 42"
+            "<think>Step 1: Analyze\nStep 2: Solve\nStep 3: Verify</think>" "Result: 42"
         )
         reasoning, content = parser.extract_reasoning(output)
         assert "Step 1" in reasoning

@@ -83,10 +83,9 @@ def apply_glm_moe_dsa_generate_patch() -> bool:
     PromptProcessingBatch = gen.PromptProcessingBatch
     BatchGenerator = gen.BatchGenerator
 
-    if (
-        getattr(PromptProcessingBatch, "_fusion_mlx_glm_dsa_adaptive_patched", False)
-        and getattr(gen.generate_step, "_fusion_mlx_glm_dsa_adaptive_patched", False)
-    ):
+    if getattr(
+        PromptProcessingBatch, "_fusion_mlx_glm_dsa_adaptive_patched", False
+    ) and getattr(gen.generate_step, "_fusion_mlx_glm_dsa_adaptive_patched", False):
         _APPLIED = True
         return False
 
@@ -264,9 +263,7 @@ def apply_glm_moe_dsa_generate_patch() -> bool:
 
     def patched_generate_step(prompt, model, *args, **kwargs):
         prefill_step_size = kwargs.get("prefill_step_size", 2048)
-        adaptive_prefill = _glm_dsa_adaptive_prefill_config(
-            model, prefill_step_size
-        )
+        adaptive_prefill = _glm_dsa_adaptive_prefill_config(model, prefill_step_size)
         if (
             adaptive_prefill is not None
             and adaptive_prefill.after == 0

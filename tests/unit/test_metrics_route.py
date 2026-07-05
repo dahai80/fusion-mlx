@@ -27,8 +27,9 @@ def metrics_client():
     counter accumulator so each test sees a fresh ``(last_raw=0, baseline=0)``
     starting state.
     """
-    from fusion_mlx.config import reset_config
     from fusion_mlx.routes.metrics import _reset_accumulator_for_tests, router
+
+    from fusion_mlx.config import reset_config
 
     cfg = reset_config()
     cfg.model_name = "qwen3.5-4b"

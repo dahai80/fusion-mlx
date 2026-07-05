@@ -166,18 +166,18 @@ def test_close_tag_never_leaks_into_emitted_fragment():
     fragments = _argument_fragments(deltas)
     for frag in fragments:
         assert "</par" not in frag, f"close-tag leaked into streamed fragment: {frag!r}"
-        assert "</parameter>" not in frag, (
-            f"close-tag leaked into streamed fragment: {frag!r}"
-        )
+        assert (
+            "</parameter>" not in frag
+        ), f"close-tag leaked into streamed fragment: {frag!r}"
 
     # Belt + braces: concatenate everything, parse the JSON, and assert
     # the decoded value is exactly the original — catches escaped /
     # split-across-fragments leaks that a substring scan alone would miss.
     combined = "".join(fragments)
     decoded = json.loads(combined)
-    assert decoded == {"value": value}, (
-        f"streamed args decoded to {decoded!r}, expected {{'value': {value!r}}}"
-    )
+    assert decoded == {
+        "value": value
+    }, f"streamed args decoded to {decoded!r}, expected {{'value': {value!r}}}"
 
 
 def test_streaming_json_matches_non_streaming():
@@ -287,9 +287,10 @@ def test_same_chunk_close_and_trailing_param_not_dropped():
     # self-contained document, not a half-open one that needs a follow-up
     # call that may never arrive (max_tokens truncation, stream cancel).
     decoded = json.loads(combined)
-    assert decoded == {"summary": _LONG_SUMMARY, "score": 42}, (
-        f"trailing param dropped on same-chunk close. decoded={decoded!r}"
-    )
+    assert decoded == {
+        "summary": _LONG_SUMMARY,
+        "score": 42,
+    }, f"trailing param dropped on same-chunk close. decoded={decoded!r}"
 
 
 def test_truncated_tool_call_closes_in_flight_string_at_tool_call_end():
@@ -322,12 +323,12 @@ def test_truncated_tool_call_closes_in_flight_string_at_tool_call_end():
     # We don't require the truncated stream to produce strictly-valid JSON
     # (the original buffered path also doesn't close ``}`` here); but the
     # parser MUST have closed the string and emitted the buffered value.
-    assert any('"value"' in f for f in fragments), (
-        f"in-flight string never closed; fragments={fragments!r}"
-    )
-    assert not parser.in_param, (
-        "parser left in_param=True after </tool_call> truncation"
-    )
+    assert any(
+        '"value"' in f for f in fragments
+    ), f"in-flight string never closed; fragments={fragments!r}"
+    assert (
+        not parser.in_param
+    ), "parser left in_param=True after </tool_call> truncation"
 
 
 @pytest.mark.parametrize(

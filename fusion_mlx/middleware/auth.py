@@ -78,7 +78,9 @@ def configure_rate_limiter(
     *,
     enabled: bool = True,
 ) -> RateLimiter:
-    logger.info("Configuring rate limiter: rpm=%d enabled=%s", requests_per_minute, enabled)
+    logger.info(
+        "Configuring rate limiter: rpm=%d enabled=%s", requests_per_minute, enabled
+    )
     with rate_limiter._lock:
         rate_limiter.requests_per_minute = requests_per_minute
         rate_limiter.enabled = enabled
@@ -140,7 +142,11 @@ async def check_rate_limit(request: Request):
     client_id = _rate_limit_client_id(request)
     allowed, retry_after = rate_limiter.is_allowed(client_id)
     if not allowed:
-        logger.warning("Rate limit exceeded for client=%s retry_after=%d", client_id[:8], retry_after)
+        logger.warning(
+            "Rate limit exceeded for client=%s retry_after=%d",
+            client_id[:8],
+            retry_after,
+        )
         raise HTTPException(
             status_code=429,
             detail=f"Rate limit exceeded. Retry after {retry_after} seconds.",
@@ -152,7 +158,11 @@ async def check_rate_limit_or_x_api_key(request: Request):
     client_id = _anthropic_rate_limit_client_id(request)
     allowed, retry_after = rate_limiter.is_allowed(client_id)
     if not allowed:
-        logger.warning("Rate limit exceeded for client=%s retry_after=%d", client_id[:8], retry_after)
+        logger.warning(
+            "Rate limit exceeded for client=%s retry_after=%d",
+            client_id[:8],
+            retry_after,
+        )
         raise HTTPException(
             status_code=429,
             detail=f"Rate limit exceeded. Retry after {retry_after} seconds.",
@@ -163,6 +173,7 @@ async def check_rate_limit_or_x_api_key(request: Request):
 def _get_configured_api_key() -> str | None:
     try:
         from ..settings import Settings
+
         settings = Settings.get_instance()
         if settings is None:
             return None
@@ -178,7 +189,9 @@ def _verify_api_key_values(*api_keys: str | None) -> bool:
     configured_key = _get_configured_api_key()
     if configured_key is None:
         if not _auth_warning_logged:
-            logger.debug("No API key configured. Use --api-key to enable authentication.")
+            logger.debug(
+                "No API key configured. Use --api-key to enable authentication."
+            )
             _auth_warning_logged = True
         return True
     provided_keys = [api_key for api_key in api_keys if api_key]

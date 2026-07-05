@@ -2705,7 +2705,7 @@ async def _create_chat_completion_impl(
                 )
             except HTTPException:
                 raise
-            except (TimeoutError, asyncio.TimeoutError, asyncio.CancelledError):
+            except (TimeoutError, asyncio.CancelledError):
                 # These belong to the outer route's standard
                 # timeout / cancellation envelopes — NOT to the
                 # strict-contract breach shape. Let them propagate
@@ -2967,7 +2967,7 @@ async def _create_chat_completion_impl(
                     )
                 except HTTPException:
                     raise
-                except (TimeoutError, asyncio.TimeoutError, asyncio.CancelledError):
+                except (TimeoutError, asyncio.CancelledError):
                     raise
                 except Exception as repair_err:
                     # Codex r1 #3: a non-timeout, non-disconnect engine

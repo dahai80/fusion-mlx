@@ -30,7 +30,7 @@ import json
 import os
 import subprocess
 import sys
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -379,15 +379,15 @@ def test_scheduler_batch_generator_reuse_key_includes_ignore_eos() -> None:
         "previous batch is still running — otherwise it inherits the "
         "wrong stop_tokens (codex P2 on PR #612)."
     )
-    assert len(create_calls) == creates_before_overlap, (
-        "refused request must not have created a new BatchGenerator."
-    )
-    assert len(close_calls) == closes_before_overlap, (
-        "refused request must not have closed the running BatchGenerator."
-    )
-    assert stub.batch_generator is sentinel, (
-        "the live generator must remain intact for the running batch."
-    )
+    assert (
+        len(create_calls) == creates_before_overlap
+    ), "refused request must not have created a new BatchGenerator."
+    assert (
+        len(close_calls) == closes_before_overlap
+    ), "refused request must not have closed the running BatchGenerator."
+    assert (
+        stub.batch_generator is sentinel
+    ), "the live generator must remain intact for the running batch."
 
 
 def test_scheduler_batch_generator_reuses_across_different_sampler_params() -> None:
@@ -511,9 +511,9 @@ def test_scheduler_batch_generator_reuse_key_includes_stop_token_ids() -> None:
         "before PR #665 the second request would silently inherit the "
         "first request's stop set (correctness bug)."
     )
-    assert len(close_calls) > closes_before, (
-        "the old generator must be torn down before the rebuild."
-    )
+    assert (
+        len(close_calls) > closes_before
+    ), "the old generator must be torn down before the rebuild."
 
     # Order-independence: the key is a frozenset, so list order of
     # stop_token_ids must not affect reuse. [1, 2] and [2, 1] are the
@@ -616,7 +616,7 @@ def test_build_payload_matches_schema() -> None:
         hf_path="mlx-community/Qwen3.5-9B-4bit",
         bench=_stub_bench_result(),
         notes="unit test",
-        now=datetime(2026, 6, 15, 10, 30, 0, tzinfo=timezone.utc),
+        now=datetime(2026, 6, 15, 10, 30, 0, tzinfo=UTC),
     )
     schema = json.loads(SCHEMA_PATH.read_text())
     jsonschema.validate(instance=payload, schema=schema)
@@ -646,7 +646,7 @@ def test_build_payload_omits_optional_fields_when_none() -> None:
         "mlx-community/Qwen3.5-9B-4bit",
         bench,
         notes=None,
-        now=datetime(2026, 6, 15, tzinfo=timezone.utc),
+        now=datetime(2026, 6, 15, tzinfo=UTC),
     )
     assert "notes" not in payload
     assert "peak_ram_mb" not in payload
@@ -977,9 +977,9 @@ def test_make_pr_via_gh_branches_from_upstream_and_uses_owner_head(
     assert captured[0][5] == "upstream"
     # Checkout must branch FROM FETCH_HEAD, not the local HEAD.
     checkout = captured[1]
-    assert checkout[-1] == "FETCH_HEAD", (
-        f"checkout must branch from FETCH_HEAD, got cmd: {checkout}"
-    )
+    assert (
+        checkout[-1] == "FETCH_HEAD"
+    ), f"checkout must branch from FETCH_HEAD, got cmd: {checkout}"
     # gh pr create must use `--head <owner>:<branch>`.
     pr_create = captured[-1]
     head_idx = pr_create.index("--head")
@@ -1540,9 +1540,9 @@ def test_validate_accepts_valid_rfc3339_datetimes(
     path = _write_to_real_submissions(good)
     cleanup_real_submissions.append(path)
     rc, out = _run_validate(path)
-    assert rc == 0, (
-        f"validator wrongly rejected submitted_at={good_value!r}; out={out!r}"
-    )
+    assert (
+        rc == 0
+    ), f"validator wrongly rejected submitted_at={good_value!r}; out={out!r}"
 
 
 def test_validate_rejects_summary_mismatch_with_rounds(
@@ -2069,9 +2069,9 @@ def test_decode_tps_formula_uses_n_minus_one(monkeypatch) -> None:
     # t_first_token=1.0, t_end=2.0 ⇒ decode_window = 1.0s.
     # N=6 completion_tokens. (N-1)/window = 5/1 = 5.0 tok/s.
     # The OLD (buggy) formula would give 6.0 tok/s; assert we get 5.0.
-    assert abs(result.decode_tps - 5.0) < 1e-9, (
-        f"decode_tps={result.decode_tps}; expected 5.0 = (6-1)/1.0"
-    )
+    assert (
+        abs(result.decode_tps - 5.0) < 1e-9
+    ), f"decode_tps={result.decode_tps}; expected 5.0 = (6-1)/1.0"
 
 
 def test_run_one_round_rejects_eos_early_stop(monkeypatch) -> None:

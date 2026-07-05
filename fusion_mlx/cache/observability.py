@@ -30,9 +30,7 @@ class CacheRateTracker:
             self._snapshots.append((now, dict(counters)))
             return True
 
-    def get_rates(
-        self, windows: tuple[int, ...] = _DEFAULT_WINDOWS
-    ) -> dict[str, Any]:
+    def get_rates(self, windows: tuple[int, ...] = _DEFAULT_WINDOWS) -> dict[str, Any]:
         with self._lock:
             if not self._snapshots:
                 return {"windows": {}, "cumulative": {}}
@@ -113,12 +111,12 @@ def _compute_window(
             _safe_ratio(d_tokens_matched, d_tokens_requested), 4
         ),
         "evictions": d_evictions,
-        "eviction_rate_per_min": round(d_evictions / minutes, 2) if minutes > 0 else 0.0,
+        "eviction_rate_per_min": (
+            round(d_evictions / minutes, 2) if minutes > 0 else 0.0
+        ),
         "ssd_hot_hits": d_ssd_hot,
         "ssd_disk_loads": d_ssd_disk,
-        "ssd_hot_rate": round(
-            _safe_ratio(d_ssd_hot, d_ssd_hot + d_ssd_disk), 4
-        ),
+        "ssd_hot_rate": round(_safe_ratio(d_ssd_hot, d_ssd_hot + d_ssd_disk), 4),
     }
 
 
@@ -133,7 +131,9 @@ def _compute_cumulative(counters: dict[str, int]) -> dict[str, Any]:
     return {
         "prefix_hits": prefix_hits,
         "prefix_misses": prefix_misses,
-        "prefix_hit_rate": round(_safe_ratio(prefix_hits, prefix_hits + prefix_misses), 4),
+        "prefix_hit_rate": round(
+            _safe_ratio(prefix_hits, prefix_hits + prefix_misses), 4
+        ),
         "prefix_tokens_saved": counters.get("prefix_tokens_saved", 0),
         "prefix_match_efficiency": round(
             _safe_ratio(tokens_matched, tokens_requested), 4

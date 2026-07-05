@@ -117,6 +117,6 @@ class TestGemma4TemplateRendering:
         processed = extract_gemma4_messages(openai_msgs)
         rendered = _render(processed, tools=_TOOLS)
         opens, closes = _marker_counts(rendered)
-        assert opens == closes, (
-            f"Still imbalanced after fix: opens={opens} closes={closes}"
-        )
+        assert (
+            opens == closes
+        ), f"Still imbalanced after fix: opens={opens} closes={closes}"

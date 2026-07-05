@@ -6,7 +6,6 @@ from __future__ import annotations
 import json
 
 import pytest
-
 from fusion_mlx.api.strict_json_schema import (
     build_repair_messages,
     build_violation_envelope,
@@ -299,9 +298,9 @@ def test_validate_and_envelope_rejects_malformed_schema():
     bad_schema = {"type": "totally-not-a-valid-json-schema-type"}
     ok, details = validate_and_envelope('{"foo": 1}', bad_schema)
     assert ok is False
-    assert details["reason"] == "invalid_schema", (
-        f"expected 'invalid_schema' reason on malformed schema; got {details!r}"
-    )
+    assert (
+        details["reason"] == "invalid_schema"
+    ), f"expected 'invalid_schema' reason on malformed schema; got {details!r}"
     # The message must hint at the schema itself (not the payload).
     assert "schema" in details["message"].lower()
 
@@ -358,9 +357,9 @@ def test_build_repair_messages_filters_assistant_turns_from_multiturn():
     failure = {"reason": "schema_violation", "failing_path": "/color"}
     repair = build_repair_messages(original, '{"fruit": "cherry"}', _SCHEMA, failure)
     # No assistant turn anywhere in the repair conversation.
-    assert all(m["role"] != "assistant" for m in repair), (
-        f"assistant turn leaked into repair: {repair!r}"
-    )
+    assert all(
+        m["role"] != "assistant" for m in repair
+    ), f"assistant turn leaked into repair: {repair!r}"
     # The user turns ARE preserved (so the model has context for
     # what was being asked).
     user_contents = [m["content"] for m in repair if m["role"] == "user"]
@@ -373,12 +372,12 @@ def test_build_repair_messages_filters_assistant_turns_from_multiturn():
     full_text = "\n".join(_content_to_text_for_test(m["content"]) for m in repair)
     # Check the FRAGMENT '{"fruit": "apple"' — the apple-near-miss
     # MUST be filtered out.
-    assert '"fruit": "apple"' not in full_text, (
-        "prior assistant near-miss leaked into repair context"
-    )
-    assert '"fruit": "banana"' not in full_text, (
-        "prior assistant near-miss leaked into repair context"
-    )
+    assert (
+        '"fruit": "apple"' not in full_text
+    ), "prior assistant near-miss leaked into repair context"
+    assert (
+        '"fruit": "banana"' not in full_text
+    ), "prior assistant near-miss leaked into repair context"
 
 
 def _content_to_text_for_test(content) -> str:
@@ -475,9 +474,9 @@ def test_build_repair_messages_merges_into_existing_system_message():
     assert repair[2]["role"] == "user"
     # No SECOND system message — codex r10 #2 contract.
     system_count = sum(1 for m in repair if m.get("role") == "system")
-    assert system_count == 1, (
-        f"expected exactly one (merged) system message, got {system_count}"
-    )
+    assert (
+        system_count == 1
+    ), f"expected exactly one (merged) system message, got {system_count}"
 
 
 # ---------------------------------------------------------------------------

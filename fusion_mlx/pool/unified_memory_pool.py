@@ -33,11 +33,13 @@ logger = logging.getLogger(__name__)
 # Metal Buffer Registry — track every allocation
 # =============================================================================
 
+
 @dataclass
 class BufferEntry:
     """Track one Metal buffer allocation."""
+
     buffer_id: str
-    backend: str          # "omlx", "rapid", "shared"
+    backend: str  # "omlx", "rapid", "shared"
     size_bytes: int
     dtype: str
     shape: tuple
@@ -83,15 +85,19 @@ class MetalBufferRegistry:
             dtype=dtype,
             shape=shape,
             is_kv_cache=is_kv_cache,
-         )
+        )
 
         with self._lock:
             self._buffers[buf_id] = entry
             self._total_bytes += size
-            self._per_backend_bytes[backend] = self._per_backend_bytes.get(backend, 0) + size
+            self._per_backend_bytes[backend] = (
+                self._per_backend_bytes.get(backend, 0) + size
+            )
 
         if is_kv_cache:
-            logger.debug(f"[Registry] registered KV buffer {buf_id}: {size / 1e6:.1f}MB @ {backend}")
+            logger.debug(
+                f"[Registry] registered KV buffer {buf_id}: {size / 1e6:.1f}MB @ {backend}"
+            )
 
         return buf_id
 
@@ -119,10 +125,12 @@ class MetalBufferRegistry:
                 self._total_bytes -= size
                 self._per_backend_bytes[backend] = max(
                     0, self._per_backend_bytes.get(backend, 0) - size
-                 )
+                )
                 del self._buffers[buf_id]
                 if entry.is_kv_cache:
-                    logger.debug(f"[Registry] freed KV buffer {buf_id}: {size / 1e6:.1f}MB")
+                    logger.debug(
+                        f"[Registry] freed KV buffer {buf_id}: {size / 1e6:.1f}MB"
+                    )
                 return (size, backend)
             return False
 
@@ -139,7 +147,7 @@ class MetalBufferRegistry:
             self._total_bytes -= size
             self._per_backend_bytes[backend] = max(
                 0, self._per_backend_bytes.get(backend, 0) - size
-             )
+            )
             del self._buffers[buf_id]
             return (size, backend)
 
@@ -153,13 +161,15 @@ class MetalBufferRegistry:
             entry = self._buffers.get(buf_id)
             if not entry:
                 return False
-             # Don't double-count — remove from old backend, add to shared
+            # Don't double-count — remove from old backend, add to shared
             old_backend = entry.backend
             self._per_backend_bytes[old_backend] = max(
                 0, self._per_backend_bytes.get(old_backend, 0) - entry.size_bytes
-             )
+            )
             entry.backend = "shared"
-            self._per_backend_bytes["shared"] = self._per_backend_bytes.get("shared", 0) + entry.size_bytes
+            self._per_backend_bytes["shared"] = (
+                self._per_backend_bytes.get("shared", 0) + entry.size_bytes
+            )
             entry.ref_count += 1
             entry._shared = True
             return True
@@ -177,16 +187,17 @@ class MetalBufferRegistry:
         with self._lock:
             kv_count = sum(1 for e in self._buffers.values() if e.is_kv_cache)
             return {
-                 "total_bytes": self._total_bytes,
-                 "total_buffers": len(self._buffers),
-                 "kv_buffers": kv_count,
-                 "per_backend": dict(self._per_backend_bytes),
-             }
+                "total_bytes": self._total_bytes,
+                "total_buffers": len(self._buffers),
+                "kv_buffers": kv_count,
+                "per_backend": dict(self._per_backend_bytes),
+            }
 
 
 # =============================================================================
 # Backend Quota — per-backend pre-allocation limits
 # =============================================================================
+
 
 class BackendQuota:
     """Pre-allocation ceiling per backend to prevent memory fragmentation."""
@@ -230,6 +241,7 @@ class BackendQuota:
 # KV Cache Bridge — zero-copy handoff between engines
 # =============================================================================
 
+
 @dataclass
 class KVCacheState:
     """Serializable KV cache state for cross-engine transfer."""
@@ -237,9 +249,9 @@ class KVCacheState:
     model_name: str
     source_backend: str
     target_backend: str
-    buffer_ids: list[str]           # Registry IDs of KV buffers
-    block_table: list[int]          # Block IDs for paged cache
-    meta_states: list[tuple]        # Per-layer (offset, ...) tuples
+    buffer_ids: list[str]  # Registry IDs of KV buffers
+    block_table: list[int]  # Block IDs for paged cache
+    meta_states: list[tuple]  # Per-layer (offset, ...) tuples
     num_tokens: int
     num_layers: int
     kv_heads: int
@@ -247,9 +259,9 @@ class KVCacheState:
     dtype: str
 
     # Dual-ownership lifecycle tracking
-    handoff_id: str = ''            # Bridge tracking ID
-    source_released: bool = False   # Source engine done with buffers
-    target_released: bool = False   # Target engine done with buffers
+    handoff_id: str = ""  # Bridge tracking ID
+    source_released: bool = False  # Source engine done with buffers
+    target_released: bool = False  # Target engine done with buffers
     handed_off_at: float = field(default_factory=time.time)
 
 
@@ -283,7 +295,7 @@ class KVCacheBridge:
         block_table: list[int],
         meta_states: list[tuple],
         num_tokens: int,
-     ) -> KVCacheState:
+    ) -> KVCacheState:
         """Capture KV cache state from source engine for handoff."""
         buffer_ids = []
         kv_heads = 0
@@ -315,7 +327,7 @@ class KVCacheBridge:
             kv_heads=kv_heads,
             head_dim=head_dim,
             dtype=dtype,
-         )
+        )
 
         handoff_id = uuid.uuid4().hex[:12]
         state.handoff_id = handoff_id
@@ -324,7 +336,7 @@ class KVCacheBridge:
         logger.info(
             f"[Bridge] captured KV state: {len(kv_arrays)} buffers, "
             f"{num_tokens} tokens, {num_layers} layers @ {source_backend}"
-           )
+        )
         return state
 
     def prepare_handoff(self, state: KVCacheState, target_backend: str) -> KVCacheState:
@@ -339,7 +351,7 @@ class KVCacheBridge:
         logger.info(
             f"[Bridge] handoff ready: {state.source_backend} -> "
             f"{target_backend}, {len(state.buffer_ids)} buffers shared"
-           )
+        )
         return state
 
     def claim(self, state: KVCacheState) -> dict[str, Any]:
@@ -354,7 +366,7 @@ class KVCacheBridge:
         logger.info(
             f"[Bridge] {state.target_backend} claimed KV handoff: "
             f"{state.num_tokens} tokens, {len(state.buffer_ids)} buffers"
-           )
+        )
 
         # Keep in active handoffs — don't remove until BOTH sides release
         return {
@@ -367,7 +379,7 @@ class KVCacheBridge:
             "head_dim": state.head_dim,
             "dtype": state.dtype,
             "model_name": state.model_name,
-          }
+        }
 
     def release_source(self, state: KVCacheState) -> None:
         """Source engine signals it is done with the buffers.
@@ -381,7 +393,7 @@ class KVCacheBridge:
         logger.debug(
             f"[Bridge] {state.source_backend} released source ownership, "
             "buffers kept alive for target"
-           )
+        )
 
     def release_target(self, state: KVCacheState) -> None:
         """Target engine signals it is done with the buffers.
@@ -403,7 +415,7 @@ class KVCacheBridge:
             logger.debug(
                 f"[Bridge] target released, source_released={state.source_released}, "
                 "waiting for other side"
-               )
+            )
 
     # Legacy alias — deprecated, use release_source + release_target
     def release_handoff(self, state: KVCacheState) -> None:
@@ -429,11 +441,11 @@ class KVCacheBridge:
 
 @dataclass
 class FragmentationReport:
-    total_allocated: int       # Total bytes in registry
-    total_contiguous: int      # Largest contiguous block available
+    total_allocated: int  # Total bytes in registry
+    total_contiguous: int  # Largest contiguous block available
     fragmentation_ratio: float  # 0.0 = perfect, 1.0 = worst
     buffer_count: int
-    recommendation: str         # "none", "compact", "evict"
+    recommendation: str  # "none", "compact", "evict"
 
 
 class FragmentationMonitor:
@@ -453,19 +465,21 @@ class FragmentationMonitor:
         total = stats["total_bytes"]
         count = stats["total_buffers"]
 
-         # Estimate fragmentation: more small buffers = more fragmentation
-         # This is a heuristic — true fragmentation requires knowing buffer addresses
+        # Estimate fragmentation: more small buffers = more fragmentation
+        # This is a heuristic — true fragmentation requires knowing buffer addresses
         if count == 0:
             return FragmentationReport(
-                total_allocated=0, total_contiguous=0,
-                fragmentation_ratio=0.0, buffer_count=0,
+                total_allocated=0,
+                total_contiguous=0,
+                fragmentation_ratio=0.0,
+                buffer_count=0,
                 recommendation="none",
-             )
+            )
 
-         # Simple heuristic: if we have many small buffers relative to total,
-         # fragmentation is high. Real implementation would track buffer addresses.
+        # Simple heuristic: if we have many small buffers relative to total,
+        # fragmentation is high. Real implementation would track buffer addresses.
         avg_size = total // count if count > 0 else 0
-         # Fragmentation proxy: high buffer count with small avg = fragmented
+        # Fragmentation proxy: high buffer count with small avg = fragmented
         frag_ratio = min(1.0, max(0.0, 1.0 - (avg_size / (64 * 1024 * 1024))))
 
         if frag_ratio < self._threshold:
@@ -481,7 +495,7 @@ class FragmentationMonitor:
             fragmentation_ratio=frag_ratio,
             buffer_count=count,
             recommendation=rec,
-         )
+        )
 
     def should_compact(self, is_gpu_busy: bool = True) -> bool:
         # Never compact while Metal GPU is actively computing
@@ -490,6 +504,8 @@ class FragmentationMonitor:
             return False
         report = self.check()
         return report.recommendation in ("compact", "evict")
+
+
 class UnifiedMemoryPool:
     """Unified memory pool for cross-engine coordination.
 
@@ -534,7 +550,9 @@ class UnifiedMemoryPool:
 
         if quotas:
             for backend, max_bytes in quotas.items():
-                self.quotas[backend] = BackendQuota(backend=backend, max_bytes=max_bytes)
+                self.quotas[backend] = BackendQuota(
+                    backend=backend, max_bytes=max_bytes
+                )
 
     def register(
         self,
@@ -550,9 +568,9 @@ class UnifiedMemoryPool:
             logger.warning(
                 f"[Pool] {backend} quota exceeded: {size / 1e6:.1f}MB requested, "
                 f"{quota.available / 1e6:.1f}MB available"
-             )
-             # Quota is a soft limit — log but don't block
-             # Hard limit is the ProcessMemoryEnforcer at a higher level
+            )
+            # Quota is a soft limit — log but don't block
+            # Hard limit is the ProcessMemoryEnforcer at a higher level
 
         if self._total_limit > 0:
             current = self.registry.total_bytes
@@ -560,7 +578,7 @@ class UnifiedMemoryPool:
                 logger.warning(
                     f"[Pool] global limit approaching: "
                     f"{(current + size) / 1e9:.2f}GB / {self._total_limit / 1e9:.2f}GB"
-                 )
+                )
 
         return self.registry.register(arr, backend, is_kv_cache=is_kv_cache)
 
@@ -597,7 +615,7 @@ class UnifiedMemoryPool:
     ) -> KVCacheState:
         return self.bridge.capture(
             model_name, source_backend, kv_arrays, block_table, meta_states, num_tokens
-         )
+        )
 
     def prepare_handoff(self, state: KVCacheState, target_backend: str) -> KVCacheState:
         return self.bridge.prepare_handoff(state, target_backend)
@@ -615,20 +633,20 @@ class UnifiedMemoryPool:
         report = self.monitor.check()
         quota_stats = {
             k: {
-                 "max_bytes": v.max_bytes,
-                 "current_bytes": v.current_bytes,
-                 "utilization": v.utilization,
-             }
+                "max_bytes": v.max_bytes,
+                "current_bytes": v.current_bytes,
+                "utilization": v.utilization,
+            }
             for k, v in self.quotas.items()
-         }
+        }
         return {
-             "registry": self.registry.get_stats(),
-             "quotas": quota_stats,
-             "fragmentation": {
-                 "ratio": report.fragmentation_ratio,
-                 "recommendation": report.recommendation,
-                 "buffer_count": report.buffer_count,
-             },
-             "active_handoffs": self.bridge.get_active_handoffs(),
-             "total_limit_bytes": self._total_limit,
-         }
+            "registry": self.registry.get_stats(),
+            "quotas": quota_stats,
+            "fragmentation": {
+                "ratio": report.fragmentation_ratio,
+                "recommendation": report.recommendation,
+                "buffer_count": report.buffer_count,
+            },
+            "active_handoffs": self.bridge.get_active_handoffs(),
+            "total_limit_bytes": self._total_limit,
+        }

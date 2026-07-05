@@ -21,8 +21,6 @@ router = APIRouter(prefix="/v1/images", tags=["images"])
 _pool: EnginePool | None = None
 
 
-
-
 def set_images_context(pool: EnginePool) -> None:
     """Inject engine pool into this module."""
     global _pool

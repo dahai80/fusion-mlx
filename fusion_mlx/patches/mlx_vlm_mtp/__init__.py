@@ -57,6 +57,7 @@ def set_mtp_attach_enabled(enabled: bool) -> None:
 def is_mtp_attach_enabled() -> bool:
     return _MTP_ATTACH_ENABLED
 
+
 def apply_mlx_vlm_mtp_patch() -> bool:
     """Apply the mlx-vlm MTP sanitize monkey-patches.
 

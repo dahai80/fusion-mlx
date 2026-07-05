@@ -176,9 +176,9 @@ def test_chat_streaming_emits_reasoning_content_only_no_reasoning_alias():
 
     # Sanity: reasoning text accumulated correctly under reasoning_content.
     joined = "".join(d.get("reasoning_content", "") for d in reasoning_deltas)
-    assert "Let me" in joined and "think." in joined, (
-        f"reasoning_content accumulation broke; got {joined!r}"
-    )
+    assert (
+        "Let me" in joined and "think." in joined
+    ), f"reasoning_content accumulation broke; got {joined!r}"
 
 
 def test_chat_streaming_sse_bytes_have_no_reasoning_alias_substring():

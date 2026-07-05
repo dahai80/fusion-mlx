@@ -1,5 +1,4 @@
 from dataclasses import dataclass
-from typing import Optional
 
 import mlx.core as mx
 import mlx.nn as nn
@@ -19,8 +18,8 @@ from ..minimax_m3_vl.minimax_m3_vl import (
 
 @dataclass
 class ModelConfig(TextConfig):
-    quantization: Optional[dict] = None
-    quantization_config: Optional[dict] = None
+    quantization: dict | None = None
+    quantization_config: dict | None = None
 
     def __post_init__(self):
         super().__post_init__()
@@ -53,8 +52,8 @@ class Model(nn.Module):
 
     def get_input_embeddings(
         self,
-        input_ids: Optional[mx.array] = None,
-        pixel_values: Optional[mx.array] = None,
+        input_ids: mx.array | None = None,
+        pixel_values: mx.array | None = None,
         **kwargs,
     ) -> InputEmbeddingsFeatures:
         if pixel_values is not None:
@@ -68,8 +67,8 @@ class Model(nn.Module):
     def __call__(
         self,
         input_ids: mx.array,
-        pixel_values: Optional[mx.array] = None,
-        mask: Optional[mx.array] = None,
+        pixel_values: mx.array | None = None,
+        mask: mx.array | None = None,
         cache=None,
         **kwargs,
     ) -> LanguageModelOutput:

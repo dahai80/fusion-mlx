@@ -32,8 +32,18 @@ from .helpers import (
     _KNOWN_SLICEABLE_CACHE_TYPES,
 )
 
+try:
+    from ..cache.hybrid_cache import ModelCacheConfig
+    from ..cache.type_registry import CacheTypeRegistry
 
-def _build_state_machine(    self, request: "Request") -> SequenceStateMachine:
+    HAS_CACHE_TYPE_HANDLERS = True
+except ImportError:
+    CacheTypeRegistry = None
+    ModelCacheConfig = None
+    HAS_CACHE_TYPE_HANDLERS = False
+
+
+def _build_state_machine(self, request: "Request") -> SequenceStateMachine:
     """Build a SequenceStateMachine for per-request stop tokens.
 
     Combines base stop tokens (EOS, Harmony) with request-specific
@@ -45,9 +55,7 @@ def _build_state_machine(    self, request: "Request") -> SequenceStateMachine:
     if request.sampling_params.stop_token_ids:
         stop_tokens_set.update(request.sampling_params.stop_token_ids)
 
-    transitions: dict[str, list] = {
-        "normal": [([t], None) for t in stop_tokens_set]
-    }
+    transitions: dict[str, list] = {"normal": [([t], None) for t in stop_tokens_set]}
 
     # Tokenize stop strings into token sequences. mlx-lm's
     # SequenceStateMachine uses Aho-Corasick, so per-token match
@@ -68,7 +76,9 @@ def _build_state_machine(    self, request: "Request") -> SequenceStateMachine:
         return SequenceStateMachine(transitions, initial="normal")
     return SequenceStateMachine({}, initial="normal")
 
-def _emit_prefill_boundary_snapshot(    self,
+
+def _emit_prefill_boundary_snapshot(
+    self,
     request: "Request",
     prompt_cache: list[Any],
     total_tokens: int,
@@ -98,6 +108,7 @@ def _emit_prefill_boundary_snapshot(    self,
         snapshot_cache,
         total_tokens,
     )
+
 
 def _build_sampler_and_processors(
     self, sampling_params: SamplingParams, request: Any = None
@@ -182,13 +193,15 @@ def _build_sampler_and_processors(
 
     return sampler, logits_processors
 
+
 def _get_model_vocab_size(self) -> int | None:
     """Return vocab_size from model config, or None if unavailable."""
     from ..utils.tokenizer import resolve_vocab_size
 
     return resolve_vocab_size(self.model)
 
-def _get_think_token_id(    self, attr: str) -> int | None:
+
+def _get_think_token_id(self, attr: str) -> int | None:
     """Safely read a think token id from the tokenizer.
 
     mlx-lm tokenizers expose ``think_start_id`` / ``think_end_id`` as
@@ -202,6 +215,7 @@ def _get_think_token_id(    self, attr: str) -> int | None:
         return getattr(self.tokenizer, attr, None)
     except (ValueError, TypeError):
         return None
+
 
 def _resolve_think_end_token_ids(self) -> list[int] | None:
     """Resolve token ID(s) for the close-think tag.
@@ -221,7 +235,9 @@ def _resolve_think_end_token_ids(self) -> list[int] | None:
         if ids:
             return list(ids)
     except Exception:
-        logger.debug("swallowed exception at fusion_mlx/scheduler/sched_thinking.py:255")
+        logger.debug(
+            "swallowed exception at fusion_mlx/scheduler/sched_thinking.py:255"
+        )
 
         pass
 
@@ -234,6 +250,7 @@ def _resolve_think_end_token_ids(self) -> list[int] | None:
         pass
 
     return None
+
 
 def _resolve_think_close_pattern(self) -> tuple[list[int] | None, list[int] | None]:
     """Detect leading/trailing tokens around </think> from the chat template.
@@ -268,16 +285,10 @@ def _resolve_think_close_pattern(self) -> tuple[list[int] | None, list[int] | No
 
     # Extract raw leading/trailing whitespace, converting \n escapes to actual newlines
     raw_leading = (
-        match.group(0)
-        .split(think_end_str)[0]
-        .replace("\\n", "\n")
-        .replace("\\r", "\r")
+        match.group(0).split(think_end_str)[0].replace("\\n", "\n").replace("\\r", "\r")
     )
     raw_trailing = (
-        match.group(0)
-        .split(think_end_str)[1]
-        .replace("\\n", "\n")
-        .replace("\\r", "\r")
+        match.group(0).split(think_end_str)[1].replace("\\n", "\n").replace("\\r", "\r")
     )
 
     # Encode to token IDs
@@ -289,7 +300,9 @@ def _resolve_think_close_pattern(self) -> tuple[list[int] | None, list[int] | No
             if ids:
                 leading_ids = list(ids)
         except Exception:
-            logger.debug("swallowed exception at fusion_mlx/scheduler/sched_thinking.py:322")
+            logger.debug(
+                "swallowed exception at fusion_mlx/scheduler/sched_thinking.py:322"
+            )
 
             pass
     if raw_trailing:
@@ -298,11 +311,14 @@ def _resolve_think_close_pattern(self) -> tuple[list[int] | None, list[int] | No
             if ids:
                 trailing_ids = list(ids)
         except Exception:
-            logger.debug("swallowed exception at fusion_mlx/scheduler/sched_thinking.py:330")
+            logger.debug(
+                "swallowed exception at fusion_mlx/scheduler/sched_thinking.py:330"
+            )
 
             pass
 
     return leading_ids, trailing_ids
+
 
 def _get_chat_template_text(self) -> str | None:
     """Get chat template text from the tokenizer or model directory."""
@@ -324,13 +340,16 @@ def _get_chat_template_text(self) -> str | None:
             with open(jinja_path, encoding="utf-8") as f:
                 return f.read()
         except Exception:
-            logger.debug("swallowed exception at fusion_mlx/scheduler/sched_thinking.py:355")
+            logger.debug(
+                "swallowed exception at fusion_mlx/scheduler/sched_thinking.py:355"
+            )
 
             pass
 
     return None
 
-def _detect_needs_think_prefix(    self, request: "Request") -> bool:
+
+def _detect_needs_think_prefix(self, request: "Request") -> bool:
     """Detect if prompt ends with an open <think> tag (thinking enabled).
 
     Returns False for disabled-thinking patterns like <think></think>
@@ -363,7 +382,8 @@ def _detect_needs_think_prefix(    self, request: "Request") -> bool:
 
     return True
 
-def _ensure_batch_generator(    self, sampling_params: SamplingParams) -> None:
+
+def _ensure_batch_generator(self, sampling_params: SamplingParams) -> None:
     """Ensure BatchGenerator exists with compatible settings."""
     # Only create once; per-request samplers are passed at insert time.
     if self.batch_generator is None:
@@ -378,7 +398,8 @@ def _ensure_batch_generator(    self, sampling_params: SamplingParams) -> None:
         sampling_params.repetition_penalty,
     )
 
-def _cache_tree_has_stateful_non_sliceable(    self, cache_obj: Any) -> bool:
+
+def _cache_tree_has_stateful_non_sliceable(self, cache_obj: Any) -> bool:
     """Detect non-sliceable recurrent cache layers requiring snapshots."""
     # None placeholders from boundary snapshots (sliceable layers replaced).
     if cache_obj is None:

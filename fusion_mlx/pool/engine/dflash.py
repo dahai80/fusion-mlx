@@ -23,6 +23,11 @@ class DFlashEngine(BatchedEngine):
         draft_quant_group_size: int = 64,
         **kwargs: Any,
     ):
-        super().__init__(model_name, model_settings=model_settings, scheduler_config=scheduler_config, **kwargs)
+        super().__init__(
+            model_name,
+            model_settings=model_settings,
+            scheduler_config=scheduler_config,
+            **kwargs,
+        )
         self.draft_model_path = draft_model_path
         self.draft_quant_enabled = draft_quant_enabled

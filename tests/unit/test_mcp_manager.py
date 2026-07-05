@@ -3,10 +3,8 @@
 Tests for MCP client manager (omlx/mcp/manager.py).
 """
 
-import asyncio
 import json
-from typing import Any, Dict, List
-from unittest.mock import AsyncMock, MagicMock, Mock, patch
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -14,11 +12,9 @@ from fusion_mlx.mcp.client import MCPClient
 from fusion_mlx.mcp.manager import MCPClientManager
 from fusion_mlx.mcp.types import (
     MCPConfig,
-    MCPServerConfig,
     MCPServerState,
     MCPTool,
     MCPToolResult,
-    MCPTransport,
 )
 
 
@@ -35,19 +31,21 @@ class TestMCPClientManagerInit:
 
     def test_init_with_servers(self):
         """Test initialization creates clients for each server."""
-        config = MCPConfig.from_dict({
-            "servers": {
-                "server1": {
-                    "transport": "stdio",
-                    "command": "python",
-                    "args": ["-m", "server1"],
-                },
-                "server2": {
-                    "transport": "sse",
-                    "url": "http://localhost:3000",
-                },
+        config = MCPConfig.from_dict(
+            {
+                "servers": {
+                    "server1": {
+                        "transport": "stdio",
+                        "command": "python",
+                        "args": ["-m", "server1"],
+                    },
+                    "server2": {
+                        "transport": "sse",
+                        "url": "http://localhost:3000",
+                    },
+                }
             }
-        })
+        )
         manager = MCPClientManager(config)
 
         assert len(manager._clients) == 2
@@ -63,22 +61,26 @@ class TestMCPClientManagerStartStop:
     @pytest.fixture
     def manager_with_clients(self) -> MCPClientManager:
         """Create a manager with mock clients."""
-        config = MCPConfig.from_dict({
-            "servers": {
-                "server1": {
-                    "transport": "stdio",
-                    "command": "python",
-                },
-                "server2": {
-                    "transport": "stdio",
-                    "command": "node",
-                },
+        config = MCPConfig.from_dict(
+            {
+                "servers": {
+                    "server1": {
+                        "transport": "stdio",
+                        "command": "python",
+                    },
+                    "server2": {
+                        "transport": "stdio",
+                        "command": "node",
+                    },
+                }
             }
-        })
+        )
         return MCPClientManager(config)
 
     @pytest.mark.asyncio
-    async def test_start_connects_all_servers(self, manager_with_clients: MCPClientManager):
+    async def test_start_connects_all_servers(
+        self, manager_with_clients: MCPClientManager
+    ):
         """Test start connects to all enabled servers."""
         # Mock all client connect methods
         for client in manager_with_clients._clients.values():
@@ -108,18 +110,20 @@ class TestMCPClientManagerStartStop:
     @pytest.mark.asyncio
     async def test_start_handles_connection_failure(self):
         """Test start handles connection failures gracefully."""
-        config = MCPConfig.from_dict({
-            "servers": {
-                "good": {
-                    "transport": "stdio",
-                    "command": "python",
-                },
-                "bad": {
-                    "transport": "stdio",
-                    "command": "nonexistent",
-                },
+        config = MCPConfig.from_dict(
+            {
+                "servers": {
+                    "good": {
+                        "transport": "stdio",
+                        "command": "python",
+                    },
+                    "bad": {
+                        "transport": "stdio",
+                        "command": "nonexistent",
+                    },
+                }
             }
-        })
+        )
         manager = MCPClientManager(config)
 
         # Mock connections
@@ -136,20 +140,22 @@ class TestMCPClientManagerStartStop:
     @pytest.mark.asyncio
     async def test_start_skips_disabled_servers(self):
         """Test start skips disabled servers."""
-        config = MCPConfig.from_dict({
-            "servers": {
-                "enabled": {
-                    "transport": "stdio",
-                    "command": "python",
-                    "enabled": True,
-                },
-                "disabled": {
-                    "transport": "stdio",
-                    "command": "python",
-                    "enabled": False,
-                },
+        config = MCPConfig.from_dict(
+            {
+                "servers": {
+                    "enabled": {
+                        "transport": "stdio",
+                        "command": "python",
+                        "enabled": True,
+                    },
+                    "disabled": {
+                        "transport": "stdio",
+                        "command": "python",
+                        "enabled": False,
+                    },
+                }
             }
-        })
+        )
         manager = MCPClientManager(config)
 
         manager._clients["enabled"].connect = AsyncMock(return_value=True)
@@ -162,7 +168,9 @@ class TestMCPClientManagerStartStop:
         # (it's skipped in the list comprehension)
 
     @pytest.mark.asyncio
-    async def test_stop_disconnects_all_servers(self, manager_with_clients: MCPClientManager):
+    async def test_stop_disconnects_all_servers(
+        self, manager_with_clients: MCPClientManager
+    ):
         """Test stop disconnects from all servers."""
         manager_with_clients._started = True
         for client in manager_with_clients._clients.values():
@@ -190,18 +198,20 @@ class TestMCPClientManagerTools:
     @pytest.fixture
     def manager_with_tools(self) -> MCPClientManager:
         """Create a manager with mock tools."""
-        config = MCPConfig.from_dict({
-            "servers": {
-                "weather": {
-                    "transport": "stdio",
-                    "command": "python",
-                },
-                "search": {
-                    "transport": "stdio",
-                    "command": "node",
-                },
+        config = MCPConfig.from_dict(
+            {
+                "servers": {
+                    "weather": {
+                        "transport": "stdio",
+                        "command": "python",
+                    },
+                    "search": {
+                        "transport": "stdio",
+                        "command": "node",
+                    },
+                }
             }
-        })
+        )
         manager = MCPClientManager(config)
 
         # Set up mock tools
@@ -211,7 +221,10 @@ class TestMCPClientManagerTools:
                 server_name="weather",
                 name="get_weather",
                 description="Get weather info",
-                input_schema={"type": "object", "properties": {"city": {"type": "string"}}},
+                input_schema={
+                    "type": "object",
+                    "properties": {"city": {"type": "string"}},
+                },
             ),
         ]
 
@@ -221,13 +234,19 @@ class TestMCPClientManagerTools:
                 server_name="search",
                 name="web_search",
                 description="Search the web",
-                input_schema={"type": "object", "properties": {"query": {"type": "string"}}},
+                input_schema={
+                    "type": "object",
+                    "properties": {"query": {"type": "string"}},
+                },
             ),
             MCPTool(
                 server_name="search",
                 name="image_search",
                 description="Search images",
-                input_schema={"type": "object", "properties": {"query": {"type": "string"}}},
+                input_schema={
+                    "type": "object",
+                    "properties": {"query": {"type": "string"}},
+                },
             ),
         ]
 
@@ -270,7 +289,9 @@ class TestMCPClientManagerTools:
 
         assert len(tools) == 3
 
-    def test_get_merged_tools_with_user_tools(self, manager_with_tools: MCPClientManager):
+    def test_get_merged_tools_with_user_tools(
+        self, manager_with_tools: MCPClientManager
+    ):
         """Test get_merged_tools with user tools."""
         user_tools = [
             {
@@ -319,12 +340,14 @@ class TestMCPClientManagerServerStatus:
     @pytest.fixture
     def manager(self) -> MCPClientManager:
         """Create a manager with servers."""
-        config = MCPConfig.from_dict({
-            "servers": {
-                "server1": {"transport": "stdio", "command": "python"},
-                "server2": {"transport": "sse", "url": "http://test.com"},
+        config = MCPConfig.from_dict(
+            {
+                "servers": {
+                    "server1": {"transport": "stdio", "command": "python"},
+                    "server2": {"transport": "sse", "url": "http://test.com"},
+                }
             }
-        })
+        )
         return MCPClientManager(config)
 
     def test_get_server_status(self, manager: MCPClientManager):
@@ -356,15 +379,17 @@ class TestMCPClientManagerExecuteTool:
     @pytest.fixture
     def manager_with_connected_client(self) -> MCPClientManager:
         """Create a manager with a connected client."""
-        config = MCPConfig.from_dict({
-            "servers": {
-                "test": {
-                    "transport": "stdio",
-                    "command": "python",
+        config = MCPConfig.from_dict(
+            {
+                "servers": {
+                    "test": {
+                        "transport": "stdio",
+                        "command": "python",
+                    },
                 },
-            },
-            "default_timeout": 30.0,
-        })
+                "default_timeout": 30.0,
+            }
+        )
         manager = MCPClientManager(config)
         manager._clients["test"]._state = MCPServerState.CONNECTED
         manager._clients["test"]._tools = [
@@ -437,11 +462,11 @@ class TestMCPClientManagerExecuteTool:
         self, manager_with_connected_client: MCPClientManager
     ):
         """Test execute_tool returns error when server not connected."""
-        manager_with_connected_client._clients["test"]._state = MCPServerState.DISCONNECTED
-
-        result = await manager_with_connected_client.execute_tool(
-            "test__my_tool", {}
+        manager_with_connected_client._clients["test"]._state = (
+            MCPServerState.DISCONNECTED
         )
+
+        result = await manager_with_connected_client.execute_tool("test__my_tool", {})
 
         assert result.is_error is True
         assert "not connected" in result.error_message
@@ -478,12 +503,14 @@ class TestMCPClientManagerRefreshReconnect:
     @pytest.fixture
     def manager(self) -> MCPClientManager:
         """Create a manager with clients."""
-        config = MCPConfig.from_dict({
-            "servers": {
-                "server1": {"transport": "stdio", "command": "python"},
-                "server2": {"transport": "stdio", "command": "node"},
+        config = MCPConfig.from_dict(
+            {
+                "servers": {
+                    "server1": {"transport": "stdio", "command": "python"},
+                    "server2": {"transport": "stdio", "command": "node"},
+                }
             }
-        })
+        )
         manager = MCPClientManager(config)
         for client in manager._clients.values():
             client._state = MCPServerState.CONNECTED

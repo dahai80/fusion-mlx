@@ -140,7 +140,10 @@ class PromptLookupDecoder:
             cont_end = min(cont_begin + self.num_draft_tokens, len(self._token_history))
             continuation = self._token_history[cont_begin:cont_end]
 
-            if len(continuation) >= self.min_matches and len(continuation) > best_continuation_length:
+            if (
+                len(continuation) >= self.min_matches
+                and len(continuation) > best_continuation_length
+            ):
                 best_continuation_length = len(continuation)
                 draft_tokens = continuation[: self.num_draft_tokens]
 
@@ -270,9 +273,7 @@ def prompt_lookup_generate_step(
             # Speculative path: verify draft tokens
             # Build verify input via concatenate — avoids unwrap/rewrap sync
             draft_arr = mx.array(draft_tokens, mx.uint32)
-            verify_input = mx.concatenate(
-                [current_token, draft_arr]
-            )
+            verify_input = mx.concatenate([current_token, draft_arr])
             verified_tokens, verified_logprobs = _step(
                 verify_input, n_predict=len(draft_tokens) + 1
             )

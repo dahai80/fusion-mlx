@@ -122,9 +122,7 @@ def test_minimax_prompt_utils_restore_image_placeholders():
         return_messages=True,
         enable_thinking=False,
     )
-    assert rendered_messages == [
-        {"role": "user", "content": "]<]image[>[describe"}
-    ]
+    assert rendered_messages == [{"role": "user", "content": "]<]image[>[describe"}]
 
 
 def test_stopping_criteria_accepts_none_eos_ids():

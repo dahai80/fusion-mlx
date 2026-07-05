@@ -225,9 +225,9 @@ def test_anthropic_vision_model_accepts_image_block():
     # 1) The capability gate must not fire — if anything 400s, it's
     #    NOT this guard.
     if resp.status_code == 400:
-        assert "does not support" not in resp.json().get("detail", ""), (
-            "VLM-capable engine wrongly triggered the text-only media gate"
-        )
+        assert "does not support" not in resp.json().get(
+            "detail", ""
+        ), "VLM-capable engine wrongly triggered the text-only media gate"
     # 2) The route must have delegated to the engine. If the route
     #    short-circuited (e.g. silently dropped the request) the
     #    chat_calls list stays empty — which is exactly the silent-drop

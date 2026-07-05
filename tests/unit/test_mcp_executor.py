@@ -4,8 +4,7 @@ Tests for MCP tool executor (omlx/mcp/executor.py).
 """
 
 import asyncio
-from typing import Any, Dict
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -13,11 +12,9 @@ from fusion_mlx.mcp.executor import ToolExecutor, execute_single_tool
 from fusion_mlx.mcp.manager import MCPClientManager
 from fusion_mlx.mcp.types import (
     MCPConfig,
-    MCPServerConfig,
     MCPServerState,
     MCPTool,
     MCPToolResult,
-    MCPTransport,
 )
 
 
@@ -50,15 +47,17 @@ class TestToolExecutorExecuteToolCalls:
     @pytest.fixture
     def executor_with_manager(self) -> ToolExecutor:
         """Create executor with mock manager."""
-        config = MCPConfig.from_dict({
-            "servers": {
-                "test": {
-                    "transport": "stdio",
-                    "command": "python",
+        config = MCPConfig.from_dict(
+            {
+                "servers": {
+                    "test": {
+                        "transport": "stdio",
+                        "command": "python",
+                    },
                 },
-            },
-            "default_timeout": 10.0,
-        })
+                "default_timeout": 10.0,
+            }
+        )
         manager = MCPClientManager(config)
         manager._clients["test"]._state = MCPServerState.CONNECTED
         manager._clients["test"]._tools = [
@@ -88,7 +87,9 @@ class TestToolExecutorExecuteToolCalls:
             {"id": "call_2", "function": {"name": "test__tool2", "arguments": "{}"}},
         ]
 
-        results = await executor_with_manager.execute_tool_calls(tool_calls, parallel=True)
+        results = await executor_with_manager.execute_tool_calls(
+            tool_calls, parallel=True
+        )
 
         assert len(results) == 2
         assert results[0][0].content == "Result 1"
@@ -106,21 +107,27 @@ class TestToolExecutorExecuteToolCalls:
             call_order.append(name)
             return MCPToolResult(tool_name=name, content=f"Result for {name}")
 
-        executor_with_manager.manager.execute_tool_call = AsyncMock(side_effect=track_call)
+        executor_with_manager.manager.execute_tool_call = AsyncMock(
+            side_effect=track_call
+        )
 
         tool_calls = [
             {"id": "call_1", "function": {"name": "tool1", "arguments": "{}"}},
             {"id": "call_2", "function": {"name": "tool2", "arguments": "{}"}},
         ]
 
-        results = await executor_with_manager.execute_tool_calls(tool_calls, parallel=False)
+        results = await executor_with_manager.execute_tool_calls(
+            tool_calls, parallel=False
+        )
 
         assert len(results) == 2
         # Verify sequential order
         assert call_order == ["tool1", "tool2"]
 
     @pytest.mark.asyncio
-    async def test_execute_parallel_with_exception(self, executor_with_manager: ToolExecutor):
+    async def test_execute_parallel_with_exception(
+        self, executor_with_manager: ToolExecutor
+    ):
         """Test parallel execution handles exceptions."""
         executor_with_manager.manager.execute_tool_call = AsyncMock(
             side_effect=[
@@ -134,7 +141,9 @@ class TestToolExecutorExecuteToolCalls:
             {"id": "call_2", "function": {"name": "tool2", "arguments": "{}"}},
         ]
 
-        results = await executor_with_manager.execute_tool_calls(tool_calls, parallel=True)
+        results = await executor_with_manager.execute_tool_calls(
+            tool_calls, parallel=True
+        )
 
         assert len(results) == 2
         assert results[0][0].is_error is False
@@ -142,7 +151,9 @@ class TestToolExecutorExecuteToolCalls:
         assert "Tool failed" in results[1][0].error_message
 
     @pytest.mark.asyncio
-    async def test_execute_sequential_with_exception(self, executor_with_manager: ToolExecutor):
+    async def test_execute_sequential_with_exception(
+        self, executor_with_manager: ToolExecutor
+    ):
         """Test sequential execution handles exceptions."""
         executor_with_manager.manager.execute_tool_call = AsyncMock(
             side_effect=[
@@ -156,14 +167,18 @@ class TestToolExecutorExecuteToolCalls:
             {"id": "call_2", "function": {"name": "tool2", "arguments": "{}"}},
         ]
 
-        results = await executor_with_manager.execute_tool_calls(tool_calls, parallel=False)
+        results = await executor_with_manager.execute_tool_calls(
+            tool_calls, parallel=False
+        )
 
         assert len(results) == 2
         assert results[0][0].is_error is True
         assert results[1][0].is_error is False
 
     @pytest.mark.asyncio
-    async def test_execute_parallel_respects_semaphore(self, executor_with_manager: ToolExecutor):
+    async def test_execute_parallel_respects_semaphore(
+        self, executor_with_manager: ToolExecutor
+    ):
         """Test parallel execution respects max_parallel limit."""
         executor_with_manager.max_parallel = 2
         concurrent_count = []
@@ -180,7 +195,9 @@ class TestToolExecutorExecuteToolCalls:
                 current_concurrent -= 1
             return MCPToolResult(tool_name="tool", content="ok")
 
-        executor_with_manager.manager.execute_tool_call = AsyncMock(side_effect=track_concurrency)
+        executor_with_manager.manager.execute_tool_call = AsyncMock(
+            side_effect=track_concurrency
+        )
 
         tool_calls = [
             {"id": f"call_{i}", "function": {"name": f"tool{i}", "arguments": "{}"}}
@@ -249,11 +266,13 @@ class TestToolExecutorExtractAndValidate:
     @pytest.fixture
     def executor_with_tools(self) -> ToolExecutor:
         """Create executor with tools."""
-        config = MCPConfig.from_dict({
-            "servers": {
-                "test": {"transport": "stdio", "command": "python"},
+        config = MCPConfig.from_dict(
+            {
+                "servers": {
+                    "test": {"transport": "stdio", "command": "python"},
+                }
             }
-        })
+        )
         manager = MCPClientManager(config)
         manager._clients["test"]._state = MCPServerState.CONNECTED
         manager._clients["test"]._tools = [
@@ -313,9 +332,7 @@ class TestToolExecutorExtractAndValidate:
 
     def test_extract_no_tool_calls(self, executor_with_tools: ToolExecutor):
         """Test extracting from response without tool calls."""
-        response = {
-            "choices": [{"message": {"content": "No tools"}}]
-        }
+        response = {"choices": [{"message": {"content": "No tools"}}]}
 
         calls, all_valid = executor_with_tools.extract_and_validate(response)
 
@@ -331,7 +348,10 @@ class TestToolExecutorExtractAndValidate:
                         "tool_calls": [
                             {
                                 "id": "call_1",
-                                "function": {"name": "test__valid_tool", "arguments": "{}"},
+                                "function": {
+                                    "name": "test__valid_tool",
+                                    "arguments": "{}",
+                                },
                             },
                             {
                                 "id": "call_2",
@@ -355,12 +375,14 @@ class TestToolExecutorToolExists:
     @pytest.fixture
     def executor(self) -> ToolExecutor:
         """Create executor with tools."""
-        config = MCPConfig.from_dict({
-            "servers": {
-                "server1": {"transport": "stdio", "command": "python"},
-                "server2": {"transport": "stdio", "command": "node"},
+        config = MCPConfig.from_dict(
+            {
+                "servers": {
+                    "server1": {"transport": "stdio", "command": "python"},
+                    "server2": {"transport": "stdio", "command": "node"},
+                }
             }
-        })
+        )
         manager = MCPClientManager(config)
         manager._clients["server1"]._state = MCPServerState.CONNECTED
         manager._clients["server1"]._tools = [

@@ -6,10 +6,9 @@ This module tests the unified cache statistics for oMLX, including
 base classes and implementation-specific metrics.
 """
 
-from typing import Any, Dict
-
 import pytest
 
+from fusion_mlx.cache.interface import CacheManager
 from fusion_mlx.cache.stats import (
     BaseCacheStats,
     PagedCacheStats,
@@ -17,7 +16,6 @@ from fusion_mlx.cache.stats import (
     PrefixCacheStats,
     VLMCacheStats,
 )
-from fusion_mlx.cache.interface import CacheManager
 
 
 class TestBaseCacheStats:

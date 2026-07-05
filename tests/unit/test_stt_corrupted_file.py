@@ -171,9 +171,9 @@ class TestCorruptedUploadReturns400:
             "site-packages",
             'File "',
         ):
-            assert forbidden not in body_text, (
-                f"R6-H3: 400 envelope leaked {forbidden!r}: {body_text!r}"
-            )
+            assert (
+                forbidden not in body_text
+            ), f"R6-H3: 400 envelope leaked {forbidden!r}: {body_text!r}"
 
 
 class TestNonDecodeErrorStillReturns500:

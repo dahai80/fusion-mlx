@@ -76,9 +76,11 @@ def test_all_runs_smoke_speed_harness_in_order(patch_serve_only, capsys):
         rc = run_tier(model="qwen3.5-4b-4bit", tier="all")
 
     assert rc == 0
-    assert call_order == ["smoke", "speed", "harness"], (
-        f"--tier all must run smoke → speed → harness; got {call_order}"
-    )
+    assert call_order == [
+        "smoke",
+        "speed",
+        "harness",
+    ], f"--tier all must run smoke → speed → harness; got {call_order}"
 
     captured = capsys.readouterr()
     assert "OK: 3/3 tiers passed" in captured.out
@@ -120,9 +122,9 @@ def test_all_aborts_after_smoke_failure(patch_serve_only, capsys):
         rc = run_tier(model="qwen3.5-4b-4bit", tier="all")
 
     assert rc == 1, "--tier all with smoke FAIL must exit 1"
-    assert call_order == ["smoke"], (
-        f"--tier all must abort after smoke fail; got {call_order}"
-    )
+    assert call_order == [
+        "smoke"
+    ], f"--tier all must abort after smoke fail; got {call_order}"
 
     captured = capsys.readouterr()
     assert "Aborting --tier all" in captured.out
@@ -199,9 +201,9 @@ def test_all_boots_server_exactly_once(capsys):
     ):
         run_tier(model="qwen3.5-4b-4bit", tier="all")
 
-    assert boot_count["n"] == 1, (
-        f"--tier all must boot the server exactly once; booted {boot_count['n']}"
-    )
+    assert (
+        boot_count["n"] == 1
+    ), f"--tier all must boot the server exactly once; booted {boot_count['n']}"
 
 
 def test_all_with_base_url_skips_server_boot(capsys):
@@ -253,9 +255,9 @@ def test_all_with_base_url_skips_server_boot(capsys):
         )
 
     assert rc == 0
-    assert boot_count["n"] == 0, (
-        f"--base-url path must skip server boot; booted {boot_count['n']}"
-    )
+    assert (
+        boot_count["n"] == 0
+    ), f"--base-url path must skip server boot; booted {boot_count['n']}"
     captured = capsys.readouterr()
     assert "attached to existing server" in captured.out
 
@@ -306,9 +308,9 @@ def test_speed_tier_fails_when_server_returns_zero_tokens(capsys):
     with patch("httpx.Client", _FakeClient):
         r = _run_speed(model="qwen3.5-4b-4bit", base_url="http://127.0.0.1:8500/v1")
 
-    assert r.passed is False, (
-        "speed tier must FAIL when server emits zero tokens and empty content"
-    )
+    assert (
+        r.passed is False
+    ), "speed tier must FAIL when server emits zero tokens and empty content"
     assert "no completion tokens" in r.detail.lower() or "unhealthy" in r.detail.lower()
 
 

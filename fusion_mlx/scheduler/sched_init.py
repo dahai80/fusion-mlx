@@ -19,11 +19,12 @@ logger = logging.getLogger(__name__)
 
 # Import protocol-specific output parser support
 try:
-    from ..adapter.output_parser import (
+    from ..parsers.output_parser import (
         OutputParserFactory,
         OutputParserSession,
         detect_output_parser,
-     )
+    )
+
     HAS_OUTPUT_PARSER = True
 except ImportError:
     OutputParserFactory = None
@@ -42,9 +43,12 @@ from mlx_lm.generate import (
     BatchGenerator,
 )
 
+from ..cache.boundary_snapshot_store import BoundarySnapshotSSDStore
 from ..cache.observability import CacheRateTracker
 from ..cache.paged_cache import PagedCacheManager
+from ..cache.paged_ssd_cache import PagedSSDCacheManager
 from ..cache.prefix_cache import BlockAwarePrefixCache
+from ..memory_monitor import MemoryMonitor
 from ..prefill_transient_tracker import PrefillTransientTracker
 from ..request import Request
 from ..speculative.vlm_mtp import VLMMTPDrafter
@@ -54,7 +58,6 @@ from ..speculative.vlm_mtp import VLMMTPDrafter
 from .config import SchedulerConfig
 from .helpers import (
     _default_generation_stream,
-    _model_declares_llama4,
 )
 from .types import (
     _PrefillState,
@@ -63,7 +66,8 @@ from .types import (
 )
 
 
-def __init__(    self,
+def __init__(
+    self,
     model: Any,
     tokenizer: Any,
     config: SchedulerConfig | None = None,
@@ -93,9 +97,7 @@ def __init__(    self,
     # Load additional EOS tokens from generation_config.json.
     # Some models (e.g. GLM-4.6V) define multiple EOS tokens there
     # that are not in tokenizer.eos_token_id.
-    self._generation_config_eos: set[int] | None = (
-        self._load_generation_config_eos()
-    )
+    self._generation_config_eos: set[int] | None = self._load_generation_config_eos()
 
     # For strict RotatingKVCache reuse, align paged cache block size to
     # the model's rotating window size when paged cache is enabled.
@@ -193,6 +195,7 @@ def __init__(    self,
 
     # Llama 4 serialization: ChunkedKVCache does not support multi-row batching
     from .helpers import _model_declares_llama4
+
     self._serialize_llama4_requests = _model_declares_llama4(model)
     if self._serialize_llama4_requests and self.config.max_num_seqs > 1:
         logger.info(
@@ -203,6 +206,7 @@ def __init__(    self,
 
     # MiniMax M3 detection: requires special cache alignment handling
     from .helpers import _model_declares_minimax_m3
+
     self._uses_minimax_m3 = _model_declares_minimax_m3(model)
 
     # Overflow recovery: request IDs that triggered generation overflow
@@ -214,6 +218,7 @@ def __init__(    self,
         from ..patches.glm_moe_dsa.generate_patch import (
             _glm_dsa_adaptive_prefill_config,
         )
+
         self._glm_dsa_adaptive_prefill = _glm_dsa_adaptive_prefill_config(
             model, self.config.prefill_step_size
         )
@@ -305,18 +310,12 @@ def __init__(    self,
         # SSD manager can use model-derived KV bytes-per-token instead
         # of its 200 KB default.  Regression guard: PR #1627.
         try:
-            from fusion_mlx.memory_monitor import MemoryMonitor
-
-            max_kv = getattr(self.config, "max_kv_cache_memory", None) or (
-                4 * 1024**3
-            )
+            max_kv = getattr(self.config, "max_kv_cache_memory", None) or (4 * 1024**3)
             self.memory_monitor = MemoryMonitor(
                 max_kv_cache_memory=max_kv,
             )
             if self.paged_cache_manager is not None:
-                self.memory_monitor.set_paged_cache_manager(
-                    self.paged_cache_manager
-                )
+                self.memory_monitor.set_paged_cache_manager(self.paged_cache_manager)
             self._set_model_info_for_monitor()
         except Exception as e:
             logger.debug("Auto-init MemoryMonitor failed: %s", e)
@@ -349,15 +348,11 @@ def __init__(    self,
         # and is shrunk by ProcessMemoryEnforcer under pressure (#1383).
         self._store_cache_gate = _StoreCacheGate(cap=self.config.max_num_seqs)
     else:
-        logger.info(
-            "oMLX cache disabled (mlx-lm BatchGenerator manages KV internally)"
-        )
+        logger.info("oMLX cache disabled (mlx-lm BatchGenerator manages KV internally)")
 
     # Streaming detokenizers for proper UTF-8 handling (one per active request)
     # NOTE: No pooling - each request gets a fresh instance to prevent state contamination
-    self._request_detokenizers: dict[str, Any] = (
-        {}
-    )  # request_id → active detokenizer
+    self._request_detokenizers: dict[str, Any] = {}  # request_id → active detokenizer
 
     # Protocol-specific output parser support (e.g. Harmony, Gemma 4)
     self._output_parser_factory: OutputParserFactory | None = None
@@ -457,6 +452,7 @@ def __init__(    self,
     # N-gram speculative decode state (lazy-initialized in _step_pure_decode)
     self._ngram_spec_state = None
 
+
 @contextmanager
 def _phase_timer(self, phase: str):
     """Lightweight wall-time accumulator for cache-on overhead diagnostics.
@@ -470,6 +466,7 @@ def _phase_timer(self, phase: str):
     finally:
         self._phase_total_ms[phase] += (time.perf_counter() - t0) * 1000.0
         self._phase_count[phase] += 1
+
 
 def get_phase_stats(self) -> dict[str, dict[str, float]]:
     """Return accumulated phase timings for diagnostics.
@@ -486,6 +483,7 @@ def get_phase_stats(self) -> dict[str, dict[str, float]]:
         }
     return result
 
+
 def _periodic_clear_threshold_bytes(self) -> int:
     """Cache-bytes threshold above which the periodic clear runs.
 
@@ -498,6 +496,7 @@ def _periodic_clear_threshold_bytes(self) -> int:
     if self._memory_limit_bytes > 0:
         return max(self._memory_limit_bytes // 3, 2 * 1024**3)
     return 2 * 1024**3
+
 
 def _should_periodic_clear_cache(self) -> bool:
     """Decide whether the per-step periodic clear should fire.

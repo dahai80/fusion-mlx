@@ -185,9 +185,9 @@ def test_readme_quickstart_mentions_vision_extra() -> None:
         if candidate.is_file():
             readme_path = candidate
             break
-    assert readme_path is not None, (
-        "README.md not found above the test file — repo layout regressed?"
-    )
+    assert (
+        readme_path is not None
+    ), "README.md not found above the test file — repo layout regressed?"
     text = readme_path.read_text(encoding="utf-8")
     has_vision_install = any(
         ("rapid-mlx" in line and "[vision]" in line) for line in text.splitlines()

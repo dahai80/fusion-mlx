@@ -20,7 +20,7 @@ import json
 import logging
 import re
 import uuid
-from dataclasses import dataclass, is_dataclass
+from dataclasses import dataclass
 from typing import Any
 
 from jsonschema import ValidationError, validate
@@ -414,6 +414,7 @@ def _parse_bracket_tool_calls(text: str) -> tuple[str, list[ToolCall] | None]:
 # Gemma 4 robust fallback parser
 # ---------------------------------------------------------------------------
 
+
 def _gemma4_args_to_json_robust(args_str: str) -> dict:
     """Convert Gemma 4 tool call args to a Python dict.
 
@@ -457,9 +458,7 @@ def _gemma4_args_to_json_robust(args_str: str) -> dict:
         except (json.JSONDecodeError, ValueError):
             return f": {json.dumps(value)}{suffix}"
 
-    text = regex.sub(
-        r"(:\s*)([^\",\[\]{}\s][^,}]*?)(\s*[,}])", _quote_bare, text
-    )
+    text = regex.sub(r"(:\s*)([^\",\[\]{}\s][^,}]*?)(\s*[,}])", _quote_bare, text)
     return json.loads(text)
 
 
@@ -473,9 +472,7 @@ def _parse_gemma4_tool_call_fallback(text: str) -> dict | list:
     """
     import regex
 
-    pattern = regex.compile(
-        r"call:([\w:.-]+)(\{(?:[^{}]|(?2))*\})", regex.DOTALL
-    )
+    pattern = regex.compile(r"call:([\w:.-]+)(\{(?:[^{}]|(?2))*\})", regex.DOTALL)
     matches = list(pattern.finditer(text))
     if not matches:
         raise ValueError("No function call found in Gemma 4 format")
@@ -580,12 +577,8 @@ def parse_tool_calls(
                     gemma4_handled = False
                     if tool_call_start == "<|tool_call>":
                         try:
-                            parsed = _parse_gemma4_tool_call_fallback(
-                                match.strip()
-                            )
-                            items = (
-                                parsed if isinstance(parsed, list) else [parsed]
-                            )
+                            parsed = _parse_gemma4_tool_call_fallback(match.strip())
+                            items = parsed if isinstance(parsed, list) else [parsed]
                             for p in items:
                                 name = p.get("name", "")
                                 arguments = p.get("arguments", {})
@@ -778,7 +771,9 @@ def extract_tool_calls_with_thinking(
                     tool_calls_from_thinking = False
             else:
                 valid_names = _extract_tool_names(tools)
-                tool_calls = [tc for tc in tool_calls if tc.function.name in valid_names]
+                tool_calls = [
+                    tc for tc in tool_calls if tc.function.name in valid_names
+                ]
                 if not tool_calls:
                     tool_calls = None
                     tool_calls_from_thinking = False
@@ -871,9 +866,7 @@ class ToolCallStreamFilter:
         """Whether this filter should run for tool-enabled streams."""
         return True
 
-    def _find_start_envelope(
-        self, text: str
-    ) -> tuple[int, int, str | None] | None:
+    def _find_start_envelope(self, text: str) -> tuple[int, int, str | None] | None:
         """Find earliest complete opening envelope.
 
         Returns:
@@ -1170,7 +1163,7 @@ def convert_tools_for_template(tools: list | None) -> list[dict] | None:
             tool_desc_direct = getattr(tool, "description", None)
             tool_schema_direct = getattr(tool, "input_schema", None)
 
-         # OpenAI format: {"type": "function", "function": {...}}
+        # OpenAI format: {"type": "function", "function": {...}}
         if tool_type == "function" and tool_func:
             # Handle function as dict or Pydantic model
             if isinstance(tool_func, dict):
@@ -1198,7 +1191,7 @@ def convert_tools_for_template(tools: list | None) -> list[dict] | None:
             )
             continue
 
-         # Anthropic format: {"name": "...", "description": "...", "input_schema": {...}}
+        # Anthropic format: {"name": "...", "description": "...", "input_schema": {...}}
         if tool_name_direct and tool_schema_direct is not None:
             desc = tool_desc_direct or ""
             if isinstance(tool_schema_direct, dict):
@@ -1207,15 +1200,15 @@ def convert_tools_for_template(tools: list | None) -> list[dict] | None:
                 params = {"type": "object", "properties": {}}
 
             converted.append(
-                 {
-                     "type": "function",
-                     "function": {
-                         "name": str(tool_name_direct),
-                         "description": str(desc),
-                         "parameters": params,
-                     },
-                 }
-             )
+                {
+                    "type": "function",
+                    "function": {
+                        "name": str(tool_name_direct),
+                        "description": str(desc),
+                        "parameters": params,
+                    },
+                }
+            )
             continue
     return converted if converted else None
 
@@ -1277,7 +1270,7 @@ def restore_gemma4_param_names(arguments: dict) -> dict:
     restored = {}
     for k, v in arguments.items():
         if k.startswith(_GEMMA4_RENAME_PREFIX):
-            original = k[len(_GEMMA4_RENAME_PREFIX):]
+            original = k[len(_GEMMA4_RENAME_PREFIX) :]
             if original in _GEMMA4_COLLIDING_PARAMS:
                 restored[original] = v
                 continue
@@ -1310,9 +1303,7 @@ def format_tool_call_for_message(tool_call: ToolCall) -> dict:
 # =============================================================================
 
 
-def validate_json_schema(
-    data: Any, schema: dict[str, Any]
-) -> tuple[bool, str | None]:
+def validate_json_schema(data: Any, schema: dict[str, Any]) -> tuple[bool, str | None]:
     """
     Validate JSON data against a JSON Schema.
 

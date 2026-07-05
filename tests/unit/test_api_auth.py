@@ -1,12 +1,13 @@
 # SPDX-License-Identifier: Apache-2.0
 
-import pytest
 from unittest.mock import MagicMock
+
+import pytest
 
 from fusion_mlx.admin.auth import (
     create_session_token,
-    verify_session,
     verify_api_key,
+    verify_session,
 )
 
 
@@ -19,19 +20,27 @@ def _mock_request(headers=None):
 class TestVerifyApiKeyServerState:
     """omlx.server._server_state based tests — skipped for fusion-mlx."""
 
-    @pytest.mark.skip(reason="fusion-mlx uses admin.auth for server auth, not _server_state")
+    @pytest.mark.skip(
+        reason="fusion-mlx uses admin.auth for server auth, not _server_state"
+    )
     def test_verify_api_key_no_auth_required(self):
         pass
 
-    @pytest.mark.skip(reason="fusion-mlx uses admin.auth for server auth, not _server_state")
+    @pytest.mark.skip(
+        reason="fusion-mlx uses admin.auth for server auth, not _server_state"
+    )
     def test_verify_api_key_missing_credentials(self):
         pass
 
-    @pytest.mark.skip(reason="fusion-mlx uses admin.auth for server auth, not _server_state")
+    @pytest.mark.skip(
+        reason="fusion-mlx uses admin.auth for server auth, not _server_state"
+    )
     def test_verify_api_key_invalid_key(self):
         pass
 
-    @pytest.mark.skip(reason="fusion-mlx uses admin.auth for server auth, not _server_state")
+    @pytest.mark.skip(
+        reason="fusion-mlx uses admin.auth for server auth, not _server_state"
+    )
     def test_verify_api_key_valid_key(self):
         pass
 
@@ -39,19 +48,27 @@ class TestVerifyApiKeyServerState:
 class TestXApiKeyHeader:
     """x-api-key header tests — skipped: depend on _server_state."""
 
-    @pytest.mark.skip(reason="fusion-mlx uses admin.auth for server auth, not _server_state")
+    @pytest.mark.skip(
+        reason="fusion-mlx uses admin.auth for server auth, not _server_state"
+    )
     def test_x_api_key_header_accepted(self):
         pass
 
-    @pytest.mark.skip(reason="fusion-mlx uses admin.auth for server auth, not _server_state")
+    @pytest.mark.skip(
+        reason="fusion-mlx uses admin.auth for server auth, not _server_state"
+    )
     def test_x_api_key_header_invalid(self):
         pass
 
-    @pytest.mark.skip(reason="fusion-mlx uses admin.auth for server auth, not _server_state")
+    @pytest.mark.skip(
+        reason="fusion-mlx uses admin.auth for server auth, not _server_state"
+    )
     def test_bearer_takes_priority_over_x_api_key(self):
         pass
 
-    @pytest.mark.skip(reason="fusion-mlx uses admin.auth for server auth, not _server_state")
+    @pytest.mark.skip(
+        reason="fusion-mlx uses admin.auth for server auth, not _server_state"
+    )
     def test_x_api_key_with_sub_keys(self):
         pass
 
@@ -59,15 +76,21 @@ class TestXApiKeyHeader:
 class TestSubKeyVerification:
     """Sub key tests — skipped: depend on _server_state."""
 
-    @pytest.mark.skip(reason="fusion-mlx uses admin.auth for server auth, not _server_state")
+    @pytest.mark.skip(
+        reason="fusion-mlx uses admin.auth for server auth, not _server_state"
+    )
     def test_sub_key_accepted_for_api(self):
         pass
 
-    @pytest.mark.skip(reason="fusion-mlx uses admin.auth for server auth, not _server_state")
+    @pytest.mark.skip(
+        reason="fusion-mlx uses admin.auth for server auth, not _server_state"
+    )
     def test_invalid_sub_key_rejected(self):
         pass
 
-    @pytest.mark.skip(reason="fusion-mlx uses admin.auth for server auth, not _server_state")
+    @pytest.mark.skip(
+        reason="fusion-mlx uses admin.auth for server auth, not _server_state"
+    )
     def test_main_key_still_works_for_api(self):
         pass
 
@@ -75,15 +98,21 @@ class TestSubKeyVerification:
 class TestSkipApiKeyVerification:
     """Skip verification tests — skipped: depend on _server_state."""
 
-    @pytest.mark.skip(reason="fusion-mlx uses admin.auth for server auth, not _server_state")
+    @pytest.mark.skip(
+        reason="fusion-mlx uses admin.auth for server auth, not _server_state"
+    )
     def test_skip_verification_when_localhost(self):
         pass
 
-    @pytest.mark.skip(reason="fusion-mlx uses admin.auth for server auth, not _server_state")
+    @pytest.mark.skip(
+        reason="fusion-mlx uses admin.auth for server auth, not _server_state"
+    )
     def test_skip_verification_on_any_host(self):
         pass
 
-    @pytest.mark.skip(reason="fusion-mlx uses admin.auth for server auth, not _server_state")
+    @pytest.mark.skip(
+        reason="fusion-mlx uses admin.auth for server auth, not _server_state"
+    )
     def test_skip_verification_disabled_by_default(self):
         pass
 
@@ -102,7 +131,9 @@ class TestAdminAuth:
     def test_verify_session_invalid(self):
         assert verify_session("invalid-token") is False
 
-    @pytest.mark.skip(reason="fusion-mlx verify_session does not support max_age parameter")
+    @pytest.mark.skip(
+        reason="fusion-mlx verify_session does not support max_age parameter"
+    )
     def test_verify_session_expired(self):
         pass
 
@@ -124,11 +155,15 @@ class TestNonAsciiApiKeys:
     def test_compare_keys_non_ascii_match(self):
         pass
 
-    @pytest.mark.skip(reason="fusion-mlx admin.auth verify_api_key uses sha256+compare_digest, tested separately")
+    @pytest.mark.skip(
+        reason="fusion-mlx admin.auth verify_api_key uses sha256+compare_digest, tested separately"
+    )
     def test_verify_api_key_non_ascii_client_key(self):
         pass
 
-    @pytest.mark.skip(reason="fusion-mlx admin.auth verify_api_key uses sha256+compare_digest, tested separately")
+    @pytest.mark.skip(
+        reason="fusion-mlx admin.auth verify_api_key uses sha256+compare_digest, tested separately"
+    )
     def test_verify_api_key_non_ascii_server_key(self):
         pass
 
@@ -140,7 +175,9 @@ class TestNonAsciiApiKeys:
     def test_verify_any_api_key_non_ascii_sub_keys(self):
         pass
 
-    @pytest.mark.skip(reason="fusion-mlx uses admin.auth for server auth, not _server_state")
+    @pytest.mark.skip(
+        reason="fusion-mlx uses admin.auth for server auth, not _server_state"
+    )
     def test_server_dependency_non_ascii_bearer_returns_401(self):
         pass
 

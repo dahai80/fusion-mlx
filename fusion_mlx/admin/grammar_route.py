@@ -23,8 +23,6 @@ logger = logging.getLogger(__name__)
 PRESET_REMOTE_URL = "http://bench.dpdns.org/assets/omlx_preset.json"
 
 
-
-
 _router = APIRouter()
 
 # =============================================================================
@@ -102,7 +100,6 @@ async def list_grammar_parsers(is_admin: bool = Depends(require_admin)):
     except Exception as e:
         logger.warning("xgrammar parser discovery unavailable: %s", e)
         return []
-
 
 
 router = _router

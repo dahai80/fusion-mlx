@@ -20,7 +20,6 @@ import threading
 from unittest.mock import MagicMock, patch
 
 import pytest
-
 from fusion_mlx.share import cli as share_cli
 
 
@@ -728,9 +727,9 @@ def test_default_cors_origins_is_rapidmlx_allowlist_not_wildcard():
         "https://rapidmlx.com",
         "https://chat.rapidmlx.com",
     ):
-        assert must_have in origins, (
-            f"missing {must_have} from default; got {origins!r}"
-        )
+        assert (
+            must_have in origins
+        ), f"missing {must_have} from default; got {origins!r}"
 
 
 def test_chat_frontend_origin_is_appended_to_default_cors_allowlist():

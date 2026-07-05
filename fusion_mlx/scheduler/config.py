@@ -15,7 +15,7 @@ from typing import Any
 # class and re-exporting it here restores the v0.4.0 contract: one class that
 # carries both the CLI knobs and the runtime field reads. See
 # fusion_mlx/config.py:SchedulerConfig for the field set.
-from ..config import SchedulerConfig, SchedulingPolicy
+from fusion_mlx.config import SchedulerConfig, SchedulingPolicy  # noqa: F401
 
 
 @dataclass

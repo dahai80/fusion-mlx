@@ -1,10 +1,8 @@
-import pytest
-
 from fusion_mlx.optimizations import (
     HardwareInfo,
     detect_hardware,
-    get_system_memory_gb,
     get_optimization_status,
+    get_system_memory_gb,
 )
 
 

@@ -289,7 +289,6 @@ class TestPagedSSDV3Format:
         from fusion_mlx.cache.paged_ssd_cache import PagedSSDCacheManager
 
         mgr = PagedSSDCacheManager.__new__(PagedSSDCacheManager)
-        from fusion_mlx.cache import paged_ssd_cache as psc
 
         def _fake_load_raw(path):
             return None
@@ -515,8 +514,9 @@ class TestPrefixCacheNTupleSubState:
         assert all(i.sliceable is False for i in info)
 
     def test_pooling_cache_deserialize_3tuple_round_trip(self, monkeypatch):
-        from fusion_mlx.patches.deepseek_v4.cache_handlers import PoolingCacheHandler
         import mlx_lm.models.cache as _cache_mod
+
+        from fusion_mlx.patches.deepseek_v4.cache_handlers import PoolingCacheHandler
 
         class _FakePoolingCache:
             def __init__(self, ratio=1):
@@ -544,8 +544,9 @@ class TestPrefixCacheNTupleSubState:
         assert rest_state[2] == "pooled_value"
 
     def test_pooling_cache_deserialize_legacy_2tuple_input(self, monkeypatch):
-        from fusion_mlx.patches.deepseek_v4.cache_handlers import PoolingCacheHandler
         import mlx_lm.models.cache as _cache_mod
+
+        from fusion_mlx.patches.deepseek_v4.cache_handlers import PoolingCacheHandler
 
         class _FakePoolingCache:
             def __init__(self, ratio=1):

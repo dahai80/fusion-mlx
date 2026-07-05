@@ -436,9 +436,9 @@ class TestCacheListTrimmability:
         short_tokens = [1, 2, 3, 4, 5]
         result, remaining = cache.fetch(short_tokens)
 
-        assert result is not None, (
-            "Supersequence match was skipped — CacheList misclassified as non-trimmable"
-        )
+        assert (
+            result is not None
+        ), "Supersequence match was skipped — CacheList misclassified as non-trimmable"
         assert remaining == []
 
     def test_supersequence_non_trimmable_skipped(self, cache):
@@ -461,9 +461,9 @@ class TestCacheListTrimmability:
         requested = [1, 2, 3, 4, 5, 20, 21]
         result, remaining = cache.fetch(requested)
 
-        assert result is not None, (
-            "LCP match was skipped — CacheList misclassified as non-trimmable"
-        )
+        assert (
+            result is not None
+        ), "LCP match was skipped — CacheList misclassified as non-trimmable"
         assert remaining == [20, 21]
 
     def test_lcp_non_trimmable_skipped(self, cache):

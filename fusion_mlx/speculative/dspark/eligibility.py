@@ -79,9 +79,7 @@ def eligible_aliases() -> list[str]:
     try:
         from fusion_mlx.model_aliases import list_profiles
 
-        return sorted(
-            p.name for p in list_profiles() if not report(p).reasons
-        )
+        return sorted(p.name for p in list_profiles() if not report(p).reasons)
     except Exception as e:  # noqa: BLE001 — diagnostic helper, never fatal
         logger.debug("eligible_aliases failed: %s", e)
         return []

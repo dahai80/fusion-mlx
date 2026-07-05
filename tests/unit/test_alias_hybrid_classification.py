@@ -299,9 +299,9 @@ def test_enrich_respects_is_hybrid_explicit_against_arrays_cache(
         "is_hybrid_explicit=True was set — the R6-C1 boot-path "
         "regression has re-opened."
     )
-    assert cfg_out.is_hybrid_explicit is True, (
-        "is_hybrid_explicit must round-trip through enrich (replace())"
-    )
+    assert (
+        cfg_out.is_hybrid_explicit is True
+    ), "is_hybrid_explicit must round-trip through enrich (replace())"
     assert cfg_out.supports_spec_decode is False, (
         "supports_spec_decode must be forced off when ArraysCache is "
         "present, regardless of the routing decision (orthogonal "

@@ -971,7 +971,6 @@ class TestArraysCacheLastBlockOnly:
 
     def test_reconstruct_arrays_cache_exact_match_succeeds(self, prefix_cache, mx):
         """Exact match (full state in last block) should reconstruct successfully."""
-        from fusion_mlx.cache.paged_ssd_cache import PagedSSDCacheManager
 
         mock_ssd = MagicMock()
 
@@ -1890,7 +1889,6 @@ class TestPrefixCacheCacheList:
 
     def test_reconstruct_cache_list_partial_match_reject(self, mx):
         """Test reconstruct_cache rejects CacheList with placeholder (partial match)."""
-        from fusion_mlx.cache.paged_ssd_cache import PagedSSDCacheManager
 
         mock_ssd = MagicMock()
 
@@ -2121,7 +2119,6 @@ class TestWalkBackTruncation:
         3 blocks: block0[p] block1[real] block2[p]
         Should truncate to blocks 0-1, returning valid cache.
         """
-        from fusion_mlx.cache.paged_ssd_cache import PagedSSDCacheManager
 
         mock_ssd = MagicMock()
 
@@ -2187,7 +2184,6 @@ class TestWalkBackTruncation:
 
     def test_reconstruct_rotating_cache_walks_back_to_valid_block(self, mx):
         """Rotating partial match should walk back to latest valid block."""
-        from fusion_mlx.cache.paged_ssd_cache import PagedSSDCacheManager
 
         mock_ssd = MagicMock()
 
@@ -2252,7 +2248,6 @@ class TestWalkBackTruncation:
     def test_reconstruct_all_placeholders_still_rejects(self, mx):
         """When no block has valid state, walk-back finds nothing and
         the existing per-layer rejection returns None."""
-        from fusion_mlx.cache.paged_ssd_cache import PagedSSDCacheManager
 
         mock_ssd = MagicMock()
 
@@ -2305,7 +2300,6 @@ class TestWalkBackTruncation:
     def test_partial_reconstruction_frees_dropped_blocks(self, mx):
         """Blocks dropped during partial reconstruction should have
         their ref_counts decremented."""
-        from fusion_mlx.cache.paged_ssd_cache import PagedSSDCacheManager
 
         mock_ssd = MagicMock()
 
@@ -2382,8 +2376,6 @@ class TestTurboQuantFormatMismatchRecovery:
         from mlx_lm.models.cache import KVCache
         from mlx_vlm.turboquant import TurboQuantKVCache
 
-        from fusion_mlx.cache.paged_ssd_cache import PagedSSDCacheManager
-
         mock_ssd = MagicMock()
         mock_ssd.forget_block.return_value = True
 
@@ -2458,13 +2450,13 @@ class TestTurboQuantFormatMismatchRecovery:
         assert block_table.num_tokens == 4
         assert blocks[1].ref_count == 1
         mock_ssd.forget_block.assert_called_once_with(blocks[1].block_hash)
-        assert paged_cache.cached_block_hash_to_block.get_block(
-            blocks[1].block_hash
-        ) is None
+        assert (
+            paged_cache.cached_block_hash_to_block.get_block(blocks[1].block_hash)
+            is None
+        )
 
     def test_reconstruct_rejects_stale_first_block_with_manager_signature(self, mx):
         """A live manager signature must make stale block 0 fail its own check."""
-        from fusion_mlx.cache.paged_ssd_cache import PagedSSDCacheManager
 
         mock_ssd = MagicMock()
         mock_ssd._expected_layer_cache_types = ["TurboQuantKVCache"]
@@ -2521,7 +2513,6 @@ class TestTurboQuantFormatMismatchRecovery:
         from mlx_lm.models.cache import KVCache
         from mlx_vlm.turboquant import TurboQuantKVCache
 
-        from fusion_mlx.cache.paged_ssd_cache import PagedSSDCacheManager
         from fusion_mlx.cache.type_handlers import SizedArraysCache
 
         mock_ssd = MagicMock()

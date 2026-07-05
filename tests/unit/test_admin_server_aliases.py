@@ -9,10 +9,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi import HTTPException
-
-import fusion_mlx.admin.routes as admin_routes
-import fusion_mlx.server  # noqa: F401 — ensure server module is imported first (triggers set_admin_getters)
-from fusion_mlx.admin.routes import GlobalSettingsRequest
 from fusion_mlx.utils.network import (
     detect_server_aliases,
     is_valid_alias,
@@ -20,6 +16,11 @@ from fusion_mlx.utils.network import (
     is_valid_hostname,
     is_valid_ip,
 )
+
+import fusion_mlx as omlx
+import fusion_mlx.admin.routes as admin_routes
+import fusion_mlx.server  # noqa: F401  # loaded so omlx.server attribute resolves  # noqa: F401 — ensure server module is imported first (triggers set_admin_getters)
+from fusion_mlx.admin.routes import GlobalSettingsRequest
 
 # =============================================================================
 # Helpers
@@ -612,11 +613,11 @@ class TestUpdateGlobalSettingsEmbeddingBatchSize:
                 "_server_state",
                 server_state,
             ),
+            pytest.raises(HTTPException) as exc_info,
         ):
-            with pytest.raises(HTTPException) as exc_info:
-                asyncio.run(
-                    admin_routes.update_global_settings(request=request, is_admin=True)
-                )
+            asyncio.run(
+                admin_routes.update_global_settings(request=request, is_admin=True)
+            )
 
         assert exc_info.value.status_code == 400
         pool.apply_embedding_batch_size.assert_not_awaited()
@@ -639,11 +640,11 @@ class TestUpdateGlobalSettingsEmbeddingBatchSize:
                 "_server_state",
                 server_state,
             ),
+            pytest.raises(HTTPException) as exc_info,
         ):
-            with pytest.raises(HTTPException) as exc_info:
-                asyncio.run(
-                    admin_routes.update_global_settings(request=request, is_admin=True)
-                )
+            asyncio.run(
+                admin_routes.update_global_settings(request=request, is_admin=True)
+            )
 
         assert exc_info.value.status_code == 400
         pool.apply_embedding_batch_size.assert_not_awaited()
@@ -666,11 +667,11 @@ class TestUpdateGlobalSettingsEmbeddingBatchSize:
                 "_server_state",
                 server_state,
             ),
+            pytest.raises(HTTPException) as exc_info,
         ):
-            with pytest.raises(HTTPException) as exc_info:
-                asyncio.run(
-                    admin_routes.update_global_settings(request=request, is_admin=True)
-                )
+            asyncio.run(
+                admin_routes.update_global_settings(request=request, is_admin=True)
+            )
 
         assert exc_info.value.status_code == 500
         pool.apply_embedding_batch_size.assert_not_awaited()

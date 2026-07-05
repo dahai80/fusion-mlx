@@ -157,8 +157,9 @@ def test_glm_adaptive_prefill_config_env_overrides(monkeypatch):
 def test_glm_patch_keeps_vendored_helpers_private():
     glm_moe_dsa = _load_patched_glm_module()
 
-    from fusion_mlx.patches.glm_moe_dsa import deepseek_v32 as vendored_deepseek_v32
     from mlx_lm.models import deepseek_v32 as upstream_deepseek_v32
+
+    from fusion_mlx.patches.glm_moe_dsa import deepseek_v32 as vendored_deepseek_v32
 
     assert getattr(glm_moe_dsa, "_OMLX_GLM_DSA_OPTIMIZED", False)
     assert sys.modules["mlx_lm.models.glm_moe_dsa"] is glm_moe_dsa
@@ -292,9 +293,7 @@ def test_glm_native_fused_kernels_match_reference(monkeypatch):
         )
         mx.eval(y_native, y_ref)
         valid = mx.isfinite(y_ref)
-        future_finite = mx.sum(
-            mx.where(~valid, mx.isfinite(y_native), mx.array(False))
-        )
+        future_finite = mx.sum(mx.where(~valid, mx.isfinite(y_native), mx.array(False)))
         diff = mx.max(
             mx.where(
                 valid,
@@ -396,9 +395,7 @@ def test_glm_native_fused_kernels_match_reference(monkeypatch):
         axis=3,
     )
     mx.eval(y_native, y_ref)
-    subset_diff = mx.max(
-        mx.abs(y_native.astype(mx.float32) - y_ref.astype(mx.float32))
-    )
+    subset_diff = mx.max(mx.abs(y_native.astype(mx.float32) - y_ref.astype(mx.float32)))
     assert float(subset_diff.item()) <= 0.02
 
     batch, heads, q_len, k_len, latent, pe, topk = 1, 64, 32, 64, 512, 64, 16

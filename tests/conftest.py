@@ -14,6 +14,7 @@ def _mock_module(name):
 def _is_real_mlx_available():
     try:
         import mlx.core as _mx
+
         _mx.zeros((1,))
         return True
     except Exception:
@@ -23,8 +24,7 @@ def _is_real_mlx_available():
 _HAS_REAL_MLX = _is_real_mlx_available()
 
 if _HAS_REAL_MLX:
-    import mlx.core as _real_mx_core
-    import mlx
+    pass
 else:
     _mlx = MagicMock()
     _mlx.__version__ = "0.31.2"
@@ -103,9 +103,17 @@ else:
 # KVCache/ArraysCache objects, so mocking breaks them.
 try:
     import mlx_lm as _real_mlx_lm
+
     sys.modules["mlx_lm"] = _real_mlx_lm
-    for _sub in ("generate", "models", "models.cache", "tokenizer_utils",
-                 "load", "sample_utils", "utils"):
+    for _sub in (
+        "generate",
+        "models",
+        "models.cache",
+        "tokenizer_utils",
+        "load",
+        "sample_utils",
+        "utils",
+    ):
         _full = f"mlx_lm.{_sub}"
         try:
             __import__(_full)
@@ -128,6 +136,7 @@ except ImportError:
 # MLX-VLM: if real package is available, preserve it; otherwise mock.
 try:
     import mlx_vlm as _real_mlx_vlm
+
     sys.modules["mlx_vlm"] = _real_mlx_vlm
     for _sub in ("generate", "models", "utils", "turboquant", "vision_cache"):
         _full = f"mlx_vlm.{_sub}"

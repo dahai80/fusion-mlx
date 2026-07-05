@@ -306,9 +306,9 @@ class TestAnthropicStreamingWithReasoningParser:
             if t == ("content_block_start", "text")
         ]
         if thinking_starts and text_starts:
-            assert thinking_starts[0][0] < text_starts[0][0], (
-                f"thinking block must start before text block: {delta_types}"
-            )
+            assert (
+                thinking_starts[0][0] < text_starts[0][0]
+            ), f"thinking block must start before text block: {delta_types}"
 
     def test_only_close_tag_implicit_think(self, cfg_with_reasoning_parser):
         """Only </think> in output (think injected in prompt) → correct split."""
@@ -463,6 +463,6 @@ class TestAnthropicStreamingChannelRouting:
         events = _collect_sse_events(gen)
 
         joined = "\n".join(events)
-        assert "INTERNAL_LEAK_TOKEN" not in joined, (
-            f"Unknown channel leaked to client: {joined!r}"
-        )
+        assert (
+            "INTERNAL_LEAK_TOKEN" not in joined
+        ), f"Unknown channel leaked to client: {joined!r}"

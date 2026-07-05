@@ -385,13 +385,8 @@ class Gemma4OutputParserSession:
             # tokens arrive. Buffer and wait so the canonical match wins.
             if not final and marker == _OPEN_MARKER_BARE:
                 suffix = source[idx:]
-                if (
-                    len(suffix) < len(_OPEN_MARKER)
-                    and _OPEN_MARKER.startswith(suffix)
-                ):
-                    self._append_text(
-                        stream_parts, visible_parts, source[pos:idx]
-                    )
+                if len(suffix) < len(_OPEN_MARKER) and _OPEN_MARKER.startswith(suffix):
+                    self._append_text(stream_parts, visible_parts, source[pos:idx])
                     self._buffer = suffix
                     return OutputParserTokenResult(
                         stream_text="".join(stream_parts),

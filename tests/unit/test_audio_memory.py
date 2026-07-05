@@ -13,14 +13,12 @@ management lifecycle as LLM/VLM/embedding engines:
 All tests run with mocked engines — mlx-audio is not required.
 """
 
-import asyncio
 import json
-from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from fusion_mlx.engine_pool import EngineEntry, EnginePool
+from fusion_mlx.engine_pool import EnginePool
 
 
 def _engine_pool_with_ceiling(ceiling=None):
@@ -48,10 +46,14 @@ def audio_model_dir(tmp_path):
 
     stt_dir = tmp_path / "whisper-tiny"
     stt_dir.mkdir()
-    (stt_dir / "config.json").write_text(json.dumps({
-        "model_type": "whisper",
-        "architectures": ["WhisperForConditionalGeneration"],
-    }))
+    (stt_dir / "config.json").write_text(
+        json.dumps(
+            {
+                "model_type": "whisper",
+                "architectures": ["WhisperForConditionalGeneration"],
+            }
+        )
+    )
     (stt_dir / "model.safetensors").write_bytes(b"0" * 2048)  # ~2KB
 
     tts_dir = tmp_path / "kokoro-tts"
@@ -296,10 +298,14 @@ class TestAudioPreLoadEviction:
 
         stt_dir = tmp_path / "whisper-tiny"
         stt_dir.mkdir()
-        (stt_dir / "config.json").write_text(json.dumps({
-            "model_type": "whisper",
-            "architectures": ["WhisperForConditionalGeneration"],
-        }))
+        (stt_dir / "config.json").write_text(
+            json.dumps(
+                {
+                    "model_type": "whisper",
+                    "architectures": ["WhisperForConditionalGeneration"],
+                }
+            )
+        )
         (stt_dir / "model.safetensors").write_bytes(b"0" * 2048)
 
         # Limit: allow one model but not both simultaneously
@@ -318,9 +324,7 @@ class TestAudioPreLoadEviction:
             "omlx.engine_pool.get_phys_footprint",
             lambda: pool._current_model_memory,
         )
-        monkeypatch.setattr(
-            "omlx.engine_pool.mx.get_active_memory", lambda: 0
-        )
+        monkeypatch.setattr("omlx.engine_pool.mx.get_active_memory", lambda: 0)
 
         mock_llm = MagicMock()
         mock_llm.start = AsyncMock()

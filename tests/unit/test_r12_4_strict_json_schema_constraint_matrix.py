@@ -382,9 +382,9 @@ def test_strict_constraint_family_trips_422(
     # ``"minimum: 18"``, ``"format: 'email'"``), so the row's
     # constraint name MUST appear as the validator portion before
     # the colon.
-    assert details.get("reason") == "schema_violation", (
-        f"{label}: expected schema_violation, got {details}"
-    )
+    assert (
+        details.get("reason") == "schema_violation"
+    ), f"{label}: expected schema_violation, got {details}"
     assert details["expected"].startswith(expected_validator_substring + ":"), (
         f"{label}: expected validator `{expected_validator_substring}` "
         f"as the failing keyword but got `{details['expected']}`. "
@@ -412,10 +412,10 @@ def test_strict_constraint_matrix_disable_flag_returns_200_for_all(monkeypatch):
         client, engine = _client(violating_body)
         resp = client.post("/v1/chat/completions", json=_payload(schema=schema))
         # Legacy behavior: 200 even with schema-violating body.
-        assert resp.status_code == 200, (
-            f"{label} should fall through under disable flag: {resp.text}"
-        )
+        assert (
+            resp.status_code == 200
+        ), f"{label} should fall through under disable flag: {resp.text}"
         # Only the initial chat call should fire; no repair retry path.
-        assert len(engine.chat_calls) == 1, (
-            f"{label}: repair retry must NOT fire under disable flag"
-        )
+        assert (
+            len(engine.chat_calls) == 1
+        ), f"{label}: repair retry must NOT fire under disable flag"

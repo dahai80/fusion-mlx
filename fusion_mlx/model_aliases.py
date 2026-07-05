@@ -3,10 +3,9 @@
 
 import logging
 import os
+from dataclasses import dataclass
 from difflib import get_close_matches
 from pathlib import Path
-
-from dataclasses import dataclass
 
 logger = logging.getLogger(__name__)
 
@@ -47,6 +46,7 @@ def _load_aliases() -> dict[str, str]:
     if not _ALIASES_FILE.exists():
         return {}
     import json
+
     try:
         with open(_ALIASES_FILE, encoding="utf-8") as f:
             data = json.load(f)
@@ -68,20 +68,22 @@ def list_profiles() -> list[AliasProfile]:
         if isinstance(hf_path, str):
             profiles.append(AliasProfile(name=name, hf_path=hf_path))
         elif isinstance(hf_path, dict):
-            profiles.append(AliasProfile(
-                name=name,
-                hf_path=hf_path.get("hf_path", hf_path.get("path", "")),
-                supports_dflash=hf_path.get("supports_dflash", False),
-                is_moe=hf_path.get("is_moe", False),
-                drafter_hf_path=hf_path.get("drafter_hf_path"),
-                description=hf_path.get("description", ""),
-                tool_call_parser=hf_path.get("tool_call_parser"),
-                reasoning_parser=hf_path.get("reasoning_parser"),
-                is_hybrid=hf_path.get("is_hybrid", False),
-                supports_spec_decode=hf_path.get("supports_spec_decode", True),
-                supports_mllm=hf_path.get("supports_mllm", False),
-                supports_dspark=hf_path.get("supports_dspark", False),
-            ))
+            profiles.append(
+                AliasProfile(
+                    name=name,
+                    hf_path=hf_path.get("hf_path", hf_path.get("path", "")),
+                    supports_dflash=hf_path.get("supports_dflash", False),
+                    is_moe=hf_path.get("is_moe", False),
+                    drafter_hf_path=hf_path.get("drafter_hf_path"),
+                    description=hf_path.get("description", ""),
+                    tool_call_parser=hf_path.get("tool_call_parser"),
+                    reasoning_parser=hf_path.get("reasoning_parser"),
+                    is_hybrid=hf_path.get("is_hybrid", False),
+                    supports_spec_decode=hf_path.get("supports_spec_decode", True),
+                    supports_mllm=hf_path.get("supports_mllm", False),
+                    supports_dspark=hf_path.get("supports_dspark", False),
+                )
+            )
     return profiles
 
 

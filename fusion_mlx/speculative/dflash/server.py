@@ -392,7 +392,9 @@ async def _stream_completion(
         def _make_gen():
             try:
                 return stream_generate(model, processor, prompt, **gen_kwargs)
-            except Exception as e:  # noqa: BLE001 — surface upstream; outer code converts to error SSE
+            except (
+                Exception
+            ) as e:  # noqa: BLE001 — surface upstream; outer code converts to error SSE
                 return e
 
         gen_or_err = await loop.run_in_executor(_dflash_executor, _make_gen)
@@ -422,7 +424,9 @@ async def _stream_completion(
                 return next(gen)
             except StopIteration:
                 return None
-            except Exception as e:  # noqa: BLE001 — surface upstream; loop converts to error SSE
+            except (
+                Exception
+            ) as e:  # noqa: BLE001 — surface upstream; loop converts to error SSE
                 return e
 
         try:

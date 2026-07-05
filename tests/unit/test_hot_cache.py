@@ -4,7 +4,6 @@
 import threading
 import time
 from pathlib import Path
-from typing import List
 from unittest.mock import patch
 
 import pytest
@@ -13,7 +12,6 @@ from fusion_mlx.cache.paged_ssd_cache import (
     PagedSSDBlockMetadata,
     PagedSSDCacheManager,
     SharedHotCacheBudget,
-    _extract_tensor_bytes,
 )
 
 try:
@@ -526,7 +524,7 @@ class TestHotCacheConcurrency:
             hot_cache_max_bytes=50 * 1024**2,
         )
 
-        errors: List[Exception] = []
+        errors: list[Exception] = []
         num_threads = 8
         ops_per_thread = 20
 

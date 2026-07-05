@@ -1,5 +1,3 @@
-
-
 from __future__ import annotations
 
 import logging
@@ -9,8 +7,8 @@ from fusion_mlx.reasoning.think_detector import (
     looks_like_autonomous_think,
 )
 
-
 logger = logging.getLogger(__name__)
+
 
 def test_looks_like_autonomous_think_simple():
     assert looks_like_autonomous_think("<think>")

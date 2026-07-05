@@ -4,10 +4,7 @@ import asyncio
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
-import pytest
-
 import fusion_mlx.admin.stats as admin_stats
-
 
 MODEL_ID = "test-model"
 

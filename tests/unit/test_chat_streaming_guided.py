@@ -268,9 +268,9 @@ def test_streaming_guided_no_duplicate_usage_when_include_usage_true():
         "finish chunk must NOT carry usage when include_usage=True — "
         "double-emission would have clients double-count tokens"
     )
-    assert len(usage_only_events) == 1, (
-        "expected exactly one dedicated usage chunk when include_usage=True"
-    )
+    assert (
+        len(usage_only_events) == 1
+    ), "expected exactly one dedicated usage chunk when include_usage=True"
 
     # All chunks in one completion stream must share a single ``created``
     # timestamp per the OpenAI streaming spec. The new helper pre-computes
@@ -279,9 +279,9 @@ def test_streaming_guided_no_duplicate_usage_when_include_usage_true():
     # to a fresh ``int(time.time())`` per instantiation and break the
     # invariant (DeepSeek pr_validate round 2 finding).
     created_values = {e["created"] for e in events if "created" in e}
-    assert len(created_values) == 1, (
-        f"all SSE chunks must share one created timestamp; saw {created_values}"
-    )
+    assert (
+        len(created_values) == 1
+    ), f"all SSE chunks must share one created timestamp; saw {created_values}"
 
     # include_usage default-False branch (D-SSE-USAGE, v0.8.2):
     # ``usage`` MUST be absent from EVERY chunk including the finish
@@ -314,9 +314,9 @@ def test_streaming_guided_no_duplicate_usage_when_include_usage_true():
         "finish chunk MUST NOT carry usage when include_usage is unset — "
         "OpenAI streaming spec requires opt-in via stream_options"
     )
-    assert usage_only_events2 == [], (
-        "no dedicated usage chunk when include_usage is unset"
-    )
+    assert (
+        usage_only_events2 == []
+    ), "no dedicated usage chunk when include_usage is unset"
     any_usage_key2 = [e for e in events2 if "usage" in e]
     assert any_usage_key2 == [], (
         f"no SSE chunk may carry the usage KEY when include_usage is "

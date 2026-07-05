@@ -37,6 +37,7 @@ import json
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from fusion_mlx.routes.metrics import router as metrics_router
 
 from fusion_mlx.api import response_format_metrics
 from fusion_mlx.api.tool_calling import (
@@ -47,7 +48,6 @@ from fusion_mlx.config import reset_config
 from fusion_mlx.engine.base import GenerationOutput
 from fusion_mlx.middleware.exception_handlers import install_exception_handlers
 from fusion_mlx.routes.chat import router as chat_router
-from fusion_mlx.routes.metrics import router as metrics_router
 
 # ---------------------------------------------------------------------------
 # Test fixtures
@@ -483,12 +483,12 @@ def test_strict_true_guided_unavailable_repair_succeeds_returns_200():
     # should bill prompt_tokens=8 + completion_tokens=10.
     body = resp.json()
     usage = body["usage"]
-    assert usage["prompt_tokens"] == 8, (
-        f"repair-success path must aggregate prompt tokens (got {usage})"
-    )
-    assert usage["completion_tokens"] == 10, (
-        f"repair-success path must aggregate completion tokens (got {usage})"
-    )
+    assert (
+        usage["prompt_tokens"] == 8
+    ), f"repair-success path must aggregate prompt tokens (got {usage})"
+    assert (
+        usage["completion_tokens"] == 10
+    ), f"repair-success path must aggregate completion tokens (got {usage})"
 
 
 def test_strict_true_guided_unavailable_disable_flag_skips_enforcement(monkeypatch):
@@ -650,9 +650,9 @@ def test_strict_true_guided_unavailable_streaming_emits_violation_finish():
 
     # The body MUST end with [DONE].
     assert events, "no SSE events parsed from body"
-    assert events[-1]["data"] == "[DONE]", (
-        f"final SSE event must be [DONE], got {events[-1]}"
-    )
+    assert (
+        events[-1]["data"] == "[DONE]"
+    ), f"final SSE event must be [DONE], got {events[-1]}"
 
     # Codex r2 #1: the FIRST finish_reason the client encounters
     # MUST be ``json_schema_violation``. A leading ``stop`` chunk
@@ -921,9 +921,9 @@ def test_strict_true_streaming_emits_done_even_without_upstream_done():
     )
     # And [DONE] must be the LAST line (modulo trailing whitespace).
     stripped = body.rstrip()
-    assert stripped.endswith("data: [DONE]"), (
-        f"expected body to end with `data: [DONE]`, got tail: {stripped[-200:]!r}"
-    )
+    assert stripped.endswith(
+        "data: [DONE]"
+    ), f"expected body to end with `data: [DONE]`, got tail: {stripped[-200:]!r}"
 
 
 def test_strict_true_streaming_emits_done_on_upstream_raise():
@@ -1008,18 +1008,18 @@ def test_strict_true_streaming_emits_done_on_upstream_raise():
         "hang on truncated stream."
     )
     # [DONE] must be the LAST line.
-    assert body.rstrip().endswith("data: [DONE]"), (
-        f"expected body to end with [DONE]; tail: {body[-200:]!r}"
-    )
+    assert body.rstrip().endswith(
+        "data: [DONE]"
+    ), f"expected body to end with [DONE]; tail: {body[-200:]!r}"
     # The structured upstream-error envelope MUST appear BEFORE [DONE]
     # so clients can decode the failure reason.
     assert "strict_stream_upstream_error" in body, (
         "wrapper did not emit upstream_error envelope on upstream raise; "
         "clients receive a silent close with no structured reason."
     )
-    assert "chat.completion.error" in body, (
-        "wrapper did not emit the named SSE error event on upstream raise."
-    )
+    assert (
+        "chat.completion.error" in body
+    ), "wrapper did not emit the named SSE error event on upstream raise."
     # Position check: the error envelope must come BEFORE [DONE].
     err_idx = body.find("strict_stream_upstream_error")
     done_idx = body.find("data: [DONE]")
@@ -1513,9 +1513,9 @@ def test_post_decode_violation_emits_error_sse_envelope_streaming():
     # MUST NOT — the helper short-circuits before emitting them.
     assert "strict_schema_violation" in body
     assert "strict response_format violated" in body
-    assert '"role":"assistant"' not in body, (
-        "role chunk must NOT precede an error envelope for strict violations"
-    )
+    assert (
+        '"role":"assistant"' not in body
+    ), "role chunk must NOT precede an error envelope for strict violations"
     assert "[DONE]" in body
 
     snap = response_format_metrics.snapshot()
@@ -1646,8 +1646,9 @@ def _make_responses_client(engine: _Engine, rate_limiter_state=None) -> TestClie
     global rate-limiter state is restored on test teardown — without
     it, the disabled state leaks into subsequent tests.
     """
-    from fusion_mlx.middleware.auth import rate_limiter
     from fusion_mlx.routes.responses import router as responses_router
+
+    from fusion_mlx.middleware.auth import rate_limiter
 
     cfg = reset_config()
     cfg.engine = engine
@@ -2347,9 +2348,9 @@ def test_strict_true_streaming_guided_raises_emits_error_sse_no_fallback():
     # MUST NOT have run (no chat_calls, no stream_calls).
     assert "strict_schema_violation" in body
     assert "strict response_format could not be honored" in body
-    assert '"role":"assistant"' not in body, (
-        "role chunk must NOT precede strict-violation error envelope"
-    )
+    assert (
+        '"role":"assistant"' not in body
+    ), "role chunk must NOT precede strict-violation error envelope"
     assert "[DONE]" in body
     assert engine.chat_calls == [], "non-stream chat fallback must NOT run"
     assert engine.stream_calls == [], "streaming chat fallback must NOT run"
@@ -2404,9 +2405,9 @@ def test_strict_false_streaming_guided_raises_still_falls_back():
     # No strict_schema_violation envelope, and the fallback streaming
     # path was used.
     assert "strict_schema_violation" not in body
-    assert len(engine.stream_calls) == 1, (
-        f"expected 1 unconstrained stream fallback call, got {len(engine.stream_calls)}"
-    )
+    assert (
+        len(engine.stream_calls) == 1
+    ), f"expected 1 unconstrained stream fallback call, got {len(engine.stream_calls)}"
     # The strict counter must NOT tick (suggestion-only path).
     snap = response_format_metrics.snapshot()
     assert snap["strict_requests_total"] == 0

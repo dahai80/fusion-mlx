@@ -52,15 +52,21 @@ def _cache_payload(n_layers: int = 2):
 class TestRadixCacheCoupling:
     """Radix-coupling tests — skipped (no radix_index support in fusion-mlx)."""
 
-    @pytest.mark.skip(reason="fusion-mlx MemoryAwarePrefixCache has no radix_index param")
+    @pytest.mark.skip(
+        reason="fusion-mlx MemoryAwarePrefixCache has no radix_index param"
+    )
     def test_store_inserts_into_radix(self):
         pass
 
-    @pytest.mark.skip(reason="fusion-mlx MemoryAwarePrefixCache has no radix_index param")
+    @pytest.mark.skip(
+        reason="fusion-mlx MemoryAwarePrefixCache has no radix_index param"
+    )
     def test_remove_drops_from_radix(self):
         pass
 
-    @pytest.mark.skip(reason="fusion-mlx MemoryAwarePrefixCache has no radix_index param")
+    @pytest.mark.skip(
+        reason="fusion-mlx MemoryAwarePrefixCache has no radix_index param"
+    )
     def test_clear_resets_radix(self):
         pass
 

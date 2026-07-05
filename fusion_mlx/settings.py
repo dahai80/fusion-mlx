@@ -43,7 +43,9 @@ class _SettingsAuthView:
 
     @property
     def skip_api_key_verification(self) -> bool:
-        return bool(self._settings.global_settings.get("skip_api_key_verification", False))
+        return bool(
+            self._settings.global_settings.get("skip_api_key_verification", False)
+        )
 
 
 @dataclass
@@ -99,10 +101,10 @@ class Settings:
             api_key = data.get("api_key")
             if not api_key:
                 auth_data = data.get("auth", {})
-                api_key = auth_data.get("api_key") if isinstance(auth_data, dict) else None
-            sub_keys = [
-                SubKeyEntry(**sk) for sk in data.get("sub_keys", [])
-            ]
+                api_key = (
+                    auth_data.get("api_key") if isinstance(auth_data, dict) else None
+                )
+            sub_keys = [SubKeyEntry(**sk) for sk in data.get("sub_keys", [])]
             return cls(
                 api_key=api_key,
                 sub_keys=sub_keys,

@@ -19,6 +19,7 @@ from unittest.mock import Mock
 
 from ..api.tool_calling import parse_tool_calls
 from ..api.utils import sanitize_output, strip_special_tokens
+
 # TODO: fusion_mlx does not have a domain/ package yet; migrate StreamEvent
 # from vllm_mlx/domain/events.py or create fusion_mlx/domain/events.py
 from ..domain.events import StreamEvent

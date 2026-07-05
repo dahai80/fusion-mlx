@@ -158,9 +158,9 @@ class TestVisionModel:
             f"VLM {vlm_id} missing 'vision' in capabilities: {caps}. "
             "F-D01 regression — VLMs must advertise vision capability."
         )
-        assert "text" in caps, (
-            f"VLM {vlm_id} missing baseline 'text' capability: {caps}"
-        )
+        assert (
+            "text" in caps
+        ), f"VLM {vlm_id} missing baseline 'text' capability: {caps}"
 
     def test_raw_hf_vlm_path_advertises_vision(self, monkeypatch):
         """Raw HF paths (no alias entry) still get ``"vision"`` via
@@ -181,9 +181,9 @@ class TestVisionModel:
         finally:
             restore()
         assert "vision" in entry["capabilities"]
-        assert entry["modality"] == "image", (
-            "raw HF VLM path: modality should still flip to 'image'"
-        )
+        assert (
+            entry["modality"] == "image"
+        ), "raw HF VLM path: modality should still flip to 'image'"
 
 
 class TestEmbeddingModel:
@@ -228,9 +228,9 @@ class TestEmbeddingModel:
             entry = _fetch_entry(client, embed_id)
         finally:
             restore()
-        assert entry["modality"] == "text", (
-            f"embedding modality must be 'text' not null/{entry['modality']!r}"
-        )
+        assert (
+            entry["modality"] == "text"
+        ), f"embedding modality must be 'text' not null/{entry['modality']!r}"
 
 
 class TestToolsCapability:
@@ -266,9 +266,9 @@ class TestToolsCapability:
         finally:
             restore()
         caps = entry["capabilities"]
-        assert "tools" in caps, (
-            f"Qwen3 alias should advertise 'tools' (hermes parser), got {caps}"
-        )
+        assert (
+            "tools" in caps
+        ), f"Qwen3 alias should advertise 'tools' (hermes parser), got {caps}"
 
     def test_server_tool_parser_enables_tag_for_unregistered_id(self, monkeypatch):
         """Operator-supplied custom HF path + ``--tool-call-parser``
@@ -363,9 +363,9 @@ class TestToolsCapability:
         # The unserved/unregistered id returns 404 — the server
         # doesn't advertise it. (If it ever did via discovery, the
         # gate would still keep "tools" off.)
-        assert r.status_code == 404, (
-            f"non-served unregistered id should 404, got {r.status_code}"
-        )
+        assert (
+            r.status_code == 404
+        ), f"non-served unregistered id should 404, got {r.status_code}"
 
     def test_tools_tag_falls_back_to_server_global(self, monkeypatch):
         """Codex r1 BLOCKING follow-up: ``_tools_capable`` must check
@@ -474,9 +474,9 @@ class TestCapabilityShapeAndOrder:
         # All three present.
         assert "text" in caps and "vision" in caps and "tools" in caps
         # Order: text < vision < tools.
-        assert caps.index("text") < caps.index("vision") < caps.index("tools"), (
-            f"capabilities order broken: {caps}. Expected text → vision → tools."
-        )
+        assert (
+            caps.index("text") < caps.index("vision") < caps.index("tools")
+        ), f"capabilities order broken: {caps}. Expected text → vision → tools."
 
     def test_no_duplicate_tags(self, monkeypatch):
         client, restore = _mount_models_app(

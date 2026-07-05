@@ -18,7 +18,7 @@ INTEGRATIONS: dict[str, Integration] = {
     "hermes": HermesIntegration(),
     "pi": PiIntegration(),
     "copilot": CopilotIntegration(),
-     "comfyui": ComfyUIIntegration(),
+    "comfyui": ComfyUIIntegration(),
 }
 
 

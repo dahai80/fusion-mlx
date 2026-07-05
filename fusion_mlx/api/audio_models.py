@@ -7,7 +7,6 @@ These models define the request and response schemas for:
 - Audio speech synthesis (text-to-speech)
 """
 
-
 from pydantic import BaseModel
 
 

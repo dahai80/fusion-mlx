@@ -1,8 +1,8 @@
 # SPDX-License-Identifier: Apache-2.0
 import logging
+from unittest.mock import MagicMock
 
 import pytest
-from unittest.mock import MagicMock
 
 from fusion_mlx.reasoning.minimax_parser import MiniMaxReasoningParser
 

@@ -67,7 +67,9 @@ class BaseUsage(BaseModel):
 
     def model_post_init(self, __context) -> None:
         """Calculate total_tokens and sync Anthropic-style aliases."""
-        if self.total_tokens == 0 and (self.prompt_tokens > 0 or self.completion_tokens > 0):
+        if self.total_tokens == 0 and (
+            self.prompt_tokens > 0 or self.completion_tokens > 0
+        ):
             object.__setattr__(
                 self,
                 "total_tokens",
