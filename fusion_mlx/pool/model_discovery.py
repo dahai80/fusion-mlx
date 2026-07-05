@@ -26,11 +26,23 @@ from typing import Literal
 logger = logging.getLogger(__name__)
 
 ModelType = Literal[
-    "llm", "vlm", "embedding", "reranker", "audio_stt", "audio_tts", "audio_sts",
+    "llm",
+    "vlm",
+    "embedding",
+    "reranker",
+    "audio_stt",
+    "audio_tts",
+    "audio_sts",
     "image",
 ]
 EngineType = Literal[
-    "batched", "vlm", "embedding", "reranker", "audio_stt", "audio_tts", "audio_sts",
+    "batched",
+    "vlm",
+    "embedding",
+    "reranker",
+    "audio_stt",
+    "audio_tts",
+    "audio_sts",
     "image_gen",
 ]
 

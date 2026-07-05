@@ -58,7 +58,13 @@ class EngineEntry:
     model_id: str  # Directory name (e.g., "llama-3b")
     model_path: str  # Full path to model directory
     model_type: Literal[
-        "llm", "vlm", "embedding", "reranker", "audio_stt", "audio_tts", "audio_sts",
+        "llm",
+        "vlm",
+        "embedding",
+        "reranker",
+        "audio_stt",
+        "audio_tts",
+        "audio_sts",
         "image",
     ]  # Model type
     engine_type: Literal[
