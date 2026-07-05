@@ -31,6 +31,7 @@ from ..engine_core import get_mlx_executor
 from ..engines.base import BaseEngine
 from ..engines.batched import BatchedEngine
 from ..engines.embedding import EmbeddingEngine
+from ..engines.image_gen import ImageGenEngine
 from ..engines.reranker import RerankerEngine
 from ..engines.sts import STSEngine
 from ..engines.stt import STTEngine
@@ -57,7 +58,8 @@ class EngineEntry:
     model_id: str  # Directory name (e.g., "llama-3b")
     model_path: str  # Full path to model directory
     model_type: Literal[
-        "llm", "vlm", "embedding", "reranker", "audio_stt", "audio_tts", "audio_sts"
+        "llm", "vlm", "embedding", "reranker", "audio_stt", "audio_tts", "audio_sts",
+        "image",
     ]  # Model type
     engine_type: Literal[
         "batched",
@@ -68,6 +70,7 @@ class EngineEntry:
         "audio_stt",
         "audio_tts",
         "audio_sts",
+        "image_gen",
     ]  # Engine type to use
     estimated_size: int  # Pre-calculated from safetensors (bytes)
     actual_size: int | None = None  # Observed process-memory delta after load settles
@@ -417,6 +420,7 @@ class EnginePool:
         "audio_stt": "audio_stt",
         "audio_tts": "audio_tts",
         "audio_sts": "audio_sts",
+        "image": "image_gen",
     }
 
     def apply_settings_overrides(self, settings_manager: ModelSettingsManager) -> None:
@@ -1384,6 +1388,8 @@ class EnginePool:
                         model_name=entry.model_path,
                         config_model_type=entry.config_model_type,
                     )
+                elif entry.engine_type == "image_gen":
+                    engine = ImageGenEngine(model_name=entry.model_path)
                 else:
                     engine = BatchedEngine(
                         model_name=entry.model_path,

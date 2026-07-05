@@ -26,10 +26,12 @@ from typing import Literal
 logger = logging.getLogger(__name__)
 
 ModelType = Literal[
-    "llm", "vlm", "embedding", "reranker", "audio_stt", "audio_tts", "audio_sts"
+    "llm", "vlm", "embedding", "reranker", "audio_stt", "audio_tts", "audio_sts",
+    "image",
 ]
 EngineType = Literal[
-    "batched", "vlm", "embedding", "reranker", "audio_stt", "audio_tts", "audio_sts"
+    "batched", "vlm", "embedding", "reranker", "audio_stt", "audio_tts", "audio_sts",
+    "image_gen",
 ]
 
 # Known VLM (Vision-Language Model) types from mlx-vlm
@@ -538,6 +540,9 @@ def detect_model_type(model_path: Path) -> ModelType:
     Returns:
         Model type: "llm", "vlm", "embedding", "reranker", "audio_stt", "audio_tts", or "audio_sts"
     """
+    if _is_image_model(model_path):
+        return "image"
+
     config_path = model_path / "config.json"
     if not config_path.exists():
         return "llm"
@@ -903,9 +908,30 @@ def _is_adapter_dir(path: Path) -> bool:
     return (path / "adapter_config.json").exists()
 
 
+def _is_image_model(path: Path) -> bool:
+    """Check if a directory is a Flux/diffusers image-generation model.
+
+    Flux models ship a ``configuration.json`` manifest with
+    ``"task": "text-to-image"`` and diffusers subdirectories
+    (transformer/vae/text_encoder) instead of a top-level ``config.json``,
+    so the standard LLM discovery path skips them.
+    """
+    manifest = path / "configuration.json"
+    if not manifest.exists():
+        return False
+    try:
+        with open(manifest) as f:
+            data = json.load(f)
+        return data.get("task") == "text-to-image"
+    except (OSError, json.JSONDecodeError):
+        return False
+
+
 def _is_model_dir(path: Path) -> bool:
-    """Check if a directory contains a valid model (has config.json)."""
-    return (path / "config.json").exists() and not _is_adapter_dir(path)
+    """Check if a directory contains a valid model (config.json or image manifest)."""
+    has_config = (path / "config.json").exists()
+    has_image_manifest = _is_image_model(path)
+    return (has_config or has_image_manifest) and not _is_adapter_dir(path)
 
 
 def model_directory_access_error(path: Path) -> str | None:
@@ -1109,6 +1135,8 @@ def _register_model(
             engine_type = "audio_tts"
         elif model_type == "audio_sts":
             engine_type = "audio_sts"
+        elif model_type == "image":
+            engine_type = "image_gen"
         else:
             engine_type = "batched"
         estimated_size = estimate_model_size(model_dir)
