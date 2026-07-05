@@ -90,7 +90,9 @@ def _mtp_compat_for_model(model_info: dict) -> tuple[bool, str]:
     import json
     from pathlib import Path
 
-    from ..utils.model_loading import _has_mtp_heads, _is_mtp_compatible
+    from ..utils.model_loading import _has_mtp_heads
+
+    _MTP_COMPAT_MODEL_TYPES = {"qwen3_5", "qwen3_6", "deepseek_v4"}
 
     is_paro, paro_reason = _paroquant_compat_for_model(model_info)
     if is_paro:
@@ -109,7 +111,9 @@ def _mtp_compat_for_model(model_info: dict) -> tuple[bool, str]:
     model_type = cfg.get("model_type")
     if not _has_mtp_heads(cfg):
         return False, "model has no MTP heads in config"
-    if not _is_mtp_compatible(cfg, model_type):
+    # Inline model-type whitelist (replaces missing _is_mtp_compatible)
+    mt = (model_type or "").lower()
+    if not any(mt.startswith(p) for p in _MTP_COMPAT_MODEL_TYPES):
         return False, (
             f"model_type={model_type!r} is not on the MTP whitelist "
             "(supported: qwen3_5*, qwen3_6*, deepseek_v4*)"
@@ -606,6 +610,11 @@ def set_hf_downloader(downloader):
     _hf_downloader = downloader
 
 
+def _get_hf_downloader():
+    """Return the current HFDownloader instance (may be None)."""
+    return _hf_downloader
+
+
 def set_ms_downloader(downloader):
     """Set the MSDownloader instance for admin routes.
 
@@ -634,6 +643,40 @@ def set_hf_uploader(uploader):
     """
     global _hf_uploader
     _hf_uploader = uploader
+
+
+def _get_model_dirs():
+    """Return model directories list, works with or without rich settings."""
+    global_settings = _get_rich_global_settings()
+    if global_settings is not None:
+        from pathlib import Path
+
+        dirs = global_settings.model.get_model_dirs(global_settings.base_path)
+        return [Path(d) for d in dirs]
+    # Fallback: read from settings.json
+    import json
+    from pathlib import Path
+
+    settings_path = Path.home() / ".fusion-mlx" / "settings.json"
+    if settings_path.exists():
+        try:
+            sj = json.loads(settings_path.read_text())
+            model_sj = sj.get("model", {})
+            dirs = model_sj.get("model_dirs", [])
+            if not dirs:
+                d = model_sj.get("model_dir", "")
+                if d:
+                    dirs = [d]
+            return [Path(d) for d in dirs if d]
+        except Exception:
+            pass
+    # Last resort: use engine pool's model_dir
+    pool = _get_engine_pool()
+    if pool and hasattr(pool, "_model_dir"):
+        from pathlib import Path
+
+        return [Path(pool._model_dir)]
+    return []
 
 
 # =============================================================================
