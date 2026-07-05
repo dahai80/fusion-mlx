@@ -3,6 +3,7 @@
 Provides stubs for missing modules from omlx/Rapid-MLX migration.
 """
 
+import sys
 from pathlib import Path
 
 # Rapid-MLX migration debt: 413 test modules excluded from collection because
@@ -18,9 +19,34 @@ collect_ignore_glob = [
     if line.strip() and not line.strip().startswith("#")
 ]
 
+# MLX is Apple-silicon only. These modules exercise real mlx arrays (or its
+# optional deps such as mlx_vlm) and pass on macOS, but on the Linux CI runner
+# libmlx.so is unavailable so they fail. They are NOT debt — skip them off
+# macOS rather than quarantine them everywhere. Locally they still run.
+if sys.platform != "darwin":
+    collect_ignore_glob += [
+        "test_disk_kv_checkpoint.py",
+        "test_hybrid_cache.py",
+        "test_hybrid_prefix_cache_growth.py",
+        "test_image_aspect_ratio.py",
+        "test_llama4_attention_patch.py",
+        "test_memory_cache_rapid.py",
+        "test_memory_monitor.py",
+        "test_mllm_batch_generator.py",
+        "test_mllm_hybrid_probe.py",
+        "test_paged_ssd_cache.py",
+        "test_prefix_cache.py",
+        "test_prefix_cache_eviction.py",
+        "test_prefix_cache_radix_e2e.py",
+        "test_prefix_cache_v4_block_storage.py",
+        "test_rotating_cache_contract.py",
+        "test_sampling.py",
+        "test_signal_observability.py",
+        "test_spec_recurrent_gate.py",
+    ]
+
 
 import logging
-import sys
 
 import pytest
 
