@@ -45,7 +45,9 @@ NGRAM_SPEC_DEFAULT_BREAK_EVEN = float(
 # otherwise wins big. order=3 fires ~4x more often with no false-accept cost
 # (rejected drafts are bounded by K). Tunable without code changes.
 NGRAM_SPEC_ORDER = int(__import__("os").environ.get("FUSION_NGRAM_SPEC_ORDER", "5"))
-NGRAM_SPEC_NUM_DRAFT = int(__import__("os").environ.get("FUSION_NGRAM_SPEC_NUM_DRAFT", "3"))
+NGRAM_SPEC_NUM_DRAFT = int(
+    __import__("os").environ.get("FUSION_NGRAM_SPEC_NUM_DRAFT", "3")
+)
 
 
 class NGramSpecState:

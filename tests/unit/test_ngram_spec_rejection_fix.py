@@ -12,7 +12,11 @@ Locks the two fixes that made n-gram spec coherent on hybrid GDN models:
      ``n_rejected`` instead of ``K`` (the replay writes n_accepted duplicates
      that must also be dropped).
 """
+
+import inspect
+
 import mlx.core as mx
+import pytest
 from mlx_lm.models.cache import ArraysCache, KVCache
 
 from fusion_mlx.scheduler.ngram_spec import (
@@ -20,6 +24,16 @@ from fusion_mlx.scheduler.ngram_spec import (
     _snapshot_non_trimmable,
     _trim_trimmable,
     _verify_drafts,
+)
+
+# These tests exercise real mlx behavior — isinstance() against KVCache/
+# ArraysCache plus mx.full/argmax array ops. The Linux CI conftest stubs mlx
+# and mlx_lm as MagicMock (mlx is Apple-only), so KVCache/ArraysCache are not
+# real types and the mx ops are no-ops; skip there, run on macOS + real mlx.
+# Mirrors the 18 existing mlx-only platform-gated tests.
+pytestmark = pytest.mark.skipif(
+    not (inspect.isclass(KVCache) and inspect.isclass(ArraysCache)),
+    reason="needs real mlx KVCache/ArraysCache (stubbed as MagicMock on CI)",
 )
 
 
@@ -125,9 +139,7 @@ def test_rollback_leaves_kvcache_with_only_accepted_drafts():
     )
     assert n_accepted == 1 and proc == 3
 
-    _rollback_spec_cache(
-        cache, snaps, drafts, n_accepted, proc, model, mx.cpu
-    )
+    _rollback_spec_cache(cache, snaps, drafts, n_accepted, proc, model, mx.cpu)
 
     # KVCache: pre(5) + K(3) verify + 1 replay duplicate - trim(3) = 5 + 1 = 6.
     assert cache[0].offset == 6, f"kv0 offset={cache[0].offset}, want 6"
@@ -154,6 +166,6 @@ def test_rollback_zero_accepted_restores_pre_verify():
 
     assert cache[0].offset == 5, f"kv offset={cache[0].offset}, want 5"
     assert cache[1].cache == [None, None], "ArraysCache should be restored only"
-    assert not any(len(c) == 1 for c in model.calls), (
-        f"no single-token replay should run when n_accepted=0; calls={model.calls}"
-    )
+    assert not any(
+        len(c) == 1 for c in model.calls
+    ), f"no single-token replay should run when n_accepted=0; calls={model.calls}"

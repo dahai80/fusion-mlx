@@ -20,7 +20,6 @@ the default path below). Run with: pytest tests/integration/test_ngram_spec_gdn_
 """
 
 import os
-import re
 import subprocess
 import sys
 
@@ -68,9 +67,7 @@ def _run(spec_on: bool, model: str) -> str:
         timeout=900,
     )
     if proc.returncode != 0:
-        raise RuntimeError(
-            f"spec_on={spec_on} failed: {proc.stderr[-2000:]}"
-        )
+        raise RuntimeError(f"spec_on={spec_on} failed: {proc.stderr[-2000:]}")
     return proc.stdout.strip()
 
 
@@ -82,8 +79,8 @@ def test_ngram_spec_gdn_coherent():
     model = _model_path()
     spec_on = _run(spec_on=True, model=model)
     spec_off = _run(spec_on=False, model=model)
-    assert spec_on, f"spec-on produced empty output; stderr check needed"
-    assert spec_off, f"spec-off produced empty output; stderr check needed"
+    assert spec_on, "spec-on produced empty output; stderr check needed"
+    assert spec_off, "spec-off produced empty output; stderr check needed"
     assert spec_on == spec_off, (
         f"n-gram spec diverged from pure decode on GDN model:\n"
         f"SPEC_ON : {spec_on!r}\nSPEC_OFF: {spec_off!r}"
