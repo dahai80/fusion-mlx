@@ -27,6 +27,7 @@ from ..api.openai_models import (
     ModelInfo,
     ModelsResponse,
 )
+from ..api.thinking import ThinkingParser
 from ..engines.base import GenerationOutput
 from ..pool import EnginePool
 from ..request import SamplingParams
@@ -274,6 +275,10 @@ async def _stream_chat_generator(request: ChatCompletionRequest) -> AsyncIterato
         prompt_tokens = 0
         completion_tokens = 0
         cached_tokens = 0
+        # Streaming thinking parser: splits <think...</think > blocks into
+        # reasoning_content vs content so OpenAI clients can tell thinking
+        # from the real answer (issue #21). No-op for tag-free text.
+        parser = ThinkingParser()
 
         ct_kwargs_stream = dict(getattr(request, "chat_template_kwargs", {}) or {})
         if request.tools and "enable_thinking" not in ct_kwargs_stream:
@@ -293,13 +298,28 @@ async def _stream_chat_generator(request: ChatCompletionRequest) -> AsyncIterato
         ):
             if gen.new_text:
                 accumulated += gen.new_text
-                chunk = StreamChunk(
-                    text=gen.new_text,
-                    prompt_tokens=gen.prompt_tokens,
-                    completion_tokens=gen.completion_tokens,
-                    cached_tokens=gen.cached_tokens,
-                )
-                yield _adapter.format_stream_chunk(chunk, request, encoder=encoder)
+                thinking_delta, content_delta = parser.feed(gen.new_text)
+                if content_delta:
+                    chunk = StreamChunk(
+                        text=content_delta,
+                        prompt_tokens=gen.prompt_tokens,
+                        completion_tokens=gen.completion_tokens,
+                        cached_tokens=gen.cached_tokens,
+                    )
+                    yield _adapter.format_stream_chunk(
+                        chunk, request, encoder=encoder
+                    )
+                if thinking_delta:
+                    rchunk = StreamChunk(
+                        text="",
+                        reasoning_content=thinking_delta,
+                        prompt_tokens=gen.prompt_tokens,
+                        completion_tokens=gen.completion_tokens,
+                        cached_tokens=gen.cached_tokens,
+                    )
+                    yield _adapter.format_stream_chunk(
+                        rchunk, request, encoder=encoder
+                    )
                 prompt_tokens = gen.prompt_tokens or prompt_tokens
                 completion_tokens = gen.completion_tokens or completion_tokens
                 cached_tokens = gen.cached_tokens or cached_tokens
@@ -331,6 +351,27 @@ async def _stream_chat_generator(request: ChatCompletionRequest) -> AsyncIterato
                         yield _adapter.format_stream_chunk(
                             tc_chunk, request, encoder=encoder
                         )
+
+        # Flush any buffered thinking/content from the parser (partial tags,
+        # malformed recovery). See issue #21.
+        t_tail, c_tail = parser.finish()
+        if c_tail:
+            cchunk = StreamChunk(
+                text=c_tail,
+                prompt_tokens=prompt_tokens,
+                completion_tokens=completion_tokens,
+                cached_tokens=cached_tokens,
+            )
+            yield _adapter.format_stream_chunk(cchunk, request, encoder=encoder)
+        if t_tail:
+            tchunk = StreamChunk(
+                text="",
+                reasoning_content=t_tail,
+                prompt_tokens=prompt_tokens,
+                completion_tokens=completion_tokens,
+                cached_tokens=cached_tokens,
+            )
+            yield _adapter.format_stream_chunk(tchunk, request, encoder=encoder)
 
         # Final chunk with finish_reason
         last_chunk = StreamChunk(
