@@ -469,6 +469,35 @@ async def update_model_settings(
         current_settings.dflash_verify_mode = (
             value if value in ("dflash", "adaptive", "ddtree", "off") else None
         )
+    # N-gram self-speculative decode (per-model override of env defaults).
+    # Sent-as-null clears to None so the FUSION_NGRAM_SPEC_* env default
+    # takes over; a real value overrides it per-model.
+    if "ngram_spec_enabled" in sent:
+        current_settings.ngram_spec_enabled = (
+            bool(request.ngram_spec_enabled)
+            if request.ngram_spec_enabled is not None
+            else None
+        )
+    if "ngram_spec_order" in sent:
+        current_settings.ngram_spec_order = (
+            int(request.ngram_spec_order)
+            if request.ngram_spec_order is not None and request.ngram_spec_order >= 1
+            else None
+        )
+    if "ngram_spec_num_draft" in sent:
+        current_settings.ngram_spec_num_draft = (
+            int(request.ngram_spec_num_draft)
+            if request.ngram_spec_num_draft is not None
+            and request.ngram_spec_num_draft >= 1
+            else None
+        )
+    if "ngram_spec_break_even" in sent:
+        current_settings.ngram_spec_break_even = (
+            float(request.ngram_spec_break_even)
+            if request.ngram_spec_break_even is not None
+            and 0.0 <= request.ngram_spec_break_even <= 1.0
+            else None
+        )
 
     # Native MTP (mlx-lm PR 990 / PR 15 monkey-patch)
     if "mtp_enabled" in sent:

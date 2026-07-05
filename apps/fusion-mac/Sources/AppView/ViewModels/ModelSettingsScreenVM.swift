@@ -45,6 +45,7 @@ final class ModelSettingsScreenVM {
         case dflashSsdCache, dflashSsdCacheGib
         case mtpEnabled
         case vlmMtpEnabled, vlmMtpDraftModel, vlmMtpDraftBlockSize
+        case ngramSpecEnabled, ngramSpecOrder, ngramSpecNumDraft, ngramSpecBreakEven
     }
 
     static var modelTypeOptions: [(String, String)] {
@@ -289,6 +290,14 @@ final class ModelSettingsScreenVM {
     var vlmMtpDraftModel: String = ""
     var vlmMtpDraftBlockSize: String = ""
 
+    // Experimental: N-gram self-speculative decode (per-model override of
+    // FUSION_NGRAM_SPEC_* env). Order/num_draft/break_even held as strings
+    // for the editor; empty falls back to env default on the server side.
+    var ngramSpecEnabled: Bool = false
+    var ngramSpecOrder: String = "5"
+    var ngramSpecNumDraft: String = "3"
+    var ngramSpecBreakEven: String = "0.5"
+
     // Profiles
     var profiles: [ProfileDTO] = []
     var templates: [ProfileDTO] = []
@@ -363,6 +372,8 @@ final class ModelSettingsScreenVM {
         case .mtpEnabled, .vlmMtpEnabled, .vlmMtpDraftModel:
             return true
         case .vlmMtpDraftBlockSize:
+            return true
+        case .ngramSpecEnabled, .ngramSpecOrder, .ngramSpecNumDraft, .ngramSpecBreakEven:
             return true
         case .alias, .modelType, .contextLength, .maxTokens:
             return false
@@ -481,6 +492,10 @@ final class ModelSettingsScreenVM {
                     self.vlmMtpEnabled = s.vlmMtpEnabled ?? false
                     self.vlmMtpDraftModel = s.vlmMtpDraftModel ?? ""
                     self.vlmMtpDraftBlockSize = s.vlmMtpDraftBlockSize.map(String.init) ?? ""
+                    self.ngramSpecEnabled = s.ngramSpecEnabled ?? false
+                    self.ngramSpecOrder = s.ngramSpecOrder.map(String.init) ?? "5"
+                    self.ngramSpecNumDraft = s.ngramSpecNumDraft.map(String.init) ?? "3"
+                    self.ngramSpecBreakEven = s.ngramSpecBreakEven.map { String($0) } ?? "0.5"
                     self.activeProfileName = s.activeProfileName
                 }
             }
@@ -633,6 +648,10 @@ final class ModelSettingsScreenVM {
         case .vlmMtpEnabled:           patch.vlmMtpEnabled = vlmMtpEnabled
         case .vlmMtpDraftModel:        patch.vlmMtpDraftModel = vlmMtpDraftModel.isEmpty ? nil : vlmMtpDraftModel
         case .vlmMtpDraftBlockSize:    patch.vlmMtpDraftBlockSize = Int(vlmMtpDraftBlockSize)
+        case .ngramSpecEnabled:        patch.ngramSpecEnabled = ngramSpecEnabled
+        case .ngramSpecOrder:          patch.ngramSpecOrder = Int(ngramSpecOrder)
+        case .ngramSpecNumDraft:       patch.ngramSpecNumDraft = Int(ngramSpecNumDraft)
+        case .ngramSpecBreakEven:      patch.ngramSpecBreakEven = Double(ngramSpecBreakEven)
         }
         do {
             _ = try await client.updateModelSettings(id: modelID, patch: patch)
@@ -895,6 +914,12 @@ final class ModelSettingsScreenVM {
             if vlmMtpEnabled {
                 putString(ProfileSettingsKey.vlmMtpDraftModel, vlmMtpDraftModel)
                 putInt(ProfileSettingsKey.vlmMtpDraftBlockSize, vlmMtpDraftBlockSize)
+            }
+            putBool(ProfileSettingsKey.ngramSpecEnabled, ngramSpecEnabled)
+            if ngramSpecEnabled {
+                putInt(ProfileSettingsKey.ngramSpecOrder, ngramSpecOrder)
+                putInt(ProfileSettingsKey.ngramSpecNumDraft, ngramSpecNumDraft)
+                putDouble(ProfileSettingsKey.ngramSpecBreakEven, ngramSpecBreakEven)
             }
         }
 

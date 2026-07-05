@@ -258,6 +258,40 @@ class BatchedEngine(BaseEngine):
         )
         await self._engine.engine.start()
 
+        # N-gram self-speculative decode — per-model override of the
+        # process-wide default that EngineCore.start() just installed from
+        # the FUSION_NGRAM_SPEC_* env vars. A non-None model_settings value
+        # wins (explicit false disables); absent model_settings leaves the
+        # env default untouched so env-var users and tests are unaffected.
+        if self._model_settings is not None:
+            ns_enabled = getattr(self._model_settings, "ngram_spec_enabled", None)
+            if ns_enabled is not None:
+                if ns_enabled:
+                    from ..scheduler.ngram_spec import NGramSpecState
+
+                    self._engine.engine.scheduler._ngram_spec_state = NGramSpecState(
+                        order=getattr(self._model_settings, "ngram_spec_order", None),
+                        num_draft=getattr(
+                            self._model_settings, "ngram_spec_num_draft", None
+                        ),
+                        break_even=getattr(
+                            self._model_settings, "ngram_spec_break_even", None
+                        ),
+                    )
+                    logger.info(
+                        "N-gram spec enabled for %s (order=%s, num_draft=%s, break_even=%s)",
+                        self._model_name,
+                        getattr(self._model_settings, "ngram_spec_order", None),
+                        getattr(self._model_settings, "ngram_spec_num_draft", None),
+                        getattr(self._model_settings, "ngram_spec_break_even", None),
+                    )
+                else:
+                    self._engine.engine.scheduler._ngram_spec_state = None
+                    logger.info(
+                        "N-gram spec disabled for %s (per-model override)",
+                        self._model_name,
+                    )
+
         # TurboQuant KV cache — auto-enable when model is eligible and no
         # explicit override was provided.  TurboQuant quantises the KV cache
         # from float16 to 4-bit, cutting memory traffic per decode step by

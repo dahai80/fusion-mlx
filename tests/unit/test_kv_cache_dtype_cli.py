@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """CLI surface for R15 #300 — argparse accepts the new flags.
 
-Verified via ``rapid-mlx serve --help`` rather than wiring a
+Verified via ``fusion-mlx serve --help`` rather than wiring a
 ``build_parser`` helper because the existing parser is inlined into
 ``main()``; capturing the help text is sufficient to assert the flags
 landed.
@@ -14,9 +14,9 @@ import sys
 
 
 def _serve_help() -> str:
-    """Run ``python -m vllm_mlx.cli serve --help`` and return its stdout."""
+    """Run ``python -m fusion_mlx.cli serve --help`` and return its stdout."""
     proc = subprocess.run(
-        [sys.executable, "-m", "vllm_mlx.cli", "serve", "--help"],
+        [sys.executable, "-m", "fusion_mlx.cli", "serve", "--help"],
         capture_output=True,
         text=True,
         timeout=30,
@@ -80,18 +80,20 @@ def test_serve_rejects_reasoning_plus_legacy_kv_cache_quantization_bits_4():
     Without ``--help``, the test would also need a real model load
     which is out of scope for the CLI surface test.
     """
-    # Use a fake model name; the rejection happens BEFORE the model
-    # load codepath, so we never need network or HF cache. We do need
-    # ``--no-port-preflight`` style suppression though — but the
-    # rejection runs BEFORE port preflight too. Test by capturing the
-    # error message + exit code.
+    # Use an ``org/name`` HF-style path (must contain ``/``) so fusion's
+    # early alias fail-fast at cli.py:1788 is skipped and execution
+    # reaches serve_command → the conflict check at cli_serve.py:1800.
+    # The rejection fires BEFORE any model load / network fetch, so this
+    # is fast and offline. The auto-pull gate (cli.py:1873) is skipped
+    # too because the subprocess has no TTY (``sys.stdin.isatty()`` is
+    # False under ``capture_output=True``).
     proc = subprocess.run(
         [
             sys.executable,
             "-m",
-            "vllm_mlx.cli",
+            "fusion_mlx.cli",
             "serve",
-            "qwen3-0.6b-4bit",
+            "mlx-community/Qwen3.5-9B-4bit",
             "--reasoning",
             "--kv-cache-quantization",
             "--kv-cache-quantization-bits",

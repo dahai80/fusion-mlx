@@ -74,7 +74,6 @@ test_hf_uploader.py
 test_image_block_requires_vision_model.py
 test_install_detection.py
 test_integrations.py
-test_kv_cache_dtype_metrics.py
 test_kv_cache_position_ids.py
 test_launch_cli.py
 test_log_namespace_rebrand.py

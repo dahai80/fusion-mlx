@@ -1256,6 +1256,49 @@ private struct ExperimentalSection: View {
                     .help(vm.mtpConflictReason ?? vm.model?.mtpCompatibilityReason ?? "")
             }
 
+            // N-gram self-speculative decode — scheduler-level n-gram draft.
+            // Lightweight (CPU n-gram stats); enabled by default server-side
+            // via FUSION_NGRAM_SPEC_* env. This toggle overrides per-model;
+            // order / num_draft / break_even map 1:1 to those env vars.
+            Row(label: String(localized: "settings.experimental.ngram_spec.label",
+                              defaultValue: "N-gram Speculative",
+                              comment: "Row label for the N-gram self-speculative decode toggle"),
+                sublabel: String(localized: "settings.experimental.ngram_spec.sub",
+                                 defaultValue: "Scheduler n-gram self-speculative decode. Overrides FUSION_NGRAM_SPEC_* env per model.",
+                                 comment: "Sublabel describing the N-gram speculative decode feature")) {
+                Toggle("", isOn: vm.bindProfile($vm.ngramSpecEnabled))
+                    .labelsHidden().toggleStyle(.switch)
+            }
+            if vm.ngramSpecEnabled {
+                Row(label: String(localized: "settings.experimental.ngram_spec.order.label",
+                                  defaultValue: "N-gram Order",
+                                  comment: "Row label for the N-gram spec order field"),
+                    sublabel: String(localized: "settings.experimental.ngram_spec.order.sub",
+                                     defaultValue: "N-gram length used to predict the next tokens. Default 5.",
+                                     comment: "Sublabel for the N-gram spec order field")) {
+                    TextInput(text: vm.bindProfile($vm.ngramSpecOrder),
+                              placeholder: "5", mono: true, width: 80)
+                }
+                Row(label: String(localized: "settings.experimental.ngram_spec.num_draft.label",
+                                  defaultValue: "Draft Tokens",
+                                  comment: "Row label for the N-gram spec num-draft field"),
+                    sublabel: String(localized: "settings.experimental.ngram_spec.num_draft.sub",
+                                     defaultValue: "Maximum draft tokens proposed per step. Default 3.",
+                                     comment: "Sublabel for the N-gram spec num-draft field")) {
+                    TextInput(text: vm.bindProfile($vm.ngramSpecNumDraft),
+                              placeholder: "3", mono: true, width: 80)
+                }
+                Row(label: String(localized: "settings.experimental.ngram_spec.break_even.label",
+                                  defaultValue: "Break-even Accept Rate",
+                                  comment: "Row label for the N-gram spec break-even field"),
+                    sublabel: String(localized: "settings.experimental.ngram_spec.break_even.sub",
+                                     defaultValue: "Accept-rate threshold below which n-gram spec disables itself (0–1). Default 0.5.",
+                                     comment: "Sublabel for the N-gram spec break-even field")) {
+                    TextInput(text: vm.bindProfile($vm.ngramSpecBreakEven),
+                              placeholder: "0.5", mono: true, width: 80)
+                }
+            }
+
             // VLM MTP — last row of the experimental group. Reveals the
             // draft-model picker and block-size field when enabled.
             Row(label: String(localized: "settings.experimental.vlm_mtp.label",

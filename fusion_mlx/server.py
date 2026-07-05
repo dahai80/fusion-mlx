@@ -180,8 +180,32 @@ def _resolve_api_key(argv_api_key: str | None = None) -> str | None:
     return os.environ.get("FUSION_MLX_API_KEY")
 
 
-def configure_cors_from_env(app_instance, cors_origins=None):
-    pass
+_cors_origins: list[str] | None = None
+
+
+def _resolve_cors_origins(cors_origins) -> list[str] | None:
+    import os
+
+    if cors_origins:
+        origins = [o.strip() for o in cors_origins if o and o.strip()]
+        if origins:
+            return origins
+    env_raw = os.environ.get("FUSION_MLX_CORS_ALLOW_ORIGINS", "").strip()
+    if env_raw:
+        origins = [o.strip() for o in env_raw.split(",") if o.strip()]
+        if origins:
+            return origins
+    return None
+
+
+def configure_cors_from_env(cors_origins=None):
+    global _cors_origins
+    _cors_origins = _resolve_cors_origins(cors_origins)
+    if _cors_origins:
+        logger.info("CORS origins pinned to: %s", ", ".join(_cors_origins))
+    else:
+        logger.debug("CORS origins defaulting to wildcard '*'")
+    return _cors_origins
 
 
 def register_audio_routes_if_enabled(*args, **kwargs):
@@ -355,10 +379,13 @@ class Server:
             lifespan=lifespan,
         )
 
-        # CORS
+        # CORS — wildcard by default for friendly single-machine UX.
+        # ``configure_cors_from_env`` (called before Server init in the
+        # serve flow) may pin this to specific origins via --cors-origins
+        # or FUSION_MLX_CORS_ALLOW_ORIGINS; None falls back to ``*``.
         app.add_middleware(
             CORSMiddleware,
-            allow_origins=["*"],
+            allow_origins=_cors_origins if _cors_origins else ["*"],
             allow_methods=["*"],
             allow_headers=["*"],
         )
