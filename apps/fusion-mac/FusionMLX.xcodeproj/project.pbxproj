@@ -128,6 +128,18 @@
 		};
 /* End PBXContainerItemProxy section */
 
+/* Begin PBXCopyFilesBuildPhase section */
+		9FE505982FFAA1950031B679 /* CopyFiles */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = opt/homebrew/bin/python3.11;
+			dstSubfolderSpec = 7;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
+
 /* Begin PBXFileReference section */
 		1CCCCCCCCCCCCCCCCCCCCCC1 /* FusionMLXApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FusionMLXApp.swift; sourceTree = "<group>"; };
 		1CCCCCCCCCCCCCCCCCCCCCC2 /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
@@ -198,6 +210,269 @@
 		9CC000000000000000000004 /* BenchDTO.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BenchDTO.swift; sourceTree = "<group>"; };
 		9CC000000000000000000005 /* PresetBundleDTO.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PresetBundleDTO.swift; sourceTree = "<group>"; };
 		9CC000000000000000000006 /* PresetBundleStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PresetBundleStore.swift; sourceTree = "<group>"; };
+		9FE504592FFA9FF40031B679 /* fusion */ = {isa = PBXFileReference; lastKnownFileType = text.script.sh; path = fusion; sourceTree = "<group>"; };
+		9FE5045B2FFA9FF40031B679 /* fusion-mlx-20260629.log */ = {isa = PBXFileReference; lastKnownFileType = text; path = "fusion-mlx-20260629.log"; sourceTree = "<group>"; };
+		9FE5045C2FFA9FF40031B679 /* fusion-mlx-20260701.log */ = {isa = PBXFileReference; lastKnownFileType = text; path = "fusion-mlx-20260701.log"; sourceTree = "<group>"; };
+		9FE5045D2FFA9FF40031B679 /* fusion-mlx-20260702.log */ = {isa = PBXFileReference; lastKnownFileType = text; path = "fusion-mlx-20260702.log"; sourceTree = "<group>"; };
+		9FE5045E2FFA9FF40031B679 /* fusion-mlx-20260704.log */ = {isa = PBXFileReference; lastKnownFileType = text; path = "fusion-mlx-20260704.log"; sourceTree = "<group>"; };
+		9FE504672FFA9FF40031B679 /* 0.safetensors.metadata */ = {isa = PBXFileReference; lastKnownFileType = text; path = 0.safetensors.metadata; sourceTree = "<group>"; };
+		9FE504692FFA9FF40031B679 /* 0.safetensors.metadata */ = {isa = PBXFileReference; lastKnownFileType = text; path = 0.safetensors.metadata; sourceTree = "<group>"; };
+		9FE5046A2FFA9FF40031B679 /* 1.safetensors.metadata */ = {isa = PBXFileReference; lastKnownFileType = text; path = 1.safetensors.metadata; sourceTree = "<group>"; };
+		9FE5046C2FFA9FF40031B679 /* merges.txt.metadata */ = {isa = PBXFileReference; lastKnownFileType = text; path = merges.txt.metadata; sourceTree = "<group>"; };
+		9FE5046D2FFA9FF40031B679 /* special_tokens_map.json.metadata */ = {isa = PBXFileReference; lastKnownFileType = text; path = special_tokens_map.json.metadata; sourceTree = "<group>"; };
+		9FE5046E2FFA9FF40031B679 /* tokenizer_config.json.metadata */ = {isa = PBXFileReference; lastKnownFileType = text; path = tokenizer_config.json.metadata; sourceTree = "<group>"; };
+		9FE5046F2FFA9FF40031B679 /* vocab.json.metadata */ = {isa = PBXFileReference; lastKnownFileType = text; path = vocab.json.metadata; sourceTree = "<group>"; };
+		9FE504712FFA9FF40031B679 /* added_tokens.json.metadata */ = {isa = PBXFileReference; lastKnownFileType = text; path = added_tokens.json.metadata; sourceTree = "<group>"; };
+		9FE504722FFA9FF40031B679 /* special_tokens_map.json.metadata */ = {isa = PBXFileReference; lastKnownFileType = text; path = special_tokens_map.json.metadata; sourceTree = "<group>"; };
+		9FE504732FFA9FF40031B679 /* spiece.model.metadata */ = {isa = PBXFileReference; lastKnownFileType = text; path = spiece.model.metadata; sourceTree = "<group>"; };
+		9FE504742FFA9FF40031B679 /* tokenizer_config.json.metadata */ = {isa = PBXFileReference; lastKnownFileType = text; path = tokenizer_config.json.metadata; sourceTree = "<group>"; };
+		9FE504762FFA9FF40031B679 /* 0.safetensors.metadata */ = {isa = PBXFileReference; lastKnownFileType = text; path = 0.safetensors.metadata; sourceTree = "<group>"; };
+		9FE504772FFA9FF40031B679 /* 1.safetensors.metadata */ = {isa = PBXFileReference; lastKnownFileType = text; path = 1.safetensors.metadata; sourceTree = "<group>"; };
+		9FE504782FFA9FF40031B679 /* 2.safetensors.metadata */ = {isa = PBXFileReference; lastKnownFileType = text; path = 2.safetensors.metadata; sourceTree = "<group>"; };
+		9FE5047A2FFA9FF40031B679 /* 0.safetensors.metadata */ = {isa = PBXFileReference; lastKnownFileType = text; path = 0.safetensors.metadata; sourceTree = "<group>"; };
+		9FE5047C2FFA9FF40031B679 /* .DS_Store.metadata */ = {isa = PBXFileReference; lastKnownFileType = text; path = .DS_Store.metadata; sourceTree = "<group>"; };
+		9FE5047D2FFA9FF40031B679 /* .gitattributes.metadata */ = {isa = PBXFileReference; lastKnownFileType = text; path = .gitattributes.metadata; sourceTree = "<group>"; };
+		9FE5047E2FFA9FF40031B679 /* README.md.metadata */ = {isa = PBXFileReference; lastKnownFileType = text; path = README.md.metadata; sourceTree = "<group>"; };
+		9FE504802FFA9FF40031B679 /* .gitignore */ = {isa = PBXFileReference; lastKnownFileType = text; path = .gitignore; sourceTree = "<group>"; };
+		9FE504812FFA9FF40031B679 /* CACHEDIR.TAG */ = {isa = PBXFileReference; lastKnownFileType = text; path = CACHEDIR.TAG; sourceTree = "<group>"; };
+		9FE504842FFA9FF40031B679 /* 0.safetensors */ = {isa = PBXFileReference; lastKnownFileType = file; path = 0.safetensors; sourceTree = "<group>"; };
+		9FE504862FFA9FF40031B679 /* 0.safetensors */ = {isa = PBXFileReference; lastKnownFileType = file; path = 0.safetensors; sourceTree = "<group>"; };
+		9FE504872FFA9FF40031B679 /* 1.safetensors */ = {isa = PBXFileReference; lastKnownFileType = file; path = 1.safetensors; sourceTree = "<group>"; };
+		9FE504892FFA9FF40031B679 /* merges.txt */ = {isa = PBXFileReference; lastKnownFileType = text; path = merges.txt; sourceTree = "<group>"; };
+		9FE5048A2FFA9FF40031B679 /* special_tokens_map.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = special_tokens_map.json; sourceTree = "<group>"; };
+		9FE5048B2FFA9FF40031B679 /* tokenizer_config.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = tokenizer_config.json; sourceTree = "<group>"; };
+		9FE5048C2FFA9FF40031B679 /* vocab.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = vocab.json; sourceTree = "<group>"; };
+		9FE5048E2FFA9FF40031B679 /* added_tokens.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = added_tokens.json; sourceTree = "<group>"; };
+		9FE5048F2FFA9FF40031B679 /* special_tokens_map.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = special_tokens_map.json; sourceTree = "<group>"; };
+		9FE504902FFA9FF40031B679 /* spiece.model */ = {isa = PBXFileReference; lastKnownFileType = file; path = spiece.model; sourceTree = "<group>"; };
+		9FE504912FFA9FF40031B679 /* tokenizer_config.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = tokenizer_config.json; sourceTree = "<group>"; };
+		9FE504932FFA9FF40031B679 /* 0.safetensors */ = {isa = PBXFileReference; lastKnownFileType = file; path = 0.safetensors; sourceTree = "<group>"; };
+		9FE504942FFA9FF40031B679 /* 1.safetensors */ = {isa = PBXFileReference; lastKnownFileType = file; path = 1.safetensors; sourceTree = "<group>"; };
+		9FE504952FFA9FF40031B679 /* 2.safetensors */ = {isa = PBXFileReference; lastKnownFileType = file; path = 2.safetensors; sourceTree = "<group>"; };
+		9FE504972FFA9FF40031B679 /* 0.safetensors */ = {isa = PBXFileReference; lastKnownFileType = file; path = 0.safetensors; sourceTree = "<group>"; };
+		9FE504992FFA9FF40031B679 /* .gitattributes */ = {isa = PBXFileReference; lastKnownFileType = text; path = .gitattributes; sourceTree = "<group>"; };
+		9FE5049A2FFA9FF40031B679 /* .msc */ = {isa = PBXFileReference; lastKnownFileType = file; path = .msc; sourceTree = "<group>"; };
+		9FE5049B2FFA9FF40031B679 /* .mv */ = {isa = PBXFileReference; lastKnownFileType = text; path = .mv; sourceTree = "<group>"; };
+		9FE5049C2FFA9FF40031B679 /* configuration.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = configuration.json; sourceTree = "<group>"; };
+		9FE5049D2FFA9FF40031B679 /* README.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = README.md; sourceTree = "<group>"; };
+		9FE5049F2FFA9FF40031B679 /* .gitattributes.metadata */ = {isa = PBXFileReference; lastKnownFileType = text; path = .gitattributes.metadata; sourceTree = "<group>"; };
+		9FE504A02FFA9FF40031B679 /* chat_template.jinja.metadata */ = {isa = PBXFileReference; lastKnownFileType = text; path = chat_template.jinja.metadata; sourceTree = "<group>"; };
+		9FE504A12FFA9FF40031B679 /* config.json.metadata */ = {isa = PBXFileReference; lastKnownFileType = text; path = config.json.metadata; sourceTree = "<group>"; };
+		9FE504A22FFA9FF40031B679 /* model-00001-of-00002.safetensors.metadata */ = {isa = PBXFileReference; lastKnownFileType = text; path = "model-00001-of-00002.safetensors.metadata"; sourceTree = "<group>"; };
+		9FE504A32FFA9FF40031B679 /* model-00002-of-00002.safetensors.metadata */ = {isa = PBXFileReference; lastKnownFileType = text; path = "model-00002-of-00002.safetensors.metadata"; sourceTree = "<group>"; };
+		9FE504A42FFA9FF40031B679 /* model.safetensors.index.json.metadata */ = {isa = PBXFileReference; lastKnownFileType = text; path = model.safetensors.index.json.metadata; sourceTree = "<group>"; };
+		9FE504A52FFA9FF40031B679 /* preprocessor_config.json.metadata */ = {isa = PBXFileReference; lastKnownFileType = text; path = preprocessor_config.json.metadata; sourceTree = "<group>"; };
+		9FE504A62FFA9FF40031B679 /* processor_config.json.metadata */ = {isa = PBXFileReference; lastKnownFileType = text; path = processor_config.json.metadata; sourceTree = "<group>"; };
+		9FE504A72FFA9FF40031B679 /* README.md.metadata */ = {isa = PBXFileReference; lastKnownFileType = text; path = README.md.metadata; sourceTree = "<group>"; };
+		9FE504A82FFA9FF40031B679 /* tokenizer_config.json.metadata */ = {isa = PBXFileReference; lastKnownFileType = text; path = tokenizer_config.json.metadata; sourceTree = "<group>"; };
+		9FE504A92FFA9FF40031B679 /* tokenizer.json.metadata */ = {isa = PBXFileReference; lastKnownFileType = text; path = tokenizer.json.metadata; sourceTree = "<group>"; };
+		9FE504AA2FFA9FF40031B679 /* video_preprocessor_config.json.metadata */ = {isa = PBXFileReference; lastKnownFileType = text; path = video_preprocessor_config.json.metadata; sourceTree = "<group>"; };
+		9FE504AB2FFA9FF40031B679 /* vocab.json.metadata */ = {isa = PBXFileReference; lastKnownFileType = text; path = vocab.json.metadata; sourceTree = "<group>"; };
+		9FE504AD2FFA9FF40031B679 /* .gitignore */ = {isa = PBXFileReference; lastKnownFileType = text; path = .gitignore; sourceTree = "<group>"; };
+		9FE504AE2FFA9FF40031B679 /* CACHEDIR.TAG */ = {isa = PBXFileReference; lastKnownFileType = text; path = CACHEDIR.TAG; sourceTree = "<group>"; };
+		9FE504B12FFA9FF40031B679 /* .gitattributes */ = {isa = PBXFileReference; lastKnownFileType = text; path = .gitattributes; sourceTree = "<group>"; };
+		9FE504B22FFA9FF40031B679 /* chat_template.jinja */ = {isa = PBXFileReference; lastKnownFileType = text; path = chat_template.jinja; sourceTree = "<group>"; };
+		9FE504B32FFA9FF40031B679 /* config.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = config.json; sourceTree = "<group>"; };
+		9FE504B42FFA9FF40031B679 /* model-00001-of-00002.safetensors */ = {isa = PBXFileReference; lastKnownFileType = file; path = "model-00001-of-00002.safetensors"; sourceTree = "<group>"; };
+		9FE504B52FFA9FF40031B679 /* model-00002-of-00002.safetensors */ = {isa = PBXFileReference; lastKnownFileType = file; path = "model-00002-of-00002.safetensors"; sourceTree = "<group>"; };
+		9FE504B62FFA9FF40031B679 /* model.safetensors.index.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = model.safetensors.index.json; sourceTree = "<group>"; };
+		9FE504B72FFA9FF40031B679 /* preprocessor_config.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = preprocessor_config.json; sourceTree = "<group>"; };
+		9FE504B82FFA9FF40031B679 /* processor_config.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = processor_config.json; sourceTree = "<group>"; };
+		9FE504B92FFA9FF40031B679 /* README.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = README.md; sourceTree = "<group>"; };
+		9FE504BA2FFA9FF40031B679 /* tokenizer.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = tokenizer.json; sourceTree = "<group>"; };
+		9FE504BB2FFA9FF40031B679 /* tokenizer_config.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = tokenizer_config.json; sourceTree = "<group>"; };
+		9FE504BC2FFA9FF40031B679 /* video_preprocessor_config.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = video_preprocessor_config.json; sourceTree = "<group>"; };
+		9FE504BD2FFA9FF40031B679 /* vocab.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = vocab.json; sourceTree = "<group>"; };
+		9FE504BF2FFA9FF40031B679 /* .gitattributes.metadata */ = {isa = PBXFileReference; lastKnownFileType = text; path = .gitattributes.metadata; sourceTree = "<group>"; };
+		9FE504C02FFA9FF40031B679 /* chat_template.jinja.metadata */ = {isa = PBXFileReference; lastKnownFileType = text; path = chat_template.jinja.metadata; sourceTree = "<group>"; };
+		9FE504C12FFA9FF40031B679 /* config.json.metadata */ = {isa = PBXFileReference; lastKnownFileType = text; path = config.json.metadata; sourceTree = "<group>"; };
+		9FE504C22FFA9FF40031B679 /* configuration.json.metadata */ = {isa = PBXFileReference; lastKnownFileType = text; path = configuration.json.metadata; sourceTree = "<group>"; };
+		9FE504C32FFA9FF40031B679 /* generation_config.json.metadata */ = {isa = PBXFileReference; lastKnownFileType = text; path = generation_config.json.metadata; sourceTree = "<group>"; };
+		9FE504C42FFA9FF40031B679 /* model-00001-of-00011.safetensors.metadata */ = {isa = PBXFileReference; lastKnownFileType = text; path = "model-00001-of-00011.safetensors.metadata"; sourceTree = "<group>"; };
+		9FE504C52FFA9FF40031B679 /* model-00002-of-00011.safetensors.metadata */ = {isa = PBXFileReference; lastKnownFileType = text; path = "model-00002-of-00011.safetensors.metadata"; sourceTree = "<group>"; };
+		9FE504C62FFA9FF40031B679 /* model-00003-of-00011.safetensors.metadata */ = {isa = PBXFileReference; lastKnownFileType = text; path = "model-00003-of-00011.safetensors.metadata"; sourceTree = "<group>"; };
+		9FE504C72FFA9FF40031B679 /* model-00004-of-00011.safetensors.metadata */ = {isa = PBXFileReference; lastKnownFileType = text; path = "model-00004-of-00011.safetensors.metadata"; sourceTree = "<group>"; };
+		9FE504C82FFA9FF40031B679 /* model-00005-of-00011.safetensors.metadata */ = {isa = PBXFileReference; lastKnownFileType = text; path = "model-00005-of-00011.safetensors.metadata"; sourceTree = "<group>"; };
+		9FE504C92FFA9FF40031B679 /* model-00006-of-00011.safetensors.metadata */ = {isa = PBXFileReference; lastKnownFileType = text; path = "model-00006-of-00011.safetensors.metadata"; sourceTree = "<group>"; };
+		9FE504CA2FFA9FF40031B679 /* model-00007-of-00011.safetensors.metadata */ = {isa = PBXFileReference; lastKnownFileType = text; path = "model-00007-of-00011.safetensors.metadata"; sourceTree = "<group>"; };
+		9FE504CB2FFA9FF40031B679 /* model-00008-of-00011.safetensors.metadata */ = {isa = PBXFileReference; lastKnownFileType = text; path = "model-00008-of-00011.safetensors.metadata"; sourceTree = "<group>"; };
+		9FE504CC2FFA9FF40031B679 /* model-00009-of-00011.safetensors.metadata */ = {isa = PBXFileReference; lastKnownFileType = text; path = "model-00009-of-00011.safetensors.metadata"; sourceTree = "<group>"; };
+		9FE504CD2FFA9FF40031B679 /* model-00010-of-00011.safetensors.metadata */ = {isa = PBXFileReference; lastKnownFileType = text; path = "model-00010-of-00011.safetensors.metadata"; sourceTree = "<group>"; };
+		9FE504CE2FFA9FF40031B679 /* model-00011-of-00011.safetensors.metadata */ = {isa = PBXFileReference; lastKnownFileType = text; path = "model-00011-of-00011.safetensors.metadata"; sourceTree = "<group>"; };
+		9FE504CF2FFA9FF40031B679 /* model.safetensors.index.json.metadata */ = {isa = PBXFileReference; lastKnownFileType = text; path = model.safetensors.index.json.metadata; sourceTree = "<group>"; };
+		9FE504D02FFA9FF40031B679 /* preprocessor_config.json.metadata */ = {isa = PBXFileReference; lastKnownFileType = text; path = preprocessor_config.json.metadata; sourceTree = "<group>"; };
+		9FE504D12FFA9FF40031B679 /* processor_config.json.metadata */ = {isa = PBXFileReference; lastKnownFileType = text; path = processor_config.json.metadata; sourceTree = "<group>"; };
+		9FE504D22FFA9FF40031B679 /* README.md.metadata */ = {isa = PBXFileReference; lastKnownFileType = text; path = README.md.metadata; sourceTree = "<group>"; };
+		9FE504D32FFA9FF40031B679 /* tokenizer_config.json.metadata */ = {isa = PBXFileReference; lastKnownFileType = text; path = tokenizer_config.json.metadata; sourceTree = "<group>"; };
+		9FE504D42FFA9FF40031B679 /* tokenizer.json.metadata */ = {isa = PBXFileReference; lastKnownFileType = text; path = tokenizer.json.metadata; sourceTree = "<group>"; };
+		9FE504D52FFA9FF40031B679 /* video_preprocessor_config.json.metadata */ = {isa = PBXFileReference; lastKnownFileType = text; path = video_preprocessor_config.json.metadata; sourceTree = "<group>"; };
+		9FE504D62FFA9FF40031B679 /* vocab.json.metadata */ = {isa = PBXFileReference; lastKnownFileType = text; path = vocab.json.metadata; sourceTree = "<group>"; };
+		9FE504D82FFA9FF40031B679 /* .gitignore */ = {isa = PBXFileReference; lastKnownFileType = text; path = .gitignore; sourceTree = "<group>"; };
+		9FE504D92FFA9FF40031B679 /* CACHEDIR.TAG */ = {isa = PBXFileReference; lastKnownFileType = text; path = CACHEDIR.TAG; sourceTree = "<group>"; };
+		9FE504DC2FFA9FF40031B679 /* .gitattributes */ = {isa = PBXFileReference; lastKnownFileType = text; path = .gitattributes; sourceTree = "<group>"; };
+		9FE504DD2FFA9FF40031B679 /* chat_template.jinja */ = {isa = PBXFileReference; lastKnownFileType = text; path = chat_template.jinja; sourceTree = "<group>"; };
+		9FE504DE2FFA9FF40031B679 /* config.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = config.json; sourceTree = "<group>"; };
+		9FE504DF2FFA9FF40031B679 /* configuration.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = configuration.json; sourceTree = "<group>"; };
+		9FE504E02FFA9FF40031B679 /* generation_config.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = generation_config.json; sourceTree = "<group>"; };
+		9FE504E12FFA9FF40031B679 /* model-00001-of-00011.safetensors */ = {isa = PBXFileReference; lastKnownFileType = file; path = "model-00001-of-00011.safetensors"; sourceTree = "<group>"; };
+		9FE504E22FFA9FF40031B679 /* model-00002-of-00011.safetensors */ = {isa = PBXFileReference; lastKnownFileType = file; path = "model-00002-of-00011.safetensors"; sourceTree = "<group>"; };
+		9FE504E32FFA9FF40031B679 /* model-00003-of-00011.safetensors */ = {isa = PBXFileReference; lastKnownFileType = file; path = "model-00003-of-00011.safetensors"; sourceTree = "<group>"; };
+		9FE504E42FFA9FF40031B679 /* model-00004-of-00011.safetensors */ = {isa = PBXFileReference; lastKnownFileType = file; path = "model-00004-of-00011.safetensors"; sourceTree = "<group>"; };
+		9FE504E52FFA9FF40031B679 /* model-00005-of-00011.safetensors */ = {isa = PBXFileReference; lastKnownFileType = file; path = "model-00005-of-00011.safetensors"; sourceTree = "<group>"; };
+		9FE504E62FFA9FF40031B679 /* model-00006-of-00011.safetensors */ = {isa = PBXFileReference; lastKnownFileType = file; path = "model-00006-of-00011.safetensors"; sourceTree = "<group>"; };
+		9FE504E72FFA9FF40031B679 /* model-00007-of-00011.safetensors */ = {isa = PBXFileReference; lastKnownFileType = file; path = "model-00007-of-00011.safetensors"; sourceTree = "<group>"; };
+		9FE504E82FFA9FF40031B679 /* model-00008-of-00011.safetensors */ = {isa = PBXFileReference; lastKnownFileType = file; path = "model-00008-of-00011.safetensors"; sourceTree = "<group>"; };
+		9FE504E92FFA9FF40031B679 /* model-00009-of-00011.safetensors */ = {isa = PBXFileReference; lastKnownFileType = file; path = "model-00009-of-00011.safetensors"; sourceTree = "<group>"; };
+		9FE504EA2FFA9FF40031B679 /* model-00010-of-00011.safetensors */ = {isa = PBXFileReference; lastKnownFileType = file; path = "model-00010-of-00011.safetensors"; sourceTree = "<group>"; };
+		9FE504EB2FFA9FF40031B679 /* model-00011-of-00011.safetensors */ = {isa = PBXFileReference; lastKnownFileType = file; path = "model-00011-of-00011.safetensors"; sourceTree = "<group>"; };
+		9FE504EC2FFA9FF40031B679 /* model.safetensors.index.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = model.safetensors.index.json; sourceTree = "<group>"; };
+		9FE504ED2FFA9FF40031B679 /* preprocessor_config.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = preprocessor_config.json; sourceTree = "<group>"; };
+		9FE504EE2FFA9FF40031B679 /* processor_config.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = processor_config.json; sourceTree = "<group>"; };
+		9FE504EF2FFA9FF40031B679 /* README.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = README.md; sourceTree = "<group>"; };
+		9FE504F02FFA9FF40031B679 /* tokenizer.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = tokenizer.json; sourceTree = "<group>"; };
+		9FE504F12FFA9FF40031B679 /* tokenizer_config.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = tokenizer_config.json; sourceTree = "<group>"; };
+		9FE504F22FFA9FF40031B679 /* video_preprocessor_config.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = video_preprocessor_config.json; sourceTree = "<group>"; };
+		9FE504F32FFA9FF40031B679 /* vocab.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = vocab.json; sourceTree = "<group>"; };
+		9FE504F52FFA9FF40031B679 /* chat_template.jinja */ = {isa = PBXFileReference; lastKnownFileType = text; path = chat_template.jinja; sourceTree = "<group>"; };
+		9FE504F62FFA9FF40031B679 /* config.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = config.json; sourceTree = "<group>"; };
+		9FE504F72FFA9FF40031B679 /* generation_config.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = generation_config.json; sourceTree = "<group>"; };
+		9FE504F82FFA9FF40031B679 /* model-00001-of-00002.safetensors */ = {isa = PBXFileReference; lastKnownFileType = file; path = "model-00001-of-00002.safetensors"; sourceTree = "<group>"; };
+		9FE504F92FFA9FF40031B679 /* model-00002-of-00002.safetensors */ = {isa = PBXFileReference; lastKnownFileType = file; path = "model-00002-of-00002.safetensors"; sourceTree = "<group>"; };
+		9FE504FA2FFA9FF40031B679 /* model.safetensors.index.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = model.safetensors.index.json; sourceTree = "<group>"; };
+		9FE504FB2FFA9FF40031B679 /* README.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = README.md; sourceTree = "<group>"; };
+		9FE504FC2FFA9FF40031B679 /* tokenizer.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = tokenizer.json; sourceTree = "<group>"; };
+		9FE504FD2FFA9FF40031B679 /* tokenizer_config.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = tokenizer_config.json; sourceTree = "<group>"; };
+		9FE504FF2FFA9FF40031B679 /* chat_template.jinja */ = {isa = PBXFileReference; lastKnownFileType = text; path = chat_template.jinja; sourceTree = "<group>"; };
+		9FE505002FFA9FF40031B679 /* config.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = config.json; sourceTree = "<group>"; };
+		9FE505012FFA9FF40031B679 /* generation_config.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = generation_config.json; sourceTree = "<group>"; };
+		9FE505022FFA9FF40031B679 /* model-00001-of-00003.safetensors */ = {isa = PBXFileReference; lastKnownFileType = file; path = "model-00001-of-00003.safetensors"; sourceTree = "<group>"; };
+		9FE505032FFA9FF40031B679 /* model-00002-of-00003.safetensors */ = {isa = PBXFileReference; lastKnownFileType = file; path = "model-00002-of-00003.safetensors"; sourceTree = "<group>"; };
+		9FE505042FFA9FF40031B679 /* model-00003-of-00003.safetensors */ = {isa = PBXFileReference; lastKnownFileType = file; path = "model-00003-of-00003.safetensors"; sourceTree = "<group>"; };
+		9FE505052FFA9FF40031B679 /* model.safetensors.index.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = model.safetensors.index.json; sourceTree = "<group>"; };
+		9FE505062FFA9FF40031B679 /* README.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = README.md; sourceTree = "<group>"; };
+		9FE505072FFA9FF40031B679 /* tokenizer.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = tokenizer.json; sourceTree = "<group>"; };
+		9FE505082FFA9FF40031B679 /* tokenizer_config.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = tokenizer_config.json; sourceTree = "<group>"; };
+		9FE5050A2FFA9FF40031B679 /* chat_template.jinja */ = {isa = PBXFileReference; lastKnownFileType = text; path = chat_template.jinja; sourceTree = "<group>"; };
+		9FE5050B2FFA9FF40031B679 /* config.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = config.json; sourceTree = "<group>"; };
+		9FE5050C2FFA9FF40031B679 /* generation_config.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = generation_config.json; sourceTree = "<group>"; };
+		9FE5050D2FFA9FF40031B679 /* model-00001-of-00003.safetensors */ = {isa = PBXFileReference; lastKnownFileType = file; path = "model-00001-of-00003.safetensors"; sourceTree = "<group>"; };
+		9FE5050E2FFA9FF40031B679 /* model-00002-of-00003.safetensors */ = {isa = PBXFileReference; lastKnownFileType = file; path = "model-00002-of-00003.safetensors"; sourceTree = "<group>"; };
+		9FE5050F2FFA9FF40031B679 /* model-00003-of-00003.safetensors */ = {isa = PBXFileReference; lastKnownFileType = file; path = "model-00003-of-00003.safetensors"; sourceTree = "<group>"; };
+		9FE505102FFA9FF40031B679 /* model.safetensors.index.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = model.safetensors.index.json; sourceTree = "<group>"; };
+		9FE505112FFA9FF40031B679 /* README.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = README.md; sourceTree = "<group>"; };
+		9FE505122FFA9FF40031B679 /* tokenizer.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = tokenizer.json; sourceTree = "<group>"; };
+		9FE505132FFA9FF40031B679 /* tokenizer_config.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = tokenizer_config.json; sourceTree = "<group>"; };
+		9FE505152FFA9FF40031B679 /* chat_template.jinja */ = {isa = PBXFileReference; lastKnownFileType = text; path = chat_template.jinja; sourceTree = "<group>"; };
+		9FE505162FFA9FF40031B679 /* config.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = config.json; sourceTree = "<group>"; };
+		9FE505172FFA9FF40031B679 /* generation_config.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = generation_config.json; sourceTree = "<group>"; };
+		9FE505182FFA9FF40031B679 /* model-00001-of-00004.safetensors */ = {isa = PBXFileReference; lastKnownFileType = file; path = "model-00001-of-00004.safetensors"; sourceTree = "<group>"; };
+		9FE505192FFA9FF40031B679 /* model-00002-of-00004.safetensors */ = {isa = PBXFileReference; lastKnownFileType = file; path = "model-00002-of-00004.safetensors"; sourceTree = "<group>"; };
+		9FE5051A2FFA9FF40031B679 /* model-00003-of-00004.safetensors */ = {isa = PBXFileReference; lastKnownFileType = file; path = "model-00003-of-00004.safetensors"; sourceTree = "<group>"; };
+		9FE5051B2FFA9FF40031B679 /* model-00004-of-00004.safetensors */ = {isa = PBXFileReference; lastKnownFileType = file; path = "model-00004-of-00004.safetensors"; sourceTree = "<group>"; };
+		9FE5051C2FFA9FF40031B679 /* model.safetensors.index.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = model.safetensors.index.json; sourceTree = "<group>"; };
+		9FE5051D2FFA9FF40031B679 /* README.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = README.md; sourceTree = "<group>"; };
+		9FE5051E2FFA9FF40031B679 /* tokenizer.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = tokenizer.json; sourceTree = "<group>"; };
+		9FE5051F2FFA9FF40031B679 /* tokenizer_config.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = tokenizer_config.json; sourceTree = "<group>"; };
+		9FE505212FFA9FF40031B679 /* .gitattributes.metadata */ = {isa = PBXFileReference; lastKnownFileType = text; path = .gitattributes.metadata; sourceTree = "<group>"; };
+		9FE505222FFA9FF40031B679 /* chat_template.jinja.metadata */ = {isa = PBXFileReference; lastKnownFileType = text; path = chat_template.jinja.metadata; sourceTree = "<group>"; };
+		9FE505232FFA9FF40031B679 /* config.json.metadata */ = {isa = PBXFileReference; lastKnownFileType = text; path = config.json.metadata; sourceTree = "<group>"; };
+		9FE505242FFA9FF40031B679 /* configuration.json.metadata */ = {isa = PBXFileReference; lastKnownFileType = text; path = configuration.json.metadata; sourceTree = "<group>"; };
+		9FE505252FFA9FF40031B679 /* generation_config.json.metadata */ = {isa = PBXFileReference; lastKnownFileType = text; path = generation_config.json.metadata; sourceTree = "<group>"; };
+		9FE505262FFA9FF40031B679 /* model-00001-of-00006.safetensors.metadata */ = {isa = PBXFileReference; lastKnownFileType = text; path = "model-00001-of-00006.safetensors.metadata"; sourceTree = "<group>"; };
+		9FE505272FFA9FF40031B679 /* model-00002-of-00006.safetensors.metadata */ = {isa = PBXFileReference; lastKnownFileType = text; path = "model-00002-of-00006.safetensors.metadata"; sourceTree = "<group>"; };
+		9FE505282FFA9FF40031B679 /* model-00003-of-00006.safetensors.metadata */ = {isa = PBXFileReference; lastKnownFileType = text; path = "model-00003-of-00006.safetensors.metadata"; sourceTree = "<group>"; };
+		9FE505292FFA9FF40031B679 /* model-00004-of-00006.safetensors.metadata */ = {isa = PBXFileReference; lastKnownFileType = text; path = "model-00004-of-00006.safetensors.metadata"; sourceTree = "<group>"; };
+		9FE5052A2FFA9FF40031B679 /* model-00005-of-00006.safetensors.metadata */ = {isa = PBXFileReference; lastKnownFileType = text; path = "model-00005-of-00006.safetensors.metadata"; sourceTree = "<group>"; };
+		9FE5052B2FFA9FF40031B679 /* model-00006-of-00006.safetensors.metadata */ = {isa = PBXFileReference; lastKnownFileType = text; path = "model-00006-of-00006.safetensors.metadata"; sourceTree = "<group>"; };
+		9FE5052C2FFA9FF40031B679 /* model.safetensors.index.json.metadata */ = {isa = PBXFileReference; lastKnownFileType = text; path = model.safetensors.index.json.metadata; sourceTree = "<group>"; };
+		9FE5052D2FFA9FF40031B679 /* preprocessor_config.json.metadata */ = {isa = PBXFileReference; lastKnownFileType = text; path = preprocessor_config.json.metadata; sourceTree = "<group>"; };
+		9FE5052E2FFA9FF40031B679 /* processor_config.json.metadata */ = {isa = PBXFileReference; lastKnownFileType = text; path = processor_config.json.metadata; sourceTree = "<group>"; };
+		9FE5052F2FFA9FF40031B679 /* README.md.metadata */ = {isa = PBXFileReference; lastKnownFileType = text; path = README.md.metadata; sourceTree = "<group>"; };
+		9FE505302FFA9FF40031B679 /* tokenizer_config.json.metadata */ = {isa = PBXFileReference; lastKnownFileType = text; path = tokenizer_config.json.metadata; sourceTree = "<group>"; };
+		9FE505312FFA9FF40031B679 /* tokenizer.json.metadata */ = {isa = PBXFileReference; lastKnownFileType = text; path = tokenizer.json.metadata; sourceTree = "<group>"; };
+		9FE505322FFA9FF40031B679 /* video_preprocessor_config.json.metadata */ = {isa = PBXFileReference; lastKnownFileType = text; path = video_preprocessor_config.json.metadata; sourceTree = "<group>"; };
+		9FE505332FFA9FF40031B679 /* vocab.json.metadata */ = {isa = PBXFileReference; lastKnownFileType = text; path = vocab.json.metadata; sourceTree = "<group>"; };
+		9FE505352FFA9FF40031B679 /* .gitignore */ = {isa = PBXFileReference; lastKnownFileType = text; path = .gitignore; sourceTree = "<group>"; };
+		9FE505362FFA9FF40031B679 /* CACHEDIR.TAG */ = {isa = PBXFileReference; lastKnownFileType = text; path = CACHEDIR.TAG; sourceTree = "<group>"; };
+		9FE505392FFA9FF40031B679 /* .gitattributes */ = {isa = PBXFileReference; lastKnownFileType = text; path = .gitattributes; sourceTree = "<group>"; };
+		9FE5053A2FFA9FF40031B679 /* chat_template.jinja */ = {isa = PBXFileReference; lastKnownFileType = text; path = chat_template.jinja; sourceTree = "<group>"; };
+		9FE5053B2FFA9FF40031B679 /* config.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = config.json; sourceTree = "<group>"; };
+		9FE5053C2FFA9FF40031B679 /* configuration.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = configuration.json; sourceTree = "<group>"; };
+		9FE5053D2FFA9FF40031B679 /* generation_config.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = generation_config.json; sourceTree = "<group>"; };
+		9FE5053E2FFA9FF40031B679 /* model-00001-of-00006.safetensors */ = {isa = PBXFileReference; lastKnownFileType = file; path = "model-00001-of-00006.safetensors"; sourceTree = "<group>"; };
+		9FE5053F2FFA9FF40031B679 /* model-00002-of-00006.safetensors */ = {isa = PBXFileReference; lastKnownFileType = file; path = "model-00002-of-00006.safetensors"; sourceTree = "<group>"; };
+		9FE505402FFA9FF40031B679 /* model-00003-of-00006.safetensors */ = {isa = PBXFileReference; lastKnownFileType = file; path = "model-00003-of-00006.safetensors"; sourceTree = "<group>"; };
+		9FE505412FFA9FF40031B679 /* model-00004-of-00006.safetensors */ = {isa = PBXFileReference; lastKnownFileType = file; path = "model-00004-of-00006.safetensors"; sourceTree = "<group>"; };
+		9FE505422FFA9FF40031B679 /* model-00005-of-00006.safetensors */ = {isa = PBXFileReference; lastKnownFileType = file; path = "model-00005-of-00006.safetensors"; sourceTree = "<group>"; };
+		9FE505432FFA9FF40031B679 /* model-00006-of-00006.safetensors */ = {isa = PBXFileReference; lastKnownFileType = file; path = "model-00006-of-00006.safetensors"; sourceTree = "<group>"; };
+		9FE505442FFA9FF40031B679 /* model.safetensors.index.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = model.safetensors.index.json; sourceTree = "<group>"; };
+		9FE505452FFA9FF40031B679 /* preprocessor_config.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = preprocessor_config.json; sourceTree = "<group>"; };
+		9FE505462FFA9FF40031B679 /* processor_config.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = processor_config.json; sourceTree = "<group>"; };
+		9FE505472FFA9FF40031B679 /* README.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = README.md; sourceTree = "<group>"; };
+		9FE505482FFA9FF40031B679 /* tokenizer.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = tokenizer.json; sourceTree = "<group>"; };
+		9FE505492FFA9FF40031B679 /* tokenizer_config.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = tokenizer_config.json; sourceTree = "<group>"; };
+		9FE5054A2FFA9FF40031B679 /* video_preprocessor_config.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = video_preprocessor_config.json; sourceTree = "<group>"; };
+		9FE5054B2FFA9FF40031B679 /* vocab.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = vocab.json; sourceTree = "<group>"; };
+		9FE5054D2FFA9FF40031B679 /* chat_template.jinja */ = {isa = PBXFileReference; lastKnownFileType = text; path = chat_template.jinja; sourceTree = "<group>"; };
+		9FE5054E2FFA9FF40031B679 /* config.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = config.json; sourceTree = "<group>"; };
+		9FE5054F2FFA9FF40031B679 /* generation_config.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = generation_config.json; sourceTree = "<group>"; };
+		9FE505502FFA9FF40031B679 /* model-00001-of-00002.safetensors */ = {isa = PBXFileReference; lastKnownFileType = file; path = "model-00001-of-00002.safetensors"; sourceTree = "<group>"; };
+		9FE505512FFA9FF40031B679 /* model-00002-of-00002.safetensors */ = {isa = PBXFileReference; lastKnownFileType = file; path = "model-00002-of-00002.safetensors"; sourceTree = "<group>"; };
+		9FE505522FFA9FF40031B679 /* model.safetensors.index.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = model.safetensors.index.json; sourceTree = "<group>"; };
+		9FE505532FFA9FF40031B679 /* README.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = README.md; sourceTree = "<group>"; };
+		9FE505542FFA9FF40031B679 /* tokenizer.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = tokenizer.json; sourceTree = "<group>"; };
+		9FE505552FFA9FF40031B679 /* tokenizer_config.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = tokenizer_config.json; sourceTree = "<group>"; };
+		9FE505572FFA9FF40031B679 /* chat_template.jinja */ = {isa = PBXFileReference; lastKnownFileType = text; path = chat_template.jinja; sourceTree = "<group>"; };
+		9FE505582FFA9FF40031B679 /* config.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = config.json; sourceTree = "<group>"; };
+		9FE505592FFA9FF40031B679 /* generation_config.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = generation_config.json; sourceTree = "<group>"; };
+		9FE5055A2FFA9FF40031B679 /* model-00001-of-00002.safetensors */ = {isa = PBXFileReference; lastKnownFileType = file; path = "model-00001-of-00002.safetensors"; sourceTree = "<group>"; };
+		9FE5055B2FFA9FF40031B679 /* model-00002-of-00002.safetensors */ = {isa = PBXFileReference; lastKnownFileType = file; path = "model-00002-of-00002.safetensors"; sourceTree = "<group>"; };
+		9FE5055C2FFA9FF40031B679 /* model.safetensors.index.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = model.safetensors.index.json; sourceTree = "<group>"; };
+		9FE5055D2FFA9FF40031B679 /* README.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = README.md; sourceTree = "<group>"; };
+		9FE5055E2FFA9FF40031B679 /* tokenizer.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = tokenizer.json; sourceTree = "<group>"; };
+		9FE5055F2FFA9FF40031B679 /* tokenizer_config.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = tokenizer_config.json; sourceTree = "<group>"; };
+		9FE505612FFA9FF40031B679 /* chat_template.jinja */ = {isa = PBXFileReference; lastKnownFileType = text; path = chat_template.jinja; sourceTree = "<group>"; };
+		9FE505622FFA9FF40031B679 /* config.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = config.json; sourceTree = "<group>"; };
+		9FE505632FFA9FF40031B679 /* generation_config.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = generation_config.json; sourceTree = "<group>"; };
+		9FE505642FFA9FF40031B679 /* model-00001-of-00002.safetensors */ = {isa = PBXFileReference; lastKnownFileType = file; path = "model-00001-of-00002.safetensors"; sourceTree = "<group>"; };
+		9FE505652FFA9FF40031B679 /* model-00002-of-00002.safetensors */ = {isa = PBXFileReference; lastKnownFileType = file; path = "model-00002-of-00002.safetensors"; sourceTree = "<group>"; };
+		9FE505662FFA9FF40031B679 /* model.safetensors.index.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = model.safetensors.index.json; sourceTree = "<group>"; };
+		9FE505672FFA9FF40031B679 /* README.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = README.md; sourceTree = "<group>"; };
+		9FE505682FFA9FF40031B679 /* tokenizer.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = tokenizer.json; sourceTree = "<group>"; };
+		9FE505692FFA9FF40031B679 /* tokenizer_config.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = tokenizer_config.json; sourceTree = "<group>"; };
+		9FE5056C2FFA9FF40031B679 /* .gitignore */ = {isa = PBXFileReference; lastKnownFileType = text; path = .gitignore; sourceTree = "<group>"; };
+		9FE5056D2FFA9FF40031B679 /* CACHEDIR.TAG */ = {isa = PBXFileReference; lastKnownFileType = text; path = CACHEDIR.TAG; sourceTree = "<group>"; };
+		9FE505702FFA9FF40031B679 /* added_tokens.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = added_tokens.json; sourceTree = "<group>"; };
+		9FE505712FFA9FF40031B679 /* config.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = config.json; sourceTree = "<group>"; };
+		9FE505722FFA9FF40031B679 /* merges.txt */ = {isa = PBXFileReference; lastKnownFileType = text; path = merges.txt; sourceTree = "<group>"; };
+		9FE505732FFA9FF40031B679 /* model.safetensors */ = {isa = PBXFileReference; lastKnownFileType = file; path = model.safetensors; sourceTree = "<group>"; };
+		9FE505742FFA9FF40031B679 /* model.safetensors.index.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = model.safetensors.index.json; sourceTree = "<group>"; };
+		9FE505752FFA9FF40031B679 /* special_tokens_map.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = special_tokens_map.json; sourceTree = "<group>"; };
+		9FE505762FFA9FF40031B679 /* tokenizer.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = tokenizer.json; sourceTree = "<group>"; };
+		9FE505772FFA9FF40031B679 /* tokenizer_config.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = tokenizer_config.json; sourceTree = "<group>"; };
+		9FE505782FFA9FF40031B679 /* vocab.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = vocab.json; sourceTree = "<group>"; };
+		9FE5057C2FFA9FF40031B679 /* config.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = config.json; sourceTree = "<group>"; };
+		9FE5057D2FFA9FF40031B679 /* configuration.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = configuration.json; sourceTree = "<group>"; };
+		9FE5057E2FFA9FF40031B679 /* model.safetensors */ = {isa = PBXFileReference; lastKnownFileType = file; path = model.safetensors; sourceTree = "<group>"; };
+		9FE5057F2FFA9FF40031B679 /* preprocessor_config.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = preprocessor_config.json; sourceTree = "<group>"; };
+		9FE505812FFA9FF40031B679 /* .msc */ = {isa = PBXFileReference; lastKnownFileType = file; path = .msc; sourceTree = "<group>"; };
+		9FE505822FFA9FF40031B679 /* .mv */ = {isa = PBXFileReference; lastKnownFileType = text; path = .mv; sourceTree = "<group>"; };
+		9FE505832FFA9FF40031B679 /* config.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = config.json; sourceTree = "<group>"; };
+		9FE505842FFA9FF40031B679 /* configuration.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = configuration.json; sourceTree = "<group>"; };
+		9FE505852FFA9FF40031B679 /* generation_config.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = generation_config.json; sourceTree = "<group>"; };
+		9FE505862FFA9FF40031B679 /* merges.txt */ = {isa = PBXFileReference; lastKnownFileType = text; path = merges.txt; sourceTree = "<group>"; };
+		9FE505872FFA9FF40031B679 /* model.safetensors */ = {isa = PBXFileReference; lastKnownFileType = file; path = model.safetensors; sourceTree = "<group>"; };
+		9FE505882FFA9FF40031B679 /* model.safetensors.index.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = model.safetensors.index.json; sourceTree = "<group>"; };
+		9FE505892FFA9FF40031B679 /* preprocessor_config.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = preprocessor_config.json; sourceTree = "<group>"; };
+		9FE5058A2FFA9FF40031B679 /* README.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = README.md; sourceTree = "<group>"; };
+		9FE5058B2FFA9FF40031B679 /* tokenizer_config.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = tokenizer_config.json; sourceTree = "<group>"; };
+		9FE5058C2FFA9FF40031B679 /* vocab.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = vocab.json; sourceTree = "<group>"; };
+		9FE5058E2FFA9FF40031B679 /* claude-4.6-sonnet */ = {isa = PBXFileReference; lastKnownFileType = file; path = "claude-4.6-sonnet"; sourceTree = "<group>"; };
+		9FE5058F2FFA9FF40031B679 /* claude-haiku-4-5-20251001 */ = {isa = PBXFileReference; lastKnownFileType = text; path = "claude-haiku-4-5-20251001"; sourceTree = "<group>"; };
+		9FE505922FFA9FF40031B679 /* Qwen3.6-27B-mixed2_4 */ = {isa = PBXFileReference; lastKnownFileType = file; path = "Qwen3.6-27B-mixed2_4"; sourceTree = "<group>"; };
+		9FE505932FFA9FF40031B679 /* Qwen3.6-27B-mxfp8 */ = {isa = PBXFileReference; lastKnownFileType = file; path = "Qwen3.6-27B-mxfp8"; sourceTree = "<group>"; };
+		9FE505952FFA9FF40031B679 /* server.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = server.json; sourceTree = "<group>"; };
+		9FE505962FFA9FF40031B679 /* settings.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = settings.json; sourceTree = "<group>"; };
 		AACFCBE32FE115A200B224C0 /* ProgressBar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProgressBar.swift; sourceTree = "<group>"; };
 		AAD9D5162FE283D100FAEA05 /* ServerScreenVM.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServerScreenVM.swift; sourceTree = "<group>"; };
 		AAD9D5182FE2840100FAEA05 /* StatusScreenVM.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StatusScreenVM.swift; sourceTree = "<group>"; };
@@ -269,6 +544,7 @@
 				DEE000000000000000000001 /* Tests */,
 				1BBBBBBBBBBBBBBBBBBBBBB5 /* Resources */,
 				1BBBBBBBBBBBBBBBBBBBBBB6 /* Products */,
+				9FE505972FFA9FF40031B679 /* .fusion-mlx */,
 			);
 			sourceTree = "<group>";
 		};
@@ -455,6 +731,716 @@
 			path = Updater;
 			sourceTree = "<group>";
 		};
+		9FE5045A2FFA9FF40031B679 /* bin */ = {
+			isa = PBXGroup;
+			children = (
+				9FE504592FFA9FF40031B679 /* fusion */,
+			);
+			path = bin;
+			sourceTree = "<group>";
+		};
+		9FE5045F2FFA9FF40031B679 /* logs */ = {
+			isa = PBXGroup;
+			children = (
+				9FE5045B2FFA9FF40031B679 /* fusion-mlx-20260629.log */,
+				9FE5045C2FFA9FF40031B679 /* fusion-mlx-20260701.log */,
+				9FE5045D2FFA9FF40031B679 /* fusion-mlx-20260702.log */,
+				9FE5045E2FFA9FF40031B679 /* fusion-mlx-20260704.log */,
+			);
+			path = logs;
+			sourceTree = "<group>";
+		};
+		9FE504602FFA9FF40031B679 /* text_encoder */ = {
+			isa = PBXGroup;
+			children = (
+			);
+			path = text_encoder;
+			sourceTree = "<group>";
+		};
+		9FE504612FFA9FF40031B679 /* text_encoder_2 */ = {
+			isa = PBXGroup;
+			children = (
+			);
+			path = text_encoder_2;
+			sourceTree = "<group>";
+		};
+		9FE504622FFA9FF40031B679 /* tokenizer */ = {
+			isa = PBXGroup;
+			children = (
+			);
+			path = tokenizer;
+			sourceTree = "<group>";
+		};
+		9FE504632FFA9FF40031B679 /* tokenizer_2 */ = {
+			isa = PBXGroup;
+			children = (
+			);
+			path = tokenizer_2;
+			sourceTree = "<group>";
+		};
+		9FE504642FFA9FF40031B679 /* transformer */ = {
+			isa = PBXGroup;
+			children = (
+			);
+			path = transformer;
+			sourceTree = "<group>";
+		};
+		9FE504652FFA9FF40031B679 /* vae */ = {
+			isa = PBXGroup;
+			children = (
+			);
+			path = vae;
+			sourceTree = "<group>";
+		};
+		9FE504662FFA9FF40031B679 /* ._____temp */ = {
+			isa = PBXGroup;
+			children = (
+				9FE504602FFA9FF40031B679 /* text_encoder */,
+				9FE504612FFA9FF40031B679 /* text_encoder_2 */,
+				9FE504622FFA9FF40031B679 /* tokenizer */,
+				9FE504632FFA9FF40031B679 /* tokenizer_2 */,
+				9FE504642FFA9FF40031B679 /* transformer */,
+				9FE504652FFA9FF40031B679 /* vae */,
+			);
+			path = "._____temp";
+			sourceTree = "<group>";
+		};
+		9FE504682FFA9FF40031B679 /* text_encoder */ = {
+			isa = PBXGroup;
+			children = (
+				9FE504672FFA9FF40031B679 /* 0.safetensors.metadata */,
+			);
+			path = text_encoder;
+			sourceTree = "<group>";
+		};
+		9FE5046B2FFA9FF40031B679 /* text_encoder_2 */ = {
+			isa = PBXGroup;
+			children = (
+				9FE504692FFA9FF40031B679 /* 0.safetensors.metadata */,
+				9FE5046A2FFA9FF40031B679 /* 1.safetensors.metadata */,
+			);
+			path = text_encoder_2;
+			sourceTree = "<group>";
+		};
+		9FE504702FFA9FF40031B679 /* tokenizer */ = {
+			isa = PBXGroup;
+			children = (
+				9FE5046C2FFA9FF40031B679 /* merges.txt.metadata */,
+				9FE5046D2FFA9FF40031B679 /* special_tokens_map.json.metadata */,
+				9FE5046E2FFA9FF40031B679 /* tokenizer_config.json.metadata */,
+				9FE5046F2FFA9FF40031B679 /* vocab.json.metadata */,
+			);
+			path = tokenizer;
+			sourceTree = "<group>";
+		};
+		9FE504752FFA9FF40031B679 /* tokenizer_2 */ = {
+			isa = PBXGroup;
+			children = (
+				9FE504712FFA9FF40031B679 /* added_tokens.json.metadata */,
+				9FE504722FFA9FF40031B679 /* special_tokens_map.json.metadata */,
+				9FE504732FFA9FF40031B679 /* spiece.model.metadata */,
+				9FE504742FFA9FF40031B679 /* tokenizer_config.json.metadata */,
+			);
+			path = tokenizer_2;
+			sourceTree = "<group>";
+		};
+		9FE504792FFA9FF40031B679 /* transformer */ = {
+			isa = PBXGroup;
+			children = (
+				9FE504762FFA9FF40031B679 /* 0.safetensors.metadata */,
+				9FE504772FFA9FF40031B679 /* 1.safetensors.metadata */,
+				9FE504782FFA9FF40031B679 /* 2.safetensors.metadata */,
+			);
+			path = transformer;
+			sourceTree = "<group>";
+		};
+		9FE5047B2FFA9FF40031B679 /* vae */ = {
+			isa = PBXGroup;
+			children = (
+				9FE5047A2FFA9FF40031B679 /* 0.safetensors.metadata */,
+			);
+			path = vae;
+			sourceTree = "<group>";
+		};
+		9FE5047F2FFA9FF40031B679 /* download */ = {
+			isa = PBXGroup;
+			children = (
+				9FE504682FFA9FF40031B679 /* text_encoder */,
+				9FE5046B2FFA9FF40031B679 /* text_encoder_2 */,
+				9FE504702FFA9FF40031B679 /* tokenizer */,
+				9FE504752FFA9FF40031B679 /* tokenizer_2 */,
+				9FE504792FFA9FF40031B679 /* transformer */,
+				9FE5047B2FFA9FF40031B679 /* vae */,
+				9FE5047C2FFA9FF40031B679 /* .DS_Store.metadata */,
+				9FE5047D2FFA9FF40031B679 /* .gitattributes.metadata */,
+				9FE5047E2FFA9FF40031B679 /* README.md.metadata */,
+			);
+			path = download;
+			sourceTree = "<group>";
+		};
+		9FE504822FFA9FF40031B679 /* huggingface */ = {
+			isa = PBXGroup;
+			children = (
+				9FE5047F2FFA9FF40031B679 /* download */,
+				9FE504802FFA9FF40031B679 /* .gitignore */,
+				9FE504812FFA9FF40031B679 /* CACHEDIR.TAG */,
+			);
+			path = huggingface;
+			sourceTree = "<group>";
+		};
+		9FE504832FFA9FF40031B679 /* .cache */ = {
+			isa = PBXGroup;
+			children = (
+				9FE504822FFA9FF40031B679 /* huggingface */,
+			);
+			path = .cache;
+			sourceTree = "<group>";
+		};
+		9FE504852FFA9FF40031B679 /* text_encoder */ = {
+			isa = PBXGroup;
+			children = (
+				9FE504842FFA9FF40031B679 /* 0.safetensors */,
+			);
+			path = text_encoder;
+			sourceTree = "<group>";
+		};
+		9FE504882FFA9FF40031B679 /* text_encoder_2 */ = {
+			isa = PBXGroup;
+			children = (
+				9FE504862FFA9FF40031B679 /* 0.safetensors */,
+				9FE504872FFA9FF40031B679 /* 1.safetensors */,
+			);
+			path = text_encoder_2;
+			sourceTree = "<group>";
+		};
+		9FE5048D2FFA9FF40031B679 /* tokenizer */ = {
+			isa = PBXGroup;
+			children = (
+				9FE504892FFA9FF40031B679 /* merges.txt */,
+				9FE5048A2FFA9FF40031B679 /* special_tokens_map.json */,
+				9FE5048B2FFA9FF40031B679 /* tokenizer_config.json */,
+				9FE5048C2FFA9FF40031B679 /* vocab.json */,
+			);
+			path = tokenizer;
+			sourceTree = "<group>";
+		};
+		9FE504922FFA9FF40031B679 /* tokenizer_2 */ = {
+			isa = PBXGroup;
+			children = (
+				9FE5048E2FFA9FF40031B679 /* added_tokens.json */,
+				9FE5048F2FFA9FF40031B679 /* special_tokens_map.json */,
+				9FE504902FFA9FF40031B679 /* spiece.model */,
+				9FE504912FFA9FF40031B679 /* tokenizer_config.json */,
+			);
+			path = tokenizer_2;
+			sourceTree = "<group>";
+		};
+		9FE504962FFA9FF40031B679 /* transformer */ = {
+			isa = PBXGroup;
+			children = (
+				9FE504932FFA9FF40031B679 /* 0.safetensors */,
+				9FE504942FFA9FF40031B679 /* 1.safetensors */,
+				9FE504952FFA9FF40031B679 /* 2.safetensors */,
+			);
+			path = transformer;
+			sourceTree = "<group>";
+		};
+		9FE504982FFA9FF40031B679 /* vae */ = {
+			isa = PBXGroup;
+			children = (
+				9FE504972FFA9FF40031B679 /* 0.safetensors */,
+			);
+			path = vae;
+			sourceTree = "<group>";
+		};
+		9FE5049E2FFA9FF40031B679 /* Flux-1.lite-8B-MLX-Q4 */ = {
+			isa = PBXGroup;
+			children = (
+				9FE504662FFA9FF40031B679 /* ._____temp */,
+				9FE504832FFA9FF40031B679 /* .cache */,
+				9FE504852FFA9FF40031B679 /* text_encoder */,
+				9FE504882FFA9FF40031B679 /* text_encoder_2 */,
+				9FE5048D2FFA9FF40031B679 /* tokenizer */,
+				9FE504922FFA9FF40031B679 /* tokenizer_2 */,
+				9FE504962FFA9FF40031B679 /* transformer */,
+				9FE504982FFA9FF40031B679 /* vae */,
+				9FE504992FFA9FF40031B679 /* .gitattributes */,
+				9FE5049A2FFA9FF40031B679 /* .msc */,
+				9FE5049B2FFA9FF40031B679 /* .mv */,
+				9FE5049C2FFA9FF40031B679 /* configuration.json */,
+				9FE5049D2FFA9FF40031B679 /* README.md */,
+			);
+			path = "Flux-1.lite-8B-MLX-Q4";
+			sourceTree = "<group>";
+		};
+		9FE504AC2FFA9FF40031B679 /* download */ = {
+			isa = PBXGroup;
+			children = (
+				9FE5049F2FFA9FF40031B679 /* .gitattributes.metadata */,
+				9FE504A02FFA9FF40031B679 /* chat_template.jinja.metadata */,
+				9FE504A12FFA9FF40031B679 /* config.json.metadata */,
+				9FE504A22FFA9FF40031B679 /* model-00001-of-00002.safetensors.metadata */,
+				9FE504A32FFA9FF40031B679 /* model-00002-of-00002.safetensors.metadata */,
+				9FE504A42FFA9FF40031B679 /* model.safetensors.index.json.metadata */,
+				9FE504A52FFA9FF40031B679 /* preprocessor_config.json.metadata */,
+				9FE504A62FFA9FF40031B679 /* processor_config.json.metadata */,
+				9FE504A72FFA9FF40031B679 /* README.md.metadata */,
+				9FE504A82FFA9FF40031B679 /* tokenizer_config.json.metadata */,
+				9FE504A92FFA9FF40031B679 /* tokenizer.json.metadata */,
+				9FE504AA2FFA9FF40031B679 /* video_preprocessor_config.json.metadata */,
+				9FE504AB2FFA9FF40031B679 /* vocab.json.metadata */,
+			);
+			path = download;
+			sourceTree = "<group>";
+		};
+		9FE504AF2FFA9FF40031B679 /* huggingface */ = {
+			isa = PBXGroup;
+			children = (
+				9FE504AC2FFA9FF40031B679 /* download */,
+				9FE504AD2FFA9FF40031B679 /* .gitignore */,
+				9FE504AE2FFA9FF40031B679 /* CACHEDIR.TAG */,
+			);
+			path = huggingface;
+			sourceTree = "<group>";
+		};
+		9FE504B02FFA9FF40031B679 /* .cache */ = {
+			isa = PBXGroup;
+			children = (
+				9FE504AF2FFA9FF40031B679 /* huggingface */,
+			);
+			path = .cache;
+			sourceTree = "<group>";
+		};
+		9FE504BE2FFA9FF40031B679 /* Qwen3.5-9B-4bit */ = {
+			isa = PBXGroup;
+			children = (
+				9FE504B02FFA9FF40031B679 /* .cache */,
+				9FE504B12FFA9FF40031B679 /* .gitattributes */,
+				9FE504B22FFA9FF40031B679 /* chat_template.jinja */,
+				9FE504B32FFA9FF40031B679 /* config.json */,
+				9FE504B42FFA9FF40031B679 /* model-00001-of-00002.safetensors */,
+				9FE504B52FFA9FF40031B679 /* model-00002-of-00002.safetensors */,
+				9FE504B62FFA9FF40031B679 /* model.safetensors.index.json */,
+				9FE504B72FFA9FF40031B679 /* preprocessor_config.json */,
+				9FE504B82FFA9FF40031B679 /* processor_config.json */,
+				9FE504B92FFA9FF40031B679 /* README.md */,
+				9FE504BA2FFA9FF40031B679 /* tokenizer.json */,
+				9FE504BB2FFA9FF40031B679 /* tokenizer_config.json */,
+				9FE504BC2FFA9FF40031B679 /* video_preprocessor_config.json */,
+				9FE504BD2FFA9FF40031B679 /* vocab.json */,
+			);
+			path = "Qwen3.5-9B-4bit";
+			sourceTree = "<group>";
+		};
+		9FE504D72FFA9FF40031B679 /* download */ = {
+			isa = PBXGroup;
+			children = (
+				9FE504BF2FFA9FF40031B679 /* .gitattributes.metadata */,
+				9FE504C02FFA9FF40031B679 /* chat_template.jinja.metadata */,
+				9FE504C12FFA9FF40031B679 /* config.json.metadata */,
+				9FE504C22FFA9FF40031B679 /* configuration.json.metadata */,
+				9FE504C32FFA9FF40031B679 /* generation_config.json.metadata */,
+				9FE504C42FFA9FF40031B679 /* model-00001-of-00011.safetensors.metadata */,
+				9FE504C52FFA9FF40031B679 /* model-00002-of-00011.safetensors.metadata */,
+				9FE504C62FFA9FF40031B679 /* model-00003-of-00011.safetensors.metadata */,
+				9FE504C72FFA9FF40031B679 /* model-00004-of-00011.safetensors.metadata */,
+				9FE504C82FFA9FF40031B679 /* model-00005-of-00011.safetensors.metadata */,
+				9FE504C92FFA9FF40031B679 /* model-00006-of-00011.safetensors.metadata */,
+				9FE504CA2FFA9FF40031B679 /* model-00007-of-00011.safetensors.metadata */,
+				9FE504CB2FFA9FF40031B679 /* model-00008-of-00011.safetensors.metadata */,
+				9FE504CC2FFA9FF40031B679 /* model-00009-of-00011.safetensors.metadata */,
+				9FE504CD2FFA9FF40031B679 /* model-00010-of-00011.safetensors.metadata */,
+				9FE504CE2FFA9FF40031B679 /* model-00011-of-00011.safetensors.metadata */,
+				9FE504CF2FFA9FF40031B679 /* model.safetensors.index.json.metadata */,
+				9FE504D02FFA9FF40031B679 /* preprocessor_config.json.metadata */,
+				9FE504D12FFA9FF40031B679 /* processor_config.json.metadata */,
+				9FE504D22FFA9FF40031B679 /* README.md.metadata */,
+				9FE504D32FFA9FF40031B679 /* tokenizer_config.json.metadata */,
+				9FE504D42FFA9FF40031B679 /* tokenizer.json.metadata */,
+				9FE504D52FFA9FF40031B679 /* video_preprocessor_config.json.metadata */,
+				9FE504D62FFA9FF40031B679 /* vocab.json.metadata */,
+			);
+			path = download;
+			sourceTree = "<group>";
+		};
+		9FE504DA2FFA9FF40031B679 /* huggingface */ = {
+			isa = PBXGroup;
+			children = (
+				9FE504D72FFA9FF40031B679 /* download */,
+				9FE504D82FFA9FF40031B679 /* .gitignore */,
+				9FE504D92FFA9FF40031B679 /* CACHEDIR.TAG */,
+			);
+			path = huggingface;
+			sourceTree = "<group>";
+		};
+		9FE504DB2FFA9FF40031B679 /* .cache */ = {
+			isa = PBXGroup;
+			children = (
+				9FE504DA2FFA9FF40031B679 /* huggingface */,
+			);
+			path = .cache;
+			sourceTree = "<group>";
+		};
+		9FE504F42FFA9FF40031B679 /* Qwen3.6-27B-bf16 */ = {
+			isa = PBXGroup;
+			children = (
+				9FE504DB2FFA9FF40031B679 /* .cache */,
+				9FE504DC2FFA9FF40031B679 /* .gitattributes */,
+				9FE504DD2FFA9FF40031B679 /* chat_template.jinja */,
+				9FE504DE2FFA9FF40031B679 /* config.json */,
+				9FE504DF2FFA9FF40031B679 /* configuration.json */,
+				9FE504E02FFA9FF40031B679 /* generation_config.json */,
+				9FE504E12FFA9FF40031B679 /* model-00001-of-00011.safetensors */,
+				9FE504E22FFA9FF40031B679 /* model-00002-of-00011.safetensors */,
+				9FE504E32FFA9FF40031B679 /* model-00003-of-00011.safetensors */,
+				9FE504E42FFA9FF40031B679 /* model-00004-of-00011.safetensors */,
+				9FE504E52FFA9FF40031B679 /* model-00005-of-00011.safetensors */,
+				9FE504E62FFA9FF40031B679 /* model-00006-of-00011.safetensors */,
+				9FE504E72FFA9FF40031B679 /* model-00007-of-00011.safetensors */,
+				9FE504E82FFA9FF40031B679 /* model-00008-of-00011.safetensors */,
+				9FE504E92FFA9FF40031B679 /* model-00009-of-00011.safetensors */,
+				9FE504EA2FFA9FF40031B679 /* model-00010-of-00011.safetensors */,
+				9FE504EB2FFA9FF40031B679 /* model-00011-of-00011.safetensors */,
+				9FE504EC2FFA9FF40031B679 /* model.safetensors.index.json */,
+				9FE504ED2FFA9FF40031B679 /* preprocessor_config.json */,
+				9FE504EE2FFA9FF40031B679 /* processor_config.json */,
+				9FE504EF2FFA9FF40031B679 /* README.md */,
+				9FE504F02FFA9FF40031B679 /* tokenizer.json */,
+				9FE504F12FFA9FF40031B679 /* tokenizer_config.json */,
+				9FE504F22FFA9FF40031B679 /* video_preprocessor_config.json */,
+				9FE504F32FFA9FF40031B679 /* vocab.json */,
+			);
+			path = "Qwen3.6-27B-bf16";
+			sourceTree = "<group>";
+		};
+		9FE504FE2FFA9FF40031B679 /* Qwen3.6-27B-mixed2_4 */ = {
+			isa = PBXGroup;
+			children = (
+				9FE504F52FFA9FF40031B679 /* chat_template.jinja */,
+				9FE504F62FFA9FF40031B679 /* config.json */,
+				9FE504F72FFA9FF40031B679 /* generation_config.json */,
+				9FE504F82FFA9FF40031B679 /* model-00001-of-00002.safetensors */,
+				9FE504F92FFA9FF40031B679 /* model-00002-of-00002.safetensors */,
+				9FE504FA2FFA9FF40031B679 /* model.safetensors.index.json */,
+				9FE504FB2FFA9FF40031B679 /* README.md */,
+				9FE504FC2FFA9FF40031B679 /* tokenizer.json */,
+				9FE504FD2FFA9FF40031B679 /* tokenizer_config.json */,
+			);
+			path = "Qwen3.6-27B-mixed2_4";
+			sourceTree = "<group>";
+		};
+		9FE505092FFA9FF40031B679 /* Qwen3.6-27B-mixed2_6 */ = {
+			isa = PBXGroup;
+			children = (
+				9FE504FF2FFA9FF40031B679 /* chat_template.jinja */,
+				9FE505002FFA9FF40031B679 /* config.json */,
+				9FE505012FFA9FF40031B679 /* generation_config.json */,
+				9FE505022FFA9FF40031B679 /* model-00001-of-00003.safetensors */,
+				9FE505032FFA9FF40031B679 /* model-00002-of-00003.safetensors */,
+				9FE505042FFA9FF40031B679 /* model-00003-of-00003.safetensors */,
+				9FE505052FFA9FF40031B679 /* model.safetensors.index.json */,
+				9FE505062FFA9FF40031B679 /* README.md */,
+				9FE505072FFA9FF40031B679 /* tokenizer.json */,
+				9FE505082FFA9FF40031B679 /* tokenizer_config.json */,
+			);
+			path = "Qwen3.6-27B-mixed2_6";
+			sourceTree = "<group>";
+		};
+		9FE505142FFA9FF40031B679 /* Qwen3.6-27B-mixed3_4 */ = {
+			isa = PBXGroup;
+			children = (
+				9FE5050A2FFA9FF40031B679 /* chat_template.jinja */,
+				9FE5050B2FFA9FF40031B679 /* config.json */,
+				9FE5050C2FFA9FF40031B679 /* generation_config.json */,
+				9FE5050D2FFA9FF40031B679 /* model-00001-of-00003.safetensors */,
+				9FE5050E2FFA9FF40031B679 /* model-00002-of-00003.safetensors */,
+				9FE5050F2FFA9FF40031B679 /* model-00003-of-00003.safetensors */,
+				9FE505102FFA9FF40031B679 /* model.safetensors.index.json */,
+				9FE505112FFA9FF40031B679 /* README.md */,
+				9FE505122FFA9FF40031B679 /* tokenizer.json */,
+				9FE505132FFA9FF40031B679 /* tokenizer_config.json */,
+			);
+			path = "Qwen3.6-27B-mixed3_4";
+			sourceTree = "<group>";
+		};
+		9FE505202FFA9FF40031B679 /* Qwen3.6-27B-mixed4_6 */ = {
+			isa = PBXGroup;
+			children = (
+				9FE505152FFA9FF40031B679 /* chat_template.jinja */,
+				9FE505162FFA9FF40031B679 /* config.json */,
+				9FE505172FFA9FF40031B679 /* generation_config.json */,
+				9FE505182FFA9FF40031B679 /* model-00001-of-00004.safetensors */,
+				9FE505192FFA9FF40031B679 /* model-00002-of-00004.safetensors */,
+				9FE5051A2FFA9FF40031B679 /* model-00003-of-00004.safetensors */,
+				9FE5051B2FFA9FF40031B679 /* model-00004-of-00004.safetensors */,
+				9FE5051C2FFA9FF40031B679 /* model.safetensors.index.json */,
+				9FE5051D2FFA9FF40031B679 /* README.md */,
+				9FE5051E2FFA9FF40031B679 /* tokenizer.json */,
+				9FE5051F2FFA9FF40031B679 /* tokenizer_config.json */,
+			);
+			path = "Qwen3.6-27B-mixed4_6";
+			sourceTree = "<group>";
+		};
+		9FE505342FFA9FF40031B679 /* download */ = {
+			isa = PBXGroup;
+			children = (
+				9FE505212FFA9FF40031B679 /* .gitattributes.metadata */,
+				9FE505222FFA9FF40031B679 /* chat_template.jinja.metadata */,
+				9FE505232FFA9FF40031B679 /* config.json.metadata */,
+				9FE505242FFA9FF40031B679 /* configuration.json.metadata */,
+				9FE505252FFA9FF40031B679 /* generation_config.json.metadata */,
+				9FE505262FFA9FF40031B679 /* model-00001-of-00006.safetensors.metadata */,
+				9FE505272FFA9FF40031B679 /* model-00002-of-00006.safetensors.metadata */,
+				9FE505282FFA9FF40031B679 /* model-00003-of-00006.safetensors.metadata */,
+				9FE505292FFA9FF40031B679 /* model-00004-of-00006.safetensors.metadata */,
+				9FE5052A2FFA9FF40031B679 /* model-00005-of-00006.safetensors.metadata */,
+				9FE5052B2FFA9FF40031B679 /* model-00006-of-00006.safetensors.metadata */,
+				9FE5052C2FFA9FF40031B679 /* model.safetensors.index.json.metadata */,
+				9FE5052D2FFA9FF40031B679 /* preprocessor_config.json.metadata */,
+				9FE5052E2FFA9FF40031B679 /* processor_config.json.metadata */,
+				9FE5052F2FFA9FF40031B679 /* README.md.metadata */,
+				9FE505302FFA9FF40031B679 /* tokenizer_config.json.metadata */,
+				9FE505312FFA9FF40031B679 /* tokenizer.json.metadata */,
+				9FE505322FFA9FF40031B679 /* video_preprocessor_config.json.metadata */,
+				9FE505332FFA9FF40031B679 /* vocab.json.metadata */,
+			);
+			path = download;
+			sourceTree = "<group>";
+		};
+		9FE505372FFA9FF40031B679 /* huggingface */ = {
+			isa = PBXGroup;
+			children = (
+				9FE505342FFA9FF40031B679 /* download */,
+				9FE505352FFA9FF40031B679 /* .gitignore */,
+				9FE505362FFA9FF40031B679 /* CACHEDIR.TAG */,
+			);
+			path = huggingface;
+			sourceTree = "<group>";
+		};
+		9FE505382FFA9FF40031B679 /* .cache */ = {
+			isa = PBXGroup;
+			children = (
+				9FE505372FFA9FF40031B679 /* huggingface */,
+			);
+			path = .cache;
+			sourceTree = "<group>";
+		};
+		9FE5054C2FFA9FF40031B679 /* Qwen3.6-27B-mxfp8 */ = {
+			isa = PBXGroup;
+			children = (
+				9FE505382FFA9FF40031B679 /* .cache */,
+				9FE505392FFA9FF40031B679 /* .gitattributes */,
+				9FE5053A2FFA9FF40031B679 /* chat_template.jinja */,
+				9FE5053B2FFA9FF40031B679 /* config.json */,
+				9FE5053C2FFA9FF40031B679 /* configuration.json */,
+				9FE5053D2FFA9FF40031B679 /* generation_config.json */,
+				9FE5053E2FFA9FF40031B679 /* model-00001-of-00006.safetensors */,
+				9FE5053F2FFA9FF40031B679 /* model-00002-of-00006.safetensors */,
+				9FE505402FFA9FF40031B679 /* model-00003-of-00006.safetensors */,
+				9FE505412FFA9FF40031B679 /* model-00004-of-00006.safetensors */,
+				9FE505422FFA9FF40031B679 /* model-00005-of-00006.safetensors */,
+				9FE505432FFA9FF40031B679 /* model-00006-of-00006.safetensors */,
+				9FE505442FFA9FF40031B679 /* model.safetensors.index.json */,
+				9FE505452FFA9FF40031B679 /* preprocessor_config.json */,
+				9FE505462FFA9FF40031B679 /* processor_config.json */,
+				9FE505472FFA9FF40031B679 /* README.md */,
+				9FE505482FFA9FF40031B679 /* tokenizer.json */,
+				9FE505492FFA9FF40031B679 /* tokenizer_config.json */,
+				9FE5054A2FFA9FF40031B679 /* video_preprocessor_config.json */,
+				9FE5054B2FFA9FF40031B679 /* vocab.json */,
+			);
+			path = "Qwen3.6-27B-mxfp8";
+			sourceTree = "<group>";
+		};
+		9FE505562FFA9FF40031B679 /* Qwen3.6-27B-quant2 */ = {
+			isa = PBXGroup;
+			children = (
+				9FE5054D2FFA9FF40031B679 /* chat_template.jinja */,
+				9FE5054E2FFA9FF40031B679 /* config.json */,
+				9FE5054F2FFA9FF40031B679 /* generation_config.json */,
+				9FE505502FFA9FF40031B679 /* model-00001-of-00002.safetensors */,
+				9FE505512FFA9FF40031B679 /* model-00002-of-00002.safetensors */,
+				9FE505522FFA9FF40031B679 /* model.safetensors.index.json */,
+				9FE505532FFA9FF40031B679 /* README.md */,
+				9FE505542FFA9FF40031B679 /* tokenizer.json */,
+				9FE505552FFA9FF40031B679 /* tokenizer_config.json */,
+			);
+			path = "Qwen3.6-27B-quant2";
+			sourceTree = "<group>";
+		};
+		9FE505602FFA9FF40031B679 /* Qwen3.6-27B-quant2-all */ = {
+			isa = PBXGroup;
+			children = (
+				9FE505572FFA9FF40031B679 /* chat_template.jinja */,
+				9FE505582FFA9FF40031B679 /* config.json */,
+				9FE505592FFA9FF40031B679 /* generation_config.json */,
+				9FE5055A2FFA9FF40031B679 /* model-00001-of-00002.safetensors */,
+				9FE5055B2FFA9FF40031B679 /* model-00002-of-00002.safetensors */,
+				9FE5055C2FFA9FF40031B679 /* model.safetensors.index.json */,
+				9FE5055D2FFA9FF40031B679 /* README.md */,
+				9FE5055E2FFA9FF40031B679 /* tokenizer.json */,
+				9FE5055F2FFA9FF40031B679 /* tokenizer_config.json */,
+			);
+			path = "Qwen3.6-27B-quant2-all";
+			sourceTree = "<group>";
+		};
+		9FE5056A2FFA9FF40031B679 /* Qwen3.6-27B-quant2-g128 */ = {
+			isa = PBXGroup;
+			children = (
+				9FE505612FFA9FF40031B679 /* chat_template.jinja */,
+				9FE505622FFA9FF40031B679 /* config.json */,
+				9FE505632FFA9FF40031B679 /* generation_config.json */,
+				9FE505642FFA9FF40031B679 /* model-00001-of-00002.safetensors */,
+				9FE505652FFA9FF40031B679 /* model-00002-of-00002.safetensors */,
+				9FE505662FFA9FF40031B679 /* model.safetensors.index.json */,
+				9FE505672FFA9FF40031B679 /* README.md */,
+				9FE505682FFA9FF40031B679 /* tokenizer.json */,
+				9FE505692FFA9FF40031B679 /* tokenizer_config.json */,
+			);
+			path = "Qwen3.6-27B-quant2-g128";
+			sourceTree = "<group>";
+		};
+		9FE5056B2FFA9FF40031B679 /* download */ = {
+			isa = PBXGroup;
+			children = (
+			);
+			path = download;
+			sourceTree = "<group>";
+		};
+		9FE5056E2FFA9FF40031B679 /* huggingface */ = {
+			isa = PBXGroup;
+			children = (
+				9FE5056B2FFA9FF40031B679 /* download */,
+				9FE5056C2FFA9FF40031B679 /* .gitignore */,
+				9FE5056D2FFA9FF40031B679 /* CACHEDIR.TAG */,
+			);
+			path = huggingface;
+			sourceTree = "<group>";
+		};
+		9FE5056F2FFA9FF40031B679 /* .cache */ = {
+			isa = PBXGroup;
+			children = (
+				9FE5056E2FFA9FF40031B679 /* huggingface */,
+			);
+			path = .cache;
+			sourceTree = "<group>";
+		};
+		9FE505792FFA9FF40031B679 /* Qwen3-0.6B-4bit */ = {
+			isa = PBXGroup;
+			children = (
+				9FE5056F2FFA9FF40031B679 /* .cache */,
+				9FE505702FFA9FF40031B679 /* added_tokens.json */,
+				9FE505712FFA9FF40031B679 /* config.json */,
+				9FE505722FFA9FF40031B679 /* merges.txt */,
+				9FE505732FFA9FF40031B679 /* model.safetensors */,
+				9FE505742FFA9FF40031B679 /* model.safetensors.index.json */,
+				9FE505752FFA9FF40031B679 /* special_tokens_map.json */,
+				9FE505762FFA9FF40031B679 /* tokenizer.json */,
+				9FE505772FFA9FF40031B679 /* tokenizer_config.json */,
+				9FE505782FFA9FF40031B679 /* vocab.json */,
+			);
+			path = "Qwen3-0.6B-4bit";
+			sourceTree = "<group>";
+		};
+		9FE5057A2FFA9FF40031B679 /* speech_tokenizer */ = {
+			isa = PBXGroup;
+			children = (
+			);
+			path = speech_tokenizer;
+			sourceTree = "<group>";
+		};
+		9FE5057B2FFA9FF40031B679 /* ._____temp */ = {
+			isa = PBXGroup;
+			children = (
+				9FE5057A2FFA9FF40031B679 /* speech_tokenizer */,
+			);
+			path = "._____temp";
+			sourceTree = "<group>";
+		};
+		9FE505802FFA9FF40031B679 /* speech_tokenizer */ = {
+			isa = PBXGroup;
+			children = (
+				9FE5057C2FFA9FF40031B679 /* config.json */,
+				9FE5057D2FFA9FF40031B679 /* configuration.json */,
+				9FE5057E2FFA9FF40031B679 /* model.safetensors */,
+				9FE5057F2FFA9FF40031B679 /* preprocessor_config.json */,
+			);
+			path = speech_tokenizer;
+			sourceTree = "<group>";
+		};
+		9FE5058D2FFA9FF40031B679 /* Qwen3-TTS-12Hz-1.7B-Base-8bit */ = {
+			isa = PBXGroup;
+			children = (
+				9FE5057B2FFA9FF40031B679 /* ._____temp */,
+				9FE505802FFA9FF40031B679 /* speech_tokenizer */,
+				9FE505812FFA9FF40031B679 /* .msc */,
+				9FE505822FFA9FF40031B679 /* .mv */,
+				9FE505832FFA9FF40031B679 /* config.json */,
+				9FE505842FFA9FF40031B679 /* configuration.json */,
+				9FE505852FFA9FF40031B679 /* generation_config.json */,
+				9FE505862FFA9FF40031B679 /* merges.txt */,
+				9FE505872FFA9FF40031B679 /* model.safetensors */,
+				9FE505882FFA9FF40031B679 /* model.safetensors.index.json */,
+				9FE505892FFA9FF40031B679 /* preprocessor_config.json */,
+				9FE5058A2FFA9FF40031B679 /* README.md */,
+				9FE5058B2FFA9FF40031B679 /* tokenizer_config.json */,
+				9FE5058C2FFA9FF40031B679 /* vocab.json */,
+			);
+			path = "Qwen3-TTS-12Hz-1.7B-Base-8bit";
+			sourceTree = "<group>";
+		};
+		9FE505902FFA9FF40031B679 /* mlx-community */ = {
+			isa = PBXGroup;
+			children = (
+				9FE5049E2FFA9FF40031B679 /* Flux-1.lite-8B-MLX-Q4 */,
+				9FE504BE2FFA9FF40031B679 /* Qwen3.5-9B-4bit */,
+				9FE504F42FFA9FF40031B679 /* Qwen3.6-27B-bf16 */,
+				9FE504FE2FFA9FF40031B679 /* Qwen3.6-27B-mixed2_4 */,
+				9FE505092FFA9FF40031B679 /* Qwen3.6-27B-mixed2_6 */,
+				9FE505142FFA9FF40031B679 /* Qwen3.6-27B-mixed3_4 */,
+				9FE505202FFA9FF40031B679 /* Qwen3.6-27B-mixed4_6 */,
+				9FE5054C2FFA9FF40031B679 /* Qwen3.6-27B-mxfp8 */,
+				9FE505562FFA9FF40031B679 /* Qwen3.6-27B-quant2 */,
+				9FE505602FFA9FF40031B679 /* Qwen3.6-27B-quant2-all */,
+				9FE5056A2FFA9FF40031B679 /* Qwen3.6-27B-quant2-g128 */,
+				9FE505792FFA9FF40031B679 /* Qwen3-0.6B-4bit */,
+				9FE5058D2FFA9FF40031B679 /* Qwen3-TTS-12Hz-1.7B-Base-8bit */,
+				9FE5058E2FFA9FF40031B679 /* claude-4.6-sonnet */,
+				9FE5058F2FFA9FF40031B679 /* claude-haiku-4-5-20251001 */,
+			);
+			path = "mlx-community";
+			sourceTree = "<group>";
+		};
+		9FE505912FFA9FF40031B679 /* Qwen3.6-27B-oq4 */ = {
+			isa = PBXGroup;
+			children = (
+			);
+			path = "Qwen3.6-27B-oq4";
+			sourceTree = "<group>";
+		};
+		9FE505942FFA9FF40031B679 /* models */ = {
+			isa = PBXGroup;
+			children = (
+				9FE505902FFA9FF40031B679 /* mlx-community */,
+				9FE505912FFA9FF40031B679 /* Qwen3.6-27B-oq4 */,
+				9FE505922FFA9FF40031B679 /* Qwen3.6-27B-mixed2_4 */,
+				9FE505932FFA9FF40031B679 /* Qwen3.6-27B-mxfp8 */,
+			);
+			path = models;
+			sourceTree = "<group>";
+		};
+		9FE505972FFA9FF40031B679 /* .fusion-mlx */ = {
+			isa = PBXGroup;
+			children = (
+				9FE5045A2FFA9FF40031B679 /* bin */,
+				9FE5045F2FFA9FF40031B679 /* logs */,
+				9FE505942FFA9FF40031B679 /* models */,
+				9FE505952FFA9FF40031B679 /* server.json */,
+				9FE505962FFA9FF40031B679 /* settings.json */,
+			);
+			path = ".fusion-mlx";
+			sourceTree = "<group>";
+		};
 		AA81FB452FE29345001BF56E /* Utils */ = {
 			isa = PBXGroup;
 			children = (
@@ -543,6 +1529,7 @@
 				1EEEEEEEEEEEEEEEEEEEEEE2 /* Frameworks */,
 				1EEEEEEEEEEEEEEEEEEEEEE3 /* Resources */,
 				9F26FFF92FF8830300D1EFB3 /* Run Script */,
+				9FE505982FFAA1950031B679 /* CopyFiles */,
 			);
 			buildRules = (
 			);
@@ -916,7 +1903,7 @@
 					"@executable_path/../Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 15.0;
-				MARKETING_VERSION = 0.4.0;
+				MARKETING_VERSION = 0.4.1;
 				PRODUCT_BUNDLE_IDENTIFIER = "app.fusion-mlx";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = YES;
@@ -942,7 +1929,7 @@
 					"@executable_path/../Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 15.0;
-				MARKETING_VERSION = 0.4.0;
+				MARKETING_VERSION = 0.4.1;
 				PRODUCT_BUNDLE_IDENTIFIER = "app.fusion-mlx";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = YES;
