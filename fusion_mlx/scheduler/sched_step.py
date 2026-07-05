@@ -431,8 +431,13 @@ def _step_pure_decode(self, output: SchedulerOutput) -> SchedulerOutput:
     step() for a typical 90ms decode step.
     """
     bg = self.batch_generator
+    # Time the regular decode forward. bg._next() syncs internally (tolist
+    # in the patched step), so this is real GPU time, not dispatch time.
+    # Consumed by ngram_spec dynamic break-even (T_verify / T_decode).
+    _decode_t0 = time.perf_counter()
     with mx.stream(self._stream):
         _, responses = bg._next()
+    self._last_decode_dt = time.perf_counter() - _decode_t0
 
     if not responses:
         return output

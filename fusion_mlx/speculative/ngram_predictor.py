@@ -131,6 +131,42 @@ class NGramPredictor:
         self._total_predictions += len(drafts)
         return drafts
 
+    def predict_top1(self, context: list[int] | None = None) -> int | None:
+        """Return the single most-likely next token, or None if no n-gram
+        hits ``min_hits``.
+
+        Side-effect free (does not touch ``_total_predictions``), so it can
+        be called every regular decode step to cheaply gate speculative
+        decode: the D1 match rate against the model's own next token
+        upper-bounds K-draft acceptance, so a low D1 rate means spec would
+        certainly regress — skip the GPU verify without ever running it.
+        """
+        if context is None:
+            context = self._history
+        if len(context) < 2:
+            return None
+
+        best_token = None
+        best_count = 0
+        for n in range(min(self.order, len(context)), 1, -1):
+            key = tuple(context[-n:])
+            table = self._tables.get(n)
+            if table is None:
+                continue
+            entry = table.get(key)
+            if entry is None:
+                continue
+            for tok, count in entry.items():
+                if count > best_count:
+                    best_count = count
+                    best_token = tok
+            if best_count >= self.min_hits:
+                break
+
+        if best_token is None or best_count < self.min_hits:
+            return None
+        return best_token
+
     def record_accepted(self, n_accepted: int):
         """Record how many draft tokens were accepted."""
         self._total_accepted += n_accepted
