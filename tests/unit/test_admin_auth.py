@@ -75,7 +75,7 @@ class TestAutoLogin:
             assert result.status_code == 302
             assert result.headers["location"] == "/admin/dashboard"
             cookie_header = result.headers.get("set-cookie", "")
-            assert "omlx_admin_session" in cookie_header
+            assert "fusionmlx_admin_session" in cookie_header
         finally:
             _restore_getter_on_module(admin_auth_routes, original)
 
@@ -107,7 +107,7 @@ class TestAutoLogin:
             assert result.status_code == 302
             assert result.headers["location"] == "/admin"
             cookie_header = result.headers.get("set-cookie", "")
-            assert "omlx_admin_session" not in cookie_header
+            assert "fusionmlx_admin_session" not in cookie_header
         finally:
             _restore_getter_on_module(admin_auth_routes, original)
 

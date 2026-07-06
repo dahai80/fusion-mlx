@@ -312,7 +312,7 @@ class TestSetters(unittest.TestCase):
 class TestConstants(unittest.TestCase):
 
     def test_cookie_name(self):
-        self.assertEqual(auth.SESSION_COOKIE_NAME, "omlx_admin_session")
+        self.assertEqual(auth.SESSION_COOKIE_NAME, "fusionmlx_admin_session")
 
     def test_max_ages(self):
         self.assertEqual(auth.SESSION_MAX_AGE, 3600)

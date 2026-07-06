@@ -325,8 +325,10 @@ class _FakePool:
         return list(self._entries)
 
 
-class _FakeServerState:
-    default_model = None
+class _FakeServerState(dict):
+    def __init__(self):
+        super().__init__()
+        self["default_model"] = None
 
 
 def _patch_model_profiles(monkeypatch):
@@ -392,6 +394,10 @@ def client(tmp_path, monkeypatch):
     # Patch on profile module directly too
     monkeypatch.setattr(
         "fusion_mlx.admin.profile._require_settings_manager",
+        lambda: mgr,
+    )
+    monkeypatch.setattr(
+        "fusion_mlx.admin.profile._get_settings_manager",
         lambda: mgr,
     )
 
