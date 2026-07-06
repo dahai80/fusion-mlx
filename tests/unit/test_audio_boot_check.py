@@ -100,7 +100,7 @@ def test_require_audio_or_exit_exits_2_when_mlx_audio_missing(
     assert "kokoro" in err, err
     assert "[audio]" in err, err
     assert "pip install" in err, err
-    assert "rapid-mlx[audio]" in err, err
+    assert "fusion-mlx[audio]" in err, err
 
 
 def test_require_audio_or_exit_no_op_when_mlx_audio_present(monkeypatch) -> None:
