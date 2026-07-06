@@ -36,6 +36,7 @@ from .api.mcp_routes import router as mcp_router
 from .api.mcp_routes import set_mcp_manager_getter
 from .middleware import (
     install_exception_handlers,
+    install_probe_fastpath_middleware,
     install_request_body_depth_middleware,
     install_request_body_limit_middleware,
 )
@@ -413,6 +414,9 @@ class Server:
         # Body-size and depth guards (ASGI-level, run before FastAPI routing)
         install_request_body_limit_middleware(app)
         install_request_body_depth_middleware(app)
+
+        # Probe fast-path (OUTERMOST — installed last so it runs first)
+        install_probe_fastpath_middleware(app)
 
         # Unified exception handlers (OpenAI/Anthropic envelope shapes)
         install_exception_handlers(app)

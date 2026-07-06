@@ -249,6 +249,32 @@ class BatchedEngine(BaseEngine):
         )
         await self._mllm_scheduler.start()
 
+    def _ubc_evict_after_load(self) -> None:
+        try:
+            from ...runtime.ubc_evict import ubc_evict_paths
+
+            model_dir = getattr(self._model, "name_or_path", None) or self._model_name
+            if not model_dir:
+                return
+            from pathlib import Path
+
+            p = Path(model_dir).expanduser()
+            if not p.is_dir():
+                return
+            safetensors_files = sorted(p.glob("*.safetensors"))
+            if safetensors_files:
+                ubc_evict_paths(str(f) for f in safetensors_files)
+        except Exception:
+            logger.debug("ubc_evict_after_load failed", exc_info=True)
+
+    def _check_mxfp4_moe_guardrail(self) -> None:
+        try:
+            from ...mxfp4_moe_guardrail import check_from_profile
+
+            check_from_profile(model_name=self._model_name)
+        except Exception:
+            logger.debug("mxfp4_moe_guardrail check failed", exc_info=True)
+
     async def _start_llm(self) -> None:
         import concurrent.futures
 
@@ -271,6 +297,9 @@ class BatchedEngine(BaseEngine):
             self._model_name,
             tokenizer_config=tokenizer_config,
         ).result()
+
+        self._ubc_evict_after_load()
+        self._check_mxfp4_moe_guardrail()
 
         scheduler_config = self._scheduler_config or SchedulerConfig()
         engine_config = EngineConfig(

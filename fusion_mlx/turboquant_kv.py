@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import logging
 import math
+from dataclasses import dataclass
 
 import mlx.core as mx
 from mlx_lm.models.cache import (
@@ -38,10 +39,46 @@ from mlx_vlm.turboquant import (
 logger = logging.getLogger(__name__)
 
 __all__ = [
+    "TurboQuantConfig",
     "TurboQuantKVCache",
     "BatchTurboQuantKVCache",
+    "auto_select_bits",
     "turboquant_enabled",
 ]
+
+TURBOQUANT_MODES: tuple[str, ...] = ("v4", "k8v4")
+DEFAULT_TURBOQUANT_MODE = "v4"
+
+
+@dataclass
+class TurboQuantConfig:
+    bits: int = 3
+    group_size: int = 32
+    rotation_seed: int = 42
+    mode: str = DEFAULT_TURBOQUANT_MODE
+
+    def __post_init__(self):
+        if self.mode not in TURBOQUANT_MODES:
+            raise ValueError(
+                f"mode must be one of {TURBOQUANT_MODES}, got {self.mode!r}"
+            )
+        if self.mode == "k8v4" and self.bits != 4:
+            raise ValueError(
+                f"mode='k8v4' requires bits=4 (got {self.bits}); "
+                "K8 path only validated against V4"
+            )
+        if self.bits not in (3, 4):
+            raise ValueError(f"bits must be 3 or 4, got {self.bits}")
+        if self.group_size < 1:
+            raise ValueError(f"group_size must be >= 1, got {self.group_size}")
+
+    @property
+    def k_bits(self) -> int | None:
+        return 8 if self.mode == "k8v4" else None
+
+
+def auto_select_bits(head_dim: int) -> int:
+    return 3 if head_dim >= 96 else 4
 
 
 # ---------------------------------------------------------------------------

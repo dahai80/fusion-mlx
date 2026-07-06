@@ -109,6 +109,7 @@ def __init__(
     # TurboQuant KV cache (set by engine if model_settings has it enabled)
     self._turboquant_kv_bits: float | None = None
     self._turboquant_skip_last: bool = True
+    self._turboquant_kv_mode: str = "v4"
 
     # Request management - following vLLM's design
     self.waiting: deque[Request] = deque()  # Waiting queue (FCFS)
