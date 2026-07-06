@@ -321,6 +321,12 @@ class ChatCompletionChoice(BaseModel):
     logprobs: ChoiceLogProbs | None = None
 
 
+class PromptTokensDetails(BaseModel):
+    """Breakdown of prompt token usage (OpenAI-compatible)."""
+
+    cached_tokens: int = 0
+
+
 class CompletionTokensDetails(BaseModel):
     """Breakdown of completion token usage (OpenAI-compatible)."""
 
@@ -334,6 +340,15 @@ class Usage(BaseModel):
     completion_tokens: int = 0
     total_tokens: int = 0
     completion_tokens_details: CompletionTokensDetails | None = None
+    prompt_tokens_details: PromptTokensDetails | None = None
+
+
+OPENAI_REASONING_EFFORT_TO_MAX_TOKENS: dict[str, int] = {
+    "minimal": 256,
+    "low": 512,
+    "medium": 2048,
+    "high": 8192,
+}
 
 
 class ChatCompletionResponse(BaseModel):
@@ -388,6 +403,13 @@ class CompletionChoice(BaseModel):
     text: str
     finish_reason: str | None = "stop"
     logprobs: ChoiceLogProbs | None = None
+
+
+class LegacyCompletionLogProbs(BaseModel):
+    tokens: list[str]
+    token_logprobs: list[float]
+    top_logprobs: list[dict[str, float]]
+    text_offset: list[int]
 
 
 class CompletionResponse(BaseModel):

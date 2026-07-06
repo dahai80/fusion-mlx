@@ -122,6 +122,13 @@ class ResponsesRequest(BaseModel):
     stream_options: dict[str, Any] | None = None
     # Seed for reproducible generation (best-effort)
     seed: int | None = None
+    # Fields forwarded to ChatCompletionRequest
+    reasoning_effort: str | None = None
+    reasoning_max_tokens: int | None = None
+    enable_thinking: bool | None = None
+    chat_template_kwargs: dict[str, Any] | None = None
+    response_format: dict[str, Any] | None = None
+    top_k: int | None = None
 
     model_config = {"extra": "allow"}
 
@@ -164,6 +171,9 @@ class OutputItem(BaseModel):
     arguments: str | None = None
     # reasoning fields
     summary: list[ReasoningSummaryPart] | None = None
+    # computer_call fields
+    action: dict[str, Any] | None = None
+    pending_safety_checks: list[Any] = Field(default_factory=list)
 
 
 class InputTokensDetails(BaseModel):
@@ -218,3 +228,15 @@ class ResponseObject(BaseModel):
     metadata: dict[str, str] | None = Field(default_factory=dict)
     truncation: str | None = None
     error: dict[str, Any] | None = None
+    instructions: str | None = None
+    service_tier: str | None = None
+    incomplete_details: dict[str, Any] | None = None
+    parallel_tool_calls: bool | None = None
+
+
+# Rapid-MLX compatibility aliases
+ResponsesInputItem = InputItem
+ResponsesOutputContent = OutputContent
+ResponsesOutputItem = OutputItem
+ResponsesResponse = ResponseObject
+ResponsesUsage = ResponseUsage
