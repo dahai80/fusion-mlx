@@ -522,6 +522,22 @@ def _try_spec_decode(
         if result:
             return result
 
+    # DFlash block-diffusion spec decode (block-size draft + verify)
+    if self._dflash_runtime is not None:
+        from .spec_decode import dflash_spec_step
+
+        result = dflash_spec_step(self, output, current_token, request_id)
+        if result:
+            return result
+
+    # DSpark DeepSpec spec decode (self-contained propose-verify)
+    if self._dspark_runtime is not None:
+        from .spec_decode import dspark_spec_step
+
+        result = dspark_spec_step(self, output, current_token, request_id)
+        if result:
+            return result
+
     # Draft-model spec decode (GPU-side, requires loaded draft model)
     if (
         self._spec_decode_state is not None

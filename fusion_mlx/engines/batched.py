@@ -383,6 +383,65 @@ class BatchedEngine(BaseEngine):
                 except Exception as e:
                     logger.error(f"SpecPrefill: draft model load failed: {e}")
 
+        # DFlash block-diffusion speculative decode
+        dflash_path = (
+            getattr(self._model_settings, "dflash_drafter_path", None)
+            if self._model_settings
+            else None
+        ) or getattr(scheduler_config, "dflash_drafter_path", "")
+        if dflash_path:
+            try:
+                from ..speculative.dflash import load_runtime as load_dflash_runtime
+
+                dflash_rt = await loop.run_in_executor(
+                    get_executor("io"),
+                    lambda: load_dflash_runtime(dflash_path),
+                )
+                self._engine.engine.scheduler._dflash_runtime = dflash_rt
+                logger.info(
+                    "DFlash spec-decode enabled for %s (drafter=%s, kind=%s)",
+                    self._model_name,
+                    dflash_path,
+                    dflash_rt.kind,
+                )
+            except Exception as e:
+                logger.error("DFlash drafter load failed for %s: %s", self._model_name, e)
+
+        # DSpark DeepSpec speculative decode
+        dspark_path = (
+            getattr(self._model_settings, "dspark_drafter_path", None)
+            if self._model_settings
+            else None
+        ) or getattr(scheduler_config, "dspark_drafter_path", "")
+        if dspark_path:
+            try:
+                from ..speculative.dspark import load_runtime as load_dspark_runtime
+
+                dspark_quant = (
+                    getattr(self._model_settings, "dspark_draft_quant_bits", None)
+                    if self._model_settings
+                    else None
+                ) or getattr(scheduler_config, "dspark_draft_quant_bits", 8)
+                # target_repo = the loaded model's HF id or local path
+                target_repo = getattr(self._model, "requested_model", None) or self._model_name
+                dspark_rt = await loop.run_in_executor(
+                    get_executor("io"),
+                    lambda: load_dspark_runtime(
+                        target_repo,
+                        dspark_path,
+                        draft_quant_bits=dspark_quant,
+                    ),
+                )
+                self._engine.engine.scheduler._dspark_runtime = dspark_rt
+                logger.info(
+                    "DSpark spec-decode enabled for %s (draft=%s, quant=%d)",
+                    self._model_name,
+                    dspark_path,
+                    dspark_quant,
+                )
+            except Exception as e:
+                logger.error("DSpark drafter load failed for %s: %s", self._model_name, e)
+
         self._loaded = True
         from ..scheduler.helpers import register_llm_engine
 
