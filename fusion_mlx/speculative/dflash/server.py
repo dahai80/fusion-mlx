@@ -43,7 +43,8 @@ from typing import Any
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.requests import Request
+from fastapi.responses import JSONResponse, StreamingResponse
 
 from fusion_mlx.api.models import (
     AssistantMessage,
@@ -113,7 +114,15 @@ def _build_app(
     multi-model deployment would still share that worker; one model
     can't run while another's generator is mid-step.
     """
-    app = FastAPI(title="rapid-mlx (DFlash)")
+    app = FastAPI(title="fusion-mlx (DFlash)")
+
+    @app.exception_handler(HTTPException)
+    async def _canonical_error_envelope(request: Request, exc: HTTPException):
+        return JSONResponse(
+            status_code=exc.status_code,
+            content={"error": {"message": exc.detail, "type": "invalid_request_error"}},
+        )
+
     app.add_middleware(
         CORSMiddleware,
         allow_origins=cors_origins,
@@ -138,7 +147,7 @@ def _build_app(
                 ModelInfo(
                     id=served_model_name,
                     created=int(time.time()),
-                    owned_by="rapid-mlx",
+                    owned_by="fusion-mlx",
                 )
             ]
         )
@@ -661,7 +670,7 @@ def run_dflash_server(
     if not have_runtime():
         raise RuntimeError(
             "DFlash server requires mlx-vlm 0.5.0+ — install with "
-            "``pip install 'rapid-mlx[dflash]'``."
+            "``pip install 'fusion-mlx[dflash]'``."
         )
 
     # Belt-and-suspenders eligibility re-check for programmatic callers

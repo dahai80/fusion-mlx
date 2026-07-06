@@ -26,6 +26,7 @@ from typing import Any
 import mlx.core as mx
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.requests import Request
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
 
@@ -145,6 +146,14 @@ def _build_app(
     enable_thinking_default: bool,
 ) -> FastAPI:
     app = FastAPI(title="fusion-mlx DSpark server")
+
+    @app.exception_handler(HTTPException)
+    async def _canonical_error_envelope(request: Request, exc: HTTPException):
+        return JSONResponse(
+            status_code=exc.status_code,
+            content={"error": {"message": exc.detail, "type": "invalid_request_error"}},
+        )
+
     origins = cors_origins if cors_origins else ["*"]
     app.add_middleware(
         CORSMiddleware,

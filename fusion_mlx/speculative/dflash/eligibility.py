@@ -85,7 +85,7 @@ def report(profile: AliasProfile, alias: str | None = None) -> EligibilityReport
             f"main model hf_path={profile.hf_path!r} is 4-bit quantized; "
             "DFlash regresses on 4-bit (use an 8-bit or higher variant)"
         )
-    has_drafter = bool(profile.dflash_draft_model)
+    has_drafter = bool(getattr(profile, "dflash_draft_model", None) or getattr(profile, "drafter_hf_path", None))
     if profile.supports_dflash and not has_drafter:
         # Should be caught at JSON-load time by _coerce, but defend
         # against direct AliasProfile construction in tests/code.
@@ -132,12 +132,12 @@ def check(profile: AliasProfile, alias: str | None = None) -> None:
     if eligible:
         suffix = (
             f"Eligible aliases today: {', '.join(eligible)}. Run "
-            "`rapid-mlx info <alias>` to inspect per-alias DFlash status."
+            "`fusion-mlx info <alias>` to inspect per-alias DFlash status."
         )
     else:
         suffix = (
             "No aliases currently pass every DFlash gate. Run "
-            "`rapid-mlx info <alias>` to inspect per-alias DFlash status."
+            "`fusion-mlx info <alias>` to inspect per-alias DFlash status."
         )
     raise DFlashUnavailable(f"{header}:\n  - {bullet}\n\n{suffix}")
 
