@@ -2,6 +2,7 @@
 
 import logging
 import threading
+import time
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -66,6 +67,7 @@ class ServerMetrics:
 
     def __post_init__(self):
         self._lock = threading.Lock()
+        self._start_time = time.monotonic()
 
     def inc_tokens(self, generated: int = 0, prompt: int = 0, cached: int = 0) -> None:
         with self._lock:
@@ -112,17 +114,56 @@ class ServerMetrics:
                         old_avg * (stats["requests"] - 1) + tps
                     ) / stats["requests"]
 
+    def uptime_seconds(self) -> float:
+        return time.monotonic() - self._start_time
+
+    def clear_metrics(self) -> None:
+        with self._lock:
+            self.total_requests = 0
+            self.successful_requests = 0
+            self.failed_requests = 0
+            self.total_tokens_generated = 0
+            self.total_tokens_prompt = 0
+            self.total_cached_tokens = 0
+            self.active_requests = 0
+            self.model_stats.clear()
+
+    def clear_alltime_metrics(self) -> None:
+        self.clear_metrics()
+
     def to_dict(self) -> dict:
         """Return a JSON-safe dict, excluding internal lock."""
+        total_prompt = self.total_tokens_prompt
+        total_cached = self.total_cached_tokens
+        total_gen = self.total_tokens_generated
+        n_models = len(self.model_stats)
+        avg_prefill = (
+            sum(s.get("avg_prefill_tps", 0.0) for s in self.model_stats.values())
+            / n_models
+            if n_models
+            else 0.0
+        )
+        avg_gen = (
+            sum(s.get("avg_generation_tps", 0.0) for s in self.model_stats.values())
+            / n_models
+            if n_models
+            else 0.0
+        )
         return {
             "total_requests": self.total_requests,
             "successful_requests": self.successful_requests,
             "failed_requests": self.failed_requests,
-            "total_tokens_generated": self.total_tokens_generated,
-            "total_tokens_prompt": self.total_tokens_prompt,
-            "total_cached_tokens": self.total_cached_tokens,
+            "total_tokens_generated": total_gen,
+            "total_tokens_prompt": total_prompt,
+            "total_tokens_served": total_gen,
+            "total_completion_tokens": total_gen,
+            "total_cached_tokens": total_cached,
+            "cache_efficiency": total_cached / max(1, total_prompt),
             "active_requests": self.active_requests,
             "model_stats": self.model_stats,
+            "avg_prefill_tps": avg_prefill,
+            "avg_generation_tps": avg_gen,
+            "uptime_seconds": self.uptime_seconds(),
             "kv_cache_dtype": _resolve_kv_cache_dtype(),
         }
 

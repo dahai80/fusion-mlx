@@ -8,6 +8,7 @@ This module provides HTTP routes for the admin panel including:
 - Global settings management
 """
 
+import json
 import logging
 from pathlib import Path
 
@@ -42,6 +43,49 @@ templates.env.globals["static"] = _static_version
 from fusion_mlx._version import __version__ as _omlx_version
 
 templates.env.globals["version"] = _omlx_version
+
+# i18n — English fallback, overridden by _refresh_i18n_globals()
+_i18n_dir = Path(__file__).parent / "i18n"
+_en_locale: dict = {}
+try:
+    _en_locale = json.loads((_i18n_dir / "en.json").read_text(encoding="utf-8"))
+except Exception:
+    logger.warning("Failed to load en.json i18n locale")
+templates.env.globals["t"] = lambda key: _en_locale.get(key, key)
+templates.env.globals["locale_json"] = json.dumps(_en_locale, ensure_ascii=False)
+templates.env.globals["current_lang"] = "en"
+
+
+def _load_locale(language: str) -> dict:
+    path = _i18n_dir / f"{language}.json"
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        try:
+            return json.loads((_i18n_dir / "en.json").read_text(encoding="utf-8"))
+        except Exception:
+            return {}
+
+
+def _make_t(locale: dict):
+    def t(key: str) -> str:
+        return locale.get(key, key)
+    return t
+
+
+def _refresh_i18n_globals() -> None:
+    lang = "en"
+    try:
+        from .helpers import _get_global_settings
+        settings = _get_global_settings()
+        if settings:
+            lang = getattr(getattr(settings, "ui", None), "language", "en")
+    except Exception:
+        pass
+    locale = _load_locale(lang)
+    templates.env.globals["t"] = _make_t(locale)
+    templates.env.globals["locale_json"] = json.dumps(locale, ensure_ascii=False)
+    templates.env.globals["current_lang"] = lang
 
 # Sub-routers (split by function for maintainability)
 from .accuracy_bench import router as accuracy_bench_router

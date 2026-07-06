@@ -8,8 +8,10 @@ This module provides HTTP routes for the admin panel including:
 - Global settings management
 """
 
+import json
 import logging
 import os
+from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import JSONResponse
@@ -31,7 +33,9 @@ from .helpers import (
     _apply_model_dirs_runtime,
     _apply_sampling_settings_runtime,
     _format_cache_size,
+    _get_engine_pool,
     _get_rich_global_settings,
+    _get_server_state,
     _schedule_self_terminate,
     get_ssd_disk_info,
     get_system_memory_info,
@@ -39,6 +43,133 @@ from .helpers import (
 from .models import (
     GlobalSettingsRequest,
 )
+
+
+def _build_fallback_global_settings() -> dict:
+    """Build a global-settings response from settings.json + runtime state
+    when the rich GlobalSettings object is not available (flat Settings
+    mode). This is the path used when the server runs with the released
+    Settings class that lacks .cache/.server/.model nested attrs."""
+    state = _get_server_state() or {}
+    pool = _get_engine_pool()
+
+    # Read settings.json directly for host/port/model_dirs/hf etc.
+    settings_path = Path.home() / ".fusion-mlx" / "settings.json"
+    sj = {}
+    if settings_path.exists():
+        try:
+            sj = json.loads(settings_path.read_text())
+        except Exception:
+            pass
+
+    server_sj = sj.get("server", {})
+    model_sj = sj.get("model", {})
+    hf_sj = sj.get("huggingface", {})
+    auth_sj = sj.get("auth", {})
+
+    host = server_sj.get("host", "127.0.0.1")
+    port = server_sj.get("port", 11435)
+    model_dir = model_sj.get("model_dir", str(Path.home() / ".fusion-mlx" / "models"))
+    model_dirs = model_sj.get("model_dirs", [model_dir])
+    hf_endpoint = hf_sj.get("endpoint", "")
+    api_key = auth_sj.get("api_key", "")
+
+    memory_info = get_system_memory_info()
+    base_path = str(Path.home() / ".fusion-mlx")
+    cache_dir = str(Path(base_path) / "cache")
+    disk_info = get_ssd_disk_info(cache_dir)
+
+    return {
+        "base_path": base_path,
+        "server": {
+            "host": host,
+            "port": port,
+            "log_level": "info",
+            "server_aliases": [],
+            "sse_keepalive_mode": "chunk",
+        },
+        "model": {
+            "model_dirs": model_dirs or [model_dir],
+            "model_dir": (model_dirs or [model_dir])[0],
+            "model_fallback": False,
+        },
+        "memory": {
+            "prefill_memory_guard": False,
+            "memory_guard_tier": "safe",
+            "memory_guard_custom_ceiling_gb": None,
+        },
+        "scheduler": {
+            "max_concurrent_requests": 8,
+            "embedding_batch_size": 32,
+            "chunked_prefill": False,
+        },
+        "cache": {
+            "enabled": False,
+            "ssd_cache_dir": cache_dir,
+            "ssd_cache_max_size": "10GB",
+            "hot_cache_only": False,
+            "hot_cache_max_size": None,
+            "initial_cache_blocks": 0,
+        },
+        "mcp": {"config_path": None},
+        "huggingface": {"endpoint": hf_endpoint},
+        "modelscope": {"endpoint": ""},
+        "network": {
+            "http_proxy": "",
+            "https_proxy": "",
+            "no_proxy": "",
+            "ca_bundle": "",
+        },
+        "sampling": {
+            "max_context_window": 4096,
+            "max_tokens": 512,
+            "temperature": 0.0,
+            "top_p": 1.0,
+            "top_k": 0,
+            "repetition_penalty": 1.0,
+        },
+        "auth": {
+            "api_key_set": bool(api_key),
+            "api_key": api_key or "",
+            "skip_api_key_verification": False,
+            "sub_keys": [],
+        },
+        "claude_code": {
+            "context_scaling_enabled": False,
+            "target_context_size": 200000,
+            "mode": None,
+            "opus_model": None,
+            "sonnet_model": None,
+            "haiku_model": None,
+        },
+        "integrations": {
+            "codex_model": None,
+            "opencode_model": None,
+            "openclaw_model": None,
+            "hermes_model": None,
+            "pi_model": None,
+            "copilot_model": None,
+            "openclaw_tools_profile": None,
+        },
+        "system": {
+            "total_memory_bytes": memory_info["total_bytes"],
+            "total_memory": memory_info["total_formatted"],
+            "auto_model_memory": memory_info["auto_limit_formatted"],
+            "available_memory_bytes": memory_info["available_bytes"],
+            "omlx_phys_footprint_bytes": memory_info["omlx_phys_footprint_bytes"],
+            "free_memory_bytes": memory_info["free_memory_bytes"],
+            "inactive_memory_bytes": memory_info["inactive_memory_bytes"],
+            "active_memory_bytes": memory_info["active_memory_bytes"],
+            "iogpu_wired_limit_bytes": memory_info["iogpu_wired_limit_bytes"],
+            "omlx_wired_limit_request_bytes": memory_info[
+                "omlx_wired_limit_request_bytes"
+            ],
+            "ssd_total_bytes": disk_info["total_bytes"],
+            "ssd_total": disk_info["total_formatted"],
+        },
+        "ui": {"language": ""},
+        "idle_timeout": {"idle_timeout_seconds": None},
+    }
 
 _router = APIRouter()
 
@@ -62,23 +193,32 @@ async def get_server_info(is_admin: bool = Depends(require_admin)):
         HTTPException: 401 if not authenticated, 503 if server not initialized.
     """
     global_settings = _get_rich_global_settings()
-    if global_settings is None:
-        raise HTTPException(status_code=503, detail="Server not initialized")
+    if global_settings is not None:
+        configured = list(global_settings.server.server_aliases)
+        if configured:
+            aliases = configured
+        else:
+            try:
+                from ..utils.network import detect_server_aliases
+                aliases = detect_server_aliases(host=global_settings.server.host)
+            except ImportError:
+                aliases = []
+        return {
+            "host": global_settings.server.host,
+            "port": global_settings.server.port,
+            "aliases": aliases,
+        }
 
-    configured = list(global_settings.server.server_aliases)
-    if configured:
-        aliases = configured
-    else:
-        try:
-            from ..utils.network import detect_server_aliases
-
-            aliases = detect_server_aliases(host=global_settings.server.host)
-        except ImportError:
-            aliases = []
-
+    # Fallback: build from settings.json + runtime state
+    fb = _build_fallback_global_settings()
+    try:
+        from ..utils.network import detect_server_aliases
+        aliases = detect_server_aliases(host=fb["server"]["host"])
+    except ImportError:
+        aliases = []
     return {
-        "host": global_settings.server.host,
-        "port": global_settings.server.port,
+        "host": fb["server"]["host"],
+        "port": fb["server"]["port"],
         "aliases": aliases,
     }
 
@@ -139,7 +279,8 @@ async def get_global_settings(is_admin: bool = Depends(require_admin)):
     global_settings = _get_rich_global_settings()
 
     if global_settings is None:
-        raise HTTPException(status_code=503, detail="Server not initialized")
+        # Flat Settings mode — build response from settings.json + runtime
+        return _build_fallback_global_settings()
 
     # Get system memory info for auto calculation
     memory_info = get_system_memory_info()
@@ -289,7 +430,10 @@ async def update_global_settings(
     global_settings = _get_rich_global_settings()
 
     if global_settings is None:
-        raise HTTPException(status_code=503, detail="Server not initialized")
+        raise HTTPException(
+            status_code=503,
+            detail="Server not initialized — settings update requires rich mode",
+        )
 
     # Track which settings were applied at runtime
     runtime_applied: list[str] = []

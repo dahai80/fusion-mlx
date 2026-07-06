@@ -77,8 +77,10 @@ def _get_available_log_files(log_dir: Path) -> list[str]:
 
     files = []
     for f in log_dir.iterdir():
-        # Match server.log and server.log.YYYY-MM-DD patterns
-        if f.name.startswith("server") and (f.suffix == ".log" or ".log." in f.name):
+        if not f.is_file() or f.name.startswith("."):
+            continue
+        # Match server.log, server.log.YYYY-MM-DD, fusion-mlx-YYYYMMDD.log
+        if f.suffix == ".log" or ".log." in f.name:
             files.append(f.name)
 
     # Sort by modification time (newest first)
@@ -115,13 +117,20 @@ async def get_logs(
     """
     global_settings = _get_rich_global_settings()
 
-    if global_settings is None:
-        raise HTTPException(status_code=503, detail="Server not initialized")
+    if global_settings is not None:
+        log_dir = global_settings.logging.get_log_dir(global_settings.base_path)
+    else:
+        log_dir = Path.home() / ".fusion-mlx" / "logs"
+
+    # Fallback: macOS app writes logs under ~/Library/Application Support/FusionMLX/logs/
+    app_support_dir = (
+        Path.home() / "Library" / "Application Support" / "FusionMLX" / "logs"
+    )
+    if not log_dir.exists() and app_support_dir.exists():
+        log_dir = app_support_dir
 
     # Limit lines to prevent memory issues
     lines = min(max(1, lines), 10000)
-
-    log_dir = global_settings.logging.get_log_dir(global_settings.base_path)
 
     # Get available log files
     available_files = _get_available_log_files(log_dir)
@@ -135,8 +144,10 @@ async def get_logs(
         if not log_file.exists():
             raise HTTPException(status_code=404, detail=f"Log file not found: {file}")
     else:
-        # Default to current log file
+        # Default: server.log if present, otherwise newest available
         log_file = log_dir / "server.log"
+        if not log_file.exists() and available_files:
+            log_file = log_dir / available_files[0]
 
     # Read log content
     if log_file.exists():

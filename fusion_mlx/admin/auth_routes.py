@@ -224,4 +224,39 @@ async def auto_login(fastapi_request: Request, redirect: str = "/admin/dashboard
     return response
 
 
+@_router.get("/auto-login")
+async def auto_login_get(
+    fastapi_request: Request,
+    redirect: str = "/admin/dashboard",
+    key: str = "",
+):
+    """
+    GET variant of auto-login for browser bookmarks and menubar URLs.
+
+    The macOS menubar constructs a URL like
+      /admin/auto-login?redirect=/admin/dashboard&key=<api_key>
+    which the browser opens as GET. This handler reads the key from the
+    query string, validates it, sets the session cookie, and redirects.
+    """
+    if not redirect.startswith("/admin"):
+        raise HTTPException(status_code=400, detail="Invalid redirect path")
+
+    global_settings = _get_global_settings()
+    server_api_key = global_settings.auth.api_key if global_settings else None
+
+    if not key or not server_api_key or not verify_api_key(key, server_api_key):
+        return RedirectResponse(url="/admin", status_code=302)
+
+    token = create_session_token()
+    response = RedirectResponse(url=redirect, status_code=302)
+    response.set_cookie(
+        key="omlx_admin_session",
+        value=token,
+        httponly=True,
+        samesite="lax",
+        max_age=86400,
+    )
+    return response
+
+
 router = _router
