@@ -8,7 +8,7 @@ from pathlib import Path
 
 from fastapi import HTTPException, Request
 
-from .auth import verify_api_key, verify_session
+from .auth import verify_api_key, verify_session_from_request
 
 logger = logging.getLogger(__name__)
 
@@ -172,7 +172,7 @@ def _model_has_mtp_weight_tensors(model_dir) -> bool:
 
 
 def _apply_log_level_runtime(level: str) -> None:
-    """Apply log level change at runtime to all oMLX loggers and handlers."""
+    """Apply log level change at runtime to all Fusion-MLX loggers and handlers."""
     level_name = level.upper()
     log_level = (
         5 if level_name == "TRACE" else getattr(logging, level_name, logging.INFO)
@@ -184,9 +184,9 @@ def _apply_log_level_runtime(level: str) -> None:
     for handler in root_logger.handlers:
         handler.setLevel(log_level)
 
-    # Update omlx-related loggers
-    omlx_loggers = [
-        "omlx",
+    # Update fusion_mlx-related loggers
+    fusionmlx_loggers = [
+        "fusion_mlx",
         "fusion_mlx.scheduler",
         "fusion_mlx.paged_ssd_cache",
         "fusion_mlx.memory_monitor",
@@ -200,7 +200,7 @@ def _apply_log_level_runtime(level: str) -> None:
         "fusion_mlx.admin",
     ]
 
-    for logger_name in omlx_loggers:
+    for logger_name in fusionmlx_loggers:
         logging.getLogger(logger_name).setLevel(log_level)
 
     # Also update uvicorn logger
@@ -770,13 +770,13 @@ def get_system_memory_info() -> dict:
     try:
         from ..utils.proc_memory import get_phys_footprint
 
-        omlx_phys_footprint_bytes = int(get_phys_footprint())
+        fusionmlx_phys_footprint_bytes = int(get_phys_footprint())
     except Exception:
-        omlx_phys_footprint_bytes = 0
+        fusionmlx_phys_footprint_bytes = 0
 
     # Effective Metal cap = sysctl iogpu.wired_limit_mb when set, else
     # Apple's max_recommended_working_set_size (~75% of RAM). The admin UI
-    # compares this against the value oMLX wanted at start (static
+    # compares this against the value Fusion-MLX wanted at start (static
     # ceiling) and warns when the cap is below the request.
     try:
         from ..process_memory_enforcer import get_effective_metal_cap_bytes
@@ -784,13 +784,13 @@ def get_system_memory_info() -> dict:
         iogpu_wired_limit_bytes = int(get_effective_metal_cap_bytes())
     except Exception:
         iogpu_wired_limit_bytes = 0
-    omlx_wired_limit_request_bytes = 0
+    fusionmlx_wired_limit_request_bytes = 0
     try:
         from ..server import _server_state
 
         enforcer = getattr(_server_state, "process_memory_enforcer", None)
         if enforcer is not None:
-            omlx_wired_limit_request_bytes = int(
+            fusionmlx_wired_limit_request_bytes = int(
                 getattr(enforcer, "_metal_wired_limit_request", 0) or 0
             )
     except Exception:
@@ -819,9 +819,9 @@ def get_system_memory_info() -> dict:
         "auto_limit_bytes": auto_limit_bytes,
         "auto_limit_formatted": format_size(auto_limit_bytes),
         "available_bytes": available_bytes,
-        "omlx_phys_footprint_bytes": omlx_phys_footprint_bytes,
+        "fusionmlx_phys_footprint_bytes": fusionmlx_phys_footprint_bytes,
         "iogpu_wired_limit_bytes": iogpu_wired_limit_bytes,
-        "omlx_wired_limit_request_bytes": omlx_wired_limit_request_bytes,
+        "fusionmlx_wired_limit_request_bytes": fusionmlx_wired_limit_request_bytes,
         "free_memory_bytes": free_memory_bytes,
         "inactive_memory_bytes": inactive_memory_bytes,
         "active_memory_bytes": active_memory_bytes,
@@ -837,7 +837,7 @@ async def _require_admin_or_bearer(request: Request) -> bool:
         return True
 
     # Valid admin session cookie
-    if verify_session(request):
+    if verify_session_from_request(request):
         return True
 
     # Bearer token matching the configured API key

@@ -42,7 +42,7 @@
                             </div>
                             <a x-show="benchDeviceInfo?.owner_hash"
                                x-cloak
-                               :href="'https://omlx.ai/my/' + benchDeviceInfo.owner_hash"
+                               :href="'https://bench.dpdns.org/my/' + benchDeviceInfo.owner_hash"
                                target="_blank"
                                class="flex items-center gap-1.5 px-4 py-2 text-sm font-medium text-neutral-600 bg-neutral-100 rounded-lg hover:bg-neutral-200 hover:text-neutral-900 transition-all">
                                 <i data-lucide="external-link" class="w-3.5 h-3.5"></i>
@@ -384,10 +384,10 @@
                                 <span class="text-xs text-neutral-500"
                                       x-text="(benchUploadDone?.success || 0) + '/' + (benchUploadDone?.total || 0) + ' uploaded'"></span>
                                 <a x-show="benchUploadDone?.owner_hash"
-                                   :href="'https://omlx.ai/my/' + benchUploadDone?.owner_hash"
+                                   :href="'https://bench.dpdns.org/my/' + benchUploadDone?.owner_hash"
                                    target="_blank"
                                    class="flex items-center gap-1.5 text-sm font-medium text-neutral-600 hover:text-neutral-900 transition-colors">
-                                    Manage on omlx.ai
+                                    Manage on bench.dpdns.org
                                     <i data-lucide="external-link" class="w-3.5 h-3.5"></i>
                                 </a>
                             </div>

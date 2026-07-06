@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Admin panel routes for oMLX server configuration.
+"""Admin panel routes for Fusion-MLX server configuration.
 
 This module provides HTTP routes for the admin panel including:
 - Login/logout with API key authentication
@@ -16,7 +16,7 @@ from typing import Any
 import requests
 from fastapi import APIRouter, Depends
 
-from fusion_mlx._version import __version__ as _omlx_version
+from fusion_mlx._version import __version__ as _fusionmlx_version
 
 from ..utils.release_check import select_latest_stable_release
 from .auth import (
@@ -25,7 +25,7 @@ from .auth import (
 
 logger = logging.getLogger(__name__)
 
-PRESET_REMOTE_URL = "http://bench.dpdns.org/assets/omlx_preset.json"
+PRESET_REMOTE_URL = "http://bench.dpdns.org/assets/fusionmlx_preset.json"
 
 
 _router = APIRouter()
@@ -43,7 +43,7 @@ _UPDATE_CACHE_TTL = 3600  # 1 hour
 async def check_update(
     is_admin: bool = Depends(require_admin),
 ):
-    """Check GitHub Releases for newer oMLX version (cached 24h)."""
+    """Check GitHub Releases for newer Fusion-MLX version (cached 24h)."""
     global _update_cache, _update_cache_time
 
     now = time.time()
@@ -63,7 +63,7 @@ async def check_update(
         # /releases/latest return them as if they were stable.
         resp = await asyncio.to_thread(
             requests.get,
-            "https://api.github.com/repos/jundot/omlx/releases",
+            "https://api.github.com/repos/dahai80/fusion-mlx/releases",
             params={"per_page": 20},
             timeout=5,
         )
@@ -83,7 +83,7 @@ async def check_update(
         try:
             from packaging.version import Version
 
-            update_available = Version(latest) > Version(_omlx_version)
+            update_available = Version(latest) > Version(_fusionmlx_version)
         except Exception:
             update_available = False
 

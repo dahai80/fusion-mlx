@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Benchmark execution logic for oMLX admin panel.
+"""Benchmark execution logic for Fusion-MLX admin panel.
 
 Provides single-request and continuous-batching benchmarks with
 real-time progress reporting via SSE events.
@@ -485,7 +485,7 @@ def _sanitize_upload_error(resp: Any) -> str:
     return text[:300] or f"HTTP {status}"
 
 
-async def _upload_to_omlx_ai(run: BenchmarkRun, engine_pool: Any) -> None:
+async def _upload_to_bench_site(run: BenchmarkRun, engine_pool: Any) -> None:
     """Upload benchmark results to bench.dpdns.org community benchmarks.
 
     Sends each single-request result as a separate submission,
@@ -544,7 +544,7 @@ async def _upload_to_omlx_ai(run: BenchmarkRun, engine_pool: Any) -> None:
     memory_gb = round(get_total_memory_gb())
     gpu_cores = get_gpu_core_count()
     os_version = get_os_version()
-    omlx_version = __version__
+    fusionmlx_version = __version__
 
     # Compute owner_hash
     owner_hash_full = None
@@ -604,7 +604,7 @@ async def _upload_to_omlx_ai(run: BenchmarkRun, engine_pool: Any) -> None:
             "chip_variant": chip_variant,
             "memory_gb": memory_gb,
             "gpu_cores": gpu_cores,
-            "omlx_version": omlx_version,
+            "fusionmlx_version": fusionmlx_version,
             "os_version": os_version,
             "model_name": model_name,
             "quantization": quantization,
@@ -944,7 +944,7 @@ async def run_benchmark(run: BenchmarkRun, engine_pool: Any) -> None:
 
         # Upload results to bench.dpdns.org (failures don't affect benchmark status)
         try:
-            await _upload_to_omlx_ai(run, engine_pool)
+            await _upload_to_bench_site(run, engine_pool)
         except Exception as e:
             logger.warning(f"Benchmark upload to bench.dpdns.org failed: {e}")
             await _send_event(

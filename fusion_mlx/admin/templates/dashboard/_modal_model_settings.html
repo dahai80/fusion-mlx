@@ -64,7 +64,7 @@
                             <button type="button" x-show="profileScope === 'preset'"
                                     @click="refreshPresets()"
                                     :disabled="refreshingPresets"
-                                    @mouseenter="showTip($event.currentTarget, 'Fetch latest presets from omlx.ai')"
+                                    @mouseenter="showTip($event.currentTarget, 'Fetch latest presets from bench.dpdns.org')"
                                     @mouseleave="hideTip()"
                                     class="p-1 rounded-full text-neutral-400 hover:text-neutral-700 hover:bg-neutral-100 transition-all disabled:opacity-50">
                                 <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
@@ -897,8 +897,8 @@
                                         <div class="flex items-start justify-between gap-3">
                                             <div class="min-w-0">
                                                 <span class="text-sm font-medium text-neutral-700">SSD cache</span>
-                                                <p class="text-xs text-neutral-500 mt-0.5">L2 spill of evicted L1 entries to disk. Uses the oMLX paged SSD cache directory (<code>dflash_l2/</code>).</p>
-                                                <p x-show="!modelSettings.dflash_ssd_cache_available" class="text-xs text-amber-600 mt-1">Enable oMLX paged SSD cache first (<code>--paged-ssd-cache-dir</code>).</p>
+                                                <p class="text-xs text-neutral-500 mt-0.5">L2 spill of evicted L1 entries to disk. Uses the Fusion-MLX paged SSD cache directory (<code>dflash_l2/</code>).</p>
+                                                <p x-show="!modelSettings.dflash_ssd_cache_available" class="text-xs text-amber-600 mt-1">Enable Fusion-MLX paged SSD cache first (<code>--paged-ssd-cache-dir</code>).</p>
                                                 <p x-show="modelSettings.dflash_ssd_cache_available && !modelSettings.dflash_in_memory_cache" class="text-xs text-amber-600 mt-1">Requires in-memory cache to be enabled.</p>
                                             </div>
                                             <button type="button"

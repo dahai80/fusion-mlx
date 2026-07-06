@@ -35,7 +35,7 @@
 			<string>app.fusion-mlx.org</string>
 			<key>CFBundleURLSchemes</key>
 			<array>
-				<string>FusionMLXapp</string>
+				<string>fusionapp</string>
 			</array>
 		</dict>
 	</array>
