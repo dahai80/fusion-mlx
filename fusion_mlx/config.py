@@ -3,6 +3,7 @@
 Merged from omlx model_settings + Rapid-MLX SchedulerConfig.
 """
 
+import asyncio
 import json
 import logging
 from dataclasses import dataclass, field
@@ -196,28 +197,94 @@ class MemoryConfig:
 
 @dataclass
 class ServerConfig:
-    """FastAPI server configuration."""
-
     host: str = "0.0.0.0"
     port: int = 8000
-    # Model directory (defaults to ~/.fusion-mlx/models)
     model_dir: str | None = None
-    # Settings directory (defaults to ~/.fusion-mlx)
     settings_dir: str | None = None
-    # Memory config
     memory: MemoryConfig = field(default_factory=MemoryConfig)
-    # Scheduler config
     scheduler: SchedulerConfig = field(default_factory=SchedulerConfig)
-    # Model aliases: friendly name -> real model ID
     model_aliases: dict[str, str] = field(default_factory=dict)
-    # Enable admin UI
     admin_enabled: bool = True
-    # Enable cloud router fallback
     cloud_router_enabled: bool = False
-    # Cloud router API key (for fallback to cloud providers)
     cloud_router_api_key: str | None = None
-    # Cloud router threshold (tokens) - route uncached requests above this to cloud
     cloud_router_threshold: int = 32768
+
+    # --- Rapid-MLX runtime state fields ---
+    engine: Any = None
+    model_name: str | None = None
+    model_alias: str | None = None
+    model_path: str | None = None
+    inference_lock: asyncio.Lock | None = None
+    ready: bool = False
+    draining: bool = False
+    bind_host: str | None = None
+    bind_port: int | None = None
+    bind_listen_fd: int | None = None
+
+    # Defaults
+    default_max_tokens: int = 4096
+    default_max_tokens_is_explicit: bool = False
+    thinking_token_budget: int = 2048
+    default_timeout: float = 1800.0
+    default_temperature: float | None = None
+    default_top_p: float | None = None
+    default_top_k: int | None = None
+    default_min_p: float | None = None
+    default_repetition_penalty: float | None = None
+    default_presence_penalty: float | None = None
+    default_frequency_penalty: float | None = None
+
+    # Sampling overlay
+    alias_recommended_sampling: dict[str, float | int] | None = None
+    generation_config_sampling: dict[str, float | int] | None = None
+
+    # Tool calling
+    enable_auto_tool_choice: bool = False
+    tool_call_parser: str | None = None
+    tool_parser_instance: Any = None
+    enable_tool_logits_bias: bool = False
+
+    # Reasoning
+    reasoning_parser: Any = None
+    reasoning_parser_name: str | None = None
+
+    # MCP
+    mcp_manager: Any = None
+    mcp_executor: Any = None
+
+    # Embeddings
+    embedding_engine: Any = None
+    embedding_model_locked: str | None = None
+
+    # Auth
+    api_key: str | None = None
+
+    # Request-body size cap
+    max_request_bytes: int = 8 * 1024 * 1024
+
+    # SSE keepalive
+    sse_keepalive_seconds: float = 20.0
+
+    # Body-receive idle timeout
+    body_receive_timeout_seconds: float = 15.0
+
+    # Cloud router instance
+    cloud_router: Any = None
+
+    # Behavior flags
+    gc_control: bool = True
+    no_thinking: bool = False
+    pin_system_prompt: bool = False
+    pinned_system_prompt_hash: str | None = None
+
+    # Audio lane
+    enable_audio_lane: bool = False
+
+    # Multi-model
+    model_registry: Any = None
+
+    # KV cache dtype (pre-load fallback for metrics)
+    kv_cache_dtype: str | None = None
 
     def __post_init__(self) -> None:
         if self.model_dir is None:

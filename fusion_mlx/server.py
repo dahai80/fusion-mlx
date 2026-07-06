@@ -61,6 +61,11 @@ from .api.openclaw_routes import set_openclaw_agent_pool
 from .api.recommend_routes import router as recommend_router
 from .api.rerank_routes import router as rerank_router
 from .api.rerank_routes import set_rerank_context
+from .routes.cache import router as cache_router
+from .routes.responses import router as responses_router
+from .routes.health import probe_router as health_probe_router
+from .routes.health import router as health_router
+from .routes.metrics import router as metrics_router
 from .config import ServerConfig
 from .engine_core import AsyncEngineCore
 from .pool import EnginePool, ProcessMemoryEnforcer
@@ -431,36 +436,16 @@ class Server:
         app.include_router(recommend_router)
         app.include_router(embeddings_router)
         app.include_router(rerank_router)
+        app.include_router(responses_router)
+        app.include_router(health_probe_router)
+        app.include_router(health_router)
+        app.include_router(metrics_router)
+        app.include_router(cache_router)
         app.include_router(admin_router)
 
         # Register GUI compatibility router (discovery, settings, manager, admin UI)
         if get_gui_compat_router:
             app.include_router(get_gui_compat_router())
-
-        # Root endpoint (health check for clients)
-        @app.get("/")
-        @app.head("/")
-        async def root():
-            return {"status": "ok", "service": "fusion-mlx"}
-
-        # Health check
-        @app.get("/health")
-        async def health():
-            engines_list = []
-            if self.pool:
-                status = self.pool.get_status()
-                engines_list = status.get("models", [])
-            return {
-                "status": "ok",
-                "version": __version__,
-                "engines": engines_list,
-                "mx_memory": {
-                    "active": f"{mx.get_active_memory() / 1e9:.2f} GB",
-                    "cached": f"{mx.get_cache_memory() / 1e9:.2f} GB",
-                    "peak": f"{mx.get_peak_memory() / 1e9:.2f} GB",
-                },
-                "model_dir": self.config.model_dir,
-            }
 
         # Stats endpoint (combined pool + metrics)
         @app.get("/stats")
@@ -468,11 +453,6 @@ class Server:
             pool_status = self.pool.get_status() if self.pool else {}
             metrics = get_server_metrics().to_dict()
             return {**pool_status, **metrics}
-
-        # Metrics endpoint
-        @app.get("/metrics")
-        async def metrics():
-            return JSONResponse(get_server_metrics().to_dict())
 
         @app.get("/api/status")
         async def api_status():
@@ -734,6 +714,14 @@ class Server:
         if _pending_single_model:
             await self._load_single_model(_pending_single_model)
 
+        # Load prefix cache from disk (best-effort)
+        try:
+            from .runtime.cache import load_prefix_cache_from_disk
+
+            load_prefix_cache_from_disk()
+        except Exception as e:
+            logger.debug("prefix cache load failed (non-fatal): %s", e)
+
         # Initialize GUI database (for compat layer)
         if get_database_manager:
             try:
@@ -747,6 +735,14 @@ class Server:
     async def _shutdown(self):
         """Graceful shutdown."""
         logger.info("fusion-mlx shutting down...")
+
+        # Save prefix cache to disk (best-effort, budget-aware)
+        try:
+            from .runtime.cache import save_prefix_cache_to_disk
+
+            save_prefix_cache_to_disk()
+        except Exception as e:
+            logger.debug("prefix cache save failed (non-fatal): %s", e)
 
         # Telemetry: fire the session_end hook registered by cli.py.
         # SIGTERM from systemd/Docker/K8s triggers FastAPI lifespan

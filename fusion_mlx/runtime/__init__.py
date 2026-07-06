@@ -1,4 +1,4 @@
-"""Runtime module — macOS-specific helpers (UBC eviction, etc.)."""
+"""Runtime module — macOS-specific helpers (UBC eviction, prefix cache, etc.)."""
 
 # Submodules are importable as fusion_mlx.runtime.ubc_evict, etc.
 # Do NOT re-export names that shadow submodule names here —
