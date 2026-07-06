@@ -50,9 +50,15 @@ def test_info_dspark_marks_4bit_alias_ineligible(capsys) -> None:
 
 
 def test_models_listing_renders_dspark_column(capsys) -> None:
+    from unittest.mock import patch
+
+    import requests
+
     from fusion_mlx.cli import models_command
 
-    models_command(None)
+    fake_resp = type("R", (), {"status_code": 200, "json": lambda self: {"data": [{"id": "test-model", "type": "llm"}]}})()
+    with patch.object(requests, "get", return_value=fake_resp):
+        models_command(None)
     captured = capsys.readouterr()
     assert "DSpark" in captured.out or "dspark" in captured.out.lower()
 
@@ -70,6 +76,7 @@ def test_build_app_healthz_models_and_completion() -> None:
     target.tokenizer = tokenizer
     generator = MagicMock()
     generator.target = target
+    generator.draft_quantization = None
 
     class _FakeResult:
         text = "four"
@@ -93,6 +100,7 @@ def test_build_app_healthz_models_and_completion() -> None:
         served_model_name="qwen3.5-9b-8bit",
         default_max_tokens=64,
         cors_origins=["*"],
+        enable_thinking_default=False,
     )
     client = TestClient(app)
 

@@ -76,7 +76,7 @@ def load_runtime(drafter_repo: str, kind: str = "dflash") -> DFlashRuntime:
     if not have_runtime():
         raise RuntimeError(
             "DFlash runtime not available — mlx-vlm 0.5.0+ is required. "
-            "Install with: pip install 'rapid-mlx[dflash]'"
+            "Install with: pip install 'fusion-mlx[dflash]'"
         )
     # Import here, not at module top, so the optional dep stays optional.
     from mlx_vlm.speculative.drafters import load_drafter

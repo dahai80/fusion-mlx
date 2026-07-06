@@ -259,10 +259,22 @@ def models_command(args):
         print(f"{mid:<50} {mtype:<12}")
 
     if DEFAULT_ALIASES:
+        from fusion_mlx.model_aliases import resolve_profile
+
         print()
-        print("Default aliases:")
+        print(f"     {'ALIAS':<25} {'MODEL':<35} {'DFlash':<8} {'DSpark':<8}")
+        print("     " + "─" * 78)
         for alias, real in DEFAULT_ALIASES.items():
-            print(f"     {alias:<25} -> {real}")
+            df_str = "—"
+            ds_str = "—"
+            try:
+                p = resolve_profile(alias)
+                if p is not None:
+                    df_str = "✓" if p.supports_dflash else "✗"
+                    ds_str = "✓" if p.supports_dspark else "✗"
+            except Exception:
+                pass
+            print(f"     {alias:<25} {real:<35} {df_str:<8} {ds_str:<8}")
     print()
 
 
@@ -1937,12 +1949,24 @@ def info_command(args):
     print(format_profile_table(name, cfg))
     print()
 
-    # DFlash eligibility — render the report so users can see which
-    # gates pass/fail without consulting the docs. Skipped for unknown
-    # models since AliasProfile is alias-keyed.
+    # DFlash / DSpark eligibility — render the report so users can see
+    # which gates pass/fail without consulting the docs. For unknown
+    # aliases (no AliasProfile), synthesize a minimal profile from the
+    # HF path so DSpark info is always visible.
     profile = resolve_profile(original_alias)
-    if profile is not None:
-        _print_dflash_status(original_alias, profile)
+    if profile is None and name != original_alias:
+        profile = resolve_profile(name)
+    if profile is None:
+        from fusion_mlx.model_aliases import AliasProfile
+
+        profile = AliasProfile(
+            name=original_alias,
+            hf_path=name,
+            supports_dspark=False,
+            supports_dflash=False,
+        )
+    _print_dflash_status(original_alias, profile)
+    _print_dspark_status(original_alias, profile)
 
     if cfg is None:
         print("  No pattern matched — runtime probe will run when the model loads.")
@@ -1989,9 +2013,9 @@ def _print_dflash_status(alias: str, profile) -> None:
         (
             "Drafter declared",
             _yes(
-                bool(profile.dflash_draft_model),
-                profile.dflash_draft_model or "yes",
-                "no (dflash_draft_model unset)",
+                bool(getattr(profile, "dflash_draft_model", None) or getattr(profile, "drafter_hf_path", None)),
+                getattr(profile, "dflash_draft_model", None) or getattr(profile, "drafter_hf_path", None) or "yes",
+                "no (drafter unset)",
             ),
         ),
         (
@@ -2014,6 +2038,60 @@ def _print_dflash_status(alias: str, profile) -> None:
     print()
     if eligible:
         print(f"  Start with: fusion-mlx serve {alias} --enable-dflash")
+        print()
+
+
+def _print_dspark_status(alias: str, profile) -> None:
+    from fusion_mlx.speculative.dspark.eligibility import (
+        _looks_like_4bit,
+        have_runtime,
+        report,
+    )
+
+    r = report(profile, alias=alias)
+    inner = 60
+    sep = "─" * inner
+
+    def _row(text: str) -> str:
+        return f"│ {text:<{inner}} │"
+
+    def _yes(ok: bool, msg_ok: str, msg_no: str) -> str:
+        return ("✓ " + msg_ok) if ok else ("✗ " + msg_no)
+
+    rows = [
+        (
+            "Declared support",
+            _yes(profile.supports_dspark, "yes (supports_dspark=true)", "no"),
+        ),
+        ("Not MoE", _yes(not profile.is_moe, "yes (dense)", "no (MoE)")),
+        (
+            "Precision ≥8-bit",
+            _yes(
+                not _looks_like_4bit(profile.hf_path),
+                "yes",
+                "no (4-bit/mxfp4/nvfp4)",
+            ),
+        ),
+        (
+            "dspark-metal",
+            _yes(have_runtime(), "installed", "missing (pip install dspark-metal)"),
+        ),
+    ]
+
+    eligible = not r.reasons and have_runtime()
+    summary = "✓ eligible" if eligible else "✗ ineligible"
+
+    top = "┌" + "─" * (inner + 2) + "┐"
+    bot = "└" + "─" * (inner + 2) + "┘"
+
+    body = [top, _row(f"DSpark eligibility: {summary}"), _row(sep)]
+    for k, v in rows:
+        body.append(_row(f"{k:<18}: {v}"))
+    body.append(bot)
+    print("\n".join(body))
+    print()
+    if eligible:
+        print(f"  Start with: fusion-mlx serve {alias} --enable-dspark")
         print()
 
 
