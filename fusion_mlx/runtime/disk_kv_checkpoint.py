@@ -32,7 +32,7 @@ cache layer (specifically the ``prompt_cache/`` package at commit
   ``cache_dir.new/`` → ``cache_dir`` rename in ``MemoryAwarePrefixCache``.
 - **Disk-budget eviction**: oldest-first across all checkpoints in
   ``~/.cache/rapid-mlx/kv_checkpoints/``, capped at a configurable byte cap
-  (default 20 GiB, env override ``RAPID_MLX_KV_CHECKPOINT_MAX_BYTES``).
+  (default 20 GiB, env override ``FUSION_MLX_KV_CHECKPOINT_MAX_BYTES``).
   ``mtime``-ordered LRU rather than the size-aware policy in PR #326 because
   the rapid-mlx scheduler is single-tenant per process and the cap exists
   primarily to keep a runaway agent from filling the disk, not to optimize
@@ -92,9 +92,9 @@ cheap because writes happen at most once per 256 generated tokens — way
 below the per-step scheduler cadence.
 """
 
-# TODO: fusion_mlx.runtime.cache does not exist yet in fusion-mlx.
-# The docstring above references it for checkpoint loading during startup.
-# Adapt the integration once fusion_mlx.runtime.cache is implemented.
+# fusion_mlx.runtime.cache now exists — prefix cache load/save is wired
+# into server lifespan via runtime.cache.load_prefix_cache_from_disk /
+# save_prefix_cache_to_disk.
 
 # TODO: fusion_mlx.positioned_kv_cache does not exist yet in fusion-mlx.
 # Referenced for positioned_update_and_fetch pre-checkpoint writes.
@@ -133,7 +133,7 @@ DEFAULT_CHECKPOINT_INTERVAL = 256
 # operator can shrink/grow without restarting the server. Picked to match the
 # headroom rapid-desktop reserves under ~/.cache/rapid-mlx (#194).
 DEFAULT_MAX_DISK_BYTES = 20 * 1024 * 1024 * 1024
-_DISK_CAP_ENV = "RAPID_MLX_KV_CHECKPOINT_MAX_BYTES"
+_DISK_CAP_ENV = "FUSION_MLX_KV_CHECKPOINT_MAX_BYTES"
 
 # Models that require a FULL cache-state snapshot at each boundary — i.e. the
 # attention cache cannot be reconstructed from a position offset alone:
@@ -257,7 +257,7 @@ def get_default_root() -> str:
     enable disk checkpointing don't see an empty directory show up.
     """
     return os.path.join(
-        os.path.expanduser("~"), ".cache", "rapid-mlx", "kv_checkpoints"
+        os.path.expanduser("~"), ".cache", "fusion-mlx", "kv_checkpoints"
     )
 
 
@@ -266,7 +266,7 @@ def resolve_max_disk_bytes(default: int = DEFAULT_MAX_DISK_BYTES) -> int:
 
     Returns 0 (cap disabled) when the env var is explicitly set to ``0``
     or a negative integer. Matches the convention the prefix cache uses
-    for ``RAPID_MLX_PREFIX_CACHE_MAX_BYTES``: an explicit ``0`` is the
+    for ``FUSION_MLX_PREFIX_CACHE_MAX_BYTES``: an explicit ``0`` is the
     escape hatch, not "use default".
     """
     raw = os.environ.get(_DISK_CAP_ENV)
@@ -998,7 +998,7 @@ def temporary_root() -> str:
     caller is responsible for ``shutil.rmtree`` cleanup; using
     ``tempfile.TemporaryDirectory`` is cleaner in test fixtures.
     """
-    return tempfile.mkdtemp(prefix="rapid-mlx-kv-checkpoint-")
+    return tempfile.mkdtemp(prefix="fusion-mlx-kv-checkpoint-")
 
 
 __all__ = [
