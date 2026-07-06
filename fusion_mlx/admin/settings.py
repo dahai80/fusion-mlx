@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Admin panel routes for oMLX server configuration.
+"""Admin panel routes for Fusion-MLX server configuration.
 
 This module provides HTTP routes for the admin panel including:
 - Login/logout with API key authentication
@@ -23,7 +23,7 @@ from .auth import (
 
 logger = logging.getLogger(__name__)
 
-PRESET_REMOTE_URL = "http://bench.dpdns.org/assets/omlx_preset.json"
+PRESET_REMOTE_URL = "http://bench.dpdns.org/assets/fusionmlx_preset.json"
 
 
 from .helpers import (
@@ -43,6 +43,312 @@ from .helpers import (
 from .models import (
     GlobalSettingsRequest,
 )
+
+
+def _get_settings_json_path() -> Path:
+    return Path.home() / ".fusion-mlx" / "settings.json"
+
+
+def _read_settings_json() -> dict:
+    path = _get_settings_json_path()
+    if path.exists():
+        try:
+            return json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            pass
+    return {}
+
+
+def _write_settings_json(data: dict) -> None:
+    path = _get_settings_json_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
+
+
+def _save_global_settings_fallback(request: GlobalSettingsRequest) -> dict:
+    """Save global settings to settings.json when rich GlobalSettings is unavailable.
+
+    Reads settings.json, applies the requested changes, writes back.
+    Returns a dict with success/message/runtime_applied.
+    """
+    sj = _read_settings_json()
+    runtime_applied: list[str] = []
+
+    # Server settings
+    if request.host is not None:
+        sj.setdefault("server", {})["host"] = request.host
+    if request.port is not None:
+        sj.setdefault("server", {})["port"] = request.port
+    if request.log_level is not None:
+        sj.setdefault("server", {})["log_level"] = request.log_level
+        _apply_log_level_runtime(request.log_level)
+        runtime_applied.append("log_level")
+    if request.sse_keepalive_mode is not None:
+        valid_modes = {"chunk", "comment", "off"}
+        if request.sse_keepalive_mode not in valid_modes:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid sse_keepalive_mode: {request.sse_keepalive_mode}",
+            )
+        sj.setdefault("server", {})["sse_keepalive_mode"] = request.sse_keepalive_mode
+        runtime_applied.append("sse_keepalive_mode")
+
+    # Model settings
+    if request.model_dirs is not None:
+        new_dirs = [d for d in request.model_dirs if d.strip()]
+        sj.setdefault("model", {})["model_dirs"] = new_dirs
+        if new_dirs:
+            sj["model"]["model_dir"] = new_dirs[0]
+        runtime_applied.append("model_dirs")
+    elif request.model_dir is not None:
+        sj.setdefault("model", {})["model_dir"] = request.model_dir
+        sj["model"]["model_dirs"] = [request.model_dir]
+        runtime_applied.append("model_dirs")
+
+    if request.model_fallback is not None:
+        sj.setdefault("model", {})["model_fallback"] = request.model_fallback
+        runtime_applied.append("model_fallback")
+
+    # Memory settings
+    if request.memory_guard_tier is not None:
+        sj.setdefault("memory", {})["memory_guard_tier"] = request.memory_guard_tier
+        runtime_applied.append("memory_guard_tier")
+    if request.memory_guard_custom_ceiling_gb is not None:
+        sj.setdefault("memory", {})["memory_guard_custom_ceiling_gb"] = (
+            request.memory_guard_custom_ceiling_gb
+        )
+        runtime_applied.append("memory_guard_custom_ceiling_gb")
+    if request.memory_prefill_memory_guard is not None:
+        sj.setdefault("memory", {})["prefill_memory_guard"] = (
+            request.memory_prefill_memory_guard
+        )
+        runtime_applied.append("prefill_memory_guard")
+
+    # Scheduler settings
+    if request.max_concurrent_requests is not None:
+        sj.setdefault("scheduler", {})["max_concurrent_requests"] = (
+            request.max_concurrent_requests
+        )
+    if request.embedding_batch_size is not None:
+        if request.embedding_batch_size <= 0:
+            raise HTTPException(
+                status_code=400, detail="Invalid embedding_batch_size: must be > 0"
+            )
+        sj.setdefault("scheduler", {})["embedding_batch_size"] = (
+            request.embedding_batch_size
+        )
+        runtime_applied.append("embedding_batch_size")
+    if request.chunked_prefill is not None:
+        sj.setdefault("scheduler", {})["chunked_prefill"] = request.chunked_prefill
+        runtime_applied.append("chunked_prefill")
+
+    # Cache settings
+    if request.cache_enabled is not None:
+        sj.setdefault("cache", {})["enabled"] = request.cache_enabled
+        runtime_applied.append("cache")
+    if request.ssd_cache_dir is not None:
+        sj.setdefault("cache", {})["ssd_cache_dir"] = request.ssd_cache_dir
+    if request.ssd_cache_max_size is not None:
+        sj.setdefault("cache", {})["ssd_cache_max_size"] = request.ssd_cache_max_size
+    if request.hot_cache_only is not None:
+        sj.setdefault("cache", {})["hot_cache_only"] = request.hot_cache_only
+    if request.hot_cache_max_size is not None:
+        sj.setdefault("cache", {})["hot_cache_max_size"] = request.hot_cache_max_size
+    if request.initial_cache_blocks is not None:
+        sj.setdefault("cache", {})["initial_cache_blocks"] = (
+            request.initial_cache_blocks
+        )
+
+    # MCP settings
+    if request.mcp_config is not None:
+        sj.setdefault("mcp", {})["config_path"] = request.mcp_config or None
+
+    # HuggingFace settings
+    if request.hf_endpoint is not None:
+        sj.setdefault("huggingface", {})["endpoint"] = request.hf_endpoint
+        if request.hf_endpoint:
+            os.environ["HF_ENDPOINT"] = request.hf_endpoint
+        else:
+            os.environ.pop("HF_ENDPOINT", None)
+        runtime_applied.append("hf_endpoint")
+
+    # ModelScope settings
+    if request.ms_endpoint is not None:
+        sj.setdefault("modelscope", {})["endpoint"] = request.ms_endpoint
+        if request.ms_endpoint:
+            os.environ["MODELSCOPE_DOMAIN"] = request.ms_endpoint
+        else:
+            os.environ.pop("MODELSCOPE_DOMAIN", None)
+        runtime_applied.append("ms_endpoint")
+
+    # Network settings
+    network_changed = False
+    if request.network_http_proxy is not None:
+        sj.setdefault("network", {})["http_proxy"] = request.network_http_proxy
+        if request.network_http_proxy:
+            os.environ["HTTP_PROXY"] = request.network_http_proxy
+            os.environ["http_proxy"] = request.network_http_proxy
+        else:
+            os.environ.pop("HTTP_PROXY", None)
+            os.environ.pop("http_proxy", None)
+        network_changed = True
+    if request.network_https_proxy is not None:
+        sj.setdefault("network", {})["https_proxy"] = request.network_https_proxy
+        if request.network_https_proxy:
+            os.environ["HTTPS_PROXY"] = request.network_https_proxy
+            os.environ["https_proxy"] = request.network_https_proxy
+        else:
+            os.environ.pop("HTTPS_PROXY", None)
+            os.environ.pop("https_proxy", None)
+        network_changed = True
+    if request.network_no_proxy is not None:
+        sj.setdefault("network", {})["no_proxy"] = request.network_no_proxy
+        if request.network_no_proxy:
+            os.environ["NO_PROXY"] = request.network_no_proxy
+            os.environ["no_proxy"] = request.network_no_proxy
+        else:
+            os.environ.pop("NO_PROXY", None)
+            os.environ.pop("no_proxy", None)
+        network_changed = True
+    if request.network_ca_bundle is not None:
+        sj.setdefault("network", {})["ca_bundle"] = request.network_ca_bundle
+        if request.network_ca_bundle:
+            os.environ["REQUESTS_CA_BUNDLE"] = request.network_ca_bundle
+            os.environ["SSL_CERT_FILE"] = request.network_ca_bundle
+        else:
+            os.environ.pop("REQUESTS_CA_BUNDLE", None)
+            os.environ.pop("SSL_CERT_FILE", None)
+        network_changed = True
+    if network_changed:
+        runtime_applied.append("network")
+
+    # Sampling settings
+    sampling_changed = False
+    if request.sampling_max_context_window is not None:
+        sj.setdefault("sampling", {})["max_context_window"] = (
+            request.sampling_max_context_window
+        )
+        sampling_changed = True
+    if request.sampling_max_tokens is not None:
+        sj.setdefault("sampling", {})["max_tokens"] = request.sampling_max_tokens
+        sampling_changed = True
+    if request.sampling_temperature is not None:
+        sj.setdefault("sampling", {})["temperature"] = request.sampling_temperature
+        sampling_changed = True
+    if request.sampling_top_p is not None:
+        sj.setdefault("sampling", {})["top_p"] = request.sampling_top_p
+        sampling_changed = True
+    if request.sampling_top_k is not None:
+        sj.setdefault("sampling", {})["top_k"] = request.sampling_top_k
+        sampling_changed = True
+    if request.sampling_repetition_penalty is not None:
+        sj.setdefault("sampling", {})["repetition_penalty"] = (
+            request.sampling_repetition_penalty
+        )
+        sampling_changed = True
+    if sampling_changed:
+        runtime_applied.append("sampling")
+
+    # Claude Code settings
+    cc_changed = False
+    if request.claude_code_context_scaling_enabled is not None:
+        sj.setdefault("claude_code", {})["context_scaling_enabled"] = (
+            request.claude_code_context_scaling_enabled
+        )
+        cc_changed = True
+    if request.claude_code_target_context_size is not None:
+        sj.setdefault("claude_code", {})["target_context_size"] = (
+            request.claude_code_target_context_size
+        )
+        cc_changed = True
+    if request.claude_code_mode is not None:
+        sj.setdefault("claude_code", {})["mode"] = request.claude_code_mode
+        cc_changed = True
+    if "claude_code_opus_model" in request.model_fields_set:
+        sj.setdefault("claude_code", {})["opus_model"] = request.claude_code_opus_model
+        cc_changed = True
+    if "claude_code_sonnet_model" in request.model_fields_set:
+        sj.setdefault("claude_code", {})["sonnet_model"] = (
+            request.claude_code_sonnet_model
+        )
+        cc_changed = True
+    if "claude_code_haiku_model" in request.model_fields_set:
+        sj.setdefault("claude_code", {})["haiku_model"] = request.claude_code_haiku_model
+        cc_changed = True
+    if cc_changed:
+        runtime_applied.append("claude_code")
+
+    # Integrations settings
+    int_changed = False
+    if "integrations_copilot_model" in request.model_fields_set:
+        sj.setdefault("integrations", {})["copilot_model"] = (
+            request.integrations_copilot_model
+        )
+        int_changed = True
+    if "integrations_codex_model" in request.model_fields_set:
+        sj.setdefault("integrations", {})["codex_model"] = request.integrations_codex_model
+        int_changed = True
+    if "integrations_opencode_model" in request.model_fields_set:
+        sj.setdefault("integrations", {})["opencode_model"] = (
+            request.integrations_opencode_model
+        )
+        int_changed = True
+    if "integrations_openclaw_model" in request.model_fields_set:
+        sj.setdefault("integrations", {})["openclaw_model"] = (
+            request.integrations_openclaw_model
+        )
+        int_changed = True
+    if "integrations_hermes_model" in request.model_fields_set:
+        sj.setdefault("integrations", {})["hermes_model"] = request.integrations_hermes_model
+        int_changed = True
+    if "integrations_pi_model" in request.model_fields_set:
+        sj.setdefault("integrations", {})["pi_model"] = request.integrations_pi_model
+        int_changed = True
+    if "integrations_openclaw_tools_profile" in request.model_fields_set:
+        sj.setdefault("integrations", {})["openclaw_tools_profile"] = (
+            request.integrations_openclaw_tools_profile
+        )
+        int_changed = True
+    if int_changed:
+        runtime_applied.append("integrations")
+
+    # UI settings
+    if request.ui_language is not None:
+        sj.setdefault("ui", {})["language"] = request.ui_language
+        runtime_applied.append("ui_language")
+
+    # Idle timeout
+    if "idle_timeout_seconds" in request.model_fields_set:
+        sj.setdefault("idle_timeout", {})["idle_timeout_seconds"] = (
+            request.idle_timeout_seconds
+        )
+        runtime_applied.append("idle_timeout_seconds")
+
+    # Auth settings
+    if request.api_key is not None:
+        is_valid, error_msg = validate_api_key(request.api_key)
+        if not is_valid:
+            raise HTTPException(status_code=400, detail=error_msg)
+        sj.setdefault("auth", {})["api_key"] = request.api_key
+        state = _get_server_state()
+        if state is not None:
+            state.api_key = request.api_key
+        runtime_applied.append("api_key")
+
+    if request.skip_api_key_verification is not None:
+        sj.setdefault("auth", {})["skip_api_key_verification"] = (
+            request.skip_api_key_verification
+        )
+        runtime_applied.append("skip_api_key_verification")
+
+    # Persist
+    try:
+        _write_settings_json(sj)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to save settings: {e}")
+
+    logger.info(f"Global settings saved (fallback mode): {runtime_applied}")
+    return {"success": True, "message": "Settings saved.", "runtime_applied": runtime_applied}
 
 
 def _build_fallback_global_settings() -> dict:
@@ -156,13 +462,13 @@ def _build_fallback_global_settings() -> dict:
             "total_memory": memory_info["total_formatted"],
             "auto_model_memory": memory_info["auto_limit_formatted"],
             "available_memory_bytes": memory_info["available_bytes"],
-            "omlx_phys_footprint_bytes": memory_info["omlx_phys_footprint_bytes"],
+            "fusionmlx_phys_footprint_bytes": memory_info["fusionmlx_phys_footprint_bytes"],
             "free_memory_bytes": memory_info["free_memory_bytes"],
             "inactive_memory_bytes": memory_info["inactive_memory_bytes"],
             "active_memory_bytes": memory_info["active_memory_bytes"],
             "iogpu_wired_limit_bytes": memory_info["iogpu_wired_limit_bytes"],
-            "omlx_wired_limit_request_bytes": memory_info[
-                "omlx_wired_limit_request_bytes"
+            "fusionmlx_wired_limit_request_bytes": memory_info[
+                "fusionmlx_wired_limit_request_bytes"
             ],
             "ssd_total_bytes": disk_info["total_bytes"],
             "ssd_total": disk_info["total_formatted"],
@@ -233,8 +539,8 @@ async def restart_server(is_admin: bool = Depends(require_admin)):
     detects the process exit and respawns the server with a short
     backoff (~5s).
 
-    Gated by the ``OMLX_SUPERVISED`` environment variable so plain
-    ``omlx serve`` (no supervisor) returns 503 rather than killing the
+    Gated by the ``FUSIONMLX_SUPERVISED`` environment variable so plain
+    ``fusion-mlx serve`` (no supervisor) returns 503 rather than killing the
     server with no respawn path.
     """
     supervisor = os.environ.get("OMLX_SUPERVISED")
@@ -384,13 +690,13 @@ async def get_global_settings(is_admin: bool = Depends(require_admin)):
             "total_memory": memory_info["total_formatted"],
             "auto_model_memory": memory_info["auto_limit_formatted"],
             "available_memory_bytes": memory_info["available_bytes"],
-            "omlx_phys_footprint_bytes": memory_info["omlx_phys_footprint_bytes"],
+            "fusionmlx_phys_footprint_bytes": memory_info["fusionmlx_phys_footprint_bytes"],
             "free_memory_bytes": memory_info["free_memory_bytes"],
             "inactive_memory_bytes": memory_info["inactive_memory_bytes"],
             "active_memory_bytes": memory_info["active_memory_bytes"],
             "iogpu_wired_limit_bytes": memory_info["iogpu_wired_limit_bytes"],
-            "omlx_wired_limit_request_bytes": memory_info[
-                "omlx_wired_limit_request_bytes"
+            "fusionmlx_wired_limit_request_bytes": memory_info[
+                "fusionmlx_wired_limit_request_bytes"
             ],
             "ssd_total_bytes": disk_info["total_bytes"],
             "ssd_total": disk_info["total_formatted"],
@@ -430,10 +736,8 @@ async def update_global_settings(
     global_settings = _get_rich_global_settings()
 
     if global_settings is None:
-        raise HTTPException(
-            status_code=503,
-            detail="Server not initialized — settings update requires rich mode",
-        )
+        # Flat Settings mode — save directly to settings.json
+        return _save_global_settings_fallback(request)
 
     # Track which settings were applied at runtime
     runtime_applied: list[str] = []
