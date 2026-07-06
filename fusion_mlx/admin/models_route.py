@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Admin panel routes for oMLX server configuration.
+"""Admin panel routes for Fusion-MLX server configuration.
 
 This module provides HTTP routes for the admin panel including:
 - Login/logout with API key authentication
@@ -8,8 +8,10 @@ This module provides HTTP routes for the admin panel including:
 - Global settings management
 """
 
+import json
 import logging
 from dataclasses import asdict
+from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException
 
@@ -20,7 +22,7 @@ from .auth import (
 
 logger = logging.getLogger(__name__)
 
-PRESET_REMOTE_URL = "http://bench.dpdns.org/assets/omlx_preset.json"
+PRESET_REMOTE_URL = "http://bench.dpdns.org/assets/fusionmlx_preset.json"
 
 
 from .helpers import (
@@ -226,7 +228,8 @@ async def update_model_settings(
     server_state = _get_server_state()
 
     if engine_pool is None or settings_manager is None:
-        raise HTTPException(status_code=503, detail="Server not initialized")
+        # Flat Settings mode — save directly to settings.json
+        return _save_model_settings_fallback(model_id, request)
 
     # Check if model exists
     entry = engine_pool.get_entry(model_id)
@@ -451,7 +454,7 @@ async def update_model_settings(
                 raise HTTPException(
                     status_code=400,
                     detail=(
-                        "DFlash SSD cache requires oMLX paged SSD cache to be enabled "
+                        "DFlash SSD cache requires Fusion-MLX paged SSD cache to be enabled "
                         "(set --paged-ssd-cache-dir or configure it in settings)."
                     ),
                 )
@@ -713,6 +716,172 @@ async def update_model_settings(
         "requires_reload": requires_reload,
         "auto_unloaded": auto_unloaded,
         "auto_reloaded": auto_reloaded,
+    }
+
+
+def _read_settings_json() -> dict:
+    path = Path.home() / ".fusion-mlx" / "settings.json"
+    if path.exists():
+        try:
+            return json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            pass
+    return {}
+
+
+def _write_settings_json(data: dict) -> None:
+    path = Path.home() / ".fusion-mlx" / "settings.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
+
+
+def _save_model_settings_fallback(model_id: str, request: ModelSettingsRequest) -> dict:
+    """Save per-model settings to settings.json when settings_manager is unavailable.
+
+    Reads settings.json's model_settings dict, applies changes, writes back.
+    Returns a success response dict.
+    """
+    sj = _read_settings_json()
+    model_settings = sj.setdefault("model_settings", {})
+    entry = model_settings.setdefault(model_id, {})
+    sent = request.model_fields_set
+    requires_reload = False
+
+    # Simple field mapping: request field -> JSON key
+    FIELD_MAP = {
+        "model_alias": "model_alias",
+        "model_type_override": "model_type_override",
+        "max_context_window": "max_context_window",
+        "max_tokens": "max_tokens",
+        "temperature": "temperature",
+        "top_p": "top_p",
+        "top_k": "top_k",
+        "repetition_penalty": "repetition_penalty",
+        "min_p": "min_p",
+        "presence_penalty": "presence_penalty",
+        "force_sampling": "force_sampling",
+        "max_tool_result_tokens": "max_tool_result_tokens",
+        "ttl_seconds": "ttl_seconds",
+        "index_cache_freq": "index_cache_freq",
+        "enable_thinking": "enable_thinking",
+        "thinking_budget_enabled": "thinking_budget_enabled",
+        "thinking_budget_tokens": "thinking_budget_tokens",
+        "turboquant_kv_enabled": "turboquant_kv_enabled",
+        "turboquant_kv_bits": "turboquant_kv_bits",
+        "specprefill_enabled": "specprefill_enabled",
+        "specprefill_draft_model": "specprefill_draft_model",
+        "specprefill_keep_pct": "specprefill_keep_pct",
+        "specprefill_threshold": "specprefill_threshold",
+        "dflash_enabled": "dflash_enabled",
+        "dflash_draft_model": "dflash_draft_model",
+        "dflash_draft_quant_enabled": "dflash_draft_quant_enabled",
+        "dflash_draft_quant_weight_bits": "dflash_draft_quant_weight_bits",
+        "dflash_draft_quant_activation_bits": "dflash_draft_quant_activation_bits",
+        "dflash_draft_quant_group_size": "dflash_draft_quant_group_size",
+        "dflash_max_ctx": "dflash_max_ctx",
+        "dflash_in_memory_cache": "dflash_in_memory_cache",
+        "dflash_in_memory_cache_max_entries": "dflash_in_memory_cache_max_entries",
+        "dflash_in_memory_cache_max_bytes": "dflash_in_memory_cache_max_bytes",
+        "dflash_ssd_cache": "dflash_ssd_cache",
+        "dflash_ssd_cache_max_bytes": "dflash_ssd_cache_max_bytes",
+        "dflash_draft_window_size": "dflash_draft_window_size",
+        "dflash_draft_sink_size": "dflash_draft_sink_size",
+        "dflash_verify_mode": "dflash_verify_mode",
+        "mtp_enabled": "mtp_enabled",
+        "vlm_mtp_enabled": "vlm_mtp_enabled",
+        "vlm_mtp_draft_model": "vlm_mtp_draft_model",
+        "vlm_mtp_draft_block_size": "vlm_mtp_draft_block_size",
+        "ngram_spec_enabled": "ngram_spec_enabled",
+        "ngram_spec_order": "ngram_spec_order",
+        "ngram_spec_num_draft": "ngram_spec_num_draft",
+        "ngram_spec_break_even": "ngram_spec_break_even",
+        "reasoning_parser": "reasoning_parser",
+        "is_pinned": "is_pinned",
+        "is_default": "is_default",
+        "trust_remote_code": "trust_remote_code",
+    }
+
+    # Complex fields that need special handling
+    if "chat_template_kwargs" in sent:
+        entry["chat_template_kwargs"] = request.chat_template_kwargs
+    if "forced_ct_kwargs" in sent:
+        entry["forced_ct_kwargs"] = request.forced_ct_kwargs
+
+    # Validate model_type_override
+    if "model_type_override" in sent:
+        valid_types = {
+            "llm", "vlm", "embedding", "reranker",
+            "audio_stt", "audio_tts", "audio_sts", "image",
+        }
+        override_value = request.model_type_override or None
+        if override_value is not None and override_value not in valid_types:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid model_type_override: {request.model_type_override}",
+            )
+
+    # Validate dflash_verify_mode
+    if "dflash_verify_mode" in sent and request.dflash_verify_mode:
+        valid_modes = {"soft", "hard", "off"}
+        if request.dflash_verify_mode not in valid_modes:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid dflash_verify_mode: {request.dflash_verify_mode}",
+            )
+
+    # Validate reasoning_parser
+    if "reasoning_parser" in sent and request.reasoning_parser:
+        valid_parsers = {"disabled", "deepseek", "anthropic"}
+        if request.reasoning_parser not in valid_parsers:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid reasoning_parser: {request.reasoning_parser}",
+            )
+
+    # Check which fields require reload
+    RELOAD_FIELDS = {
+        "model_type_override", "max_context_window", "chat_template_kwargs",
+        "forced_ct_kwargs", "dflash_enabled", "dflash_draft_model",
+        "dflash_draft_quant_enabled", "dflash_draft_quant_weight_bits",
+        "dflash_draft_quant_activation_bits", "dflash_draft_quant_group_size",
+        "dflash_max_ctx", "dflash_draft_window_size", "dflash_draft_sink_size",
+        "dflash_verify_mode", "mtp_enabled", "vlm_mtp_enabled",
+        "vlm_mtp_draft_model", "vlm_mtp_draft_block_size",
+        "ngram_spec_enabled", "ngram_spec_order", "ngram_spec_num_draft",
+        "specprefill_enabled", "specprefill_draft_model",
+        "turboquant_kv_enabled", "turboquant_kv_bits",
+        "enable_thinking", "thinking_budget_enabled", "thinking_budget_tokens",
+        "dflash_in_memory_cache", "dflash_in_memory_cache_max_entries",
+        "dflash_in_memory_cache_max_bytes", "dflash_ssd_cache",
+        "dflash_ssd_cache_max_bytes", "trust_remote_code",
+    }
+    requires_reload = bool(sent & RELOAD_FIELDS)
+
+    # Apply simple fields
+    for req_field, json_key in FIELD_MAP.items():
+        if req_field in sent:
+            val = getattr(request, req_field)
+            entry[json_key] = val
+
+    # Handle is_default: if setting a new default, clear old default
+    if "is_default" in sent and request.is_default:
+        for mid, ms in model_settings.items():
+            if mid != model_id and ms.get("is_default"):
+                ms["is_default"] = False
+
+    try:
+        _write_settings_json(sj)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to save settings: {e}")
+
+    logger.info(f"Model settings saved (fallback mode): {model_id}, fields={list(sent)}")
+    return {
+        "success": True,
+        "model_id": model_id,
+        "settings": entry,
+        "requires_reload": requires_reload,
+        "auto_unloaded": False,
+        "auto_reloaded": False,
     }
 
 
