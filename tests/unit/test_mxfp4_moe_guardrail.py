@@ -22,7 +22,7 @@ import logging
 
 import pytest
 
-from fusion_mlx import _mxfp4_moe_guardrail as g
+from fusion_mlx import mxfp4_moe_guardrail as g
 
 
 @pytest.fixture(autouse=True)
