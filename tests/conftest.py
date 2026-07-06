@@ -156,7 +156,12 @@ sys.modules["mlx_audio"] = MagicMock()
 sys.modules["dflash_mlx"] = MagicMock()
 
 # Mock heavy/optional dependencies
-_mock_module("transformers")
+# transformers: preserve real package if available (mlx_lm depends on it)
+try:
+    import transformers as _real_transformers
+    sys.modules["transformers"] = _real_transformers
+except ImportError:
+    _mock_module("transformers")
 _hf_hub = MagicMock()
 _hf_hub.__spec__ = MagicMock()
 _hf_hub.HfApi = MagicMock
@@ -176,7 +181,12 @@ _mock_module("mistral_common.tokens.tokenizers")
 _mock_module("sentencepiece")
 _mock_module("tiktoken")
 _mock_module("socksio")
-_mock_module("openai_harmony")
+# openai_harmony: preserve real package if available (tests import HarmonyEncodingName)
+try:
+    import openai_harmony as _real_openai_harmony
+    sys.modules["openai_harmony"] = _real_openai_harmony
+except ImportError:
+    _mock_module("openai_harmony")
 
 import pytest
 

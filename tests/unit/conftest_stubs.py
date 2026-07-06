@@ -62,7 +62,6 @@ def _install_stubs():
         "fusion_mlx.adapter.output_parser": {
             "OutputParserSession": type("OutputParserSession", (), {})
         },
-        "fusion_mlx.middleware.probe_fastpath": {},
         "fusion_mlx.utils.generation_config": {},
         "scripts": {},
     }
