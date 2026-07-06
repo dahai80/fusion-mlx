@@ -18,6 +18,7 @@ from ..utils.image import (
     compute_per_image_hashes,
     extract_images_from_messages,
 )
+from ..utils.video import DEFAULT_FPS, MAX_FRAMES
 from .base import BaseEngine, GenerationOutput, _fallback_parse_tool_calls
 
 logger = logging.getLogger(__name__)
@@ -501,17 +502,238 @@ class VLMBatchedEngine(BaseEngine):
             )
             return token_ids, None, None, None, 0, []
 
+    def _is_native_video_model(self) -> bool:
+        config = getattr(self._vlm_model, "config", None)
+        if config is None:
+            return False
+        return hasattr(config, "video_token_id") or hasattr(
+            config, "video_token_index"
+        )
+
+    def _prepare_native_video_inputs(
+        self,
+        messages: list[dict[str, Any]],
+        videos: list[str | dict],
+        video_fps: float = DEFAULT_FPS,
+        video_max_frames: int = MAX_FRAMES,
+    ) -> tuple:
+        """Use mlx_vlm native video path for Qwen-family models."""
+        from mlx_vlm.utils import prepare_inputs
+        from ..utils.video import process_video_input
+
+        # Apply chat template
+        template_kwargs = {"tokenize": False, "add_generation_prompt": True}
+        if self._enable_thinking is not None:
+            template_kwargs["enable_thinking"] = self._enable_thinking
+
+        template_target = self._processor
+        if not hasattr(template_target, "apply_chat_template"):
+            template_target = getattr(self._processor, "tokenizer", self._processor)
+
+        try:
+            prompt = template_target.apply_chat_template(messages, **template_kwargs)
+        except TypeError:
+            template_kwargs.pop("enable_thinking", None)
+            prompt = template_target.apply_chat_template(messages, **template_kwargs)
+
+        # Load video frames natively via mlx_vlm
+        all_images = []
+        for video in videos:
+            try:
+                video_path = process_video_input(video)
+                try:
+                    from mlx_vlm.video_generate import load_video
+
+                    video_frames = load_video(
+                        video_path, video_fps, video_max_frames
+                    )
+                    all_images.extend(video_frames)
+                    logger.info(
+                        "Native video: %d frames from %s",
+                        len(video_frames),
+                        video_path,
+                    )
+                except (ImportError, Exception) as e:
+                    logger.debug(
+                        "mlx_vlm load_video failed, falling back: %s", e
+                    )
+                    from ..utils.video import (
+                        extract_video_frames_smart,
+                        save_frames_to_temp,
+                    )
+
+                    frames = extract_video_frames_smart(
+                        video_path, fps=video_fps, max_frames=video_max_frames
+                    )
+                    frame_paths = save_frames_to_temp(frames)
+                    from ..utils.image import load_image
+
+                    for fp in frame_paths:
+                        all_images.append(load_image(fp))
+                    logger.info(
+                        "Fallback video: %d frames from %s",
+                        len(frame_paths),
+                        video_path,
+                    )
+            except Exception as e:
+                logger.warning("Video processing failed for %s: %s", video, e)
+
+        if not all_images:
+            return self._prepare_vision_inputs(messages, [])
+
+        inputs = prepare_inputs(
+            self._processor, images=all_images, prompts=[prompt]
+        )
+        input_ids = inputs["input_ids"]
+        pixel_values = inputs.get("pixel_values")
+        attention_mask = inputs.get("attention_mask")
+
+        extra_model_inputs = {
+            k: v
+            for k, v in inputs.items()
+            if k not in ("input_ids", "attention_mask", "pixel_values")
+            and v is not None
+        }
+
+        num_images = len(all_images)
+        if pixel_values is not None and num_images > 0:
+            image_hash = compute_image_hash(all_images)
+            call_kwargs = dict(extra_model_inputs)
+
+            if self._vision_cache is not None and self._vision_cache_enabled:
+                cached_whole = self._vision_cache.get(image_hash, self._model_name)
+                if cached_whole is not None:
+                    call_kwargs["cached_image_features"] = cached_whole
+                else:
+                    try:
+                        features = self._compute_vision_features(
+                            pixel_values, extra_model_inputs
+                        )
+                        if features is not None:
+                            mx.eval(features)
+                            call_kwargs["cached_image_features"] = features
+                            self._vision_cache.put(
+                                image_hash, self._model_name, features
+                            )
+                    except Exception:
+                        logger.debug(
+                            "Vision feature computation failed", exc_info=True
+                        )
+
+            try:
+                embed_features = self._vlm_model.get_input_embeddings(
+                    input_ids,
+                    pixel_values,
+                    mask=attention_mask,
+                    **call_kwargs,
+                )
+            except TypeError:
+                if "cached_image_features" in call_kwargs:
+                    self._vision_cache_enabled = False
+                    call_kwargs.pop("cached_image_features")
+                    embed_features = self._vlm_model.get_input_embeddings(
+                        input_ids, pixel_values, mask=attention_mask, **call_kwargs
+                    )
+                else:
+                    raise
+
+            mx.eval(embed_features.inputs_embeds)
+
+            extra_kwargs = {}
+            if hasattr(embed_features, "to_dict"):
+                for k, v in embed_features.to_dict().items():
+                    if k != "inputs_embeds" and v is not None:
+                        extra_kwargs[k] = v
+
+            lm = getattr(self._vlm_model, "language_model", None)
+            if lm is not None:
+                pid = getattr(lm, "_position_ids", None)
+                if pid is not None and "position_ids" not in extra_kwargs:
+                    extra_kwargs["position_ids"] = pid
+                rd = getattr(lm, "_rope_deltas", None)
+                if rd is not None:
+                    extra_kwargs["_captured_rope_deltas"] = rd
+
+            token_ids = (
+                input_ids[0].tolist() if input_ids.ndim > 1 else input_ids.tolist()
+            )
+            return token_ids, embed_features.inputs_embeds, extra_kwargs, image_hash, 0, []
+        else:
+            token_ids = (
+                input_ids[0].tolist() if input_ids.ndim > 1 else input_ids.tolist()
+            )
+            return token_ids, None, None, None, 0, []
+
     def _process_chat_messages(
         self,
         messages: list[dict[str, Any]],
         tools: list[dict] | None,
         kwargs: dict,
     ) -> tuple:
-        text_messages, images, _audio = extract_images_from_messages(messages)
+        text_messages, images, _videos, _audio = extract_images_from_messages(
+            messages
+        )
+
+        # Merge videos from message content into kwargs
+        if _videos and "videos" not in kwargs:
+            kwargs["videos"] = _videos
+
         if images:
             text_messages = (
                 self._apply_ocr_prompt(messages) if self.is_ocr_model else text_messages
             )
+
+        # Video frame extraction: video frames become additional images
+        videos = kwargs.get("videos") or []
+        if videos and self._is_native_video_model():
+            # Qwen native video path (preserves temporal info)
+            video_fps = kwargs.get("video_fps", DEFAULT_FPS)
+            video_max_frames = kwargs.get("video_max_frames", MAX_FRAMES)
+            (
+                token_ids,
+                vlm_embeds,
+                vlm_kwargs,
+                image_hash,
+                cache_key_start,
+                cache_key_ranges,
+            ) = self._prepare_native_video_inputs(
+                text_messages, videos, video_fps, video_max_frames
+            )
+            mx.synchronize()
+            mx.clear_cache()
+            return (
+                token_ids,
+                vlm_embeds,
+                vlm_kwargs,
+                image_hash,
+                cache_key_start,
+                cache_key_ranges,
+            )
+        elif videos:
+
+            video_fps = kwargs.get("video_fps", DEFAULT_FPS)
+            video_max_frames = kwargs.get("video_max_frames", MAX_FRAMES)
+
+            for video in videos:
+                try:
+                    video_path = process_video_input(video)
+                    frames = extract_video_frames_smart(
+                        video_path, fps=video_fps, max_frames=video_max_frames
+                    )
+                    frame_paths = save_frames_to_temp(frames)
+                    for fp in frame_paths:
+                        try:
+                            from ..utils.image import load_image
+                            images.append(load_image(fp))
+                        except Exception as e:
+                            logger.warning("Failed to load video frame %s: %s", fp, e)
+                    logger.info(
+                        "Video: extracted %d frames from %s",
+                        len(frame_paths),
+                        video_path,
+                    )
+                except Exception as e:
+                    logger.warning("Video processing failed for %s: %s", video, e)
 
         (
             token_ids,
@@ -842,7 +1064,7 @@ class VLMBatchedEngine(BaseEngine):
     def count_chat_tokens(
         self, messages: list[dict[str, Any]], tools: list[dict] | None = None
     ) -> int:
-        text_messages, _, _ = extract_images_from_messages(messages)
+        text_messages, _, _, _ = extract_images_from_messages(messages)
         prompt = (
             "\n".join(f"{m['role']}: {m['content']}" for m in text_messages)
             + "\nassistant:"

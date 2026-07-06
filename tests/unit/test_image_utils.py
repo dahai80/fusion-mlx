@@ -119,7 +119,7 @@ class TestExtractImagesFromMessages:
             {"role": "user", "content": "Hello"},
             {"role": "assistant", "content": "Hi there"},
         ]
-        text_msgs, images, audio = extract_images_from_messages(messages)
+        text_msgs, images, videos, audio = extract_images_from_messages(messages)
         assert len(text_msgs) == 2
         assert len(images) == 0
         assert len(audio) == 0
@@ -140,7 +140,7 @@ class TestExtractImagesFromMessages:
                 ],
             },
         ]
-        text_msgs, images, audio = extract_images_from_messages(messages)
+        text_msgs, images, videos, audio = extract_images_from_messages(messages)
         assert len(images) == 1
         assert isinstance(images[0], Image.Image)
         # Text-only message should contain only text part
@@ -161,7 +161,7 @@ class TestExtractImagesFromMessages:
                 ],
             },
         ]
-        text_msgs, images, audio = extract_images_from_messages(messages)
+        text_msgs, images, videos, audio = extract_images_from_messages(messages)
         assert len(images) == 1
         assert isinstance(images[0], Image.Image)
         assert text_msgs[0]["role"] == "user"
@@ -189,7 +189,7 @@ class TestExtractImagesFromMessages:
                 ],
             },
         ]
-        text_msgs, images, audio = extract_images_from_messages(messages)
+        text_msgs, images, videos, audio = extract_images_from_messages(messages)
         assert len(images) == 2
 
     def test_mixed_text_and_image_messages(self):
@@ -211,7 +211,7 @@ class TestExtractImagesFromMessages:
             },
             {"role": "assistant", "content": "I see an image."},
         ]
-        text_msgs, images, audio = extract_images_from_messages(messages)
+        text_msgs, images, videos, audio = extract_images_from_messages(messages)
         assert len(images) == 1
         assert len(text_msgs) == 3
         # System message preserved as-is
@@ -226,7 +226,7 @@ class TestExtractImagesFromMessages:
                 "tool_calls": [{"id": "tc1", "function": {"name": "test"}}],
             },
         ]
-        text_msgs, images, audio = extract_images_from_messages(messages)
+        text_msgs, images, videos, audio = extract_images_from_messages(messages)
         assert "tool_calls" in text_msgs[0]
 
     def test_invalid_image_url_skipped(self):
@@ -240,7 +240,7 @@ class TestExtractImagesFromMessages:
                 ],
             },
         ]
-        text_msgs, images, audio = extract_images_from_messages(messages)
+        text_msgs, images, videos, audio = extract_images_from_messages(messages)
         assert len(images) == 0
 
     def test_pydantic_model_content_parts(self):
@@ -263,7 +263,7 @@ class TestExtractImagesFromMessages:
         messages = [
             {"role": "user", "content": [image_part, text_part]},
         ]
-        text_msgs, images, audio = extract_images_from_messages(messages)
+        text_msgs, images, videos, audio = extract_images_from_messages(messages)
         assert len(images) == 1
 
     def test_input_audio_base64_data_uri(self):
@@ -283,7 +283,7 @@ class TestExtractImagesFromMessages:
                 ],
             },
         ]
-        text_msgs, images, audio = extract_images_from_messages(messages)
+        text_msgs, images, videos, audio = extract_images_from_messages(messages)
         assert len(audio) == 1
         assert len(images) == 0
         # Audio should be a BytesIO object
@@ -310,7 +310,7 @@ class TestExtractImagesFromMessages:
                 ],
             },
         ]
-        text_msgs, images, audio = extract_images_from_messages(messages)
+        text_msgs, images, videos, audio = extract_images_from_messages(messages)
         assert len(audio) == 1
         assert hasattr(audio[0], "read")
 
@@ -332,7 +332,7 @@ class TestExtractImagesFromMessages:
                 ],
             },
         ]
-        text_msgs, images, audio = extract_images_from_messages(messages)
+        text_msgs, images, videos, audio = extract_images_from_messages(messages)
         assert len(audio) == 1
         assert hasattr(audio[0], "read")
 
@@ -352,7 +352,7 @@ class TestExtractImagesFromMessages:
                 ],
             },
         ]
-        text_msgs, images, audio = extract_images_from_messages(messages)
+        text_msgs, images, videos, audio = extract_images_from_messages(messages)
         assert len(audio) == 1
         # Should be the string path, not a BytesIO (not valid base64)
         assert isinstance(audio[0], str)
@@ -375,7 +375,7 @@ class TestExtractImagesFromMessages:
                 ],
             },
         ]
-        text_msgs, images, audio = extract_images_from_messages(messages)
+        text_msgs, images, videos, audio = extract_images_from_messages(messages)
         assert len(audio) == 0
 
     def test_audio_mixed_with_images(self):
@@ -406,11 +406,70 @@ class TestExtractImagesFromMessages:
                 ],
             },
         ]
-        text_msgs, images, audio = extract_images_from_messages(messages)
+        text_msgs, images, videos, audio = extract_images_from_messages(messages)
         assert len(images) == 1
         assert len(audio) == 1
         # Text content should be preserved
         assert "Describe this image and audio" in text_msgs[0]["content"]
+
+    def test_video_url_extraction(self):
+        messages = [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "Describe this video"},
+                    {
+                        "type": "video_url",
+                        "video_url": {"url": "https://example.com/test.mp4"},
+                    },
+                ],
+            },
+        ]
+        text_msgs, images, videos, audio = extract_images_from_messages(messages)
+        assert len(videos) == 1
+        assert videos[0] == "https://example.com/test.mp4"
+        assert "[video]" in text_msgs[0]["content"]
+        assert len(images) == 0
+
+    def test_video_type_extraction(self):
+        messages = [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "What happens here"},
+                    {
+                        "type": "video",
+                        "video": {"url": "https://example.com/clip.mp4"},
+                    },
+                ],
+            },
+        ]
+        text_msgs, images, videos, audio = extract_images_from_messages(messages)
+        assert len(videos) == 1
+        assert videos[0] == "https://example.com/clip.mp4"
+
+    def test_mixed_image_and_video(self):
+        messages = [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "Compare"},
+                    {
+                        "type": "image_url",
+                        "image_url": {
+                            "url": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
+                        },
+                    },
+                    {
+                        "type": "video_url",
+                        "video_url": {"url": "https://example.com/vid.mp4"},
+                    },
+                ],
+            },
+        ]
+        text_msgs, images, videos, audio = extract_images_from_messages(messages)
+        assert len(images) == 1
+        assert len(videos) == 1
 
 
 # =============================================================================
