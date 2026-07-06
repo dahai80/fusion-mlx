@@ -27,9 +27,10 @@ PRESET_REMOTE_URL = "http://bench.dpdns.org/assets/omlx_preset.json"
 
 from .helpers import (
     _get_engine_pool,
+    _get_hf_downloader,
+    _get_model_dirs,
     _get_rich_global_settings,
     _get_settings_manager,
-    _hf_downloader,
     format_size,
     get_system_memory_info,
 )
@@ -51,11 +52,12 @@ async def start_hf_download(
     is_admin: bool = Depends(require_admin),
 ):
     """Start downloading a model from HuggingFace."""
-    if _hf_downloader is None:
+    dl = _get_hf_downloader()
+    if dl is None:
         raise HTTPException(status_code=503, detail="Downloader not initialized")
 
     try:
-        task = await _hf_downloader.start_download(request.repo_id, request.hf_token)
+        task = await dl.start_download(request.repo_id, request.hf_token)
         return {"success": True, "task": task.to_dict()}
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -64,10 +66,11 @@ async def start_hf_download(
 @_router.get("/api/hf/tasks")
 async def list_hf_tasks(is_admin: bool = Depends(require_admin)):
     """List all download tasks."""
-    if _hf_downloader is None:
+    dl = _get_hf_downloader()
+    if dl is None:
         raise HTTPException(status_code=503, detail="Downloader not initialized")
 
-    return {"tasks": _hf_downloader.get_tasks()}
+    return {"tasks": dl.get_tasks()}
 
 
 @_router.post("/api/hf/cancel/{task_id}")
@@ -76,10 +79,11 @@ async def cancel_hf_download(
     is_admin: bool = Depends(require_admin),
 ):
     """Cancel an active download."""
-    if _hf_downloader is None:
+    dl = _get_hf_downloader()
+    if dl is None:
         raise HTTPException(status_code=503, detail="Downloader not initialized")
 
-    success = await _hf_downloader.cancel_download(task_id)
+    success = await dl.cancel_download(task_id)
     if not success:
         raise HTTPException(status_code=404, detail="Task not found or not cancellable")
     return {"success": True}
@@ -96,11 +100,12 @@ async def retry_hf_download(
     is_admin: bool = Depends(require_admin),
 ):
     """Retry a failed or cancelled download, resuming from existing files."""
-    if _hf_downloader is None:
+    dl = _get_hf_downloader()
+    if dl is None:
         raise HTTPException(status_code=503, detail="Downloader not initialized")
 
     try:
-        task = await _hf_downloader.retry_download(task_id, request.hf_token)
+        task = await dl.retry_download(task_id, request.hf_token)
         return {"success": True, "task": task.to_dict()}
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -112,10 +117,11 @@ async def remove_hf_task(
     is_admin: bool = Depends(require_admin),
 ):
     """Remove a completed, failed, or cancelled task."""
-    if _hf_downloader is None:
+    dl = _get_hf_downloader()
+    if dl is None:
         raise HTTPException(status_code=503, detail="Downloader not initialized")
 
-    success = _hf_downloader.remove_task(task_id)
+    success = dl.remove_task(task_id)
     if not success:
         raise HTTPException(status_code=404, detail="Task not found or still active")
     return {"success": True}
@@ -127,7 +133,8 @@ async def get_recommended_models(
     is_admin: bool = Depends(require_admin),
 ):
     """Get recommended models filtered by system memory."""
-    if _hf_downloader is None:
+    dl = _get_hf_downloader()
+    if dl is None:
         raise HTTPException(status_code=503, detail="Downloader not initialized")
 
     memory_info = get_system_memory_info()
@@ -241,13 +248,11 @@ async def get_hf_model_info(
 @_router.get("/api/hf/models")
 async def list_hf_models(is_admin: bool = Depends(require_admin)):
     """List models in all model directories with disk size info."""
-    global_settings = _get_rich_global_settings()
-    if global_settings is None:
-        raise HTTPException(status_code=503, detail="Server not initialized")
+    model_dirs = _get_model_dirs()
+    if not model_dirs:
+        raise HTTPException(status_code=503, detail="No model directories configured")
 
-    model_dirs = global_settings.model.get_model_dirs(global_settings.base_path)
-
-    from ..model_discovery import _resolve_hf_cache_entry
+    from ..pool.model_discovery import _resolve_hf_cache_entry
 
     def _add_model(model_path: Path, model_name: str) -> None:
         if model_name in seen_names:
@@ -302,13 +307,11 @@ async def delete_hf_model(
     is_admin: bool = Depends(require_admin),
 ):
     """Delete a downloaded model from disk and refresh the model pool."""
-    global_settings = _get_rich_global_settings()
+    model_dirs = _get_model_dirs()
     engine_pool = _get_engine_pool()
 
-    if global_settings is None:
-        raise HTTPException(status_code=503, detail="Server not initialized")
-
-    model_dirs = global_settings.model.get_model_dirs(global_settings.base_path)
+    if not model_dirs:
+        raise HTTPException(status_code=503, detail="No model directories configured")
 
     # Search for model across all directories in both flat and org-folder layouts
     model_path = None

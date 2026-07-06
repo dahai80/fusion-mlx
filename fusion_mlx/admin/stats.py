@@ -185,6 +185,9 @@ def _build_runtime_cache_observability(
             "total_num_files": 0,
             "total_size_bytes": 0,
             "effective_block_sizes": [],
+            "hot_cache_max_bytes": 0,
+            "hot_cache_size_bytes": 0,
+            "hot_cache_entries": 0,
         }
 
     cache_dir = global_settings.cache.get_ssd_cache_dir(global_settings.base_path)
@@ -546,6 +549,9 @@ def _build_active_models_data() -> dict:
                 snapshot = entry.engine.get_activity_snapshot()
                 active_requests = snapshot.get("active_requests", 0)
                 activities = snapshot.get("activities", [])
+                _contention_detected = False
+                _decode_step_time_ms = None
+                _decode_step_cv_pct = None
 
         prefilling = tracker.get_model_progress(model_id)
         prefilling_ids = {p["request_id"] for p in prefilling}

@@ -65,7 +65,7 @@ async def list_models(is_admin: bool = Depends(require_admin)):
     server_state = _get_server_state()
 
     if engine_pool is None:
-        raise HTTPException(status_code=503, detail="Server not initialized")
+        return {"models": []}
 
     # Get engine pool status
     status = engine_pool.get_status()
@@ -110,7 +110,7 @@ async def list_models(is_admin: bool = Depends(require_admin)):
             ),
             "pinned": model_info.get("pinned", False),
             "is_default": (
-                server_state.default_model == model_id if server_state else False
+                server_state.get("default_model") == model_id if server_state else False
             ),
             "engine_type": model_info.get("engine_type", "batched"),
             "model_type": model_info.get("model_type", "llm"),
