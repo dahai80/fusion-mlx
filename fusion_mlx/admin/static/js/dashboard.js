@@ -69,7 +69,7 @@
     function dashboard() {
         return {
             // Theme
-            theme: localStorage.getItem('omlx-chat-theme') || 'auto',
+            theme: localStorage.getItem('fusionmlx-chat-theme') || 'auto',
             activeTheme: 'light', // Will be updated by applyTheme
             systemThemeListener: null,
 
@@ -406,7 +406,7 @@
             oqPreserveMtp: false,
 
             // oQ Uploader state
-            uploadHfToken: localStorage.getItem('omlx-hf-upload-token') || '',
+            uploadHfToken: localStorage.getItem('fusionmlx-hf-upload-token') || '',
             uploadHfUsername: '',
             uploadHfOrgs: [],
             uploadHfNamespace: '',
@@ -908,7 +908,7 @@
                 const chars = 'abcdefghijklmnopqrstuvwxyz0123456789';
                 const rand = Array.from(crypto.getRandomValues(new Uint8Array(16)))
                     .map(b => chars[b % chars.length]).join('');
-                this.newSubKeyValue = 'omlx-' + rand;
+                this.newSubKeyValue = 'fusionmlx-' + rand;
                 this.showNewSubKey = true;
             },
 
@@ -1244,7 +1244,7 @@
 
             async loadPresets() {
                 // Use localStorage cache if present, otherwise fall back to the bundled file.
-                const cached = localStorage.getItem('omlx_preset_cache');
+                const cached = localStorage.getItem('fusionmlx_preset_cache');
                 if (cached) {
                     try {
                         const parsed = JSON.parse(cached);
@@ -1253,7 +1253,7 @@
                     } catch (e) { /* corrupted, fall through */ }
                 }
                 try {
-                    const r = await fetch('/admin/static/omlx_preset.json');
+                    const r = await fetch('/admin/static/fusionmlx_preset.json');
                     if (r.ok) {
                         const data = await r.json();
                         this.presets = data.presets || [];
@@ -1271,7 +1271,7 @@
                     if (r.ok) {
                         const data = await r.json();
                         this.presets = data.presets || [];
-                        localStorage.setItem('omlx_preset_cache', JSON.stringify(data));
+                        localStorage.setItem('fusionmlx_preset_cache', JSON.stringify(data));
                     } else if (r.status === 401) {
                         window.location.href = '/admin';
                     }
@@ -1542,7 +1542,7 @@
 
             setScope(scope) {
                 this.profileScope = scope;
-                try { localStorage.setItem('omlx_profile_scope', scope); } catch (e) {}
+                try { localStorage.setItem('fusionmlx_profile_scope', scope); } catch (e) {}
             },
 
             isValidProfileName(name) {
@@ -1855,7 +1855,7 @@
                     this.profilesDrift = false;
                 } else {
                     try {
-                        const saved = localStorage.getItem('omlx_profile_scope');
+                        const saved = localStorage.getItem('fusionmlx_profile_scope');
                         if (saved === 'preset' || saved === 'global' || saved === 'model') {
                             this.profileScope = saved;
                         }
@@ -2388,8 +2388,8 @@
             },
 
             _launchCmd(tool) {
-                const raw = this.stats.cli_prefix || 'omlx';
-                const cli = raw === 'omlx' ? raw : this.shellQuote(raw);
+                const raw = this.stats.cli_prefix || 'fusionmlx';
+                const cli = raw === 'fusionmlx' ? raw : this.shellQuote(raw);
                 return `${cli} launch ${tool}`;
             },
 
@@ -2971,8 +2971,8 @@
                 const rpad = (s, w) => s.toString().padEnd(w);
                 let lines = [];
 
-                lines.push('oMLX - LLM inference, optimized for your Mac');
-                lines.push('https://github.com/jundot/omlx');
+                lines.push('Fusion-MLX - LLM inference, optimized for your Mac');
+                lines.push('https://github.com/dahai80/fusion-mlx');
                 lines.push(`Benchmark Model: ${this.benchModelId}`);
                 lines.push(`Engine: ${this.benchForceLmEngine ? 'Force mlx-lm' : 'Auto'}`);
                 lines.push('='.repeat(80));
@@ -3681,21 +3681,21 @@
             // Memory guard tier → live hard ceiling (GB) for the selected tier.
             // Mirrors ProcessMemoryEnforcer._get_hard_limit_bytes:
             //   static_ceiling  = total - tier.static_reserve
-            //   dynamic_ceiling = omlx_phys + free + inactive + active * ratio
+            //   dynamic_ceiling = fusionmlx_phys + free + inactive + active * ratio
             //   final = min(static, dynamic, metal_cap)
             // The static / dynamic inputs come from the global-settings
             // response and reflect the moment that response was fetched.
             // Warning shown below the breakdown when the kernel
-            // iogpu.wired_limit_mb is lower than what oMLX asked Metal
+            // iogpu.wired_limit_mb is lower than what Fusion-MLX asked Metal
             // to allow at start. Returns an HTML string with the exact
             // sysctl command the user can paste into Terminal, or "" when
             // the kernel cap is fine.
             // True when the kernel iogpu.wired_limit_mb (or Apple default
-            // working set) caps oMLX below its desired static ceiling.
+            // working set) caps Fusion-MLX below its desired static ceiling.
             get memoryGuardShowWiredLimitWarning() {
                 const sys = this.globalSettings.system || {};
                 const kernelBytes = sys.iogpu_wired_limit_bytes || 0;
-                const requestedBytes = sys.omlx_wired_limit_request_bytes || 0;
+                const requestedBytes = sys.fusionmlx_wired_limit_request_bytes || 0;
                 if (kernelBytes <= 0 || requestedBytes <= 0) return false;
                 return kernelBytes < requestedBytes;
             },
@@ -3716,7 +3716,7 @@
             // The sysctl command rendered in the dark bold <code> chip.
             get memoryGuardWiredLimitCommand() {
                 if (!this.memoryGuardShowWiredLimitWarning) return '';
-                const requested = this.globalSettings.system.omlx_wired_limit_request_bytes;
+                const requested = this.globalSettings.system.fusionmlx_wired_limit_request_bytes;
                 const requestedMB = Math.ceil(requested / (1024 ** 2));
                 return `sudo sysctl iogpu.wired_limit_mb=${requestedMB}`;
             },
@@ -3820,8 +3820,8 @@
                 const ratio = { safe: 0.2, balanced: 0.5, aggressive: 0.8 }[tier] ?? 0.5;
                 const pct = Math.round(ratio * 100);
                 const reclaim = activeGB * ratio;
-                const omlxGB = (sys.omlx_phys_footprint_bytes || 0) / GB;
-                const dynamicCeiling = omlxGB + freeGB + inactiveGB + reclaim;
+                const fusionmlxGB = (sys.fusionmlx_phys_footprint_bytes || 0) / GB;
+                const dynamicCeiling = fusionmlxGB + freeGB + inactiveGB + reclaim;
                 const candidates = [dynamicCeiling, staticCeiling];
                 if (metalCapGB > 0) candidates.push(metalCapGB);
                 const ceiling = Math.max(0, Math.min(...candidates));
@@ -3996,7 +3996,7 @@
             // Theme select
             setTheme(theme) {
                 this.theme = theme;
-                localStorage.setItem('omlx-chat-theme', this.theme);
+                localStorage.setItem('fusionmlx-chat-theme', this.theme);
                 this.applyTheme();
             },
 
@@ -4458,7 +4458,7 @@
                         this.uploadHfOrgs = data.orgs || [];
                         this.uploadHfNamespace = this.uploadHfUsername;
                         this.uploadTokenValidated = true;
-                        localStorage.setItem('omlx-hf-upload-token', this.uploadHfToken);
+                        localStorage.setItem('fusionmlx-hf-upload-token', this.uploadHfToken);
                         this.loadUploadOqModels();
                     } else {
                         this.uploadError = data.detail || window.t('models.uploader.invalid_token');

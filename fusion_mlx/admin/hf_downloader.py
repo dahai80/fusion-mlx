@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""HuggingFace model downloader for oMLX admin panel.
+"""HuggingFace model downloader for Fusion-MLX admin panel.
 
 Downloads models from HuggingFace Hub using huggingface_hub's snapshot_download
 with directory-size-based progress polling.
@@ -126,7 +126,7 @@ def _make_cancellable_tqdm(should_cancel: Callable[[], bool]) -> type:
     cleanly within one chunk, releasing its buffers and connection.
 
     Note: this relies on the Python http_get path. If HF_HUB_ENABLE_HF_TRANSFER
-    is on, the Rust path ignores tqdm_class and this won't interrupt; oMLX does
+    is on, the Rust path ignores tqdm_class and this won't interrupt; Fusion-MLX does
     not enable hf_transfer.
     """
 

@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Admin panel routes for oMLX server configuration.
+"""Admin panel routes for Fusion-MLX server configuration.
 
 This module provides HTTP routes for the admin panel including:
 - Login/logout with API key authentication
@@ -17,7 +17,7 @@ from fastapi.templating import Jinja2Templates
 
 logger = logging.getLogger(__name__)
 
-PRESET_REMOTE_URL = "http://bench.dpdns.org/assets/omlx_preset.json"
+PRESET_REMOTE_URL = "http://bench.dpdns.org/assets/fusionmlx_preset.json"
 
 
 # =============================================================================
@@ -40,9 +40,9 @@ def _static_version(path: str) -> str:
 
 templates.env.globals["static"] = _static_version
 
-from fusion_mlx._version import __version__ as _omlx_version
+from fusion_mlx._version import __version__ as _fusionmlx_version
 
-templates.env.globals["version"] = _omlx_version
+templates.env.globals["version"] = _fusionmlx_version
 
 # i18n — English fallback, overridden by _refresh_i18n_globals()
 _i18n_dir = Path(__file__).parent / "i18n"

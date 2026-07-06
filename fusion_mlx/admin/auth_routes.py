@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Admin panel routes for oMLX server configuration.
+"""Admin panel routes for Fusion-MLX server configuration.
 
 This module provides HTTP routes for the admin panel including:
 - Login/logout with API key authentication
@@ -23,7 +23,7 @@ from .auth import (
 
 logger = logging.getLogger(__name__)
 
-PRESET_REMOTE_URL = "http://bench.dpdns.org/assets/omlx_preset.json"
+PRESET_REMOTE_URL = "http://bench.dpdns.org/assets/fusionmlx_preset.json"
 
 
 from .helpers import (
@@ -80,7 +80,7 @@ async def login(request: LoginRequest, response: Response):
     token = create_session_token(remember=request.remember)
     cookie_max_age = REMEMBER_ME_MAX_AGE if request.remember else SESSION_MAX_AGE
     response.set_cookie(
-        key="omlx_admin_session",
+        key="fusionmlx_admin_session",
         value=token,
         httponly=True,
         samesite="lax",
@@ -155,7 +155,7 @@ async def setup_api_key(
     # Create session token and set cookie (auto-login after setup)
     token = create_session_token()
     response.set_cookie(
-        key="omlx_admin_session",
+        key="fusionmlx_admin_session",
         value=token,
         httponly=True,
         samesite="lax",
@@ -176,7 +176,7 @@ async def logout(response: Response):
     Returns:
         JSON response with success status.
     """
-    response.delete_cookie(key="omlx_admin_session")
+    response.delete_cookie(key="fusionmlx_admin_session")
     return {"success": True}
 
 
@@ -215,7 +215,7 @@ async def auto_login(fastapi_request: Request, redirect: str = "/admin/dashboard
     token = create_session_token()
     response = RedirectResponse(url=redirect, status_code=302)
     response.set_cookie(
-        key="omlx_admin_session",
+        key="fusionmlx_admin_session",
         value=token,
         httponly=True,
         samesite="lax",
@@ -250,7 +250,7 @@ async def auto_login_get(
     token = create_session_token()
     response = RedirectResponse(url=redirect, status_code=302)
     response.set_cookie(
-        key="omlx_admin_session",
+        key="fusionmlx_admin_session",
         value=token,
         httponly=True,
         samesite="lax",
