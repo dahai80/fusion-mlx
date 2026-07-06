@@ -20,7 +20,7 @@ from .helpers import (
 
 # Import protocol-specific output parser support
 try:
-    from .adapter.output_parser import (
+    from ..parsers.output_parser import (
         OutputParserFactory,
         OutputParserSession,
         detect_output_parser,

@@ -593,7 +593,7 @@ def _turboquant_compress_cache(
     """Compress KVCache V tensors using TurboQuant (K stays FP16)."""
     from mlx_lm.models.cache import KVCache
 
-    from .turboquant_kv import TurboQuantConfig, TurboQuantKVCache, auto_select_bits
+    from .turboquant_kv import TurboQuantKVCache, auto_select_bits
 
     compressed_count = 0
     result = []
@@ -604,8 +604,7 @@ def _turboquant_compress_cache(
         if isinstance(layer, KVCache) and layer.keys is not None:
             head_dim = layer.values.shape[-1] if layer.values is not None else 128
             actual_bits = bits if bits is not None else auto_select_bits(head_dim)
-            config = TurboQuantConfig(bits=actual_bits, group_size=group_size)
-            result.append(TurboQuantKVCache.from_kv_cache(layer, config))
+            result.append(TurboQuantKVCache.from_cache(layer, bits=actual_bits))
             compressed_count += 1
         else:
             result.append(layer)
@@ -613,22 +612,29 @@ def _turboquant_compress_cache(
     if compressed_count > 0:
         logger.debug(
             f"TurboQuant compressed {compressed_count}/{len(cache)} layers "
-            f"({bits or 'auto'}-bit, group_size={group_size})"
+            f"({bits or 'auto'}-bit)"
         )
     return result
 
 
 def _turboquant_decompress_cache(cache: list[Any]) -> list[Any]:
     """Decompress TurboQuantKVCache layers back to regular KVCache."""
-    from .turboquant import TurboQuantKVCache
+    from mlx_lm.models.cache import KVCache
+
+    from .turboquant_kv import TurboQuantKVCache
 
     result = []
     for layer in cache:
         if layer is None:
             result.append(layer)
             continue
-        if isinstance(layer, TurboQuantKVCache) and layer.keys is not None:
-            result.append(layer.to_kv_cache())
+        if isinstance(layer, TurboQuantKVCache):
+            keys, values = layer.dequantize()
+            kv = KVCache()
+            kv.offset = keys.shape[2] if keys.ndim >= 3 else 0
+            kv.keys = keys
+            kv.values = values
+            result.append(kv)
         else:
             result.append(layer)
     return result

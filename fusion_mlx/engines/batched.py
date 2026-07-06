@@ -314,6 +314,23 @@ class BatchedEngine(BaseEngine):
                 self._engine.engine.scheduler._turboquant_skip_last = getattr(
                     self._model_settings, "turboquant_skip_last", True
                 )
+                tq_mode = getattr(
+                    self._model_settings, "kv_cache_turboquant_mode", None
+                ) or getattr(
+                    self._engine.engine.scheduler, "_turboquant_kv_mode", "v4"
+                )
+                if tq_mode not in ("v4", "k8v4"):
+                    logger.warning(
+                        "TurboQuant mode %r not in ('v4', 'k8v4'), defaulting to v4",
+                        tq_mode,
+                    )
+                    tq_mode = "v4"
+                self._engine.engine.scheduler._turboquant_kv_mode = tq_mode
+                if tq_mode == "k8v4":
+                    logger.info(
+                        "TurboQuant K8V4 mode requested — live KV cache uses V4 "
+                        "(mlx_vlm); K8V4 applies to prefix cache storage only."
+                    )
                 if not tq_explicit:
                     logger.info(
                         "TurboQuant KV cache auto-enabled (4-bit) — no explicit "

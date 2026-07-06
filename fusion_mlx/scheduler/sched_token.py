@@ -329,6 +329,7 @@ def _apply_turboquant_kv_empty(self, prompt_cache: list[Any]) -> None:
 
     converted = 0
     bits = float(self._turboquant_kv_bits)
+    mode = getattr(self, "_turboquant_kv_mode", "v4")
     for i, cache_obj in enumerate(prompt_cache):
         if isinstance(cache_obj, KVCache):
             if i == last_kv_idx:
@@ -346,9 +347,10 @@ def _apply_turboquant_kv_empty(self, prompt_cache: list[Any]) -> None:
             cache_obj.caches = tuple(new_caches)
     if converted > 0:
         skip_msg = ", skipped last KVCache layer" if skip_last else ""
+        mode_msg = f" (mode={mode})" if mode != "v4" else ""
         logger.info(
             f"TurboQuant: {converted}/{len(prompt_cache)} "
-            f"cache layers set to {bits}-bit{skip_msg}"
+            f"cache layers set to {bits}-bit{skip_msg}{mode_msg}"
         )
 
 
@@ -369,6 +371,7 @@ def _apply_turboquant_kv_convert(self, prompt_cache: list[Any]) -> None:
 
     converted = 0
     bits = float(self._turboquant_kv_bits)
+    mode = getattr(self, "_turboquant_kv_mode", "v4")
     for i, cache_obj in enumerate(prompt_cache):
         if isinstance(cache_obj, KVCache):
             if i == last_kv_idx:
@@ -386,7 +389,8 @@ def _apply_turboquant_kv_convert(self, prompt_cache: list[Any]) -> None:
             cache_obj.caches = tuple(new_caches)
     if converted > 0:
         skip_msg = ", skipped last KVCache layer" if skip_last else ""
+        mode_msg = f" (mode={mode})" if mode != "v4" else ""
         logger.info(
             f"TurboQuant: converted {converted}/{len(prompt_cache)} "
-            f"cache layers to {bits}-bit{skip_msg}"
+            f"cache layers to {bits}-bit{skip_msg}{mode_msg}"
         )

@@ -16,8 +16,13 @@ from .body_depth import (
 )
 from .body_size import RequestBodyLimitMiddleware, install_request_body_limit_middleware
 from .exception_handlers import install_exception_handlers
+from .probe_fastpath import (
+    ProbeFastPathMiddleware,
+    install_probe_fastpath_middleware,
+)
 
 __all__ = [
+    "ProbeFastPathMiddleware",
     "RateLimiter",
     "RequestBodyDepthMiddleware",
     "RequestBodyLimitMiddleware",
@@ -25,6 +30,7 @@ __all__ = [
     "check_rate_limit_or_x_api_key",
     "configure_rate_limiter",
     "install_exception_handlers",
+    "install_probe_fastpath_middleware",
     "install_request_body_depth_middleware",
     "install_request_body_limit_middleware",
     "rate_limiter",

@@ -64,6 +64,7 @@ dependencies = [
      "rich>=13.0.0",
      "click>=8.0.0",
     "argcomplete>=3.6",
+    "websockets>=12.0",
 ]
 
 [project.optional-dependencies]
