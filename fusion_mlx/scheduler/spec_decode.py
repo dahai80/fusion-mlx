@@ -391,3 +391,485 @@ def spec_decode_step(
             break
 
     return outputs
+
+
+DFLASH_SPEC_WARMUP_STEPS = 2
+DFLASH_SPEC_LOG_INTERVAL = 50
+
+
+class DFlashSpecState:
+    """Per-scheduler DFlash speculative decode state."""
+
+    def __init__(self, runtime):
+        self.runtime = runtime
+        self.steps_since_start = 0
+        self.total_spec_steps = 0
+        self.total_draft_proposed = 0
+        self.total_draft_accepted = 0
+        self._last_request_id = None
+
+    def on_new_request(self, request_id: str):
+        if self._last_request_id != request_id:
+            self._last_request_id = request_id
+            self.steps_since_start = 0
+            drafter = getattr(self.runtime, "drafter", None)
+            if drafter is not None:
+                drafter.reset()
+
+    def add_token(self, token: int):
+        self.steps_since_start += 1
+
+    def should_speculate(self) -> bool:
+        return self.steps_since_start >= DFLASH_SPEC_WARMUP_STEPS
+
+    def record_result(self, n_accepted: int, n_total: int):
+        self.total_spec_steps += 1
+        self.total_draft_proposed += n_total
+        self.total_draft_accepted += n_accepted
+
+    def get_stats(self) -> dict:
+        rate = (
+            self.total_draft_accepted / self.total_draft_proposed
+            if self.total_draft_proposed > 0
+            else 0.0
+        )
+        return {
+            "spec_steps": self.total_spec_steps,
+            "draft_proposed": self.total_draft_proposed,
+            "draft_accepted": self.total_draft_accepted,
+            "acceptance_rate": rate,
+            "block_size": self.runtime.drafter.block_size,
+        }
+
+
+def dflash_spec_step(
+    scheduler,
+    output,
+    current_token: int,
+    request_id: str,
+) -> list[RequestOutput]:
+    """DFlash block-diffusion speculative decode after a regular decode step.
+
+    Uses the DFlash drafter to produce a draft block (block_size tokens),
+    then verifies against the target model using _run_spec_verify.
+    The cache is already past current_token from the regular step, so
+    we feed [D1, D2, ..., DK] (not [current_token, D1, ...]).
+    """
+    dflash_state = getattr(scheduler, "_dflash_spec_state", None)
+    if dflash_state is None:
+        dflash_runtime = scheduler._dflash_runtime
+        if dflash_runtime is None:
+            return []
+        dflash_state = DFlashSpecState(dflash_runtime)
+        scheduler._dflash_spec_state = dflash_state
+
+    request = scheduler.running.get(request_id)
+    if request is None:
+        return []
+
+    if dflash_state._last_request_id != request_id:
+        dflash_state.on_new_request(request_id)
+
+    dflash_state.add_token(current_token)
+
+    if not dflash_state.should_speculate():
+        if dflash_state.steps_since_start <= 3:
+            logger.info(
+                "dflash_spec: warming up step=%d/%d",
+                dflash_state.steps_since_start,
+                DFLASH_SPEC_WARMUP_STEPS,
+            )
+        return []
+
+    bg = scheduler.batch_generator
+    if bg is None:
+        return []
+
+    gen = bg._generation_batch
+    if gen is None:
+        return []
+
+    prompt_cache = gen.prompt_cache
+    model = gen.model
+    drafter = dflash_state.runtime.drafter
+
+    # Get current offset from cache
+    current_offset = 0
+    for c in prompt_cache:
+        if hasattr(c, "offset"):
+            current_offset = max(current_offset, c.offset)
+
+    # Draft a block using the DFlash drafter
+    prefix_tokens = mx.array([current_token], dtype=mx.uint32)
+    try:
+        draft_block = drafter.draft_block(prefix_tokens, current_offset)
+    except (IndexError, RuntimeError) as e:
+        logger.debug("dflash_spec: draft_block failed: %s", e)
+        return []
+
+    block_size = drafter.block_size
+    draft_tokens = [int(x) for x in draft_block.tolist()]
+    K = len(draft_tokens)
+    if K == 0:
+        return []
+
+    # Capture regular step's sampled token for D1 verification
+    sampled_from_regular = None
+    if gen._next_tokens is not None:
+        try:
+            sampled_from_regular = int(gen._next_tokens.item())
+        except Exception:
+            pass
+
+    # D1 gate (CPU-only, no GPU sync needed for the gate itself)
+    if sampled_from_regular is not None and draft_tokens[0] != sampled_from_regular:
+        dflash_state.record_result(0, K)
+        return []
+
+    non_trimmable_snapshots = _snapshot_non_trimmable_caches(prompt_cache)
+
+    with mx.stream(scheduler._stream):
+        t0 = time.perf_counter()
+        verified, n_accepted, cache_tokens_processed = _run_spec_verify(
+            model,
+            current_token,
+            draft_tokens,
+            prompt_cache,
+            sampled_from_regular=sampled_from_regular,
+        )
+    dt = time.perf_counter() - t0
+
+    # Cache rollback for rejected tokens
+    if cache_tokens_processed > 0 and n_accepted < K:
+        n_rejected = cache_tokens_processed - n_accepted
+        if non_trimmable_snapshots is not None:
+            _restore_non_trimmable_caches(prompt_cache, non_trimmable_snapshots)
+            if n_accepted > 0:
+                accepted_prefix = draft_tokens[:n_accepted]
+                replay_input = mx.array(accepted_prefix, mx.uint32)
+                with mx.stream(scheduler._stream):
+                    replay_logits = model(replay_input[None], cache=prompt_cache)
+                    mx.eval(replay_logits)
+            logger.debug(
+                "dflash_spec: restored %d non-trimmable caches, %d/%d rejected",
+                len(non_trimmable_snapshots),
+                n_rejected,
+                K,
+            )
+        if n_rejected > 0:
+            from mlx_lm.models import cache as mlx_cache
+
+            mlx_cache.trim_prompt_cache(prompt_cache, n_rejected)
+
+    dflash_state.record_result(n_accepted, K)
+
+    if dflash_state.total_spec_steps % DFLASH_SPEC_LOG_INTERVAL == 1:
+        stats = dflash_state.get_stats()
+        logger.info(
+            "dflash_spec: step=%d, block=%d, accepted=%d/%d (%.1f%%), "
+            "verify=%.1fms, rate=%.1f%%",
+            dflash_state.total_spec_steps,
+            block_size,
+            n_accepted,
+            K,
+            100.0 * n_accepted / K if K else 0,
+            dt * 1000,
+            stats["acceptance_rate"] * 100,
+        )
+
+    if not verified:
+        return []
+
+    accepted_only = verified[:-1]
+    last_token = verified[-1]
+    gen._next_tokens = mx.array([last_token], mx.uint32)
+
+    if gen.tokens and len(gen.tokens) > 0:
+        for t in accepted_only:
+            gen.tokens[0].append(t)
+
+    outputs = []
+    step_now = time.monotonic()
+
+    for i, token in enumerate(accepted_only):
+        request.append_output_token(token)
+        request.last_activity_at = step_now
+
+        detokenizer = scheduler._get_detokenizer(request_id)
+        if detokenizer is not None:
+            detokenizer.add_token(token)
+            new_text = detokenizer.last_segment
+        else:
+            new_text = scheduler.tokenizer.decode([token])
+
+        eos_ids = (
+            scheduler.tokenizer.eos_token_id
+            if hasattr(scheduler.tokenizer, "eos_token_id")
+            else []
+        )
+        if isinstance(eos_ids, int):
+            eos_ids = [eos_ids]
+        is_eos = token in eos_ids
+        is_length = request.num_output_tokens >= request.max_tokens
+        is_finished = is_eos or is_length
+
+        out = RequestOutput(
+            request_id=request_id,
+            new_token_ids=[token],
+            new_text="" if is_eos else new_text,
+            completion_tokens=request.num_output_tokens,
+            prompt_tokens=request.num_prompt_tokens,
+            cached_tokens=request.cached_tokens,
+            finished=is_finished,
+            finish_reason="stop" if is_eos else ("length" if is_length else None),
+        )
+
+        if is_finished:
+            from ..request import RequestStatus
+
+            request.set_finished(
+                RequestStatus.FINISHED_STOPPED
+                if is_eos
+                else RequestStatus.FINISHED_LENGTH_CAPPED
+            )
+            out.output_token_ids = list(request.output_token_ids)
+            out.output_text = scheduler.tokenizer.decode(request.output_token_ids)
+            request.output_text = out.output_text
+
+        outputs.append(out)
+        if is_finished:
+            break
+
+    return outputs
+
+
+DSPARK_SPEC_LOG_INTERVAL = 50
+
+
+class DSparkSpecState:
+    """Per-scheduler DSpark speculative decode state.
+
+    DSparkGenerator is self-contained (loads its own target + draft),
+    so the per-step integration pulls tokens from its internal
+    propose-verify loop rather than running our own verify.
+    """
+
+    def __init__(self, runtime):
+        self.runtime = runtime
+        self.total_spec_steps = 0
+        self.total_draft_proposed = 0
+        self.total_draft_accepted = 0
+        self._last_request_id = None
+        # Active generator sessions: request_id -> token iterator
+        self._sessions: dict = {}
+
+    def on_new_request(self, request_id: str):
+        if self._last_request_id != request_id:
+            self._last_request_id = request_id
+            self.total_spec_steps = 0
+
+    def get_session(self, request_id: str):
+        return self._sessions.get(request_id)
+
+    def set_session(self, request_id: str, session):
+        self._sessions[request_id] = session
+
+    def remove_session(self, request_id: str):
+        self._sessions.pop(request_id, None)
+
+    def record_result(self, n_accepted: int, n_total: int):
+        self.total_spec_steps += 1
+        self.total_draft_proposed += n_total
+        self.total_draft_accepted += n_accepted
+
+    def get_stats(self) -> dict:
+        rate = (
+            self.total_draft_accepted / self.total_draft_proposed
+            if self.total_draft_proposed > 0
+            else 0.0
+        )
+        return {
+            "spec_steps": self.total_spec_steps,
+            "draft_proposed": self.total_draft_proposed,
+            "draft_accepted": self.total_draft_accepted,
+            "acceptance_rate": rate,
+            "active_sessions": len(self._sessions),
+        }
+
+
+def _emit_spec_tokens(
+    scheduler,
+    request_id: str,
+    tokens: list[int],
+) -> list[RequestOutput]:
+    """Build RequestOutputs for spec-decode accepted tokens."""
+    if not tokens:
+        return []
+
+    request = scheduler.running.get(request_id)
+    if request is None:
+        return []
+
+    bg = scheduler.batch_generator
+    gen = bg._generation_batch if bg else None
+
+    eos_ids = (
+        scheduler.tokenizer.eos_token_id
+        if hasattr(scheduler.tokenizer, "eos_token_id")
+        else []
+    )
+    if isinstance(eos_ids, int):
+        eos_ids = [eos_ids]
+
+    outputs = []
+    step_now = time.monotonic()
+
+    for token in tokens:
+        request.append_output_token(token)
+        request.last_activity_at = step_now
+
+        detokenizer = scheduler._get_detokenizer(request_id)
+        if detokenizer is not None:
+            detokenizer.add_token(token)
+            new_text = detokenizer.last_segment
+        else:
+            new_text = scheduler.tokenizer.decode([token])
+
+        is_eos = token in eos_ids
+        is_length = request.num_output_tokens >= request.max_tokens
+        is_finished = is_eos or is_length
+
+        out = RequestOutput(
+            request_id=request_id,
+            new_token_ids=[token],
+            new_text="" if is_eos else new_text,
+            completion_tokens=request.num_output_tokens,
+            prompt_tokens=request.num_prompt_tokens,
+            cached_tokens=request.cached_tokens,
+            finished=is_finished,
+            finish_reason="stop" if is_eos else ("length" if is_length else None),
+        )
+
+        if is_finished:
+            from ..request import RequestStatus
+
+            request.set_finished(
+                RequestStatus.FINISHED_STOPPED
+                if is_eos
+                else RequestStatus.FINISHED_LENGTH_CAPPED
+            )
+            out.output_token_ids = list(request.output_token_ids)
+            out.output_text = scheduler.tokenizer.decode(request.output_token_ids)
+            request.output_text = out.output_text
+
+        outputs.append(out)
+        if is_finished:
+            break
+
+    # Update gen._next_tokens so the regular step picks up the last token
+    if gen is not None and tokens:
+        gen._next_tokens = mx.array([tokens[-1]], mx.uint32)
+        if gen.tokens and len(gen.tokens) > 0:
+            for t in tokens[:-1]:
+                gen.tokens[0].append(t)
+
+    return outputs
+
+
+def dspark_spec_step(
+    scheduler,
+    output,
+    current_token: int,
+    request_id: str,
+) -> list[RequestOutput]:
+    """DSpark speculative decode step.
+
+    DSparkGenerator runs its own propose-verify loop internally.
+    This step pulls accepted tokens from the DSpark session and
+    emits them as RequestOutputs. DSpark is self-contained (loads
+    its own target + draft model), so this does NOT use the
+    scheduler's model or cache for the propose-verify loop.
+    """
+    dspark_state = getattr(scheduler, "_dspark_spec_state", None)
+    if dspark_state is None:
+        dspark_runtime = scheduler._dspark_runtime
+        if dspark_runtime is None:
+            return []
+        dspark_state = DSparkSpecState(dspark_runtime)
+        scheduler._dspark_spec_state = dspark_state
+
+    request = scheduler.running.get(request_id)
+    if request is None:
+        return []
+
+    if dspark_state._last_request_id != request_id:
+        dspark_state.on_new_request(request_id)
+
+    # Check for an active DSpark generation session
+    session = dspark_state.get_session(request_id)
+    if session is None:
+        prompt_tokens = getattr(request, "prompt_token_ids", None)
+        if not prompt_tokens:
+            return []
+
+        generator = dspark_state.runtime.generator
+        if generator is None:
+            return []
+
+        try:
+            max_tokens = request.max_tokens or 4096
+            token_iter = generator.stream_from_tokens(
+                prompt_tokens,
+                max_new_tokens=max_tokens,
+                temperature=0.0,
+            )
+            dspark_state.set_session(request_id, token_iter)
+            session = token_iter
+            logger.info(
+                "dspark_spec: started session for request=%s, "
+                "prompt_len=%d, max_tokens=%d",
+                request_id[:8],
+                len(prompt_tokens),
+                max_tokens,
+            )
+        except Exception as e:
+            logger.warning("dspark_spec: failed to start session: %s", e)
+            return []
+
+    # Pull the next batch of tokens from the DSpark generator
+    try:
+        accepted_tokens = []
+        block_size = getattr(
+            dspark_state.runtime.generator, "block_size", 7
+        )
+        for _ in range(block_size):
+            try:
+                tok = next(session)
+                accepted_tokens.append(int(tok))
+            except StopIteration:
+                break
+
+        if not accepted_tokens:
+            dspark_state.remove_session(request_id)
+            return []
+
+        n_accepted = len(accepted_tokens)
+        dspark_state.record_result(n_accepted, n_accepted)
+
+        if dspark_state.total_spec_steps % DSPARK_SPEC_LOG_INTERVAL == 1:
+            stats = dspark_state.get_stats()
+            logger.info(
+                "dspark_spec: step=%d, accepted=%d, rate=%.1f%%, "
+                "sessions=%d",
+                dspark_state.total_spec_steps,
+                n_accepted,
+                stats["acceptance_rate"] * 100,
+                stats["active_sessions"],
+            )
+
+        return _emit_spec_tokens(scheduler, request_id, accepted_tokens)
+
+    except Exception as e:
+        logger.warning("dspark_spec: session error: %s", e)
+        dspark_state.remove_session(request_id)
+        return []

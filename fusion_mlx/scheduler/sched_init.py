@@ -457,6 +457,12 @@ def __init__(
     # N-gram speculative decode state (lazy-initialized in _step_pure_decode)
     self._ngram_spec_state = None
 
+    # DFlash block-diffusion speculative decode runtime
+    self._dflash_runtime = None
+
+    # DSpark (DeepSeek DeepSpec) speculative decode runtime
+    self._dspark_runtime = None
+
 
 @contextmanager
 def _phase_timer(self, phase: str):
