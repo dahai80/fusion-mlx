@@ -1499,3 +1499,79 @@ def build_json_system_prompt(
         return prompt
 
     return None
+
+
+def check_schema_validity(json_schema: dict) -> tuple[bool, str | None]:
+    try:
+        from jsonschema.exceptions import SchemaError
+        from jsonschema.validators import validator_for
+    except ImportError:
+        return True, None
+    try:
+        validator_cls = validator_for(json_schema)
+    except TypeError as exc:
+        return False, f"{type(exc).__name__}: {exc}"
+    try:
+        validator_cls.check_schema(json_schema)
+    except SchemaError as exc:
+        return False, f"{type(exc).__name__}: {exc}"
+    except TypeError as exc:
+        return False, f"{type(exc).__name__}: {exc}"
+    return True, None
+
+
+def extract_json_schema_for_guided(response_format) -> dict | None:
+    if response_format is None:
+        return None
+    if hasattr(response_format, "model_dump"):
+        rf_dict = response_format.model_dump()
+    elif isinstance(response_format, dict):
+        rf_dict = response_format
+    else:
+        return None
+    format_type = rf_dict.get("type", "text")
+    if format_type != "json_schema":
+        return None
+    json_schema_spec = rf_dict.get("json_schema", {})
+    schema = json_schema_spec.get("schema", {})
+    if not schema:
+        return None
+    return schema
+
+
+def is_strict_json_schema(response_format) -> bool:
+    if response_format is None:
+        return False
+    if hasattr(response_format, "model_dump"):
+        rf_dict = response_format.model_dump()
+    elif isinstance(response_format, dict):
+        rf_dict = response_format
+    else:
+        return False
+    if rf_dict.get("type") != "json_schema":
+        return False
+    if rf_dict.get("strict") is True:
+        return True
+    spec = rf_dict.get("json_schema") or {}
+    if not isinstance(spec, dict):
+        return False
+    return spec.get("strict") is True
+
+
+def validate_output_against_schema(
+    output_text: str, json_schema: dict[str, Any]
+) -> tuple[bool, str | None]:
+    text = (output_text or "").strip()
+    if not text:
+        return False, "empty output"
+    try:
+        parsed = json.loads(text)
+    except (json.JSONDecodeError, TypeError, ValueError) as exc:
+        return False, f"invalid JSON: {exc}"
+    try:
+        validate(instance=parsed, schema=json_schema)
+    except ValidationError as exc:
+        return False, f"schema violation: {exc.message}"
+    except Exception as exc:
+        return False, f"validator error: {type(exc).__name__}: {exc}"
+    return True, None

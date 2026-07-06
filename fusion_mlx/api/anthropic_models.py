@@ -201,6 +201,9 @@ class MessagesRequest(BaseModel):
     chat_template_kwargs: dict[str, Any] | None = None
 
 
+AnthropicRequest = MessagesRequest
+
+
 # =============================================================================
 # Token Counting
 # =============================================================================

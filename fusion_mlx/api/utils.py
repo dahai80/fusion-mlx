@@ -15,6 +15,12 @@ def is_mllm_model(name) -> bool:
     return False
 
 
+def _require_string(value, field_name: str) -> str:
+    if not isinstance(value, str):
+        raise ValueError(f"{field_name} must be a string (got {type(value).__name__})")
+    return value
+
+
 # =============================================================================
 # Partial Mode Detection
 # =============================================================================
@@ -1059,6 +1065,224 @@ def sanitize_reasoning_content(text: str | None) -> str | None:
     return text
 
 
+def sanitize_reasoning_for_stream(text: str | None) -> str:
+    if not text:
+        return ""
+    for ch in text:
+        if ch in _SPECIAL_TOKEN_CHARS:
+            return _FINAL_SANITIZER.sub("", text)
+    return text
+
+
+def _strip_markdown_code_block(text: str) -> str:
+    pattern = re.compile(r"```(?:json|JSON)?\s*\n([\s\S]*?)\n\s*```")
+    match = pattern.search(text)
+    if match:
+        inner = match.group(1).strip()
+        if inner and (inner[0] in "{["):
+            return inner
+    return text
+
+
+THINK_PATTERN = re.compile(
+    r"<think>[\s\S]*?</think>\s*"
+    r"|<\|channel>thought\n[\s\S]*?<channel\|>\s*",
+    re.DOTALL,
+)
+
+
+def strip_thinking_tags(text: str) -> str:
+    if not text:
+        return text
+    return THINK_PATTERN.sub("", text).strip()
+
+
+def _is_balanced(text: str, open_char: str, close_char: str) -> bool:
+    depth = 0
+    for char in text:
+        if char == open_char:
+            depth += 1
+        elif char == close_char:
+            depth -= 1
+    return depth == 0
+
+
+def extract_json_from_response(text: str) -> str:
+    if not text:
+        return text
+    text = text.strip()
+    if (text.startswith("{") and text.endswith("}")) or (
+        text.startswith("[") and text.endswith("]")
+    ):
+        return text
+    stripped = _strip_markdown_code_block(text)
+    if stripped != text:
+        return stripped
+    last_brace = text.rfind("{")
+    if last_brace != -1 and text.endswith("}"):
+        potential_json = text[last_brace:]
+        if _is_balanced(potential_json, "{", "}"):
+            return potential_json
+    last_bracket = text.rfind("[")
+    if last_bracket != -1 and text.endswith("]"):
+        potential_json = text[last_bracket:]
+        if _is_balanced(potential_json, "[", "]"):
+            return potential_json
+    return text
+
+
+def decode_inline_tool_call_arguments(messages: list[dict]) -> None:
+    for msg in messages:
+        for tc in msg.get("tool_calls") or []:
+            func = tc.get("function") or {}
+            args = func.get("arguments")
+            if isinstance(args, str):
+                try:
+                    func["arguments"] = json.loads(args)
+                except (json.JSONDecodeError, ValueError):
+                    pass
+
+
+TEXT_CONTENT_TYPES = {"text", "input_text", "output_text"}
+IMAGE_CONTENT_TYPES = {"image_url", "image", "input_image"}
+VIDEO_CONTENT_TYPES = {"video", "video_url"}
+AUDIO_CONTENT_TYPES = {"audio_url", "audio", "input_audio"}
+MEDIA_CONTENT_TYPES = IMAGE_CONTENT_TYPES | VIDEO_CONTENT_TYPES | AUDIO_CONTENT_TYPES
+KNOWN_CONTENT_TYPES = TEXT_CONTENT_TYPES | MEDIA_CONTENT_TYPES
+SUPPORTED_INPUT_AUDIO_FORMATS = {
+    "wav", "mp3", "flac", "ogg", "opus", "pcm", "m4a", "webm",
+}
+
+
+def _content_part_to_dict(item) -> dict:
+    if hasattr(item, "model_dump"):
+        item = item.model_dump(exclude_none=True)
+    elif hasattr(item, "dict"):
+        item = {k: v for k, v in item.dict().items() if v is not None}
+    if not isinstance(item, dict):
+        raise ValueError(f"content blocks must be objects (got {type(item).__name__})")
+    item_type = item.get("type")
+    if not isinstance(item_type, str) or not item_type:
+        raise ValueError("content block is missing required string field 'type'")
+    if item_type not in KNOWN_CONTENT_TYPES:
+        raise ValueError(f"Unsupported content block type: {item_type!r}")
+    return item
+
+
+def _require_string(value, field_name: str) -> str:
+    if not isinstance(value, str) or value == "":
+        raise ValueError(
+            f"{field_name} must be a non-empty string (got {type(value).__name__})"
+        )
+    return value
+
+
+def _extract_object_url(item: dict, field_name: str) -> str:
+    value = item.get(field_name)
+    if not isinstance(value, dict):
+        raise ValueError(
+            f"{field_name} must be an object with required field 'url' "
+            f"(got {type(value).__name__})"
+        )
+    return _require_string(value.get("url"), f"{field_name}.url")
+
+
+def _validate_content_part_payload(item: dict) -> None:
+    item_type = item["type"]
+    if item_type in TEXT_CONTENT_TYPES:
+        if "text" not in item:
+            raise ValueError(f"{item_type}.text is required")
+        text = item.get("text")
+        if not isinstance(text, str):
+            if item_type in {"input_text", "output_text"}:
+                raise ValueError(
+                    f"{item_type}.text must be a string (got {type(text).__name__})"
+                )
+            raise ValueError(
+                f"content[].text must be a non-empty string (got {type(text).__name__})"
+            )
+        if text == "" and item_type in {"input_text", "output_text"}:
+            raise ValueError(f"{item_type}.text must be a non-empty string")
+    elif item_type == "image_url":
+        _extract_object_url(item, "image_url")
+    elif item_type == "input_image":
+        image_url = item.get("image_url")
+        if isinstance(image_url, dict):
+            _require_string(image_url.get("url"), "input_image.image_url.url")
+        else:
+            _require_string(image_url, "input_image.image_url")
+    elif item_type == "image":
+        _require_string(item.get("image", item.get("url")), "image")
+    elif item_type == "video":
+        _require_string(item.get("video", item.get("url")), "video")
+    elif item_type == "video_url":
+        _extract_object_url(item, "video_url")
+    elif item_type == "audio_url":
+        _extract_object_url(item, "audio_url")
+    elif item_type == "audio":
+        _require_string(item.get("audio", item.get("url")), "audio")
+    elif item_type == "input_audio":
+        value = item.get("input_audio")
+        if not isinstance(value, dict):
+            raise ValueError(
+                "input_audio must be an object with required fields 'data' "
+                "and 'format'; input_audio.format is required"
+            )
+        _require_string(value.get("data"), "input_audio.data")
+        if "format" not in value:
+            raise ValueError("input_audio.format is required")
+        audio_format = _require_string(
+            value.get("format"), "input_audio.format"
+        ).lower()
+        if audio_format not in SUPPORTED_INPUT_AUDIO_FORMATS:
+            raise ValueError(
+                "input_audio.format must be one of "
+                f"{sorted(SUPPORTED_INPUT_AUDIO_FORMATS)}"
+            )
+
+
+def validate_content_blocks_for_capabilities(
+    messages: list,
+    *,
+    model_name: str,
+    allow_image: bool,
+    allow_video: bool,
+    allow_audio: bool = False,
+) -> None:
+    for msg in messages:
+        if isinstance(msg, dict):
+            content = msg.get("content")
+        else:
+            content = getattr(msg, "content", None)
+        if not isinstance(content, list):
+            continue
+        for raw_item in content:
+            item = _content_part_to_dict(raw_item)
+            item_type = item["type"]
+            _validate_content_part_payload(item)
+            if item_type in TEXT_CONTENT_TYPES:
+                continue
+            if item_type in IMAGE_CONTENT_TYPES and allow_image:
+                continue
+            if item_type in VIDEO_CONTENT_TYPES and allow_video:
+                continue
+            if item_type == "input_audio" and allow_audio:
+                continue
+            if item_type in AUDIO_CONTENT_TYPES:
+                detail = (
+                    "audio inputs in this shape; only input_audio is supported"
+                    if allow_audio
+                    else "audio inputs"
+                )
+            elif item_type in IMAGE_CONTENT_TYPES:
+                detail = "image inputs"
+            elif item_type in VIDEO_CONTENT_TYPES:
+                detail = "video inputs"
+            else:
+                detail = f"{item_type!r} content blocks"
+            raise ValueError(f"Model '{model_name}' does not support {detail}.")
+
+
 def strip_reasoning_channel_markup(text: str) -> str:
     if not text:
         return text
@@ -1138,3 +1362,138 @@ class StreamingThinkRouter:
             self._buffer = ""
         self._in_think = False
         return pieces
+
+
+_MAX_TOOL_BUFFER_BYTES = 1_048_576
+
+_TOOL_CALL_TAGS: list[tuple[str, str]] = [
+    ("<minimax:tool_call>", "</minimax:tool_call>"),
+    ("<think>", "</think>"),
+    ("<function=", "</function>"),
+    ("[TOOL_CALL]", "[/TOOL_CALL]"),
+    ("<|tool_call>", "<tool_call|>"),
+    ("[Calling tool", "\n"),
+]
+
+
+def register_tool_call_tag(open_tag: str, close_tag: str) -> bool:
+    pair = (open_tag, close_tag)
+    if pair not in _TOOL_CALL_TAGS:
+        _TOOL_CALL_TAGS.append(pair)
+        return True
+    return False
+
+
+def get_tool_call_tags() -> list[tuple[str, str]]:
+    return list(_TOOL_CALL_TAGS)
+
+
+class StreamingToolCallFilter:
+
+    def __init__(self, extra_tags: list[tuple[str, str]] | None = None):
+        self._buffer = ""
+        self._in_block = False
+        self._close_tag = ""
+        self._tags = _TOOL_CALL_TAGS
+        if extra_tags:
+            self._tags = _TOOL_CALL_TAGS + [
+                t for t in extra_tags if t not in _TOOL_CALL_TAGS
+            ]
+        self._max_open_len = max(len(t[0]) for t in self._tags)
+
+    def process(self, delta: str) -> str:
+        self._buffer += delta
+        if self._in_block:
+            return self._consume_block()
+        else:
+            return self._scan_for_open()
+
+    def _scan_for_open(self) -> str:
+        for open_tag, close_tag in self._tags:
+            idx = self._buffer.find(open_tag)
+            if idx >= 0:
+                emit = self._buffer[:idx]
+                self._buffer = self._buffer[idx + len(open_tag):]
+                self._in_block = True
+                self._close_tag = close_tag
+                after = self._consume_block()
+                return emit + after
+        hold_back = 0
+        for open_tag, _ in self._tags:
+            for prefix_len in range(min(len(open_tag), len(self._buffer)), 0, -1):
+                if self._buffer.endswith(open_tag[:prefix_len]):
+                    hold_back = max(hold_back, prefix_len)
+                    break
+        if hold_back > 0:
+            emit = self._buffer[:-hold_back]
+            self._buffer = self._buffer[-hold_back:]
+            return emit
+        emit = self._buffer
+        self._buffer = ""
+        return emit
+
+    def _consume_block(self) -> str:
+        idx = self._buffer.find(self._close_tag)
+        if idx >= 0:
+            self._buffer = self._buffer[idx + len(self._close_tag):]
+            self._in_block = False
+            self._close_tag = ""
+            if self._buffer:
+                return self._scan_for_open()
+            return ""
+        if len(self._buffer) > _MAX_TOOL_BUFFER_BYTES:
+            logger.warning(
+                "Tool call buffer exceeded %d bytes, discarding",
+                _MAX_TOOL_BUFFER_BYTES,
+            )
+            self._buffer = ""
+            self._in_block = False
+            self._close_tag = ""
+        return ""
+
+    def flush(self) -> str:
+        if self._in_block:
+            self._buffer = ""
+            self._in_block = False
+            return ""
+        emit = self._buffer
+        self._buffer = ""
+        return emit
+
+
+def normalize_responses_content_part(item) -> dict:
+    data = item.model_dump(exclude_none=True) if hasattr(item, "model_dump") else item
+    if not isinstance(data, dict):
+        raise ValueError(
+            f"Responses content blocks must be objects (got {type(data).__name__})"
+        )
+    item_type = data.get("type")
+    if item_type in ("input_text", "output_text"):
+        if "text" not in data:
+            raise ValueError(f"{item_type}.text is required")
+        text = data.get("text")
+        if not isinstance(text, str):
+            raise ValueError(
+                f"{item_type}.text must be a string (got {type(text).__name__})"
+            )
+        if text == "":
+            raise ValueError(f"{item_type}.text must be a non-empty string")
+        return {"type": "text", "text": text}
+    if item_type == "input_image":
+        image_url = data.get("image_url")
+        if isinstance(image_url, dict):
+            normalized_image_url = {
+                key: value
+                for key, value in image_url.items()
+                if key in {"url", "detail"}
+            }
+            _require_string(
+                normalized_image_url.get("url"), "input_image.image_url.url"
+            )
+        else:
+            url = _require_string(image_url, "input_image.image_url")
+            normalized_image_url = {"url": url}
+        return {"type": "image_url", "image_url": normalized_image_url}
+    if item_type == "input_audio":
+        raise ValueError("Responses input_audio content blocks are not supported")
+    raise ValueError(f"Unsupported Responses content block type: {item_type!r}")
