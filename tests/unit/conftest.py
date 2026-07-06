@@ -72,8 +72,6 @@ def _add_missing_symbols():
         import fusion_mlx
 
         for name in (
-            "_version_check",
-            "_tempfile_safe",
             "_parent_watchdog",
             "_mxfp4_moe_guardrail",
             "_log_namespace",
