@@ -17,6 +17,7 @@ import asyncio
 import gc
 import json
 import logging
+import os
 import time
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
@@ -112,6 +113,8 @@ class EngineEntry:
     abort_requested: bool = False  # Set under hard pressure for leased requests
     pending_unload_reason: str | None = None  # Unload as soon as leases/activity drain
     runtime_settings_signature: tuple[tuple[str, str], ...] | None = None
+    adapter_path: str | None = None  # LoRA adapter path for derived adapter entries
+    base_model_id: str | None = None  # Base model_id for derived adapter entries
 
 
 class EnginePool:
@@ -148,6 +151,9 @@ class EnginePool:
         self._get_final_ceiling: object | None = None  # Set by server
         self._settings_manager: object | None = None  # Set by server
         self._suppress_ttl: bool = False  # Suppress TTL during benchmarks
+        self._max_adapter_engines: int = int(
+            os.getenv("FUSION_MAX_ADAPTER_ENGINES", "4")
+        )
         self._load_seconds_per_gb_ema: float | None = None
         self._load_time_observations: int = 0
         self.configure_hot_cache_budget()
@@ -205,17 +211,18 @@ class EnginePool:
         *,
         loaded_engine: object | None = None,
     ) -> tuple[tuple[str, str], ...] | None:
+        entry = self._entries.get(model_id)
+        settings_id = entry.base_model_id if entry and entry.base_model_id else model_id
         settings = runtime_settings
         if settings is None and self._settings_manager is not None:
             get_settings = getattr(self._settings_manager, "get_settings", None)
             if callable(get_settings):
-                settings = get_settings(model_id)
+                settings = get_settings(settings_id)
         if settings is None:
             return None
 
         to_dict = getattr(settings, "to_dict", None)
         data = to_dict() if callable(to_dict) else {}
-        entry = self._entries.get(model_id)
         is_diffusion = bool(entry and self._entry_is_diffusion_model(entry))
         loaded_engine_name = (
             type(loaded_engine).__name__ if loaded_engine is not None else None
@@ -618,12 +625,74 @@ class EnginePool:
         entry = self._entries.get(model_id)
         return bool(entry and entry.abort_requested)
 
+    @staticmethod
+    def _adapter_key(model_id: str, adapter_path: str | None) -> str:
+        if not adapter_path:
+            return model_id
+        return f"{model_id}::lora::{adapter_path}"
+
+    def _make_adapter_entry(
+        self,
+        base: EngineEntry,
+        adapter_path: str,
+        entry_key: str,
+    ) -> EngineEntry:
+        logger.info(
+            "Creating derived LoRA entry '%s' from base '%s' (adapter=%s)",
+            entry_key,
+            base.model_id,
+            adapter_path,
+        )
+        return EngineEntry(
+            model_id=entry_key,
+            model_path=base.model_path,
+            model_type=base.model_type,
+            engine_type=base.engine_type,
+            estimated_size=base.estimated_size,
+            config_model_type=base.config_model_type,
+            thinking_default=base.thinking_default,
+            preserve_thinking_default=base.preserve_thinking_default,
+            model_context_length=base.model_context_length,
+            source_type="lora_adapter",
+            source_repo_id=base.source_repo_id,
+            adapter_path=adapter_path,
+            base_model_id=base.model_id,
+        )
+
+    def _select_adapter_cap_victims(self, exclude_key: str) -> list[str]:
+        cap = self._max_adapter_engines
+        if cap <= 0:
+            return []
+        idle_adapters = [
+            (k, e)
+            for k, e in self._entries.items()
+            if e.source_type == "lora_adapter"
+            and e.engine is not None
+            and e.in_use == 0
+            and k != exclude_key
+        ]
+        victims: list[str] = []
+        while len(idle_adapters) + 1 > cap:
+            idle_adapters.sort(key=lambda kv: kv[1].last_access)
+            vk, ve = idle_adapters.pop(0)
+            ve.pending_unload_reason = "adapter_cap"
+            victims.append(vk)
+        if victims:
+            logger.info(
+                "Adapter cap %d exceeded; evicting %d derived " "adapter engine(s): %s",
+                cap,
+                len(victims),
+                victims,
+            )
+        return victims
+
     async def get_engine(
         self,
         model_id: str,
         force_lm: bool = False,
         _lease: bool = False,
         runtime_settings: object | None = None,
+        adapter_path: str | None = None,
     ) -> (
         BaseEngine
         | EmbeddingEngine
@@ -646,6 +715,9 @@ class EnginePool:
             model_id: The model ID to get engine for
             force_lm: Force loading as LM (BatchedEngine) even for VLM models.
                 Useful for text-only tasks like accuracy benchmarks.
+            adapter_path: Optional LoRA adapter path. When set, a derived
+                engine entry is lazily created (keyed by model_id::adapter)
+                so each adapter gets its own loaded model instance.
 
         Returns:
             The loaded engine (BaseEngine for LLM, EmbeddingEngine for embeddings)
@@ -657,12 +729,22 @@ class EnginePool:
             ModelLoadingError: If model is already being loaded
         """
         # Phase 1: Quick check under lock for already-loaded models
+        entry_key = self._adapter_key(model_id, adapter_path)
+        adapter_victims: list[str] = []
         async with self._lock:
-            entry = self._entries.get(model_id)
-            if not entry:
-                raise ModelNotFoundError(model_id, list(self._entries.keys()))
+            entry = self._entries.get(entry_key)
+            if entry is None:
+                if adapter_path:
+                    base = self._entries.get(model_id)
+                    if base is None:
+                        raise ModelNotFoundError(model_id, list(self._entries.keys()))
+                    adapter_victims = self._select_adapter_cap_victims(entry_key)
+                    entry = self._make_adapter_entry(base, adapter_path, entry_key)
+                    self._entries[entry_key] = entry
+                else:
+                    raise ModelNotFoundError(model_id, list(self._entries.keys()))
             expected_signature = self._engine_runtime_signature(
-                model_id,
+                entry_key,
                 runtime_settings,
             )
 
@@ -700,7 +782,7 @@ class EnginePool:
 
                 # Needs reload — mark loading and release lock for slow unload
                 if entry.is_loading:
-                    raise ModelLoadingError(model_id)
+                    raise ModelLoadingError(entry_key)
                 entry.is_loading = True
                 entry.loading_started_at = time.monotonic()
                 entry.abort_loading = False
@@ -708,7 +790,7 @@ class EnginePool:
             else:
                 # Not loaded yet — mark loading
                 if entry.is_loading:
-                    raise ModelLoadingError(model_id)
+                    raise ModelLoadingError(entry_key)
                 entry.is_loading = True
                 entry.loading_started_at = time.monotonic()
                 entry.abort_loading = False
@@ -718,9 +800,14 @@ class EnginePool:
         if entry.engine is not None:
             logger.info(
                 "Unloading %s before reload (outside lock)",
-                model_id,
+                entry_key,
             )
-            await self._unload_engine(model_id)
+            await self._unload_engine(entry_key)
+
+        # Evict derived adapter engines over the soft cap (victims selected
+        # under the lock in Phase 1). _unload_engine is slow, so do it here.
+        for vk in adapter_victims:
+            await self._unload_engine(vk)
 
         # Pre-load admission check (outside lock — memory state is approximate)
         ceiling = self._current_ceiling()
@@ -737,7 +824,7 @@ class EnginePool:
                 victim = self._find_lru_victim()
                 if victim is not None:
                     logger.info(
-                        f"Evicting '{victim}' to fit '{model_id}' "
+                        f"Evicting '{victim}' to fit '{entry_key}' "
                         f"under memory ceiling "
                         f"({format_size(projected)} > "
                         f"{format_size(ceiling)})"
@@ -764,24 +851,27 @@ class EnginePool:
 
         # Now load the model (slow, outside lock)
         await self._load_engine(
-            model_id,
+            entry_key,
             force_lm=force_lm,
             runtime_settings=runtime_settings,
         )
 
         async with self._lock:
-            loaded = self._entries[model_id]
+            loaded = self._entries[entry_key]
             if _lease:
                 loaded.in_use += 1
             return loaded.engine
 
-    async def release_engine(self, model_id: str) -> None:
+    async def release_engine(
+        self, model_id: str, adapter_path: str | None = None
+    ) -> None:
         """Release one in-use lease previously taken via get_engine(_lease=True)."""
+        entry_key = self._adapter_key(model_id, adapter_path)
         async with self._lock:
-            e = self._entries.get(model_id)
+            e = self._entries.get(entry_key)
             if e is not None and e.in_use > 0:
                 e.in_use -= 1
-            await self._unload_pending_if_idle_locked(model_id)
+            await self._unload_pending_if_idle_locked(entry_key)
 
     async def unload_if_idle_unpinned(self, model_id: str) -> bool:
         """Unload a loaded engine only when it is idle and not pinned."""
@@ -1270,10 +1360,14 @@ class EnginePool:
             else:
                 logger.info(f"Loading model: {model_id}")
 
-            # Retrieve per-model settings for post-load transforms
+            # Retrieve per-model settings for post-load transforms.
+            # Derived adapter entries reuse the base model's settings so that
+            # per-profile defaults (quant, context, etc.) still apply; the
+            # adapter path is injected separately via entry.adapter_path.
+            settings_id = entry.base_model_id or model_id
             model_settings = runtime_settings
             if model_settings is None and self._settings_manager is not None:
-                model_settings = self._settings_manager.get_settings(model_id)
+                model_settings = self._settings_manager.get_settings(settings_id)
 
             # Native MTP forces LM-only dispatch even for VLM models. Vision
             # encoder weights are ignored because the patched mtp_forward only
@@ -1405,7 +1499,8 @@ class EnginePool:
                         enable_thinking=entry.thinking_default,
                         preserve_thinking=entry.preserve_thinking_default,
                         prefill_eviction_callback=prefill_eviction_callback,
-                        lora_path=getattr(model_settings, "lora_path", None),
+                        lora_path=entry.adapter_path
+                        or getattr(model_settings, "lora_path", None),
                     )
 
             _is_dflash_engine = (
@@ -1458,7 +1553,8 @@ class EnginePool:
                             enable_thinking=entry.thinking_default,
                             preserve_thinking=entry.preserve_thinking_default,
                             prefill_eviction_callback=prefill_eviction_callback,
-                            lora_path=getattr(model_settings, "lora_path", None),
+                            lora_path=entry.adapter_path
+                            or getattr(model_settings, "lora_path", None),
                         )
                     try:
                         await engine.start()
@@ -1545,7 +1641,8 @@ class EnginePool:
                         enable_thinking=entry.thinking_default,
                         preserve_thinking=entry.preserve_thinking_default,
                         prefill_eviction_callback=prefill_eviction_callback,
-                        lora_path=getattr(model_settings, "lora_path", None),
+                        lora_path=entry.adapter_path
+                        or getattr(model_settings, "lora_path", None),
                     )
                     try:
                         await engine.start()

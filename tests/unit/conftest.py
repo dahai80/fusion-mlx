@@ -94,6 +94,7 @@ _OPT_DEP_SUITES: list[tuple[str, list[str]]] = [
             "test_suffix_bench_methodology.py",
             "test_index_cache.py",
             "test_llama4_attention_patch.py",
+            "test_lora_hotswap.py",
             "test_dspark_integration.py",
             "test_pflash_engine.py",
             "test_pflash_scheduler.py",
