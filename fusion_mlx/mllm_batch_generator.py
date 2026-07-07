@@ -576,7 +576,7 @@ class MLLMBatchGenerator:
         all_images = []
 
         if request.images:
-            from .models.mllm import process_image_input
+            from .utils.video import process_image_input
 
             # Pre-PR: undecodable / unreachable image was logged at WARN
             # and silently dropped from ``all_images``, so the model
@@ -595,7 +595,7 @@ class MLLMBatchGenerator:
                     raise ValueError(f"Failed to process image: {e}") from e
 
         if request.videos:
-            from .models.mllm import (
+            from .utils.video import (
                 DEFAULT_FPS,
                 MAX_FRAMES,
                 extract_video_frames_smart,

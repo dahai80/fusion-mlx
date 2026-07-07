@@ -43,7 +43,7 @@ def _make_request(images: list[str] | None) -> MLLMBatchRequest:
 
 
 def _bypass_process_image(monkeypatch):
-    from fusion_mlx.models import mllm as mllm_models
+    from fusion_mlx.utils import video as mllm_models
 
     def _identity(img):
         return img

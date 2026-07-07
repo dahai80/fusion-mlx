@@ -90,7 +90,7 @@ def _bypass_process_image(monkeypatch):
     a pre-materialized PNG path directly without going through base64
     decode / tempfile registration.
     """
-    from fusion_mlx.models import mllm as mllm_models
+    from fusion_mlx.utils import video as mllm_models
 
     def _identity(img):
         return img
