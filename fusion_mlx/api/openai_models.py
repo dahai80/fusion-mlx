@@ -249,6 +249,10 @@ class ChatCompletionRequest(BaseModel):
     """Request for chat completion."""
 
     model: str
+    # Optional LoRA adapter path (mlx-lm server-compatible). When set, the
+    # request is routed to a derived engine entry keyed by (model, adapter)
+    # so each adapter gets its own loaded model instance.
+    adapters: str | None = None
     messages: list[Message]
     temperature: float | None = None
     top_p: float | None = None
@@ -363,6 +367,9 @@ class CompletionRequest(BaseModel):
     """Request for text completion."""
 
     model: str
+    # Optional LoRA adapter path (mlx-lm server-compatible). See
+    # ChatCompletionRequest.adapters for routing semantics.
+    adapters: str | None = None
     prompt: str | list[str]
     temperature: float | None = None
     top_p: float | None = None
