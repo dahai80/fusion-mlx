@@ -159,9 +159,7 @@ class VLMBatchedEngine(BaseEngine):
             )
             logger.info("GrammarCompiler initialized for %s", self._model_name)
         except Exception as e:
-            logger.info(
-                "GrammarCompiler init failed for %s: %s", self._model_name, e
-            )
+            logger.info("GrammarCompiler init failed for %s: %s", self._model_name, e)
         return self._grammar_compiler
 
     @property
@@ -189,9 +187,7 @@ class VLMBatchedEngine(BaseEngine):
                         self._model_settings, "vlm_mtp_draft_block_size", None
                     )
                 if hasattr(scheduler, "set_vlm_mtp_drafter"):
-                    scheduler.set_vlm_mtp_drafter(
-                        drafter, draft_block_size=block_size
-                    )
+                    scheduler.set_vlm_mtp_drafter(drafter, draft_block_size=block_size)
             except Exception as e:
                 logger.warning("Failed to set VLM MTP drafter on scheduler: %s", e)
 
@@ -215,9 +211,7 @@ class VLMBatchedEngine(BaseEngine):
             try:
                 tool_module = load_tool_module(tool_parser_type)
             except ImportError:
-                logger.warning(
-                    "VLM tool parser module not found: %s", tool_parser_type
-                )
+                logger.warning("VLM tool parser module not found: %s", tool_parser_type)
                 return
         except ImportError:
             try:
@@ -236,9 +230,7 @@ class VLMBatchedEngine(BaseEngine):
                     f"mlx_lm.tool_parsers.{tool_parser_type}"
                 )
             except ImportError:
-                logger.warning(
-                    "VLM tool parser module not found: %s", tool_parser_type
-                )
+                logger.warning("VLM tool parser module not found: %s", tool_parser_type)
                 return
 
         tool_call_start = tool_module.tool_call_start
@@ -367,16 +359,12 @@ class VLMBatchedEngine(BaseEngine):
 
         # TurboQuant KV cache
         if self._model_settings is not None:
-            tq_enabled = getattr(
-                self._model_settings, "turboquant_kv_enabled", False
-            )
+            tq_enabled = getattr(self._model_settings, "turboquant_kv_enabled", False)
             if tq_enabled:
                 try:
                     from mlx_vlm.turboquant import turboquant_attention
 
-                    tq_bits = getattr(
-                        self._model_settings, "turboquant_kv_bits", 4
-                    )
+                    tq_bits = getattr(self._model_settings, "turboquant_kv_bits", 4)
                     tq_skip = getattr(
                         self._model_settings, "turboquant_skip_last", True
                     )
@@ -385,9 +373,7 @@ class VLMBatchedEngine(BaseEngine):
                         kv_bits=tq_bits,
                         skip_last=tq_skip,
                     )
-                    logger.info(
-                        "TurboQuant KV cache enabled for VLM: %s bits", tq_bits
-                    )
+                    logger.info("TurboQuant KV cache enabled for VLM: %s bits", tq_bits)
                 except Exception as e:
                     logger.warning("TurboQuant KV init failed: %s", e)
 

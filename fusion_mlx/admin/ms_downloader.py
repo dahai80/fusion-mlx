@@ -172,9 +172,8 @@ def _estimate_params_from_config(config: dict | None) -> int:
 
     # Attention: Q + O are full hidden_size; K + V are reduced for GQA.
     if num_heads and head_dim:
-        attn = (
-            2 * hidden_size * (num_heads * head_dim)
-            + 2 * hidden_size * (num_kv * head_dim)
+        attn = 2 * hidden_size * (num_heads * head_dim) + 2 * hidden_size * (
+            num_kv * head_dim
         )
     else:
         attn = 4 * hidden_size * hidden_size
@@ -365,9 +364,7 @@ async def _fetch_ms_models_rest(
         payload["Name"] = query
     try:
         resp = await asyncio.wait_for(
-            asyncio.to_thread(
-                requests.put, url, json=payload, timeout=_MS_API_TIMEOUT
-            ),
+            asyncio.to_thread(requests.put, url, json=payload, timeout=_MS_API_TIMEOUT),
             timeout=_MS_API_TIMEOUT + 5,
         )
         if resp.status_code == 200:
@@ -479,9 +476,9 @@ class MSDownloader:
 
         # Sort by downloads for popular, keep original order for trending
         trending = models[:result_limit]
-        popular = sorted(
-            models, key=lambda x: x.get("downloads", 0), reverse=True
-        )[:result_limit]
+        popular = sorted(models, key=lambda x: x.get("downloads", 0), reverse=True)[
+            :result_limit
+        ]
 
         return {
             "trending": trending,
@@ -697,9 +694,7 @@ class MSDownloader:
         """Update the model directory path."""
         self._model_dir = Path(new_dir)
 
-    async def start_download(
-        self, model_id: str, ms_token: str = ""
-    ) -> DownloadTask:
+    async def start_download(self, model_id: str, ms_token: str = "") -> DownloadTask:
         """Start downloading a model from ModelScope.
 
         Args:
@@ -733,9 +728,7 @@ class MSDownloader:
                 DownloadStatus.PENDING,
                 DownloadStatus.DOWNLOADING,
             ):
-                raise ValueError(
-                    f"Download for '{model_id}' is already in progress"
-                )
+                raise ValueError(f"Download for '{model_id}' is already in progress")
 
         task_id = str(uuid.uuid4())
         task = DownloadTask(task_id=task_id, repo_id=model_id)
@@ -807,9 +800,7 @@ class MSDownloader:
         self._cancelled.discard(task_id)
         return True
 
-    async def retry_download(
-        self, task_id: str, ms_token: str = ""
-    ) -> DownloadTask:
+    async def retry_download(self, task_id: str, ms_token: str = "") -> DownloadTask:
         """Retry a failed or cancelled download, resuming from existing files.
 
         Args:
@@ -901,9 +892,7 @@ class MSDownloader:
                             timeout=_MS_API_TIMEOUT,
                         )
                         if file_list:
-                            task.total_size = _extract_model_size_from_files(
-                                file_list
-                            )
+                            task.total_size = _extract_model_size_from_files(file_list)
                 except Exception as e:  # noqa: BLE001 — best-effort
                     logger.warning(
                         f"Could not fetch file info for {task.repo_id}: {e}. "
@@ -940,9 +929,7 @@ class MSDownloader:
                     if target_dir.exists():
                         try:
                             shutil.rmtree(target_dir)
-                            logger.info(
-                                f"Cleaned up cancelled download: {target_dir}"
-                            )
+                            logger.info(f"Cleaned up cancelled download: {target_dir}")
                         except Exception as cleanup_err:  # noqa: BLE001
                             logger.warning(
                                 f"Failed to clean up {target_dir}: {cleanup_err}"
@@ -967,9 +954,7 @@ class MSDownloader:
                 # Success
                 task.status = DownloadStatus.COMPLETED
                 task.progress = 100.0
-                task.downloaded_size = task.total_size or self._get_dir_size(
-                    target_dir
-                )
+                task.downloaded_size = task.total_size or self._get_dir_size(target_dir)
                 task.completed_at = time.time()
 
                 logger.info(
@@ -982,9 +967,7 @@ class MSDownloader:
                     try:
                         await self._on_complete()
                     except Exception as e:  # noqa: BLE001
-                        logger.error(
-                            f"Error in download completion callback: {e}"
-                        )
+                        logger.error(f"Error in download completion callback: {e}")
 
         except asyncio.CancelledError:
             if task.status not in (
@@ -1044,9 +1027,7 @@ class MSDownloader:
 
                 if task.total_size > 0:
                     # Cap at 99% until snapshot_download confirms completion
-                    task.progress = min(
-                        (current_size / task.total_size) * 100, 99.0
-                    )
+                    task.progress = min((current_size / task.total_size) * 100, 99.0)
 
                 # Activity detection: size change OR file mtime change
                 if current_size != last_size:

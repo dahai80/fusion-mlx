@@ -214,7 +214,9 @@ class TestMSDownloader:
         with (
             patch("fusion_mlx.admin.ms_downloader.MS_SDK_AVAILABLE", True),
             patch("fusion_mlx.admin.ms_downloader._get_ms_api") as mock_get_api,
-            patch("fusion_mlx.admin.ms_downloader.ms_snapshot_download") as mock_download,
+            patch(
+                "fusion_mlx.admin.ms_downloader.ms_snapshot_download"
+            ) as mock_download,
         ):
             mock_api = MagicMock()
             mock_api.get_model_files.return_value = []

@@ -428,7 +428,9 @@ class MLXRerankerModel:
     def _get_jina_hidden_states(self, input_ids):
         backbone = getattr(self._model, "model", None)
         if backbone is None or not callable(backbone):
-            model_type = type(self._model).__name__ if self._model is not None else "None"
+            model_type = (
+                type(self._model).__name__ if self._model is not None else "None"
+            )
             raise ValueError(
                 "Could not find Jina model backbone (model.model). "
                 f"The mlx-lm model wrapper may have changed: {model_type}."
@@ -578,19 +580,25 @@ class MLXRerankerModel:
             return RerankOutput(scores=[], indices=[], total_tokens=0)
         if self._is_vl_reranker:
             effective_max_length = (
-                max_length if max_length is not None else self._DEFAULT_MAX_LENGTH_CAUSAL_LM
+                max_length
+                if max_length is not None
+                else self._DEFAULT_MAX_LENGTH_CAUSAL_LM
             )
             return self._rerank_vl(query, documents, effective_max_length)
         query_str = _coerce_item_to_text(query)
         docs_str = [_coerce_item_to_text(d) for d in documents]
         if self._is_jina_reranker:
             effective_max_length = (
-                max_length if max_length is not None else self._DEFAULT_MAX_LENGTH_CAUSAL_LM
+                max_length
+                if max_length is not None
+                else self._DEFAULT_MAX_LENGTH_CAUSAL_LM
             )
             return self._rerank_jina(query_str, docs_str, effective_max_length)
         elif self._is_causal_lm:
             effective_max_length = (
-                max_length if max_length is not None else self._DEFAULT_MAX_LENGTH_CAUSAL_LM
+                max_length
+                if max_length is not None
+                else self._DEFAULT_MAX_LENGTH_CAUSAL_LM
             )
             return self._rerank_causal_lm(query_str, docs_str, effective_max_length)
         else:
@@ -621,9 +629,7 @@ class MLXRerankerModel:
         max_content_tokens = max_length - len(prefix_tokens) - len(suffix_tokens)
         pairs_text = []
         for doc in documents:
-            content = (
-                f"<Instruct>: {self._CAUSAL_LM_DEFAULT_INSTRUCTION}\n<Query>: {query}\n<Document>: {doc}"
-            )
+            content = f"<Instruct>: {self._CAUSAL_LM_DEFAULT_INSTRUCTION}\n<Query>: {query}\n<Document>: {doc}"
             pairs_text.append(content)
         content_encodings = tokenizer(
             pairs_text,

@@ -232,12 +232,21 @@ class OQManager:
 
         return await asyncio.to_thread(_scan)
 
-    MLX_RECIPES = frozenset({
-        "mixed_3_4", "mixed_3_6", "mixed_4_6",
-        "mixed_2_6", "mixed_2_4",
-        "quant2", "quant2_128", "quant2_flat", "quant2_all",
-        "mxfp4", "mxfp8",
-    })
+    MLX_RECIPES = frozenset(
+        {
+            "mixed_3_4",
+            "mixed_3_6",
+            "mixed_4_6",
+            "mixed_2_6",
+            "mixed_2_4",
+            "quant2",
+            "quant2_128",
+            "quant2_flat",
+            "quant2_all",
+            "mxfp4",
+            "mxfp8",
+        }
+    )
 
     async def start_quantization(
         self,
@@ -482,26 +491,32 @@ class OQManager:
         import sys
 
         cmd = [
-            sys.executable, "-m", "mlx_lm.convert",
-            "--model", model_path,
-            "--output", output_path,
-            "--quant-recipe", recipe,
+            sys.executable,
+            "-m",
+            "mlx_lm.convert",
+            "--model",
+            model_path,
+            "--output",
+            output_path,
+            "--quant-recipe",
+            recipe,
         ]
         if dtype == "float16":
             cmd.extend(["--dtype", "float16"])
 
         logger.info(f"Running mlx_lm.convert: {' '.join(cmd)}")
         result = subprocess.run(
-            cmd, capture_output=True, text=True, timeout=7200,
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=7200,
         )
         if result.returncode != 0:
             raise RuntimeError(
                 f"mlx_lm.convert failed (exit {result.returncode}): "
                 f"{result.stderr[:2000]}"
             )
-        logger.info(
-            f"mlx_lm.convert completed: {model_path} -> {output_path}"
-        )
+        logger.info(f"mlx_lm.convert completed: {model_path} -> {output_path}")
 
     async def _run_quantization(self, task_id: str) -> None:
         """Execute the quantization pipeline in background."""

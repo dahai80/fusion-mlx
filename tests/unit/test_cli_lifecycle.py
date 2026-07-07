@@ -42,7 +42,14 @@ class TestControlSocketPath:
 
     def test_app_control_socket_path_endswith_hyphenated_form(self):
         path = cli_lifecycle._app_control_socket_path()
-        assert path == Path.home() / "Library" / "Application Support" / "Fusion-MLX" / "control.sock"
+        assert (
+            path
+            == Path.home()
+            / "Library"
+            / "Application Support"
+            / "Fusion-MLX"
+            / "control.sock"
+        )
 
     def test_app_control_socket_path_under_home(self):
         path = cli_lifecycle._app_control_socket_path()
@@ -50,7 +57,9 @@ class TestControlSocketPath:
         assert str(path).startswith(str(Path.home()))
 
 
-def _serve_one(sock_path: str, response: dict | None, ready: threading.Event | None = None) -> bytes:
+def _serve_one(
+    sock_path: str, response: dict | None, ready: threading.Event | None = None
+) -> bytes:
     """Bind a Unix socket, accept one client, return the raw request bytes.
 
     If ``response`` is None, accept then close without writing (simulates an
@@ -81,15 +90,24 @@ class TestSendAppControlProtocol:
     def test_sends_command_json_with_newline(self, monkeypatch, short_sock_path):
         # Swift Request is Decodable {command: String}; readRequest reads one
         # newline-terminated line. Verify we send exactly {"command": "status"}\n.
-        monkeypatch.setattr(cli_lifecycle, "_app_control_socket_path", lambda: Path(short_sock_path))
+        monkeypatch.setattr(
+            cli_lifecycle, "_app_control_socket_path", lambda: Path(short_sock_path)
+        )
         captured: dict = {}
         ready = threading.Event()
 
         def server():
             captured["raw"] = _serve_one(
                 short_sock_path,
-                {"ok": True, "status": "ok", "state": "running", "pid": 123,
-                 "host": "127.0.0.1", "port": 11435, "message": None},
+                {
+                    "ok": True,
+                    "status": "ok",
+                    "state": "running",
+                    "pid": 123,
+                    "host": "127.0.0.1",
+                    "port": 11435,
+                    "message": None,
+                },
                 ready,
             )
 
@@ -107,7 +125,9 @@ class TestSendAppControlProtocol:
     def test_empty_response_raises_value_error(self, monkeypatch, short_sock_path):
         # App accepts then closes without JSON → json.loads("") → ValueError.
         # lifecycle_command(stop) must treat this as "stopped" (return 0).
-        monkeypatch.setattr(cli_lifecycle, "_app_control_socket_path", lambda: Path(short_sock_path))
+        monkeypatch.setattr(
+            cli_lifecycle, "_app_control_socket_path", lambda: Path(short_sock_path)
+        )
         ready = threading.Event()
 
         def server():
@@ -121,7 +141,9 @@ class TestSendAppControlProtocol:
         t.join()
 
 
-def _args(command: str, timeout: float = 0.5, no_wait: bool = False) -> types.SimpleNamespace:
+def _args(
+    command: str, timeout: float = 0.5, no_wait: bool = False
+) -> types.SimpleNamespace:
     return types.SimpleNamespace(command=command, timeout=timeout, no_wait=no_wait)
 
 
@@ -142,12 +164,16 @@ class TestLifecycleCommandPipFallback:
         assert rc == 1
         assert "requires" in out
 
-    def test_stop_app_bundle_empty_response_is_treated_as_stopped(self, monkeypatch, short_sock_path, capsys):
+    def test_stop_app_bundle_empty_response_is_treated_as_stopped(
+        self, monkeypatch, short_sock_path, capsys
+    ):
         # is_app_bundle True + app closes without JSON → ValueError caught → rc 0.
         # With a short path the connect succeeds, so rc 0 is attributable to the
         # ValueError path (not an OSError short-circuit).
         monkeypatch.setattr(cli_lifecycle, "is_app_bundle", lambda: True)
-        monkeypatch.setattr(cli_lifecycle, "_app_control_socket_path", lambda: Path(short_sock_path))
+        monkeypatch.setattr(
+            cli_lifecycle, "_app_control_socket_path", lambda: Path(short_sock_path)
+        )
         ready = threading.Event()
 
         def server():

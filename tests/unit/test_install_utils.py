@@ -69,4 +69,6 @@ class TestCliPrefix:
         assert prefix == "fusion-mlx" or prefix == f"{sys.executable} -m fusion_mlx"
 
     def test_get_cli_command_prefix_is_quoted_cli_prefix(self):
-        assert install_mod.get_cli_command_prefix() == shlex.quote(install_mod.get_cli_prefix())
+        assert install_mod.get_cli_command_prefix() == shlex.quote(
+            install_mod.get_cli_prefix()
+        )
