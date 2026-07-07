@@ -3,7 +3,7 @@
 
 import logging
 
-from .xlm_roberta import Model as XLMRobertaModel
-from .xlm_roberta import ModelArgs as XLMRobertaModelArgs
-
 logger = logging.getLogger(__name__)
+
+from .xlm_roberta import Model as XLMRobertaModel  # noqa: F401, E402
+from .xlm_roberta import ModelArgs as XLMRobertaModelArgs  # noqa: F401, E402
