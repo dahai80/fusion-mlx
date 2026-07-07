@@ -227,6 +227,8 @@ Each model can have custom settings stored in `~/.fusion-mlx/settings/`:
 | `mtp_enabled` | Enable native MTP (Qwen3.5/3.6, DeepSeek-V4) |
 | `vlm_mtp_enabled` | Enable VLM MTP with gemma4_assistant drafter |
 
+> The speculative-decoding settings above (`specprefill_enabled`, `dflash_enabled`, `mtp_enabled`, `vlm_mtp_enabled`) mirror the `serve` flags. For the full method matrix, selection guide, the boot-time loading constraint, and the `SpecAutoRouter` API, see [Speculative Decoding](speculative-decoding.md).
+
 ## Server Config Summary
 
 ```python

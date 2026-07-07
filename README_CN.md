@@ -190,6 +190,17 @@ macOS 应用提供模式切换：
 
 **推荐**：`mixed_3_4` 或 `quant2_all` 获得最佳质量/速度平衡。**保守**：`mixed_4_6` 或 `mxfp4` 适用于质量优先场景。**激进**：`mixed_2_4` 或 `quant2` 适用于受限内存下追求极限速度。
 
+### 模型转换（convert）
+
+使用 `convert` 命令把任意 HuggingFace 模型转换为 MLX（可选量化），接受模型别名或完整 HF 仓库：
+
+```bash
+fusion-mlx convert qwen3.5-9b --quant-bits 4 -o ./qwen3.5-9b-4bit
+fusion-mlx convert mlx-community/Qwen3.5-9B --quant-bits 8 --upload-repo me/my-repo
+```
+
+这是保存到磁盘的**权重**量化，与 TurboQuant KV cache 压缩（`--kv-cache-turboquant`，运行时参数）不同。详见 [CLI 参考](docs/cli-reference.md)。
+
 ## API 兼容性
 
 | API | 端点 | 状态 |
@@ -312,6 +323,8 @@ fusion-mlx/
 - [Architecture](docs/architecture.md) — EnginePool、Scheduler（25 模块）、Cache 层、SmartRouter（英文）
 - [CLI Reference](docs/cli-reference.md) — 所有命令和参数（英文）
 - [Configuration](docs/configuration.md) — 内存分级、调度器设置、TurboQuant、别名、执行器线程池（英文）
+- [Speculative Decoding](docs/speculative-decoding.md) — Suffix/DFlash/DSpark/MTP/VLM-MTP 五种投机解码方法、选型指南、auto-router（英文）
+- [FR Differentiation](docs/FR_DIFFERENTIATION.md) — fusion-mlx 在投机解码/TurboQuant/调度方面差异化能力的核实分析（英文）
 - [架构详解](docs/architecture_CN.md) — 架构文档中文版
 - [配置指南](docs/configuration_CN.md) — 配置文档中文版
 

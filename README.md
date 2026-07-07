@@ -164,6 +164,17 @@ The macOS app offers a mode toggle between:
 
 **Recommended**: `mixed_3_4` or `quant2_all` for best quality/speed tradeoff. **Conservative**: `mixed_4_6` or `mxfp4` when quality is priority. **Aggressive**: `mixed_2_4` or `quant2` when maximizing speed on constrained memory.
 
+### Converting models
+
+Convert any HuggingFace model to MLX (optionally quantized) with the `convert` command — accepts a model alias or full HF repo:
+
+```bash
+fusion-mlx convert qwen3.5-9b --quant-bits 4 -o ./qwen3.5-9b-4bit
+fusion-mlx convert mlx-community/Qwen3.5-9B --quant-bits 8 --upload-repo me/my-repo
+```
+
+This is **weight** quantization saved to disk, distinct from TurboQuant KV-cache compression (`--kv-cache-turboquant`), which is a runtime knob. See [CLI Reference](docs/cli-reference.md).
+
 ## API Compatibility
 
 | API | Endpoints | Status |
@@ -299,6 +310,8 @@ fusion-mlx/
 - [Architecture](docs/architecture.md) — EnginePool, Scheduler (25 modules), Cache layers, SmartRouter
 - [CLI Reference](docs/cli-reference.md) — All commands and flags
 - [Configuration](docs/configuration.md) — Memory tiers, scheduler settings, TurboQuant, aliases, executor pools
+- [Speculative Decoding](docs/speculative-decoding.md) — Suffix/DFlash/DSpark/MTP/VLM-MTP methods, selection guide, auto-router
+- [FR Differentiation](docs/FR_DIFFERENTIATION.md) — Verified analysis of fusion-mlx's spec-decode/TurboQuant/scheduling differentiation
 
 ## License
 
