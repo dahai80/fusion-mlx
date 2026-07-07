@@ -97,10 +97,10 @@ class _MockPool:
     def __init__(self, engine):
         self._engine = engine
 
-    async def get_engine(self, model_name, _lease=False):
+    async def get_engine(self, model_name, _lease=False, adapter_path=None):
         return self._engine
 
-    async def release_engine(self, model_name):
+    async def release_engine(self, model_name, adapter_path=None):
         return None
 
 
