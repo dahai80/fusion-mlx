@@ -21,15 +21,16 @@ them would force the user into all-or-nothing.
 The ``is_enabled`` decision precedence (highest first):
 
 1. ``--no-telemetry`` CLI flag → forced OFF for this run.
-2. ``RAPID_MLX_TELEMETRY=0`` env → forced OFF.
+2. ``FUSION_MLX_TELEMETRY=0`` env → forced OFF. (``RAPID_MLX_TELEMETRY=0``
+   is the deprecated alias.)
 3. Stored consent file → whatever the user answered.
 4. Default → OFF. (Anonymous data collection without explicit opt-in is
    a non-starter.)
 
 There is intentionally no env-var equivalent for forcing ON. CI agents
-silently opting in via ``RAPID_MLX_TELEMETRY=1`` would skew the data
-toward synthetic workloads. Users who want to opt in run
-``rapid-mlx telemetry enable`` once.
+silently opting in via ``FUSION_MLX_TELEMETRY=1`` (or the deprecated
+``RAPID_MLX_TELEMETRY=1``) would skew the data toward synthetic workloads.
+Users who want to opt in run ``rapid-mlx telemetry enable`` once.
 """
 
 from __future__ import annotations
@@ -42,7 +43,10 @@ from pathlib import Path
 
 import yaml
 
-ENV_VAR = "RAPID_MLX_TELEMETRY"
+ENV_VAR_PRIMARY = "FUSION_MLX_TELEMETRY"
+ENV_VAR_LEGACY = "RAPID_MLX_TELEMETRY"
+# Back-compat alias for external consumers; prefer ENV_VAR_PRIMARY / ENV_VAR_LEGACY.
+ENV_VAR = ENV_VAR_PRIMARY
 
 # Bump when the on-disk consent file format changes incompatibly. A
 # stored record with a smaller schema_version is treated as "never
@@ -191,15 +195,19 @@ def reset_state() -> None:
 
 
 def _env_kill_switch_active() -> bool:
-    """``RAPID_MLX_TELEMETRY=0`` (or any falsy value) wins.
+    """``FUSION_MLX_TELEMETRY=0`` (or any falsy value) wins.
+    ``RAPID_MLX_TELEMETRY`` is the deprecated alias.
 
     Truthy values are intentionally ignored — see module docstring for
     why there's no env-var force-on.
     """
-    raw = os.environ.get(ENV_VAR)
-    if raw is None:
-        return False
-    return raw.strip().lower() in ("0", "false", "no", "off", "")
+    raw = os.environ.get(ENV_VAR_PRIMARY)
+    if raw is not None:
+        return raw.strip().lower() in ("0", "false", "no", "off", "")
+    raw = os.environ.get(ENV_VAR_LEGACY)
+    if raw is not None:
+        return raw.strip().lower() in ("0", "false", "no", "off", "")
+    return False
 
 
 # Process-level kill switch set by ``cli.py`` when ``--no-telemetry`` is
@@ -247,7 +255,8 @@ def consent_source(*, cli_no_telemetry: bool = False) -> str:
     if cli_no_telemetry or _cli_kill_switch_active:
         return "cli-flag (--no-telemetry)"
     if _env_kill_switch_active():
-        return f"env-var ({ENV_VAR}={os.environ.get(ENV_VAR, '')!r})"
+        used_var = ENV_VAR_PRIMARY if os.environ.get(ENV_VAR_PRIMARY) is not None else ENV_VAR_LEGACY
+        return f"env-var ({used_var}={os.environ.get(used_var, '')!r})"
     state = get_consent_state()
     if state is None:
         return "default (no consent recorded)"

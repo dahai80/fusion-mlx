@@ -285,7 +285,7 @@ def _apply_reasoning_cap(
 # ── Silent-drop rescue ─────────────────────────────────────────────
 
 
-def _should_start_in_thinking(
+def _is_truncated_mid_think(
     cleaned_text: str | None,
     reasoning_text: str | None,
     finish_reason: str | None,
@@ -299,54 +299,127 @@ def _should_start_in_thinking(
     return False
 
 
+def _should_start_in_thinking(
+    chat_template: str,
+    enable_thinking: bool | None,
+) -> bool:
+    if not chat_template:
+        return False
+    if enable_thinking is False:
+        return False
+    has_think_tag = "EATURE" in chat_template or "<think>" in chat_template
+    if not has_think_tag:
+        return False
+    return True
+
+
+_CUTOFF_NOTICE_DISABLED_VALUES = frozenset({"0", "false", "no", "off", "disabled"})
+_RESCUE_ENV_PRIMARY = "FUSION_REASONING_CUTOFF_NOTICE"
+_RESCUE_ENV_LEGACY = "RAPID_MLX_REASONING_CUTOFF_NOTICE"
+
+
 def _rescue_silent_drop_from_reasoning(
-    content: str | None,
+    final_content: str | None,
     reasoning_text: str | None,
-    finish_reason: str | None,
+    tool_calls: list | None,
+    finish_reason: str | None = None,
+    raw_text: str | None = None,
     *,
-    enable_thinking: bool | None = None,
+    reasoning_is_case4: bool = False,
+    matched_stop: str | None = None,
+    prompt_thinking_active: bool = False,
 ) -> str | None:
+    logger.debug(
+        "rescue_silent_drop: content=%r reasoning=%r tool_calls=%s finish=%s",
+        (final_content or "")[:40],
+        (reasoning_text or "")[:40],
+        bool(tool_calls),
+        finish_reason,
+    )
+    if final_content and final_content.strip():
+        return final_content
+    if tool_calls:
+        return final_content
     if not reasoning_text or not reasoning_text.strip():
-        return content
-    if finish_reason != "length":
-        return content
-    if content and content.strip():
-        return content
-    return None
-
-
-# ── Reasoning cutoff notice ────────────────────────────────────────
+        return final_content
+    THINK_OPEN = "<think>"
+    THINK_CLOSE = "</think>"
+    truncated_mid_think = (
+        (
+            finish_reason == "length"
+            and raw_text
+            and raw_text.lstrip().startswith(THINK_OPEN)
+            and THINK_CLOSE not in raw_text
+        )
+        or (
+            finish_reason == "stop"
+            and matched_stop is not None
+            and raw_text
+            and raw_text.lstrip().startswith(THINK_OPEN)
+            and THINK_CLOSE not in raw_text
+        )
+        or (finish_reason == "length" and reasoning_is_case4 and prompt_thinking_active)
+        or (
+            finish_reason == "stop"
+            and reasoning_is_case4
+            and matched_stop is not None
+            and prompt_thinking_active
+        )
+    )
+    if truncated_mid_think:
+        return final_content
+    if (
+        finish_reason == "length"
+        and raw_text
+        and "<|channel>thought" in raw_text
+        and "<channel|>" not in raw_text[raw_text.rfind("<|channel>thought") :]
+    ):
+        return final_content
+    if (
+        raw_text
+        and "<|channel|>analysis<|message|>" in raw_text
+        and "<|channel|>final<|message|>" not in raw_text
+    ):
+        return final_content
+    return reasoning_text
 
 
 def _cutoff_notice_enabled() -> bool:
-    return bool(os.environ.get("FUSION_REASONING_CUTOFF_NOTICE", ""))
+    for env_name in (_RESCUE_ENV_PRIMARY, _RESCUE_ENV_LEGACY):
+        raw = os.environ.get(env_name)
+        if raw is None:
+            continue
+        if raw.strip().lower() in _CUTOFF_NOTICE_DISABLED_VALUES:
+            return False
+    return True
 
 
-def _build_reasoning_rescue_payload(
-    reasoning_text: str | None,
-    reasoning_max_tokens: int | None,
-) -> str | None:
-    if not reasoning_text or not reasoning_max_tokens:
-        return None
-    char_budget = reasoning_max_tokens * 4
-    if len(reasoning_text) <= char_budget:
-        return None
-    return REASONING_CUTOFF_SENTINEL
+def _build_reasoning_rescue_payload(reasoning_text: str) -> str:
+    stripped = strip_reasoning_channel_markup(reasoning_text.rstrip())
+    tail = stripped[-RESCUE_TAIL_LENGTH:]
+    sanitized = sanitize_output(tail)
+    if not sanitized:
+        return REASONING_CUTOFF_SENTINEL
+    return f"{REASONING_CUTOFF_SENTINEL}\n\n{sanitized}"
 
 
 def _apply_reasoning_cutoff_notice(
-    content: str | None,
+    final_content: str | None,
     reasoning_text: str | None,
-    reasoning_max_tokens: int | None,
-) -> str:
+    tool_calls: list | None,
+    finish_reason: str | None,
+) -> str | None:
     if not _cutoff_notice_enabled():
-        return content or ""
-    rescue = _build_reasoning_rescue_payload(reasoning_text, reasoning_max_tokens)
-    if rescue is None:
-        return content or ""
-    if content and content.strip():
-        return f"{rescue}\n\n{content}"
-    return rescue
+        return final_content
+    if finish_reason != "length":
+        return final_content
+    if final_content and final_content.strip():
+        return final_content
+    if tool_calls:
+        return final_content
+    if not reasoning_text or not reasoning_text.strip():
+        return final_content
+    return _build_reasoning_rescue_payload(reasoning_text)
 
 
 # ── Response format validation ─────────────────────────────────────
@@ -522,45 +595,78 @@ def _resolve_enable_thinking(request) -> bool | None:
 
 
 def maybe_auto_disable_thinking_for_tools(
-    request, enable_thinking: bool | None
+    request, enable_thinking: bool | None = None
 ) -> bool | None:
     tools = getattr(request, "tools", None)
     if not tools:
         return enable_thinking
+    if _client_signalled_reasoning_intent(request):
+        return False
     tool_choice = getattr(request, "tool_choice", None)
-    if tool_choice in ("required", "auto"):
-        if enable_thinking is None or enable_thinking is True:
-            ctk = getattr(request, "chat_template_kwargs", None)
-            if isinstance(ctk, dict):
-                ctk["enable_thinking"] = False
-            _mark_thinking_auto_disabled(request)
-            return False
+    if tool_choice == "none":
+        return enable_thinking
+    if enable_thinking is None or enable_thinking is True:
+        ctk = getattr(request, "chat_template_kwargs", None)
+        if isinstance(ctk, dict):
+            ctk["enable_thinking"] = False
+        else:
+            try:
+                request.chat_template_kwargs = {"enable_thinking": False}
+            except Exception:
+                logger.debug("maybe_auto_disable_thinking_for_tools: failed to set ctk", exc_info=True)
+        _mark_thinking_auto_disabled(request)
+        return True
     return enable_thinking
 
 
-def _client_signalled_reasoning_intent(request) -> bool:
-    if _extract_thinking_from_request(request) is not None:
-        return True
-    if getattr(request, "reasoning_effort", None) is not None:
-        return True
+def _client_signalled_reasoning_intent(request, *extra) -> bool:
+    for obj in (request, *extra):
+        if obj is None:
+            continue
+        if _extract_thinking_from_request(obj) is not None:
+            return True
+        if getattr(obj, "reasoning_effort", None) is not None:
+            return True
+        if getattr(obj, "reasoning_max_tokens", None) is not None:
+            return True
+        reasoning = getattr(obj, "reasoning", None)
+        if isinstance(reasoning, dict):
+            effort = reasoning.get("effort")
+            if effort is not None:
+                return True
     return False
 
 
-def maybe_apply_reasoning_effort(request) -> None:
+def maybe_apply_reasoning_effort(request) -> bool:
     effort = getattr(request, "reasoning_effort", None)
     if not effort:
-        return
+        return False
+    if effort == "none":
+        explicit_thinking = _extract_thinking_from_request(request)
+        if explicit_thinking is not None:
+            return False
+        ctk = getattr(request, "chat_template_kwargs", None)
+        if isinstance(ctk, dict):
+            ctk["enable_thinking"] = False
+        else:
+            try:
+                request.chat_template_kwargs = {"enable_thinking": False}
+            except Exception:
+                logger.debug("maybe_apply_reasoning_effort: failed to set ctk", exc_info=True)
+        _mark_thinking_auto_disabled(request)
+        return True
     max_tokens_map = OPENAI_REASONING_EFFORT_TO_MAX_TOKENS
     mapped = max_tokens_map.get(effort)
     if mapped is None:
-        return
-    existing = getattr(request, "max_tokens", None)
-    if existing is not None:
-        return
+        return False
+    existing_rmt = getattr(request, "reasoning_max_tokens", None)
+    if existing_rmt is not None:
+        return False
     try:
-        request.max_tokens = mapped
+        request.reasoning_max_tokens = mapped
     except Exception:
-        logger.debug("maybe_apply_reasoning_effort: failed to set max_tokens", exc_info=True)
+        logger.debug("maybe_apply_reasoning_effort: failed to set reasoning_max_tokens", exc_info=True)
+    return True
 
 
 def maybe_auto_disable_thinking_for_casual_chat(
@@ -765,6 +871,15 @@ def get_engine(model_name: str | None = None) -> BaseEngine:
                 return entry.engine
         except Exception:
             pass
+    cfg = _get_server_attr("_config") or _get_server_attr("config")
+    if cfg is not None:
+        direct = getattr(cfg, "engine", None)
+        if direct is not None:
+            return direct
+    from ..config import get_config
+    direct = get_config().engine
+    if direct is not None:
+        return direct
     raise HTTPException(status_code=503, detail="Model not loaded")
 
 

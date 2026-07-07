@@ -19,9 +19,10 @@ The design choice (option a in the R12-4 design doc):
        ``param=response_format.json_schema``, ``details`` carrying the
        failing path / expected / got).
 
-The disable flag ``RAPID_MLX_STRICT_JSON_SCHEMA=off`` (default ``on``)
+The disable flag ``FUSION_MLX_STRICT_JSON_SCHEMA=off`` (default ``on``)
 short-circuits step 3+ — strict requests fall through to the legacy
-prompt-injection behavior. Operators who rely on the pre-R12-4
+prompt-injection behavior. ``RAPID_MLX_STRICT_JSON_SCHEMA`` is the
+deprecated alias. Operators who rely on the pre-R12-4
 silent-pass-through behavior get the legacy code path back without
 having to pin to an older release.
 """
@@ -40,41 +41,66 @@ logger = logging.getLogger(__name__)
 # Environment-variable feature flags
 # ---------------------------------------------------------------------------
 
-_DISABLE_FLAG = "RAPID_MLX_STRICT_JSON_SCHEMA"
-_REPAIR_FLAG = "RAPID_MLX_STRICT_JSON_SCHEMA_REPAIR"
+_DISABLE_FLAG_PRIMARY = "FUSION_MLX_STRICT_JSON_SCHEMA"
+_DISABLE_FLAG_LEGACY = "RAPID_MLX_STRICT_JSON_SCHEMA"
+_REPAIR_FLAG_PRIMARY = "FUSION_MLX_STRICT_JSON_SCHEMA_REPAIR"
+_REPAIR_FLAG_LEGACY = "RAPID_MLX_STRICT_JSON_SCHEMA_REPAIR"
 
 # Values that disable a feature flag (matches the
-# ``RAPID_MLX_AUTO_PULL`` / ``RAPID_MLX_PROFILE_VERBOSE`` convention).
+# ``FUSION_MLX_AUTO_PULL`` / ``FUSION_MLX_PROFILE_VERBOSE`` convention;
+# ``RAPID_MLX_`` aliases are deprecated).
 _OFF_VALUES = {"0", "off", "false", "no", "disable", "disabled"}
 
 
 def strict_enforcement_enabled() -> bool:
     """Return ``True`` iff post-generate strict enforcement should run.
 
-    Default: enabled. The env var ``RAPID_MLX_STRICT_JSON_SCHEMA=off``
+    Default: enabled. The env var ``FUSION_MLX_STRICT_JSON_SCHEMA=off``
     (``0`` / ``false`` / ``no`` / ``disable`` / ``disabled`` are also
     accepted as falsy) short-circuits enforcement so requests fall
     through to the legacy prompt-injection-only behavior.
+    ``RAPID_MLX_STRICT_JSON_SCHEMA`` is the deprecated alias.
 
     The disable flag is intended ONLY for operators who relied on the
     silent-pass-through behavior pre-R12-4 and need time to adapt their
     clients. It will likely be removed in a future release.
     """
-    raw = os.environ.get(_DISABLE_FLAG, "").strip().lower()
-    return raw not in _OFF_VALUES
+    raw = os.environ.get(_DISABLE_FLAG_PRIMARY, "").strip().lower()
+    if raw:
+        return raw not in _OFF_VALUES
+    raw = os.environ.get(_DISABLE_FLAG_LEGACY, "").strip().lower()
+    if raw:
+        logger.warning(
+            "env var %s is deprecated, use %s instead",
+            _DISABLE_FLAG_LEGACY,
+            _DISABLE_FLAG_PRIMARY,
+        )
+        return raw not in _OFF_VALUES
+    return True
 
 
 def repair_retry_enabled() -> bool:
     """Return ``True`` iff the single auto-repair retry should run.
 
     Default: enabled. The env var
-    ``RAPID_MLX_STRICT_JSON_SCHEMA_REPAIR=off`` disables ONLY the
+    ``FUSION_MLX_STRICT_JSON_SCHEMA_REPAIR=off`` disables ONLY the
     retry; the post-decode validation + 422 envelope still runs (so
     strict mode remains hard-contract; only the retry is skipped).
+    ``RAPID_MLX_STRICT_JSON_SCHEMA_REPAIR`` is the deprecated alias.
     Useful for cost-sensitive deployments that prefer to fail fast.
     """
-    raw = os.environ.get(_REPAIR_FLAG, "").strip().lower()
-    return raw not in _OFF_VALUES
+    raw = os.environ.get(_REPAIR_FLAG_PRIMARY, "").strip().lower()
+    if raw:
+        return raw not in _OFF_VALUES
+    raw = os.environ.get(_REPAIR_FLAG_LEGACY, "").strip().lower()
+    if raw:
+        logger.warning(
+            "env var %s is deprecated, use %s instead",
+            _REPAIR_FLAG_LEGACY,
+            _REPAIR_FLAG_PRIMARY,
+        )
+        return raw not in _OFF_VALUES
+    return True
 
 
 # ---------------------------------------------------------------------------

@@ -13,7 +13,7 @@ import time
 import uuid
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, StrictInt, StrictStr, model_validator
+from pydantic import BaseModel, ConfigDict, Field, StrictInt, StrictStr, field_validator, model_validator
 
 # =============================================================================
 # Content Types (for multimodal messages)
@@ -243,6 +243,24 @@ class ChatCompletionRequest(BaseModel):
     timeout: float | None = None
     # Thinking/reasoning control (Qwen3 style).  None = server default.
     enable_thinking: bool | None = None
+    # Reasoning effort (OpenAI / Anthropic compatible).  None = unset.
+    # Valid values: "minimal", "low", "medium", "high", "none".
+    reasoning_effort: str | None = None
+
+    @field_validator("reasoning_effort")
+    @classmethod
+    def _validate_reasoning_effort(cls, v: str | None) -> str | None:
+        if v is None:
+            return v
+        allowed = {"minimal", "low", "medium", "high", "none"}
+        if v not in allowed:
+            raise ValueError(
+                f"reasoning_effort must be one of {sorted(allowed)}, got {v!r}"
+            )
+        return v
+    # Hard cap on reasoning token budget (set by reasoning_effort tier or
+    # explicitly by the client).  None = no cap / server default.
+    reasoning_max_tokens: int | None = None
     # OpenAI extended spec: arbitrary kwargs forwarded to the chat template.
     # We currently honor the ``enable_thinking`` key here; other keys are
     # accepted (no Pydantic drop) but not yet forwarded — see
@@ -286,6 +304,27 @@ class ChatCompletionRequest(BaseModel):
                     "type": "function",
                     "function": {"name": fc["name"]},
                 }
+        return self
+
+    @model_validator(mode="after")
+    def _validate_tool_schema_depth(self) -> "ChatCompletionRequest":
+        if not self.tools:
+            return self
+        from ..utils.json_depth import (
+            json_nesting_depth_exceeds,
+            resolve_max_tool_schema_depth,
+        )
+        max_depth = resolve_max_tool_schema_depth()
+        if max_depth <= 0:
+            return self
+        for tool in self.tools:
+            tool_dict = tool.model_dump(exclude_none=True) if hasattr(tool, "model_dump") else tool
+            params = tool_dict.get("function", {}).get("parameters") if isinstance(tool_dict, dict) else None
+            if params and json_nesting_depth_exceeds(params, max_depth):
+                raise ValueError(
+                    f"Tool schema nesting depth exceeds the {max_depth}-level "
+                    f"server cap (set via FUSION_MLX_MAX_TOOL_SCHEMA_DEPTH)."
+                )
         return self
 
 

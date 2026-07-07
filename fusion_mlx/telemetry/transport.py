@@ -15,8 +15,9 @@ Implementation choices, called out because they look unusual:
   CPython 3.10+ and is already imported elsewhere in this codebase.
 
 - **HTTPS except loopback dev overrides.** The endpoint is overridable
-  via ``RAPID_MLX_TELEMETRY_ENDPOINT`` for debug rigs and local Worker
-  dev. The exact rule (round 17 codex catch -- the prior "HTTPS-only"
+  via ``FUSION_MLX_TELEMETRY_ENDPOINT`` for debug rigs and local Worker
+  dev (``RAPID_MLX_TELEMETRY_ENDPOINT`` is the deprecated alias).
+  The exact rule (round 17 codex catch -- the prior "HTTPS-only"
   shorthand made the loopback exemption look like a bug):
     * Public hosts -- HTTPS required, no exceptions.
     * Loopback hosts (``localhost`` / ``127.0.0.1`` / ``::1``) --
@@ -51,8 +52,10 @@ from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 DEFAULT_ENDPOINT = "https://telemetry.rapidmlx.com/v1/events"
-DEBUG_ENV = "RAPID_MLX_TELEMETRY_DEBUG"
-ENDPOINT_ENV = "RAPID_MLX_TELEMETRY_ENDPOINT"
+DEBUG_ENV_PRIMARY = "FUSION_MLX_TELEMETRY_DEBUG"
+DEBUG_ENV_LEGACY = "RAPID_MLX_TELEMETRY_DEBUG"
+ENDPOINT_ENV_PRIMARY = "FUSION_MLX_TELEMETRY_ENDPOINT"
+ENDPOINT_ENV_LEGACY = "RAPID_MLX_TELEMETRY_ENDPOINT"
 
 TIMEOUT_S = 3.0
 RETRY_BACKOFFS_S: tuple[float, ...] = (0.5, 2.0)
@@ -66,8 +69,9 @@ def endpoint() -> str | None:
     monkey-patch ``os.environ`` per case without poisoning each other.
 
     Round 3 codex review caught that an unrestricted override
-    (``RAPID_MLX_TELEMETRY_ENDPOINT=https://attacker.example/`` set in
-    a user's shell rc or by a malicious wrapper script) would silently
+    (``FUSION_MLX_TELEMETRY_ENDPOINT=https://attacker.example/`` set in
+    a user's shell rc or by a malicious wrapper script; the deprecated
+    ``RAPID_MLX_TELEMETRY_ENDPOINT`` alias is also accepted) would silently
     redirect every opted-in user's events to a hostile collector, with
     the privacy guarantees of the disclosure ("only our Worker hashes
     your IP, etc.") no longer applying. The override is restricted to
@@ -83,7 +87,7 @@ def endpoint() -> str | None:
     closed (drops the batch). Default (no env var at all) still
     returns ``DEFAULT_ENDPOINT``.
     """
-    raw = os.environ.get(ENDPOINT_ENV)
+    raw = os.environ.get(ENDPOINT_ENV_PRIMARY) or os.environ.get(ENDPOINT_ENV_LEGACY)
     if raw is None:
         return DEFAULT_ENDPOINT
     if _is_localhost_override(raw):
@@ -122,9 +126,16 @@ def _is_localhost_override(url: str) -> bool:
 
 
 def debug_enabled() -> bool:
-    raw = os.environ.get(DEBUG_ENV)
+    raw = os.environ.get(DEBUG_ENV_PRIMARY) or os.environ.get(DEBUG_ENV_LEGACY)
     if raw is None:
         return False
+    if os.environ.get(DEBUG_ENV_LEGACY) and not os.environ.get(DEBUG_ENV_PRIMARY):
+        import logging as _logging
+        _logging.getLogger(__name__).warning(
+            "env var %s is deprecated, use %s instead",
+            DEBUG_ENV_LEGACY,
+            DEBUG_ENV_PRIMARY,
+        )
     return raw.strip().lower() not in ("0", "", "false", "no", "off")
 
 
@@ -188,7 +199,7 @@ def post_batch(events: list[dict[str, Any]]) -> bool:
         # bucket invisibly. Fail closed: drop the batch and log so the
         # operator can see why nothing landed.
         _log(
-            f"{ENDPOINT_ENV} was set but rejected -- dropping batch "
+            f"{ENDPOINT_ENV_PRIMARY} was set but rejected -- dropping batch "
             f"(set a localhost / 127.0.0.1 / ::1 URL or unset the env "
             f"var to use the production endpoint)"
         )
@@ -294,9 +305,10 @@ def post_batch(events: list[dict[str, Any]]) -> bool:
 def _log(msg: str) -> None:
     """Debug-only logger.
 
-    Silent unless ``RAPID_MLX_TELEMETRY_DEBUG`` is set to a truthy
-    value. Goes to stderr so it does not interleave with subcommand
-    output that may be JSON-piped.
+    Silent unless ``FUSION_MLX_TELEMETRY_DEBUG`` (or the deprecated
+    ``RAPID_MLX_TELEMETRY_DEBUG``) is set to a truthy value. Goes to
+    stderr so it does not interleave with subcommand output that may be
+    JSON-piped.
     """
     if not debug_enabled():
         return

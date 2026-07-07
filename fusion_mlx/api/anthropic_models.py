@@ -14,6 +14,12 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from fusion_mlx.api.shared_models import IDPrefix, generate_id
 
+ANTHROPIC_EFFORT_TO_REASONING_MAX_TOKENS: dict[str, int] = {
+    "low": 512,
+    "medium": 2048,
+    "high": 8192,
+}
+
 # =============================================================================
 # Content Blocks
 # =============================================================================
