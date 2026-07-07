@@ -1,8 +1,13 @@
 # SPDX-License-Identifier: Apache-2.0
 from __future__ import annotations
+
 import pytest
+
 pytest.importorskip("mlx")  # tokenizer/run_tool_extraction needs mlx runtime
-pytest.skip("requires mlx runtime (stub tokenizer leaks placeholder content)", allow_module_level=True)
+pytest.skip(
+    "requires mlx runtime (stub tokenizer leaks placeholder content)",
+    allow_module_level=True,
+)
 
 import json
 from dataclasses import dataclass

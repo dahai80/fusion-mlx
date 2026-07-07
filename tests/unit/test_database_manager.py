@@ -21,9 +21,6 @@ import pytest
 
 from fusion_gui.database import (
     DatabaseManager,
-    close_database,
-    get_database_manager,
-    get_db_session,
 )
 
 
@@ -69,11 +66,18 @@ class TestConstructorAndInit:
 class TestDefaultSettings:
     def test_default_settings_inserted(self, db):
         keys = [
-            "server_port", "max_concurrent_requests", "max_concurrent_requests_per_model",
-            "max_concurrent_models", "auto_unload_inactive_models",
-            "model_inactivity_timeout_minutes", "enable_system_tray", "log_level",
-            "huggingface_cache_dir", "enable_gpu_acceleration",
-            "bind_to_all_interfaces", "max_tokens_limit",
+            "server_port",
+            "max_concurrent_requests",
+            "max_concurrent_requests_per_model",
+            "max_concurrent_models",
+            "auto_unload_inactive_models",
+            "model_inactivity_timeout_minutes",
+            "enable_system_tray",
+            "log_level",
+            "huggingface_cache_dir",
+            "enable_gpu_acceleration",
+            "bind_to_all_interfaces",
+            "max_tokens_limit",
         ]
         for k in keys:
             assert db.get_setting(k) is not None, f"missing default setting {k}"
@@ -132,8 +136,15 @@ class TestResetModelStatuses:
 
     def test_reset_marks_loaded_as_unloaded(self, db):
         from fusion_gui.models import Model
+
         with db.get_session() as sess:
-            m = Model(name="t", path="/p", model_type="text", memory_required_gb=1.0, status="loaded")
+            m = Model(
+                name="t",
+                path="/p",
+                model_type="text",
+                memory_required_gb=1.0,
+                status="loaded",
+            )
             sess.add(m)
             sess.commit()
         db._reset_model_statuses()
@@ -183,7 +194,10 @@ class TestResolveModelPath:
         snap = cache / "models--org--model" / "snapshots" / "snap_x"
         snap.mkdir(parents=True)
         # redirect cache dir lookup to our tmp/cache
-        monkeypatch.setattr("os.path.join", lambda *a: "/".join(a) if a[0] != os.path.expanduser("~") else str(snap))
+        monkeypatch.setattr(
+            "os.path.join",
+            lambda *a: "/".join(a) if a[0] != os.path.expanduser("~") else str(snap),
+        )
         # path resolution will use os.path.expanduser("~") + .cache/fusion-mlx
         # Simpler: directly test the branch by pointing expanduser to tmp
         result = db._resolve_model_path("org/model")
@@ -197,8 +211,15 @@ class TestUpdateModelSizesFromDisk:
 
     def test_model_with_missing_path_logs_warning(self, db):
         from fusion_gui.models import Model
+
         with db.get_session() as sess:
-            m = Model(name="ghost", path="/nonexistent/ghost", model_type="text", memory_required_gb=1.0, status="unloaded")
+            m = Model(
+                name="ghost",
+                path="/nonexistent/ghost",
+                model_type="text",
+                memory_required_gb=1.0,
+                status="unloaded",
+            )
             sess.add(m)
             sess.commit()
         # should swallow the "not found" path gracefully
@@ -206,6 +227,7 @@ class TestUpdateModelSizesFromDisk:
 
     def test_model_with_safetensors_updates_size(self, db, tmp_path):
         from fusion_gui.models import Model
+
         model_dir = tmp_path / "realmodel"
         model_dir.mkdir()
         # write a large placeholder safetensors so the computed memory delta
@@ -215,7 +237,13 @@ class TestUpdateModelSizesFromDisk:
         # 600 MiB * 1.25 overhead ≈ 0.73 GB > 0.5 GB delta from initial 0.0
         st.write_bytes(b"\0" * (600 * 1024 * 1024))
         with db.get_session() as sess:
-            m = Model(name="real", path=str(model_dir), model_type="text", memory_required_gb=0.0, status="unloaded")
+            m = Model(
+                name="real",
+                path=str(model_dir),
+                model_type="text",
+                memory_required_gb=0.0,
+                status="unloaded",
+            )
             sess.add(m)
             sess.commit()
         db.update_model_sizes_from_disk()
@@ -227,6 +255,7 @@ class TestUpdateModelSizesFromDisk:
 class TestGlobalHelpers:
     def test_get_database_manager_singleton(self, monkeypatch, tmp_path):
         import fusion_gui.database as mod
+
         monkeypatch.setattr("appdirs.user_data_dir", lambda *a, **k: str(tmp_path))
         mod.db_manager = None
         m1 = mod.get_database_manager()
@@ -237,6 +266,7 @@ class TestGlobalHelpers:
 
     def test_get_db_session_generator(self, monkeypatch, tmp_path):
         import fusion_gui.database as mod
+
         monkeypatch.setattr("appdirs.user_data_dir", lambda *a, **k: str(tmp_path))
         mod.db_manager = None
         gen = mod.get_db_session()
@@ -247,6 +277,7 @@ class TestGlobalHelpers:
 
     def test_close_database_when_none(self):
         import fusion_gui.database as mod
+
         mod.db_manager = None
         mod.close_database()  # should not raise
         assert mod.db_manager is None

@@ -2,6 +2,7 @@
 """Regression tests for the Llama 4 BatchKVCache offset patch."""
 
 import pytest
+
 pytest.importorskip("mlx")  # suite needs mlx runtime; skip if absent
 pytest.skip("requires mlx runtime (stub shadow breaks bodies)", allow_module_level=True)
 
