@@ -45,7 +45,7 @@ def _run_tests() -> None:
     from langchain_openai import ChatOpenAI
     from pydantic import BaseModel, Field
 
-    base_url = os.environ.get("RAPID_MLX_BASE_URL", "http://localhost:8000/v1")
+    base_url = os.environ.get("FUSION_MLX_BASE_URL", "http://localhost:8000/v1")
     try:
         model_id = _httpx.get(f"{base_url}/models", timeout=5).json()["data"][0]["id"]
     except Exception:

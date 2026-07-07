@@ -9,7 +9,7 @@ Two tiers of coverage here:
    (flag parsing, eligibility errors, info rendering, app construction
    with mocked model/processor/runtime).
 
-2. **End-to-end** — guarded by ``RAPID_MLX_DFLASH_E2E=1`` and the
+2. **End-to-end** — guarded by ``FUSION_MLX_DFLASH_E2E=1`` and the
    presence of mlx-vlm 0.5.0 + the Qwen3.5-27B-8bit weights and DFlash
    drafter locally. These actually generate text via the production
    server. They live here (not in a separate file) so a maintainer can
@@ -1015,7 +1015,7 @@ def test_run_dflash_server_loads_models_on_executor_thread(monkeypatch) -> None:
 
 # =============================================================================
 # End-to-end — heavy. Requires:
-#   - ``RAPID_MLX_DFLASH_E2E=1`` env var (opt-in; CI doesn't set it)
+#   - ``FUSION_MLX_DFLASH_E2E=1`` env var (opt-in; CI doesn't set it)
 #   - mlx-vlm 0.5.0+ installed (skipif gates this)
 #   - Qwen3.5-27B-8bit + DFlash drafter cached locally (~30 GB combined)
 # Validates the full happy path: model load → generate → OpenAI-format
@@ -1023,12 +1023,12 @@ def test_run_dflash_server_loads_models_on_executor_thread(monkeypatch) -> None:
 # =============================================================================
 
 
-_E2E_ENABLED = os.environ.get("RAPID_MLX_DFLASH_E2E", "") in ("1", "true", "yes")
+_E2E_ENABLED = os.environ.get("FUSION_MLX_DFLASH_E2E", "") in ("1", "true", "yes")
 
 
 @pytest.mark.skipif(
     not _E2E_ENABLED,
-    reason="DFlash e2e disabled — set RAPID_MLX_DFLASH_E2E=1 to enable "
+    reason="DFlash e2e disabled — set FUSION_MLX_DFLASH_E2E=1 to enable "
     "(requires Qwen3.5-27B-8bit + drafter cached, ~30 GB)",
 )
 def test_dflash_e2e_chat_completion_smoke() -> None:
@@ -1044,7 +1044,7 @@ def test_dflash_e2e_chat_completion_smoke() -> None:
     if not have_runtime():
         pytest.skip("mlx-vlm 0.5.0+ not installed")
 
-    # Cache-presence gate — if a curious dev sets RAPID_MLX_DFLASH_E2E=1
+    # Cache-presence gate — if a curious dev sets FUSION_MLX_DFLASH_E2E=1
     # but doesn't have the weights, ``mlx_vlm.load`` would silently
     # start a multi-GB HuggingFace download (no progress visible from
     # pytest). Skip with a precise reason so they know how to bring the
@@ -1061,7 +1061,7 @@ def test_dflash_e2e_chat_completion_smoke() -> None:
             pytest.skip(
                 f"DFlash e2e: {repo} not cached locally. Run "
                 f"`huggingface-cli download {repo}` before re-running "
-                "with RAPID_MLX_DFLASH_E2E=1."
+                "with FUSION_MLX_DFLASH_E2E=1."
             )
 
     from fastapi.testclient import TestClient

@@ -10,7 +10,7 @@ logger = logging.getLogger(__name__)
 @pytest.fixture
 def fake_home(tmp_path, monkeypatch):
     monkeypatch.setenv("HOME", str(tmp_path))
-    monkeypatch.delenv("RAPID_MLX_TELEMETRY", raising=False)
+    monkeypatch.delenv("FUSION_MLX_TELEMETRY", raising=False)
     import fusion_mlx.telemetry.state as state
 
     importlib.reload(state)
@@ -37,7 +37,7 @@ def test_skips_when_consent_already_recorded(fake_home, monkeypatch, capsys):
 def test_skips_when_env_var_set(fake_home, monkeypatch, capsys):
     from fusion_mlx.telemetry.consent import maybe_prompt_for_consent
 
-    monkeypatch.setenv("RAPID_MLX_TELEMETRY", "0")
+    monkeypatch.setenv("FUSION_MLX_TELEMETRY", "0")
     _stub_tty(monkeypatch)
     maybe_prompt_for_consent("serve")
     assert capsys.readouterr().out == ""
@@ -199,7 +199,7 @@ def test_records_prompted_version_correctly(fake_home, monkeypatch):
 def test_disclosure_is_ascii_encodable():
     from fusion_mlx.telemetry.consent import _DISCLOSURE
 
-    rendered = _DISCLOSURE.format(env="RAPID_MLX_TELEMETRY", client_id_path="/tmp/x")
+    rendered = _DISCLOSURE.format(env="FUSION_MLX_TELEMETRY", client_id_path="/tmp/x")
     rendered.encode("ascii")
 
 

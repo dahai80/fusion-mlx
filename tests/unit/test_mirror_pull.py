@@ -11,7 +11,7 @@ Covers the seven scenarios called out in the PR #649 spec:
    requests, all requests via HF.
 4. Catalog fetch failure — catalog endpoint returns 500 → pull still
    completes via HF.
-5. ``RAPID_MLX_MODEL_MIRROR=""`` — env disable → zero R2 requests even
+5. ``FUSION_MLX_MODEL_MIRROR=""`` — env disable → zero R2 requests even
    when alias is fully mirrored.
 6. Size mismatch — R2 returns bytes whose size disagrees with HF's
    advertised size → R2 file is deleted and HF is used.
@@ -318,7 +318,7 @@ def test_per_file_fallback(
         target.write_bytes(b"h" * expected_size)
         return str(target)
 
-    monkeypatch.setenv("RAPID_MLX_MODEL_MIRROR", "https://models.rapidmlx.com")
+    monkeypatch.setenv("FUSION_MLX_MODEL_MIRROR", "https://models.rapidmlx.com")
     with (
         patch("urllib.request.urlopen", side_effect=router),
         patch(
@@ -401,7 +401,7 @@ def test_not_yet_mirrored_skips_r2_entirely(
         target.write_bytes(b"h" * expected_size)
         return str(target)
 
-    monkeypatch.setenv("RAPID_MLX_MODEL_MIRROR", "https://models.rapidmlx.com")
+    monkeypatch.setenv("FUSION_MLX_MODEL_MIRROR", "https://models.rapidmlx.com")
     with (
         patch("urllib.request.urlopen", side_effect=router),
         patch(
@@ -463,7 +463,7 @@ def test_catalog_500_falls_through_to_hf(
         (snap / filename).write_bytes(b"h" * 50)
         return str(snap / filename)
 
-    monkeypatch.setenv("RAPID_MLX_MODEL_MIRROR", "https://models.rapidmlx.com")
+    monkeypatch.setenv("FUSION_MLX_MODEL_MIRROR", "https://models.rapidmlx.com")
     with (
         patch("urllib.request.urlopen", side_effect=router),
         patch(
@@ -497,7 +497,7 @@ def test_custom_mirror_without_catalog_uses_direct_layout(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ):
-    """User sets RAPID_MLX_MODEL_MIRROR=<custom URL> that has no
+    """User sets FUSION_MLX_MODEL_MIRROR=<custom URL> that has no
     /api/models endpoint. We must try ``<base>/<owner>/<repo>/<file>``
     (the PR #647 contract) instead of silently routing everything via
     HF.
@@ -522,7 +522,7 @@ def test_custom_mirror_without_catalog_uses_direct_layout(
         _FakeResponse(200, b"y" * 200),
     )
 
-    monkeypatch.setenv("RAPID_MLX_MODEL_MIRROR", "https://custom.example.com")
+    monkeypatch.setenv("FUSION_MLX_MODEL_MIRROR", "https://custom.example.com")
     with (
         patch("urllib.request.urlopen", side_effect=router),
         patch(
@@ -542,7 +542,7 @@ def test_custom_mirror_without_catalog_uses_direct_layout(
 
 
 # ---------------------------------------------------------------------------
-# 5. RAPID_MLX_MODEL_MIRROR="" — env disable — zero R2 requests.
+# 5. FUSION_MLX_MODEL_MIRROR="" — env disable — zero R2 requests.
 # ---------------------------------------------------------------------------
 
 
@@ -556,7 +556,7 @@ def test_env_disable_skips_r2_entirely(
 
     # Empty env value means "force HF" — production code returns False
     # from download_with_mirror_fallback before touching the network.
-    monkeypatch.setenv("RAPID_MLX_MODEL_MIRROR", "")
+    monkeypatch.setenv("FUSION_MLX_MODEL_MIRROR", "")
 
     router = _UrlRouter()
     # No routes registered — any HTTP call would AssertionError.
@@ -618,7 +618,7 @@ def test_size_mismatch_deletes_r2_file_and_uses_hf(
         (snap / filename).write_bytes(b"h" * 100)
         return str(snap / filename)
 
-    monkeypatch.setenv("RAPID_MLX_MODEL_MIRROR", "https://models.rapidmlx.com")
+    monkeypatch.setenv("FUSION_MLX_MODEL_MIRROR", "https://models.rapidmlx.com")
     with (
         patch("urllib.request.urlopen", side_effect=router),
         patch(
@@ -682,7 +682,7 @@ def test_resume_sends_range_header_for_partial_part_file(
         _FakeResponse(206, b"b" * 150, headers={"Content-Range": "bytes 50-199/200"}),
     )
 
-    monkeypatch.setenv("RAPID_MLX_MODEL_MIRROR", "https://models.rapidmlx.com")
+    monkeypatch.setenv("FUSION_MLX_MODEL_MIRROR", "https://models.rapidmlx.com")
     with (
         patch("urllib.request.urlopen", side_effect=router),
         patch(
@@ -764,7 +764,7 @@ def test_resume_rejects_bad_content_range(
         target.write_bytes(b"h" * 200)
         return str(target)
 
-    monkeypatch.setenv("RAPID_MLX_MODEL_MIRROR", "https://models.rapidmlx.com")
+    monkeypatch.setenv("FUSION_MLX_MODEL_MIRROR", "https://models.rapidmlx.com")
     with (
         patch("urllib.request.urlopen", side_effect=router),
         patch(
@@ -818,7 +818,7 @@ def test_truncated_cached_file_is_replaced(
         _FakeResponse(200, b"x" * 200),
     )
 
-    monkeypatch.setenv("RAPID_MLX_MODEL_MIRROR", "https://models.rapidmlx.com")
+    monkeypatch.setenv("FUSION_MLX_MODEL_MIRROR", "https://models.rapidmlx.com")
     with (
         patch("urllib.request.urlopen", side_effect=router),
         patch(
@@ -875,7 +875,7 @@ def test_refs_main_updated_when_pointing_elsewhere(
         _FakeResponse(200, b"x" * 100),
     )
 
-    monkeypatch.setenv("RAPID_MLX_MODEL_MIRROR", "https://models.rapidmlx.com")
+    monkeypatch.setenv("FUSION_MLX_MODEL_MIRROR", "https://models.rapidmlx.com")
     with (
         patch("urllib.request.urlopen", side_effect=router),
         patch(
@@ -915,7 +915,7 @@ def test_refs_main_written_when_absent(
         _FakeResponse(200, b"x" * 100),
     )
 
-    monkeypatch.setenv("RAPID_MLX_MODEL_MIRROR", "https://models.rapidmlx.com")
+    monkeypatch.setenv("FUSION_MLX_MODEL_MIRROR", "https://models.rapidmlx.com")
     with (
         patch("urllib.request.urlopen", side_effect=router),
         patch(
@@ -985,7 +985,7 @@ def test_unstatable_cached_path_falls_through_to_r2(
         return original_stat(self, *args, **kwargs)
 
     monkeypatch.setattr(Path, "stat", _raising_stat)
-    monkeypatch.setenv("RAPID_MLX_MODEL_MIRROR", "https://models.rapidmlx.com")
+    monkeypatch.setenv("FUSION_MLX_MODEL_MIRROR", "https://models.rapidmlx.com")
     with (
         patch("urllib.request.urlopen", side_effect=router),
         patch(
@@ -1054,7 +1054,7 @@ def test_resume_rejects_short_content_range(
         target.write_bytes(b"h" * 200)
         return str(target)
 
-    monkeypatch.setenv("RAPID_MLX_MODEL_MIRROR", "https://models.rapidmlx.com")
+    monkeypatch.setenv("FUSION_MLX_MODEL_MIRROR", "https://models.rapidmlx.com")
     with (
         patch("urllib.request.urlopen", side_effect=router),
         patch(
@@ -1118,7 +1118,7 @@ def test_resume_rejects_wrong_total_in_content_range(
         target.write_bytes(b"h" * 200)
         return str(target)
 
-    monkeypatch.setenv("RAPID_MLX_MODEL_MIRROR", "https://models.rapidmlx.com")
+    monkeypatch.setenv("FUSION_MLX_MODEL_MIRROR", "https://models.rapidmlx.com")
     with (
         patch("urllib.request.urlopen", side_effect=router),
         patch(
@@ -1171,7 +1171,7 @@ def test_symlinked_parent_under_snapshot_is_rejected(
     # file as untrusted, fall back through download_with_mirror_fallback
     # returning False".
 
-    monkeypatch.setenv("RAPID_MLX_MODEL_MIRROR", "https://models.rapidmlx.com")
+    monkeypatch.setenv("FUSION_MLX_MODEL_MIRROR", "https://models.rapidmlx.com")
     with (
         patch("urllib.request.urlopen", side_effect=router),
         patch(
@@ -1229,7 +1229,7 @@ def test_part_tempfile_does_not_collide_with_dot_part_repo_asset(
         _FakeResponse(200, b"Y" * 50),
     )
 
-    monkeypatch.setenv("RAPID_MLX_MODEL_MIRROR", "https://models.rapidmlx.com")
+    monkeypatch.setenv("FUSION_MLX_MODEL_MIRROR", "https://models.rapidmlx.com")
     with (
         patch("urllib.request.urlopen", side_effect=router),
         patch(
@@ -1289,7 +1289,7 @@ def test_custom_mirror_with_5xx_catalog_skips_direct_layout(
         target.write_bytes(b"h" * 100)
         return str(target)
 
-    monkeypatch.setenv("RAPID_MLX_MODEL_MIRROR", "https://custom.example.com")
+    monkeypatch.setenv("FUSION_MLX_MODEL_MIRROR", "https://custom.example.com")
     with (
         patch("urllib.request.urlopen", side_effect=router),
         patch(
@@ -1360,7 +1360,7 @@ def test_r2_lfs_sha256_mismatch_falls_back_to_hf(
         target.write_bytes(payload_correct)
         return str(target)
 
-    monkeypatch.setenv("RAPID_MLX_MODEL_MIRROR", "https://models.rapidmlx.com")
+    monkeypatch.setenv("FUSION_MLX_MODEL_MIRROR", "https://models.rapidmlx.com")
     with (
         patch("urllib.request.urlopen", side_effect=router),
         patch(
@@ -1405,7 +1405,7 @@ def test_r2_lfs_sha256_match_accepts_download(
         _FakeResponse(200, payload),
     )
 
-    monkeypatch.setenv("RAPID_MLX_MODEL_MIRROR", "https://models.rapidmlx.com")
+    monkeypatch.setenv("FUSION_MLX_MODEL_MIRROR", "https://models.rapidmlx.com")
     with (
         patch("urllib.request.urlopen", side_effect=router),
         patch(
@@ -1454,7 +1454,7 @@ def test_zero_byte_file_handled_correctly(
         _FakeResponse(200, b"x" * 100),
     )
 
-    monkeypatch.setenv("RAPID_MLX_MODEL_MIRROR", "https://models.rapidmlx.com")
+    monkeypatch.setenv("FUSION_MLX_MODEL_MIRROR", "https://models.rapidmlx.com")
     with (
         patch("urllib.request.urlopen", side_effect=router),
         patch(
@@ -1590,7 +1590,7 @@ def test_r2_empty_response_without_expected_size_falls_back_to_hf(
             target.write_bytes(b"h" * 100)
         return str(target)
 
-    monkeypatch.setenv("RAPID_MLX_MODEL_MIRROR", "https://models.rapidmlx.com")
+    monkeypatch.setenv("FUSION_MLX_MODEL_MIRROR", "https://models.rapidmlx.com")
     with (
         patch("urllib.request.urlopen", side_effect=router),
         patch(
@@ -1665,7 +1665,7 @@ def test_r2_empty_response_with_expected_size_still_falls_back_via_size_check(
         target.write_bytes(b"h" * expected_size)
         return str(target)
 
-    monkeypatch.setenv("RAPID_MLX_MODEL_MIRROR", "https://models.rapidmlx.com")
+    monkeypatch.setenv("FUSION_MLX_MODEL_MIRROR", "https://models.rapidmlx.com")
     with (
         patch("urllib.request.urlopen", side_effect=router),
         patch(
@@ -1722,7 +1722,7 @@ def test_custom_mirror_catalog_httperror_404_uses_direct_layout(
         _FakeResponse(200, b"x" * 100),
     )
 
-    monkeypatch.setenv("RAPID_MLX_MODEL_MIRROR", "https://custom2.example.com")
+    monkeypatch.setenv("FUSION_MLX_MODEL_MIRROR", "https://custom2.example.com")
     with (
         patch("urllib.request.urlopen", side_effect=router),
         patch(
@@ -1780,7 +1780,7 @@ def test_custom_mirror_catalog_4xx_uses_direct_layout(
     )
 
     monkeypatch.setenv(
-        "RAPID_MLX_MODEL_MIRROR", f"https://custom-{catalog_status}.example.com"
+        "FUSION_MLX_MODEL_MIRROR", f"https://custom-{catalog_status}.example.com"
     )
     with (
         patch("urllib.request.urlopen", side_effect=router),
@@ -1817,7 +1817,7 @@ def test_non_default_revision_skips_mirror_entirely(
     router = _UrlRouter()
     # No routes — any HTTP call would AssertionError, proving we
     # short-circuit before touching the network.
-    monkeypatch.setenv("RAPID_MLX_MODEL_MIRROR", "https://models.rapidmlx.com")
+    monkeypatch.setenv("FUSION_MLX_MODEL_MIRROR", "https://models.rapidmlx.com")
     with (
         patch("urllib.request.urlopen", side_effect=router),
         patch("huggingface_hub.model_info") as info_mock,
@@ -1854,7 +1854,7 @@ def test_revision_main_is_accepted(
         _FakeResponse(200, b"x" * 100),
     )
 
-    monkeypatch.setenv("RAPID_MLX_MODEL_MIRROR", "https://models.rapidmlx.com")
+    monkeypatch.setenv("FUSION_MLX_MODEL_MIRROR", "https://models.rapidmlx.com")
     with (
         patch("urllib.request.urlopen", side_effect=router),
         patch(
@@ -1919,7 +1919,7 @@ def test_resume_range_ignored_200_response_discards_stale_prefix(
         _FakeResponse(200, full_body),
     )
 
-    monkeypatch.setenv("RAPID_MLX_MODEL_MIRROR", "https://models.rapidmlx.com")
+    monkeypatch.setenv("FUSION_MLX_MODEL_MIRROR", "https://models.rapidmlx.com")
     with (
         patch("urllib.request.urlopen", side_effect=router),
         patch(
@@ -1989,7 +1989,7 @@ def test_cached_lfs_file_with_wrong_sha_is_refetched(
         _FakeResponse(200, good_bytes),
     )
 
-    monkeypatch.setenv("RAPID_MLX_MODEL_MIRROR", "https://models.rapidmlx.com")
+    monkeypatch.setenv("FUSION_MLX_MODEL_MIRROR", "https://models.rapidmlx.com")
     with (
         patch("urllib.request.urlopen", side_effect=router),
         patch(
@@ -2043,7 +2043,7 @@ def test_cached_lfs_file_with_correct_sha_is_kept(
     # No file URL registered — if production tries to hit R2 for this
     # file, the router raises AssertionError.
 
-    monkeypatch.setenv("RAPID_MLX_MODEL_MIRROR", "https://models.rapidmlx.com")
+    monkeypatch.setenv("FUSION_MLX_MODEL_MIRROR", "https://models.rapidmlx.com")
     with (
         patch("urllib.request.urlopen", side_effect=router),
         patch(
@@ -2115,7 +2115,7 @@ def test_part_lock_reacquire_uses_same_inode(tmp_path: Path):
 
 
 # ---------------------------------------------------------------------------
-# Codex round-11 NIT #3 — a malformed ``RAPID_MLX_MODEL_MIRROR`` URL
+# Codex round-11 NIT #3 — a malformed ``FUSION_MLX_MODEL_MIRROR`` URL
 # should not crash the pull. The catalog fetch must catch the
 # ``Request()`` constructor's own ``ValueError``.
 # ---------------------------------------------------------------------------
@@ -2126,7 +2126,7 @@ def test_malformed_mirror_url_returns_false_gracefully(
     monkeypatch: pytest.MonkeyPatch,
 ):
     # ``urllib.request.Request`` raises ValueError on unknown URL types.
-    monkeypatch.setenv("RAPID_MLX_MODEL_MIRROR", "not-a-url://garbage")
+    monkeypatch.setenv("FUSION_MLX_MODEL_MIRROR", "not-a-url://garbage")
     # No urlopen patch — if anything bypasses the guard we'll get a
     # real network error not an assertion.
     data, status = _mirror.fetch_catalog_with_status("not-a-url://garbage")
@@ -2182,7 +2182,7 @@ def test_cached_symlink_escaping_repo_root_is_rejected(
         _FakeResponse(200, real_bytes),
     )
 
-    monkeypatch.setenv("RAPID_MLX_MODEL_MIRROR", "https://models.rapidmlx.com")
+    monkeypatch.setenv("FUSION_MLX_MODEL_MIRROR", "https://models.rapidmlx.com")
     with (
         patch("urllib.request.urlopen", side_effect=router),
         patch(
@@ -2256,7 +2256,7 @@ def test_refs_main_written_as_utf8(
         _FakeResponse(200, b"x" * 100),
     )
 
-    monkeypatch.setenv("RAPID_MLX_MODEL_MIRROR", "https://models.rapidmlx.com")
+    monkeypatch.setenv("FUSION_MLX_MODEL_MIRROR", "https://models.rapidmlx.com")
     with (
         patch("urllib.request.urlopen", side_effect=router),
         patch(
@@ -2306,7 +2306,7 @@ def test_sidecar_dir_holds_part_and_lock_not_snapshot(
         _FakeResponse(200, b"X" * 200),
     )
 
-    monkeypatch.setenv("RAPID_MLX_MODEL_MIRROR", "https://models.rapidmlx.com")
+    monkeypatch.setenv("FUSION_MLX_MODEL_MIRROR", "https://models.rapidmlx.com")
     with (
         patch("urllib.request.urlopen", side_effect=router),
         patch(
@@ -2363,7 +2363,7 @@ def test_sidecar_key_collision_safe_with_hidden_repo_files(
         _FakeResponse(200, payload),
     )
 
-    monkeypatch.setenv("RAPID_MLX_MODEL_MIRROR", "https://models.rapidmlx.com")
+    monkeypatch.setenv("FUSION_MLX_MODEL_MIRROR", "https://models.rapidmlx.com")
     with (
         patch("urllib.request.urlopen", side_effect=router),
         patch(
@@ -2432,7 +2432,7 @@ def test_cached_symlink_to_refs_main_is_rejected(
         _FakeResponse(200, real_bytes),
     )
 
-    monkeypatch.setenv("RAPID_MLX_MODEL_MIRROR", "https://models.rapidmlx.com")
+    monkeypatch.setenv("FUSION_MLX_MODEL_MIRROR", "https://models.rapidmlx.com")
     with (
         patch("urllib.request.urlopen", side_effect=router),
         patch(
@@ -2503,7 +2503,7 @@ def test_snap_dir_as_symlink_is_refused(
         # to participate. We only care here that R2 didn't write.
         return str(snap / filename)
 
-    monkeypatch.setenv("RAPID_MLX_MODEL_MIRROR", "https://models.rapidmlx.com")
+    monkeypatch.setenv("FUSION_MLX_MODEL_MIRROR", "https://models.rapidmlx.com")
     with (
         patch("urllib.request.urlopen", side_effect=router),
         patch(
@@ -2569,7 +2569,7 @@ def test_cached_hf_blob_symlink_skips_rehash(
     # AssertionError, which would catch the case where the blob-name
     # shortcut accidentally falls through.
 
-    monkeypatch.setenv("RAPID_MLX_MODEL_MIRROR", "https://models.rapidmlx.com")
+    monkeypatch.setenv("FUSION_MLX_MODEL_MIRROR", "https://models.rapidmlx.com")
     with (
         patch("urllib.request.urlopen", side_effect=router),
         patch(
@@ -2623,7 +2623,7 @@ def test_r2_lfs_download_writes_blob_and_symlink(
         _FakeResponse(200, payload),
     )
 
-    monkeypatch.setenv("RAPID_MLX_MODEL_MIRROR", "https://models.rapidmlx.com")
+    monkeypatch.setenv("FUSION_MLX_MODEL_MIRROR", "https://models.rapidmlx.com")
     with (
         patch("urllib.request.urlopen", side_effect=router),
         patch(
@@ -2694,7 +2694,7 @@ def test_warm_r2_pull_uses_blob_name_shortcut(
         _FakeResponse(200, payload),
     )
 
-    monkeypatch.setenv("RAPID_MLX_MODEL_MIRROR", "https://models.rapidmlx.com")
+    monkeypatch.setenv("FUSION_MLX_MODEL_MIRROR", "https://models.rapidmlx.com")
 
     # First (cold) pull — populates blobs/<sha> and the snapshot
     # symlink via the R2 path.
@@ -2871,7 +2871,7 @@ def _full_pull_scaffold(
     for fname, size in files:
         url = f"https://models.rapidmlx.com/mlx-community/Qwen3-0.6B-4bit/{fname}"
         router.add(url, _FakeResponse(200, b"x" * size))
-    monkeypatch.setenv("RAPID_MLX_MODEL_MIRROR", "https://models.rapidmlx.com")
+    monkeypatch.setenv("FUSION_MLX_MODEL_MIRROR", "https://models.rapidmlx.com")
     return router, revision
 
 
@@ -3030,7 +3030,7 @@ def test_progress_file_count_matches_downloaded_files(
         (snap / filename).write_bytes(b"h" * expected_size)
         return str(snap / filename)
 
-    monkeypatch.setenv("RAPID_MLX_MODEL_MIRROR", "https://models.rapidmlx.com")
+    monkeypatch.setenv("FUSION_MLX_MODEL_MIRROR", "https://models.rapidmlx.com")
     with (
         patch("urllib.request.urlopen", side_effect=router),
         patch(
@@ -3099,7 +3099,7 @@ def test_bytes_heartbeat_emitted_during_r2_pull(
     # zero so every chunk emits. Production keeps it at 500 ms; the test
     # only needs to verify the emission shape + final total.
     monkeypatch.setattr(_mirror, "_PROGRESS_HEARTBEAT_SECONDS", 0.0)
-    monkeypatch.setenv("RAPID_MLX_MODEL_MIRROR", "https://models.rapidmlx.com")
+    monkeypatch.setenv("FUSION_MLX_MODEL_MIRROR", "https://models.rapidmlx.com")
     with (
         patch("urllib.request.urlopen", side_effect=router),
         patch(
@@ -3178,7 +3178,7 @@ def test_bytes_heartbeat_skipped_when_total_unknown(
         return str(snap / filename)
 
     monkeypatch.setattr(_mirror, "_PROGRESS_HEARTBEAT_SECONDS", 0.0)
-    monkeypatch.setenv("RAPID_MLX_MODEL_MIRROR", "https://models.rapidmlx.com")
+    monkeypatch.setenv("FUSION_MLX_MODEL_MIRROR", "https://models.rapidmlx.com")
     with (
         patch("urllib.request.urlopen", side_effect=router),
         patch(
@@ -3217,7 +3217,7 @@ def test_progress_tracker_is_per_pull_not_global(
     from concurrent.futures import ThreadPoolExecutor
 
     monkeypatch.setattr(_mirror, "_PROGRESS_HEARTBEAT_SECONDS", 0.0)
-    monkeypatch.setenv("RAPID_MLX_MODEL_MIRROR", "https://models.rapidmlx.com")
+    monkeypatch.setenv("FUSION_MLX_MODEL_MIRROR", "https://models.rapidmlx.com")
 
     # Two pulls with very different total sizes — if a global tracker
     # were still in play, the smaller pull's final flush would emit
@@ -3363,7 +3363,7 @@ def test_progress_no_double_count_on_r2_short_read_then_hf(
         return str(snap / filename)
 
     monkeypatch.setattr(_mirror, "_PROGRESS_HEARTBEAT_SECONDS", 0.0)
-    monkeypatch.setenv("RAPID_MLX_MODEL_MIRROR", "https://models.rapidmlx.com")
+    monkeypatch.setenv("FUSION_MLX_MODEL_MIRROR", "https://models.rapidmlx.com")
     with (
         patch("urllib.request.urlopen", side_effect=router),
         patch(
@@ -3452,7 +3452,7 @@ def test_progress_resumed_r2_credits_existing_prefix(
     )
 
     monkeypatch.setattr(_mirror, "_PROGRESS_HEARTBEAT_SECONDS", 0.0)
-    monkeypatch.setenv("RAPID_MLX_MODEL_MIRROR", "https://models.rapidmlx.com")
+    monkeypatch.setenv("FUSION_MLX_MODEL_MIRROR", "https://models.rapidmlx.com")
     with (
         patch("urllib.request.urlopen", side_effect=router),
         patch(
@@ -3623,7 +3623,7 @@ def test_progress_tracker_flush_runs_even_when_worker_raises_unwhitelisted(
         raise TypeError("simulated programmer error in R2 worker")
 
     monkeypatch.setattr(_mirror, "_download_one_from_r2", _boom)
-    monkeypatch.setenv("RAPID_MLX_MODEL_MIRROR", "https://models.rapidmlx.com")
+    monkeypatch.setenv("FUSION_MLX_MODEL_MIRROR", "https://models.rapidmlx.com")
 
     with (
         patch("urllib.request.urlopen", side_effect=router),

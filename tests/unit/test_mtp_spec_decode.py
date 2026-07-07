@@ -764,7 +764,7 @@ def test_inject_mtp_support_loads_synthetic_sidecar():
     """Lightweight quantize → load → coverage-check probe (no 5 GB download).
 
     Codex round-5 NIT: the heavy real-weights test is gated on
-    RAPID_MLX_RUN_HEAVY_TESTS=1 and doesn't run in normal CI, so the
+    FUSION_MLX_RUN_HEAVY_TESTS=1 and doesn't run in normal CI, so the
     quantize/load/key-coverage path it covers has no default
     safety net. This test fills the gap with a synthetic sidecar:
 

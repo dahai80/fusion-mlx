@@ -86,7 +86,7 @@ class TestConsent(unittest.TestCase):
 
     def test_is_enabled_env_kill_switch(self):
         record_consent(True, rapid_mlx_version="0.1.0")
-        with patch.dict(os.environ, {"RAPID_MLX_TELEMETRY": "0"}):
+        with patch.dict(os.environ, {"FUSION_MLX_TELEMETRY": "0"}):
             self.assertFalse(is_enabled())
 
     def test_is_enabled_cli_kill_switch(self):

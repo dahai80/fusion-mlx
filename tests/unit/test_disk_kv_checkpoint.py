@@ -609,18 +609,18 @@ def test_cleanup_request_removes_all_checkpoints(root: str):
 
 
 def test_env_override_max_bytes(monkeypatch):
-    """``RAPID_MLX_KV_CHECKPOINT_MAX_BYTES`` overrides the default cap.
+    """``FUSION_MLX_KV_CHECKPOINT_MAX_BYTES`` overrides the default cap.
 
     Covers the integer parse + the explicit-0-disables shape. An
     invalid value falls back to the default.
     """
-    monkeypatch.setenv("RAPID_MLX_KV_CHECKPOINT_MAX_BYTES", "12345")
+    monkeypatch.setenv("FUSION_MLX_KV_CHECKPOINT_MAX_BYTES", "12345")
     assert _dkc.resolve_max_disk_bytes() == 12345
 
-    monkeypatch.setenv("RAPID_MLX_KV_CHECKPOINT_MAX_BYTES", "0")
+    monkeypatch.setenv("FUSION_MLX_KV_CHECKPOINT_MAX_BYTES", "0")
     assert _dkc.resolve_max_disk_bytes() == 0
 
-    monkeypatch.setenv("RAPID_MLX_KV_CHECKPOINT_MAX_BYTES", "not-an-int")
+    monkeypatch.setenv("FUSION_MLX_KV_CHECKPOINT_MAX_BYTES", "not-an-int")
     assert _dkc.resolve_max_disk_bytes() == _dkc.DEFAULT_MAX_DISK_BYTES
 
 

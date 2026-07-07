@@ -147,16 +147,16 @@ def test_silent_when_dev_build_unparseable(isolated_cache, monkeypatch):
     assert vc.staleness_warning() is None
 
 
-# --- _disabled honors RAPID_MLX_DISABLE_VERSION_CHECK ----------------
+# --- _disabled honors FUSION_MLX_DISABLE_VERSION_CHECK ----------------
 
 
 def test_disabled_via_env(monkeypatch):
-    monkeypatch.setenv("RAPID_MLX_DISABLE_VERSION_CHECK", "1")
+    monkeypatch.setenv("FUSION_MLX_DISABLE_VERSION_CHECK", "1")
     assert vc._disabled() is True
 
 
 def test_disabled_in_ci(monkeypatch):
-    monkeypatch.delenv("RAPID_MLX_DISABLE_VERSION_CHECK", raising=False)
+    monkeypatch.delenv("FUSION_MLX_DISABLE_VERSION_CHECK", raising=False)
     monkeypatch.setenv("CI", "true")
     assert vc._disabled() is True
 
@@ -324,14 +324,14 @@ def test_detect_install_method_no_binary_falls_back_to_pip(monkeypatch):
 @pytest.fixture
 def interactive(monkeypatch):
     """Enable the prompt path: TTY on stdin+stderr, not disabled, not in CI."""
-    monkeypatch.delenv("RAPID_MLX_DISABLE_VERSION_CHECK", raising=False)
+    monkeypatch.delenv("FUSION_MLX_DISABLE_VERSION_CHECK", raising=False)
     monkeypatch.delenv("CI", raising=False)
     monkeypatch.setattr(vc.sys.stdin, "isatty", lambda: True)
     monkeypatch.setattr(vc.sys.stderr, "isatty", lambda: True)
 
 
 def test_prompt_returns_false_when_disabled(monkeypatch, interactive):
-    monkeypatch.setenv("RAPID_MLX_DISABLE_VERSION_CHECK", "1")
+    monkeypatch.setenv("FUSION_MLX_DISABLE_VERSION_CHECK", "1")
     # Disabled MUST short-circuit before fetching anything.
     monkeypatch.setattr(
         vc,

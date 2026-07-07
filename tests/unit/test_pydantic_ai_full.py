@@ -9,7 +9,7 @@ from pydantic_ai import Agent
 from pydantic_ai.models.openai import OpenAIChatModel
 from pydantic_ai.providers.openai import OpenAIProvider
 
-_BASE = os.environ.get("RAPID_MLX_BASE_URL", "http://localhost:8000/v1")
+_BASE = os.environ.get("FUSION_MLX_BASE_URL", "http://localhost:8000/v1")
 try:
     MODEL_ID = _httpx.get(f"{_BASE}/models", timeout=5).json()["data"][0]["id"]
 except Exception:

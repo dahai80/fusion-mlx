@@ -476,7 +476,7 @@ class TestConsentSource(unittest.TestCase):
 class TestEnvVarConstant(unittest.TestCase):
 
     def test_env_var_name(self):
-        self.assertEqual(state.ENV_VAR, "RAPID_MLX_TELEMETRY")
+        self.assertEqual(state.ENV_VAR, "FUSION_MLX_TELEMETRY")
 
     def test_schema_version_constant(self):
         self.assertEqual(state.CURRENT_CONSENT_SCHEMA_VERSION, 1)

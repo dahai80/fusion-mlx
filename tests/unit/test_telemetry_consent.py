@@ -10,7 +10,7 @@ logger = logging.getLogger(__name__)
 @pytest.fixture
 def fake_home(tmp_path, monkeypatch):
     monkeypatch.setenv("HOME", str(tmp_path))
-    monkeypatch.delenv("RAPID_MLX_TELEMETRY", raising=False)
+    monkeypatch.delenv("FUSION_MLX_TELEMETRY", raising=False)
     import fusion_mlx.telemetry.state as state
 
     importlib.reload(state)
@@ -46,7 +46,7 @@ def test_env_kill_switch_wins_over_consent(fake_home, monkeypatch):
 
     record_consent(True, rapid_mlx_version="0.6.33")
     assert is_enabled() is True
-    monkeypatch.setenv("RAPID_MLX_TELEMETRY", "0")
+    monkeypatch.setenv("FUSION_MLX_TELEMETRY", "0")
     assert is_enabled() is False
 
 
@@ -61,9 +61,9 @@ def test_cli_flag_wins_over_consent(fake_home):
 def test_env_force_on_is_ignored(fake_home, monkeypatch):
     from fusion_mlx.telemetry.state import is_enabled
 
-    monkeypatch.setenv("RAPID_MLX_TELEMETRY", "1")
+    monkeypatch.setenv("FUSION_MLX_TELEMETRY", "1")
     assert is_enabled() is False
-    monkeypatch.setenv("RAPID_MLX_TELEMETRY", "true")
+    monkeypatch.setenv("FUSION_MLX_TELEMETRY", "true")
     assert is_enabled() is False
 
 
@@ -72,7 +72,7 @@ def test_env_falsy_values_all_disable(fake_home, monkeypatch, falsy):
     from fusion_mlx.telemetry.state import is_enabled, record_consent
 
     record_consent(True, rapid_mlx_version="0.6.33")
-    monkeypatch.setenv("RAPID_MLX_TELEMETRY", falsy)
+    monkeypatch.setenv("FUSION_MLX_TELEMETRY", falsy)
     assert is_enabled() is False, f"falsy value {falsy!r} should kill-switch"
 
 
@@ -120,9 +120,9 @@ def test_consent_source_reports_origin(fake_home, monkeypatch):
     assert "default" in consent_source()
     record_consent(True, rapid_mlx_version="0.6.33")
     assert "consent-file" in consent_source()
-    monkeypatch.setenv("RAPID_MLX_TELEMETRY", "0")
+    monkeypatch.setenv("FUSION_MLX_TELEMETRY", "0")
     assert "env-var" in consent_source()
-    monkeypatch.delenv("RAPID_MLX_TELEMETRY")
+    monkeypatch.delenv("FUSION_MLX_TELEMETRY")
     assert "cli-flag" in consent_source(cli_no_telemetry=True)
 
 

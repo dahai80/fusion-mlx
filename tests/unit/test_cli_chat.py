@@ -1580,7 +1580,7 @@ def test_chat_no_thinking_hidden_from_help(capsys):
 
 def test_seen_tips_marker_round_trip(tmp_path, monkeypatch):
     """``_has_seen_tip`` returns False before, True after ``_mark_tip_seen``."""
-    monkeypatch.setenv("RAPID_MLX_CONFIG_HOME", str(tmp_path))
+    monkeypatch.setenv("FUSION_MLX_CONFIG_HOME", str(tmp_path))
     assert cli._has_seen_tip("chat_intro_codex") is False
     cli._mark_tip_seen("chat_intro_codex")
     assert cli._has_seen_tip("chat_intro_codex") is True
@@ -1591,16 +1591,16 @@ def test_seen_tips_marker_round_trip(tmp_path, monkeypatch):
 def test_seen_tips_marker_survives_corrupt_file(tmp_path, monkeypatch):
     """A corrupt marker (parse error) must be treated as 'not seen' so
     the tip re-fires once, rather than being silently hidden forever."""
-    monkeypatch.setenv("RAPID_MLX_CONFIG_HOME", str(tmp_path))
+    monkeypatch.setenv("FUSION_MLX_CONFIG_HOME", str(tmp_path))
     (tmp_path / "seen-tips.json").write_text("not json {{")
     assert cli._has_seen_tip("chat_intro_codex") is False
 
 
 def test_chat_banner_shown_on_first_launch_only(monkeypatch, capsys, tmp_path):
     """First chat launch shows the agents-codex tip; subsequent launches
-    do NOT. The marker file under ``RAPID_MLX_CONFIG_HOME`` records the
+    do NOT. The marker file under ``FUSION_MLX_CONFIG_HOME`` records the
     first-seen state."""
-    monkeypatch.setenv("RAPID_MLX_CONFIG_HOME", str(tmp_path))
+    monkeypatch.setenv("FUSION_MLX_CONFIG_HOME", str(tmp_path))
 
     # Force the TTY/NO_COLOR gate to think we're interactive (otherwise
     # the marker logic short-circuits to "skip everything").
@@ -1642,7 +1642,7 @@ def test_chat_banner_shown_on_first_launch_only(monkeypatch, capsys, tmp_path):
 def test_chat_banner_skipped_when_no_color_set(monkeypatch, capsys, tmp_path):
     """``NO_COLOR`` or non-TTY stdout: skip the marker logic AND the
     banner entirely so pipe/CI runs don't pollute the user's config."""
-    monkeypatch.setenv("RAPID_MLX_CONFIG_HOME", str(tmp_path))
+    monkeypatch.setenv("FUSION_MLX_CONFIG_HOME", str(tmp_path))
     monkeypatch.setenv("NO_COLOR", "1")
 
     canned = [_delta("ok")]
@@ -1662,7 +1662,7 @@ def test_chat_banner_write_failure_does_not_abort(monkeypatch, tmp_path, capsys)
     """If the marker dir is unwritable (read-only FS / permission
     denied), the tip should still print and chat must continue — best
     effort only."""
-    monkeypatch.setenv("RAPID_MLX_CONFIG_HOME", str(tmp_path / "no_perm"))
+    monkeypatch.setenv("FUSION_MLX_CONFIG_HOME", str(tmp_path / "no_perm"))
 
     class _Tty(io.StringIO):
         def isatty(self):
@@ -1816,11 +1816,11 @@ def test_teardown_unlinks_only_empty_log_files(tmp_path, monkeypatch):
 
 def test_main_skips_download_gate_when_chat_spawn_env_set(monkeypatch):
     """When the chat REPL spawns its own ``serve`` subprocess, the child
-    sees ``RAPID_MLX_CHAT_SPAWN=1`` and must NOT re-run the B2 gate. A
+    sees ``FUSION_MLX_CHAT_SPAWN=1`` and must NOT re-run the B2 gate. A
     re-run would either (a) re-prompt on a TTY or (b) call the HF API
     needlessly in the child."""
-    monkeypatch.setenv("RAPID_MLX_CHAT_SPAWN", "1")
-    monkeypatch.delenv("RAPID_MLX_AUTO_PULL", raising=False)
+    monkeypatch.setenv("FUSION_MLX_CHAT_SPAWN", "1")
+    monkeypatch.delenv("FUSION_MLX_AUTO_PULL", raising=False)
     monkeypatch.setattr("sys.stdin.isatty", lambda: True)
 
     calls: list[str] = []
@@ -1855,8 +1855,8 @@ def test_main_skips_download_gate_when_chat_spawn_env_set(monkeypatch):
 def test_main_skips_size_estimate_in_non_tty_context(monkeypatch):
     """The B2 gate must short-circuit on TTY/env checks BEFORE calling
     ``estimate_repo_size_bytes`` — otherwise every CI run with
-    ``RAPID_MLX_AUTO_PULL=1`` pays a 5-second HF metadata round-trip."""
-    monkeypatch.delenv("RAPID_MLX_CHAT_SPAWN", raising=False)
+    ``FUSION_MLX_AUTO_PULL=1`` pays a 5-second HF metadata round-trip."""
+    monkeypatch.delenv("FUSION_MLX_CHAT_SPAWN", raising=False)
     monkeypatch.setattr("sys.stdin.isatty", lambda: False)
 
     calls: list[str] = []
@@ -1889,11 +1889,11 @@ def test_main_skips_size_estimate_in_non_tty_context(monkeypatch):
 
 
 def test_main_skips_size_estimate_when_auto_pull_env_set(monkeypatch):
-    """``RAPID_MLX_AUTO_PULL=1`` must short-circuit on the env check
+    """``FUSION_MLX_AUTO_PULL=1`` must short-circuit on the env check
     BEFORE ``estimate_repo_size_bytes`` — the env is the documented
     CI/unattended escape hatch and should not pay any network cost."""
-    monkeypatch.delenv("RAPID_MLX_CHAT_SPAWN", raising=False)
-    monkeypatch.setenv("RAPID_MLX_AUTO_PULL", "1")
+    monkeypatch.delenv("FUSION_MLX_CHAT_SPAWN", raising=False)
+    monkeypatch.setenv("FUSION_MLX_AUTO_PULL", "1")
     monkeypatch.setattr("sys.stdin.isatty", lambda: True)
 
     calls: list[str] = []
@@ -1920,7 +1920,7 @@ def test_main_skips_size_estimate_when_auto_pull_env_set(monkeypatch):
 
 
 def test_spawn_chat_server_sets_chat_spawn_env(monkeypatch, tmp_path):
-    """``_spawn_chat_server`` must pass ``RAPID_MLX_CHAT_SPAWN=1`` to the
+    """``_spawn_chat_server`` must pass ``FUSION_MLX_CHAT_SPAWN=1`` to the
     child so the child main() bypasses the download gate."""
     captured: dict = {}
 
@@ -1969,7 +1969,7 @@ def test_spawn_chat_server_sets_chat_spawn_env(monkeypatch, tmp_path):
     proc, base_url = cli._spawn_chat_server("qwen3.5-4b-4bit", str(log_path))
 
     assert captured["env"] is not None
-    assert captured["env"].get("RAPID_MLX_CHAT_SPAWN") == "1"
+    assert captured["env"].get("FUSION_MLX_CHAT_SPAWN") == "1"
 
 
 def test_sigterm_handler_masks_second_sigterm(monkeypatch):
@@ -2070,12 +2070,12 @@ def test_sigterm_handler_masks_second_sigterm(monkeypatch):
 
 
 def test_main_pops_chat_spawn_env_so_grandchildren_do_not_inherit(monkeypatch):
-    """Codex round-2 BLOCKING #2: ``RAPID_MLX_CHAT_SPAWN=1`` must be
+    """Codex round-2 BLOCKING #2: ``FUSION_MLX_CHAT_SPAWN=1`` must be
     treated as a single-use marker. If the spawned ``serve`` itself
     forks any subprocess (HF auth helper, doctor self-probe, future
     hub plugin), that grandchild would otherwise inherit the bypass
     and skip its own download gate."""
-    monkeypatch.setenv("RAPID_MLX_CHAT_SPAWN", "1")
+    monkeypatch.setenv("FUSION_MLX_CHAT_SPAWN", "1")
     monkeypatch.setattr(cli, "serve_command", lambda *_a, **_kw: None)
     monkeypatch.setattr(
         sys,
@@ -2083,7 +2083,7 @@ def test_main_pops_chat_spawn_env_so_grandchildren_do_not_inherit(monkeypatch):
         ["rapid-mlx", "serve", "mlx-community/some-fake-7b"],
     )
     cli.main()
-    assert "RAPID_MLX_CHAT_SPAWN" not in os.environ, (
+    assert "FUSION_MLX_CHAT_SPAWN" not in os.environ, (
         "main() must pop the marker so it does not leak to grandchildren; "
         "this is what makes the 'single-use' contract real."
     )

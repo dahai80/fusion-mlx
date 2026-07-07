@@ -318,7 +318,7 @@ def test_cache_import_501_envelope_does_not_leak_operator_path(
     at a tmp dir, hand-craft a valid manifest so the route gets past
     validation into the 501 stub, then assert the body is path-free +
     manifest-free."""
-    monkeypatch.setenv("RAPID_MLX_CACHE_EXPORT_DIR", str(tmp_path))
+    monkeypatch.setenv("FUSION_MLX_CACHE_EXPORT_DIR", str(tmp_path))
 
     import json
 
@@ -390,7 +390,7 @@ def test_cache_info_does_not_leak_operator_path(
     # to land in the OS-provided ``tmp_path``.
     sandbox = tmp_path / "Users" / "yuki" / ".cache" / "rapid-mlx" / "cache_exports"
     sandbox.mkdir(parents=True)
-    monkeypatch.setenv("RAPID_MLX_CACHE_EXPORT_DIR", str(sandbox))
+    monkeypatch.setenv("FUSION_MLX_CACHE_EXPORT_DIR", str(sandbox))
 
     import json
 
@@ -432,7 +432,7 @@ def test_cache_info_returns_canonical_shape_without_path_field(
     """
     sandbox = tmp_path / "h12-canonical-shape"
     sandbox.mkdir(parents=True)
-    monkeypatch.setenv("RAPID_MLX_CACHE_EXPORT_DIR", str(sandbox))
+    monkeypatch.setenv("FUSION_MLX_CACHE_EXPORT_DIR", str(sandbox))
 
     import json
 
