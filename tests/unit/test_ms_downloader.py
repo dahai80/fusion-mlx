@@ -6,6 +6,8 @@ import time
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+
+from fusion_mlx.admin.hf_downloader import DownloadStatus, DownloadTask
 from fusion_mlx.admin.ms_downloader import (
     _ENRICH_CACHE,
     MSDownloader,
@@ -19,8 +21,6 @@ from fusion_mlx.admin.ms_downloader import (
     _get_ms_endpoint,
     _parse_ms_model_entry,
 )
-
-from fusion_mlx.admin.hf_downloader import DownloadStatus, DownloadTask
 
 # =============================================================================
 # Helper function tests
@@ -131,9 +131,9 @@ class TestMSDownloader:
     @pytest.mark.asyncio
     async def test_start_download_creates_task(self, downloader):
         with (
-            patch("omlx.admin.ms_downloader.MS_SDK_AVAILABLE", True),
-            patch("omlx.admin.ms_downloader._get_ms_api") as mock_get_api,
-            patch("omlx.admin.ms_downloader.ms_snapshot_download"),
+            patch("fusion_mlx.admin.ms_downloader.MS_SDK_AVAILABLE", True),
+            patch("fusion_mlx.admin.ms_downloader._get_ms_api") as mock_get_api,
+            patch("fusion_mlx.admin.ms_downloader.ms_snapshot_download"),
         ):
             mock_api = MagicMock()
             mock_api.get_model_files.return_value = []
@@ -152,22 +152,22 @@ class TestMSDownloader:
 
     @pytest.mark.asyncio
     async def test_start_download_invalid_model_id_no_slash(self, downloader):
-        with patch("omlx.admin.ms_downloader.MS_SDK_AVAILABLE", True):
+        with patch("fusion_mlx.admin.ms_downloader.MS_SDK_AVAILABLE", True):
             with pytest.raises(ValueError, match="Invalid model ID"):
                 await downloader.start_download("no-slash")
 
     @pytest.mark.asyncio
     async def test_start_download_invalid_model_id_too_many_parts(self, downloader):
-        with patch("omlx.admin.ms_downloader.MS_SDK_AVAILABLE", True):
+        with patch("fusion_mlx.admin.ms_downloader.MS_SDK_AVAILABLE", True):
             with pytest.raises(ValueError, match="Invalid model ID"):
                 await downloader.start_download("a/b/c")
 
     @pytest.mark.asyncio
     async def test_start_download_strips_whitespace(self, downloader):
         with (
-            patch("omlx.admin.ms_downloader.MS_SDK_AVAILABLE", True),
-            patch("omlx.admin.ms_downloader._get_ms_api") as mock_get_api,
-            patch("omlx.admin.ms_downloader.ms_snapshot_download"),
+            patch("fusion_mlx.admin.ms_downloader.MS_SDK_AVAILABLE", True),
+            patch("fusion_mlx.admin.ms_downloader._get_ms_api") as mock_get_api,
+            patch("fusion_mlx.admin.ms_downloader.ms_snapshot_download"),
         ):
             mock_api = MagicMock()
             mock_api.get_model_files.return_value = []
@@ -180,17 +180,17 @@ class TestMSDownloader:
 
     @pytest.mark.asyncio
     async def test_start_download_sdk_not_available(self, downloader):
-        with patch("omlx.admin.ms_downloader.MS_SDK_AVAILABLE", False):
+        with patch("fusion_mlx.admin.ms_downloader.MS_SDK_AVAILABLE", False):
             with pytest.raises(RuntimeError, match="ModelScope SDK not installed"):
                 await downloader.start_download("owner/model")
 
     @pytest.mark.asyncio
     async def test_start_download_duplicate(self, downloader):
         with (
-            patch("omlx.admin.ms_downloader.MS_SDK_AVAILABLE", True),
-            patch("omlx.admin.ms_downloader._get_ms_api") as mock_get_api,
+            patch("fusion_mlx.admin.ms_downloader.MS_SDK_AVAILABLE", True),
+            patch("fusion_mlx.admin.ms_downloader._get_ms_api") as mock_get_api,
             patch(
-                "omlx.admin.ms_downloader.ms_snapshot_download",
+                "fusion_mlx.admin.ms_downloader.ms_snapshot_download",
                 side_effect=lambda **kwargs: asyncio.sleep(10),
             ),
         ):
@@ -212,9 +212,9 @@ class TestMSDownloader:
         downloader = MSDownloader(model_dir=str(model_dir))
 
         with (
-            patch("omlx.admin.ms_downloader.MS_SDK_AVAILABLE", True),
-            patch("omlx.admin.ms_downloader._get_ms_api") as mock_get_api,
-            patch("omlx.admin.ms_downloader.ms_snapshot_download") as mock_download,
+            patch("fusion_mlx.admin.ms_downloader.MS_SDK_AVAILABLE", True),
+            patch("fusion_mlx.admin.ms_downloader._get_ms_api") as mock_get_api,
+            patch("fusion_mlx.admin.ms_downloader.ms_snapshot_download") as mock_download,
         ):
             mock_api = MagicMock()
             mock_api.get_model_files.return_value = []
@@ -236,10 +236,10 @@ class TestMSDownloader:
     @pytest.mark.asyncio
     async def test_cancel_download(self, downloader):
         with (
-            patch("omlx.admin.ms_downloader.MS_SDK_AVAILABLE", True),
-            patch("omlx.admin.ms_downloader._get_ms_api") as mock_get_api,
+            patch("fusion_mlx.admin.ms_downloader.MS_SDK_AVAILABLE", True),
+            patch("fusion_mlx.admin.ms_downloader._get_ms_api") as mock_get_api,
             patch(
-                "omlx.admin.ms_downloader.ms_snapshot_download",
+                "fusion_mlx.admin.ms_downloader.ms_snapshot_download",
                 side_effect=lambda **kwargs: time.sleep(10),
             ),
         ):
@@ -312,9 +312,9 @@ class TestMSDownloader:
     @pytest.mark.asyncio
     async def test_retry_failed_download(self, downloader):
         with (
-            patch("omlx.admin.ms_downloader.MS_SDK_AVAILABLE", True),
-            patch("omlx.admin.ms_downloader._get_ms_api") as mock_get_api,
-            patch("omlx.admin.ms_downloader.ms_snapshot_download"),
+            patch("fusion_mlx.admin.ms_downloader.MS_SDK_AVAILABLE", True),
+            patch("fusion_mlx.admin.ms_downloader._get_ms_api") as mock_get_api,
+            patch("fusion_mlx.admin.ms_downloader.ms_snapshot_download"),
         ):
             mock_api = MagicMock()
             mock_api.get_model_files.return_value = []
@@ -439,7 +439,7 @@ class TestMSDownloaderStaticMethods:
         }
 
         with patch(
-            "omlx.admin.ms_downloader._get_ms_api",
+            "fusion_mlx.admin.ms_downloader._get_ms_api",
             return_value=mock_api,
         ):
             result = await MSDownloader.search_models("qwen")
@@ -458,7 +458,7 @@ class TestMSDownloaderStaticMethods:
         }
 
         with patch(
-            "omlx.admin.ms_downloader._get_ms_api",
+            "fusion_mlx.admin.ms_downloader._get_ms_api",
             return_value=mock_api,
         ):
             result = await MSDownloader.search_models("nonexistent")
@@ -469,7 +469,7 @@ class TestMSDownloaderStaticMethods:
     async def test_search_models_api_error(self):
         """Test search handles SDK errors gracefully."""
         with patch(
-            "omlx.admin.ms_downloader._get_ms_api",
+            "fusion_mlx.admin.ms_downloader._get_ms_api",
             return_value=None,
         ):
             result = await MSDownloader.search_models("test")
@@ -495,15 +495,15 @@ class TestMSDownloaderStaticMethods:
         # TestRecommendedEnrichment below.
         with (
             patch(
-                "omlx.admin.ms_downloader._get_ms_api",
+                "fusion_mlx.admin.ms_downloader._get_ms_api",
                 return_value=mock_api,
             ),
             patch(
-                "omlx.admin.ms_downloader._fetch_model_config",
+                "fusion_mlx.admin.ms_downloader._fetch_model_config",
                 new=AsyncMock(return_value=None),
             ),
             patch(
-                "omlx.admin.ms_downloader._fetch_model_detail_size",
+                "fusion_mlx.admin.ms_downloader._fetch_model_detail_size",
                 new=AsyncMock(return_value=0),
             ),
         ):
@@ -529,15 +529,15 @@ class TestMSDownloaderStaticMethods:
 
         with (
             patch(
-                "omlx.admin.ms_downloader._get_ms_api",
+                "fusion_mlx.admin.ms_downloader._get_ms_api",
                 return_value=mock_api,
             ),
             patch(
-                "omlx.admin.ms_downloader._fetch_model_config",
+                "fusion_mlx.admin.ms_downloader._fetch_model_config",
                 new=AsyncMock(return_value=None),
             ),
             patch(
-                "omlx.admin.ms_downloader._fetch_model_detail_size",
+                "fusion_mlx.admin.ms_downloader._fetch_model_detail_size",
                 new=AsyncMock(return_value=0),
             ),
         ):
@@ -574,13 +574,13 @@ class TestMSDownloaderStaticMethods:
         mock_readme_response.text = "# Test Model\nThis is a test."
 
         with (
-            patch("omlx.admin.ms_downloader.MS_SDK_AVAILABLE", True),
+            patch("fusion_mlx.admin.ms_downloader.MS_SDK_AVAILABLE", True),
             patch(
-                "omlx.admin.ms_downloader._get_ms_api",
+                "fusion_mlx.admin.ms_downloader._get_ms_api",
                 return_value=mock_api,
             ),
             patch(
-                "omlx.admin.ms_downloader.requests.get",
+                "fusion_mlx.admin.ms_downloader.requests.get",
                 return_value=mock_readme_response,
             ),
         ):
@@ -597,9 +597,9 @@ class TestMSDownloaderStaticMethods:
     @pytest.mark.asyncio
     async def test_get_model_info_sdk_not_available(self):
         with (
-            patch("omlx.admin.ms_downloader.MS_SDK_AVAILABLE", True),
+            patch("fusion_mlx.admin.ms_downloader.MS_SDK_AVAILABLE", True),
             patch(
-                "omlx.admin.ms_downloader._get_ms_api",
+                "fusion_mlx.admin.ms_downloader._get_ms_api",
                 return_value=None,
             ),
             pytest.raises(RuntimeError, match="SDK not available"),
@@ -617,13 +617,13 @@ class TestMSDownloaderStaticMethods:
         mock_readme_response.text = "---\ntitle: Test\n---\n# Model Card"
 
         with (
-            patch("omlx.admin.ms_downloader.MS_SDK_AVAILABLE", True),
+            patch("fusion_mlx.admin.ms_downloader.MS_SDK_AVAILABLE", True),
             patch(
-                "omlx.admin.ms_downloader._get_ms_api",
+                "fusion_mlx.admin.ms_downloader._get_ms_api",
                 return_value=mock_api,
             ),
             patch(
-                "omlx.admin.ms_downloader.requests.get",
+                "fusion_mlx.admin.ms_downloader.requests.get",
                 return_value=mock_readme_response,
             ),
         ):
@@ -641,13 +641,13 @@ class TestMSDownloaderStaticMethods:
         mock_readme_response.text = ""
 
         with (
-            patch("omlx.admin.ms_downloader.MS_SDK_AVAILABLE", True),
+            patch("fusion_mlx.admin.ms_downloader.MS_SDK_AVAILABLE", True),
             patch(
-                "omlx.admin.ms_downloader._get_ms_api",
+                "fusion_mlx.admin.ms_downloader._get_ms_api",
                 return_value=mock_api,
             ),
             patch(
-                "omlx.admin.ms_downloader.requests.get",
+                "fusion_mlx.admin.ms_downloader.requests.get",
                 return_value=mock_readme_response,
             ),
         ):
@@ -792,7 +792,7 @@ class TestFetchModelConfig:
         resp = MagicMock()
         resp.status_code = 200
         resp.text = '{"vocab_size": 128256, "hidden_size": 2048}'
-        with patch("omlx.admin.ms_downloader.requests.get", return_value=resp):
+        with patch("fusion_mlx.admin.ms_downloader.requests.get", return_value=resp):
             result = await _fetch_model_config("owner/m")
         assert result == {"vocab_size": 128256, "hidden_size": 2048}
 
@@ -801,7 +801,7 @@ class TestFetchModelConfig:
         resp = MagicMock()
         resp.status_code = 404
         resp.text = "not found"
-        with patch("omlx.admin.ms_downloader.requests.get", return_value=resp):
+        with patch("fusion_mlx.admin.ms_downloader.requests.get", return_value=resp):
             assert await _fetch_model_config("owner/m") is None
 
     @pytest.mark.asyncio
@@ -809,13 +809,13 @@ class TestFetchModelConfig:
         resp = MagicMock()
         resp.status_code = 200
         resp.text = "not json"
-        with patch("omlx.admin.ms_downloader.requests.get", return_value=resp):
+        with patch("fusion_mlx.admin.ms_downloader.requests.get", return_value=resp):
             assert await _fetch_model_config("owner/m") is None
 
     @pytest.mark.asyncio
     async def test_returns_none_on_network_error(self):
         with patch(
-            "omlx.admin.ms_downloader.requests.get",
+            "fusion_mlx.admin.ms_downloader.requests.get",
             side_effect=Exception("connection refused"),
         ):
             assert await _fetch_model_config("owner/m") is None
@@ -835,7 +835,7 @@ class TestFetchModelConfig:
             r.text = "{}"
             return r
 
-        with patch("omlx.admin.ms_downloader.requests.get", side_effect=fake_get):
+        with patch("fusion_mlx.admin.ms_downloader.requests.get", side_effect=fake_get):
             await _fetch_model_config("owner/m")
         assert "/api/v1/models/owner/m/repo" in captured["url"]
         assert "FilePath=config.json" in captured["url"]
@@ -852,7 +852,7 @@ class TestFetchModelDetailSize:
                 "StorageSize": 712593982,
             }
         }
-        with patch("omlx.admin.ms_downloader.requests.get", return_value=resp):
+        with patch("fusion_mlx.admin.ms_downloader.requests.get", return_value=resp):
             assert await _fetch_model_detail_size("owner/m") == 193153024
 
     @pytest.mark.asyncio
@@ -860,7 +860,7 @@ class TestFetchModelDetailSize:
         resp = MagicMock()
         resp.status_code = 200
         resp.json.return_value = {"Data": {"StorageSize": 712593982}}
-        with patch("omlx.admin.ms_downloader.requests.get", return_value=resp):
+        with patch("fusion_mlx.admin.ms_downloader.requests.get", return_value=resp):
             assert await _fetch_model_detail_size("owner/m") == 712593982
 
     @pytest.mark.asyncio
@@ -868,14 +868,14 @@ class TestFetchModelDetailSize:
         resp = MagicMock()
         resp.status_code = 200
         resp.json.return_value = {}
-        with patch("omlx.admin.ms_downloader.requests.get", return_value=resp):
+        with patch("fusion_mlx.admin.ms_downloader.requests.get", return_value=resp):
             assert await _fetch_model_detail_size("owner/m") == 0
 
     @pytest.mark.asyncio
     async def test_returns_zero_on_non_200(self):
         resp = MagicMock()
         resp.status_code = 500
-        with patch("omlx.admin.ms_downloader.requests.get", return_value=resp):
+        with patch("fusion_mlx.admin.ms_downloader.requests.get", return_value=resp):
             assert await _fetch_model_detail_size("owner/m") == 0
 
 
@@ -907,11 +907,11 @@ class TestEnrichMsEntry:
         sem = asyncio.Semaphore(1)
         with (
             patch(
-                "omlx.admin.ms_downloader._fetch_model_config",
+                "fusion_mlx.admin.ms_downloader._fetch_model_config",
                 new=AsyncMock(return_value=config),
             ),
             patch(
-                "omlx.admin.ms_downloader._fetch_model_detail_size",
+                "fusion_mlx.admin.ms_downloader._fetch_model_detail_size",
                 new=AsyncMock(return_value=0),
             ),
         ):
@@ -932,11 +932,11 @@ class TestEnrichMsEntry:
         sem = asyncio.Semaphore(1)
         with (
             patch(
-                "omlx.admin.ms_downloader._fetch_model_config",
+                "fusion_mlx.admin.ms_downloader._fetch_model_config",
                 new=AsyncMock(return_value=None),
             ),
             patch(
-                "omlx.admin.ms_downloader._fetch_model_detail_size",
+                "fusion_mlx.admin.ms_downloader._fetch_model_detail_size",
                 new=AsyncMock(return_value=987654321),
             ),
         ):
@@ -951,11 +951,11 @@ class TestEnrichMsEntry:
         detail_mock = AsyncMock(return_value=999)
         with (
             patch(
-                "omlx.admin.ms_downloader._fetch_model_config",
+                "fusion_mlx.admin.ms_downloader._fetch_model_config",
                 new=AsyncMock(return_value=None),
             ),
             patch(
-                "omlx.admin.ms_downloader._fetch_model_detail_size",
+                "fusion_mlx.admin.ms_downloader._fetch_model_detail_size",
                 new=detail_mock,
             ),
         ):
@@ -979,11 +979,11 @@ class TestEnrichMsEntry:
         detail_mock = AsyncMock(return_value=42)
         with (
             patch(
-                "omlx.admin.ms_downloader._fetch_model_config",
+                "fusion_mlx.admin.ms_downloader._fetch_model_config",
                 new=config_mock,
             ),
             patch(
-                "omlx.admin.ms_downloader._fetch_model_detail_size",
+                "fusion_mlx.admin.ms_downloader._fetch_model_detail_size",
                 new=detail_mock,
             ),
         ):
@@ -999,7 +999,7 @@ class TestEnrichMsEntry:
         sem = asyncio.Semaphore(1)
         config_mock = AsyncMock(return_value={})
         with patch(
-            "omlx.admin.ms_downloader._fetch_model_config",
+            "fusion_mlx.admin.ms_downloader._fetch_model_config",
             new=config_mock,
         ):
             result = await _enrich_ms_entry(entry, sem)
@@ -1039,15 +1039,15 @@ class TestRecommendedEnrichmentEndToEnd:
         }
         with (
             patch(
-                "omlx.admin.ms_downloader._get_ms_api",
+                "fusion_mlx.admin.ms_downloader._get_ms_api",
                 return_value=mock_api,
             ),
             patch(
-                "omlx.admin.ms_downloader._fetch_model_config",
+                "fusion_mlx.admin.ms_downloader._fetch_model_config",
                 new=AsyncMock(return_value=llama_config),
             ),
             patch(
-                "omlx.admin.ms_downloader._fetch_model_detail_size",
+                "fusion_mlx.admin.ms_downloader._fetch_model_detail_size",
                 new=AsyncMock(return_value=1_500_000_000),
             ),
         ):
@@ -1078,15 +1078,15 @@ class TestRecommendedEnrichmentEndToEnd:
 
         with (
             patch(
-                "omlx.admin.ms_downloader._get_ms_api",
+                "fusion_mlx.admin.ms_downloader._get_ms_api",
                 return_value=mock_api,
             ),
             patch(
-                "omlx.admin.ms_downloader._fetch_model_config",
+                "fusion_mlx.admin.ms_downloader._fetch_model_config",
                 new=AsyncMock(return_value=None),
             ),
             patch(
-                "omlx.admin.ms_downloader._fetch_model_detail_size",
+                "fusion_mlx.admin.ms_downloader._fetch_model_detail_size",
                 side_effect=fake_size,
             ),
         ):
