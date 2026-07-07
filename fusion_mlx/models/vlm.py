@@ -27,6 +27,7 @@ class VLMModelAdapter(nn.Module):
         self._vlm_model = vlm_model
         self._language_model = vlm_model.language_model
         self._uses_mrope = self._detect_mrope(vlm_model)
+        self._uses_minimax_m3_positions = self._detect_minimax_m3(vlm_model)
 
         # Pending vision embeddings (set before prefill, cleared after)
         self._pending_embeds: mx.array | None = None
@@ -35,6 +36,9 @@ class VLMModelAdapter(nn.Module):
 
         # Batch mRoPE state
         self._batch_rope_deltas: mx.array | None = None
+
+        # Per-request mRoPE state: UID → rope_delta mapping
+        self._uid_rope_deltas: dict[int, float] = {}
 
     @property
     def layers(self):
@@ -105,6 +109,26 @@ class VLMModelAdapter(nn.Module):
         if not isinstance(rope_cfg, dict):
             return False
         return "mrope_section" in rope_cfg or rope_cfg.get("type") == "mrope"
+
+    @staticmethod
+    def _detect_minimax_m3(vlm_model) -> bool:
+        config = getattr(vlm_model, "config", None)
+        if not config:
+            return False
+        model_type = getattr(config, "model_type", "")
+        if model_type in {"minimax_m3", "minimax_m3_vl"}:
+            return True
+        text_config = getattr(config, "text_config", None)
+        if text_config:
+            text_type = getattr(text_config, "model_type", "")
+            return text_type in {"minimax_m3", "minimax_m3_vl"}
+        return False
+
+    def register_rope_delta(self, uid: int, delta: float) -> None:
+        self._uid_rope_deltas[uid] = delta
+
+    def unregister_rope_delta(self, uid: int) -> None:
+        self._uid_rope_deltas.pop(uid, None)
 
     def clear_vlm_position_state(self) -> None:
         """Clear stale mRoPE state from previous VLM requests."""
