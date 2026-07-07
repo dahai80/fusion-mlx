@@ -53,6 +53,9 @@ fusion-mlx serve --model-dir ~/.cache/huggingface --admin
 
 # Custom memory limit (16 GB)
 fusion-mlx serve --memory-tier custom --custom-limit-mb 16384
+
+# Boot-time LoRA adapter (single-model serve only)
+fusion-mlx serve --model Qwen3-4B-Q4_K_M --lora-path /path/to/lora-adapter
 ```
 
 ### `start` / `stop` / `restart` — Managed background server

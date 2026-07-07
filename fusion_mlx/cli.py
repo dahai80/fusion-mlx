@@ -641,6 +641,20 @@ Examples:
         help="Path to the converted MLX DSpark draft directory (produced by "
         "dspark-metal-convert). Required when --enable-dspark is set.",
     )
+    # Boot-time LoRA adapter (Phase B LoRA slice 1). Applies a PEFT LoRA
+    # adapter at model load via mlx_lm.load(adapter_path=...). Single-model
+    # ``serve --model`` path only; multi-model ``--model-dir`` per-model LoRA
+    # and runtime hot-swap are follow-ups.
+    serve_parser.add_argument(
+        "--lora-path",
+        dest="lora_path",
+        default=None,
+        help="Path to a PEFT LoRA adapter directory (adapter_config.json) to "
+        "apply at boot. Fuses the adapter into the base model weights via "
+        "mlx_lm.load(adapter_path=...). Single-model ``serve --model`` only; "
+        "ignored by multi-model ``--model-dir``. Runtime hot-swap is not yet "
+        "supported.",
+    )
     serve_parser.add_argument(
         "--dspark-draft-quant-bits",
         dest="dspark_draft_quant_bits",
