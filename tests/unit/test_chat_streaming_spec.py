@@ -607,7 +607,6 @@ def test_synthetic_terminal_chunk_does_not_replay_accumulated_text(monkeypatch):
     would double-send the entire reply via the synthetic chunk.
     """
     from fusion_mlx.domain.events import StreamEvent
-
     from fusion_mlx.service import postprocessor as pp_mod
 
     # Force the defensive branch:

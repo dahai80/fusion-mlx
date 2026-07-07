@@ -8,7 +8,6 @@ Dataset bundled from math_qa on HuggingFace.
 
 import logging
 from pathlib import Path
-from typing import Optional
 
 from .base import BaseBenchmark
 from .datasets import deterministic_sample, load_jsonl
@@ -34,14 +33,16 @@ class MathQABenchmark(BaseBenchmark):
             labels = item.get("labels", [])
             if not choices or not labels:
                 continue
-            normalized.append({
-                "id": item.get("id", ""),
-                "question": item["question"],
-                "choices": choices,
-                "labels": labels,
-                "answer": item["answer"],
-                "category": item.get("category", "general"),
-            })
+            normalized.append(
+                {
+                    "id": item.get("id", ""),
+                    "question": item["question"],
+                    "choices": choices,
+                    "labels": labels,
+                    "answer": item["answer"],
+                    "category": item.get("category", "general"),
+                }
+            )
 
         logger.info(f"MathQA: loaded {len(normalized)} questions")
 
@@ -57,8 +58,7 @@ class MathQABenchmark(BaseBenchmark):
         labels = item["labels"]
 
         parts = [
-            "Solve the following math problem. "
-            "Answer with just the letter.\n",
+            "Solve the following math problem. " "Answer with just the letter.\n",
             f"Problem: {question}\n",
         ]
         for label, choice in zip(labels, choices):
@@ -75,5 +75,5 @@ class MathQABenchmark(BaseBenchmark):
     def check_answer(self, predicted: str, item: dict) -> bool:
         return predicted == item["answer"]
 
-    def get_category(self, item: dict) -> Optional[str]:
+    def get_category(self, item: dict) -> str | None:
         return item.get("category")

@@ -15,7 +15,6 @@ from fusion_mlx.turboquant import (
 from fusion_mlx.turboquant_kv import (
     TurboQuantConfig,
     TurboQuantKVCache,
-    auto_select_bits,
 )
 
 logger = logging.getLogger(__name__)

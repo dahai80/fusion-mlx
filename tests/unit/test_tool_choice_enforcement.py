@@ -48,10 +48,6 @@ from typing import Any
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from fusion_mlx.service.helpers import (
-    _TOOL_USE_REQUIRED_SUFFIX,
-    _TOOL_USE_SYSTEM_SUFFIX,
-)
 
 from fusion_mlx.config import reset_config
 from fusion_mlx.engine.base import GenerationOutput
@@ -66,6 +62,10 @@ from fusion_mlx.routes.chat import (
     _synthesize_forced_tool_call,
 )
 from fusion_mlx.routes.chat import router as chat_router
+from fusion_mlx.service.helpers import (
+    _TOOL_USE_REQUIRED_SUFFIX,
+    _TOOL_USE_SYSTEM_SUFFIX,
+)
 from fusion_mlx.tool_parsers.deepseekv31_tool_parser import DeepSeekV31ToolParser
 from fusion_mlx.tool_parsers.hermes_tool_parser import HermesToolParser
 

@@ -47,9 +47,8 @@ class TestResponseFormatValidation:
         ``{}``. Wrapped by ``except Exception: raise
         HTTPException(detail=str(e))`` and the raw error string
         surfaced in the response body."""
-        from fusion_mlx.service.helpers import _validate_response_format
-
         from fusion_mlx.api.models import ResponseFormat
+        from fusion_mlx.service.helpers import _validate_response_format
 
         with pytest.raises(HTTPException) as ei:
             _validate_response_format(ResponseFormat(type="json_schema"))
@@ -149,9 +148,8 @@ class TestResponseFormatValidation:
         """``type:"text"`` is the documented default and is the
         explicit value Pydantic assigns when no ``type`` is provided
         to the typed path — must not raise."""
-        from fusion_mlx.service.helpers import _validate_response_format
-
         from fusion_mlx.api.models import ResponseFormat
+        from fusion_mlx.service.helpers import _validate_response_format
 
         # Both shapes — dict and Pydantic — must pass.
         _validate_response_format(ResponseFormat(type="text"))
@@ -159,9 +157,8 @@ class TestResponseFormatValidation:
 
     def test_valid_json_object_passes(self):
         """The OpenAI ``json_object`` JSON-mode shorthand."""
-        from fusion_mlx.service.helpers import _validate_response_format
-
         from fusion_mlx.api.models import ResponseFormat
+        from fusion_mlx.service.helpers import _validate_response_format
 
         _validate_response_format(ResponseFormat(type="json_object"))
         _validate_response_format({"type": "json_object"})

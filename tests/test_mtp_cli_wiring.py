@@ -15,6 +15,7 @@ explaining what's missing.
 from __future__ import annotations
 
 import logging
+
 import pytest
 
 logger = logging.getLogger(__name__)
@@ -415,7 +416,6 @@ class _StubBatchGen:
         self._orig_next_logprob = mx.array([0.0])
 
     def _step(self):
-        import mlx.core as mx
 
         self.orig_step_calls += 1
         current = self._next_tokens

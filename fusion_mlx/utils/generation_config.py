@@ -26,7 +26,9 @@ def load_generation_config_sampling(model_path: str | None) -> dict[str, float |
         with open(config_path) as fh:
             raw = json.load(fh)
     except (OSError, json.JSONDecodeError) as exc:
-        logger.debug("generation_config: skip %s (read/parse failed: %s)", config_path, exc)
+        logger.debug(
+            "generation_config: skip %s (read/parse failed: %s)", config_path, exc
+        )
         return {}
     if not isinstance(raw, dict):
         logger.debug("generation_config: skip %s (not a JSON object)", config_path)
@@ -49,7 +51,9 @@ def load_generation_config_sampling(model_path: str | None) -> dict[str, float |
             continue
         out[key] = value
     if out:
-        logger.info("generation_config: loaded sampling defaults from %s: %s", config_path, out)
+        logger.info(
+            "generation_config: loaded sampling defaults from %s: %s", config_path, out
+        )
     return out
 
 
@@ -84,7 +88,11 @@ def load_generation_config_eos_ids(model_path: str | None) -> tuple[int, ...]:
             continue
         out.append(item)
     if out:
-        logger.info("generation_config: loaded extra EOS token ids from %s: %s", config_path, out)
+        logger.info(
+            "generation_config: loaded extra EOS token ids from %s: %s",
+            config_path,
+            out,
+        )
     return tuple(out)
 
 

@@ -13,9 +13,7 @@ import importlib.util
 
 def _load_version_module():
     """Load _version.py directly to avoid fusion_mlx/__init__.py MLX chain."""
-    spec = importlib.util.spec_from_file_location(
-        "_version", "fusion_mlx/_version.py"
-    )
+    spec = importlib.util.spec_from_file_location("_version", "fusion_mlx/_version.py")
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
     return mod

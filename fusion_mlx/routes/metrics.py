@@ -1,7 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 import logging
 import threading
-import time
 from typing import Any
 
 from fastapi import APIRouter
@@ -82,25 +81,32 @@ def _render_engine_metrics() -> list[str]:
     lines: list[str] = []
     try:
         from ..server_metrics import get_server_metrics
+
         m = get_server_metrics().to_dict()
-        lines.extend(_fmt_metric(
-            "fusion_mlx_requests_total",
-            "counter",
-            "Total inference requests processed.",
-            int(m.get("total_requests", 0)),
-        ))
-        lines.extend(_fmt_metric(
-            "fusion_mlx_prompt_tokens_total",
-            "counter",
-            "Total prompt tokens across all requests.",
-            int(m.get("total_tokens_prompt", 0)),
-        ))
-        lines.extend(_fmt_metric(
-            "fusion_mlx_completion_tokens_total",
-            "counter",
-            "Total completion tokens across all requests.",
-            int(m.get("total_tokens_generated", 0)),
-        ))
+        lines.extend(
+            _fmt_metric(
+                "fusion_mlx_requests_total",
+                "counter",
+                "Total inference requests processed.",
+                int(m.get("total_requests", 0)),
+            )
+        )
+        lines.extend(
+            _fmt_metric(
+                "fusion_mlx_prompt_tokens_total",
+                "counter",
+                "Total prompt tokens across all requests.",
+                int(m.get("total_tokens_prompt", 0)),
+            )
+        )
+        lines.extend(
+            _fmt_metric(
+                "fusion_mlx_completion_tokens_total",
+                "counter",
+                "Total completion tokens across all requests.",
+                int(m.get("total_tokens_generated", 0)),
+            )
+        )
     except Exception as e:
         logger.debug("metrics render error: %s", e)
     return lines
@@ -110,27 +116,34 @@ def _render_pool_metrics() -> list[str]:
     lines: list[str] = []
     try:
         from ..service.helpers import _server_state
+
         pool = _server_state.get("engine_pool")
         if pool is not None:
-            lines.extend(_fmt_metric(
-                "fusion_mlx_models_discovered",
-                "gauge",
-                "Number of models discovered in model_dir.",
-                pool.model_count,
-            ))
-            lines.extend(_fmt_metric(
-                "fusion_mlx_models_loaded",
-                "gauge",
-                "Number of models currently loaded.",
-                pool.loaded_model_count,
-            ))
+            lines.extend(
+                _fmt_metric(
+                    "fusion_mlx_models_discovered",
+                    "gauge",
+                    "Number of models discovered in model_dir.",
+                    pool.model_count,
+                )
+            )
+            lines.extend(
+                _fmt_metric(
+                    "fusion_mlx_models_loaded",
+                    "gauge",
+                    "Number of models currently loaded.",
+                    pool.loaded_model_count,
+                )
+            )
             mem = pool.current_model_memory
-            lines.extend(_fmt_metric(
-                "fusion_mlx_model_memory_bytes",
-                "gauge",
-                "GPU memory used by loaded models.",
-                mem,
-            ))
+            lines.extend(
+                _fmt_metric(
+                    "fusion_mlx_model_memory_bytes",
+                    "gauge",
+                    "GPU memory used by loaded models.",
+                    mem,
+                )
+            )
     except Exception as e:
         logger.debug("pool metrics render error: %s", e)
     return lines

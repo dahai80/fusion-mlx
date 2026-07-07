@@ -8,9 +8,7 @@ Dataset bundled from truthfulqa/truthful_qa on HuggingFace.
 
 import logging
 import random
-import re
 from pathlib import Path
-from typing import Optional
 
 from .base import BaseBenchmark
 from .datasets import deterministic_sample, load_jsonl
@@ -63,12 +61,14 @@ class TruthfulQABenchmark(BaseBenchmark):
             shuffled = [choices[j] for j in indices]
             new_correct_pos = indices.index(correct_idx)
 
-            items.append({
-                "id": str(i),
-                "question": question,
-                "choices": shuffled,
-                "answer": new_correct_pos,
-            })
+            items.append(
+                {
+                    "id": str(i),
+                    "question": question,
+                    "choices": shuffled,
+                    "answer": new_correct_pos,
+                }
+            )
 
         logger.info(f"TruthfulQA: loaded {len(items)} questions")
 
@@ -104,5 +104,5 @@ class TruthfulQABenchmark(BaseBenchmark):
         expected = _index_to_letter(item["answer"])
         return predicted == expected
 
-    def get_category(self, item: dict) -> Optional[str]:
+    def get_category(self, item: dict) -> str | None:
         return None

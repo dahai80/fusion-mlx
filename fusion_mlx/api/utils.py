@@ -5,8 +5,11 @@ Utility functions for text processing.
 """
 
 import json
+import logging
 import re
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 from .openai_models import Message
 
@@ -1085,8 +1088,7 @@ def _strip_markdown_code_block(text: str) -> str:
 
 
 THINK_PATTERN = re.compile(
-    r"<think>[\s\S]*?</think>\s*"
-    r"|<\|channel>thought\n[\s\S]*?<channel\|>\s*",
+    r"<think>[\s\S]*?</think>\s*" r"|<\|channel>thought\n[\s\S]*?<channel\|>\s*",
     re.DOTALL,
 )
 
@@ -1150,7 +1152,14 @@ AUDIO_CONTENT_TYPES = {"audio_url", "audio", "input_audio"}
 MEDIA_CONTENT_TYPES = IMAGE_CONTENT_TYPES | VIDEO_CONTENT_TYPES | AUDIO_CONTENT_TYPES
 KNOWN_CONTENT_TYPES = TEXT_CONTENT_TYPES | MEDIA_CONTENT_TYPES
 SUPPORTED_INPUT_AUDIO_FORMATS = {
-    "wav", "mp3", "flac", "ogg", "opus", "pcm", "m4a", "webm",
+    "wav",
+    "mp3",
+    "flac",
+    "ogg",
+    "opus",
+    "pcm",
+    "m4a",
+    "webm",
 }
 
 
@@ -1413,7 +1422,7 @@ class StreamingToolCallFilter:
             idx = self._buffer.find(open_tag)
             if idx >= 0:
                 emit = self._buffer[:idx]
-                self._buffer = self._buffer[idx + len(open_tag):]
+                self._buffer = self._buffer[idx + len(open_tag) :]
                 self._in_block = True
                 self._close_tag = close_tag
                 after = self._consume_block()
@@ -1435,7 +1444,7 @@ class StreamingToolCallFilter:
     def _consume_block(self) -> str:
         idx = self._buffer.find(self._close_tag)
         if idx >= 0:
-            self._buffer = self._buffer[idx + len(self._close_tag):]
+            self._buffer = self._buffer[idx + len(self._close_tag) :]
             self._in_block = False
             self._close_tag = ""
             if self._buffer:

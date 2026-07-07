@@ -123,9 +123,7 @@ def fused_quantize_v4(
             output_dtypes=[mx.uint32, mx.float32],
         )
     except Exception as exc:
-        logger.warning(
-            "turboquant_fused: V4 dispatch failed (%s); falling back", exc
-        )
+        logger.warning("turboquant_fused: V4 dispatch failed (%s); falling back", exc)
         return None
 
     packed = outputs[0].reshape(n_vecs, p_dim)
@@ -213,9 +211,7 @@ def fused_quantize_k8(
             output_dtypes=[mx.uint8, mx.float32, mx.float32],
         )
     except Exception as exc:
-        logger.warning(
-            "turboquant_fused: K8 dispatch failed (%s); falling back", exc
-        )
+        logger.warning("turboquant_fused: K8 dispatch failed (%s); falling back", exc)
         return None
 
     packed = outputs[0].reshape(n_vecs, dim)

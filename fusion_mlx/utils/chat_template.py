@@ -52,8 +52,10 @@ def _collect_role_markers(template_applicator) -> set[str]:
         if not tok or not isinstance(tok, str):
             continue
         if (
-            tok.startswith("<|") and tok.endswith("|>")
-            or tok.startswith("<") and tok.endswith(">")
+            tok.startswith("<|")
+            and tok.endswith("|>")
+            or tok.startswith("<")
+            and tok.endswith(">")
             and any(kw in tok for kw in ("turn", "header", "message", "channel"))
         ):
             markers.add(tok)
@@ -71,6 +73,7 @@ def _neutralize_in_string(text: str, pattern: re.Pattern) -> str:
     def _sub(match: re.Match) -> str:
         marker = match.group(0)
         return marker[0] + "​" + marker[1:]
+
     return pattern.sub(_sub, text)
 
 

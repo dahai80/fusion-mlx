@@ -566,6 +566,7 @@ def _load_model_with_fallback_impl(model_name: str, tokenizer_config: dict = Non
 
     try:
         from ..models.gemma4_text import is_gemma4_model as _is_g4
+
         has_gemma4 = True
     except ImportError:
         has_gemma4 = False

@@ -389,9 +389,8 @@ def test_validator_only_checks_called_tools_schema():
     schema. We pass two tools but the model only called the first
     — the second tool's schema must be ignored entirely.
     """
-    from fusion_mlx.service.helpers import _validate_tool_call_params
-
     from fusion_mlx.api.models import FunctionCall, ToolCall
+    from fusion_mlx.service.helpers import _validate_tool_call_params
 
     tools = [
         _tool_def("get_weather", {"location": {"type": "string"}}),
@@ -418,9 +417,8 @@ def test_validator_called_unknown_tool_skips_validation():
     schema to validate against, and the upstream parser layers own
     that failure mode.
     """
-    from fusion_mlx.service.helpers import _validate_tool_call_params
-
     from fusion_mlx.api.models import FunctionCall, ToolCall
+    from fusion_mlx.service.helpers import _validate_tool_call_params
 
     tools = [_tool_def("get_weather", {"location": {"type": "string"}})]
     calls = [
@@ -439,9 +437,8 @@ def test_validator_multiple_calls_each_validated_against_own_schema():
     → no raise. Locks that the per-call loop is using each call's own
     tool spec rather than mixing schemas between calls.
     """
-    from fusion_mlx.service.helpers import _validate_tool_call_params
-
     from fusion_mlx.api.models import FunctionCall, ToolCall
+    from fusion_mlx.service.helpers import _validate_tool_call_params
 
     tools = [
         _tool_def("get_weather", {"location": {"type": "string"}}),
@@ -471,9 +468,9 @@ def test_validator_multiple_calls_bad_one_raises_about_bad_one_only():
     name the bad-call's tool, NOT mix names in the message.
     """
     from fastapi import HTTPException
-    from fusion_mlx.service.helpers import _validate_tool_call_params
 
     from fusion_mlx.api.models import FunctionCall, ToolCall
+    from fusion_mlx.service.helpers import _validate_tool_call_params
 
     tools = [
         _tool_def("get_weather", {"location": {"type": "string"}}),

@@ -316,9 +316,7 @@ class BatchedEngine(BaseEngine):
                 )
                 tq_mode = getattr(
                     self._model_settings, "kv_cache_turboquant_mode", None
-                ) or getattr(
-                    self._engine.engine.scheduler, "_turboquant_kv_mode", "v4"
-                )
+                ) or getattr(self._engine.engine.scheduler, "_turboquant_kv_mode", "v4")
                 if tq_mode not in ("v4", "k8v4"):
                     logger.warning(
                         "TurboQuant mode %r not in ('v4', 'k8v4'), defaulting to v4",
@@ -405,7 +403,9 @@ class BatchedEngine(BaseEngine):
                     dflash_rt.kind,
                 )
             except Exception as e:
-                logger.error("DFlash drafter load failed for %s: %s", self._model_name, e)
+                logger.error(
+                    "DFlash drafter load failed for %s: %s", self._model_name, e
+                )
 
         # DSpark DeepSpec speculative decode
         dspark_path = (
@@ -423,7 +423,9 @@ class BatchedEngine(BaseEngine):
                     else None
                 ) or getattr(scheduler_config, "dspark_draft_quant_bits", 8)
                 # target_repo = the loaded model's HF id or local path
-                target_repo = getattr(self._model, "requested_model", None) or self._model_name
+                target_repo = (
+                    getattr(self._model, "requested_model", None) or self._model_name
+                )
                 dspark_rt = await loop.run_in_executor(
                     get_executor("io"),
                     lambda: load_dspark_runtime(
@@ -440,7 +442,9 @@ class BatchedEngine(BaseEngine):
                     dspark_quant,
                 )
             except Exception as e:
-                logger.error("DSpark drafter load failed for %s: %s", self._model_name, e)
+                logger.error(
+                    "DSpark drafter load failed for %s: %s", self._model_name, e
+                )
 
         self._loaded = True
         from ..scheduler.helpers import register_llm_engine

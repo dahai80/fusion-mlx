@@ -175,7 +175,9 @@ async def cache_info(path: str | None = None):
 @router.post("/clear")
 async def clear_cache(is_admin: bool = Depends(require_admin)):
     import gc
+
     from ..service.helpers import _server_state
+
     pool = _server_state.get("engine_pool")
     if pool is None:
         raise HTTPException(status_code=503, detail="Engine not loaded")

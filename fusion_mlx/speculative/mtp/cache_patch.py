@@ -2,8 +2,6 @@
 import logging
 from typing import Any
 
-import mlx.core as mx
-
 logger = logging.getLogger(__name__)
 
 _ARRAYS_CACHE_PATCHED = False
@@ -46,7 +44,7 @@ def patch_gated_delta_net_for_mtp() -> bool:
         cache = kwargs.get("cache") or (args[1] if len(args) > 1 else None)
         if cache is None or not hasattr(cache, "state"):
             return original_call(self, *args, **kwargs)
-        from .detect import MTPEligibility
+
         return original_call(self, *args, **kwargs)
 
     _patched_call._mtp_patched = True  # type: ignore[attr-defined]

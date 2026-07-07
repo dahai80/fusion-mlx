@@ -30,7 +30,9 @@ except ImportError:
 
 def _require_reasoning_helpers():
     if not _HAS_REASONING_HELPERS:
-        pytest.skip("fusion_mlx.service.helpers reasoning effort helpers not migrated yet")
+        pytest.skip(
+            "fusion_mlx.service.helpers reasoning effort helpers not migrated yet"
+        )
 
 
 @pytest.fixture(autouse=True)
@@ -38,9 +40,7 @@ def _guard_reasoning_helpers():
     _require_reasoning_helpers()
 
 
-
 class TestReasoningIntentPredicate:
-
 
     def test_none_of_the_signals(self):
         assert _client_signalled_reasoning_intent(_shim()) is False
@@ -248,7 +248,6 @@ class TestOrderingWithToolAutoDisable:
 
 class TestToolAutoDisableStepsAsideForReasoning:
 
-
     def test_tools_plus_raw_reasoning_effort_steps_aside(self):
         req = _shim(reasoning_effort="high", tools=[{"type": "function"}])
         assert maybe_auto_disable_thinking_for_tools(req) is False
@@ -310,7 +309,6 @@ class TestTypedModels:
 
 class TestResponsesAdapterForwardsEffort:
 
-
     def test_top_level_reasoning_effort_forwarded(self):
         oai = responses_to_openai(
             ResponsesRequest(model="m", input="hi", reasoning_effort="none")
@@ -353,4 +351,3 @@ class TestResponsesAdapterForwardsEffort:
             ResponsesRequest(model="m", input="hi", reasoning={"effort": "high"})
         )
         assert _client_signalled_reasoning_intent(oai) is True
-

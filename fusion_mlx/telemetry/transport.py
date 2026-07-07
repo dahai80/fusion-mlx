@@ -131,6 +131,7 @@ def debug_enabled() -> bool:
         return False
     if os.environ.get(DEBUG_ENV_LEGACY) and not os.environ.get(DEBUG_ENV_PRIMARY):
         import logging as _logging
+
         _logging.getLogger(__name__).warning(
             "env var %s is deprecated, use %s instead",
             DEBUG_ENV_LEGACY,

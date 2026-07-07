@@ -871,7 +871,9 @@ class TestHarnessProfilesFilter:
             self._reload()
 
     def test_comma_separated_filter(self, monkeypatch):
-        monkeypatch.setenv("FUSION_MLX_HARNESS_PROFILES_FILTER", "codex,aider,langchain")
+        monkeypatch.setenv(
+            "FUSION_MLX_HARNESS_PROFILES_FILTER", "codex,aider,langchain"
+        )
         tr = self._reload()
         try:
             assert tr.HARNESS_PROFILES_FILTER == ("codex", "aider", "langchain")

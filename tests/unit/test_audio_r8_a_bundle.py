@@ -590,22 +590,25 @@ class TestAllowedVoicesHelper:
         yield audio_route  # nothing for the tests to consume
 
     def test_kokoro_short_alias_returns_kokoro_voices(self):
-        from fusion_mlx.audio.tts import KOKORO_VOICES
         from fusion_mlx.routes.audio import _allowed_voices_for
+
+        from fusion_mlx.audio.tts import KOKORO_VOICES
 
         assert _allowed_voices_for("kokoro") == list(KOKORO_VOICES)
 
     def test_kokoro_hf_path_returns_kokoro_voices(self):
-        from fusion_mlx.audio.tts import KOKORO_VOICES
         from fusion_mlx.routes.audio import _allowed_voices_for
+
+        from fusion_mlx.audio.tts import KOKORO_VOICES
 
         assert _allowed_voices_for("mlx-community/Kokoro-82M-bf16") == list(
             KOKORO_VOICES
         )
 
     def test_chatterbox_returns_chatterbox_voices(self):
-        from fusion_mlx.audio.tts import CHATTERBOX_VOICES
         from fusion_mlx.routes.audio import _allowed_voices_for
+
+        from fusion_mlx.audio.tts import CHATTERBOX_VOICES
 
         assert _allowed_voices_for("chatterbox") == list(CHATTERBOX_VOICES)
 

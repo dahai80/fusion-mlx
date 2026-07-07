@@ -193,6 +193,7 @@ def _mirror_base() -> str:
     val = os.environ.get("RAPID_MLX_MODEL_MIRROR")
     if val is not None:
         import logging as _logging
+
         _logging.getLogger(__name__).warning(
             "env var RAPID_MLX_MODEL_MIRROR is deprecated, use FUSION_MLX_MODEL_MIRROR instead"
         )

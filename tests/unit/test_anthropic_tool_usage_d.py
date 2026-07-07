@@ -23,7 +23,6 @@ from types import SimpleNamespace
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from fusion_mlx.service.helpers import _TOOL_USE_REQUIRED_SUFFIX
 
 from fusion_mlx.config import reset_config
 from fusion_mlx.routes.anthropic import (
@@ -34,6 +33,7 @@ from fusion_mlx.routes.anthropic import (
     _synthesize_anthropic_forced_tool_call,
     router,
 )
+from fusion_mlx.service.helpers import _TOOL_USE_REQUIRED_SUFFIX
 
 # ──────────────────────────────────────────────────────────────────
 # Engine doubles

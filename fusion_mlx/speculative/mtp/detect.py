@@ -12,11 +12,13 @@ class MTPEligibility(Enum):
     TREE = "tree"
 
 
-_SUPPORTED_MODEL_TYPES: frozenset[str] = frozenset({
-    "qwen3_5",
-    "qwen3_5_moe",
-    "gemma4_unified",
-})
+_SUPPORTED_MODEL_TYPES: frozenset[str] = frozenset(
+    {
+        "qwen3_5",
+        "qwen3_5_moe",
+        "gemma4_unified",
+    }
+)
 
 
 @dataclass(frozen=True)

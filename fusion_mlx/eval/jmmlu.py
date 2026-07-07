@@ -7,9 +7,7 @@ Dataset bundled from nlp-waseda/JMMLU on HuggingFace.
 """
 
 import logging
-import re
 from pathlib import Path
-from typing import Optional
 
 from .base import BaseBenchmark
 from .datasets import load_jsonl, stratified_sample
@@ -43,12 +41,14 @@ class JMMLUBenchmark(BaseBenchmark):
         all_items = []
         for item in test_items:
             answer = item.get("answer", "A")
-            all_items.append({
-                "question": item["question"],
-                "choices": item["choices"],
-                "answer": answer,  # Already A/B/C/D
-                "subject": item.get("subject", "unknown"),
-            })
+            all_items.append(
+                {
+                    "question": item["question"],
+                    "choices": item["choices"],
+                    "answer": answer,  # Already A/B/C/D
+                    "subject": item.get("subject", "unknown"),
+                }
+            )
 
         logger.info(f"JMMLU: loaded {len(all_items)} questions")
 
@@ -76,5 +76,5 @@ class JMMLUBenchmark(BaseBenchmark):
     def check_answer(self, predicted: str, item: dict) -> bool:
         return predicted == item["answer"]
 
-    def get_category(self, item: dict) -> Optional[str]:
+    def get_category(self, item: dict) -> str | None:
         return item.get("subject")

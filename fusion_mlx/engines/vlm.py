@@ -18,7 +18,13 @@ from ..utils.image import (
     compute_per_image_hashes,
     extract_images_from_messages,
 )
-from ..utils.video import DEFAULT_FPS, MAX_FRAMES
+from ..utils.video import (
+    DEFAULT_FPS,
+    MAX_FRAMES,
+    extract_video_frames_smart,
+    process_video_input,
+    save_frames_to_temp,
+)
 from .base import BaseEngine, GenerationOutput, _fallback_parse_tool_calls
 
 logger = logging.getLogger(__name__)
@@ -506,9 +512,7 @@ class VLMBatchedEngine(BaseEngine):
         config = getattr(self._vlm_model, "config", None)
         if config is None:
             return False
-        return hasattr(config, "video_token_id") or hasattr(
-            config, "video_token_index"
-        )
+        return hasattr(config, "video_token_id") or hasattr(config, "video_token_index")
 
     def _prepare_native_video_inputs(
         self,
@@ -519,6 +523,7 @@ class VLMBatchedEngine(BaseEngine):
     ) -> tuple:
         """Use mlx_vlm native video path for Qwen-family models."""
         from mlx_vlm.utils import prepare_inputs
+
         from ..utils.video import process_video_input
 
         # Apply chat template
@@ -544,9 +549,7 @@ class VLMBatchedEngine(BaseEngine):
                 try:
                     from mlx_vlm.video_generate import load_video
 
-                    video_frames = load_video(
-                        video_path, video_fps, video_max_frames
-                    )
+                    video_frames = load_video(video_path, video_fps, video_max_frames)
                     all_images.extend(video_frames)
                     logger.info(
                         "Native video: %d frames from %s",
@@ -554,9 +557,7 @@ class VLMBatchedEngine(BaseEngine):
                         video_path,
                     )
                 except (ImportError, Exception) as e:
-                    logger.debug(
-                        "mlx_vlm load_video failed, falling back: %s", e
-                    )
+                    logger.debug("mlx_vlm load_video failed, falling back: %s", e)
                     from ..utils.video import (
                         extract_video_frames_smart,
                         save_frames_to_temp,
@@ -581,9 +582,7 @@ class VLMBatchedEngine(BaseEngine):
         if not all_images:
             return self._prepare_vision_inputs(messages, [])
 
-        inputs = prepare_inputs(
-            self._processor, images=all_images, prompts=[prompt]
-        )
+        inputs = prepare_inputs(self._processor, images=all_images, prompts=[prompt])
         input_ids = inputs["input_ids"]
         pixel_values = inputs.get("pixel_values")
         attention_mask = inputs.get("attention_mask")
@@ -616,9 +615,7 @@ class VLMBatchedEngine(BaseEngine):
                                 image_hash, self._model_name, features
                             )
                     except Exception:
-                        logger.debug(
-                            "Vision feature computation failed", exc_info=True
-                        )
+                        logger.debug("Vision feature computation failed", exc_info=True)
 
             try:
                 embed_features = self._vlm_model.get_input_embeddings(
@@ -657,7 +654,14 @@ class VLMBatchedEngine(BaseEngine):
             token_ids = (
                 input_ids[0].tolist() if input_ids.ndim > 1 else input_ids.tolist()
             )
-            return token_ids, embed_features.inputs_embeds, extra_kwargs, image_hash, 0, []
+            return (
+                token_ids,
+                embed_features.inputs_embeds,
+                extra_kwargs,
+                image_hash,
+                0,
+                [],
+            )
         else:
             token_ids = (
                 input_ids[0].tolist() if input_ids.ndim > 1 else input_ids.tolist()
@@ -670,9 +674,7 @@ class VLMBatchedEngine(BaseEngine):
         tools: list[dict] | None,
         kwargs: dict,
     ) -> tuple:
-        text_messages, images, _videos, _audio = extract_images_from_messages(
-            messages
-        )
+        text_messages, images, _videos, _audio = extract_images_from_messages(messages)
 
         # Merge videos from message content into kwargs
         if _videos and "videos" not in kwargs:
@@ -724,6 +726,7 @@ class VLMBatchedEngine(BaseEngine):
                     for fp in frame_paths:
                         try:
                             from ..utils.image import load_image
+
                             images.append(load_image(fp))
                         except Exception as e:
                             logger.warning("Failed to load video frame %s: %s", fp, e)

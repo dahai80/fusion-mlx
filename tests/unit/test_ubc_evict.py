@@ -192,6 +192,7 @@ def test_ubc_evict_munmap_failure_is_not_reported_as_success(tmp_path, caplog):
 
         def munmap(self, addr, size):
             import ctypes
+
             ctypes.set_errno(22)  # EINVAL
             return -1
 
@@ -204,9 +205,7 @@ def test_ubc_evict_munmap_failure_is_not_reported_as_success(tmp_path, caplog):
         finally:
             ubc_module._libc = real_libc
 
-    assert result == 0, (
-        "munmap failure must NOT report file size as evicted"
-    )
+    assert result == 0, "munmap failure must NOT report file size as evicted"
     snap = snapshot()
     assert snap["ubc_evict_failed_total"] == 1
     assert snap["ubc_evicted_bytes_total"] == 0

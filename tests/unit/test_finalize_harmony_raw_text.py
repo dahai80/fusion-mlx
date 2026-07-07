@@ -28,11 +28,10 @@ the retry branch.
 
 from __future__ import annotations
 
-from fusion_mlx.service.helpers import _finalize_content_and_reasoning
-
 from fusion_mlx.reasoning.deepseek_r1_parser import DeepSeekR1ReasoningParser
 from fusion_mlx.reasoning.harmony_parser import HarmonyReasoningParser
 from fusion_mlx.reasoning.qwen3_parser import Qwen3ReasoningParser
+from fusion_mlx.service.helpers import _finalize_content_and_reasoning
 
 # A realistic gpt-oss-20b-mxfp4-q8 harmony non-stream response: analysis channel
 # (CoT) followed by final channel (answer), terminated with <|return|>.
@@ -211,12 +210,11 @@ def test_engine_reasoning_empty_falls_through_to_parser():
 # #575 — Case-4 leak plug + effective-thinking resolution + signature probe
 # ---------------------------------------------------------------------------
 
+from fusion_mlx.reasoning.glm4_parser import Glm4ReasoningParser
 from fusion_mlx.service.helpers import (
     _effective_enable_thinking,
     _parser_accepts_enable_thinking,
 )
-
-from fusion_mlx.reasoning.glm4_parser import Glm4ReasoningParser
 
 _QWEN3_TRUNCATED_THOUGHT = (
     "Here's my thinking process:\n"

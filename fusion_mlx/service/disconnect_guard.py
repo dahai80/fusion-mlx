@@ -32,6 +32,7 @@ def _resolve_disconnect_abort_recorder():
         return _disconnect_abort_recorder
     try:
         from ..telemetry import get_disconnect_abort_recorder
+
         _disconnect_abort_recorder = get_disconnect_abort_recorder()
     except Exception:
         pass
@@ -59,7 +60,11 @@ def _record_disconnect_abort_on_scheduler(engine, request_id) -> None:
 
 
 def _force_abort_request(engine, request_id_holder) -> bool:
-    if request_id_holder is None or not isinstance(request_id_holder, list) or not request_id_holder:
+    if (
+        request_id_holder is None
+        or not isinstance(request_id_holder, list)
+        or not request_id_holder
+    ):
         return False
     request_id = request_id_holder[0]
     if request_id is None:
@@ -85,6 +90,7 @@ def _force_abort_request(engine, request_id_holder) -> bool:
         try:
             result = engine.abort_request(request_id)
             if asyncio.iscoroutine(result):
+
                 async def _await_and_record():
                     try:
                         r = await result
@@ -99,6 +105,7 @@ def _force_abort_request(engine, request_id_holder) -> bool:
                             "[disconnect_guard] async force-abort failed",
                             exc_info=True,
                         )
+
                 asyncio.ensure_future(_await_and_record())
                 logger.warning(
                     f"[disconnect_guard] force-abort fell back to async "
@@ -141,6 +148,7 @@ async def _disconnect_guard(
     if keepalive_seconds is None:
         try:
             from ..server import _sse_keepalive_seconds
+
             keepalive_seconds = float(_sse_keepalive_seconds)
         except Exception:
             keepalive_seconds = 20.0
@@ -222,6 +230,7 @@ async def _disconnect_guard(
                     exc_info=True,
                 )
                 import json as _json
+
                 error_data = _json.dumps(
                     {
                         "error": {

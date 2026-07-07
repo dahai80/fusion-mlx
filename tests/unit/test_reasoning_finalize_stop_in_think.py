@@ -1042,9 +1042,8 @@ class TestNonStreamingHelperSymmetry:
         )
 
     def test_gemma4_non_streaming_mid_thought(self):
-        from fusion_mlx.service.helpers import _finalize_content_and_reasoning
-
         from fusion_mlx.api.utils import clean_output_text, strip_thinking_tags
+        from fusion_mlx.service.helpers import _finalize_content_and_reasoning
 
         raw_text = "<|channel>thought\nLet me think about 5+7. The answer is "
         cleaned_text = raw_text

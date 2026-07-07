@@ -67,6 +67,7 @@ def _detect_dflash_eligibility_verbose(
         drafter_path = drafter_override
     elif alias:
         from .drafter_registry import get_dflash_drafter_path
+
         drafter_path = get_dflash_drafter_path(alias)
     if not drafter_path:
         return _DetectionResult(

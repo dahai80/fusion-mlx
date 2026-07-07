@@ -236,6 +236,7 @@ def test_enforce_over_cap_raises_400_context_length_exceeded():
     ``context_length_exceeded`` envelope. This is the load-bearing
     test — without this we go right back to the F-007 silent hang."""
     from fastapi import HTTPException
+
     from fusion_mlx.service.helpers import enforce_context_length
 
     eng = _StubEngine(model=_StubModel(args=_StubArgs(max_position_embeddings=2048)))
@@ -260,6 +261,7 @@ def test_enforce_includes_max_tokens_in_budget():
     OpenAI's own ``context_length_exceeded`` fires in this case so we
     mirror it — rejecting now avoids a mid-generation truncation."""
     from fastapi import HTTPException
+
     from fusion_mlx.service.helpers import enforce_context_length
 
     eng = _StubEngine(model=_StubModel(args=_StubArgs(max_position_embeddings=4096)))
@@ -297,6 +299,7 @@ def test_enforce_for_messages_template_error_raises_400():
     OpenAI-style ``invalid_request_error`` envelope.
     """
     from fastapi import HTTPException
+
     from fusion_mlx.service.helpers import enforce_context_length_for_messages
 
     class _TemplateErrorEngine:
@@ -328,6 +331,7 @@ def test_enforce_for_messages_template_error_lowercase_match():
     handler at ``routes/chat.py``.
     """
     from fastapi import HTTPException
+
     from fusion_mlx.service.helpers import enforce_context_length_for_messages
 
     class _LowercaseTemplateEngine:
@@ -383,6 +387,7 @@ def test_enforce_for_messages_http_exception_passes_through():
     deliberate HTTP status must win.
     """
     from fastapi import HTTPException
+
     from fusion_mlx.service.helpers import enforce_context_length_for_messages
 
     class _HttpEngine:

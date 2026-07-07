@@ -1,9 +1,8 @@
 # SPDX-License-Identifier: Apache-2.0
 import importlib.util
+import logging
 import sys
 from dataclasses import dataclass
-
-import logging
 
 logger = logging.getLogger(__name__)
 

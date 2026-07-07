@@ -147,12 +147,11 @@ def _build_app(monkeypatch):
 
     _install_lightweight_engine_modules(monkeypatch)
 
-    from fusion_mlx.routes.responses import router as responses_router
-
     from fusion_mlx.config import reset_config
     from fusion_mlx.middleware.auth import rate_limiter
     from fusion_mlx.middleware.exception_handlers import install_exception_handlers
     from fusion_mlx.routes.anthropic import router as anthropic_router
+    from fusion_mlx.routes.responses import router as responses_router
 
     cfg = reset_config()
     cfg.api_key = None
@@ -219,12 +218,11 @@ def chat_client():
     admission-flow tests. Keeping the chat-router tests on a
     real-engine-imports fixture sidesteps that interaction entirely.
     """
-    from fusion_mlx.routes.responses import router as responses_router
-
     from fusion_mlx.config import reset_config
     from fusion_mlx.middleware.auth import rate_limiter
     from fusion_mlx.middleware.exception_handlers import install_exception_handlers
     from fusion_mlx.routes.chat import router as chat_router
+    from fusion_mlx.routes.responses import router as responses_router
 
     cfg = reset_config()
     cfg.api_key = None

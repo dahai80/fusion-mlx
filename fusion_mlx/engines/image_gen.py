@@ -9,7 +9,6 @@ import time
 from typing import Any
 
 import mlx.core as mx
-from PIL import Image
 
 from ..engine_core import get_executor
 from .base import BaseNonStreamingEngine
@@ -52,8 +51,8 @@ class ImageGenEngine(BaseNonStreamingEngine):
 
         def _load():
             try:
-                from mflux.models.flux.variants.txt2img.flux import Flux1
                 from mflux.models.common.config.model_config import ModelConfig
+                from mflux.models.flux.variants.txt2img.flux import Flux1
             except ImportError as exc:
                 raise ImportError(
                     "Flux image generation requires mflux. "

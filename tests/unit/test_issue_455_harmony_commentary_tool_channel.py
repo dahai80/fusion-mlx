@@ -146,9 +146,9 @@ def router() -> OutputRouter:
         "harmony vocab — discovery is broken or the vocab is missing "
         "required tokens (<|channel|>, <|message|>)."
     )
-    assert r.map.format_tag == "harmony", (
-        f"Expected harmony discovery; got format_tag={r.map.format_tag!r}"
-    )
+    assert (
+        r.map.format_tag == "harmony"
+    ), f"Expected harmony discovery; got format_tag={r.map.format_tag!r}"
     return r
 
 
@@ -214,9 +214,9 @@ def test_harmony_router_commentary_tool_call(case: _BugCase, router):
         f"content leaked for case={case.id}: got={result['content']!r}. "
         "Recipient/body must not be emitted to CONTENT channel."
     )
-    assert _normalize_str(result["reasoning"]) is None, (
-        f"reasoning leaked for case={case.id}: got={result['reasoning']!r}"
-    )
+    assert (
+        _normalize_str(result["reasoning"]) is None
+    ), f"reasoning leaked for case={case.id}: got={result['reasoning']!r}"
 
     tool_calls = result["tool_calls"]
     assert tool_calls, (

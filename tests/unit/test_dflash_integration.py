@@ -913,7 +913,9 @@ def test_dflashruntime_accept_lens_tolerates_wrong_type(caplog) -> None:
     drafter.accept_lens = 42  # not a list
     rt = DFlashRuntime(drafter=drafter, kind="dflash", drafter_repo="fake/repo")
 
-    with caplog.at_level(logging.WARNING, logger="fusion_mlx.speculative.dflash.runtime"):
+    with caplog.at_level(
+        logging.WARNING, logger="fusion_mlx.speculative.dflash.runtime"
+    ):
         rt.reset_accept_lens()
     assert any(
         "unexpected type" in rec.message for rec in caplog.records

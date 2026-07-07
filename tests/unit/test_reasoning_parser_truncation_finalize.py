@@ -39,10 +39,6 @@ The no-regression contract: ``finish_reason="stop"`` (or
 from __future__ import annotations
 
 import pytest
-from fusion_mlx.service.helpers import (
-    _finalize_content_and_reasoning,
-    _rescue_silent_drop_from_reasoning,
-)
 
 from fusion_mlx.api.utils import clean_output_text, strip_thinking_tags
 from fusion_mlx.reasoning import finalize_truncation
@@ -54,6 +50,10 @@ from fusion_mlx.reasoning.gemma4_parser import Gemma4ReasoningParser
 from fusion_mlx.reasoning.glm4_parser import Glm4ReasoningParser
 from fusion_mlx.reasoning.minimax_parser import MiniMaxReasoningParser
 from fusion_mlx.reasoning.qwen3_parser import Qwen3ReasoningParser
+from fusion_mlx.service.helpers import (
+    _finalize_content_and_reasoning,
+    _rescue_silent_drop_from_reasoning,
+)
 
 
 def _route_end_to_end(parser, raw, finish_reason):

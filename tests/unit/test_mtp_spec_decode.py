@@ -474,10 +474,11 @@ def test_metrics_renders_spec_decode_counters_zero_at_cold_start():
     present with value 0 (engine-independence rationale — same as
     response_format and mxfp4 guardrail counters).
     """
-    from fusion_mlx.routes.metrics import _render_spec_decode_mtp_counters
     from fusion_mlx.spec_decode.mtp.accept_counter import (
         reset_global_counter_for_tests,
     )
+
+    from fusion_mlx.routes.metrics import _render_spec_decode_mtp_counters
 
     reset_global_counter_for_tests()
 
@@ -497,11 +498,12 @@ def test_metrics_renders_spec_decode_counters_zero_at_cold_start():
 
 def test_metrics_renders_post_acceptance_counters():
     """After 4 attempts / 3 accepts, the metric values must reflect it."""
-    from fusion_mlx.routes.metrics import _render_spec_decode_mtp_counters
     from fusion_mlx.spec_decode.mtp.accept_counter import (
         get_global_counter,
         reset_global_counter_for_tests,
     )
+
+    from fusion_mlx.routes.metrics import _render_spec_decode_mtp_counters
 
     reset_global_counter_for_tests()
     counter = get_global_counter()
@@ -533,10 +535,11 @@ def test_metrics_renders_post_acceptance_counters():
 
 def test_metrics_renders_zero_ratio_when_no_attempts():
     """Zero attempts → ratio gauge MUST be 0 (not NaN, not missing)."""
-    from fusion_mlx.routes.metrics import _render_spec_decode_mtp_counters
     from fusion_mlx.spec_decode.mtp.accept_counter import (
         reset_global_counter_for_tests,
     )
+
+    from fusion_mlx.routes.metrics import _render_spec_decode_mtp_counters
 
     reset_global_counter_for_tests()
 

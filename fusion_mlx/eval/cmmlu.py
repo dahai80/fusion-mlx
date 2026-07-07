@@ -7,9 +7,7 @@ Dataset bundled from haonan-li/cmmlu on HuggingFace.
 """
 
 import logging
-import re
 from pathlib import Path
-from typing import Optional
 
 from .base import BaseBenchmark
 from .datasets import load_jsonl, stratified_sample
@@ -46,12 +44,14 @@ class CMMLUBenchmark(BaseBenchmark):
         all_items = []
         for item in test_items:
             answer = item.get("answer", "A")
-            all_items.append({
-                "question": item["question"],
-                "choices": item["choices"],
-                "answer": answer,  # Already A/B/C/D
-                "subject": item.get("subject", "unknown"),
-            })
+            all_items.append(
+                {
+                    "question": item["question"],
+                    "choices": item["choices"],
+                    "answer": answer,  # Already A/B/C/D
+                    "subject": item.get("subject", "unknown"),
+                }
+            )
 
         dev_items = load_jsonl(DATA_DIR / "cmmlu_dev.jsonl")
         for item in dev_items:
@@ -59,11 +59,13 @@ class CMMLUBenchmark(BaseBenchmark):
             if subject not in self._few_shot_examples:
                 self._few_shot_examples[subject] = []
             if len(self._few_shot_examples[subject]) < 5:
-                self._few_shot_examples[subject].append({
-                    "question": item["question"],
-                    "choices": item["choices"],
-                    "answer": item.get("answer", "A"),
-                })
+                self._few_shot_examples[subject].append(
+                    {
+                        "question": item["question"],
+                        "choices": item["choices"],
+                        "answer": item.get("answer", "A"),
+                    }
+                )
 
         logger.info(f"CMMLU: loaded {len(all_items)} questions")
 
@@ -95,5 +97,5 @@ class CMMLUBenchmark(BaseBenchmark):
     def check_answer(self, predicted: str, item: dict) -> bool:
         return predicted == item["answer"]
 
-    def get_category(self, item: dict) -> Optional[str]:
+    def get_category(self, item: dict) -> str | None:
         return item.get("subject")

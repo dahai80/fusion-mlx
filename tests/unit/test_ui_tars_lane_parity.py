@@ -442,7 +442,6 @@ class TestResponsesLaneComputerCallEmission:
         # synthesized computer tool_call MUST produce a
         # ``computer_call`` output item (not ``function_call``).
         from fusion_mlx.api.responses_adapter import openai_to_responses
-
         from fusion_mlx.api.responses_models import ResponsesRequest
 
         req = ResponsesRequest(
@@ -852,7 +851,6 @@ class TestR6M2CoordinateKeyTranslation:
 
     def test_responses_click_emits_coordinate_not_point(self):
         from fusion_mlx.api.responses_adapter import openai_to_responses
-
         from fusion_mlx.api.responses_models import ResponsesRequest
 
         chat_resp = self._click_chat_response({"action": "click", "point": [500, 300]})
@@ -912,7 +910,6 @@ class TestR6M2CoordinateKeyTranslation:
         # surfaced the Anthropic shape on the Responses lane — a
         # behavior regression for drag.
         from fusion_mlx.api.responses_adapter import openai_to_responses
-
         from fusion_mlx.api.responses_models import ResponsesRequest
 
         chat_resp = self._click_chat_response(
@@ -1441,7 +1438,6 @@ class TestR7M6ComputerUsePreviewAlias:
 
     def test_request_uses_computer_use_honours_alias(self):
         from fusion_mlx.api.responses_adapter import request_uses_computer_use
-
         from fusion_mlx.api.responses_models import ResponsesRequest
 
         req = ResponsesRequest(
@@ -1471,6 +1467,7 @@ class TestR7M6ComputerUsePreviewAlias:
         # The alias is a narrow pass-through; the F13 allowlist
         # contract still holds for every other type.
         from fastapi import HTTPException
+
         from fusion_mlx.api.responses_adapter import validate_responses_tool_types
 
         with pytest.raises(HTTPException) as exc:
@@ -1501,6 +1498,7 @@ class TestR7M6ComputerUsePreviewAlias:
         # is the exact shape OpenAI SDK clients DO NOT parse as a
         # tool-related rejection.
         from fastapi import HTTPException
+
         from fusion_mlx.api.responses_adapter import validate_responses_tool_types
 
         with pytest.raises(HTTPException) as exc:

@@ -26,9 +26,6 @@ Public API:
 - ``DEFAULT_BLOCK_SIZE``: default block size (16)
 """
 
-from .eligibility import DFlashUnavailable, check
-from .runtime import load_runtime
-
 # Rapid-MLX migrated additions
 from .accept_counter import (
     DFlashAcceptCounter,
@@ -37,14 +34,20 @@ from .accept_counter import (
     reset_global_counter_for_tests,
 )
 from .detect import DFlashEligibility, detect_dflash_eligibility
-from .drafter import BlockDiffusionDrafter, MlxVlmDFlashDriver, StubBlockDiffusionDrafter
+from .drafter import (
+    BlockDiffusionDrafter,
+    MlxVlmDFlashDriver,
+    StubBlockDiffusionDrafter,
+)
 from .drafter_registry import (
     clear_drafter_registry_for_tests,
     get_dflash_drafter_path,
     list_registered_aliases,
     register_dflash_drafter,
 )
+from .eligibility import DFlashUnavailable, check
 from .generator import dflash_generate_step
+from .runtime import load_runtime
 from .verifier import VerifyResult, verify_block
 
 DEFAULT_BLOCK_SIZE = 16

@@ -2,7 +2,7 @@
 import logging
 
 from fastapi import APIRouter, Depends, HTTPException
-from fastapi.responses import JSONResponse, PlainTextResponse
+from fastapi.responses import JSONResponse
 
 from ..admin.auth import require_admin
 
@@ -20,6 +20,7 @@ async def root():
 @probe_router.get("/health")
 async def health():
     from ..service.helpers import _server_state
+
     pool = _server_state.get("engine_pool")
     model_loaded = pool is not None and pool.loaded_model_count > 0
     loaded_models = []
@@ -36,6 +37,7 @@ async def health():
 @probe_router.get("/health/ready")
 async def health_ready():
     from ..service.helpers import _server_state
+
     pool = _server_state.get("engine_pool")
     if pool is None or pool.loaded_model_count == 0:
         raise HTTPException(status_code=503, detail="model loading")
@@ -45,6 +47,7 @@ async def health_ready():
 @probe_router.get("/healthz")
 async def healthz():
     from ..service.helpers import _server_state
+
     pool = _server_state.get("engine_pool")
     draining = _server_state.get("draining", False)
     if draining:
@@ -76,10 +79,12 @@ async def livez():
 @router.get("/v1/status")
 async def status():
     from ..service.helpers import _server_state
+
     pool = _server_state.get("engine_pool")
     if pool is None or pool.loaded_model_count == 0:
         return {"status": "not_loaded", "model": None, "requests": []}
     from ..server_metrics import get_server_metrics
+
     metrics = get_server_metrics().to_dict()
     return {
         "status": "ok",
@@ -93,6 +98,7 @@ async def status():
 @router.post("/v1/requests/{request_id}/cancel")
 async def cancel_request(request_id: str, is_admin: bool = Depends(require_admin)):
     from ..service.helpers import _server_state
+
     pool = _server_state.get("engine_pool")
     if pool is None:
         raise HTTPException(status_code=503, detail="Engine not loaded")

@@ -8,10 +8,9 @@ Dataset bundled from TIGER-Lab/MMLU-Pro on HuggingFace.
 
 import logging
 from pathlib import Path
-from typing import Optional
 
 from .base import BaseBenchmark
-from .datasets import deterministic_sample, stratified_sample, load_jsonl
+from .datasets import load_jsonl, stratified_sample
 
 logger = logging.getLogger(__name__)
 
@@ -37,14 +36,16 @@ class MMLUProBenchmark(BaseBenchmark):
             labels = item.get("labels", [])
             if not choices or not labels:
                 continue
-            normalized.append({
-                "id": item.get("id", ""),
-                "question": item["question"],
-                "choices": choices,
-                "labels": labels,
-                "answer": item["answer"],
-                "subject": item.get("subject", "general"),
-            })
+            normalized.append(
+                {
+                    "id": item.get("id", ""),
+                    "question": item["question"],
+                    "choices": choices,
+                    "labels": labels,
+                    "answer": item["answer"],
+                    "subject": item.get("subject", "general"),
+                }
+            )
 
         logger.info(f"MMLU-Pro: loaded {len(normalized)} questions")
 
@@ -60,8 +61,7 @@ class MMLUProBenchmark(BaseBenchmark):
         labels = item["labels"]
 
         parts = [
-            "Answer the following question. "
-            "Answer with just the letter.\n",
+            "Answer the following question. " "Answer with just the letter.\n",
             f"Question: {question}\n",
         ]
         for label, choice in zip(labels, choices):
@@ -78,5 +78,5 @@ class MMLUProBenchmark(BaseBenchmark):
     def check_answer(self, predicted: str, item: dict) -> bool:
         return predicted == item["answer"]
 
-    def get_category(self, item: dict) -> Optional[str]:
+    def get_category(self, item: dict) -> str | None:
         return item.get("subject")
