@@ -44,7 +44,16 @@ def _install_stubs():
     }
 
     for mod_name, attrs in stubs.items():
-        if mod_name not in sys.modules:
+        if mod_name in sys.modules:
+            continue
+        # Try the real module first — when the ambient venv has the optional
+        # deps installed (mlx/mlx_vlm/mlx_audio/...) the real module imports
+        # fine and stubbing it would shadow real symbols (e.g. markitdown's
+        # is_markitdown_model). Only stub when the real import fails.
+        try:
+            __import__(mod_name)
+            continue
+        except Exception:
             sys.modules[mod_name] = _make_stub_module(mod_name, attrs)
 
 
