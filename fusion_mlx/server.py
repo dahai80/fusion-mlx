@@ -15,6 +15,7 @@ import asyncio
 import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
+from typing import Any
 
 import mlx.core as mx
 import uvicorn
@@ -363,6 +364,22 @@ def resolve_model_id(model_id: str) -> str:
     return model_id
 
 
+_server_instance: "Server | None" = None
+
+
+def get_settings() -> Any:
+    from .settings import Settings
+
+    global _server_instance
+    if _server_instance is not None:
+        return _server_instance.settings
+    return Settings()
+
+
+def get_server() -> "Server | None":
+    return _server_instance
+
+
 class Server:
     """Main fusion-mlx server with engine pool, routing, and API endpoints."""
 
@@ -664,6 +681,8 @@ class Server:
             )
 
         # Inject context into route modules
+        global _server_instance
+        _server_instance = self
         set_openai_context(self.pool, self.request_router)
         set_anthropic_context(self.pool)
         set_images_context(self.pool)

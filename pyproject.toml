@@ -65,6 +65,7 @@ dependencies = [
      "click>=8.0.0",
     "argcomplete>=3.6",
     "websockets>=12.0",
+    "markitdown[pdf,docx,pptx]>=0.1.0",
 ]
 
 [project.optional-dependencies]

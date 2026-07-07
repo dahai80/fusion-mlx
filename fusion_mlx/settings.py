@@ -1,10 +1,47 @@
 """Settings management for fusion-mlx."""
 
+from __future__ import annotations
+
 import asyncio
 import json
+import logging
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+
+logger = logging.getLogger(__name__)
+
+
+@dataclass
+class IntegrationSettings:
+    markitdown_enabled: bool = True
+    markitdown_expose_model: bool = False
+    markitdown_max_file_size_mb: int = 25
+    markitdown_max_files_per_request: int = 5
+    markitdown_pdf_processing_engine: str = "markitdown"
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "markitdown_enabled": self.markitdown_enabled,
+            "markitdown_expose_model": self.markitdown_expose_model,
+            "markitdown_max_file_size_mb": self.markitdown_max_file_size_mb,
+            "markitdown_max_files_per_request": self.markitdown_max_files_per_request,
+            "markitdown_pdf_processing_engine": self.markitdown_pdf_processing_engine,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> IntegrationSettings:
+        return cls(
+            markitdown_enabled=data.get("markitdown_enabled", True),
+            markitdown_expose_model=data.get("markitdown_expose_model", False),
+            markitdown_max_file_size_mb=data.get("markitdown_max_file_size_mb", 25),
+            markitdown_max_files_per_request=data.get(
+                "markitdown_max_files_per_request", 5
+            ),
+            markitdown_pdf_processing_engine=data.get(
+                "markitdown_pdf_processing_engine", "markitdown"
+            ),
+        )
 
 
 @dataclass
@@ -26,7 +63,7 @@ class _SettingsAuthView:
     # (api_key assign, sub_keys append/pop) propagate and persist on save.
     __slots__ = ("_settings",)
 
-    def __init__(self, settings: "Settings") -> None:
+    def __init__(self, settings: Settings) -> None:
         self._settings = settings
 
     @property
@@ -56,6 +93,7 @@ class Settings:
     sub_keys: list[SubKeyEntry] = field(default_factory=list)
     model_settings: dict[str, Any] = field(default_factory=dict)
     global_settings: dict[str, Any] = field(default_factory=dict)
+    integrations: IntegrationSettings = field(default_factory=IntegrationSettings)
 
     @property
     def auth(self) -> _SettingsAuthView:
@@ -80,6 +118,7 @@ class Settings:
             ],
             "model_settings": self.model_settings,
             "global_settings": self.global_settings,
+            "integrations": self.integrations.to_dict(),
         }
         path.write_text(json.dumps(data, indent=2))
 
@@ -92,7 +131,7 @@ class Settings:
         await asyncio.to_thread(self._save_sync, path)
 
     @classmethod
-    def _load_sync(cls, path: Path) -> "Settings":
+    def _load_sync(cls, path: Path) -> Settings:
         if not path.exists():
             return cls()
         try:
@@ -105,21 +144,28 @@ class Settings:
                     auth_data.get("api_key") if isinstance(auth_data, dict) else None
                 )
             sub_keys = [SubKeyEntry(**sk) for sk in data.get("sub_keys", [])]
+            integrations_data = data.get("integrations", {})
+            integrations = (
+                IntegrationSettings.from_dict(integrations_data)
+                if isinstance(integrations_data, dict)
+                else IntegrationSettings()
+            )
             return cls(
                 api_key=api_key,
                 sub_keys=sub_keys,
                 model_settings=data.get("model_settings", {}),
                 global_settings=data.get("global_settings", {}),
+                integrations=integrations,
             )
         except (json.JSONDecodeError, KeyError):
             return cls()
 
     @classmethod
-    def load(cls, path: Path) -> "Settings":
+    def load(cls, path: Path) -> Settings:
         """Load settings from JSON file (sync, for CLI/init context)."""
         return cls._load_sync(path)
 
     @classmethod
-    async def load_async(cls, path: Path) -> "Settings":
+    async def load_async(cls, path: Path) -> Settings:
         """Non-blocking async load for FastAPI routes."""
         return await asyncio.to_thread(cls._load_sync, path)
