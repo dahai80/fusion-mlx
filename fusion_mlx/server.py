@@ -316,6 +316,7 @@ def load_model(
     no_spec_decode: bool = False,
     force_openai_harmony_streaming: bool = False,
     no_openai_harmony_streaming: bool = False,
+    lora_path: str | None = None,
 ):
     # ``serve --model <X>`` single-model entry. The migration left this as a
     # NotImplementedError stub, which broke even full local paths. We stage the
@@ -350,6 +351,7 @@ def load_model(
         "cloud_api_key": cloud_api_key,
         "max_tokens": max_tokens,
         "max_tokens_is_explicit": max_tokens_is_explicit,
+        "lora_path": lora_path,
     }
     # Ensure the singleton Server + app exist so _startup will pick up the
     # staged model when uvicorn starts the lifespan.
@@ -695,9 +697,7 @@ class Server:
 
             settings_path = Path(self.config.settings_dir)
             settings_manager = ModelSettingsManager(settings_path)
-            logger.info(
-                "ModelSettingsManager initialized at %s", settings_path
-            )
+            logger.info("ModelSettingsManager initialized at %s", settings_path)
         except Exception as e:
             logger.warning("Failed to initialize ModelSettingsManager: %s", e)
 
@@ -797,9 +797,7 @@ class Server:
                     )
                     logger.info("ModelScope Downloader initialized")
                 else:
-                    logger.info(
-                        "ModelScope SDK not installed, MS downloader disabled"
-                    )
+                    logger.info("ModelScope SDK not installed, MS downloader disabled")
             except Exception as e:
                 logger.warning("Failed to initialize MSDownloader: %s", e)
 
@@ -934,6 +932,7 @@ class Server:
             model_name=model_path,
             scheduler_config=scheduler_config,
             stream_interval=stream_interval,
+            lora_path=pending.get("lora_path"),
         )
         await engine.start()
         self.pool.register_engine(served, engine)

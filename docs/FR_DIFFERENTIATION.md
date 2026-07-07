@@ -101,19 +101,38 @@ documenting the weight-vs-runtime-KV distinction in `docs/cli-reference.md`.
 
 ## What is honestly deferred
 
-### A.2 / Phase B — `--spec-route auto` engine wiring 🗺️
+### A.2 / Phase B — spec-decode auto wiring
 
-The router logic is landed and tested (A.1). Wiring it to a `--spec-route auto`
-CLI flag requires the engine refactor dictated by the boot-time loading
-constraint: the request-setup path must select the method per request without a
-draft-model reload where methods overlap, or with a lazy draft load where they
-don't. This is real engine work, scoped as Phase B. Until then the router is
-usable as a library / admin-panel recommendation.
+**Boot-time auto: ✅ landed** (`--spec-decode auto`, commit d6d85e84).
+`fusion_mlx/speculative/auto_resolve.py` wires `SpecAutoRouter` into the CLI
+serve path: at boot it probes the model's MTP eligibility and lets the router
+pick `mtp` (MTP-eligible) or `suffix` (safe default, zero GPU cost). The
+router library from A.1 now has its first caller. 7 unit tests in
+`tests/unit/test_spec_auto_resolve.py`; E2E verified on Qwen3.5-9B-4bit
+(banner: `Spec-decode: auto → suffix`).
 
-### B.2 — LoRA hot-swap 🗺️
+**Per-request routing: 🗺️ Phase B (engine refactor).** Switching the spec
+method per request — not just at boot — requires the engine refactor dictated
+by the boot-time loading constraint: the request-setup path must select the
+method per request without a draft-model reload where methods overlap, or with
+a lazy draft load where they don't. Boot-time auto lands the zero-config
+happy path; per-request cross-method routing remains real engine work.
 
-Per-request LoRA adapter hot-swap. Scoped as Phase B alongside spec routing
-(both touch the engine's per-request setup path).
+### B.2 — LoRA hot-swap
+
+**Boot-time LoRA: ✅ landed** (`--lora-path`, Phase B LoRA slice 1).
+`serve --model <X> --lora-path <adapter-dir>` applies a PEFT LoRA adapter at
+boot via `mlx_lm.load(adapter_path=...)`. Threads through `server.load_model`
+→ `_pending_single_model` → `BatchedEngine.__init__` → `_load_model_sync`.
+Single-model `serve --model` only; multi-model `--model-dir` per-model LoRA
+is a follow-up (needs per-model adapter config in the discovery path). 5 unit
+tests in `tests/unit/test_lora_path.py`.
+
+**Runtime hot-swap: 🗺️ Phase B.** Per-request LoRA adapter hot-swap (loading
+and unrolling adapters without a model reload) remains engine work — mlx_lm
+fuses the adapter into weights at load time, so hot-swap needs either an
+unload+reload path or a runtime LoRA hook. Scoped alongside per-request spec
+routing (both touch the engine's per-request setup path).
 
 ### Phase C — kernel work 🗺️
 
@@ -130,12 +149,21 @@ TurboQuant / scheduling," point at the **Already differentiates** table and
 the spec-decoding doc. When someone proposes a TurboQuant convert CLI or a
 per-request spec-routing stopgap, point at the **wrong premises** section —
 both were checked against the source and re-scoped. The remaining real gaps
-are A.2/B engine wiring, B.2 LoRA, and Phase C kernels, in that order.
+are per-request spec routing (Phase B engine refactor), runtime LoRA hot-swap,
+and Phase C kernels, in that order.
 
 ---
 
 ## Changelog
 
+- **2026-07-07 (update 2)** — Landed boot-time `--lora-path` (B.2 boot-time
+  slice, Phase B LoRA slice 1): `serve --model <X> --lora-path <adapter>`
+  applies a PEFT LoRA adapter at boot via `mlx_lm.load(adapter_path=...)`.
+  Runtime hot-swap and multi-model per-model LoRA remain Phase B.
+- **2026-07-07 (update)** — Landed boot-time `--spec-decode auto` (A.2
+  boot-time slice, commit d6d85e84): `SpecAutoRouter` now wired into the CLI
+  serve path with MTP-eligibility probing. Per-request routing remains Phase B
+  engine work.
 - **2026-07-07** — Initial analysis. Landed A.1 (spec auto-router library) and
   B.1 (`convert` CLI). Re-scoped A.2 to Phase B engine work. Corrected the
   TurboQuant weight-format premise.

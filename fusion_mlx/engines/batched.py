@@ -94,10 +94,12 @@ class BatchedEngine(BaseEngine):
         preserve_thinking: bool | None = None,
         model_settings: Any | None = None,
         prefill_eviction_callback: Any | None = None,
+        lora_path: str | None = None,
     ):
         super().__init__()
         self._model_name = model_name
         self._trust_remote_code = trust_remote_code
+        self._lora_path = lora_path
         self._scheduler_config = scheduler_config
         self._stream_interval = stream_interval
         self._enable_thinking = enable_thinking
@@ -218,7 +220,11 @@ class BatchedEngine(BaseEngine):
         def _load_model_sync():
             start = time.monotonic()
             logger.info("Loading model: %s", self._model_name)
-            model, tokenizer = load(self._model_name, tokenizer_config=tokenizer_config)
+            load_kwargs = {"tokenizer_config": tokenizer_config}
+            if self._lora_path:
+                load_kwargs["adapter_path"] = self._lora_path
+                logger.info("Applying LoRA adapter: %s", self._lora_path)
+            model, tokenizer = load(self._model_name, **load_kwargs)
             elapsed = time.monotonic() - start
             # Estimate model size from loaded weights
             total_params = 0
