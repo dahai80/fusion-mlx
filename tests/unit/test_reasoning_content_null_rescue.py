@@ -39,6 +39,7 @@ from __future__ import annotations
 import json
 
 import pytest
+
 from fusion_mlx.service.helpers import (
     REASONING_CUTOFF_SENTINEL,
     RESCUE_TAIL_LENGTH,
@@ -849,15 +850,14 @@ def _finalize_route_assembly(
     Returns ``(final_content, reasoning_text)`` exactly as the route
     layer would set them on the AssistantMessage.
     """
-    from fusion_mlx.service.helpers import (
-        _finalize_content_and_reasoning,
-        _rescue_silent_drop_from_reasoning,
-    )
-
     from fusion_mlx.api.utils import (
         clean_output_text,
         sanitize_output,
         strip_thinking_tags,
+    )
+    from fusion_mlx.service.helpers import (
+        _finalize_content_and_reasoning,
+        _rescue_silent_drop_from_reasoning,
     )
 
     cleaned_text, reasoning_text = _finalize_content_and_reasoning(
@@ -1844,9 +1844,9 @@ def test_responses_route_opt_out_no_sentinel_on_length_cut(monkeypatch):
     monkeypatch.setenv("FUSION_REASONING_CUTOFF_NOTICE", "disabled")
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
-    from fusion_mlx.routes.responses import router as responses_router
 
     from fusion_mlx.config import reset_config
+    from fusion_mlx.routes.responses import router as responses_router
 
     cfg = reset_config()
     _seed_length_cut_engine(cfg)
@@ -1892,9 +1892,9 @@ def test_responses_route_enabled_surfaces_sentinel(monkeypatch):
     monkeypatch.setenv("FUSION_REASONING_CUTOFF_NOTICE", "1")
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
-    from fusion_mlx.routes.responses import router as responses_router
 
     from fusion_mlx.config import reset_config
+    from fusion_mlx.routes.responses import router as responses_router
 
     cfg = reset_config()
     _seed_length_cut_engine(cfg)
@@ -1915,6 +1915,7 @@ def test_responses_route_enabled_surfaces_sentinel(monkeypatch):
         assert resp.status_code == 200, resp.text
         payload = resp.json()
         from fusion_mlx.service.helpers import _cutoff_notice_enabled
+
         assert _cutoff_notice_enabled(), "cutoff notice should be enabled when env=1"
         sentinel_texts: list[str] = []
         for item in payload.get("output") or []:

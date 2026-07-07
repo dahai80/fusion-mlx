@@ -37,12 +37,12 @@ from __future__ import annotations
 
 import mlx.core as mx
 import pytest
-from fusion_mlx.service.helpers import build_extended_sampling_kwargs
 from pydantic import ValidationError
 
 from fusion_mlx._seeded_sampler import make_seeded_sampler
 from fusion_mlx.api.models import ChatCompletionRequest, CompletionRequest
 from fusion_mlx.request import SamplingParams
+from fusion_mlx.service.helpers import build_extended_sampling_kwargs
 
 # =============================================================================
 # Layer 1 — Pydantic models preserve the seed field
@@ -96,7 +96,6 @@ def test_responses_request_preserves_seed_through_adapter():
     sees the value.
     """
     from fusion_mlx.api.responses_adapter import responses_to_openai
-
     from fusion_mlx.api.responses_models import ResponsesRequest
 
     req = ResponsesRequest(model="qwen3-0.6b-8bit", input="hi", seed=42)

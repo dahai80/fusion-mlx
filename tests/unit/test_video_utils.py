@@ -1,28 +1,23 @@
 # SPDX-License-Identifier: Apache-2.0
 """Tests for video processing utilities."""
 
-import math
 import tempfile
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import numpy as np
 import pytest
 
 from fusion_mlx.utils.video import (
-    DEFAULT_FPS,
     FRAME_FACTOR,
     MAX_FRAMES,
-    MAX_VIDEO_SIZE,
     MIN_FRAMES,
     FileSizeExceededError,
     TempFileManager,
     ceil_by_factor,
-    cleanup_all_temp_files,
     cleanup_temp_file,
     decode_base64_video,
     describe_video,
-    download_video,
     extract_video_frames_smart,
     floor_by_factor,
     is_base64_video,
@@ -209,7 +204,9 @@ class TestTempFileManager:
 
 class TestSaveFramesToTemp:
     def test_save_frames(self):
-        frames = [np.random.randint(0, 255, (64, 64, 3), dtype=np.uint8) for _ in range(3)]
+        frames = [
+            np.random.randint(0, 255, (64, 64, 3), dtype=np.uint8) for _ in range(3)
+        ]
         paths = save_frames_to_temp(frames)
         assert len(paths) == 3
         for p in paths:

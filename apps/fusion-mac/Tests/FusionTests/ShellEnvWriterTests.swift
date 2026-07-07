@@ -39,7 +39,7 @@ final class ShellEnvWriterTests: XCTestCase {
         let result = try ShellEnvWriter.ensureCLIShim(appBundleURL: appURL)
 
         let shim = tempHome
-            .appendingPathComponent(".fusion", isDirectory: true)
+            .appendingPathComponent(".fusion-mlx", isDirectory: true)
             .appendingPathComponent("bin", isDirectory: true)
             .appendingPathComponent("fusion")
         XCTAssertTrue(FileManager.default.isExecutableFile(atPath: shim.path))
@@ -68,7 +68,7 @@ final class ShellEnvWriterTests: XCTestCase {
         let publicCLI = publicBin.appendingPathComponent("fusion")
         XCTAssertTrue(FileManager.default.fileExists(atPath: publicCLI.path))
         let destination = try FileManager.default.destinationOfSymbolicLink(atPath: publicCLI.path)
-        XCTAssertTrue(destination.hasSuffix("/.fusion/bin/fusion"))
+        XCTAssertTrue(destination.hasSuffix("/.fusion-mlx/bin/fusion"))
         XCTAssertEqual(result, .publicCommandReady(path: publicCLI.path))
         XCTAssertFalse(FileManager.default.fileExists(atPath: tempHome.appendingPathComponent(".zshrc").path))
     }
@@ -100,7 +100,7 @@ final class ShellEnvWriterTests: XCTestCase {
         let zshrc = tempHome.appendingPathComponent(".zshrc")
         let rcText = try String(contentsOf: zshrc, encoding: .utf8)
         XCTAssertTrue(rcText.contains("# FusionMLX: CLI shim path begin"))
-        XCTAssertTrue(rcText.contains("$HOME/.fusion/bin"))
+        XCTAssertTrue(rcText.contains("$HOME/.fusion-mlx/bin"))
         let count = rcText.components(separatedBy: "# FusionMLX: CLI shim path begin").count - 1
         XCTAssertEqual(count, 1)
     }
@@ -132,7 +132,7 @@ final class ShellEnvWriterTests: XCTestCase {
         )
 
         let shim = tempHome
-            .appendingPathComponent(".fusion", isDirectory: true)
+            .appendingPathComponent(".fusion-mlx", isDirectory: true)
             .appendingPathComponent("bin", isDirectory: true)
             .appendingPathComponent("fusion")
         let process = Process()

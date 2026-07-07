@@ -20,9 +20,7 @@ def _install_stubs():
         "fusion_mlx.domain.schemas": {},
         "fusion_mlx.domain.errors": {},
         "fusion_mlx.domain._registry": {},
-        "fusion_mlx.text_model_from_vlm": {
-            "text_model_from_vlm": lambda *a, **k: None
-        },
+        "fusion_mlx.text_model_from_vlm": {"text_model_from_vlm": lambda *a, **k: None},
         "fusion_mlx.logging_config": {"setup_logging": lambda *a, **k: None},
         "fusion_mlx.process_title": {"set_process_title": lambda *a, **k: None},
         "fusion_mlx.positioned_kv_cache": {

@@ -159,11 +159,10 @@ def _build_app(monkeypatch, *, with_handlers: bool = True):
 
     _install_lightweight_engine_modules(monkeypatch)
 
-    from fusion_mlx.routes.responses import router as responses_router
-
     from fusion_mlx.config import reset_config
     from fusion_mlx.middleware.auth import rate_limiter
     from fusion_mlx.routes.anthropic import router as anthropic_router
+    from fusion_mlx.routes.responses import router as responses_router
 
     cfg = reset_config()
     cfg.api_key = None

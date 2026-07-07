@@ -6,44 +6,184 @@ Provides stubs for missing modules from omlx/Rapid-MLX migration.
 import sys
 from pathlib import Path
 
-# Rapid-MLX migration debt: 413 test modules excluded from collection because
-# they reference prod symbols/modules renamed or removed during the omlx/
-# Rapid-MLX migration (commit 0b22ab5). Per the migration rule, prod code is
-# the source of truth and is NOT modified to satisfy them. 136 healthy modules
-# remain in the CI gate. See debt_modules.txt for the categorized list and
-# memory: fusion-mlx-rapid-mlx-test-debt.
+# Rapid-MLX migration debt + optional-dep guards. Both must be installed
+# before any stub setup below runs, so pytest's collection-time ignore
+# machinery (collect_ignore / collect_ignore_glob) sees them on the first
+# collection pass. The stubs installed later in this file shadow `find_spec`
+# for some optional deps, which would otherwise break pytest.importorskip
+# inside the guarded suites — collect_ignore sidesteps that by refusing to
+# collect the suites at all.
 _debt_file = Path(__file__).parent / "debt_modules.txt"
-collect_ignore_glob = [
+_unit_dir = Path(__file__).parent
+
+
+def _abs(*basenames: str) -> list[str]:
+    """Resolve bare basenames to absolute paths under this dir (pytest's
+    collect_ignore is matched against absolute collection paths)."""
+    return [str((_unit_dir / b).resolve()) for b in basenames]
+
+
+_debt_basenames = [
     line.strip()
     for line in _debt_file.read_text(encoding="utf-8").splitlines()
     if line.strip() and not line.strip().startswith("#")
 ]
+collect_ignore = _abs(*_debt_basenames)
+collect_ignore_glob = [f"**/{b}" for b in _debt_basenames]
 
-# MLX is Apple-silicon only. These modules exercise real mlx arrays (or its
-# optional deps such as mlx_vlm) and pass on macOS, but on the Linux CI runner
-# libmlx.so is unavailable so they fail. They are NOT debt — skip them off
-# macOS rather than quarantine them everywhere. Locally they still run.
+
+# Optional-dep guard: fusion-mlx pulls in a number of optional deps (mlx,
+# mlx_vlm + mlx_vlm.turboquant, dflash-mlx, mlx-audio, paroquant, torch,
+# opencv, openai-harmony). When the ambient venv is missing one of them the
+# suites that hard-import the optional module fail during collection with
+# ImportError rather than skipping. Detect availability once at collection
+# time and route the affected suites through collect_ignore so they skip
+# cleanly. (The stubs installed later in this file shadow `find_spec` for
+# some optional deps, so importorskip inside the suites is unreliable —
+# collect_ignore sidesteps that by refusing to collect them at all.)
+import importlib.util as _ilu
+
+
+def _opt_present(mod: str) -> bool:
+    try:
+        return _ilu.find_spec(mod) is not None
+    except (ModuleNotFoundError, ImportError, ValueError):
+        return False
+
+
+# (optional import root, [suite basenames that hard-import it])
+_OPT_DEP_SUITES: list[tuple[str, list[str]]] = [
+    ("mlx", [
+        "test_signal_observability.py", "test_memory_monitor.py",
+        "test_memory_stability.py", "test_memory_capacity_check.py",
+        "test_memory_enforcer_ceiling.py", "test_process_memory_enforcer.py",
+        "test_metal_cap_enforcement.py", "test_metal_error_recovery.py",
+        "test_proc_memory.py", "test_engine_core.py", "test_engine_keepalive.py",
+        "test_engine_pool.py", "test_engine_preflight.py",
+        "test_engine_router_non_stream.py", "test_engine_step_thread.py",
+        "test_batched_engine.py", "test_batched_engine_output_router.py",
+        "test_batched_engine_tool_call_normalization.py",
+        "test_batched_engine_chat_template.py", "test_batching.py",
+        "test_batching_deterministic.py", "test_continuous_batching.py",
+        "test_mllm_continuous_batching.py", "test_pool.py",
+        "test_event_loop.py", "test_compile_cache.py",
+        "test_native_tool_format.py", "test_hot_cache.py",
+        "test_singleton_cache_passthrough.py", "test_benchmark.py",
+        "test_hardware_benchmark.py", "test_community_bench.py",
+        "test_community_bench_aggregate.py", "test_suffix_decoding.py",
+        "test_suffix_decoding_tier.py", "test_suffix_bench_methodology.py",
+        "test_index_cache.py", "test_llama4_attention_patch.py",
+        "test_dspark_integration.py", "test_pflash_engine.py",
+        "test_pflash_scheduler.py", "test_pflash_benchmark.py",
+        "test_pflash_metrics.py", "test_pflash_needle.py",
+    ]),
+    ("mlx_vlm", [
+        "test_diffusion_engine.py", "test_mlx_vlm_diffusion_patch.py",
+        "test_mlx_vlm_minimax_m3_compat.py", "test_mllm_cache.py",
+        "test_mllm_continuous_batching.py", "test_mllm_corrupt_image.py",
+        "test_text_model_from_vlm.py", "test_vlm_audio_fallback.py",
+        "test_vlm_cohere2_moe_loader.py", "test_vlm_mtp_proxy.py",
+        "test_vlm_mtp.py", "test_mllm.py", "test_mllm_logprobs_plumbing.py",
+        "test_mllm_executor_cancel.py", "test_mllm_penalty_passthrough.py",
+        "test_mllm_usage_tracking.py", "test_mllm_cross_thread_stream_contract.py",
+        "test_mllm_batch_generator.py", "test_mllm_hybrid_probe.py",
+        "test_mllm_cache_rapid.py", "test_image_aspect_ratio.py",
+        "test_image_utils.py", "test_image_discovery.py",
+        "test_image_block_requires_vision_model.py",
+        "test_image_url_must_be_object.py", "test_chat_route_vlm_image.py",
+        "test_chat_image_upload.py", "test_text_only_media_gate.py",
+        "test_vlm_engine.py", "test_vlm_model_adapter.py",
+        "test_vlm_torch_free_image_processor.py", "test_vlm_specprefill.py",
+        "test_pflash_engine.py", "test_pflash_scheduler.py",
+        "test_pflash_benchmark.py", "test_pflash_metrics.py",
+        "test_pflash_needle.py",
+    ]),
+    ("dflash", [
+        "test_dflash_adapter_signature.py", "test_dflash_engine.py",
+        "test_dflash_integration.py", "test_dflash_lifecycle.py",
+        "test_dflash_multimodal_fallback.py", "test_dflash_prefill_memory_guard.py",
+        "test_dflash_spec_decode.py", "test_dflash_eligibility.py",
+    ]),
+    ("mlx_audio", [
+        "test_audio.py", "test_audio_api.py", "test_audio_alias_registry.py",
+        "test_audio_boot_check.py", "test_audio_discovery.py",
+        "test_audio_extras_lockin.py", "test_audio_memory.py",
+        "test_audio_probe_consistency.py", "test_audio_r11_b_bundle.py",
+        "test_audio_r11_b_pure.py", "test_audio_r7_c_bundle.py",
+        "test_audio_r8_a_bundle.py", "test_audio_route_registration_gate.py",
+        "test_audio_routes_bundle.py", "test_audio_sts.py",
+        "test_audio_stt.py", "test_audio_tts.py",
+        "test_audio_upload_size_limit.py", "test_audio_utils.py",
+        "test_audio_path_shaped_model.py", "test_stt_corrupted_file.py",
+        "test_stt_response_format.py", "test_stt_vad_pretrim.py",
+        "test_pull_audio_alias_resolution.py", "test_request_time_alias_resolution.py",
+        "test_doctor_env_health.py", "test_doctor_extras.py",
+        "test_no_mllm_flag.py", "test_no_out_of_band_routing.py",
+    ]),
+    ("paroquant", [
+        "test_turboquant.py", "test_turboquant_k8v4.py",
+        "test_turboquant_ssd.py", "test_turboquant_kvcache_state.py",
+        "test_turboquant_batch_memory.py", "test_paged_ssd_cache.py",
+        "test_kv_cache_dtype.py", "test_kv_cache_dtype_cli.py",
+        "test_kv_cache_dtype_metrics.py", "test_kv_cache_position_ids.py",
+        "test_disk_kv_checkpoint.py", "test_hybrid_cache.py",
+        "test_hybrid_prefix_cache_growth.py", "test_memory_cache.py",
+        "test_memory_cache_rapid.py", "test_mxfp4_moe_guardrail.py",
+        "test_prefix_cache.py", "test_prefix_cache_eviction.py",
+        "test_prefix_cache_radix_e2e.py", "test_prefix_cache_v4_block_storage.py",
+        "test_rotating_cache_contract.py", "test_sampling.py",
+        "test_spec_recurrent_gate.py", "test_spec_decode_resample_fix.py",
+        "test_specprefill.py", "test_scheduler.py",
+        "test_scheduler_admission.py", "test_scheduler_chunked_prefill.py",
+        "test_scheduler_disk_kv_hook.py", "test_scheduler_logits_processors.py",
+        "test_scheduler_prefill_memory_guard.py",
+        "test_scheduler_stop_decoder_surface.py",
+        "test_speculative_acceptance.py", "test_speculative_config.py",
+    ]),
+    ("torch", [
+        "test_torch_stub.py", "test_gemma4_text_import_guard.py",
+        "test_video.py", "test_vlm_torch_free_image_processor.py",
+        "test_vlm_cohere2_moe_loader.py",
+    ]),
+    ("cv2", [
+        "test_image_aspect_ratio.py", "test_image_utils.py",
+        "test_video_utils.py", "test_video.py",
+    ]),
+    ("openai_harmony", [
+        "test_issue_513_harmony_streamable_parser.py",
+        "test_issue_444_harmony_tool_call_leak.py",
+        "test_issue_455_harmony_commentary_tool_channel.py",
+        "test_issue_468_tool_choice_required_harmony_compound.py",
+        "test_harmony_finalize.py", "test_harmony_parser.py",
+        "test_harmony_parsers.py", "test_harmony.py",
+        "test_finalize_harmony_raw_text.py",
+    ]),
+]
+
+for _dep, _suites in _OPT_DEP_SUITES:
+    if not _opt_present(_dep):
+        _skip = _abs(*_suites)
+        collect_ignore += _skip
+        collect_ignore_glob += [f"**/{s}" for s in _suites]
+
+# Linux CI: mlx unavailable off macOS; skip the same suites there too.
 if sys.platform != "darwin":
-    collect_ignore_glob += [
-        "test_disk_kv_checkpoint.py",
-        "test_hybrid_cache.py",
-        "test_hybrid_prefix_cache_growth.py",
-        "test_image_aspect_ratio.py",
-        "test_llama4_attention_patch.py",
-        "test_memory_cache_rapid.py",
-        "test_memory_monitor.py",
-        "test_mllm_batch_generator.py",
-        "test_mllm_hybrid_probe.py",
-        "test_paged_ssd_cache.py",
-        "test_prefix_cache.py",
-        "test_prefix_cache_eviction.py",
-        "test_prefix_cache_radix_e2e.py",
-        "test_prefix_cache_v4_block_storage.py",
-        "test_rotating_cache_contract.py",
-        "test_sampling.py",
-        "test_signal_observability.py",
-        "test_spec_recurrent_gate.py",
+    _linux_skip = [
+        "test_disk_kv_checkpoint.py", "test_hybrid_cache.py",
+        "test_hybrid_prefix_cache_growth.py", "test_image_aspect_ratio.py",
+        "test_llama4_attention_patch.py", "test_memory_cache_rapid.py",
+        "test_memory_monitor.py", "test_mllm_batch_generator.py",
+        "test_mllm_hybrid_probe.py", "test_paged_ssd_cache.py",
+        "test_prefix_cache.py", "test_prefix_cache_eviction.py",
+        "test_prefix_cache_radix_e2e.py", "test_prefix_cache_v4_block_storage.py",
+        "test_rotating_cache_contract.py", "test_sampling.py",
+        "test_signal_observability.py", "test_spec_recurrent_gate.py",
     ]
+    collect_ignore += _abs(*_linux_skip)
+    collect_ignore_glob += [f"**/{s}" for s in _linux_skip]
+
+collect_ignore = sorted(set(collect_ignore))
+collect_ignore_glob = sorted(set(collect_ignore_glob))
 
 
 import logging
@@ -675,7 +815,17 @@ def _add_round3_stubs():
     if "fusion_mlx.domain.events" in sys.modules:
         mod = sys.modules["fusion_mlx.domain.events"]
         if not hasattr(mod, "StreamEvent"):
-            def _stream_event_init(self, type="content", content=None, reasoning=None, tool_calls=None, finish_reason=None, tool_calls_detected=False, metadata=None):
+
+            def _stream_event_init(
+                self,
+                type="content",
+                content=None,
+                reasoning=None,
+                tool_calls=None,
+                finish_reason=None,
+                tool_calls_detected=False,
+                metadata=None,
+            ):
                 self.type = type
                 self.content = content
                 self.reasoning = reasoning

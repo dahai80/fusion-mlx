@@ -70,6 +70,7 @@ def _load_locale(language: str) -> dict:
 def _make_t(locale: dict):
     def t(key: str) -> str:
         return locale.get(key, key)
+
     return t
 
 
@@ -77,6 +78,7 @@ def _refresh_i18n_globals() -> None:
     lang = "en"
     try:
         from .helpers import _get_global_settings
+
         settings = _get_global_settings()
         if settings:
             lang = getattr(getattr(settings, "ui", None), "language", "en")
@@ -86,6 +88,7 @@ def _refresh_i18n_globals() -> None:
     templates.env.globals["t"] = _make_t(locale)
     templates.env.globals["locale_json"] = json.dumps(locale, ensure_ascii=False)
     templates.env.globals["current_lang"] = lang
+
 
 # Sub-routers (split by function for maintainability)
 from .accuracy_bench import router as accuracy_bench_router

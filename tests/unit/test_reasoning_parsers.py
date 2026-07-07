@@ -978,12 +978,11 @@ class TestResidualThinkTagSweep:
 
     @pytest.mark.skip(reason="service.helpers unavailable: service package broken")
     def test_reasoning_max_tokens_cap_no_tag_leak(self):
-        from fusion_mlx.service.helpers import (
-            _finalize_content_and_reasoning,
-        )
-
         from fusion_mlx.reasoning.deepseek_r1_parser import (
             DeepSeekR1ReasoningParser,
+        )
+        from fusion_mlx.service.helpers import (
+            _finalize_content_and_reasoning,
         )
 
         parser = DeepSeekR1ReasoningParser()

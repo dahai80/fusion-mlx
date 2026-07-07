@@ -13,7 +13,15 @@ import time
 import uuid
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, StrictInt, StrictStr, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    StrictInt,
+    StrictStr,
+    field_validator,
+    model_validator,
+)
 
 # =============================================================================
 # Content Types (for multimodal messages)
@@ -258,6 +266,7 @@ class ChatCompletionRequest(BaseModel):
                 f"reasoning_effort must be one of {sorted(allowed)}, got {v!r}"
             )
         return v
+
     # Hard cap on reasoning token budget (set by reasoning_effort tier or
     # explicitly by the client).  None = no cap / server default.
     reasoning_max_tokens: int | None = None
@@ -314,12 +323,21 @@ class ChatCompletionRequest(BaseModel):
             json_nesting_depth_exceeds,
             resolve_max_tool_schema_depth,
         )
+
         max_depth = resolve_max_tool_schema_depth()
         if max_depth <= 0:
             return self
         for tool in self.tools:
-            tool_dict = tool.model_dump(exclude_none=True) if hasattr(tool, "model_dump") else tool
-            params = tool_dict.get("function", {}).get("parameters") if isinstance(tool_dict, dict) else None
+            tool_dict = (
+                tool.model_dump(exclude_none=True)
+                if hasattr(tool, "model_dump")
+                else tool
+            )
+            params = (
+                tool_dict.get("function", {}).get("parameters")
+                if isinstance(tool_dict, dict)
+                else None
+            )
             if params and json_nesting_depth_exceeds(params, max_depth):
                 raise ValueError(
                     f"Tool schema nesting depth exceeds the {max_depth}-level "

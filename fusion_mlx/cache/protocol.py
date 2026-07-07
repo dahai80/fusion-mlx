@@ -96,9 +96,7 @@ class Manifest:
 def write_manifest(root: Path, manifest: Manifest) -> Path:
     root.mkdir(parents=True, exist_ok=True)
     target = root / MANIFEST_FILENAME
-    fd, tmp_name = tempfile.mkstemp(
-        prefix=".manifest-", suffix=".json", dir=str(root)
-    )
+    fd, tmp_name = tempfile.mkstemp(prefix=".manifest-", suffix=".json", dir=str(root))
     try:
         with os.fdopen(fd, "w") as f:
             json.dump(manifest.to_dict(), f, indent=2, sort_keys=True)

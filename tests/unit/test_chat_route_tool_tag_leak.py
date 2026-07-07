@@ -16,9 +16,8 @@ reasoning parser to recover reasoning_text from the raw output.
 
 from types import SimpleNamespace
 
-from fusion_mlx.service.helpers import _finalize_content_and_reasoning
-
 from fusion_mlx.reasoning.qwen3_parser import Qwen3ReasoningParser
+from fusion_mlx.service.helpers import _finalize_content_and_reasoning
 from fusion_mlx.tool_parsers.hermes_tool_parser import HermesToolParser
 
 

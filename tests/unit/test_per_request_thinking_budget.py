@@ -22,7 +22,6 @@ from __future__ import annotations
 from unittest.mock import MagicMock
 
 import pytest
-from fusion_mlx.service.helpers import _finalize_content_and_reasoning
 from pydantic import ValidationError
 
 from fusion_mlx.api.anthropic_adapter import (
@@ -36,6 +35,7 @@ from fusion_mlx.api.anthropic_models import (
 )
 from fusion_mlx.api.models import ChatCompletionRequest
 from fusion_mlx.api.responses_models import ResponsesRequest
+from fusion_mlx.service.helpers import _finalize_content_and_reasoning
 from fusion_mlx.service.postprocessor import StreamingPostProcessor
 
 # ---------------------------------------------------------------------------

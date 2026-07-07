@@ -34,6 +34,7 @@ from unittest.mock import MagicMock
 import pytest
 from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
+
 from fusion_mlx.service.helpers import (
     _find_lone_surrogate,
     _scan_messages_for_lone_surrogates,

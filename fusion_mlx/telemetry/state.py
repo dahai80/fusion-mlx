@@ -255,7 +255,11 @@ def consent_source(*, cli_no_telemetry: bool = False) -> str:
     if cli_no_telemetry or _cli_kill_switch_active:
         return "cli-flag (--no-telemetry)"
     if _env_kill_switch_active():
-        used_var = ENV_VAR_PRIMARY if os.environ.get(ENV_VAR_PRIMARY) is not None else ENV_VAR_LEGACY
+        used_var = (
+            ENV_VAR_PRIMARY
+            if os.environ.get(ENV_VAR_PRIMARY) is not None
+            else ENV_VAR_LEGACY
+        )
         return f"env-var ({used_var}={os.environ.get(used_var, '')!r})"
     state = get_consent_state()
     if state is None:

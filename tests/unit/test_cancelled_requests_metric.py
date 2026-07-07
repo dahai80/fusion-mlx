@@ -1258,9 +1258,8 @@ def metrics_client():
     metrics.metrics_client`` so the M-01 counters are exercised
     through the same render path as every other series.
     """
-    from fusion_mlx.routes.metrics import _reset_accumulator_for_tests, router
-
     from fusion_mlx.config import reset_config
+    from fusion_mlx.routes.metrics import _reset_accumulator_for_tests, router
 
     cfg = reset_config()
     cfg.model_name = "qwen3-0.6b"

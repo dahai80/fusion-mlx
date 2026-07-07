@@ -839,9 +839,7 @@ def dspark_spec_step(
     # Pull the next batch of tokens from the DSpark generator
     try:
         accepted_tokens = []
-        block_size = getattr(
-            dspark_state.runtime.generator, "block_size", 7
-        )
+        block_size = getattr(dspark_state.runtime.generator, "block_size", 7)
         for _ in range(block_size):
             try:
                 tok = next(session)
@@ -859,8 +857,7 @@ def dspark_spec_step(
         if dspark_state.total_spec_steps % DSPARK_SPEC_LOG_INTERVAL == 1:
             stats = dspark_state.get_stats()
             logger.info(
-                "dspark_spec: step=%d, accepted=%d, rate=%.1f%%, "
-                "sessions=%d",
+                "dspark_spec: step=%d, accepted=%d, rate=%.1f%%, " "sessions=%d",
                 dspark_state.total_spec_steps,
                 n_accepted,
                 stats["acceptance_rate"] * 100,

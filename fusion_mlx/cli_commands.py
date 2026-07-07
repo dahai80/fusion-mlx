@@ -2013,8 +2013,13 @@ def _print_dflash_status(alias: str, profile) -> None:
         (
             "Drafter declared",
             _yes(
-                bool(getattr(profile, "dflash_draft_model", None) or getattr(profile, "drafter_hf_path", None)),
-                getattr(profile, "dflash_draft_model", None) or getattr(profile, "drafter_hf_path", None) or "yes",
+                bool(
+                    getattr(profile, "dflash_draft_model", None)
+                    or getattr(profile, "drafter_hf_path", None)
+                ),
+                getattr(profile, "dflash_draft_model", None)
+                or getattr(profile, "drafter_hf_path", None)
+                or "yes",
                 "no (drafter unset)",
             ),
         ),

@@ -6,6 +6,7 @@ from __future__ import annotations
 import json
 
 import pytest
+
 from fusion_mlx.api.strict_json_schema import (
     build_repair_messages,
     build_violation_envelope,

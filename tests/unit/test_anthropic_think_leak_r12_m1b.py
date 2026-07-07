@@ -44,15 +44,15 @@ Mira r12 dogfood report path:
 from __future__ import annotations
 
 import pytest
-from fusion_mlx.api.constants import (
-    REASONING_CUTOFF_SENTINEL,
-    RESCUE_TAIL_LENGTH,
-    is_rescue_payload,
-)
 
 from fusion_mlx.api.anthropic_adapter import (
     _thinking_block_content,
     openai_to_anthropic,
+)
+from fusion_mlx.api.constants import (
+    REASONING_CUTOFF_SENTINEL,
+    RESCUE_TAIL_LENGTH,
+    is_rescue_payload,
 )
 from fusion_mlx.api.models import (
     AssistantMessage,

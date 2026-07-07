@@ -502,9 +502,8 @@ def test_unresolved_engine_shape_logs_explicit_warning(caplog):
     """
     import logging
 
-    from fusion_mlx.service.helpers import _record_disconnect_abort_on_scheduler
-
     from fusion_mlx.service import helpers as _helpers
+    from fusion_mlx.service.helpers import _record_disconnect_abort_on_scheduler
 
     # Use a name unique to this test so the once-per-engine-type
     # dedupe in the helper doesn't suppress us due to a previous
@@ -559,9 +558,8 @@ def test_unresolved_engine_warning_keyed_by_module_qualname(caplog):
     """
     import logging
 
-    from fusion_mlx.service.helpers import _record_disconnect_abort_on_scheduler
-
     from fusion_mlx.service import helpers as _helpers
+    from fusion_mlx.service.helpers import _record_disconnect_abort_on_scheduler
 
     class _SameLeafA:
         _is_mllm = False
@@ -607,9 +605,8 @@ def test_unresolved_engine_warning_dedupes_per_engine_type(caplog):
     """
     import logging
 
-    from fusion_mlx.service.helpers import _record_disconnect_abort_on_scheduler
-
     from fusion_mlx.service import helpers as _helpers
+    from fusion_mlx.service.helpers import _record_disconnect_abort_on_scheduler
 
     class _NakedEngineForDedupeTest:
         _is_mllm = False

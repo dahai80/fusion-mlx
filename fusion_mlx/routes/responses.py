@@ -6,7 +6,7 @@ import time
 import uuid
 from collections.abc import AsyncIterator
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import Response, StreamingResponse
 
 from ..api.models import (
@@ -23,7 +23,6 @@ from ..api.responses_adapter import (
 )
 from ..api.responses_models import (
     ResponsesRequest,
-    ResponsesResponse,
     ResponsesUsage,
 )
 from ..api.tool_calling import convert_tools_for_template
@@ -127,7 +126,7 @@ async def _non_stream(
             engine.chat(messages=messages, **chat_kwargs),
             timeout=300.0,
         )
-    except asyncio.TimeoutError:
+    except TimeoutError:
         raise HTTPException(status_code=504, detail="Generation timed out")
 
     elapsed = time.perf_counter() - start_time
@@ -154,8 +153,7 @@ async def _non_stream(
         if output.num_completion_tokens >= max_tokens:
             finish_reason = "length"
 
-    from ..api.models import ChatCompletionChoice, ChatCompletionUsage
-    from ..api.models import AssistantMessage
+    from ..api.models import AssistantMessage, ChatCompletionChoice, ChatCompletionUsage
 
     assistant_msg = AssistantMessage(
         content=text,
@@ -164,8 +162,12 @@ async def _non_stream(
     if hasattr(output, "reasoning_content") and output.reasoning_content:
         assistant_msg.reasoning_content = output.reasoning_content
 
-    prompt_tokens = output.num_prompt_tokens if hasattr(output, "num_prompt_tokens") else 0
-    completion_tokens = output.num_completion_tokens if hasattr(output, "num_completion_tokens") else 0
+    prompt_tokens = (
+        output.num_prompt_tokens if hasattr(output, "num_prompt_tokens") else 0
+    )
+    completion_tokens = (
+        output.num_completion_tokens if hasattr(output, "num_completion_tokens") else 0
+    )
 
     chat_response = ChatCompletionResponse(
         id=f"chatcmpl-{uuid.uuid4().hex[:12]}",
@@ -229,22 +231,28 @@ async def _stream_responses(
         in_thinking = False
         tool_filter = StreamingToolCallFilter()
 
-        yield _sse("response.created", {
-            "type": "response.created",
-            "response": {
-                "id": response_id,
-                "object": "response",
-                "created_at": created_at,
-                "model": openai_request.model,
-                "status": "in_progress",
-                "output": [],
+        yield _sse(
+            "response.created",
+            {
+                "type": "response.created",
+                "response": {
+                    "id": response_id,
+                    "object": "response",
+                    "created_at": created_at,
+                    "model": openai_request.model,
+                    "status": "in_progress",
+                    "output": [],
+                },
             },
-        })
+        )
 
-        yield _sse("response.in_progress", {
-            "type": "response.in_progress",
-            "response": {"id": response_id, "status": "in_progress"},
-        })
+        yield _sse(
+            "response.in_progress",
+            {
+                "type": "response.in_progress",
+                "response": {"id": response_id, "status": "in_progress"},
+            },
+        )
 
         try:
             stream = await engine.chat(messages=messages, stream=True, **chat_kwargs)
@@ -270,7 +278,9 @@ async def _stream_responses(
                     usage = chunk.get("usage")
                     if usage:
                         prompt_tokens = usage.get("prompt_tokens", prompt_tokens)
-                        completion_tokens = usage.get("completion_tokens", completion_tokens)
+                        completion_tokens = usage.get(
+                            "completion_tokens", completion_tokens
+                        )
                 elif hasattr(chunk, "choices") and chunk.choices:
                     c = chunk.choices[0]
                     delta = c.delta if hasattr(c, "delta") else {}
@@ -279,54 +289,72 @@ async def _stream_responses(
                     chunk_tool_calls = getattr(delta, "tool_calls", None)
                     chunk_finish = getattr(c, "finish_reason", None)
                     if hasattr(chunk, "usage") and chunk.usage:
-                        prompt_tokens = getattr(chunk.usage, "prompt_tokens", prompt_tokens)
-                        completion_tokens = getattr(chunk.usage, "completion_tokens", completion_tokens)
+                        prompt_tokens = getattr(
+                            chunk.usage, "prompt_tokens", prompt_tokens
+                        )
+                        completion_tokens = getattr(
+                            chunk.usage, "completion_tokens", completion_tokens
+                        )
 
                 if delta_reasoning:
                     if not in_thinking and not reasoning_parts:
                         in_thinking = True
                         reasoning_id = f"rs_{uuid.uuid4().hex[:24]}"
-                        yield _sse("response.output_item.added", {
-                            "type": "response.output_item.added",
-                            "output_index": output_index,
-                            "item": {
-                                "type": "reasoning",
-                                "id": reasoning_id,
-                                "status": "in_progress",
-                                "summary": [],
+                        yield _sse(
+                            "response.output_item.added",
+                            {
+                                "type": "response.output_item.added",
+                                "output_index": output_index,
+                                "item": {
+                                    "type": "reasoning",
+                                    "id": reasoning_id,
+                                    "status": "in_progress",
+                                    "summary": [],
+                                },
                             },
-                        })
+                        )
                     reasoning_parts.append(delta_reasoning)
-                    yield _sse("response.reasoning_summary_text.delta", {
-                        "type": "response.reasoning_summary_text.delta",
-                        "item_id": reasoning_id,
-                        "output_index": output_index,
-                        "delta": delta_reasoning,
-                    })
+                    yield _sse(
+                        "response.reasoning_summary_text.delta",
+                        {
+                            "type": "response.reasoning_summary_text.delta",
+                            "item_id": reasoning_id,
+                            "output_index": output_index,
+                            "delta": delta_reasoning,
+                        },
+                    )
 
                 if delta_text:
                     filtered = tool_filter.process(delta_text)
                     if filtered:
                         if not text_parts:
                             msg_id = f"msg_{uuid.uuid4().hex[:24]}"
-                            yield _sse("response.output_item.added", {
-                                "type": "response.output_item.added",
-                                "output_index": output_index + (1 if reasoning_parts else 0),
-                                "item": {
-                                    "type": "message",
-                                    "id": msg_id,
-                                    "role": "assistant",
-                                    "status": "in_progress",
-                                    "content": [],
+                            yield _sse(
+                                "response.output_item.added",
+                                {
+                                    "type": "response.output_item.added",
+                                    "output_index": output_index
+                                    + (1 if reasoning_parts else 0),
+                                    "item": {
+                                        "type": "message",
+                                        "id": msg_id,
+                                        "role": "assistant",
+                                        "status": "in_progress",
+                                        "content": [],
+                                    },
                                 },
-                            })
+                            )
                         text_parts.append(filtered)
-                        yield _sse("response.output_text.delta", {
-                            "type": "response.output_text.delta",
-                            "output_index": output_index + (1 if reasoning_parts else 0),
-                            "content_index": 0,
-                            "delta": filtered,
-                        })
+                        yield _sse(
+                            "response.output_text.delta",
+                            {
+                                "type": "response.output_text.delta",
+                                "output_index": output_index
+                                + (1 if reasoning_parts else 0),
+                                "content_index": 0,
+                                "delta": filtered,
+                            },
+                        )
 
                 if chunk_tool_calls:
                     for tc in chunk_tool_calls:
@@ -341,47 +369,68 @@ async def _stream_responses(
                             tc_name = getattr(func, "name", "") if func else ""
                             tc_args = getattr(func, "arguments", "") if func else ""
 
-                        if tc_name and tc_id and tc_id not in [t.get("id") for t in tool_calls_collected]:
-                            tool_calls_collected.append({
-                                "id": tc_id,
-                                "type": "function",
-                                "function": {"name": tc_name, "arguments": tc_args},
-                            })
-                            tc_output_idx = output_index + (1 if reasoning_parts else 0) + (1 if text_parts else 0) + len(tool_calls_collected) - 1
+                        if (
+                            tc_name
+                            and tc_id
+                            and tc_id not in [t.get("id") for t in tool_calls_collected]
+                        ):
+                            tool_calls_collected.append(
+                                {
+                                    "id": tc_id,
+                                    "type": "function",
+                                    "function": {"name": tc_name, "arguments": tc_args},
+                                }
+                            )
+                            tc_output_idx = (
+                                output_index
+                                + (1 if reasoning_parts else 0)
+                                + (1 if text_parts else 0)
+                                + len(tool_calls_collected)
+                                - 1
+                            )
                             if uses_computer_use and tc_name == "computer":
-                                yield _sse("response.output_item.added", {
-                                    "type": "response.output_item.added",
-                                    "output_index": tc_output_idx,
-                                    "item": {
-                                        "type": "computer_call",
-                                        "id": f"cu_{uuid.uuid4().hex[:24]}",
-                                        "call_id": tc_id,
-                                        "status": "in_progress",
+                                yield _sse(
+                                    "response.output_item.added",
+                                    {
+                                        "type": "response.output_item.added",
+                                        "output_index": tc_output_idx,
+                                        "item": {
+                                            "type": "computer_call",
+                                            "id": f"cu_{uuid.uuid4().hex[:24]}",
+                                            "call_id": tc_id,
+                                            "status": "in_progress",
+                                        },
                                     },
-                                })
+                                )
                             else:
-                                yield _sse("response.output_item.added", {
-                                    "type": "response.output_item.added",
-                                    "output_index": tc_output_idx,
-                                    "item": {
-                                        "type": "function_call",
-                                        "id": f"fc_{uuid.uuid4().hex[:24]}",
-                                        "call_id": tc_id,
-                                        "name": tc_name,
-                                        "status": "in_progress",
+                                yield _sse(
+                                    "response.output_item.added",
+                                    {
+                                        "type": "response.output_item.added",
+                                        "output_index": tc_output_idx,
+                                        "item": {
+                                            "type": "function_call",
+                                            "id": f"fc_{uuid.uuid4().hex[:24]}",
+                                            "call_id": tc_id,
+                                            "name": tc_name,
+                                            "status": "in_progress",
+                                        },
                                     },
-                                })
+                                )
                         elif tc_args:
                             for existing in tool_calls_collected:
                                 if existing.get("id") == tc_id:
                                     existing["function"]["arguments"] += tc_args
                                     break
-                            yield _sse("response.function_call_arguments.delta", {
-                                "type": "response.function_call_arguments.delta",
-                                "item_id": tc_id,
-                                "output_index": 0,
-                                "delta": tc_args,
-                            })
+                            yield _sse(
+                                "response.function_call_arguments.delta",
+                                {
+                                    "type": "response.function_call_arguments.delta",
+                                    "item_id": tc_id,
+                                    "output_index": 0,
+                                    "delta": tc_args,
+                                },
+                            )
 
                 if chunk_finish:
                     finish_reason = chunk_finish
@@ -389,47 +438,61 @@ async def _stream_responses(
             remaining = tool_filter.flush()
             if remaining and not text_parts:
                 msg_id = f"msg_{uuid.uuid4().hex[:24]}"
-                yield _sse("response.output_item.added", {
-                    "type": "response.output_item.added",
-                    "output_index": output_index + (1 if reasoning_parts else 0),
-                    "item": {
-                        "type": "message",
-                        "id": msg_id,
-                        "role": "assistant",
-                        "status": "in_progress",
-                        "content": [],
+                yield _sse(
+                    "response.output_item.added",
+                    {
+                        "type": "response.output_item.added",
+                        "output_index": output_index + (1 if reasoning_parts else 0),
+                        "item": {
+                            "type": "message",
+                            "id": msg_id,
+                            "role": "assistant",
+                            "status": "in_progress",
+                            "content": [],
+                        },
                     },
-                })
+                )
                 text_parts.append(remaining)
-                yield _sse("response.output_text.delta", {
-                    "type": "response.output_text.delta",
-                    "output_index": output_index + (1 if reasoning_parts else 0),
-                    "content_index": 0,
-                    "delta": remaining,
-                })
+                yield _sse(
+                    "response.output_text.delta",
+                    {
+                        "type": "response.output_text.delta",
+                        "output_index": output_index + (1 if reasoning_parts else 0),
+                        "content_index": 0,
+                        "delta": remaining,
+                    },
+                )
             elif remaining:
                 text_parts.append(remaining)
-                yield _sse("response.output_text.delta", {
-                    "type": "response.output_text.delta",
-                    "output_index": output_index + (1 if reasoning_parts else 0),
-                    "content_index": 0,
-                    "delta": remaining,
-                })
+                yield _sse(
+                    "response.output_text.delta",
+                    {
+                        "type": "response.output_text.delta",
+                        "output_index": output_index + (1 if reasoning_parts else 0),
+                        "content_index": 0,
+                        "delta": remaining,
+                    },
+                )
 
         except Exception as e:
             logger.error("responses stream error: %s", e, exc_info=True)
-            yield _sse("response.failed", {
-                "type": "response.failed",
-                "response": {
-                    "id": response_id,
-                    "status": "failed",
-                    "error": {"type": "server_error", "message": str(e)},
+            yield _sse(
+                "response.failed",
+                {
+                    "type": "response.failed",
+                    "response": {
+                        "id": response_id,
+                        "status": "failed",
+                        "error": {"type": "server_error", "message": str(e)},
+                    },
                 },
-            })
+            )
             return
 
         status = "incomplete" if finish_reason == "length" else "completed"
-        incomplete_details = {"reason": "max_output_tokens"} if status == "incomplete" else None
+        incomplete_details = (
+            {"reason": "max_output_tokens"} if status == "incomplete" else None
+        )
 
         usage = ResponsesUsage(
             input_tokens=prompt_tokens,
@@ -437,21 +500,24 @@ async def _stream_responses(
             total_tokens=prompt_tokens + completion_tokens,
         )
 
-        yield _sse("response.completed", {
-            "type": "response.completed",
-            "response": {
-                "id": response_id,
-                "object": "response",
-                "created_at": created_at,
-                "model": openai_request.model,
-                "status": status,
-                "output": [],
-                "usage": usage.model_dump(exclude_none=True),
-                "incomplete_details": incomplete_details,
-                "parallel_tool_calls": bool(responses_request.parallel_tool_calls),
-                "tool_choice": responses_request.tool_choice or "auto",
+        yield _sse(
+            "response.completed",
+            {
+                "type": "response.completed",
+                "response": {
+                    "id": response_id,
+                    "object": "response",
+                    "created_at": created_at,
+                    "model": openai_request.model,
+                    "status": status,
+                    "output": [],
+                    "usage": usage.model_dump(exclude_none=True),
+                    "incomplete_details": incomplete_details,
+                    "parallel_tool_calls": bool(responses_request.parallel_tool_calls),
+                    "tool_choice": responses_request.tool_choice or "auto",
+                },
             },
-        })
+        )
 
     return StreamingResponse(
         _generate(),

@@ -16,10 +16,10 @@ def build_mtp_module(args: Any, num_layers: int) -> tuple[type, type]:
     if _MTP_MODULE_BUILT and _MTPDecoderLayer is not None and _MTPModule is not None:
         return _MTPDecoderLayer, _MTPModule
     try:
-        from mlx_lm.models.qwen3_5 import Attention, MLP
+        from mlx_lm.models.qwen3_5 import MLP, Attention
     except ImportError:
         try:
-            from mlx_lm.models.gemma4_unified import Attention, MLP
+            from mlx_lm.models.gemma4_unified import MLP, Attention
         except ImportError:
             logger.warning("mtp/head: cannot import Attention/MLP from mlx-lm")
             _MTPDecoderLayer = type("_MTPDecoderLayer", (nn.Module,), {})
@@ -30,18 +30,14 @@ def build_mtp_module(args: Any, num_layers: int) -> tuple[type, type]:
         from mlx_lm.models.qwen3_5 import SparseMoeBlock
     except ImportError:
         SparseMoeBlock = None
+
     class _BuiltMTPDecoderLayer(nn.Module):
         def __init__(self, args: Any) -> None:
             super().__init__()
             self.hidden_size = args.hidden_size
-            self.input_layernorm = nn.RMSNorm(
-                args.hidden_size, eps=args.rms_norm_eps
-            )
+            self.input_layernorm = nn.RMSNorm(args.hidden_size, eps=args.rms_norm_eps)
             self.self_attn = Attention(args=args)
-            if (
-                SparseMoeBlock is not None
-                and getattr(args, "num_experts", 0) > 0
-            ):
+            if SparseMoeBlock is not None and getattr(args, "num_experts", 0) > 0:
                 self.mlp = SparseMoeBlock(args=args)
             else:
                 self.mlp = MLP(args=args)

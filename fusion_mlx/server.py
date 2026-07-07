@@ -15,13 +15,11 @@ import asyncio
 import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Any
 
 import mlx.core as mx
 import uvicorn
 from fastapi import Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
 
 from ._version import __version__
 from .admin.auth import require_admin
@@ -61,19 +59,20 @@ from .api.openclaw_routes import set_openclaw_agent_pool
 from .api.recommend_routes import router as recommend_router
 from .api.rerank_routes import router as rerank_router
 from .api.rerank_routes import set_rerank_context
-from .routes.cache import router as cache_router
-from .routes.responses import router as responses_router
-from .routes.health import probe_router as health_probe_router
-from .routes.health import router as health_router
-from .routes.metrics import router as metrics_router
 from .config import ServerConfig
 from .engine_core import AsyncEngineCore
 from .pool import EnginePool, ProcessMemoryEnforcer
 from .router import CloudRouter, RequestRouter
+from .routes.cache import router as cache_router
+from .routes.health import probe_router as health_probe_router
+from .routes.health import router as health_router
+from .routes.metrics import router as metrics_router
+from .routes.responses import router as responses_router
 from .server_metrics import get_server_metrics
 from .settings import Settings
 
 logger = logging.getLogger(__name__)
+
 
 class _ServerState(dict):
     """Dict subclass that also supports attribute access for admin helpers."""
@@ -644,6 +643,7 @@ class Server:
         _server_state["default_model"] = None  # set when a model is marked default
         # Simple namespace for sampling defaults (read by admin helpers)
         import types
+
         _server_state["sampling"] = types.SimpleNamespace(
             max_context_window=getattr(self.config, "max_context_window", 4096),
             max_tokens=getattr(self.config, "max_tokens", 4096),
@@ -688,7 +688,9 @@ class Server:
 
                 hf_dl = HFDownloader(model_dir=self.config.model_dir)
                 set_hf_downloader(hf_dl)
-                logger.info("HFDownloader initialized with model_dir=%s", self.config.model_dir)
+                logger.info(
+                    "HFDownloader initialized with model_dir=%s", self.config.model_dir
+                )
             except Exception as e:
                 logger.warning("Failed to initialize HFDownloader: %s", e)
 

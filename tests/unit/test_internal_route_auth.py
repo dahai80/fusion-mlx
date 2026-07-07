@@ -52,9 +52,8 @@ def client_factory():
     Cache routes don't touch the engine for the happy path; the mock
     satisfies the 503-check guard in the route handlers.
     """
-    from fusion_mlx.routes.health import admin_router, router
-
     from fusion_mlx.config import get_config
+    from fusion_mlx.routes.health import admin_router, router
 
     cfg = get_config()
     prev = {

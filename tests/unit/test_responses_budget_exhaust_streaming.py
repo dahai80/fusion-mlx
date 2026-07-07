@@ -392,11 +392,10 @@ def responses_client(monkeypatch):
 
     _install_lightweight_engine_modules(monkeypatch)
 
-    from fusion_mlx.routes.responses import router
-
     from fusion_mlx.config import reset_config
     from fusion_mlx.middleware.auth import rate_limiter
     from fusion_mlx.middleware.exception_handlers import install_exception_handlers
+    from fusion_mlx.routes.responses import router
 
     cfg = reset_config()
     cfg.api_key = "test-secret"
@@ -457,11 +456,10 @@ def reasoning_then_message_client(monkeypatch):
 
     _install_lightweight_engine_modules(monkeypatch)
 
-    from fusion_mlx.routes.responses import router
-
     from fusion_mlx.config import reset_config
     from fusion_mlx.middleware.auth import rate_limiter
     from fusion_mlx.middleware.exception_handlers import install_exception_handlers
+    from fusion_mlx.routes.responses import router
 
     cfg = reset_config()
     cfg.api_key = "test-secret"
@@ -520,11 +518,10 @@ def reasoning_message_tool_client(monkeypatch):
 
     _install_lightweight_engine_modules(monkeypatch)
 
-    from fusion_mlx.routes.responses import router
-
     from fusion_mlx.config import reset_config
     from fusion_mlx.middleware.auth import rate_limiter
     from fusion_mlx.middleware.exception_handlers import install_exception_handlers
+    from fusion_mlx.routes.responses import router
 
     cfg = reset_config()
     cfg.api_key = "test-secret"
@@ -583,11 +580,10 @@ def reasoning_tool_length_client(monkeypatch):
 
     _install_lightweight_engine_modules(monkeypatch)
 
-    from fusion_mlx.routes.responses import router
-
     from fusion_mlx.config import reset_config
     from fusion_mlx.middleware.auth import rate_limiter
     from fusion_mlx.middleware.exception_handlers import install_exception_handlers
+    from fusion_mlx.routes.responses import router
 
     cfg = reset_config()
     cfg.api_key = "test-secret"
@@ -950,11 +946,10 @@ class TestStreamingBudgetExhaustEmitsReasoningItem:
                 getattr(module, attr, _MISSING) if module is not None else _MISSING
             )
         _install_lightweight_engine_modules(monkeypatch)
-        from fusion_mlx.routes.responses import router
-
         from fusion_mlx.config import reset_config
         from fusion_mlx.middleware.auth import rate_limiter
         from fusion_mlx.middleware.exception_handlers import install_exception_handlers
+        from fusion_mlx.routes.responses import router
 
         cfg = reset_config()
         cfg.api_key = "test-secret"

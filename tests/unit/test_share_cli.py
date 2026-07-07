@@ -20,6 +20,7 @@ import threading
 from unittest.mock import MagicMock, patch
 
 import pytest
+
 from fusion_mlx.share import cli as share_cli
 
 

@@ -51,15 +51,15 @@ from __future__ import annotations
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from fusion_mlx.service.helpers import (
-    enforce_context_length_for_messages,
-    repair_messages_fit_context,
-)
 
 from fusion_mlx.api import response_format_metrics
 from fusion_mlx.config import reset_config
 from fusion_mlx.engine.base import GenerationOutput
 from fusion_mlx.middleware.exception_handlers import install_exception_handlers
+from fusion_mlx.service.helpers import (
+    enforce_context_length_for_messages,
+    repair_messages_fit_context,
+)
 
 # ---------------------------------------------------------------------------
 # Shared shims

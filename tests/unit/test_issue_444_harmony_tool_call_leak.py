@@ -80,9 +80,9 @@ def test_harmony_tool_extraction_non_stream(case: _Case, parser):
         f"Expected non-stream extraction to consume all input as a tool "
         f"call; got leftover content={content!r}"
     )
-    assert len(tool_calls) == 1, (
-        f"Expected exactly one tool call, got {len(tool_calls)}: {tool_calls!r}"
-    )
+    assert (
+        len(tool_calls) == 1
+    ), f"Expected exactly one tool call, got {len(tool_calls)}: {tool_calls!r}"
     tc = tool_calls[0]
     assert tc.name == case.expected_name
     assert json.loads(tc.arguments) == case.expected_args

@@ -52,7 +52,8 @@ def _resolve_max_body_depth() -> int:
             _legacy_warned.add(MAX_BODY_DEPTH_ENV_LEGACY)
             logger.warning(
                 "env var %s is deprecated, use %s instead",
-                MAX_BODY_DEPTH_ENV_LEGACY, MAX_BODY_DEPTH_ENV_PRIMARY,
+                MAX_BODY_DEPTH_ENV_LEGACY,
+                MAX_BODY_DEPTH_ENV_PRIMARY,
             )
         return _parse_int_or(raw, DEFAULT_MAX_BODY_DEPTH)
     return DEFAULT_MAX_BODY_DEPTH

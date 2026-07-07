@@ -29,7 +29,6 @@ from .helpers import (
     _get_engine_pool,
     _get_hf_downloader,
     _get_model_dirs,
-    _get_rich_global_settings,
     _get_settings_manager,
     format_size,
     get_system_memory_info,

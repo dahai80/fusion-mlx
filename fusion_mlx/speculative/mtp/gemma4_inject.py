@@ -609,9 +609,7 @@ def inject_mtp_support(
                     state = tgt_cache.state
                 except AttributeError:
                     state = None
-                if state is None or (
-                    isinstance(state, tuple) and state[0] is None
-                ):
+                if state is None or (isinstance(state, tuple) and state[0] is None):
                     raise RuntimeError(
                         "[mtp.inject.gemma4] target cache slot has empty state; "
                         "cannot compute drafter attention without any K/V."
@@ -625,17 +623,13 @@ def inject_mtp_support(
                 layer_offsets.append(int(tgt_cache.offset))
 
             target_embed = self.model.embed_tokens
-            next_embed_all = (
-                target_embed(next_token_ids) * _target_embed_scale
-            )
+            next_embed_all = target_embed(next_token_ids) * _target_embed_scale
 
             per_position_h: list = []
             for pos in range(n_positions):
                 h_pos = hidden_states[:, pos : pos + 1, :]
                 next_pos = next_embed_all[:, pos : pos + 1, :]
-                fused_pos = _mx.concatenate(
-                    [next_pos, h_pos], axis=-1
-                )
+                fused_pos = _mx.concatenate([next_pos, h_pos], axis=-1)
                 h_pos_proj = self.mtp.pre_projection(fused_pos)
 
                 h_layer = h_pos_proj

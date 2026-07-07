@@ -300,7 +300,9 @@ def share_command(args: argparse.Namespace) -> None:
     state_dir = _state_dir()
     serve_log = state_dir / "serve.log"
 
-    relay_url = os.environ.get("FUSION_MLX_RELAY_URL", ws_tunnel.DEFAULT_RAPIDSERVER_WSS)
+    relay_url = os.environ.get(
+        "FUSION_MLX_RELAY_URL", ws_tunnel.DEFAULT_RAPIDSERVER_WSS
+    )
     if not (relay_url.startswith("wss://") or relay_url.startswith("ws://")):
         print(
             f"share: FUSION_MLX_RELAY_URL must start with wss:// or ws:// "

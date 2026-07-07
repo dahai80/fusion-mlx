@@ -46,6 +46,7 @@ This file exercises:
 from __future__ import annotations
 
 import pytest
+
 from fusion_mlx.service.helpers import _rescue_silent_drop_from_reasoning
 
 # ── Unit tests: the rescue helper's new harmony gate ─────────────────

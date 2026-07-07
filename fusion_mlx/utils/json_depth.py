@@ -23,9 +23,7 @@ def _resolve_env_int(primary: str, legacy: str, default: int) -> int:
     if raw:
         if legacy not in _legacy_warned:
             _legacy_warned.add(legacy)
-            logger.warning(
-                "env var %s is deprecated, use %s instead", legacy, primary
-            )
+            logger.warning("env var %s is deprecated, use %s instead", legacy, primary)
         return _parse_int_or(raw, default)
     return default
 

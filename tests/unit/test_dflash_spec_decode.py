@@ -1065,10 +1065,11 @@ def test_scheduler_config_dflash_round_trip():
 def test_metrics_renders_dflash_counters_zero_at_cold_start():
     """Before any DFlash generation runs, the five DFlash series MUST be
     present with value 0/16 (block_size gauge starts at the default)."""
-    from fusion_mlx.routes.metrics import _render_spec_decode_dflash_counters
     from fusion_mlx.spec_decode.dflash.accept_counter import (
         reset_global_counter_for_tests,
     )
+
+    from fusion_mlx.routes.metrics import _render_spec_decode_dflash_counters
 
     reset_global_counter_for_tests()
 
@@ -1094,11 +1095,12 @@ def test_metrics_renders_dflash_counters_zero_at_cold_start():
 
 def test_metrics_renders_post_acceptance_dflash_counters():
     """4 attempts / 3 accepts / 27 tokens_saved → metric reflects state."""
-    from fusion_mlx.routes.metrics import _render_spec_decode_dflash_counters
     from fusion_mlx.spec_decode.dflash.accept_counter import (
         get_global_counter,
         reset_global_counter_for_tests,
     )
+
+    from fusion_mlx.routes.metrics import _render_spec_decode_dflash_counters
 
     reset_global_counter_for_tests()
     counter = get_global_counter()

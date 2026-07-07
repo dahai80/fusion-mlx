@@ -8,17 +8,17 @@ Disconnect logic lives in disconnect_guard.py and is re-exported here.
 
 from __future__ import annotations
 
-import asyncio
+import asyncio  # noqa: F401
 import hashlib
 import inspect
 import json
 import logging
 import os
 import uuid
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator  # noqa: F401
 
 from fastapi import HTTPException
-from starlette.requests import Request
+from starlette.requests import Request  # noqa: F401
 
 from ..api.constants import (  # noqa: F401
     REASONING_CUTOFF_SENTINEL,
@@ -53,6 +53,7 @@ SSE_RESPONSE_HEADERS: dict[str, str] = {
 def _get_server_attr(name: str, default=None):
     try:
         from .. import server as _srv
+
         return getattr(_srv, name, default)
     except Exception:
         return default
@@ -61,6 +62,7 @@ def _get_server_attr(name: str, default=None):
 def _get_engine_pool():
     try:
         from .. import server as _srv
+
         return _srv._server_state.get("engine_pool")
     except Exception:
         return None
@@ -444,7 +446,9 @@ def _is_structured_output_requested(request) -> bool:
     rf = getattr(request, "response_format", None)
     if rf is None:
         return False
-    rf_type = getattr(rf, "type", None) or (rf.get("type") if isinstance(rf, dict) else None)
+    rf_type = getattr(rf, "type", None) or (
+        rf.get("type") if isinstance(rf, dict) else None
+    )
     return rf_type in ("json_object", "json_schema")
 
 
@@ -613,7 +617,10 @@ def maybe_auto_disable_thinking_for_tools(
             try:
                 request.chat_template_kwargs = {"enable_thinking": False}
             except Exception:
-                logger.debug("maybe_auto_disable_thinking_for_tools: failed to set ctk", exc_info=True)
+                logger.debug(
+                    "maybe_auto_disable_thinking_for_tools: failed to set ctk",
+                    exc_info=True,
+                )
         _mark_thinking_auto_disabled(request)
         return True
     return enable_thinking
@@ -652,7 +659,9 @@ def maybe_apply_reasoning_effort(request) -> bool:
             try:
                 request.chat_template_kwargs = {"enable_thinking": False}
             except Exception:
-                logger.debug("maybe_apply_reasoning_effort: failed to set ctk", exc_info=True)
+                logger.debug(
+                    "maybe_apply_reasoning_effort: failed to set ctk", exc_info=True
+                )
         _mark_thinking_auto_disabled(request)
         return True
     max_tokens_map = OPENAI_REASONING_EFFORT_TO_MAX_TOKENS
@@ -665,7 +674,10 @@ def maybe_apply_reasoning_effort(request) -> bool:
     try:
         request.reasoning_max_tokens = mapped
     except Exception:
-        logger.debug("maybe_apply_reasoning_effort: failed to set reasoning_max_tokens", exc_info=True)
+        logger.debug(
+            "maybe_apply_reasoning_effort: failed to set reasoning_max_tokens",
+            exc_info=True,
+        )
     return True
 
 
@@ -854,6 +866,7 @@ def get_engine(model_name: str | None = None) -> BaseEngine:
     if pool is not None:
         try:
             import asyncio
+
             loop = asyncio.get_running_loop()
             if loop.is_running():
                 try:
@@ -877,6 +890,7 @@ def get_engine(model_name: str | None = None) -> BaseEngine:
         if direct is not None:
             return direct
     from ..config import get_config
+
     direct = get_config().engine
     if direct is not None:
         return direct
@@ -1208,15 +1222,13 @@ def _maybe_pin_system_prompt(messages: list) -> None:
         if not system_tokens or len(system_tokens) < 16:
             return
 
-        if (
-            hasattr(engine, "_prefix_cache")
-            and engine._prefix_cache is not None
-        ):
+        if hasattr(engine, "_prefix_cache") and engine._prefix_cache is not None:
             cache = engine._prefix_cache
             if hasattr(cache, "pin_prefix"):
                 if cache.pin_prefix(system_tokens):
                     try:
                         from .. import server as _srv
+
                         _srv._pinned_system_prompt_hash = prompt_hash
                     except Exception:
                         pass
@@ -1226,15 +1238,13 @@ def _maybe_pin_system_prompt(messages: list) -> None:
                     )
                     return
 
-        if (
-            hasattr(engine, "_cache_manager")
-            and engine._cache_manager is not None
-        ):
+        if hasattr(engine, "_cache_manager") and engine._cache_manager is not None:
             cache = engine._cache_manager
             if hasattr(cache, "pin_prefix"):
                 if cache.pin_prefix(system_tokens):
                     try:
                         from .. import server as _srv
+
                         _srv._pinned_system_prompt_hash = prompt_hash
                     except Exception:
                         pass
@@ -1249,8 +1259,6 @@ def _maybe_pin_system_prompt(messages: list) -> None:
 
 
 # ── Disconnect guard re-exports ────────────────────────────────────
-
-from .disconnect_guard import _disconnect_guard, _wait_with_disconnect  # noqa: E402
 
 
 # ── Context-length pre-check ───────────────────────────────────────
@@ -1476,3 +1484,9 @@ def enforce_context_length_for_prompt(
     if prompt_tokens <= 0:
         return
     enforce_context_length(engine, prompt_tokens, max_tokens=max_tokens)
+
+
+from .disconnect_guard import (  # noqa: E402, F401
+    _disconnect_guard,
+    _wait_with_disconnect,
+)

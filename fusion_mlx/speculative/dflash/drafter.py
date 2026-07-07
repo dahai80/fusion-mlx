@@ -15,11 +15,9 @@ class BlockDiffusionDrafter(Protocol):
         self,
         prefix_tokens: mx.array,
         current_position: int,
-    ) -> mx.array:
-        ...
+    ) -> mx.array: ...
 
-    def reset(self) -> None:
-        ...
+    def reset(self) -> None: ...
 
 
 class StubBlockDiffusionDrafter:

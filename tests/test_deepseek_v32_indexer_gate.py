@@ -33,10 +33,10 @@ import mlx.core as mx
 import pytest
 
 try:
-    from fusion_mlx.patches.deepseek_v32_indexer_gate import (
+    from fusion_mlx.patches.deepseek_v32_indexer_gate import (  # noqa: F401
         install_indexer_gate,
-        uninstall_indexer_gate,
         is_installed,
+        uninstall_indexer_gate,
     )
 
     _HAS_INDEXER_GATE = True
@@ -52,6 +52,7 @@ def _require_indexer_gate():
 @pytest.fixture(autouse=True)
 def _guard_indexer_gate():
     _require_indexer_gate()
+
 
 # ----------------------------------------------------------------------
 # Synthetic glm_moe_dsa config + weight forge (no GLM-5.2 download)
@@ -331,9 +332,9 @@ def test_gate_is_noop_when_indexer_types_absent(repro_dir):
     layers = model.model.layers
     assert len(layers) == 4
     for i, layer in enumerate(layers):
-        assert layer.self_attn.indexer is not None, (
-            f"layer {i} should retain Indexer when indexer_types is absent"
-        )
+        assert (
+            layer.self_attn.indexer is not None
+        ), f"layer {i} should retain Indexer when indexer_types is absent"
 
 
 # ----------------------------------------------------------------------
@@ -721,8 +722,7 @@ def test_install_fires_on_real_serve_import_path():
     # module (NOT the patch module directly), then check that the gate's
     # ``_INSTALLED`` flag and the upstream-class marker are both set.
     # Anything but "OK" on stdout (or a non-zero exit) is a failure.
-    script = textwrap.dedent(
-        """
+    script = textwrap.dedent("""
         import sys
 
         # Import a SERVE-path module. Importing the patch module directly
@@ -748,8 +748,7 @@ def test_install_fires_on_real_serve_import_path():
             sys.exit(1)
 
         print("OK")
-        """
-    ).strip()
+        """).strip()
 
     result = subprocess.run(
         [sys.executable, "-c", script],

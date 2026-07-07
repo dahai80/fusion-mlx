@@ -23,12 +23,12 @@ When ``final_content`` is empty/None AND no ``tool_calls`` fired AND
 from __future__ import annotations
 
 import pytest
+
+from fusion_mlx.reasoning.gemma4_parser import Gemma4ReasoningParser
 from fusion_mlx.service.helpers import (
     _finalize_content_and_reasoning,
     _rescue_silent_drop_from_reasoning,
 )
-
-from fusion_mlx.reasoning.gemma4_parser import Gemma4ReasoningParser
 
 # ── Unit tests for the rescue helper ─────────────────────────────────
 

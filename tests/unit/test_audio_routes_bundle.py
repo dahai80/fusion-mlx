@@ -1034,10 +1034,9 @@ class TestDeepProbeSurfacesDegradedLane:
         report ``ok`` even when ``whisper-large-v3`` requests are
         silently 500'ing.
         """
-        from fusion_mlx.audio.stt import DEFAULT_WHISPER_MODEL
-
         from fusion_mlx.audio import probe
         from fusion_mlx.audio import stt as stt_mod
+        from fusion_mlx.audio.stt import DEFAULT_WHISPER_MODEL
 
         observed: list[str] = []
 

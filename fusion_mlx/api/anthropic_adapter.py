@@ -35,11 +35,11 @@ _TOOLU_TAIL_RE = re.compile(r"^[0-9a-fA-F]+$")
 
 def to_anthropic_tool_use_id(openai_id: str | None) -> str:
     if isinstance(openai_id, str) and openai_id.startswith("call_"):
-        tail = openai_id[len("call_"):]
+        tail = openai_id[len("call_") :]
         if tail and _TOOLU_TAIL_RE.match(tail):
             return "toolu_" + tail
     if isinstance(openai_id, str) and openai_id.startswith("toolu_"):
-        tail = openai_id[len("toolu_"):]
+        tail = openai_id[len("toolu_") :]
         if tail and _TOOLU_TAIL_RE.match(tail):
             return openai_id
     return f"toolu_{secrets.token_hex(12)}"

@@ -30,7 +30,6 @@ from .helpers import (
     _get_engine_pool,
     _get_server_state,
     _get_settings_manager,
-    _model_has_mtp_weight_tensors,
     _mtp_compat_for_model,
     _paroquant_compat_for_model,
     _reload_models,
@@ -305,7 +304,9 @@ async def update_model_settings(
                 detected_type = detect_model_type(Path(entry.model_path))
             except ImportError:
                 detected_type = entry.engine_type or "batched"
-                logger.warning("detect_model_type not available, using %s", detected_type)
+                logger.warning(
+                    "detect_model_type not available, using %s", detected_type
+                )
             entry.model_type = detected_type
             entry.engine_type = type_to_engine.get(detected_type, "batched")
     if "max_context_window" in sent:
@@ -521,7 +522,6 @@ async def update_model_settings(
             # files must actually contain mtp.* tensors. The last check is
             # the one that catches mlx-community converted weights where the
             # default sanitize path stripped the MTP heads.
-            import json
             from pathlib import Path
 
             try:
@@ -535,7 +535,9 @@ async def update_model_settings(
                         detail=f"Model is not MTP-compatible: {compat_reason}",
                     )
             except ImportError:
-                logger.warning("_mtp_compat_for_model not available, skipping MTP compat check")
+                logger.warning(
+                    "_mtp_compat_for_model not available, skipping MTP compat check"
+                )
             # Mutual exclusion with DFlash / TurboQuant — ModelSettings.__post_init__
             # also enforces this, but we surface a clearer error here.
             dflash_after = (
@@ -810,8 +812,14 @@ def _save_model_settings_fallback(model_id: str, request: ModelSettingsRequest) 
     # Validate model_type_override
     if "model_type_override" in sent:
         valid_types = {
-            "llm", "vlm", "embedding", "reranker",
-            "audio_stt", "audio_tts", "audio_sts", "image",
+            "llm",
+            "vlm",
+            "embedding",
+            "reranker",
+            "audio_stt",
+            "audio_tts",
+            "audio_sts",
+            "image",
         }
         override_value = request.model_type_override or None
         if override_value is not None and override_value not in valid_types:
@@ -840,20 +848,40 @@ def _save_model_settings_fallback(model_id: str, request: ModelSettingsRequest) 
 
     # Check which fields require reload
     RELOAD_FIELDS = {
-        "model_type_override", "max_context_window", "chat_template_kwargs",
-        "forced_ct_kwargs", "dflash_enabled", "dflash_draft_model",
-        "dflash_draft_quant_enabled", "dflash_draft_quant_weight_bits",
-        "dflash_draft_quant_activation_bits", "dflash_draft_quant_group_size",
-        "dflash_max_ctx", "dflash_draft_window_size", "dflash_draft_sink_size",
-        "dflash_verify_mode", "mtp_enabled", "vlm_mtp_enabled",
-        "vlm_mtp_draft_model", "vlm_mtp_draft_block_size",
-        "ngram_spec_enabled", "ngram_spec_order", "ngram_spec_num_draft",
-        "specprefill_enabled", "specprefill_draft_model",
-        "turboquant_kv_enabled", "turboquant_kv_bits",
-        "enable_thinking", "thinking_budget_enabled", "thinking_budget_tokens",
-        "dflash_in_memory_cache", "dflash_in_memory_cache_max_entries",
-        "dflash_in_memory_cache_max_bytes", "dflash_ssd_cache",
-        "dflash_ssd_cache_max_bytes", "trust_remote_code",
+        "model_type_override",
+        "max_context_window",
+        "chat_template_kwargs",
+        "forced_ct_kwargs",
+        "dflash_enabled",
+        "dflash_draft_model",
+        "dflash_draft_quant_enabled",
+        "dflash_draft_quant_weight_bits",
+        "dflash_draft_quant_activation_bits",
+        "dflash_draft_quant_group_size",
+        "dflash_max_ctx",
+        "dflash_draft_window_size",
+        "dflash_draft_sink_size",
+        "dflash_verify_mode",
+        "mtp_enabled",
+        "vlm_mtp_enabled",
+        "vlm_mtp_draft_model",
+        "vlm_mtp_draft_block_size",
+        "ngram_spec_enabled",
+        "ngram_spec_order",
+        "ngram_spec_num_draft",
+        "specprefill_enabled",
+        "specprefill_draft_model",
+        "turboquant_kv_enabled",
+        "turboquant_kv_bits",
+        "enable_thinking",
+        "thinking_budget_enabled",
+        "thinking_budget_tokens",
+        "dflash_in_memory_cache",
+        "dflash_in_memory_cache_max_entries",
+        "dflash_in_memory_cache_max_bytes",
+        "dflash_ssd_cache",
+        "dflash_ssd_cache_max_bytes",
+        "trust_remote_code",
     }
     requires_reload = bool(sent & RELOAD_FIELDS)
 
@@ -874,7 +902,9 @@ def _save_model_settings_fallback(model_id: str, request: ModelSettingsRequest) 
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to save settings: {e}")
 
-    logger.info(f"Model settings saved (fallback mode): {model_id}, fields={list(sent)}")
+    logger.info(
+        f"Model settings saved (fallback mode): {model_id}, fields={list(sent)}"
+    )
     return {
         "success": True,
         "model_id": model_id,

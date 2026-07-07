@@ -1,11 +1,10 @@
 # SPDX-License-Identifier: Apache-2.0
 """Service layer — shared helpers and post-processing pipeline."""
 
-from .postprocessor import StreamingPostProcessor
 from .helpers import (  # noqa: F401
-    SSE_RESPONSE_HEADERS,
     _TOOL_USE_REQUIRED_SUFFIX,
     _TOOL_USE_SYSTEM_SUFFIX,
+    SSE_RESPONSE_HEADERS,
     _apply_reasoning_cutoff_notice,
     _build_usage,
     _check_admission_or_503,
@@ -41,6 +40,7 @@ from .helpers import (  # noqa: F401
     maybe_auto_disable_thinking_for_tools,
     repair_messages_fit_context,
 )
+from .postprocessor import StreamingPostProcessor
 
 __all__ = [
     "StreamingPostProcessor",

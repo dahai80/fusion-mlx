@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 import logging
 import threading
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 logger = logging.getLogger(__name__)
 

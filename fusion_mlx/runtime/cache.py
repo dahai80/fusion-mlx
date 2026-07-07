@@ -43,7 +43,9 @@ def load_prefix_cache_from_disk() -> None:
             logger.info("[lifespan] No prefix cache entries found on disk")
         _load_radix_index_after_cache(engine, d)
     except Exception as e:
-        logger.warning("[lifespan] Failed to load cache from disk: %s", e, exc_info=True)
+        logger.warning(
+            "[lifespan] Failed to load cache from disk: %s", e, exc_info=True
+        )
 
 
 def _load_radix_index_after_cache(engine, cache_dir: str) -> None:

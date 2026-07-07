@@ -8,9 +8,7 @@ Dataset bundled from winogrande (winogrande_xl) on HuggingFace.
 """
 
 import logging
-import re
 from pathlib import Path
-from typing import Optional
 
 from .base import BaseBenchmark
 from .datasets import deterministic_sample, load_jsonl
@@ -32,13 +30,15 @@ class WinograndeBenchmark(BaseBenchmark):
 
         normalized = []
         for item in items:
-            normalized.append({
-                "id": item.get("id", ""),
-                "sentence": item["sentence"],
-                "option1": item["option1"],
-                "option2": item["option2"],
-                "answer": item["answer"],  # "1" or "2"
-            })
+            normalized.append(
+                {
+                    "id": item.get("id", ""),
+                    "sentence": item["sentence"],
+                    "option1": item["option1"],
+                    "option2": item["option2"],
+                    "answer": item["answer"],  # "1" or "2"
+                }
+            )
 
         logger.info(f"Winogrande: loaded {len(normalized)} questions")
 
@@ -73,5 +73,5 @@ class WinograndeBenchmark(BaseBenchmark):
     def get_question_text(self, item: dict) -> str:
         return item.get("sentence", "")
 
-    def get_category(self, item: dict) -> Optional[str]:
+    def get_category(self, item: dict) -> str | None:
         return None

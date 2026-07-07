@@ -1,17 +1,14 @@
 """Tests for DFlash and DSpark spec-decode step integration."""
 
-import pytest
-from unittest.mock import MagicMock, patch, PropertyMock
-from dataclasses import dataclass
+from unittest.mock import MagicMock
 
 from fusion_mlx.scheduler.spec_decode import (
+    DFLASH_SPEC_WARMUP_STEPS,
     DFlashSpecState,
     DSparkSpecState,
+    _emit_spec_tokens,
     dflash_spec_step,
     dspark_spec_step,
-    _emit_spec_tokens,
-    DFLASH_SPEC_WARMUP_STEPS,
-    DSPARK_SPEC_LOG_INTERVAL,
 )
 
 
@@ -75,6 +72,7 @@ def _make_output(token=42, request_id="req-001"):
 
 # ---- DFlashSpecState ----
 
+
 class TestDFlashSpecState:
     def test_init_defaults(self):
         rt = MagicMock()
@@ -120,6 +118,7 @@ class TestDFlashSpecState:
 
 # ---- DSparkSpecState ----
 
+
 class TestDSparkSpecState:
     def test_init_defaults(self):
         rt = MagicMock()
@@ -159,6 +158,7 @@ class TestDSparkSpecState:
 
 # ---- dflash_spec_step ----
 
+
 class TestDFlashSpecStep:
     def test_returns_empty_when_no_runtime(self):
         sched = FakeScheduler()
@@ -193,6 +193,7 @@ class TestDFlashSpecStep:
 
 
 # ---- dspark_spec_step ----
+
 
 class TestDSparkSpecStep:
     def test_returns_empty_when_no_runtime(self):
@@ -257,6 +258,7 @@ class TestDSparkSpecStep:
 
 
 # ---- _emit_spec_tokens ----
+
 
 class TestEmitSpecTokens:
     def test_empty_tokens(self):

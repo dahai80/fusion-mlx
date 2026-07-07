@@ -32,12 +32,12 @@ import pytest
 from fastapi import FastAPI
 from fastapi.responses import StreamingResponse
 from fastapi.testclient import TestClient
+
+from fusion_mlx.config import get_config
 from fusion_mlx.middleware.probe_fastpath import (
     ProbeFastPathMiddleware,
     install_probe_fastpath_middleware,
 )
-
-from fusion_mlx.config import get_config
 
 # ---------------------------------------------------------------------------
 # Helpers

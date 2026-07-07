@@ -2,6 +2,7 @@
 """Unit tests for accuracy evaluation modules."""
 
 import pytest
+
 from fusion_mlx.eval.datasets import deterministic_sample, stratified_sample
 from fusion_mlx.eval.gsm8k import (
     GSM8KBenchmark,

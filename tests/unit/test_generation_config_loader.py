@@ -7,6 +7,7 @@ import json
 import os
 
 import pytest
+
 from fusion_mlx.utils.generation_config import (
     load_generation_config_eos_ids,
     load_generation_config_sampling,

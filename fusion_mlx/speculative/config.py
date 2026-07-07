@@ -36,7 +36,13 @@ _ALLOWED_KEYS: dict[str, set[str]] = {
     "ddtree": {"method", "model", "num_speculative_tokens", "tree_budget"},
     "dflash": {"method", "model", "num_speculative_tokens", "block_size"},
     "mtp": {"method", "model", "num_speculative_tokens", "chain_or_tree"},
-    "suffix": {"method", "num_speculative_tokens", "max_draft_tokens", "max_suffix_len", "min_confidence"},
+    "suffix": {
+        "method",
+        "num_speculative_tokens",
+        "max_draft_tokens",
+        "max_suffix_len",
+        "min_confidence",
+    },
     "dspark": {"method", "model", "num_speculative_tokens"},
     "vlm-mtp": {"method", "model", "num_speculative_tokens", "draft_block_size"},
 }
@@ -77,9 +83,11 @@ def parse_speculative_config(value: str) -> SpeculativeConfig:
         )
     tree_budget = d.get("tree_budget", 0)
     model = d.get("model")
-    raw = {k: v for k, v in d.items() if k not in {
-        "method", "model", "num_speculative_tokens", "tree_budget"
-    }}
+    raw = {
+        k: v
+        for k, v in d.items()
+        if k not in {"method", "model", "num_speculative_tokens", "tree_budget"}
+    }
     return SpeculativeConfig(
         method=resolved,
         model=model,

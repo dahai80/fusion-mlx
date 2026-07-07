@@ -159,6 +159,7 @@ sys.modules["dflash_mlx"] = MagicMock()
 # transformers: preserve real package if available (mlx_lm depends on it)
 try:
     import transformers as _real_transformers
+
     sys.modules["transformers"] = _real_transformers
 except ImportError:
     _mock_module("transformers")
@@ -184,6 +185,7 @@ _mock_module("socksio")
 # openai_harmony: preserve real package if available (tests import HarmonyEncodingName)
 try:
     import openai_harmony as _real_openai_harmony
+
     sys.modules["openai_harmony"] = _real_openai_harmony
 except ImportError:
     _mock_module("openai_harmony")

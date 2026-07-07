@@ -96,8 +96,7 @@ def patch_mlx_lm_for_mamba():
             return [to_batch_cache(c) for c in cache]
         elif max_kv_size is not None:
             return [
-                BatchRotatingKVCache(max_kv_size, left_padding)
-                for _ in model.layers
+                BatchRotatingKVCache(max_kv_size, left_padding) for _ in model.layers
             ]
         else:
             return [BatchKVCache(left_padding) for _ in model.layers]

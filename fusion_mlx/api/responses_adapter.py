@@ -426,6 +426,7 @@ def _parse_computer_action(arguments: str) -> dict:
         from ..tool_parsers.ui_tars_tool_parser import (
             translate_to_responses_spec_keys,
         )
+
         return translate_to_responses_spec_keys(out)
     except ImportError:
         logger.debug("ui_tars_tool_parser not available, returning raw action")

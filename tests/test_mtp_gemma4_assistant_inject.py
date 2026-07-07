@@ -4,8 +4,6 @@
 
 from __future__ import annotations
 
-import json
-
 import pytest
 
 mx = pytest.importorskip("mlx.core")
@@ -36,7 +34,6 @@ def _reset_mtp_state():
         return
     _unpatch_for_tests()
     reset_global_counter_for_tests()
-    import mlx_lm.generate
 
     sys.modules["mlx_lm.generate"].generation_stream = mx.default_stream(
         mx.default_device()

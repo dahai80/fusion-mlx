@@ -3,8 +3,6 @@ import importlib
 import logging
 from typing import Any
 
-from .detect import MTPEligibility, detect_mtp_eligibility
-
 logger = logging.getLogger(__name__)
 
 _MTP_INJECT_DISPATCH: dict[str, tuple[str, str]] = {
@@ -15,8 +13,14 @@ _MTP_INJECT_DISPATCH: dict[str, tuple[str, str]] = {
 
 _MTP_VALIDATE_DISPATCH: dict[str, tuple[str, str]] = {
     "qwen3_5": ("fusion_mlx.speculative.mtp.qwen3_5_inject", "validate_mtp_qwen3_5"),
-    "qwen3_5_moe": ("fusion_mlx.speculative.mtp.qwen3_5_inject", "validate_mtp_qwen3_5"),
-    "gemma4_unified": ("fusion_mlx.speculative.mtp.gemma4_inject", "validate_mtp_gemma4"),
+    "qwen3_5_moe": (
+        "fusion_mlx.speculative.mtp.qwen3_5_inject",
+        "validate_mtp_qwen3_5",
+    ),
+    "gemma4_unified": (
+        "fusion_mlx.speculative.mtp.gemma4_inject",
+        "validate_mtp_gemma4",
+    ),
 }
 
 
@@ -41,7 +45,9 @@ def dispatch_mtp_inject(
         logger.warning("mtp/dispatch: %s has no %s", module_path, func_name)
         return False
     try:
-        result = func(model, mtp_sidecar=mtp_sidecar, allow_random_init=allow_random_init)
+        result = func(
+            model, mtp_sidecar=mtp_sidecar, allow_random_init=allow_random_init
+        )
         if result:
             logger.info("mtp/dispatch: injected MTP for %s", model_type)
         return bool(result)

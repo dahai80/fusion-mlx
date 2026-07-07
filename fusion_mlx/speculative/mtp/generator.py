@@ -64,6 +64,7 @@ def _make_sampler_chain(
     if min_p != 0.0:
         chain.append(lambda x: apply_min_p(x, min_p, min_tokens_to_keep))
     if xtc_probability > 0.0:
+
         def _xtc(x, _cell=xtc_cell):
             return _apply_xtc_with_shared_draw(
                 x,
@@ -72,6 +73,7 @@ def _make_sampler_chain(
                 xtc_special_tokens,
                 _cell[0],
             )
+
         chain.append(_xtc)
     if top_k > 0:
         chain.append(lambda x: apply_top_k(x, top_k))

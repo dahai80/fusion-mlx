@@ -26,12 +26,12 @@ from typing import Any
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from fusion_mlx.service.helpers import _resolve_reasoning_enabled
 
 from fusion_mlx.config import reset_config
 from fusion_mlx.engine.base import GenerationOutput
 from fusion_mlx.routes.anthropic import router as anthropic_router
 from fusion_mlx.runtime.model_registry import ModelEntry, ModelRegistry
+from fusion_mlx.service.helpers import _resolve_reasoning_enabled
 
 
 class _NonStreamingEngineEmittingReasoning:

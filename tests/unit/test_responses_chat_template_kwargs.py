@@ -40,14 +40,14 @@ from unittest.mock import patch
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from fusion_mlx.api.responses_adapter import responses_to_openai
-from fusion_mlx.service.helpers import _resolve_enable_thinking
 
 from fusion_mlx.api import response_format_metrics
+from fusion_mlx.api.responses_adapter import responses_to_openai
 from fusion_mlx.api.responses_models import ResponsesRequest
 from fusion_mlx.config import reset_config
 from fusion_mlx.engine.base import GenerationOutput
 from fusion_mlx.middleware.exception_handlers import install_exception_handlers
+from fusion_mlx.service.helpers import _resolve_enable_thinking
 
 # ---------------------------------------------------------------------------
 # (1) Pydantic-model parity — fields are no longer silently dropped

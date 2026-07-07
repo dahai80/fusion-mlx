@@ -486,9 +486,8 @@ class TestChatRouteDefaultNotRegressed:
     """
 
     def test_chat_resolve_model_name_maps_default_to_cfg(self):
-        from fusion_mlx.service.helpers import _resolve_model_name
-
         from fusion_mlx.config import get_config
+        from fusion_mlx.service.helpers import _resolve_model_name
 
         cfg = get_config()
         prev = cfg.model_name

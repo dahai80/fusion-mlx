@@ -20,7 +20,7 @@ SAMPLE_SEED = 42
 def load_jsonl(path: Path) -> list[dict]:
     """Load a JSONL file into a list of dicts."""
     items = []
-    with open(path, "r", encoding="utf-8") as f:
+    with open(path, encoding="utf-8") as f:
         for line in f:
             line = line.strip()
             if line:
@@ -40,9 +40,7 @@ def deterministic_sample(items: list[dict], n: int) -> list[dict]:
     return rng.sample(items, n)
 
 
-def stratified_sample(
-    items: list[dict], n: int, key: str
-) -> list[dict]:
+def stratified_sample(items: list[dict], n: int, key: str) -> list[dict]:
     """Stratified sampling: proportional representation from each category.
 
     Uses a fixed seed so the same questions are always selected.

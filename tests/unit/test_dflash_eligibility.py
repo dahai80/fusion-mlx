@@ -115,7 +115,11 @@ def test_check_message_lists_eligible_aliases(monkeypatch) -> None:
         "fusion_mlx.speculative.dflash.eligibility.eligible_aliases",
         lambda: ["qwen3.5-27b-8bit"],
     )
-    p = AliasProfile(name="qwen3.6-35b-8bit", hf_path="mlx-community/Qwen3.6-35B-A3B-8bit", is_moe=True)
+    p = AliasProfile(
+        name="qwen3.6-35b-8bit",
+        hf_path="mlx-community/Qwen3.6-35B-A3B-8bit",
+        is_moe=True,
+    )
     try:
         check(p, alias="qwen3.6-35b-8bit")
         raise AssertionError("should have raised")
@@ -150,7 +154,9 @@ def test_report_collects_all_failures() -> None:
 def test_report_no_alias_name_renders_cleanly() -> None:
     """Some callers (programmatic use) don't have an alias name. Header
     fallback must still produce something useful."""
-    bad = AliasProfile(name="test-4bit-moe", hf_path="mlx-community/Qwen3.5-27B-4bit", is_moe=True)
+    bad = AliasProfile(
+        name="test-4bit-moe", hf_path="mlx-community/Qwen3.5-27B-4bit", is_moe=True
+    )
     try:
         check(bad)  # alias=None
         raise AssertionError("should have raised")

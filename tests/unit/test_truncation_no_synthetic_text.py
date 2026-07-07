@@ -41,6 +41,7 @@ import json
 import re
 
 import pytest
+
 from fusion_mlx.service.helpers import REASONING_CUTOFF_SENTINEL
 
 # Substrings that flag synthetic truncation text. Case-insensitive.
@@ -304,9 +305,9 @@ def test_responses_nonstream_no_truncated_injection():
     truncation cues."""
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
-    from fusion_mlx.routes.responses import router as responses_router
 
     from fusion_mlx.config import reset_config
+    from fusion_mlx.routes.responses import router as responses_router
 
     cfg = reset_config()
     _seed_cfg(cfg)
@@ -353,9 +354,9 @@ def test_responses_stream_no_truncated_injection():
     event may carry the ``[truncated…]`` sentinel."""
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
-    from fusion_mlx.routes.responses import router as responses_router
 
     from fusion_mlx.config import reset_config
+    from fusion_mlx.routes.responses import router as responses_router
 
     cfg = reset_config()
     _seed_cfg(cfg)

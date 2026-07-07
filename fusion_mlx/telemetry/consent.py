@@ -25,8 +25,8 @@ import sys
 from fusion_mlx import __version__ as _rapid_mlx_version  # noqa: N811
 from fusion_mlx.telemetry.state import (
     ENV_VAR,
-    ENV_VAR_PRIMARY,
     ENV_VAR_LEGACY,
+    ENV_VAR_PRIMARY,
     client_id_path,
     consent_path,
     get_consent_state,
@@ -145,7 +145,10 @@ def maybe_prompt_for_consent(
         # Env var already decides — no need to prompt.
         import os
 
-        if os.environ.get(ENV_VAR_PRIMARY) is not None or os.environ.get(ENV_VAR_LEGACY) is not None:
+        if (
+            os.environ.get(ENV_VAR_PRIMARY) is not None
+            or os.environ.get(ENV_VAR_LEGACY) is not None
+        ):
             return False
         if subcommand in _NON_INTERACTIVE_SUBCOMMANDS:
             return False
