@@ -50,7 +50,13 @@ except ImportError:
     close_database = None
 
 # Import route modules
-from .admin.helpers import set_admin_getters, set_hf_downloader
+from .admin.helpers import (
+    set_admin_getters,
+    set_hf_downloader,
+    set_hf_uploader,
+    set_ms_downloader,
+    set_oq_manager,
+)
 from .api.embeddings_routes import router as embeddings_router
 from .api.embeddings_routes import set_embeddings_context
 from .api.openai_routes import router as openai_router
@@ -725,6 +731,60 @@ class Server:
                 )
             except Exception as e:
                 logger.warning("Failed to initialize HFDownloader: %s", e)
+
+        # Initialize the oQ quantizer, ModelScope downloader, and HF uploader.
+        # All three share a refresh callback that re-discovers models in the
+        # pool after a download/quantization completes (mirrors omlx wiring).
+        if self.config.model_dir:
+            model_dirs = [self.config.model_dir]
+
+            async def _refresh_models_after_task():
+                if self.pool is None:
+                    return
+                self.pool.discover_models(self.config.model_dir)
+                logger.info("Model pool refreshed after admin task completion")
+
+            # oQ Quantizer (always available — only needs mlx)
+            try:
+                from .admin.oq_manager import OQManager
+
+                set_oq_manager(
+                    OQManager(
+                        model_dirs=model_dirs,
+                        on_complete=_refresh_models_after_task,
+                    )
+                )
+                logger.info("oQ Quantizer initialized")
+            except Exception as e:
+                logger.warning("Failed to initialize oQManager: %s", e)
+
+            # ModelScope downloader (requires modelscope SDK)
+            try:
+                from .admin.ms_downloader import MS_SDK_AVAILABLE, MSDownloader
+
+                if MS_SDK_AVAILABLE:
+                    set_ms_downloader(
+                        MSDownloader(
+                            model_dir=self.config.model_dir,
+                            on_complete=_refresh_models_after_task,
+                        )
+                    )
+                    logger.info("ModelScope Downloader initialized")
+                else:
+                    logger.info(
+                        "ModelScope SDK not installed, MS downloader disabled"
+                    )
+            except Exception as e:
+                logger.warning("Failed to initialize MSDownloader: %s", e)
+
+            # HuggingFace uploader (requires huggingface_hub, lazy per-call)
+            try:
+                from .admin.hf_uploader import HFUploader
+
+                set_hf_uploader(HFUploader(model_dirs=model_dirs))
+                logger.info("HF Uploader initialized")
+            except Exception as e:
+                logger.warning("Failed to initialize HFUploader: %s", e)
 
         # Apply model aliases
         aliases = {**self.config.model_aliases}
