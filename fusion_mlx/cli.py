@@ -1312,6 +1312,31 @@ Examples:
     )
     subparsers.add_parser("ps", help="List running fusion-mlx servers")
 
+    # Lifecycle — managed background server control (macOS app / Homebrew).
+    # Delegates to the FusionMLX.app control socket or `brew services`.
+    for _name, _help_text in (
+        ("start", "Start fusion-mlx as a managed background server"),
+        ("stop", "Stop the managed background fusion-mlx server"),
+        ("restart", "Restart the managed background fusion-mlx server"),
+    ):
+        _lifecycle_parser = subparsers.add_parser(
+            _name,
+            help=_help_text,
+            description=_help_text,
+        )
+        _lifecycle_parser.add_argument(
+            "--timeout",
+            type=float,
+            default=60.0,
+            help="Seconds to wait for the macOS app/server to reach the requested state",
+        )
+        if _name in {"start", "restart"}:
+            _lifecycle_parser.add_argument(
+                "--no-wait",
+                action="store_true",
+                help="Return after sending the request without waiting for server health",
+            )
+
     # Upgrade — detect install method and run the right upgrade command
     upgrade_parser = subparsers.add_parser(
         "upgrade",
@@ -1921,6 +1946,10 @@ Examples:
         rm_command(args)
     elif args.command == "ps":
         ps_command(args)
+    elif args.command in ("start", "stop", "restart"):
+        from fusion_mlx.cli_lifecycle import lifecycle_command
+
+        sys.exit(lifecycle_command(args))
     elif args.command == "upgrade":
         upgrade_command(args)
     elif args.command in ("chat", "run"):

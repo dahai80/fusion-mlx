@@ -55,6 +55,39 @@ fusion-mlx serve --model-dir ~/.cache/huggingface --admin
 fusion-mlx serve --memory-tier custom --custom-limit-mb 16384
 ```
 
+### `start` / `stop` / `restart` — Managed background server
+
+Manage the fusion-mlx server as a background process through the macOS app's
+control socket (`.app` install) or `brew services` (Homebrew install). These
+do not apply to plain pip/dev installs — use `serve` for a foreground server.
+
+```bash
+fusion-mlx start [--timeout SECONDS] [--no-wait]
+fusion-mlx stop  [--timeout SECONDS]
+fusion-mlx restart [--timeout SECONDS] [--no-wait]
+```
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `--timeout SECONDS` | `60` | Seconds to wait for the server to reach the requested state |
+| `--no-wait` | off | Return after issuing the request without waiting for health (`start`/`restart` only) |
+
+`start` launches the macOS app (if needed) and polls the control socket until
+the server reports `running`. `stop` is idempotent — if the server is already
+stopped (or exits before acknowledging), it reports `fusion-mlx stopped` and
+succeeds. `restart` stops then starts, waiting for `running`.
+
+```bash
+# Start and wait up to 30s for the server
+fusion-mlx start --timeout 30
+
+# Fire-and-forget start
+fusion-mlx start --no-wait
+
+# Stop the background server
+fusion-mlx stop
+```
+
 ### `launch` — Launch an integration
 
 ```bash
