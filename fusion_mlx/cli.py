@@ -1257,6 +1257,72 @@ Examples:
     )
     _add_pflash_args(bench_parser)
 
+    # Convert — HF -> MLX conversion + weight quantization (wraps mlx-lm
+    # convert). fusion-mlx had no convert command; users had to call
+    # ``python -m mlx_lm convert`` directly. Adds model-alias resolution so
+    # ``fusion-mlx convert qwen3.5-9b --quant-bits 4`` works the same way as
+    # every other fusion-mlx subcommand. Note: this is WEIGHT quantization
+    # (saved to disk); TurboQuant KV-cache compression is a separate runtime
+    # knob (``--kv-cache-turboquant``) and is not a weight format.
+    convert_parser = subparsers.add_parser(
+        "convert",
+        help="Convert a HuggingFace model to MLX format (optionally quantized)",
+    )
+    convert_parser.add_argument(
+        "model",
+        help="Model alias (e.g. qwen3.5-9b) or HF repo (org/name)",
+    ).completer = alias_completer
+    convert_parser.add_argument(
+        "--out",
+        "-o",
+        default=None,
+        help="Output directory (default: ./<model-basename>)",
+    )
+    convert_parser.add_argument(
+        "--quant-bits",
+        type=int,
+        default=None,
+        choices=[2, 3, 4, 6, 8],
+        help="Quantize weights to N bits (enables quantization). "
+        "Omit for a plain MLX (bf16) conversion.",
+    )
+    convert_parser.add_argument(
+        "--quant-group-size",
+        type=int,
+        default=64,
+        help="Group size for weight quantization (default: 64)",
+    )
+    convert_parser.add_argument(
+        "--quant-mode",
+        type=str,
+        default="affine",
+        help="Quantization mode (default: affine; mlx-lm also supports floquet)",
+    )
+    convert_parser.add_argument(
+        "--dtype",
+        type=str,
+        default=None,
+        choices=["bf16", "fp16", "fp32"],
+        help="Cast weights to this dtype (default: keep source dtype)",
+    )
+    convert_parser.add_argument(
+        "--dequantize",
+        action="store_true",
+        default=False,
+        help="Dequantize a quantized model back to float",
+    )
+    convert_parser.add_argument(
+        "--upload-repo",
+        default=None,
+        help="Upload the converted model to this HF repo (e.g. org/name)",
+    )
+    convert_parser.add_argument(
+        "--trust-remote-code",
+        action="store_true",
+        default=False,
+        help="Allow custom modeling code from the source repo",
+    )
+
     # Models command. ``ls`` is registered as a top-level alias that
     # defaults to ``models --cached`` (the locally-cached view) — two
     # muscle-memory entry points, one underlying impl.
@@ -1913,6 +1979,10 @@ Examples:
         serve_command(args)
     elif args.command == "bench":
         bench_command(args)
+    elif args.command == "convert":
+        from fusion_mlx.cli_convert import convert_command
+
+        sys.exit(convert_command(args))
     elif args.command == "models":
         models_command(args)
     elif args.command == "ls":

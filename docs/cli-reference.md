@@ -149,6 +149,26 @@ Queries `/v1/models` and shows:
 - Default model aliases (e.g., `claude-4.6-sonnet` → real model ID)
 - Model types and sizes
 
+### `convert` — Convert a HuggingFace model to MLX (optionally quantized)
+
+```bash
+fusion-mlx convert <model> [--quant-bits N] [--out PATH]
+fusion-mlx convert qwen3.5-9b --quant-bits 4 -o ./qwen3.5-9b-4bit
+fusion-mlx convert mlx-community/Qwen3.5-9B --quant-bits 8 --upload-repo me/my-repo
+```
+
+Wraps `mlx-lm convert` to produce MLX-format weights on disk. Accepts a
+model alias (resolved the same way as every other subcommand) or a full HF
+repo. Omit `--quant-bits` for a plain bf16 conversion; pass it to quantize
+weights (2/3/4/6/8 bits). This is **weight** quantization saved to disk —
+distinct from TurboQuant KV-cache compression (`--kv-cache-turboquant`),
+which is a runtime knob, not a weight format.
+
+- `--quant-bits {2,3,4,6,8}` — quantize weights; omit for plain conversion
+- `--quant-group-size N` (default 64), `--quant-mode` (default `affine`)
+- `--dtype {bf16,fp16,fp32}`, `--dequantize`, `--upload-repo`, `--trust-remote-code`
+- `-o/--out` — output dir (default `./<model-basename>`)
+
 ### `diagnose` — Run system diagnostics
 
 ```bash
