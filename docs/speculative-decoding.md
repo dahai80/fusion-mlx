@@ -7,7 +7,7 @@ spec-decode path. This document is the authoritative reference: which method to
 pick, how to activate it, the architectural constraint that governs selection,
 and the auto-router that automates the choice.
 
-> **Status legend** — ✅ shipping and verified · 🧪 shipped but PoC / workload-gated · 🗺️ library landed, CLI wiring is Phase B (see [Auto-router](#auto-router-specroute)).
+> **Status legend** — ✅ shipping and verified · 🧪 shipped but PoC / workload-gated · 🗺️ per-request routing is Phase B (boot-time `--spec-decode auto` landed; see [Auto-router](#auto-router-specroute)).
 
 ---
 
@@ -149,11 +149,11 @@ Consequences:
 - **Selection happens at serve start, not per request.** You cannot, today,
   route request A to DFlash and request B to MTP within one running serve —
   that would require loading (or hot-swapping) draft state mid-flight.
-- **Per-request cross-method routing is engine work, not a flag.** This is
-  why `--spec-route auto` is not yet a shipping CLI flag — see
-  [Auto-router](#auto-router-specroute). The decision logic is landed and
-  tested; wiring it into the engine's request setup path (so a running serve
-  can switch method per request without a draft reload) is Phase B.
+- **Per-request cross-method routing is engine work, not a flag.**
+  Boot-time `--spec-decode auto` *is* shipping — it picks `mtp` vs `suffix`
+  from the model's shape at startup (see [Auto-router](#auto-router-specroute)).
+  What is Phase B is *per-request* routing: switching method per request
+  without a draft reload, which needs the engine refactor above.
 - **Runtime tuning is already per-request.** Within the *active* method, the
   scheduler's adaptive gating (below) pauses/resumes spec decode per request
   based on observed acceptance. That is gating, not cross-method routing.
@@ -239,18 +239,29 @@ method = router.decide(RouteSignals(
 that are both registered and config-enabled, so the router never recommends a
 method the serve can't actually provide.
 
-### Status: 🗺️ library landed, CLI wiring is Phase B
+### Status: ✅ boot-time auto landed · 🗺️ per-request routing is Phase B
 
-The router is a **ready-to-call library** with full unit coverage. It is **not
-yet wired** to a `--spec-route auto` CLI flag, because of the
-[boot-time loading constraint](#the-boot-time-loading-constraint): a running
-serve cannot today hot-swap draft state per request. Wiring the router into
-the engine's request-setup path — so the chosen method is selected per request
-*without* a draft-model reload where the methods overlap, or with a lazy
-draft load where they don't — is the Phase B engine refactor. Until then,
-`available_methods()` and `SpecAutoRouter.decide` are usable from the admin
-panel, tests, and per-model settings as a recommendation/preview of the
-upcoming behavior.
+The router is a **ready-to-call library** with full unit coverage, and
+**boot-time CLI wiring has landed** via `--spec-decode auto`: at startup
+`resolve_spec_auto()` inspects the model's config and picks a zero-config
+method — `mtp` for MTP-eligible Qwen3.5/3.6 checkpoints (`model_type` ∈
+{`qwen3_5`, `qwen3_5_moe`, `gemma4_unified`} with `mtp_num_hidden_layers ≥ 1`),
+`suffix` (n-gram) otherwise. Drafter-backed methods (dflash/dspark) stay
+operator-selected; auto does not duplicate their drafter-binding and
+eligibility checks.
+
+```bash
+fusion-mlx serve --spec-decode auto --model mlx-community/Qwen3.5-9B-4bit
+# → Spec-decode: auto → suffix (n-gram suffix decoding (safe default, ...))
+```
+
+What remains Phase B is **per-request routing** — selecting the method per
+request based on prompt length and observed acceptance rate, *without* a
+draft-model reload. The [boot-time loading constraint](#the-boot-time-loading-constraint)
+means a running serve cannot today hot-swap draft state per request; that
+engine refactor (lazy draft load where methods don't overlap, or multi-method
+resident state) is Phase B. `available_methods()` and `SpecAutoRouter.decide`
+remain usable from the admin panel, tests, and per-model settings.
 
 ---
 
