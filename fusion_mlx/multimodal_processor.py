@@ -13,7 +13,7 @@ from typing import Any
 
 import mlx.core as mx
 
-from .models.mllm import (
+from .utils.video import (
     DEFAULT_FPS,
     MAX_FRAMES,
     extract_video_frames_smart,
