@@ -65,7 +65,9 @@ def _is_oq_model(name: str) -> bool:
 
 
 def _generate_model_card(
-    model_name: str, config: dict, redownload_notice: bool = False,
+    model_name: str,
+    config: dict,
+    redownload_notice: bool = False,
 ) -> str:
     """Generate a minimal HuggingFace model card for an oQ model."""
     from fusion_mlx._version import __version__
@@ -151,7 +153,9 @@ class UploadTask:
             "started_at": self.started_at,
             "completed_at": self.completed_at,
             "total_size": self.total_size,
-            "total_size_formatted": _format_size(self.total_size) if self.total_size else "",
+            "total_size_formatted": (
+                _format_size(self.total_size) if self.total_size else ""
+            ),
             "repo_url": self.repo_url,
         }
 
@@ -249,17 +253,18 @@ class HFUploader:
                             continue
                         try:
                             size = sum(
-                                f.stat().st_size
-                                for f in path.glob("*.safetensors")
+                                f.stat().st_size for f in path.glob("*.safetensors")
                             )
                             if size == 0:
                                 continue
-                            models.append({
-                                "name": path.name,
-                                "path": str(path),
-                                "size": size,
-                                "size_formatted": _format_size(size),
-                            })
+                            models.append(
+                                {
+                                    "name": path.name,
+                                    "path": str(path),
+                                    "size": size,
+                                    "size_formatted": _format_size(size),
+                                }
+                            )
                         except Exception:
                             continue
             return models
@@ -296,11 +301,13 @@ class HFUploader:
                             continue
                         seen.add(path.name)
                         has_readme = _has_meaningful_readme(path)
-                        models.append({
-                            "name": path.name,
-                            "path": str(path),
-                            "has_readme": has_readme,
-                        })
+                        models.append(
+                            {
+                                "name": path.name,
+                                "path": str(path),
+                                "has_readme": has_readme,
+                            }
+                        )
             return models
 
         return await asyncio.to_thread(_scan)
@@ -336,7 +343,9 @@ class HFUploader:
             raise ValueError(f"Model directory not found: {model_path}")
 
         if not (source / "config.json").exists():
-            raise ValueError(f"Not a valid model directory (no config.json): {model_path}")
+            raise ValueError(
+                f"Not a valid model directory (no config.json): {model_path}"
+            )
 
         repo_id = repo_id.strip()
         if "/" not in repo_id or len(repo_id.split("/")) != 2:
@@ -348,14 +357,10 @@ class HFUploader:
         # Check for duplicate active uploads
         for task in self._tasks.values():
             if task.repo_id == repo_id and task.status in _ACTIVE_STATUSES:
-                raise ValueError(
-                    f"Upload to '{repo_id}' is already in progress"
-                )
+                raise ValueError(f"Upload to '{repo_id}' is already in progress")
 
         model_name = source.name
-        total_size = sum(
-            f.stat().st_size for f in source.rglob("*") if f.is_file()
-        )
+        total_size = sum(f.stat().st_size for f in source.rglob("*") if f.is_file())
 
         task_id = str(uuid.uuid4())
         task = UploadTask(
@@ -368,7 +373,14 @@ class HFUploader:
         self._tasks[task_id] = task
 
         self._active_tasks[task_id] = asyncio.create_task(
-            self._run_upload(task_id, token, readme_source_path, auto_readme, redownload_notice, private)
+            self._run_upload(
+                task_id,
+                token,
+                readme_source_path,
+                auto_readme,
+                redownload_notice,
+                private,
+            )
         )
 
         logger.info(f"Upload queued: {model_name} -> {repo_id} (task_id={task_id})")
@@ -490,7 +502,8 @@ class HFUploader:
                     except Exception:
                         config = {}
                     readme_content = _generate_model_card(
-                        task.model_name, config,
+                        task.model_name,
+                        config,
                         redownload_notice=redownload_notice,
                     )
                     readme_in_model.write_text(readme_content, encoding="utf-8")

@@ -13,7 +13,9 @@ from .utils.install import get_app_bundle_path, is_app_bundle, is_homebrew
 # ``Fusion-MLX`` (with hyphen) — matches AppConfig.appSupportURL() in the
 # Swift app (apps/fusion-mac/Sources/Config/AppConfig.swift). The
 # admin/logs.py ``FusionMLX`` (no hyphen) fallback is stale; match the code.
-_CONTROL_SOCK_REL = Path("Library") / "Application Support" / "Fusion-MLX" / "control.sock"
+_CONTROL_SOCK_REL = (
+    Path("Library") / "Application Support" / "Fusion-MLX" / "control.sock"
+)
 _BREW_SERVICE = "fusion-mlx"
 
 

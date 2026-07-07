@@ -53,12 +53,12 @@ class ColoredFormatter(logging.Formatter):
     """ANSI-colored log formatter for terminal output."""
 
     COLORS = {
-        TRACE: "\033[90m",                 # Gray (TRACE)
-        logging.DEBUG: "\033[36m",         # Cyan
-        logging.INFO: "\033[32m",          # Green
-        logging.WARNING: "\033[33m",       # Yellow
-        logging.ERROR: "\033[31m",         # Red
-        logging.CRITICAL: "\033[35m",      # Magenta
+        TRACE: "\033[90m",  # Gray (TRACE)
+        logging.DEBUG: "\033[36m",  # Cyan
+        logging.INFO: "\033[32m",  # Green
+        logging.WARNING: "\033[33m",  # Yellow
+        logging.ERROR: "\033[31m",  # Red
+        logging.CRITICAL: "\033[35m",  # Magenta
     }
     RESET = "\033[0m"
 
@@ -115,10 +115,14 @@ def configure_logging(
     uvicorn) can reuse it. Clears existing root handlers to avoid duplicates.
     """
     level_name = level.upper()
-    log_level = TRACE if level_name == "TRACE" else getattr(logging, level_name, logging.INFO)
+    log_level = (
+        TRACE if level_name == "TRACE" else getattr(logging, level_name, logging.INFO)
+    )
 
     if include_request_id:
-        format_str = "%(asctime)s - %(name)s - %(levelname)s - [%(request_id)s] - %(message)s"
+        format_str = (
+            "%(asctime)s - %(name)s - %(levelname)s - [%(request_id)s] - %(message)s"
+        )
     else:
         format_str = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 
@@ -199,10 +203,14 @@ def configure_file_logging(
     log_dir.mkdir(parents=True, exist_ok=True)
 
     level_name = level.upper()
-    log_level = TRACE if level_name == "TRACE" else getattr(logging, level_name, logging.INFO)
+    log_level = (
+        TRACE if level_name == "TRACE" else getattr(logging, level_name, logging.INFO)
+    )
 
     if include_request_id:
-        format_str = "%(asctime)s - %(name)s - %(levelname)s - [%(request_id)s] - %(message)s"
+        format_str = (
+            "%(asctime)s - %(name)s - %(levelname)s - [%(request_id)s] - %(message)s"
+        )
     else:
         format_str = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 
