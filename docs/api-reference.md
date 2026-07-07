@@ -457,6 +457,7 @@ Key admin API endpoints:
 | POST | `/admin/api/cache/probe` | Probe cache state for messages |
 | GET | `/admin/api/hf/models` | Search HuggingFace models |
 | POST | `/admin/api/hf/download` | Start a model download |
+| GET | `/admin/api/logs` | Tail server.log (file-based, with rotation history) |
 | GET | `/admin/api/logs/stream` | SSE log streaming |
 | POST | `/admin/api/bench/run` | Run throughput benchmark |
 | POST | `/admin/api/bench/accuracy` | Run accuracy benchmark |

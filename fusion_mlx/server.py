@@ -38,6 +38,7 @@ from .middleware import (
     install_probe_fastpath_middleware,
     install_request_body_depth_middleware,
     install_request_body_limit_middleware,
+    install_request_id_middleware,
 )
 
 # GUI compatibility layer
@@ -194,10 +195,16 @@ def _sync_config() -> None:
 
 
 def configure_logging(log_level: str) -> str:
-    import logging as _logging
+    """Configure console logging and return the level name for uvicorn.
 
-    level = getattr(_logging, log_level.upper(), _logging.INFO)
-    _logging.basicConfig(level=level, format="%(levelname)s %(name)s: %(message)s")
+    Delegates to ``fusion_mlx.logging_config.configure_logging`` (colored
+    stderr output, request-id filter, admin-polling access-log suppression,
+    third-party noise taming) while preserving the released
+    ``-> str`` contract that cli_serve relies on when wiring uvicorn.
+    """
+    from .logging_config import configure_logging as _configure_logging
+
+    _configure_logging(level=log_level)
     return log_level.upper()
 
 
@@ -398,6 +405,20 @@ class Server:
         self._load_lock = asyncio.Lock()
         self.settings = Settings.load(Path(self.config.settings_dir) / "settings.json")
 
+        # Daily-rotated file logging — writes {settings_dir}/logs/server.log so
+        # the admin /admin/api/logs endpoint has content to serve. Appends a
+        # file handler to the root logger; console logging is configured
+        # separately by ``configure_logging`` from cli_serve. Best-effort: a
+        # filesystem failure here must not block server startup.
+        try:
+            from .logging_config import configure_file_logging
+
+            log_dir = Path(self.config.settings_dir) / "logs"
+            configure_file_logging(log_dir=log_dir, level="INFO")
+            logger.info("File logging enabled: %s", log_dir / "server.log")
+        except Exception:
+            logger.debug("configure_file_logging failed (non-fatal)", exc_info=True)
+
         from .admin.auth import set_api_key
 
         if self.settings.api_key:
@@ -441,6 +462,11 @@ class Server:
         # Body-size and depth guards (ASGI-level, run before FastAPI routing)
         install_request_body_limit_middleware(app)
         install_request_body_depth_middleware(app)
+
+        # Request-ID correlation — stamps the logging ContextVar per request
+        # and echoes X-Request-Id on the response. Pure ASGI so the ContextVar
+        # propagates into the handler's task.
+        install_request_id_middleware(app)
 
         # Probe fast-path (OUTERMOST — installed last so it runs first)
         install_probe_fastpath_middleware(app)
