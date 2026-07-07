@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from fusion_mlx.exceptions import ModelNotFoundError
+from fusion_mlx.exceptions import AdapterPathError, ModelNotFoundError
 from fusion_mlx.pool.engine_pool import EngineEntry, EnginePool
 
 
@@ -16,6 +16,9 @@ def _make_pool(ceiling: int = 0, **kwargs) -> EnginePool:
     pool._unload_engine = AsyncMock()
     pool._unload_pending_if_idle_locked = AsyncMock()
     pool._wake_process_memory_enforcer = MagicMock()
+    # Allow any absolute adapter path so hot-swap/cap tests focus on logic;
+    # validation is exercised separately in TestAdapterPathValidation.
+    pool._allowed_adapter_dirs = ["/"]
     return pool
 
 
@@ -180,3 +183,58 @@ class TestAdapterCap:
         # a1 should have been unloaded to make room for the new derived entry
         unloaded_keys = [c.args[0] for c in pool._unload_engine.await_args_list]
         assert "a1" in unloaded_keys
+
+
+class TestAdapterPathValidation:
+    def test_default_deny_rejects_direct(self):
+        pool = _make_pool()
+        pool._allowed_adapter_dirs = []
+        with pytest.raises(AdapterPathError):
+            pool._validate_adapter_path("/some/adapter")
+
+    def test_rejects_empty(self):
+        pool = _make_pool()
+        with pytest.raises(AdapterPathError):
+            pool._validate_adapter_path("")
+
+    def test_rejects_absolute_outside_allowed(self, tmp_path):
+        pool = _make_pool()
+        pool._allowed_adapter_dirs = [str(tmp_path)]
+        with pytest.raises(AdapterPathError):
+            pool._validate_adapter_path("/etc/passwd")
+
+    def test_rejects_traversal_outside_allowed(self, tmp_path):
+        pool = _make_pool()
+        pool._allowed_adapter_dirs = [str(tmp_path)]
+        traversal = str(tmp_path) + "/../../etc"
+        with pytest.raises(AdapterPathError):
+            pool._validate_adapter_path(traversal)
+
+    def test_accepts_within_allowed_and_canonicalizes(self, tmp_path):
+        pool = _make_pool()
+        pool._allowed_adapter_dirs = [str(tmp_path)]
+        raw = str(tmp_path) + "/./my_adapter"
+        resolved = pool._validate_adapter_path(raw)
+        assert resolved == str(tmp_path / "my_adapter")
+
+    async def test_get_engine_fast_fails_on_bad_adapter(self):
+        # AdapterPathError must fire before any base lookup / loading.
+        pool = _make_pool()
+        pool._allowed_adapter_dirs = []
+        pool._entries["base"] = _base_entry()
+        _install_load(pool)
+        with pytest.raises(AdapterPathError):
+            await pool.get_engine("base", _lease=True, adapter_path="/evil")
+        assert "base::lora::/evil" not in pool._entries
+        pool._load_engine.assert_not_called()
+
+    async def test_get_engine_accepts_allowed_adapter(self, tmp_path):
+        pool = _make_pool()
+        pool._allowed_adapter_dirs = [str(tmp_path)]
+        pool._entries["base"] = _base_entry()
+        _install_load(pool)
+        adapter = str(tmp_path / "adapter")
+        result = await pool.get_engine("base", _lease=True, adapter_path=adapter)
+        assert result is not None
+        derived = pool._entries[f"base::lora::{adapter}"]
+        assert derived.adapter_path == adapter

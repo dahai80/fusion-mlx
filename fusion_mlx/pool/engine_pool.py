@@ -39,6 +39,7 @@ from ..engines.stt import STTEngine
 from ..engines.tts import TTSEngine
 from ..engines.vlm import VLMBatchedEngine
 from ..exceptions import (
+    AdapterPathError,
     InsufficientMemoryError,
     ModelBusyError,
     ModelLoadingError,
@@ -154,6 +155,7 @@ class EnginePool:
         self._max_adapter_engines: int = int(
             os.getenv("FUSION_MAX_ADAPTER_ENGINES", "4")
         )
+        self._allowed_adapter_dirs: list[str] = self._resolve_allowed_adapter_dirs()
         self._load_seconds_per_gb_ema: float | None = None
         self._load_time_observations: int = 0
         self.configure_hot_cache_budget()
@@ -631,6 +633,41 @@ class EnginePool:
             return model_id
         return f"{model_id}::lora::{adapter_path}"
 
+    @staticmethod
+    def _resolve_allowed_adapter_dirs() -> list[str]:
+        raw = os.getenv("FUSION_LORA_ALLOWED_DIRS", "").strip()
+        if not raw:
+            return []
+        dirs: list[str] = []
+        for part in raw.split(","):
+            part = part.strip()
+            if not part:
+                continue
+            dirs.append(os.path.realpath(os.path.expanduser(part)))
+        return dirs
+
+    @staticmethod
+    def _is_within(child: str, base: str) -> bool:
+        try:
+            return os.path.commonpath([child, base]) == base
+        except ValueError:
+            return False
+
+    def _validate_adapter_path(self, path: str) -> str:
+        if not path or not path.strip():
+            raise AdapterPathError(path or "")
+        real = os.path.realpath(os.path.expanduser(path))
+        if not self._allowed_adapter_dirs:
+            raise AdapterPathError(
+                path,
+                "Per-request LoRA adapters are disabled. Set "
+                "FUSION_LORA_ALLOWED_DIRS (comma-separated list of adapter "
+                "directories) to enable them.",
+            )
+        if not any(self._is_within(real, base) for base in self._allowed_adapter_dirs):
+            raise AdapterPathError(path)
+        return real
+
     def _make_adapter_entry(
         self,
         base: EngineEntry,
@@ -728,6 +765,10 @@ class EnginePool:
             InsufficientMemoryError: If can't free enough memory (all pinned)
             ModelLoadingError: If model is already being loaded
         """
+        # Validate untrusted request-supplied adapter path before any work.
+        # Canonicalizes to realpath and enforces the allow-list (default-deny).
+        if adapter_path:
+            adapter_path = self._validate_adapter_path(adapter_path)
         # Phase 1: Quick check under lock for already-loaded models
         entry_key = self._adapter_key(model_id, adapter_path)
         adapter_victims: list[str] = []

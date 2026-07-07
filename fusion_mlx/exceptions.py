@@ -468,6 +468,21 @@ class ModelLoadingError(EnginePoolError):
         super().__init__(message)
 
 
+class AdapterPathError(EnginePoolError):
+    """Raised when a request-supplied LoRA adapter path is invalid or outside
+    the configured allow-list. Maps to HTTP 400 (client error)."""
+
+    def __init__(self, path: str, message: str | None = None):
+        self.path = path
+        if message is None:
+            message = (
+                f"Adapter path '{path}' is empty, invalid, or outside the "
+                f"allowed adapter directories. Set FUSION_LORA_ALLOWED_DIRS "
+                f"(comma-separated) to enable per-request LoRA adapters."
+            )
+        super().__init__(message)
+
+
 class ModelBusyError(EnginePoolError):
     """Raised when an operation would unload a model that is currently in use."""
 
