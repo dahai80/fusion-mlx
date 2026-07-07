@@ -311,6 +311,7 @@ fusion-mlx/
 - [CLI Reference](docs/cli-reference.md) — All commands and flags
 - [Configuration](docs/configuration.md) — Memory tiers, scheduler settings, TurboQuant, aliases, executor pools
 - [Speculative Decoding](docs/speculative-decoding.md) — Suffix/DFlash/DSpark/MTP/VLM-MTP methods, selection guide, auto-router
+- [Video Input](docs/video-input.md) — VLM video support: `video_url` API, frame extraction, Qwen native path, limits
 - [FR Differentiation](docs/FR_DIFFERENTIATION.md) — Verified analysis of fusion-mlx's spec-decode/TurboQuant/scheduling differentiation
 
 ## License
