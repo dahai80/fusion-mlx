@@ -10,6 +10,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+pytest.importorskip("mlx.utils")  # real mlx runtime; Linux CI ships a flat mlx
+
 from fusion_mlx.engines.batched import BatchedEngine
 from fusion_mlx.model_profiles import MODEL_SPECIFIC_PROFILE_FIELDS
 from fusion_mlx.model_settings import ModelSettings, ModelSettingsManager
