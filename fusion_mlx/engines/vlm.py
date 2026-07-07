@@ -107,6 +107,9 @@ class VLMBatchedEngine(BaseEngine):
         self._loaded = False
         self._vision_cache = None
         self._vision_cache_enabled = True
+        self._grammar_compiler = None
+        self._grammar_compiler_init_attempted = False
+        self._vlm_mtp_drafter = None
 
     @property
     def model_name(self) -> str:
@@ -140,6 +143,116 @@ class VLMBatchedEngine(BaseEngine):
             return self._engine.engine.scheduler.block_aware_cache is not None
         except AttributeError:
             return False
+
+    @property
+    def grammar_compiler(self):
+        if self._grammar_compiler is not None:
+            return self._grammar_compiler
+        if self._grammar_compiler_init_attempted:
+            return None
+        self._grammar_compiler_init_attempted = True
+        try:
+            from ..api.grammar import create_grammar_compiler
+
+            self._grammar_compiler = create_grammar_compiler(
+                self._tokenizer, self._vlm_model
+            )
+            logger.info("GrammarCompiler initialized for %s", self._model_name)
+        except Exception as e:
+            logger.info(
+                "GrammarCompiler init failed for %s: %s", self._model_name, e
+            )
+        return self._grammar_compiler
+
+    @property
+    def message_extractor(self):
+        try:
+            from ..parsers.output_parser import detect_message_extractor
+
+            model_config = getattr(self._vlm_model, "config", None)
+            return detect_message_extractor(self._model_name, model_config)
+        except Exception:
+            return None
+
+    @property
+    def supports_tool_calling(self) -> bool:
+        return bool(getattr(self._tokenizer, "has_tool_calling", False))
+
+    def set_vlm_mtp_drafter(self, drafter: Any) -> None:
+        self._vlm_mtp_drafter = drafter
+        if self._engine is not None:
+            try:
+                scheduler = self._engine.engine.scheduler
+                block_size = None
+                if self._model_settings:
+                    block_size = getattr(
+                        self._model_settings, "vlm_mtp_draft_block_size", None
+                    )
+                if hasattr(scheduler, "set_vlm_mtp_drafter"):
+                    scheduler.set_vlm_mtp_drafter(
+                        drafter, draft_block_size=block_size
+                    )
+            except Exception as e:
+                logger.warning("Failed to set VLM MTP drafter on scheduler: %s", e)
+
+    @property
+    def vlm_mtp_drafter(self) -> Any | None:
+        return self._vlm_mtp_drafter
+
+    def _inject_tool_calling(self, tokenizer) -> None:
+        chat_template = getattr(tokenizer, "chat_template", None)
+        if not chat_template:
+            return
+        try:
+            from mlx_vlm.tool_parsers import (
+                _infer_tool_parser,
+                load_tool_module,
+            )
+
+            tool_parser_type = _infer_tool_parser(chat_template)
+            if tool_parser_type is None:
+                return
+            try:
+                tool_module = load_tool_module(tool_parser_type)
+            except ImportError:
+                logger.warning(
+                    "VLM tool parser module not found: %s", tool_parser_type
+                )
+                return
+        except ImportError:
+            try:
+                import importlib
+
+                from mlx_lm.tokenizer_utils import (
+                    _infer_tool_parser as _mlx_lm_infer,
+                )
+            except ImportError:
+                return
+            tool_parser_type = _mlx_lm_infer(chat_template)
+            if tool_parser_type is None:
+                return
+            try:
+                tool_module = importlib.import_module(
+                    f"mlx_lm.tool_parsers.{tool_parser_type}"
+                )
+            except ImportError:
+                logger.warning(
+                    "VLM tool parser module not found: %s", tool_parser_type
+                )
+                return
+
+        tool_call_start = tool_module.tool_call_start
+        tool_call_end = tool_module.tool_call_end
+        vocab = tokenizer.get_vocab()
+        if (tool_call_start and tool_call_start not in vocab) or (
+            tool_call_end and tool_call_end not in vocab
+        ):
+            return
+        tokenizer.has_tool_calling = True
+        tokenizer.tool_call_start = tool_call_start
+        tokenizer.tool_call_end = tool_call_end
+        tokenizer.tool_parser = tool_module.parse_tool_call
+        logger.info("VLM tool calling enabled: parser=%s", tool_parser_type)
 
     async def start(self) -> None:
         if self._loaded:
@@ -221,6 +334,66 @@ class VLMBatchedEngine(BaseEngine):
         )
         await self._engine.engine.start()
 
+        # SpecPrefill: load draft model if configured
+        if self._model_settings is not None:
+            specprefill_draft = getattr(
+                self._model_settings, "specprefill_draft_model", None
+            )
+            specprefill_enabled = getattr(
+                self._model_settings, "specprefill_enabled", False
+            )
+            if specprefill_enabled and specprefill_draft:
+                try:
+                    from mlx_lm import load as mlx_lm_load
+
+                    def _load_specprefill_draft():
+                        draft_model, _ = mlx_lm_load(
+                            specprefill_draft,
+                            trust_remote_code=self._trust_remote_code,
+                        )
+                        return draft_model
+
+                    draft_model = await loop.run_in_executor(
+                        get_executor("io"), _load_specprefill_draft
+                    )
+                    self._engine.engine.scheduler.set_specprefill_draft_model(
+                        draft_model, draft_model_name=specprefill_draft
+                    )
+                    logger.info(
+                        "SpecPrefill: draft model loaded (%s)", specprefill_draft
+                    )
+                except Exception as e:
+                    logger.error("SpecPrefill: draft model load failed: %s", e)
+
+        # TurboQuant KV cache
+        if self._model_settings is not None:
+            tq_enabled = getattr(
+                self._model_settings, "turboquant_kv_enabled", False
+            )
+            if tq_enabled:
+                try:
+                    from mlx_vlm.turboquant import turboquant_attention
+
+                    tq_bits = getattr(
+                        self._model_settings, "turboquant_kv_bits", 4
+                    )
+                    tq_skip = getattr(
+                        self._model_settings, "turboquant_skip_last", True
+                    )
+                    turboquant_attention(
+                        self._vlm_model.language_model,
+                        kv_bits=tq_bits,
+                        skip_last=tq_skip,
+                    )
+                    logger.info(
+                        "TurboQuant KV cache enabled for VLM: %s bits", tq_bits
+                    )
+                except Exception as e:
+                    logger.warning("TurboQuant KV init failed: %s", e)
+
+        # Inject tool calling support into VLM tokenizer
+        self._inject_tool_calling(self._tokenizer)
+
         self._loaded = True
         from ..scheduler.helpers import register_llm_engine
 
@@ -243,6 +416,9 @@ class VLMBatchedEngine(BaseEngine):
         self._processor = None
         self._adapter = None
         self._tokenizer = None
+        self._grammar_compiler = None
+        self._grammar_compiler_init_attempted = False
+        self._vlm_mtp_drafter = None
         if self._loaded:
             from ..scheduler.helpers import unregister_llm_engine
 
