@@ -703,41 +703,58 @@ class VLMBatchedEngine(BaseEngine):
             template_kwargs.pop("enable_thinking", None)
             prompt = template_target.apply_chat_template(messages, **template_kwargs)
 
-        # Load video frames natively via mlx_vlm
+        # Load video frames natively via mlx_vlm.
+        # load_video(ele) expects {"video": path, "fps", "max_frames"} and
+        # returns (ndarray (T,C,H,W), sample_fps).
         all_images = []
+
+        def _fallback_cv2_frames(path: str) -> None:
+            frames = extract_video_frames_smart(
+                path, fps=video_fps, max_frames=video_max_frames
+            )
+            frame_paths = save_frames_to_temp(frames)
+            from ..utils.image import load_image
+
+            for fp in frame_paths:
+                all_images.append(load_image(fp))
+            logger.info("Fallback video: %d frames from %s", len(frame_paths), path)
+
         for video in videos:
             try:
                 video_path = process_video_input(video)
                 try:
                     from mlx_vlm.video_generate import load_video
 
-                    video_frames = load_video(video_path, video_fps, video_max_frames)
-                    all_images.extend(video_frames)
+                    ele = {
+                        "video": video_path,
+                        "fps": video_fps,
+                        "max_frames": video_max_frames,
+                    }
+                    video_np, _sample_fps = load_video(ele)
+                    import numpy as np
+                    from PIL import Image
+
+                    for t in range(video_np.shape[0]):
+                        frame = np.transpose(video_np[t], (1, 2, 0))
+                        all_images.append(Image.fromarray(frame.astype(np.uint8)))
                     logger.info(
                         "Native video: %d frames from %s",
-                        len(video_frames),
+                        int(video_np.shape[0]),
                         video_path,
                     )
-                except (ImportError, Exception) as e:
-                    logger.debug("mlx_vlm load_video failed, falling back: %s", e)
-                    from ..utils.video import (
-                        extract_video_frames_smart,
-                        save_frames_to_temp,
-                    )
-
-                    frames = extract_video_frames_smart(
-                        video_path, fps=video_fps, max_frames=video_max_frames
-                    )
-                    frame_paths = save_frames_to_temp(frames)
-                    from ..utils.image import load_image
-
-                    for fp in frame_paths:
-                        all_images.append(load_image(fp))
-                    logger.info(
-                        "Fallback video: %d frames from %s",
-                        len(frame_paths),
+                except ImportError:
+                    logger.warning(
+                        "mlx_vlm.video_generate unavailable, fallback to cv2: %s",
                         video_path,
                     )
+                    _fallback_cv2_frames(video_path)
+                except Exception as e:
+                    logger.warning(
+                        "Native load_video failed for %s: %s; fallback to cv2",
+                        video_path,
+                        e,
+                    )
+                    _fallback_cv2_frames(video_path)
             except Exception as e:
                 logger.warning("Video processing failed for %s: %s", video, e)
 
