@@ -102,8 +102,7 @@ def check_equivalence(qkvz_w, ba_w, q_w, k_w, v_w, z_w, b_w, a_w):
     eq_b = mx.allclose(fb, ub, atol=1e-3)
     eq_a = mx.allclose(fa, ua, atol=1e-3)
     if not (eq_qkv and eq_z and eq_b and eq_a):
-        print("  ERROR: fused != unfused (qkv={}, z={}, b={}, a={})".format(
-            eq_qkv, eq_z, eq_b, eq_a), file=sys.stderr)
+        print(f"  ERROR: fused != unfused (qkv={eq_qkv}, z={eq_z}, b={eq_b}, a={eq_a})", file=sys.stderr)
         return False
     return True
 
