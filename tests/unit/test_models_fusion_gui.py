@@ -15,13 +15,12 @@ from __future__ import annotations
 import json
 from datetime import datetime
 
-import pytest
-
 from fusion_gui.models import (
     AppSettings,
+    Base,
     InferenceRequest,
-    InferenceStatus,
     InferenceSession,
+    InferenceStatus,
     Model,
     ModelCapability,
     ModelStatus,
@@ -29,7 +28,6 @@ from fusion_gui.models import (
     QueueStatus,
     RequestQueue,
     SystemMetrics,
-    Base,
 )
 
 
@@ -131,7 +129,9 @@ class TestInferenceSession:
 
 class TestInferenceRequest:
     def _make(self):
-        return InferenceRequest(session_id="s1", model_id=1, request_type="chat", input_data="{}")
+        return InferenceRequest(
+            session_id="s1", model_id=1, request_type="chat", input_data="{}"
+        )
 
     def test_get_input_data(self):
         r = self._make()
@@ -204,7 +204,9 @@ class TestSystemMetrics:
         assert m.memory_usage_percent == 0.0
 
     def test_repr(self):
-        m = SystemMetrics(memory_used_gb=4, memory_total_gb=8, timestamp=datetime.utcnow())
+        m = SystemMetrics(
+            memory_used_gb=4, memory_total_gb=8, timestamp=datetime.utcnow()
+        )
         assert "SystemMetrics(timestamp=" in repr(m)
         assert "memory_used=4GB" in repr(m)
 

@@ -2,7 +2,9 @@
 """Integration-style tests for the DSpark MVP plumbing."""
 
 from __future__ import annotations
+
 import pytest
+
 pytest.importorskip("mlx")  # suite needs mlx runtime; skip if absent
 pytest.skip("requires mlx runtime (stub shadow breaks bodies)", allow_module_level=True)
 
@@ -45,10 +47,7 @@ def test_info_dspark_marks_4bit_alias_ineligible(capsys) -> None:
     captured = capsys.readouterr()
     combined = captured.out + captured.err
     # DSpark eligibility section should mention ineligible or 4-bit
-    has_dspark_section = (
-        "DSpark" in combined
-        or "dspark" in combined.lower()
-    )
+    has_dspark_section = "DSpark" in combined or "dspark" in combined.lower()
     if has_dspark_section:
         assert "ineligible" in combined.lower() or "4-bit" in combined.lower()
 
@@ -60,7 +59,14 @@ def test_models_listing_renders_dspark_column(capsys) -> None:
 
     from fusion_mlx.cli import models_command
 
-    fake_resp = type("R", (), {"status_code": 200, "json": lambda self: {"data": [{"id": "test-model", "type": "llm"}]}})()
+    fake_resp = type(
+        "R",
+        (),
+        {
+            "status_code": 200,
+            "json": lambda self: {"data": [{"id": "test-model", "type": "llm"}]},
+        },
+    )()
     with patch.object(requests, "get", return_value=fake_resp):
         models_command(None)
     captured = capsys.readouterr()
@@ -68,7 +74,6 @@ def test_models_listing_renders_dspark_column(capsys) -> None:
 
 
 def test_build_app_healthz_models_and_completion() -> None:
-    from types import SimpleNamespace
     from unittest.mock import MagicMock
 
     from fusion_mlx.speculative.dspark.runtime import DSparkRuntime
@@ -111,7 +116,11 @@ def test_build_app_healthz_models_and_completion() -> None:
     r = client.get("/healthz")
     assert r.status_code == 200
     body = r.json()
-    assert body.get("engine") == "dspark" or body.get("ready") is True or "dspark" in str(body).lower()
+    assert (
+        body.get("engine") == "dspark"
+        or body.get("ready") is True
+        or "dspark" in str(body).lower()
+    )
 
     r = client.get("/v1/models")
     assert r.status_code == 200
