@@ -656,7 +656,20 @@ class Server:
         # (instead of using getter functions) can find engine_pool etc.
         _server_state["engine_pool"] = self.pool
         _server_state["process_memory_enforcer"] = self.pool._process_memory_enforcer
-        _server_state["settings_manager"] = None  # flat Settings has no manager
+        # Initialize ModelSettingsManager for per-model settings + profiles
+        settings_manager = None
+        try:
+            from .model_settings import ModelSettingsManager
+
+            settings_path = Path(self.config.settings_dir)
+            settings_manager = ModelSettingsManager(settings_path)
+            logger.info(
+                "ModelSettingsManager initialized at %s", settings_path
+            )
+        except Exception as e:
+            logger.warning("Failed to initialize ModelSettingsManager: %s", e)
+
+        _server_state["settings_manager"] = settings_manager
         _server_state["default_model"] = None  # set when a model is marked default
         # Simple namespace for sampling defaults (read by admin helpers)
         import types
@@ -696,7 +709,7 @@ class Server:
         set_admin_getters(
             state_getter=lambda: _server_state,
             pool_getter=lambda: self.pool,
-            settings_manager_getter=lambda: None,
+            settings_manager_getter=lambda: _server_state.get("settings_manager"),
             global_settings_getter=lambda: self.settings,
         )
 
