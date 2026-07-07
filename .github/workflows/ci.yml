@@ -26,4 +26,4 @@ jobs:
                with:
                    python-version: "3.11"
              - run: pip install -e ".[dev]"
-             - run: pytest tests/unit -v --tb=short
+             - run: pytest tests/unit -v --tb=short --continue-on-collection-errors

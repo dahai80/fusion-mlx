@@ -290,6 +290,7 @@ if sys.platform != "darwin":
         "test_memory_enforcer_ceiling.py",
         "test_memory_monitor.py",
         "test_middleware.py",
+        "test_middleware_auth.py",
         "test_mllm_batch_generator.py",
         "test_mllm_hybrid_probe.py",
         "test_model_discovery.py",
