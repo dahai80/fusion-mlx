@@ -23,7 +23,8 @@ Design constraints (from PR #649 spec):
   with ``refs/main`` pinned. The next ``hf_hub_download`` /
   ``snapshot_download`` call sees a cache hit. We do NOT invent a
   parallel cache.
-* Default ON — set ``RAPID_MLX_MODEL_MIRROR=""`` to disable.
+* Default ON — set ``FUSION_MLX_MODEL_MIRROR=""`` to disable
+  (``RAPID_MLX_MODEL_MIRROR=""`` is the deprecated alias).
 * No new third-party deps — stdlib ``urllib`` + ``huggingface_hub``.
 * Concurrency capped at 4 to stay polite to Cloudflare.
 * Resume — interrupted ``.part`` files are completed via ``Range`` requests.
@@ -50,7 +51,8 @@ from typing import Any
 # Cloudflare's edge fronts the R2 bucket at this hostname. The catalog
 # lives at ``/api/models`` and per-file objects at
 # ``/<owner>/<repo>/<filename>``. Override / disable with the
-# ``RAPID_MLX_MODEL_MIRROR`` env var.
+# ``FUSION_MLX_MODEL_MIRROR`` env var (``RAPID_MLX_MODEL_MIRROR`` is
+# the deprecated alias).
 MIRROR_DEFAULT = "https://models.rapidmlx.com"
 
 # Cloudflare 403s the default ``Python-urllib/*`` UA — verified by the
@@ -182,8 +184,20 @@ def _mirror_base() -> str:
 
     Empty string means "force HF" — distinct from "unset" which means
     "use the project default". This is the documented opt-out knob.
+    ``FUSION_MLX_MODEL_MIRROR`` is the primary env var;
+    ``RAPID_MLX_MODEL_MIRROR`` is the deprecated alias.
     """
-    return os.environ.get("RAPID_MLX_MODEL_MIRROR", MIRROR_DEFAULT).strip()
+    val = os.environ.get("FUSION_MLX_MODEL_MIRROR")
+    if val is not None:
+        return val.strip()
+    val = os.environ.get("RAPID_MLX_MODEL_MIRROR")
+    if val is not None:
+        import logging as _logging
+        _logging.getLogger(__name__).warning(
+            "env var RAPID_MLX_MODEL_MIRROR is deprecated, use FUSION_MLX_MODEL_MIRROR instead"
+        )
+        return val.strip()
+    return MIRROR_DEFAULT
 
 
 def fetch_catalog(
@@ -218,9 +232,10 @@ def fetch_catalog_with_status(
     url = f"{base.rstrip('/')}/api/models"
     # Codex round-11 NIT #3: ``urllib.request.Request(url)`` raises
     # ``ValueError`` for a malformed URL (e.g. a user typo in
-    # ``RAPID_MLX_MODEL_MIRROR``). Construct it inside the guarded block
-    # so it routes to "treat as transient, fall through to HF" instead
-    # of escaping the whole pull with a raw stack trace.
+    # ``FUSION_MLX_MODEL_MIRROR`` or ``RAPID_MLX_MODEL_MIRROR``). Construct
+    # it inside the guarded block so it routes to "treat as transient,
+    # fall through to HF" instead of escaping the whole pull with a raw
+    # stack trace.
     try:
         req = urllib.request.Request(
             url,
@@ -1126,6 +1141,7 @@ def download_with_mirror_fallback(
     # Catalog lookup — for the project default mirror, the catalog
     # confirms whether the alias is mirrored and gives us
     # ``download_url_base``. For a custom mirror (user set
+    # ``FUSION_MLX_MODEL_MIRROR=<other URL>`` or the deprecated
     # ``RAPID_MLX_MODEL_MIRROR=<other URL>``), the catalog endpoint may
     # not exist — fall back to the direct-layout convention
     # (``<base>/<owner>/<repo>/<file>``) that PR #647 introduced.
@@ -1188,7 +1204,7 @@ def download_with_mirror_fallback(
         # Catalog unreachable (custom mirror or transient outage); we
         # still try direct ``<base>/<owner>/<repo>/<file>`` URLs and
         # fall back to HF per file on 404. Preserves PR #647's contract
-        # for non-default ``RAPID_MLX_MODEL_MIRROR`` URLs.
+        # for non-default ``FUSION_MLX_MODEL_MIRROR`` / ``RAPID_MLX_MODEL_MIRROR`` URLs.
         _print_dim(
             f"  {BOLD}Pulling {repo_id}{RESET} {DIM}(mirror direct-layout, "
             f"fallback: HF){RESET}"

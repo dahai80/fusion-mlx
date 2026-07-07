@@ -36,18 +36,33 @@ _JSON_CONTENT_TYPE_OPTIONAL_PATHS = frozenset(
 )
 
 DEFAULT_MAX_BODY_DEPTH = 64
-MAX_BODY_DEPTH_ENV = "FUSION_MLX_MAX_BODY_DEPTH"
+MAX_BODY_DEPTH_ENV_PRIMARY = "FUSION_MLX_MAX_BODY_DEPTH"
+MAX_BODY_DEPTH_ENV_LEGACY = "RAPID_MLX_MAX_BODY_DEPTH"
+
+_legacy_warned: set[str] = set()
 
 
 def _resolve_max_body_depth() -> int:
-    raw = os.environ.get(MAX_BODY_DEPTH_ENV, "").strip()
-    if not raw:
-        return DEFAULT_MAX_BODY_DEPTH
+    raw = os.environ.get(MAX_BODY_DEPTH_ENV_PRIMARY, "").strip()
+    if raw:
+        return _parse_int_or(raw, DEFAULT_MAX_BODY_DEPTH)
+    raw = os.environ.get(MAX_BODY_DEPTH_ENV_LEGACY, "").strip()
+    if raw:
+        if MAX_BODY_DEPTH_ENV_LEGACY not in _legacy_warned:
+            _legacy_warned.add(MAX_BODY_DEPTH_ENV_LEGACY)
+            logger.warning(
+                "env var %s is deprecated, use %s instead",
+                MAX_BODY_DEPTH_ENV_LEGACY, MAX_BODY_DEPTH_ENV_PRIMARY,
+            )
+        return _parse_int_or(raw, DEFAULT_MAX_BODY_DEPTH)
+    return DEFAULT_MAX_BODY_DEPTH
+
+
+def _parse_int_or(raw: str, default: int) -> int:
     try:
-        val = int(raw)
-        return val
+        return int(raw)
     except ValueError:
-        return DEFAULT_MAX_BODY_DEPTH
+        return default
 
 
 def _quick_depth_might_exceed(body: bytes, max_depth: int) -> bool:
@@ -134,7 +149,7 @@ async def _send_400_depth(send, *, max_depth: int) -> None:
             "error": {
                 "message": (
                     f"Request body JSON nesting depth exceeds the {max_depth}-level "
-                    f"server cap (set via {MAX_BODY_DEPTH_ENV})."
+                    f"server cap (set via {MAX_BODY_DEPTH_ENV_PRIMARY})."
                 ),
                 "type": "invalid_request_error",
                 "code": "request_body_too_deep",
