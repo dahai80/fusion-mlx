@@ -1250,9 +1250,10 @@ class TestNativeEmbeddingLoading:
 
     def _write_full_native_checkpoint(self, tmp_path, config):
         """Write a complete native checkpoint for a small embedding model."""
-        from fusion_mlx.models.xlm_roberta import Model, ModelArgs
         from mlx.utils import tree_flatten
         from safetensors.numpy import save_file
+
+        from fusion_mlx.models.xlm_roberta import Model, ModelArgs
 
         model_config = ModelArgs(**config)
         model = Model(model_config)
@@ -1643,9 +1644,10 @@ class TestNativeQwen2Embedding:
 
     def _write_full_qwen2_checkpoint(self, tmp_path, config):
         """Write a complete native Qwen2 checkpoint from the adapter's own params."""
-        from fusion_mlx.models.qwen2_embedding import Model, ModelArgs
         from mlx.utils import tree_flatten
         from safetensors.numpy import save_file
+
+        from fusion_mlx.models.qwen2_embedding import Model, ModelArgs
 
         model = Model(ModelArgs(**config))
         weights = {
@@ -1698,6 +1700,7 @@ class TestNativeQwen2Embedding:
         would read a pad position under right padding and diverge.
         """
         import mlx.core as mx
+
         from fusion_mlx.models.qwen2_embedding import Model, ModelArgs
 
         mx.random.seed(0)
@@ -1728,6 +1731,7 @@ class TestNativeQwen2Embedding:
         distinguishes jina-code (causal) from gte-Qwen2 (``is_causal: false``).
         """
         import mlx.core as mx
+
         from fusion_mlx.models.qwen2_embedding import Model, ModelArgs
 
         base = mx.array([[5, 9, 7, 3]])

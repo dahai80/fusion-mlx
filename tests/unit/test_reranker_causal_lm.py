@@ -24,8 +24,9 @@ class TestXLMRobertaReranker:
     @pytest.mark.skipif(not HAS_MLX, reason="MLX not available")
     def test_load_xlm_roberta_switches_to_eval_mode(self, tmp_path):
         """Native reranker load must disable dropout for deterministic scores."""
-        from fusion_mlx.models.xlm_roberta import Model, ModelArgs
         from mlx.utils import tree_flatten
+
+        from fusion_mlx.models.xlm_roberta import Model, ModelArgs
 
         config = {
             "model_type": "xlm-roberta",
