@@ -63,13 +63,41 @@ weight-fetch-dominated bandwidth path). A native W4A8 kernel should be
   when native available and seq ≥ threshold; decode stays on `mx.quantized_matmul`.
 - Slice 3: end-to-end bench vs baseline (W4) at prefill to confirm net win.
 
-### Fused GDN megakernel — UNMEASURED (next)
+### Fused GDN projections — MEASURED
 
-`mx.compile` measured non-viable for this op (prior session). A hand-written
-Metal megakernel has not been measured. Next kickoff step: a viability harness
-analogous to the W4A8 one, comparing unfused mlx-op GDN vs a hand-written
-fused kernel on the GLM projection shapes. Defer until W4A8 Slice 1 lands or
-is explicitly deprioritized.
+`mx.compile` measured non-viable for this op (prior session). This harness
+measures the **projection-fusion** speedup (the fork's `qwen3_5.py` GDN class
+already fuses q/k/v/z into one `in_proj_qkvz` matmul + b/a into one
+`in_proj_ba` matmul = 2 matmuls, vs the unfused 6-matmul form) on real
+Qwen3.6-27B GDN shapes. It is the lower bound for a full fused megakernel
+(which would additionally fuse conv1d + delta update + out_proj, eliminating
+the 22528-wide intermediate round-trip through global memory).
+
+Harness: `scripts/bench_phase_c_fused_gdn.py` (mlx 0.31.2, M-series GPU).
+Shapes: hidden=4096, key_dim=3072, value_dim=8192, num_v_heads=64 →
+qkvz out=22528, ba out=128. Correctness verified: fused-split == unfused.
+
+| Regime | fused (2 matmul) | unfused (6 matmul) | speedup | verdict |
+|---|---|---|---|---|
+| decode b1 (1×1×4096) | 0.88 ms | 0.90 ms | 1.03x | BREAK-EVEN |
+| decode b4 (4×1×4096) | 1.04 ms | 1.12 ms | 1.08x | BREAK-EVEN |
+| prefill 512 | 2.25 ms | 2.60 ms | 1.16x | BREAK-EVEN |
+| prefill 2048 | 7.85 ms | 11.20 ms | 1.43x | FUSED WINS |
+| prefill 8192 | 35.1 ms | 44.2 ms | 1.26x | FUSED WINS |
+
+**Verdict:** projection fusion is a **net win at prefill** (1.26–1.43x at
+seq≥2048, the compute-bound regime) and **break-even at decode** (kernel-
+launch-bound, no harm). The fork's fused `qkv3_5.py` GDN class is justified
+and stays — it is a free prefill win with no decode downside, and it is what
+unblocks quant2-all loading (fused `in_proj_qkvz`/`in_proj_ba`).
+
+A **full fused GDN megakernel is NOT worth implementing** this branch: the
+projection-fusion floor is only 1.26–1.43x, and the remaining headroom
+(conv1d + delta glue, a smaller fraction of GDN cost) does not justify a
+multi-day Metal effort relative to W4A8, which is a genuine mlx-core gap with
+measured prefill promise (2.4–4.7% overhead to absorb). Defer the megakernel
+indefinitely; revisit only if GDN layers become a profiled hotspot on real
+Qwen3.6-27B end-to-end runs.
 
 ## Artifacts on this branch
 
@@ -77,8 +105,10 @@ is explicitly deprioritized.
   (matches `glm_moe_dsa` convention: `_ext` + `NATIVE_SYMBOLS` +
   `is_native_available`/`has_symbol`/`missing_symbols` + `w4a8_fused_matmul`
   fallback wrapper). Native not built yet → `is_native_available()` is False.
-- `scripts/bench_phase_c_w4a8_viability.py` — the viability harness (run:
+- `scripts/bench_phase_c_w4a8_viability.py` — the W4A8 viability harness (run:
   `python scripts/bench_phase_c_w4a8_viability.py`).
+- `scripts/bench_phase_c_fused_gdn.py` — the Fused-GDN projection viability
+  harness (run: `python scripts/bench_phase_c_fused_gdn.py`).
 - `PHASE_C.md` — this doc.
 
 ## Why this is the right kickoff (not "write a kernel now")
