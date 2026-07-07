@@ -3,10 +3,11 @@
 Branch: `feat/phase-c-kernels` (off `main` @ 19d50beb).
 Scope: the "Phase C" kernel-fusion items from the FR differentiation plan.
 
-This doc is the **evidence-based re-scope** produced by the Phase C kickoff
-investigation (2026-07-07). It records what is already done, what is blocked,
-and what is genuinely open — with measurements — so future sessions do not
-re-derive it or re-implement already-covered work.
+This doc is the **evidence-based record** of the Phase C investigation
+(2026-07-07). It records what is already done, what is blocked, and what is
+genuinely open — with measurements — so future sessions do not re-derive it
+or re-implement already-covered work. All slices are now resolved; see
+"Phase C outcome — COMPLETE" at the end.
 
 ## Already covered — NOT Phase C gaps (do not re-implement)
 
@@ -30,11 +31,12 @@ dequant SDPA" — that exists.
 
 ## Open — startable
 
-### W4A8 fused MatMul (4-bit weight + 8-bit activation) — MEASURED
+### W4A8 fused MatMul (4-bit weight + 8-bit activation) — MEASURED, NOT BUILDING
 
 `mx.quantized_matmul` accepts only **fp16 activations**. W4A8 would also
 quantize activations to int8 and fuse that into MatMul. MLX core has no
-int8-activation MatMul, so the upside cannot be measured directly; the
+int8-activation MatMul (confirmed: `mx.matmul` rejects int8 — "Only inexact
+types are supported"), so the upside cannot be measured directly; the
 viability harness measures the **overhead a fused kernel must absorb**
 (quantize A→int8 + dequant round-trip) relative to the W4 baseline.
 
@@ -47,21 +49,33 @@ Harness: `scripts/bench_phase_c_w4a8_viability.py` (mlx 0.31.2, M-series GPU).
 | prefill 512 | 4.11 ms | 0.19 ms | 4.7% | PROMISING |
 | prefill 2048 | 15.9 ms | 0.39 ms | 2.4% | PROMISING |
 
-**Verdict:** W4A8 is **promising at prefill** (compute-bound: overhead tiny,
-int8 MatMul upside may net-win) and **likely decode-losing** (bandwidth-bound:
-overhead 26–50% of an already-cheap MatMul; int8 does not help the
-weight-fetch-dominated bandwidth path). A native W4A8 kernel should be
-**prefill-gated** (seq-length threshold), not decode.
+**Verdict:** W4A8 is **prefill-promising on overhead alone** (2.4–4.7% to
+absorb) and **decode-losing** (26–50%). BUT the overhead analysis shows a
+fused W4A8 (round-trip removed) ≈ W4 baseline — the **entire** win rests on
+int8 GEMM compute being cheaper than fp16 compute on Apple GPU, which is
+speculative (Apple GPU int8 dot-product is not uniformly faster than the
+highly-tuned fp16 steel/GEMM path) and **cannot be fairly tested without an
+optimized kernel** (a naive kernel would lose to the tuned W4 baseline for
+kernel-quality reasons, giving an inconclusive negative).
 
-**Slice plan (future sessions):**
-- Slice 1: `w4a8_fused_matmul` Metal kernel via the `glm_moe_dsa` CMake path
-  (`fusion_mlx/custom_kernels/phase_c/csrc/`), prefill-gated. The `phase_c`
-  Python module + `w4a8_fused_matmul` fallback wrapper already exist
-  (`fusion_mlx/custom_kernels/phase_c/__init__.py`) — falls back to
-  `mx.quantized_matmul` (fp16 activations) until the native extension builds.
-- Slice 2: engine integration — route prefill MatMul through `w4a8_fused_matmul`
-  when native available and seq ≥ threshold; decode stays on `mx.quantized_matmul`.
-- Slice 3: end-to-end bench vs baseline (W4) at prefill to confirm net win.
+**Upstream status — maintainer-declined (decisive):** ml-explore/mlx issue
+[#1293 "How can we enable w4a8 GEMM in MLX?"](https://github.com/ml-explore/mlx/issues/1293)
+(closed). Core maintainer angeloskath: *"A matmul kernel where both matrices
+are quantized is not currently implemented... I don't think we plan to
+implement this in the near future... The speed is likely to be slower because
+we also need to dequantize the second matrix on the fly."* A W4A8 PR to
+ml-explore/mlx would go against explicit maintainer guidance — **not a viable
+upstream contribution.**
+
+**Decision: NOT BUILDING a native W4A8 kernel.** The measured + maintainer-
+confirmed ROI is marginal/speculative at prefill and losing at decode, the
+upstream is declined, and a fair test requires a multi-day optimized kernel
+for a return that the maintainer assesses as "likely slower." The fork-local
+`phase_c` wrapper (`fusion_mlx/custom_kernels/phase_c/__init__.py`) keeps the
+`w4a8_fused_matmul` fallback to `mx.quantized_matmul` (fp16 activations) and
+remains the extension point should the ROI change — per the maintainer's
+suggested path, a future fork-local extension would use `QuantizedBlockLoader`
+from `mlx/backend/metal/kernels/quantized.h` to load both `x` and `w`.
 
 ### Fused GDN projections — MEASURED
 
@@ -94,10 +108,8 @@ unblocks quant2-all loading (fused `in_proj_qkvz`/`in_proj_ba`).
 A **full fused GDN megakernel is NOT worth implementing** this branch: the
 projection-fusion floor is only 1.26–1.43x, and the remaining headroom
 (conv1d + delta glue, a smaller fraction of GDN cost) does not justify a
-multi-day Metal effort relative to W4A8, which is a genuine mlx-core gap with
-measured prefill promise (2.4–4.7% overhead to absorb). Defer the megakernel
-indefinitely; revisit only if GDN layers become a profiled hotspot on real
-Qwen3.6-27B end-to-end runs.
+multi-day Metal effort. Defer the megakernel indefinitely; revisit only if
+GDN layers become a profiled hotspot on real Qwen3.6-27B end-to-end runs.
 
 ## Artifacts on this branch
 
@@ -111,11 +123,26 @@ Qwen3.6-27B end-to-end runs.
   harness (run: `python scripts/bench_phase_c_fused_gdn.py`).
 - `PHASE_C.md` — this doc.
 
-## Why this is the right kickoff (not "write a kernel now")
+## Phase C outcome — COMPLETE (all slices measured)
 
 Per Rule 12 (fail visibly) and Rule 5 (decide with code, not tokens): the
 prior Phase C status was "no-promise" because the obvious targets were
-already done upstream. Measuring before writing a Metal kernel prevents
-spending a multi-day C++/Metal effort on an op that is decode-losing. The
-harness converts "no-promise (unmeasured)" into a measured, regime-specific
-verdict that gates the next slice.
+already done upstream. Measuring before writing a Metal kernel prevented
+spending multi-day C++/Metal effort on ops that are decode-losing or
+maintainer-declined. Every Phase C slice now has a measured, documented
+outcome:
+
+| Slice | Outcome |
+|---|---|
+| NVFP4 / fp-quant modes | **DONE** — fusion-mlx convert CLI supports `mxfp4`/`nvfp4`/`mxfp8` (commit b6acd3bd); the dtype support is already on mlx main, no mlx PR needed. |
+| Fused dequant SDPA | **Already upstream** — `mlx_vlm.turboquant`; fusion-mlx uses it. Not a gap. |
+| W4 weight fused MatMul | **Already upstream** — `mx.quantized_matmul` / `nn.QuantizedLinear`. Not a gap. |
+| Fused GDN projections | **DONE** — fork's fused `qwen3_5.py` class measured 1.26–1.43x prefill win, break-even decode; kept (commit 8707d2f). Full megakernel deferred (marginal headroom). |
+| W4A8 fused MatMul | **MEASURED, NOT BUILDING** — prefill-marginal, decode-losing; maintainer-declined upstream (mlx #1293). Fork-local `phase_c` wrapper keeps the fallback + extension point. |
+| NVFP4 dtype / ANE / TP / JetSpec | **Blocked** — upstream mlx#2962 / no ANE backend / single-SoC / not in mlx. |
+
+**Net:** the high-value Phase C kernel work was already upstream; the
+remaining candidates are measured-marginal or maintainer-declined. No native
+Metal kernel is worth writing this branch. The `phase_c` module stays as the
+scaffolded extension point (fallback to `mx.quantized_matmul`) for future
+fork-local experimentation.
