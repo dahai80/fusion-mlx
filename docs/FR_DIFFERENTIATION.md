@@ -124,9 +124,12 @@ happy path; per-request cross-method routing remains real engine work.
 `serve --model <X> --lora-path <adapter-dir>` applies a PEFT LoRA adapter at
 boot via `mlx_lm.load(adapter_path=...)`. Threads through `server.load_model`
 → `_pending_single_model` → `BatchedEngine.__init__` → `_load_model_sync`.
-Single-model `serve --model` only; multi-model `--model-dir` per-model LoRA
-is a follow-up (needs per-model adapter config in the discovery path). 5 unit
-tests in `tests/unit/test_lora_path.py`.
+
+**Multi-model per-model LoRA: ✅ landed** (Phase B LoRA slice 2). `lora_path`
+is now a `ModelSettings` field registered in `MODEL_SPECIFIC_PROFILE_FIELDS`,
+so in `--model-dir` mode each alias/profile can specify its own adapter. The
+engine pool threads `model_settings.lora_path` into `BatchedEngine.__init__`
+at all three construction sites. 11 unit tests in `tests/unit/test_lora_path.py`.
 
 **Runtime hot-swap: 🗺️ Phase B.** Per-request LoRA adapter hot-swap (loading
 and unrolling adapters without a model reload) remains engine work — mlx_lm
@@ -151,11 +154,15 @@ per-request spec-routing stopgap, point at the **wrong premises** section —
 both were checked against the source and re-scoped. The remaining real gaps
 are per-request spec routing (Phase B engine refactor), runtime LoRA hot-swap,
 and Phase C kernels, in that order.
-
 ---
 
 ## Changelog
 
+- **2026-07-07 (update 3)** — Landed multi-model per-model LoRA (Phase B LoRA
+  slice 2): `lora_path` is now a `ModelSettings` field in
+  `MODEL_SPECIFIC_PROFILE_FIELDS`, so each alias/profile in `--model-dir` mode
+  can specify its own adapter; engine pool threads it into engine construction.
+  Runtime hot-swap remains Phase B.
 - **2026-07-07 (update 2)** — Landed boot-time `--lora-path` (B.2 boot-time
   slice, Phase B LoRA slice 1): `serve --model <X> --lora-path <adapter>`
   applies a PEFT LoRA adapter at boot via `mlx_lm.load(adapter_path=...)`.

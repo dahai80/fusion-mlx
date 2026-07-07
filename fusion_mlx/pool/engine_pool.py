@@ -1405,6 +1405,7 @@ class EnginePool:
                         enable_thinking=entry.thinking_default,
                         preserve_thinking=entry.preserve_thinking_default,
                         prefill_eviction_callback=prefill_eviction_callback,
+                        lora_path=getattr(model_settings, "lora_path", None),
                     )
 
             _is_dflash_engine = (
@@ -1457,6 +1458,7 @@ class EnginePool:
                             enable_thinking=entry.thinking_default,
                             preserve_thinking=entry.preserve_thinking_default,
                             prefill_eviction_callback=prefill_eviction_callback,
+                            lora_path=getattr(model_settings, "lora_path", None),
                         )
                     try:
                         await engine.start()
@@ -1543,6 +1545,7 @@ class EnginePool:
                         enable_thinking=entry.thinking_default,
                         preserve_thinking=entry.preserve_thinking_default,
                         prefill_eviction_callback=prefill_eviction_callback,
+                        lora_path=getattr(model_settings, "lora_path", None),
                     )
                     try:
                         await engine.start()
