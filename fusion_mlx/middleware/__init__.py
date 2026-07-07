@@ -20,10 +20,12 @@ from .probe_fastpath import (
     ProbeFastPathMiddleware,
     install_probe_fastpath_middleware,
 )
+from .request_id import RequestIdMiddleware, install_request_id_middleware
 
 __all__ = [
     "ProbeFastPathMiddleware",
     "RateLimiter",
+    "RequestIdMiddleware",
     "RequestBodyDepthMiddleware",
     "RequestBodyLimitMiddleware",
     "check_rate_limit",
@@ -33,6 +35,7 @@ __all__ = [
     "install_probe_fastpath_middleware",
     "install_request_body_depth_middleware",
     "install_request_body_limit_middleware",
+    "install_request_id_middleware",
     "rate_limiter",
     "verify_api_key",
     "verify_api_key_or_x_api_key",
