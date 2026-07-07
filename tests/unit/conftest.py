@@ -313,9 +313,13 @@ if sys.platform != "darwin":
         "test_signal_observability.py",
         "test_spec_recurrent_gate.py",
         "test_telemetry.py",
+        "test_telemetry_consent.py",
+        "test_telemetry_emit.py",
         "test_telemetry_queue.py",
         "test_telemetry_redact.py",
+        "test_telemetry_state.py",
         "test_telemetry_state_comprehensive.py",
+        "test_telemetry_transport.py",
     ]
     collect_ignore += _abs(*_linux_skip)
     collect_ignore_glob += [f"**/{s}" for s in _linux_skip]
