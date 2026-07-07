@@ -14,6 +14,9 @@ from unittest.mock import patch
 
 import pytest
 from fastapi.testclient import TestClient
+from starlette.responses import StreamingResponse
+
+import fusion_mlx.server as server_module
 from fusion_mlx.api.markitdown import (
     MARKITDOWN_EMPTY_PDF_MESSAGE,
     MARKITDOWN_MODEL_ID,
@@ -30,9 +33,6 @@ from fusion_mlx.api.markitdown_pdf_fallback import (
     resolve_pdf_ocr_model,
     stream_pdf_with_ocr_engine,
 )
-from starlette.responses import StreamingResponse
-
-import fusion_mlx.server as server_module
 from fusion_mlx.api.openai_models import ChatCompletionRequest, Message
 from fusion_mlx.engine_pool import EngineEntry, EnginePool
 from fusion_mlx.server import ServerState, app

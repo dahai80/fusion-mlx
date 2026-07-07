@@ -10,6 +10,7 @@ from __future__ import annotations
 import math
 
 import mlx.core as mx
+
 from fusion_mlx.models.base_model import (
     BaseModelArgs,
     BaseModelOutput,
