@@ -123,9 +123,14 @@ async def _run_chat(request: ChatCompletionRequest) -> ChatCompletionResponse:
     from ..server import resolve_model_id
 
     model_name = resolve_model_id(request.model)
-    engine = await _pool.get_engine(model_name, _lease=True)
+    adapter_path = getattr(request, "adapters", None)
+
+    async def _release() -> None:
+        await _pool.release_engine(model_name, adapter_path=adapter_path)
+
+    engine = await _pool.get_engine(model_name, _lease=True, adapter_path=adapter_path)
     if engine is None:
-        await _pool.release_engine(model_name)
+        await _release()
         raise HTTPException(404, f"Model {model_name} not available")
 
     # Reject multimodal content on text-only models
@@ -148,7 +153,7 @@ async def _run_chat(request: ChatCompletionRequest) -> ChatCompletionResponse:
                         "audio",
                         "input_audio",
                     ):
-                        await _pool.release_engine(model_name)
+                        await _release()
                         raise HTTPException(
                             status_code=400,
                             detail=(
@@ -200,7 +205,7 @@ async def _run_chat(request: ChatCompletionRequest) -> ChatCompletionResponse:
         logger.exception("Non-streaming chat failed for %s", request_id)
         raise HTTPException(500, str(exc))
     finally:
-        await _pool.release_engine(model_name)
+        await _release()
 
 
 async def _stream_chat_generator(request: ChatCompletionRequest) -> AsyncIterator[str]:
@@ -211,9 +216,14 @@ async def _stream_chat_generator(request: ChatCompletionRequest) -> AsyncIterato
     from ..server import resolve_model_id
 
     model_name = resolve_model_id(request.model)
-    engine = await _pool.get_engine(model_name, _lease=True)
+    adapter_path = getattr(request, "adapters", None)
+
+    async def _release() -> None:
+        await _pool.release_engine(model_name, adapter_path=adapter_path)
+
+    engine = await _pool.get_engine(model_name, _lease=True, adapter_path=adapter_path)
     if engine is None:
-        await _pool.release_engine(model_name)
+        await _release()
         raise HTTPException(404, f"Model {model_name} not available")
 
     # Reject multimodal content on text-only models
@@ -236,7 +246,7 @@ async def _stream_chat_generator(request: ChatCompletionRequest) -> AsyncIterato
                         "audio",
                         "input_audio",
                     ):
-                        await _pool.release_engine(model_name)
+                        await _release()
                         raise HTTPException(
                             status_code=400,
                             detail=(
@@ -398,7 +408,7 @@ async def _stream_chat_generator(request: ChatCompletionRequest) -> AsyncIterato
             logger.exception("Streaming chat failed for %s", request_id)
             yield f'data: {{"error": {{"message": {err_msg!r}}}}}\n\n'
     finally:
-        await _pool.release_engine(model_name)
+        await _release()
 
 
 async def _stream_chat(request: ChatCompletionRequest) -> StreamingResponse:
@@ -591,6 +601,7 @@ async def completions(request: CompletionRequest) -> Any:
         # Convert completion to chat format
         chat_req = ChatCompletionRequest(
             model=request.model,
+            adapters=request.adapters,
             messages=[{"role": "user", "content": request.prompt}],
             max_tokens=request.max_tokens,
             temperature=request.temperature,

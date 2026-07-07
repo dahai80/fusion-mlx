@@ -131,11 +131,25 @@ so in `--model-dir` mode each alias/profile can specify its own adapter. The
 engine pool threads `model_settings.lora_path` into `BatchedEngine.__init__`
 at all three construction sites. 11 unit tests in `tests/unit/test_lora_path.py`.
 
-**Runtime hot-swap: 🗺️ Phase B.** Per-request LoRA adapter hot-swap (loading
-and unrolling adapters without a model reload) remains engine work — mlx_lm
-fuses the adapter into weights at load time, so hot-swap needs either an
-unload+reload path or a runtime LoRA hook. Scoped alongside per-request spec
-routing (both touch the engine's per-request setup path).
+**Runtime hot-swap: ✅ landed (path A' — adapter-keyed engine cache).**
+Per-request LoRA adapter hot-swap is now served via the OpenAI-compatible
+`adapters` field on `ChatCompletionRequest` / `CompletionRequest` (mlx-lm
+server-compatible). `get_engine(model, adapter_path=...)` derives an engine
+entry keyed by `(model_id, adapter_path)` (`f"{model_id}::lora::{adapter_path}"`
+when an adapter is set, plain `model_id` otherwise), lazily creating a derived
+`EngineEntry` that clones the base model's path/type/size/config and loads a
+fresh `BatchedEngine(... lora_path=adapter_path)`. Each adapter thus gets its
+own loaded instance, reused across requests via the existing LRU; release
+decrements the derived entry's `in_use`. An `FUSION_MAX_ADAPTER_ENGINES` cap
+(default 4) LRU-evicts idle derived adapter engines. 13 unit tests in
+`tests/unit/test_lora_hotswap.py`.
+
+> Premise correction: an earlier draft of this section claimed "mlx_lm fuses
+> the adapter into weights at load time, so hot-swap needs an unload+reload
+> path." That is wrong — `mlx_lm.load(adapter_path=...)` wraps `LoRALinear`
+> (base weight + LoRA delta as separate, removable layers); it does **not**
+> fuse. Runtime hot-swap is therefore viable without an unload+reload of the
+> base, and path A' ships it.
 
 ### Phase C — kernel work 🗺️
 
@@ -152,12 +166,21 @@ TurboQuant / scheduling," point at the **Already differentiates** table and
 the spec-decoding doc. When someone proposes a TurboQuant convert CLI or a
 per-request spec-routing stopgap, point at the **wrong premises** section —
 both were checked against the source and re-scoped. The remaining real gaps
-are per-request spec routing (Phase B engine refactor), runtime LoRA hot-swap,
-and Phase C kernels, in that order.
+are per-request spec routing (Phase B engine refactor) and Phase C kernels, in
+that order. (Runtime LoRA hot-swap, formerly listed here, landed via path A'.)
 ---
 
 ## Changelog
 
+- **2026-07-07 (update 4)** — Landed runtime LoRA hot-swap (B.2 path A',
+  adapter-keyed engine cache): OpenAI-compatible `adapters` field on
+  chat/completion requests routes to a derived `EngineEntry` keyed by
+  `(model_id, adapter_path)`, lazily loaded with
+  `BatchedEngine(... lora_path=...)` and reused via the existing LRU;
+  `FUSION_MAX_ADAPTER_ENGINES` (default 4) caps idle derived adapter engines.
+  13 unit tests in `tests/unit/test_lora_hotswap.py`. Corrected the false
+  "mlx_lm fuses the adapter at load time" premise — it wraps `LoRALinear`,
+  not fuses, so hot-swap is viable without a base reload.
 - **2026-07-07 (update 3)** — Landed multi-model per-model LoRA (Phase B LoRA
   slice 2): `lora_path` is now a `ModelSettings` field in
   `MODEL_SPECIFIC_PROFILE_FIELDS`, so each alias/profile in `--model-dir` mode
