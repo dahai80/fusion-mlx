@@ -1952,6 +1952,32 @@ def serve_command(args):
         print(f"Chunked prefill: {args.chunked_prefill_tokens} tokens per step")
     if args.enable_mtp:
         print(f"MTP: enabled, draft_tokens={args.mtp_num_draft_tokens}")
+    # --spec-decode auto: ask SpecAutoRouter to pick a zero-config
+    # method (mtp for MTP-eligible checkpoints, n-gram suffix otherwise)
+    # from the model's shape. Drafter-backed methods stay operator-
+    # selected. See speculative/auto_resolve.py. Runs before the mtp
+    # eligibility check so a resolved "mtp" still gets validated below.
+    if getattr(args, "spec_decode", "none") == "auto":
+        from fusion_mlx.speculative.auto_resolve import (
+            apply_resolution,
+            resolve_spec_auto,
+        )
+
+        try:
+            _hf_cfg_auto, _ = _gather_kv_cache_dtype_inputs(args.model)
+        except Exception:
+            _hf_cfg_auto = None
+        _resolution = resolve_spec_auto(_hf_cfg_auto)
+        # auto is authoritative — clear operator-set spec flags so the
+        # resolved method doesn't collide with a stale enable_*.
+        args.suffix_decoding = False
+        args.enable_mtp = False
+        args.enable_dflash = False
+        args.enable_dspark = False
+        apply_resolution(args, _resolution)
+        print(
+            f"Spec-decode: auto → {_resolution.cli_target} " f"({_resolution.reason})"
+        )
     # R15-P1 #302: native Qwen3.5/3.6 MTP via vendored mlx-lm PR #990.
     # Banner line + boot-time eligibility check fires here so misuse
     # (--spec-decode mtp on a non-Qwen3.5/3.6 model) bounces with a

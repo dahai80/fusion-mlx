@@ -579,7 +579,7 @@ Examples:
     serve_parser.add_argument(
         "--spec-decode",
         dest="spec_decode",
-        choices=["none", "mtp", "dflash", "dspark"],
+        choices=["none", "mtp", "dflash", "dspark", "auto"],
         default="none",
         help=(
             "R15-P1 model-side speculative decode. "
@@ -589,8 +589,14 @@ Examples:
             "that preserves ``mtp.*`` weights; ``dflash`` enables the "
             "block-diffusion drafter from arxiv 2410.04097 (R15-P1 "
             "#313) for Qwen3.5/3.6 with a bound drafter (default "
-            "block size 16). Rejects at boot if the model doesn't "
-            "qualify so misuse fails loud."
+            "block size 16); ``dspark`` enables DeepSeek DeepSpec "
+            "lossless block speculative decode; ``auto`` asks "
+            "SpecAutoRouter to pick at boot from the model's shape "
+            "and drafter flags — MTP-eligible checkpoints get ``mtp``, "
+            "everything else gets n-gram suffix decoding (zero GPU "
+            "cost). Drafter-backed methods (dflash/dspark) stay "
+            "operator-selected even under ``auto``. Rejects at boot "
+            "if the model doesn't qualify so misuse fails loud."
         ),
     )
     # R15-P1 #313: DFlash drafter HF path override. Empty by default
