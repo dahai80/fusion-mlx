@@ -29,6 +29,7 @@ from ..api.openai_models import (
 )
 from ..api.thinking import ThinkingParser
 from ..engines.base import GenerationOutput
+from ..exceptions import AdapterPathError
 from ..pool import EnginePool
 from ..request import SamplingParams
 from ..router import RequestRouter
@@ -197,6 +198,8 @@ async def _run_chat(request: ChatCompletionRequest) -> ChatCompletionResponse:
         return _adapter.format_response(internal, request)
     except HTTPException:
         raise
+    except AdapterPathError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
         err_msg = str(exc)
         # VLM image/video fetch failures -> 400
@@ -399,6 +402,8 @@ async def _stream_chat_generator(request: ChatCompletionRequest) -> AsyncIterato
             except Exception:
                 pass
         raise
+    except AdapterPathError as exc:
+        yield f'data: {{"error": {{"message": {str(exc)!r}, "status": 400}}}}\n\n'
     except Exception as exc:
         err_msg = str(exc)
         # VLM image/video fetch failures -> 400
