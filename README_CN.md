@@ -324,6 +324,7 @@ fusion-mlx/
 - [CLI Reference](docs/cli-reference.md) — 所有命令和参数（英文）
 - [Configuration](docs/configuration.md) — 内存分级、调度器设置、TurboQuant、别名、执行器线程池（英文）
 - [Speculative Decoding](docs/speculative-decoding.md) — Suffix/DFlash/DSpark/MTP/VLM-MTP 五种投机解码方法、选型指南、auto-router（英文）
+- [Video Input](docs/video-input.md) — VLM 视频输入：`video_url` API、帧抽取、Qwen 原生视频路径、限制（英文）
 - [FR Differentiation](docs/FR_DIFFERENTIATION.md) — fusion-mlx 在投机解码/TurboQuant/调度方面差异化能力的核实分析（英文）
 - [架构详解](docs/architecture_CN.md) — 架构文档中文版
 - [配置指南](docs/configuration_CN.md) — 配置文档中文版
