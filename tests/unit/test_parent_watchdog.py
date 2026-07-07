@@ -293,9 +293,9 @@ class TestInternalSpawnersStampWatchdog:
         start = source.index("def _spawn_chat_server(")
         end = source.find("\ndef ", start + 1)
         body = source[start : end if end != -1 else len(source)]
-        assert "RAPID_MLX_WATCHDOG_PPID" in body, (
+        assert "FUSION_MLX_WATCHDOG_PPID" in body, (
             "rapid-desktop #449 sibling regression: _spawn_chat_server "
-            "no longer stamps RAPID_MLX_WATCHDOG_PPID on the child env. "
+            "no longer stamps FUSION_MLX_WATCHDOG_PPID on the child env. "
             "Without it, SIGKILL of `rapid-mlx chat` orphans the serve "
             "subprocess. Restore the env stamp."
         )
@@ -307,9 +307,9 @@ class TestInternalSpawnersStampWatchdog:
             Path(__file__).resolve().parents[1] / "vllm_mlx" / "share" / "cli.py"
         )
         source = share_file.read_text()
-        assert "RAPID_MLX_WATCHDOG_PPID" in source, (
+        assert "FUSION_MLX_WATCHDOG_PPID" in source, (
             "rapid-desktop #449 sibling regression: rapid-mlx share's "
-            "serve-spawn no longer stamps RAPID_MLX_WATCHDOG_PPID on the "
+            "serve-spawn no longer stamps FUSION_MLX_WATCHDOG_PPID on the "
             "child env. Without it, SIGKILL of `rapid-mlx share` leaves "
             "an orphan serve holding the bearer-gated port. Restore the "
             "env stamp."
@@ -325,9 +325,9 @@ class TestInternalSpawnersStampWatchdog:
             Path(__file__).resolve().parents[1] / "vllm_mlx" / "bench" / "_server.py"
         )
         source = bench_file.read_text()
-        assert "RAPID_MLX_WATCHDOG_PPID" in source, (
+        assert "FUSION_MLX_WATCHDOG_PPID" in source, (
             "rapid-desktop #449 sibling regression: bench/_server.py "
-            "no longer stamps RAPID_MLX_WATCHDOG_PPID on the spawned "
+            "no longer stamps FUSION_MLX_WATCHDOG_PPID on the spawned "
             "serve child. SIGKILL of `rapid-mlx bench` would orphan "
             "the model server. Restore the env stamp."
         )
@@ -337,7 +337,7 @@ class TestInternalSpawnersStampWatchdog:
         the watchdog stamp.
 
         If the parent CLI invocation was itself launched under a
-        supervisor that exported ``RAPID_MLX_WATCHDOG_PPID=<gp_pid>``,
+        supervisor that exported ``FUSION_MLX_WATCHDOG_PPID=<gp_pid>``,
         ``setdefault`` would preserve the grandparent's PID. The serve
         child would then compare ``os.getppid()`` (= our immediate
         PID) against the grandparent's PID, mismatch on the FIRST
@@ -363,12 +363,12 @@ class TestInternalSpawnersStampWatchdog:
                 stripped = line.strip()
                 if stripped.startswith("#"):
                     continue
-                if "setdefault" in stripped and "RAPID_MLX_WATCHDOG_PPID" in stripped:
+                if "setdefault" in stripped and "FUSION_MLX_WATCHDOG_PPID" in stripped:
                     offenders.append(f"{spawner.name}: {stripped}")
         assert not offenders, (
             "rapid-desktop #449 sibling regression: a spawner used "
             "setdefault for the watchdog stamp. A grandparent's stale "
-            "RAPID_MLX_WATCHDOG_PPID would be inherited and the serve "
+            "FUSION_MLX_WATCHDOG_PPID would be inherited and the serve "
             "child would self-terminate immediately. Use direct "
             "assignment instead. Offending lines:\n  " + "\n  ".join(offenders)
         )

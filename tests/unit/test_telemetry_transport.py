@@ -10,8 +10,8 @@ logger = logging.getLogger(__name__)
 
 @pytest.fixture(autouse=True)
 def _clean_env(monkeypatch):
-    monkeypatch.delenv("RAPID_MLX_TELEMETRY_DEBUG", raising=False)
-    monkeypatch.delenv("RAPID_MLX_TELEMETRY_ENDPOINT", raising=False)
+    monkeypatch.delenv("FUSION_MLX_TELEMETRY_DEBUG", raising=False)
+    monkeypatch.delenv("FUSION_MLX_TELEMETRY_ENDPOINT", raising=False)
 
 
 def test_empty_batch_is_success_no_network():
@@ -196,7 +196,7 @@ def test_oversized_payload_dropped_locally():
 def test_non_https_non_loopback_override_fails_closed(monkeypatch):
     from fusion_mlx.telemetry import transport
 
-    monkeypatch.setenv("RAPID_MLX_TELEMETRY_ENDPOINT", "http://insecure.example/v1")
+    monkeypatch.setenv("FUSION_MLX_TELEMETRY_ENDPOINT", "http://insecure.example/v1")
     assert transport.endpoint() is None
 
 
@@ -209,7 +209,7 @@ def test_endpoint_override_only_accepts_localhost(monkeypatch):
         "https://localhost/v1/events",
         "http://[::1]:8787/v1/events",
     ):
-        monkeypatch.setenv("RAPID_MLX_TELEMETRY_ENDPOINT", ok)
+        monkeypatch.setenv("FUSION_MLX_TELEMETRY_ENDPOINT", ok)
         assert transport.endpoint() == ok, f"{ok} should be accepted"
 
     for bad in (
@@ -219,17 +219,17 @@ def test_endpoint_override_only_accepts_localhost(monkeypatch):
         "ftp://localhost/v1/events",
         "not-a-url",
     ):
-        monkeypatch.setenv("RAPID_MLX_TELEMETRY_ENDPOINT", bad)
+        monkeypatch.setenv("FUSION_MLX_TELEMETRY_ENDPOINT", bad)
         assert transport.endpoint() is None, f"{bad} should be refused (fail closed)"
 
-    monkeypatch.delenv("RAPID_MLX_TELEMETRY_ENDPOINT", raising=False)
+    monkeypatch.delenv("FUSION_MLX_TELEMETRY_ENDPOINT", raising=False)
     assert transport.endpoint() == transport.DEFAULT_ENDPOINT
 
 
 def test_post_batch_fails_closed_on_rejected_override(monkeypatch):
     from fusion_mlx.telemetry import transport
 
-    monkeypatch.setenv("RAPID_MLX_TELEMETRY_ENDPOINT", "https://attacker.example/v1")
+    monkeypatch.setenv("FUSION_MLX_TELEMETRY_ENDPOINT", "https://attacker.example/v1")
 
     called = []
 
@@ -259,7 +259,7 @@ def test_malformed_url_request_does_not_raise(monkeypatch):
 def test_malformed_port_localhost_override_does_not_raise(monkeypatch):
     from fusion_mlx.telemetry import transport
 
-    monkeypatch.setenv("RAPID_MLX_TELEMETRY_ENDPOINT", "http://localhost:bad/v1")
+    monkeypatch.setenv("FUSION_MLX_TELEMETRY_ENDPOINT", "http://localhost:bad/v1")
     assert transport.endpoint() is None
 
 
@@ -349,13 +349,13 @@ def test_post_sends_self_identifying_user_agent():
 def test_debug_env_truthy_off_by_default(monkeypatch):
     from fusion_mlx.telemetry import transport
 
-    monkeypatch.delenv("RAPID_MLX_TELEMETRY_DEBUG", raising=False)
+    monkeypatch.delenv("FUSION_MLX_TELEMETRY_DEBUG", raising=False)
     assert transport.debug_enabled() is False
 
     for falsy in ("0", "false", "no", "off", ""):
-        monkeypatch.setenv("RAPID_MLX_TELEMETRY_DEBUG", falsy)
+        monkeypatch.setenv("FUSION_MLX_TELEMETRY_DEBUG", falsy)
         assert transport.debug_enabled() is False
 
     for truthy in ("1", "true", "yes", "on"):
-        monkeypatch.setenv("RAPID_MLX_TELEMETRY_DEBUG", truthy)
+        monkeypatch.setenv("FUSION_MLX_TELEMETRY_DEBUG", truthy)
         assert transport.debug_enabled() is True

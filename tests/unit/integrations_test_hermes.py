@@ -25,7 +25,7 @@ import unittest
 
 import httpx
 
-BASE_URL = os.environ.get("RAPID_MLX_BASE_URL", "http://localhost:8000/v1")
+BASE_URL = os.environ.get("FUSION_MLX_BASE_URL", "http://localhost:8000/v1")
 # Auto-detect model from server
 try:
     resp = httpx.get(f"{BASE_URL}/models", timeout=5)

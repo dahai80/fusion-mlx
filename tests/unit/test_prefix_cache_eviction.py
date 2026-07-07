@@ -3,7 +3,7 @@
 
 Adaptations:
 - vllm_mlx.memory_cache -> fusion_mlx.memory_cache
-- RAPID_MLX_PREFIX_CACHE_MAX_BYTES env var is NOT supported in fusion-mlx;
+- FUSION_MLX_PREFIX_CACHE_MAX_BYTES env var is NOT supported in fusion-mlx;
   use max_memory_mb parameter directly instead.
 - Scheduler.evict_prefix_cache_under_pressure does NOT exist in fusion-mlx;
   scheduler-pressure-eviction tests are skipped.

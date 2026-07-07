@@ -287,7 +287,7 @@ def test_metrics_exposes_r7_m1_prefix_cache_cap_and_current_bytes(metrics_client
     """R7-M1 (dogfood-088 Talia r2): ``rapid_mlx_prefix_cache_cap_bytes``
     and ``rapid_mlx_prefix_cache_current_bytes`` gauges must appear in
     the scrape output when a cache is active. Pre-fix, operators tuning
-    ``RAPID_MLX_PREFIX_CACHE_MAX_BYTES`` had no way to verify their
+    ``FUSION_MLX_PREFIX_CACHE_MAX_BYTES`` had no way to verify their
     ceiling was honored at runtime; this test pins both gauges through
     the metrics route.
 

@@ -828,12 +828,12 @@ def test_harness_profile_timeout_env_var_respected(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# RAPID_MLX_HARNESS_PROFILES_FILTER — env-var subset filter used by G12.
+# FUSION_MLX_HARNESS_PROFILES_FILTER — env-var subset filter used by G12.
 # ---------------------------------------------------------------------------
 
 
 class TestHarnessProfilesFilter:
-    """G12 (random-coverage) sets ``RAPID_MLX_HARNESS_PROFILES_FILTER``
+    """G12 (random-coverage) sets ``FUSION_MLX_HARNESS_PROFILES_FILTER``
     to scope a ``--tier harness`` sweep to a randomly-picked subset of
     the 5 first-class harnesses. The filter must:
       * accept a single profile (``"codex"``)
@@ -854,7 +854,7 @@ class TestHarnessProfilesFilter:
         return tr
 
     def test_no_env_var_returns_none(self, monkeypatch):
-        monkeypatch.delenv("RAPID_MLX_HARNESS_PROFILES_FILTER", raising=False)
+        monkeypatch.delenv("FUSION_MLX_HARNESS_PROFILES_FILTER", raising=False)
         tr = self._reload()
         try:
             assert tr.HARNESS_PROFILES_FILTER is None
@@ -862,65 +862,65 @@ class TestHarnessProfilesFilter:
             tr = self._reload()  # restore for siblings
 
     def test_single_profile_filter(self, monkeypatch):
-        monkeypatch.setenv("RAPID_MLX_HARNESS_PROFILES_FILTER", "codex")
+        monkeypatch.setenv("FUSION_MLX_HARNESS_PROFILES_FILTER", "codex")
         tr = self._reload()
         try:
             assert tr.HARNESS_PROFILES_FILTER == ("codex",)
         finally:
-            monkeypatch.delenv("RAPID_MLX_HARNESS_PROFILES_FILTER", raising=False)
+            monkeypatch.delenv("FUSION_MLX_HARNESS_PROFILES_FILTER", raising=False)
             self._reload()
 
     def test_comma_separated_filter(self, monkeypatch):
-        monkeypatch.setenv("RAPID_MLX_HARNESS_PROFILES_FILTER", "codex,aider,langchain")
+        monkeypatch.setenv("FUSION_MLX_HARNESS_PROFILES_FILTER", "codex,aider,langchain")
         tr = self._reload()
         try:
             assert tr.HARNESS_PROFILES_FILTER == ("codex", "aider", "langchain")
         finally:
-            monkeypatch.delenv("RAPID_MLX_HARNESS_PROFILES_FILTER", raising=False)
+            monkeypatch.delenv("FUSION_MLX_HARNESS_PROFILES_FILTER", raising=False)
             self._reload()
 
     def test_whitespace_and_trailing_commas_tolerated(self, monkeypatch):
-        monkeypatch.setenv("RAPID_MLX_HARNESS_PROFILES_FILTER", " codex , aider , ")
+        monkeypatch.setenv("FUSION_MLX_HARNESS_PROFILES_FILTER", " codex , aider , ")
         tr = self._reload()
         try:
             assert tr.HARNESS_PROFILES_FILTER == ("codex", "aider")
         finally:
-            monkeypatch.delenv("RAPID_MLX_HARNESS_PROFILES_FILTER", raising=False)
+            monkeypatch.delenv("FUSION_MLX_HARNESS_PROFILES_FILTER", raising=False)
             self._reload()
 
     def test_unknown_profile_warned_and_dropped(self, monkeypatch, capsys):
         # Mix of valid + invalid; valid ones survive.
-        monkeypatch.setenv("RAPID_MLX_HARNESS_PROFILES_FILTER", "codex,bogus,aider")
+        monkeypatch.setenv("FUSION_MLX_HARNESS_PROFILES_FILTER", "codex,bogus,aider")
         tr = self._reload()
         try:
             assert tr.HARNESS_PROFILES_FILTER == ("codex", "aider")
             captured = capsys.readouterr()
             assert "bogus" in captured.err
         finally:
-            monkeypatch.delenv("RAPID_MLX_HARNESS_PROFILES_FILTER", raising=False)
+            monkeypatch.delenv("FUSION_MLX_HARNESS_PROFILES_FILTER", raising=False)
             self._reload()
 
     def test_all_unknown_disables_filter(self, monkeypatch, capsys):
         # All-unknown: warn and disable filter rather than silently
         # sweeping zero profiles (which would look like a successful
         # but coverage-empty run).
-        monkeypatch.setenv("RAPID_MLX_HARNESS_PROFILES_FILTER", "bogus,nope")
+        monkeypatch.setenv("FUSION_MLX_HARNESS_PROFILES_FILTER", "bogus,nope")
         tr = self._reload()
         try:
             assert tr.HARNESS_PROFILES_FILTER is None
             captured = capsys.readouterr()
             assert "matched zero" in captured.err
         finally:
-            monkeypatch.delenv("RAPID_MLX_HARNESS_PROFILES_FILTER", raising=False)
+            monkeypatch.delenv("FUSION_MLX_HARNESS_PROFILES_FILTER", raising=False)
             self._reload()
 
     def test_empty_string_disables_filter(self, monkeypatch, capsys):
-        monkeypatch.setenv("RAPID_MLX_HARNESS_PROFILES_FILTER", "   ")
+        monkeypatch.setenv("FUSION_MLX_HARNESS_PROFILES_FILTER", "   ")
         tr = self._reload()
         try:
             assert tr.HARNESS_PROFILES_FILTER is None
             captured = capsys.readouterr()
             assert "empty/whitespace" in captured.err
         finally:
-            monkeypatch.delenv("RAPID_MLX_HARNESS_PROFILES_FILTER", raising=False)
+            monkeypatch.delenv("FUSION_MLX_HARNESS_PROFILES_FILTER", raising=False)
             self._reload()

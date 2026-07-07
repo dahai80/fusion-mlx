@@ -22,7 +22,7 @@ import pytest
 @pytest.fixture
 def fake_home(tmp_path, monkeypatch):
     monkeypatch.setenv("HOME", str(tmp_path))
-    monkeypatch.delenv("RAPID_MLX_TELEMETRY", raising=False)
+    monkeypatch.delenv("FUSION_MLX_TELEMETRY", raising=False)
     import fusion_mlx.telemetry.state as state
 
     importlib.reload(state)
@@ -40,7 +40,7 @@ def _run_cli(*args, env_overrides=None, home=None):
     env = os.environ.copy()
     if home is not None:
         env["HOME"] = str(home)
-    env.pop("RAPID_MLX_TELEMETRY", None)
+    env.pop("FUSION_MLX_TELEMETRY", None)
     if env_overrides:
         env.update(env_overrides)
     return subprocess.run(
@@ -184,8 +184,8 @@ def test_session_end_synchronously_drained_before_exit(fake_home):
             "models",
             home=fake_home,
             env_overrides={
-                "RAPID_MLX_TELEMETRY_DEBUG": "1",
-                "RAPID_MLX_TELEMETRY_ENDPOINT": f"http://127.0.0.1:{port}/v1/events",
+                "FUSION_MLX_TELEMETRY_DEBUG": "1",
+                "FUSION_MLX_TELEMETRY_ENDPOINT": f"http://127.0.0.1:{port}/v1/events",
             },
         )
         assert r.returncode == 0, r.stderr
@@ -244,11 +244,11 @@ def test_telemetry_subcommand_does_not_emit_lifecycle_events(fake_home):
         "disable",
         home=fake_home,
         env_overrides={
-            "RAPID_MLX_TELEMETRY_DEBUG": "1",
+            "FUSION_MLX_TELEMETRY_DEBUG": "1",
             # Force a non-routable endpoint so this test cannot
             # accidentally exercise the production collector even if
             # the kill-switch wiring regresses.
-            "RAPID_MLX_TELEMETRY_ENDPOINT": "https://127.0.0.1:1/never",
+            "FUSION_MLX_TELEMETRY_ENDPOINT": "https://127.0.0.1:1/never",
         },
     )
     assert r.returncode == 0, r.stderr
@@ -264,7 +264,7 @@ def test_env_kill_switch_via_subprocess(fake_home):
         "telemetry",
         "status",
         home=fake_home,
-        env_overrides={"RAPID_MLX_TELEMETRY": "0"},
+        env_overrides={"FUSION_MLX_TELEMETRY": "0"},
     )
     assert r.returncode == 0
     assert "env-var" in r.stdout.lower()

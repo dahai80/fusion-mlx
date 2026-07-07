@@ -492,10 +492,10 @@ def test_strict_true_guided_unavailable_repair_succeeds_returns_200():
 
 
 def test_strict_true_guided_unavailable_disable_flag_skips_enforcement(monkeypatch):
-    """R12-4 escape hatch — ``RAPID_MLX_STRICT_JSON_SCHEMA=off`` restores
+    """R12-4 escape hatch — ``FUSION_MLX_STRICT_JSON_SCHEMA=off`` restores
     the pre-R12-4 silent-pass-through behavior. Schema-violating output
     is returned as 200 (legacy compat) instead of 422."""
-    monkeypatch.setenv("RAPID_MLX_STRICT_JSON_SCHEMA", "off")
+    monkeypatch.setenv("FUSION_MLX_STRICT_JSON_SCHEMA", "off")
     engine = _Engine(
         supports_guided=False,
         chat_text=_INVALID_PAYLOAD_OUT_OF_RANGE,
@@ -552,11 +552,11 @@ def test_strict_true_guided_unavailable_repair_engine_failure_returns_502():
 
 
 def test_strict_true_guided_unavailable_repair_disable_flag_skips_retry(monkeypatch):
-    """R12-4 — ``RAPID_MLX_STRICT_JSON_SCHEMA_REPAIR=off`` disables ONLY
+    """R12-4 — ``FUSION_MLX_STRICT_JSON_SCHEMA_REPAIR=off`` disables ONLY
     the repair retry; the post-decode validation + 422 envelope still
     fires (strict mode stays a hard contract; only the retry is
     skipped). One chat call (no retry) then 422."""
-    monkeypatch.setenv("RAPID_MLX_STRICT_JSON_SCHEMA_REPAIR", "off")
+    monkeypatch.setenv("FUSION_MLX_STRICT_JSON_SCHEMA_REPAIR", "off")
     engine = _Engine(
         supports_guided=False,
         chat_text=_INVALID_PAYLOAD_OUT_OF_RANGE,
@@ -1152,12 +1152,12 @@ def test_strict_true_streaming_bounds_buffer_with_overflow_error(monkeypatch):
     OOM crash.
 
     Test strategy: monkey-patch the cap to a tiny value (256 bytes)
-    via ``RAPID_MLX_STRICT_BUFFER_BYTES``, then feed an upstream
+    via ``FUSION_MLX_STRICT_BUFFER_BYTES``, then feed an upstream
     that emits content far larger than the cap. Pin: error envelope
     contains ``buffer_overflow`` in the message, finish_reason is
     ``json_schema_violation``, and [DONE] is last.
     """
-    monkeypatch.setenv("RAPID_MLX_STRICT_BUFFER_BYTES", "256")
+    monkeypatch.setenv("FUSION_MLX_STRICT_BUFFER_BYTES", "256")
 
     import json as _json
 
@@ -1256,7 +1256,7 @@ def test_strict_true_streaming_overflow_closes_upstream_generator(monkeypatch):
     whether ``aclose()`` was called on it; force an overflow; pin
     that ``aclose()`` ran.
     """
-    monkeypatch.setenv("RAPID_MLX_STRICT_BUFFER_BYTES", "100")
+    monkeypatch.setenv("FUSION_MLX_STRICT_BUFFER_BYTES", "100")
 
     import json as _json
 
@@ -1354,7 +1354,7 @@ def test_strict_true_streaming_buffer_cap_counts_bytes_not_chars(monkeypatch):
     appeared to fit (30 code points < 100), and validation would
     proceed against a 120-byte buffer.
     """
-    monkeypatch.setenv("RAPID_MLX_STRICT_BUFFER_BYTES", "100")
+    monkeypatch.setenv("FUSION_MLX_STRICT_BUFFER_BYTES", "100")
 
     import json as _json
 
@@ -1896,7 +1896,7 @@ def test_responses_strict_true_guided_unavailable_disable_flag_skips_enforcement
     monkeypatch, _rate_limiter_state
 ):
     """R12-T1F-267-a (PR #878 codex review follow-up): the
-    ``RAPID_MLX_STRICT_JSON_SCHEMA=off`` escape hatch must restore
+    ``FUSION_MLX_STRICT_JSON_SCHEMA=off`` escape hatch must restore
     legacy pass-through behavior on /v1/responses too — not just on
     /v1/chat/completions. Pre-fix the route correctly skipped the
     non-guided post-generate validation block, then immediately
@@ -1907,7 +1907,7 @@ def test_responses_strict_true_guided_unavailable_disable_flag_skips_enforcement
     ``test_strict_true_guided_unavailable_disable_flag_skips_enforcement``
     on the chat route).
     """
-    monkeypatch.setenv("RAPID_MLX_STRICT_JSON_SCHEMA", "off")
+    monkeypatch.setenv("FUSION_MLX_STRICT_JSON_SCHEMA", "off")
     engine = _Engine(
         supports_guided=False,
         chat_text=_INVALID_PAYLOAD_OUT_OF_RANGE,
@@ -1930,7 +1930,7 @@ def test_responses_strict_true_guided_unavailable_default_on_invalid_returns_422
     _rate_limiter_state,
 ):
     """R12-T1F-267-a — positive regression for the default
-    enforcement path. With ``RAPID_MLX_STRICT_JSON_SCHEMA`` unset
+    enforcement path. With ``FUSION_MLX_STRICT_JSON_SCHEMA`` unset
     (default = on) and the engine reporting
     ``supports_guided_generation=False``, invalid output MUST
     surface as 422 ``json_schema_violation`` (NOT 502

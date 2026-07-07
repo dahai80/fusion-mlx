@@ -151,7 +151,7 @@ def test_no_api_key_keeps_dev_path_anonymous():
     """The no-auth (development) path MUST stay anonymous-OK.
 
     ``rapid-mlx serve <alias>`` without ``--api-key`` /
-    ``RAPID_MLX_API_KEY`` is the on-laptop developer ergonomic — a
+    ``FUSION_MLX_API_KEY`` is the on-laptop developer ergonomic — a
     well-meaning fix to #574 must not break it. Pin the contract here so
     a future "always require auth" reflex regression fails loudly.
     """

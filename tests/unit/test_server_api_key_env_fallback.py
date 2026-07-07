@@ -3,7 +3,7 @@
 
 The ``vllm_mlx.server`` standalone entrypoint historically only honored
 ``--api-key`` on argv. rapid-desktop's sidecar shim exported
-``RAPID_MLX_API_KEY`` AND still appended ``--api-key "$KEY"`` to argv,
+``FUSION_MLX_API_KEY`` AND still appended ``--api-key "$KEY"`` to argv,
 so ``ps -ef`` exposed the per-launch bearer token to any local user
 (codex BLOCKER taxonomy #3 — "bearer-in-shell-history").
 
@@ -48,7 +48,7 @@ def test_api_key_env_only_resolves_to_env_value(monkeypatch):
     production helper drops its env-var branch, this assertion fails."""
     from fusion_mlx.server import _resolve_api_key
 
-    monkeypatch.setenv("RAPID_MLX_API_KEY", "ENV_SECRET")
+    monkeypatch.setenv("FUSION_MLX_API_KEY", "ENV_SECRET")
     assert _resolve_api_key(argv_value=None) == "ENV_SECRET"
 
 
@@ -56,7 +56,7 @@ def test_api_key_argv_only_still_works(monkeypatch):
     """Inline argv is the legacy path — backwards-compat must hold."""
     from fusion_mlx.server import _resolve_api_key
 
-    monkeypatch.delenv("RAPID_MLX_API_KEY", raising=False)
+    monkeypatch.delenv("FUSION_MLX_API_KEY", raising=False)
     assert _resolve_api_key(argv_value="ARGV_SECRET") == "ARGV_SECRET"
 
 
@@ -64,7 +64,7 @@ def test_api_key_both_set_argv_wins(monkeypatch):
     """Argv override is documented in --api-key help; pin the priority."""
     from fusion_mlx.server import _resolve_api_key
 
-    monkeypatch.setenv("RAPID_MLX_API_KEY", "ENV_VALUE")
+    monkeypatch.setenv("FUSION_MLX_API_KEY", "ENV_VALUE")
     assert _resolve_api_key(argv_value="ARGV_VALUE") == "ARGV_VALUE"
 
 
@@ -72,7 +72,7 @@ def test_api_key_neither_set_is_none(monkeypatch):
     """No-auth dev path stays anonymous-OK."""
     from fusion_mlx.server import _resolve_api_key
 
-    monkeypatch.delenv("RAPID_MLX_API_KEY", raising=False)
+    monkeypatch.delenv("FUSION_MLX_API_KEY", raising=False)
     assert _resolve_api_key(argv_value=None) is None
 
 
@@ -82,7 +82,7 @@ def test_api_key_empty_string_argv_falls_back_to_env(monkeypatch):
     wins because empty string is falsy."""
     from fusion_mlx.server import _resolve_api_key
 
-    monkeypatch.setenv("RAPID_MLX_API_KEY", "ENV_FALLBACK")
+    monkeypatch.setenv("FUSION_MLX_API_KEY", "ENV_FALLBACK")
     assert _resolve_api_key(argv_value="") == "ENV_FALLBACK"
 
 
@@ -101,7 +101,7 @@ def test_banner_renders_auth_on_when_only_env_is_set(monkeypatch):
     red because the input ``argv_api_key=None`` produces no feature."""
     from fusion_mlx.cli import _auth_feature_str
 
-    monkeypatch.setenv("RAPID_MLX_API_KEY", "ENV_SECRET")
+    monkeypatch.setenv("FUSION_MLX_API_KEY", "ENV_SECRET")
     assert _auth_feature_str(argv_api_key=None) == "auth: on"
 
 
@@ -109,7 +109,7 @@ def test_banner_renders_auth_on_when_only_argv_is_set(monkeypatch):
     """Backwards-compat: inline argv-set path also renders the line."""
     from fusion_mlx.cli import _auth_feature_str
 
-    monkeypatch.delenv("RAPID_MLX_API_KEY", raising=False)
+    monkeypatch.delenv("FUSION_MLX_API_KEY", raising=False)
     assert _auth_feature_str(argv_api_key="ARGV_SECRET") == "auth: on"
 
 
@@ -118,7 +118,7 @@ def test_banner_omits_auth_line_when_neither_is_set(monkeypatch):
     CONFIGURATION block's ``Authentication: DISABLED`` warning."""
     from fusion_mlx.cli import _auth_feature_str
 
-    monkeypatch.delenv("RAPID_MLX_API_KEY", raising=False)
+    monkeypatch.delenv("FUSION_MLX_API_KEY", raising=False)
     assert _auth_feature_str(argv_api_key=None) is None
 
 
@@ -179,7 +179,7 @@ def test_env_only_spawn_keeps_bearer_out_of_ps_and_enforces_auth():
     """End-to-end contract for dogfood-v0.8.2 finding #3:
 
     1. Boot ``rapid-mlx serve qwen3.5-4b-4bit`` with the bearer in
-       ``RAPID_MLX_API_KEY`` env-only (NO ``--api-key`` argv).
+       ``FUSION_MLX_API_KEY`` env-only (NO ``--api-key`` argv).
     2. Read ``psutil.Process.cmdline()`` on the live child — the same
        source ``ps -ef`` reads. Bearer MUST NOT appear.
     3. ``GET /v1/models`` without auth → 401 (proves env actually
@@ -188,14 +188,14 @@ def test_env_only_spawn_keeps_bearer_out_of_ps_and_enforces_auth():
     5. Port-qualified pkill cleanup (per memory feedback_dogfood_
        pkill_port_qualified) — must NOT touch the user's prod 8451.
 
-    Mutation safety: if production ignores ``RAPID_MLX_API_KEY``, step
+    Mutation safety: if production ignores ``FUSION_MLX_API_KEY``, step
     3 would return 200 (no auth wired) and the test flips red. If
     production puts the bearer on argv, step 2 sees it and flips red.
     """
     psutil = pytest.importorskip("psutil")
     port = _find_free_port()
     bearer = "DOGFOOD_AGENT_F_LIVE_BEARER_must_not_appear_in_ps_cmdline"
-    env = {**os.environ, "RAPID_MLX_API_KEY": bearer}
+    env = {**os.environ, "FUSION_MLX_API_KEY": bearer}
     # The default test model per project memory.
     model_alias = "qwen3.5-4b-4bit"
 
@@ -238,7 +238,7 @@ def test_env_only_spawn_keeps_bearer_out_of_ps_and_enforces_auth():
         joined_live = " ".join(observed_cmdline)
         assert bearer not in joined_live, (
             f"BEARER LEAKED in live process cmdline ({observed_cmdline!r}). "
-            "Sidecar spawn path MUST keep RAPID_MLX_API_KEY in env only."
+            "Sidecar spawn path MUST keep FUSION_MLX_API_KEY in env only."
         )
 
         # Healthz: skip if model load takes too long on this CI. The
@@ -253,7 +253,7 @@ def test_env_only_spawn_keeps_bearer_out_of_ps_and_enforces_auth():
             )
 
         # Assertion 2: env-only auth is actually enforced. If production
-        # ignored RAPID_MLX_API_KEY, this would return 200 and flip red.
+        # ignored FUSION_MLX_API_KEY, this would return 200 and flip red.
         unauth_status = _http_get(port, "/v1/models", bearer=None)
         assert unauth_status == 401, (
             f"env-only auth NOT enforced: GET /v1/models without bearer "
@@ -298,7 +298,7 @@ def test_cli_help_advertises_env_fallback():
         timeout=30,
     )
     assert result.returncode == 0
-    assert "RAPID_MLX_API_KEY" in result.stdout, (
+    assert "FUSION_MLX_API_KEY" in result.stdout, (
         "--api-key help text must advertise the env-var fallback. "
         "Found:\n" + result.stdout[:2000]
     )
@@ -317,7 +317,7 @@ def test_server_help_advertises_env_fallback():
     )
     combined = (result.stdout or "") + (result.stderr or "")
     assert "--api-key" in combined
-    assert "RAPID_MLX_API_KEY" in combined, (
+    assert "FUSION_MLX_API_KEY" in combined, (
         "server entry --help must advertise the env fallback. "
         "Pre-fix it only said 'if not set, no auth required', which "
         "left downstream wrappers no choice but to put the bearer "

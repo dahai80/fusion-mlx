@@ -30,7 +30,7 @@ from fusion_mlx.cache.protocol import (
 def sandbox(monkeypatch, tmp_path):
     """Point the export sandbox at an isolated tmp dir for the test."""
     export_root = tmp_path / "exports"
-    monkeypatch.setenv("RAPID_MLX_CACHE_EXPORT_DIR", str(export_root))
+    monkeypatch.setenv("FUSION_MLX_CACHE_EXPORT_DIR", str(export_root))
     return export_root
 
 

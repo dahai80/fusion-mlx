@@ -8,7 +8,7 @@ routing decision in:
   - Per-request: request body fields, headers, middleware
   - Runtime mutation: setter methods, post-init writes to routing
     attributes
-  - Environment: ``os.environ.get("RAPID_MLX_FORCE_*")`` etc.
+  - Environment: ``os.environ.get("FUSION_MLX_FORCE_*")`` etc.
   - Engine API: ``engine.set_force_*`` / ``engine.set_*_mllm`` setters
 
 Round-4 red-team found 13 bypasses across these surfaces (5 per-request,
@@ -101,14 +101,14 @@ ROUTING_WRITE_ALLOWED_LOCATIONS: dict[str, frozenset[str]] = {
 }
 
 
-# RAPID_MLX_* env vars that are allowed to exist. Routing-shaped env
-# vars (``RAPID_MLX_FORCE_*`` etc.) are NEVER allowed — they bypass
+# FUSION_MLX_* env vars that are allowed to exist. Routing-shaped env
+# vars (``FUSION_MLX_FORCE_*`` etc.) are NEVER allowed — they bypass
 # every CLI gate. Add a knob here only if it's a non-routing toggle
 # (debug verbosity, version-check disable, etc.).
-ALLOWED_RAPID_MLX_ENV_VARS: frozenset[str] = frozenset(
+ALLOWED_FUSION_MLX_ENV_VARS: frozenset[str] = frozenset(
     {
-        "RAPID_MLX_DISABLE_VERSION_CHECK",  # opt-out of version check
-        "RAPID_MLX_PROFILE_VERBOSE",  # debug verbosity for profile logs
+        "FUSION_MLX_DISABLE_VERSION_CHECK",  # opt-out of version check
+        "FUSION_MLX_PROFILE_VERBOSE",  # debug verbosity for profile logs
         # Opt-out of the fused top-p/top-k/temperature sampler fast path
         # (PR #542). Same shape as DISABLE_VERSION_CHECK — a perf shortcut
         # toggle, not a routing decision. The math collapses to mlx-lm's
@@ -116,69 +116,69 @@ ALLOWED_RAPID_MLX_ENV_VARS: frozenset[str] = frozenset(
         # which model loads, which parser fires, which tier engages — none
         # of that changes. Read by ``vllm_mlx.scheduler._get_request_sampler``
         # only, never by config / aliases / model_auto_config.
-        "RAPID_MLX_DISABLE_FUSED_SAMPLER",
+        "FUSION_MLX_DISABLE_FUSED_SAMPLER",
         # Test/integration helpers — server URL for integration suites,
         # not consulted at runtime by the engine.
-        "RAPID_MLX_BASE_URL",
+        "FUSION_MLX_BASE_URL",
         # Telemetry consent toggle (off/on), not engine routing.
-        "RAPID_MLX_TELEMETRY",
+        "FUSION_MLX_TELEMETRY",
         # Telemetry debug log toggle (stderr trace of POST attempts to
         # the collector). Pure observability, not engine routing.
-        "RAPID_MLX_TELEMETRY_DEBUG",
+        "FUSION_MLX_TELEMETRY_DEBUG",
         # Telemetry collector endpoint override for Phase 2 dev rigs and
         # local-Worker testing. Production stays on
         # ``telemetry.rapidmlx.com``; never consulted by the engine.
-        "RAPID_MLX_TELEMETRY_ENDPOINT",
+        "FUSION_MLX_TELEMETRY_ENDPOINT",
         # Port for doctor harness probe checks, not engine routing.
-        "RAPID_MLX_PORT",
+        "FUSION_MLX_PORT",
         # Skip the [Y/n] confirmation prompt before large model downloads
         # (UX knob for unattended/CI usage; not consulted by the engine).
-        "RAPID_MLX_AUTO_PULL",
+        "FUSION_MLX_AUTO_PULL",
         # Override the per-user config dir used to remember "seen-tips"
         # banner state (chat REPL first-launch tip gating).
-        "RAPID_MLX_CONFIG_HOME",
+        "FUSION_MLX_CONFIG_HOME",
         # Set by ``rapid-mlx chat`` on the spawned ``serve`` subprocess
         # so the child's B2 download gate no-ops (parent already gated).
         # Pure UX flag — never read by the engine or scheduler.
-        "RAPID_MLX_CHAT_SPAWN",
+        "FUSION_MLX_CHAT_SPAWN",
         # ``rapid-mlx share`` control-plane endpoint override. Default points at
         # https://api.rapidmlx.com; dev sets this to a local docker-compose.
         # Read once at session-request time, never consulted by the engine.
-        "RAPID_MLX_RELAY_URL",
+        "FUSION_MLX_RELAY_URL",
         # ``rapid-mlx share`` local-port override for the spawned serve
         # subprocess. UX knob; not consulted by the engine or scheduler.
-        "RAPID_MLX_SHARE_PORT",
+        "FUSION_MLX_SHARE_PORT",
         # Operator request-shape safety cap for nested tool schemas.
         # Bounds validation recursion only; never chooses model/routing.
-        "RAPID_MLX_MAX_TOOL_SCHEMA_DEPTH",
+        "FUSION_MLX_MAX_TOOL_SCHEMA_DEPTH",
         # Operator request-shape safety cap for nested JSON bodies.
         # Bounds validation recursion only; never chooses model/routing.
-        "RAPID_MLX_MAX_BODY_DEPTH",
+        "FUSION_MLX_MAX_BODY_DEPTH",
         # Operator ceiling for accepted generation token budgets.
         # Request validation policy only; never chooses model/routing.
-        "RAPID_MLX_MAX_GENERATION_TOKENS",
+        "FUSION_MLX_MAX_GENERATION_TOKENS",
         # ``rapid-mlx share`` one-click chat-link override. Picks which
         # frontend URL the banner advertises (defaults to
         # https://chat.rapidmlx.com). Pure UX knob; consulted only by
         # ``vllm_mlx/share/cli.py`` when rendering the banner.
-        "RAPID_MLX_CHAT_FRONTEND",
+        "FUSION_MLX_CHAT_FRONTEND",
         # Server-side: fallback for ``--api-key`` when the inline flag is
         # not provided. Used by ``rapid-mlx share`` to avoid exposing the
         # bearer key in argv (visible to ``ps`` for any local user).
         # Pure auth-config knob; routing decisions never read it.
-        "RAPID_MLX_API_KEY",
+        "FUSION_MLX_API_KEY",
         # Server-side: fallback for ``--max-request-bytes`` (DoS defense,
         # rapid-desktop#273 / #463). Enforces the ASGI-layer body cap in
         # ``vllm_mlx/middleware/body_size.py``. Pure wire-level size gate
         # — never selects a model, parser, or routing tier; it only
         # decides whether a request body is admitted at all.
-        "RAPID_MLX_MAX_REQUEST_BYTES",
+        "FUSION_MLX_MAX_REQUEST_BYTES",
         # Path to the MCP server config file (formerly VLLM_MLX_MCP_CONFIG).
         # Plumbs ``--mcp-config`` from the CLI to the FastAPI lifespan and is
         # consumed only by ``vllm_mlx/mcp/config.py`` to discover MCP tool
         # servers. It selects external tool endpoints, never which model /
         # parser / tier the engine routes a request to.
-        "RAPID_MLX_MCP_CONFIG",
+        "FUSION_MLX_MCP_CONFIG",
         # ``rapid-mlx launch <client>`` default-model override. When the user
         # doesn't pass ``--model``, the launch dispatcher reads this env var
         # before falling back to the built-in ``qwen3.5-4b-4bit`` default.
@@ -188,7 +188,7 @@ ALLOWED_RAPID_MLX_ENV_VARS: frozenset[str] = frozenset(
         # Code / Continue / Cursor). Never consulted by the engine,
         # scheduler, or any routing layer — the actual model that loads is
         # chosen by ``rapid-mlx serve <model>``.
-        "RAPID_MLX_DEFAULT_MODEL",
+        "FUSION_MLX_DEFAULT_MODEL",
         # User-configured HTTP base URL for a weight mirror (R2/S3/any HTTP
         # host) consumed by ``_try_mirror_prefetch`` in ``vllm_mlx/cli.py``.
         # Pre-populates the HF cache layout (``snapshots/<sha>/<file>``) from
@@ -198,14 +198,14 @@ ALLOWED_RAPID_MLX_ENV_VARS: frozenset[str] = frozenset(
         # which parser fires, or which tier engages. The desktop app sets a
         # default R2 URL; power users override with any URL or "" to disable.
         # Never consulted by the engine, scheduler, or routing layer.
-        "RAPID_MLX_MODEL_MIRROR",
+        "FUSION_MLX_MODEL_MIRROR",
         # SIGTERM-grace budget (seconds, float) for the lifespan prefix-cache
         # flush in ``vllm_mlx/runtime/cache.py``. Defaults to 3.5s so a
         # multi-GB save commits its partial snapshot before downstream
         # supervisors (rapid-desktop's 5s grace, systemd / Docker / launchd
         # equivalents) escalate to SIGKILL and orphan ``<cache_dir>.new/``.
         # Pure deadline knob — never selects model, parser, or tier.
-        "RAPID_MLX_PREFIX_CACHE_SHUTDOWN_BUDGET",
+        "FUSION_MLX_PREFIX_CACHE_SHUTDOWN_BUDGET",
         # R6-H6 prefix-cache memory ceiling (bytes). Read by
         # ``MemoryCacheConfig.compute_memory_limit`` and consumed by
         # ``MemoryAwarePrefixCache._max_memory``. The 0.8.7 dogfood found
@@ -217,14 +217,14 @@ ALLOWED_RAPID_MLX_ENV_VARS: frozenset[str] = frozenset(
         # (the scheduler's cache-self-pressure trigger) tick on real
         # eviction activity. Pure capacity knob — never selects a model,
         # parser, or routing tier.
-        "RAPID_MLX_PREFIX_CACHE_MAX_BYTES",
+        "FUSION_MLX_PREFIX_CACHE_MAX_BYTES",
         # Sandbox root for the KV cache export/import HTTP API (issue #476).
         # Default ``~/.cache/rapid-mlx/cache_exports/``. All caller-supplied
         # paths to ``/v1/cache/{export,import,info}`` must resolve inside
         # this directory after symlink/commonpath checks — otherwise a
         # bearer-token holder could write arbitrary files. Pure filesystem
         # sandbox knob; never consulted by the engine or scheduler.
-        "RAPID_MLX_CACHE_EXPORT_DIR",
+        "FUSION_MLX_CACHE_EXPORT_DIR",
         # G12 release-gauntlet random-coverage gate
         # (``scripts/release_check_m3_random.py``) sets this to a single
         # harness name (or comma-separated subset) when running a scoped
@@ -234,7 +234,7 @@ ALLOWED_RAPID_MLX_ENV_VARS: frozenset[str] = frozenset(
         # engine, scheduler, or any routing layer. ``vllm_mlx.cli``
         # refuses ``--submit`` while it's set so a scoped sweep can't
         # silently produce a schema-incomplete community-bench payload.
-        "RAPID_MLX_HARNESS_PROFILES_FILTER",
+        "FUSION_MLX_HARNESS_PROFILES_FILTER",
         # F-070 SSE keepalive interval (seconds, float). Mapped to
         # ``ServerConfig.sse_keepalive_seconds`` and consumed by
         # ``_disconnect_guard`` to emit ``: keepalive\n\n`` SSE comments
@@ -242,17 +242,17 @@ ALLOWED_RAPID_MLX_ENV_VARS: frozenset[str] = frozenset(
         # nginx / Cloudflare idle-timeouts on long prefills). 0 disables.
         # Pure connection-keepalive knob — never selects a model, parser,
         # or routing tier.
-        "RAPID_MLX_SSE_KEEPALIVE_SECONDS",
+        "FUSION_MLX_SSE_KEEPALIVE_SECONDS",
         # F-072 slow-DoS body-receive idle timeout (seconds, float).
         # Mapped to ``ServerConfig.body_receive_timeout_seconds`` and
         # consumed by ``RequestBodyLimitMiddleware`` to bound each
         # ``receive()`` ASGI call in ``asyncio.wait_for`` until the body
         # is fully on the wire. 0 disables. Pure wire-level DoS gate
-        # paired with ``RAPID_MLX_MAX_REQUEST_BYTES`` — never selects a
+        # paired with ``FUSION_MLX_MAX_REQUEST_BYTES`` — never selects a
         # model, parser, or routing tier; it only decides whether a
         # slow-shipping client is bounced with 408 vs allowed to stall
         # the worker indefinitely.
-        "RAPID_MLX_BODY_RECEIVE_TIMEOUT_SECONDS",
+        "FUSION_MLX_BODY_RECEIVE_TIMEOUT_SECONDS",
         # F-090 + F-091 CORS env-var family. None of these select a
         # model, parser, or routing tier — they only decide whether the
         # CORS middleware is registered and, if so, what the
@@ -261,11 +261,11 @@ ALLOWED_RAPID_MLX_ENV_VARS: frozenset[str] = frozenset(
         # ``--cors-origins`` CLI flag. See
         # ``vllm_mlx/server.py::configure_cors_from_env`` for the
         # default-deny stance (unset → no middleware, preflight 405).
-        "RAPID_MLX_CORS_ALLOW_ORIGINS",
-        "RAPID_MLX_CORS_ALLOW_METHODS",
-        "RAPID_MLX_CORS_ALLOW_HEADERS",
-        "RAPID_MLX_CORS_MAX_AGE",
-        "RAPID_MLX_CORS_ALLOW_CREDENTIALS",
+        "FUSION_MLX_CORS_ALLOW_ORIGINS",
+        "FUSION_MLX_CORS_ALLOW_METHODS",
+        "FUSION_MLX_CORS_ALLOW_HEADERS",
+        "FUSION_MLX_CORS_MAX_AGE",
+        "FUSION_MLX_CORS_ALLOW_CREDENTIALS",
         # Reasoning-cutoff RESCUE opt-OUT (R12-8 / issue #259, the
         # 8-round D-carry that extended PR #802 / #860 from a bare
         # sentinel to ``sentinel + tail-of-reasoning``). Pure UX knob
@@ -276,19 +276,19 @@ ALLOWED_RAPID_MLX_ENV_VARS: frozenset[str] = frozenset(
         # callers that want the strict-null shape (relying on the
         # structured ``finish_reason="length"`` / ``status="incomplete"``
         # / ``stop_reason="max_tokens"`` cue alone) opt out via
-        # ``RAPID_MLX_REASONING_RESCUE=off`` (or ``0`` / ``false`` /
+        # ``FUSION_REASONING_RESCUE=off`` (or ``0`` / ``false`` /
         # ``no`` / ``disabled``). Never selects a model, parser, or
         # routing tier; consumed only by
         # ``vllm_mlx.service.helpers._cutoff_notice_enabled`` to decide
         # whether the rescue payload is surfaced. See PR
         # fix/r12-8-reasoning-content-rescue.
-        "RAPID_MLX_REASONING_RESCUE",
+        "FUSION_REASONING_RESCUE",
         # Legacy alias for the rescue opt-out (PR #802 / #860 / issue
         # #858, pre-R12-8). Still honoured so existing rapid-desktop
         # deployments and operator runbooks that already reference this
         # name keep working without a rebuild. Identical semantics +
-        # call-site to ``RAPID_MLX_REASONING_RESCUE``.
-        "RAPID_MLX_REASONING_CUTOFF_NOTICE",
+        # call-site to ``FUSION_REASONING_RESCUE``.
+        "FUSION_REASONING_CUTOFF_NOTICE",
         # F-K-CAPABILITIES-OMIT-AUDIO opt-in deep audio probe (boolean
         # flag). When set to a truthy value, the lifespan hook runs a
         # tiny dry-run inference on each audio lane (STT + TTS) so
@@ -299,7 +299,7 @@ ALLOWED_RAPID_MLX_ENV_VARS: frozenset[str] = frozenset(
         # model, parser, or routing tier. Consumed only by
         # ``vllm_mlx/server.py``'s lifespan to decide whether to fire
         # the deep probe at boot.
-        "RAPID_MLX_AUDIO_DEEP_PROBE",
+        "FUSION_MLX_AUDIO_DEEP_PROBE",
         # R12-4 strict ``response_format.json_schema`` enforcement
         # escape hatch (``off`` falls through to legacy silent-pass-
         # through; default is on). Pure behaviour-policy knob —
@@ -307,14 +307,14 @@ ALLOWED_RAPID_MLX_ENV_VARS: frozenset[str] = frozenset(
         # only by ``vllm_mlx.api.strict_json_schema`` to decide
         # whether the post-generate validation gate fires. See PR
         # fix/r12-4-strict-json-schema-enforcement.
-        "RAPID_MLX_STRICT_JSON_SCHEMA",
+        "FUSION_MLX_STRICT_JSON_SCHEMA",
         # R12-4 strict-mode auto-repair retry toggle. Setting to
         # ``off`` disables ONLY the single repair retry — the
         # post-decode validation + 422 envelope still fires. Pure
         # cost-sensitivity knob — never selects a model, parser, or
         # routing tier. Same module / same PR as the parent
-        # ``RAPID_MLX_STRICT_JSON_SCHEMA`` knob.
-        "RAPID_MLX_STRICT_JSON_SCHEMA_REPAIR",
+        # ``FUSION_MLX_STRICT_JSON_SCHEMA`` knob.
+        "FUSION_MLX_STRICT_JSON_SCHEMA_REPAIR",
         # R12-4 / codex r8 #2 — strict-streaming content-buffer cap
         # (bytes). Bounds the per-request memory the post-generate
         # validation buffer can hold so a misbehaving / adversarial
@@ -322,7 +322,7 @@ ALLOWED_RAPID_MLX_ENV_VARS: frozenset[str] = frozenset(
         # — never selects a model, parser, or routing tier;
         # consumed only by ``stream_chat_completion_strict_postgen``
         # to size the violation-detection buffer. Default 2 MiB.
-        "RAPID_MLX_STRICT_BUFFER_BYTES",
+        "FUSION_MLX_STRICT_BUFFER_BYTES",
         # PID of the supervising parent process for the parent-watchdog
         # graceful-exit path (``vllm_mlx/_parent_watchdog.py``). The
         # supervising process injects its own PID before spawning the
@@ -331,13 +331,13 @@ ALLOWED_RAPID_MLX_ENV_VARS: frozenset[str] = frozenset(
         # model, parser, or routing tier; read only by the watchdog
         # loop in ``_parent_watchdog.py`` and the wire-up at
         # ``cli.py``, ``bench/_server.py``, ``share/cli.py``.
-        "RAPID_MLX_WATCHDOG_PPID",
+        "FUSION_MLX_WATCHDOG_PPID",
         # Disk KV cache checkpoint size ceiling (bytes). Bounds the
         # serialized snapshot ``runtime/disk_kv_checkpoint.py`` writes
         # to disk on graceful shutdown so an oversize cache can't
         # blow up the FS. Pure wire-level capacity gate — never
         # selects a model, parser, or routing tier.
-        "RAPID_MLX_KV_CHECKPOINT_MAX_BYTES",
+        "FUSION_MLX_KV_CHECKPOINT_MAX_BYTES",
     }
 )
 
@@ -816,19 +816,19 @@ def test_routing_fields_written_only_in_allowed_scopes():
 
 def test_no_routing_shaped_rapid_mlx_env_vars():
     """Round-4 cat-4 (env-var/config routing) — 3 of 5 attacks read an
-    env var (``RAPID_MLX_FORCE_MLLM``, ``RAPID_MLX_FORCE_TEXT_MODE``)
+    env var (``FUSION_MLX_FORCE_MLLM``, ``FUSION_MLX_FORCE_TEXT_MODE``)
     at startup or request time and mutated routing without ever
     touching the CLI surface.
 
     This test forbids env var NAMES that match the routing-shape
-    pattern (``RAPID_MLX_(FORCE|NO|ENABLE|DISABLE)_*``). The check is
+    pattern (``FUSION_MLX_(FORCE|NO|ENABLE|DISABLE)_*``). The check is
     on the CONSTANT — even if the attacker reads the env var, the
     constant string has to appear somewhere in source, and that string
     can't be routing-shaped.
 
-    Non-routing env vars (``RAPID_MLX_PROFILE_VERBOSE``,
-    ``RAPID_MLX_DISABLE_VERSION_CHECK``) are allowlisted explicitly.
-    Add new non-routing env vars to ``ALLOWED_RAPID_MLX_ENV_VARS``
+    Non-routing env vars (``FUSION_MLX_PROFILE_VERBOSE``,
+    ``FUSION_MLX_DISABLE_VERSION_CHECK``) are allowlisted explicitly.
+    Add new non-routing env vars to ``ALLOWED_FUSION_MLX_ENV_VARS``
     with a justification comment. NEVER add a routing-shaped name to
     the allowlist — register a CLI flag pair instead.
     """
@@ -847,7 +847,7 @@ def test_no_routing_shaped_rapid_mlx_env_vars():
 
         for node in ast.walk(tree):
             # Round-5 subagent 3 #B: bytes literal env vars
-            # (os.environb[b"RAPID_MLX_FORCE_MLLM"]) — decode and check
+            # (os.environb[b"FUSION_MLX_FORCE_MLLM"]) — decode and check
             # the same pattern.
             if isinstance(node, ast.Constant) and isinstance(node.value, bytes):
                 try:
@@ -888,7 +888,7 @@ def test_no_routing_shaped_rapid_mlx_env_vars():
 
         # Codex round-B fix (PR #409): the string-Constant scan only
         # sees fully-literal keys. Composed names like
-        # ``os.environ.get("RAPID_MLX_" + "FORCE_MLLM")`` or
+        # ``os.environ.get("FUSION_MLX_" + "FORCE_MLLM")`` or
         # ``f"{prefix}FORCE_MLLM"`` never present the full routing-shape
         # string to ``_check_env_constant`` — the gate passes even
         # though the runtime read targets the exact out-of-band routing
@@ -912,7 +912,7 @@ def test_no_routing_shaped_rapid_mlx_env_vars():
                 "use a single string literal or a module-level "
                 "constant whose value is a literal. Composing the "
                 "name at the call site is the codex round-B bypass "
-                "shape (e.g. `os.environ.get('RAPID_MLX_' + 'FORCE_MLLM')`)."
+                "shape (e.g. `os.environ.get('FUSION_MLX_' + 'FORCE_MLLM')`)."
             )
 
     assert not offenders, "\n".join(offenders)
@@ -923,10 +923,10 @@ def _check_env_constant(
 ) -> None:
     """Run the env-var routing checks against a single constant string."""
     # Strip RAPID_ prefix for the routing-shape check so both
-    # RAPID_MLX_FORCE_* and MLX_FORCE_* are caught.
-    if not (value.startswith("RAPID_MLX_") or value.startswith("MLX_")):
+    # FUSION_MLX_FORCE_* and MLX_FORCE_* are caught.
+    if not (value.startswith("FUSION_MLX_") or value.startswith("MLX_")):
         return
-    if value in ALLOWED_RAPID_MLX_ENV_VARS:
+    if value in ALLOWED_FUSION_MLX_ENV_VARS:
         return
     if ENV_VAR_ROUTING_PATTERN.match(value):
         offenders.append(
@@ -936,12 +936,12 @@ def _check_env_constant(
             "(round-4 cat-4 + round-5 subagent 3 #C). Register a "
             "RoutingFlagPair instead."
         )
-    elif value.startswith("RAPID_MLX_"):
-        # Only treat RAPID_MLX_ as our namespace; bare MLX_ may be from
+    elif value.startswith("FUSION_MLX_"):
+        # Only treat FUSION_MLX_ as our namespace; bare MLX_ may be from
         # upstream mlx-lm or transformers.
         offenders.append(
             f"{rel}:{lineno} references env var `{value}` — not in "
-            "ALLOWED_RAPID_MLX_ENV_VARS. If this is a non-routing knob, "
+            "ALLOWED_FUSION_MLX_ENV_VARS. If this is a non-routing knob, "
             "add it to the allowlist with a comment. Routing env vars "
             "are forbidden."
         )
@@ -1271,7 +1271,7 @@ def test_environb_detection_catches_bare_name_form():
     """DeepSeek-V4 review regression (PR #409): the original
     ``os.environb`` ban only matched ``Attribute(attr='environb',
     value=Name(id='os'))``. An attacker who writes
-    ``from os import environb; environb[b'RAPID_MLX_FORCE_MLLM'] = b'1'``
+    ``from os import environb; environb[b'FUSION_MLX_FORCE_MLLM'] = b'1'``
     creates an ``ast.Subscript`` whose ``.value`` is a bare ``Name(id=
     'environb')`` with no ``os.`` prefix — the Attribute-only scan
     misses it entirely. The fix adds a second predicate matching
@@ -1284,9 +1284,9 @@ def test_environb_detection_catches_bare_name_form():
     counting matches.
     """
     bare_form_source = (
-        "from os import environb\nenvironb[b'RAPID_MLX_FORCE_MLLM'] = b'1'\n"
+        "from os import environb\nenvironb[b'FUSION_MLX_FORCE_MLLM'] = b'1'\n"
     )
-    attribute_form_source = "import os\nos.environb[b'RAPID_MLX_FORCE_MLLM'] = b'1'\n"
+    attribute_form_source = "import os\nos.environb[b'FUSION_MLX_FORCE_MLLM'] = b'1'\n"
 
     def _count_environb_hits(source: str) -> int:
         tree = ast.parse(source)
@@ -1434,8 +1434,8 @@ def test_os_environ_composed_key_is_detected():
     ``_os_environ_key_expr`` can't silently drop one of these shapes.
     """
     composed_sources = {
-        "concat": "import os\nos.environ.get('RAPID_MLX_' + 'FORCE_MLLM')\n",
-        "fstring": "import os\nprefix = 'RAPID_MLX_'\nos.environ.get(f'{prefix}FORCE_MLLM')\n",
+        "concat": "import os\nos.environ.get('FUSION_MLX_' + 'FORCE_MLLM')\n",
+        "fstring": "import os\nprefix = 'FUSION_MLX_'\nos.environ.get(f'{prefix}FORCE_MLLM')\n",
         "call": "import os\nos.environ.get('RAPID_'.join(['MLX_FORCE_MLLM']))\n",
     }
     for shape, source in composed_sources.items():
@@ -1454,7 +1454,7 @@ def test_os_environ_composed_key_is_detected():
     # vllm_mlx/mcp/config.py and vllm_mlx/telemetry/state.py).
     benign_sources = (
         "import os\nos.environ.get('VLLM_MLX_MCP_CONFIG')\n",
-        "import os\nENV_VAR = 'RAPID_MLX_TELEMETRY'\nos.environ.get(ENV_VAR)\n",
+        "import os\nENV_VAR = 'FUSION_MLX_TELEMETRY'\nos.environ.get(ENV_VAR)\n",
     )
     for source in benign_sources:
         tree = ast.parse(source)

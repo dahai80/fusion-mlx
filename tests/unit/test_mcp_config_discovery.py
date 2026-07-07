@@ -3,7 +3,7 @@
 rename.
 
 The rename moved the config search dir and env var to ``rapid-mlx`` /
-``RAPID_MLX_MCP_CONFIG`` while keeping the pre-rename ``vllm-mlx`` /
+``FUSION_MLX_MCP_CONFIG`` while keeping the pre-rename ``vllm-mlx`` /
 ``VLLM_MLX_MCP_CONFIG`` locations as fallbacks so existing users' configs keep
 working. These tests pin that contract: new location wins, old location still
 resolves, and resolution is existence-aware (a stale new path must not shadow a
@@ -22,7 +22,7 @@ from fusion_mlx.mcp import config as mcp_config
 @pytest.fixture(autouse=True)
 def _clear_mcp_env(monkeypatch):
     """Both MCP env vars start unset so the host environment can't leak in."""
-    monkeypatch.delenv("RAPID_MLX_MCP_CONFIG", raising=False)
+    monkeypatch.delenv("FUSION_MLX_MCP_CONFIG", raising=False)
     monkeypatch.delenv("VLLM_MLX_MCP_CONFIG", raising=False)
 
 
@@ -59,7 +59,7 @@ def test_rapid_mlx_dir_preferred_over_legacy(monkeypatch, tmp_path):
 
 def test_rapid_mlx_env_var_honored(monkeypatch, tmp_path):
     cfg = _write_cfg(tmp_path / "explicit.json")
-    monkeypatch.setenv("RAPID_MLX_MCP_CONFIG", str(cfg))
+    monkeypatch.setenv("FUSION_MLX_MCP_CONFIG", str(cfg))
     assert mcp_config._find_config_file() == cfg
 
 
@@ -72,7 +72,7 @@ def test_legacy_env_var_still_honored(monkeypatch, tmp_path):
 def test_new_env_var_wins_when_both_point_to_real_files(monkeypatch, tmp_path):
     new = _write_cfg(tmp_path / "new.json")
     old = _write_cfg(tmp_path / "old.json")
-    monkeypatch.setenv("RAPID_MLX_MCP_CONFIG", str(new))
+    monkeypatch.setenv("FUSION_MLX_MCP_CONFIG", str(new))
     monkeypatch.setenv("VLLM_MLX_MCP_CONFIG", str(old))
     assert mcp_config._find_config_file() == new
 
@@ -81,7 +81,7 @@ def test_stale_new_env_var_falls_through_to_working_legacy(monkeypatch, tmp_path
     """A new env var pointing at a missing file must not shadow a legacy var
     that points at a real one — the loader's lookup is existence-aware."""
     old = _write_cfg(tmp_path / "old.json")
-    monkeypatch.setenv("RAPID_MLX_MCP_CONFIG", str(tmp_path / "does-not-exist.json"))
+    monkeypatch.setenv("FUSION_MLX_MCP_CONFIG", str(tmp_path / "does-not-exist.json"))
     monkeypatch.setenv("VLLM_MLX_MCP_CONFIG", str(old))
     assert mcp_config._find_config_file() == old
 
@@ -93,7 +93,7 @@ def test_directory_env_var_falls_through_to_working_legacy(monkeypatch, tmp_path
     a_dir = tmp_path / "rapid-mlx"
     a_dir.mkdir()
     old = _write_cfg(tmp_path / "old.json")
-    monkeypatch.setenv("RAPID_MLX_MCP_CONFIG", str(a_dir))
+    monkeypatch.setenv("FUSION_MLX_MCP_CONFIG", str(a_dir))
     monkeypatch.setenv("VLLM_MLX_MCP_CONFIG", str(old))
     assert mcp_config._find_config_file() == old
 

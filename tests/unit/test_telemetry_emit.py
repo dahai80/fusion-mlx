@@ -10,7 +10,7 @@ logger = logging.getLogger(__name__)
 @pytest.fixture
 def fake_home(tmp_path, monkeypatch):
     monkeypatch.setenv("HOME", str(tmp_path))
-    monkeypatch.delenv("RAPID_MLX_TELEMETRY", raising=False)
+    monkeypatch.delenv("FUSION_MLX_TELEMETRY", raising=False)
 
     import fusion_mlx.telemetry.state as state
 

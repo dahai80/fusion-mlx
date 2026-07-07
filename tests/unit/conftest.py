@@ -675,11 +675,20 @@ def _add_round3_stubs():
     if "fusion_mlx.domain.events" in sys.modules:
         mod = sys.modules["fusion_mlx.domain.events"]
         if not hasattr(mod, "StreamEvent"):
+            def _stream_event_init(self, type="content", content=None, reasoning=None, tool_calls=None, finish_reason=None, tool_calls_detected=False, metadata=None):
+                self.type = type
+                self.content = content
+                self.reasoning = reasoning
+                self.tool_calls = tool_calls
+                self.finish_reason = finish_reason
+                self.tool_calls_detected = tool_calls_detected
+                self.metadata = metadata or {}
+
             mod.StreamEvent = type(
                 "StreamEvent",
                 (),
                 {
-                    "__init__": lambda self, **kw: None,
+                    "__init__": _stream_event_init,
                 },
             )
 

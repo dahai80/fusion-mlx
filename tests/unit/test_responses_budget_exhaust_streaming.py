@@ -871,8 +871,8 @@ class TestStreamingBudgetExhaustEmitsReasoningItem:
         streaming surface only emitted the reasoning item (status
         incomplete) and silently dropped the rescue text.
         """
-        monkeypatch.delenv("RAPID_MLX_REASONING_RESCUE", raising=False)
-        monkeypatch.delenv("RAPID_MLX_REASONING_CUTOFF_NOTICE", raising=False)
+        monkeypatch.delenv("FUSION_REASONING_RESCUE", raising=False)
+        monkeypatch.delenv("FUSION_REASONING_CUTOFF_NOTICE", raising=False)
         with responses_client.client.stream(
             "POST",
             "/v1/responses",
