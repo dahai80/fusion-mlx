@@ -64,6 +64,7 @@ MODEL_SPECIFIC_PROFILE_FIELDS = (
     "ngram_spec_order",
     "ngram_spec_num_draft",
     "ngram_spec_break_even",
+    "lora_path",
 )
 
 EXCLUDED_FROM_PROFILES = frozenset(

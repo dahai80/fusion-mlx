@@ -1,11 +1,19 @@
 # SPDX-License-Identifier: Apache-2.0
-# Boot-time LoRA adapter wiring (Phase B LoRA slice 1).
-# Verifies --lora-path threads from server.load_model into BatchedEngine and
-# reaches mlx_lm.load(adapter_path=...).
+# LoRA adapter wiring (Phase B).
+# Slice 1 (boot-time): --lora-path threads from server.load_model into
+# BatchedEngine and reaches mlx_lm.load(adapter_path=...).
+# Slice 2 (multi-model): per-model lora_path via ModelSettings threads
+# through engine_pool's BatchedEngine construction.
 import asyncio
+import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
+
 from fusion_mlx.engines.batched import BatchedEngine
+from fusion_mlx.model_profiles import MODEL_SPECIFIC_PROFILE_FIELDS
+from fusion_mlx.model_settings import ModelSettings, ModelSettingsManager
+from fusion_mlx.pool.engine_pool import EnginePool
 
 
 def _run(coro):
@@ -87,3 +95,76 @@ class TestLoadModelStagesLoraPath:
             assert server._pending_single_model["lora_path"] == "/adapters/x"
         finally:
             server._pending_single_model = saved
+
+
+def _make_mock_model_dir(tmp_path):
+    model_a = tmp_path / "model-a"
+    model_a.mkdir()
+    (model_a / "config.json").write_text(json.dumps({"model_type": "llama"}))
+    (model_a / "model.safetensors").write_bytes(b"0" * 1024)
+    return tmp_path
+
+
+class TestModelSettingsLoraPath:
+    def test_roundtrip(self):
+        ms = ModelSettings(lora_path="/adapters/x")
+        d = ms.to_dict()
+        assert d["lora_path"] == "/adapters/x"
+        ms2 = ModelSettings.from_dict(d)
+        assert ms2.lora_path == "/adapters/x"
+
+    def test_default_none(self):
+        assert ModelSettings().lora_path is None
+
+    def test_from_dict_ignores_unknown_keys(self):
+        ms = ModelSettings.from_dict({"lora_path": "/a", "bogus": 1})
+        assert ms.lora_path == "/a"
+
+    def test_in_profile_allowlist(self):
+        assert "lora_path" in MODEL_SPECIFIC_PROFILE_FIELDS
+
+
+class TestEnginePoolLoraWiring:
+    @pytest.mark.asyncio
+    async def test_threads_lora_path_from_settings(self, tmp_path):
+        _make_mock_model_dir(tmp_path)
+        pool = EnginePool()
+        pool._get_final_ceiling = lambda: 0
+        pool.discover_models(str(tmp_path))
+
+        mgr = ModelSettingsManager(tmp_path / "settings")
+        mgr.set_settings("model-a", ModelSettings(lora_path="/adapters/x"))
+        pool._settings_manager = mgr
+
+        mock_engine = MagicMock()
+        mock_engine.start = AsyncMock()
+
+        with patch(
+            "fusion_mlx.pool.engine_pool.BatchedEngine",
+            return_value=mock_engine,
+        ) as mock_ctor:
+            await pool._load_engine("model-a")
+
+        mock_ctor.assert_called_once()
+        assert mock_ctor.call_args.kwargs.get("lora_path") == "/adapters/x"
+
+    @pytest.mark.asyncio
+    async def test_no_lora_path_when_settings_unset(self, tmp_path):
+        _make_mock_model_dir(tmp_path)
+        pool = EnginePool()
+        pool._get_final_ceiling = lambda: 0
+        pool.discover_models(str(tmp_path))
+
+        pool._settings_manager = ModelSettingsManager(tmp_path / "settings")
+
+        mock_engine = MagicMock()
+        mock_engine.start = AsyncMock()
+
+        with patch(
+            "fusion_mlx.pool.engine_pool.BatchedEngine",
+            return_value=mock_engine,
+        ) as mock_ctor:
+            await pool._load_engine("model-a")
+
+        mock_ctor.assert_called_once()
+        assert mock_ctor.call_args.kwargs.get("lora_path") is None

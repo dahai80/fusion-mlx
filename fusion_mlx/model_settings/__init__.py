@@ -94,6 +94,8 @@ class ModelSettings:
 
     trust_remote_code: bool = False
 
+    lora_path: str | None = None
+
     display_name: str | None = None
     description: str | None = None
     active_profile_name: str | None = None
