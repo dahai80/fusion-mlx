@@ -191,6 +191,10 @@ class MessagesRequest(BaseModel):
     """Request for Anthropic Messages API."""
 
     model: str
+    # Optional LoRA adapter path (mlx-lm server-compatible). When set, the
+    # request is routed to a derived engine entry keyed by (model, adapter)
+    # so each adapter gets its own loaded model instance.
+    adapters: str | None = None
     max_tokens: int
     messages: list[AnthropicMessage]
     system: str | list[SystemContent] | None = None
