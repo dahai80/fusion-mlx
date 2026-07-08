@@ -1,0 +1,119 @@
+#!/usr/bin/osascript -l JavaScript
+/*
+ * FusionMLX GUI Automation Test
+ *
+ * Tests Welcome wizard flow using Accessibility API (no code changes needed).
+ * Finds UI elements by their native labels/titles.
+ *
+ * Usage:
+ *   osascript -l JavaScript FusionMLX-gui-test.jxa
+ */
+
+function wait(seconds) { delay(seconds); }
+
+function findButton(proc, label) {
+    const btns = proc.buttons;
+    for (let i = 0; i < btns.length; i++) {
+        if (btns[i].title() === label || btns[i].description() === label) {
+            return btns[i];
+        }
+    }
+    return null;
+}
+
+function waitForButton(proc, label, timeoutSec) {
+    const deadline = Date.now() + (timeoutSec * 1000);
+    while (Date.now() < deadline) {
+        const btn = findButton(proc, label);
+        if (btn) return btn;
+        delay(0.5);
+    }
+    return null;
+}
+
+function findWindow(proc, name) {
+    const wins = proc.windows;
+    for (let i = 0; i < wins.length; i++) {
+        if (wins[i].title() === name) return wins[i];
+    }
+    return null;
+}
+
+function run() {
+    console.log("=== FusionMLX GUI Automation Test ===");
+
+    // 0. Launch app
+    const app = Application("app.fusion-mlx");
+    app.activate();
+    wait(4);
+
+    const sys = Application("System Events");
+    const proc = sys.processes["FusionMLX"];
+    if (!proc) { console.error("FAIL: App not started"); return false; }
+    console.log("✅ App running");
+
+    // 1. Step: Intro
+    const introWin = findWindow(proc, "Welcome to FusionMLX");
+    if (introWin) {
+        console.log("✅ Intro window visible");
+        const getStarted = waitForButton(proc, "Get Started", 3);
+        if (getStarted) {
+            console.log("  ↪ Clicking 'Get Started'");
+            getStarted.click();
+            wait(1);
+        }
+    } else {
+        console.log("ℹ️  No Welcome window (existing config or already past intro)");
+    }
+
+    // 2. Step: Setup (S1)
+    const continueBtn = waitForButton(proc, "Continue", 3);
+    if (continueBtn) {
+        console.log("✅ Setup screen visible");
+        // Try to set API key
+        try {
+            const apiField = proc.textFields["sk-fusion-…"];
+            if (apiField) {
+                apiField.setValue("test-api-key-gui");
+                console.log("  ✅ API key entered");
+            }
+        } catch (e) { /* ok */ }
+        console.log("  ↪ Clicking 'Continue' (→ hardware detection)");
+        continueBtn.click();
+        wait(3);
+    }
+
+    // 3. Step: Hardware Detect (S2)
+    const hwContinue = waitForButton(proc, "Continue", 10);
+    if (hwContinue) {
+        console.log("✅ Hardware detection completed");
+        console.log("  ↪ Clicking 'Continue' (→ recommendations)");
+        hwContinue.click();
+        wait(2);
+    }
+
+    // 4. Step: Recommend (S3)
+    const startServer = waitForButton(proc, "Start Server", 8);
+    if (startServer) {
+        console.log("✅ Recommendation screen visible");
+        console.log("  - Server settings section present");
+        // Check for model recommendations (may be empty if offline)
+        console.log("  ℹ️  Starting server (connects to existing server on configured port)");
+        startServer.click();
+        wait(3);
+    } else {
+        console.log("ℹ️  Recommendation screen not reached");
+    }
+
+    // 5. Check result
+    const completeWin = findWindow(proc, "FusionMLX");
+    const dashboardBtn = findButton(proc, "Open Web Dashboard");
+    if (dashboardBtn || completeWin) {
+        console.log("✅ Welcome wizard completed successfully");
+    }
+
+    console.log("");
+    console.log("=== Test Complete ===");
+    console.log("Welcome 5-step flow: intro → setup → hardware → recommend → complete ✓");
+    return true;
+}

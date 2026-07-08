@@ -69,8 +69,19 @@ Key optimizations: quant2/quant2_128/quant2_flat ultra-aggressive 2-bit quantiza
 - **Multi-model concurrency** — EnginePool with LRU eviction, pinning, and TTL
 - **MCP tool support** — list, discover, and execute MCP tools via API
 - **Admin web panel** — model management, live chat, HuggingFace downloads, online quantization
-- **macOS native app** — SwiftUI with menu bar, auto-update, benchmark, model management
-- **8 integrations** — Claude Code, OpenClaw, ComfyUI, Copilot, Codex, OpenCode, Pi, Hermes
+- **macOS native app** — SwiftUI with menu bar, auto-update, benchmark, model management, **hardware-aware setup wizard**
+
+### Advanced Feature Recommendations
+
+When you launch the macOS app for the first time, the **6-step Welcome wizard** auto-detects your Mac hardware and recommends optimal settings:
+
+| Use Case | Recommended Models (selectable list) | DFlash | DSpark | TurboQuant | Max Context |
+|----------|--------------------------------------|--------|--------|------------|-------------|
+| 🤖 Agent (OpenClaw) | DeepSeek-V4-Flash, Qwen3.6-27B | ✅ | ❌ | ✅ (≥64GB) | 65K |
+| 💻 Coding | Qwen3.5-9B, DeepSeek-Coder-V2 | ❌ | ✅ | ✅ (≥64GB) | 131K |
+| 💬 Chat | Qwen3.5-9B, Gemma-4-31B | ❌ | ❌ | ✅ (≥64GB) | 32K |
+
+Recommendations are based on real-time hardware detection (CPU cores, unified memory, GPU bandwidth, disk space). All settings are editable with validation warnings for out-of-range values.
 
 ## Quick Start
 
@@ -313,6 +324,24 @@ fusion-mlx/
 - [Speculative Decoding](docs/speculative-decoding.md) — Suffix/DFlash/DSpark/MTP/VLM-MTP methods, selection guide, auto-router
 - [Video Input](docs/video-input.md) — VLM video support: `video_url` API, frame extraction, Qwen native path, limits
 - [FR Differentiation](docs/FR_DIFFERENTIATION.md) — Verified analysis of fusion-mlx's spec-decode/TurboQuant/scheduling differentiation
+
+## whichllm Integration
+
+The macOS app's **Welcome wizard** uses [whichllm](https://github.com/Andyyyy64/whichllm) for hardware-aware model recommendations. whichllm auto-detects your Mac's GPU, CPU, RAM and disk, then ranks the best local LLMs from HuggingFace that fit your system.
+
+**Integrated features:**
+- **Hardware detection** — Apple Silicon chip type, unified memory, GPU bandwidth, CPU cores, free disk (via `system_profiler`/`sysctl`)
+- **Model recommendations** — Top-ranked models by quality score, speed (tok/s), VRAM fit, and benchmark evidence
+- **Use-case optimization** — Different recommendations for Agent / Coding / Chat workloads
+- **Mirror selection** — HuggingFace, HF Mirror, or ModelScope for Chinese users without VPN
+- **Graceful fallback** — when whichllm is not installed, detection falls back to `ProcessInfo` + `sysctl` (built-in, no Python dependency)
+
+**Bridge architecture:**
+```
+Swift App → WhichLLMService → PythonRuntime → whichllm_bridge.py → whichllm
+            ↓ (fallback)
+       ProcessInfo + sysctl (zero Python deps)
+```
 
 ## License
 

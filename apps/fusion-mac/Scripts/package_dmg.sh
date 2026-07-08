@@ -79,8 +79,18 @@ fi
 [ -d "$STAGED_APP" ] || die "FusionMLX.app not found at $STAGED_APP — run with --build or build.sh first"
 APP_BINARY="$STAGED_APP/Contents/MacOS/FusionMLX"
 [ -x "$APP_BINARY" ] || die "App binary missing or not executable: $APP_BINARY"
+
+# --- Strip Python bundle for size (target < 500 MB DMG) ---
+STRIP_SCRIPT="$SCRIPT_DIR/strip_bundle.sh"
+if [ -x "$STRIP_SCRIPT" ]; then
+    log "Stripping Python bundle…"
+    "$STRIP_SCRIPT" "$STAGED_APP"
+else
+    warn "strip_bundle.sh not found; skipping size optimization"
+fi
+
 APP_SIZE=$(du -sh "$STAGED_APP" | cut -f1)
-log "App bundle: $STAGED_APP ($APP_SIZE)"
+log "App bundle after strip: $STAGED_APP ($APP_SIZE)"
 
 # --- Ad-hoc sign (ensure coherent signature) ---
 log "Ad-hoc signing app bundle…"
@@ -150,11 +160,11 @@ APPLESCRIPT
 sync
 hdiutil detach "$MOUNT_DIR" -quiet
 
-# Convert to compressed read-only
-log "Compressing DMG…"
+# Convert to compressed read-only (LZMA for max compression)
+log "Compressing DMG with LZMA…"
 hdiutil convert "$DMG_RW" \
-    -format UDZO \
-    -imagekey zlib-level=9 \
+    -format ULFO \
+    -imagekey lzma-level=9 \
     -o "$DMG_PATH" >/dev/null
 
 rm -f "$DMG_RW"

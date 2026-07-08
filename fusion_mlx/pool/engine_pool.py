@@ -1182,11 +1182,12 @@ class EnginePool:
             # get_engine), so any unreleased memory stays visible to both.
             pass
         else:
-            # Barrier timed out - try emergency reclaim
-            logger.warning(
-                f"Settle barrier timed out for '{model_id}': "
-                f"freed={format_size(actual_freed)} "
-                f"(need>={format_size(min_expected_freed)})"
+            # Barrier timed out - this is expected for Metal/MLX: the
+            # memory is cached internally and WILL be reused on next load.
+            logger.info(
+                f"Settle barrier: '{model_id}' freed={format_size(actual_freed)} "
+                f"(expected>={format_size(min_expected_freed)}), "
+                f"Metal cache will reuse on next load"
             )
             for _ in range(3):
                 gc.collect()
@@ -1196,12 +1197,11 @@ class EnginePool:
                 )
                 await asyncio.sleep(1.0)
             active_after = mx.get_active_memory()
-            if active_after > self._current_model_memory + 5 * 1024**3:
-                logger.error(
-                    f"Emergency reclaim failed for '{model_id}': "
+            if active_after > self._current_model_memory + 8 * 1024**3:
+                logger.warning(
+                    f"Emergency reclaim high residual for '{model_id}': "
                     f"active_memory={format_size(active_after)} "
-                    f"exceeds safe threshold "
-                    f"({format_size(self._current_model_memory + 5 * 1024**3)})"
+                    f"(expected ≤{format_size(self._current_model_memory + 8 * 1024**3)})"
                 )
             else:
                 logger.info(

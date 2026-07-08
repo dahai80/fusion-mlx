@@ -538,7 +538,7 @@ def detect_output_parser(
     tokenizer: Any,
     model_config: dict[str, Any] | None = None,
 ) -> OutputParserFactory | None:
-    if is_harmony_model(model_name, model_config):
+    if is_harmony_model(model_name):
         temp_parser = HarmonyStreamingParser(tokenizer)
         return OutputParserFactory(
             kind="harmony",
@@ -551,7 +551,7 @@ def detect_output_parser(
             thinking_end_trailing_text="<|start|>assistant<|channel|>final<|message|>",
         )
 
-    if is_gemma4_model(model_name, model_config):
+    if is_gemma4_model(model_name):
         from .gemma4 import (
             _CLOSE_MARKER,
             _OPEN_MARKER_BARE,
@@ -628,12 +628,12 @@ def detect_message_extractor(
     model_name: str,
     model_config: dict[str, Any] | None = None,
 ) -> Callable:
-    if is_harmony_model(model_name, model_config):
+    if is_harmony_model(model_name):
         from ..api.utils import extract_harmony_messages
 
         return extract_harmony_messages
 
-    if is_gemma4_model(model_name, model_config):
+    if is_gemma4_model(model_name):
         from .gemma4 import extract_gemma4_messages
 
         return extract_gemma4_messages

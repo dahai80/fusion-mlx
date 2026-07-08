@@ -69,8 +69,19 @@ Ollama / vLLM 的直接替代 —— 基于 MLX 原生运行在 Metal 上
 - **多模型并发** — EnginePool 支持 LRU 驱逐、模型锁定（pinning）和 TTL
 - **MCP 工具支持** — 通过 API 列出、发现和执行 MCP 工具
 - **Admin 管理面板** — 模型管理、在线对话、HuggingFace 下载、在线量化
-- **macOS 原生应用** — SwiftUI 菜单栏、自动更新、基准测试、模型管理
-- **8 种集成** — Claude Code、OpenClaw、ComfyUI、Copilot、Codex、OpenCode、Pi、Hermes
+- **macOS 原生应用** — SwiftUI 菜单栏、自动更新、基准测试、模型管理、**硬件感知设置向导**
+
+### 高级特性推荐
+
+首次启动 macOS 应用时，**6 步 Welcome 向导**会自动检测你的 Mac 硬件并推荐最优配置：
+
+| 使用场景 | 推荐模型（可多选下载） | DFlash | DSpark | TurboQuant | 最大上下文 |
+|----------|----------------------|--------|--------|------------|-----------|
+| 🤖 Agent (OpenClaw) | DeepSeek-V4-Flash, Qwen3.6-27B | ✅ | ❌ | ✅ (≥64GB) | 65K |
+| 💻 编程 | Qwen3.5-9B, DeepSeek-Coder-V2 | ❌ | ✅ | ✅ (≥64GB) | 131K |
+| 💬 聊天 | Qwen3.5-9B, Gemma-4-31B | ❌ | ❌ | ✅ (≥64GB) | 32K |
+
+推荐基于实时硬件检测（CPU 核心、统一内存、GPU 带宽、磁盘空间）。所有设置可手动修改，超范围值会显示校验警告。
 
 ## 快速开始
 
@@ -328,6 +339,24 @@ fusion-mlx/
 - [FR Differentiation](docs/FR_DIFFERENTIATION.md) — fusion-mlx 在投机解码/TurboQuant/调度方面差异化能力的核实分析（英文）
 - [架构详解](docs/architecture_CN.md) — 架构文档中文版
 - [配置指南](docs/configuration_CN.md) — 配置文档中文版
+
+## whichllm 集成
+
+macOS 应用的 **Welcome 向导**使用 [whichllm](https://github.com/Andyyyy64/whichllm) 进行硬件感知的模型推荐。whichllm 自动检测 Mac 的 GPU、CPU、RAM 和磁盘，然后从 HuggingFace 上排名最适合你系统的本地 LLM。
+
+**集成特性：**
+- **硬件检测** — Apple Silicon 芯片类型、统一内存、GPU 带宽、CPU 核心、可用磁盘（通过 `system_profiler`/`sysctl`）
+- **模型推荐** — 按质量评分、速度 (tok/s)、VRAM 适配度和基准证据排名的 Top 模型
+- **使用场景优化** — 针对 Agent / 编程 / 聊天 三种场景给出不同推荐
+- **镜像源选择** — HuggingFace、HF Mirror 或 ModelScope（中国大陆用户免 VPN）
+- **优雅降级** — whichllm 未安装时自动回退到 `ProcessInfo` + `sysctl`（零 Python 依赖）
+
+**桥接架构：**
+```
+Swift App → WhichLLMService → PythonRuntime → whichllm_bridge.py → whichllm
+            ↓ (回退)
+       ProcessInfo + sysctl (零 Python 依赖)
+```
 
 ## 许可证
 

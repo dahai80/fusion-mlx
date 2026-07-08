@@ -247,17 +247,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 case .started, .alreadyRunning:
                     break
                 case .portConflict:
-                    // ServerProcess already posted .portConflictNotification +
-                    // updated state to .failed; MenubarController will surface
-                    // it on next click.
                     break
                 }
             }
         } catch {
-            // Surface the failure in the menubar header so the user has a
-            // recovery affordance without needing to dig through logs.
-            self.menubar = makeMenubar(server: nil, config: config, lastError: error)
-            NSLog("FusionMLX: server bootstrap failed — \(error)")
+            // When auto-start is off, don't show errors for missing Python runtime —
+            // the user may rely on an external server (e.g. launchd).
+            if !config.autoStartOnLaunch && error is PythonRuntime.ResolutionError {
+                self.menubar = makeMenubar(server: nil, config: config, lastError: nil)
+                NSLog("FusionMLX: Python runtime not found (auto-start off, external server expected)")
+            } else {
+                self.menubar = makeMenubar(server: nil, config: config, lastError: error)
+                NSLog("FusionMLX: server bootstrap failed — \(error)")
+            }
         }
     }
 

@@ -437,12 +437,12 @@ def _build_fallback_global_settings() -> dict:
             "ca_bundle": "",
         },
         "sampling": {
-            "max_context_window": 4096,
-            "max_tokens": 512,
-            "temperature": 0.0,
-            "top_p": 1.0,
-            "top_k": 0,
-            "repetition_penalty": 1.0,
+            "max_context_window": sj.get("sampling", {}).get("max_context_window", 4096),
+            "max_tokens": sj.get("sampling", {}).get("max_tokens", 512),
+            "temperature": sj.get("sampling", {}).get("temperature", 0.0),
+            "top_p": sj.get("sampling", {}).get("top_p", 1.0),
+            "top_k": sj.get("sampling", {}).get("top_k", 0),
+            "repetition_penalty": sj.get("sampling", {}).get("repetition_penalty", 1.0),
         },
         "auth": {
             "api_key_set": bool(api_key),

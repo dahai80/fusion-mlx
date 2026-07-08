@@ -140,6 +140,15 @@ async def require_admin(request: Request) -> bool:
             if verify_api_key(bearer_key, sk_key):
                 return True
 
+    # Allow browser-based access via ?key= or ?api_key= query param
+    query_key = request.query_params.get("key") or request.query_params.get("api_key")
+    if query_key:
+        if _api_key and verify_api_key(query_key, _api_key):
+            return True
+        server_key = _get_settings_api_key(gs)
+        if verify_api_key(query_key, server_key):
+            return True
+
     raise HTTPException(
         status_code=401,
         detail="Admin authentication required",

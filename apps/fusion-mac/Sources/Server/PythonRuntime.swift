@@ -57,10 +57,19 @@ struct PythonRuntime {
             let url = URL(fileURLWithPath: override)
             tried.append(override)
             if FileManager.default.isExecutableFile(atPath: url.path) {
+                // Always include bundle's site-packages so system Python
+                // can find mlx, numpy, etc. from the framework-mlx-base layer.
+                let bundleRoot = Bundle.main.bundleURL
+                let resources = bundleRoot.appendingPathComponent("Contents/Resources")
+                let pyRoot = resources.appendingPathComponent("Python")
+                let mlxSite = pyRoot
+                    .appendingPathComponent("framework-mlx-base/lib/python3.11/site-packages")
                 return PythonRuntime(
                     executable: url,
                     homebrewPaths: defaultHomebrewPaths,
-                    pythonPath: [],
+                    pythonPath: FileManager.default.fileExists(atPath: mlxSite.path)
+                        ? [resources, mlxSite]
+                        : [resources],
                     pythonHome: nil,
                     isBundled: false
                 )
