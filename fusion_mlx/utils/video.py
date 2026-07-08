@@ -398,6 +398,14 @@ def smart_nframes(
     min_frames: int = MIN_FRAMES,
     max_frames: int = MAX_FRAMES,
 ) -> int:
+    # Non-positive total_frames (cap.get returns 0/-1 on a broken or empty
+    # stream) would otherwise force nframes >= FRAME_FACTOR and make
+    # np.linspace(0, total_frames-1, n) emit negative indices downstream.
+    if total_frames <= 0:
+        logger.warning(
+            "smart_nframes: non-positive total_frames=%d -> 0 frames", total_frames
+        )
+        return 0
     duration = total_frames / video_fps if video_fps > 0 else 0
     nframes = duration * target_fps
     nframes = max(min_frames, min(nframes, max_frames, total_frames))
@@ -417,40 +425,41 @@ def extract_video_frames_smart(
         raise ImportError("opencv-python is required for video processing")
 
     cap = cv2.VideoCapture(video_path)
-    if not cap.isOpened():
-        raise ValueError(f"Cannot open video: {video_path}")
+    try:
+        if not cap.isOpened():
+            raise ValueError(f"Cannot open video: {video_path}")
 
-    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-    video_fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
+        total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+        video_fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
 
-    nframes = smart_nframes(
-        total_frames=total_frames,
-        video_fps=video_fps,
-        target_fps=fps,
-        max_frames=max_frames,
-    )
+        nframes = smart_nframes(
+            total_frames=total_frames,
+            video_fps=video_fps,
+            target_fps=fps,
+            max_frames=max_frames,
+        )
 
-    indices = np.linspace(0, total_frames - 1, nframes).round().astype(int)
+        indices = np.linspace(0, total_frames - 1, nframes).round().astype(int)
 
-    logger.info(
-        "Video: %d total frames @ %.1f fps, extracting %d frames",
-        total_frames,
-        video_fps,
-        nframes,
-    )
+        logger.info(
+            "Video: %d total frames @ %.1f fps, extracting %d frames",
+            total_frames,
+            video_fps,
+            nframes,
+        )
 
-    frames = []
-    for idx in indices:
-        cap.set(cv2.CAP_PROP_POS_FRAMES, idx)
-        ret, frame = cap.read()
-        if not ret:
-            continue
-        frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        if resize:
-            frame = cv2.resize(frame, resize)
-        frames.append(frame)
-
-    cap.release()
+        frames = []
+        for idx in indices:
+            cap.set(cv2.CAP_PROP_POS_FRAMES, idx)
+            ret, frame = cap.read()
+            if not ret:
+                continue
+            frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            if resize:
+                frame = cv2.resize(frame, resize)
+            frames.append(frame)
+    finally:
+        cap.release()
     return frames
 
 
@@ -461,7 +470,17 @@ def save_frames_to_temp(frames: list[np.ndarray]) -> list[str]:
     for i, frame in enumerate(frames):
         img = Image.fromarray(frame)
         temp_file = tempfile.NamedTemporaryFile(suffix=".jpg", delete=False)
-        img.save(temp_file.name, "JPEG", quality=85)
+        try:
+            img.save(temp_file.name, "JPEG", quality=85)
+        except Exception:
+            logger.warning("save_frames_to_temp: img.save failed for frame %d", i)
+            temp_file.close()
+            try:
+                os.unlink(temp_file.name)
+            except OSError:
+                pass
+            raise
+        temp_file.close()
         paths.append(_temp_manager.register(temp_file.name))
 
     return paths
@@ -474,15 +493,17 @@ def describe_video(video_path: str) -> dict:
         raise ImportError("opencv-python is required for video processing")
 
     cap = cv2.VideoCapture(video_path)
-    if not cap.isOpened():
-        raise ValueError(f"Cannot open video: {video_path}")
+    try:
+        if not cap.isOpened():
+            raise ValueError(f"Cannot open video: {video_path}")
 
-    fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
-    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-    width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-    height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-    duration = total_frames / fps if fps > 0 else 0.0
-    cap.release()
+        fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
+        total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+        width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        duration = total_frames / fps if fps > 0 else 0.0
+    finally:
+        cap.release()
 
     return {
         "fps": fps,
