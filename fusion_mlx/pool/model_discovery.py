@@ -34,6 +34,7 @@ ModelType = Literal[
     "audio_tts",
     "audio_sts",
     "image",
+    "video",
 ]
 EngineType = Literal[
     "batched",
@@ -44,6 +45,7 @@ EngineType = Literal[
     "audio_tts",
     "audio_sts",
     "image_gen",
+    "video_gen",
 ]
 
 # Known VLM (Vision-Language Model) types from mlx-vlm
@@ -554,6 +556,8 @@ def detect_model_type(model_path: Path) -> ModelType:
     """
     if _is_image_model(model_path):
         return "image"
+    if _is_video_model(model_path):
+        return "video"
 
     config_path = model_path / "config.json"
     if not config_path.exists():
@@ -939,11 +943,28 @@ def _is_image_model(path: Path) -> bool:
         return False
 
 
+def _is_video_model(path: Path) -> bool:
+    # mlx-video models ship a configuration.json manifest with
+    # task == "text-to-video" (same convention as mflux Flux image models).
+    manifest = path / "configuration.json"
+    if not manifest.exists():
+        return False
+    try:
+        with open(manifest) as f:
+            data = json.load(f)
+        return data.get("task") == "text-to-video"
+    except (OSError, json.JSONDecodeError):
+        return False
+
+
 def _is_model_dir(path: Path) -> bool:
     """Check if a directory contains a valid model (config.json or image manifest)."""
     has_config = (path / "config.json").exists()
     has_image_manifest = _is_image_model(path)
-    return (has_config or has_image_manifest) and not _is_adapter_dir(path)
+    has_video_manifest = _is_video_model(path)
+    return (
+        has_config or has_image_manifest or has_video_manifest
+    ) and not _is_adapter_dir(path)
 
 
 def model_directory_access_error(path: Path) -> str | None:
@@ -1149,6 +1170,8 @@ def _register_model(
             engine_type = "audio_sts"
         elif model_type == "image":
             engine_type = "image_gen"
+        elif model_type == "video":
+            engine_type = "video_gen"
         else:
             engine_type = "batched"
         estimated_size = estimate_model_size(model_dir)

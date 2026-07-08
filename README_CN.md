@@ -31,7 +31,7 @@ Ollama / vLLM 的直接替代 —— 基于 MLX 原生运行在 Metal 上
 | VLM + Paged KV cache | ✅ | ❌ | ❌ |
 | 40+ 量化格式 | ✅ | ~15 | ~10 |
 | macOS 原生应用 | ✅ SwiftUI | ✅ | ✅ |
-| 8 种推理引擎 | ✅ | 2 | 2 |
+| 9 种推理引擎 | ✅ | 2 | 2 |
 | Admin 管理面板 | ✅ | ✅ | ❌ |
 
 **性能基准** (Qwen3.6-27B, Apple M2 Ultra 137GB):
@@ -55,7 +55,7 @@ Ollama / vLLM 的直接替代 —— 基于 MLX 原生运行在 Metal 上
 
 ## 特性一览
 
-- **8 种推理引擎** — LLM、VLM、Embedding、Reranker、STT、TTS、STS、ImageGen (Flux 2)
+- **9 种推理引擎** — LLM、VLM、Embedding、Reranker、STT、TTS、STS、ImageGen (Flux 2)、VideoGen (LTX-2)
 - **OpenAI + Anthropic 双协议** — 一个服务同时支持两套 API，完全兼容
 - **Continuous batching** — 类 vLLM 调度器，支持 chunked prefill、抢占式调度、优先级队列
 - **Speculative decoding** — SuffixDecoding、DFlash、MTP、VLM MTP（2–5× 加速生成）
@@ -165,6 +165,7 @@ pip install -e .
 | STT | `STTEngine` | Whisper、VibeVoice-ASR |
 | TTS | `TTSEngine` | Kokoro、VibeVoice |
 | ImageGen | `ImageGenEngine` | Flux 2 |
+| VideoGen | `VideoGenEngine` | LTX-2 (mlx-video) |
 
 ## 量化格式
 
@@ -221,6 +222,7 @@ fusion-mlx convert mlx-community/Qwen3.5-9B --quant-bits 8 --upload-repo me/my-r
 | Anthropic Messages | `/v1/messages`, `/v1/count_tokens` | ✅ 完全兼容 |
 | Audio | `/v1/audio/transcriptions`, `/v1/audio/speech` | ✅ 支持 |
 | Images | `/v1/images/generate` | ✅ 支持 (Flux 2) |
+| Videos | `/v1/videos/generate` | ✅ 支持 (LTX-2, mlx-video) |
 | Embeddings | `/v1/embeddings` | ✅ 支持 |
 | MCP | `/v1/mcp/tools`, `/v1/mcp/servers`, `/v1/mcp/execute` | ✅ 支持 |
 | OpenClaw Agent | `/v1/openclaw/agent/*` | ✅ 会话、多轮、工具调用、SSE 流式 |
@@ -296,7 +298,7 @@ fusion-mlx/
 ├── fusion_mlx/
 │    ├── api/             # OpenAI、Anthropic、Audio、Images、MCP、OpenClaw 路由
 │    ├── cache/           # PagedCache、PagedSSDCache、PrefixCache
-│    ├── engines/         # 8 种引擎 (LLM、VLM、Embedding 等)
+│    ├── engines/         # 9 种引擎 (LLM、VLM、Embedding 等)
 │    ├── integrations/    # Claude Code、OpenClaw、ComfyUI、Copilot、Codex 等
 │    ├── parsers/         # 工具调用解析器 (Gemma、Harmony、Hermes 等)
 │    ├── pool/            # EnginePool、MemoryEnforcer、ModelDiscovery、PriorityScheduler

@@ -55,7 +55,7 @@ Key optimizations: quant2/quant2_128/quant2_flat ultra-aggressive 2-bit quantiza
 
 ## Features
 
-- **8 engine types** — LLM, VLM, Embedding, Reranker, STT, TTS, STS, ImageGen (Flux 2)
+- **9 engine types** — LLM, VLM, Embedding, Reranker, STT, TTS, STS, ImageGen (Flux 2), VideoGen (LTX-2)
 - **OpenAI + Anthropic API** — one server, two API flavors, fully compatible
 - **Continuous batching** — vLLM-style scheduler with chunked prefill, preemption, priority queues
 - **Speculative decoding** — SuffixDecoding, DFlash, DSpark, MTP, VLM MTP (2–5× faster generation)
@@ -139,6 +139,7 @@ print(resp.content[0].text)
 | STT | `STTEngine` | Whisper, VibeVoice-ASR |
 | TTS | `TTSEngine` | Kokoro, VibeVoice |
 | ImageGen | `ImageGenEngine` | Flux 2 |
+| VideoGen | `VideoGenEngine` | LTX-2 (mlx-video) |
 
 ## Quantization Formats
 
@@ -195,6 +196,7 @@ This is **weight** quantization saved to disk, distinct from TurboQuant KV-cache
 | Anthropic Messages | `/v1/messages`, `/v1/count_tokens` | ✅ Fully compatible |
 | Audio | `/v1/audio/transcriptions`, `/v1/audio/speech` | ✅ Supported |
 | Images | `/v1/images/generate` | ✅ Supported (Flux 2) |
+| Videos | `/v1/videos/generate` | ✅ Supported (LTX-2, mlx-video) |
 | Embeddings | `/v1/embeddings` | ✅ Supported |
 | MCP | `/v1/mcp/tools`, `/v1/mcp/servers`, `/v1/mcp/execute` | ✅ Supported |
 | OpenClaw Agent | `/v1/openclaw/agent/*` | ✅ Sessions, turns, tool calling, SSE streaming |
@@ -281,7 +283,7 @@ Submit your own benchmarks at [bench.dpdns.org](https://bench.dpdns.org/).
 ```
 fusion-mlx/
 ├── fusion_mlx/
-│    ├── api/             # OpenAI, Anthropic, Audio, Images, MCP, OpenClaw routes
+│    ├── api/             # OpenAI, Anthropic, Audio, Images, Videos, MCP, OpenClaw routes
 │    ├── cache/           # PagedCache, PagedSSDCache, PrefixCache
 │    ├── engines/         # 8 engine types (LLM, VLM, Embedding, etc.)
 │    ├── integrations/    # Claude Code, OpenClaw, ComfyUI, Copilot, Codex, etc.
