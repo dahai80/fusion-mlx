@@ -77,6 +77,33 @@ def _extract_text(msg: Any) -> str:
     return str(content) if content else ""
 
 
+def _messages_for_engine(request_msgs: Any, is_mllm: bool) -> list[dict]:
+    """Convert request messages to the dict list engines expect.
+
+    Text-only models (and plain-string content) get the flattened text form
+    from _extract_text. Multimodal models keep the structured content parts
+    (image_url / video_url blocks) as dicts so the VLM engine can extract the
+    media - flattening here would discard the URLs and the model would see
+    only "[video]" / "[image]" placeholders.
+    """
+    out: list[dict] = []
+    for m in request_msgs:
+        content = getattr(m, "content", "")
+        if is_mllm and isinstance(content, list):
+            parts: list[dict] = []
+            for part in content:
+                if isinstance(part, dict):
+                    parts.append(part)
+                elif hasattr(part, "model_dump"):
+                    parts.append(part.model_dump(exclude_none=True))
+                else:
+                    parts.append(dict(part))
+            out.append({"role": m.role, "content": parts})
+        else:
+            out.append({"role": m.role, "content": _extract_text(m)})
+    return out
+
+
 def _build_sampling_params(req: ChatCompletionRequest) -> SamplingParams:
     """Convert ChatCompletionRequest to SamplingParams."""
     return SamplingParams(
@@ -163,7 +190,7 @@ async def _run_chat(request: ChatCompletionRequest) -> ChatCompletionResponse:
                             ),
                         )
 
-    messages = [{"role": m.role, "content": _extract_text(m)} for m in request.messages]
+    messages = _messages_for_engine(request.messages, getattr(engine, "is_mllm", False))
     sampling = _build_sampling_params(request)
     request_id = f"chatcmpl-{uuid.uuid4().hex[:12]}"
 
@@ -258,7 +285,7 @@ async def _stream_chat_generator(request: ChatCompletionRequest) -> AsyncIterato
                             ),
                         )
 
-    messages = [{"role": m.role, "content": _extract_text(m)} for m in request.messages]
+    messages = _messages_for_engine(request.messages, getattr(engine, "is_mllm", False))
     sampling = _build_sampling_params(request)
     request_id = f"chatcmpl-{uuid.uuid4().hex[:12]}"
 

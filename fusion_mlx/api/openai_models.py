@@ -34,6 +34,12 @@ class ImageURL(BaseModel):
     detail: str | None = "auto"  # "low", "high", "auto"
 
 
+class VideoURL(BaseModel):
+    """Video URL or base64 data URI for video model input."""
+
+    url: str  # "https://..." or "data:video/mp4;base64,..."
+
+
 class ContentPart(BaseModel):
     """
     A part of a message content array.
@@ -41,12 +47,14 @@ class ContentPart(BaseModel):
     Supports:
     - text: Plain text content
     - image_url: Image input for vision models
+    - video_url: Video input for video models
     - file: File attachment (PDF, etc.)
     """
 
-    type: str  # "text", "image_url", or "file"
+    type: str  # "text", "image_url", "video_url", or "file"
     text: str | None = None
     image_url: ImageURL | None = None
+    video_url: VideoURL | dict | str | None = None
     file: dict | None = None
 
 
