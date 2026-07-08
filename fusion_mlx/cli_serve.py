@@ -987,25 +987,6 @@ def serve_command(args):
 
         require_mlx_embeddings_or_exit()
 
-    # R-10 (PyPI 0.8.6 dogfood): same boot-guard shape for vision /
-    # multimodal aliases. ``mlx-vlm`` lives behind the ``[vision]``
-    # extra, but ``fusion-mlx serve ui-tars-1.5-7b-4bit`` on a fresh
-    # ``pip install fusion-mlx`` previously fell into the engine load
-    # path BEFORE the missing-dep error surfaced (deep ImportError
-    # after weight download + alias resolution). Probe here so the
-    # operator sees an actionable hint before the long download starts.
-    # Honors ``--mllm`` force-on AND the alias-name / HF-path probe
-    # used downstream by ``pflash.validate_model_support``. The
-    # ``--no-mllm`` escape hatch (force_text in load_model) bypasses
-    # this guard, matching the engine-side semantics.
-    if not getattr(args, "no_mllm", False):
-        from .api.utils import is_mllm_model as _boot_is_mllm
-
-        if getattr(args, "mllm", False) or _boot_is_mllm(args.model):
-            from .models.mllm import require_mlx_vlm_or_exit
-
-            require_mlx_vlm_or_exit(args.model)
-
     # R6-H4 (Eva 0.8.7 dogfood): same boot-guard shape for audio aliases.
     # ``mlx-audio`` lives behind the ``[audio]`` extra; pre-fix
     # ``fusion-mlx serve kokoro`` (or whisper/parakeet/chatterbox/...) on
@@ -1232,7 +1213,7 @@ def serve_command(args):
         validate_model_support(
             pflash_config,
             model_name=args.model,
-            is_mllm=getattr(args, "mllm", False) or is_mllm_model(args.model),
+            is_mllm=is_mllm_model(args.model),
         )
     except ValueError as e:
         print(f"Error: {e}")
@@ -2131,13 +2112,6 @@ def serve_command(args):
         return
 
     # Load model with unified server
-    if args.mllm and args.no_mllm:
-        print(
-            "error: --mllm and --no-mllm are mutually exclusive — "
-            "pick one to override auto-detection.",
-            file=sys.stderr,
-        )
-        sys.exit(2)
     if getattr(args, "force_hybrid", False) and getattr(args, "no_hybrid", False):
         print(
             "error: --force-hybrid and --no-hybrid are mutually exclusive — "
@@ -2171,7 +2145,6 @@ def serve_command(args):
             stream_interval=args.stream_interval,
             max_tokens=effective_max_tokens,
             max_tokens_is_explicit=_max_tokens_is_explicit,
-            force_mllm=args.mllm,
             force_text=args.no_mllm,
             gpu_memory_utilization=args.gpu_memory_utilization,
             cloud_model=args.cloud_model,
@@ -2819,7 +2792,7 @@ def bench_command(args):
         _bench_pflash_validate(
             bench_pflash_config,
             model_name=args.model,
-            is_mllm=getattr(args, "mllm", False) or _bench_is_mllm_model(args.model),
+            is_mllm=_bench_is_mllm_model(args.model),
         )
     except ValueError as e:
         print(f"Error: {e}")

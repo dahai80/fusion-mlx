@@ -10,11 +10,11 @@
 #   runtime-fail  — collects but fails on stale assertions / removed attrs
 #   timeout       — hangs or exceeds the unit-gate budget (integration-style)
 #
-# Total: 413 modules excluded; 136 healthy modules remain in the CI gate.
+# Total: 404 modules excluded; 131 healthy modules remain in the CI gate.
 # Pay down by updating each module to the current released API, then remove
 # its line here. See memory: fusion-mlx-rapid-mlx-test-debt.
 
-## uncollectable (140)
+## uncollectable (137)
 test_accuracy_benchmark.py
 test_admin_server_aliases.py
 test_agent_query_context_skip.py
@@ -82,7 +82,6 @@ test_lone_surrogate_validator.py
 test_markitdown_integration.py
 test_max_generation_tokens_ceiling.py
 test_mbpp_extract_code.py
-test_mllm_cache.py
 test_mlx_lm_mtp_patch.py
 test_modality_field.py
 test_models_base.py
@@ -149,13 +148,12 @@ test_tools_auto_disable_thinking.py
 test_truncation_no_synthetic_text.py
 test_turboquant_kvcache_state.py
 test_upgrade_cli.py
-test_video.py
 test_vlm_audio_fallback.py
 test_vlm_cohere2_moe_loader.py
 test_vlm_mtp_proxy.py
 test_vlm_torch_free_image_processor.py
 
-## runtime-fail (271)
+## runtime-fail (266)
 test_447_stream_tool_choice_auto.py
 test_active_models_visibility.py
 test_admin_auth.py
@@ -287,10 +285,6 @@ test_metrics_route.py
 test_microbench_parsers.py
 test_minimax_m3_sparse_attention_patch.py
 test_mirror_pull.py
-test_mllm_continuous_batching.py
-test_mllm_cross_thread_stream_contract.py
-test_mllm_executor_cancel.py
-test_mllm_penalty_passthrough.py
 test_mlx_compat.py
 test_mlx_embeddings_compat.py
 test_mlx_vlm_diffusion_patch.py
@@ -417,7 +411,6 @@ test_turboquant.py
 test_ui_tars_fixes.py
 test_ui_tars_lane_parity.py
 test_ui_tars_parser.py
-test_uitars_boot_check.py
 test_v4_multi_session.py
 test_validate_release_subject.py
 test_version_check.py
@@ -428,6 +421,5 @@ test_vlm_model_adapter.py
 test_vlm_mtp.py
 test_vlm_specprefill.py
 
-## timeout (2)
+## timeout (1)
 test_boundary_snapshot_store.py
-test_mllm.py

@@ -242,7 +242,6 @@ class TestBatchedEngineWarmup:
 
         engine = BatchedEngine.__new__(BatchedEngine)
         engine._loaded = True
-        engine._is_mllm = False
         engine._tokenizer = MagicMock()
         engine._tokenizer.encode = MagicMock(return_value=[1, 2])
 
@@ -294,7 +293,6 @@ class TestBatchedEngineWarmup:
 
         engine = BatchedEngine.__new__(BatchedEngine)
         engine._loaded = True
-        engine._is_mllm = False
         engine._tokenizer = MagicMock()
         engine._tokenizer.encode = MagicMock(return_value=[1, 2])
 
@@ -309,54 +307,6 @@ class TestBatchedEngineWarmup:
 
         # Should have run on caller thread.
         assert captured.get("model_thread") == threading.current_thread().name
-
-
-class TestBatchedEngineGetStats:
-    """get_stats() must promote MLLMScheduler keys (Metal memory + the
-    batch_generator throughput dict) to the top level. /v1/status reads
-    from the top level — without this forwarding, generation_tps stays
-    invisible to monitoring even though the underlying counters tick.
-    """
-
-    def _make_engine(self, mllm_stats):
-        from fusion_mlx.engine.batched import BatchedEngine
-
-        engine = BatchedEngine.__new__(BatchedEngine)
-        engine._model_name = "test-model"
-        engine._is_mllm = False
-        engine._loaded = True
-        engine._stream_interval = 1
-        engine._engine = None
-        engine._mllm_scheduler = MagicMock()
-        engine._mllm_scheduler.get_stats = MagicMock(return_value=mllm_stats)
-        return engine
-
-    def test_get_stats_forwards_batch_generator(self):
-        bg = {"generation_tps": 42.0, "prompt_tps": 100.0}
-        engine = self._make_engine(
-            {
-                "metal_active_memory_gb": 1.0,
-                "batch_generator": bg,
-                "other_key": "ignored",
-            }
-        )
-
-        stats = engine.get_stats()
-
-        assert stats["batch_generator"] == bg
-        assert stats["metal_active_memory_gb"] == 1.0
-        # Non-promoted keys must not appear at top level.
-        assert "other_key" not in stats
-        # Full mllm_stats remains nested for debugging.
-        assert stats["mllm_scheduler"]["other_key"] == "ignored"
-
-    def test_get_stats_omits_missing_batch_generator(self):
-        engine = self._make_engine({"metal_active_memory_gb": 2.5})
-
-        stats = engine.get_stats()
-
-        assert "batch_generator" not in stats
-        assert stats["metal_active_memory_gb"] == 2.5
 
 
 class TestGuidedGenerationStepThread:
@@ -388,7 +338,6 @@ class TestGuidedGenerationStepThread:
         try:
             engine = BatchedEngine.__new__(BatchedEngine)
             engine._loaded = True
-            engine._is_mllm = False
             engine._model = MagicMock()
             engine._tokenizer = MagicMock()
             engine._tokenizer.apply_chat_template = MagicMock(return_value="prompt")
@@ -433,7 +382,6 @@ class TestGuidedGenerationStepThread:
 
         engine = BatchedEngine.__new__(BatchedEngine)
         engine._loaded = True
-        engine._is_mllm = False
         engine._model = MagicMock()
         engine._tokenizer = MagicMock()
         engine._tokenizer.apply_chat_template = MagicMock(return_value="prompt")
@@ -480,7 +428,6 @@ class TestGuidedGenerationStepThread:
 
         engine = BatchedEngine.__new__(BatchedEngine)
         engine._loaded = True
-        engine._is_mllm = False
         engine._model = MagicMock()
         engine._tokenizer = MagicMock()
         engine._tokenizer.apply_chat_template = MagicMock(return_value="prompt")
@@ -529,121 +476,3 @@ class TestGuidedGenerationStepThread:
                 raise_on_failure=True,
             )
         assert chat_calls["n"] == 1  # unchanged — raise short-circuited self.chat
-
-
-class TestMLLMSchedulerStepThread:
-    """#170 regression: MLLMScheduler must run every step on the mllm-step
-    worker, not split between worker (when waiting) and loop thread (when
-    only generating).
-
-    BatchGenerator keeps KV state across calls. Splitting prefill onto
-    mllm-step and decode onto the loop thread tags freshly-allocated
-    arrays with mismatched streams, so the next decode step crashes with
-    "There is no Stream(gpu, N) in current thread" inside
-    `mx.eval([c.state for c in self.prompt_cache])`.
-    """
-
-    @pytest.mark.asyncio
-    async def test_step_runs_on_mllm_step_thread_with_and_without_waiting(self):
-        """_step_no_queue must execute on mllm-step in BOTH branches.
-
-        Drives _process_loop for two iterations and toggles ``waiting``
-        between non-empty (prefill) and empty (decode-only). Pre-fix the
-        decode-only iteration ran inline on the loop thread; post-fix
-        every iteration must land on mllm-step.
-        """
-        from fusion_mlx.mllm_scheduler import MLLMScheduler
-
-        scheduler = MLLMScheduler.__new__(MLLMScheduler)
-        scheduler._running = True
-        scheduler._step_executor = None
-        scheduler._injected_step_executor = None  # _process_loop creates its own
-
-        threads: list[str] = []
-        waiting_seen: list[bool] = []
-        call_count = {"n": 0}
-
-        def fake_step():
-            threads.append(threading.current_thread().name)
-            waiting_seen.append(bool(scheduler.waiting))
-            call_count["n"] += 1
-            if call_count["n"] == 1:
-                # Prepare iter 2 to be decode-only (empty waiting).
-                scheduler.waiting = []
-            elif call_count["n"] >= 2:
-                scheduler._running = False
-            return None  # nothing to distribute
-
-        scheduler._step_no_queue = fake_step
-        scheduler.has_requests = lambda: True
-        scheduler.waiting = [object()]  # iter 1: prefill
-        scheduler._distribute_outputs = lambda _o: None
-
-        await scheduler._process_loop()
-
-        assert len(threads) == 2, f"Expected 2 step calls, got {len(threads)}"
-        assert waiting_seen == [
-            True,
-            False,
-        ], f"Expected iter 1 with waiting + iter 2 without, got {waiting_seen}"
-        for i, name in enumerate(threads):
-            assert name.startswith("mllm-step"), (
-                f"step #{i + 1} (waiting={waiting_seen[i]}) ran on {name!r}, "
-                "expected mllm-step worker. Splitting steps between mllm-step "
-                "and loop thread tags BatchGenerator KV arrays with mismatched "
-                "streams and the next batch_generator.next() crashes with "
-                "'There is no Stream(gpu, N) in current thread'."
-            )
-
-    @pytest.mark.asyncio
-    async def test_step_uses_injected_executor_not_a_fresh_one(self):
-        """When BatchedEngine hands in the model-load executor, MLLMScheduler
-        MUST step on that same thread — the model arrays are tagged with its
-        stream. Creating a fresh mllm-step worker would be a new stream and
-        every batch_generator.next() would crash with Stream(gpu, N).
-        """
-        import concurrent.futures
-
-        from fusion_mlx.mllm_scheduler import MLLMScheduler
-
-        injected = concurrent.futures.ThreadPoolExecutor(
-            max_workers=1, thread_name_prefix="mllm-step-injected"
-        )
-        try:
-            scheduler = MLLMScheduler.__new__(MLLMScheduler)
-            scheduler._running = True
-            scheduler._step_executor = None
-            scheduler._injected_step_executor = injected
-            scheduler._owns_step_executor = (
-                False  # set by _process_loop, but be explicit
-            )
-
-            captured: dict = {}
-            call_count = {"n": 0}
-
-            def fake_step():
-                captured["thread"] = threading.current_thread().name
-                call_count["n"] += 1
-                if call_count["n"] >= 1:
-                    scheduler._running = False
-                return None
-
-            scheduler._step_no_queue = fake_step
-            scheduler.has_requests = lambda: True
-            scheduler.waiting = [object()]
-            scheduler._distribute_outputs = lambda _o: None
-
-            await scheduler._process_loop()
-
-            assert captured["thread"].startswith("mllm-step-injected"), (
-                f"step ran on {captured['thread']!r}; expected the injected "
-                "executor's thread. A fresh executor would crash with "
-                "Stream(gpu, N) because the model arrays are tagged with the "
-                "injected executor's stream."
-            )
-        finally:
-            injected.shutdown(wait=True)
-
-
-if __name__ == "__main__":
-    pytest.main([__file__, "-v"])

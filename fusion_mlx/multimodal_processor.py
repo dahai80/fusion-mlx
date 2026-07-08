@@ -125,7 +125,6 @@ class MultimodalProcessor:
         # leaving the request to proceed with an empty image list. The model would
         # then either emit an empty completion (case in #457) or hallucinate plausible
         # content from no input. Raise to surface a clean HTTP 400 at the route layer
-        # — mirrors the pattern already used by mllm_batch_generator.py:485.
         all_images = []
         if images:
             for img in images:
@@ -291,7 +290,7 @@ class MultimodalProcessor:
         Prepare multiple processed inputs for batch generation.
 
         This method takes a list of ProcessedMultimodalInput objects and
-        combines them into batched tensors suitable for the MLLMBatchGenerator.
+        combines them into batched tensors suitable for batched VLM generation.
 
         Args:
             processed_inputs: List of ProcessedMultimodalInput from process()
