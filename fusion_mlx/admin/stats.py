@@ -492,6 +492,12 @@ def _build_active_models_data() -> dict:
         waiting_ids = set()
         waiting = []
         activities = []
+        # GPU contention / decode-step metrics default before the
+        # engine/scheduler branches below may skip assignment (e.g. while
+        # a model is still loading and entry.engine is None).
+        _contention_detected = False
+        _decode_step_time_ms = None
+        _decode_step_cv_pct = None
 
         # Get per-model active/waiting request counts.
         # Follow the same pattern as server.py /api/status endpoint.
