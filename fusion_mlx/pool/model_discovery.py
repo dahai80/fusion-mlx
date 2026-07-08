@@ -924,37 +924,33 @@ def _is_adapter_dir(path: Path) -> bool:
     return (path / "adapter_config.json").exists()
 
 
-def _is_image_model(path: Path) -> bool:
-    """Check if a directory is a Flux/diffusers image-generation model.
-
-    Flux models ship a ``configuration.json`` manifest with
-    ``"task": "text-to-image"`` and diffusers subdirectories
-    (transformer/vae/text_encoder) instead of a top-level ``config.json``,
-    so the standard LLM discovery path skips them.
-    """
+def _is_task_model(path: Path, task: str) -> bool:
+    # Shared manifest check for mflux/mlx-video models, which ship a
+    # ``configuration.json`` with ``"task": ...`` and diffusers subdirectories
+    # instead of a top-level ``config.json``.
     manifest = path / "configuration.json"
     if not manifest.exists():
         return False
     try:
         with open(manifest) as f:
             data = json.load(f)
-        return data.get("task") == "text-to-image"
+        return data.get("task") == task
     except (OSError, json.JSONDecodeError):
         return False
+
+
+def _is_image_model(path: Path) -> bool:
+    return _is_task_model(path, "text-to-image")
 
 
 def _is_video_model(path: Path) -> bool:
-    # mlx-video models ship a configuration.json manifest with
-    # task == "text-to-video" (same convention as mflux Flux image models).
-    manifest = path / "configuration.json"
-    if not manifest.exists():
+    # Require a diffusers-style subdir (vae/transformer/audio_vae) in addition
+    # to the task manifest, so an LLM dir that happens to carry a stray
+    # text-to-video configuration.json is not misclassified as a video engine.
+    # Real LTX-2/Wan models ship these subdirs; LLM dirs do not.
+    if not _is_task_model(path, "text-to-video"):
         return False
-    try:
-        with open(manifest) as f:
-            data = json.load(f)
-        return data.get("task") == "text-to-video"
-    except (OSError, json.JSONDecodeError):
-        return False
+    return any((path / sub).is_dir() for sub in ("vae", "transformer", "audio_vae"))
 
 
 def _is_model_dir(path: Path) -> bool:

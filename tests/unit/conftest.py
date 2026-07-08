@@ -101,6 +101,9 @@ _OPT_DEP_SUITES: list[tuple[str, list[str]]] = [
             "test_pflash_benchmark.py",
             "test_pflash_metrics.py",
             "test_pflash_needle.py",
+            "test_video_gen_engine.py",
+            "test_videos_routes.py",
+            "test_video_discovery.py",
         ],
     ),
     (

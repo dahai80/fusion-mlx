@@ -6,9 +6,10 @@ import logging
 import time
 
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from ..engines import VideoGenEngine
+from ..exceptions import ModelNotFoundError
 from ..pool import EnginePool
 
 logger = logging.getLogger(__name__)
@@ -19,7 +20,6 @@ _pool: EnginePool | None = None
 
 
 def set_videos_context(pool: EnginePool) -> None:
-    # Inject engine pool into this module.
     global _pool
     _pool = pool
 
@@ -28,9 +28,9 @@ class VideoGenerateRequest(BaseModel):
     prompt: str
     # Number of videos to generate (default 1, max 4)
     n: int = Field(default=1, ge=1, le=4)
-    # Number of frames per video
+    # Number of frames per video (LTX-2 requires 1 + 8*k)
     num_frames: int = Field(default=97, ge=1, le=1024)
-    # Frame dimensions
+    # Frame dimensions (LTX-2 distilled requires divisibility by 64)
     width: int = Field(default=768, ge=256, le=2048)
     height: int = Field(default=512, ge=256, le=2048)
     # Frames per second
@@ -41,6 +41,19 @@ class VideoGenerateRequest(BaseModel):
     response_format: str = Field(default="url", pattern="^(url|b64_json)$")
     # Model name (default: first available video gen model)
     model: str | None = None
+
+    @model_validator(mode="after")
+    def _validate_ltx_constraints(self):
+        # mlx-video LTX-2 enforces num_frames = 1 + 8*k (it silently adjusts
+        # otherwise) and height/width divisible by 64 for the distilled
+        # pipeline (it asserts otherwise). Reject early with 422 so the caller
+        # learns the real constraint instead of getting an adjusted/asserted
+        # result or a 500.
+        if self.num_frames % 8 != 1:
+            raise ValueError("num_frames must be 1 + 8*k (e.g. 9, 17, 33, 97)")
+        if self.width % 64 != 0 or self.height % 64 != 0:
+            raise ValueError("width and height must be divisible by 64")
+        return self
 
 
 class VideoOutput(BaseModel):
@@ -53,18 +66,28 @@ class VideoGenerateResponse(BaseModel):
     created: int = Field(default_factory=lambda: int(time.time()))
 
 
+def _encode_video_output(vid_bytes: bytes, response_format: str) -> VideoOutput:
+    b64 = base64.b64encode(vid_bytes).decode()
+    if response_format == "b64_json":
+        return VideoOutput(b64_json=b64)
+    return VideoOutput(url=f"data:video/mp4;base64,{b64}")
+
+
 @router.post("/generate")
 async def generate_video(request: VideoGenerateRequest) -> VideoGenerateResponse:
     # Generate videos from a text prompt using LTX-2.
     try:
         if _pool is None:
-            raise HTTPException(450, "Engine pool not initialized")
+            raise HTTPException(503, "Engine pool not initialized")
 
         model_name = request.model
         if not model_name:
             model_name = "ltx-2"
 
-        engine = await _pool.get_engine(model_name)
+        try:
+            engine = await _pool.get_engine(model_name)
+        except ModelNotFoundError:
+            engine = None
         if engine is None or not isinstance(engine, VideoGenEngine):
             raise HTTPException(
                 404,
@@ -82,16 +105,9 @@ async def generate_video(request: VideoGenerateRequest) -> VideoGenerateResponse
             n=request.n,
         )
 
-        outputs = []
-        for vid_bytes in video_bytes_list:
-            if request.response_format == "b64_json":
-                outputs.append(
-                    VideoOutput(b64_json=base64.b64encode(vid_bytes).decode())
-                )
-            else:
-                b64 = base64.b64encode(vid_bytes).decode()
-                outputs.append(VideoOutput(url=f"data:video/mp4;base64,{b64}"))
-
+        outputs = [
+            _encode_video_output(vb, request.response_format) for vb in video_bytes_list
+        ]
         return VideoGenerateResponse(data=outputs)
 
     except HTTPException:

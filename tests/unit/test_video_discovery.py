@@ -50,6 +50,16 @@ class TestIsVideoModel:
         (tmp_path / "configuration.json").write_text("{not json")
         assert _is_video_model(tmp_path) is False
 
+    def test_stray_video_manifest_without_diffusers_subdir_returns_false(
+        self, tmp_path
+    ):
+        # An LLM dir that happens to carry a stray text-to-video configuration.json
+        # must NOT be misclassified as a video engine - real LTX-2/Wan models ship
+        # vae/transformer subdirs; LLM dirs do not.
+        tmp_path.mkdir(exist_ok=True)
+        _write_video_manifest(tmp_path, task="text-to-video")
+        assert _is_video_model(tmp_path) is False
+
 
 class TestDetectVideoModelType:
     def test_video_dir_returns_video(self, tmp_path):
@@ -58,6 +68,13 @@ class TestDetectVideoModelType:
 
     def test_llm_dir_still_returns_llm(self, tmp_path):
         _make_llm_model(tmp_path)
+        assert detect_model_type(tmp_path) == "llm"
+
+    def test_stray_manifest_dir_falls_through_to_llm(self, tmp_path):
+        # text-to-video manifest but no diffusers subdir -> not video; with no
+        # config.json either, detect_model_type falls through to "llm".
+        tmp_path.mkdir(exist_ok=True)
+        _write_video_manifest(tmp_path, task="text-to-video")
         assert detect_model_type(tmp_path) == "llm"
 
 

@@ -1,17 +1,22 @@
 # Video Generation Engine (#454) — VERIFIED PLAN
 
-> Status: COMPLETE - implemented + mocked-tested (38 unit tests green, black+ruff clean). Branch: `feat/video-gen-engine` (from `main` @ `54cf8cbd`).
+> Status: COMPLETE - implemented + mocked-tested (49 unit tests green, black+ruff clean). Branch: `feat/video-gen-engine` (from `main` @ `54cf8cbd`). mlx-video API now RUNTIME-VERIFIED (package installed + `inspect.signature`/`getsource` introspected 2026-07-07).
 > Predecessors (unmerged, do NOT merge here): #431 spec-routing (`c96b65e4`), #453 video hardening (`6786fa89`), #451 mllm cleanup (`5fc1d015`).
 
-## ⚠️ Environment constraint (Rule 12 — fail visibly)
+## ✅ Environment constraint (RESOLVED 2026-07-07)
 
-`github.com` is UNREACHABLE in this env (HTTP2 framing error + port 443 timeout 75s). Cannot `pip install mlx-video` or clone the repo to inspect its API, nor download an LTX-2 model. Implications:
+`github.com` is now reachable. `pip install git+https://github.com/Blaizzy/mlx-video.git` succeeded (package version 0.0.1, Home-page `https://github.com/Blaizzy/mlx-video`). The real API was introspected at runtime:
 
-- **mlx-video API is researched, NOT runtime-verified.** Engine internals (touchpoint 3) written against prior GitHub-contents-API research. The single mlx-video load+generate call is isolated in one method so a fix is ~5 lines once network returns.
-- **Unit tests mock `mlx_video`** via `sys.modules` patch (same pattern as `test_video_utils.py` mocks cv2). Tests are green WITHOUT the real package — but they verify the **wiring** (engine lifecycle, executor usage, activity tracking, bytes return, route dispatch, b64/data-url formatting), NOT that mlx-video accepts the args. Honest per Rule 9.
-- **Manual E2E (verification criterion 4) DEFERRED** until network available.
+- **Top-level**: `mlx_video.get_model_path(repo)` (downloads/returns local HF cache path). `LTXModel`, `WanModel`, `AudioDecoder`, `models` present. There is NO top-level `load` or `generate`.
+- **Generation entry**: `mlx_video.models.ltx_2.generate.generate_video(model_repo, text_encoder_repo, prompt, pipeline=PipelineType.DISTILLED, negative_prompt=..., height=512, width=512, num_frames=33, num_inference_steps=40, cfg_scale=4.0, seed=42, fps=24, output_path='output.mp4', verbose=True, ...)`.
+- `generate_video` loads weights internally EVERY call via `LTXModel.from_pretrained` (no module-level cache), so `start()` front-loads only the network download via `get_model_path`; generation reads weights from the local HF cache.
+- `PipelineType` enum: `DISTILLED`, `DEV`, `DEV_TWO_STAGE`, `DEV_TWO_STAGE_HQ`.
+- LTX-2 constraints: `num_frames` must be `1 + 8*k` (silently adjusted otherwise); `height`/`width` divisible by 64 (distilled/two-stage) or 32 (dev) - enforced via `assert`.
+- ⚠️ **PyPI `mlx-video` 0.1.0 is a DIFFERENT video-IO library** (only `load`/`normalize`/`resize`/`to_float`, reads video files to arrays, NO `generate`). `pip install mlx-video` installs the WRONG package. Use `pip install git+https://github.com/Blaizzy/mlx-video.git`.
 
-All 9 touchpoints' STRUCTURE is confirmed against current code (post-#414/#453) — none depend on mlx-video internals. Deliverable = full structural integration + mocked-tested engine + clearly-marked single integration point.
+Unit tests mock `mlx_video` via `sys.modules` (stub `get_model_path` + fake `mlx_video.models.ltx_2.generate` module with `PipelineType`/`generate_video`). Tests verify wiring + the verified API contract, NOT real generation.
+
+Manual E2E (verification criterion 4) still DEFERRED - requires downloading an LTX-2 model (~19B), a long network transfer not performed here.
 
 ## Decisions
 
@@ -42,12 +47,12 @@ video = ["mlx-video @ git+https://github.com/Blaizzy/mlx-video.git"]
 ### 3. `fusion_mlx/engines/video.py` (NEW) — `VideoGenEngine(BaseNonStreamingEngine)`
 Mirror `image_gen.py:35-154` line-for-line in shape:
 - `__init__(model_name, **kwargs)`: `self._model_name`/`_model_path`, `self._model = None`, `_kwargs`.
-- `start()`: lazy `from mlx_video import LTXModel, LTXModelConfig` (or `load`) inside `_load` run in `get_executor("io")` 180s timeout; friendly `ImportError` if missing (mirror L53-60). **ISOLATE the mlx-video load into `_load()` — single point needing runtime confirmation.** Log model_path.
+- `start()`: lazy `from mlx_video import get_model_path` inside `_resolve` run in `get_executor("io")` 180s timeout; friendly `ImportError` (github install URL, NOT PyPI) if missing. `get_model_path` front-loads the network download; `generate_video` reloads weights every call so no model object is held. **ISOLATE the mlx-video resolve into `_resolve()` - single point.** Log model_name.
 - `stop()`: null `self._model`, `gc.collect()`, `mx.synchronize()` + `mx.clear_cache()` on `get_executor("video")` (mirror L81-92).
-- `generate(prompt, num_frames=97, width=768, height=512, fps=24, seed=None, **kwargs) -> list[bytes]`: run in `get_executor("video")` 600s timeout; call mlx-video `generate(...)` writing to `tempfile.NamedTemporaryFile(suffix=".mp4", delete=False)`, read bytes, unlink temp, return `list[bytes]` (one mp4 per `n`). `_begin_activity`/`_update_activity`/`_finish_activity` (mirror L112-147). Log prompt_len/num_frames/elapsed. **ISOLATE the mlx-video generate call into `_generate_one()` — single point.**
+- `generate(prompt, num_frames=97, width=768, height=512, fps=24, seed=None, n=1, **kwargs) -> list[bytes]`: run in `get_executor("video")` 600s timeout; call mlx-video `generate_video(...)` writing to a `managed_tempfile_path(prefix="fusion_video_", suffix=".mp4")` mp4, read bytes, return `list[bytes]` (one mp4 per `n`; temp auto-unlinked by the context manager). `_begin_activity`/`_update_activity`/`_finish_activity`. Log prompt_len/num_frames/elapsed. **ISOLATE the mlx-video generate call into `_generate_one()` - single point.**
 - `get_stats()`: `{"model_name": ..., "loaded": self._model is not None}`.
 
-> **mlx-video call (researched, unverified)**: `from mlx_video import load, generate` → `model, processor = load(model_path)` in `start()`; `generate(model, processor, prompt, num_frames, height, width, fps, seed, output_path)` in `_generate_one()`. If this shape is wrong, only `_load()` + `_generate_one()` change.
+> **mlx-video call (VERIFIED 2026-07-07)**: `from mlx_video.models.ltx_2.generate import PipelineType, generate_video` + `from mlx_video import get_model_path`. `start()` calls `get_model_path(model_name)` (download only); `_generate_one()` calls `generate_video(model_repo, text_encoder_repo, prompt, pipeline=PipelineType(...), height=, width=, num_frames=, seed=, fps=, output_path=<temp>, verbose=False)`. `seed` defaults to `random.randint(0, 2**31-1)` (NOT 0) when None; `stop()` routes mx cleanup to the 2-worker `io` executor (not the contended 1-worker `video` executor) to avoid a 5s-timeout deadlock.
 
 ### 4. `fusion_mlx/engines/__init__.py` (verified L8-30)
 Add `from .video import VideoGenEngine` + `"VideoGenEngine"` to `__all__`.
@@ -80,12 +85,12 @@ Add `from .video import VideoGenEngine` + `"VideoGenEngine"` to `__all__`.
 
 ## Tests (mirror existing engine/route patterns; all mock mlx_video)
 
-- `tests/unit/test_video_gen_engine.py` — `sys.modules["mlx_video"]` patch (fake `load`/`generate`):
-  - `start()` raises friendly ImportError when mlx_video absent (del from sys.modules) — message includes install hint.
-  - `start()` loads via fake `load` in io executor; `stop()` nulls + syncs; `get_stats()` reflects loaded state.
-  - `generate()` calls fake `generate` (writes fake mp4 bytes to temp path), returns `list[bytes]`, activity tracking begins/finishes, temp file unlinked.
-- `tests/unit/test_videos_routes.py` — `POST /v1/videos/generate` happy path (mock engine returns mp4 bytes → b64_json + data URL), 404 on non-VideoGenEngine, validation errors (n>4, bad response_format).
-- extend `tests/unit/test_model_discovery*.py` — `_is_video_model` detects `configuration.json` `task=="text-to-video"`; maps to `engine_type="video_gen"` via `_register_model`.
+- `tests/unit/test_video_gen_engine.py` - `sys.modules["mlx_video"]` patch (stub `get_model_path` + fake `mlx_video.models.ltx_2.generate` module with `PipelineType`/`generate_video`):
+  - `start()` raises friendly ImportError when mlx_video absent (`sys.modules["mlx_video"]=None`) - message includes github install hint.
+  - `start()` resolves via fake `get_model_path` in io executor; idempotent; `stop()` clears loaded + syncs on io executor; `get_stats()` reflects loaded state.
+  - `generate()` calls fake `generate_video` (writes fake mp4 bytes to `output_path`), returns `list[bytes]`; `seed=None` -> random non-zero distinct seeds; `seed=42,n=3` -> seeds 42/43/44; temp auto-unlinked; pipeline/text_encoder_repo passed through; generate before start raises RuntimeError.
+- `tests/unit/test_videos_routes.py` - `POST /v1/videos/generate` happy path (mock engine returns mp4 bytes -> b64_json + data URL), 404 on non-VideoGenEngine / `ModelNotFoundError`, 503 when pool uninitialized, 500 on engine raise, 422 on LTX constraint violations (`num_frames` not `1+8*k`, `width`/`height` not divisible by 64, n>4, bad response_format). Strict mock `generate` side_effect rejects unexpected kwargs (#12).
+- `tests/unit/test_video_discovery.py` - `_is_video_model` detects `configuration.json` `task=="text-to-video"` AND requires a diffusers subdir (vae/transformer/audio_vae); a stray text-to-video manifest without subdirs returns False / falls through to llm (#5/#7). Maps to `engine_type="video_gen"` via `_register_model`.
 
 ## Verification (success criteria — what "done" looks like)
 

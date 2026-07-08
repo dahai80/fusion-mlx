@@ -15,11 +15,28 @@ from fusion_mlx.api.videos_routes import (
     set_videos_context,
 )
 from fusion_mlx.engines.video import VideoGenEngine
+from fusion_mlx.exceptions import ModelNotFoundError
+
+# Exact kwargs the route is allowed to forward to engine.generate. A mock that
+# accepts anything silently masks route/engine signature drift, so the strict
+# side_effect below raises on any unexpected kwarg (#12).
+_VALID_GENERATE_KWARGS = {"prompt", "num_frames", "width", "height", "fps", "seed", "n"}
 
 
 def _make_video_engine(byte_sequences):
     engine = MagicMock(spec=VideoGenEngine)
-    engine.generate = AsyncMock(return_value=list(byte_sequences))
+    payload = list(byte_sequences)
+
+    async def _generate(**kwargs):
+        unexpected = set(kwargs) - _VALID_GENERATE_KWARGS
+        if unexpected:
+            raise AssertionError(f"unexpected generate kwargs: {sorted(unexpected)}")
+        prompt = kwargs.get("prompt")
+        if not isinstance(prompt, str) or not prompt:
+            raise AssertionError(f"generate called with bad prompt: {prompt!r}")
+        return list(payload)
+
+    engine.generate = AsyncMock(side_effect=_generate)
     return engine
 
 
@@ -101,7 +118,7 @@ class TestVideoGenerateDefaults:
             "/v1/videos/generate",
             json={
                 "prompt": "hello",
-                "num_frames": 16,
+                "num_frames": 17,
                 "width": 512,
                 "height": 512,
                 "fps": 12,
@@ -112,7 +129,7 @@ class TestVideoGenerateDefaults:
         engine.generate.assert_awaited_once()
         _, kwargs = engine.generate.call_args
         assert kwargs["prompt"] == "hello"
-        assert kwargs["num_frames"] == 16
+        assert kwargs["num_frames"] == 17
         assert kwargs["width"] == 512
         assert kwargs["height"] == 512
         assert kwargs["fps"] == 12
@@ -137,6 +154,23 @@ class TestVideoGenerateErrors:
         resp = client.post("/v1/videos/generate", json={"prompt": "p"})
         assert resp.status_code == 404
 
+    def test_404_when_model_not_found(self):
+        pool = MagicMock()
+        pool.get_engine = AsyncMock(side_effect=ModelNotFoundError("nope"))
+        client = _make_app(pool)
+        resp = client.post("/v1/videos/generate", json={"prompt": "p"})
+        assert resp.status_code == 404
+
+    def test_503_when_pool_not_initialized(self, monkeypatch):
+        from fusion_mlx.api import videos_routes
+
+        monkeypatch.setattr(videos_routes, "_pool", None)
+        app = FastAPI()
+        app.include_router(videos_router)
+        client = TestClient(app, raise_server_exceptions=False)
+        resp = client.post("/v1/videos/generate", json={"prompt": "p"})
+        assert resp.status_code == 503
+
     def test_500_when_engine_generate_raises(self):
         engine = MagicMock(spec=VideoGenEngine)
         engine.generate = AsyncMock(side_effect=RuntimeError("boom"))
@@ -155,8 +189,11 @@ class TestVideoGenerateValidation:
             {"prompt": "p", "n": 0},
             {"prompt": "p", "n": 5},
             {"prompt": "p", "num_frames": 0},
+            {"prompt": "p", "num_frames": 16},  # 16 % 8 != 1
             {"prompt": "p", "width": 100},
+            {"prompt": "p", "width": 300},  # 300 % 64 != 0
             {"prompt": "p", "height": 5000},
+            {"prompt": "p", "height": 300},  # 300 % 64 != 0
             {"prompt": "p", "fps": 0},
             {"prompt": "p", "response_format": "weird"},
         ],
