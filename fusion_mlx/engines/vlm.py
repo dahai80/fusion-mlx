@@ -361,16 +361,37 @@ class VLMBatchedEngine(BaseEngine):
         # TurboQuant KV cache
         self._apply_turboquant_kv()
 
-        # N-gram self-speculative decode. The text engine (batched.py) loads
-        # _ngram_spec_state from model_settings; the VLM engine never did, so
-        # the per-request router found no loaded method and VLM text decode
-        # never speculated. Port the same loader here: n-gram spec is the
-        # safest spec method for VLM (no draft model - it matches the request's
-        # own output token stream, which VLM produces normally during decode).
-        # dflash/dspark (draft-model spec) are deliberately NOT ported here:
-        # their verify step assumes a text-only target and a VLM target carries
-        # vision encoders, so correctness is unverified - leave to a follow-up.
+        # N-gram self-speculative decode (no draft model - drafts from the
+        # request's own generated token stream). Ported from batched.py:272-299:
+        # the VLM engine never loaded _ngram_spec_state, so the per-request
+        # router found no loaded method and VLM decode never speculated.
         self._apply_ngram_spec()
+
+        # DFlash block-diffusion speculative decode. Ported from
+        # batched.py:390-414. VLM-safe: dflash_spec_step drafts from
+        # current_token (a generated text token) and verifies via
+        # gen.model + gen.prompt_cache - for VLM those carry the vision
+        # features already computed at prefill, so decode-phase verify is
+        # identical to text. No drafter path configured -> no-op.
+        await self._apply_dflash()
+
+        # DSpark DeepSpec speculative decode is NOT ported to VLM (unlike
+        # DFlash above). Verified reason: dspark_spec_step is self-contained -
+        # it calls DSparkGenerator.stream_from_tokens(prompt_tokens, ...),
+        # feeding the FULL multimodal prompt (image placeholder tokens
+        # included) to a target model DSparkGenerator loads ITSELF as a plain
+        # text model (no vision encoder, no cached vision features). For a VLM
+        # that re-processes image-placeholder token ids through a text-only
+        # target -> incoherent output. DFlash dodges this because its verify
+        # reuses the engine's already-prefilled VLM model + KV cache; DSpark
+        # cannot. Requires dspark-metal to support multimodal targets (vision
+        # encoder + image features in DSparkGenerator) - upstream issue to
+        # file, not wireable here. See issue #40.
+        # dspark_path = (
+        #     getattr(self._model_settings, "dspark_drafter_path", None)
+        #     if self._model_settings
+        #     else None
+        # ) or getattr(self._scheduler_config, "dspark_drafter_path", "")
 
         # Inject tool calling support into VLM tokenizer
         self._inject_tool_calling(self._tokenizer)
@@ -462,6 +483,42 @@ class VLMBatchedEngine(BaseEngine):
         except Exception as e:
             logger.warning(
                 "N-gram spec init failed for VLM %s: %s", self._model_name, e
+            )
+
+    async def _apply_dflash(self) -> None:
+        # Mirror engines/batched.py:390-414. Loads the DFlash drafter (IO-bound,
+        # so run in the executor) and stores it on the VLM scheduler as
+        # _dflash_runtime. Once set, the per-request router (engine-type-
+        # agnostic) assigns METHOD_DFLASH to VLM requests and _try_spec_decode
+        # runs dflash_spec_step on them. VLM-safe: dflash_spec_step verifies via
+        # gen.model + gen.prompt_cache, which for a VLM already hold the vision
+        # features computed at prefill - decode-phase verify is identical to
+        # text. No drafter path configured -> no-op (default VLM load untouched).
+        dflash_path = (
+            getattr(self._model_settings, "dflash_drafter_path", None)
+            if self._model_settings
+            else None
+        ) or getattr(self._scheduler_config, "dflash_drafter_path", "")
+        if not dflash_path:
+            return
+        try:
+            from ..speculative.dflash import load_runtime as load_dflash_runtime
+
+            loop = asyncio.get_running_loop()
+            dflash_rt = await loop.run_in_executor(
+                get_executor("io"),
+                lambda: load_dflash_runtime(dflash_path),
+            )
+            self._engine.engine.scheduler._dflash_runtime = dflash_rt
+            logger.info(
+                "DFlash spec-decode enabled for VLM %s (drafter=%s, kind=%s)",
+                self._model_name,
+                dflash_path,
+                dflash_rt.kind,
+            )
+        except Exception as e:
+            logger.error(
+                "DFlash drafter load failed for VLM %s: %s", self._model_name, e
             )
 
     async def stop(self) -> None:
