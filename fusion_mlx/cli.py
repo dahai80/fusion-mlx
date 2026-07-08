@@ -1316,7 +1316,11 @@ Examples:
         "--quant-mode",
         type=str,
         default="affine",
-        help="Quantization mode (default: affine; mlx-lm also supports floquet)",
+        choices=["affine", "mxfp4", "nvfp4", "mxfp8"],
+        help="Quantization mode (default: affine). affine uses --quant-bits/--quant-group-size. "
+        "mxfp4/nvfp4/mxfp8 are fixed-width float modes (mlx main) that ignore "
+        "--quant-bits/--quant-group-size and use per-mode defaults; setting one of "
+        "these modes enables quantization on its own.",
     )
     convert_parser.add_argument(
         "--dtype",

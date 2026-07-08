@@ -18,15 +18,31 @@ def _resolve_output_path(model: str, out: str | None) -> str:
     return str(Path.cwd() / base)
 
 
+# Fixed-width float quant modes (mlx main): nvfp4/mxfp4 are 4-bit E2M1,
+# mxfp8 is 8-bit. mlx-lm's quantize_model.defaults_for_mode fills the
+# correct (group_size, bits) per mode, so we pass None and let it choose —
+# a user-supplied --quant-group-size of 64 would otherwise break nvfp4
+# (which requires 16). Affine still needs --quant-bits to enable.
+_FP_QUANT_MODES = ("nvfp4", "mxfp4", "mxfp8")
+
+
 def _build_convert_kwargs(args, hf_path: str) -> dict:
     bits = getattr(args, "quant_bits", None)
-    quantize = bits is not None
+    mode = getattr(args, "quant_mode", "affine")
+    if mode in _FP_QUANT_MODES:
+        quantize = True
+        q_group_size = None
+        q_bits = None
+    else:
+        quantize = bits is not None
+        q_group_size = getattr(args, "quant_group_size", 64)
+        q_bits = bits
     return {
         "mlx_path": _resolve_output_path(hf_path, getattr(args, "out", None)),
         "quantize": quantize,
-        "q_group_size": getattr(args, "quant_group_size", 64),
-        "q_bits": bits,
-        "q_mode": getattr(args, "quant_mode", "affine"),
+        "q_group_size": q_group_size,
+        "q_bits": q_bits,
+        "q_mode": mode,
         "dtype": getattr(args, "dtype", None),
         "upload_repo": getattr(args, "upload_repo", None),
         "dequantize": getattr(args, "dequantize", False),

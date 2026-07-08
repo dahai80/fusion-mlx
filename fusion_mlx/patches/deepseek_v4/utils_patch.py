@@ -33,7 +33,6 @@ from typing import Any
 import mlx.core as mx
 import mlx.nn as nn
 import mlx_lm.utils as _utils
-from mlx.utils import tree_map
 
 logger = logging.getLogger(__name__)
 
@@ -102,6 +101,8 @@ def _build_patched_load_model() -> Callable:
     they pick up any other patches applied to ``mlx_lm.utils``.
     """
     default_get_classes = _utils._get_classes
+
+    from mlx.utils import tree_map
 
     def patched_load_model(
         model_path: Path,
