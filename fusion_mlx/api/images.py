@@ -46,6 +46,11 @@ class ImageGenerateRequest(BaseModel):
     response_format: str = Field(default="url", pattern="^(url|b64_json)$")
     # Model name (default: first available image gen model)
     model: str | None = None
+    # Optional diffusion knobs (forwarded only when set):
+    # scheduler: mflux noise scheduler ('linear'/'sdrm'/'euler'/etc).
+    # negative_prompt: steer away from unwanted content.
+    scheduler: str | None = None
+    negative_prompt: str | None = None
 
 
 class ImageOutput(BaseModel):
@@ -84,7 +89,7 @@ async def generate_image(request: ImageGenerateRequest) -> ImageGenerateResponse
             )
 
         # Generate images
-        image_bytes_list = await engine.generate(
+        gen_kwargs: dict = dict(
             prompt=request.prompt,
             width=request.width,
             height=request.height,
@@ -93,6 +98,11 @@ async def generate_image(request: ImageGenerateRequest) -> ImageGenerateResponse
             guidance=request.guidance,
             n_images=request.n,
         )
+        if request.scheduler is not None:
+            gen_kwargs["scheduler"] = request.scheduler
+        if request.negative_prompt is not None:
+            gen_kwargs["negative_prompt"] = request.negative_prompt
+        image_bytes_list = await engine.generate(**gen_kwargs)
 
         # Format response
         outputs = []

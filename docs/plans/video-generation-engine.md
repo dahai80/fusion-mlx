@@ -109,3 +109,139 @@ Add `from .video import VideoGenEngine` + `"VideoGenEngine"` to `__all__`.
 - **git+ dep needs network**: optional group keeps it out of core install; `start()` gives install hint.
 - **LTX-2 19B memory**: `engine_pool` memory admission already guards load; fails loudly on low-RAM (Rule 12).
 - **macOS app repackage**: when this lands on `main` (touches `fusion_mlx/` Python), `.app`/`.dmg` must be rebuilt (standing constraint).
+
+## Phase 2: Continuous Batching & Vision Cache Verification (2026-07-09)
+
+The three features are layered: (1) video generation engine (Phase 0/1 above),
+(2) MLLM continuous batching scheduler, (3) vision feature cache for video
+frames. Phases 2 and 3 reuse existing fusion-mlx subsystems; this section
+records the verification performed and the debt surfaced.
+
+### Feature 2 — MLLM continuous batching scheduler: VERIFIED (existing)
+
+The real continuous-batching scheduler lives in `fusion_mlx/scheduler/`
+(`Scheduler` class, instantiated at `engine_core.py:183`). It is true
+iteration-level batching via mlx-lm `BatchGenerator` with real chunked prefill
+(`sched_batch.py:506`). VLM and video requests flow through this same
+scheduler; they are not special-cased at the scheduling layer.
+
+- **VLM/text batch isolation** (`sched_schedule.py:201-213`): the homogeneity
+  guard classifies each request via `request_is_vlm = request.vlm_inputs_embeds
+  is not None`. VLM and text-only requests use different prefill paths
+  (embeddings vs token IDs), so a status mismatch defers the later request to
+  the next batch (`self.waiting.appendleft(request); break`). Multiple VLM
+  requests batch together; VLM+text mixes do not. Verified by inspection —
+  driving `_schedule_waiting` end-to-end was ruled out: the function is 746
+  lines with 3 conditional `scheduled.append` branches (VLM-MTP / normal /
+  paged) behind a large SpecPrefill block and 6+ model-touching downstream
+  methods; mocking all of it would pass for the wrong reasons (Rule 9).
+- **`fusion_mlx/pool/priority_scheduler.py` is DEAD CODE.** `PriorityScheduler`
+  is not wired into production (referenced only in `pool/__init__.py` export
+  and `tests/unit/test_pool.py`). Its `step()` drains priority queues into
+  `base.add_request()` then calls `base.step()` once — no continuous batching.
+  Its `_check_chunked_prefill` (line 430) is a no-op stub. Not the scheduler
+  the feature refers to; candidate for removal.
+
+**Tests added** (`tests/unit/test_continuous_batching.py::TestVLMContinuousBatching`):
+`test_scheduler_accepts_vlm_requests`, `test_vlm_and_text_requests_queue_together`
+— VLM requests carrying `vlm_inputs_embeds`/`vlm_image_hash` are admitted into
+the same waiting queue as text requests (the precondition for VLM batching).
+
+### Feature 3 — Vision feature cache for video frames: VERIFIED (existing)
+
+`VisionFeatureSSDCache` (`fusion_mlx/cache/vision_feature_cache.py`) is a
+two-tier cache (memory LRU + SSD safetensors) keyed by
+`_composite_key(model_name, image_hash)`. 19 unit tests pass.
+
+- **Non-native video path benefits** (`engines/vlm.py:577-608`):
+  `_prepare_vision_inputs` calls `compute_per_image_hashes(images)` and looks
+  up each frame in the cache; on an all-hit it concatenates cached features
+  and skips the vision encoder, on a miss it computes + `_split_vision_features`
+  + `put` per-image. Video frames on the non-native path are extracted as PIL
+  images (`vlm.py:949-983`, Path B) and flow into this same branch, so repeated
+  frames across turns reuse cached features.
+- **Native video models deliberately skip the cache** (`vlm.py:828-830`):
+  ndarray frames have no stable PIL hash, so Qwen-style native video
+  (`_is_native_video_model`, `vlm.py:925-936`, Path A) bypasses the cache by
+  design. This is intended behavior, not a gap.
+
+**Tests added** (`tests/unit/test_vision_feature_cache.py::TestVisionCacheEngineWiring`):
+`test_repeat_image_hits_cache_and_skips_encoder` (second call with the same
+image hits the cache — `_compute_vision_features` called once, `stats.hits >= 1`),
+`test_cache_disabled_does_not_consult_cache` (disabled → model's
+`get_input_embeddings` runs each call, cache untouched: 0 hits / 0 misses),
+`test_different_image_misses_again` (different image → miss, encoder runs
+again). Mocks are at clean seams only (mlx_vlm `prepare_inputs`,
+`_compute_vision_features`, `_split_vision_features`, `_vlm_model`); the cache
+and image-hash functions are real.
+
+### Debt surfaced (pre-existing, NOT introduced by this work)
+
+- **11 `TestVLMEngineIntegration` tests fail** (`test_vision_feature_cache.py:266+`):
+  they import `from fusion_mlx.engine.vlm import VLMBatchedEngine` (singular
+  `engine` — a stub/shim) instead of the real `fusion_mlx.engines.vlm`
+  (plural), and assert a stale API contract (`encode_image(pixel_values,
+  image_position_ids=...)`, `_image_token_count`) the real class no longer has.
+  Unrelated to the three features; left as debt (Rule 3/6). Fix = correct the
+  import path + update assertions to the real `_compute_vision_features`
+  strategy API.
+- **`PriorityScheduler` dead code** (see Feature 2): candidate for deletion.
+
+## Phase 3 & 4: Legacy LTX-Video + CogVideoX stubs (2026-07-09)
+
+**Decision (Option B): stub + upstream issue.** mlx-video (Blaizzy/mlx-video)
+ships only `ltx_2` (covers LTX-2 and LTX-2.3) and `wan_2` (Wan2.1 / Wan2.2).
+Web + GitHub-API search confirmed **no MLX port of legacy LTX-Video (0.9.x) or
+CogVideoX exists** anywhere. A from-scratch port of either would be multi-kLoC,
+unverifiable without multi-GB weights and GPU-class compute, and would violate
+Rule 6/9/12. Per the user's flow ("遇到上游问题，先提issue，再提pr，跟着提交落地code"),
+the correct move is: register a stub that raises a clear `NotImplementedError`
+pointing at the upstream issue tracker and naming a real shipped alternative,
+then file the upstream issues. The stubs let `resolve_backend` route the
+families correctly today instead of mis-routing them to LTX2.
+
+**Implementation** (`fusion_mlx/engines/video_backends/unimplemented.py`):
+`UnimplementedBackend(VideoBackend)` base stores `_model_name`/`_loaded` in
+`__init__` (so `resolve_backend`'s `cls(model_name, **kwargs)` constructs it),
+`start()`/`generate()` raise `NotImplementedError` with the message
+`"{family} has no MLX port and is not shipped by mlx-video; ... Request/track
+upstream support: https://github.com/Blaizzy/mlx-video/issues. Use ltx2 (LTX-2 /
+LTX-2.3) or wan2 (Wan2.1 / Wan2.2) instead."`, `stop()` is a no-op, and
+`constraints()` returns permissive `VideoConstraints(supports_i2v=True, max_n=4,
+dim_divisibility=1, num_frames_validator=None)` so `validate_params` accepts the
+request and the stub - not the validator - delivers the clear error.
+
+- `LegacyLTXBackend` (`name="ltx_video_legacy"`): `detect` matches `ltx-video` /
+  `ltx_video` substrings (incl. `Lightricks/LTX-Video`).
+- `CogVideoBackend` (`name="cogvideo"`): `detect` matches `cogvideo` /
+  `cog_video` substrings (incl. `THUDM/CogVideoX-2b`).
+
+**Registry** (`video_backends/__init__.py`): BACKENDS now has 4 entries
+(`ltx2`, `wan2`, `ltx_video_legacy`, `cogvideo`); `_ALIASES` adds `ltx-video` /
+`ltx_video` -> `ltx_video_legacy` and `cogvideox` / `cog_video` / `cogvideo-x`
+-> `cogvideo`. **Critical correctness property**: `ltx-2` / `ltx-2.3` still
+resolve to the real `LTX2Backend` (registered first, detected first) - the
+legacy stub does NOT shadow the modern shipped backend. Unknown model names
+still fall back to `LTX2Backend` (Phase 0 behavior preserved).
+
+**Bug found + fixed during verification**: the first `resolve_backend` call on a
+stub raised `TypeError: LegacyLTXBackend() takes no arguments` because
+`UnimplementedBackend` inherited `object.__init__`. Added the `__init__` above.
+
+**Tests added** (`tests/unit/test_video_backends.py`):
+- `test_legacy_ltx_autodetect`, `test_cogvideo_autodetect` (name + repo-id
+  detection).
+- `test_legacy_does_not_shadow_modern_ltx` (ltx-2/ltx-2.3 -> LTX2, not the
+  stub) - guards the critical property above.
+- `test_explicit_legacy_and_cogvideo_aliases` (explicit hints resolve).
+- `TestUnimplementedBackends` (parametrized over both): permissive constraints,
+  `validate_params` accepts then backend raises, `stop()` no-op, `start()`
+  raises with upstream URL + a real alternative name, `generate()` raises.
+- `test_backends_registry_has_both` -> `test_backends_registry_has_all` (asserts
+  all 4 keys; the old 2-key assertion was stale).
+- Full file: 36 passed; lint clean (`black` + `ruff`).
+
+**Deferred**: filing the 2 upstream mlx-video issues (legacy LTX-Video +
+CogVideoX MLX port requests) was held - it commits the user's identity to a
+public third-party tracker and the Phase 3/4 direction was confirmed while the
+user was AFK. Re-raise with the user before filing.

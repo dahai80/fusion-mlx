@@ -358,24 +358,7 @@ class VLMBatchedEngine(BaseEngine):
                     logger.error("SpecPrefill: draft model load failed: %s", e)
 
         # TurboQuant KV cache
-        if self._model_settings is not None:
-            tq_enabled = getattr(self._model_settings, "turboquant_kv_enabled", False)
-            if tq_enabled:
-                try:
-                    from mlx_vlm.turboquant import turboquant_attention
-
-                    tq_bits = getattr(self._model_settings, "turboquant_kv_bits", 4)
-                    tq_skip = getattr(
-                        self._model_settings, "turboquant_skip_last", True
-                    )
-                    turboquant_attention(
-                        self._vlm_model.language_model,
-                        kv_bits=tq_bits,
-                        skip_last=tq_skip,
-                    )
-                    logger.info("TurboQuant KV cache enabled for VLM: %s bits", tq_bits)
-                except Exception as e:
-                    logger.warning("TurboQuant KV init failed: %s", e)
+        self._apply_turboquant_kv()
 
         # Inject tool calling support into VLM tokenizer
         self._inject_tool_calling(self._tokenizer)
@@ -385,6 +368,45 @@ class VLMBatchedEngine(BaseEngine):
 
         register_llm_engine()
         logger.info("VLMBatchedEngine loaded: %s", self._model_name)
+
+    def _apply_turboquant_kv(self) -> None:
+        if self._model_settings is None:
+            return
+        tq_enabled = getattr(self._model_settings, "turboquant_kv_enabled", False)
+        if not tq_enabled:
+            return
+        # Mirror the text-LM path (engines/batched.py): activate TurboQuant by
+        # setting kv bits/skip/mode on the scheduler, which swaps KVCache ->
+        # TurboQuantKVCache at prefill (sched_schedule.py + sched_token.py).
+        # The previous code called mlx_vlm.turboquant.turboquant_attention, a
+        # symbol that does not exist in mlx-vlm - the ImportError was silently
+        # swallowed, so TurboQuant never applied to VLM. Default off
+        # (turboquant_kv_enabled defaults False) -> no change to default loads.
+        try:
+            scheduler = self._engine.engine.scheduler
+            tq_bits = float(getattr(self._model_settings, "turboquant_kv_bits", 4) or 4)
+            tq_skip = getattr(self._model_settings, "turboquant_skip_last", True)
+            tq_mode = getattr(
+                self._model_settings, "kv_cache_turboquant_mode", None
+            ) or getattr(scheduler, "_turboquant_kv_mode", "v4")
+            if tq_mode not in ("v4", "k8v4"):
+                logger.warning(
+                    "TurboQuant mode %r not in ('v4', 'k8v4'), defaulting to v4",
+                    tq_mode,
+                )
+                tq_mode = "v4"
+            scheduler._turboquant_kv_bits = tq_bits
+            scheduler._turboquant_skip_last = tq_skip
+            scheduler._turboquant_kv_mode = tq_mode
+            logger.info(
+                "TurboQuant KV cache enabled for VLM: %s bits (mode=%s)",
+                tq_bits,
+                tq_mode,
+            )
+        except Exception as e:
+            logger.warning(
+                "TurboQuant KV init failed for VLM %s: %s", self._model_name, e
+            )
 
     async def stop(self) -> None:
         if self._engine:
