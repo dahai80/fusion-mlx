@@ -539,7 +539,7 @@ class Server:
                 "default_model": _server_state.get("default_model"),
                 "loaded_models": loaded_models,
                 "total_requests": metrics.get("total_requests", 0),
-                "total_prompt_tokens": metrics.get("total_tokens_prompt", 0),
+                "total_prompt_tokens": metrics.get("total_prompt_tokens", 0),
                 "total_completion_tokens": metrics.get("total_tokens_generated", 0),
                 "model_memory_used": model_memory_used,
                 "model_memory_max": model_memory_max,

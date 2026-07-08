@@ -96,7 +96,7 @@ def _render_engine_metrics() -> list[str]:
                 "fusion_mlx_prompt_tokens_total",
                 "counter",
                 "Total prompt tokens across all requests.",
-                int(m.get("total_tokens_prompt", 0)),
+                int(m.get("total_prompt_tokens", 0)),
             )
         )
         lines.extend(

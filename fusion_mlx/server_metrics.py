@@ -154,7 +154,7 @@ class ServerMetrics:
             "successful_requests": self.successful_requests,
             "failed_requests": self.failed_requests,
             "total_tokens_generated": total_gen,
-            "total_tokens_prompt": total_prompt,
+            "total_prompt_tokens": total_prompt,
             "total_tokens_served": total_gen,
             "total_completion_tokens": total_gen,
             "total_cached_tokens": total_cached,
