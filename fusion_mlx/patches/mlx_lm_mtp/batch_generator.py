@@ -118,6 +118,14 @@ def apply() -> bool:
                     logger.debug("MTP path not active: %s", reason)
 
         def patched_next(self, *args, **kwargs):
+            # Per-step flag read by the scheduler's _try_spec_decode guard
+            # (last_step_was_mtp). True only when this step ran the mtp
+            # verify+accept path; suffix/dflash/dspark/draft must not run on
+            # top (double-spec -> cache corruption). Reset every call and
+            # set on the success path only, so a _MtpStepFallback leaves it
+            # False and suffix may run on the fallback standard step.
+            self._fusion_mlx_mtp_stepped = False
+
             realign_rows = getattr(self, "_fusion_mlx_realign_rows", None)
             if callable(realign_rows):
                 realign_rows()
@@ -126,7 +134,9 @@ def apply() -> bool:
                 try:
                     batch_state = _prepare_mtp_batch_state_for_next(self)
                     if batch_state is not None:
-                        return _mtp_batch_next(self, batch_state)
+                        result = _mtp_batch_next(self, batch_state)
+                        self._fusion_mlx_mtp_stepped = True
+                        return result
                 except _MtpStepFallback as exc:
                     logger.debug("MTP batch next() fallback to standard step: %s", exc)
                     _reconcile_mtp_batch_to_standard(self)
@@ -139,7 +149,9 @@ def apply() -> bool:
                 try:
                     state = _prepare_mtp_state_for_next(self)
                     if state is not None:
-                        return _mtp_next(self, state)
+                        result = _mtp_next(self, state)
+                        self._fusion_mlx_mtp_stepped = True
+                        return result
                 except _MtpStepFallback as exc:
                     logger.debug("MTP next() fallback to standard step: %s", exc)
                     _drop_mtp_state(self, "step-fallback")

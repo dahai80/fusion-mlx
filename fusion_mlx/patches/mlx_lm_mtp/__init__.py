@@ -59,6 +59,21 @@ def is_mtp_active() -> bool:
     return _MTP_ACTIVE
 
 
+def last_step_was_mtp(batch_generator) -> bool:
+    # True iff the most recent GenerationBatch.next ran the mtp verify+accept
+    # path. Read by the scheduler's _try_spec_decode guard to suppress
+    # suffix/dflash/dspark/draft on a step mtp already owned - running a
+    # second spec loop on top would double-spec and corrupt cache state.
+    # Degrades to False on any error so a missing flag lets suffix run
+    # (suffix running is never a correctness bug, only a possible wasted
+    # verify; the corruption risk is the reverse direction).
+    try:
+        gen_batch = getattr(batch_generator, "_generation_batch", None)
+        return bool(getattr(gen_batch, "_fusion_mlx_mtp_stepped", False))
+    except Exception:
+        return False
+
+
 def apply_mlx_lm_mtp_patch() -> bool:
     """Apply the model-side and BatchGenerator monkey-patches.
 

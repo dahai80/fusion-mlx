@@ -507,6 +507,14 @@ def _try_spec_decode(
 
     if self._vlm_mtp_active:
         return []
+    # Standard mtp owns this decode step (verify+accept ran inside
+    # bg._next()). Running suffix/dflash/dspark/draft on top would
+    # double-spec and corrupt cache state. Bail so the per-step mtp flag
+    # drives mtp<->suffix per-request routing when both are loaded.
+    from ..patches.mlx_lm_mtp import last_step_was_mtp
+
+    if last_step_was_mtp(self.batch_generator):
+        return []
     if request_id in self._output_parser_sessions:
         return []
 

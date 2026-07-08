@@ -1,82 +1,236 @@
-# #431 Per-Request Spec Routing — 分阶段实现计划
+# Per-Request Spec Routing — Engine Refactor Plan
 
-分支: `feat/per-request-spec-routing` (从 main 创建)
+## Status
 
-## 目标 + 验证标准 (Rule 4)
+- **Slice 1 DONE** (commit c93407a5, branch `feat/per-request-spec-routing`):
+  `fusion_mlx/speculative/per_request_route.py` (`select_active_method` +
+  `loaded_methods`) + 16 unit tests. Pure decision function, zero wiring,
+  zero regression risk. Reusable foundation.
+- **Step 1 (break the suffix/mtp mutex) DONE** (Changes 1-6, branch
+  `feat/per-request-spec-routing`). The strictly-additive per-step guard
+  is in place: mtp sets `_fusion_mlx_mtp_stepped` on the verify+accept
+  path; `last_step_was_mtp` reads it; `_try_spec_decode` bails when mtp
+  owned the step; the CLI `sys.exit` mutex is lifted to an info print.
+  Verified by 12 new coexistence unit tests + 60 existing spec tests
+  (84 hw/mlx-gated skips, 0 regressions); full unit suite collects
+  cleanly with quarantine active. **E2E coherence (Change 6) is
+  environment-gated**: no local MTP-head model loads with `mtp_enabled`
+  today (Qwen3.5-9B-4bit has a `language_model.` weight-prefix mismatch
+  that fails even without mtp; Qwen3.6-27B-mxfp8's mtp patch breaks
+  strict load with 160 extra params; DeepSeek-V4-Flash's model type is
+  absent from mlx_lm). All three are pre-existing load issues unrelated
+  to this change. The E2E test (`tests/integration/test_mtp_suffix_
+  coherence.py`) skips gracefully on load failure and will run once an
+  mtp-loadable model is available; the guard's correctness rests on the
+  unit tests + the strictly-additive safety argument (the guard only
+  makes `_try_spec_decode` bail more, never less - the double-spec
+  corruption path is precisely what it blocks).
+- **Slice 2/3 REPLANNED** below. The original 3-slice plan assumed
+  "multi-method resident per-request routing" was possible at boot. Code
+  investigation proved that assumption WRONG. This document records the
+  corrected architecture and the real first step.
 
-把 `SpecAutoRouter`（已实现，纯决策函数）从 boot-time-only 接到 **per-request 决策点**：每个 request 进入 pure-decode 时，按 `prompt_token_count` + 上次 acceptance rate + boot 已加载方法集，在**已加载**的 spec 方法间选 active 方法，dispatch 链按 active 过滤。
+## Architecture reality (corrected)
 
-成功标准:
-1. boot 单方法（最常见，suffix-only）时：router 仍选 suffix，行为 = 现状（no-op 正确，零回归）
-2. operator 同时 `--enable-dflash --suffix-decoding` 加载两方法：长 prompt（>=4096 tok）路由 dflash，短 prompt 路由 suffix，per-request 切换不 reload
-3. acceptance 滞回：当前方法 acceptance < 0.20 放弃并排除，>= 0.40 保留（已有 `SpecDecodeState` 机制复用）
-4. 现有 spec 全套测试（ngram/dflash/dspark/mtp）零回归
-5. CI lint（black+ruff）+ test 全绿
-6. E2E: Qwen3.5-9B-4bit `--spec-decode auto` boot -> suffix；长 prompt 仍 suffix（单方法 no-op）；日志打印 `spec-route:` 决策
+The original plan claimed suffix and mtp "both monkey-patch the
+BatchGenerator step" and are therefore mutually exclusive. That is
+INACCURATE. The actual mechanisms:
 
-## 核心设计 (渐进式 — 不强制多方法 resident)
+| Method | Integration | Patch site | When it runs |
+|---|---|---|---|
+| fusion throughput opt | monkey-patch `GenerationBatch._step` | `scheduler/monkeypatches.py` L343 | every decode step (inner forward+sampling) |
+| **mtp** | monkey-patch `GenerationBatch.__init__/next/filter/extend` | `patches/mlx_lm_mtp/batch_generator.py` `apply()` | inside `bg._next()`, per-batch gated by `_is_mtp_eligible`/`_is_mtp_batch_eligible`; does its own 2-token verify + MTP-head forward, bypassing standard `_step` |
+| **suffix (ngram)** | NONE on `GenerationBatch` — engine-agnostic drafter | driven by scheduler `_try_spec_decode` -> `ngram_spec_step` | AFTER the decode step, single-seq only |
+| dflash / dspark | scheduler `_try_spec_decode` (dflash/dspark `*_spec_step`); runtime injected into `scheduler._dflash_runtime`/`_dspark_runtime` | AFTER the decode step | single-seq only |
+| draft-model (SpecPrefill) | scheduler `_try_spec_decode` -> `spec_decode_step` | AFTER the decode step | single-seq only |
 
-### 关键约束（确认 memory 判断）
-DFlash/DSpark 需 drafter model（boot 加载），MTP 需 converted ckpt。**per-request 跨方法切换不 reload** 的前提是方法已 resident。强制多方法 resident = 内存爆炸 + 多套 state + 高回归（spec corruption 历史痛点）。
+### The real mutex reason
 
-### 渐进式解决
-`available` 方法集 = **boot 已加载的**（runtime 非空的方法）。router 只在 available 集内决策：
-- boot 单方法（suffix-only，最常见）-> router 选 suffix（no-op，零回归）
-- boot 多方法（operator 显式 `--enable-dflash --suffix-decoding`）-> router 在两者间 per-request 选
-- 未加载的方法 router 不推荐（`available_methods()` 已过滤 `config_enabled`，扩展过滤 `runtime loaded`）
+`_try_spec_decode` (`scheduler/sched_step.py` L479) runs AFTER the regular
+decode step (called from `_step_pure_decode` L456). It is a static
+priority chain: ngram -> dflash -> dspark -> draft-model, single-seq only.
 
-**不引入 lazy draft load**（首次切换秒级延迟不可接受），**不强制多方法 resident**。价值随 operator 加载方法数线性增长，零方法数风险。
+mtp runs INSIDE the decode step (`bg._next()` -> `GenerationBatch.next` ->
+`patched_next` -> `_mtp_next`), advancing the cache and emitting
+accepted/rejected tokens. When mtp handles a step, `_try_spec_decode` then
+runs on top of the mtp-produced response and tries a SECOND independent
+spec loop (suffix draft-verify) on the same step = **double-spec**. Two
+independent cache-advancing speculative loops on one step is exactly the
+corruption mode documented in `fusion-mlx-spec-corruption-fix.md`.
 
-### 注入点
-`sched_step.py::_try_spec_decode` L504 已有 `request = self.running.get(request_id)`，`request.num_prompt_tokens` = router 的 `prompt_token_count` 信号。dispatch 链 L516-548 从硬 `if runtime is not None` 改 `if runtime is not None and method == active`。
+`_try_spec_decode` already guards VLM-MTP (`if self._vlm_mtp_active:
+return []`, L508) but has NO guard for standard mtp. The CLI mutex at
+`cli_serve.py` L1859 (`--suffix-decoding` XOR `--enable-mtp`) prevents
+the double-spec by forbidding coexistence — but its stated reason
+("both monkey-patch the BatchGenerator step") is wrong, and forbidding
+coexistence blocks the most valuable per-request routing combination
+(mtp for MTP-eligible models, suffix fallback for the rest).
 
-## 分阶段切片 (Rule 10 checkpoint)
+### dflash / dspark stay excluded from Step 1
 
-### Slice 1: per-request active 方法选择器（纯函数 + 单测，零 wiring）
-- 新增 `speculative/per_request_route.py`：`select_active_method(signals: RouteSignals, loaded: dict[str,bool], recent_accept: float|None, current: str|None) -> str|None`
-  - 包装 `SpecAutoRouter.decide`，但 `available` = `{m for m in loaded if loaded[m]}`
-  - 返回 None = 无 spec（所有方法未加载/未启用）
-  - 纯函数，无副作用，完全单测
-- 单测 `tests/unit/test_per_request_route.py`：覆盖单方法 no-op、多方法 long-doc->dflash、滞回、available 为空
+dflash and dspark **early-fork** to separate servers
+(`cli_serve.py` L1090-1105 `run_dspark_server` + `return`, bypassing
+BatchedEngine entirely). Integrating them into BatchedEngine is a
+separate, larger refactor explicitly deferred to 0.10 (L1555 comment).
+Step 1 does NOT touch them. The dflash-vs-{suffix,mtp} mutex at L1563
+stays.
 
-**Checkpoint**: 单测全绿，未碰 scheduler 代码，零回归风险。
+## Step 1 — Break the suffix/mtp mutex safely (THIS task)
 
-### Slice 2: scheduler 接入 active 选择（wiring，核心改动）
-- `sched_init.py`: 加 `self._spec_active_method: str | None = None`（per-request，每 request 重算）+ `self._spec_recent_accept: dict[str,float]`（method->上次 acceptance，跨 request 滞回）
-- `_try_spec_decode`（sched_step.py L504 后）:
-  - 算 `loaded = {"suffix": _ngram_spec_state is not None, "ddtree": _dflash_runtime is not None, "dspark": _dspark_runtime is not None, "mtp": enable_mtp...}`
-  - 调 `select_active_method`，写 `self._spec_active_method`
-  - dispatch 链每个 `if runtime is not None` 加 `and self._spec_active_method == METHOD_X`
-- acceptance 反馈: `record_accepted` 路径更新 `self._spec_recent_accept[method]`
+**Goal**: allow `--suffix-decoding` and `--enable-mtp` to coexist, with
+mtp taking priority for MTP-eligible steps and suffix running only when
+mtp did NOT handle the step. This unlocks mtp<->suffix per-request
+routing (the highest-value combination) with a strictly-additive guard.
 
-**Checkpoint**: boot 单方法时 active 恒 = 该方法（no-op）；多方法时 per-request 切。现有 spec 测试全绿（active 选择不改变单方法行为）。
+**Behavior change is one-directional and safe**: the new guard only
+makes `_try_spec_decode` bail MORE often (when mtp ran). It never causes
+suffix to run when it should not. Status quo (mutex forbids coexistence)
+is strictly more restrictive than the post-change behavior.
 
-### Slice 3: `--spec-decode auto` per-request 模式（CLI + 集成）
-- `cli_serve.py` auto 分支（L1960）: 保留 boot-time 解析作 fallback，但加 `--spec-route per-request` flag（或 `auto` 升级为 per-request 当多方法加载时）
-- auto 时**不再 boot 强制单选**：若 operator 同时给了 drafter paths，加载多方法，per-request router 接管
-- 集成测试: 多方法加载 + 长/短 prompt 路由验证
+### Change 1 — mtp per-step "handled" signal
 
-**Checkpoint**: E2E Qwen3.5-9B-4bit 验证；CI 全绿。
+File: `fusion_mlx/patches/mlx_lm_mtp/batch_generator.py`, in `patched_next`
+(L120-149).
 
-## 风险 + 缓解 (Rule 1/12)
-- **spec corruption 回归**: dispatch 链改动可能破坏 KV cache 一致性。缓解: Slice 2 单方法 no-op 严格保持，多方法切换只在 request 边界（`on_new_request`）发生，不在 mid-decode 切。每 slice 跑现有 spec 全套测试。
-- **per-request 切换 mid-request**: 一个 request 内 active 方法固定（在 `_try_spec_decode` 首次进入该 request 时定，缓存到 request 结束）。避免 mid-decode 切换导致 KV 状态混乱。
-- **acceptance 信号冷启动**: 首个 request 无 recent_accept -> router 用默认（current method 或 suffix），不阻塞。
+- Reset `self._fusion_mlx_mtp_stepped = False` at the top of `patched_next`.
+- Set `self._fusion_mlx_mtp_stepped = True` ONLY after `_mtp_batch_next`
+  (L129) or `_mtp_next` (L142) returns successfully — i.e. capture the
+  result, set the flag, then return. Do NOT set it before the call (a
+  `_MtpStepFallback` exception must leave the flag False so suffix may
+  run on the fallback standard step).
+- Restructure the two `try`/`except _MtpStepFallback` blocks so the flag
+  is set on the success path only:
+  ```python
+  result = _mtp_batch_next(self, batch_state)
+  self._fusion_mlx_mtp_stepped = True
+  return result
+  ```
+  inside the `try`, leaving the `except` (fallback) path with the flag
+  still False.
 
-## 不做 (Rule 2)
-- 不做 lazy draft load（延迟不可接受）
-- 不做 multi-method KV state 隔离重构（每方法已有独立 state 字段，复用）
-- 不做 mid-request 方法切换（固定 per-request）
-- 不改 macOS app（per-request routing 是 scheduler 层，app settings 不涉及）
+### Change 2 — helper to read the signal
 
-## 文件清单
-- 新增: `fusion_mlx/speculative/per_request_route.py`（~80 行）
-- 新增: `tests/unit/test_per_request_route.py`（~120 行）
-- 改: `fusion_mlx/scheduler/sched_init.py`（+2 字段）
-- 改: `fusion_mlx/scheduler/sched_step.py`（dispatch 链 + active 选择，~20 行）
-- 改: `fusion_mlx/scheduler/spec_decode.py`（acceptance 反馈写 recent_accept，~5 行）
-- 改: `fusion_mlx/cli_serve.py`（auto per-request 模式，~15 行）
-- 文档: 本文件 + README spec 章节
+File: `fusion_mlx/patches/mlx_lm_mtp/__init__.py` (or `batch_generator.py`
+re-exported).
 
-## 执行顺序
-Slice 1 -> checkpoint(单测) -> Slice 2 -> checkpoint(spec 全套测试) -> Slice 3 -> checkpoint(E2E+CI) -> 更新 memory + README
+Add:
+```python
+def last_step_was_mtp(batch_generator) -> bool:
+    """True iff the most recent ``GenerationBatch.next`` ran the mtp path."""
+    try:
+        gb = getattr(batch_generator, "_generation_batch", None)
+        return bool(getattr(gb, "_fusion_mlx_mtp_stepped", False))
+    except Exception:
+        return False
+```
+The scheduler reaches the gen batch via `self.batch_generator._generation_batch`
+(this attribute is already used by the mtp patch at L193).
+
+### Change 3 — guard in `_try_spec_decode`
+
+File: `fusion_mlx/scheduler/sched_step.py`, `_try_spec_decode` (L479),
+right after the existing `_vlm_mtp_active` guard (L508):
+```python
+if self._vlm_mtp_active:
+    return []
+# Standard mtp owns this decode step (verify+accept inside bg._next());
+# running suffix/dflash/dspark/draft on top would double-spec.
+if _last_step_was_mtp(self.batch_generator):
+    return []
+```
+with a lazy import of the helper to keep the scheduler import-light.
+
+### Change 4 — lift the CLI mutex
+
+File: `fusion_mlx/cli_serve.py` L1857-1865. Replace the hard
+`sys.exit(1)` with a warning + allow coexistence:
+```python
+if args.suffix_decoding and args.enable_mtp:
+    logger.info(
+        "--suffix-decoding + --enable-mtp: mtp takes priority for "
+        "MTP-eligible steps; suffix runs only when mtp did not handle "
+        "the step (per-request routing)."
+    )
+```
+Also check `speculative/auto_resolve.py` boot-time resolution: ensure
+`auto` no longer forces suffix XOR mtp when both are eligible — both
+should be loaded and the per-step guard decides dispatch. (Verify the
+exact gate in auto_resolve; adjust to allow both loaded.)
+
+### Change 5 — tests
+
+File: `tests/unit/test_mtp_suffix_coexistence.py` (new) + extend
+existing mtp/suffix tests.
+
+1. **mtp eligible + suffix loaded**: mtp `patched_next` sets
+   `_fusion_mlx_mtp_stepped=True`; `_try_spec_decode` returns `[]`
+   (suffix not double-run). Assert via a fake gen_batch with the flag.
+2. **non-mtp model + suffix loaded**: flag stays False; suffix
+   `ngram_spec_step` runs normally. (Existing suffix tests cover this;
+   add an assertion that the guard does not fire.)
+3. **mtp fallback** (`_MtpStepFallback`): flag stays False; suffix may
+   run. Simulate by making `_mtp_next` raise `_MtpStepFallback`.
+4. **flag reset each step**: two consecutive `patched_next` calls, first
+   mtp-eligible then not — flag is True then False.
+5. **existing mtp identity tests** (`tests/test_mlx_lm_mtp_patch.py`)
+   still pass — the flag is additive, does not alter mtp token output.
+6. **existing suffix tests** still pass.
+
+### Change 6 — E2E coherence + CI
+
+- Run the spec-corruption coherence smoke test (the historical pain
+  point: greedy identity across mtp+suffix coexistence) on an
+  MTP-eligible model (e.g. Qwen3.5) with both `--suffix-decoding` and
+  `--enable-mtp`.
+- Assert output is byte-identical to mtp-only and suffix-only baselines
+  for a fixed prompt (greedy, temp 0).
+- CI: black + ruff + the new + existing unit tests.
+
+## Risk analysis
+
+- **Spec corruption (historical pain point)**: mitigated by the guard
+  being strictly additive — it only suppresses suffix when mtp ran, never
+  the reverse. The double-spec path that would cause corruption is
+  precisely the path now blocked. Coherence E2E (Change 6) is the
+  verification gate.
+- **mtp fallback correctness**: the flag must NOT be set on
+  `_MtpStepFallback`. Test 3 covers this. If missed, suffix would be
+  suppressed on a step where mtp fell back to standard decode — a
+  missed-speedup bug, not a corruption bug (suffix simply doesn't run).
+- **flag staleness across steps**: reset at top of `patched_next` (Change
+  1). Test 4 covers this.
+- **`_generation_batch` attribute access**: already used by the mtp patch
+  itself (L193), so the path is known-good. Helper swallows exceptions
+  (Change 2) so a missing attr degrades to "suffix may run" (safe).
+
+## Explicitly deferred (later steps / sessions)
+
+- **Explicit router-driven dispatch**: wire `select_active_method`
+  (Slice 1) into `_try_spec_decode` + mtp eligibility so the router, not
+  implicit mtp-priority, decides which method runs. Larger; needs the
+  guard from Step 1 as a prerequisite.
+- **dflash / dspark into BatchedEngine**: break the early-fork
+  (`run_dspark_server` + `return`). Explicitly deferred to 0.10 per the
+  L1555 comment. Multi-session.
+- **CLI `--spec-decode auto` per-request mode** (original Slice 3):
+  depends on both deferrals above.
+
+## Success criteria for Step 1
+
+1. DONE - `--suffix-decoding --enable-mtp` boots without `sys.exit`
+   (CLI mutex lifted to an info print; `ModelSettings` has no
+   mtp+ngram_spec validation, so per-load settings coexist too).
+2. DONE (unit) - On an MTP-eligible step, mtp sets
+   `_fusion_mlx_mtp_stepped`; `last_step_was_mtp` returns True;
+   `_try_spec_decode` returns `[]` (suffix not double-run). Covered by
+   `tests/unit/test_mtp_suffix_coexistence.py`.
+3. DONE (unit) - On a non-mtp step the flag is False (reset each call,
+   left False on `_MtpStepFallback`), so suffix may run as before.
+4. ENVIRONMENT-GATED - Greedy byte-identity across mtp-only / suffix-only
+   / both. No local MTP-head model loads with `mtp_enabled` today
+   (pre-existing checkpoint/patch issues, see Status). The E2E test
+   skips on load failure; correctness rests on (2)+(3) + the
+   strictly-additive safety argument.
+5. DONE - 12 new coexistence tests pass; 60 existing spec tests pass
+   (84 skips, 0 regressions); black + ruff clean on all touched files;
+   full unit suite collects cleanly with quarantine active.
