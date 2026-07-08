@@ -34,6 +34,12 @@ ok()   { printf "${GREEN}[dmg]${RESET} %s\n" "$*"; }
 warn() { printf "${YELLOW}[dmg]${RESET} %s\n" "$*"; }
 die()  { printf "${RED}[dmg ERROR]${RESET} %s\n" "$*" >&2; exit 1; }
 
+# Shared embedded Mach-O signing helpers (per-file; replaces the deprecated
+# `codesign --deep` which left stale page hashes on nested .so and caused
+# the server to SIGKILL on launch - see note at the sign step below).
+# shellcheck source=sign_utils.sh
+source "$SCRIPT_DIR/sign_utils.sh"
+
 # --- Parse args ---
 DO_BUILD=0
 for arg in "$@"; do
@@ -92,12 +98,23 @@ fi
 APP_SIZE=$(du -sh "$STAGED_APP" | cut -f1)
 log "App bundle after strip: $STAGED_APP ($APP_SIZE)"
 
-# --- Ad-hoc sign (ensure coherent signature) ---
-log "Ad-hoc signing app bundle…"
-codesign --force --sign - --deep "$STAGED_APP" 2>/dev/null || {
-    warn "codesign --deep failed, trying flat sign…"
-    codesign --force --sign - "$STAGED_APP" 2>/dev/null || warn "ad-hoc sign failed; DMG will still work but Gatekeeper may complain more"
-}
+# --- Ad-hoc sign (per-file embedded + flat bundle seal) ---
+#
+# strip_bundle.sh just mutated the bundle, so signatures must be re-applied
+# AFTER stripping. `codesign --force --sign - --deep` is deprecated and does
+# NOT reliably re-sign the nested .so/.dylib under Resources/Python - it
+# leaves stale page hashes, and macOS SIGKILLs the server child (exit 9,
+# "Code Signature Invalid" / "Invalid Page") on the first dlopen. Sign each
+# embedded Mach-O explicitly, seal the bundle flat, then verify mlx.core so a
+# broken bundle never ships.
+PYTHON_DIR="$STAGED_APP/Contents/Resources/Python"
+MLX_SITE="$PYTHON_DIR/framework-mlx-base/lib/python3.11/site-packages"
+log "Ad-hoc signing embedded native code (per-file)…"
+_sign_embedded_mach_o_files "$PYTHON_DIR"
+codesign --force --sign - "$STAGED_APP/Contents/MacOS/fusion-cli" >/dev/null 2>&1 || true
+_verify_embedded_signatures "$MLX_SITE"
+log "Ad-hoc resigning app bundle (flat seal)…"
+codesign --force --sign - "$STAGED_APP"
 xattr -dr com.apple.quarantine "$STAGED_APP" 2>/dev/null || true
 ok "Signed"
 

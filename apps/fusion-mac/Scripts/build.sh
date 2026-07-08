@@ -133,36 +133,14 @@ ok()   { printf "${GREEN}[build.sh]${RESET} %s\n" "$*"; }
 warn() { printf "${YELLOW}[build.sh]${RESET} %s\n" "$*"; }
 die()  { printf "${RED}[build.sh ERROR]${RESET} %s\n" "$*" >&2; exit 1; }
 
-_is_mach_o_file() {
-    local path="$1"
-    local type
-    type="$(file -b "$path" 2>/dev/null || true)"
-    [[ "$type" == *"Mach-O"* ]]
-}
-
-_sign_embedded_mach_o_files() {
-    local root="$1"
-    local count=0
-
-    while IFS= read -r -d '' path; do
-        _is_mach_o_file "$path" || continue
-        codesign --force --sign - "$path" >/dev/null 2>&1
-        count=$((count + 1))
-    done < <(
-        find "$root" \
-            \( -path "*/.dSYM/*" -o -path "*/__pycache__/*" \) -prune -o \
-            -type f \( \
-                -name "*.so" -o \
-                -name "*.dylib" -o \
-                -name "*.bundle" -o \
-                -perm -100 -o \
-                -perm -010 -o \
-                -perm -001 \
-            \) -print0
-    )
-
-    ok "  + signed $count embedded Mach-O files"
-}
+# Embedded Mach-O signing helpers live in sign_utils.sh so build.sh and
+# package_dmg.sh share one implementation. build.sh signed per-file here
+# correctly, but package_dmg.sh re-signed with the deprecated `--deep`,
+# which leaves stale page hashes on nested .so -> server SIGKILL (exit 9)
+# on launch. Sourcing the shared file lets package_dmg reuse this correct
+# per-file signer instead of `--deep`.
+# shellcheck source=sign_utils.sh
+source "$SCRIPT_DIR/sign_utils.sh"
 
 _app_python_layers_path() {
     local app="$1"
@@ -573,6 +551,7 @@ else
     _sign_embedded_mach_o_files "$PYTHON_DIR"
     codesign --force --sign - "$CLI_WRAPPER" >/dev/null 2>&1
     ok "  + signed fusion-cli wrapper"
+    _verify_embedded_signatures "$MLX_SITE"
 fi
 
 log "Ad-hoc resigning app bundle…"
