@@ -21,6 +21,7 @@ from ..utils.image import (
 from ..utils.video import (
     DEFAULT_FPS,
     MAX_FRAMES,
+    compute_video_hash,
     extract_video_frames_smart,
     process_video_input,
     save_frames_to_temp,
@@ -846,30 +847,37 @@ class VLMBatchedEngine(BaseEngine):
         num_media = len(all_videos) + len(all_images)
         if pixel_values is not None and num_media > 0:
             call_kwargs = dict(extra_model_inputs)
-            image_hash = None
-            # Vision cache is image-hash based; skip for the native video path
-            # (ndarray frames have no stable PIL hash) and recompute each call.
-            if not all_videos and all_images:
-                image_hash = compute_image_hash(all_images)
-                if self._vision_cache is not None and self._vision_cache_enabled:
-                    cached_whole = self._vision_cache.get(image_hash, self._model_name)
-                    if cached_whole is not None:
-                        call_kwargs["cached_image_features"] = cached_whole
-                    else:
-                        try:
-                            features = self._compute_vision_features(
-                                pixel_values, extra_model_inputs
+            media_hash = None
+            # Vision features are computed from pixel_values regardless of
+            # whether they came from images or video frames, so the same cache
+            # applies. Key videos by a content-stable hash over sampled frames
+            # (compute_video_hash) and images by their PIL hash. Mixed media
+            # prefers the video hash since video frames dominate pixel_values.
+            if all_videos:
+                media_hash = compute_video_hash(all_videos)
+            elif all_images:
+                media_hash = compute_image_hash(all_images)
+            if (
+                media_hash is not None
+                and self._vision_cache is not None
+                and self._vision_cache_enabled
+            ):
+                cached_whole = self._vision_cache.get(media_hash, self._model_name)
+                if cached_whole is not None:
+                    call_kwargs["cached_image_features"] = cached_whole
+                else:
+                    try:
+                        features = self._compute_vision_features(
+                            pixel_values, extra_model_inputs
+                        )
+                        if features is not None:
+                            mx.eval(features)
+                            call_kwargs["cached_image_features"] = features
+                            self._vision_cache.put(
+                                media_hash, self._model_name, features
                             )
-                            if features is not None:
-                                mx.eval(features)
-                                call_kwargs["cached_image_features"] = features
-                                self._vision_cache.put(
-                                    image_hash, self._model_name, features
-                                )
-                        except Exception:
-                            logger.debug(
-                                "Vision feature computation failed", exc_info=True
-                            )
+                    except Exception:
+                        logger.debug("Vision feature computation failed", exc_info=True)
 
             try:
                 embed_features = self._vlm_model.get_input_embeddings(
@@ -912,7 +920,7 @@ class VLMBatchedEngine(BaseEngine):
                 token_ids,
                 embed_features.inputs_embeds,
                 extra_kwargs,
-                image_hash,
+                media_hash,
                 0,
                 [],
             )
