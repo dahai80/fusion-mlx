@@ -347,15 +347,20 @@ def print_fingerprint():
 
 
 def venvstacks_only():
-    logging.info("Step 1/4: generating venvstacks.toml …")
+    logging.info("Step 1/5: generating venvstacks.toml …")
     toml_path = SCRIPT_DIR / "venvstacks.toml"
     prepare_venvstacks_toml(str(toml_path))
-    logging.info("Step 2/4: venvstacks build …")
+    logging.info("Step 2/5: venvstacks lock (refresh stale layer locks) …")
+    subprocess.check_call(
+        ["venvstacks", "lock", "--if-needed", str(toml_path)],
+        cwd=str(SCRIPT_DIR),
+    )
+    logging.info("Step 3/5: venvstacks build …")
     subprocess.check_call(
         ["venvstacks", "build", str(toml_path)],
         cwd=str(SCRIPT_DIR),
     )
-    logging.info("Step 3/4: venvstacks local-export …")
+    logging.info("Step 4/5: venvstacks local-export …")
     subprocess.check_call(
         ["venvstacks", "local-export", str(toml_path)],
         cwd=str(SCRIPT_DIR),
@@ -364,7 +369,7 @@ def venvstacks_only():
     if not export_dir.exists():
         print(f"  ✗ export dir missing: {export_dir}", file=sys.stderr)
         sys.exit(1)
-    logging.info("Step 4/4: writing fingerprint …")
+    logging.info("Step 5/5: writing fingerprint …")
     fp = _read_layer_requirements()
     raw = json.dumps(fp, sort_keys=True)
     (export_dir / ".fingerprint").write_text(hashlib.sha256(raw.encode()).hexdigest() + "\n")
