@@ -9,6 +9,10 @@
 # auto-detect their model families and fail loudly with an actionable message
 # pointing to upstream support and the working alternatives.
 #
+# Upstream feature requests filed 2026-07-09 (per the file-issue-first flow):
+#   CogVideoX:        https://github.com/Blaizzy/mlx-video/issues/42
+#   Legacy LTX-Video: https://github.com/Blaizzy/mlx-video/issues/43
+#
 # When an MLX port lands upstream (mlx-video or a community port), replace the
 # NotImplementedError in start()/generate() with a real delegator - the registry
 # and engine wiring already handle the rest.
