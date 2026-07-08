@@ -52,6 +52,29 @@ class TestBuildKwargs:
         assert kw["upload_repo"] == "me/m"
         assert kw["trust_remote_code"] is True
 
+    def test_nvfp4_mode_enables_quantize_without_bits(self):
+        # fp-quant modes ignore --quant-bits; mlx-lm's defaults_for_mode fills
+        # the per-mode (group_size, bits). We must pass None so a stale
+        # --quant-group-size=64 does not override nvfp4's required 16.
+        kw = _build_convert_kwargs(_args(quant_mode="nvfp4"), "org/m")
+        assert kw["quantize"] is True
+        assert kw["q_mode"] == "nvfp4"
+        assert kw["q_bits"] is None
+        assert kw["q_group_size"] is None
+
+    def test_mxfp8_mode_ignores_quant_bits_and_group_size(self):
+        kw = _build_convert_kwargs(
+            _args(quant_mode="mxfp8", quant_bits=4, quant_group_size=32), "org/m"
+        )
+        assert kw["quantize"] is True
+        assert kw["q_bits"] is None
+        assert kw["q_group_size"] is None
+
+    def test_affine_mode_still_requires_bits(self):
+        kw = _build_convert_kwargs(_args(quant_mode="affine"), "org/m")
+        assert kw["quantize"] is False
+        assert kw["q_group_size"] == 64
+
 
 class TestOutputPath:
     def test_default_is_cwd_basename(self):

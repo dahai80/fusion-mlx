@@ -8,7 +8,6 @@ from typing import Any
 import mlx.core as mx
 import mlx.nn as nn
 from mlx.nn.layers.distributed import shard_inplace, shard_linear, sum_gradients
-from mlx.utils import tree_flatten
 
 from .base import BaseModelArgs, create_attention_mask, scaled_dot_product_attention
 from .cache import CacheList, PoolingCache, RotatingKVCache
@@ -102,6 +101,8 @@ class ModelArgs(BaseModelArgs):
 
 
 def make_quantization_config(model):
+    from mlx.utils import tree_flatten
+
     mxfp4 = {"group_size": 32, "bits": 4, "mode": "mxfp4"}
     mxfp8 = {"group_size": 32, "bits": 8, "mode": "mxfp8"}
 

@@ -11,7 +11,6 @@ from pathlib import Path
 from typing import Any
 
 import mlx.core as mx
-from mlx.utils import tree_flatten
 
 from ..engine_core import get_executor
 from .base import BaseNonStreamingEngine
@@ -219,6 +218,8 @@ class MLXEmbeddingModel:
         return embeddings
 
     def _validate_native_weights(self, model_instance, weights: dict[str, Any]) -> None:
+        from mlx.utils import tree_flatten
+
         expected_weights = dict(tree_flatten(model_instance.parameters()))
         expected_weight_names = set(expected_weights.keys())
         provided_weight_names = set(weights.keys())
