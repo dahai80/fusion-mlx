@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.4.5] - 2026-07-07
+
+### Fixed
+- **Performance screen Apply did not persist (macOS app).** `GET /admin/api/global-settings`
+  in flat-Settings fallback mode returned hardcoded `scheduler` / `memory` / `cache` /
+  `mcp` values (e.g. `max_concurrent_requests: 8`), ignoring what `POST` wrote to
+  `settings.json`. The POST handler persisted correctly, but GET never read it back, so
+  every Apply looked like a no-op. `_build_fallback_global_settings` now reads those
+  sections from `settings.json`, matching the existing `sampling` / `server` / `model` /
+  `auth` read path.
+- **Service stats showed "data couldn't be read because it is missing" (macOS app).**
+  `server_metrics.to_dict()` emitted `total_tokens_prompt`, but the Swift `StatsDTO`
+  expects `total_prompt_tokens` (via `convertFromSnakeCase`), so decoding threw
+  `keyNotFound` and the Status screen rendered the system error. Unified all four sites
+  — `server_metrics.py` (writer) plus `server.py`, `routes/health.py`,
+  `routes/metrics.py` (readers) — on `total_prompt_tokens`. No Swift change needed.
+- **App icon refresh.** Replaced Dock icon, AppLogo (light/dark), and menubar
+  (outline/filled) assets.
+
 ## [0.4.2] - 2026-07-04
 
 ### Added
