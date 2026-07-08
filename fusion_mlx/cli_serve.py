@@ -1835,15 +1835,19 @@ def serve_command(args):
         except Exception:
             pass
 
-    # Mutual exclusion: only one spec-decode method may wrap _step at a time.
-    # (The DFlash-vs-{suffix,mtp} check is upstream, before the banner.)
+    # --suffix-decoding + --enable-mtp may coexist: mtp takes priority for
+    # MTP-eligible decode steps (verify+accept inside GenerationBatch.next)
+    # and suffix runs only on steps mtp did not own (fallback / non-MTP
+    # models). The scheduler's _try_spec_decode guard (last_step_was_mtp)
+    # prevents double-spec. This is the mtp<->suffix per-request routing
+    # path. (The DFlash-vs-{suffix,mtp} check is upstream, before the banner;
+    # dflash/dspark still early-fork and stay mutually exclusive here.)
     if args.suffix_decoding and args.enable_mtp:
         print(
-            "\n  Error: --suffix-decoding and --enable-mtp are mutually "
-            "exclusive (both monkey-patch the BatchGenerator step). "
-            "Pick one.\n"
+            "\n  --suffix-decoding + --enable-mtp: mtp takes priority for\n"
+            "  MTP-eligible steps; suffix runs when mtp did not handle the\n"
+            "  step (per-request routing, no double-spec).\n"
         )
-        sys.exit(1)
 
     # Build scheduler config
     enable_prefix_cache = args.enable_prefix_cache and not args.disable_prefix_cache
