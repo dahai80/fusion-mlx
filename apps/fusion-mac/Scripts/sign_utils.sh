@@ -47,7 +47,10 @@ _sign_embedded_mach_o_files() {
             \) -print0
     )
 
-    ok "  + signed $count embedded Mach-O files${failed:+ ($failed failed)}"
+    if [ "$failed" -gt 0 ]; then
+        die "$failed embedded Mach-O file(s) failed to codesign - a stale sig would SIGKILL (exit 9) on launch"
+    fi
+    ok "  + signed $count embedded Mach-O files"
 }
 
 # Spot-check mlx.core - the first native module the server loads and the

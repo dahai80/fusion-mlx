@@ -111,7 +111,7 @@ PYTHON_DIR="$STAGED_APP/Contents/Resources/Python"
 MLX_SITE="$PYTHON_DIR/framework-mlx-base/lib/python3.11/site-packages"
 log "Ad-hoc signing embedded native code (per-file)…"
 _sign_embedded_mach_o_files "$PYTHON_DIR"
-codesign --force --sign - "$STAGED_APP/Contents/MacOS/fusion-cli" >/dev/null 2>&1 || true
+codesign --force --sign - "$STAGED_APP/Contents/MacOS/fusion-cli" >/dev/null 2>&1
 _verify_embedded_signatures "$MLX_SITE"
 log "Ad-hoc resigning app bundle (flat seal)…"
 codesign --force --sign - "$STAGED_APP"

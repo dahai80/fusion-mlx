@@ -551,7 +551,11 @@ else
     _sign_embedded_mach_o_files "$PYTHON_DIR"
     codesign --force --sign - "$CLI_WRAPPER" >/dev/null 2>&1
     ok "  + signed fusion-cli wrapper"
-    _verify_embedded_signatures "$MLX_SITE"
+    # Verify the STAGED bundle we just signed. MLX_SITE points at $PYROOT
+    # (apps/fusion-mac/Resources/Python), which is absent from the source
+    # tree - reusing it made verify silently skip every build.
+    STAGED_SITE="$PYTHON_DIR/framework-mlx-base/lib/python3.11/site-packages"
+    _verify_embedded_signatures "$STAGED_SITE"
 fi
 
 log "Ad-hoc resigning app bundle…"
