@@ -977,11 +977,6 @@ Examples:
     )
     # Multimodal option
     serve_parser.add_argument(
-        "--mllm",
-        action="store_true",
-        help="Force load model as multimodal (vision) even if name doesn't match auto-detection patterns",
-    )
-    serve_parser.add_argument(
         "--no-mllm",
         "--text-only",
         dest="no_mllm",

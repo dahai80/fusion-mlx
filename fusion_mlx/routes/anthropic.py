@@ -840,10 +840,9 @@ async def create_anthropic_message(
                 )
             # Multimodal fetch failures → 400 (parity with chat route, #457).
             # Per-batch-cap errors from the MLLM engine also surface as
-            # client-actionable → 400 (parity with chat route, #682). The
-            # MLLM scheduler classifier in ``mllm_scheduler._step_no_queue``
-            # treats both as client errors; this route must map both to 400
-            # or Anthropic-style clients get a 500 for what is really an
+            # client-actionable → 400 (parity with chat route, #682).
+            # Both are client errors; this route must map both to 400 or
+            # Anthropic-style clients get a 500 for what is really an
             # oversized-image / oversized-prompt user error.
             if (
                 "Failed to process image" in err_msg

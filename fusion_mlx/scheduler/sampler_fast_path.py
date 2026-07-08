@@ -287,7 +287,7 @@ make_fused_top_p_temp_sampler = make_fused_sampler
 
 # ---------------------------------------------------------------------------
 # Shared batch sampler cache — keyed on (temperature, top_p, top_k, min_p).
-# Single-writer (MLLMScheduler worker thread), no lock needed.
+# Single-writer (engine worker thread), no lock needed.
 # ---------------------------------------------------------------------------
 _shared_fused_sampler: tuple[tuple[float, float, int, float], Callable] | None = None
 

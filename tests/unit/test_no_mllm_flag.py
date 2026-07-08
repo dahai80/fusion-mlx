@@ -1,25 +1,19 @@
 # SPDX-License-Identifier: Apache-2.0
 """
-Tests for the --no-mllm / --text-only escape hatch (#393).
+Routing-flag registry invariants + the --no-mllm / --text-only escape
+hatch (#393).
 
-Some HuggingFace model repos ship a `config.json` that declares
-multimodal capabilities (e.g. `vision_config` block) but the actual
-safetensors only contain text-model weights — a partial quant, a
-text-only fork, or a checkpoint that was uploaded before vision shards
-were finalized. Auto-detection (`is_mllm_model`) correctly identifies
-the config as multimodal-capable, but the load path then crashes inside
-mlx_vlm with `ValueError: Missing N parameters: vision_tower.*`.
+The AUTO_ROUTING_FLAG_PAIRS registry below is the single source of
+truth for every binary auto-routing decision exposed via paired
+``--force-*`` / ``--no-*`` CLI flags. The gates derived from it catch
+silent bypasses when a new routing flag is added without wiring it
+through every required call site.
 
-`--no-mllm` (alias `--text-only`) is the user-facing escape hatch:
-force the text path even when auto-detection would route to MLLM.
-
-These tests verify:
-1. BatchedEngine respects force_text=True (skips is_mllm_model probe).
-2. force_text and force_mllm are not both honored — server.load_model
-   raises ValueError if both are passed.
-3. The friendly-error wrapper in MLLMModel.load() catches the
-   missing-vision-tensor ValueError and re-raises as RuntimeError that
-   mentions `--no-mllm`.
+NOTE: the legacy ``--mllm`` force-on side (rapid-mlx ``MLLMScheduler``
+dead path) has been deleted. ``--no-mllm`` / ``--text-only`` survives
+as a standalone no-op escape-hatch hook (``force_text``, retained for
+#393 text-only forks of multimodal architectures) and is declared in
+NON_ROUTING_FLAGS_ALLOWLIST rather than the paired registry.
 """
 
 from __future__ import annotations
@@ -68,8 +62,8 @@ class RoutingFlagPair:
         model_config_field: ``ModelConfig`` attribute that
             ``EngineCore.__init__`` mutates when this pair's
             ``EngineConfig`` field is set. ``None`` = the override
-            doesn't go through ModelConfig (e.g. ``--no-mllm`` mutates
-            ``BatchedEngine._is_mllm``). When non-``None``,
+            doesn't go through ModelConfig (e.g. an override that mutates
+            a runtime factory instead). When non-``None``,
             ``test_engine_core_applies_routing_overrides_from_registry``
             asserts the mutation actually happens.
     """
@@ -83,15 +77,11 @@ class RoutingFlagPair:
 
 
 AUTO_ROUTING_FLAG_PAIRS: tuple[RoutingFlagPair, ...] = (
-    RoutingFlagPair(
-        force_on="--mllm",
-        force_off="--no-mllm",
-        desc="MLLM vs text-only routing (#393)",
-        required_files=("cli.py", "server.py", "benchmark.py"),
-        forwarded_kwargs=("force_mllm", "force_text"),
-        # --mllm acts on BatchedEngine._is_mllm, not ModelConfig.
-        model_config_field=None,
-    ),
+    # NOTE: --mllm / --no-mllm is intentionally NOT a registered pair here.
+    # The force-on side (--mllm -> force_mllm -> BatchedEngine._is_mllm) was
+    # rapid-mlx legacy dead code and has been deleted; --no-mllm / --text-only
+    # survives as a standalone escape-hatch hook (force_text, currently a
+    # no-op retained for #393) and is listed in NON_ROUTING_FLAGS_ALLOWLIST.
     RoutingFlagPair(
         force_on="--tool-call-parser",
         force_off="--no-tool-call-parser",
@@ -190,6 +180,13 @@ NON_ROUTING_FLAGS_ALLOWLIST: frozenset[str] = frozenset(
         "--no-memory-aware-cache",  # disables memory-aware cache sizing
         # Privacy toggle.
         "--no-telemetry",
+        # --no-mllm / --text-only: standalone escape hatch (#393). The
+        # paired force-on side (--mllm) was rapid-mlx legacy dead code and
+        # has been deleted; this survives as a no-op force_text hook for
+        # loading text-only forks of multimodal architectures. Not a binary
+        # auto-routing pair anymore, so it lives here, not in the registry.
+        "--no-mllm",
+        "--text-only",
     }
 )
 
@@ -215,46 +212,6 @@ def _pkg_root() -> pathlib.Path:
     return pathlib.Path(
         str(importlib.resources.files("vllm_mlx").joinpath(""))
     ).resolve()
-
-
-def test_force_text_overrides_auto_detection(monkeypatch):
-    """When force_text=True, BatchedEngine._is_mllm is False even if
-    is_mllm_model would return True. Verifies the probe is short-
-    circuited (not just overridden later) by checking it isn't called."""
-    from fusion_mlx.engine import batched as batched_mod
-
-    probe_calls = []
-
-    def _fake_is_mllm_model(name):
-        probe_calls.append(name)
-        return True  # would normally route to MLLM
-
-    monkeypatch.setattr(batched_mod, "is_mllm_model", _fake_is_mllm_model)
-
-    engine = batched_mod.BatchedEngine(
-        model_name="fake/model-name",
-        force_text=True,
-    )
-
-    assert (
-        engine._is_mllm is False
-    ), "force_text=True must override auto-detection to False"
-    assert probe_calls == [], (
-        "force_text=True should short-circuit the probe entirely; "
-        f"is_mllm_model was called for: {probe_calls}"
-    )
-
-
-def test_force_mllm_still_works_when_force_text_is_false():
-    """Regression: adding force_text must not break force_mllm."""
-    from fusion_mlx.engine.batched import BatchedEngine
-
-    engine = BatchedEngine(
-        model_name="mlx-community/Llama-3.2-1B-Instruct-4bit",
-        force_mllm=True,
-        force_text=False,
-    )
-    assert engine._is_mllm is True
 
 
 def test_load_model_alias_resolver_handles_every_import_shape():
@@ -377,8 +334,8 @@ def test_force_text_is_keyword_only_in_load_model():
     positional callers (e.g. ``load_model(name, None, 1, 32768, False,
     0.5)`` setting ``gpu_memory_utilization=0.5``) don't suddenly
     pass that float as a truthy ``force_text``. Codex R2 caught this
-    on the original PR — the original placement after ``force_mllm``
-    shifted every subsequent positional arg by one slot."""
+    on the original PR - a non-keyword-only routing bool shifted every
+    subsequent positional arg by one slot."""
     import inspect
 
     from fusion_mlx.server import load_model
@@ -395,84 +352,6 @@ def test_force_text_is_keyword_only_in_load_model():
     assert (
         sig.parameters["force_text"].kind == inspect.Parameter.KEYWORD_ONLY
     ), "BatchedEngine.__init__ force_text must be KEYWORD_ONLY too."
-
-
-def test_force_text_and_force_mllm_mutually_exclusive_in_load_model():
-    """server.load_model raises ValueError if both flags are True. This
-    is the second line of defense — CLI already rejects this via
-    sys.exit(2), but load_model is also a public entry point so guard
-    here too."""
-    from fusion_mlx.server import load_model
-
-    with pytest.raises(ValueError, match="mutually exclusive"):
-        load_model(
-            "fake/model",
-            force_mllm=True,
-            force_text=True,
-        )
-
-
-def test_friendly_error_on_missing_vision_tensors(monkeypatch):
-    """MLLMModel.load() must translate mlx_vlm's
-    `ValueError: Missing N parameters: vision_tower.*` into a RuntimeError
-    that mentions --no-mllm, so users find the escape hatch without
-    grepping the source. Verifies the wrapper fires only on the
-    vision-shaped missing-parameter signature."""
-    import importlib
-    import sys
-
-    # mlx_vlm may not be installed (vision extra is opt-in). The wrapper
-    # logic lives in MLLMModel.load, which doesn't need mlx_vlm to be
-    # importable for the catch path. But we DO need mlx_vlm to satisfy
-    # the `_require_mlx_vlm()` precondition. Skip cleanly if absent.
-    try:
-        importlib.import_module("mlx_vlm")
-    except ImportError:
-        pytest.skip("mlx_vlm not installed (vision extra)")
-
-    from fusion_mlx.models import mllm as mllm_mod
-
-    # Inject a fake mlx_vlm.load that raises the M5-style missing-tensor
-    # ValueError. We poke sys.modules so the `from mlx_vlm import load`
-    # inside MLLMModel.load() picks up our fake.
-    real_mlx_vlm = sys.modules["mlx_vlm"]
-
-    class _FakeMlxVlm:
-        @staticmethod
-        def load(_name):
-            raise ValueError(
-                "Missing 60 parameters: \n"
-                "vision_tower.blocks.27.attn.proj.bias,\n"
-                "vision_tower.blocks.27.attn.proj.weight,\n"
-                "vision_tower.blocks.27.attn.qkv.bias."
-            )
-
-    class _FakeMlxVlmUtils:
-        @staticmethod
-        def load_config(_name):
-            return {}
-
-    monkeypatch.setitem(sys.modules, "mlx_vlm", _FakeMlxVlm)
-    monkeypatch.setitem(sys.modules, "mlx_vlm.utils", _FakeMlxVlmUtils)
-
-    # Avoid the global instance count guard
-    inst = mllm_mod.MLXMultimodalLM(model_name="fake/incomplete-vlm")
-
-    try:
-        with pytest.raises(RuntimeError) as excinfo:
-            inst.load()
-
-        msg = str(excinfo.value)
-        assert (
-            "--no-mllm" in msg
-        ), f"Friendly error must mention --no-mllm; got: {msg!r}"
-        assert "#393" in msg, "Friendly error must reference #393 for searchability"
-        assert (
-            "60 vision tensors missing" in msg
-        ), "Friendly error must surface the count from the underlying error"
-    finally:
-        # Restore original mlx_vlm so subsequent tests aren't poisoned.
-        sys.modules["mlx_vlm"] = real_mlx_vlm
 
 
 def _flag_in_add_argument_calls(source: str, flag: str) -> bool:
@@ -593,7 +472,7 @@ def _add_argument_calls_with_custom_action(source: str) -> list[tuple[int, str]]
 
 def _add_argument_calls_with_dict_kwarg_unpack(source: str) -> list[int]:
     """Find ``add_argument(..., **dict_literal_or_var)`` calls. Round-5
-    subagent 1 #P2-3: dest aliasing via ``**{"dest": "force_mllm"}`` is
+    subagent 1 #P2-3: dest aliasing via ``**{"dest": "force_hybrid"}`` is
     invisible to the per-kwarg scan because the keyword arg has
     ``kw.arg is None``. Reject the unpack outright in entrypoint files
     — there's no legitimate use of ``**`` for add_argument, and helper
@@ -990,7 +869,7 @@ def test_registry_invariants():
         with non-empty ``forwarded_kwargs`` to either (a) have
         ``model_config_field`` set OR (b) be in
         ``KWARGS_FORWARDED_BUT_NOT_VIA_MODEL_CONFIG`` (explicit
-        exception list, ``force_mllm``/``force_text`` go here).
+        exception list, ``force_openai_harmony_streaming`` goes here).
 
       - Bypass #2.5 (duplicate entry): contributor inserts the same
         pair twice. We assert all ``(force_on, force_off)`` tuples
@@ -1030,10 +909,6 @@ def test_registry_invariants():
     # does mutate ModelConfig to silently disable the derived gate.
     KWARGS_FORWARDED_BUT_NOT_VIA_MODEL_CONFIG = frozenset(
         {
-            # --mllm / --no-mllm route through BatchedEngine._is_mllm,
-            # not ModelConfig. Verified by test_force_text_overrides_auto_detection.
-            "force_mllm",
-            "force_text",
             # --force-openai-harmony-streaming / --no-openai-harmony-streaming
             # act on the streaming OutputRouter factory at request time
             # (BatchedEngine._create_output_router →
@@ -1275,7 +1150,7 @@ def test_registry_is_not_runtime_mutated():
 
 
 def test_alias_profile_has_no_routing_shaped_fields():
-    """Round-4 env-config #5: a contributor adds ``force_mllm: true``
+    """Round-4 env-config #5: a contributor adds ``force_hybrid: true``
     to an alias entry and a matching field on ``AliasProfile``, then
     consults the field inside load_model — a covert per-alias routing
     flip that bypasses CLI and load_model kwargs entirely.
@@ -1956,7 +1831,6 @@ def test_load_model_has_no_unkeyworded_bool_or_routing_params_beyond_baseline():
     # — see docstring. Every entry needs a 1-line reason.
     grandfathered = frozenset(
         {
-            "force_mllm",  # original MLLM force-on flag, pre-#393
             "mtp",  # native MTP enable, pre-PR #407
         }
     )
@@ -2231,12 +2105,10 @@ def test_spec_decode_overrides_mutually_exclusive_in_load_model():
 
 
 def _post_sop_forwarded_kwargs() -> frozenset[str]:
-    """Forwarded kwargs from the registry MINUS pre-SOP grandfathered
-    ones. Used by the keyword-only test — pre-SOP positional bools
-    (``force_mllm``) can't be retroactively moved without breaking
-    callers, but every NEW kwarg added via the registry must be
-    keyword-only."""
-    return KWARGS_THAT_MUST_BE_FORWARDED - {"force_mllm"}
+    """Forwarded kwargs from the registry. Used by the keyword-only
+    test - every kwarg added via the registry must be keyword-only so
+    existing positional callers do not silently get a True ``force_X``."""
+    return KWARGS_THAT_MUST_BE_FORWARDED
 
 
 def test_routing_override_kwargs_are_keyword_only_in_load_model():
@@ -2248,10 +2120,7 @@ def test_routing_override_kwargs_are_keyword_only_in_load_model():
 
     Derived from ``AUTO_ROUTING_FLAG_PAIRS[*].forwarded_kwargs`` so
     adding a new pair to the registry automatically extends this
-    check. The pre-SOP grandfathered ``force_mllm`` is excluded — its
-    positional position is fixed for back-compat (verified by
-    ``test_load_model_has_no_unkeyworded_bool_params_beyond_baseline``
-    elsewhere)."""
+    check."""
     # DeepSeek round-4 fix (PR #409): on headless CI without a Metal
     # device, importing these modules raises RuntimeError before any
     # assertion can run. Skip gracefully — the gate's intent is a
@@ -2557,51 +2426,3 @@ def test_dflash_branch_rejects_no_spec_decode():
         "no_spec_decode mutex check must come BEFORE run_dflash_server() "
         "call so the override actually rejects DFlash startup."
     )
-
-
-def test_friendly_error_does_not_swallow_unrelated_valueerror(monkeypatch):
-    """An unrelated ValueError (e.g. config parsing) must NOT trigger
-    the friendly-error path — it should propagate as-is so genuine bugs
-    surface and don't get misattributed to vision-tower issues."""
-    import importlib.util
-    import sys
-
-    # Codex round-A fix (PR #409): in headless CI without a Metal
-    # device, importlib.import_module("mlx_vlm") raises RuntimeError
-    # from MLX init (not ImportError), bypassing the
-    # ``except ImportError`` skip. Use find_spec to verify mlx_vlm is
-    # installable without actually loading it — the test only needs
-    # the module slot in sys.modules to exist before we replace it
-    # with a fake. Skip if the package isn't installed at all.
-    if importlib.util.find_spec("mlx_vlm") is None:
-        pytest.skip("mlx_vlm not installed (vision extra)")
-
-    from fusion_mlx.models import mllm as mllm_mod
-
-    real_mlx_vlm = sys.modules.get("mlx_vlm")
-
-    class _FakeMlxVlm:
-        @staticmethod
-        def load(_name):
-            raise ValueError("config.json has an invalid model_type field")
-
-    class _FakeMlxVlmUtils:
-        @staticmethod
-        def load_config(_name):
-            return {}
-
-    monkeypatch.setitem(sys.modules, "mlx_vlm", _FakeMlxVlm)
-    monkeypatch.setitem(sys.modules, "mlx_vlm.utils", _FakeMlxVlmUtils)
-
-    inst = mllm_mod.MLXMultimodalLM(model_name="fake/bad-config")
-
-    try:
-        with pytest.raises(ValueError, match="invalid model_type"):
-            inst.load()
-    finally:
-        # monkeypatch.setitem already restores on teardown, but the
-        # original test had a paranoid manual restore. Preserve that
-        # only when there's something to restore — find_spec-based
-        # detection means we may not have imported it.
-        if real_mlx_vlm is not None:
-            sys.modules["mlx_vlm"] = real_mlx_vlm

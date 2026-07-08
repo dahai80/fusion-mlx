@@ -780,7 +780,6 @@ async def test_force_abort_async_fallback_does_not_attribute_on_false_result():
     class _BatchedEngineLike:
         def __init__(self):
             self._engine = _AsyncEngineCoreLike()
-            self._is_mllm = False
 
         async def abort_request(self, rid: str) -> bool:
             return await self._engine.abort_request(rid)
@@ -831,7 +830,6 @@ async def test_force_abort_async_fallback_attributes_on_true_result():
     class _BatchedEngineLike:
         def __init__(self):
             self._engine = _AsyncEngineCoreLike()
-            self._is_mllm = False
 
         async def abort_request(self, rid: str) -> bool:
             return await self._engine.abort_request(rid)
@@ -980,7 +978,6 @@ async def test_force_abort_attribution_walks_production_batched_engine_shape():
     class _BatchedEngineLike:
         def __init__(self):
             self._engine = _AsyncEngineCoreLike()
-            self._is_mllm = False
 
         async def abort_request(self, request_id: str) -> bool:
             return await self._engine.abort_request(request_id)
@@ -1003,102 +1000,6 @@ async def test_force_abort_attribution_walks_production_batched_engine_shape():
     # But the attribution MUST still have landed — that's the bug
     # we're guarding against.
     assert engine._engine.engine.scheduler.disconnect_records == ["req-prod-shape"]
-
-
-def test_attribution_resolver_honors_is_mllm_before_direct_scheduler():
-    """Codex r7 BLOCKING #2: a dual-shaped engine exposing BOTH
-    ``engine.scheduler`` (text-path leftover) AND ``_mllm_scheduler``
-    (MLLM-path active) with ``_is_mllm=True`` must attribute the
-    disconnect to the MLLM scheduler — NOT the direct
-    ``engine.scheduler``.
-
-    Pre-r7-fix the resolver checked ``engine.scheduler`` FIRST and
-    short-circuited, mis-attributing every MLLM disconnect to the
-    text scheduler. The fix honors ``_is_mllm`` first; direct
-    ``engine.scheduler`` is only consulted as a fallback when the
-    flag is absent entirely.
-    """
-    from fusion_mlx.service.helpers import _force_abort_request
-
-    class _SyncSched:
-        def __init__(self, name):
-            self.name = name
-            self.disconnect_records: list[str] = []
-
-        def abort_request(self, request_id: str) -> bool:
-            return True
-
-        def record_disconnect_abort(self, request_id: str) -> None:
-            self.disconnect_records.append(request_id)
-
-    class _DualShapedEngine:
-        """Both ``.scheduler`` (text leftover, e.g. a stale attribute
-        from a prior backend init) AND ``_mllm_scheduler`` populated;
-        the active backend is MLLM per ``_is_mllm=True``.
-        """
-
-        def __init__(self):
-            self.scheduler = _SyncSched("text-leftover")
-            self._mllm_scheduler = _SyncSched("mllm-active")
-            self._is_mllm = True
-
-        async def abort_request(self, request_id: str) -> bool:
-            return True
-
-    engine = _DualShapedEngine()
-    _force_abort_request(engine, ["req-mllm-active"])
-
-    # The MLLM scheduler MUST own the attribution.
-    assert engine._mllm_scheduler.disconnect_records == ["req-mllm-active"]
-    # The text-leftover scheduler MUST NOT be touched.
-    assert engine.scheduler.disconnect_records == []
-
-
-def test_force_abort_attribution_walks_active_backend():
-    """Cancel-attribution resolver respects ``_is_mllm`` like the abort
-    resolver — text-active engines record on ``_engine.scheduler``,
-    MLLM-active engines on ``_mllm_scheduler``.
-
-    The codex r2 BLOCKING #1 finding on PR #777 pinned this for the
-    abort resolver; the attribution resolver must follow the same
-    rule or it would bump the sub-counter on the wrong scheduler.
-    """
-    from fusion_mlx.service.helpers import _force_abort_request
-
-    class _SyncSched:
-        def __init__(self, name):
-            self.name = name
-            self.aborts: list[str] = []
-            self.disconnect_records: list[str] = []
-
-        def abort_request(self, request_id: str) -> bool:
-            self.aborts.append(request_id)
-            return True
-
-        def record_disconnect_abort(self, request_id: str) -> None:
-            self.disconnect_records.append(request_id)
-
-    class _Inner:
-        def __init__(self):
-            self.scheduler = _SyncSched("text")
-
-    class _DualEngine:
-        def __init__(self, is_mllm: bool):
-            self._is_mllm = is_mllm
-            self._engine = _Inner()
-            self._mllm_scheduler = _SyncSched("mllm")
-
-    # Text path
-    text_engine = _DualEngine(is_mllm=False)
-    _force_abort_request(text_engine, ["req-text"])
-    assert text_engine._engine.scheduler.disconnect_records == ["req-text"]
-    assert text_engine._mllm_scheduler.disconnect_records == []
-
-    # MLLM path
-    mllm_engine = _DualEngine(is_mllm=True)
-    _force_abort_request(mllm_engine, ["req-mllm"])
-    assert mllm_engine._mllm_scheduler.disconnect_records == ["req-mllm"]
-    assert mllm_engine._engine.scheduler.disconnect_records == []
 
 
 # ---------------------------------------------------------------------------
