@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 import logging
+from types import SimpleNamespace
 
 from fusion_mlx.speculative.auto_router import (
     METHOD_DFLASH,
@@ -151,3 +152,103 @@ class TestLoadedMethods:
         assert lm[METHOD_DSPARK] is True
         assert lm[METHOD_DFLASH] is False
         assert lm[METHOD_MTP] is False
+
+
+# --- scheduler-side assembly + decision (#431 Step 2) ---
+
+
+class TestSchedulerLoadedAssembly:
+    # scheduler._loaded_spec_methods assembles the boot-time loaded dict from
+    # scheduler attrs (_ngram_spec_state/_dflash_runtime/_dspark_runtime +
+    # model._fusion_mlx_mtp_decode_enabled), NOT from the registry whose
+    # config_enabled is hardcoded True and does not reflect actual loading.
+
+    def test_all_unloaded_returns_all_false(self):
+        from fusion_mlx.scheduler.sched_step import _loaded_spec_methods
+
+        sched = SimpleNamespace(
+            _ngram_spec_state=None,
+            _dflash_runtime=None,
+            _dspark_runtime=None,
+            model=SimpleNamespace(),
+        )
+        assert _loaded_spec_methods(sched) == {
+            METHOD_NGRAM: False,
+            METHOD_DFLASH: False,
+            METHOD_DSPARK: False,
+            METHOD_MTP: False,
+        }
+
+    def test_assembles_from_scheduler_attrs(self):
+        from fusion_mlx.scheduler.sched_step import _loaded_spec_methods
+
+        sched = SimpleNamespace(
+            _ngram_spec_state=object(),
+            _dflash_runtime=object(),
+            _dspark_runtime=None,
+            model=SimpleNamespace(_fusion_mlx_mtp_decode_enabled=True),
+        )
+        lm = _loaded_spec_methods(sched)
+        assert lm[METHOD_NGRAM] is True
+        assert lm[METHOD_DFLASH] is True
+        assert lm[METHOD_DSPARK] is False
+        assert lm[METHOD_MTP] is True
+
+    def test_mtp_reads_model_decode_enabled(self):
+        from fusion_mlx.scheduler.sched_step import _loaded_spec_methods
+
+        sched = SimpleNamespace(
+            _ngram_spec_state=None,
+            _dflash_runtime=None,
+            _dspark_runtime=None,
+            model=SimpleNamespace(_fusion_mlx_mtp_decode_enabled=False),
+        )
+        assert _loaded_spec_methods(sched)[METHOD_MTP] is False
+
+
+class TestDecideSpecMethod:
+    # scheduler._decide_spec_method picks a METHOD_* (or "" for no-method) via
+    # select_active_method; the caller caches the result per-request. The
+    # scheduler supplies _loaded_spec_methods (bound module fn) so the decision
+    # uses the real boot-time assembly, not a hardcoded dict.
+
+    def _sched(self, *, ngram=False, dflash=False, dspark=False, mtp=False):
+        from fusion_mlx.scheduler.sched_step import _loaded_spec_methods as _lsm
+
+        sched = SimpleNamespace(
+            _ngram_spec_state=object() if ngram else None,
+            _dflash_runtime=object() if dflash else None,
+            _dspark_runtime=object() if dspark else None,
+            model=SimpleNamespace(_fusion_mlx_mtp_decode_enabled=mtp),
+        )
+        sched._loaded_spec_methods = lambda: _lsm(sched)
+        return sched
+
+    def test_short_prompt_ngram_only_picks_ngram(self):
+        from fusion_mlx.scheduler.sched_step import _decide_spec_method
+
+        sched = self._sched(ngram=True)
+        request = SimpleNamespace(num_prompt_tokens=100)
+        assert _decide_spec_method(sched, request) == METHOD_NGRAM
+
+    def test_long_prompt_routes_to_dflash_when_loaded(self):
+        from fusion_mlx.scheduler.sched_step import _decide_spec_method
+
+        sched = self._sched(ngram=True, dflash=True)
+        # >= 4096 long_doc_threshold -> dflash wins fresh selection
+        request = SimpleNamespace(num_prompt_tokens=5000)
+        assert _decide_spec_method(sched, request) == METHOD_DFLASH
+
+    def test_mtp_loaded_short_prompt_picks_mtp(self):
+        from fusion_mlx.scheduler.sched_step import _decide_spec_method
+
+        sched = self._sched(mtp=True)
+        request = SimpleNamespace(num_prompt_tokens=100)
+        assert _decide_spec_method(sched, request) == METHOD_MTP
+
+    def test_nothing_loaded_returns_empty_string(self):
+        from fusion_mlx.scheduler.sched_step import _decide_spec_method
+
+        sched = self._sched()
+        request = SimpleNamespace(num_prompt_tokens=100)
+        assert _decide_spec_method(sched, request) == ""

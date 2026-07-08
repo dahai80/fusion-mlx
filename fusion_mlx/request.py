@@ -123,6 +123,11 @@ class Request:
     specprefill_position_offset: int = 0
     specprefill_system_end: int = 0
 
+    # Per-request spec-decode method (#431 Step 2). Decided once at the first
+    # pure-decode step; fixed for the request lifetime. None = not yet
+    # decided; "" = decided no-method; else a METHOD_* canonical name.
+    _active_spec_method: str | None = None
+
     # Cache corruption recovery
     cache_corruption_retries: int = 0
     generation_overflow_retries: int = 0

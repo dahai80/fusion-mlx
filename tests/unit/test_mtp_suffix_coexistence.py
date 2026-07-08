@@ -246,3 +246,42 @@ class TestFlagToGuardIntegration:
 
         sched_view = SimpleNamespace(_generation_batch=batch)
         assert last_step_was_mtp(sched_view) is False
+
+
+# --- _mtp_common_eligible suppress flag (#431 Step 2) ---
+
+
+class TestMtpSuppressFlag:
+    # Router sets _fusion_mlx_mtp_suppressed on the model before bg._next()
+    # when a post-forward heuristic (ngram/dflash/dspark) is chosen.
+    # _mtp_common_eligible must honor it or mtp owns the forward pass and the
+    # chosen heuristic bails via last_step_was_mtp - the router decision
+    # would be silently overridden.
+
+    def _eligible_gen_batch(self):
+        # mtp-eligible in every other respect: mtp_forward present, mtp module
+        # attached, decode enabled, one uid, no grammar processors.
+        inner = SimpleNamespace(mtp=object())
+        model = SimpleNamespace(
+            mtp_forward=lambda *a, **k: None,
+            language_model=inner,
+            _fusion_mlx_mtp_decode_enabled=True,
+        )
+        return SimpleNamespace(model=model, uids=[0], logits_processors=None)
+
+    def test_eligible_when_not_suppressed(self):
+        from fusion_mlx.patches.mlx_lm_mtp.batch_generator import (
+            _mtp_common_eligible,
+        )
+
+        assert _mtp_common_eligible(self._eligible_gen_batch()) is True
+
+    def test_ineligible_when_suppress_flag_set(self):
+        from fusion_mlx.patches.mlx_lm_mtp.batch_generator import (
+            _mtp_common_eligible,
+        )
+
+        gb = self._eligible_gen_batch()
+        gb.model._fusion_mlx_mtp_suppressed = True
+        # decode still enabled, mtp module still present - only suppress blocks
+        assert _mtp_common_eligible(gb) is False

@@ -307,6 +307,13 @@ def _mtp_common_eligible(gen_batch: Any) -> bool:
         return False
     if not _model_mtp_decode_enabled(gen_batch.model):
         return False
+    # Per-request router suppress (#431 Step 2): the scheduler sets this flag
+    # before bg._next() when the router chose a post-forward heuristic
+    # (ngram/dflash/dspark) for this request. Without it mtp would own the
+    # forward pass every eligible step and the chosen heuristic bails via
+    # last_step_was_mtp - the router decision would be silently overridden.
+    if getattr(gen_batch.model, "_fusion_mlx_mtp_suppressed", False):
+        return False
     uids = getattr(gen_batch, "uids", None)
     if uids is None or len(uids) == 0:
         return False

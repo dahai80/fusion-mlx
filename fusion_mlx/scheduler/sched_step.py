@@ -431,12 +431,27 @@ def _step_pure_decode(self, output: SchedulerOutput) -> SchedulerOutput:
     step() for a typical 90ms decode step.
     """
     bg = self.batch_generator
+    # Router-driven per-request spec decision (#431 Step 2). Decided once at
+    # the first pure-decode step; fixed for the request lifetime. mtp runs
+    # inside bg._next() on its own eligibility, so a non-mtp choice must
+    # suppress mtp this step or the forward pass steals the step and the
+    # post-forward heuristic bails via last_step_was_mtp.
+    request = next(iter(self.running.values()))
+    if request._active_spec_method is None:
+        request._active_spec_method = self._decide_spec_method(request)
+    from ..speculative.auto_router import METHOD_MTP
+
+    suppress_mtp = request._active_spec_method not in (METHOD_MTP, "")
+    self.model._fusion_mlx_mtp_suppressed = suppress_mtp
     # Time the regular decode forward. bg._next() syncs internally (tolist
     # in the patched step), so this is real GPU time, not dispatch time.
     # Consumed by ngram_spec dynamic break-even (T_verify / T_decode).
     _decode_t0 = time.perf_counter()
-    with mx.stream(self._stream):
-        _, responses = bg._next()
+    try:
+        with mx.stream(self._stream):
+            _, responses = bg._next()
+    finally:
+        self.model._fusion_mlx_mtp_suppressed = False
     self._last_decode_dt = time.perf_counter() - _decode_t0
 
     if not responses:
@@ -474,6 +489,29 @@ def _step_pure_decode(self, output: SchedulerOutput) -> SchedulerOutput:
             self._tokens_since_clear_cache = 0
 
     return output
+
+
+def _loaded_spec_methods(self) -> dict[str, bool]:
+    from ..speculative.per_request_route import loaded_methods
+
+    return loaded_methods(
+        suffix=self._ngram_spec_state is not None,
+        dflash=self._dflash_runtime is not None,
+        dspark=self._dspark_runtime is not None,
+        mtp=bool(getattr(self.model, "_fusion_mlx_mtp_decode_enabled", False)),
+    )
+
+
+def _decide_spec_method(self, request) -> str:
+    from ..speculative.per_request_route import select_active_method
+
+    loaded = self._loaded_spec_methods()
+    method = select_active_method(
+        request.num_prompt_tokens,
+        loaded,
+        has_mtp=loaded["mtp"],
+    )
+    return method or ""
 
 
 def _try_spec_decode(
@@ -521,32 +559,40 @@ def _try_spec_decode(
     if self._pending_abort_ids:
         return []
 
-    # N-gram spec decode (CPU-side, zero GPU overhead for drafting)
-    ngram_state = getattr(self, "_ngram_spec_state", None)
-    if ngram_state is not None:
+    # Router-driven dispatch (#431 Step 2): run only the method the router
+    # chose for this request (decided once at first pure-decode step). No
+    # fall-through among heuristic methods - the router picked one, running a
+    # second would double-spec. Draft-model (not router-controlled) stays as
+    # a fallback when the chosen heuristic produced no output this step.
+    from ..speculative.auto_router import (
+        METHOD_DFLASH,
+        METHOD_DSPARK,
+        METHOD_NGRAM,
+    )
+
+    method = request._active_spec_method or ""
+    if method == METHOD_NGRAM and self._ngram_spec_state is not None:
         from .ngram_spec import ngram_spec_step
 
         result = ngram_spec_step(self, output, current_token, request_id)
         if result:
             return result
-
-    # DFlash block-diffusion spec decode (block-size draft + verify)
-    if self._dflash_runtime is not None:
+    elif method == METHOD_DFLASH and self._dflash_runtime is not None:
         from .spec_decode import dflash_spec_step
 
         result = dflash_spec_step(self, output, current_token, request_id)
         if result:
             return result
-
-    # DSpark DeepSpec spec decode (self-contained propose-verify)
-    if self._dspark_runtime is not None:
+    elif method == METHOD_DSPARK and self._dspark_runtime is not None:
         from .spec_decode import dspark_spec_step
 
         result = dspark_spec_step(self, output, current_token, request_id)
         if result:
             return result
+    # METHOD_MTP (handled inside bg._next) and "" (no method) fall through.
 
-    # Draft-model spec decode (GPU-side, requires loaded draft model)
+    # Draft-model spec decode (GPU-side, requires loaded draft model) - not
+    # router-controlled; kept as fallback after the chosen heuristic.
     if (
         self._spec_decode_state is not None
         and self._spec_decode_state.draft_model is not None
