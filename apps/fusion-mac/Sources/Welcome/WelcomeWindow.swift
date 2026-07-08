@@ -118,6 +118,9 @@ final class WelcomeWindowController: NSObject, NSWindowDelegate {
 enum WelcomeStep: Equatable, Sendable {
     case intro
     case setup
+    case hardwareDetect
+    case modelSource
+    case recommend
     case complete
 }
 
@@ -131,6 +134,211 @@ final class WelcomeViewModel: ObservableObject {
     @Published var lastError: String?
     @Published var isStarting: Bool = false
     @Published var startCompleted: Bool = false
+
+    /// Model source mirror: huggingface | hf-mirror | modelscope
+    @Published var modelSource: String = "huggingface"
+    /// Use case: agent | coding | chat
+    @Published var useCase: String = "agent"
+
+    // MARK: Editable recommendation fields
+    @Published var editMaxContext: Int = 65536
+    @Published var editMaxTokens: Int = 4096
+    @Published var editCacheEnabled: Bool = true
+    @Published var editIdleTimeout: Int = 300
+    @Published var editDflash: Bool = false
+    @Published var editDspark: Bool = false
+    @Published var editTurboquant: Bool = false
+    @Published var validationWarning: String?
+
+    // MARK: Recommended model download
+    /// Download state per model repo ID: repoId -> status
+    @Published var modelDownloads: [String: String] = [:]  // idle|downloading|done|error
+    @Published var downloadErrors: [String: String] = [:]
+    /// Which models the user has checked for download
+    @Published var selectedModels: Set<String> = []
+
+    struct ModelOption: Identifiable {
+        let id: String          // repoId
+        let displayName: String
+        let reason: String
+    }
+
+    /// All recommended models for current use case + hardware
+    var recommendedModels: [ModelOption] {
+        let ramGB = Double(ProcessInfo.processInfo.physicalMemory) / 1_073_741_824
+        let chip = detectChipName()
+        let bw = gpuBandwidthFromChip(chip: chip) ?? 0
+        switch useCase {
+        case "coding":
+            if ramGB >= 128 {
+                return [
+                    ModelOption(id: "Qwen/Qwen3.6-27B", displayName: "Qwen3.6-27B (Q4_K_M)", reason: "Best coding model on \(chip)"),
+                    ModelOption(id: "deepseek-ai/DeepSeek-Coder-V2", displayName: "DeepSeek-Coder-V2", reason: "Strong alternative for code gen"),
+                ]
+            }
+            if ramGB >= 64 {
+                return [ModelOption(id: "Qwen/Qwen3.5-9B", displayName: "Qwen3.5-9B (4bit)", reason: "Balanced coding on \(Int(ramGB))GB RAM")]
+            }
+            return [ModelOption(id: "Qwen/Qwen3-0.6B", displayName: "Qwen3-0.6B (4bit)", reason: "Lightweight for \(Int(ramGB))GB RAM")]
+        case "agent":
+            if ramGB >= 128 {
+                return [
+                    ModelOption(id: "deepseek-ai/DeepSeek-V4-Flash", displayName: "DeepSeek-V4-Flash", reason: "Best agent throughput on \(chip) (\(bw)GB/s)"),
+                    ModelOption(id: "Qwen/Qwen3.6-27B", displayName: "Qwen3.6-27B", reason: "Larger context for agent tasks"),
+                ]
+            }
+            if ramGB >= 64 {
+                return [
+                    ModelOption(id: "Qwen/Qwen3.5-9B", displayName: "Qwen3.5-9B", reason: "Balanced agent on \(Int(ramGB))GB RAM"),
+                    ModelOption(id: "unsloth/gpt-oss-120b-GGUF", displayName: "GPT-OSS-120B", reason: "High quality if RAM allows"),
+                ]
+            }
+            return [ModelOption(id: "Qwen/Qwen3-0.6B", displayName: "Qwen3-0.6B (4bit)", reason: "Lightweight for \(Int(ramGB))GB RAM")]
+        default: // chat
+            if ramGB >= 64 {
+                return [
+                    ModelOption(id: "Qwen/Qwen3.5-9B", displayName: "Qwen3.5-9B", reason: "Best chat quality-speed on \(chip)"),
+                    ModelOption(id: "google/gemma-4-31B-it", displayName: "Gemma-4-31B", reason: "Strong chat alternative"),
+                ]
+            }
+            if ramGB >= 32 {
+                return [ModelOption(id: "Qwen/Qwen3-0.6B", displayName: "Qwen3-0.6B", reason: "Chat-friendly for \(Int(ramGB))GB RAM")]
+            }
+            return [ModelOption(id: "Qwen/Qwen3-0.6B", displayName: "Qwen3-0.6B (4bit)", reason: "Lightweight for \(Int(ramGB))GB RAM")]
+        }
+    }
+
+    func toggleModelSelection(_ repoId: String) {
+        if selectedModels.contains(repoId) { selectedModels.remove(repoId) }
+        else { selectedModels.insert(repoId) }
+    }
+
+    func selectAllModels() {
+        selectedModels = Set(recommendedModels.map(\.id))
+    }
+
+    func downloadSelectedModels() {
+        guard let services else { return }
+        for repoId in selectedModels {
+            guard modelDownloads[repoId] != "downloading" else { continue }
+            modelDownloads[repoId] = "downloading"
+            Task {
+                do {
+                    let resp = try await services.client.startHFDownload(repoId: repoId, hfToken: "")
+                    if resp.success {
+                        modelDownloads[repoId] = "done"
+                    } else {
+                        modelDownloads[repoId] = "error"
+                        downloadErrors[repoId] = "Failed to start"
+                    }
+                } catch {
+                    modelDownloads[repoId] = "error"
+                    downloadErrors[repoId] = error.localizedDescription
+                }
+            }
+        }
+    }
+
+    // MARK: Recommended settings (computed from hardware + use case)
+    var recommendedMaxContext: Int {
+        let ramGB = Double(ProcessInfo.processInfo.physicalMemory) / 1_073_741_824
+        if useCase == "coding" { return ramGB >= 64 ? 131072 : 65536 }
+        if useCase == "agent" { return ramGB >= 64 ? 65536 : 32768 }
+        return ramGB >= 64 ? 32768 : 16384
+    }
+    var recommendedMaxTokens: Int {
+        let ramGB = Double(ProcessInfo.processInfo.physicalMemory) / 1_073_741_824
+        if useCase == "coding" { return ramGB >= 64 ? 8192 : 4096 }
+        return ramGB >= 64 ? 4096 : 2048
+    }
+    var recommendedCacheEnabled: Bool {
+        (try? FileManager.default.attributesOfFileSystem(forPath: NSHomeDirectory()))
+            .flatMap { $0[.systemFreeSize] as? Int64 }
+            .map { $0 > 100_000_000_000 } ?? false
+    }
+    var recommendedIdleTimeout: Int {
+        let ramGB = Double(ProcessInfo.processInfo.physicalMemory) / 1_073_741_824
+        if useCase == "agent" { return ramGB >= 64 ? 600 : 1200 }
+        return ramGB >= 64 ? 300 : 600
+    }
+
+    var recommendedModelReason: String {
+        let ramGB = Double(ProcessInfo.processInfo.physicalMemory) / 1_073_741_824
+        let chip = detectChipName()
+        if useCase == "coding" {
+            return "Best for coding: large context (\(recommendedMaxContext) tokens) on \(chip) with \(Int(ramGB))GB unified memory"
+        }
+        if useCase == "agent" {
+            return "Best for agents: balanced throughput on \(chip) (\(Int(ramGB))GB RAM, \(gpuBandwidthFromChip(chip: chip) ?? 0)GB/s bandwidth)"
+        }
+        return "Best for chat: quality-speed balance on \(chip) (\(Int(ramGB))GB RAM)"
+    }
+    var recommendedDflash: Bool { useCase == "agent" }
+    var recommendedDspark: Bool { useCase == "coding" }
+    var recommendedTurboquant: Bool {
+        let ramGB = Double(ProcessInfo.processInfo.physicalMemory) / 1_073_741_824
+        return ramGB >= 64
+    }
+
+    func validateRecommendedSettings() {
+        let ramGB = Double(ProcessInfo.processInfo.physicalMemory) / 1_073_741_824
+        if editMaxContext > 262144 {
+            validationWarning = "Max context 262K+ may exceed \(Int(ramGB))GB RAM capacity"
+        } else if editMaxContext > 131072 && ramGB < 64 {
+            validationWarning = "Max context 128K+ recommended only for 64GB+ RAM (you have \(Int(ramGB))GB)"
+        } else if editMaxTokens > 16384 {
+            validationWarning = "Max tokens 16K+ unusual for most models"
+        } else if editIdleTimeout < 60 {
+            validationWarning = "Idle timeout <60s may cause frequent reloads"
+        } else if editIdleTimeout > 3600 && ramGB < 32 {
+            validationWarning = "Long timeout on \(Int(ramGB))GB RAM may cause memory pressure"
+        } else {
+            validationWarning = nil
+        }
+    }
+
+    func loadRecommendedEdits() {
+        editMaxContext = recommendedMaxContext
+        editMaxTokens = recommendedMaxTokens
+        editCacheEnabled = recommendedCacheEnabled
+        editIdleTimeout = recommendedIdleTimeout
+        editDflash = recommendedDflash
+        editDspark = recommendedDspark
+        editTurboquant = recommendedTurboquant
+        validationWarning = nil
+    }
+
+    func detectChipName() -> String {
+        var size = 0; sysctlbyname("machdep.cpu.brand_string", nil, &size, nil, 0)
+        guard size > 0 else { return "Apple Silicon" }
+        var buf = [CChar](repeating: 0, count: size)
+        sysctlbyname("machdep.cpu.brand_string", &buf, &size, nil, 0)
+        return String(cString: buf).trimmingCharacters(in: .whitespaces)
+    }
+
+    func gpuBandwidthFromChip(chip: String) -> Int? {
+        let c = chip.uppercased()
+        if c.contains("M5 MAX") { return 614 }
+        if c.contains("M5 PRO") { return 307 }
+        if c.contains("M5") { return 153 }
+        if c.contains("M4 ULTRA") { return 819 }
+        if c.contains("M4 MAX") { return 546 }
+        if c.contains("M4 PRO") { return 273 }
+        if c.contains("M4") { return 120 }
+        if c.contains("M3 ULTRA") { return 800 }
+        if c.contains("M3 MAX") { return 400 }
+        if c.contains("M3 PRO") { return 150 }
+        if c.contains("M3") { return 100 }
+        if c.contains("M2 ULTRA") { return 800 }
+        if c.contains("M2 MAX") { return 400 }
+        if c.contains("M2 PRO") { return 200 }
+        if c.contains("M2") { return 100 }
+        if c.contains("M1 ULTRA") { return 800 }
+        if c.contains("M1 MAX") { return 400 }
+        if c.contains("M1 PRO") { return 200 }
+        if c.contains("M1") { return 68 }
+        return nil
+    }
 
     var onFinish: ((AppConfig, ServerProcess?) -> Void)?
     var onOpenDashboard: (() -> Void)?
@@ -384,10 +592,21 @@ final class WelcomeViewModel: ObservableObject {
     @discardableResult
     func openWebDashboard() -> Bool {
         guard let services else { return false }
+        // Use /admin/auto-login with API key so the browser gets a session cookie
+        if let url = MenubarController.webAdminURL(
+            host: services.config.host,
+            port: services.config.port,
+            apiKey: services.config.apiKey
+        ) {
+            NSWorkspace.shared.open(url)
+            onOpenDashboard?()
+            return true
+        }
+        // Fallback: try the dashboard directly (will show login page)
         guard let url = AppConfig.httpURL(
             host: services.config.host,
             port: services.config.port,
-            path: "/admin/dashboard"
+            path: "/admin/auto-login"
         ) else {
             return false
         }
@@ -438,6 +657,12 @@ struct WelcomeView: View {
                         WelcomeIntroBody()
                     case .setup:
                         WelcomeSetupBody(vm: vm)
+                    case .hardwareDetect:
+                        WelcomeHardwareDetectBody(vm: vm)
+                    case .modelSource:
+                        WelcomeModelSourceBody(vm: vm)
+                    case .recommend:
+                        WelcomeRecommendBody(vm: vm)
                     case .complete:
                         WelcomeCompleteBody(vm: vm)
                     }
@@ -713,9 +938,15 @@ private struct WelcomeFooter: View {
 
     var body: some View {
         HStack(alignment: .center, spacing: 18) {
-            if vm.step == .setup {
+            if vm.step == .setup || vm.step == .hardwareDetect || vm.step == .modelSource || vm.step == .recommend {
                 Button {
-                    vm.backToIntro()
+                    switch vm.step {
+                    case .setup: vm.backToIntro()
+                    case .hardwareDetect: vm.step = .setup
+                    case .modelSource: vm.step = .hardwareDetect
+                    case .recommend: vm.step = .modelSource
+                    default: vm.backToIntro()
+                    }
                 } label: {
                     Label(String(localized: "common.back",
                                  defaultValue: "Back",
@@ -768,13 +999,44 @@ private struct WelcomeFooter: View {
 
         case .setup:
             WelcomeCTA(
+                title: String(localized: "welcome.button.continue",
+                              defaultValue: "Continue",
+                              comment: "Footer button that advances from setup to hardware detection"),
+                systemImage: "arrow.right",
+                width: 142
+            ) {
+                if vm.validateSetup() {
+                    vm.step = .hardwareDetect
+                }
+            }
+
+        case .hardwareDetect:
+            WelcomeCTA(
+                title: String(localized: "welcome.button.continue",
+                              defaultValue: "Continue",
+                              comment: "Footer button that advances from hardware detect to model source"),
+                systemImage: "arrow.right",
+                width: 142
+            ) {
+                vm.step = .modelSource
+            }
+
+        case .modelSource:
+            WelcomeCTA(
+                title: String(localized: "welcome.button.continue",
+                              defaultValue: "Continue",
+                              comment: "Footer button that advances from model source to recommendations"),
+                systemImage: "arrow.right",
+                width: 142
+            ) {
+                vm.step = .recommend
+            }
+
+        case .recommend:
+            WelcomeCTA(
                 title: vm.isStarting
-                    ? String(localized: "welcome.button.starting",
-                             defaultValue: "Starting Server...",
-                             comment: "Footer button label shown while the server is being spawned")
-                    : String(localized: "welcome.button.start_server",
-                             defaultValue: "Start Server",
-                             comment: "Primary footer button that spawns the server"),
+                    ? "Starting Server..."
+                    : "Start Server",
                 systemImage: vm.isStarting ? nil : "arrow.right",
                 isBusy: vm.isStarting,
                 width: 160
@@ -797,6 +1059,389 @@ private struct WelcomeFooter: View {
                 _ = vm.openWebDashboard()
             }
         }
+    }
+}
+
+// MARK: - Model Source Selection
+
+private struct WelcomeModelSourceBody: View {
+    @ObservedObject var vm: WelcomeViewModel
+
+    var body: some View {
+        VStack(spacing: 22) {
+            WelcomeIcon(size: 70)
+
+            VStack(spacing: 6) {
+                Text("Model Source")
+                    .font(.fusionDisplay(24, weight: .semibold))
+                    .foregroundStyle(WelcomeStyle.text)
+                Text("Choose where to download models from.\nChinese users should select HF Mirror or ModelScope.")
+                    .font(.fusionText(13))
+                    .foregroundStyle(WelcomeStyle.muted)
+                    .multilineTextAlignment(.center)
+                    .lineSpacing(2)
+                    .frame(maxWidth: 480)
+            }
+
+            VStack(spacing: 10) {
+                SourceOption(
+                    title: "HuggingFace",
+                    subtitle: "hub.huggingface.co",
+                    icon: "globe",
+                    isSelected: vm.modelSource == "huggingface"
+                ) { vm.modelSource = "huggingface" }
+
+                SourceOption(
+                    title: "HF Mirror",
+                    subtitle: "hf-mirror.com",
+                    icon: "arrow.triangle.branch",
+                    isSelected: vm.modelSource == "hf-mirror"
+                ) { vm.modelSource = "hf-mirror" }
+
+                SourceOption(
+                    title: "ModelScope",
+                    subtitle: "modelscope.cn",
+                    icon: "square.stack.3d.up",
+                    isSelected: vm.modelSource == "modelscope"
+                ) { vm.modelSource = "modelscope" }
+            }
+            .frame(width: 420)
+        }
+        .padding(.horizontal, 48)
+        .padding(.top, 18)
+    }
+}
+
+private struct SourceOption: View {
+    let title: String
+    let subtitle: String
+    let icon: String
+    let isSelected: Bool
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 14) {
+                Image(systemName: icon)
+                    .font(.system(size: 18, weight: .medium))
+                    .foregroundStyle(isSelected ? WelcomeStyle.accent : WelcomeStyle.muted)
+                    .frame(width: 28)
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(title)
+                        .font(.fusionText(14, weight: .semibold))
+                        .foregroundStyle(WelcomeStyle.text)
+                    Text(subtitle)
+                        .font(.fusionText(11))
+                        .foregroundStyle(WelcomeStyle.faint)
+                }
+
+                Spacer()
+
+                if isSelected {
+                    Image(systemName: "checkmark.circle.fill")
+                        .font(.system(size: 20))
+                        .foregroundStyle(WelcomeStyle.accent)
+                }
+            }
+            .padding(14)
+            .background(isSelected ? WelcomeStyle.accent.opacity(0.08) : WelcomeStyle.fill)
+            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .strokeBorder(isSelected ? WelcomeStyle.accent.opacity(0.4) : .clear, lineWidth: 1)
+            )
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+// MARK: - Hardware Detection Body
+
+private struct WelcomeHardwareDetectBody: View {
+    @ObservedObject var vm: WelcomeViewModel
+
+    var body: some View {
+        VStack(spacing: 22) {
+            WelcomeIcon(size: 70)
+            VStack(spacing: 6) {
+                Text("Your Mac Hardware")
+                    .font(.fusionDisplay(24, weight: .semibold))
+                    .foregroundStyle(WelcomeStyle.text)
+                Text("Detected hardware configuration. This helps us recommend optimal settings.")
+                    .font(.fusionText(13))
+                    .foregroundStyle(WelcomeStyle.muted)
+                    .multilineTextAlignment(.center)
+                    .lineSpacing(2)
+                    .frame(maxWidth: 480)
+            }
+            VStack(alignment: .leading, spacing: 0) {
+                HwRow(label: "Chip", value: detectChip())
+                WelcomeDivider()
+                HwRow(label: "CPU Cores", value: "\(ProcessInfo.processInfo.processorCount)")
+                WelcomeDivider()
+                let chip = detectChip()
+                let isAppleSilicon = chip.contains("Apple") || chip.contains("M")
+                if isAppleSilicon {
+                    HwRow(label: "GPU", value: chip)  // Apple Silicon = unified GPU
+                    WelcomeDivider()
+                    HwRow(label: "GPU Memory", value: String(format: "%.0f GB (unified)", Double(ProcessInfo.processInfo.physicalMemory) / 1_073_741_824))
+                    WelcomeDivider()
+                    if let bw = gpuBandwidth(chip: chip) {
+                        HwRow(label: "Memory BW", value: "\(bw) GB/s")
+                        WelcomeDivider()
+                    }
+                }
+                HwRow(label: "System RAM", value: String(format: "%.1f GB", Double(ProcessInfo.processInfo.physicalMemory) / 1_073_741_824))
+                WelcomeDivider()
+                HwRow(label: "Disk Free", value: diskFree())
+            }
+            .background(WelcomeStyle.panel)
+            .clipShape(RoundedRectangle(cornerRadius: 12))
+            .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(WelcomeStyle.panelBorder.opacity(0.45), lineWidth: 0.5))
+            .frame(width: 500)
+        }
+        .padding(.horizontal, 48).padding(.top, 18).padding(.bottom, 6)
+    }
+
+    private func detectChip() -> String {
+        var size = 0; sysctlbyname("machdep.cpu.brand_string", nil, &size, nil, 0)
+        guard size > 0 else { return "Apple Silicon" }
+        var buf = [CChar](repeating: 0, count: size)
+        sysctlbyname("machdep.cpu.brand_string", &buf, &size, nil, 0)
+        return String(cString: buf).trimmingCharacters(in: .whitespaces)
+    }
+
+    private func diskFree() -> String {
+        guard let attrs = try? FileManager.default.attributesOfFileSystem(forPath: NSHomeDirectory()),
+              let free = attrs[.systemFreeSize] as? Int64 else { return "—" }
+        return String(format: "%.0f GB", Double(free) / 1_073_741_824)
+    }
+
+    /// Apple Silicon GPU memory bandwidth lookup (GB/s)
+    private func gpuBandwidth(chip: String) -> Int? {
+        let c = chip.uppercased()
+        if c.contains("M5 MAX") { return 614 }
+        if c.contains("M5 PRO") { return 307 }
+        if c.contains("M5") { return 153 }
+        if c.contains("M4 ULTRA") { return 819 }
+        if c.contains("M4 MAX") { return 546 }
+        if c.contains("M4 PRO") { return 273 }
+        if c.contains("M4") { return 120 }
+        if c.contains("M3 ULTRA") { return 800 }
+        if c.contains("M3 MAX") { return 400 }
+        if c.contains("M3 PRO") { return 150 }
+        if c.contains("M3") { return 100 }
+        if c.contains("M2 ULTRA") { return 800 }
+        if c.contains("M2 MAX") { return 400 }
+        if c.contains("M2 PRO") { return 200 }
+        if c.contains("M2") { return 100 }
+        if c.contains("M1 ULTRA") { return 800 }
+        if c.contains("M1 MAX") { return 400 }
+        if c.contains("M1 PRO") { return 200 }
+        if c.contains("M1") { return 68 }
+        return nil
+    }
+}
+
+private struct HwRow: View {
+    let label: String; let value: String
+    var body: some View {
+        HStack(spacing: 12) {
+            Text(label).font(.fusionText(13, weight: .medium)).foregroundStyle(WelcomeStyle.text)
+            Spacer()
+            Text(value).font(.fusionMono(12)).foregroundStyle(WelcomeStyle.muted)
+        }.padding(.horizontal, 16).padding(.vertical, 10)
+    }
+}
+
+// MARK: - Recommendation Body
+
+private struct WelcomeRecommendBody: View {
+    @ObservedObject var vm: WelcomeViewModel
+
+    var body: some View {
+        ScrollView {
+            VStack(spacing: 14) {
+                WelcomeIcon(size: 45)
+                VStack(spacing: 3) {
+                    Text("Recommended Configuration").font(.fusionDisplay(22, weight: .semibold)).foregroundStyle(WelcomeStyle.text)
+                    Text("Select your use case — recommendations adjust automatically.").font(.fusionText(12)).foregroundStyle(WelcomeStyle.muted).multilineTextAlignment(.center).frame(maxWidth: 520)
+                }
+
+                // Use case picker
+                HStack(spacing: 8) {
+                    UseCaseButton(title: "Agent", icon: "robot", desc: "OpenClaw agents", isSelected: vm.useCase == "agent") { vm.useCase = "agent"; vm.loadRecommendedEdits() }
+                    UseCaseButton(title: "Coding", icon: "chevron.left.forwardslash.chevron.right", desc: "Code completion", isSelected: vm.useCase == "coding") { vm.useCase = "coding"; vm.loadRecommendedEdits() }
+                    UseCaseButton(title: "Chat", icon: "message", desc: "General chat", isSelected: vm.useCase == "chat") { vm.useCase = "chat"; vm.loadRecommendedEdits() }
+                }.padding(.horizontal, 8)
+
+                // Recommended models list with checkboxes & download
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Recommended Models").font(.fusionText(11, weight: .semibold)).foregroundStyle(WelcomeStyle.faint)
+                        .padding(.horizontal, 16).padding(.top, 10)
+                    ForEach(vm.recommendedModels) { opt in
+                        HStack(spacing: 10) {
+                            let state = vm.modelDownloads[opt.id] ?? "idle"
+                            let isSelected = vm.selectedModels.contains(opt.id)
+                            Button {
+                                vm.toggleModelSelection(opt.id)
+                            } label: {
+                                Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
+                                    .font(.system(size: 16))
+                                    .foregroundStyle(isSelected ? WelcomeStyle.accent : WelcomeStyle.faint)
+                            }.buttonStyle(.plain)
+
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(opt.displayName).font(.fusionText(12, weight: .semibold)).foregroundStyle(WelcomeStyle.text)
+                                Text(opt.reason).font(.fusionText(10)).foregroundStyle(WelcomeStyle.faint)
+                            }
+
+                            Spacer()
+
+                            if state == "idle" {
+                                Button("Download") {
+                                    vm.selectedModels.insert(opt.id)
+                                    vm.downloadSelectedModels()
+                                }.buttonStyle(.fusion(.normal, size: .small)).font(.fusionText(10))
+                            } else if state == "downloading" {
+                                ProgressView().controlSize(.small).scaleEffect(0.7)
+                            } else if state == "done" {
+                                Image(systemName: "checkmark.circle.fill").font(.system(size: 14)).foregroundStyle(.green)
+                            } else if state == "error" {
+                                Button("Retry") {
+                                    vm.modelDownloads[opt.id] = "idle"
+                                    vm.selectedModels.insert(opt.id)
+                                    vm.downloadSelectedModels()
+                                }.buttonStyle(.fusion(.normal, size: .small)).foregroundStyle(.red)
+                            }
+                        }
+                        .padding(.horizontal, 16).padding(.vertical, 6)
+                        .background(vm.selectedModels.contains(opt.id) ? WelcomeStyle.accent.opacity(0.04) : .clear)
+                        .clipShape(RoundedRectangle(cornerRadius: 6))
+
+                        if opt.id != vm.recommendedModels.last?.id {
+                            WelcomeDivider().padding(.leading, 52)
+                        }
+                    }
+
+                    // Bulk download button
+                    if !vm.recommendedModels.isEmpty {
+                        HStack(spacing: 12) {
+                            Button("Select All") { vm.selectAllModels() }
+                                .buttonStyle(.fusion(.plain, size: .small)).font(.fusionText(10))
+
+                            Button {
+                                vm.downloadSelectedModels()
+                            } label: {
+                                HStack(spacing: 4) {
+                                    Image(systemName: "arrow.down.circle").font(.system(size: 11))
+                                    Text("Download (\(vm.selectedModels.count))")
+                                }
+                                .font(.fusionText(11, weight: .medium))
+                                .foregroundStyle(.white)
+                                .padding(.horizontal, 12).padding(.vertical, 5)
+                                .background(vm.selectedModels.isEmpty ? WelcomeStyle.faint : WelcomeStyle.accent)
+                                .clipShape(RoundedRectangle(cornerRadius: 6))
+                            }
+                            .buttonStyle(.plain).disabled(vm.selectedModels.isEmpty)
+
+                            Spacer()
+
+                            Text("Start Server below after downloading")
+                                .font(.fusionText(9)).foregroundStyle(WelcomeStyle.faint)
+                        }
+                        .padding(.horizontal, 16).padding(.bottom, 10)
+                    }
+                }
+                .background(WelcomeStyle.panel).clipShape(RoundedRectangle(cornerRadius: 12))
+                .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(WelcomeStyle.accent.opacity(0.3), lineWidth: 1))
+                .frame(width: 560)
+
+                // Editable parameters
+                VStack(alignment: .leading, spacing: 0) {
+                    Text("Server & Performance").font(.fusionText(11, weight: .semibold)).foregroundStyle(WelcomeStyle.faint)
+                        .padding(.horizontal, 16).padding(.top, 10).padding(.bottom, 4)
+                    EditRow(label: "Port", value: Binding(get: { vm.portText }, set: { vm.portText = $0 }), mono: true)
+                    WelcomeDivider()
+                    EditRow(label: "Max Context", value: Binding(get: { String(vm.editMaxContext) }, set: { if let v = Int($0) { vm.editMaxContext = v; vm.validateRecommendedSettings() } }), mono: true)
+                    WelcomeDivider()
+                    EditRow(label: "Max Tokens", value: Binding(get: { String(vm.editMaxTokens) }, set: { if let v = Int($0) { vm.editMaxTokens = v; vm.validateRecommendedSettings() } }), mono: true)
+                    WelcomeDivider()
+                    EditRow(label: "Idle Timeout", value: Binding(get: { "\(vm.editIdleTimeout)s" }, set: { vm.editIdleTimeout = Int($0.dropLast()) ?? Int($0) ?? 300; vm.validateRecommendedSettings() }), mono: true)
+                    WelcomeDivider()
+                    ToggleRow(label: "SSD Cache", isOn: Binding(get: { vm.editCacheEnabled }, set: { vm.editCacheEnabled = $0 }))
+                }
+                .background(WelcomeStyle.panel).clipShape(RoundedRectangle(cornerRadius: 12))
+                .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(WelcomeStyle.panelBorder.opacity(0.45), lineWidth: 0.5))
+                .frame(width: 560)
+
+                // Advanced features
+                VStack(alignment: .leading, spacing: 0) {
+                    Text("Advanced Features").font(.fusionText(11, weight: .semibold)).foregroundStyle(WelcomeStyle.faint)
+                        .padding(.horizontal, 16).padding(.top, 10).padding(.bottom, 4)
+                    ToggleRow(label: "DFlash (speculative decoding)", isOn: Binding(get: { vm.editDflash }, set: { vm.editDflash = $0 }), hint: "Faster generation via draft model")
+                    WelcomeDivider()
+                    ToggleRow(label: "DSpark (distributed推理)", isOn: Binding(get: { vm.editDspark }, set: { vm.editDspark = $0 }), hint: "Multi-node inference")
+                    WelcomeDivider()
+                    ToggleRow(label: "TurboQuant (fast quantization)", isOn: Binding(get: { vm.editTurboquant }, set: { vm.editTurboquant = $0 }), hint: "On-the-fly quantization for speed")
+                }
+                .background(WelcomeStyle.panel).clipShape(RoundedRectangle(cornerRadius: 12))
+                .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(WelcomeStyle.panelBorder.opacity(0.45), lineWidth: 0.5))
+                .frame(width: 560)
+
+                // Validation warning
+                if let warn = vm.validationWarning {
+                    HStack(spacing: 6) {
+                        Image(systemName: "exclamationmark.triangle.fill").font(.system(size: 12)).foregroundStyle(.orange)
+                        Text(warn).font(.fusionText(11)).foregroundStyle(.orange)
+                    }.padding(10).frame(width: 560)
+                        .background(.orange.opacity(0.08)).clipShape(RoundedRectangle(cornerRadius: 8))
+                }
+            }
+            .padding(.horizontal, 30).padding(.top, 10).padding(.bottom, 4)
+        }
+    }
+}
+
+private struct UseCaseButton: View {
+    let title: String; let icon: String; let desc: String
+    let isSelected: Bool; let action: () -> Void
+    var body: some View {
+        Button(action: action) {
+            VStack(spacing: 4) {
+                Image(systemName: icon).font(.system(size: 16))
+                Text(title).font(.fusionText(12, weight: .semibold))
+                Text(desc).font(.fusionText(9)).foregroundStyle(WelcomeStyle.faint)
+            }.frame(maxWidth: .infinity).padding(.vertical, 10)
+                .background(isSelected ? WelcomeStyle.accent.opacity(0.12) : WelcomeStyle.fill)
+                .clipShape(RoundedRectangle(cornerRadius: 8))
+                .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(isSelected ? WelcomeStyle.accent.opacity(0.4) : .clear, lineWidth: 1))
+        }.buttonStyle(.plain).frame(width: 170)
+    }
+}
+
+private struct EditRow: View {
+    let label: String; let value: Binding<String>; var mono: Bool = false
+    var body: some View {
+        HStack(spacing: 12) {
+            Text(label).font(.fusionText(12, weight: .medium)).foregroundStyle(WelcomeStyle.text).frame(width: 100, alignment: .leading)
+            Spacer()
+            TextField("", text: value).textFieldStyle(.plain).font(mono ? .fusionMono(11) : .fusionText(12)).foregroundStyle(WelcomeStyle.muted)
+                .frame(width: 160).padding(.horizontal, 8).padding(.vertical, 4).background(WelcomeStyle.fill).clipShape(RoundedRectangle(cornerRadius: 6))
+        }.padding(.horizontal, 16).padding(.vertical, 8)
+    }
+}
+
+private struct ToggleRow: View {
+    let label: String; let isOn: Binding<Bool>; var hint: String? = nil
+    var body: some View {
+        HStack(spacing: 12) {
+            Text(label).font(.fusionText(12, weight: .medium)).foregroundStyle(WelcomeStyle.text).frame(width: 200, alignment: .leading)
+            if let hint { Text(hint).font(.fusionText(9)).foregroundStyle(WelcomeStyle.faint) }
+            Spacer()
+            Toggle("", isOn: isOn).labelsHidden().controlSize(.small)
+        }.padding(.horizontal, 16).padding(.vertical, 8)
     }
 }
 

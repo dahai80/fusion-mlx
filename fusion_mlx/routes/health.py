@@ -19,7 +19,7 @@ async def root():
 
 @probe_router.get("/health")
 async def health():
-    from ..service.helpers import _server_state
+    from ..server import _server_state
 
     pool = _server_state.get("engine_pool")
     model_loaded = pool is not None and pool.loaded_model_count > 0
@@ -36,7 +36,7 @@ async def health():
 
 @probe_router.get("/health/ready")
 async def health_ready():
-    from ..service.helpers import _server_state
+    from ..server import _server_state
 
     pool = _server_state.get("engine_pool")
     if pool is None or pool.loaded_model_count == 0:
@@ -46,7 +46,7 @@ async def health_ready():
 
 @probe_router.get("/healthz")
 async def healthz():
-    from ..service.helpers import _server_state
+    from ..server import _server_state
 
     pool = _server_state.get("engine_pool")
     draining = _server_state.get("draining", False)
@@ -78,7 +78,7 @@ async def livez():
 
 @router.get("/v1/status")
 async def status():
-    from ..service.helpers import _server_state
+    from ..server import _server_state
 
     pool = _server_state.get("engine_pool")
     if pool is None or pool.loaded_model_count == 0:
@@ -97,7 +97,7 @@ async def status():
 
 @router.post("/v1/requests/{request_id}/cancel")
 async def cancel_request(request_id: str, is_admin: bool = Depends(require_admin)):
-    from ..service.helpers import _server_state
+    from ..server import _server_state
 
     pool = _server_state.get("engine_pool")
     if pool is None:
