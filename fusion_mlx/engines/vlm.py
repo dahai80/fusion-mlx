@@ -361,6 +361,17 @@ class VLMBatchedEngine(BaseEngine):
         # TurboQuant KV cache
         self._apply_turboquant_kv()
 
+        # N-gram self-speculative decode. The text engine (batched.py) loads
+        # _ngram_spec_state from model_settings; the VLM engine never did, so
+        # the per-request router found no loaded method and VLM text decode
+        # never speculated. Port the same loader here: n-gram spec is the
+        # safest spec method for VLM (no draft model - it matches the request's
+        # own output token stream, which VLM produces normally during decode).
+        # dflash/dspark (draft-model spec) are deliberately NOT ported here:
+        # their verify step assumes a text-only target and a VLM target carries
+        # vision encoders, so correctness is unverified - leave to a follow-up.
+        self._apply_ngram_spec()
+
         # Inject tool calling support into VLM tokenizer
         self._inject_tool_calling(self._tokenizer)
 
@@ -407,6 +418,50 @@ class VLMBatchedEngine(BaseEngine):
         except Exception as e:
             logger.warning(
                 "TurboQuant KV init failed for VLM %s: %s", self._model_name, e
+            )
+
+    def _apply_ngram_spec(self) -> None:
+        # Mirror engines/batched.py:272-299. A non-None model_settings value
+        # wins (explicit false disables); absent model_settings leaves the
+        # scheduler default (None) untouched. Once _ngram_spec_state is set,
+        # the per-request router (per_request_route.select_active_method,
+        # engine-type-agnostic) assigns METHOD_NGRAM to VLM requests and
+        # _try_spec_decode runs ngram_spec_step on them - same path as text.
+        if self._model_settings is None:
+            return
+        ns_enabled = getattr(self._model_settings, "ngram_spec_enabled", None)
+        if ns_enabled is None:
+            return
+        try:
+            scheduler = self._engine.engine.scheduler
+            if ns_enabled:
+                from ..scheduler.ngram_spec import NGramSpecState
+
+                scheduler._ngram_spec_state = NGramSpecState(
+                    order=getattr(self._model_settings, "ngram_spec_order", None),
+                    num_draft=getattr(
+                        self._model_settings, "ngram_spec_num_draft", None
+                    ),
+                    break_even=getattr(
+                        self._model_settings, "ngram_spec_break_even", None
+                    ),
+                )
+                logger.info(
+                    "N-gram spec enabled for VLM %s (order=%s, num_draft=%s, break_even=%s)",
+                    self._model_name,
+                    getattr(self._model_settings, "ngram_spec_order", None),
+                    getattr(self._model_settings, "ngram_spec_num_draft", None),
+                    getattr(self._model_settings, "ngram_spec_break_even", None),
+                )
+            else:
+                scheduler._ngram_spec_state = None
+                logger.info(
+                    "N-gram spec disabled for VLM %s (per-model override)",
+                    self._model_name,
+                )
+        except Exception as e:
+            logger.warning(
+                "N-gram spec init failed for VLM %s: %s", self._model_name, e
             )
 
     async def stop(self) -> None:
