@@ -1,8 +1,10 @@
 # SPDX-License-Identifier: Apache-2.0
 """Tests for video processing utilities."""
 
+import os
 import tempfile
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import numpy as np
@@ -67,6 +69,14 @@ class TestSmartNframes:
         )
         assert result >= 2
         assert result <= 16
+
+    def test_zero_total_frames(self):
+        # Broken/empty stream reports 0 frames; must not force FRAME_FACTOR
+        # and emit negative linspace indices downstream.
+        assert smart_nframes(total_frames=0, video_fps=30.0) == 0
+
+    def test_negative_total_frames(self):
+        assert smart_nframes(total_frames=-1, video_fps=30.0) == 0
 
 
 class TestRounding:
@@ -227,3 +237,108 @@ class TestExtractVideoFramesSmart:
         with patch.dict("sys.modules", {"cv2": None}):
             with pytest.raises(ImportError):
                 extract_video_frames_smart("/tmp/test.mp4")
+
+
+def _fake_cv2(cap, *, with_color=True):
+    attrs = dict(
+        VideoCapture=lambda path: cap,
+        CAP_PROP_FRAME_COUNT=1,
+        CAP_PROP_FPS=2,
+        CAP_PROP_POS_FRAMES=3,
+        CAP_PROP_FRAME_WIDTH=4,
+        CAP_PROP_FRAME_HEIGHT=5,
+    )
+    if with_color:
+        attrs.update(
+            COLOR_BGR2RGB=6,
+            cvtColor=lambda f, c: f,
+            resize=lambda f, sz: f,
+        )
+    return SimpleNamespace(**attrs)
+
+
+class TestExtractFramesRelease:
+    def _make_cap(self, *, opened=True, total=300, read_raises=None):
+        released = []
+
+        def _read():
+            if read_raises:
+                raise read_raises
+            return True, np.zeros((4, 4, 3), dtype=np.uint8)
+
+        cap = SimpleNamespace(
+            isOpened=lambda: opened,
+            get=lambda p: total,
+            set=lambda p, v: None,
+            read=_read,
+            release=lambda: released.append(True),
+        )
+        return cap, released
+
+    def test_releases_on_read_exception(self):
+        cap, released = self._make_cap(read_raises=RuntimeError("boom"))
+        with patch.dict("sys.modules", {"cv2": _fake_cv2(cap)}):
+            with pytest.raises(RuntimeError):
+                extract_video_frames_smart("/fake.mp4")
+        assert released == [True]
+
+    def test_releases_when_not_opened(self):
+        cap, released = self._make_cap(opened=False)
+        with patch.dict("sys.modules", {"cv2": _fake_cv2(cap)}):
+            with pytest.raises(ValueError, match="Cannot open video"):
+                extract_video_frames_smart("/fake.mp4")
+        assert released == [True]
+
+
+class TestDescribeVideoRelease:
+    def test_releases_on_get_exception(self):
+        released = []
+
+        def _get(p):
+            raise RuntimeError("get boom")
+
+        cap = SimpleNamespace(
+            isOpened=lambda: True,
+            get=_get,
+            release=lambda: released.append(True),
+        )
+        with patch.dict("sys.modules", {"cv2": _fake_cv2(cap, with_color=False)}):
+            with pytest.raises(RuntimeError):
+                describe_video("/fake.mp4")
+        assert released == [True]
+
+    def test_releases_when_not_opened(self):
+        released = []
+        cap = SimpleNamespace(
+            isOpened=lambda: False,
+            get=lambda p: 0,
+            release=lambda: released.append(True),
+        )
+        with patch.dict("sys.modules", {"cv2": _fake_cv2(cap, with_color=False)}):
+            with pytest.raises(ValueError, match="Cannot open video"):
+                describe_video("/fake.mp4")
+        assert released == [True]
+
+
+class TestSaveFramesFailure:
+    def test_unlinks_temp_on_save_failure(self, monkeypatch):
+        unlinked = []
+        real_unlink = os.unlink
+
+        def spy_unlink(path):
+            unlinked.append(path)
+            return real_unlink(path)
+
+        monkeypatch.setattr("fusion_mlx.utils.video.os.unlink", spy_unlink)
+
+        import PIL.Image
+
+        class FakeImg:
+            def save(self, name, fmt, quality=85):
+                raise OSError("disk full")
+
+        monkeypatch.setattr(PIL.Image, "fromarray", lambda f: FakeImg())
+        with pytest.raises(OSError):
+            save_frames_to_temp([np.zeros((4, 4, 3), dtype=np.uint8)])
+        assert len(unlinked) == 1
+        assert not Path(unlinked[0]).exists()
