@@ -697,16 +697,55 @@ class VLMBatchedEngine(BaseEngine):
         if not hasattr(template_target, "apply_chat_template"):
             template_target = getattr(self._processor, "tokenizer", self._processor)
 
+        # Remap OpenAI video_url/image_url content parts to the native
+        # video/image types the Qwen3.5 chat template matches on
+        # (item.type == 'video'/'image'), so it emits <|video_pad|>/
+        # <|image_pad|> placeholders. Without this the template sees no media
+        # part and emits zero media tokens, and mlx_vlm rejects the run with
+        # "Image features and image tokens do not match: tokens: 0, features N".
+        template_messages: list[dict] = []
+        for m in messages:
+            c = m.get("content")
+            if isinstance(c, list):
+                parts = []
+                for p in c:
+                    if isinstance(p, dict):
+                        t = p.get("type")
+                        if t == "video_url":
+                            url = p.get("video_url")
+                            url = url.get("url") if isinstance(url, dict) else url
+                            parts.append({"type": "video", "video": url or ""})
+                        elif t == "image_url":
+                            url = p.get("image_url")
+                            url = url.get("url") if isinstance(url, dict) else url
+                            parts.append({"type": "image", "image": url or ""})
+                        else:
+                            parts.append(p)
+                    else:
+                        parts.append(p)
+                template_messages.append({**m, "content": parts})
+            else:
+                template_messages.append(m)
+
         try:
-            prompt = template_target.apply_chat_template(messages, **template_kwargs)
+            prompt = template_target.apply_chat_template(
+                template_messages, **template_kwargs
+            )
         except TypeError:
             template_kwargs.pop("enable_thinking", None)
-            prompt = template_target.apply_chat_template(messages, **template_kwargs)
+            prompt = template_target.apply_chat_template(
+                template_messages, **template_kwargs
+            )
 
-        # Load video frames natively via mlx_vlm.
-        # load_video(ele) expects {"video": path, "fps", "max_frames"} and
-        # returns (ndarray (T,C,H,W), sample_fps).
-        all_images = []
+        # Load video natively via mlx_vlm. Keep the raw ndarray so the Qwen3.5
+        # processor expands <|video_pad|> placeholders to match the video
+        # features (pixel_values_videos). Converting frames to PIL and passing
+        # them as images= routes through the image branch, whose features do
+        # not align with video_pad tokens, and mlx_vlm rejects the run with
+        # "Image features and image tokens do not match". cv2 fallback (PIL
+        # frames) is kept for environments lacking mlx_vlm.video_generate.
+        all_videos: list = []
+        all_images: list = []
 
         def _fallback_cv2_frames(path: str) -> None:
             frames = extract_video_frames_smart(
@@ -731,12 +770,7 @@ class VLMBatchedEngine(BaseEngine):
                         "max_frames": video_max_frames,
                     }
                     video_np, _sample_fps = load_video(ele)
-                    import numpy as np
-                    from PIL import Image
-
-                    for t in range(video_np.shape[0]):
-                        frame = np.transpose(video_np[t], (1, 2, 0))
-                        all_images.append(Image.fromarray(frame.astype(np.uint8)))
+                    all_videos.append(video_np)
                     logger.info(
                         "Native video: %d frames from %s",
                         int(video_np.shape[0]),
@@ -758,43 +792,62 @@ class VLMBatchedEngine(BaseEngine):
             except Exception as e:
                 logger.warning("Video processing failed for %s: %s", video, e)
 
-        if not all_images:
+        if not all_videos and not all_images:
             return self._prepare_vision_inputs(messages, [])
 
-        inputs = prepare_inputs(self._processor, images=all_images, prompts=[prompt])
+        if all_videos:
+            inputs = prepare_inputs(
+                self._processor, videos=all_videos, prompts=[prompt]
+            )
+            pixel_values = inputs.get("pixel_values_videos", inputs.get("pixel_values"))
+        else:
+            inputs = prepare_inputs(
+                self._processor, images=all_images, prompts=[prompt]
+            )
+            pixel_values = inputs.get("pixel_values")
         input_ids = inputs["input_ids"]
-        pixel_values = inputs.get("pixel_values")
         attention_mask = inputs.get("attention_mask")
 
         extra_model_inputs = {
             k: v
             for k, v in inputs.items()
-            if k not in ("input_ids", "attention_mask", "pixel_values")
+            if k
+            not in (
+                "input_ids",
+                "attention_mask",
+                "pixel_values",
+                "pixel_values_videos",
+            )
             and v is not None
         }
 
-        num_images = len(all_images)
-        if pixel_values is not None and num_images > 0:
-            image_hash = compute_image_hash(all_images)
+        num_media = len(all_videos) + len(all_images)
+        if pixel_values is not None and num_media > 0:
             call_kwargs = dict(extra_model_inputs)
-
-            if self._vision_cache is not None and self._vision_cache_enabled:
-                cached_whole = self._vision_cache.get(image_hash, self._model_name)
-                if cached_whole is not None:
-                    call_kwargs["cached_image_features"] = cached_whole
-                else:
-                    try:
-                        features = self._compute_vision_features(
-                            pixel_values, extra_model_inputs
-                        )
-                        if features is not None:
-                            mx.eval(features)
-                            call_kwargs["cached_image_features"] = features
-                            self._vision_cache.put(
-                                image_hash, self._model_name, features
+            image_hash = None
+            # Vision cache is image-hash based; skip for the native video path
+            # (ndarray frames have no stable PIL hash) and recompute each call.
+            if not all_videos and all_images:
+                image_hash = compute_image_hash(all_images)
+                if self._vision_cache is not None and self._vision_cache_enabled:
+                    cached_whole = self._vision_cache.get(image_hash, self._model_name)
+                    if cached_whole is not None:
+                        call_kwargs["cached_image_features"] = cached_whole
+                    else:
+                        try:
+                            features = self._compute_vision_features(
+                                pixel_values, extra_model_inputs
                             )
-                    except Exception:
-                        logger.debug("Vision feature computation failed", exc_info=True)
+                            if features is not None:
+                                mx.eval(features)
+                                call_kwargs["cached_image_features"] = features
+                                self._vision_cache.put(
+                                    image_hash, self._model_name, features
+                                )
+                        except Exception:
+                            logger.debug(
+                                "Vision feature computation failed", exc_info=True
+                            )
 
             try:
                 embed_features = self._vlm_model.get_input_embeddings(
@@ -855,8 +908,11 @@ class VLMBatchedEngine(BaseEngine):
     ) -> tuple:
         text_messages, images, _videos, _audio = extract_images_from_messages(messages)
 
-        # Merge videos from message content into kwargs
-        if _videos and "videos" not in kwargs:
+        # Merge videos extracted from message content into kwargs. Use a falsy
+        # check (not "videos" not in kwargs) so a present-but-None "videos"
+        # key set by an upstream caller does not block the override - otherwise
+        # the extracted video would be silently dropped.
+        if _videos and not kwargs.get("videos"):
             kwargs["videos"] = _videos
 
         if images:
@@ -878,7 +934,7 @@ class VLMBatchedEngine(BaseEngine):
                 cache_key_start,
                 cache_key_ranges,
             ) = self._prepare_native_video_inputs(
-                text_messages, videos, video_fps, video_max_frames
+                messages, videos, video_fps, video_max_frames
             )
             mx.synchronize()
             mx.clear_cache()
