@@ -382,6 +382,10 @@ def _build_fallback_global_settings() -> dict:
     model_sj = sj.get("model", {})
     hf_sj = sj.get("huggingface", {})
     auth_sj = sj.get("auth", {})
+    scheduler_sj = sj.get("scheduler", {})
+    memory_sj = sj.get("memory", {})
+    cache_sj = sj.get("cache", {})
+    mcp_sj = sj.get("mcp", {})
 
     host = server_sj.get("host", "127.0.0.1")
     port = server_sj.get("port", 11435)
@@ -410,24 +414,26 @@ def _build_fallback_global_settings() -> dict:
             "model_fallback": False,
         },
         "memory": {
-            "prefill_memory_guard": False,
-            "memory_guard_tier": "safe",
-            "memory_guard_custom_ceiling_gb": None,
+            "prefill_memory_guard": memory_sj.get("prefill_memory_guard", False),
+            "memory_guard_tier": memory_sj.get("memory_guard_tier", "safe"),
+            "memory_guard_custom_ceiling_gb": memory_sj.get(
+                "memory_guard_custom_ceiling_gb", None
+            ),
         },
         "scheduler": {
-            "max_concurrent_requests": 8,
-            "embedding_batch_size": 32,
-            "chunked_prefill": False,
+            "max_concurrent_requests": scheduler_sj.get("max_concurrent_requests", 8),
+            "embedding_batch_size": scheduler_sj.get("embedding_batch_size", 32),
+            "chunked_prefill": scheduler_sj.get("chunked_prefill", False),
         },
         "cache": {
-            "enabled": False,
-            "ssd_cache_dir": cache_dir,
-            "ssd_cache_max_size": "10GB",
-            "hot_cache_only": False,
-            "hot_cache_max_size": None,
-            "initial_cache_blocks": 0,
+            "enabled": cache_sj.get("enabled", False),
+            "ssd_cache_dir": cache_sj.get("ssd_cache_dir", cache_dir),
+            "ssd_cache_max_size": cache_sj.get("ssd_cache_max_size", "10GB"),
+            "hot_cache_only": cache_sj.get("hot_cache_only", False),
+            "hot_cache_max_size": cache_sj.get("hot_cache_max_size", None),
+            "initial_cache_blocks": cache_sj.get("initial_cache_blocks", 0),
         },
-        "mcp": {"config_path": None},
+        "mcp": {"config_path": mcp_sj.get("config_path")},
         "huggingface": {"endpoint": hf_endpoint},
         "modelscope": {"endpoint": ""},
         "network": {
@@ -437,7 +443,9 @@ def _build_fallback_global_settings() -> dict:
             "ca_bundle": "",
         },
         "sampling": {
-            "max_context_window": sj.get("sampling", {}).get("max_context_window", 4096),
+            "max_context_window": sj.get("sampling", {}).get(
+                "max_context_window", 4096
+            ),
             "max_tokens": sj.get("sampling", {}).get("max_tokens", 512),
             "temperature": sj.get("sampling", {}).get("temperature", 0.0),
             "top_p": sj.get("sampling", {}).get("top_p", 1.0),
