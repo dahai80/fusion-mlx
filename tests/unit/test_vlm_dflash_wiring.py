@@ -38,9 +38,7 @@ def test_enabled_loads_dflash_runtime_onto_scheduler():
     )
     fake = _FakeDFlashRuntime()
 
-    with patch(
-        "fusion_mlx.speculative.dflash.load_runtime", return_value=fake
-    ):
+    with patch("fusion_mlx.speculative.dflash.load_runtime", return_value=fake):
         asyncio.run(engine._apply_dflash())
 
     assert sched._dflash_runtime is fake
@@ -94,9 +92,7 @@ def test_none_model_settings_falls_back_to_config():
     )
     fake = _FakeDFlashRuntime()
 
-    with patch(
-        "fusion_mlx.speculative.dflash.load_runtime", return_value=fake
-    ):
+    with patch("fusion_mlx.speculative.dflash.load_runtime", return_value=fake):
         asyncio.run(engine._apply_dflash())
 
     assert sched._dflash_runtime is fake
