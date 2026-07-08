@@ -512,3 +512,116 @@ class TestVLMEngineIntegration:
             "mm_token_type_ids": mm_token_type_ids,
             "token_type_ids": token_type_ids,
         }
+
+
+class TestVisionCacheEngineWiring:
+    """Verify VLMBatchedEngine._prepare_vision_inputs hits the cache on repeat.
+
+    Proves the load-bearing claim for video/vision caching: the same image
+    (or video frame, on the non-native path) submitted twice reuses cached
+    vision features and skips the vision encoder on the second call.
+    """
+
+    def _build_engine(self, cache_enabled: bool):
+        from fusion_mlx.engines.vlm import VLMBatchedEngine
+
+        engine = VLMBatchedEngine.__new__(VLMBatchedEngine)
+        engine._processor = MagicMock()
+        engine._processor.apply_chat_template.return_value = "prompt"
+        engine._enable_thinking = None
+        engine._model_name = "test-vlm-model"
+        engine._vision_cache = VisionFeatureSSDCache(
+            cache_dir=None, max_memory_entries=8
+        )
+        engine._vision_cache_enabled = cache_enabled
+
+        compute_calls = [0]
+
+        def fake_compute(pixel_values, extra_model_inputs):
+            compute_calls[0] += 1
+            return mx.ones((4, 8), mx.float32)
+
+        def fake_split(features, num_images, extra_model_inputs):
+            return [mx.ones((4, 8), mx.float32)]
+
+        engine._compute_vision_features = fake_compute
+        engine._split_vision_features = fake_split
+
+        embed_ns = SimpleNamespace(
+            inputs_embeds=mx.array([[1.0, 2.0, 3.0]]), to_dict=lambda: {}
+        )
+        vlm_model = MagicMock()
+        vlm_model.config.model_type = "test_vlm"
+        vlm_model.get_input_embeddings.return_value = embed_ns
+        vlm_model.language_model = None
+        engine._vlm_model = vlm_model
+
+        return engine, compute_calls
+
+    def _fake_prepare_inputs(self):
+        def _prepare(processor, images=None, prompts=None):
+            return {
+                "input_ids": mx.array([[1, 2, 3]]),
+                "pixel_values": mx.zeros((1, 3, 8, 8)),
+                "attention_mask": mx.array([[1, 1, 1]]),
+            }
+
+        return _prepare
+
+    def test_repeat_image_hits_cache_and_skips_encoder(self, monkeypatch):
+        import mlx_vlm.utils as vlm_utils
+        from PIL import Image
+
+        monkeypatch.setattr(vlm_utils, "prepare_inputs", self._fake_prepare_inputs())
+
+        engine, compute_calls = self._build_engine(cache_enabled=True)
+        messages = [{"role": "user", "content": "describe"}]
+        img = Image.new("RGB", (8, 8), color=(123, 45, 67))
+
+        engine._prepare_vision_inputs(messages, [img])
+        assert compute_calls[0] == 1
+        stats_after_first = engine._vision_cache.stats
+        assert stats_after_first["misses"] >= 1
+        assert stats_after_first["hits"] == 0
+
+        engine._prepare_vision_inputs(messages, [img])
+        assert compute_calls[0] == 1
+        stats_after_second = engine._vision_cache.stats
+        assert stats_after_second["hits"] >= 1
+
+    def test_cache_disabled_does_not_consult_cache(self, monkeypatch):
+        import mlx_vlm.utils as vlm_utils
+        from PIL import Image
+
+        monkeypatch.setattr(vlm_utils, "prepare_inputs", self._fake_prepare_inputs())
+
+        engine, compute_calls = self._build_engine(cache_enabled=False)
+        messages = [{"role": "user", "content": "describe"}]
+        img = Image.new("RGB", (8, 8), color=(123, 45, 67))
+
+        engine._prepare_vision_inputs(messages, [img])
+        engine._prepare_vision_inputs(messages, [img])
+
+        # Cache branch is skipped entirely when disabled: the model's
+        # get_input_embeddings does the vision work each call, and the
+        # cache is never consulted (no hits, no misses).
+        assert engine._vlm_model.get_input_embeddings.call_count == 2
+        stats = engine._vision_cache.stats
+        assert stats["hits"] == 0
+        assert stats["misses"] == 0
+
+    def test_different_image_misses_again(self, monkeypatch):
+        import mlx_vlm.utils as vlm_utils
+        from PIL import Image
+
+        monkeypatch.setattr(vlm_utils, "prepare_inputs", self._fake_prepare_inputs())
+
+        engine, compute_calls = self._build_engine(cache_enabled=True)
+        messages = [{"role": "user", "content": "describe"}]
+        img_a = Image.new("RGB", (8, 8), color=(10, 20, 30))
+        img_b = Image.new("RGB", (8, 8), color=(200, 100, 50))
+
+        engine._prepare_vision_inputs(messages, [img_a])
+        assert compute_calls[0] == 1
+        engine._prepare_vision_inputs(messages, [img_b])
+        assert compute_calls[0] == 2

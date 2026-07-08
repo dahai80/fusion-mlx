@@ -21,6 +21,7 @@ from ..utils.image import (
 from ..utils.video import (
     DEFAULT_FPS,
     MAX_FRAMES,
+    compute_video_hash,
     extract_video_frames_smart,
     process_video_input,
     save_frames_to_temp,
@@ -358,24 +359,18 @@ class VLMBatchedEngine(BaseEngine):
                     logger.error("SpecPrefill: draft model load failed: %s", e)
 
         # TurboQuant KV cache
-        if self._model_settings is not None:
-            tq_enabled = getattr(self._model_settings, "turboquant_kv_enabled", False)
-            if tq_enabled:
-                try:
-                    from mlx_vlm.turboquant import turboquant_attention
+        self._apply_turboquant_kv()
 
-                    tq_bits = getattr(self._model_settings, "turboquant_kv_bits", 4)
-                    tq_skip = getattr(
-                        self._model_settings, "turboquant_skip_last", True
-                    )
-                    turboquant_attention(
-                        self._vlm_model.language_model,
-                        kv_bits=tq_bits,
-                        skip_last=tq_skip,
-                    )
-                    logger.info("TurboQuant KV cache enabled for VLM: %s bits", tq_bits)
-                except Exception as e:
-                    logger.warning("TurboQuant KV init failed: %s", e)
+        # N-gram self-speculative decode. The text engine (batched.py) loads
+        # _ngram_spec_state from model_settings; the VLM engine never did, so
+        # the per-request router found no loaded method and VLM text decode
+        # never speculated. Port the same loader here: n-gram spec is the
+        # safest spec method for VLM (no draft model - it matches the request's
+        # own output token stream, which VLM produces normally during decode).
+        # dflash/dspark (draft-model spec) are deliberately NOT ported here:
+        # their verify step assumes a text-only target and a VLM target carries
+        # vision encoders, so correctness is unverified - leave to a follow-up.
+        self._apply_ngram_spec()
 
         # Inject tool calling support into VLM tokenizer
         self._inject_tool_calling(self._tokenizer)
@@ -385,6 +380,89 @@ class VLMBatchedEngine(BaseEngine):
 
         register_llm_engine()
         logger.info("VLMBatchedEngine loaded: %s", self._model_name)
+
+    def _apply_turboquant_kv(self) -> None:
+        if self._model_settings is None:
+            return
+        tq_enabled = getattr(self._model_settings, "turboquant_kv_enabled", False)
+        if not tq_enabled:
+            return
+        # Mirror the text-LM path (engines/batched.py): activate TurboQuant by
+        # setting kv bits/skip/mode on the scheduler, which swaps KVCache ->
+        # TurboQuantKVCache at prefill (sched_schedule.py + sched_token.py).
+        # The previous code called mlx_vlm.turboquant.turboquant_attention, a
+        # symbol that does not exist in mlx-vlm - the ImportError was silently
+        # swallowed, so TurboQuant never applied to VLM. Default off
+        # (turboquant_kv_enabled defaults False) -> no change to default loads.
+        try:
+            scheduler = self._engine.engine.scheduler
+            tq_bits = float(getattr(self._model_settings, "turboquant_kv_bits", 4) or 4)
+            tq_skip = getattr(self._model_settings, "turboquant_skip_last", True)
+            tq_mode = getattr(
+                self._model_settings, "kv_cache_turboquant_mode", None
+            ) or getattr(scheduler, "_turboquant_kv_mode", "v4")
+            if tq_mode not in ("v4", "k8v4"):
+                logger.warning(
+                    "TurboQuant mode %r not in ('v4', 'k8v4'), defaulting to v4",
+                    tq_mode,
+                )
+                tq_mode = "v4"
+            scheduler._turboquant_kv_bits = tq_bits
+            scheduler._turboquant_skip_last = tq_skip
+            scheduler._turboquant_kv_mode = tq_mode
+            logger.info(
+                "TurboQuant KV cache enabled for VLM: %s bits (mode=%s)",
+                tq_bits,
+                tq_mode,
+            )
+        except Exception as e:
+            logger.warning(
+                "TurboQuant KV init failed for VLM %s: %s", self._model_name, e
+            )
+
+    def _apply_ngram_spec(self) -> None:
+        # Mirror engines/batched.py:272-299. A non-None model_settings value
+        # wins (explicit false disables); absent model_settings leaves the
+        # scheduler default (None) untouched. Once _ngram_spec_state is set,
+        # the per-request router (per_request_route.select_active_method,
+        # engine-type-agnostic) assigns METHOD_NGRAM to VLM requests and
+        # _try_spec_decode runs ngram_spec_step on them - same path as text.
+        if self._model_settings is None:
+            return
+        ns_enabled = getattr(self._model_settings, "ngram_spec_enabled", None)
+        if ns_enabled is None:
+            return
+        try:
+            scheduler = self._engine.engine.scheduler
+            if ns_enabled:
+                from ..scheduler.ngram_spec import NGramSpecState
+
+                scheduler._ngram_spec_state = NGramSpecState(
+                    order=getattr(self._model_settings, "ngram_spec_order", None),
+                    num_draft=getattr(
+                        self._model_settings, "ngram_spec_num_draft", None
+                    ),
+                    break_even=getattr(
+                        self._model_settings, "ngram_spec_break_even", None
+                    ),
+                )
+                logger.info(
+                    "N-gram spec enabled for VLM %s (order=%s, num_draft=%s, break_even=%s)",
+                    self._model_name,
+                    getattr(self._model_settings, "ngram_spec_order", None),
+                    getattr(self._model_settings, "ngram_spec_num_draft", None),
+                    getattr(self._model_settings, "ngram_spec_break_even", None),
+                )
+            else:
+                scheduler._ngram_spec_state = None
+                logger.info(
+                    "N-gram spec disabled for VLM %s (per-model override)",
+                    self._model_name,
+                )
+        except Exception as e:
+            logger.warning(
+                "N-gram spec init failed for VLM %s: %s", self._model_name, e
+            )
 
     async def stop(self) -> None:
         if self._engine:
@@ -824,30 +902,37 @@ class VLMBatchedEngine(BaseEngine):
         num_media = len(all_videos) + len(all_images)
         if pixel_values is not None and num_media > 0:
             call_kwargs = dict(extra_model_inputs)
-            image_hash = None
-            # Vision cache is image-hash based; skip for the native video path
-            # (ndarray frames have no stable PIL hash) and recompute each call.
-            if not all_videos and all_images:
-                image_hash = compute_image_hash(all_images)
-                if self._vision_cache is not None and self._vision_cache_enabled:
-                    cached_whole = self._vision_cache.get(image_hash, self._model_name)
-                    if cached_whole is not None:
-                        call_kwargs["cached_image_features"] = cached_whole
-                    else:
-                        try:
-                            features = self._compute_vision_features(
-                                pixel_values, extra_model_inputs
+            media_hash = None
+            # Vision features are computed from pixel_values regardless of
+            # whether they came from images or video frames, so the same cache
+            # applies. Key videos by a content-stable hash over sampled frames
+            # (compute_video_hash) and images by their PIL hash. Mixed media
+            # prefers the video hash since video frames dominate pixel_values.
+            if all_videos:
+                media_hash = compute_video_hash(all_videos)
+            elif all_images:
+                media_hash = compute_image_hash(all_images)
+            if (
+                media_hash is not None
+                and self._vision_cache is not None
+                and self._vision_cache_enabled
+            ):
+                cached_whole = self._vision_cache.get(media_hash, self._model_name)
+                if cached_whole is not None:
+                    call_kwargs["cached_image_features"] = cached_whole
+                else:
+                    try:
+                        features = self._compute_vision_features(
+                            pixel_values, extra_model_inputs
+                        )
+                        if features is not None:
+                            mx.eval(features)
+                            call_kwargs["cached_image_features"] = features
+                            self._vision_cache.put(
+                                media_hash, self._model_name, features
                             )
-                            if features is not None:
-                                mx.eval(features)
-                                call_kwargs["cached_image_features"] = features
-                                self._vision_cache.put(
-                                    image_hash, self._model_name, features
-                                )
-                        except Exception:
-                            logger.debug(
-                                "Vision feature computation failed", exc_info=True
-                            )
+                    except Exception:
+                        logger.debug("Vision feature computation failed", exc_info=True)
 
             try:
                 embed_features = self._vlm_model.get_input_embeddings(
@@ -890,7 +975,7 @@ class VLMBatchedEngine(BaseEngine):
                 token_ids,
                 embed_features.inputs_embeds,
                 extra_kwargs,
-                image_hash,
+                media_hash,
                 0,
                 [],
             )

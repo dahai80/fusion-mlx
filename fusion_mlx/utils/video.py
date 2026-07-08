@@ -3,6 +3,7 @@
 
 import atexit
 import base64
+import hashlib
 import logging
 import math
 import os
@@ -317,6 +318,28 @@ def process_video_input(video: str | dict) -> str:
         return decode_base64_video(video)
 
     raise ValueError(f"Cannot process video: {video[:50]}...")
+
+
+def compute_video_hash(video_arrays: list) -> str | None:
+    # Stable SHA256 over sampled frames (first/last + evenly spaced, up to 8)
+    # for the native Qwen video path; same video -> same hash, different video
+    # or frame count/shape -> different hash. Used as the VisionFeatureSSDCache
+    # key so video features are not recomputed across multi-turn conversations.
+    if not video_arrays:
+        return None
+    hasher = hashlib.sha256()
+    for varr in video_arrays:
+        arr = np.asarray(varr)
+        hasher.update(f"{arr.shape}{arr.dtype}".encode())
+        n = arr.shape[0] if arr.ndim >= 1 else 1
+        if n == 0:
+            continue
+        # Sample up to 8 frames evenly across the temporal axis.
+        k = min(8, n)
+        idxs = [round(i * (n - 1) / max(1, k - 1)) for i in range(k)]
+        for i in idxs:
+            hasher.update(np.ascontiguousarray(arr[i]).tobytes())
+    return hasher.hexdigest()
 
 
 _base64_image_cache: dict[str, str] = {}

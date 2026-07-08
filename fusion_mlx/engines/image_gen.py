@@ -39,6 +39,10 @@ class ImageGenEngine(BaseNonStreamingEngine):
         self._model_path = model_name
         self._flux = None
         self._kwargs = kwargs
+        # Load-time quantization (4/8-bit) reduces memory and often speeds up
+        # Flux dev. None = load at the model's native precision. Passed through
+        # to mflux Flux1(quantize=...).
+        self._quantize = kwargs.get("quantize")
 
     @property
     def model_name(self) -> str:
@@ -69,7 +73,11 @@ class ImageGenEngine(BaseNonStreamingEngine):
                 label,
                 self._model_path,
             )
-            flux = Flux1(model_config=model_config, model_path=self._model_path)
+            flux = Flux1(
+                model_config=model_config,
+                model_path=self._model_path,
+                quantize=self._quantize,
+            )
             return flux
 
         loop = asyncio.get_running_loop()
@@ -101,6 +109,8 @@ class ImageGenEngine(BaseNonStreamingEngine):
         guidance: float = 4.0,
         n_images: int = 1,
         output_format: str = "PNG",
+        scheduler: str | None = None,
+        negative_prompt: str | None = None,
         **kwargs,
     ) -> list[bytes]:
         if self._flux is None:
@@ -117,7 +127,7 @@ class ImageGenEngine(BaseNonStreamingEngine):
         def _generate():
             images: list[bytes] = []
             for i in range(max(1, n_images)):
-                gen = flux.generate_image(
+                gen_kwargs: dict[str, Any] = dict(
                     seed=base_seed + i,
                     prompt=prompt,
                     num_inference_steps=steps,
@@ -125,6 +135,11 @@ class ImageGenEngine(BaseNonStreamingEngine):
                     width=width,
                     guidance=guidance,
                 )
+                if scheduler is not None:
+                    gen_kwargs["scheduler"] = scheduler
+                if negative_prompt is not None:
+                    gen_kwargs["negative_prompt"] = negative_prompt
+                gen = flux.generate_image(**gen_kwargs)
                 buf = io.BytesIO()
                 gen.image.save(buf, format=output_format)
                 images.append(buf.getvalue())

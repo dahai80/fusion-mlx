@@ -2,6 +2,8 @@
 # Tests for POST /v1/videos/generate. Uses a minimal FastAPI app with the
 # videos router and a mocked EnginePool - no mlx-video or model loading.
 
+import base64
+import os
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -19,8 +21,24 @@ from fusion_mlx.exceptions import ModelNotFoundError
 
 # Exact kwargs the route is allowed to forward to engine.generate. A mock that
 # accepts anything silently masks route/engine signature drift, so the strict
-# side_effect below raises on any unexpected kwarg (#12).
-_VALID_GENERATE_KWARGS = {"prompt", "num_frames", "width", "height", "fps", "seed", "n"}
+# side_effect below raises on any unexpected kwarg (#12). Optional knobs are
+# forwarded only when set, so requests that omit them still produce the core 7.
+_VALID_GENERATE_KWARGS = {
+    "prompt",
+    "num_frames",
+    "width",
+    "height",
+    "fps",
+    "seed",
+    "n",
+    "image",
+    "negative_prompt",
+    "num_inference_steps",
+    "scheduler",
+    "cfg_scale",
+    "guide_scale",
+    "shift",
+}
 
 
 def _make_video_engine(byte_sequences):
@@ -204,3 +222,124 @@ class TestVideoGenerateValidation:
         client = _make_app(pool)
         resp = client.post("/v1/videos/generate", json=payload)
         assert resp.status_code == 422
+
+
+class TestVideoGenerateBackendAware:
+    def test_wan_valid_payload_passes(self):
+        pool = MagicMock()
+        pool.get_engine = AsyncMock(return_value=_make_video_engine([b"M"]))
+        client = _make_app(pool)
+        # 41 = 4k+1, 768/512 % 16 == 0 -> Wan2 constraints satisfied
+        resp = client.post(
+            "/v1/videos/generate",
+            json={"prompt": "p", "model": "wan2.1", "num_frames": 41},
+        )
+        assert resp.status_code == 200
+        pool.get_engine.assert_awaited_once_with("wan2.1")
+
+    def test_wan_invalid_num_frames_422(self):
+        pool = MagicMock()
+        pool.get_engine = AsyncMock(return_value=_make_video_engine([b"M"]))
+        client = _make_app(pool)
+        # 40 -> (40-1)%4 != 0 -> Wan2 rejects
+        resp = client.post(
+            "/v1/videos/generate",
+            json={"prompt": "p", "model": "wan2.1", "num_frames": 40},
+        )
+        assert resp.status_code == 422
+        pool.get_engine.assert_not_awaited()
+
+    def test_wan_invalid_dim_422(self):
+        pool = MagicMock()
+        pool.get_engine = AsyncMock(return_value=_make_video_engine([b"M"]))
+        client = _make_app(pool)
+        # 260 >= 256 (field ok) but 260 % 16 != 0 -> Wan2 rejects
+        resp = client.post(
+            "/v1/videos/generate",
+            json={"prompt": "p", "model": "wan2.1", "width": 260},
+        )
+        assert resp.status_code == 422
+
+    def test_ltx_default_constraints_still_enforced(self):
+        pool = MagicMock()
+        pool.get_engine = AsyncMock(return_value=_make_video_engine([b"M"]))
+        client = _make_app(pool)
+        # 16 % 8 != 1 -> LTX-2 (default model) rejects via backend validation
+        resp = client.post(
+            "/v1/videos/generate", json={"prompt": "p", "num_frames": 16}
+        )
+        assert resp.status_code == 422
+
+
+class TestVideoGenerateI2V:
+    def test_ltx_rejects_image_422(self):
+        pool = MagicMock()
+        pool.get_engine = AsyncMock(return_value=_make_video_engine([b"M"]))
+        client = _make_app(pool)
+        # LTX-2 backend does not support I2V (Phase 1) -> 422
+        resp = client.post(
+            "/v1/videos/generate",
+            json={"prompt": "p", "model": "ltx-2", "image": "/tmp/x.png"},
+        )
+        assert resp.status_code == 422
+        pool.get_engine.assert_not_awaited()
+
+    def test_wan_image_path_forwarded(self):
+        engine = _make_video_engine([b"M"])
+        pool = MagicMock()
+        pool.get_engine = AsyncMock(return_value=engine)
+        client = _make_app(pool)
+        resp = client.post(
+            "/v1/videos/generate",
+            json={"prompt": "p", "model": "wan2.1", "image": "/tmp/clip.png"},
+        )
+        assert resp.status_code == 200
+        _, kwargs = engine.generate.call_args
+        assert kwargs["image"] == "/tmp/clip.png"
+
+    def test_wan_image_data_uri_resolved_to_temp(self):
+        engine = _make_video_engine([b"M"])
+        pool = MagicMock()
+        pool.get_engine = AsyncMock(return_value=engine)
+        client = _make_app(pool)
+        b64 = base64.b64encode(b"\x89PNG fake").decode()
+        data_uri = f"data:image/png;base64,{b64}"
+        resp = client.post(
+            "/v1/videos/generate",
+            json={"prompt": "p", "model": "wan2.1", "image": data_uri},
+        )
+        assert resp.status_code == 200
+        _, kwargs = engine.generate.call_args
+        # data URI must be decoded to a temp file path, not passed through raw
+        assert "fusion_i2v_" in kwargs["image"]
+        assert not kwargs["image"].startswith("data:")
+        # temp file must be cleaned up after generation
+        assert not os.path.exists(kwargs["image"])
+
+    def test_optional_knobs_forwarded_when_set(self):
+        engine = _make_video_engine([b"M"])
+        pool = MagicMock()
+        pool.get_engine = AsyncMock(return_value=engine)
+        client = _make_app(pool)
+        resp = client.post(
+            "/v1/videos/generate",
+            json={
+                "prompt": "p",
+                "model": "wan2.1",
+                "negative_prompt": "blurry",
+                "num_inference_steps": 15,
+                "scheduler": "unipc",
+                "guide_scale": 3.5,
+                "shift": 1.0,
+            },
+        )
+        assert resp.status_code == 200
+        _, kwargs = engine.generate.call_args
+        assert kwargs["negative_prompt"] == "blurry"
+        assert kwargs["num_inference_steps"] == 15
+        assert kwargs["scheduler"] == "unipc"
+        assert kwargs["guide_scale"] == 3.5
+        assert kwargs["shift"] == 1.0
+        # unset optional knobs must not be forwarded
+        assert "image" not in kwargs
+        assert "cfg_scale" not in kwargs

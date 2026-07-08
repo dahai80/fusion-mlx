@@ -53,6 +53,71 @@ class TestContinuousBatchingBasic:
         assert config.completion_batch_size == 32
 
 
+class TestVLMContinuousBatching:
+    """VLM/video requests are first-class citizens of the batching scheduler.
+
+    The real continuous-batching Scheduler (fusion_mlx/scheduler/) admits VLM
+    requests (carrying vlm_inputs_embeds) into the same waiting queue as text
+    requests; a homogeneity guard in _schedule_waiting then keeps VLM and
+    text-only requests out of the same prefill batch. These tests verify the
+    admission path (the guard is verified by inspection in the Phase 2 notes).
+    """
+
+    def test_scheduler_accepts_vlm_requests(self):
+        import mlx.core as mx
+
+        model = MagicMock()
+        tokenizer = MagicMock()
+        tokenizer.encode = lambda x: list(range(len(x.split())))
+
+        config = SchedulerConfig(max_num_seqs=32)
+        scheduler = Scheduler(model, tokenizer, config)
+
+        embeds = mx.ones((4, 8), mx.float32)
+        for i in range(3):
+            request = Request(
+                request_id=f"vlm-{i}",
+                prompt=f"describe image {i}",
+                sampling_params=SamplingParams(max_tokens=10),
+                vlm_inputs_embeds=embeds,
+                vlm_image_hash=f"hash-{i}",
+            )
+            scheduler.add_request(request)
+
+        assert scheduler.get_num_waiting() == 3
+        assert scheduler.has_requests()
+
+    def test_vlm_and_text_requests_queue_together(self):
+        import mlx.core as mx
+
+        model = MagicMock()
+        tokenizer = MagicMock()
+        tokenizer.encode = lambda x: list(range(len(x.split())))
+
+        config = SchedulerConfig(max_num_seqs=32)
+        scheduler = Scheduler(model, tokenizer, config)
+
+        scheduler.add_request(
+            Request(
+                request_id="vlm-0",
+                prompt="describe image",
+                sampling_params=SamplingParams(max_tokens=10),
+                vlm_inputs_embeds=mx.ones((4, 8), mx.float32),
+                vlm_image_hash="h0",
+            )
+        )
+        scheduler.add_request(
+            Request(
+                request_id="txt-0",
+                prompt="plain text prompt",
+                sampling_params=SamplingParams(max_tokens=10),
+            )
+        )
+
+        assert scheduler.get_num_waiting() == 2
+        assert scheduler.has_requests()
+
+
 @pytest.mark.asyncio
 class TestContinuousBatchingIntegration:
     """Integration tests requiring actual model loading."""
