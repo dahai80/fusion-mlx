@@ -265,10 +265,22 @@ class NGramSpecState:
 
 
 def _snapshot_non_trimmable(prompt_cache: list) -> list | None:
+    try:
+        from mlx_lm.models.cache import ArraysCache
+    except Exception:
+        ArraysCache = None
     snapshots = []
     for i, c in enumerate(prompt_cache):
-        if hasattr(c, "is_trimmable") and not c.is_trimmable():
+        non_trimmable = ArraysCache is not None and isinstance(c, ArraysCache)
+        if not non_trimmable and hasattr(c, "is_trimmable"):
+            non_trimmable = not c.is_trimmable()
+        if non_trimmable:
             snapshots.append((i, copy.deepcopy(c)))
+    if snapshots:
+        logger.debug(
+            "ngram_spec: snapshotted %d non-trimmable cache(s) for rollback",
+            len(snapshots),
+        )
     return snapshots if snapshots else None
 
 

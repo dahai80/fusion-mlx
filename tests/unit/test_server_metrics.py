@@ -147,7 +147,7 @@ class TestServerMetrics:
         )
         d = metrics.to_dict()
         assert d["total_requests"] == 1
-        assert d["total_tokens_prompt"] == 100
+        assert d["total_prompt_tokens"] == 100
         assert d["total_tokens_generated"] == 50
         assert "test" in d["model_stats"]
         assert "_lock" not in d

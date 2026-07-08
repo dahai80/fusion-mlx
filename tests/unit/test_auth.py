@@ -77,7 +77,7 @@ class _MockRequest(FastAPIRequest):
     """Minimal Request subclass that passes isinstance check without ASGI setup."""
 
     def __init__(self, token=None, auth_header=""):
-        self.scope = {}
+        self.scope = {"query_string": b"", "type": "http"}
         self._cookies = MagicMock()
         self._cookies.get.return_value = token
         self._headers = MagicMock()

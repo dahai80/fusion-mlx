@@ -62,6 +62,7 @@ def _make_request(cookies=None, auth_header=None):
         req.headers = {"authorization": auth_header}
     else:
         req.headers = {}
+    req.query_params = {}
     return req
 
 
