@@ -34,6 +34,7 @@ ModelType = Literal[
     "audio_tts",
     "audio_sts",
     "image",
+    "video",
 ]
 EngineType = Literal[
     "batched",
@@ -44,6 +45,7 @@ EngineType = Literal[
     "audio_tts",
     "audio_sts",
     "image_gen",
+    "video_gen",
 ]
 
 # Known VLM (Vision-Language Model) types from mlx-vlm
@@ -554,6 +556,8 @@ def detect_model_type(model_path: Path) -> ModelType:
     """
     if _is_image_model(model_path):
         return "image"
+    if _is_video_model(model_path):
+        return "video"
 
     config_path = model_path / "config.json"
     if not config_path.exists():
@@ -920,30 +924,43 @@ def _is_adapter_dir(path: Path) -> bool:
     return (path / "adapter_config.json").exists()
 
 
-def _is_image_model(path: Path) -> bool:
-    """Check if a directory is a Flux/diffusers image-generation model.
-
-    Flux models ship a ``configuration.json`` manifest with
-    ``"task": "text-to-image"`` and diffusers subdirectories
-    (transformer/vae/text_encoder) instead of a top-level ``config.json``,
-    so the standard LLM discovery path skips them.
-    """
+def _is_task_model(path: Path, task: str) -> bool:
+    # Shared manifest check for mflux/mlx-video models, which ship a
+    # ``configuration.json`` with ``"task": ...`` and diffusers subdirectories
+    # instead of a top-level ``config.json``.
     manifest = path / "configuration.json"
     if not manifest.exists():
         return False
     try:
         with open(manifest) as f:
             data = json.load(f)
-        return data.get("task") == "text-to-image"
+        return data.get("task") == task
     except (OSError, json.JSONDecodeError):
         return False
+
+
+def _is_image_model(path: Path) -> bool:
+    return _is_task_model(path, "text-to-image")
+
+
+def _is_video_model(path: Path) -> bool:
+    # Require a diffusers-style subdir (vae/transformer/audio_vae) in addition
+    # to the task manifest, so an LLM dir that happens to carry a stray
+    # text-to-video configuration.json is not misclassified as a video engine.
+    # Real LTX-2/Wan models ship these subdirs; LLM dirs do not.
+    if not _is_task_model(path, "text-to-video"):
+        return False
+    return any((path / sub).is_dir() for sub in ("vae", "transformer", "audio_vae"))
 
 
 def _is_model_dir(path: Path) -> bool:
     """Check if a directory contains a valid model (config.json or image manifest)."""
     has_config = (path / "config.json").exists()
     has_image_manifest = _is_image_model(path)
-    return (has_config or has_image_manifest) and not _is_adapter_dir(path)
+    has_video_manifest = _is_video_model(path)
+    return (
+        has_config or has_image_manifest or has_video_manifest
+    ) and not _is_adapter_dir(path)
 
 
 def model_directory_access_error(path: Path) -> str | None:
@@ -1149,6 +1166,8 @@ def _register_model(
             engine_type = "audio_sts"
         elif model_type == "image":
             engine_type = "image_gen"
+        elif model_type == "video":
+            engine_type = "video_gen"
         else:
             engine_type = "batched"
         estimated_size = estimate_model_size(model_dir)

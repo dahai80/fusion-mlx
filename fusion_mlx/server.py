@@ -67,6 +67,8 @@ from .api.openclaw_routes import set_openclaw_agent_pool
 from .api.recommend_routes import router as recommend_router
 from .api.rerank_routes import router as rerank_router
 from .api.rerank_routes import set_rerank_context
+from .api.videos_routes import router as videos_router
+from .api.videos_routes import set_videos_context
 from .config import ServerConfig
 from .engine_core import AsyncEngineCore
 from .pool import EnginePool, ProcessMemoryEnforcer
@@ -479,6 +481,7 @@ class Server:
         app.include_router(anthropic_router)
         app.include_router(audio_router)
         app.include_router(images_router)
+        app.include_router(videos_router)
         app.include_router(mcp_router)
         app.include_router(openclaw_router)
         app.include_router(recommend_router)
@@ -729,6 +732,7 @@ class Server:
         set_openai_context(self.pool, self.request_router)
         set_anthropic_context(self.pool)
         set_images_context(self.pool)
+        set_videos_context(self.pool)
         set_audio_context(self.pool)
         set_openclaw_agent_pool(self.pool)
         set_mcp_manager_getter(lambda: None)  # TODO: wire MCP manager

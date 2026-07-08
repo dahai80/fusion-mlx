@@ -13,6 +13,7 @@ from .reranker import RerankerEngine
 from .sts import STSEngine
 from .stt import STTEngine
 from .tts import TTSEngine
+from .video import VideoGenEngine
 from .vlm import VLMBatchedEngine
 
 __all__ = [
@@ -27,4 +28,5 @@ __all__ = [
     "TTSEngine",
     "STSEngine",
     "ImageGenEngine",
+    "VideoGenEngine",
 ]

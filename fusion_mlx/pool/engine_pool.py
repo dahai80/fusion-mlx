@@ -37,6 +37,7 @@ from ..engines.reranker import RerankerEngine
 from ..engines.sts import STSEngine
 from ..engines.stt import STTEngine
 from ..engines.tts import TTSEngine
+from ..engines.video import VideoGenEngine
 from ..engines.vlm import VLMBatchedEngine
 from ..exceptions import (
     AdapterPathError,
@@ -68,6 +69,7 @@ class EngineEntry:
         "audio_tts",
         "audio_sts",
         "image",
+        "video",
     ]  # Model type
     engine_type: Literal[
         "batched",
@@ -79,6 +81,7 @@ class EngineEntry:
         "audio_tts",
         "audio_sts",
         "image_gen",
+        "video_gen",
     ]  # Engine type to use
     estimated_size: int  # Pre-calculated from safetensors (bytes)
     actual_size: int | None = None  # Observed process-memory delta after load settles
@@ -103,6 +106,7 @@ class EngineEntry:
         | STTEngine
         | STSEngine
         | TTSEngine
+        | VideoGenEngine
         | None
     ) = None  # Loaded engine instance
     last_access: float = 0.0  # Timestamp for LRU (0 if never loaded)
@@ -436,6 +440,7 @@ class EnginePool:
         "audio_tts": "audio_tts",
         "audio_sts": "audio_sts",
         "image": "image_gen",
+        "video": "video_gen",
     }
 
     def apply_settings_overrides(self, settings_manager: ModelSettingsManager) -> None:
@@ -1531,6 +1536,8 @@ class EnginePool:
                     )
                 elif entry.engine_type == "image_gen":
                     engine = ImageGenEngine(model_name=entry.model_path)
+                elif entry.engine_type == "video_gen":
+                    engine = VideoGenEngine(model_name=entry.model_path)
                 else:
                     engine = BatchedEngine(
                         model_name=entry.model_path,

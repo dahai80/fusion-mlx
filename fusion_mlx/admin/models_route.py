@@ -271,6 +271,7 @@ async def update_model_settings(
             "audio_tts",
             "audio_sts",
             "image",
+            "video",
         }
         # Treat empty string as None (auto-detect)
         override_value = request.model_type_override or None
@@ -290,6 +291,7 @@ async def update_model_settings(
             "audio_tts": "audio_tts",
             "audio_sts": "audio_sts",
             "image": "image_gen",
+            "video": "video_gen",
         }
         if override_value:
             entry.model_type = override_value
@@ -820,6 +822,7 @@ def _save_model_settings_fallback(model_id: str, request: ModelSettingsRequest) 
             "audio_tts",
             "audio_sts",
             "image",
+            "video",
         }
         override_value = request.model_type_override or None
         if override_value is not None and override_value not in valid_types:

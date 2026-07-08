@@ -56,6 +56,7 @@ _immortal_mlx_streams: list = []
 _executor_config: dict[str, dict[str, Any]] = {
     "llm": {"max_workers": 1, "prefix": "mlx-llm"},
     "image": {"max_workers": 1, "prefix": "mlx-image"},
+    "video": {"max_workers": 1, "prefix": "mlx-video"},
     "audio": {"max_workers": 2, "prefix": "mlx-audio"},
     "io": {"max_workers": 2, "prefix": "mlx-io"},
 }
