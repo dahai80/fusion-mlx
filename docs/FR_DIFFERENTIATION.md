@@ -133,8 +133,8 @@ at all three construction sites. 11 unit tests in `tests/unit/test_lora_path.py`
 
 **Runtime hot-swap: ✅ landed (path A' — adapter-keyed engine cache).**
 Per-request LoRA adapter hot-swap is now served via the OpenAI-compatible
-`adapters` field on `ChatCompletionRequest` / `CompletionRequest` (mlx-lm
-server-compatible). `get_engine(model, adapter_path=...)` derives an engine
+`adapters` field on `ChatCompletionRequest` / `CompletionRequest` and the
+Anthropic `MessagesRequest` (mlx-lm server-compatible). `get_engine(model, adapter_path=...)` derives an engine
 entry keyed by `(model_id, adapter_path)` (`f"{model_id}::lora::{adapter_path}"`
 when an adapter is set, plain `model_id` otherwise), lazily creating a derived
 `EngineEntry` that clones the base model's path/type/size/config and loads a
@@ -142,7 +142,8 @@ fresh `BatchedEngine(... lora_path=adapter_path)`. Each adapter thus gets its
 own loaded instance, reused across requests via the existing LRU; release
 decrements the derived entry's `in_use`. An `FUSION_MAX_ADAPTER_ENGINES` cap
 (default 4) LRU-evicts idle derived adapter engines. 13 unit tests in
-`tests/unit/test_lora_hotswap.py`.
+`tests/unit/test_lora_hotswap.py`; Anthropic route threading covered by 5
+tests in `tests/unit/test_anthropic_adapter_wiring.py`.
 
 > Premise correction: an earlier draft of this section claimed "mlx_lm fuses
 > the adapter into weights at load time, so hot-swap needs an unload+reload
