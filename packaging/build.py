@@ -28,7 +28,7 @@ WHEELS_DIR = SCRIPT_DIR / "_wheels"
 
 # pyproject sections merged into the framework-mlx-base layer, in order.
 # Later sources override earlier on PEP 503 normalized name collisions.
-LAYER_REQUIREMENTS_SOURCES = ["project", "grammar", "mcp"]
+LAYER_REQUIREMENTS_SOURCES = ["project", "grammar", "mcp", "image"]
 
 # Git deps shown in the admin dashboard "About" panel.
 ENGINE_COMMIT_REPOS = {
