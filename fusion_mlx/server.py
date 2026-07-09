@@ -13,6 +13,7 @@ Wires together all API routes:
 
 import asyncio
 import logging
+import warnings
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
@@ -658,6 +659,17 @@ class Server:
 
     async def _startup(self):
         """Initialize engine pool, routers, and load models."""
+        warnings.filterwarnings(
+            "ignore",
+            message="You are using a model of type .* to instantiate",
+            category=UserWarning,
+        )
+        warnings.filterwarnings(
+            "ignore",
+            message="resource_tracker: There appear to be .* leaked semaphore",
+            category=UserWarning,
+        )
+
         # Telemetry: check consent state at server startup so we can log
         # the current status for operators auditing their install.
         try:
