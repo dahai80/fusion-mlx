@@ -39,6 +39,81 @@ def _human_size(n: int) -> str:
     return f"{n:.1f} PB"
 
 
+_VLM_SANITIZE_PATCHED = False
+_VLM_ORIGINAL_SANITIZES: dict = {}
+
+
+def _patch_vlm_sanitize():
+    """Monkey-patch mlx_vlm model sanitize() to guard RMSNorm +1.0 shift.
+
+    Upstream bug (mlx-vlm): qwen3_5/qwen3_5_moe/minicpmv4_6 sanitize()
+    unconditionally adds 1.0 to RMSNorm weights.  The correct behaviour
+    (matching mlx_lm) is to only shift when the checkpoint stores
+    gamma-1 (indicated by MTP weights or unsanitized conv1d axes).
+
+    See: https://github.com/Blaizzy/mlx-vlm/issues/XXXX
+    """
+    global _VLM_SANITIZE_PATCHED
+    if _VLM_SANITIZE_PATCHED:
+        return
+
+    _AFFECTED_MODELS = ("qwen3_5", "qwen3_5_moe", "minicpmv4_6")
+
+    for model_name in _AFFECTED_MODELS:
+        try:
+            mod = __import__(
+                f"mlx_vlm.models.{model_name}.{model_name}", fromlist=["Model"]
+            )
+            cls = getattr(mod, "Model", None)
+            if cls is None or not hasattr(cls, "sanitize"):
+                continue
+
+            if cls in _VLM_ORIGINAL_SANITIZES:
+                original = _VLM_ORIGINAL_SANITIZES[cls]
+            else:
+                original = cls.sanitize
+                _VLM_ORIGINAL_SANITIZES[cls] = original
+
+            def _make_patched(orig):
+                def _safe_sanitize(self, weights):
+                    has_mtp = any("mtp." in k for k in weights)
+                    has_unsanitized_conv1d = any(
+                        "conv1d.weight" in k and v.shape[-1] != 1
+                        for k, v in weights.items()
+                    )
+                    should_shift = has_mtp or has_unsanitized_conv1d
+                    result = orig(self, weights)
+                    if should_shift:
+                        return result
+                    norm_keys = (
+                        ".input_layernorm.weight",
+                        ".post_attention_layernorm.weight",
+                        "model.norm.weight",
+                        ".q_norm.weight",
+                        ".k_norm.weight",
+                    )
+                    undo_count = 0
+                    for k, v in result.items():
+                        if any(k.endswith(s) for s in norm_keys) and v.ndim == 1:
+                            result[k] = v - 1.0
+                            undo_count += 1
+                    if undo_count:
+                        logger.info(
+                            "VLM sanitize: undid incorrect +1.0 on %d norm weights "
+                            "(checkpoint has no MTP/unsanitized-conv1d)",
+                            undo_count,
+                        )
+                    return result
+                return _safe_sanitize
+
+            cls.sanitize = _make_patched(original)
+            logger.debug("Patched mlx_vlm sanitize for %s", model_name)
+        except (ImportError, AttributeError) as exc:
+            logger.debug("No sanitize patch needed for %s: %s", model_name, exc)
+
+    _VLM_SANITIZE_PATCHED = True
+
+
 OCR_MODEL_TYPES = {"deepseekocr", "deepseekocr_2", "dots_ocr", "glm_ocr"}
 
 OCR_MODEL_PROMPTS: dict[str, str] = {
@@ -250,6 +325,8 @@ class VLMBatchedEngine(BaseEngine):
     async def start(self) -> None:
         if self._loaded:
             return
+
+        _patch_vlm_sanitize()
 
         from mlx_vlm.utils import load as vlm_load
 
@@ -642,6 +719,8 @@ class VLMBatchedEngine(BaseEngine):
         self,
         messages: list[dict[str, Any]],
         images: list[Any],
+        tools: list[dict] | None = None,
+        chat_template_kwargs: dict[str, Any] | None = None,
     ) -> tuple:
         """Run VLM preprocessing: tokenize, preprocess images, compute embeddings, cache.
 
@@ -659,8 +738,13 @@ class VLMBatchedEngine(BaseEngine):
 
         # Apply chat template
         template_kwargs = {"tokenize": False, "add_generation_prompt": True}
+        if tools:
+            from ..api.tool_calling import convert_tools_for_template
+            template_kwargs["tools"] = convert_tools_for_template(tools)
         if self._enable_thinking is not None:
             template_kwargs["enable_thinking"] = self._enable_thinking
+        if chat_template_kwargs:
+            template_kwargs.update(chat_template_kwargs)
 
         template_target = self._processor
         if not hasattr(template_target, "apply_chat_template"):
@@ -685,9 +769,32 @@ class VLMBatchedEngine(BaseEngine):
 
         try:
             prompt = template_target.apply_chat_template(messages, **template_kwargs)
-        except TypeError:
-            template_kwargs.pop("enable_thinking", None)
-            prompt = template_target.apply_chat_template(messages, **template_kwargs)
+        except TypeError as e:
+            logger.warning(
+                "VLM apply_chat_template TypeError: %s, kwargs_keys=%s — surgical fallback preserving tools",
+                e,
+                list(template_kwargs.keys()),
+            )
+            fallback_kwargs = dict(template_kwargs)
+            if chat_template_kwargs:
+                for key in chat_template_kwargs:
+                    fallback_kwargs.pop(key, None)
+            for key in ("enable_thinking", "preserve_thinking"):
+                fallback_kwargs.pop(key, None)
+            if fallback_kwargs != template_kwargs:
+                try:
+                    prompt = template_target.apply_chat_template(
+                        messages, **fallback_kwargs
+                    )
+                except TypeError:
+                    fallback_kwargs.pop("tools", None)
+                    prompt = template_target.apply_chat_template(
+                        messages, **fallback_kwargs
+                    )
+            else:
+                template_kwargs.pop("tools", None)
+                template_kwargs.pop("enable_thinking", None)
+                prompt = template_target.apply_chat_template(messages, **template_kwargs)
 
         # Tokenize text and preprocess images
         inputs = prepare_inputs(
@@ -1122,7 +1229,9 @@ class VLMBatchedEngine(BaseEngine):
             image_hash,
             cache_key_start,
             cache_key_ranges,
-        ) = self._prepare_vision_inputs(text_messages, images)
+        ) = self._prepare_vision_inputs(
+            text_messages, images, tools=tools, chat_template_kwargs=kwargs.get("chat_template_kwargs")
+        )
         if images:
             mx.synchronize()
             mx.clear_cache()

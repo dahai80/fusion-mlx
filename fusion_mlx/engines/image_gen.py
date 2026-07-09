@@ -85,7 +85,7 @@ class ImageGenEngine(BaseNonStreamingEngine):
 
         loop = asyncio.get_running_loop()
         self._flux = await asyncio.wait_for(
-            loop.run_in_executor(get_executor("io"), _load), timeout=180.0
+            loop.run_in_executor(get_executor("image"), _load), timeout=180.0
         )
         logger.info("ImageGen engine loaded: %s", self._model_name)
 

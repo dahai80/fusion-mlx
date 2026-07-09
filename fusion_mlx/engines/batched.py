@@ -516,12 +516,9 @@ class BatchedEngine(BaseEngine):
                 messages.insert(
                     0, {"role": "system", "content": "You are a helpful assistant."}
                 )
-            logger.info(
-                "Chat template: roles=%s",
-                [m.get("role") for m in messages[:5]],
-            )
             try:
-                return self._tokenizer.apply_chat_template(messages, **template_kwargs)
+                result = self._tokenizer.apply_chat_template(messages, **template_kwargs)
+                return result
             except Exception as e:
                 if "system message" in str(e).lower():
                     logger.error(
@@ -534,9 +531,36 @@ class BatchedEngine(BaseEngine):
                         messages, **template_kwargs
                     )
                 if isinstance(e, TypeError):
+                    logger.warning(
+                        "apply_chat_template TypeError: %s, kwargs_keys=%s — attempting surgical fallback preserving tools",
+                        e,
+                        list(template_kwargs.keys()),
+                    )
+                    fallback_kwargs = dict(template_kwargs)
                     if chat_template_kwargs:
                         for key in chat_template_kwargs:
-                            template_kwargs.pop(key, None)
+                            fallback_kwargs.pop(key, None)
+                    for key in ("enable_thinking", "preserve_thinking"):
+                        fallback_kwargs.pop(key, None)
+                    if fallback_kwargs != template_kwargs:
+                        try:
+                            result = self._tokenizer.apply_chat_template(
+                                messages, **fallback_kwargs
+                            )
+                            logger.info(
+                                "Surgical fallback OK: len=%d, has_tools=%s",
+                                len(result),
+                                "tools" in fallback_kwargs,
+                            )
+                            return result
+                        except TypeError:
+                            logger.warning(
+                                "Surgical fallback still failed, stripping tools as last resort"
+                            )
+                            fallback_kwargs.pop("tools", None)
+                            return self._tokenizer.apply_chat_template(
+                                messages, **fallback_kwargs
+                            )
                     template_kwargs.pop("tools", None)
                     template_kwargs.pop("enable_thinking", None)
                     template_kwargs.pop("preserve_thinking", None)
