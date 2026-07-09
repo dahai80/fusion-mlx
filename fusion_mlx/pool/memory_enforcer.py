@@ -880,6 +880,8 @@ class ProcessMemoryEnforcer:
                     continue
                 if getattr(engine, "is_diffusion_model", False):
                     continue
+                if getattr(engine, "_non_streaming_engine", False):
+                    continue
                 engine_type = type(engine).__name__
                 if engine_type not in self._scheduler_resolve_warned:
                     self._scheduler_resolve_warned.add(engine_type)

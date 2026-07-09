@@ -248,6 +248,8 @@ class BaseEngine(ABC):
 
 
 class BaseNonStreamingEngine(ABC):
+    _non_streaming_engine = True
+
     def __init__(self):
         self._active_count = 0
         self._active_lock = threading.Lock()
