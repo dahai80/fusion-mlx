@@ -85,6 +85,7 @@ class ServerMetrics:
         completion_tokens: int = 0,
         cached_tokens: int = 0,
         prefill_duration: float = 0.0,
+        generation_duration: float = 0.0,
         model_id: str | None = None,
     ) -> None:
         with self._lock:
@@ -111,6 +112,12 @@ class ServerMetrics:
                     tps = prompt_tokens / prefill_duration
                     old_avg = stats["avg_prefill_tps"]
                     stats["avg_prefill_tps"] = (
+                        old_avg * (stats["requests"] - 1) + tps
+                    ) / stats["requests"]
+                if generation_duration > 0 and completion_tokens > 0:
+                    tps = completion_tokens / generation_duration
+                    old_avg = stats["avg_generation_tps"]
+                    stats["avg_generation_tps"] = (
                         old_avg * (stats["requests"] - 1) + tps
                     ) / stats["requests"]
 
@@ -173,5 +180,25 @@ _metrics = ServerMetrics()
 
 
 def get_server_metrics() -> ServerMetrics:
-    """Get the global server metrics instance."""
     return _metrics
+
+
+def record_llm_metrics(
+    prompt_tokens: int = 0,
+    completion_tokens: int = 0,
+    cached_tokens: int = 0,
+    prefill_duration: float = 0.0,
+    generation_duration: float = 0.0,
+    model_id: str | None = None,
+) -> None:
+    try:
+        get_server_metrics().record_request_complete(
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
+            cached_tokens=cached_tokens,
+            prefill_duration=prefill_duration,
+            generation_duration=generation_duration,
+            model_id=model_id,
+        )
+    except Exception as exc:
+        logger.debug("Failed to record LLM metrics for %s: %s", model_id, exc)

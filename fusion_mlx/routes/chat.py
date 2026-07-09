@@ -62,6 +62,7 @@ from ..api.utils import (
 )
 from ..config import get_config
 from ..engine import GenerationOutput
+from ..server_metrics import record_llm_metrics
 from ..middleware.auth import check_rate_limit, verify_api_key
 from ..service.helpers import (
     _TOOL_USE_REQUIRED_SUFFIX,
@@ -2826,6 +2827,15 @@ async def _create_chat_completion_impl(
         f"Chat completion: {output.completion_tokens} tokens in {elapsed:.2f}s ({tokens_per_sec:.1f} tok/s)"
     )
 
+    record_llm_metrics(
+        prompt_tokens=output.prompt_tokens or 0,
+        completion_tokens=output.completion_tokens or 0,
+        cached_tokens=getattr(output, "cached_tokens", 0) or 0,
+        prefill_duration=0.0,
+        generation_duration=elapsed,
+        model_id=cfg.model_name,
+    )
+
     # H-06: when the client asked for strict json_schema mode and we
     # routed through guided decoding, validate the buffered text
     # against the schema. Outlines should make this unreachable; a
@@ -4385,6 +4395,15 @@ async def stream_chat_completion(
         tokens_per_sec = completion_tokens / elapsed if elapsed > 0 else 0
         logger.info(
             f"Chat completion (stream): {completion_tokens} tokens in {elapsed:.2f}s ({tokens_per_sec:.1f} tok/s)"
+        )
+
+        record_llm_metrics(
+            prompt_tokens=prompt_tokens or 0,
+            completion_tokens=completion_tokens or 0,
+            cached_tokens=cached_tokens or 0,
+            prefill_duration=0.0,
+            generation_duration=elapsed,
+            model_id=cfg.model_name,
         )
 
         # Send final chunk with usage if requested. Mirror non-streaming

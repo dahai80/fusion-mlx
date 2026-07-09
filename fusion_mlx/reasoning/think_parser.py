@@ -1319,7 +1319,7 @@ class BaseThinkingReasoningParser(ReasoningParser):
 
         result_content = result_content.strip() or None
 
-        logger.warning(
+        logger.debug(
             "Promoted %d tool_call block(s) from reasoning to content "
             "(%d closed, %d unclosed)",
             promoted_count,
@@ -1423,7 +1423,7 @@ class BaseThinkingReasoningParser(ReasoningParser):
                 flushed = self._tool_call_buffer
                 self._tool_call_buffer = ""
                 self._in_tool_call = False
-                logger.warning(
+                logger.debug(
                     "Promoted unclosed streaming tool_call "
                     "(think ended before tool_call closed)"
                 )
@@ -1480,7 +1480,7 @@ class BaseThinkingReasoningParser(ReasoningParser):
                 out_content.append(promoted)
                 self._tool_call_buffer = ""
                 self._in_tool_call = False
-                logger.warning("Promoted streaming tool_call block from reasoning")
+                logger.debug("Promoted streaming tool_call block from reasoning")
                 remaining = tail
                 continue
             # Not buffering — look for <tool_call> in remaining.
@@ -1567,7 +1567,7 @@ class BaseThinkingReasoningParser(ReasoningParser):
             content_flush = self._tool_call_buffer
             self._tool_call_buffer = ""
             self._in_tool_call = False
-            logger.warning("Promoted unclosed streaming tool_call at stream end")
+            logger.debug("Promoted unclosed streaming tool_call at stream end")
         if reasoning_flush is None and content_flush is None:
             return None
         return DeltaMessage(reasoning=reasoning_flush, content=content_flush)
