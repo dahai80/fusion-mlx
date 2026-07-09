@@ -293,55 +293,22 @@ async def _run_anthropic_messages(
 
 async def _stream_anthropic_generator(
     req: AnthropicMessagesRequest,
+    engine: Any,
+    model_name: str,
+    adapter_path: str | None,
 ) -> AsyncIterator[str]:
-    """Generate SSE events for a streaming Anthropic messages request."""
-    if _pool is None:
-        raise HTTPException(450, "Engine pool not initialized")
+    """Generate SSE events for a streaming Anthropic messages request.
 
+    Engine must be resolved BEFORE calling this generator (by the route
+    handler) so that ModelNotFoundError / ModelLoadingError become proper
+    HTTP status codes instead of unhandled ASGI 500s.
+    """
     import time as _time
 
-    from ..server import resolve_model_id
-
     _start = _time.perf_counter()
-    model_name = resolve_model_id(req.model)
-    adapter_path = getattr(req, "adapters", None)
 
     async def _release() -> None:
         await _pool.release_engine(model_name, adapter_path=adapter_path)
-
-    engine = await _pool.get_engine(model_name, _lease=True, adapter_path=adapter_path)
-    if engine is None:
-        await _release()
-        raise HTTPException(404, f"Model {model_name} not available")
-
-    # Reject multimodal content on text-only models
-    if not getattr(engine, "is_mllm", False):
-        for msg in req.messages:
-            content = getattr(msg, "content", "") if msg else None
-            if isinstance(content, list):
-                for part in content:
-                    pt = (
-                        part.get("type", "")
-                        if isinstance(part, dict)
-                        else getattr(part, "type", "")
-                    )
-                    if pt in (
-                        "image_url",
-                        "image",
-                        "video",
-                        "video_url",
-                        "audio_url",
-                        "audio",
-                        "input_audio",
-                    ):
-                        await _release()
-                        raise HTTPException(
-                            status_code=400,
-                            detail=(
-                                f"Model '{model_name}' does not support "
-                                "image, video, or audio inputs."
-                            ),
-                        )
 
     tokenizer = getattr(engine, "_tokenizer", None) or getattr(
         engine, "tokenizer", None
@@ -488,8 +455,55 @@ async def anthropic_messages(request: AnthropicMessagesRequest) -> Any:
     )
     try:
         if request.stream:
+            # Resolve engine BEFORE creating StreamingResponse so that
+            # ModelNotFoundError / ModelLoadingError become proper HTTP
+            # 404/503 instead of unhandled ASGI 500 after stream starts.
+            from ..server import resolve_model_id
+
+            model_name = resolve_model_id(request.model)
+            adapter_path = getattr(request, "adapters", None)
+            engine = await _pool.get_engine(
+                model_name, _lease=True, adapter_path=adapter_path
+            )
+            if engine is None:
+                await _pool.release_engine(model_name, adapter_path=adapter_path)
+                raise HTTPException(404, f"Model {model_name} not available")
+
+            # Reject multimodal content on text-only models
+            if not getattr(engine, "is_mllm", False):
+                for msg in request.messages:
+                    content = getattr(msg, "content", "") if msg else None
+                    if isinstance(content, list):
+                        for part in content:
+                            pt = (
+                                part.get("type", "")
+                                if isinstance(part, dict)
+                                else getattr(part, "type", "")
+                            )
+                            if pt in (
+                                "image_url",
+                                "image",
+                                "video",
+                                "video_url",
+                                "audio_url",
+                                "audio",
+                                "input_audio",
+                            ):
+                                await _pool.release_engine(
+                                    model_name, adapter_path=adapter_path
+                                )
+                                raise HTTPException(
+                                    status_code=400,
+                                    detail=(
+                                        f"Model '{model_name}' does not support "
+                                        "image, video, or audio inputs."
+                                    ),
+                                )
+
             return StreamingResponse(
-                _stream_anthropic_generator(request),
+                _stream_anthropic_generator(
+                    request, engine, model_name, adapter_path
+                ),
                 media_type="text/event-stream",
                 headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
             )

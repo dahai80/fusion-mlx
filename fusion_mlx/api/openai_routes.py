@@ -279,60 +279,27 @@ async def _run_chat(request: ChatCompletionRequest) -> ChatCompletionResponse:
         await _release()
 
 
-async def _stream_chat_generator(request: ChatCompletionRequest) -> AsyncIterator[str]:
-    """Generate SSE events for a streaming chat completion."""
-    if _pool is None:
-        raise HTTPException(450, "Engine pool not initialized")
+async def _stream_chat_generator(
+    request: ChatCompletionRequest,
+    engine: Any,
+    model_name: str,
+    adapter_path: str | None,
+) -> AsyncIterator[str]:
+    """Generate SSE events for a streaming chat completion.
 
-    from ..server import resolve_model_id
-
+    Engine must be resolved BEFORE calling this generator (by _stream_chat)
+    so that ModelNotFoundError / ModelLoadingError become proper HTTP
+    status codes instead of unhandled ASGI 500s.
+    """
     _start = time.perf_counter()
-    model_name = resolve_model_id(request.model)
-    adapter_path = getattr(request, "adapters", None)
 
     async def _release() -> None:
         await _pool.release_engine(model_name, adapter_path=adapter_path)
-
-    engine = await _pool.get_engine(model_name, _lease=True, adapter_path=adapter_path)
-    if engine is None:
-        await _release()
-        raise HTTPException(404, f"Model {model_name} not available")
-
-    # Reject multimodal content on text-only models
-    if not getattr(engine, "is_mllm", False):
-        for msg in request.messages:
-            content = getattr(msg, "content", "")
-            if isinstance(content, list):
-                for part in content:
-                    pt = (
-                        part.get("type", "")
-                        if isinstance(part, dict)
-                        else getattr(part, "type", "")
-                    )
-                    if pt in (
-                        "image_url",
-                        "image",
-                        "video",
-                        "video_url",
-                        "audio_url",
-                        "audio",
-                        "input_audio",
-                    ):
-                        await _release()
-                        raise HTTPException(
-                            status_code=400,
-                            detail=(
-                                f"Model '{model_name}' does not support "
-                                "image, video, or audio inputs."
-                            ),
-                        )
 
     messages = _messages_for_engine(request.messages, getattr(engine, "is_mllm", False))
     sampling = _build_sampling_params(request)
     request_id = f"chatcmpl-{uuid.uuid4().hex[:12]}"
 
-    # Create StreamingJSONEncoder for fast-path SSE encoding (avoids per-token
-    # Pydantic model construction + model_dump_json overhead)
     from .streaming import StreamingJSONEncoder
 
     encoder = StreamingJSONEncoder(
@@ -508,9 +475,58 @@ async def _stream_chat_generator(request: ChatCompletionRequest) -> AsyncIterato
 
 
 async def _stream_chat(request: ChatCompletionRequest) -> StreamingResponse:
-    """Execute a streaming chat completion."""
+    """Execute a streaming chat completion.
+
+    Resolves the engine BEFORE creating the StreamingResponse so that
+    ModelNotFoundError / ModelLoadingError / etc. are caught by the route
+    handler's exception handlers and become proper HTTP 404/503 responses
+    instead of unhandled ASGI 500 errors after the stream has started.
+    """
+    if _pool is None:
+        raise HTTPException(450, "Engine pool not initialized")
+
+    from ..server import resolve_model_id
+
+    model_name = resolve_model_id(request.model)
+    adapter_path = getattr(request, "adapters", None)
+
+    # Resolve engine first — exceptions propagate to route handler
+    engine = await _pool.get_engine(model_name, _lease=True, adapter_path=adapter_path)
+    if engine is None:
+        await _pool.release_engine(model_name, adapter_path=adapter_path)
+        raise HTTPException(404, f"Model {model_name} not available")
+
+    # Reject multimodal content on text-only models
+    if not getattr(engine, "is_mllm", False):
+        for msg in request.messages:
+            content = getattr(msg, "content", "")
+            if isinstance(content, list):
+                for part in content:
+                    pt = (
+                        part.get("type", "")
+                        if isinstance(part, dict)
+                        else getattr(part, "type", "")
+                    )
+                    if pt in (
+                        "image_url",
+                        "image",
+                        "video",
+                        "video_url",
+                        "audio_url",
+                        "audio",
+                        "input_audio",
+                    ):
+                        await _pool.release_engine(model_name, adapter_path=adapter_path)
+                        raise HTTPException(
+                            status_code=400,
+                            detail=(
+                                f"Model '{model_name}' does not support "
+                                "image, video, or audio inputs."
+                            ),
+                        )
+
     return StreamingResponse(
-        _stream_chat_generator(request),
+        _stream_chat_generator(request, engine, model_name, adapter_path),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
