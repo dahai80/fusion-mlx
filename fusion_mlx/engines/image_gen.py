@@ -57,8 +57,8 @@ class ImageGenEngine(BaseNonStreamingEngine):
             from mflux.models.flux.variants.txt2img.flux import Flux1
         except ImportError as exc:
             logger.warning(
-                "ImageGen engine disabled: mflux not installed. "
-                "Install with: pip install mflux  (%s)",
+                "ImageGen engine disabled: mflux-fusion not installed. "
+                "Install with: pip install mflux-fusion  (%s)",
                 exc,
             )
             self._mflux_missing = True
@@ -119,8 +119,8 @@ class ImageGenEngine(BaseNonStreamingEngine):
         if self._flux is None:
             if self._mflux_missing:
                 raise RuntimeError(
-                    "Image generation unavailable: mflux not installed. "
-                    "Install with: pip install mflux"
+                    "Image generation unavailable: mflux-fusion not installed. "
+                    "Install with: pip install mflux-fusion"
                 )
             raise RuntimeError("ImageGen engine not started.")
 
