@@ -350,7 +350,7 @@ async def _stream_chat_generator(request: ChatCompletionRequest) -> AsyncIterato
             completion_tokens=0,
             cached_tokens=0,
         )
-        yield _adapter.format_stream_chunk(first_chunk, request)
+        yield _adapter.format_stream_chunk(first_chunk, request, encoder=encoder)
 
         accumulated = ""
         finish_reason = None
