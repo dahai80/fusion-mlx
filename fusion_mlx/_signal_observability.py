@@ -40,7 +40,12 @@ def _signal_name(signum: int) -> str:
 def _on_signal(signum: int, frame) -> None:
     name = _signal_name(signum)
     try:
-        logger.warning(
+        is_sighup = (
+            getattr(signal, "SIGHUP", None) is not None and signum == signal.SIGHUP
+        )
+        log_level = logging.DEBUG if is_sighup else logging.INFO
+        logger.log(
+            log_level,
             "fusion-mlx received signal %s; thread stacks follow (faulthandler)",
             name,
         )

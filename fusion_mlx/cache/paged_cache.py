@@ -533,7 +533,7 @@ class PagedCacheManager(CacheManager):
 
         # Warn if model_name is not set (cache isolation may not work)
         if not model_name:
-            logger.warning(
+            logger.debug(
                 "PagedCacheManager initialized without model_name. "
                 "Cache isolation between models may not work correctly."
             )
