@@ -153,21 +153,23 @@ class OpenAIAdapter(BaseAdapter):
         request: ChatCompletionRequest,
         encoder=None,
     ) -> str:
-        """Format a streaming chunk for SSE output in OpenAI format.
-
-        Uses StreamingJSONEncoder when available for ~30% lower CPU overhead
-        per token vs Pydantic ChatCompletionChunk construction + model_dump_json.
-        """
-        # Fast path: content-only chunks (the 99% hot path during decode)
         if encoder is not None and not chunk.is_first and not chunk.is_last:
             if chunk.text and not chunk.tool_call_delta and not chunk.reasoning_content:
                 return encoder.encode_chat_chunk(
                     content=chunk.text,
                     finish_reason=None,
                 )
+            if chunk.reasoning_content and not chunk.text and not chunk.tool_call_delta:
+                return encoder.encode_chat_chunk(
+                    content=None,
+                    finish_reason=None,
+                    reasoning_content=chunk.reasoning_content,
+                )
 
-        # Slow path: first/last chunks, tool calls, reasoning — use Pydantic
-        request_id = f"chatcmpl-{uuid.uuid4().hex[:8]}"
+        if encoder is not None:
+            request_id = encoder.response_id
+        else:
+            request_id = f"chatcmpl-{uuid.uuid4().hex[:8]}"
 
         delta = ChatCompletionChunkDelta(
             content=chunk.text if chunk.text else None,

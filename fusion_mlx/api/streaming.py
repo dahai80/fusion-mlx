@@ -153,25 +153,17 @@ class StreamingJSONEncoder:
         content: str | None = None,
         finish_reason: str | None = None,
         usage: dict[str, int] | None = None,
+        reasoning_content: str | None = None,
     ) -> str:
-        """
-        Encode a chat completion chunk using pre-computed templates.
-
-        Args:
-            role: Assistant role (only for first chunk)
-            content: Generated content for this chunk
-            finish_reason: "stop", "length", or None if not finished
-            usage: Optional usage stats
-
-        Returns:
-            SSE-formatted string: "data: {json}\n\n"
-        """
-        # Build delta content - only include non-None values
         delta_parts = []
         if role is not None:
             delta_parts.append(f'"role":"{_escape_json_string(role)}"')
         if content is not None:
             delta_parts.append(f'"content":"{_escape_json_string(content)}"')
+        if reasoning_content is not None:
+            delta_parts.append(
+                f'"reasoning_content":"{_escape_json_string(reasoning_content)}"'
+            )
 
         delta_json = ",".join(delta_parts)
 
