@@ -412,6 +412,17 @@ class Server:
         self.cloud_router: CloudRouter | None = None
         self.engine_cores: dict[str, AsyncEngineCore] = {}
         self._load_lock = asyncio.Lock()
+
+        warnings.filterwarnings(
+            "ignore",
+            message="You are using a model of type .* to instantiate",
+            category=UserWarning,
+        )
+        warnings.filterwarnings(
+            "ignore",
+            message="resource_tracker: There appear to be .* leaked semaphore",
+            category=UserWarning,
+        )
         self.settings = Settings.load(Path(self.config.settings_dir) / "settings.json")
 
         # Daily-rotated file logging — writes {settings_dir}/logs/server.log so
@@ -659,17 +670,6 @@ class Server:
 
     async def _startup(self):
         """Initialize engine pool, routers, and load models."""
-        warnings.filterwarnings(
-            "ignore",
-            message="You are using a model of type .* to instantiate",
-            category=UserWarning,
-        )
-        warnings.filterwarnings(
-            "ignore",
-            message="resource_tracker: There appear to be .* leaked semaphore",
-            category=UserWarning,
-        )
-
         # Telemetry: check consent state at server startup so we can log
         # the current status for operators auditing their install.
         try:
