@@ -112,6 +112,7 @@ class EngineEntry:
     last_access: float = 0.0  # Timestamp for LRU (0 if never loaded)
     is_loading: bool = False  # Prevent concurrent loads
     loading_started_at: float | None = None  # Timestamp when current load started
+    loading_event: asyncio.Event | None = None  # Signaled when loading completes
     is_pinned: bool = False  # Never evict if True
     abort_loading: bool = False  # Set by memory enforcer to abort in-progress load
     in_use: int = 0  # in-flight acquire/use lease count; never evict while > 0
@@ -768,7 +769,7 @@ class EnginePool:
             ModelNotFoundError: If model is not discovered
             ModelTooLargeError: If model exceeds memory limit
             InsufficientMemoryError: If can't free enough memory (all pinned)
-            ModelLoadingError: If model is already being loaded
+            ModelLoadingError: If model load is aborted by memory enforcer
         """
         # Validate untrusted request-supplied adapter path before any work.
         # Canonicalizes to realpath and enforces the allow-list (default-deny).
@@ -777,6 +778,7 @@ class EnginePool:
         # Phase 1: Quick check under lock for already-loaded models
         entry_key = self._adapter_key(model_id, adapter_path)
         adapter_victims: list[str] = []
+        wait_event: asyncio.Event | None = None
         async with self._lock:
             entry = self._entries.get(entry_key)
             if entry is None:
@@ -828,18 +830,42 @@ class EnginePool:
 
                 # Needs reload — mark loading and release lock for slow unload
                 if entry.is_loading:
-                    raise ModelLoadingError(entry_key)
-                entry.is_loading = True
-                entry.loading_started_at = time.monotonic()
-                entry.abort_loading = False
+                    wait_event = entry.loading_event or asyncio.Event()
+                    entry.loading_event = wait_event
+                else:
+                    entry.is_loading = True
+                    entry.loading_started_at = time.monotonic()
+                    entry.abort_loading = False
+                    entry.loading_event = asyncio.Event()
 
             else:
                 # Not loaded yet — mark loading
                 if entry.is_loading:
-                    raise ModelLoadingError(entry_key)
-                entry.is_loading = True
-                entry.loading_started_at = time.monotonic()
-                entry.abort_loading = False
+                    wait_event = entry.loading_event or asyncio.Event()
+                    entry.loading_event = wait_event
+                else:
+                    entry.is_loading = True
+                    entry.loading_started_at = time.monotonic()
+                    entry.abort_loading = False
+                    entry.loading_event = asyncio.Event()
+
+        # If another coroutine is already loading this model, wait for it
+        # OUTSIDE the lock (the loader needs the lock to finish).
+        if wait_event is not None:
+            logger.info(
+                "Model '%s' is already loading — waiting for existing load",
+                entry_key,
+            )
+            await wait_event.wait()
+            # Retry from the top — the engine is now loaded (or the load
+            # failed and get_engine will re-trigger a fresh attempt).
+            return await self.get_engine(
+                model_id,
+                force_lm=force_lm,
+                _lease=_lease,
+                runtime_settings=runtime_settings,
+                adapter_path=adapter_path,
+            )
 
         # Phase 2: Slow operations OUTSIDE the lock
         # so concurrent requests are not blocked for 5-20 seconds.
@@ -880,6 +906,10 @@ class EnginePool:
                 # Nothing to evict — clean up loading flag and raise
                 async with self._lock:
                     entry.is_loading = False
+                    loading_event = entry.loading_event
+                    entry.loading_event = None
+                if loading_event is not None:
+                    loading_event.set()
                 if entry.estimated_size > ceiling:
                     raise ModelTooLargeError(model_id, entry.estimated_size, ceiling)
                 raise InsufficientMemoryError(
@@ -1382,7 +1412,7 @@ class EnginePool:
             force_lm: Force loading as BatchedEngine even for VLM models.
 
         Raises:
-            ModelLoadingError: If model is already being loaded
+            ModelLoadingError: If model load is aborted by memory enforcer
         """
         entry = self._entries[model_id]
         # get_engine phase 1 reserves the loading slot under the lock before
@@ -1829,6 +1859,10 @@ class EnginePool:
             entry.is_loading = False
             entry.loading_started_at = None
             entry.abort_loading = False
+            loading_event = entry.loading_event
+            entry.loading_event = None
+            if loading_event is not None:
+                loading_event.set()
             self._wake_process_memory_enforcer()
 
     async def preload_pinned_models(self) -> None:
