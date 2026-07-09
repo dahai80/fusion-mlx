@@ -33,6 +33,12 @@ from .api.images import router as images_router
 from .api.images import set_images_context
 from .api.mcp_routes import router as mcp_router
 from .api.mcp_routes import set_mcp_manager_getter
+from .exceptions import (
+    InsufficientMemoryError,
+    ModelBusyError,
+    ModelLoadingError,
+    ModelTooLargeError,
+)
 from .middleware import (
     install_exception_handlers,
     install_probe_fastpath_middleware,
@@ -579,8 +585,19 @@ class Server:
                 }
             try:
                 await self.pool.get_engine(resolved)
+            except HTTPException:
+                raise
+            except (ModelLoadingError, ModelBusyError) as e:
+                raise HTTPException(
+                    status_code=503,
+                    detail=str(e),
+                    headers={"Retry-After": "5"},
+                ) from e
+            except (InsufficientMemoryError, ModelTooLargeError) as e:
+                raise HTTPException(status_code=503, detail=str(e)) from e
             except Exception as e:
-                raise HTTPException(status_code=500, detail=str(e))
+                logger.exception("Load model failed: %s(%s)", type(e).__name__, e)
+                raise HTTPException(status_code=500, detail=f"{type(e).__name__}: {e}")
             return {
                 "status": "ok",
                 "model_id": model_id,

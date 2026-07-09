@@ -29,10 +29,18 @@ from ..api.openai_models import (
 )
 from ..api.thinking import ThinkingParser
 from ..engines.base import GenerationOutput
-from ..exceptions import AdapterPathError, ModelNotFoundError
+from ..exceptions import (
+    AdapterPathError,
+    InsufficientMemoryError,
+    ModelBusyError,
+    ModelLoadingError,
+    ModelNotFoundError,
+    ModelTooLargeError,
+)
 from ..pool import EnginePool
 from ..request import SamplingParams
 from ..router import RequestRouter
+from ..server_metrics import record_llm_metrics
 
 logger = logging.getLogger(__name__)
 
@@ -150,6 +158,7 @@ async def _run_chat(request: ChatCompletionRequest) -> ChatCompletionResponse:
 
     from ..server import resolve_model_id
 
+    _start = time.perf_counter()
     model_name = resolve_model_id(request.model)
     adapter_path = getattr(request, "adapters", None)
 
@@ -222,6 +231,13 @@ async def _run_chat(request: ChatCompletionRequest) -> ChatCompletionResponse:
         internal = _gen_to_internal(gen, model_name, request_id)
         if tool_calls is not None:
             internal.tool_calls = tool_calls
+        record_llm_metrics(
+            prompt_tokens=getattr(gen, "prompt_tokens", 0) or 0,
+            completion_tokens=getattr(gen, "completion_tokens", 0) or 0,
+            cached_tokens=getattr(gen, "cached_tokens", 0) or 0,
+            generation_duration=time.perf_counter() - _start,
+            model_id=model_name,
+        )
         return _adapter.format_response(internal, request)
     except HTTPException:
         raise
@@ -229,13 +245,36 @@ async def _run_chat(request: ChatCompletionRequest) -> ChatCompletionResponse:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except ModelNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except (ModelLoadingError, ModelBusyError) as exc:
+        logger.warning("Model temporarily unavailable: %s", exc)
+        raise HTTPException(
+            status_code=503,
+            detail={"error": {"message": str(exc), "type": "server_busy"}},
+            headers={"Retry-After": "5"},
+        ) from exc
+    except InsufficientMemoryError as exc:
+        logger.warning("Insufficient memory: %s", exc)
+        raise HTTPException(
+            status_code=503,
+            detail={"error": {"message": str(exc), "type": "resource_exhausted"}},
+            headers={"Retry-After": "10"},
+        ) from exc
+    except ModelTooLargeError as exc:
+        raise HTTPException(
+            status_code=413,
+            detail={"error": {"message": str(exc), "type": "model_too_large"}},
+        ) from exc
     except Exception as exc:
         err_msg = str(exc)
-        # VLM image/video fetch failures -> 400
         if "Failed to process image" in err_msg or "Failed to process video" in err_msg:
             raise HTTPException(status_code=400, detail=err_msg)
-        logger.exception("Non-streaming chat failed for %s", request_id)
-        raise HTTPException(500, str(exc))
+        logger.exception(
+            "Non-streaming chat failed for %s: %s(%s)",
+            request_id,
+            type(exc).__name__,
+            exc,
+        )
+        raise HTTPException(500, f"{type(exc).__name__}: {exc}")
     finally:
         await _release()
 
@@ -247,6 +286,7 @@ async def _stream_chat_generator(request: ChatCompletionRequest) -> AsyncIterato
 
     from ..server import resolve_model_id
 
+    _start = time.perf_counter()
     model_name = resolve_model_id(request.model)
     adapter_path = getattr(request, "adapters", None)
 
@@ -423,6 +463,14 @@ async def _stream_chat_generator(request: ChatCompletionRequest) -> AsyncIterato
         yield _adapter.format_stream_chunk(last_chunk, request, encoder=encoder)
         yield _adapter.format_stream_end(request)
 
+        record_llm_metrics(
+            prompt_tokens=prompt_tokens or 0,
+            completion_tokens=completion_tokens or 0,
+            cached_tokens=cached_tokens or 0,
+            generation_duration=time.perf_counter() - _start,
+            model_id=model_name,
+        )
+
     except asyncio.CancelledError:
         logger.info("Client disconnected during streaming: %s", request_id)
         if engine:
@@ -435,14 +483,26 @@ async def _stream_chat_generator(request: ChatCompletionRequest) -> AsyncIterato
         yield f'data: {{"error": {{"message": {str(exc)!r}, "status": 400}}}}\n\n'
     except ModelNotFoundError as exc:
         yield f'data: {{"error": {{"message": {str(exc)!r}, "status": 404}}}}\n\n'
+    except (ModelLoadingError, ModelBusyError) as exc:
+        logger.warning("Stream: model temporarily unavailable: %s", exc)
+        yield f'data: {{"error": {{"message": {str(exc)!r}, "status": 503, "type": "server_busy"}}}}\n\n'
+    except InsufficientMemoryError as exc:
+        logger.warning("Stream: insufficient memory: %s", exc)
+        yield f'data: {{"error": {{"message": {str(exc)!r}, "status": 503, "type": "resource_exhausted"}}}}\n\n'
+    except ModelTooLargeError as exc:
+        yield f'data: {{"error": {{"message": {str(exc)!r}, "status": 413, "type": "model_too_large"}}}}\n\n'
     except Exception as exc:
         err_msg = str(exc)
-        # VLM image/video fetch failures -> 400
         if "Failed to process image" in err_msg or "Failed to process video" in err_msg:
             yield f'data: {{"error": {{"message": {err_msg!r}, "status": 400}}}}\n\n'
         else:
-            logger.exception("Streaming chat failed for %s", request_id)
-            yield f'data: {{"error": {{"message": {err_msg!r}}}}}\n\n'
+            logger.exception(
+                "Streaming chat failed for %s: %s(%s)",
+                request_id,
+                type(exc).__name__,
+                exc,
+            )
+            yield f'data: {{"error": {{"message": {f"{type(exc).__name__}: {exc}"!r}}}}}\n\n'
     finally:
         await _release()
 
@@ -627,9 +687,26 @@ async def chat_completions(request: ChatCompletionRequest) -> Any:
         raise
     except ModelNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except (ModelLoadingError, ModelBusyError) as exc:
+        raise HTTPException(
+            status_code=503,
+            detail={"error": {"message": str(exc), "type": "server_busy"}},
+            headers={"Retry-After": "5"},
+        ) from exc
+    except InsufficientMemoryError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail={"error": {"message": str(exc), "type": "resource_exhausted"}},
+            headers={"Retry-After": "10"},
+        ) from exc
+    except ModelTooLargeError as exc:
+        raise HTTPException(
+            status_code=413,
+            detail={"error": {"message": str(exc), "type": "model_too_large"}},
+        ) from exc
     except Exception as exc:
-        logger.exception("Chat completion failed")
-        raise HTTPException(500, str(exc))
+        logger.exception("Chat completion failed: %s(%s)", type(exc).__name__, exc)
+        raise HTTPException(500, f"{type(exc).__name__}: {exc}")
 
 
 @router.post("/completions")
@@ -654,9 +731,26 @@ async def completions(request: CompletionRequest) -> Any:
         raise
     except ModelNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except (ModelLoadingError, ModelBusyError) as exc:
+        raise HTTPException(
+            status_code=503,
+            detail={"error": {"message": str(exc), "type": "server_busy"}},
+            headers={"Retry-After": "5"},
+        ) from exc
+    except InsufficientMemoryError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail={"error": {"message": str(exc), "type": "resource_exhausted"}},
+            headers={"Retry-After": "10"},
+        ) from exc
+    except ModelTooLargeError as exc:
+        raise HTTPException(
+            status_code=413,
+            detail={"error": {"message": str(exc), "type": "model_too_large"}},
+        ) from exc
     except Exception as exc:
-        logger.exception("Completion failed")
-        raise HTTPException(500, str(exc))
+        logger.exception("Completion failed: %s(%s)", type(exc).__name__, exc)
+        raise HTTPException(500, f"{type(exc).__name__}: {exc}")
 
 
 @router.get("/models")

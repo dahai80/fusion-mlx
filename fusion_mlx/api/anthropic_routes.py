@@ -36,9 +36,16 @@ from ..api.anthropic_utils import (
     create_tool_name_delta_event,
     map_finish_reason_to_stop_reason,
 )
-from ..exceptions import ModelNotFoundError
+from ..exceptions import (
+    InsufficientMemoryError,
+    ModelBusyError,
+    ModelLoadingError,
+    ModelNotFoundError,
+    ModelTooLargeError,
+)
 from ..pool import EnginePool
 from ..request import SamplingParams
+from ..server_metrics import record_llm_metrics
 
 logger = logging.getLogger(__name__)
 
@@ -150,8 +157,11 @@ async def _run_anthropic_messages(
     if _pool is None:
         raise HTTPException(450, "Engine pool not initialized")
 
+    import time as _time
+
     from ..server import resolve_model_id
 
+    _start = _time.perf_counter()
     model_name = resolve_model_id(req.model)
     adapter_path = getattr(req, "adapters", None)
 
@@ -235,18 +245,48 @@ async def _run_anthropic_messages(
             request_id=request_id,
             model=model_name,
         )
+        record_llm_metrics(
+            prompt_tokens=gen.prompt_tokens or 0,
+            completion_tokens=gen.completion_tokens or 0,
+            cached_tokens=gen.cached_tokens or 0,
+            generation_duration=_time.perf_counter() - _start,
+            model_id=model_name,
+        )
         return _adapter.format_response(internal, req)
     except HTTPException:
         raise
     except ModelNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except (ModelLoadingError, ModelBusyError) as exc:
+        logger.warning("Anthropic: model temporarily unavailable: %s", exc)
+        raise HTTPException(
+            status_code=503,
+            detail={"error": {"message": str(exc), "type": "server_busy"}},
+            headers={"Retry-After": "5"},
+        ) from exc
+    except InsufficientMemoryError as exc:
+        logger.warning("Anthropic: insufficient memory: %s", exc)
+        raise HTTPException(
+            status_code=503,
+            detail={"error": {"message": str(exc), "type": "resource_exhausted"}},
+            headers={"Retry-After": "10"},
+        ) from exc
+    except ModelTooLargeError as exc:
+        raise HTTPException(
+            status_code=413,
+            detail={"error": {"message": str(exc), "type": "model_too_large"}},
+        ) from exc
     except Exception as exc:
         err_msg = str(exc)
-        # VLM image/video fetch failures -> 400
         if "Failed to process image" in err_msg or "Failed to process video" in err_msg:
             raise HTTPException(status_code=400, detail=err_msg)
-        logger.exception("Anthropic messages failed for %s", request_id)
-        raise HTTPException(500, str(exc))
+        logger.exception(
+            "Anthropic messages failed for %s: %s(%s)",
+            request_id,
+            type(exc).__name__,
+            exc,
+        )
+        raise HTTPException(500, f"{type(exc).__name__}: {exc}")
     finally:
         await _release()
 
@@ -258,8 +298,11 @@ async def _stream_anthropic_generator(
     if _pool is None:
         raise HTTPException(450, "Engine pool not initialized")
 
+    import time as _time
+
     from ..server import resolve_model_id
 
+    _start = _time.perf_counter()
     model_name = resolve_model_id(req.model)
     adapter_path = getattr(req, "adapters", None)
 
@@ -382,12 +425,26 @@ async def _stream_anthropic_generator(
                 )
                 yield create_message_stop_event()
 
+                record_llm_metrics(
+                    prompt_tokens=gen.prompt_tokens or 0,
+                    completion_tokens=gen.completion_tokens or 0,
+                    cached_tokens=gen.cached_tokens or 0,
+                    generation_duration=_time.perf_counter() - _start,
+                    model_id=model_name,
+                )
+
     except ModelNotFoundError as exc:
         yield f'event: error\ndata: {{"error": {str(exc)!r}, "status": 404}}\n\n'
+    except (ModelLoadingError, ModelBusyError) as exc:
+        logger.warning("Anthropic stream: model temporarily unavailable: %s", exc)
+        yield f'event: error\ndata: {{"error": {{"message": {str(exc)!r}, "type": "server_busy"}}, "status": 503}}\n\n'
+    except InsufficientMemoryError as exc:
+        logger.warning("Anthropic stream: insufficient memory: %s", exc)
+        yield f'event: error\ndata: {{"error": {{"message": {str(exc)!r}, "type": "resource_exhausted"}}, "status": 503}}\n\n'
+    except ModelTooLargeError as exc:
+        yield f'event: error\ndata: {{"error": {{"message": {str(exc)!r}, "type": "model_too_large"}}, "status": 413}}\n\n'
     except Exception as exc:
         err_msg = str(exc)
-        # VLM image/video fetch failures -> 400
-        # Log EVERY error with full details (Ollama-style)
         logger.error(
             "Stream ERROR %s: %s\n  type=%s\n  model=%s",
             request_id,
@@ -399,8 +456,7 @@ async def _stream_anthropic_generator(
         if "Failed to process image" in err_msg or "Failed to process video" in err_msg:
             yield f'event: error\ndata: {{"error": {err_msg!r}, "status": 400}}\n\n'
         else:
-            pass
-            yield f'event: error\ndata: {{"error": {err_msg!r}}}\n\n'
+            yield f'event: error\ndata: {{"error": {f"{type(exc).__name__}: {exc}"!r}}}\n\n'
     finally:
         await _release()
 
@@ -442,9 +498,26 @@ async def anthropic_messages(request: AnthropicMessagesRequest) -> Any:
         raise
     except ModelNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except (ModelLoadingError, ModelBusyError) as exc:
+        raise HTTPException(
+            status_code=503,
+            detail={"error": {"message": str(exc), "type": "server_busy"}},
+            headers={"Retry-After": "5"},
+        ) from exc
+    except InsufficientMemoryError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail={"error": {"message": str(exc), "type": "resource_exhausted"}},
+            headers={"Retry-After": "10"},
+        ) from exc
+    except ModelTooLargeError as exc:
+        raise HTTPException(
+            status_code=413,
+            detail={"error": {"message": str(exc), "type": "model_too_large"}},
+        ) from exc
     except Exception as exc:
-        logger.exception("Anthropic messages failed")
-        raise HTTPException(500, str(exc))
+        logger.exception("Anthropic messages failed: %s(%s)", type(exc).__name__, exc)
+        raise HTTPException(500, f"{type(exc).__name__}: {exc}")
 
 
 @router.post("/count_tokens")
