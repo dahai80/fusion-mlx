@@ -132,6 +132,13 @@ struct PythonRuntime {
         if let home = pythonHome {
             env["PYTHONHOME"] = home.path
             env["PYTHONDONTWRITEBYTECODE"] = "1"
+            // Bundled Python runs `python -m fusion_mlx.cli serve`; without
+            // this the host cwd lands on sys.path[0] and any same-named
+            // subdir (e.g. an `accelerate/` checkout) becomes a PEP 420
+            // namespace package -> transformers' is_accelerate_available()
+            // parses version "N/A" and crashes at import. PYTHONPATH above
+            // still resolves fusion_mlx / transformers / mlx_lm.
+            env["PYTHONSAFEPATH"] = "1"
         }
 
         return env

@@ -29,7 +29,7 @@ from ..api.openai_models import (
 )
 from ..api.thinking import ThinkingParser
 from ..engines.base import GenerationOutput
-from ..exceptions import AdapterPathError
+from ..exceptions import AdapterPathError, ModelNotFoundError
 from ..pool import EnginePool
 from ..request import SamplingParams
 from ..router import RequestRouter
@@ -227,6 +227,8 @@ async def _run_chat(request: ChatCompletionRequest) -> ChatCompletionResponse:
         raise
     except AdapterPathError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except ModelNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
     except Exception as exc:
         err_msg = str(exc)
         # VLM image/video fetch failures -> 400
@@ -431,6 +433,8 @@ async def _stream_chat_generator(request: ChatCompletionRequest) -> AsyncIterato
         raise
     except AdapterPathError as exc:
         yield f'data: {{"error": {{"message": {str(exc)!r}, "status": 400}}}}\n\n'
+    except ModelNotFoundError as exc:
+        yield f'data: {{"error": {{"message": {str(exc)!r}, "status": 404}}}}\n\n'
     except Exception as exc:
         err_msg = str(exc)
         # VLM image/video fetch failures -> 400
@@ -621,6 +625,8 @@ async def chat_completions(request: ChatCompletionRequest) -> Any:
             return await _run_chat(request)
     except HTTPException:
         raise
+    except ModelNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
     except Exception as exc:
         logger.exception("Chat completion failed")
         raise HTTPException(500, str(exc))
@@ -646,6 +652,8 @@ async def completions(request: CompletionRequest) -> Any:
         return await _run_chat(chat_req)
     except HTTPException:
         raise
+    except ModelNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
     except Exception as exc:
         logger.exception("Completion failed")
         raise HTTPException(500, str(exc))

@@ -38,6 +38,7 @@ class ImageGenEngine(BaseNonStreamingEngine):
         self._model_name = model_name
         self._model_path = model_name
         self._flux = None
+        self._mflux_missing = False
         self._kwargs = kwargs
         # Load-time quantization (4/8-bit) reduces memory and often speeds up
         # Flux dev. None = load at the model's native precision. Passed through
@@ -51,18 +52,20 @@ class ImageGenEngine(BaseNonStreamingEngine):
     async def start(self) -> None:
         if self._flux is not None:
             return
+        try:
+            from mflux.models.common.config.model_config import ModelConfig
+            from mflux.models.flux.variants.txt2img.flux import Flux1
+        except ImportError as exc:
+            logger.warning(
+                "ImageGen engine disabled: mflux not installed. "
+                "Install with: pip install mflux  (%s)",
+                exc,
+            )
+            self._mflux_missing = True
+            return
         logger.info("Starting ImageGen engine (mflux): %s", self._model_path)
 
         def _load():
-            try:
-                from mflux.models.common.config.model_config import ModelConfig
-                from mflux.models.flux.variants.txt2img.flux import Flux1
-            except ImportError as exc:
-                raise ImportError(
-                    "Flux image generation requires mflux. "
-                    "Install mflux (editable from mlx-examples/mflux or pip install mflux)."
-                ) from exc
-
             label = _infer_model_config_label(self._model_path)
             if label == "dev":
                 model_config = ModelConfig.dev()
@@ -114,6 +117,11 @@ class ImageGenEngine(BaseNonStreamingEngine):
         **kwargs,
     ) -> list[bytes]:
         if self._flux is None:
+            if self._mflux_missing:
+                raise RuntimeError(
+                    "Image generation unavailable: mflux not installed. "
+                    "Install with: pip install mflux"
+                )
             raise RuntimeError("ImageGen engine not started.")
 
         flux = self._flux
@@ -162,8 +170,17 @@ class ImageGenEngine(BaseNonStreamingEngine):
             await self._finish_activity(activity_id)
 
     def get_stats(self) -> dict[str, Any]:
-        return {"model_name": self._model_name, "loaded": self._flux is not None}
+        return {
+            "model_name": self._model_name,
+            "loaded": self._flux is not None,
+            "mflux_missing": self._mflux_missing,
+        }
 
     def __repr__(self) -> str:
-        status = "running" if self._flux is not None else "stopped"
+        if self._mflux_missing:
+            status = "disabled(mflux-missing)"
+        elif self._flux is not None:
+            status = "running"
+        else:
+            status = "stopped"
         return f"<ImageGenEngine model={self._model_name} status={status}>"

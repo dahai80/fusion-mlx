@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """Consent + client-id state for opt-in telemetry.
 
-Two files live under ``~/.rapid-mlx/``:
+Two files live under ``~/.fusion-mlx/``:
 
 - ``telemetry-client-id`` — a UUID4 string. Stable across runs so we can
   count distinct opted-in machines without identifying them. The user
@@ -21,16 +21,15 @@ them would force the user into all-or-nothing.
 The ``is_enabled`` decision precedence (highest first):
 
 1. ``--no-telemetry`` CLI flag → forced OFF for this run.
-2. ``FUSION_MLX_TELEMETRY=0`` env → forced OFF. (``RAPID_MLX_TELEMETRY=0``
-   is the deprecated alias.)
+2. ``FUSION_MLX_TELEMETRY=0`` env → forced OFF.
 3. Stored consent file → whatever the user answered.
 4. Default → OFF. (Anonymous data collection without explicit opt-in is
    a non-starter.)
 
 There is intentionally no env-var equivalent for forcing ON. CI agents
 silently opting in via ``FUSION_MLX_TELEMETRY=1`` (or the deprecated
-``RAPID_MLX_TELEMETRY=1``) would skew the data toward synthetic workloads.
-Users who want to opt in run ``rapid-mlx telemetry enable`` once.
+``FUSION_MLX_TELEMETRY=1``) would skew the data toward synthetic workloads.
+Users who want to opt in run ``fusion-mlx telemetry enable`` once.
 """
 
 from __future__ import annotations
@@ -43,10 +42,7 @@ from pathlib import Path
 
 import yaml
 
-ENV_VAR_PRIMARY = "FUSION_MLX_TELEMETRY"
-ENV_VAR_LEGACY = "RAPID_MLX_TELEMETRY"
-# Back-compat alias for external consumers; prefer ENV_VAR_PRIMARY / ENV_VAR_LEGACY.
-ENV_VAR = ENV_VAR_PRIMARY
+ENV_VAR = "FUSION_MLX_TELEMETRY"
 
 # Bump when the on-disk consent file format changes incompatibly. A
 # stored record with a smaller schema_version is treated as "never
@@ -56,7 +52,7 @@ CURRENT_CONSENT_SCHEMA_VERSION = 1
 
 def _default_telemetry_dir() -> Path:
     """Resolved at call time so ``HOME`` overrides in tests take effect."""
-    return Path.home() / ".rapid-mlx"
+    return Path.home() / ".fusion-mlx"
 
 
 def client_id_path() -> Path:
@@ -78,7 +74,7 @@ class ConsentState:
 
     consent: bool
     prompted_at: str  # ISO-8601 UTC, "Z" suffix
-    prompted_version: str  # rapid-mlx version that showed the prompt
+    prompted_version: str  # fusion-mlx version that showed the prompt
     schema_version: int = 1
 
 
@@ -110,7 +106,7 @@ def get_consent_state() -> ConsentState | None:
     # Treat unknown / older schema versions as "never prompted" so a
     # disclosure-copy bump in a future release re-asks every user under
     # the new wording. Forward-compat (newer file from a downgraded
-    # rapid-mlx) hits the same path — safer to re-prompt than to honor
+    # fusion-mlx) hits the same path — safer to re-prompt than to honor
     # a record we don't fully understand.
     if schema_version != CURRENT_CONSENT_SCHEMA_VERSION:
         return None
@@ -122,7 +118,7 @@ def get_consent_state() -> ConsentState | None:
     )
 
 
-def record_consent(consent: bool, *, rapid_mlx_version: str) -> ConsentState:
+def record_consent(consent: bool, *, fusion_mlx_version: str) -> ConsentState:
     """Persist the user's answer.
 
     Writes the file with mode 0600 — the directory itself stays at the
@@ -133,7 +129,7 @@ def record_consent(consent: bool, *, rapid_mlx_version: str) -> ConsentState:
     state = ConsentState(
         consent=consent,
         prompted_at=datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
-        prompted_version=rapid_mlx_version,
+        prompted_version=fusion_mlx_version,
     )
     path = consent_path()
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -196,15 +192,11 @@ def reset_state() -> None:
 
 def _env_kill_switch_active() -> bool:
     """``FUSION_MLX_TELEMETRY=0`` (or any falsy value) wins.
-    ``RAPID_MLX_TELEMETRY`` is the deprecated alias.
 
     Truthy values are intentionally ignored — see module docstring for
     why there's no env-var force-on.
     """
-    raw = os.environ.get(ENV_VAR_PRIMARY)
-    if raw is not None:
-        return raw.strip().lower() in ("0", "false", "no", "off", "")
-    raw = os.environ.get(ENV_VAR_LEGACY)
+    raw = os.environ.get(ENV_VAR)
     if raw is not None:
         return raw.strip().lower() in ("0", "false", "no", "off", "")
     return False
@@ -249,18 +241,13 @@ def is_enabled(*, cli_no_telemetry: bool = False) -> bool:
 def consent_source(*, cli_no_telemetry: bool = False) -> str:
     """Human-readable source of the current is_enabled() answer.
 
-    Used by ``rapid-mlx telemetry status`` so users can debug why
+    Used by ``fusion-mlx telemetry status`` so users can debug why
     telemetry is (or isn't) enabled without reading our code.
     """
     if cli_no_telemetry or _cli_kill_switch_active:
         return "cli-flag (--no-telemetry)"
     if _env_kill_switch_active():
-        used_var = (
-            ENV_VAR_PRIMARY
-            if os.environ.get(ENV_VAR_PRIMARY) is not None
-            else ENV_VAR_LEGACY
-        )
-        return f"env-var ({used_var}={os.environ.get(used_var, '')!r})"
+        return f"env-var ({ENV_VAR}={os.environ.get(ENV_VAR, '')!r})"
     state = get_consent_state()
     if state is None:
         return "default (no consent recorded)"

@@ -217,7 +217,7 @@ def test_group_key_uses_chip_alias_version_only(tmp_path):
     """Rows that differ only in RAM/GPU/MLX-version land in the SAME group.
 
     The schema description is explicit: ``aggregates by (chip, model,
-    rapid_mlx_version)``. RAM and GPU cores are bucketing axes for the
+    fusion_mlx_version)``. RAM and GPU cores are bucketing axes for the
     raw store, not the aggregate — partitioning them would shatter
     every (chip family, model) cell into single-machine cells and the
     leaderboard becomes useless.
@@ -254,7 +254,7 @@ def test_distinct_versions_become_distinct_groups(tmp_path):
     sub_dir = _write_rows(tmp_path, rows)
     out = AGG.build_aggregate(sub_dir)
     assert len(out["groups"]) == 2
-    versions = {g["rapid_mlx_version"]: g for g in out["groups"]}
+    versions = {g["fusion_mlx_version"]: g for g in out["groups"]}
     assert versions["0.7.27"]["short"]["decode_tps"]["median"] == pytest.approx(100.0)
     assert versions["0.7.28"]["short"]["decode_tps"]["median"] == pytest.approx(120.0)
 
@@ -274,7 +274,7 @@ def test_groups_are_sorted_for_determinism(tmp_path):
     sub_dir = _write_rows(tmp_path, rows)
     out = AGG.build_aggregate(sub_dir)
     keys = [
-        (g["chip"], g["model_alias"], g["rapid_mlx_version"]) for g in out["groups"]
+        (g["chip"], g["model_alias"], g["fusion_mlx_version"]) for g in out["groups"]
     ]
     assert keys == sorted(keys)
 

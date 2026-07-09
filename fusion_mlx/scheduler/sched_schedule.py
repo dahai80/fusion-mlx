@@ -123,6 +123,9 @@ def _schedule_waiting(
         # temp allocations, avoiding Metal OOM during batch_generator.next().
         # First request always passes (self.running is empty).
         if self._prefill_memory_guard and self._memory_limit_bytes > 0 and self.running:
+            # Clear MLX buffer cache before measuring so stale
+            # cached-but-freed Metal buffers don't inflate current.
+            _sync_and_clear_cache(self._stream)
             current = max(mx.get_active_memory(), get_phys_footprint())
             _next = self.waiting[0]
             new_tokens = max(_next.num_prompt_tokens - (_next.cached_tokens or 0), 0)

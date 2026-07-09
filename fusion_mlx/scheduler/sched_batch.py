@@ -239,13 +239,16 @@ def _do_external_prefill(
             current = max(mx.get_active_memory(), get_phys_footprint())
             _hard = self._memory_hard_limit_bytes
             _soft = self._memory_limit_bytes
-            # Only log when crossing the soft watermark — that's the
-            # caution zone where adaptive throttle decisions matter.
-            # Skipped on healthy traffic to keep the log quiet.
+            # If over the soft watermark, clear MLX buffer cache and
+            # re-measure to deflate stale cached-but-freed Metal
+            # buffers (same fix as chunked prefill path).
             if current > _soft:
+                _sync_and_clear_cache(self._stream)
+                current = max(mx.get_active_memory(), get_phys_footprint())
                 logger.debug(
                     "[memcheck:external] rid=%s n=%d processed=%d "
-                    "current=%.3fGB soft=%.3fGB hard=%.3fGB %s",
+                    "current=%.3fGB soft=%.3fGB hard=%.3fGB %s "
+                    "(post-clear)",
                     request.request_id,
                     n_to_process,
                     processed_tokens,
@@ -590,15 +593,31 @@ def _step_prefill_chunk(self, state: _PrefillState) -> bool:
     # _do_external_prefill check; on macOS jetsam watches
     # phys_footprint, so the active-only check could miss the page
     # before the kernel kills us.
+    #
+    # Unlike the inline (external) prefill path which clears the MLX
+    # buffer cache on every chunk, the chunked path defers clears to
+    # boundary snapshots to avoid GPU stalls.  This means MLX's buffer
+    # cache accumulates freed intermediates between clears, inflating
+    # both mx.get_active_memory() and phys_footprint.  When we detect
+    # the soft watermark has been crossed, we clear the cache and
+    # re-measure so the hard/soft checks compare against actual
+    # in-use memory, not stale cached buffers.
     if self._memory_limit_bytes > 0:
         current = max(mx.get_active_memory(), get_phys_footprint())
         _hard = self._memory_hard_limit_bytes
         _soft = self._memory_limit_bytes
-        # Caution-zone-only memcheck log (see external loop counterpart).
+        # If over the soft watermark, clear MLX buffer cache and
+        # re-measure.  The inflated measurement from cached-but-freed
+        # Metal buffers causes false-positive OOM warnings and
+        # aborts (observed 103-118GB reported for a 27B model that
+        # fits in ~40GB after cache reclaim).
         if current > _soft:
+            _sync_and_clear_cache(self._stream)
+            current = max(mx.get_active_memory(), get_phys_footprint())
             logger.debug(
                 "[memcheck:chunked_step] rid=%s n=%d processed=%d/%d "
-                "current=%.3fGB soft=%.3fGB hard=%.3fGB %s",
+                "current=%.3fGB soft=%.3fGB hard=%.3fGB %s "
+                "(post-clear)",
                 state.request.request_id,
                 n,
                 state.tokens_processed,
@@ -633,6 +652,9 @@ def _step_prefill_chunk(self, state: _PrefillState) -> bool:
     # chunk stalls the GPU pipeline — a 128k prompt at 2048-step
     # size would produce 64 full syncs.  Intermediate chunks already
     # have mx.eval(c.state) above to ensure states are materialized.
+    # Note: the memory-monitoring block above may have already cleared
+    # the cache if memory pressure was detected; this clear handles
+    # the non-pressure path at boundaries.
     is_final = state.tokens_remaining.shape[1] == 0
     had_boundary_snapshot = (
         state.boundary_enabled

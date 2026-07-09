@@ -4,8 +4,7 @@
 Fires at most once per machine, only when:
 
 - The user has never been prompted (``get_consent_state`` returns None).
-- ``FUSION_MLX_TELEMETRY`` is not set (``RAPID_MLX_TELEMETRY`` is the
-  deprecated alias; env var already determines state, no need to ask).
+- ``FUSION_MLX_TELEMETRY`` is not set (env var already determines state, no need to ask).
 - ``--no-telemetry`` is not set on this run.
 - ``stdin`` is a tty (we are not in a pipe / CI / daemon-spawn).
 - The current subcommand is interactive (``serve``, ``chat``, etc.) —
@@ -21,12 +20,9 @@ from __future__ import annotations
 
 import sys
 
-# TODO: verify fusion_mlx.__version__ is compatible with the original vllm_mlx.__version__
-from fusion_mlx import __version__ as _rapid_mlx_version  # noqa: N811
+from fusion_mlx import __version__ as _fusion_mlx_version
 from fusion_mlx.telemetry.state import (
     ENV_VAR,
-    ENV_VAR_LEGACY,
-    ENV_VAR_PRIMARY,
     client_id_path,
     consent_path,
     get_consent_state,
@@ -56,7 +52,7 @@ _NON_INTERACTIVE_SUBCOMMANDS = frozenset(
 # command. The outer except now also catches ``UnicodeError`` as a
 # belt-and-braces second guard.
 _DISCLOSURE = """\
-Rapid-MLX is open source and built on what its users report. We do not
+Fusion-MLX is open source and built on what its users report. We do not
 ship analytics SDKs, third-party trackers, or ads -- and we never will.
 With your help, we can do three concrete things better:
 
@@ -70,7 +66,7 @@ With your help, we can do three concrete things better:
 WHAT WE SEND (only after you say yes):
   - Your chip family + RAM tier -- "Apple M3 Ultra, 256 GB", never serial
   - OS family + major.minor version ("darwin 25.3"), arch ("arm64"),
-    Python major.minor ("3.12"), Rapid-MLX version ("0.6.79")
+    Python major.minor ("3.12"), Fusion-MLX version ("0.6.79")
   - Which subcommand you ran ("serve" / "chat") and its duration
   - The NAMES (only) of CLI flags you passed, sorted and de-duplicated
     (`--api-key sk-XXX` becomes the literal string "api-key"; the value
@@ -103,10 +99,10 @@ ABOUT YOUR IP:
   key is sha256(IP), the raw IP is discarded the same request).
 
 You can see the exact bytes that would leave your machine right now:
-  rapid-mlx telemetry preview
+  fusion-mlx telemetry preview
 
 You can pause, resume, or reset your identity anytime:
-  rapid-mlx telemetry {{status,disable,enable,reset}}
+  fusion-mlx telemetry {{status,disable,enable,reset}}
 
 To force-disable in scripts or CI: set {env}=0.
 """
@@ -145,10 +141,7 @@ def maybe_prompt_for_consent(
         # Env var already decides — no need to prompt.
         import os
 
-        if (
-            os.environ.get(ENV_VAR_PRIMARY) is not None
-            or os.environ.get(ENV_VAR_LEGACY) is not None
-        ):
+        if os.environ.get(ENV_VAR) is not None:
             return False
         if subcommand in _NON_INTERACTIVE_SUBCOMMANDS:
             return False
@@ -161,7 +154,7 @@ def maybe_prompt_for_consent(
         if not sys.stdout.isatty():
             return False
 
-        version = _rapid_mlx_version
+        version = _fusion_mlx_version
         print()
         print(
             _DISCLOSURE.format(
@@ -170,7 +163,7 @@ def maybe_prompt_for_consent(
             )
         )
         print(
-            "Contribute anonymous telemetry to make rapid-mlx better "
+            "Contribute anonymous telemetry to make fusion-mlx better "
             "for everyone? [y/N]  ",
             end="",
             flush=True,
@@ -184,7 +177,7 @@ def maybe_prompt_for_consent(
             print()
             return False
         consent = answer in ("y", "yes")
-        record_consent(consent, rapid_mlx_version=version)
+        record_consent(consent, fusion_mlx_version=version)
         # From here on, consent IS persisted to disk. The flag must
         # survive any subsequent print failure so the CLI knows not to
         # emit lifecycle telemetry for the argv that ran before the
@@ -194,18 +187,18 @@ def maybe_prompt_for_consent(
             print()
             print(
                 "Thank you for contributing. "
-                "rapid-mlx will get measurably better because you said yes."
+                "fusion-mlx will get measurably better because you said yes."
             )
             print(
-                "Audit anytime: `rapid-mlx telemetry status` / `... preview`. "
-                "Stop anytime: `rapid-mlx telemetry disable`."
+                "Audit anytime: `fusion-mlx telemetry status` / `... preview`. "
+                "Stop anytime: `fusion-mlx telemetry disable`."
             )
         else:
             print()
             print(
                 "Got it -- telemetry stays off and we will not ask again. "
                 "You can always opt in later with "
-                "`rapid-mlx telemetry enable`,"
+                "`fusion-mlx telemetry enable`,"
             )
             print(f"or delete {consent_path()} to be re-prompted.")
         print()

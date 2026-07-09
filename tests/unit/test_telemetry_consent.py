@@ -31,7 +31,7 @@ def test_consent_round_trip(fake_home):
     )
 
     assert get_consent_state() is None
-    record_consent(True, rapid_mlx_version="0.6.33")
+    record_consent(True, fusion_mlx_version="0.6.33")
     state = get_consent_state()
     assert state is not None
     assert state.consent is True
@@ -44,7 +44,7 @@ def test_consent_round_trip(fake_home):
 def test_env_kill_switch_wins_over_consent(fake_home, monkeypatch):
     from fusion_mlx.telemetry.state import is_enabled, record_consent
 
-    record_consent(True, rapid_mlx_version="0.6.33")
+    record_consent(True, fusion_mlx_version="0.6.33")
     assert is_enabled() is True
     monkeypatch.setenv("FUSION_MLX_TELEMETRY", "0")
     assert is_enabled() is False
@@ -53,7 +53,7 @@ def test_env_kill_switch_wins_over_consent(fake_home, monkeypatch):
 def test_cli_flag_wins_over_consent(fake_home):
     from fusion_mlx.telemetry.state import is_enabled, record_consent
 
-    record_consent(True, rapid_mlx_version="0.6.33")
+    record_consent(True, fusion_mlx_version="0.6.33")
     assert is_enabled() is True
     assert is_enabled(cli_no_telemetry=True) is False
 
@@ -71,7 +71,7 @@ def test_env_force_on_is_ignored(fake_home, monkeypatch):
 def test_env_falsy_values_all_disable(fake_home, monkeypatch, falsy):
     from fusion_mlx.telemetry.state import is_enabled, record_consent
 
-    record_consent(True, rapid_mlx_version="0.6.33")
+    record_consent(True, fusion_mlx_version="0.6.33")
     monkeypatch.setenv("FUSION_MLX_TELEMETRY", falsy)
     assert is_enabled() is False, f"falsy value {falsy!r} should kill-switch"
 
@@ -104,7 +104,7 @@ def test_reset_state_removes_both_files(fake_home):
         reset_state,
     )
 
-    record_consent(True, rapid_mlx_version="0.6.33")
+    record_consent(True, fusion_mlx_version="0.6.33")
     get_or_create_client_id()
     assert consent_path().exists()
     assert client_id_path().exists()
@@ -118,7 +118,7 @@ def test_consent_source_reports_origin(fake_home, monkeypatch):
     from fusion_mlx.telemetry.state import consent_source, record_consent
 
     assert "default" in consent_source()
-    record_consent(True, rapid_mlx_version="0.6.33")
+    record_consent(True, fusion_mlx_version="0.6.33")
     assert "consent-file" in consent_source()
     monkeypatch.setenv("FUSION_MLX_TELEMETRY", "0")
     assert "env-var" in consent_source()
@@ -138,7 +138,7 @@ def test_corrupt_consent_file_treated_as_unprompted(fake_home):
 def test_consent_file_atomic_write(fake_home):
     from fusion_mlx.telemetry.state import consent_path, record_consent
 
-    record_consent(True, rapid_mlx_version="0.6.33")
+    record_consent(True, fusion_mlx_version="0.6.33")
     leftover = consent_path().with_suffix(consent_path().suffix + ".tmp")
     assert not leftover.exists()
 
@@ -158,7 +158,7 @@ def test_record_consent_cleans_up_stale_tmp(fake_home):
     stale.write_text("partial: junk\nthis is not valid")
     assert stale.exists()
 
-    record_consent(True, rapid_mlx_version="0.6.33")
+    record_consent(True, fusion_mlx_version="0.6.33")
     assert not stale.exists(), "stale .tmp should be cleaned up"
     state = get_consent_state()
     assert state is not None

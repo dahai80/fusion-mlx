@@ -121,9 +121,16 @@ class TTSEngine(BaseNonStreamingEngine):
                 gk["instruct"] = instructions
             if speed != 1.0:
                 gk["speed"] = speed
-            if ref_audio is not None and "ref_audio" in gp:
-                gk["ref_audio"] = ref_audio
-                gk["ref_text"] = ref_text
+            if ref_audio is not None:
+                if "ref_audio" in gp:
+                    gk["ref_audio"] = ref_audio
+                    gk["ref_text"] = ref_text
+                else:
+                    logger.warning(
+                        "ref_audio provided but model %s does not support "
+                        "voice cloning (no ref_audio param); dropping ref_audio",
+                        type(model).__name__,
+                    )
             for p, v in [
                 ("temperature", temperature),
                 ("top_k", top_k),
@@ -202,9 +209,16 @@ class TTSEngine(BaseNonStreamingEngine):
                 gk["instruct"] = instructions
             if speed != 1.0:
                 gk["speed"] = speed
-            if ref_audio is not None and "ref_audio" in gp:
-                gk["ref_audio"] = ref_audio
-                gk["ref_text"] = ref_text
+            if ref_audio is not None:
+                if "ref_audio" in gp:
+                    gk["ref_audio"] = ref_audio
+                    gk["ref_text"] = ref_text
+                else:
+                    logger.warning(
+                        "ref_audio provided but model %s does not support "
+                        "voice cloning (no ref_audio param); dropping ref_audio",
+                        type(model).__name__,
+                    )
             for p, v in [
                 ("temperature", temperature),
                 ("top_k", top_k),

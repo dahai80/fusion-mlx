@@ -317,8 +317,8 @@ def test_user_agent_is_self_identifying():
 
     ua = transport._user_agent()
     assert re.search(
-        r"\brapid-mlx/\S+", ua
-    ), f"UA must follow 'rapid-mlx/<version>' shape, got {ua!r}"
+        r"\bfusion-mlx/\S+", ua
+    ), f"UA must follow 'fusion-mlx/<version>' shape, got {ua!r}"
     assert "Python-urllib" not in ua
 
 
@@ -341,8 +341,8 @@ def test_post_sends_self_identifying_user_agent():
         assert transport.post_batch([{"x": 1}]) is True
     ua = {k.lower(): v for k, v in captured["headers"].items()}["user-agent"]
     assert re.search(
-        r"\brapid-mlx/\S+", ua
-    ), f"UA must follow 'rapid-mlx/<version>' shape, got {ua!r}"
+        r"\bfusion-mlx/\S+", ua
+    ), f"UA must follow 'fusion-mlx/<version>' shape, got {ua!r}"
     assert "Python-urllib" not in ua
 
 

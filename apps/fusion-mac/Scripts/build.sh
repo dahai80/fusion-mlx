@@ -472,6 +472,14 @@ MLX_SITE="$PYROOT/framework-mlx-base/lib/python3.11/site-packages"
 
 export PYTHONHOME="$CPYTHON"
 export PYTHONDONTWRITEBYTECODE=1
+# Stop CPython from prepending cwd/script-dir to sys.path. With
+# `python -m fusion_mlx.cli` the caller's cwd lands on sys.path[0]; any
+# subdir whose name collides with a probed package (e.g. an `accelerate/`
+# checkout) becomes a PEP 420 namespace package -> no metadata, no
+# __version__ -> transformers 5.0.0's unguarded is_accelerate_available()
+# does version.parse("N/A") and crashes at import time. PYTHONPATH entries
+# below still resolve fusion_mlx / transformers / mlx_lm.
+export PYTHONSAFEPATH=1
 if [ -n "${PYTHONPATH:-}" ]; then
     export PYTHONPATH="$RESOURCES:$MLX_SITE:$PYTHONPATH"
 else

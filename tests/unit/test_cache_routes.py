@@ -122,7 +122,7 @@ def test_manifest_roundtrip(tmp_path):
         index_format_version=2,
         entries=42,
         total_bytes=12_345_678,
-        rapid_mlx_version="0.7.29",
+        fusion_mlx_version="0.7.29",
         created_at="2026-06-18T00:00:00Z",
     )
     write_manifest(tmp_path, original)

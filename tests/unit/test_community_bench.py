@@ -99,11 +99,11 @@ def test_collect_refuses_non_apple_silicon(monkeypatch) -> None:
         hardware.collect()
 
 
-def test_rapid_mlx_version_resolves() -> None:
+def test_fusion_mlx_version_resolves() -> None:
     """The probe should at least return a string (real version or 'unknown')."""
     from fusion_mlx.community_bench import hardware
 
-    v = hardware._rapid_mlx_version()
+    v = hardware._fusion_mlx_version()
     assert isinstance(v, str) and v
 
 

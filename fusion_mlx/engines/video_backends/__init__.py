@@ -14,7 +14,8 @@ from .base import (
     validate_params,
 )
 from .ltx2 import LTX2Backend
-from .unimplemented import CogVideoBackend, LegacyLTXBackend
+from .ltx_video_legacy import LegacyLTXBackend
+from .unimplemented import CogVideoBackend
 from .wan2 import Wan2Backend
 
 BACKENDS: dict[str, type[VideoBackend]] = {

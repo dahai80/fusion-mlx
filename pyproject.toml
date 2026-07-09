@@ -81,6 +81,9 @@ modelscope = [
 audio = [
     "mlx-audio[tts,stt,sts] @ git+https://github.com/Blaizzy/mlx-audio@51753266e0a4f766fd5e6fbc46652224efc23981",
 ]
+image = [
+    "mflux>=0.18.0",
+]
 video = [
     "mlx-video @ git+https://github.com/Blaizzy/mlx-video.git",
 ]

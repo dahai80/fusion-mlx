@@ -37,6 +37,7 @@ from . import claude_code, cline, continue_dev, cursor
 # ``continue-dev``).
 ADAPTERS: dict[str, object] = {
     "cline": cline,
+    "claude": claude_code,
     "claude-code": claude_code,
     "continue-dev": continue_dev,
     "cursor": cursor,

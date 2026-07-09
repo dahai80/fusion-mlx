@@ -28,7 +28,7 @@ class TestConsentState(unittest.TestCase):
             with patch.object(
                 state, "consent_path", return_value=Path(td) / "consent.json"
             ):
-                record_consent(True, rapid_mlx_version="0.4.1")
+                record_consent(True, fusion_mlx_version="0.4.1")
                 cs = get_consent_state()
                 self.assertIsNotNone(cs)
                 self.assertTrue(cs.consent)
@@ -38,7 +38,7 @@ class TestConsentState(unittest.TestCase):
             with patch.object(
                 state, "consent_path", return_value=Path(td) / "consent.json"
             ):
-                record_consent(False, rapid_mlx_version="0.4.1")
+                record_consent(False, fusion_mlx_version="0.4.1")
                 cs = get_consent_state()
                 self.assertIsNotNone(cs)
                 self.assertFalse(cs.consent)
@@ -55,7 +55,7 @@ class TestConsentState(unittest.TestCase):
             with patch.object(
                 state, "consent_path", return_value=Path(td) / "consent.json"
             ):
-                record_consent(True, rapid_mlx_version="0.4.1")
+                record_consent(True, fusion_mlx_version="0.4.1")
                 src = consent_source()
                 self.assertIsInstance(src, str)
                 self.assertGreater(len(src), 0)

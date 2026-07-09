@@ -44,6 +44,9 @@ def is_fused_sampler_eligible(
     mx.random.categorical on un-modified logits). Zero-temperature
     greedy is already a single op — no fusion benefit.
     """
+    if temperature is None:
+        logger.debug("is_fused_sampler_eligible: temperature is None, ineligible")
+        return False
     return temperature > 0.0
 
 

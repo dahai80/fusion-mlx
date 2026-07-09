@@ -65,19 +65,19 @@ class TestConsentStateDataclass(unittest.TestCase):
 
 class TestPaths(unittest.TestCase):
 
-    def test_consent_path_under_rapid_mlx_dir(self):
+    def test_consent_path_under_fusion_mlx_dir(self):
         p = state.consent_path()
-        self.assertIn(".rapid-mlx", str(p))
+        self.assertIn(".fusion-mlx", str(p))
         self.assertTrue(p.name == "telemetry-consent.yaml")
 
-    def test_client_id_path_under_rapid_mlx_dir(self):
+    def test_client_id_path_under_fusion_mlx_dir(self):
         p = state.client_id_path()
-        self.assertIn(".rapid-mlx", str(p))
+        self.assertIn(".fusion-mlx", str(p))
         self.assertTrue(p.name == "telemetry-client-id")
 
     def test_default_telemetry_dir_uses_home(self):
         d = state._default_telemetry_dir()
-        self.assertEqual(d, Path.home() / ".rapid-mlx")
+        self.assertEqual(d, Path.home() / ".fusion-mlx")
 
 
 class TestGetConsentState(unittest.TestCase):
@@ -234,7 +234,7 @@ class TestRecordConsent(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             p = Path(td) / "consent.yaml"
             with patch.object(state, "consent_path", return_value=p):
-                result = state.record_consent(True, rapid_mlx_version="0.4.1")
+                result = state.record_consent(True, fusion_mlx_version="0.4.1")
             self.assertTrue(result.consent)
             self.assertEqual(result.prompted_version, "0.4.1")
             self.assertTrue(p.exists())
@@ -247,14 +247,14 @@ class TestRecordConsent(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             p = Path(td) / "nested" / "deep" / "consent.yaml"
             with patch.object(state, "consent_path", return_value=p):
-                state.record_consent(False, rapid_mlx_version="0.4.1")
+                state.record_consent(False, fusion_mlx_version="0.4.1")
             self.assertTrue(p.exists())
 
     def test_tmp_cleanup_no_leftover(self):
         with tempfile.TemporaryDirectory() as td:
             p = Path(td) / "consent.yaml"
             with patch.object(state, "consent_path", return_value=p):
-                state.record_consent(True, rapid_mlx_version="0.4.1")
+                state.record_consent(True, fusion_mlx_version="0.4.1")
             # 不应残留 .tmp 文件
             tmp = p.with_suffix(p.suffix + ".tmp")
             self.assertFalse(tmp.exists())
@@ -263,8 +263,8 @@ class TestRecordConsent(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             p = Path(td) / "consent.yaml"
             with patch.object(state, "consent_path", return_value=p):
-                state.record_consent(True, rapid_mlx_version="0.4.0")
-                state.record_consent(False, rapid_mlx_version="0.4.1")
+                state.record_consent(True, fusion_mlx_version="0.4.0")
+                state.record_consent(False, fusion_mlx_version="0.4.1")
                 cs = state.get_consent_state()
             self.assertFalse(cs.consent)
             self.assertEqual(cs.prompted_version, "0.4.1")

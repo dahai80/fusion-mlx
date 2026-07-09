@@ -27,7 +27,7 @@ def fake_home(tmp_path, monkeypatch):
 def opted_in(fake_home):
     from fusion_mlx.telemetry.state import record_consent
 
-    record_consent(True, rapid_mlx_version="0.0.0+test")
+    record_consent(True, fusion_mlx_version="0.0.0+test")
     return fake_home
 
 

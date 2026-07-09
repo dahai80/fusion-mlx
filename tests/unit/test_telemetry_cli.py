@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Pin the user-facing ``rapid-mlx telemetry ...`` subcommand surface.
+"""Pin the user-facing ``fusion-mlx telemetry ...`` subcommand surface.
 
 Smoke-level: every action returns 0, prints something resembling its
 purpose. The deep behaviour (precedence, redaction, prompt skips) is
@@ -125,7 +125,7 @@ def test_reset_removes_consent(fake_home):
 
 
 def test_status_with_no_action_defaults_to_status(fake_home):
-    """``rapid-mlx telemetry`` (no action) should be a friendly status,
+    """``fusion-mlx telemetry`` (no action) should be a friendly status,
     not an argparse error — users will type the bare command first."""
     r = _run_cli("telemetry", home=fake_home)
     assert r.returncode == 0, r.stderr
@@ -230,7 +230,7 @@ def test_session_end_synchronously_drained_before_exit(fake_home):
 
 def test_telemetry_subcommand_does_not_emit_lifecycle_events(fake_home):
     """Codex round 1 caught a "phone home before silencing the phone"
-    issue: ``rapid-mlx telemetry disable`` (and ``reset``) would queue
+    issue: ``fusion-mlx telemetry disable`` (and ``reset``) would queue
     a ``session_start`` event before the disable action ran, because
     cli.py registered the lifecycle emit for every non-None
     subcommand. The fix excludes the ``telemetry`` subcommand entirely.
@@ -272,7 +272,7 @@ def test_env_kill_switch_via_subprocess(fake_home):
 
 
 def test_help_lists_telemetry_subcommand():
-    """Bare ``rapid-mlx --help`` must surface the telemetry subcommand
+    """Bare ``fusion-mlx --help`` must surface the telemetry subcommand
     so users discover it. Regression target: someone refactors the
     subparsers and accidentally drops the registration."""
     r = subprocess.run(

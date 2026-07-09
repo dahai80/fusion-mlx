@@ -396,6 +396,39 @@ class EnginePoolError(FusionMLXError):
     pass
 
 
+def _fuzzy_match(query: str, candidates: list[str], max_dist: int = 3) -> str | None:
+    if not query or not candidates:
+        return None
+    q = query.lower()
+    best = None
+    best_d = max_dist + 1
+    for c in candidates:
+        cl = c.lower()
+        if q == cl:
+            continue
+        d = _edit_distance(q, cl)
+        if d < best_d:
+            best_d = d
+            best = c
+    return best if best_d <= max_dist else None
+
+
+def _edit_distance(a: str, b: str) -> int:
+    n, m = len(a), len(b)
+    if n == 0:
+        return m
+    if m == 0:
+        return n
+    prev = list(range(m + 1))
+    for i in range(1, n + 1):
+        curr = [i] + [0] * m
+        for j in range(1, m + 1):
+            cost = 0 if a[i - 1] == b[j - 1] else 1
+            curr[j] = min(curr[j - 1] + 1, prev[j] + 1, prev[j - 1] + cost)
+        prev = curr
+    return prev[m]
+
+
 class ModelNotFoundError(EnginePoolError):
     """Raised when a requested model is not found."""
 
@@ -411,9 +444,10 @@ class ModelNotFoundError(EnginePoolError):
             models_str = (
                 ", ".join(self.available_models) if self.available_models else "(none)"
             )
-            message = (
-                f"Model '{model_id}' not found. " f"Available models: {models_str}"
-            )
+            message = f"Model '{model_id}' not found. Available models: {models_str}"
+            hint = _fuzzy_match(model_id, self.available_models)
+            if hint:
+                message += f" Did you mean '{hint}'?"
         super().__init__(message)
 
 
@@ -558,14 +592,25 @@ CACHE_CORRUPTION_PATTERNS = [
     "shape mismatch",
 ]
 
+# TypeError/AttributeError messages that are NOT cache corruption —
+# they are application logic bugs that should surface normally rather than
+# trigger cache-clear + re-prefill.
+_NON_CORRUPTION_PATTERNS = [
+    # None vs float/int comparison in sampling params (temperature, top_p, etc.)
+    # These are input validation bugs, not cache corruption.
+    "not supported between instances of 'NoneType' and 'float'",
+    "not supported between instances of 'NoneType' and 'int'",
+]
+
 
 def is_cache_corruption_error(error: Exception) -> bool:
     """
     Check if an error indicates cache corruption.
 
-    Examines the error message against known cache corruption patterns,
-    and also matches isinstance for common Python error types that
-    typically indicate corrupted state.
+    Examines the error message against known cache corruption patterns.
+    CacheCorruptionError always matches. For TypeError/AttributeError/
+    ValueError, only match if the message aligns with known corruption
+    patterns — NOT arbitrary None comparisons in sampling params.
 
     Args:
         error: The exception to check.
@@ -573,7 +618,17 @@ def is_cache_corruption_error(error: Exception) -> bool:
     Returns:
         True if the error appears to be cache corruption.
     """
-    if isinstance(error, (CacheCorruptionError, ValueError, TypeError, AttributeError)):
+    if isinstance(error, CacheCorruptionError):
         return True
     error_str = str(error)
+    # Exclude known non-corruption patterns first
+    for pat in _NON_CORRUPTION_PATTERNS:
+        if pat in error_str:
+            return False
+    # For generic TypeError/AttributeError/ValueError, only match
+    # if the error message contains a known cache-corruption pattern.
+    # This prevents arbitrary None comparisons (e.g. temperature > 0.0
+    # where temperature is None) from triggering cache clear + re-prefill.
+    if isinstance(error, (TypeError, AttributeError, ValueError)):
+        return any(pattern in error_str for pattern in CACHE_CORRUPTION_PATTERNS)
     return any(pattern in error_str for pattern in CACHE_CORRUPTION_PATTERNS)

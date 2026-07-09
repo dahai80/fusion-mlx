@@ -36,6 +36,7 @@ from ..api.anthropic_utils import (
     create_tool_name_delta_event,
     map_finish_reason_to_stop_reason,
 )
+from ..exceptions import ModelNotFoundError
 from ..pool import EnginePool
 from ..request import SamplingParams
 
@@ -237,6 +238,8 @@ async def _run_anthropic_messages(
         return _adapter.format_response(internal, req)
     except HTTPException:
         raise
+    except ModelNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
     except Exception as exc:
         err_msg = str(exc)
         # VLM image/video fetch failures -> 400
@@ -379,6 +382,8 @@ async def _stream_anthropic_generator(
                 )
                 yield create_message_stop_event()
 
+    except ModelNotFoundError as exc:
+        yield f'event: error\ndata: {{"error": {str(exc)!r}, "status": 404}}\n\n'
     except Exception as exc:
         err_msg = str(exc)
         # VLM image/video fetch failures -> 400
@@ -435,6 +440,8 @@ async def anthropic_messages(request: AnthropicMessagesRequest) -> Any:
         return await _run_anthropic_messages(request)
     except HTTPException:
         raise
+    except ModelNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
     except Exception as exc:
         logger.exception("Anthropic messages failed")
         raise HTTPException(500, str(exc))

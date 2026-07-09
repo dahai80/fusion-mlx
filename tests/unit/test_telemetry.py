@@ -60,14 +60,14 @@ class TestConsent(unittest.TestCase):
         self.assertIsNone(get_consent_state())
 
     def test_record_consent_true(self):
-        state = record_consent(True, rapid_mlx_version="0.1.0")
+        state = record_consent(True, fusion_mlx_version="0.1.0")
         self.assertTrue(state.consent)
         loaded = get_consent_state()
         self.assertIsNotNone(loaded)
         self.assertTrue(loaded.consent)
 
     def test_record_consent_false(self):
-        state = record_consent(False, rapid_mlx_version="0.1.0")
+        state = record_consent(False, fusion_mlx_version="0.1.0")
         self.assertFalse(state.consent)
         loaded = get_consent_state()
         self.assertIsNotNone(loaded)
@@ -77,26 +77,26 @@ class TestConsent(unittest.TestCase):
         self.assertFalse(is_enabled())
 
     def test_is_enabled_consent_true(self):
-        record_consent(True, rapid_mlx_version="0.1.0")
+        record_consent(True, fusion_mlx_version="0.1.0")
         self.assertTrue(is_enabled())
 
     def test_is_enabled_consent_false(self):
-        record_consent(False, rapid_mlx_version="0.1.0")
+        record_consent(False, fusion_mlx_version="0.1.0")
         self.assertFalse(is_enabled())
 
     def test_is_enabled_env_kill_switch(self):
-        record_consent(True, rapid_mlx_version="0.1.0")
+        record_consent(True, fusion_mlx_version="0.1.0")
         with patch.dict(os.environ, {"FUSION_MLX_TELEMETRY": "0"}):
             self.assertFalse(is_enabled())
 
     def test_is_enabled_cli_kill_switch(self):
-        record_consent(True, rapid_mlx_version="0.1.0")
+        record_consent(True, fusion_mlx_version="0.1.0")
         set_cli_kill_switch(True)
         self.assertFalse(is_enabled())
         set_cli_kill_switch(False)
 
     def test_reset_state_removes_files(self):
-        record_consent(True, rapid_mlx_version="0.1.0")
+        record_consent(True, fusion_mlx_version="0.1.0")
         reset_state()
         self.assertIsNone(get_consent_state())
 
@@ -190,7 +190,7 @@ class TestSchema(unittest.TestCase):
             schema_version=SCHEMA_VERSION,
             client_id="test-cid",
             session_id="test-sid",
-            rapid_mlx_version="0.1.0",
+            fusion_mlx_version="0.1.0",
             platform=info,
             event="session_start",
             timestamp="2026-01-01T00:00:00Z",
@@ -204,7 +204,7 @@ class TestSchema(unittest.TestCase):
     def test_sample_preview_payload(self):
         payload = sample_preview_payload(
             client_id="test-cid",
-            rapid_mlx_version="0.1.0",
+            fusion_mlx_version="0.1.0",
         )
         self.assertEqual(payload.client_id, "test-cid")
         self.assertEqual(payload.event, "session_start")

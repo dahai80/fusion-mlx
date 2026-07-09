@@ -28,7 +28,7 @@ def test_skips_when_consent_already_recorded(fake_home, monkeypatch, capsys):
     from fusion_mlx.telemetry.consent import maybe_prompt_for_consent
     from fusion_mlx.telemetry.state import record_consent
 
-    record_consent(False, rapid_mlx_version="0.6.33")
+    record_consent(False, fusion_mlx_version="0.6.33")
     _stub_tty(monkeypatch)
     maybe_prompt_for_consent("serve")
     assert capsys.readouterr().out == ""
@@ -95,7 +95,7 @@ def test_yes_records_consent_true(fake_home, monkeypatch, capsys):
     out = capsys.readouterr().out
     lower = out.lower()
     assert "thank you" in lower
-    assert "rapid-mlx telemetry disable" in lower
+    assert "fusion-mlx telemetry disable" in lower
 
 
 def test_no_records_consent_false(fake_home, monkeypatch, capsys):
@@ -119,7 +119,7 @@ def test_cached_consent_skip_returns_false(fake_home, monkeypatch, capsys):
 
     _stub_tty(monkeypatch)
 
-    record_consent(True, rapid_mlx_version="0.0.0+test")
+    record_consent(True, fusion_mlx_version="0.0.0+test")
     assert maybe_prompt_for_consent("serve") is False
 
 

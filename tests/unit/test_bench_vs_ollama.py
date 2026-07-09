@@ -402,7 +402,7 @@ def test_render_markdown_includes_model_table_and_speedups():
         "metadata": {
             "timestamp": "2026-05-02T12:00:00",
             "git_commit": "abc123",
-            "rapid_mlx_version": "rapid-mlx 0.2.0",
+            "fusion_mlx_version": "rapid-mlx 0.2.0",
             "ollama_version": "ollama version 0.6.0",
         },
         "config": {

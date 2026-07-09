@@ -157,11 +157,26 @@ def _decode_ref_audio_base64(request: AudioSpeechRequest) -> bytes | None:
         )
 
 
+def _detect_audio_suffix(audio_bytes: bytes) -> str:
+    # Sniff magic bytes to pick the right extension so downstream load_audio()
+    # decodes with the correct codec instead of misreading MP3/AAC as WAV.
+    if audio_bytes[:3] == b"ID3" or audio_bytes[:2] == b"\xff\xfb":
+        return ".mp3"
+    if audio_bytes[:4] == b"fLaC":
+        return ".flac"
+    if audio_bytes[:4] == b"OggS":
+        return ".ogg"
+    if len(audio_bytes) >= 12 and audio_bytes[4:8] == b"ftyp":
+        return ".m4a"
+    return ".wav"
+
+
 def _write_ref_audio_tempfile(audio_bytes: bytes | None) -> str | None:
     """Persist decoded ref audio to a temp file if present."""
     if audio_bytes is None:
         return None
-    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".wav")
+    suffix = _detect_audio_suffix(audio_bytes)
+    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=suffix)
     try:
         tmp.write(audio_bytes)
         return tmp.name

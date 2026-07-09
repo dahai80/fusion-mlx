@@ -32,8 +32,7 @@ from datetime import UTC, datetime
 from typing import Any
 from urllib.parse import urlsplit
 
-# TODO: verify fusion_mlx.__version__ is compatible with the original vllm_mlx.__version__
-from fusion_mlx import __version__ as _rapid_mlx_version  # noqa: N811
+from fusion_mlx import __version__ as _fusion_mlx_version
 from fusion_mlx.telemetry.queue import TelemetryQueue
 from fusion_mlx.telemetry.redact import (
     bucket_tokens,
@@ -216,7 +215,7 @@ def _envelope(event: str) -> dict[str, Any]:
         "schema_version": SCHEMA_VERSION,
         "client_id": get_or_create_client_id(),
         "session_id": session_id(),
-        "rapid_mlx_version": _rapid_mlx_version,
+        "fusion_mlx_version": _fusion_mlx_version,
         "event": event,
         "timestamp": _utc_now_iso(),
         "platform": {

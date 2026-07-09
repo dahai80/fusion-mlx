@@ -99,9 +99,11 @@ def test_shutdown_does_not_orphan_thread_for_restart_when_join_times_out():
     assert original_thread is not None
     assert original_thread.is_alive()
 
-    before_named = [t for t in threading.enumerate() if t.name == "rapid-mlx-telemetry"]
+    before_named = [
+        t for t in threading.enumerate() if t.name == "fusion-mlx-telemetry"
+    ]
     q.start()
-    after_named = [t for t in threading.enumerate() if t.name == "rapid-mlx-telemetry"]
+    after_named = [t for t in threading.enumerate() if t.name == "fusion-mlx-telemetry"]
     assert q._thread is original_thread, "start() replaced live daemon"
     assert len(after_named) == len(before_named), (
         f"start() spawned a second telemetry daemon "
@@ -264,7 +266,7 @@ def test_concurrent_start_does_not_spawn_duplicate_daemons():
     for t in threads:
         t.join(timeout=2.0)
 
-    named = [t for t in threading.enumerate() if t.name == "rapid-mlx-telemetry"]
+    named = [t for t in threading.enumerate() if t.name == "fusion-mlx-telemetry"]
     assert (
         len(named) == 1
     ), f"concurrent start() spawned {len(named)} daemons (want exactly 1)"

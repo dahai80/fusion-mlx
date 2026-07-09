@@ -1,19 +1,19 @@
 # SPDX-License-Identifier: Apache-2.0
 # Stub backends for video models with no MLX port.
 #
-# Legacy LTX-Video (0.9.x, superseded by LTX-2) and CogVideoX have no MLX
-# reference implementation and are not shipped by mlx-video (which provides
-# only ltx_2 and wan_2). A from-scratch MLX port of a video diffusion model
-# (VAE + DiT + scheduler) is multi-thousand-line and unverifiable without the
-# model weights and compute. Rather than ship unverified code, these backends
-# auto-detect their model families and fail loudly with an actionable message
-# pointing to upstream support and the working alternatives.
+# CogVideoX has no MLX reference implementation and is not shipped by mlx-video
+# (which provides only ltx_2 and wan_2). A from-scratch MLX port of a video
+# diffusion model (VAE + DiT + scheduler) is multi-thousand-line and unverifiable
+# without the model weights and compute. Rather than ship unverified code, this
+# backend auto-detects the model family and fails loudly with an actionable
+# message pointing to upstream support and the working alternatives.
 #
-# Upstream feature requests filed 2026-07-09 (per the file-issue-first flow):
-#   CogVideoX:        https://github.com/Blaizzy/mlx-video/issues/42
-#   Legacy LTX-Video: https://github.com/Blaizzy/mlx-video/issues/43
+# Upstream feature request filed 2026-07-09 (per the file-issue-first flow):
+#   CogVideoX: https://github.com/Blaizzy/mlx-video/issues/42
 #
-# When an MLX port lands upstream (mlx-video or a community port), replace the
+# Legacy LTX-Video (0.9.x) previously lived here as a stub; Phase 3 replaced it
+# with a pure-MLX port in ltx_video_legacy.py (upstream issue #43 referenced for
+# context). When an MLX port of CogVideoX lands upstream, replace the
 # NotImplementedError in start()/generate() with a real delegator - the registry
 # and engine wiring already handle the rest.
 
@@ -75,17 +75,6 @@ class UnimplementedBackend(VideoBackend):
             dim_divisibility=1,
             num_frames_validator=None,
         )
-
-
-class LegacyLTXBackend(UnimplementedBackend):
-    name = "ltx_video_legacy"
-    supports_i2v = True
-    _family = "Legacy LTX-Video (0.9.x)"
-
-    @classmethod
-    def detect(cls, model_path: str) -> bool:
-        p = model_path.lower()
-        return "ltx-video" in p or "ltx_video" in p
 
 
 class CogVideoBackend(UnimplementedBackend):
