@@ -10,7 +10,12 @@ from typing import Any
 
 from ..engine_core import AsyncEngineCore, EngineConfig, get_executor
 from ..request import SamplingParams
-from .base import BaseEngine, GenerationOutput, _fallback_parse_tool_calls
+from .base import (
+    BaseEngine,
+    GenerationOutput,
+    _apply_reasoning_parser,
+    _fallback_parse_tool_calls,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -81,6 +86,9 @@ def _fallback_parse_tool_calls(
     except Exception as e:
         logger.debug(f"_fallback_parse_tool_calls failed: {e}")
     return gen
+
+
+# _apply_reasoning_parser lives in base.py (shared with VLMBatchedEngine).
 
 
 class BatchedEngine(BaseEngine):
@@ -811,6 +819,14 @@ class BatchedEngine(BaseEngine):
         )
         if tools and not gen.tool_calls:
             gen = _fallback_parse_tool_calls(gen, self._tokenizer, tools)
+        # Non-streaming path bypasses the output router, so reasoning tags
+        # (e.g. Qwen3's chat-template-injected "Here's a thinking process:"
+        # preamble) leak into gen.text and consume the token budget without
+        # producing a real answer. Strip them via the configured reasoning
+        # parser so gen.text is the final content (see reasoning/__init__.py).
+        gen = _apply_reasoning_parser(
+            gen, self._model_settings, ct_kwargs, self._model_name
+        )
         return gen
 
     async def stream_chat(

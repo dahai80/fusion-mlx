@@ -75,6 +75,67 @@ def _fallback_parse_tool_calls(
     return gen
 
 
+def _apply_reasoning_parser(
+    gen: "GenerationOutput",
+    model_settings: Any | None,
+    ct_kwargs: dict | None,
+    model_name: str | None = None,
+) -> "GenerationOutput":
+    """Strip reasoning tags from non-streaming output.
+
+    Runs the configured reasoning parser (model_settings.reasoning_parser)
+    over gen.text so Qwen3's chat-template-injected "Here's a thinking
+    process:" preamble and thinking blocks go to the reasoning channel
+    instead of consuming the content token budget. No-op when no parser
+    is configured or extraction yields nothing.
+
+    When ``model_settings.reasoning_parser`` is unset (common on the
+    multi-model discovery path, which unlike ``cli_serve --model`` does
+    not call ``detect_model_config``), fall back to family inference via
+    ``detect_model_config(model_name)`` so Qwen3 models still get their
+    parser without requiring persisted per-model settings.
+    """
+    parser_name = (
+        getattr(model_settings, "reasoning_parser", None) if model_settings else None
+    )
+    if not parser_name and model_name:
+        try:
+            from ..model_auto_config import detect_model_config
+
+            auto = detect_model_config(model_name)
+            if auto is not None:
+                parser_name = auto.reasoning_parser
+        except Exception as e:
+            logger.debug("reasoning parser auto-detect failed for %s: %s", model_name, e)
+    if not parser_name:
+        return gen
+    try:
+        from ..reasoning import get_parser
+
+        parser_cls = get_parser(parser_name)
+    except Exception as e:
+        logger.debug("reasoning parser %r unavailable: %s", parser_name, e)
+        return gen
+    try:
+        enable_thinking = (ct_kwargs or {}).get("enable_thinking")
+        parser = parser_cls(tokenizer=None)
+        reasoning, content = parser.extract_reasoning(
+            gen.text, enable_thinking=enable_thinking
+        )
+        # content is the real answer channel; reasoning is the thinking trace
+        # (template-injected or model-emitted). When the run truncated mid-
+        # think (content is None), surface empty so the caller knows no real
+        # answer was produced — do NOT leak the reasoning preamble back as
+        # content (that is the exact bug this fix targets).
+        new_text = content if content is not None else ""
+        if new_text != gen.text:
+            gen = copy.deepcopy(gen)
+            gen.text = new_text
+    except Exception as e:
+        logger.debug("reasoning parser extract failed: %s", e)
+    return gen
+
+
 _warn_scheduler_logged = set()
 
 

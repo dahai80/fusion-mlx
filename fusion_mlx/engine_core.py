@@ -57,7 +57,10 @@ _executor_config: dict[str, dict[str, Any]] = {
     "llm": {"max_workers": 1, "prefix": "mlx-llm"},
     "image": {"max_workers": 1, "prefix": "mlx-image"},
     "video": {"max_workers": 1, "prefix": "mlx-video"},
-    "audio": {"max_workers": 2, "prefix": "mlx-audio"},
+    # audio must be max_workers=1: mlx-audio's Metal Stream is thread-local,
+    # so load_model() and generate() must run on the same thread (else
+    # "no Stream(gpu, N) in current thread").
+    "audio": {"max_workers": 1, "prefix": "mlx-audio"},
     "io": {"max_workers": 2, "prefix": "mlx-io"},
 }
 _global_executors: dict[str, concurrent.futures.ThreadPoolExecutor] = {}

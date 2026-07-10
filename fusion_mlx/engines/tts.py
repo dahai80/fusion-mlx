@@ -161,9 +161,12 @@ class TTSEngine(BaseNonStreamingEngine):
         )
         try:
             loop = asyncio.get_running_loop()
+            # 180s: mlx-audio generate() for long text + cold-start (lazy
+            # tokenizer/Metal kernel JIT) can exceed the old 60s ceiling and
+            # surface as an empty-message 500.
             result = await asyncio.wait_for(
                 loop.run_in_executor(get_executor("audio"), _synthesize_sync),
-                timeout=60.0,
+                timeout=180.0,
             )
             return result
         finally:
@@ -264,7 +267,7 @@ class TTSEngine(BaseNonStreamingEngine):
             while True:
                 chunk = await asyncio.wait_for(
                     loop.run_in_executor(get_executor("audio"), _next_chunk),
-                    timeout=30.0,
+                    timeout=120.0,
                 )
                 if chunk is sentinel:
                     break
