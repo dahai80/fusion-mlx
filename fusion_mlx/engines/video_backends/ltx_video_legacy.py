@@ -177,7 +177,12 @@ def _vae_scale_factors(vae) -> tuple[int, int, int]:
     spatial = 1
     temporal = 1
     for b in vae.config.blocks:
-        name = b.get("name", "") if isinstance(b, dict) else getattr(b, "name", "")
+        if isinstance(b, (list, tuple)):
+            name = b[0] if b else ""
+        elif isinstance(b, dict):
+            name = b.get("name", "")
+        else:
+            name = getattr(b, "name", "")
         if "space" in name or "all" in name:
             spatial *= 2
         if "time" in name or "all" in name:
@@ -300,7 +305,9 @@ def _generate_one(
     target_shape = (1, 3, lf * temporal_s, lh * spatial_s, lw * spatial_s)
     decoded = vae.decode(latents_5d, target_shape=target_shape)
     mx.eval(decoded)
-    decoded = np.asarray(decoded, dtype=np.float32)
+    # bf16 mlx arrays expose a PEP 3118 buffer whose item size mismatches
+    # float32, so cast to float32 on the mlx side before handing to numpy.
+    decoded = np.asarray(decoded.astype(mx.float32))
 
     # NCDHW (1, 3, F, H, W) -> crop to requested dims -> list of HxWx3 uint8 frames.
     f_out = min(decoded.shape[2], num_frames)

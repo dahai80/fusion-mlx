@@ -35,15 +35,18 @@ logger = logging.getLogger(__name__)
 _TRANSFORMER_KEYS_RENAME = {
     "proj_in": "patchify_proj",
     "time_embed": "adaln_single",
-    "norm_q": "q_norm",
-    "norm_k": "k_norm",
 }
 
 # ltx_video-native sub-module names that differ from this port's internal names.
+# norm_q/norm_k are middle fragments (transformer_blocks.N.attn1.norm_q.weight),
+# so they must be substring-renamed here, not prefix-matched above.
+# ff.net.0.proj -> fc1.proj because FeedForward.fc1 is _GELUProj with .proj inside.
 _SUBKEY_RENAME = [
     (".to_out.0.", ".out_proj."),
-    (".ff.net.0.proj.", ".ff.fc1."),
+    (".ff.net.0.proj.", ".ff.fc1.proj."),
     (".ff.net.2.", ".ff.fc2."),
+    (".norm_q.", ".q_norm."),
+    (".norm_k.", ".k_norm."),
 ]
 
 _MASK_NEG = -1e4
@@ -394,7 +397,7 @@ class Transformer3DModel(nn.Module):
                 dim_head=config.attention_head_dim,
                 cross_attention_dim=config.cross_attention_dim,
                 eps=config.norm_eps,
-                qk_norm=(config.qk_norm == "rms_norm"),
+                qk_norm=(config.qk_norm in ("rms_norm", "rms_norm_across_heads")),
                 use_rope=(config.positional_embedding_type == "rope"),
             )
             for _ in range(config.num_layers)
@@ -504,7 +507,7 @@ class Transformer3DModel(nn.Module):
         raw = {}
         for shard in shards:
             with safe_open(shard, framework="numpy") as f:
-                for k in f.keys():
+                for k in f.keys():  # noqa: SIM118 - safe_open is not iterable
                     raw[k] = f.get_tensor(k)
 
         mapped = _map_transformer_weights(raw)
