@@ -26,7 +26,12 @@ from ..utils.video import (
     process_video_input,
     save_frames_to_temp,
 )
-from .base import BaseEngine, GenerationOutput, _fallback_parse_tool_calls
+from .base import (
+    BaseEngine,
+    GenerationOutput,
+    _apply_reasoning_parser,
+    _fallback_parse_tool_calls,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -51,7 +56,7 @@ def _patch_vlm_sanitize():
     (matching mlx_lm) is to only shift when the checkpoint stores
     gamma-1 (indicated by MTP weights or unsanitized conv1d axes).
 
-    See: https://github.com/Blaizzy/mlx-vlm/issues/XXXX
+    See: https://github.com/Blaizzy/mlx-vlm/issues/1548
     """
     global _VLM_SANITIZE_PATCHED
     if _VLM_SANITIZE_PATCHED:
@@ -1496,6 +1501,14 @@ class VLMBatchedEngine(BaseEngine):
         )
         if tools and not gen.tool_calls:
             gen = _fallback_parse_tool_calls(gen, self._tokenizer, tools)
+        # Non-streaming path bypasses the output router, so reasoning tags
+        # (e.g. Qwen3's chat-template-injected "Here's a thinking process:"
+        # preamble) leak into gen.text and consume the token budget without
+        # producing a real answer. Strip them via the configured reasoning
+        # parser so gen.text is the final content.
+        gen = _apply_reasoning_parser(
+            gen, self._model_settings, kwargs.get("chat_template_kwargs"), self._model_name
+        )
         return gen
 
     async def stream_chat(
