@@ -1,9 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # Tests for the video backend registry: resolve_backend auto-detection,
-# constraints_for, validate_params, and Wan2Backend generate (stubbed mlx-video
-# wan_2 - no real model loading or generation).
-import sys
-import types
+# constraints_for, validate_params, and Wan2Backend generate (stubbed pure-MLX
+# wan2 port - no real model loading or generation).
 from pathlib import Path
 
 import pytest
@@ -22,16 +20,18 @@ from fusion_mlx.engines.video_backends import (
 
 
 def _install_wan2_stub(monkeypatch):
+    # Phase 5: Wan2 runs on the vendored pure-MLX port (fusion_mlx.video.wan2).
+    # Stub the port's get_model_path + generate_video - no real weights/compute.
     calls = {"resolve": [], "generate": []}
 
-    top = types.ModuleType("mlx_video")
-    models = types.ModuleType("mlx_video.models")
-    wan_2 = types.ModuleType("mlx_video.models.wan_2")
-    gen_mod = types.ModuleType("mlx_video.models.wan_2.generate")
+    from fusion_mlx.video.wan2 import generate as port_gen
+    from fusion_mlx.video.wan2 import utils as port_utils
 
-    def get_model_path(repo):
-        calls["resolve"].append(repo)
-        return Path("/tmp/fake-wan2")
+    monkeypatch.setattr(
+        port_utils,
+        "get_model_path",
+        lambda repo: calls["resolve"].append(repo) or Path("/tmp/fake-wan2"),
+    )
 
     def generate_video(model_dir, prompt, **kwargs):
         calls["generate"].append({"model_dir": model_dir, "prompt": prompt, **kwargs})
@@ -39,16 +39,7 @@ def _install_wan2_stub(monkeypatch):
             f.write(b"WANMP4" + str(kwargs.get("seed", 0)).encode())
         return None
 
-    top.get_model_path = get_model_path
-    top.models = models
-    models.wan_2 = wan_2
-    wan_2.generate = gen_mod
-    gen_mod.generate_video = generate_video
-
-    monkeypatch.setitem(sys.modules, "mlx_video", top)
-    monkeypatch.setitem(sys.modules, "mlx_video.models", models)
-    monkeypatch.setitem(sys.modules, "mlx_video.models.wan_2", wan_2)
-    monkeypatch.setitem(sys.modules, "mlx_video.models.wan_2.generate", gen_mod)
+    monkeypatch.setattr(port_gen, "generate_video", generate_video)
     return calls
 
 
@@ -309,6 +300,26 @@ class TestWan2Backend:
         assert call["scheduler"] == "unipc"
 
 
+class TestWan2BackendPureMLX:
+    # Phase 5 rewiring: Wan2 generation must run through the vendored pure-MLX
+    # port (fusion_mlx.video.wan2), replacing mlx-video for Wan2.
+
+    def _wan2_source(self):
+        from fusion_mlx.engines.video_backends import wan2 as mod
+
+        return Path(mod.__file__).read_text()
+
+    def test_generate_imports_from_pure_mlx_port(self):
+        src = self._wan2_source()
+        assert "from fusion_mlx.video.wan2.generate import" in src
+        assert "from mlx_video.models.wan_2.generate" not in src
+
+    def test_get_model_path_imports_from_pure_mlx_port(self):
+        src = self._wan2_source()
+        assert "from fusion_mlx.video.wan2.utils import get_model_path" in src
+        assert "from mlx_video import get_model_path" not in src
+
+
 class TestLegacyLTXBackend:
     # Legacy LTX-Video (0.9.x) pure-MLX port. No real weights - stub the
     # component loaders + mp4 writer and exercise the orchestration: start()
@@ -483,3 +494,105 @@ class TestLegacyLTXBackend:
         # negative_prompt set -> two T5 __call__ invocations would happen inside
         # _encode_prompt; we only assert generate completed and wrote one mp4.
         assert len(stub["write"]) == 1
+
+
+def _install_ltx2_stub(monkeypatch):
+    # Phase 4: LTX-2 routes through the vendored pure-MLX port
+    # (fusion_mlx.video.ltx2), NOT mlx_video. Stub the port's get_model_path +
+    # generate_video so the backend orchestration can be exercised without real
+    # 19B weights, and so the test fails loudly if the backend is ever rewired
+    # back to mlx_video (the stubs live on the pure-MLX modules).
+    calls = {"resolve": [], "generate": []}
+
+    from fusion_mlx.video.ltx2 import generate as port_gen
+    from fusion_mlx.video.ltx2 import utils as port_utils
+
+    monkeypatch.setattr(
+        port_utils,
+        "get_model_path",
+        lambda repo: calls["resolve"].append(repo) or Path("/tmp/fake-ltx2"),
+    )
+
+    def generate_video(model_repo, text_encoder_repo, prompt, **kwargs):
+        calls["generate"].append({"model_repo": model_repo, "prompt": prompt, **kwargs})
+        with open(kwargs["output_path"], "wb") as f:
+            f.write(b"LTX2MP4" + str(kwargs.get("seed", 0)).encode())
+        return None
+
+    monkeypatch.setattr(port_gen, "generate_video", generate_video)
+    return calls
+
+
+class TestLTX2BackendPureMLX:
+    # Phase 4 rewiring: LTX-2 generation must run through the vendored
+    # pure-MLX port (fusion_mlx.video.ltx2), replacing mlx-video for LTX-2.
+
+    def _ltx2_source(self):
+        from fusion_mlx.engines.video_backends import ltx2 as mod
+
+        return Path(mod.__file__).read_text()
+
+    def test_generate_imports_from_pure_mlx_port(self):
+        src = self._ltx2_source()
+        assert "from fusion_mlx.video.ltx2.generate import" in src
+        assert "from mlx_video.models.ltx_2.generate" not in src
+
+    def test_get_model_path_imports_from_pure_mlx_port(self):
+        src = self._ltx2_source()
+        assert "from fusion_mlx.video.ltx2.utils import get_model_path" in src
+        assert "from mlx_video import get_model_path" not in src
+
+    @pytest.fixture
+    def stub(self, monkeypatch):
+        return _install_ltx2_stub(monkeypatch)
+
+    async def test_start_resolves(self, stub):
+        backend = LTX2Backend("ltx-2")
+        await backend.start("ltx-2")
+        assert backend._loaded is True
+        assert stub["resolve"] == ["ltx-2"]
+
+    async def test_start_idempotent(self, stub):
+        backend = LTX2Backend("ltx-2")
+        await backend.start("ltx-2")
+        await backend.start("ltx-2")
+        assert len(stub["resolve"]) == 1
+
+    async def test_generate_seed_increment(self, stub):
+        backend = LTX2Backend("ltx-2")
+        await backend.start("ltx-2")
+        params = VideoGenParams(
+            prompt="a cat", n=3, num_frames=9, width=64, height=64, seed=42
+        )
+        result = await backend.generate(params)
+        assert len(result) == 3
+        seeds = [stub["generate"][i]["seed"] for i in range(3)]
+        assert seeds == [42, 43, 44]
+        assert result[0] == b"LTX2MP4" + b"42"
+
+    async def test_generate_random_seed_when_none(self, stub):
+        backend = LTX2Backend("ltx-2")
+        await backend.start("ltx-2")
+        params = VideoGenParams(prompt="a cat", num_frames=9, width=64, height=64)
+        result = await backend.generate(params)
+        seed = stub["generate"][0]["seed"]
+        assert seed != 0
+        assert result[0] == b"LTX2MP4" + str(seed).encode()
+
+    async def test_generate_forwards_knobs(self, stub):
+        backend = LTX2Backend("ltx-2")
+        await backend.start("ltx-2")
+        params = VideoGenParams(
+            prompt="a cat",
+            num_frames=9,
+            width=64,
+            height=64,
+            num_inference_steps=10,
+            cfg_scale=3.0,
+            tiling="auto",
+        )
+        await backend.generate(params)
+        call = stub["generate"][0]
+        assert call["num_inference_steps"] == 10
+        assert call["cfg_scale"] == 3.0
+        assert call["tiling"] == "auto"

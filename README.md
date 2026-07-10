@@ -139,7 +139,7 @@ print(resp.content[0].text)
 | STT | `STTEngine` | Whisper, VibeVoice-ASR |
 | TTS | `TTSEngine` | Kokoro, VibeVoice |
 | ImageGen | `ImageGenEngine` | Flux 2 |
-| VideoGen | `VideoGenEngine` | LTX-2 (mlx-video) |
+| VideoGen | `VideoGenEngine` | LTX-2, Wan2 (pure-MLX ports) |
 
 ## Quantization Formats
 
@@ -196,7 +196,7 @@ This is **weight** quantization saved to disk, distinct from TurboQuant KV-cache
 | Anthropic Messages | `/v1/messages`, `/v1/count_tokens` | ✅ Fully compatible |
 | Audio | `/v1/audio/transcriptions`, `/v1/audio/speech` | ✅ Supported |
 | Images | `/v1/images/generate` | ✅ Supported (Flux 2) |
-| Videos | `/v1/videos/generate` | ✅ Supported (LTX-2, mlx-video) |
+| Videos | `/v1/videos/generate` | ✅ Supported (LTX-2, Wan2; pure-MLX ports) |
 | Embeddings | `/v1/embeddings` | ✅ Supported |
 | MCP | `/v1/mcp/tools`, `/v1/mcp/servers`, `/v1/mcp/execute` | ✅ Supported |
 | OpenClaw Agent | `/v1/openclaw/agent/*` | ✅ Sessions, turns, tool calling, SSE streaming |

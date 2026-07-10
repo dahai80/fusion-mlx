@@ -1,11 +1,12 @@
 # SPDX-License-Identifier: Apache-2.0
-# Wan2.2 video backend (mlx-video Blaizzy/mlx-video).
-# Verified API: mlx_video.models.wan_2.generate.generate_video(model_dir,
-# prompt, negative_prompt=, image=, width=, height=, num_frames=, steps=,
-# guide_scale=, shift=, seed=, output_path=, scheduler=, no_compile=).
-# Wan supports image-to-video (I2V) via image=. Wan's generate_video takes no
-# fps argument (it controls container fps internally), so request fps is
-# ignored for this backend. Signature confirmed against installed mlx-video.
+# Wan2.2 video backend (pure-MLX port, vendored from mlx-video).
+# Phase 5: imports fusion_mlx.video.wan2 (direct MLX port) instead of
+# mlx_video.models.wan_2. Verified API: generate_video(model_dir, prompt,
+# negative_prompt=, image=, width=, height=, num_frames=, steps=, guide_scale=,
+# shift=, seed=, output_path=, scheduler=, no_compile=, tiling=). Wan supports
+# image-to-video (I2V) via image=. Wan's generate_video takes no fps argument
+# (it controls container fps internally), so request fps is ignored for this
+# backend. Signature confirmed against the pure-MLX port.
 
 import asyncio
 import gc
@@ -42,15 +43,14 @@ class Wan2Backend(VideoBackend):
     async def start(self, model_path: str, **kwargs: Any) -> None:
         if self._loaded:
             return
-        logger.info("Starting Wan2 backend (mlx-video): %s", model_path)
+        logger.info("Starting Wan2 backend (pure-MLX): %s", model_path)
 
         def _resolve():
             try:
-                from mlx_video import get_model_path
+                from fusion_mlx.video.wan2.utils import get_model_path
             except ImportError as exc:
                 raise ImportError(
-                    "Video generation requires mlx-video (Blaizzy/mlx-video). "
-                    "Install: pip install git+https://github.com/Blaizzy/mlx-video.git"
+                    "Wan2 pure-MLX port (fusion_mlx.video.wan2) is unavailable."
                 ) from exc
             return get_model_path(model_path)
 
@@ -141,7 +141,7 @@ def _generate_one(
     no_compile: bool = True,
     tiling: str | None = None,
 ) -> bytes:
-    from mlx_video.models.wan_2.generate import generate_video
+    from fusion_mlx.video.wan2.generate import generate_video
 
     with managed_tempfile_path(prefix="fusion_video_", suffix=".mp4") as handle:
         temp_path = handle.path

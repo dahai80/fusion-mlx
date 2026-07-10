@@ -1,8 +1,8 @@
 # SPDX-License-Identifier: Apache-2.0
-# Tests for VideoGenEngine. Stubs mlx-video's verified API
-# (get_model_path + generate_video) - no real model loading or generation.
+# Tests for VideoGenEngine. Stubs the vendored pure-MLX LTX-2 port
+# (fusion_mlx.video.ltx2: get_model_path + generate_video) - no real model
+# loading or generation. (Phase 4: LTX-2 no longer routes through mlx-video.)
 import sys
-import types
 from pathlib import Path
 
 import pytest
@@ -10,24 +10,17 @@ import pytest
 from fusion_mlx.engines.video import VideoGenEngine
 
 
-def _install_mlx_video_stub(monkeypatch, *, generate_side_effect=None):
+def _install_ltx2_port_stub(monkeypatch, *, generate_side_effect=None):
     calls = {"resolve": [], "generate": []}
 
-    top = types.ModuleType("mlx_video")
-    models = types.ModuleType("mlx_video.models")
-    ltx_2 = types.ModuleType("mlx_video.models.ltx_2")
-    gen_mod = types.ModuleType("mlx_video.models.ltx_2.generate")
+    from fusion_mlx.video.ltx2 import generate as port_gen
+    from fusion_mlx.video.ltx2 import utils as port_utils
 
-    def get_model_path(repo):
-        calls["resolve"].append(repo)
-        return Path("/tmp/fake-ltx-2")
-
-    class PipelineType:
-        DISTILLED = "distilled"
-        DEV = "dev"
-
-        def __init__(self, value):
-            self.value = value
+    monkeypatch.setattr(
+        port_utils,
+        "get_model_path",
+        lambda repo: calls["resolve"].append(repo) or Path("/tmp/fake-ltx-2"),
+    )
 
     def generate_video(model_repo, text_encoder_repo, prompt, **kwargs):
         calls["generate"].append(
@@ -45,23 +38,13 @@ def _install_mlx_video_stub(monkeypatch, *, generate_side_effect=None):
                 f.write(b"FAKEMP4" + str(kwargs.get("seed", 0)).encode())
         return None
 
-    top.get_model_path = get_model_path
-    top.models = models
-    models.ltx_2 = ltx_2
-    ltx_2.generate = gen_mod
-    gen_mod.generate_video = generate_video
-    gen_mod.PipelineType = PipelineType
-
-    monkeypatch.setitem(sys.modules, "mlx_video", top)
-    monkeypatch.setitem(sys.modules, "mlx_video.models", models)
-    monkeypatch.setitem(sys.modules, "mlx_video.models.ltx_2", ltx_2)
-    monkeypatch.setitem(sys.modules, "mlx_video.models.ltx_2.generate", gen_mod)
+    monkeypatch.setattr(port_gen, "generate_video", generate_video)
     return calls
 
 
 @pytest.fixture
 def stub(monkeypatch):
-    return _install_mlx_video_stub(monkeypatch)
+    return _install_ltx2_port_stub(monkeypatch)
 
 
 class TestStart:
@@ -77,11 +60,13 @@ class TestStart:
         await engine.start()
         assert len(stub["resolve"]) == 1
 
-    async def test_start_import_error_message(self, monkeypatch):
+    async def test_start_works_without_mlx_video(self, stub, monkeypatch):
+        # Phase 4: LTX-2 runs on the vendored pure-MLX port, so start() must
+        # succeed even with mlx_video absent (no hard mlx-video dependency).
         monkeypatch.setitem(sys.modules, "mlx_video", None)
         engine = VideoGenEngine("ltx-2")
-        with pytest.raises(ImportError, match="mlx-video"):
-            await engine.start()
+        await engine.start()
+        assert engine._loaded is True
 
 
 class TestGenerate:

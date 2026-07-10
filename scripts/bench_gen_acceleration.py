@@ -83,7 +83,7 @@ def explain(args):
 
 
 def run_ltx2(model_path, prompt, configs):
-    from mlx_video.models.ltx_2.generate import generate_video
+    from fusion_mlx.video.ltx2.generate import generate_video
 
     results = []
     for cfg in configs:
@@ -109,7 +109,7 @@ def run_ltx2(model_path, prompt, configs):
 
 
 def run_wan2(model_path, prompt, configs):
-    from mlx_video.models.wan_2.generate import generate_video
+    from fusion_mlx.video.wan2.generate import generate_video
 
     results = []
     for cfg in configs:

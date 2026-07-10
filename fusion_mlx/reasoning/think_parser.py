@@ -1319,7 +1319,7 @@ class BaseThinkingReasoningParser(ReasoningParser):
 
         result_content = result_content.strip() or None
 
-        logger.debug(
+        logger.warning(
             "Promoted %d tool_call block(s) from reasoning to content "
             "(%d closed, %d unclosed)",
             promoted_count,

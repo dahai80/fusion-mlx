@@ -1,8 +1,8 @@
 # SPDX-License-Identifier: Apache-2.0
 # Verifies the diffusion-acceleration knobs (num_inference_steps / cfg_scale /
 # tiling / no_compile / scheduler / negative_prompt / quantize) actually reach
-# the backend generate calls. Stubs mlx-video + mflux so no weights/compute are
-# needed - this is a wiring test, not a quality/perf test.
+# the backend generate calls. Stubs the pure-MLX wan2/ltx2 ports + mflux so no
+# weights/compute are needed - this is a wiring test, not a quality/perf test.
 import sys
 import types
 from pathlib import Path
@@ -13,57 +13,44 @@ from fusion_mlx.engines.video_backends import LTX2Backend, VideoGenParams, Wan2B
 
 
 def _install_wan2_stub(monkeypatch):
+    # Phase 5: Wan2 runs on the vendored pure-MLX port (fusion_mlx.video.wan2).
     calls = {"generate": []}
-    gen_mod = types.ModuleType("mlx_video.models.wan_2.generate")
+
+    from fusion_mlx.video.wan2 import generate as port_gen
+    from fusion_mlx.video.wan2 import utils as port_utils
+
+    monkeypatch.setattr(
+        port_utils, "get_model_path", lambda repo: Path("/tmp/fake-wan2")
+    )
 
     def generate_video(model_dir, prompt, **kwargs):
         calls["generate"].append({"model_dir": model_dir, "prompt": prompt, **kwargs})
         with open(kwargs["output_path"], "wb") as f:
             f.write(b"WANMP4")
 
-    gen_mod.generate_video = generate_video
-    top = types.ModuleType("mlx_video")
-    models = types.ModuleType("mlx_video.models")
-    wan_2 = types.ModuleType("mlx_video.models.wan_2")
-    top.get_model_path = lambda repo: Path("/tmp/fake-wan2")
-    top.models = models
-    models.wan_2 = wan_2
-    wan_2.generate = gen_mod
-    monkeypatch.setitem(sys.modules, "mlx_video", top)
-    monkeypatch.setitem(sys.modules, "mlx_video.models", models)
-    monkeypatch.setitem(sys.modules, "mlx_video.models.wan_2", wan_2)
-    monkeypatch.setitem(sys.modules, "mlx_video.models.wan_2.generate", gen_mod)
+    monkeypatch.setattr(port_gen, "generate_video", generate_video)
     return calls
 
 
 def _install_ltx2_stub(monkeypatch):
+    # Phase 4: LTX-2 runs on the vendored pure-MLX port (fusion_mlx.video.ltx2).
+    # Stub the port's get_model_path + generate_video (PipelineType stays the
+    # real port enum) - no real 19B weights or model loading.
     calls = {"generate": []}
-    gen_mod = types.ModuleType("mlx_video.models.ltx_2.generate")
 
-    class PipelineType:
-        DISTILLED = "distilled"
+    from fusion_mlx.video.ltx2 import generate as port_gen
+    from fusion_mlx.video.ltx2 import utils as port_utils
 
-        def __new__(cls, val):
-            return val
+    monkeypatch.setattr(
+        port_utils, "get_model_path", lambda repo: Path("/tmp/fake-ltx2")
+    )
 
     def generate_video(model_repo, text_encoder_repo, prompt, **kwargs):
         calls["generate"].append({"model_repo": model_repo, "prompt": prompt, **kwargs})
         with open(kwargs["output_path"], "wb") as f:
             f.write(b"LTXMP4")
 
-    gen_mod.PipelineType = PipelineType
-    gen_mod.generate_video = generate_video
-    top = types.ModuleType("mlx_video")
-    models = types.ModuleType("mlx_video.models")
-    ltx_2 = types.ModuleType("mlx_video.models.ltx_2")
-    top.get_model_path = lambda repo: Path("/tmp/fake-ltx2")
-    top.models = models
-    models.ltx_2 = ltx_2
-    ltx_2.generate = gen_mod
-    monkeypatch.setitem(sys.modules, "mlx_video", top)
-    monkeypatch.setitem(sys.modules, "mlx_video.models", models)
-    monkeypatch.setitem(sys.modules, "mlx_video.models.ltx_2", ltx_2)
-    monkeypatch.setitem(sys.modules, "mlx_video.models.ltx_2.generate", gen_mod)
+    monkeypatch.setattr(port_gen, "generate_video", generate_video)
     return calls
 
 

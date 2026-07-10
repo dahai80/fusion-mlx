@@ -35,11 +35,13 @@ def _make_native_engine():
 
 
 class TestNativeVideoLoadVideoCall:
-    def test_load_video_receives_dict_not_positional_args(self, monkeypatch):
+    def test_load_video_called_with_positional_args(self, monkeypatch):
         captured = {}
 
-        def fake_load_video(ele):
-            captured["ele"] = ele
+        def fake_load_video(video_path, fps=2.0, max_frames=768, **kw):
+            captured["video_path"] = video_path
+            captured["fps"] = fps
+            captured["max_frames"] = max_frames
             return np.zeros((4, 3, 8, 8), dtype=np.uint8), 2.0
 
         embed_mock = MagicMock()
@@ -60,7 +62,7 @@ class TestNativeVideoLoadVideoCall:
         monkeypatch.setattr(
             "fusion_mlx.utils.video.process_video_input", lambda v: "/tmp/x.mp4"
         )
-        monkeypatch.setattr("mlx_vlm.video_generate.load_video", fake_load_video)
+        monkeypatch.setattr("mlx_vlm.utils.load_video", fake_load_video)
         monkeypatch.setattr("mlx_vlm.utils.prepare_inputs", fake_prepare_inputs)
         monkeypatch.setattr(
             "fusion_mlx.engines.vlm.compute_image_hash", lambda imgs: "h"
@@ -74,10 +76,9 @@ class TestNativeVideoLoadVideoCall:
             video_max_frames=8,
         )
 
-        assert isinstance(captured["ele"], dict)
-        assert captured["ele"]["video"] == "/tmp/x.mp4"
-        assert captured["ele"]["fps"] == 2.0
-        assert captured["ele"]["max_frames"] == 8
+        assert captured["video_path"] == "/tmp/x.mp4"
+        assert captured["fps"] == 2.0
+        assert captured["max_frames"] == 8
         assert isinstance(result, tuple) and len(result) == 6
 
     def test_load_video_failure_falls_back_with_warning(self, monkeypatch, caplog):
@@ -91,8 +92,8 @@ class TestNativeVideoLoadVideoCall:
             "fusion_mlx.utils.video.process_video_input", lambda v: "/tmp/x.mp4"
         )
         monkeypatch.setattr(
-            "mlx_vlm.video_generate.load_video",
-            lambda ele: (_ for _ in ()).throw(RuntimeError("boom")),
+            "mlx_vlm.utils.load_video",
+            lambda *a, **kw: (_ for _ in ()).throw(RuntimeError("boom")),
         )
         monkeypatch.setattr(
             "fusion_mlx.engines.vlm.extract_video_frames_smart",

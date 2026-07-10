@@ -85,7 +85,13 @@ image = [
     "mflux-fusion @ file:///Users/dahai/claude-home/fusion-mlx/packaging/_wheels/mflux_fusion-0.18.0-py3-none-any.whl",
 ]
 video = [
-    "mlx-video @ git+https://github.com/Blaizzy/mlx-video.git",
+    # Phase 5/6: vendored pure-MLX ports (fusion_mlx.video.ltx2 + wan2) replace
+    # mlx-video. Deps mirror mlx-video's own Requires-Dist (core deps excluded).
+    "opencv-python>=4.12.0",
+    "librosa>=0.10.0",
+    "imageio>=2.37.2",
+    "imageio-ffmpeg>=0.6.0",
+    "ftfy",
 ]
 paroquant = [
     "paroquant==0.1.14; python_version >= '3.11'",

@@ -1,7 +1,8 @@
 # SPDX-License-Identifier: Apache-2.0
 # Video backend registry. VideoGenEngine resolves a concrete backend here.
-# Phase 0 ships only LTX2Backend (LTX-2 + LTX-2.3 via mlx-video). Phases 1/3/4
-# register wan2, ltx_video_legacy, cogvideo without touching the engine.
+# LTX2Backend (LTX-2 + LTX-2.3) and Wan2Backend run on vendored pure-MLX ports
+# (fusion_mlx.video.ltx2 / wan2, Phases 4/5); ltx_video_legacy is a direct
+# pure-MLX impl. No mlx-video runtime dependency remains.
 
 from __future__ import annotations
 

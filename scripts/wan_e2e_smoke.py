@@ -43,7 +43,7 @@ def main():
         sys.exit(1)
     make_test_image()
     patch_tokenizer()
-    from mlx_video.models.wan_2.generate import generate_video
+    from fusion_mlx.video.wan2.generate import generate_video
     logger.info("E2E I2V generate: model=%s", MODEL_DIR)
     generate_video(
         str(MODEL_DIR),

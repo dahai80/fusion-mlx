@@ -1,11 +1,10 @@
 # SPDX-License-Identifier: Apache-2.0
-# LTX-2 / LTX-2.3 video backend (mlx-video Blaizzy/mlx-video).
-# Logic moved verbatim from engines/video.py (Phase 0 refactor, no behavior
-# change). The verified API is mlx_video.models.ltx_2.generate.generate_video
-# (model_repo, text_encoder_repo, prompt, ...). generate_video loads weights
-# internally on every call, so start() front-loads the network download via
-# get_model_path; generation reads weights from the local HF cache.
-# ltx_2 covers both LTX-2 and LTX-2.3 in mlx-video.
+# LTX-2 video backend (pure-MLX port, Phase 4). Generation runs through the
+# vendored fusion_mlx.video.ltx2 port (MLX->MLX, replaces mlx-video for LTX-2).
+# generate_video loads weights internally on every call, so start() front-loads
+# the network download via get_model_path; generation reads weights from the
+# local HF cache. Phase 5 ported Wan2 the same way; mlx-video is no longer a
+# runtime dependency.
 
 import asyncio
 import gc
@@ -49,18 +48,11 @@ class LTX2Backend(VideoBackend):
     async def start(self, model_path: str, **kwargs: Any) -> None:
         if self._loaded:
             return
-        logger.info("Starting LTX-2 backend (mlx-video): %s", model_path)
+        logger.info("Starting LTX-2 backend (pure-MLX): %s", model_path)
 
         def _resolve():
-            try:
-                from mlx_video import get_model_path
-            except ImportError as exc:
-                raise ImportError(
-                    "Video generation requires mlx-video (Blaizzy/mlx-video, which "
-                    "ships generate_video). NOTE: the PyPI 'mlx-video' 0.1.0 is a "
-                    "different video-IO library and will NOT work. Install the "
-                    "correct package: pip install git+https://github.com/Blaizzy/mlx-video.git"
-                ) from exc
+            from fusion_mlx.video.ltx2.utils import get_model_path
+
             return get_model_path(model_path)
 
         loop = asyncio.get_running_loop()
@@ -144,12 +136,12 @@ def _generate_one(
     tiling: str | None = None,
     enhance_prompt: bool | None = None,
 ) -> bytes:
-    from mlx_video.models.ltx_2.generate import PipelineType, generate_video
+    from fusion_mlx.video.ltx2.generate import PipelineType, generate_video
 
     pipe = PipelineType(pipeline) if isinstance(pipeline, str) else pipeline
     # Diffusion wall-time is ~linear in num_inference_steps, so reducing steps
     # is the dominant speed lever (e.g. 40 -> 10 ≈ 4x on the denoise loop).
-    # Defaults left to mlx-video when None (distilled pipeline = 40 steps).
+    # Defaults left to the pure-MLX port when None (distilled pipeline = 40 steps).
     gen_kwargs: dict[str, Any] = dict(
         pipeline=pipe,
         height=height,

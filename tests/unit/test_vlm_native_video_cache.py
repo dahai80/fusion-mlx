@@ -43,7 +43,8 @@ def _patch_native_path(monkeypatch, embed_mock, frames_value=None):
         "fusion_mlx.utils.video.process_video_input", lambda v: "/tmp/x.mp4"
     )
     monkeypatch.setattr(
-        "mlx_vlm.video_generate.load_video", lambda ele: (frames_value, 2.0)
+        "mlx_vlm.utils.load_video",
+        lambda video_path, fps=2.0, max_frames=768, **kw: (frames_value, 2.0),
     )
 
     def fake_prepare_inputs(processor, images=None, videos=None, prompts=None, **kw):

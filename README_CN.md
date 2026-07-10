@@ -165,7 +165,7 @@ pip install -e .
 | STT | `STTEngine` | Whisper、VibeVoice-ASR |
 | TTS | `TTSEngine` | Kokoro、VibeVoice |
 | ImageGen | `ImageGenEngine` | Flux 2 |
-| VideoGen | `VideoGenEngine` | LTX-2 (mlx-video) |
+| VideoGen | `VideoGenEngine` | LTX-2、Wan2 (纯 MLX 移植) |
 
 ## 量化格式
 
@@ -222,7 +222,7 @@ fusion-mlx convert mlx-community/Qwen3.5-9B --quant-bits 8 --upload-repo me/my-r
 | Anthropic Messages | `/v1/messages`, `/v1/count_tokens` | ✅ 完全兼容 |
 | Audio | `/v1/audio/transcriptions`, `/v1/audio/speech` | ✅ 支持 |
 | Images | `/v1/images/generate` | ✅ 支持 (Flux 2) |
-| Videos | `/v1/videos/generate` | ✅ 支持 (LTX-2, mlx-video) |
+| Videos | `/v1/videos/generate` | ✅ 支持 (LTX-2、Wan2；纯 MLX 移植) |
 | Embeddings | `/v1/embeddings` | ✅ 支持 |
 | MCP | `/v1/mcp/tools`, `/v1/mcp/servers`, `/v1/mcp/execute` | ✅ 支持 |
 | OpenClaw Agent | `/v1/openclaw/agent/*` | ✅ 会话、多轮、工具调用、SSE 流式 |

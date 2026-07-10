@@ -109,6 +109,7 @@ def _patch_vlm_sanitize():
                             undo_count,
                         )
                     return result
+
                 return _safe_sanitize
 
             cls.sanitize = _make_patched(original)
@@ -745,6 +746,7 @@ class VLMBatchedEngine(BaseEngine):
         template_kwargs = {"tokenize": False, "add_generation_prompt": True}
         if tools:
             from ..api.tool_calling import convert_tools_for_template
+
             template_kwargs["tools"] = convert_tools_for_template(tools)
         if self._enable_thinking is not None:
             template_kwargs["enable_thinking"] = self._enable_thinking
@@ -799,7 +801,9 @@ class VLMBatchedEngine(BaseEngine):
             else:
                 template_kwargs.pop("tools", None)
                 template_kwargs.pop("enable_thinking", None)
-                prompt = template_target.apply_chat_template(messages, **template_kwargs)
+                prompt = template_target.apply_chat_template(
+                    messages, **template_kwargs
+                )
 
         # Tokenize text and preprocess images
         inputs = prepare_inputs(
@@ -1009,14 +1013,24 @@ class VLMBatchedEngine(BaseEngine):
             try:
                 video_path = process_video_input(video)
                 try:
-                    from mlx_vlm.video_generate import load_video
+                    video_np = None
+                    try:
+                        from mlx_vlm.video_generate import load_video
 
-                    ele = {
-                        "video": video_path,
-                        "fps": video_fps,
-                        "max_frames": video_max_frames,
-                    }
-                    video_np, _sample_fps = load_video(ele)
+                        ele = {
+                            "video": video_path,
+                            "fps": video_fps,
+                            "max_frames": video_max_frames,
+                        }
+                        video_np, _sample_fps = load_video(ele)
+                    except ImportError:
+                        from mlx_vlm.utils import load_video
+
+                        video_np, _sample_fps = load_video(
+                            video_path,
+                            fps=video_fps,
+                            max_frames=video_max_frames,
+                        )
                     all_videos.append(video_np)
                     logger.info(
                         "Native video: %d frames from %s",
@@ -1025,7 +1039,7 @@ class VLMBatchedEngine(BaseEngine):
                     )
                 except ImportError:
                     logger.warning(
-                        "mlx_vlm.video_generate unavailable, fallback to cv2: %s",
+                        "mlx_vlm load_video unavailable, fallback to cv2: %s",
                         video_path,
                     )
                     _fallback_cv2_frames(video_path)
@@ -1235,7 +1249,10 @@ class VLMBatchedEngine(BaseEngine):
             cache_key_start,
             cache_key_ranges,
         ) = self._prepare_vision_inputs(
-            text_messages, images, tools=tools, chat_template_kwargs=kwargs.get("chat_template_kwargs")
+            text_messages,
+            images,
+            tools=tools,
+            chat_template_kwargs=kwargs.get("chat_template_kwargs"),
         )
         if images:
             mx.synchronize()
@@ -1507,7 +1524,10 @@ class VLMBatchedEngine(BaseEngine):
         # producing a real answer. Strip them via the configured reasoning
         # parser so gen.text is the final content.
         gen = _apply_reasoning_parser(
-            gen, self._model_settings, kwargs.get("chat_template_kwargs"), self._model_name
+            gen,
+            self._model_settings,
+            kwargs.get("chat_template_kwargs"),
+            self._model_name,
         )
         return gen
 

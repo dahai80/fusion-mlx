@@ -1,4 +1,9 @@
 #!/usr/bin/env python3
+# Dev-only: converts raw PyTorch Wan2.2 checkpoints -> MLX format. This torch
+# conversion path was intentionally dropped from the fusion_mlx.video.wan2 port
+# (runtime loads pre-converted mlx-community weights directly). To run, install
+# the original mlx-video + torch: pip install mlx-video torch  (dev utility,
+# NOT a fusion-mlx runtime dependency).
 import logging
 import sys
 from pathlib import Path
