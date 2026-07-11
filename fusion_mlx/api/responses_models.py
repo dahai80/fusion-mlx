@@ -6,7 +6,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
-from .models import _validate_response_format_raw
+from .models import StreamOptions, _validate_response_format_raw, _validate_token_budget
 from .shared_models import IDPrefix, generate_id, get_unix_timestamp
 
 # =============================================================================
@@ -129,7 +129,7 @@ class ResponsesRequest(BaseModel):
     background: bool | None = None
     conversation: Any | None = None
     max_tool_calls: int | None = None
-    stream_options: dict[str, Any] | None = None
+    stream_options: StreamOptions | None = None
     # Seed for reproducible generation (best-effort)
     seed: int | None = None
     # Fields forwarded to ChatCompletionRequest
@@ -146,6 +146,13 @@ class ResponsesRequest(BaseModel):
     @classmethod
     def _validate_response_format_field(cls, v):
         return _validate_response_format_raw(v)
+
+    @field_validator("max_output_tokens", mode="before")
+    @classmethod
+    def _validate_token_budget_field(cls, v, info):
+        # Reject bool / non-int / non-positive before lax coercion -
+        # pinned by TestPositiveIntGenerationBudget (cross-route parity).
+        return _validate_token_budget(v, info.field_name)
 
 
 # =============================================================================

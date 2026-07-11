@@ -10,9 +10,10 @@ These models define the request and response schemas for:
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from fusion_mlx.api.shared_models import IDPrefix, generate_id
+from .models import StreamOptions, _validate_token_budget
 
 ANTHROPIC_EFFORT_TO_REASONING_MAX_TOKENS: dict[str, int] = {
     "low": 512,
@@ -209,6 +210,17 @@ class MessagesRequest(BaseModel):
     thinking: ThinkingConfig | None = None
     # Chat template kwargs (e.g. enable_thinking, reasoning_effort)
     chat_template_kwargs: dict[str, Any] | None = None
+    # OpenAI-compat surface: stream_options.include_usage gates the trailing
+    # usage SSE chunk. Declared on the Anthropic model so the cross-route
+    # StreamOptions contract is uniform (pinned by TestStreamOptionsIncludeUsageCrossRoute).
+    stream_options: StreamOptions | None = None
+
+    @field_validator("max_tokens", mode="before")
+    @classmethod
+    def _validate_token_budget_field(cls, v, info):
+        # Reject bool / non-int / non-positive before lax coercion -
+        # pinned by TestPositiveIntGenerationBudget (cross-route parity).
+        return _validate_token_budget(v, info.field_name)
 
 
 AnthropicRequest = MessagesRequest
