@@ -25,7 +25,7 @@ from fusion_mlx.engine_core import (
 from fusion_mlx.output_collector import RequestOutputCollector, RequestStreamState
 from fusion_mlx.request import RequestOutput, SamplingParams
 from fusion_mlx.scheduler import SchedulerConfig, SchedulerOutput
-from fusion_mlx.scheduler.types import PrefillMemoryExceededError
+from fusion_mlx.exceptions import PrefillMemoryExceededError
 
 
 class TestEngineConfig:

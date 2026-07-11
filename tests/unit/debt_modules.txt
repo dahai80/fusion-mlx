@@ -10,11 +10,11 @@
 #   runtime-fail  — collects but fails on stale assertions / removed attrs
 #   timeout       — hangs or exceeds the unit-gate budget (integration-style)
 #
-# Total: 403 modules excluded; 132 healthy modules remain in the CI gate.
+# Total: 398 modules excluded; 137 healthy modules remain in the CI gate.
 # Pay down by updating each module to the current released API, then remove
 # its line here. See memory: fusion-mlx-rapid-mlx-test-debt.
 
-## uncollectable (137)
+## uncollectable (132)
 test_accuracy_benchmark.py
 test_admin_server_aliases.py
 test_agent_query_context_skip.py
@@ -60,7 +60,6 @@ test_disk_space_check.py
 test_embedding.py
 test_enable_thinking_prompt_accounting.py
 test_enable_thinking_warning_header.py
-test_engine_core.py
 test_engine_pool.py
 test_eval.py
 test_finalize_harmony_raw_text.py
@@ -69,7 +68,6 @@ test_gemma4_messages.py
 test_generation_config_loader.py
 test_harmony_finalize.py
 test_harmony_parser.py
-test_harmony.py
 test_hf_uploader.py
 test_image_block_requires_vision_model.py
 test_install_detection.py
@@ -78,17 +76,14 @@ test_kv_cache_position_ids.py
 test_launch_cli.py
 test_log_namespace_rebrand.py
 test_logging_config.py
-test_lone_surrogate_validator.py
 test_markitdown_integration.py
 test_max_generation_tokens_ceiling.py
 test_mbpp_extract_code.py
 test_mlx_lm_mtp_patch.py
 test_modality_field.py
-test_models_base.py
 test_models_command_layout.py
 test_ms_downloader.py
 test_mtp_lossless.py
-test_oq_manager.py
 test_orphan_tool_validation.py
 test_output_parser.py
 test_paired_compat.py
