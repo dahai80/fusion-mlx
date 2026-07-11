@@ -306,6 +306,14 @@ def _do_external_prefill(
                 f"{total_length} tokens: "
                 f"{len(abort_uids)} request(s) aborted"
             )
+            # Reclaim Metal intermediates before unwinding: the raise skips
+            # both the chunk-end clear below and the post-loop clear, so
+            # sync+clear twice here to mirror the normal-exit invariant.
+            _sync_and_clear_cache(self._stream)
+            _sync_and_clear_cache(self._stream)
+            # Clear saved rope-delta state so a retry never restores stale
+            # mRoPE deltas captured before the abort.
+            request._prefill_saved_rope_deltas = None
             raise _PrefillAbortedError(abort_uids, processed_tokens)
 
         # Reclaim Metal intermediates between prefill chunks.

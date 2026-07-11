@@ -1153,7 +1153,9 @@ class TestPrefillAbortInterrupt:
         scheduler.uid_to_request_id[uid] = request.request_id
         scheduler._pending_abort_ids.add(request.request_id)
 
-        with patch.object(scheduler_module, "_sync_and_clear_cache") as clear_cache:
+        with patch(
+            "fusion_mlx.scheduler.sched_batch._sync_and_clear_cache"
+        ) as clear_cache:
             with pytest.raises(_PrefillAbortedError):
                 scheduler._do_external_prefill(
                     request,
@@ -1203,12 +1205,12 @@ class TestPrefillAbortInterrupt:
         scheduler = Scheduler(model=mock_model, tokenizer=mock_tokenizer)
         scheduler.batch_generator = MagicMock()
 
-        # Make next_generated() raise _PrefillAbortedError
-        # (simulates abort during external prefill in _schedule_waiting)
-        scheduler.batch_generator.next_generated.side_effect = _PrefillAbortedError(
+        # Make _next() raise _PrefillAbortedError on the pure-decode fast
+        # path (simulates a pending-prefill abort surfacing during step()).
+        scheduler.batch_generator._next.side_effect = _PrefillAbortedError(
             [0], 1024
         )
-        # Need running requests for next_generated() to be called
+        # Need running requests for _next() to be called
         request = Request(
             request_id="req-prefill",
             prompt="Hello",

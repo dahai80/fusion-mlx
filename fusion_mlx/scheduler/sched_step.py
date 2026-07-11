@@ -456,6 +456,19 @@ def _step_pure_decode(self, output: SchedulerOutput) -> SchedulerOutput:
     try:
         with mx.stream(self._stream):
             _, responses = bg._next()
+    except _PrefillAbortedError:
+        # Abort during a pending-prefill step: tear down the inconsistent
+        # BatchGenerator and reschedule running requests for re-prefill.
+        # Mirrors the full step() _PrefillAbortedError handler.
+        _unregister_uid_rows_for_model(self.model)
+        self.batch_generator = None
+        self._current_sampler_params = None
+        self._boundary_cache_snapshots.clear()
+        if self._boundary_snapshot_store is not None:
+            self._boundary_snapshot_store.cleanup_all()
+        self._boundary_snapshot_required = None
+        self._reschedule_running_requests()
+        return output
     except OverflowError as e:
         if self._is_generation_overflow_error(e):
             self._handle_generation_overflow(output)
