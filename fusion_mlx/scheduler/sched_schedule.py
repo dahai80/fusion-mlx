@@ -143,6 +143,20 @@ def _schedule_waiting(
 
         request = self.waiting.popleft()
 
+        # Cache freshness deferral: add_request registered a wait when a
+        # relevant store_cache was in flight. If it is still unresolved,
+        # put the request back and stop admitting so we don't read stale
+        # KV state. The wait times out automatically
+        # (_CACHE_FRESHNESS_WAIT_TIMEOUT_S), so admission is never blocked
+        # indefinitely.
+        if self._should_defer_for_cache_freshness(request):
+            self.waiting.appendleft(request)
+            logger.debug(
+                "Deferring admission of %s: in-flight store_cache not settled",
+                request.request_id,
+            )
+            break
+
         # SpecPrefill: score remaining tokens on the executor thread
         # (not in add_request, which runs on the FastAPI event loop)
         self._try_specprefill_scoring(request)

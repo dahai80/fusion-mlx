@@ -60,8 +60,20 @@ def add_request(self, request: Request) -> None:
             request.prompt_token_ids = list(request.prompt)
         request.num_prompt_tokens = len(request.prompt_token_ids)
 
-    # Check prefix cache for cached KV state
-    if self.block_aware_cache is not None:
+    # Cache freshness: if a store_cache is in flight, defer the prefix
+    # lookup to _schedule_waiting (executor thread) so add_request (FastAPI
+    # event loop) never races an in-flight store_cache and reads stale KV.
+    # _should_defer registers a freshness wait for relevant stores (above
+    # thresholds); either way prep is deferred to _schedule_waiting.
+    if self._inflight_store_futures:
+        self._should_defer_for_cache_freshness(request)
+        request.remaining_tokens = request.prompt_token_ids
+        logger.debug(
+            "Deferring prefix-cache prep for %s to _schedule_waiting "
+            "(in-flight store_cache present)",
+            request.request_id,
+        )
+    elif self.block_aware_cache is not None:
         # Use paged cache
         block_table, remaining = self.block_aware_cache.fetch_cache(
             request.request_id,
