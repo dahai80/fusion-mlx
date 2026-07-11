@@ -743,7 +743,10 @@ def shutdown(self) -> None:
                 )
                 concurrent.futures.wait(inflight, timeout=30.0)
             self._drain_pending_async_removes()
-            self._store_cache_executor.shutdown(wait=True)
+            # Fatal-exit after the bounded wait above: concurrent.futures.wait
+            # already capped blocking at 30s, so do not re-block on the
+            # executor's internal join (a stuck worker would hang shutdown).
+            self._store_cache_executor.shutdown(wait=False)
             # Final drain after executor join. All workers are now done,
             # so any entries still in _pending_async_removes (skipped by
             # the first drain because their future hadn't completed yet)

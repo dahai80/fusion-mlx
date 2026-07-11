@@ -1526,6 +1526,10 @@ class TestSchedulerSuppressTokens:
         scheduler = Scheduler(model=mock_model, tokenizer=mock_tokenizer)
         scheduler._model_suppress_tokens = {3}
         scheduler._vlm_mtp_drafter = MagicMock()
+        # Flush immediately on a single request so this synchronous test
+        # exercises _vlm_mtp_flush_batch without filling a full batch (the
+        # default max_batch is 4, which would only queue and return None).
+        scheduler._vlm_mtp_max_batch_size = 1
 
         class FakeLanguageModel:
             def rollback_speculative_cache(self):
@@ -1575,9 +1579,8 @@ class TestSchedulerSuppressTokens:
 
             return _gen()
 
-        with patch.object(
-            scheduler_module,
-            "run_vlm_mtp_decode",
+        with patch(
+            "fusion_mlx.speculative.vlm_mtp.run_vlm_mtp_decode",
             side_effect=fake_run_vlm_mtp_decode,
         ):
             uid = scheduler._route_to_vlm_mtp(
@@ -1589,10 +1592,12 @@ class TestSchedulerSuppressTokens:
             )
 
         assert uid is not None
-        assert mock_model.calls
-        assert captured["target_language_model"] is mock_model
-        assert float(mock_model.batch_rope_deltas.item()) == 123.0
-        assert captured["first_bonus"] == 2
+        # Batched flush calls the inner language model directly (text-only
+        # MTP decode) and forwards the suppressing sampler to
+        # run_vlm_mtp_decode. first_bonus is sampled with _model_suppress_tokens
+        # masked, so token 3 (the 99.0 logit) is never picked.
+        assert captured["target_language_model"] is mock_model._language_model
+        assert int(captured["first_bonus"].item()) == 2
         assert "prompt_tokens" not in captured
 
         round_logits = mx.array([[0.0, 0.0, 1.0, 99.0, 0.0]])
