@@ -81,6 +81,7 @@ misuse never silently falls back.
 | `--dflash-drafter-path` | empty | Override the per-alias DFlash drafter HF path; empty = use the registry binding. |
 | `--dspark-drafter-path` | — | Path to a converted MLX DSpark draft (from `dspark-metal-convert`). Required with `--enable-dspark`. |
 | `--dspark-draft-quant-bits` | 8 | Draft quantization bits; lower = faster drafter, lower acceptance. |
+| `--vlm-dev` | off | [.dev/experimental] Enable multimodal (image) input on the DSpark server's `/v1/chat/completions`. Only takes effect under `--enable-dspark` with a `qwen3_vl` target; images are dropped (with a warning) otherwise. Also set via `DSPARK_VLM_DEV=1`. |
 | `--force-spec-decode` | off | Override the eligibility/auto-disable gates. Mutually exclusive with `--no-spec-decode`. |
 | `--no-spec-decode` | off | Hard-disable all spec decode for this serve. Mutually exclusive with `--force-spec-decode`. |
 

@@ -1082,6 +1082,7 @@ def serve_command(args):
             default_max_tokens=effective_max_tokens,
             uvicorn_log_level=getattr(args, "log_level", "info"),
             enable_thinking=False,
+            vlm_dev=getattr(args, "vlm_dev", False),
         )
         return
 
