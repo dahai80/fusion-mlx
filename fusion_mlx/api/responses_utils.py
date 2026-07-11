@@ -15,6 +15,7 @@ from .responses_models import (
     OutputContent,
     OutputItem,
     OutputTokensDetails,
+    ReasoningSummaryPart,
     ResponsesTool,
     ResponseUsage,
 )
@@ -115,6 +116,7 @@ def convert_responses_input_to_messages(
     input_data: str | list[InputItem] | None,
     instructions: str | None = None,
     previous_messages: list[dict[str, Any]] | None = None,
+    consolidate_system_messages: bool = True,
 ) -> list[dict[str, Any]]:
     """Convert Responses API input to internal messages format.
 
@@ -122,6 +124,11 @@ def convert_responses_input_to_messages(
         input_data: String prompt or list of InputItem objects.
         instructions: System prompt (prepended as system message).
         previous_messages: Messages from previous_response_id chain.
+        consolidate_system_messages: When True (default) all system/developer
+            messages are merged into one at position 0 (most chat templates
+            only allow a single leading system message). When False, each
+            system/developer item stays at its natural position so a later
+            chat-template probe can decide placement.
 
     Returns:
         List of message dicts compatible with chat template.
@@ -144,13 +151,13 @@ def convert_responses_input_to_messages(
     if input_data is None:
         if system_parts:
             messages.insert(0, {"role": "system", "content": "\n\n".join(system_parts)})
-        return _consolidate_system_messages(messages)
+        return _consolidate_system_messages(messages) if consolidate_system_messages else messages
 
     if isinstance(input_data, str):
         if system_parts:
             messages.insert(0, {"role": "system", "content": "\n\n".join(system_parts)})
         messages.append({"role": "user", "content": input_data})
-        return _consolidate_system_messages(messages)
+        return _consolidate_system_messages(messages) if consolidate_system_messages else messages
 
     # Process input items
     # Track pending tool calls for grouping into a single assistant message
@@ -214,7 +221,9 @@ def convert_responses_input_to_messages(
                     content = "\n".join(text_parts) if text_parts else ""
 
             # Merge system/developer messages into the single system block
-            if role == "system":
+            # (unless the caller asked to preserve position for a later
+            # chat-template probe).
+            if role == "system" and consolidate_system_messages:
                 system_parts.append(content or "")
             else:
                 msg_dict: dict[str, Any] = {"role": role, "content": content or ""}
@@ -282,10 +291,12 @@ def convert_responses_input_to_messages(
     )
 
     # Insert merged system message at position 0
-    if system_parts:
+    if consolidate_system_messages and system_parts:
         messages.insert(0, {"role": "system", "content": "\n\n".join(system_parts)})
 
-    return _consolidate_system_messages(messages)
+    if consolidate_system_messages:
+        return _consolidate_system_messages(messages)
+    return messages
 
 
 # =============================================================================
@@ -367,8 +378,6 @@ def build_reasoning_output_item(
     status: str = "completed",
 ) -> OutputItem:
     """Build a reasoning-type OutputItem with full CoT in summary[0].text."""
-    from ..responses_models import ReasoningSummaryPart
-
     summary = [ReasoningSummaryPart(text=reasoning_text)] if reasoning_text else []
     return OutputItem(
         type="reasoning",
