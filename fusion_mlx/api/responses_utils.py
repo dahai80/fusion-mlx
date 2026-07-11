@@ -14,6 +14,7 @@ from .responses_models import (
     InputTokensDetails,
     OutputContent,
     OutputItem,
+    OutputTokensDetails,
     ResponsesTool,
     ResponseUsage,
 )
@@ -384,8 +385,6 @@ def build_response_usage(
     cached_tokens: int = 0,
 ) -> ResponseUsage:
     """Build ResponseUsage from token counts."""
-    from ..responses_models import OutputTokensDetails
-
     return ResponseUsage(
         input_tokens=input_tokens,
         output_tokens=output_tokens,
