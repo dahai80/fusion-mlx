@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # Pure-MLX port of LTX-2 AV transformer block (vendored from mlx-video).
 # Phase 4 LTX-2 direct-MLX port: model-layer foundation.
+import logging
 from dataclasses import dataclass, replace
 from typing import Optional, Tuple
 
@@ -11,6 +12,8 @@ from .attention import Attention
 from .config import LTXRopeType, TransformerConfig
 from .feed_forward import FeedForward
 from .utils import rms_norm
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -105,9 +108,7 @@ class BasicAVTransformerBlock(nn.Module):
             )
             self.audio_ff = FeedForward(audio.dim, dim_out=audio.dim)
             num_audio_ada_params = 9 if has_prompt_adaln else 6
-            self.audio_scale_shift_table = mx.zeros(
-                (num_audio_ada_params, audio.dim)
-            )
+            self.audio_scale_shift_table = mx.zeros((num_audio_ada_params, audio.dim))
 
             if has_prompt_adaln:
                 self.audio_prompt_scale_shift_table = mx.zeros((2, audio.dim))
@@ -126,10 +127,18 @@ class BasicAVTransformerBlock(nn.Module):
                 query_dim=audio.dim,
                 context_dim=video.dim,
                 heads=audio.heads,
-                dim_head=video.d_head,
+                dim_head=audio.d_head,
                 rope_type=rope_type,
                 norm_eps=norm_eps,
                 has_gate_logits=has_prompt_adaln,
+            )
+            logger.debug(
+                "video_to_audio_attn: query_dim=%d context_dim=%d heads=%d dim_head=%d inner_dim=%d",
+                audio.dim,
+                video.dim,
+                audio.heads,
+                audio.d_head,
+                audio.d_head * audio.heads,
             )
             self.scale_shift_table_a2v_ca_audio = mx.zeros((5, audio.dim))
             self.scale_shift_table_a2v_ca_video = mx.zeros((5, video.dim))
