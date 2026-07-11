@@ -45,6 +45,9 @@ class GenerationOutput:
     diffusion_work_tps: float = 0.0
     # OutputRouter channel (content/reasoning/tool_call); StreamingPostProcessor branches on it.
     channel: str | None = None
+    # Unprocessed output (pre special-token cleanup) for reasoning/wire-leak
+    # detection; engines may populate it, else ``or output.text`` falls back.
+    raw_text: str | None = None
 
 
 def _fallback_parse_tool_calls(

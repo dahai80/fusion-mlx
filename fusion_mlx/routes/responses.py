@@ -110,7 +110,7 @@ async def _non_stream(
     messages = _prepare_messages(openai_request)
 
     chat_kwargs = {
-        "max_tokens": _resolve_max_tokens(openai_request.max_tokens, None),
+        "max_tokens": _resolve_max_tokens(openai_request.max_tokens),
         **_resolved_sampling_kwargs(openai_request),
     }
     if openai_request.tools:
@@ -153,7 +153,7 @@ async def _non_stream(
         if output.num_completion_tokens >= max_tokens:
             finish_reason = "length"
 
-    from ..api.models import AssistantMessage, ChatCompletionChoice, ChatCompletionUsage
+    from ..api.models import AssistantMessage, ChatCompletionChoice, Usage
 
     assistant_msg = AssistantMessage(
         content=text,
@@ -179,7 +179,7 @@ async def _non_stream(
                 finish_reason=finish_reason,
             )
         ],
-        usage=ChatCompletionUsage(
+        usage=Usage(
             prompt_tokens=prompt_tokens,
             completion_tokens=completion_tokens,
             total_tokens=prompt_tokens + completion_tokens,
@@ -208,7 +208,7 @@ async def _stream_responses(
     messages = _prepare_messages(openai_request)
 
     chat_kwargs = {
-        "max_tokens": _resolve_max_tokens(openai_request.max_tokens, None),
+        "max_tokens": _resolve_max_tokens(openai_request.max_tokens),
         **_resolved_sampling_kwargs(openai_request),
     }
     if openai_request.tools:

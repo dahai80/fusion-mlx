@@ -585,6 +585,12 @@ def _convert_tool_choice(tool_choice: str | dict | None) -> str | dict | None:
 def _convert_text_format(text: dict | None) -> ResponseFormat | None:
     if not text:
         return None
+    # ``text`` may arrive as a ``TextConfig`` pydantic model (the Responses
+    # API request field) rather than a dict; normalize via ``model_dump`` so
+    # ``schema_`` (aliased "schema") round-trips as "schema" for the dict
+    # access below (fixes ``'TextConfig' object has no attribute 'get'``).
+    if hasattr(text, "model_dump"):
+        text = text.model_dump(by_alias=True, exclude_none=True)
     fmt = text.get("format")
     if not isinstance(fmt, dict):
         return None
@@ -630,6 +636,6 @@ def _build_responses_usage(response: ChatCompletionResponse) -> ResponsesUsage:
         input_tokens=prompt,
         output_tokens=completion,
         total_tokens=prompt + completion,
-        input_tokens_details=({"cached_tokens": cached} if cached else None),
-        output_tokens_details=({"reasoning_tokens": reasoning} if reasoning else None),
+        input_tokens_details={"cached_tokens": cached},
+        output_tokens_details={"reasoning_tokens": reasoning},
     )

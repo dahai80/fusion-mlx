@@ -1396,8 +1396,12 @@ def parse_json_output(
     if response_format is None:
         return text, None, True, None
 
-    # Normalize response_format to dict
-    if isinstance(response_format, ResponseFormat):
+    # Normalize response_format to dict. ``models.py`` and
+    # ``openai_models.py`` define identical ``ResponseFormat`` duplicates;
+    # duck-type via ``model_dump`` so an isinstance against one class does
+    # not miss an instance of the other (fixes ``'ResponseFormat' object has
+    # no attribute 'get'`` when the request model uses the models.py variant).
+    if hasattr(response_format, "model_dump"):
         rf_dict = {"type": response_format.type, "json_schema": None}
         if response_format.json_schema:
             rf_dict["json_schema"] = {
