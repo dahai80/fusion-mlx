@@ -397,7 +397,9 @@ class VideoEncoder(nn.Module):
         model = cls(config)
         sanitized = model.sanitize(weights)
 
-        model_keys = {k for k, _ in mx.utils.tree_flatten(model.parameters())}
+        from mlx.utils import tree_flatten
+
+        model_keys = {k for k, _ in tree_flatten(model.parameters())}
         sanitized_keys = set(sanitized.keys())
         unmatched = sanitized_keys - model_keys
         missing = model_keys - sanitized_keys
