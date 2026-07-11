@@ -53,6 +53,15 @@ class InputItem(BaseModel):
         return data
 
 
+class ResponsesContentItem(BaseModel):
+    type: str = "input_text"
+    text: str | None = None
+    image_url: str | dict[str, Any] | None = None
+    input_audio: dict[str, Any] | None = None
+
+    model_config = {"extra": "allow"}
+
+
 class ResponsesTool(BaseModel):
     """Tool definition in Responses API format.
 
