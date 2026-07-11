@@ -17,6 +17,7 @@ from pydantic import (
     BaseModel,
     ConfigDict,
     Field,
+    StrictBool,
     StrictInt,
     StrictStr,
     field_validator,
@@ -129,7 +130,7 @@ class ResponseFormatJsonSchema(BaseModel):
     name: str
     description: str | None = None
     schema_: dict = Field(alias="schema")  # JSON Schema specification
-    strict: bool | None = False
+    strict: StrictBool | None = False
 
     class Config:
         populate_by_name = True
@@ -147,6 +148,7 @@ class ResponseFormat(BaseModel):
 
     type: str = "text"  # "text", "json_object", "json_schema"
     json_schema: ResponseFormatJsonSchema | None = None
+    strict: StrictBool | None = None
 
 
 _VALID_RESPONSE_FORMAT_TYPES = ("text", "json_object", "json_schema")
@@ -169,6 +171,12 @@ def _validate_response_format_raw(v):
         raise ValueError(
             "response_format.type must be 'text', 'json_object' or 'json_schema'"
         )
+    strict = v.get("strict")
+    if strict is not None and not isinstance(strict, bool):
+        raise ValueError(
+            "response_format.strict must be a boolean "
+            f"(got {type(strict).__name__})"
+        )
     if rf_type == "json_schema":
         js = v.get("json_schema")
         if not isinstance(js, dict) or not js:
@@ -187,6 +195,12 @@ def _validate_response_format_raw(v):
         if not schema:
             raise ValueError(
                 "response_format.json_schema.schema must be a non-empty object"
+            )
+        inner_strict = js.get("strict")
+        if inner_strict is not None and not isinstance(inner_strict, bool):
+            raise ValueError(
+                "response_format.json_schema.strict must be a boolean "
+                f"(got {type(inner_strict).__name__})"
             )
     return v
 

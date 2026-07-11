@@ -4,8 +4,9 @@
 import json
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
+from .models import _validate_response_format_raw
 from .shared_models import IDPrefix, generate_id, get_unix_timestamp
 
 # =============================================================================
@@ -140,6 +141,11 @@ class ResponsesRequest(BaseModel):
     top_k: int | None = None
 
     model_config = {"extra": "allow"}
+
+    @field_validator("response_format", mode="before")
+    @classmethod
+    def _validate_response_format_field(cls, v):
+        return _validate_response_format_raw(v)
 
 
 # =============================================================================
