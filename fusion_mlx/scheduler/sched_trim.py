@@ -18,7 +18,7 @@ from collections import deque
 from typing import Any
 
 from ..prefill_progress import get_prefill_tracker
-from ..request import RequestStatus
+from ..request import Request, RequestStatus
 
 # Module-level alias so Scheduler.__init__ can fall back to mlx-lm's default
 # stream when no per-engine stream is provided.
@@ -221,3 +221,20 @@ def _do_abort_request(self, request_id: str) -> bool:
 
     logger.debug(f"Aborted request {request_id}")
     return True
+
+
+def _cleanup_prefill_abort_request(
+    self, request: Request, temp_uid: int | None = None
+) -> None:
+    request_id = request.request_id
+    request.set_finished(RequestStatus.FINISHED_ABORTED)
+    self.requests.pop(request_id, None)
+    self.request_id_to_uid.pop(request_id, None)
+    if temp_uid is not None:
+        self.uid_to_request_id.pop(temp_uid, None)
+    self._pending_abort_ids.discard(request_id)
+    logger.info(
+        "Cleaned up prefill-abort request %s (temp_uid=%s)",
+        request_id,
+        temp_uid,
+    )

@@ -76,14 +76,14 @@ class TestSchedulerConfig:
         assert config.completion_batch_size == 32
         assert config.embedding_batch_size == 32
         assert config.prefill_step_size == 2048
-        assert config.paged_cache_block_size == 256
-        assert config.max_cache_blocks is None
+        assert config.paged_cache_block_size == 64
+        assert config.max_cache_blocks == 1000
         assert config.initial_cache_blocks == 256
         assert config.paged_ssd_cache_dir is None
         assert config.paged_ssd_cache_max_size == 100 * 1024 * 1024 * 1024  # 100GB
         assert config.model_name == ""
         assert config.gc_cleanup_interval == 0
-        assert config.mlx_cache_cleanup_interval == 512
+        assert config.mlx_cache_cleanup_interval == 8192
 
     def test_custom_values(self):
         """Test SchedulerConfig with custom values."""
