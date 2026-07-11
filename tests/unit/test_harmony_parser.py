@@ -8,9 +8,9 @@ Uses real openai_harmony encoding for accurate testing.
 
 import pytest
 
-from fusion_mlx.adapter.harmony import (
+from fusion_mlx.parsers.harmony import (
     HarmonyStreamingParser,
-    load_harmony_gpt_oss_encoding,
+    load_harmony_encoding,
     preprocess_harmony_messages,
 )
 
@@ -33,7 +33,7 @@ class RealTokenizer:
 @pytest.fixture(scope="session")
 def harmony_encoding():
     """Get the real openai_harmony encoding."""
-    return load_harmony_gpt_oss_encoding()
+    return load_harmony_encoding("HarmonyGptOss")
 
 
 @pytest.fixture
