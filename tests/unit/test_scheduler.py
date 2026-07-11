@@ -1428,53 +1428,58 @@ class TestSchedulerReset:
 class TestSchedulerStopTokens:
     """Tests for stop token handling."""
 
-    def test_get_stop_tokens(self, mock_model, mock_tokenizer):
+    def test_get_stop_tokens(self, mock_model):
         """Test _get_stop_tokens() retrieves EOS token."""
-        scheduler = Scheduler(model=mock_model, tokenizer=mock_tokenizer)
+        tokenizer = MockTokenizer()
+        scheduler = Scheduler(model=mock_model, tokenizer=tokenizer)
 
         stop_tokens = scheduler._get_stop_tokens()
 
         # MockTokenizer has eos_token_id = 2
-        assert mock_tokenizer.eos_token_id in stop_tokens
+        assert tokenizer.eos_token_id in stop_tokens
 
-    def test_includes_eot_token_id(self, mock_model, mock_tokenizer):
+    def test_includes_eot_token_id(self, mock_model):
         """Test _get_stop_tokens() includes end-of-turn token when available."""
+        tokenizer = MockTokenizer()
         # eot_token_id as a single int
-        mock_tokenizer.eot_token_id = 106
-        scheduler = Scheduler(model=mock_model, tokenizer=mock_tokenizer)
+        tokenizer.eot_token_id = 106
+        scheduler = Scheduler(model=mock_model, tokenizer=tokenizer)
         stop_tokens = scheduler._get_stop_tokens()
         assert 106 in stop_tokens
-        assert mock_tokenizer.eos_token_id in stop_tokens  # EOS still there too
+        assert tokenizer.eos_token_id in stop_tokens  # EOS still there too
 
-    def test_includes_eot_token_id_list(self, mock_model, mock_tokenizer):
+    def test_includes_eot_token_id_list(self, mock_model):
         """Test _get_stop_tokens() handles eot_token_id as a list."""
-        mock_tokenizer.eot_token_id = [106, 107]
-        scheduler = Scheduler(model=mock_model, tokenizer=mock_tokenizer)
+        tokenizer = MockTokenizer()
+        tokenizer.eot_token_id = [106, 107]
+        scheduler = Scheduler(model=mock_model, tokenizer=tokenizer)
         stop_tokens = scheduler._get_stop_tokens()
         assert 106 in stop_tokens
         assert 107 in stop_tokens
 
-    def test_falls_back_to_eot_token_encoding(self, mock_model, mock_tokenizer):
+    def test_falls_back_to_eot_token_encoding(self, mock_model):
         """When eot_token_id is absent but eot_token string is present, encode it."""
-        mock_tokenizer.eot_token = "<turn|>"
+        tokenizer = MockTokenizer()
+        tokenizer.eot_token = "<turn|>"
         # Ensure eot_token_id is NOT present
         assert (
-            not hasattr(mock_tokenizer, "eot_token_id")
-            or mock_tokenizer.eot_token_id is None
+            not hasattr(tokenizer, "eot_token_id")
+            or tokenizer.eot_token_id is None
         )
-        scheduler = Scheduler(model=mock_model, tokenizer=mock_tokenizer)
+        scheduler = Scheduler(model=mock_model, tokenizer=tokenizer)
         stop_tokens = scheduler._get_stop_tokens()
-        # The MockTokenizer.encode() returns hash-based IDs, so we get something
-        assert len([t for t in stop_tokens if t != mock_tokenizer.eos_token_id]) > 0
+        # The MockTokenizer.encode() returns char-derived IDs, so we get something
+        assert len([t for t in stop_tokens if t != tokenizer.eos_token_id]) > 0
 
-    def test_no_eot_token_when_absent(self, mock_model, mock_tokenizer):
+    def test_no_eot_token_when_absent(self, mock_model):
         """When neither eot_token_id nor eot_token string is present, no crash."""
+        tokenizer = MockTokenizer()
         # MockTokenizer has no eot_token_id or eot_token by default
-        assert not hasattr(mock_tokenizer, "eot_token_id")
-        assert not hasattr(mock_tokenizer, "eot_token")
-        scheduler = Scheduler(model=mock_model, tokenizer=mock_tokenizer)
+        assert not hasattr(tokenizer, "eot_token_id")
+        assert not hasattr(tokenizer, "eot_token")
+        scheduler = Scheduler(model=mock_model, tokenizer=tokenizer)
         stop_tokens = scheduler._get_stop_tokens()
-        assert mock_tokenizer.eos_token_id in stop_tokens
+        assert tokenizer.eos_token_id in stop_tokens
 
 
 class TestSchedulerSuppressTokens:
@@ -4019,8 +4024,13 @@ class TestBuildStateMachineStopStrings:
     so mlx-lm's BatchGenerator can halt on user-supplied stop sequences.
     """
 
-    def _make_scheduler(self, mock_model, mock_tokenizer):
-        return Scheduler(model=mock_model, tokenizer=mock_tokenizer)
+    def _make_scheduler(self, mock_model):
+        # MockTokenizer (not the MagicMock fixture): its encode() returns
+        # per-character ord ids that never collide with eos_token_id=2.
+        # The fixture's hardcoded [1,2,3,4,5] contains token 2 == eos,
+        # which merges the Aho-Corasick eos failure-link into the stop
+        # sequence path and corrupts the trie.
+        return Scheduler(model=mock_model, tokenizer=MockTokenizer())
 
     def _request_with_stop(self, stop):
         return Request(
@@ -4029,17 +4039,18 @@ class TestBuildStateMachineStopStrings:
             sampling_params=SamplingParams(max_tokens=10, stop=stop),
         )
 
-    def test_no_stop_string_only_eos_transitions(self, mock_model, mock_tokenizer):
-        scheduler = self._make_scheduler(mock_model, mock_tokenizer)
+    def test_no_stop_string_only_eos_transitions(self, mock_model):
+        scheduler = self._make_scheduler(mock_model)
         sm = scheduler._build_state_machine(self._request_with_stop([]))
         # SequenceStateMachine has internal _states dict; non-empty implies
         # at least the EOS transitions are present.
         assert sm._states
 
-    def test_stop_string_added_as_token_sequence(self, mock_model, mock_tokenizer):
-        scheduler = self._make_scheduler(mock_model, mock_tokenizer)
-        # MockTokenizer encodes "delta" to a single hash-derived token id.
-        expected_seq = mock_tokenizer.encode("delta", add_special_tokens=False)
+    def test_stop_string_added_as_token_sequence(self, mock_model):
+        scheduler = self._make_scheduler(mock_model)
+        tokenizer = MockTokenizer()
+        # MockTokenizer encodes "delta" to char-derived token ids.
+        expected_seq = tokenizer.encode("delta", add_special_tokens=False)
         assert expected_seq, "MockTokenizer must produce a token for 'delta'"
 
         sm = scheduler._build_state_machine(self._request_with_stop(["delta"]))
@@ -4051,23 +4062,24 @@ class TestBuildStateMachineStopStrings:
             node = node[tok]
         assert "__match__" in node, "stop sequence not terminated in trie"
 
-    def test_empty_or_non_string_entries_skipped(self, mock_model, mock_tokenizer):
-        scheduler = self._make_scheduler(mock_model, mock_tokenizer)
+    def test_empty_or_non_string_entries_skipped(self, mock_model):
+        scheduler = self._make_scheduler(mock_model)
         # Mixed list with empty string and non-string entry; only "real"
         # should be tokenized.
         sm = scheduler._build_state_machine(self._request_with_stop(["", "real", 123]))
-        real_seq = mock_tokenizer.encode("real", add_special_tokens=False)
+        real_seq = MockTokenizer().encode("real", add_special_tokens=False)
         node = sm._states["normal"][0]
         for tok in real_seq:
             assert tok in node
             node = node[tok]
         assert "__match__" in node
 
-    def test_multiple_stop_strings_all_registered(self, mock_model, mock_tokenizer):
-        scheduler = self._make_scheduler(mock_model, mock_tokenizer)
+    def test_multiple_stop_strings_all_registered(self, mock_model):
+        scheduler = self._make_scheduler(mock_model)
         sm = scheduler._build_state_machine(self._request_with_stop(["foo", "bar"]))
+        tokenizer = MockTokenizer()
         for stop_str in ("foo", "bar"):
-            seq = mock_tokenizer.encode(stop_str, add_special_tokens=False)
+            seq = tokenizer.encode(stop_str, add_special_tokens=False)
             node = sm._states["normal"][0]
             for tok in seq:
                 assert tok in node

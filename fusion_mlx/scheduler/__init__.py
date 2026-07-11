@@ -18,8 +18,15 @@ from .types import (
 # Backward-compat re-exports: the old monolithic omlx.scheduler exposed these
 # helpers/constants at package level. Tests (and any external callers) still
 # reference them via fusion_mlx.scheduler.X after the submodule split.
-from .helpers import _safe_sync_stream, _slice_vlm_extra, _sync_and_clear_cache  # noqa: F401
+from .helpers import (
+    _advance_vlm_extra,
+    _safe_sync_stream,
+    _slice_vlm_extra,
+    _sync_and_clear_cache,
+)  # noqa: F401
+from .monkeypatches import _default_generation_stream  # noqa: F401
 from .sched_misc import HAS_TIERED_CACHE  # noqa: F401
+from ..cache.paged_ssd_cache import PagedSSDCacheManager  # noqa: F401
 
 
 class BackpressureError(Exception):
