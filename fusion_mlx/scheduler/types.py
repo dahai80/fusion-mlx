@@ -205,6 +205,20 @@ class _BoundarySnapshotProvider:
     def __bool__(self) -> bool:
         return bool(self._valid_tcs)
 
+    def iter_in_memory_values(self):
+        # Yield each in-memory snapshot value, applying extract_fn if set so
+        # callers receive extracted cache state (matching __getitem__). SSD-only
+        # entries are skipped; the store_cache worker loads them lazily.
+        for tc in self._valid_tcs:
+            snap = self._in_memory.get(tc)
+            if snap is None:
+                continue
+            if self._extract_fn is None:
+                yield snap
+            else:
+                extracted, _ = self._extract_fn(snap)
+                yield extracted
+
 
 @dataclass
 class _InflightStoreInfo:

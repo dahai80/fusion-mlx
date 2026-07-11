@@ -21,7 +21,6 @@ import mlx.core as mx
 from ..request import Request
 from .helpers import (
     _KNOWN_SLICEABLE_CACHE_TYPES,
-    _safe_sync_stream,
 )
 
 # Module-level alias so Scheduler.__init__ can fall back to mlx-lm's default
@@ -163,7 +162,12 @@ def _extract_boundary_snapshot(self, uid: int) -> list[Any] | None:
         # Synchronize pending engine stream operations before
         # accessing batch cache tensors.
         with self._phase_timer("boundary_capture_sync"):
-            _safe_sync_stream(self._stream)
+            # Direct mx.synchronize on module mx: this path runs on the
+            # inference thread that owns self._stream, so the cross-thread
+            # "no Stream" guard _safe_sync_stream provides is unnecessary.
+            # Using the module-level mx also keeps the call observable to
+            # sched_boundary.mx test patches.
+            mx.synchronize(self._stream)
         with self._phase_timer("boundary_capture_extract"):
             with mx.stream(self._stream):
                 result = self.batch_generator.extract_cache([uid])
@@ -303,16 +307,27 @@ def _get_boundary_store_override(
     else:
         return None
 
-    # Build lazy-loading provider for intermediate snapshots.
-    # Each snapshot is loaded from SSD one-at-a-time during
-    # store_cache() instead of extracting all at once.
+    # Eagerly extract in-memory intermediate snapshots here on the inference
+    # thread, so the async store-cache worker never touches MLX extraction on
+    # its own thread. Snapshots already offloaded to SSD stay lazy: the worker
+    # loads pre-extracted state through the store, not raw snapshots. Passing
+    # extract_fn=None also means later provider[tc] access returns the
+    # already-extracted value without re-invoking _extract_cache_states.
     intermediate_tcs = [tc for tc in valid_counts if tc != latest_tc]
+    pre_extracted: dict[int, list[dict[str, Any]]] = {}
+    for tc in intermediate_tcs:
+        snap = snapshots.get(tc)
+        if snap is None:
+            continue
+        extracted_tc, _ = self._extract_cache_states(snap)
+        if extracted_tc:
+            pre_extracted[tc] = extracted_tc
     intermediate_snapshots = _BoundarySnapshotProvider(
         store=self._boundary_snapshot_store,
         request_id=request_id,
         valid_tcs=intermediate_tcs,
-        in_memory_snapshots=snapshots,
-        extract_fn=self._extract_cache_states,
+        in_memory_snapshots=pre_extracted,
+        extract_fn=None,
     )
 
     token_sequence = (

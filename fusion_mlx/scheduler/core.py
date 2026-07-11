@@ -312,3 +312,30 @@ Scheduler._cache_tree_has_arrays_cache = _cache_tree_has_arrays_cache
 from .sched_misc import _format_bytes as _format_bytes
 
 Scheduler._format_bytes = _format_bytes
+
+# _collect_arrays_from_extracted_cache is a @staticmethod pure helper in
+# sched_cache (no self use) that walks an _extracted_cache payload for lazy
+# mx.array refs to pre-eval on the inference thread. The self/sched-first
+# auto-bind loop skips staticmethods, so bind it explicitly. Called as
+# self._collect_arrays_from_extracted_cache(...) inside _cleanup_finished
+# (sched_response.py store_cache_main_collect phase). Without this binding the
+# call raised AttributeError, was swallowed by the surrounding except, and
+# silently skipped cache storage for every finished request.
+from .sched_cache import (
+    _collect_arrays_from_extracted_cache as _collect_arrays_from_extracted_cache,
+)
+
+Scheduler._collect_arrays_from_extracted_cache = _collect_arrays_from_extracted_cache
+
+# _merge_boundary_with_full_cache is a @staticmethod pure helper in
+# sched_boundary (no self use) that fills placeholder layers in a boundary
+# snapshot from the full extracted cache. Skipped by the self/sched-first
+# auto-bind loop; called as self._merge_boundary_with_full_cache(...) inside
+# _cleanup_finished (sched_response.py boundary_override branch). Without this
+# binding the call raised AttributeError and silently skipped cache storage
+# for every request ending on a partial trailing block.
+from .sched_boundary import (
+    _merge_boundary_with_full_cache as _merge_boundary_with_full_cache,
+)
+
+Scheduler._merge_boundary_with_full_cache = _merge_boundary_with_full_cache
