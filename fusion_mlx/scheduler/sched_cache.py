@@ -177,29 +177,41 @@ def _async_store_cache_worker(
         logger.warning("Async store_cache failed for %s: %s", request_id, e)
 
 
-def _drain_pending_async_removes(self) -> None:
+def _drain_pending_async_removes(self) -> bool:
     """Process deferred batch_generator.remove() calls from prior steps.
 
-    Called at the start of every step. For each pending entry, if the
-    async store_cache future has finished, perform the
-    batch_generator.remove() on the inference thread (Metal-safe) and
-    finalize cleanup state. Entries whose futures are still in flight
-    are left at the head of the deque for a later step.
+    Called at the start of every step. Entries whose async store_cache
+    futures have finished are finalized on the inference thread
+    (Metal-safe): batch_generator.remove(), uid map cleanup, and release
+    of the store-cache gate slot plus inflight bookkeeping. Entries
+    still in flight are re-queued in their original order; a slow head
+    no longer pins later completed entries (#1684). Returns True if any
+    entry was drained.
     """
     if not self._pending_async_removes:
-        return
+        return False
+    done_entries = []
+    remaining_entries = []
     while self._pending_async_removes:
-        uid, request_id, future = self._pending_async_removes[0]
+        uid, request_id, future = self._pending_async_removes.popleft()
         if future is not None and not future.done():
-            # Worker still busy. Stop draining; check again next step.
-            # Inflight entry stays at deque head to preserve order.
-            break
-        self._pending_async_removes.popleft()
+            # Worker still busy; keep for a later step in original order.
+            remaining_entries.append((uid, request_id, future))
+        else:
+            done_entries.append((uid, request_id, future))
+    self._pending_async_removes.extend(remaining_entries)
+    if not done_entries:
+        return False
+    gate = self._store_cache_gate
+    for uid, request_id, future in done_entries:
         # Surface worker exceptions for visibility (don't crash step loop).
         if future is not None:
             exc = future.exception()
             if exc is not None:
                 logger.warning("Async store_cache for %s raised: %s", request_id, exc)
+        # Release the store-cache admission slot this entry held.
+        if gate is not None:
+            gate.note_done()
         # Run batch_generator.remove on the inference thread.
         try:
             _safe_sync_stream(self._stream)
@@ -219,19 +231,21 @@ def _drain_pending_async_removes(self) -> None:
         if request_id in self.request_id_to_uid:
             del self.request_id_to_uid[request_id]
         self._inflight_store_futures.pop(request_id, None)
+        self._inflight_store_info.pop(request_id, None)
         # Boundary snapshots were kept on disk for the worker; safe to
         # delete now that the future has completed. Cleanup was
         # deferred from _cleanup_finished to avoid racing the worker's
         # boundary_snapshot_store.load() calls with rmtree.
         if self._boundary_snapshot_store is not None:
             self._boundary_snapshot_store.cleanup_request(request_id)
-        # Worker no longer holds extracted_cache — pop request from
+        # Worker no longer holds extracted_cache - pop request from
         # self.requests and drop the cache buffer references so MLX
         # arrays can be freed.
         req_to_remove = self.requests.pop(request_id, None)
         if req_to_remove is not None:
             req_to_remove._extracted_cache = None
             req_to_remove.prompt_cache = None
+    return True
 
 
 def _calculate_max_blocks(self) -> int:
