@@ -307,6 +307,12 @@ def step(self) -> SchedulerOutput:
         else:
             raise
 
+    except OverflowError as e:
+        if self._is_generation_overflow_error(e):
+            self._handle_generation_overflow(output)
+            return output
+        raise
+
     except Exception as e:
         import traceback
 
@@ -450,6 +456,11 @@ def _step_pure_decode(self, output: SchedulerOutput) -> SchedulerOutput:
     try:
         with mx.stream(self._stream):
             _, responses = bg._next()
+    except OverflowError as e:
+        if self._is_generation_overflow_error(e):
+            self._handle_generation_overflow(output)
+            return output
+        raise
     finally:
         self.model._fusion_mlx_mtp_suppressed = False
     self._last_decode_dt = time.perf_counter() - _decode_t0
@@ -735,3 +746,77 @@ def shutdown(self) -> None:
         self.paged_ssd_cache_manager.close()
         self.paged_ssd_cache_manager = None
     logger.info("Scheduler shutdown completed")
+
+
+def _is_generation_overflow_error(self, error: BaseException) -> bool:
+    """Classify an error as the MLX __next_prime generation overflow.
+
+    The ngram-spec / sampler prime sieve raises OverflowError("__next_prime
+    overflow") when token-id magnitudes overflow prime selection (observed
+    with degenerate token ids). Only that exact shape is a recoverable
+    generation overflow; other OverflowErrors (e.g. integer conversion)
+    and other exception types are not.
+    """
+    return isinstance(error, OverflowError) and "__next_prime" in str(error)
+
+
+def _handle_generation_overflow(self, output: SchedulerOutput) -> None:
+    logger.warning(
+        "step(%d): generation overflow (__next_prime) - recovering, running=%d",
+        self._step_counter,
+        len(self.running),
+    )
+    self.batch_generator = None
+    self._current_sampler_params = None
+    self._boundary_cache_snapshots.clear()
+    if self._boundary_snapshot_store is not None:
+        self._boundary_snapshot_store.cleanup_all()
+    self._boundary_snapshot_required = None
+    _unregister_uid_rows_for_model(self.model)
+
+    max_overflow_retries = 1
+    for rid in list(self.running.keys()):
+        req = self.running.pop(rid)
+        old_uid = self.request_id_to_uid.pop(rid, None)
+        if old_uid is not None:
+            self.uid_to_request_id.pop(old_uid, None)
+
+        if req.generation_overflow_retries < max_overflow_retries:
+            req.generation_overflow_retries += 1
+            req.output_token_ids = []
+            req.output_text = ""
+            req.num_computed_tokens = 0
+            req.prompt_cache = None
+            req.cached_tokens = 0
+            req.remaining_tokens = req.prompt_token_ids
+            req.think_prefix_sent = False
+            req.status = RequestStatus.WAITING
+            req.batch_uid = None
+            self.waiting.append(req)
+            self._generation_overflow_recovery_ids.add(rid)
+            logger.info(
+                "step(%d): rescheduled %s for serial overflow retry (attempt %d)",
+                self._step_counter,
+                rid,
+                req.generation_overflow_retries,
+            )
+        else:
+            output.outputs.append(
+                RequestOutput(
+                    request_id=rid,
+                    finished=True,
+                    finish_reason="error",
+                    error="Generation overflow not recoverable after retries",
+                )
+            )
+            output.finished_request_ids.add(rid)
+            self.requests.pop(rid, None)
+            self._generation_overflow_recovery_ids.discard(rid)
+            logger.warning(
+                "step(%d): failed %s - generation overflow not recoverable after %d retry/retries",
+                self._step_counter,
+                rid,
+                req.generation_overflow_retries,
+            )
+    output.has_work = True
+

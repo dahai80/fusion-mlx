@@ -27,6 +27,7 @@ from .helpers import (
 from .monkeypatches import _default_generation_stream  # noqa: F401
 from .sched_misc import HAS_TIERED_CACHE  # noqa: F401
 from ..cache.paged_ssd_cache import PagedSSDCacheManager  # noqa: F401
+from ..speculative.vlm_mtp import run_vlm_mtp_decode  # noqa: F401
 
 
 class BackpressureError(Exception):

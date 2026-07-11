@@ -93,6 +93,50 @@ def _load_generation_config_eos(self) -> set[int] | None:
         return None
 
 
+def _load_generation_config_suppress_tokens(self) -> set[int]:
+    """Load suppress_tokens from generation_config.json if available.
+
+    Standard HF field: tokens forbidden during generation (e.g. tokens
+    that trigger runaway/recursive output). Mirrors _load_generation_config_eos
+    path resolution (local dir then HF cache). Returns empty set on any
+    miss so callers can treat it as always-present.
+    """
+    try:
+        model_path = getattr(self.tokenizer, "name_or_path", None)
+        if not isinstance(model_path, str) or not model_path:
+            return set()
+        import json
+        import os
+
+        gc_path = os.path.join(model_path, "generation_config.json")
+        if not os.path.exists(gc_path):
+            try:
+                from huggingface_hub import try_to_load_from_cache
+
+                cached = try_to_load_from_cache(model_path, "generation_config.json")
+                if cached and isinstance(cached, str):
+                    gc_path = cached
+                else:
+                    return set()
+            except (ImportError, Exception):
+                return set()
+        with open(gc_path) as f:
+            gc = json.load(f)
+        raw = gc.get("suppress_tokens")
+        if raw is None:
+            return set()
+        if isinstance(raw, list):
+            ids = {int(t) for t in raw}
+        else:
+            ids = {int(raw)}
+        if ids:
+            logger.info(f"Loaded {len(ids)} suppress token(s) from generation_config.json: {ids}")
+        return ids
+    except Exception as e:
+        logger.debug(f"Could not load suppress_tokens: {e}")
+        return set()
+
+
 def _get_stop_tokens(self) -> set[int]:
     """Get stop token IDs from tokenizer and generation_config."""
     stop_tokens = set()

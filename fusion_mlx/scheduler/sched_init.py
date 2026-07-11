@@ -99,6 +99,11 @@ def __init__(
     # that are not in tokenizer.eos_token_id.
     self._generation_config_eos: set[int] | None = self._load_generation_config_eos()
 
+    # Load suppress_tokens from generation_config.json. Standard HF field
+    # forbidding certain tokens during generation (e.g. runaway-output
+    # triggers). Empty set when absent; honored as a logits processor.
+    self._model_suppress_tokens: set[int] = self._load_generation_config_suppress_tokens()
+
     # For strict RotatingKVCache reuse, align paged cache block size to
     # the model's rotating window size when paged cache is enabled.
     self._align_block_size_with_rotating_window()

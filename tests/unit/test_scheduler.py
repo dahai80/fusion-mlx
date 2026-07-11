@@ -2932,6 +2932,9 @@ class TestGenerationOverflowRecovery:
         scheduler.batch_generator.next_generated.side_effect = OverflowError(
             "__next_prime overflow"
         )
+        scheduler.batch_generator._next.side_effect = OverflowError(
+            "__next_prime overflow"
+        )
         for i in range(count):
             request = Request(
                 request_id=f"req-overflow-{i}",
@@ -3017,7 +3020,7 @@ class TestGenerationOverflowRecovery:
     def test_unrelated_overflow_still_raises(self, mock_model, mock_tokenizer):
         scheduler = Scheduler(model=mock_model, tokenizer=mock_tokenizer)
         scheduler.batch_generator = MagicMock()
-        scheduler.batch_generator.next_generated.side_effect = OverflowError(
+        scheduler.batch_generator._next.side_effect = OverflowError(
             "integer conversion overflow"
         )
         request = Request(
