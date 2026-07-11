@@ -97,7 +97,25 @@ def _do_external_prefill(
 
     # Clear stale mRoPE position state for text-only requests.
     if vlm_embeds is None and hasattr(self.model, "clear_vlm_position_state"):
+        # Cached text-only suffix: the prefill forward only runs on the
+        # post-cache tokens, so the language model never recomputes the
+        # full-sequence mRoPE delta. Capture the existing delta shape before
+        # clear() resets it to None, then seed zeros in that shape so decode
+        # resumes at the restored offset (text-only => no image offset).
+        _seed_delta = None
+        if getattr(request, "cached_tokens", 0) > 0:
+            _lm = getattr(self.model, "_language_model", None)
+            if _lm is not None and hasattr(_lm, "_rope_deltas"):
+                _seed_delta = getattr(_lm, "_rope_deltas", None)
         self.model.clear_vlm_position_state()
+        if _seed_delta is not None:
+            _lm = getattr(self.model, "_language_model", None)
+            if _lm is not None and hasattr(_lm, "_rope_deltas"):
+                _lm._rope_deltas = mx.zeros_like(_seed_delta)
+                logger.debug(
+                    "Seeded zero mRoPE delta for cached text-only request %s",
+                    request.request_id,
+                )
 
     # Boundary snapshot setup
     block_size = self.config.paged_cache_block_size
