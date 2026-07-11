@@ -7,9 +7,10 @@ a loading_event and retries once the first load completes.
 """
 
 import asyncio
+
 import pytest
 
-from fusion_mlx.pool.engine_pool import EngineEntry, ModelLoadingError
+from fusion_mlx.pool.engine_pool import EngineEntry
 
 
 @pytest.fixture

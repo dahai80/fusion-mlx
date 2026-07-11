@@ -8,9 +8,7 @@ first, preserving tools whenever possible.
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock, patch
-
-import pytest
+from unittest.mock import MagicMock
 
 
 def _make_engine():
@@ -66,9 +64,7 @@ class TestTypeErrorFallbackPreservesTools:
         engine._tokenizer = mock_tok
 
         result = engine._apply_chat_template(_fake_messages(), tools=_tools_spec())
-        assert "<tools>present</tools>" in result, (
-            f"Tools were stripped! Got: {result}"
-        )
+        assert "<tools>present</tools>" in result, f"Tools were stripped! Got: {result}"
         assert call_count == 2
 
     def test_typeerror_from_chat_template_kwargs_preserves_tools(self):

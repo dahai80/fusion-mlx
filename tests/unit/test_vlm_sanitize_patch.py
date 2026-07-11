@@ -15,6 +15,7 @@ import pytest
 
 def _reset_patch_state():
     import fusion_mlx.engines.vlm as vlm_mod
+
     for cls, orig in vlm_mod._VLM_ORIGINAL_SANITIZES.items():
         cls.sanitize = orig
     vlm_mod._VLM_ORIGINAL_SANITIZES.clear()
@@ -31,20 +32,26 @@ class TestPatchVlmSanitize:
 
     def test_patch_applies_to_qwen3_5(self):
         from fusion_mlx.engines.vlm import _patch_vlm_sanitize
+
         _patch_vlm_sanitize()
         import fusion_mlx.engines.vlm as vlm_mod
+
         assert vlm_mod._VLM_SANITIZE_PATCHED is True
 
     def test_no_double_patch(self):
         from fusion_mlx.engines.vlm import _patch_vlm_sanitize
+
         _patch_vlm_sanitize()
         _patch_vlm_sanitize()
         import fusion_mlx.engines.vlm as vlm_mod
+
         assert vlm_mod._VLM_SANITIZE_PATCHED is True
 
     def test_sanitize_identity_when_no_mtp_no_conv1d(self):
         import mlx.core as mx
+
         from fusion_mlx.engines.vlm import _patch_vlm_sanitize
+
         _patch_vlm_sanitize()
 
         try:
@@ -59,7 +66,8 @@ class TestPatchVlmSanitize:
 
         weights = {
             "language_model.model.layers.0.input_layernorm.weight": mx.ones(8) * 1.5,
-            "language_model.model.layers.0.post_attention_layernorm.weight": mx.ones(8) * 1.3,
+            "language_model.model.layers.0.post_attention_layernorm.weight": mx.ones(8)
+            * 1.3,
             "language_model.model.norm.weight": mx.ones(8) * 1.2,
             "language_model.model.layers.0.self_attn.q_norm.weight": mx.ones(8) * 1.1,
             "language_model.model.layers.0.self_attn.k_norm.weight": mx.ones(8) * 1.1,
@@ -90,7 +98,9 @@ class TestPatchVlmSanitize:
 
     def test_sanitize_keeps_plus1_when_mtp_present(self):
         import mlx.core as mx
+
         from fusion_mlx.engines.vlm import _patch_vlm_sanitize
+
         _patch_vlm_sanitize()
 
         try:
@@ -119,7 +129,9 @@ class TestPatchVlmSanitize:
 
     def test_sanitize_keeps_plus1_when_unsanitized_conv1d(self):
         import mlx.core as mx
+
         from fusion_mlx.engines.vlm import _patch_vlm_sanitize
+
         _patch_vlm_sanitize()
 
         try:
@@ -133,7 +145,9 @@ class TestPatchVlmSanitize:
         model["config"].text_config.tie_word_embeddings = False
 
         weights = {
-            "language_model.model.layers.0.linear_attn.conv1d.weight": mx.ones((4, 8, 3)),
+            "language_model.model.layers.0.linear_attn.conv1d.weight": mx.ones(
+                (4, 8, 3)
+            ),
             "language_model.model.layers.0.input_layernorm.weight": mx.ones(8) * 0.5,
             "some_other.weight": mx.ones(8) * 3.0,
         }
