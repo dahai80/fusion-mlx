@@ -299,12 +299,15 @@ class TestSchedulerInitialization:
 
         scheduler = Scheduler(model=mock_model, tokenizer=mock_tokenizer, config=config)
 
+        # SSD tier failed -> SSD manager nulled and never connected to the
+        # in-memory cache.  In-memory paged cache + async store pipeline are
+        # RETAINED (resilient degradation); only SSD-specific components drop.
         assert scheduler.paged_ssd_cache_manager is None
-        assert scheduler.paged_cache_manager is None
-        assert scheduler.block_aware_cache is None
         assert scheduler._boundary_snapshot_store is None
-        assert scheduler._store_cache_executor is None
-        assert scheduler._store_cache_gate is None
+        assert scheduler.paged_cache_manager is not None
+        assert scheduler.block_aware_cache is not None
+        assert scheduler._store_cache_executor is not None
+        assert scheduler._store_cache_gate is not None
         assert "Failed to initialize paged SSD cache" in caplog.text
 
     def test_init_statistics_zero(self, mock_model, mock_tokenizer):
@@ -1620,28 +1623,33 @@ class TestSchedulerXtcSpecialTokens:
         for eos_id in [2, 100, 200]:
             assert eos_id in tokens
 
-    def test_falls_back_to_singular_eos(self, mock_model, mock_tokenizer):
+    def test_falls_back_to_singular_eos(self, mock_model):
         """Test fallback to eos_token_id when eos_token_ids is absent."""
-        # MockTokenizer has eos_token_id=2 but no eos_token_ids
-        assert not hasattr(mock_tokenizer, "eos_token_ids")
-        scheduler = Scheduler(model=mock_model, tokenizer=mock_tokenizer)
+        tokenizer = MockTokenizer()
+        # MockTokenizer has eos_token_id=2 but no eos_token_ids (plural)
+        assert not hasattr(tokenizer, "eos_token_ids")
+        scheduler = Scheduler(model=mock_model, tokenizer=tokenizer)
         tokens = scheduler._get_xtc_special_tokens()
 
         assert 2 in tokens
 
-    def test_includes_parser_stop_tokens_without_base_stop(
-        self, mock_model, mock_tokenizer
+    def test_parser_stop_tokens_are_base_stops_and_xtc_protected(
+        self, mock_model
     ):
-        """Parser stop tokens are XTC-protected but not BatchGenerator stops."""
-        scheduler = Scheduler(model=mock_model, tokenizer=mock_tokenizer)
+        """Parser (Harmony) stop tokens are base BatchGenerator stops and
+        therefore XTC-protected: generation halts at action boundaries
+        (sched_thinking.py combines "EOS, Harmony" into the stop state
+        machine) and XTC never samples them mid-generation."""
+        tokenizer = MockTokenizer()
+        scheduler = Scheduler(model=mock_model, tokenizer=tokenizer)
         scheduler._output_parser_factory = _ParserStopFactory()
         scheduler._output_parser_factory.stop_token_ids = {101, 102}
 
         stop_tokens = scheduler._get_stop_tokens()
         xtc_tokens = scheduler._get_xtc_special_tokens()
 
-        assert 101 not in stop_tokens
-        assert 102 not in stop_tokens
+        assert 101 in stop_tokens
+        assert 102 in stop_tokens
         assert 101 in xtc_tokens
         assert 102 in xtc_tokens
 

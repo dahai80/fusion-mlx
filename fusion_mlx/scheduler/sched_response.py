@@ -132,6 +132,7 @@ def _process_batch_responses(
             if parser_result.is_stop and not is_finished:
                 is_finished = True
                 is_stop = True
+                response.finish_reason = "stop"
 
             should_record_token = (
                 parser_result.record_token
