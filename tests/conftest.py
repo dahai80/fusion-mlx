@@ -212,6 +212,9 @@ def mock_tokenizer():
     tok.encode = MagicMock(return_value=[1, 2, 3, 4, 5])
     tok.decode = MagicMock(return_value="test output")
     tok.apply_chat_template = MagicMock(return_value="<s>test prompt</s>")
+    tok.eos_token_id = 2
+    tok.bos_token_id = 1
+    tok.pad_token_id = 0
     return tok
 
 
