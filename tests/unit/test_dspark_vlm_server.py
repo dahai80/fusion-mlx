@@ -83,9 +83,10 @@ _IMG_PART = {"type": "image_url", "image_url": {"url": "data:image/png;base64,AA
 
 
 def test_extract_multimodal_string_content():
-    text, imgs = _extract_multimodal("hello world")
+    text, imgs, n = _extract_multimodal("hello world")
     assert text == "hello world"
     assert imgs == []
+    assert n == 0
 
 
 def test_extract_multimodal_text_parts_concat():
@@ -93,9 +94,10 @@ def test_extract_multimodal_text_parts_concat():
         {"type": "text", "text": "describe "},
         {"type": "text", "text": "this"},
     ]
-    text, imgs = _extract_multimodal(content)
+    text, imgs, n = _extract_multimodal(content)
     assert text == "describe this"
     assert imgs == []
+    assert n == 0
 
 
 def test_extract_multimodal_drops_unknown_parts():
@@ -104,9 +106,25 @@ def test_extract_multimodal_drops_unknown_parts():
         {"type": "audio_url", "audio_url": {"url": "x"}},
         "raw-string",
     ]
-    text, imgs = _extract_multimodal(content)
+    text, imgs, n = _extract_multimodal(content)
     assert text == "hiraw-string"
     assert imgs == []
+    assert n == 0
+
+
+def test_extract_multimodal_load_images_false_counts_without_loading():
+    # Security: when load_images is False (vlm_dev off / non-VLM target), image
+    # parts are counted (for the drop warning) but never decoded - no network
+    # or filesystem touch.
+    with patch("fusion_mlx.speculative.dspark.server._load_pil_image") as m_img:
+        m_img.return_value = "fake-pil"
+        text, imgs, n = _extract_multimodal(
+            [{"type": "text", "text": "hi"}, _IMG_PART], load_images=False
+        )
+    assert text == "hi"
+    assert imgs == []
+    assert n == 1
+    m_img.assert_not_called()
 
 
 def test_load_pil_image_data_uri(tmp_path):
@@ -130,6 +148,16 @@ def test_load_pil_image_file_path(tmp_path):
     Image.new("RGB", (2, 3), (0, 255, 0)).save(f)
     img = _load_pil_image(str(f))
     assert img.size == (2, 3)
+
+
+def test_load_pil_image_rejects_http_for_ssrf():
+    # Security: http(s) fetch is disabled (SSRF protection). The server must
+    # never make outbound requests for image_url values.
+    from fastapi import HTTPException
+
+    with pytest.raises(HTTPException) as exc:
+        _load_pil_image("https://example.com/evil.png")
+    assert exc.value.status_code == 400
 
 
 def test_vlm_dev_routes_image_to_generate_multimodal():
@@ -163,11 +191,9 @@ def test_vlm_dev_routes_image_to_generate_multimodal():
 
 
 def test_vlm_dev_off_drops_images_uses_text_path():
-    with (
-        patch("fusion_mlx.speculative.dspark.server._load_pil_image") as m_img,
-        patch("fusion_mlx.speculative.dspark.server._render_prompt") as m_render,
-    ):
-        m_img.return_value = "fake-pil"
+    # vlm_dev off -> load_images False -> _load_pil_image never called (no
+    # network/fs touch), images counted for the drop warning.
+    with patch("fusion_mlx.speculative.dspark.server._render_prompt") as m_render:
         m_render.return_value = (None, 9)
         client, runtime = _client(is_vlm=True, vlm_dev=False)
         r = client.post(
@@ -187,11 +213,9 @@ def test_vlm_dev_off_drops_images_uses_text_path():
 
 
 def test_vlm_dev_non_vlm_target_drops_images():
-    with (
-        patch("fusion_mlx.speculative.dspark.server._load_pil_image") as m_img,
-        patch("fusion_mlx.speculative.dspark.server._render_prompt") as m_render,
-    ):
-        m_img.return_value = "fake-pil"
+    # vlm_dev on but text target -> load_images False -> _load_pil_image never
+    # called, images dropped with a warning.
+    with patch("fusion_mlx.speculative.dspark.server._render_prompt") as m_render:
         m_render.return_value = (None, 9)
         client, runtime = _client(is_vlm=False, vlm_dev=True)
         r = client.post(

@@ -89,10 +89,18 @@ def _coerce_content(content: str | list[Any] | None) -> str:
 
 
 def _load_pil_image(url: str) -> Any:
-    # OpenAI image_url.url can be a data URI, an http(s) link, a file:// URL,
-    # or a bare filesystem path. PIL is a transitive dep of mlx-vlm (dspark
-    # requires mlx-vlm), imported lazily so the module still imports on a
-    # text-only boot with no images in flight.
+    # .dev VLM path: decode an OpenAI image_url into a PIL image.
+    #
+    # Security posture (this path is gated behind --vlm-dev, off by default,
+    # and the DSpark server is a LOCAL single-user serial dev tool):
+    #   * data: URIs are always safe (inline base64, no I/O).
+    #   * local file paths / file:// are supported - the operator already owns
+    #     the filesystem, so this is not a privilege escalation in the
+    #     single-user local threat model.
+    #   * http(s) fetch is intentionally rejected to eliminate SSRF (the server
+    #     never makes outbound requests). Use a base64 data: URI for remote
+    #     images. PIL is imported lazily so the module still imports on a
+    #     text-only boot with no images in flight.
     import base64
     from io import BytesIO
     from urllib.parse import urlparse
@@ -104,27 +112,37 @@ def _load_pil_image(url: str) -> Any:
         return Image.open(BytesIO(base64.b64decode(b64)))
     parsed = urlparse(url)
     if parsed.scheme in ("http", "https"):
-        import urllib.request
-
-        with urllib.request.urlopen(url, timeout=30) as resp:  # noqa: S310
-            return Image.open(BytesIO(resp.read()))
+        logger.warning(
+            "DSpark VLM .dev: rejected http(s) image URL (SSRF protection); "
+            "use a base64 data: URI or a local file path."
+        )
+        raise HTTPException(
+            status_code=400,
+            detail="http(s) image URLs are not supported in DSpark VLM .dev "
+            "mode (SSRF protection); use a data: URI or a local file path.",
+        )
     path = parsed.path if parsed.scheme == "file" else url
     return Image.open(path)
 
 
 def _extract_multimodal(
     content: str | list[Any] | None,
-) -> tuple[str, list[Any]]:
-    # Splits OpenAI chat content into (text, images). Text parts concatenate
-    # in order; image_url parts decode to PIL images. Non-text/non-image parts
-    # are dropped. Mirrors _coerce_content but also harvests vision inputs for
-    # the VLM dev path.
+    *,
+    load_images: bool = True,
+) -> tuple[str, list[Any], int]:
+    # Splits OpenAI chat content into (text, images, n_image_parts). Text parts
+    # concatenate in order; image_url parts decode to PIL images only when
+    # load_images is True (SSRF/attack-surface guard: callers pass False unless
+    # the images will actually be consumed by a VLM target). n_image_parts
+    # always counts image_url parts so dropped images can be warned about
+    # without loading them. Non-text/non-image parts are dropped.
     if content is None:
-        return "", []
+        return "", [], 0
     if isinstance(content, str):
-        return content, []
+        return content, [], 0
     text_parts: list[str] = []
     images: list[Any] = []
+    n_images = 0
     for part in content:
         if isinstance(part, str):
             text_parts.append(part)
@@ -138,8 +156,10 @@ def _extract_multimodal(
             url_obj = part.get("image_url")
             url = url_obj.get("url") if isinstance(url_obj, dict) else url_obj
             if url:
-                images.append(_load_pil_image(str(url)))
-    return "".join(text_parts), images
+                n_images += 1
+                if load_images:
+                    images.append(_load_pil_image(str(url)))
+    return "".join(text_parts), images, n_images
 
 
 def _render_prompt(
@@ -313,13 +333,19 @@ def _build_app(
 
         gen = runtime.generator
         is_vlm = gen._is_vlm()
+        # Security: only decode images when they will actually be consumed
+        # (vlm_dev on AND a VLM target). Otherwise count-and-drop without
+        # touching the network or filesystem.
+        load_images = vlm_dev_enabled and is_vlm
 
         messages: list[dict[str, Any]] = []
         images: list[Any] = []
+        total_images = 0
         for m in req.messages:
-            text, imgs = _extract_multimodal(m.content)
+            text, imgs, n = _extract_multimodal(m.content, load_images=load_images)
             images.extend(imgs)
-            if not text and not imgs and m.role != "assistant":
+            total_images += n
+            if not text and not n and m.role != "assistant":
                 raise HTTPException(
                     status_code=400,
                     detail=f"message role={m.role!r} has empty/non-text content",
@@ -327,17 +353,17 @@ def _build_app(
             messages.append({"role": m.role, "content": text})
 
         use_vlm = vlm_dev_enabled and is_vlm and bool(images)
-        if images and not use_vlm:
+        if total_images and not use_vlm:
             if not vlm_dev_enabled:
                 logger.warning(
                     "DSpark: %d image(s) dropped (VLM dev mode off). "
                     "Enable --vlm-dev or DSPARK_VLM_DEV=1 for multimodal.",
-                    len(images),
+                    total_images,
                 )
             elif not is_vlm:
                 logger.warning(
                     "DSpark: %d image(s) dropped (target family=%r is not a VLM).",
-                    len(images),
+                    total_images,
                     gen.target.adapter.family,
                 )
 
