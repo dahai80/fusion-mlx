@@ -7,6 +7,7 @@ from fastapi import APIRouter
 from fastapi.responses import PlainTextResponse
 
 from .._version import __version__
+from ..api import response_format_metrics
 
 logger = logging.getLogger(__name__)
 
@@ -161,12 +162,59 @@ def _render_kv_cache_dtype_gauge() -> list[str]:
     return lines
 
 
+def _render_response_format_metrics() -> list[str]:
+    snap = response_format_metrics.snapshot()
+    lines: list[str] = []
+    lines.extend(
+        _fmt_metric(
+            "rapid_mlx_response_format_strict_total",
+            "counter",
+            "Total strict json_schema response_format requests seen.",
+            snap.get("strict_requests_total", 0),
+        )
+    )
+    lines.extend(
+        _fmt_metric(
+            "rapid_mlx_response_format_strict_violations_total",
+            "counter",
+            "Strict json_schema outputs that violated the schema.",
+            snap.get("strict_violations_total", 0),
+        )
+    )
+    lines.extend(
+        _fmt_metric(
+            "rapid_mlx_response_format_strict_repairs_attempted_total",
+            "counter",
+            "Strict json_schema repair retries attempted.",
+            snap.get("strict_repairs_attempted_total", 0),
+        )
+    )
+    lines.extend(
+        _fmt_metric(
+            "rapid_mlx_response_format_strict_repairs_succeeded_total",
+            "counter",
+            "Strict json_schema repair retries that produced valid output.",
+            snap.get("strict_repairs_succeeded_total", 0),
+        )
+    )
+    lines.extend(
+        _fmt_metric(
+            "rapid_mlx_response_format_strict_repairs_skipped_context_overflow_total",
+            "counter",
+            "Strict repair retries skipped due to context overflow.",
+            snap.get("strict_repairs_skipped_context_overflow_total", 0),
+        )
+    )
+    return lines
+
+
 def render_prometheus_metrics() -> str:
     lines: list[str] = []
     lines.extend(_render_build_info())
     lines.extend(_render_engine_metrics())
     lines.extend(_render_pool_metrics())
     lines.extend(_render_kv_cache_dtype_gauge())
+    lines.extend(_render_response_format_metrics())
     return "\n".join(lines) + "\n"
 
 
