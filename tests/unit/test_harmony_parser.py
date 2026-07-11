@@ -307,8 +307,11 @@ class TestHarmonyEdgeCases:
     def test_unknown_channel_without_recipient_falls_back_to_final(
         self, parser, harmony_encoding
     ):
-        """Test handling of malformed channel names."""
-        # Note: openai_harmony may handle unknown channels differently
+        """Unknown (non-analysis/final) channels are buffered, not streamed."""
+        # Per parsers/harmony.py: a channel that is not final/analysis/None
+        # falls to the `else` branch and is buffered (stream_token=None,
+        # visible_token=None), like the commentary channel. "content" is
+        # therefore never emitted on stream or visible for unknown channels.
         tokens = harmony_encoding.encode(
             "<|channel|>someunknownchannel<|message|>content<|end|>",
             allowed_special="all",
@@ -323,8 +326,8 @@ class TestHarmonyEdgeCases:
             if visible_token is not None:
                 visible_tokens.append(visible_token)
 
-        assert "content" in harmony_encoding.decode(stream_tokens)
-        assert "content" in harmony_encoding.decode(visible_tokens)
+        assert stream_tokens == []
+        assert visible_tokens == []
 
     def test_consecutive_analysis_channels(self, parser, harmony_encoding):
         """Test multiple consecutive analysis channels."""

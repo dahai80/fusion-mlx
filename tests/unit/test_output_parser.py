@@ -619,8 +619,12 @@ class TestOutputParserFactory:
     def test_harmony_wrapper_regression(self):
         encoding = load_harmony_encoding("HarmonyGptOss")
         tokenizer = HarmonyTokenizer(encoding)
+        # detect_output_parser matches harmony by NAME only (is_harmony_model);
+        # gpt-oss itself is routed via output_router_harmony, not this factory.
+        # Use a harmony-bearing name so the factory is returned and the
+        # HarmonyOutputParserSession wrapper behavior is exercised.
         factory = detect_output_parser(
-            "gpt-oss-20b",
+            "harmony-gpt-oss-20b",
             tokenizer,
             {"model_type": "gpt_oss"},
         )
@@ -658,8 +662,10 @@ class TestOutputParserFactory:
 
         encoding = load_harmony_encoding("HarmonyGptOss")
         tokenizer = HarmonyTokenizer(encoding)
+        # Name must contain "harmony" for detect_output_parser (name-based);
+        # gpt-oss routing lives in output_router_harmony, not this factory.
         factory = detect_output_parser(
-            "gpt-oss-20b",
+            "harmony-gpt-oss-20b",
             tokenizer,
             {"model_type": "gpt_oss"},
         )

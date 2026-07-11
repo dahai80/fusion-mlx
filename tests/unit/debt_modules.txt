@@ -132,13 +132,12 @@ test_vlm_cohere2_moe_loader.py
 test_vlm_mtp_proxy.py
 test_vlm_torch_free_image_processor.py
 
-## runtime-fail (272)
+## runtime-fail (271)
 test_r12_4_strict_json_schema_constraint_matrix.py
 test_response_format_json_schema_strict.py
 test_routes_cached_tokens.py
 test_stream_include_usage_honored.py
 test_text_only_media_gate.py
-test_harmony_parser.py
 test_output_parser.py
 test_447_stream_tool_choice_auto.py
 test_active_models_visibility.py
