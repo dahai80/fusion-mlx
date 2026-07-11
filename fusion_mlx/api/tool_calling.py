@@ -647,6 +647,26 @@ def parse_tool_calls(
                         cleaned_text = cleaned_text[:idx].strip()
                 return cleaned_text, tool_calls
 
+    # Fallback: bare <tool_call>...</tool_call> tags. Reached when no
+    # tokenizer tool-calling is configured (streaming finalize passes the
+    # request dict, not a tokenizer) or the native parser found no calls.
+    # Wrap each body in the internal ␝/␞ delimiters so the shared
+    # _parse_xml_tool_calls recovers JSON / Qwen <function=> / GLM bodies
+    # (test_finalize_cross_format_fallback_recovers_xml_tool_call).
+    if "<tool_call>" in cleaned_text and "</tool_call>" in cleaned_text:
+        wrapped = re.sub(
+            r"<tool_call>(.*?)</tool_call>",
+            lambda m: f"␝{m.group(1)}␞",
+            cleaned_text,
+            flags=re.DOTALL,
+        )
+        if wrapped != cleaned_text:
+            logger.debug(
+                "parse_tool_calls: bare <tool_call> fallback engaged, "
+                "no tokenizer tool-calling available"
+            )
+            return _parse_xml_tool_calls(wrapped)
+
     # Fallback: parse XML <tool_call> tags (GLM, Qwen, generic formats)
     if "␝" in cleaned_text:
         return _parse_xml_tool_calls(cleaned_text)

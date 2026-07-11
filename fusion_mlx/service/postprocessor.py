@@ -3212,10 +3212,9 @@ class StreamingPostProcessor:
                 else:
                     return []
 
-        # Nemotron thinking prefix
-        if self._is_thinking_model and not self._think_prefix_sent and content:
-            content = "<think>" + content
-            self._think_prefix_sent = True
+        # Nemotron thinking prefix injection moved to AFTER sanitize_output
+        # below - sanitize_output strips ``<think>`` tags as special tokens,
+        # so injecting here made the prefix dead code.
 
         # Tool call detection
         if self.tool_parser and delta_text:
@@ -3363,6 +3362,19 @@ class StreamingPostProcessor:
             content = sanitize_output(content)
             if not content:
                 content = None
+
+        # Nemotron thinking prefix - injected AFTER sanitize_output so the
+        # ``<think>`` opener survives to the wire. sanitize_output strips
+        # ``<think>`` tags as special tokens; injecting pre-sanitize (the
+        # former location) made the prefix dead code - sanitize ate it
+        # before emission (test_thinking_prefix_injected).
+        if self._is_thinking_model and not self._think_prefix_sent and content:
+            content = "<think>" + content
+            self._think_prefix_sent = True
+            logger.debug(
+                "nemotron thinking prefix injected (model=%s)",
+                getattr(self, "_thinking_model_name", "nemotron"),
+            )
 
         # When finish_reason is set, emit ONE finish event with content merged in.
         # Never enable separate content + finish events — that would cause
