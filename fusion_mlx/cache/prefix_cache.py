@@ -1506,6 +1506,7 @@ class BlockAwarePrefixCache(CacheManager):
     def reconstruct_cache(
         self,
         block_table: BlockTable,
+        promote_to_hot_cache: bool = True,
     ) -> list[Any] | None:
         """
         Reconstruct cache objects from paged SSD-stored block data.
@@ -1532,6 +1533,13 @@ class BlockAwarePrefixCache(CacheManager):
         """
         if not block_table or not block_table.block_ids:
             return None
+
+        if not promote_to_hot_cache:
+            logger.debug(
+                "Reconstructing cache for %s without hot-cache promotion "
+                "(memory pressure bypass)",
+                block_table.request_id,
+            )
 
         if not HAS_MLX:
             logger.warning("Cannot reconstruct cache: MLX not available")

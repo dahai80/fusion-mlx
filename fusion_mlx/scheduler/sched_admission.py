@@ -71,12 +71,25 @@ def add_request(self, request: Request) -> None:
             extra_key_ranges=request.vlm_extra_key_ranges_for_cache,
         )
         if block_table and block_table.num_tokens > 0:
-            self.block_aware_cache.preload_blocks(block_table)
+            bypass_hot_cache = self._bypass_hot_cache_under_pressure()
+            if bypass_hot_cache:
+                logger.info(
+                    "Skipping hot-cache preload for %s under memory pressure",
+                    request.request_id,
+                )
+            else:
+                self.block_aware_cache.preload_blocks(block_table)
             # Reconstruct actual KVCache objects from stored tensor data
             # Note: reconstruct_cache may modify block_table in-place if
             # partial reconstruction occurs (some blocks invalid)
             original_tokens = block_table.num_tokens
-            reconstructed = self.block_aware_cache.reconstruct_cache(block_table)
+            if bypass_hot_cache:
+                reconstructed = self.block_aware_cache.reconstruct_cache(
+                    block_table,
+                    promote_to_hot_cache=False,
+                )
+            else:
+                reconstructed = self.block_aware_cache.reconstruct_cache(block_table)
             if reconstructed:
                 request.prompt_cache = reconstructed
                 request.block_table = block_table
@@ -557,6 +570,7 @@ def _prepare_prefix_cache_for_request(self, request: Request) -> None:
             if bypass_hot_cache:
                 reconstructed = self.block_aware_cache.reconstruct_cache(
                     block_table,
+                    promote_to_hot_cache=False,
                 )
             else:
                 reconstructed = self.block_aware_cache.reconstruct_cache(block_table)

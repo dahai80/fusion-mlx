@@ -482,7 +482,6 @@ class TestSchedulerAddRequest:
         )
 
         scheduler.add_request(request)
-        scheduler._prepare_prefix_cache_for_request(request)
 
         assert request.cached_tokens == 3
         assert request.remaining_tokens == [14]
@@ -516,7 +515,6 @@ class TestSchedulerAddRequest:
         )
 
         scheduler.add_request(request)
-        scheduler._prepare_prefix_cache_for_request(request)
 
         assert request.cached_tokens == 0
         assert request.remaining_tokens == [21, 22, 23, 24]
@@ -554,7 +552,6 @@ class TestSchedulerAddRequest:
         )
 
         scheduler.add_request(request)
-        scheduler._prepare_prefix_cache_for_request(request)
 
         assert request.cached_tokens == 0
         assert request.remaining_tokens == [31, 32, 33, 34]
@@ -593,7 +590,6 @@ class TestSchedulerAddRequest:
         )
 
         scheduler.add_request(request)
-        scheduler._prepare_prefix_cache_for_request(request)
 
         scheduler.block_aware_cache.preload_blocks.assert_not_called()
         scheduler.block_aware_cache.reconstruct_cache.assert_called_once_with(
@@ -632,7 +628,6 @@ class TestSchedulerAddRequest:
         )
 
         scheduler.add_request(request)
-        scheduler._prepare_prefix_cache_for_request(request)
 
         scheduler.block_aware_cache.preload_blocks.assert_called_once_with(block_table)
         scheduler.block_aware_cache.reconstruct_cache.assert_called_once_with(
@@ -670,7 +665,6 @@ class TestSchedulerAddRequest:
         )
 
         scheduler.add_request(request)
-        scheduler._prepare_prefix_cache_for_request(request)
 
         scheduler.block_aware_cache.preload_blocks.assert_called_once_with(block_table)
         scheduler.block_aware_cache.reconstruct_cache.assert_called_once_with(
