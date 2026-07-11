@@ -209,7 +209,6 @@ _OPT_DEP_SUITES: list[tuple[str, list[str]]] = [
             "test_spec_recurrent_gate.py",
             "test_spec_decode_resample_fix.py",
             "test_specprefill.py",
-            "test_scheduler.py",
             "test_scheduler_admission.py",
             "test_scheduler_chunked_prefill.py",
             "test_scheduler_disk_kv_hook.py",
