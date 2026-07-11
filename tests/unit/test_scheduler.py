@@ -269,7 +269,9 @@ class TestSchedulerInitialization:
 
     def test_llama4_effective_cap_is_serial(self, mock_model, mock_tokenizer):
         """Llama 4 uses ChunkedKVCache layers that are serialized for now."""
-        mock_model.config.model_type = "llama4"
+        # _get_attr_or_key filters MagicMock values, so config must be a real
+        # object for _model_declares_llama4 to see model_type="llama4".
+        mock_model.config = SimpleNamespace(model_type="llama4")
         scheduler = Scheduler(
             model=mock_model,
             tokenizer=mock_tokenizer,
@@ -3220,7 +3222,9 @@ class TestStoreCacheAdmissionBackpressure:
         self, mock_model, mock_tokenizer
     ):
         """A second Llama 4 request stays queued instead of forming a batch."""
-        mock_model.config.model_type = "llama4"
+        # _get_attr_or_key filters MagicMock values, so config must be a real
+        # object for _model_declares_llama4 to see model_type="llama4".
+        mock_model.config = SimpleNamespace(model_type="llama4")
         scheduler = Scheduler(
             model=mock_model,
             tokenizer=mock_tokenizer,
