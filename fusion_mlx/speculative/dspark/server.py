@@ -88,6 +88,80 @@ def _coerce_content(content: str | list[Any] | None) -> str:
     return "".join(parts)
 
 
+def _load_pil_image(url: str) -> Any:
+    # .dev VLM path: decode an OpenAI image_url into a PIL image.
+    #
+    # Security posture (this path is gated behind --vlm-dev, off by default,
+    # and the DSpark server is a LOCAL single-user serial dev tool):
+    #   * data: URIs are always safe (inline base64, no I/O).
+    #   * local file paths / file:// are supported - the operator already owns
+    #     the filesystem, so this is not a privilege escalation in the
+    #     single-user local threat model.
+    #   * http(s) fetch is intentionally rejected to eliminate SSRF (the server
+    #     never makes outbound requests). Use a base64 data: URI for remote
+    #     images. PIL is imported lazily so the module still imports on a
+    #     text-only boot with no images in flight.
+    import base64
+    from io import BytesIO
+    from urllib.parse import urlparse
+
+    from PIL import Image
+
+    if url.startswith("data:"):
+        _, _, b64 = url.partition(",")
+        return Image.open(BytesIO(base64.b64decode(b64)))
+    parsed = urlparse(url)
+    if parsed.scheme in ("http", "https"):
+        logger.warning(
+            "DSpark VLM .dev: rejected http(s) image URL (SSRF protection); "
+            "use a base64 data: URI or a local file path."
+        )
+        raise HTTPException(
+            status_code=400,
+            detail="http(s) image URLs are not supported in DSpark VLM .dev "
+            "mode (SSRF protection); use a data: URI or a local file path.",
+        )
+    path = parsed.path if parsed.scheme == "file" else url
+    return Image.open(path)
+
+
+def _extract_multimodal(
+    content: str | list[Any] | None,
+    *,
+    load_images: bool = True,
+) -> tuple[str, list[Any], int]:
+    # Splits OpenAI chat content into (text, images, n_image_parts). Text parts
+    # concatenate in order; image_url parts decode to PIL images only when
+    # load_images is True (SSRF/attack-surface guard: callers pass False unless
+    # the images will actually be consumed by a VLM target). n_image_parts
+    # always counts image_url parts so dropped images can be warned about
+    # without loading them. Non-text/non-image parts are dropped.
+    if content is None:
+        return "", [], 0
+    if isinstance(content, str):
+        return content, [], 0
+    text_parts: list[str] = []
+    images: list[Any] = []
+    n_images = 0
+    for part in content:
+        if isinstance(part, str):
+            text_parts.append(part)
+            continue
+        if not isinstance(part, dict):
+            continue
+        ptype = part.get("type")
+        if ptype == "text":
+            text_parts.append(str(part.get("text", "")))
+        elif ptype == "image_url":
+            url_obj = part.get("image_url")
+            url = url_obj.get("url") if isinstance(url_obj, dict) else url_obj
+            if url:
+                n_images += 1
+                if load_images:
+                    images.append(_load_pil_image(str(url)))
+    return "".join(text_parts), images, n_images
+
+
 def _render_prompt(
     runtime: DSparkRuntime,
     messages: list[dict[str, str]],
@@ -137,6 +211,43 @@ def _sse_chunk(
     return f"data: {json.dumps(chunk, ensure_ascii=False)}\n\n"
 
 
+def _build_completion_response(
+    runtime: DSparkRuntime,
+    result: Any,
+    served_model_name: str,
+    prompt_len: int,
+) -> JSONResponse:
+    metrics = result.metrics or {}
+    avg_accept = metrics.get("avg_acceptance_length")
+    runtime.record_accept(avg_accept)
+    completion_tokens = len(result.generated_tokens)
+    total = prompt_len + completion_tokens
+    return JSONResponse(
+        {
+            "id": f"chatcmpl-{uuid.uuid4().hex[:24]}",
+            "object": "chat.completion",
+            "created": int(time.time()),
+            "model": served_model_name,
+            "choices": [
+                {
+                    "index": 0,
+                    "message": {"role": "assistant", "content": result.text},
+                    "finish_reason": "stop",
+                }
+            ],
+            "usage": {
+                "prompt_tokens": prompt_len,
+                "completion_tokens": completion_tokens,
+                "total_tokens": total,
+            },
+            "metrics": {
+                "generation_tps": metrics.get("generation_tps"),
+                "avg_acceptance_length": avg_accept,
+            },
+        }
+    )
+
+
 def _build_app(
     *,
     runtime: DSparkRuntime,
@@ -144,6 +255,7 @@ def _build_app(
     default_max_tokens: int,
     cors_origins: list[str] | None,
     enable_thinking_default: bool,
+    vlm_dev_enabled: bool = False,
 ) -> FastAPI:
     app = FastAPI(title="fusion-mlx DSpark server")
 
@@ -219,15 +331,41 @@ def _build_app(
                 detail="DSpark does not support response_format (raw text only)",
             )
 
-        messages: list[dict[str, str]] = []
+        gen = runtime.generator
+        is_vlm = gen._is_vlm()
+        # Security: only decode images when they will actually be consumed
+        # (vlm_dev on AND a VLM target). Otherwise count-and-drop without
+        # touching the network or filesystem.
+        load_images = vlm_dev_enabled and is_vlm
+
+        messages: list[dict[str, Any]] = []
+        images: list[Any] = []
+        total_images = 0
         for m in req.messages:
-            text = _coerce_content(m.content)
-            if not text and m.role != "assistant":
+            text, imgs, n = _extract_multimodal(m.content, load_images=load_images)
+            images.extend(imgs)
+            total_images += n
+            if not text and not n and m.role != "assistant":
                 raise HTTPException(
                     status_code=400,
                     detail=f"message role={m.role!r} has empty/non-text content",
                 )
             messages.append({"role": m.role, "content": text})
+
+        use_vlm = vlm_dev_enabled and is_vlm and bool(images)
+        if total_images and not use_vlm:
+            if not vlm_dev_enabled:
+                logger.warning(
+                    "DSpark: %d image(s) dropped (VLM dev mode off). "
+                    "Enable --vlm-dev or DSPARK_VLM_DEV=1 for multimodal.",
+                    total_images,
+                )
+            elif not is_vlm:
+                logger.warning(
+                    "DSpark: %d image(s) dropped (target family=%r is not a VLM).",
+                    total_images,
+                    gen.target.adapter.family,
+                )
 
         enable_thinking = (
             req.enable_thinking
@@ -244,8 +382,49 @@ def _build_app(
         temperature = float(req.temperature) if req.temperature is not None else 0.0
         conf = float(req.confidence_threshold) if req.confidence_threshold else 0.0
 
+        if use_vlm:
+            # VLM dev path: generate_multimodal runs its own apply_chat_template
+            # + prepare_inputs via mlx-vlm (num_images from len(images)), so we
+            # pass the text-only message list + extracted PIL images. prompt_len
+            # is recovered from result.metrics["num_input_tokens"]. enable_thinking
+            # is not threaded here (the VLM chat template controls reasoning).
+            if req.stream:
+                return StreamingResponse(
+                    _stream_completion(
+                        runtime=runtime,
+                        prompt_tokens=None,
+                        max_new_tokens=max_new_tokens,
+                        temperature=temperature,
+                        confidence_threshold=conf,
+                        served_model_name=served_model_name,
+                        prompt_len=None,
+                        vlm_prompt_text=messages,
+                        vlm_images=images,
+                    ),
+                    media_type="text/event-stream",
+                )
+
+            def _run_vlm() -> Any:
+                return gen.generate_multimodal(
+                    prompt_text=messages,
+                    images=images,
+                    max_new_tokens=max_new_tokens,
+                    temperature=temperature,
+                    confidence_threshold=conf,
+                    skip_special_tokens=True,
+                )
+
+            assert _dspark_executor is not None
+            loop = asyncio.get_running_loop()
+            result = await loop.run_in_executor(_dspark_executor, _run_vlm)
+            prompt_len = (
+                int(result.metrics.get("num_input_tokens", 0)) if result.metrics else 0
+            )
+            return _build_completion_response(
+                runtime, result, served_model_name, prompt_len
+            )
+
         prompt_tokens, prompt_len = _render_prompt(runtime, messages, enable_thinking)
-        gen = runtime.generator
 
         if req.stream:
             return StreamingResponse(
@@ -273,46 +452,21 @@ def _build_app(
         assert _dspark_executor is not None
         loop = asyncio.get_running_loop()
         result = await loop.run_in_executor(_dspark_executor, _run)
-
-        metrics = result.metrics or {}
-        avg_accept = metrics.get("avg_acceptance_length")
-        runtime.record_accept(avg_accept)
-        completion_tokens = len(result.generated_tokens)
-        total = prompt_len + completion_tokens
-        return JSONResponse(
-            {
-                "id": f"chatcmpl-{uuid.uuid4().hex[:24]}",
-                "object": "chat.completion",
-                "created": int(time.time()),
-                "model": served_model_name,
-                "choices": [
-                    {
-                        "index": 0,
-                        "message": {"role": "assistant", "content": result.text},
-                        "finish_reason": "stop",
-                    }
-                ],
-                "usage": {
-                    "prompt_tokens": prompt_len,
-                    "completion_tokens": completion_tokens,
-                    "total_tokens": total,
-                },
-                "metrics": {
-                    "generation_tps": metrics.get("generation_tps"),
-                    "avg_acceptance_length": avg_accept,
-                },
-            }
+        return _build_completion_response(
+            runtime, result, served_model_name, prompt_len
         )
 
     async def _stream_completion(
         *,
         runtime: DSparkRuntime,
-        prompt_tokens: mx.array,
+        prompt_tokens: mx.array | None,
         max_new_tokens: int,
         temperature: float,
         confidence_threshold: float,
         served_model_name: str,
-        prompt_len: int,
+        prompt_len: int | None,
+        vlm_prompt_text: Any = None,
+        vlm_images: list[Any] | None = None,
     ):
         gen = runtime.generator
         queue: asyncio.Queue[tuple[str, Any]] = asyncio.Queue()
@@ -320,13 +474,24 @@ def _build_app(
 
         def _producer() -> None:
             try:
-                for event in gen.stream_from_tokens(
-                    prompt_tokens=prompt_tokens,
-                    max_new_tokens=max_new_tokens,
-                    temperature=temperature,
-                    confidence_threshold=confidence_threshold,
-                    skip_special_tokens=True,
-                ):
+                if vlm_images is not None:
+                    iterator = gen.stream_multimodal(
+                        prompt_text=vlm_prompt_text,
+                        images=vlm_images,
+                        max_new_tokens=max_new_tokens,
+                        temperature=temperature,
+                        confidence_threshold=confidence_threshold,
+                        skip_special_tokens=True,
+                    )
+                else:
+                    iterator = gen.stream_from_tokens(
+                        prompt_tokens=prompt_tokens,
+                        max_new_tokens=max_new_tokens,
+                        temperature=temperature,
+                        confidence_threshold=confidence_threshold,
+                        skip_special_tokens=True,
+                    )
+                for event in iterator:
                     fut = asyncio.run_coroutine_threadsafe(
                         queue.put(("delta", event)), loop
                     )
@@ -358,10 +523,15 @@ def _build_app(
                     completion_tokens = (
                         len(event.generated_tokens) if event.generated_tokens else 0
                     )
+                    eff_prompt_len = (
+                        prompt_len
+                        if prompt_len is not None
+                        else int(metrics.get("num_input_tokens", 0))
+                    )
                     usage = {
-                        "prompt_tokens": prompt_len,
+                        "prompt_tokens": eff_prompt_len,
                         "completion_tokens": completion_tokens,
-                        "total_tokens": prompt_len + completion_tokens,
+                        "total_tokens": eff_prompt_len + completion_tokens,
                     }
                     yield _sse_chunk(
                         cid,
@@ -398,6 +568,7 @@ def run_dspark_server(
     cors_origins: list[str] | None = None,
     uvicorn_log_level: str = "info",
     enable_thinking: bool = False,
+    vlm_dev: bool = False,
 ) -> None:
     # Boot guards fail loud and early (before the multi-minute model load).
     from .eligibility import have_runtime
@@ -410,6 +581,17 @@ def run_dspark_server(
         )
         sys.exit(1)
     import os
+
+    vlm_dev = vlm_dev or os.environ.get("DSPARK_VLM_DEV", "").lower() in (
+        "1",
+        "true",
+        "yes",
+    )
+    if vlm_dev:
+        logger.info(
+            "DSpark VLM dev mode ENABLED - multimodal image input on "
+            "/v1/chat/completions (requires a qwen3_vl target)"
+        )
 
     if not drafter_path:
         print(
@@ -451,6 +633,7 @@ def run_dspark_server(
         default_max_tokens=default_max_tokens,
         cors_origins=cors_origins,
         enable_thinking_default=enable_thinking,
+        vlm_dev_enabled=vlm_dev,
     )
 
     import uvicorn

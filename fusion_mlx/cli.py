@@ -663,6 +663,16 @@ Examples:
         help="Quantization bits for the DSpark draft model (default 8). "
         "Lower bits speed the drafter forward at some acceptance cost.",
     )
+    serve_parser.add_argument(
+        "--vlm-dev",
+        dest="vlm_dev",
+        action="store_true",
+        default=False,
+        help="[.dev/experimental] Enable multimodal (image) input on the DSpark "
+        "server's /v1/chat/completions. Only takes effect under --enable-dspark "
+        "with a qwen3_vl target; images are dropped (with a warning) otherwise. "
+        "Also honored via the DSPARK_VLM_DEV=1 env var.",
+    )
     # SuffixDecoding — drafter-free spec-decode using a suffix tree over
     # generated tokens. Big wins on agent/tool/JSON workloads (3-5x);
     # ~zero overhead on free-form chat. Pure-attention only.
