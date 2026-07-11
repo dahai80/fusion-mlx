@@ -724,11 +724,39 @@ def _insert_prefilled_request(
     if request.sampling_params.seed is not None:
         mx.random.seed(request.sampling_params.seed)
 
+    # TurboQuant KV epilogue: mirror the external-prefill / cache-hit path
+    # (sched_schedule._schedule_waiting) so chunked prefill also lands a
+    # quantized cache. Materialize lazy KV arrays first, flush the Metal
+    # cache pool, then convert eligible KVCache layers in place. Without
+    # this, chunked-prefill requests keep fp16 KV and silently skip the
+    # memory savings the user configured via _turboquant_kv_bits.
+    if (
+        state.cache is not None
+        and getattr(self, "_turboquant_kv_bits", None) is not None
+        and self._turboquant_eligible(state.cache)
+    ):
+        from . import sched_cache as _sched_cache_mod
+
+        _sched_cache_mod._materialize_cache_storage(state.cache)
+        _sync_and_clear_cache(self._stream)
+        self._apply_turboquant_kv_convert(state.cache)
+        logger.debug(
+            "Chunked prefill TQ epilogue applied for %s (%d cache layers)",
+            request.request_id,
+            len(state.cache),
+        )
+
     per_row_lps = state.per_row_lps if state.per_row_lps is not None else []
+    # Seed the per-row token history with the prefilled prompt prefix
+    # (everything except state.last_token, which BatchGenerator processes
+    # via ``prompts``). Mirrors the all_tokens seed in _schedule_waiting.
+    prompt_ids = request.prompt_token_ids
+    seed_prefix = prompt_ids[: len(prompt_ids) - len(state.last_token)]
     uids = self.batch_generator.insert(
         [state.last_token],
         max_tokens=[request.sampling_params.max_tokens],
         caches=[state.cache] if state.cache else None,
+        all_tokens=[seed_prefix],
         samplers=[state.sampler],
         logits_processors=[per_row_lps],
         state_machines=[state.sm],

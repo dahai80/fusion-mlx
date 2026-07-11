@@ -426,18 +426,18 @@ def _cache_tree_has_arrays_cache(cache_obj: Any) -> bool:
     return type(cache_obj).__name__ in ("ArraysCache", "SizedArraysCache")
 
 
-def _collect_cache_storage_arrays(self, cache_obj: Any) -> list:
+def _collect_cache_storage_arrays(cache_obj: Any) -> list:
     arrays = []
     if isinstance(cache_obj, mx.array):
         return [cache_obj]
     sub_caches = getattr(cache_obj, "caches", None)
     if isinstance(sub_caches, (list, tuple)):
         for sub_cache in sub_caches:
-            arrays.extend(self._collect_cache_storage_arrays(sub_cache))
+            arrays.extend(_collect_cache_storage_arrays(sub_cache))
     array_cache = getattr(cache_obj, "cache", None)
     if isinstance(array_cache, (list, tuple)):
         for item in array_cache:
-            arrays.extend(self._collect_cache_storage_arrays(item))
+            arrays.extend(_collect_cache_storage_arrays(item))
     for attr in ("keys", "values", "left_padding", "lengths"):
         value = getattr(cache_obj, attr, None)
         if isinstance(value, mx.array):
@@ -445,10 +445,14 @@ def _collect_cache_storage_arrays(self, cache_obj: Any) -> list:
     return arrays
 
 
-def _materialize_cache_storage(self, cache_list: list) -> None:
+def _materialize_cache_storage(cache_list: list) -> None:
+    # Module-level helper (no ``self``): callers reach it via the
+    # ``fusion_mlx.scheduler.sched_cache`` module attribute so unit tests
+    # can patch it in place. Materialize lazy KV arrays before a TurboQuant
+    # convert or cache-store so quantization/storage reads real buffers.
     arrays = []
     for cache_obj in cache_list:
-        arrays.extend(self._collect_cache_storage_arrays(cache_obj))
+        arrays.extend(_collect_cache_storage_arrays(cache_obj))
     if arrays:
         with _mx_buffer_access_lock:
             mx.eval(*arrays)

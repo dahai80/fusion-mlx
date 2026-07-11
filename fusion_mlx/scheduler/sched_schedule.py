@@ -704,10 +704,18 @@ def _schedule_waiting(
             self._apply_turboquant_kv_convert(cache_to_use)
 
         per_row_lps = list(logits_processors) if logits_processors else []
+        # Seed BatchGenerator's per-row token history with the already-prefilled
+        # prompt prefix (everything except the suffix handed to ``prompts``).
+        # mlx-lm's BatchGenerator.insert accepts ``all_tokens`` for this; omitting
+        # it leaves the sequence's token log empty, which breaks downstream
+        # detokenization/stop-state that rely on the full prompt history.
+        prompt_ids = request.prompt_token_ids
+        seed_prefix = prompt_ids[: len(prompt_ids) - len(tokens_to_process)]
         uids = self.batch_generator.insert(
             [tokens_to_process],
             max_tokens=[request.sampling_params.max_tokens],
             caches=[cache_to_use] if cache_to_use else None,
+            all_tokens=[seed_prefix],
             samplers=[sampler],
             logits_processors=[per_row_lps],
             state_machines=[sm],
