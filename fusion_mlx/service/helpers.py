@@ -517,8 +517,34 @@ def _resolve_request_alias_or_default(request_model: str | None) -> str | None:
     return request_model
 
 
-def _resolve_max_tokens(request_max_tokens: int | None) -> int | None:
-    return request_max_tokens
+def _resolve_max_tokens(
+    request_max_tokens: int | None,
+    enable_thinking: bool | None = None,
+) -> int | None:
+    # Explicit per-request cap is always a hard ceiling - honored verbatim,
+    # thinking or not (the operator/user set it deliberately).
+    if request_max_tokens is not None:
+        return request_max_tokens
+
+    # enable_thinking=None means the route did not resolve the thinking
+    # state - preserve the historical pass-through (None = "no cap / engine
+    # default") so chat/completions/responses routes keep behaving as before.
+    if enable_thinking is None:
+        return request_max_tokens
+
+    from ..config import get_config
+
+    cfg = get_config()
+    default = cfg.default_max_tokens
+
+    # Thinking on + an IMPLICIT operator default: add CoT headroom
+    # (default + thinking_token_budget) so reasoning isn't truncated before
+    # the answer. An EXPLICIT operator default is a hard cap - no headroom
+    # (the operator chose the ceiling knowingly).
+    if enable_thinking and not cfg.default_max_tokens_is_explicit:
+        return default + cfg.thinking_token_budget
+
+    return default
 
 
 def _resolve_temperature(request_temperature: float | None) -> float:

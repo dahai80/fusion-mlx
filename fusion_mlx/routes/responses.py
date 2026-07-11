@@ -58,6 +58,7 @@ from ..service.helpers import (
     _resolve_temperature,
     _resolve_top_p,
     _validate_model_name,
+    _wait_with_disconnect,
     get_engine,
     maybe_apply_reasoning_effort,
     repair_messages_fit_context,
@@ -402,7 +403,7 @@ async def _non_stream(
     openai_request: ChatCompletionRequest,
     responses_request: ResponsesRequest,
     request: Request,
-    strict_ctx: dict,
+    strict_ctx: dict | None = None,
 ) -> Response:
     created_at = int(time.time())
 
@@ -419,6 +420,13 @@ async def _non_stream(
     if resolved_thinking is not None:
         chat_kwargs["enable_thinking"] = resolved_thinking
 
+    if strict_ctx is None:
+        strict_ctx = {
+            "strict_mode": False,
+            "use_guided": False,
+            "use_strict_postgen_validation": False,
+            "json_schema": None,
+        }
     strict_mode = strict_ctx["strict_mode"]
     use_guided = strict_ctx["use_guided"]
     use_strict_postgen_validation = strict_ctx["use_strict_postgen_validation"]
@@ -436,16 +444,17 @@ async def _non_stream(
         }
         guided_kwargs["raise_on_failure"] = True
         try:
-            output = await asyncio.wait_for(
+            output = await _wait_with_disconnect(
                 engine.generate_with_schema(
                     messages=messages,
                     json_schema=json_schema,
                     **guided_kwargs,
                 ),
+                request,
                 timeout=300.0,
             )
-        except TimeoutError:
-            raise HTTPException(status_code=504, detail="Generation timed out")
+        except HTTPException:
+            raise
         except Exception as guided_err:
             if strict_mode:
                 incr_strict_violation()
@@ -479,8 +488,9 @@ async def _non_stream(
                 "to standard: %s",
                 guided_err,
             )
-            output = await asyncio.wait_for(
+            output = await _wait_with_disconnect(
                 engine.chat(messages=messages, **chat_kwargs),
+                request,
                 timeout=300.0,
             )
         if strict_mode and output is not None:
@@ -513,24 +523,29 @@ async def _non_stream(
                 )
     elif use_strict_postgen_validation and json_schema:
         try:
-            output = await asyncio.wait_for(
+            output = await _wait_with_disconnect(
                 engine.chat(messages=messages, **chat_kwargs),
+                request,
                 timeout=300.0,
             )
-        except TimeoutError:
-            raise HTTPException(status_code=504, detail="Generation timed out")
+        except HTTPException:
+            raise
         if output is not None:
             output = await _apply_responses_postgen_validation(
                 engine, messages, chat_kwargs, output, json_schema
             )
     else:
         try:
-            output = await asyncio.wait_for(
+            output = await _wait_with_disconnect(
                 engine.chat(messages=messages, **chat_kwargs),
+                request,
                 timeout=300.0,
             )
-        except TimeoutError:
-            raise HTTPException(status_code=504, detail="Generation timed out")
+        except HTTPException:
+            raise
+
+    if output is None:
+        return Response(status_code=499, content="Client disconnected")
 
     elapsed = time.perf_counter() - start_time
     logger.info(
