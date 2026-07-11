@@ -519,6 +519,8 @@ def _convert_tools(tools: list[dict] | None) -> list[ToolDefinition] | None:
         return None
     converted: list[ToolDefinition] = []
     for t in tools:
+        if hasattr(t, "model_dump"):
+            t = t.model_dump()
         if not isinstance(t, dict):
             continue
         ttype = t.get("type")
