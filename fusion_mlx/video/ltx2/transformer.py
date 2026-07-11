@@ -108,9 +108,7 @@ class BasicAVTransformerBlock(nn.Module):
             )
             self.audio_ff = FeedForward(audio.dim, dim_out=audio.dim)
             num_audio_ada_params = 9 if has_prompt_adaln else 6
-            self.audio_scale_shift_table = mx.zeros(
-                (num_audio_ada_params, audio.dim)
-            )
+            self.audio_scale_shift_table = mx.zeros((num_audio_ada_params, audio.dim))
 
             if has_prompt_adaln:
                 self.audio_prompt_scale_shift_table = mx.zeros((2, audio.dim))
@@ -136,7 +134,11 @@ class BasicAVTransformerBlock(nn.Module):
             )
             logger.debug(
                 "video_to_audio_attn: query_dim=%d context_dim=%d heads=%d dim_head=%d inner_dim=%d",
-                audio.dim, video.dim, audio.heads, audio.d_head, audio.d_head * audio.heads,
+                audio.dim,
+                video.dim,
+                audio.heads,
+                audio.d_head,
+                audio.d_head * audio.heads,
             )
             self.scale_shift_table_a2v_ca_audio = mx.zeros((5, audio.dim))
             self.scale_shift_table_a2v_ca_video = mx.zeros((5, video.dim))
