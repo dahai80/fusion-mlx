@@ -113,6 +113,7 @@ class Scheduler:
     _ROTATING_BLOCK_SIZE_MIN: int = 512
     _ROTATING_BLOCK_SIZE_MAX: int = 1024
     _ARRAYS_CACHE_BLOCK_SIZE: int = 2048
+    _DEFERRED_CLEAR_DELAY: int = 4
 
     def add_request(self, *args, **kwargs):
         return add_request(self, *args, **kwargs)
@@ -295,3 +296,19 @@ for _mod_name in _sched_mod_names:
         _params = list(_sig.parameters.keys())
         if _params and _params[0] in ("self", "sched"):
             setattr(Scheduler, _attr_name, _fn)
+
+# Bind @staticmethod helpers skipped by the self/sched-first auto-bind loop.
+# _cache_tree_has_arrays_cache is called as self._cache_tree_has_arrays_cache
+# inside _enlarge_block_size_for_arrays_cache (sched_cache.py:402, reachable
+# when paged_ssd_cache_dir is set) and directly by unit tests.
+from .sched_cache import _cache_tree_has_arrays_cache as _cache_tree_has_arrays_cache
+
+Scheduler._cache_tree_has_arrays_cache = _cache_tree_has_arrays_cache
+
+# _format_bytes is a pure formatter (no self use) declared @staticmethod in
+# sched_misc; the self/sched-first auto-bind loop skips staticmethods, so bind
+# it explicitly. Called as self._format_bytes(...) and directly by unit tests
+# via Scheduler._format_bytes(...).
+from .sched_misc import _format_bytes as _format_bytes
+
+Scheduler._format_bytes = _format_bytes

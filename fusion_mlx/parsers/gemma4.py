@@ -286,8 +286,9 @@ def _matching_prefix_len(text: str, marker: str) -> int:
 class Gemma4OutputParserSession:
     """Suppress Gemma 4 protocol markers and re-emit thought blocks as ``<think>`` tags."""
 
-    def __init__(self, tokenizer: Any):
+    def __init__(self, tokenizer: Any, model_path: Any = None):
         self._tokenizer = tokenizer
+        self._model_path = model_path
         self._buffer = ""
         self._in_thought = False
 

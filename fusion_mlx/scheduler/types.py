@@ -176,7 +176,7 @@ class _BoundarySnapshotProvider:
         request_id: str,
         valid_tcs: list[int],
         in_memory_snapshots: dict[int, Any],
-        extract_fn: Any,  # Callable — Scheduler._extract_cache_states
+        extract_fn: Any = None,  # Callable — Scheduler._extract_cache_states
     ) -> None:
         self._store = store
         self._request_id = request_id
@@ -191,6 +191,8 @@ class _BoundarySnapshotProvider:
         snap = self._in_memory.get(tc)
         if snap is not None:
             # In-memory fallback (SSD write failed).
+            if self._extract_fn is None:
+                return snap
             extracted, _ = self._extract_fn(snap)
             return extracted
         if self._store is not None:
