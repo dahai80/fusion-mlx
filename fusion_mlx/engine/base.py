@@ -49,6 +49,8 @@ class GenerationOutput:
     diffusion_work_tokens: int = 0
     diffusion_canvas_tps: float = 0.0
     diffusion_work_tps: float = 0.0
+    # OutputRouter channel (content/reasoning/tool_call); StreamingPostProcessor branches on it.
+    channel: str | None = None
 
 
 class BaseEngine(ABC):
@@ -150,10 +152,12 @@ class BaseEngine(ABC):
         pass
 
     @property
-    @abstractmethod
     def model_type(self) -> str | None:
-        """Get the model type from config.json (e.g., 'llama', 'qwen2')."""
-        pass
+        # Concrete default (was @abstractmethod): real engines override
+        # with the config.json model_type; stubs/partial impls collapse
+        # to None so BaseEngine subclasses instantiate without forcing
+        # every introspection method. Mirrors grammar_compiler below.
+        return None
 
     @property
     def grammar_compiler(self):
@@ -169,15 +173,31 @@ class BaseEngine(ABC):
         """Check if the engine has active in-flight requests."""
         return False
 
-    @abstractmethod
-    def get_stats(self) -> dict[str, Any]:
-        """Get engine statistics."""
-        pass
+    @property
+    def supports_completion_logprobs(self) -> bool:
+        # Structural fallback for /v1/completions logprobs: an engine
+        # exposing a tokenizer + a streaming generator can emit per-token
+        # distributions. Subclasses may override with a precise flag;
+        # routes/completions.py::_engine_supports_completion_logprobs
+        # honors an explicit attribute first. A tokenizer that raises
+        # AttributeError (uninitialized) collapses to False.
+        try:
+            tokenizer = self.tokenizer
+        except AttributeError:
+            return False
+        return tokenizer is not None and callable(
+            getattr(self, "stream_generate", None)
+        )
 
-    @abstractmethod
+    def get_stats(self) -> dict[str, Any]:
+        # Concrete default (was @abstractmethod): real engines override
+        # with live scheduler/cache stats; stubs collapse to {}.
+        return {}
+
     def get_cache_stats(self) -> dict[str, Any] | None:
-        """Get cache statistics."""
-        pass
+        # Concrete default (was @abstractmethod): real engines override;
+        # stubs collapse to None (no cache stats available).
+        return None
 
 
 class BaseNonStreamingEngine(ABC):

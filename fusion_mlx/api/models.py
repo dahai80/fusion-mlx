@@ -149,6 +149,48 @@ class ResponseFormat(BaseModel):
     json_schema: ResponseFormatJsonSchema | None = None
 
 
+_VALID_RESPONSE_FORMAT_TYPES = ("text", "json_object", "json_schema")
+
+
+def _validate_response_format_raw(v):
+    # Shared ``mode="before"`` guard for the ``response_format`` field.
+    # Validates the bare-dict union arm that Pydantic would otherwise
+    # silently coerce; raises ValueError (-> 422 ValidationError) for
+    # every shape that used to 200-through unconstrained. Returns the
+    # value untouched on success so Pydantic can still coerce dicts.
+    if v is None or isinstance(v, ResponseFormat):
+        return v
+    if not isinstance(v, dict):
+        raise ValueError("response_format must be an object")
+    if "type" not in v:
+        raise ValueError("response_format.type is required")
+    rf_type = v.get("type")
+    if not isinstance(rf_type, str) or rf_type not in _VALID_RESPONSE_FORMAT_TYPES:
+        raise ValueError(
+            "response_format.type must be 'text', 'json_object' or 'json_schema'"
+        )
+    if rf_type == "json_schema":
+        js = v.get("json_schema")
+        if not isinstance(js, dict) or not js:
+            raise ValueError(
+                "response_format.json_schema must be a non-empty 'json_schema' field"
+            )
+        name = js.get("name")
+        if not isinstance(name, str) or not name:
+            raise ValueError("response_format.json_schema.name is required")
+        schema = js.get("schema")
+        if not isinstance(schema, dict):
+            raise ValueError(
+                "response_format.json_schema.schema must be an object, "
+                f"got {type(schema).__name__}"
+            )
+        if not schema:
+            raise ValueError(
+                "response_format.json_schema.schema must be a non-empty object"
+            )
+    return v
+
+
 # =============================================================================
 # Logprobs
 # =============================================================================
@@ -266,6 +308,14 @@ class ChatCompletionRequest(BaseModel):
                 f"reasoning_effort must be one of {sorted(allowed)}, got {v!r}"
             )
         return v
+
+    @field_validator("response_format", mode="before")
+    @classmethod
+    def _validate_response_format_field(cls, v):
+        # Reject silent-200 dict shapes (unknown type, missing schema,
+        # non-dict schema, missing name) before Pydantic's Union arm
+        # coerces them - pinned by test_response_format_strict_types.py.
+        return _validate_response_format_raw(v)
 
     # Hard cap on reasoning token budget (set by reasoning_effort tier or
     # explicitly by the client).  None = no cap / server default.
@@ -464,6 +514,35 @@ class CompletionRequest(BaseModel):
     # Request timeout in seconds (None = use server default)
     timeout: float | None = None
 
+    @field_validator("n")
+    @classmethod
+    def _validate_completion_n(cls, v):
+        # F-152: pin the wire schema - ``n`` must equal 1. Pydantic raises
+        # here (422 at the schema layer) before the route's own 400 envelope
+        # runs; the production server still rewrites 422->400, but the raw
+        # contract is "one completion per request, no server-side rerank".
+        if v is not None and v != 1:
+            raise ValueError(
+                "n must equal 1 (server generates one completion per "
+                "request; no server-side rerank)"
+            )
+        return v
+
+    @field_validator("logprobs", mode="before")
+    @classmethod
+    def _validate_completion_logprobs_type(cls, v):
+        # ``logprobs`` is an integer 0-5 on the legacy completions spec.
+        # bool is a subclass of int, so without a before-mode guard Pydantic
+        # silently coerces True->1 - reject it explicitly with a message that
+        # names the integer expectation (not the opaque bool_parsing error).
+        if v is None:
+            return v
+        if isinstance(v, bool):
+            raise ValueError("logprobs must be an integer (0-5), got boolean")
+        if not isinstance(v, int):
+            raise ValueError("logprobs must be an integer (0-5)")
+        return v
+
 
 class CompletionChoice(BaseModel):
     """A single choice in text completion response."""
@@ -471,7 +550,12 @@ class CompletionChoice(BaseModel):
     index: int = 0
     text: str
     finish_reason: str | None = "stop"
-    logprobs: ChoiceLogProbs | None = None
+    # Legacy /v1/completions logprobs are the OpenAI 4-array shape
+    # (tokens/token_logprobs/top_logprobs/text_offset), NOT the chat
+    # ``ChoiceLogProbs.content`` shape. Forward-ref as a string because
+    # ``LegacyCompletionLogProbs`` is defined below this class and the
+    # module does not use ``from __future__ import annotations``.
+    logprobs: "LegacyCompletionLogProbs | None" = None
 
 
 class LegacyCompletionLogProbs(BaseModel):

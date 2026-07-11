@@ -43,6 +43,8 @@ class GenerationOutput:
     diffusion_work_tokens: int = 0
     diffusion_canvas_tps: float = 0.0
     diffusion_work_tps: float = 0.0
+    # OutputRouter channel (content/reasoning/tool_call); StreamingPostProcessor branches on it.
+    channel: str | None = None
 
 
 def _fallback_parse_tool_calls(

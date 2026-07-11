@@ -1808,10 +1808,12 @@ async def _create_chat_completion_impl(
             decode_inline_tool_call_arguments(messages)
         logger.debug(f"MLLM: Processing {len(messages)} messages")
     else:
-        messages, images, videos = extract_multimodal_content(
-            request.messages,
-            preserve_native_format=engine.preserve_native_tool_format,
-        )
+        # extract_multimodal_content no longer separates images/videos nor
+        # accepts preserve_native_format= (signature dropped both); mirror
+        # routes/anthropic.py - has_media is re-derived from content below.
+        messages = extract_multimodal_content(request.messages)
+        images = None
+        videos = None
 
     has_media = bool(images or videos)
     if engine.is_mllm and not has_media:
@@ -1968,7 +1970,7 @@ async def _create_chat_completion_impl(
     # kwarg below from one source. Mirrors the ``rapid-mlx chat``
     # REPL's ``--no-think`` default for thinking-capable models on
     # the OpenAI-SDK surface.
-    if maybe_auto_disable_thinking_for_casual_chat(request):
+    if maybe_auto_disable_thinking_for_casual_chat(request, request.enable_thinking):
         logger.info(
             "R12-T2F auto-disable: /v1/chat/completions casual chat "
             "request to a thinking-capable model (parser=%s) with no "
@@ -1988,7 +1990,7 @@ async def _create_chat_completion_impl(
 
     # Prepare kwargs
     chat_kwargs = {
-        "max_tokens": _resolve_max_tokens(request.max_tokens, resolved_thinking),
+        "max_tokens": _resolve_max_tokens(request.max_tokens),
         "temperature": _resolve_temperature(request.temperature),
         "top_p": _resolve_top_p(request.top_p),
         "stop": request.stop,

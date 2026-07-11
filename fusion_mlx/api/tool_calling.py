@@ -1459,8 +1459,12 @@ def build_json_system_prompt(
     if response_format is None:
         return None
 
-    # Normalize to dict
-    if isinstance(response_format, ResponseFormat):
+    # Normalize to dict. Two ResponseFormat pydantic classes coexist
+    # (api.models.ResponseFormat vs api.openai_models.ResponseFormat);
+    # isinstance only catches the openai_models one, so duck-type on
+    # model_dump to route both into the instance arm - mirrors
+    # extract_json_schema_for_guided / is_strict_json_schema below.
+    if hasattr(response_format, "model_dump"):
         rf_dict = {"type": response_format.type, "json_schema": None}
         if response_format.json_schema:
             rf_dict["json_schema"] = {
@@ -1524,7 +1528,7 @@ def extract_json_schema_for_guided(response_format) -> dict | None:
     if response_format is None:
         return None
     if hasattr(response_format, "model_dump"):
-        rf_dict = response_format.model_dump()
+        rf_dict = response_format.model_dump(by_alias=True)
     elif isinstance(response_format, dict):
         rf_dict = response_format
     else:
@@ -1543,7 +1547,7 @@ def is_strict_json_schema(response_format) -> bool:
     if response_format is None:
         return False
     if hasattr(response_format, "model_dump"):
-        rf_dict = response_format.model_dump()
+        rf_dict = response_format.model_dump(by_alias=True)
     elif isinstance(response_format, dict):
         rf_dict = response_format
     else:
