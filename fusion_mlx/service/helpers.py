@@ -830,6 +830,19 @@ def _extract_token_logprob(
     if hasattr(logprobs_array, "astype"):
         logprobs_array = logprobs_array.astype(mx.float32)
     probs = np.array(logprobs_array).flatten()
+    # top_k <= 0 means the caller requested no alternative logprobs (OpenAI
+    # top_logprobs=0). np.argpartition(probs, -0)[-0:] would otherwise slice
+    # [:] and return the entire vocabulary sorted. Return just the sampled
+    # token with an empty list instead. (code-review #72)
+    if top_k <= 0:
+        sampled_text = tokenizer.decode([token_id])
+        sampled_bytes = list(sampled_text.encode("utf-8", errors="replace"))
+        return TokenLogProb(
+            token=sampled_text,
+            logprob=float(probs[token_id]) if token_id < len(probs) else 0.0,
+            bytes=sampled_bytes,
+            top_logprobs=[],
+        )
     top_k = min(top_k, len(probs))
     top_indices = np.argpartition(probs, -top_k)[-top_k:]
     top_indices = top_indices[np.argsort(probs[top_indices])][::-1]

@@ -315,12 +315,19 @@ def _rollback_spec_cache(
     """Roll back cache state after a rejected n-gram verify pass.
 
     Verify wrote all ``cache_tokens_processed`` (= K) drafts to every cache.
-    On rejection only ``n_accepted`` of them should be kept. Non-trimmable
-    recurrent caches (ArraysCache) were snapshotted before verify and are
-    restored, then the accepted prefix is replayed to re-derive their state.
-    Trimmable caches (KVCache) end up with K + n_accepted entries (the K
-    drafts plus ``n_accepted`` duplicates from the replay); trimming by K
-    leaves exactly the n_accepted accepted drafts.
+    On rejection only ``n_accepted`` of them should be kept.
+
+    Hybrid models (``snapshots is not None``): non-trimmable recurrent
+    caches (ArraysCache) were snapshotted before verify and are restored,
+    then the accepted prefix is replayed to re-derive their state. That
+    replay also appends ``n_accepted`` duplicates to the trimmable KVCache,
+    so each KVCache holds K + n_accepted entries; trimming by K leaves
+    exactly the n_accepted accepted drafts.
+
+    Pure-trimmable models (``snapshots is None``): no snapshot to restore
+    and no replay, so the KVCache still holds exactly the K drafts verify
+    wrote. Trim only the (K - n_accepted) rejected drafts to retain the
+    accepted prefix for the bonus-token regular step.
     """
     if snapshots is not None:
         _restore_non_trimmable(prompt_cache, snapshots)
@@ -330,8 +337,21 @@ def _rollback_spec_cache(
             with mx.stream(stream):
                 replay_logits = model(replay_input[None], cache=prompt_cache)
                 mx.eval(replay_logits)
-    if cache_tokens_processed > 0:
-        _trim_trimmable(prompt_cache, cache_tokens_processed)
+        # The replay appended n_accepted duplicates on top of the K drafts
+        # verify wrote, so each trimmable KVCache now holds K + n_accepted;
+        # trimming by K leaves exactly the n_accepted accepted drafts.
+        trim_count = cache_tokens_processed
+    else:
+        # Pure-trimmable model (no ArraysCache to snapshot/restore, so no
+        # replay ran): the KVCache still holds exactly the K drafts verify
+        # wrote. Trim only the (K - n_accepted) REJECTED drafts so the
+        # accepted prefix survives for the bonus-token regular step below.
+        # Trimming by K here drops the accepted drafts too, leaving the
+        # next regular step to decode its bonus token against a cache
+        # missing the accepted prefix -> silent corruption (r5 B-03).
+        trim_count = cache_tokens_processed - n_accepted
+    if trim_count > 0:
+        _trim_trimmable(prompt_cache, trim_count)
 
 
 def _verify_drafts(

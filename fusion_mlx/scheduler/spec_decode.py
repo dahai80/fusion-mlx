@@ -143,6 +143,17 @@ def _restore_non_trimmable_caches(prompt_cache: list, snapshots: list):
         prompt_cache[i] = snapshot
 
 
+def _trim_trimmable(prompt_cache: list, num_tokens: int):
+    # Trim each trimmable cache (KVCache) by num_tokens in place.
+    # mlx_cache.trim_prompt_cache is a no-op when any layer is
+    # non-trimmable (hybrid GDN models carry ArraysCache layers whose
+    # is_trimmable() is False), which would leave the rejected drafts in
+    # KVCache; this trims the trimmable layers and skips the rest.
+    for c in prompt_cache:
+        if getattr(c, "is_trimmable", None) and c.is_trimmable():
+            c.trim(num_tokens)
+
+
 def _run_spec_verify(
     model,
     current_token: int,
@@ -303,11 +314,20 @@ def spec_decode_step(
                 n_rejected,
                 K,
             )
-        # Trim trimmable caches
-        if n_rejected > 0:
-            from mlx_lm.models import cache as mlx_cache
-
-            mlx_cache.trim_prompt_cache(prompt_cache, n_rejected)
+        # Trim trimmable KVCache layers. trim_prompt_cache is a no-op on
+        # hybrid caches (ArraysCache is non-trimmable); _trim_trimmable
+        # skips non-trimmable layers instead. The replay above appended
+        # n_accepted duplicates to KVCache, so a hybrid cache holds
+        # K+n_accepted -> trim K (==cache_tokens_processed) to leave
+        # n_accepted. A pure KVCache (no snapshot/replay) still holds K
+        # -> trim only the n_rejected rejected drafts.
+        trim_count = (
+            cache_tokens_processed
+            if non_trimmable_snapshots is not None
+            else n_rejected
+        )
+        if trim_count > 0:
+            _trim_trimmable(prompt_cache, trim_count)
 
     spec_state.record_accepted(n_accepted, K)
 
@@ -556,10 +576,16 @@ def dflash_spec_step(
                 n_rejected,
                 K,
             )
-        if n_rejected > 0:
-            from mlx_lm.models import cache as mlx_cache
-
-            mlx_cache.trim_prompt_cache(prompt_cache, n_rejected)
+        # Same trim logic as the spec path: _trim_trimmable (not the
+        # no-op trim_prompt_cache), and trim K when a replay ran (hybrid)
+        # vs only n_rejected for a pure KVCache. See spec path above.
+        trim_count = (
+            cache_tokens_processed
+            if non_trimmable_snapshots is not None
+            else n_rejected
+        )
+        if trim_count > 0:
+            _trim_trimmable(prompt_cache, trim_count)
 
     dflash_state.record_result(n_accepted, K)
 

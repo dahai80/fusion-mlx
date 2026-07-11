@@ -441,8 +441,20 @@ class CompletionRequest(BaseModel):
     repetition_penalty: float | None = None
     presence_penalty: float | None = None
     frequency_penalty: float | None = None
+    # OpenAI ``n``/``best_of`` - declared so Pydantic stops silently
+    # dropping them; rejected with 400 in routes/completions.py when >1
+    # since we generate one completion per request (no server-side rerank).
+    n: int | None = None
+    best_of: int | None = None
+    # OpenAI ``echo``/``response_format``/``stream_options`` - declared
+    # so Pydantic stops silently dropping them; consumed in
+    # routes/completions.py (echo gates the fence-strip + prompt logprobs,
+    # response_format selects JSON cleanup, stream_options gates usage SSE).
+    echo: bool | None = None
+    response_format: ResponseFormat | dict | None = None
+    stream_options: StreamOptions | None = None
     # Logprobs
-    logprobs: bool | None = None
+    logprobs: int | None = None  # 0-5, per OpenAI legacy completions spec
     top_logprobs: int | None = None  # 0-20, per OpenAI spec
     # OpenAI FIM (fill-in-the-middle) suffix. Declared so Pydantic stops
     # silently dropping it; rejected with 400 in routes/completions.py

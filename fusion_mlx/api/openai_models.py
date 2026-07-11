@@ -40,6 +40,12 @@ class VideoURL(BaseModel):
     url: str  # "https://..." or "data:video/mp4;base64,..."
 
 
+class AudioURL(BaseModel):
+    """Audio URL or base64 data URI for audio model input."""
+
+    url: str  # "https://..." or "data:audio/wav;base64,..."
+
+
 class ContentPart(BaseModel):
     """
     A part of a message content array.
@@ -47,14 +53,20 @@ class ContentPart(BaseModel):
     Supports:
     - text: Plain text content
     - image_url: Image input for vision models
+    - video: Local video path for video models
     - video_url: Video input for video models
+    - audio_url: Audio input for audio models
     - file: File attachment (PDF, etc.)
     """
 
-    type: str  # "text", "image_url", "video_url", or "file"
+    # Mirrors fusion_mlx.api.models.ContentPart so the OpenAI route does not
+    # silently drop video/audio parts via pydantic field filtering. (#77)
+    type: str  # "text", "image_url", "video", "video_url", "audio_url", or "file"
     text: str | None = None
     image_url: ImageURL | None = None
+    video: str | None = None
     video_url: VideoURL | dict | str | None = None
+    audio_url: AudioURL | dict | str | None = None
     file: dict | None = None
 
 

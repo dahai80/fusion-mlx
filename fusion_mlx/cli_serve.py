@@ -863,7 +863,12 @@ def _serve_from_model_dir(args):
     from .server import create_app
 
     host = getattr(args, "host", "0.0.0.0") or "0.0.0.0"
-    port = int(getattr(args, "port", 8000) or 8000)
+    # Honor an explicit --port 0 (OS-assigned ephemeral port, valid for
+    # uvicorn). `or 8000` would collapse 0 -> 8000 since 0 is falsy, so only
+    # fall back to the default when the flag was not provided at all.
+    # (code-review #75)
+    port_raw = getattr(args, "port", None)
+    port = 8000 if port_raw is None else int(port_raw)
     config = ServerConfig(host=host, port=port, model_dir=args.model_dir)
 
     logger.info(

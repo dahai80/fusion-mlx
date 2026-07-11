@@ -243,6 +243,29 @@ def _extract_multimodal_content_list(content: list) -> list:
                             "input_audio": audio_data,
                         }
                     )
+            elif item_type == "video":
+                # Local video path. Preserved verbatim for the VLM video path.
+                video_path = item.get("video")
+                if video_path:
+                    parts.append({"type": "video", "video": video_path})
+            elif item_type == "video_url":
+                video_url_value = item.get("video_url")
+                url = None
+                if isinstance(video_url_value, str):
+                    url = video_url_value
+                elif isinstance(video_url_value, dict):
+                    url = video_url_value.get("url")
+                if url:
+                    parts.append({"type": "video_url", "video_url": {"url": url}})
+            elif item_type == "audio_url":
+                audio_url_value = item.get("audio_url")
+                url = None
+                if isinstance(audio_url_value, str):
+                    url = audio_url_value
+                elif isinstance(audio_url_value, dict):
+                    url = audio_url_value.get("url")
+                if url:
+                    parts.append({"type": "audio_url", "audio_url": {"url": url}})
     return parts
 
 
@@ -777,7 +800,9 @@ def extract_multimodal_content(
             # Preserve image_url and input_audio parts for VLM processing
             multimodal_parts = _extract_multimodal_content_list(content)
             has_multimodal = any(
-                p.get("type") in ("image_url", "input_audio") for p in multimodal_parts
+                p.get("type")
+                in ("image_url", "input_audio", "video", "video_url", "audio_url")
+                for p in multimodal_parts
             )
             if has_multimodal:
                 # Keep as content list for VLM engine

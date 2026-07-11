@@ -943,14 +943,47 @@ class EnginePool:
     ) -> None:
         """Release one in-use lease previously taken via get_engine(_lease=True)."""
         entry_key = self._adapter_key(model_id, adapter_path)
+        # Detach under the lock (fast), settle outside it. Holding the pool
+        # lock across _unload_engine's ~settle barrier (gc + synchronize +
+        # clear_cache x10) blocks every concurrent get_engine for seconds.
+        # _detach_engine stops the engine and sets entry.engine=None under the
+        # lock (so get_engine's fast-path won't return it), then the slow
+        # barrier runs unlocked - mirrors get_engine's "slow work outside lock"
+        # pattern. (code-review #74)
+        settle_pre: int | None = None
         async with self._lock:
             e = self._entries.get(entry_key)
             if e is not None and e.in_use > 0:
                 e.in_use -= 1
-            await self._unload_pending_if_idle_locked(entry_key)
+            # Inline the pending-unload drain gate (same conditions as
+            # _unload_pending_if_idle_locked) so we can split detach/settle
+            # across the lock boundary instead of calling the locked helper,
+            # which would run the full settle under the lock.
+            if (
+                e is not None
+                and e.engine is not None
+                and e.pending_unload_reason
+                and not e.is_loading
+                and not e.is_pinned
+                and not self._entry_is_busy(e)
+            ):
+                reason = e.pending_unload_reason
+                e.pending_unload_reason = None
+                e.abort_requested = False
+                logger.warning(
+                    "Unloading pending model '%s' after activity drained (%s)",
+                    entry_key,
+                    reason,
+                )
+                settle_pre = await self._detach_engine(entry_key)
+        if settle_pre is not None:
+            await self._settle_unloaded_engine(entry_key, settle_pre)
 
     async def unload_if_idle_unpinned(self, model_id: str) -> bool:
         """Unload a loaded engine only when it is idle and not pinned."""
+        # Detach under the lock (fast), settle outside it so the ~settle
+        # barrier does not block all get_engine. (code-review #74)
+        settle_pre: int | None = None
         async with self._lock:
             entry = self._entries.get(model_id)
             if (
@@ -966,8 +999,10 @@ class EnginePool:
                 entry.last_access = time.time()
                 return False
 
-            await self._unload_engine(model_id)
-            return True
+            settle_pre = await self._detach_engine(model_id)
+        if settle_pre is not None:
+            await self._settle_unloaded_engine(model_id, settle_pre)
+        return True
 
     @asynccontextmanager
     async def acquire(self, model_id: str, force_lm: bool = False):
@@ -1006,6 +1041,12 @@ class EnginePool:
         if entry and entry.engine is not None:
             entry.engine = None
             entry.last_access = 0.0
+            # Mirror register_engine (+) / _unload_engine (-): keep the pool's
+            # _current_model_memory tracker in sync. Without this the sync
+            # unload path (server shutdown / external unregister) leaves the
+            # tracker inflated, so pre-load admission over-counts loaded
+            # memory and may spuriously evict or reject loads. (code-review #69)
+            self._current_model_memory -= entry.estimated_size
             if self._process_memory_enforcer is not None:
                 self._process_memory_enforcer.update_loaded_model_bytes(
                     -int(entry.estimated_size)
@@ -1064,20 +1105,17 @@ class EnginePool:
                 logger.warning(f"Phase 1 eviction failed for {model_id}: {e}")
         return False
 
-    async def _unload_engine(self, model_id: str) -> None:
-        """
-        Immediately stop and unload an engine with memory settle barrier.
-
-        After stopping the engine, polls mx.get_active_memory() to verify
-        Metal buffers are actually reclaimed before updating the memory
-        tracking counter.
-
-        Args:
-            model_id: The model ID to unload
-        """
+    async def _detach_engine(self, model_id: str) -> int | None:
+        # Stop and detach an engine (set entry.engine = None). Fast teardown:
+        # stop + reset activity + drain ready queue + clear entry fields.
+        # Returns pre_unload_active for the caller to pass to
+        # _settle_unloaded_engine, or None if there was nothing to unload.
+        # Caller must hold self._lock (or have set entry.is_loading, as the
+        # get_engine reload path does) so a concurrent get_engine fast-path
+        # cannot return the engine being stopped. (code-review #74)
         entry = self._entries.get(model_id)
         if not entry or entry.engine is None:
-            return
+            return None
 
         logger.info(f"Unloading model: {model_id} (immediate abort)")
         pre_unload_active = mx.get_active_memory()
@@ -1133,7 +1171,34 @@ class EnginePool:
         entry.abort_requested = False
         entry.pending_unload_reason = None
         entry.runtime_settings_signature = None
+        return pre_unload_active
 
+    async def _unload_engine(self, model_id: str) -> None:
+        # Full unload (detach + settle). Used by get_engine's reload/evict
+        # path (called outside the lock, guarded by entry.is_loading) and by
+        # _unload_pending_if_idle_locked (memory_enforcer path). Callers that
+        # hold the pool lock (release_engine / unload_if_idle_unpinned) must
+        # instead call _detach_engine under the lock and _settle_unloaded_engine
+        # outside it, so the ~settle barrier does not block all get_engine.
+        # (code-review #74)
+        pre_unload_active = await self._detach_engine(model_id)
+        if pre_unload_active is None:
+            return
+        await self._settle_unloaded_engine(model_id, pre_unload_active)
+
+    async def _settle_unloaded_engine(
+        self, model_id: str, pre_unload_active: int
+    ) -> None:
+        # Memory settle barrier after _detach_engine detached the engine
+        # (entry.engine is already None). Polls mx.get_active_memory() to
+        # verify Metal buffers are actually reclaimed before updating the
+        # memory tracking counter. Safe to run WITHOUT the pool lock: the
+        # engine is detached, so get_engine's fast-path sees entry.engine is
+        # None and goes to the load path rather than returning a half-stopped
+        # engine. (code-review #74)
+        entry = self._entries.get(model_id)
+        if entry is None:
+            return
         # Force garbage collection to release memory.
         # Run mx.clear_cache on the global MLX executor to avoid concurrent
         # Metal operations with running engines. See issue #85.

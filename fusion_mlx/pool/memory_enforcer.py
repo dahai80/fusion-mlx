@@ -584,12 +584,30 @@ class ProcessMemoryEnforcer:
         return max(mx.get_active_memory(), phys)
 
     def _is_emergency_pressure(self, current: int, ceiling: int) -> bool:
-        """Return True only for pressure beyond the configured ceiling."""
+        """Return True only for pressure beyond the configured ceiling.
+
+        Updates the sustained over-ceiling poll counter as a side effect, so
+        call exactly once per _check_and_enforce cycle (the initial check).
+        Re-checks within the same cycle must use _evaluate_emergency_pressure,
+        which reads the counter as-is - calling this twice double-increments
+        the counter and trips the sustained-pressure threshold too early.
+        (code-review #73)
+        """
         if ceiling <= 0 or current < ceiling:
             self._over_ceiling_polls = 0
             return False
 
         self._over_ceiling_polls += 1
+        return self._evaluate_emergency_pressure(current, ceiling)
+
+    def _evaluate_emergency_pressure(self, current: int, ceiling: int) -> bool:
+        """Side-effect-free emergency check. Reads _over_ceiling_polls as-is.
+
+        Use for re-checks within the same _check_and_enforce cycle (e.g. after
+        a hot-cache shrink) so the sustained-pressure counter is not inflated.
+        """
+        if ceiling <= 0 or current < ceiling:
+            return False
         if current >= ceiling + _EMERGENCY_OVER_CEILING_MARGIN_BYTES:
             return True
         return self._over_ceiling_polls >= _EMERGENCY_OVER_CEILING_POLLS
@@ -1107,7 +1125,7 @@ class ProcessMemoryEnforcer:
             )
             if freed_hot > 0:
                 current = self._current_usage_bytes()
-                emergency = self._is_emergency_pressure(current, ceiling)
+                emergency = self._evaluate_emergency_pressure(current, ceiling)
                 if current < soft:
                     recovered_level = "ok"
                 elif current < hard:

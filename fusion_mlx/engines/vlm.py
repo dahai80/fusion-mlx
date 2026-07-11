@@ -1392,7 +1392,12 @@ class VLMBatchedEngine(BaseEngine):
             vlm_cache_key_start=vlm_cache_key_start,
             vlm_cache_key_ranges=vlm_cache_key_ranges,
         )
-        text = output.output_text
+        # Mirror BatchedEngine.generate (batched.py:644-646): strip special
+        # tokens (<|im_end|>, <|endoftext|>, ...) so they don't leak into the
+        # VLM response text. RequestOutput.output_text is raw.
+        from ..api.utils import clean_special_tokens
+
+        text = clean_special_tokens(output.output_text)
         return GenerationOutput(
             text=text,
             prompt_tokens=output.prompt_tokens,
@@ -1449,9 +1454,16 @@ class VLMBatchedEngine(BaseEngine):
             async for output in engine.stream_outputs(request_id):
                 if output.finished:
                     finished_normally = True
+                # Mirror BatchedEngine.stream_generate (batched.py:713-720):
+                # strip special tokens from the streamed delta so they don't
+                # leak into the VLM SSE stream. Both text and new_text carry
+                # the cleaned value (new_text is the delta clients append).
+                from ..api.utils import clean_special_tokens
+
+                text = clean_special_tokens(output.new_text)
                 yield GenerationOutput(
-                    text=output.output_text,
-                    new_text=output.new_text,
+                    text=text,
+                    new_text=text,
                     prompt_tokens=output.prompt_tokens,
                     completion_tokens=output.completion_tokens,
                     finished=output.finished,
@@ -1483,6 +1495,18 @@ class VLMBatchedEngine(BaseEngine):
         if not self._loaded:
             await self.start()
         loop = asyncio.get_running_loop()
+        # _process_chat_messages runs MLX (_prepare_vision_inputs computes the
+        # vision features + mx.synchronize/clear_cache), so it must run on the
+        # MLX executor thread. That executor is max_workers=1 and a running
+        # callable cannot be preempted by ThreadPoolExecutor, so wrapping
+        # run_in_executor in asyncio.wait_for is a FALSE timeout: on timeout
+        # the asyncio Future cancels but the MLX task keeps running and holds
+        # the sole MLX thread, stalling every subsequent generate() (and this
+        # chat's own generate step) until it finishes - the client sees a
+        # TimeoutError while the engine is wedged. Vision prep is bounded
+        # (image/video decode + one vision forward), so await it directly and
+        # let it complete; per-request timeouts are enforced at the HTTP
+        # layer. (code-review finding #9)
         (
             prompt,
             vlm_embeds,
@@ -1490,15 +1514,12 @@ class VLMBatchedEngine(BaseEngine):
             image_hash,
             cache_key_start,
             cache_key_ranges,
-        ) = await asyncio.wait_for(
-            loop.run_in_executor(
-                self._engine._mlx_executor,
-                self._process_chat_messages,
-                messages,
-                tools,
-                kwargs,
-            ),
-            timeout=30.0,
+        ) = await loop.run_in_executor(
+            self._engine._mlx_executor,
+            self._process_chat_messages,
+            messages,
+            tools,
+            kwargs,
         )
         gen = await self.generate(
             prompt=prompt,
