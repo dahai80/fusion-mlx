@@ -222,7 +222,12 @@ class TestSchedulerStepOutputs:
         )
         scheduler._cleanup_finished = MagicMock()
 
-        scheduler.running = {"running": MagicMock()}
+        # Two running requests (not 1): the pure-decode fast path in step()
+        # short-circuits when len(running)==1 and there is no waiting, which
+        # would skip _schedule_waiting/_process_batch_responses entirely.
+        # A second entry keeps the full step() path exercised without
+        # triggering any real per-request processing.
+        scheduler.running = {"running": MagicMock(), "running2": MagicMock()}
         scheduler.batch_generator = MagicMock()
         scheduler.batch_generator.next_generated.return_value = iter([MagicMock()])
 
