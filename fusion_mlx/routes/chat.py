@@ -4807,7 +4807,9 @@ async def stream_chat_completion_strict_postgen(
     # schemas in our pydantic-ai corpus marshal to ~50 KiB) but
     # comfortably below per-request memory limits operators expect
     # streaming to honor. Override via
-    # ``RAPID_MLX_STRICT_BUFFER_BYTES`` for unusual workloads.
+    # ``FUSION_MLX_STRICT_BUFFER_BYTES`` for unusual workloads
+    # (``RAPID_MLX_STRICT_BUFFER_BYTES`` is the deprecated pre-rename
+    # alias, still honored).
     #
     # Codex r12 #1 (design decision, documented for future passes):
     # the wrapper streams incremental content deltas to the client
@@ -4840,10 +4842,24 @@ async def stream_chat_completion_strict_postgen(
     # clamped DOWN to the bound with an operator-facing warning.
     _BUFFER_CAP_HARD_MAX = 64 * 1024 * 1024
     _BUFFER_CAP_DEFAULT = 2 * 1024 * 1024
+    # Primary canonical env var (``FUSION_MLX_STRICT_BUFFER_BYTES``)
+    # with the pre-rename ``RAPID_MLX_STRICT_BUFFER_BYTES`` alias
+    # honored for backward compatibility. Mirrors the primary+legacy
+    # convention in ``api/strict_json_schema.py``
+    # (``FUSION_MLX_STRICT_JSON_SCHEMA`` / ``RAPID_MLX_STRICT_JSON_SCHEMA``).
+    _BUFFER_CAP_ENV_PRIMARY = "FUSION_MLX_STRICT_BUFFER_BYTES"
+    _BUFFER_CAP_ENV_LEGACY = "RAPID_MLX_STRICT_BUFFER_BYTES"
+    _cap_raw = os.environ.get(_BUFFER_CAP_ENV_PRIMARY)
+    if _cap_raw is None:
+        _cap_raw = os.environ.get(_BUFFER_CAP_ENV_LEGACY)
+        if _cap_raw is not None:
+            logger.warning(
+                "env var %s is deprecated, use %s instead",
+                _BUFFER_CAP_ENV_LEGACY,
+                _BUFFER_CAP_ENV_PRIMARY,
+            )
     try:
-        _buffer_cap = int(
-            os.environ.get("RAPID_MLX_STRICT_BUFFER_BYTES", str(_BUFFER_CAP_DEFAULT))
-        )
+        _buffer_cap = int(_cap_raw) if _cap_raw is not None else _BUFFER_CAP_DEFAULT
         if _buffer_cap <= 0:
             _buffer_cap = _BUFFER_CAP_DEFAULT
         elif _buffer_cap > _BUFFER_CAP_HARD_MAX:
@@ -4856,7 +4872,7 @@ async def stream_chat_completion_strict_postgen(
                 "%s=%d exceeds hard maximum %d; clamping to %d to preserve "
                 "memory-safety guarantee. If you need a larger cap, file an "
                 "issue rather than raising the hard limit.",
-                "RAPID_MLX_STRICT_BUFFER_BYTES",
+                _BUFFER_CAP_ENV_PRIMARY,
                 _buffer_cap,
                 _BUFFER_CAP_HARD_MAX,
                 _BUFFER_CAP_HARD_MAX,
@@ -5083,7 +5099,7 @@ async def stream_chat_completion_strict_postgen(
                 )
             else:
                 cap_guidance = (
-                    f"raise RAPID_MLX_STRICT_BUFFER_BYTES (current: "
+                    f"raise {_BUFFER_CAP_ENV_PRIMARY} (current: "
                     f"{_buffer_cap} bytes, hard maximum: "
                     f"{_BUFFER_CAP_HARD_MAX} bytes) or investigate a "
                     "runaway generation."
