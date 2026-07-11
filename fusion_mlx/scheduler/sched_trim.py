@@ -158,6 +158,23 @@ def _do_abort_request(self, request_id: str) -> bool:
         # can hit 'completeMemory() prepare count underflow'.
         _safe_sync_stream(self._stream)
         self._remove_uid_from_active_batch(uid)
+        # vlm_mtp uses negative uids that BatchGenerator never sees; the
+        # per-uid drafter generator + prompt_cache live in _vlm_mtp_active
+        # and are only dropped by _step_vlm_mtp on NORMAL finish. On abort
+        # that path never runs, so release the serialized drafter here to
+        # avoid leaking the generator and its cache.
+        if uid < 0 and uid in self._vlm_mtp_active:
+            state = self._vlm_mtp_active.pop(uid)
+            gen = getattr(state, "generator", None)
+            close_fn = getattr(gen, "close", None)
+            if callable(close_fn):
+                try:
+                    close_fn()
+                except Exception:
+                    logger.debug(
+                        "vlm_mtp generator close failed for uid %d", uid
+                    )
+            logger.info("Released vlm_mtp drafter for aborted uid %d", uid)
         if hasattr(self.model, "unregister_rope_delta"):
             self.model.unregister_rope_delta(uid)
         _unregister_uid_row(self.model, uid)
