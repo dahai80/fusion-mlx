@@ -9,6 +9,17 @@ import mlx.nn as nn
 from .config import LTXRopeType
 from .rope import apply_rotary_emb
 
+try:
+    from fusion_mlx.custom_kernels.mfa_bridge import (
+        flash_attention as _mfa_flash_attention,
+    )
+    from fusion_mlx.custom_kernels.mfa_bridge import (
+        is_available as _mfa_available,
+    )
+except Exception:  # pragma: no cover - optional Metal Flash Attention extension
+    _mfa_flash_attention = None
+    _mfa_available = None
+
 
 def scaled_dot_product_attention(
     q: mx.array,
@@ -38,7 +49,10 @@ def scaled_dot_product_attention(
 
     scale = 1.0 / math.sqrt(dim_head)
 
-    out = mx.fast.scaled_dot_product_attention(q, k, v, scale=scale, mask=mask)
+    if _mfa_available is not None and _mfa_available():
+        out = _mfa_flash_attention(q, k, v, scale=scale, mask=mask)
+    else:
+        out = mx.fast.scaled_dot_product_attention(q, k, v, scale=scale, mask=mask)
 
     out = mx.swapaxes(out, 1, 2)
     out = mx.reshape(out, (b, q_seq_len, heads * dim_head))

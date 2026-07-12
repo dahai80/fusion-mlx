@@ -3,6 +3,25 @@ import mlx.nn as nn
 
 from .rope import rope_apply
 
+try:
+    from fusion_mlx.custom_kernels.mfa_bridge import (
+        flash_attention as _mfa_flash_attention,
+    )
+    from fusion_mlx.custom_kernels.mfa_bridge import (
+        is_available as _mfa_available,
+    )
+except Exception:  # pragma: no cover - optional Metal Flash Attention extension
+    _mfa_flash_attention = None
+    _mfa_available = None
+
+
+def _sdpa(q, k, v, scale, mask=None):
+    if _mfa_available is not None and _mfa_available():
+        return _mfa_flash_attention(q, k, v, scale=scale, mask=mask)
+    if mask is not None:
+        return mx.fast.scaled_dot_product_attention(q, k, v, scale=scale, mask=mask)
+    return mx.fast.scaled_dot_product_attention(q, k, v, scale=scale)
+
 
 def _linear_dtype(layer) -> mx.Dtype:
     # Unwrap LoRA wrapper to get the underlying linear layer
@@ -115,12 +134,7 @@ class WanSelfAttention(nn.Module):
 
         # Use memory-efficient scaled dot-product attention
         # mx.fast.scaled_dot_product_attention expects [B, N, L, D]
-        if mask is not None:
-            out = mx.fast.scaled_dot_product_attention(
-                q, k, v, scale=self.scale, mask=mask
-            )
-        else:
-            out = mx.fast.scaled_dot_product_attention(q, k, v, scale=self.scale)
+        out = _sdpa(q, k, v, self.scale, mask)
 
         out = out.transpose(0, 2, 1, 3).reshape(b, s, -1)
         return self.o(out)
@@ -197,12 +211,7 @@ class WanCrossAttention(nn.Module):
             for i, cl in enumerate(context_lens):
                 mask[i, :, :, cl:] = -1e9
 
-        if mask is not None:
-            out = mx.fast.scaled_dot_product_attention(
-                q, k, v, scale=self.scale, mask=mask
-            )
-        else:
-            out = mx.fast.scaled_dot_product_attention(q, k, v, scale=self.scale)
+        out = _sdpa(q, k, v, self.scale, mask)
 
         out = out.transpose(0, 2, 1, 3).reshape(b, -1, n * d)
         return self.o(out)

@@ -93,6 +93,12 @@ video = [
     "imageio-ffmpeg>=0.6.0",
     "ftfy",
 ]
+# Metal Flash Attention (Apple-Silicon native): optional acceleration for
+# video attention. When absent the bridge transparently falls back to
+# mx.fast.scaled_dot_product_attention, so this stays an opt-in extra.
+mfa = [
+    "mlx-mfa>=2.61.0",
+]
 paroquant = [
     "paroquant==0.1.14; python_version >= '3.11'",
 ]

@@ -103,6 +103,7 @@ _OPT_DEP_SUITES: list[tuple[str, list[str]]] = [
             "test_video_gen_engine.py",
             "test_videos_routes.py",
             "test_video_discovery.py",
+            "test_custom_kernels_mfa.py",
         ],
     ),
     (
