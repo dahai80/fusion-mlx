@@ -220,6 +220,7 @@ class TestApplyModelDirsRuntime:
         monkeypatch.setattr(admin_helpers, "_hf_uploader", None)
 
         pool = MagicMock()
+        pool.discover_models_async = AsyncMock(return_value=None)
         pool.get_loaded_model_ids.return_value = []
         pool.model_count = 0
         mock_server_state = _mock_server_state(engine_pool=pool, settings_manager=None)
@@ -231,7 +232,7 @@ class TestApplyModelDirsRuntime:
 
         assert success is True
         assert "from 2 directories" in msg
-        pool.discover_models.assert_called_once_with(
+        pool.discover_models_async.assert_awaited_once_with(
             [str(primary.resolve()), str(secondary.resolve())], []
         )
 
@@ -245,6 +246,7 @@ class TestApplyModelDirsRuntime:
         monkeypatch.setattr(admin_helpers, "_hf_uploader", None)
 
         pool = MagicMock()
+        pool.discover_models_async = AsyncMock(return_value=None)
         pool.get_loaded_model_ids.return_value = []
         pool.model_count = 0
         mock_server_state = _mock_server_state(engine_pool=pool, settings_manager=None)
@@ -256,4 +258,6 @@ class TestApplyModelDirsRuntime:
 
         assert success is True
         assert "from 1 directory" in msg
-        pool.discover_models.assert_called_once_with([str(model_dir.resolve())], [])
+        pool.discover_models_async.assert_awaited_once_with(
+            [str(model_dir.resolve())], []
+        )

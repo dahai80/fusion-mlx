@@ -406,7 +406,9 @@ async def delete_hf_model(
         # so they can be reused by another model.
         if settings_manager:
             settings_manager.delete_settings(model_name)
-        engine_pool.discover_models([str(d) for d in model_dirs], pinned_models)
+        await engine_pool.discover_models_async(
+            [str(d) for d in model_dirs], pinned_models
+        )
         if settings_manager:
             engine_pool.apply_settings_overrides(settings_manager)
         logger.info("Model pool refreshed after deletion")

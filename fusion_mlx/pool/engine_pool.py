@@ -49,7 +49,7 @@ from ..exceptions import (
 )
 from ..scheduler import SchedulerConfig
 from ..utils.proc_memory import get_phys_footprint
-from .model_discovery import discover_models, format_size
+from .model_discovery import DiscoveredModel, discover_models, format_size
 
 logger = logging.getLogger(__name__)
 
@@ -361,16 +361,10 @@ class EnginePool:
                 if isinstance(engine, EmbeddingEngine):
                     engine._batch_size = batch_size
 
-    def discover_models(
-        self, model_dirs: str | list[str], pinned_models: list[str] | None = None
-    ) -> None:
-        """
-        Discover models in the specified directory or directories.
-
-        Args:
-            model_dirs: Path or list of paths to directories containing model subdirectories
-            pinned_models: List of model IDs to pin (never evict)
-        """
+    def _scan_models(self, model_dirs: str | list[str]) -> dict[str, DiscoveredModel]:
+        # Executor-safe filesystem scan: walks model_dirs and reads each
+        # model's config. Pure (no self mutation) so it can run off the
+        # event loop via run_in_executor (#59).
         from pathlib import Path
 
         from .model_discovery import discover_models_from_dirs
@@ -381,10 +375,16 @@ class EnginePool:
             dirs = [Path(d) for d in model_dirs]
 
         if len(dirs) == 1:
-            discovered = discover_models(dirs[0])
-        else:
-            discovered = discover_models_from_dirs(dirs)
+            return discover_models(dirs[0])
+        return discover_models_from_dirs(dirs)
 
+    def _merge_discovered(
+        self,
+        discovered: dict[str, DiscoveredModel],
+        pinned_models: list[str] | None = None,
+    ) -> None:
+        # Mutates self._entries from a scan result. Must run on the loop
+        # thread (or under the pool lock) since it touches shared state.
         pinned_set = set(pinned_models or [])
 
         for model_id, info in discovered.items():
@@ -431,6 +431,24 @@ class EnginePool:
                 logger.warning(f"Pinned model not found: {model_id}")
 
         logger.info(f"Discovered {len(self._entries)} models")
+
+    def discover_models(
+        self, model_dirs: str | list[str], pinned_models: list[str] | None = None
+    ) -> None:
+        # Synchronous discover: scan + merge in one call (back-compat for
+        # sync callers and tests). Async callers should use
+        # discover_models_async to avoid blocking the event loop (#59).
+        discovered = self._scan_models(model_dirs)
+        self._merge_discovered(discovered, pinned_models)
+
+    async def discover_models_async(
+        self, model_dirs: str | list[str], pinned_models: list[str] | None = None
+    ) -> None:
+        # Non-blocking discover: run the filesystem scan in an executor so
+        # the event loop stays responsive, then merge on the loop thread.
+        loop = asyncio.get_running_loop()
+        discovered = await loop.run_in_executor(None, self._scan_models, model_dirs)
+        self._merge_discovered(discovered, pinned_models)
 
     _MODEL_TYPE_TO_ENGINE: dict[str, str] = {
         "llm": "batched",

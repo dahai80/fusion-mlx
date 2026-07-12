@@ -804,7 +804,7 @@ class Server:
             async def _refresh_models_after_task():
                 if self.pool is None:
                     return
-                self.pool.discover_models(self.config.model_dir)
+                await self.pool.discover_models_async(self.config.model_dir)
                 logger.info("Model pool refreshed after admin task completion")
 
             # oQ Quantizer (always available — only needs mlx)
@@ -854,7 +854,7 @@ class Server:
 
         # Auto-discover and register models in pool
         if self.config.model_dir:
-            self.pool.discover_models(self.config.model_dir)
+            await self.pool.discover_models_async(self.config.model_dir)
             logger.info(
                 "Discovered %d models in %s",
                 self.pool.model_count,

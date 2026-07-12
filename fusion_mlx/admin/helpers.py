@@ -272,7 +272,7 @@ async def _apply_model_dirs_runtime(model_dirs: list[str]) -> tuple[bool, str]:
 
     # Re-discover models from new directories
     try:
-        pool.discover_models(model_dirs, pinned_models)
+        await pool.discover_models_async(model_dirs, pinned_models)
         if _server_state.settings_manager is not None:
             pool.apply_settings_overrides(_server_state.settings_manager)
     except Exception as e:
