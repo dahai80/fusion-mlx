@@ -602,3 +602,69 @@ class TestModelSettingsManager:
                 t.join()
 
             assert len(errors) == 0
+
+
+class TestSettingsPerfRegression:
+    # Issue #72: get_settings (to_dict/from_dict round-trip, per-request
+    # path) and the copy.deepcopy snapshots in admin mutation paths
+    # (save/delete/apply profile - rare, transactional rollback) must stay
+    # negligible vs seconds-scale inference. Guards against a future change
+    # that makes the per-request read or the snapshot O(n^2)/blocking.
+    # Ceilings are generous (CI-runner safe, ~100x observed sub-ms cost,
+    # >100x below one decode step); only a quadratic/network regression
+    # trips them. Actual values are printed for the record.
+
+    _NUM_MODELS = 12
+    _GET_ITERS = 500
+    _SNAP_ITERS = 100
+    _PER_CALL_CEIL_MS = 20.0
+
+    def _populate(self, manager):
+        for i in range(self._NUM_MODELS):
+            manager.set_settings(
+                f"org/model-{i}",
+                ModelSettings(
+                    temperature=0.7,
+                    top_p=0.9,
+                    max_tokens=4096,
+                    chat_template_kwargs={"enable_thinking": True},
+                ),
+            )
+
+    def test_get_settings_per_call_under_ceiling(self):
+        import time
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            manager = ModelSettingsManager(Path(tmpdir))
+            self._populate(manager)
+            mid = "org/model-3"
+            manager.get_settings(mid)
+            t0 = time.perf_counter()
+            for _ in range(self._GET_ITERS):
+                manager.get_settings(mid)
+            elapsed = time.perf_counter() - t0
+            per_call_ms = (elapsed / self._GET_ITERS) * 1000.0
+            print(
+                f"#72 get_settings per-call: {per_call_ms:.4f} ms "
+                f"(n={self._GET_ITERS})"
+            )
+            assert per_call_ms < self._PER_CALL_CEIL_MS
+
+    def test_snapshot_deepcopy_under_ceiling(self):
+        import copy
+        import time
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            manager = ModelSettingsManager(Path(tmpdir))
+            self._populate(manager)
+            copy.deepcopy(manager._settings)
+            t0 = time.perf_counter()
+            for _ in range(self._SNAP_ITERS):
+                copy.deepcopy(manager._settings)
+            elapsed = time.perf_counter() - t0
+            per_call_ms = (elapsed / self._SNAP_ITERS) * 1000.0
+            print(
+                f"#72 deepcopy(_settings) per-call: {per_call_ms:.4f} ms "
+                f"(n={self._SNAP_ITERS})"
+            )
+            assert per_call_ms < self._PER_CALL_CEIL_MS

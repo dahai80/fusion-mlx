@@ -279,7 +279,6 @@ test_model_auto_config.py
 test_model_loading.py
 test_model_profiles_ssot.py
 test_model_settings_profiles.py
-test_model_settings.py
 test_mtp_inject_and_install.py
 test_mtp_spec_decode.py
 test_mtp_stream_contract.py
