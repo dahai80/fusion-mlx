@@ -60,8 +60,20 @@ def add_request(self, request: Request) -> None:
             request.prompt_token_ids = list(request.prompt)
         request.num_prompt_tokens = len(request.prompt_token_ids)
 
-    # Check prefix cache for cached KV state
-    if self.block_aware_cache is not None:
+    # Cache freshness: if a store_cache is in flight, defer the prefix
+    # lookup to _schedule_waiting (executor thread) so add_request (FastAPI
+    # event loop) never races an in-flight store_cache and reads stale KV.
+    # _should_defer registers a freshness wait for relevant stores (above
+    # thresholds); either way prep is deferred to _schedule_waiting.
+    if self._inflight_store_futures:
+        self._should_defer_for_cache_freshness(request)
+        request.remaining_tokens = request.prompt_token_ids
+        logger.debug(
+            "Deferring prefix-cache prep for %s to _schedule_waiting "
+            "(in-flight store_cache present)",
+            request.request_id,
+        )
+    elif self.block_aware_cache is not None:
         # Use paged cache
         block_table, remaining = self.block_aware_cache.fetch_cache(
             request.request_id,
@@ -71,12 +83,25 @@ def add_request(self, request: Request) -> None:
             extra_key_ranges=request.vlm_extra_key_ranges_for_cache,
         )
         if block_table and block_table.num_tokens > 0:
-            self.block_aware_cache.preload_blocks(block_table)
+            bypass_hot_cache = self._bypass_hot_cache_under_pressure()
+            if bypass_hot_cache:
+                logger.info(
+                    "Skipping hot-cache preload for %s under memory pressure",
+                    request.request_id,
+                )
+            else:
+                self.block_aware_cache.preload_blocks(block_table)
             # Reconstruct actual KVCache objects from stored tensor data
             # Note: reconstruct_cache may modify block_table in-place if
             # partial reconstruction occurs (some blocks invalid)
             original_tokens = block_table.num_tokens
-            reconstructed = self.block_aware_cache.reconstruct_cache(block_table)
+            if bypass_hot_cache:
+                reconstructed = self.block_aware_cache.reconstruct_cache(
+                    block_table,
+                    promote_to_hot_cache=False,
+                )
+            else:
+                reconstructed = self.block_aware_cache.reconstruct_cache(block_table)
             if reconstructed:
                 request.prompt_cache = reconstructed
                 request.block_table = block_table
@@ -557,6 +582,7 @@ def _prepare_prefix_cache_for_request(self, request: Request) -> None:
             if bypass_hot_cache:
                 reconstructed = self.block_aware_cache.reconstruct_cache(
                     block_table,
+                    promote_to_hot_cache=False,
                 )
             else:
                 reconstructed = self.block_aware_cache.reconstruct_cache(block_table)

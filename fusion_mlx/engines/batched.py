@@ -525,7 +525,9 @@ class BatchedEngine(BaseEngine):
                     0, {"role": "system", "content": "You are a helpful assistant."}
                 )
             try:
-                result = self._tokenizer.apply_chat_template(messages, **template_kwargs)
+                result = self._tokenizer.apply_chat_template(
+                    messages, **template_kwargs
+                )
                 return result
             except Exception as e:
                 if "system message" in str(e).lower():

@@ -685,10 +685,15 @@ async def create_anthropic_message(
         # threading) + #2 (let extract errors propagate so a malformed
         # request body 400s here instead of crossing the streaming
         # SSE boundary mid-response).
-        messages, images, videos = extract_multimodal_content(
-            openai_request.messages,
-            preserve_native_format=engine.preserve_native_tool_format,
-        )
+        # extract_multimodal_content returns list[dict] (preserves
+        # image_url content parts); the VLM engine extracts images/videos
+        # from these messages itself, same as the OpenAI route which
+        # never separates images/videos. The old 3-tuple unpack +
+        # ``preserve_native_format=`` kwarg never matched this signature
+        # -> TypeError on every /v1/messages (codex r5 BLOCKING #1).
+        messages = extract_multimodal_content(openai_request.messages)
+        images = None
+        videos = None
         # Dogfood C-05 / F-R2-04 / r5-B C-11 lane parity: auto-prepend the
         # canonical UI-TARS Computer-Use sysprompt on the Anthropic lane
         # too so the three surfaces produce the SAME prompt for the SAME
@@ -1517,10 +1522,12 @@ async def _stream_anthropic_messages(
         images = prepared_images if prepared_images is not None else []
         videos = prepared_videos if prepared_videos is not None else []
     else:
-        messages, images, videos = extract_multimodal_content(
-            openai_request.messages,
-            preserve_native_format=engine.preserve_native_tool_format,
-        )
+        # Direct-call test path: list[dict] preserves image_url parts;
+        # VLM engine extracts images/videos itself. Old 3-tuple unpack
+        # was a TypeError here too.
+        messages = extract_multimodal_content(openai_request.messages)
+        images = []
+        videos = []
 
         # D-ANTHRO-TOOL-USAGE F3: forced ``tool_choice`` levers — same
         # injection the non-stream branch performs. Only runs on the

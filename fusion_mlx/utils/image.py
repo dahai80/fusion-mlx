@@ -14,17 +14,25 @@ logger = logging.getLogger(__name__)
 
 
 def load_image(url_or_base64: str) -> Image.Image:
-    """Load an image from URL, base64 data URI, or local file path."""
+    """Load an image from a base64 data URI or a local file path."""
     if url_or_base64.startswith("data:"):
         _, data_part = url_or_base64.split(",", 1)
         img_bytes = base64.b64decode(data_part)
         img = Image.open(io.BytesIO(img_bytes))
     elif url_or_base64.startswith(("http://", "https://")):
-        import urllib.request
-
-        with urllib.request.urlopen(url_or_base64, timeout=30) as response:
-            img_bytes = response.read()
-        img = Image.open(io.BytesIO(img_bytes))
+        # SSRF protection: never make an outbound request to a remote URL.
+        # The server must not fetch attacker-controlled or RFC1918/loopback
+        # addresses (e.g. cloud metadata endpoints). Clients must inline
+        # images as data: URIs or pass a local file path. The caller
+        # (extract_images_from_messages) catches this and skips the part.
+        logger.warning(
+            "load_image: refused remote URL (SSRF protection); require a "
+            "data: URI or a local file path"
+        )
+        raise ValueError(
+            "Remote image URLs are not supported; use a data: URI or a "
+            "local file path"
+        )
     else:
         img = Image.open(url_or_base64)
 

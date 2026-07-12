@@ -176,7 +176,7 @@ class _BoundarySnapshotProvider:
         request_id: str,
         valid_tcs: list[int],
         in_memory_snapshots: dict[int, Any],
-        extract_fn: Any,  # Callable — Scheduler._extract_cache_states
+        extract_fn: Any = None,  # Callable — Scheduler._extract_cache_states
     ) -> None:
         self._store = store
         self._request_id = request_id
@@ -191,6 +191,8 @@ class _BoundarySnapshotProvider:
         snap = self._in_memory.get(tc)
         if snap is not None:
             # In-memory fallback (SSD write failed).
+            if self._extract_fn is None:
+                return snap
             extracted, _ = self._extract_fn(snap)
             return extracted
         if self._store is not None:
@@ -202,6 +204,20 @@ class _BoundarySnapshotProvider:
 
     def __bool__(self) -> bool:
         return bool(self._valid_tcs)
+
+    def iter_in_memory_values(self):
+        # Yield each in-memory snapshot value, applying extract_fn if set so
+        # callers receive extracted cache state (matching __getitem__). SSD-only
+        # entries are skipped; the store_cache worker loads them lazily.
+        for tc in self._valid_tcs:
+            snap = self._in_memory.get(tc)
+            if snap is None:
+                continue
+            if self._extract_fn is None:
+                yield snap
+            else:
+                extracted, _ = self._extract_fn(snap)
+                yield extracted
 
 
 @dataclass

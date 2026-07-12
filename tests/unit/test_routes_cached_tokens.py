@@ -416,6 +416,22 @@ def test_scheduler_request_output_construction_carries_cached_tokens():
         encode=MagicMock(return_value=[1, 2]),
         decode=MagicMock(return_value="x"),
     )
+    # _process_batch_responses reads self.tokenizer (not _actual_tokenizer)
+    # for the fallback single-token decode; mirror the real attr name.
+    scheduler.tokenizer = scheduler._actual_tokenizer
+    # _process_batch_responses -> _get_output_parser_session /
+    # _get_detokenizer read these; __init__ always sets them, but __new__
+    # bypasses it. None/empty means "no protocol parser" and "no pooled
+    # detokenizer" so the cached_tokens path runs unmodified.
+    scheduler._output_parser_factory = None
+    scheduler._output_parser_sessions = {}
+    scheduler._request_detokenizers = {}
+    # Incidental deep dependencies of the non-stop path (cache-store
+    # capture, detokenizer creation) are NOT what this test asserts on -
+    # stub them to no-ops so the RequestOutput construction (the source
+    # line under test) is exercised in isolation.
+    scheduler._get_detokenizer = lambda request_id: None
+    scheduler._maybe_capture_boundary_snapshot = lambda *a, **k: None
 
     # Build a Request with a known cached_tokens count. Attach a
     # minimal decoder so the streaming-decode branch on the non-stop

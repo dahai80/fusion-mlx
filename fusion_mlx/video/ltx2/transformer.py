@@ -3,7 +3,6 @@
 # Phase 4 LTX-2 direct-MLX port: model-layer foundation.
 import logging
 from dataclasses import dataclass, replace
-from typing import Optional, Tuple
 
 import mlx.core as mx
 import mlx.nn as nn
@@ -23,25 +22,25 @@ class Modality:
     positions: mx.array
     context: mx.array
     enabled: bool = True
-    context_mask: Optional[mx.array] = None
-    positional_embeddings: Optional[Tuple[mx.array, mx.array]] = None
-    sigma: Optional[mx.array] = None
+    context_mask: mx.array | None = None
+    positional_embeddings: tuple[mx.array, mx.array] | None = None
+    sigma: mx.array | None = None
 
 
 @dataclass(frozen=True)
 class TransformerArgs:
     x: mx.array
     context: mx.array
-    context_mask: Optional[mx.array]
+    context_mask: mx.array | None
     timesteps: mx.array
     embedded_timestep: mx.array
-    positional_embeddings: Tuple[mx.array, mx.array]
-    cross_positional_embeddings: Optional[Tuple[mx.array, mx.array]]
-    cross_scale_shift_timestep: Optional[mx.array]
-    cross_gate_timestep: Optional[mx.array]
+    positional_embeddings: tuple[mx.array, mx.array]
+    cross_positional_embeddings: tuple[mx.array, mx.array] | None
+    cross_scale_shift_timestep: mx.array | None
+    cross_gate_timestep: mx.array | None
     enabled: bool
-    prompt_timesteps: Optional[mx.array] = None
-    prompt_embedded_timestep: Optional[mx.array] = None
+    prompt_timesteps: mx.array | None = None
+    prompt_embedded_timestep: mx.array | None = None
 
 
 class BasicAVTransformerBlock(nn.Module):
@@ -49,8 +48,8 @@ class BasicAVTransformerBlock(nn.Module):
     def __init__(
         self,
         idx: int,
-        video: Optional[TransformerConfig] = None,
-        audio: Optional[TransformerConfig] = None,
+        video: TransformerConfig | None = None,
+        audio: TransformerConfig | None = None,
         rope_type: LTXRopeType = LTXRopeType.INTERLEAVED,
         norm_eps: float = 1e-6,
         has_prompt_adaln: bool = False,
@@ -149,7 +148,7 @@ class BasicAVTransformerBlock(nn.Module):
         batch_size: int,
         timestep: mx.array,
         indices: slice,
-    ) -> Tuple[mx.array, ...]:
+    ) -> tuple[mx.array, ...]:
         num_ada_params = scale_shift_table.shape[0]
 
         table_slice = scale_shift_table[indices]
@@ -175,7 +174,7 @@ class BasicAVTransformerBlock(nn.Module):
         scale_shift_timestep: mx.array,
         gate_timestep: mx.array,
         num_scale_shift_values: int = 4,
-    ) -> Tuple[mx.array, mx.array, mx.array, mx.array, mx.array]:
+    ) -> tuple[mx.array, mx.array, mx.array, mx.array, mx.array]:
         scale_shift_ada = self.get_ada_values(
             scale_shift_table[:num_scale_shift_values, :],
             batch_size,
@@ -201,12 +200,12 @@ class BasicAVTransformerBlock(nn.Module):
 
     def __call__(
         self,
-        video: Optional[TransformerArgs] = None,
-        audio: Optional[TransformerArgs] = None,
+        video: TransformerArgs | None = None,
+        audio: TransformerArgs | None = None,
         skip_video_self_attn: bool = False,
         skip_audio_self_attn: bool = False,
         skip_cross_modal: bool = False,
-    ) -> Tuple[Optional[TransformerArgs], Optional[TransformerArgs]]:
+    ) -> tuple[TransformerArgs | None, TransformerArgs | None]:
         batch_size = video.x.shape[0] if video is not None else audio.x.shape[0]
 
         vx = video.x if video is not None else None

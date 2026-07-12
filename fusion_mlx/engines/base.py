@@ -43,6 +43,11 @@ class GenerationOutput:
     diffusion_work_tokens: int = 0
     diffusion_canvas_tps: float = 0.0
     diffusion_work_tps: float = 0.0
+    # OutputRouter channel (content/reasoning/tool_call); StreamingPostProcessor branches on it.
+    channel: str | None = None
+    # Unprocessed output (pre special-token cleanup) for reasoning/wire-leak
+    # detection; engines may populate it, else ``or output.text`` falls back.
+    raw_text: str | None = None
 
 
 def _fallback_parse_tool_calls(
@@ -106,7 +111,9 @@ def _apply_reasoning_parser(
             if auto is not None:
                 parser_name = auto.reasoning_parser
         except Exception as e:
-            logger.debug("reasoning parser auto-detect failed for %s: %s", model_name, e)
+            logger.debug(
+                "reasoning parser auto-detect failed for %s: %s", model_name, e
+            )
     if not parser_name:
         return gen
     try:

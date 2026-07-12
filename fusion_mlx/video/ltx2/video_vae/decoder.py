@@ -539,7 +539,13 @@ class LTX2VideoDecoder(nn.Module):
             embedded_timestep = embedded_timestep.reshape(batch_size, -1, 1, 1, 1)
 
             ada_values = self.last_scale_shift_table[None, :, :, None, None, None]
-            ts_reshaped = embedded_timestep.reshape(batch_size, 2, 128, 1, 1, 1)
+            # last_ch is blocks[-1][1] (128 for DEFAULT_BLOCKS); hardcoding
+            # 128 breaks non-default decoder_blocks inferred from weights.
+            # last_scale_shift_table == mx.zeros((2, last_ch)), so its
+            # shape[1] tracks the real config.
+            ts_reshaped = embedded_timestep.reshape(
+                batch_size, 2, self.last_scale_shift_table.shape[1], 1, 1, 1
+            )
             ada_values = ada_values + ts_reshaped
 
             shift = ada_values[:, 0]

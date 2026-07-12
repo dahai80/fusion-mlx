@@ -62,8 +62,8 @@ from ..api.utils import (
 )
 from ..config import get_config
 from ..engine import GenerationOutput
-from ..server_metrics import record_llm_metrics
 from ..middleware.auth import check_rate_limit, verify_api_key
+from ..server_metrics import record_llm_metrics
 from ..service.helpers import (
     _TOOL_USE_REQUIRED_SUFFIX,
     _TOOL_USE_SYSTEM_SUFFIX,
@@ -1808,10 +1808,12 @@ async def _create_chat_completion_impl(
             decode_inline_tool_call_arguments(messages)
         logger.debug(f"MLLM: Processing {len(messages)} messages")
     else:
-        messages, images, videos = extract_multimodal_content(
-            request.messages,
-            preserve_native_format=engine.preserve_native_tool_format,
-        )
+        # extract_multimodal_content no longer separates images/videos nor
+        # accepts preserve_native_format= (signature dropped both); mirror
+        # routes/anthropic.py - has_media is re-derived from content below.
+        messages = extract_multimodal_content(request.messages)
+        images = None
+        videos = None
 
     has_media = bool(images or videos)
     if engine.is_mllm and not has_media:
@@ -1968,7 +1970,7 @@ async def _create_chat_completion_impl(
     # kwarg below from one source. Mirrors the ``rapid-mlx chat``
     # REPL's ``--no-think`` default for thinking-capable models on
     # the OpenAI-SDK surface.
-    if maybe_auto_disable_thinking_for_casual_chat(request):
+    if maybe_auto_disable_thinking_for_casual_chat(request, request.enable_thinking):
         logger.info(
             "R12-T2F auto-disable: /v1/chat/completions casual chat "
             "request to a thinking-capable model (parser=%s) with no "
@@ -1988,7 +1990,7 @@ async def _create_chat_completion_impl(
 
     # Prepare kwargs
     chat_kwargs = {
-        "max_tokens": _resolve_max_tokens(request.max_tokens, resolved_thinking),
+        "max_tokens": _resolve_max_tokens(request.max_tokens),
         "temperature": _resolve_temperature(request.temperature),
         "top_p": _resolve_top_p(request.top_p),
         "stop": request.stop,
@@ -4805,7 +4807,9 @@ async def stream_chat_completion_strict_postgen(
     # schemas in our pydantic-ai corpus marshal to ~50 KiB) but
     # comfortably below per-request memory limits operators expect
     # streaming to honor. Override via
-    # ``RAPID_MLX_STRICT_BUFFER_BYTES`` for unusual workloads.
+    # ``FUSION_MLX_STRICT_BUFFER_BYTES`` for unusual workloads
+    # (``RAPID_MLX_STRICT_BUFFER_BYTES`` is the deprecated pre-rename
+    # alias, still honored).
     #
     # Codex r12 #1 (design decision, documented for future passes):
     # the wrapper streams incremental content deltas to the client
@@ -4838,10 +4842,24 @@ async def stream_chat_completion_strict_postgen(
     # clamped DOWN to the bound with an operator-facing warning.
     _BUFFER_CAP_HARD_MAX = 64 * 1024 * 1024
     _BUFFER_CAP_DEFAULT = 2 * 1024 * 1024
+    # Primary canonical env var (``FUSION_MLX_STRICT_BUFFER_BYTES``)
+    # with the pre-rename ``RAPID_MLX_STRICT_BUFFER_BYTES`` alias
+    # honored for backward compatibility. Mirrors the primary+legacy
+    # convention in ``api/strict_json_schema.py``
+    # (``FUSION_MLX_STRICT_JSON_SCHEMA`` / ``RAPID_MLX_STRICT_JSON_SCHEMA``).
+    _BUFFER_CAP_ENV_PRIMARY = "FUSION_MLX_STRICT_BUFFER_BYTES"
+    _BUFFER_CAP_ENV_LEGACY = "RAPID_MLX_STRICT_BUFFER_BYTES"
+    _cap_raw = os.environ.get(_BUFFER_CAP_ENV_PRIMARY)
+    if _cap_raw is None:
+        _cap_raw = os.environ.get(_BUFFER_CAP_ENV_LEGACY)
+        if _cap_raw is not None:
+            logger.warning(
+                "env var %s is deprecated, use %s instead",
+                _BUFFER_CAP_ENV_LEGACY,
+                _BUFFER_CAP_ENV_PRIMARY,
+            )
     try:
-        _buffer_cap = int(
-            os.environ.get("RAPID_MLX_STRICT_BUFFER_BYTES", str(_BUFFER_CAP_DEFAULT))
-        )
+        _buffer_cap = int(_cap_raw) if _cap_raw is not None else _BUFFER_CAP_DEFAULT
         if _buffer_cap <= 0:
             _buffer_cap = _BUFFER_CAP_DEFAULT
         elif _buffer_cap > _BUFFER_CAP_HARD_MAX:
@@ -4854,7 +4872,7 @@ async def stream_chat_completion_strict_postgen(
                 "%s=%d exceeds hard maximum %d; clamping to %d to preserve "
                 "memory-safety guarantee. If you need a larger cap, file an "
                 "issue rather than raising the hard limit.",
-                "RAPID_MLX_STRICT_BUFFER_BYTES",
+                _BUFFER_CAP_ENV_PRIMARY,
                 _buffer_cap,
                 _BUFFER_CAP_HARD_MAX,
                 _BUFFER_CAP_HARD_MAX,
@@ -5081,7 +5099,7 @@ async def stream_chat_completion_strict_postgen(
                 )
             else:
                 cap_guidance = (
-                    f"raise RAPID_MLX_STRICT_BUFFER_BYTES (current: "
+                    f"raise {_BUFFER_CAP_ENV_PRIMARY} (current: "
                     f"{_buffer_cap} bytes, hard maximum: "
                     f"{_BUFFER_CAP_HARD_MAX} bytes) or investigate a "
                     "runaway generation."

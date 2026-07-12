@@ -3,7 +3,7 @@
 
 import base64
 import io
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 from PIL import Image
@@ -81,18 +81,12 @@ class TestLoadImage:
         loaded = load_image(uri)
         assert isinstance(loaded, Image.Image)
 
-    @patch("urllib.request.urlopen")
-    def test_load_from_url(self, mock_urlopen):
-        """Load image from HTTP URL."""
-        img = _make_test_image(4, 4)
-        buf = io.BytesIO()
-        img.save(buf, format="PNG")
-        buf.seek(0)
-        mock_urlopen.return_value.__enter__ = MagicMock(return_value=buf)
-        mock_urlopen.return_value.__exit__ = MagicMock(return_value=False)
-
-        loaded = load_image("https://example.com/image.png")
-        assert isinstance(loaded, Image.Image)
+    def test_load_from_url_refused(self):
+        """Remote http(s) URLs are refused for SSRF protection."""
+        with pytest.raises(ValueError, match="Remote image URLs are not supported"):
+            load_image("https://example.com/image.png")
+        with pytest.raises(ValueError, match="Remote image URLs are not supported"):
+            load_image("http://example.com/image.png")
 
     def test_load_invalid_format_raises(self):
         """Invalid input raises ValueError."""

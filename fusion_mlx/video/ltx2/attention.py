@@ -2,7 +2,6 @@
 # Pure-MLX port of LTX-2 attention (vendored from mlx-video).
 # Phase 4 LTX-2 direct-MLX port: model-layer foundation.
 import math
-from typing import Optional, Tuple
 
 import mlx.core as mx
 import mlx.nn as nn
@@ -16,7 +15,7 @@ def scaled_dot_product_attention(
     k: mx.array,
     v: mx.array,
     heads: int,
-    mask: Optional[mx.array] = None,
+    mask: mx.array | None = None,
 ) -> mx.array:
 
     b, q_seq_len, dim = q.shape
@@ -52,7 +51,7 @@ class Attention(nn.Module):
     def __init__(
         self,
         query_dim: int,
-        context_dim: Optional[int] = None,
+        context_dim: int | None = None,
         heads: int = 8,
         dim_head: int = 64,
         norm_eps: float = 1e-6,
@@ -83,10 +82,10 @@ class Attention(nn.Module):
     def __call__(
         self,
         x: mx.array,
-        context: Optional[mx.array] = None,
-        mask: Optional[mx.array] = None,
-        pe: Optional[Tuple[mx.array, mx.array]] = None,
-        k_pe: Optional[Tuple[mx.array, mx.array]] = None,
+        context: mx.array | None = None,
+        mask: mx.array | None = None,
+        pe: tuple[mx.array, mx.array] | None = None,
+        k_pe: tuple[mx.array, mx.array] | None = None,
         skip_attention: bool = False,
     ) -> mx.array:
         gate = None

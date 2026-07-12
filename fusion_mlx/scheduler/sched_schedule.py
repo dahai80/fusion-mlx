@@ -35,6 +35,12 @@ from .types import (
     _PrefillAbortedError,
 )
 
+# Max wall-clock seconds a head-of-line admission stall (store-cache
+# pipeline full or memory guard over-limit) may persist before the
+# blocked request is rejected. Bounds admission so a stuck SSD write
+# or memory ceiling can never deadlock scheduling (#1684).
+_ADMISSION_STALL_TIMEOUT_S = 60.0
+
 
 def _release_multimodal_tensors(request: "Request") -> None:
     """Release multimodal tensors after prefill to free unified memory."""
@@ -102,11 +108,47 @@ def _schedule_waiting(
         # blocking the generation step on the store-cache write (#1496).
         # The cap bounds concurrent extracted-KV copies (the #1383 OOM
         # guard) and shrinks under memory pressure via
-        # adjust_store_cache_cap. In-flight requests keep generating;
-        # the first request always passes (self.running is empty) so a
-        # lone slow SSD write cannot deadlock admission.
+        # adjust_store_cache_cap. In-flight requests keep generating.
+        # A stall persisting past _ADMISSION_STALL_TIMEOUT_S rejects the
+        # head-of-line request so admission can never deadlock on a
+        # stuck SSD write (#1684).
         gate = self._store_cache_gate
-        if gate is not None and self.running and not gate.has_capacity:
+        if gate is not None and not gate.has_capacity:
+            now = time.monotonic()
+            blocked_id = self._store_cache_admission_blocked_request_id
+            blocked_since = self._store_cache_admission_blocked_since
+            if (
+                blocked_id is not None
+                and now - blocked_since >= _ADMISSION_STALL_TIMEOUT_S
+            ):
+                stalled_req = self.waiting.popleft()
+                self.requests.pop(stalled_req.request_id, None)
+                self._store_cache_admission_blocked_request_id = None
+                self._store_cache_admission_blocked_since = 0.0
+                logger.warning(
+                    "Rejecting %s: store-cache admission stalled %.1fs "
+                    "(in_flight=%d cap=%d)",
+                    stalled_req.request_id,
+                    now - blocked_since,
+                    gate.in_flight,
+                    gate.cap,
+                )
+                rejected_outputs.append(
+                    RequestOutput(
+                        request_id=stalled_req.request_id,
+                        finished=True,
+                        finish_reason="error",
+                        error="store_cache_admission_stalled",
+                        error_code="store_cache_admission_stalled",
+                        error_metadata={"store_cache_in_flight": gate.in_flight},
+                    )
+                )
+                continue
+            if blocked_id is None:
+                self._store_cache_admission_blocked_request_id = self.waiting[
+                    0
+                ].request_id
+                self._store_cache_admission_blocked_since = now
             logger.debug(
                 "Admission deferred: store-cache pipeline full "
                 "(in_flight=%d cap=%d), %d running",
@@ -115,14 +157,62 @@ def _schedule_waiting(
                 len(self.running),
             )
             break
+        elif (
+            gate is not None
+            and self._store_cache_admission_blocked_request_id is not None
+        ):
+            # Gate recovered capacity - clear stale stall tracking.
+            self._store_cache_admission_blocked_request_id = None
+            self._store_cache_admission_blocked_since = 0.0
+
+        # Deferred removals still own cache refs even when the gate has
+        # room; defer admission until the drain reclaims a slot (#1684).
+        if gate is not None and len(self._pending_async_removes) >= gate.cap:
+            logger.debug(
+                "Admission deferred: %d pending cleanups >= cap %d",
+                len(self._pending_async_removes),
+                gate.cap,
+            )
+            break
 
         # Generation memory guard: when requests are already running,
         # defer scheduling if current memory + estimated prefill peak
         # exceeds the soft limit. This prevents admitting new requests
         # when there isn't enough headroom for their KV cache + SDPA
         # temp allocations, avoiding Metal OOM during batch_generator.next().
-        # First request always passes (self.running is empty).
+        # A stall persisting past _ADMISSION_STALL_TIMEOUT_S rejects the
+        # head-of-line request (#1684).
         if self._prefill_memory_guard and self._memory_limit_bytes > 0 and self.running:
+            now = time.monotonic()
+            mem_blocked_id = self._memory_admission_blocked_request_id
+            mem_blocked_since = self._memory_admission_blocked_since
+            if (
+                mem_blocked_id is not None
+                and now - mem_blocked_since >= _ADMISSION_STALL_TIMEOUT_S
+            ):
+                stalled_req = self.waiting.popleft()
+                self.requests.pop(stalled_req.request_id, None)
+                self._memory_admission_blocked_request_id = None
+                self._memory_admission_blocked_since = 0.0
+                logger.warning(
+                    "Rejecting %s: memory admission stalled %.1fs " "(limit=%s bytes)",
+                    stalled_req.request_id,
+                    now - mem_blocked_since,
+                    self._memory_limit_bytes,
+                )
+                rejected_outputs.append(
+                    RequestOutput(
+                        request_id=stalled_req.request_id,
+                        finished=True,
+                        finish_reason="error",
+                        error="memory_admission_stalled",
+                        error_code="memory_admission_stalled",
+                        error_metadata={
+                            "memory_limit_bytes": self._memory_limit_bytes,
+                        },
+                    )
+                )
+                continue
             # Clear MLX buffer cache before measuring so stale
             # cached-but-freed Metal buffers don't inflate current.
             _sync_and_clear_cache(self._stream)
@@ -131,6 +221,9 @@ def _schedule_waiting(
             new_tokens = max(_next.num_prompt_tokens - (_next.cached_tokens or 0), 0)
             estimated_prefill = self._estimate_prefill_peak(new_tokens)
             if current + estimated_prefill > self._memory_limit_bytes:
+                if mem_blocked_id is None:
+                    self._memory_admission_blocked_request_id = _next.request_id
+                    self._memory_admission_blocked_since = now
                 logger.debug(
                     "Generation memory guard: deferring scheduling "
                     "(current=%s + prefill=%s > limit=%s), %d running",
@@ -140,8 +233,26 @@ def _schedule_waiting(
                     len(self.running),
                 )
                 break
+            elif mem_blocked_id is not None:
+                # Memory recovered headroom - clear stale stall tracking.
+                self._memory_admission_blocked_request_id = None
+                self._memory_admission_blocked_since = 0.0
 
         request = self.waiting.popleft()
+
+        # Cache freshness deferral: add_request registered a wait when a
+        # relevant store_cache was in flight. If it is still unresolved,
+        # put the request back and stop admitting so we don't read stale
+        # KV state. The wait times out automatically
+        # (_CACHE_FRESHNESS_WAIT_TIMEOUT_S), so admission is never blocked
+        # indefinitely.
+        if self._should_defer_for_cache_freshness(request):
+            self.waiting.appendleft(request)
+            logger.debug(
+                "Deferring admission of %s: in-flight store_cache not settled",
+                request.request_id,
+            )
+            break
 
         # SpecPrefill: score remaining tokens on the executor thread
         # (not in add_request, which runs on the FastAPI event loop)
@@ -690,10 +801,18 @@ def _schedule_waiting(
             self._apply_turboquant_kv_convert(cache_to_use)
 
         per_row_lps = list(logits_processors) if logits_processors else []
+        # Seed BatchGenerator's per-row token history with the already-prefilled
+        # prompt prefix (everything except the suffix handed to ``prompts``).
+        # mlx-lm's BatchGenerator.insert accepts ``all_tokens`` for this; omitting
+        # it leaves the sequence's token log empty, which breaks downstream
+        # detokenization/stop-state that rely on the full prompt history.
+        prompt_ids = request.prompt_token_ids
+        seed_prefix = prompt_ids[: len(prompt_ids) - len(tokens_to_process)]
         uids = self.batch_generator.insert(
             [tokens_to_process],
             max_tokens=[request.sampling_params.max_tokens],
             caches=[cache_to_use] if cache_to_use else None,
+            all_tokens=[seed_prefix],
             samplers=[sampler],
             logits_processors=[per_row_lps],
             state_machines=[sm],

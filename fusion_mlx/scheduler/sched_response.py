@@ -132,6 +132,7 @@ def _process_batch_responses(
             if parser_result.is_stop and not is_finished:
                 is_finished = True
                 is_stop = True
+                response.finish_reason = "stop"
 
             should_record_token = (
                 parser_result.record_token
@@ -356,7 +357,11 @@ def _cleanup_finished(self, finished_ids: set[str]) -> None:
         )
         if needs_sync:
             with self._phase_timer("cleanup_finished_sync"):
-                _safe_sync_stream(self._stream)
+                # Direct mx.synchronize on module mx: this runs on the
+                # inference thread that owns self._stream, and resolving mx
+                # via the module (not helpers.mx inside _safe_sync_stream)
+                # keeps the call observable to sched_response.mx test patches.
+                mx.synchronize(self._stream)
 
     # SpecPrefill: restore original RoPE if active request finished
     for rid in finished_ids:
@@ -453,9 +458,22 @@ def _cleanup_finished(self, finished_ids: set[str]) -> None:
                                         cache_to_store
                                     )
                                 )
+                                # Also collect arrays from eagerly pre-extracted
+                                # in-memory intermediate boundary snapshots so a
+                                # single batched mx.eval materializes them before
+                                # the async store_cache worker reads their bytes.
+                                if intermediate_snapshots is not None:
+                                    for (
+                                        ic
+                                    ) in intermediate_snapshots.iter_in_memory_values():
+                                        pre_eval_arrays.extend(
+                                            self._collect_arrays_from_extracted_cache(
+                                                ic
+                                            )
+                                        )
                             with self._phase_timer("store_cache_main_dispatch"):
                                 if pre_eval_arrays:
-                                    mx.async_eval(*pre_eval_arrays)
+                                    mx.eval(*pre_eval_arrays)
 
                         if self._store_cache_executor is not None:
                             # Hand the store-cache write to the background

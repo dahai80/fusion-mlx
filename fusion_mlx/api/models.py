@@ -17,6 +17,7 @@ from pydantic import (
     BaseModel,
     ConfigDict,
     Field,
+    StrictBool,
     StrictInt,
     StrictStr,
     field_validator,
@@ -129,7 +130,7 @@ class ResponseFormatJsonSchema(BaseModel):
     name: str
     description: str | None = None
     schema_: dict = Field(alias="schema")  # JSON Schema specification
-    strict: bool | None = False
+    strict: StrictBool | None = False
 
     class Config:
         populate_by_name = True
@@ -147,6 +148,60 @@ class ResponseFormat(BaseModel):
 
     type: str = "text"  # "text", "json_object", "json_schema"
     json_schema: ResponseFormatJsonSchema | None = None
+    strict: StrictBool | None = None
+
+
+_VALID_RESPONSE_FORMAT_TYPES = ("text", "json_object", "json_schema")
+
+
+def _validate_response_format_raw(v):
+    # Shared ``mode="before"`` guard for the ``response_format`` field.
+    # Validates the bare-dict union arm that Pydantic would otherwise
+    # silently coerce; raises ValueError (-> 422 ValidationError) for
+    # every shape that used to 200-through unconstrained. Returns the
+    # value untouched on success so Pydantic can still coerce dicts.
+    if v is None or isinstance(v, ResponseFormat):
+        return v
+    if not isinstance(v, dict):
+        raise ValueError("response_format must be an object")
+    if "type" not in v:
+        raise ValueError("response_format.type is required")
+    rf_type = v.get("type")
+    if not isinstance(rf_type, str) or rf_type not in _VALID_RESPONSE_FORMAT_TYPES:
+        raise ValueError(
+            "response_format.type must be 'text', 'json_object' or 'json_schema'"
+        )
+    strict = v.get("strict")
+    if strict is not None and not isinstance(strict, bool):
+        raise ValueError(
+            "response_format.strict must be a boolean " f"(got {type(strict).__name__})"
+        )
+    if rf_type == "json_schema":
+        js = v.get("json_schema")
+        if not isinstance(js, dict) or not js:
+            raise ValueError(
+                "response_format.json_schema must be a non-empty 'json_schema' field"
+            )
+        name = js.get("name")
+        if not isinstance(name, str) or not name:
+            raise ValueError("response_format.json_schema.name is required")
+        schema = js.get("schema")
+        if not isinstance(schema, dict):
+            raise ValueError(
+                "response_format.json_schema.schema must be an object, "
+                f"got {type(schema).__name__}"
+            )
+        if not schema:
+            raise ValueError(
+                "response_format.json_schema.schema must be a non-empty object"
+            )
+        inner_strict = js.get("strict")
+        if inner_strict is not None and not isinstance(inner_strict, bool):
+            raise ValueError(
+                "response_format.json_schema.strict must be a boolean "
+                f"(got {type(inner_strict).__name__})"
+            )
+    return v
 
 
 # =============================================================================
@@ -182,10 +237,32 @@ class ChoiceLogProbs(BaseModel):
 # =============================================================================
 
 
+def _validate_token_budget(v, field_name: str):
+    # R7-M3 cross-route guard: every token-budget field (max_tokens on
+    # chat/completions/messages, max_completion_tokens on chat,
+    # max_output_tokens on /v1/responses) rejects bool (Python bool is an
+    # int subclass -> would coerce True->1 silently), non-int wire shapes
+    # (JSON string "100"), and non-positive values (0 / negative). None is
+    # the server-default sentinel on the OpenAI-compat surfaces and stays
+    # valid; the message names the field so cross-route tests can assert it.
+    if v is None:
+        return v
+    if isinstance(v, bool):
+        raise ValueError(f"{field_name} must be an integer, got boolean")
+    if not isinstance(v, int):
+        raise ValueError(f"{field_name} must be an integer")
+    if v < 1:
+        raise ValueError(f"{field_name} must be >= 1")
+    return v
+
+
 class StreamOptions(BaseModel):
     """Options for streaming responses."""
 
-    include_usage: bool = False  # Include usage stats in final chunk
+    # StrictBool rejects string "true"/"yes"/1 coercion at parse time so a
+    # wire bug on include_usage surfaces as a 4xx, not a silent-200 (the
+    # lax bool arm coerced "yes"->True and emitted usage unconditionally).
+    include_usage: StrictBool = False  # Include usage stats in final chunk
 
 
 class ChatCompletionRequest(BaseModel):
@@ -266,6 +343,21 @@ class ChatCompletionRequest(BaseModel):
                 f"reasoning_effort must be one of {sorted(allowed)}, got {v!r}"
             )
         return v
+
+    @field_validator("response_format", mode="before")
+    @classmethod
+    def _validate_response_format_field(cls, v):
+        # Reject silent-200 dict shapes (unknown type, missing schema,
+        # non-dict schema, missing name) before Pydantic's Union arm
+        # coerces them - pinned by test_response_format_strict_types.py.
+        return _validate_response_format_raw(v)
+
+    @field_validator("max_tokens", "max_completion_tokens", mode="before")
+    @classmethod
+    def _validate_token_budget_field(cls, v, info):
+        # Reject bool / non-int / non-positive before Pydantic lax-coerces
+        # "100"->100 or True->1 - pinned by TestPositiveIntGenerationBudget.
+        return _validate_token_budget(v, info.field_name)
 
     # Hard cap on reasoning token budget (set by reasoning_effort tier or
     # explicitly by the client).  None = no cap / server default.
@@ -441,8 +533,20 @@ class CompletionRequest(BaseModel):
     repetition_penalty: float | None = None
     presence_penalty: float | None = None
     frequency_penalty: float | None = None
+    # OpenAI ``n``/``best_of`` - declared so Pydantic stops silently
+    # dropping them; rejected with 400 in routes/completions.py when >1
+    # since we generate one completion per request (no server-side rerank).
+    n: int | None = None
+    best_of: int | None = None
+    # OpenAI ``echo``/``response_format``/``stream_options`` - declared
+    # so Pydantic stops silently dropping them; consumed in
+    # routes/completions.py (echo gates the fence-strip + prompt logprobs,
+    # response_format selects JSON cleanup, stream_options gates usage SSE).
+    echo: bool | None = None
+    response_format: ResponseFormat | dict | None = None
+    stream_options: StreamOptions | None = None
     # Logprobs
-    logprobs: bool | None = None
+    logprobs: int | None = None  # 0-5, per OpenAI legacy completions spec
     top_logprobs: int | None = None  # 0-20, per OpenAI spec
     # OpenAI FIM (fill-in-the-middle) suffix. Declared so Pydantic stops
     # silently dropping it; rejected with 400 in routes/completions.py
@@ -452,6 +556,42 @@ class CompletionRequest(BaseModel):
     # Request timeout in seconds (None = use server default)
     timeout: float | None = None
 
+    @field_validator("n")
+    @classmethod
+    def _validate_completion_n(cls, v):
+        # F-152: pin the wire schema - ``n`` must equal 1. Pydantic raises
+        # here (422 at the schema layer) before the route's own 400 envelope
+        # runs; the production server still rewrites 422->400, but the raw
+        # contract is "one completion per request, no server-side rerank".
+        if v is not None and v != 1:
+            raise ValueError(
+                "n must equal 1 (server generates one completion per "
+                "request; no server-side rerank)"
+            )
+        return v
+
+    @field_validator("max_tokens", mode="before")
+    @classmethod
+    def _validate_token_budget_field(cls, v, info):
+        # Reject bool / non-int / non-positive before lax coercion -
+        # pinned by TestPositiveIntGenerationBudget (cross-route parity).
+        return _validate_token_budget(v, info.field_name)
+
+    @field_validator("logprobs", mode="before")
+    @classmethod
+    def _validate_completion_logprobs_type(cls, v):
+        # ``logprobs`` is an integer 0-5 on the legacy completions spec.
+        # bool is a subclass of int, so without a before-mode guard Pydantic
+        # silently coerces True->1 - reject it explicitly with a message that
+        # names the integer expectation (not the opaque bool_parsing error).
+        if v is None:
+            return v
+        if isinstance(v, bool):
+            raise ValueError("logprobs must be an integer (0-5), got boolean")
+        if not isinstance(v, int):
+            raise ValueError("logprobs must be an integer (0-5)")
+        return v
+
 
 class CompletionChoice(BaseModel):
     """A single choice in text completion response."""
@@ -459,7 +599,12 @@ class CompletionChoice(BaseModel):
     index: int = 0
     text: str
     finish_reason: str | None = "stop"
-    logprobs: ChoiceLogProbs | None = None
+    # Legacy /v1/completions logprobs are the OpenAI 4-array shape
+    # (tokens/token_logprobs/top_logprobs/text_offset), NOT the chat
+    # ``ChoiceLogProbs.content`` shape. Forward-ref as a string because
+    # ``LegacyCompletionLogProbs`` is defined below this class and the
+    # module does not use ``from __future__ import annotations``.
+    logprobs: "LegacyCompletionLogProbs | None" = None
 
 
 class LegacyCompletionLogProbs(BaseModel):

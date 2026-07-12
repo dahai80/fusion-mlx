@@ -93,6 +93,52 @@ def _load_generation_config_eos(self) -> set[int] | None:
         return None
 
 
+def _load_generation_config_suppress_tokens(self) -> set[int]:
+    """Load suppress_tokens from generation_config.json if available.
+
+    Standard HF field: tokens forbidden during generation (e.g. tokens
+    that trigger runaway/recursive output). Mirrors _load_generation_config_eos
+    path resolution (local dir then HF cache). Returns empty set on any
+    miss so callers can treat it as always-present.
+    """
+    try:
+        model_path = getattr(self.tokenizer, "name_or_path", None)
+        if not isinstance(model_path, str) or not model_path:
+            return set()
+        import json
+        import os
+
+        gc_path = os.path.join(model_path, "generation_config.json")
+        if not os.path.exists(gc_path):
+            try:
+                from huggingface_hub import try_to_load_from_cache
+
+                cached = try_to_load_from_cache(model_path, "generation_config.json")
+                if cached and isinstance(cached, str):
+                    gc_path = cached
+                else:
+                    return set()
+            except (ImportError, Exception):
+                return set()
+        with open(gc_path) as f:
+            gc = json.load(f)
+        raw = gc.get("suppress_tokens")
+        if raw is None:
+            return set()
+        if isinstance(raw, list):
+            ids = {int(t) for t in raw}
+        else:
+            ids = {int(raw)}
+        if ids:
+            logger.info(
+                f"Loaded {len(ids)} suppress token(s) from generation_config.json: {ids}"
+            )
+        return ids
+    except Exception as e:
+        logger.debug(f"Could not load suppress_tokens: {e}")
+        return set()
+
+
 def _get_stop_tokens(self) -> set[int]:
     """Get stop token IDs from tokenizer and generation_config."""
     stop_tokens = set()
@@ -113,6 +159,29 @@ def _get_stop_tokens(self) -> set[int]:
             stop_tokens.add(eos_ids)
         else:
             stop_tokens.update(eos_ids)
+
+    # End-of-turn token (e.g. Harmony <turn|> = 106). Some tokenizers
+    # expose eot_token_id directly; others expose only the eot_token
+    # string, which we encode to resolve its id. Mirrors eos_token_ids
+    # handling; guarded so models without eot are unaffected.
+    if (
+        hasattr(self.tokenizer, "eot_token_id")
+        and self.tokenizer.eot_token_id is not None
+    ):
+        eot_id = self.tokenizer.eot_token_id
+        if isinstance(eot_id, list):
+            stop_tokens.update(eot_id)
+        else:
+            stop_tokens.add(eot_id)
+    elif hasattr(self.tokenizer, "eot_token") and self.tokenizer.eot_token:
+        try:
+            eot_seq = self.tokenizer.encode(
+                self.tokenizer.eot_token, add_special_tokens=False
+            )
+        except TypeError:
+            eot_seq = self.tokenizer.encode(self.tokenizer.eot_token)
+        if eot_seq:
+            stop_tokens.update(eot_seq)
 
     # Read additional EOS tokens from generation_config.json.
     # Some models (e.g. GLM-4.6V) define multiple EOS tokens there

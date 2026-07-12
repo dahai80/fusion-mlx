@@ -97,7 +97,25 @@ def _do_external_prefill(
 
     # Clear stale mRoPE position state for text-only requests.
     if vlm_embeds is None and hasattr(self.model, "clear_vlm_position_state"):
+        # Cached text-only suffix: the prefill forward only runs on the
+        # post-cache tokens, so the language model never recomputes the
+        # full-sequence mRoPE delta. Capture the existing delta shape before
+        # clear() resets it to None, then seed zeros in that shape so decode
+        # resumes at the restored offset (text-only => no image offset).
+        _seed_delta = None
+        if getattr(request, "cached_tokens", 0) > 0:
+            _lm = getattr(self.model, "_language_model", None)
+            if _lm is not None and hasattr(_lm, "_rope_deltas"):
+                _seed_delta = getattr(_lm, "_rope_deltas", None)
         self.model.clear_vlm_position_state()
+        if _seed_delta is not None:
+            _lm = getattr(self.model, "_language_model", None)
+            if _lm is not None and hasattr(_lm, "_rope_deltas"):
+                _lm._rope_deltas = mx.zeros_like(_seed_delta)
+                logger.debug(
+                    "Seeded zero mRoPE delta for cached text-only request %s",
+                    request.request_id,
+                )
 
     # Boundary snapshot setup
     block_size = self.config.paged_cache_block_size
@@ -288,6 +306,14 @@ def _do_external_prefill(
                 f"{total_length} tokens: "
                 f"{len(abort_uids)} request(s) aborted"
             )
+            # Reclaim Metal intermediates before unwinding: the raise skips
+            # both the chunk-end clear below and the post-loop clear, so
+            # sync+clear twice here to mirror the normal-exit invariant.
+            _sync_and_clear_cache(self._stream)
+            _sync_and_clear_cache(self._stream)
+            # Clear saved rope-delta state so a retry never restores stale
+            # mRoPE deltas captured before the abort.
+            request._prefill_saved_rope_deltas = None
             raise _PrefillAbortedError(abort_uids, processed_tokens)
 
         # Reclaim Metal intermediates between prefill chunks.
@@ -698,11 +724,39 @@ def _insert_prefilled_request(
     if request.sampling_params.seed is not None:
         mx.random.seed(request.sampling_params.seed)
 
+    # TurboQuant KV epilogue: mirror the external-prefill / cache-hit path
+    # (sched_schedule._schedule_waiting) so chunked prefill also lands a
+    # quantized cache. Materialize lazy KV arrays first, flush the Metal
+    # cache pool, then convert eligible KVCache layers in place. Without
+    # this, chunked-prefill requests keep fp16 KV and silently skip the
+    # memory savings the user configured via _turboquant_kv_bits.
+    if (
+        state.cache is not None
+        and getattr(self, "_turboquant_kv_bits", None) is not None
+        and self._turboquant_eligible(state.cache)
+    ):
+        from . import sched_cache as _sched_cache_mod
+
+        _sched_cache_mod._materialize_cache_storage(state.cache)
+        _sync_and_clear_cache(self._stream)
+        self._apply_turboquant_kv_convert(state.cache)
+        logger.debug(
+            "Chunked prefill TQ epilogue applied for %s (%d cache layers)",
+            request.request_id,
+            len(state.cache),
+        )
+
     per_row_lps = state.per_row_lps if state.per_row_lps is not None else []
+    # Seed the per-row token history with the prefilled prompt prefix
+    # (everything except state.last_token, which BatchGenerator processes
+    # via ``prompts``). Mirrors the all_tokens seed in _schedule_waiting.
+    prompt_ids = request.prompt_token_ids
+    seed_prefix = prompt_ids[: len(prompt_ids) - len(state.last_token)]
     uids = self.batch_generator.insert(
         [state.last_token],
         max_tokens=[request.sampling_params.max_tokens],
         caches=[state.cache] if state.cache else None,
+        all_tokens=[seed_prefix],
         samplers=[state.sampler],
         logits_processors=[per_row_lps],
         state_machines=[state.sm],

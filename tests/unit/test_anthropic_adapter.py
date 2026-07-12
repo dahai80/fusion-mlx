@@ -1173,29 +1173,36 @@ class TestOpenaiToAnthropicMigrated:
         result = openai_to_anthropic(resp, "default")
         assert result.stop_reason == "max_tokens"
 
-    @pytest.mark.skip(
-        reason="fusion-mlx openai_to_anthropic does not support matched_stop kwarg"
-    )
     def test_matched_stop_promotes_end_turn_to_stop_sequence(self):
-        pass
+        resp = self._make_response(content="hi END", finish_reason="stop")
+        result = openai_to_anthropic(resp, "default", matched_stop="END")
+        assert result.stop_reason == "stop_sequence"
+        assert result.stop_sequence == "END"
 
-    @pytest.mark.skip(
-        reason="fusion-mlx openai_to_anthropic does not support matched_stop kwarg"
-    )
     def test_matched_stop_none_keeps_end_turn(self):
-        pass
+        resp = self._make_response(content="hi", finish_reason="stop")
+        result = openai_to_anthropic(resp, "default", matched_stop=None)
+        assert result.stop_reason == "end_turn"
+        assert result.stop_sequence is None
 
-    @pytest.mark.skip(
-        reason="fusion-mlx openai_to_anthropic does not support matched_stop kwarg"
-    )
     def test_matched_stop_does_not_override_max_tokens(self):
-        pass
+        resp = self._make_response(content="long output", finish_reason="length")
+        result = openai_to_anthropic(resp, "default", matched_stop="END")
+        assert result.stop_reason == "max_tokens"
 
-    @pytest.mark.skip(
-        reason="fusion-mlx openai_to_anthropic does not support matched_stop kwarg"
-    )
     def test_matched_stop_does_not_override_tool_use(self):
-        pass
+        tc = ToolCall(
+            id="call_1",
+            type="function",
+            function=FunctionCall(name="search", arguments='{"q": "x"}'),
+        )
+        resp = self._make_response(
+            content="Calling search.",
+            finish_reason="tool_calls",
+            tool_calls=[tc],
+        )
+        result = openai_to_anthropic(resp, "default", matched_stop="END")
+        assert result.stop_reason == "tool_use"
 
     def test_response_has_id(self):
         resp = self._make_response()
@@ -1236,11 +1243,16 @@ class TestOpenaiToAnthropicMigrated:
         result = openai_to_anthropic(resp, "default")
         assert all(b.type != "thinking" for b in result.content)
 
-    @pytest.mark.skip(
-        reason="fusion-mlx openai_to_anthropic does not support reasoning_enabled kwarg"
-    )
     def test_reasoning_disabled_omits_thinking_block(self):
-        pass
+        resp = self._make_response(
+            content="Final answer.",
+            reasoning_content="Let me think.",
+        )
+        result = openai_to_anthropic(resp, "default", reasoning_enabled=False)
+        assert all(b.type != "thinking" for b in result.content)
+        assert any(
+            b.type == "text" and b.text == "Final answer." for b in result.content
+        )
 
     @pytest.mark.skip(
         reason="fusion-mlx openai_to_anthropic does not support reasoning_enabled kwarg; "

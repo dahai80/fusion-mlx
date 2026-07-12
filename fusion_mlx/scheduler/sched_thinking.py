@@ -191,6 +191,18 @@ def _build_sampler_and_processors(
         except ImportError:
             logger.warning("xgrammar not installed; skipping grammar constraint")
 
+    # Mask model-level suppress_tokens (from generation_config.json) to -inf
+    # so they are never sampled (e.g. tokens that trigger runaway output).
+    if self._model_suppress_tokens:
+        _suppress_ids = mx.array(sorted(self._model_suppress_tokens))
+        _neg_inf = float("-inf")
+
+        def _suppress_tokens_processor(token_ids, logits):
+            logits[:, _suppress_ids] = _neg_inf
+            return logits
+
+        logits_processors.append(_suppress_tokens_processor)
+
     return sampler, logits_processors
 
 

@@ -501,9 +501,7 @@ async def anthropic_messages(request: AnthropicMessagesRequest) -> Any:
                                 )
 
             return StreamingResponse(
-                _stream_anthropic_generator(
-                    request, engine, model_name, adapter_path
-                ),
+                _stream_anthropic_generator(request, engine, model_name, adapter_path),
                 media_type="text/event-stream",
                 headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
             )

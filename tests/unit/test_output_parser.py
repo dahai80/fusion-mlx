@@ -8,10 +8,9 @@ import sys
 import types
 from types import SimpleNamespace
 
-from fusion_mlx.adapter.output_parser import detect_output_parser
-
-from fusion_mlx.adapter.gemma4 import Gemma4OutputParserSession
-from fusion_mlx.adapter.harmony import load_harmony_gpt_oss_encoding
+from fusion_mlx.parsers.gemma4 import Gemma4OutputParserSession
+from fusion_mlx.parsers.harmony import load_harmony_encoding
+from fusion_mlx.parsers.output_parser import detect_output_parser
 
 
 class FakeDetokenizer:
@@ -271,7 +270,7 @@ class TestCohere2MoeOutputParserSession:
         monkeypatch.setitem(__import__("sys").modules, "cohere_melody", module)
 
         tokenizer = CohereTokenizer({"TC": "TC"})
-        from fusion_mlx.adapter.output_parser import Cohere2MoeOutputParserSession
+        from fusion_mlx.parsers.output_parser import Cohere2MoeOutputParserSession
 
         session = Cohere2MoeOutputParserSession.__new__(Cohere2MoeOutputParserSession)
         session._tokenizer = tokenizer
@@ -617,10 +616,14 @@ class TestOutputParserFactory:
         assert factory.kind == "gemma4"
 
     def test_harmony_wrapper_regression(self):
-        encoding = load_harmony_gpt_oss_encoding()
+        encoding = load_harmony_encoding("HarmonyGptOss")
         tokenizer = HarmonyTokenizer(encoding)
+        # detect_output_parser matches harmony by NAME only (is_harmony_model);
+        # gpt-oss itself is routed via output_router_harmony, not this factory.
+        # Use a harmony-bearing name so the factory is returned and the
+        # HarmonyOutputParserSession wrapper behavior is exercised.
         factory = detect_output_parser(
-            "gpt-oss-20b",
+            "harmony-gpt-oss-20b",
             tokenizer,
             {"model_type": "gpt_oss"},
         )
@@ -656,10 +659,12 @@ class TestOutputParserFactory:
         """Non-streaming output_text retains analysis-channel reasoning."""
         from fusion_mlx.api.thinking import extract_thinking
 
-        encoding = load_harmony_gpt_oss_encoding()
+        encoding = load_harmony_encoding("HarmonyGptOss")
         tokenizer = HarmonyTokenizer(encoding)
+        # Name must contain "harmony" for detect_output_parser (name-based);
+        # gpt-oss routing lives in output_router_harmony, not this factory.
         factory = detect_output_parser(
-            "gpt-oss-20b",
+            "harmony-gpt-oss-20b",
             tokenizer,
             {"model_type": "gpt_oss"},
         )

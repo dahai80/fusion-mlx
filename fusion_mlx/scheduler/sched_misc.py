@@ -514,7 +514,8 @@ def get_ssd_cache_stats(self) -> dict[str, Any] | None:
 get_tiered_cache_stats = get_ssd_cache_stats
 
 
-def _format_bytes(self, bytes_value: int) -> str:
+@staticmethod
+def _format_bytes(bytes_value: int) -> str:
     if bytes_value >= 1024**3:
         return f"{bytes_value / 1024**3:.2f} GB"
     elif bytes_value >= 1024**2:

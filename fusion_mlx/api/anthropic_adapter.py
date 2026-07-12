@@ -127,6 +127,8 @@ def anthropic_to_openai(request: MessagesRequest) -> ChatCompletionRequest:
 def openai_to_anthropic(
     response: ChatCompletionResponse,
     model: str,
+    reasoning_enabled: bool = True,
+    matched_stop: str | None = None,
 ) -> MessagesResponse:
     """
     Convert an OpenAI Chat Completions response to Anthropic Messages API format.
@@ -146,7 +148,7 @@ def openai_to_anthropic(
         # matching Anthropic's extended-thinking SDK convention. Without
         # this block ``<think>...</think>`` reasoning would silently
         # disappear from the non-streaming response — issue #413.
-        if choice.message.reasoning_content:
+        if reasoning_enabled and choice.message.reasoning_content:
             content.append(
                 ContentBlockThinking(
                     thinking=choice.message.reasoning_content,
@@ -191,6 +193,11 @@ def openai_to_anthropic(
     else:
         stop_reason = "end_turn"
 
+    stop_sequence: str | None = None
+    if matched_stop is not None and stop_reason == "end_turn":
+        stop_reason = "stop_sequence"
+        stop_sequence = matched_stop
+
     # If no content blocks, add empty text
     if not content:
         content.append(ContentBlockText(text=""))
@@ -199,6 +206,7 @@ def openai_to_anthropic(
         model=model,
         content=content,
         stop_reason=stop_reason,
+        stop_sequence=stop_sequence,
         usage=AnthropicUsage(
             input_tokens=response.usage.prompt_tokens if response.usage else 0,
             output_tokens=response.usage.completion_tokens if response.usage else 0,

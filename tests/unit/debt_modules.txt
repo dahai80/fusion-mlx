@@ -10,11 +10,11 @@
 #   runtime-fail  — collects but fails on stale assertions / removed attrs
 #   timeout       — hangs or exceeds the unit-gate budget (integration-style)
 #
-# Total: 404 modules excluded; 131 healthy modules remain in the CI gate.
+# Total: 389 modules excluded; 146 healthy modules remain in the CI gate.
 # Pay down by updating each module to the current released API, then remove
 # its line here. See memory: fusion-mlx-rapid-mlx-test-debt.
 
-## uncollectable (137)
+## uncollectable (115)
 test_accuracy_benchmark.py
 test_admin_server_aliases.py
 test_agent_query_context_skip.py
@@ -26,12 +26,9 @@ test_anthropic_route_thinking_gate.py
 test_anthropic_sdk.py
 test_anthropic_spec_polish_bundle.py
 test_anthropic_stop_sequences.py
-test_anthropic_stream_finalize.py
 test_anthropic_stream_reasoning.py
 test_anthropic_think_leak_r12_m1b.py
-test_anthropic_tool_param_validation.py
 test_anthropic_tool_usage_d.py
-test_anthropic_tool_validation_scope.py
 test_audio_discovery.py
 test_bench_tier_smoke.py
 test_benchmark_sse_replay.py
@@ -43,24 +40,18 @@ test_chat_route_forced_tool_prefix.py
 test_chat_route_tool_choice_enforcement.py
 test_chat_route_tool_tag_leak.py
 test_chat_route_vlm_image.py
-test_chat_streaming_guided.py
-test_chat_streaming_no_reasoning_alias.py
-test_chat_streaming_spec.py
 test_chat_template_kwargs.py
 test_chat_template_marker_sanitize.py
 test_cli_chat.py
 test_cli_info.py
 test_cli_models.py
 test_community_bench_aggregate.py
-test_completions_response_format_json_schema.py
-test_completions_response_format_logprobs.py
 test_config.py
 test_context_scaling.py
 test_disk_space_check.py
 test_embedding.py
 test_enable_thinking_prompt_accounting.py
 test_enable_thinking_warning_header.py
-test_engine_core.py
 test_engine_pool.py
 test_eval.py
 test_finalize_harmony_raw_text.py
@@ -68,29 +59,22 @@ test_gemma4_altup_autodetect.py
 test_gemma4_messages.py
 test_generation_config_loader.py
 test_harmony_finalize.py
-test_harmony_parser.py
-test_harmony.py
 test_hf_uploader.py
-test_image_block_requires_vision_model.py
 test_install_detection.py
 test_integrations.py
 test_kv_cache_position_ids.py
 test_launch_cli.py
 test_log_namespace_rebrand.py
 test_logging_config.py
-test_lone_surrogate_validator.py
 test_markitdown_integration.py
 test_max_generation_tokens_ceiling.py
 test_mbpp_extract_code.py
 test_mlx_lm_mtp_patch.py
 test_modality_field.py
-test_models_base.py
 test_models_command_layout.py
 test_ms_downloader.py
 test_mtp_lossless.py
-test_oq_manager.py
 test_orphan_tool_validation.py
-test_output_parser.py
 test_paired_compat.py
 test_param_validation_r5e.py
 test_per_request_thinking_budget.py
@@ -106,18 +90,15 @@ test_probe_fastpath.py
 test_process_title.py
 test_pull_summary.py
 test_pydantic_ai_full.py
-test_r12_4_strict_json_schema_constraint_matrix.py
 test_r12_4_strict_json_schema_helpers.py
 test_r12_h06_repair_context_guard.py
 test_r12_reasoning_sanitizer_required.py
 test_reasoning_content_null_rescue.py
 test_reasoning_parser_truncation_finalize.py
 test_reranker_vl.py
-test_response_format_json_schema_strict.py
 test_responses_adapter.py
 test_responses_chat_template_kwargs.py
 test_rm_command.py
-test_routes_cached_tokens.py
 test_runtime_cache_path.py
 test_sampler_fast_path.py
 test_seed_reproducibility.py
@@ -129,14 +110,12 @@ test_settings.py
 test_share_cli.py
 test_silent_drop_rescue_569.py
 test_smolagents_full.py
-test_stream_include_usage_honored.py
 test_streaming_detokenizer_bpe.py
 test_streaming_detokenizer.py
 test_streaming_pipeline_integration.py
 test_suffix_bench_methodology.py
 test_tempfile_safe.py
 test_text_model_from_vlm.py
-test_text_only_media_gate.py
 test_thinking_budget.py
 test_thinking_toggle.py
 test_tokenizer_gemma4_hybrid.py
@@ -146,14 +125,20 @@ test_tool_logits.py
 test_tool_result_content_array.py
 test_tools_auto_disable_thinking.py
 test_truncation_no_synthetic_text.py
-test_turboquant_kvcache_state.py
 test_upgrade_cli.py
 test_vlm_audio_fallback.py
 test_vlm_cohere2_moe_loader.py
 test_vlm_mtp_proxy.py
 test_vlm_torch_free_image_processor.py
 
-## runtime-fail (266)
+## runtime-fail (272)
+test_r12_4_strict_json_schema_constraint_matrix.py
+test_response_format_json_schema_strict.py
+test_routes_cached_tokens.py
+test_stream_include_usage_honored.py
+test_text_only_media_gate.py
+test_output_parser.py
+test_turboquant_kvcache_state.py
 test_447_stream_tool_choice_auto.py
 test_active_models_visibility.py
 test_admin_auth.py
@@ -366,7 +351,6 @@ test_sanitize_output.py
 test_scheduler_chunked_prefill.py
 test_scheduler_prefill_memory_guard.py
 test_scheduler_stop_decoder_surface.py
-test_scheduler.py
 test_schema_v2_accepts_minimal_v2.py
 test_schema_v2_accepts_v1.py
 test_schema_v2_rejects_partial_harness.py

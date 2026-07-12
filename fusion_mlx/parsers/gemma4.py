@@ -7,12 +7,8 @@ import json
 import re
 from typing import Any
 
-try:
-    from mlx_lm.tokenizer_utils import NaiveStreamingDetokenizer
-except ImportError:
-    NaiveStreamingDetokenizer = None
-
 from ..api.utils import _PRESERVE_BOUNDARY_KEY
+from ..utils.tokenizer import create_streaming_detokenizer
 from .output_parser import OutputParserFinalizeResult, OutputParserTokenResult
 
 _OPEN_MARKER = "<|channel>thought\n"
@@ -286,18 +282,13 @@ def _matching_prefix_len(text: str, marker: str) -> int:
 class Gemma4OutputParserSession:
     """Suppress Gemma 4 protocol markers and re-emit thought blocks as ``<think>`` tags."""
 
-    def __init__(self, tokenizer: Any):
+    def __init__(self, tokenizer: Any, model_path: Any = None):
         self._tokenizer = tokenizer
+        self._model_path = model_path
         self._buffer = ""
         self._in_thought = False
 
-        if hasattr(tokenizer, "detokenizer"):
-            self._detokenizer = tokenizer.detokenizer
-        elif NaiveStreamingDetokenizer is not None:
-            self._detokenizer = NaiveStreamingDetokenizer(tokenizer)
-        else:
-            self._detokenizer = None
-
+        self._detokenizer = create_streaming_detokenizer(tokenizer, model_path)
         if self._detokenizer is not None:
             self._detokenizer.reset()
 

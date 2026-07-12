@@ -2320,7 +2320,7 @@ class TestCoverageGaps:
         cfg = _make_cfg(reasoning_parser_name="minimax")
         # Make ToolParserManager.get_tool_parser raise for "minimax"
         with patch(
-            "vllm_mlx.tool_parsers.ToolParserManager.get_tool_parser",
+            "fusion_mlx.tool_parsers.ToolParserManager.get_tool_parser",
             side_effect=KeyError("minimax not found"),
         ):
             pp = StreamingPostProcessor(cfg, tools_requested=True)
@@ -2372,7 +2372,7 @@ class TestCoverageGaps:
         pp.reset()
 
         # sanitize_output returns empty → content becomes None
-        with patch("vllm_mlx.service.postprocessor.sanitize_output", return_value=""):
+        with patch("fusion_mlx.service.postprocessor.sanitize_output", return_value=""):
             out = _make_output("some text", channel="content")
             events = pp.process_chunk(out)
             content_events = [e for e in events if e.type == "content"]
@@ -2430,7 +2430,7 @@ class TestCoverageGaps:
         pp = StreamingPostProcessor(cfg)
         pp.reset()
 
-        with patch("vllm_mlx.service.postprocessor.sanitize_output", return_value=""):
+        with patch("fusion_mlx.service.postprocessor.sanitize_output", return_value=""):
             events = pp.process_chunk(_make_output("text"))
             content_events = [e for e in events if e.type == "content"]
             assert len(content_events) == 0
@@ -2443,7 +2443,7 @@ class TestCoverageGaps:
         pp = StreamingPostProcessor(cfg)
         pp.reset()
 
-        with patch("vllm_mlx.service.postprocessor.sanitize_output", return_value=""):
+        with patch("fusion_mlx.service.postprocessor.sanitize_output", return_value=""):
             events = pp.process_chunk(_make_output("text"))
             content_events = [e for e in events if e.type == "content"]
             assert len(content_events) == 0
@@ -2493,7 +2493,7 @@ class TestCoverageGaps:
 
         # strip_special_tokens returns empty string → content=None, no finish → []
         with patch(
-            "vllm_mlx.service.postprocessor.strip_special_tokens", return_value=""
+            "fusion_mlx.service.postprocessor.strip_special_tokens", return_value=""
         ):
             events = pp.process_chunk(_make_output("some_special_token"))
             assert len(events) == 0
@@ -2507,7 +2507,7 @@ class TestCoverageGaps:
         # Text that sanitizes to nothing
         from unittest.mock import patch
 
-        with patch("vllm_mlx.service.postprocessor.sanitize_output", return_value=""):
+        with patch("fusion_mlx.service.postprocessor.sanitize_output", return_value=""):
             events = pp.process_chunk(_make_output("some text"))
             # sanitize returned empty, no finish → empty list
             content_events = [e for e in events if e.type == "content"]

@@ -1,5 +1,48 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixed
+- **`/v1/completions` silently dropped OpenAI params and mistyped `logprobs`.**
+  `CompletionRequest.logprobs` was declared `bool | None` (copy-pasted from
+  `ChatCompletionRequest`), but the OpenAI legacy-completions spec - and the
+  route's own `0..5` range check at `routes/completions.py:121` - treat it as
+  an integer top-k. A `logprobs: 2` request was rejected as `invalid_request`
+  ("Input should be a valid boolean") before the route body ran. Additionally,
+  `n`, `best_of`, `echo`, `response_format`, and `stream_options` were never
+  declared, so Pydantic silently dropped them and the route crashed with
+  `AttributeError` once it reached `request.n` / `request.echo`. `logprobs` is
+  now `int | None` and the five fields are declared with types mirroring
+  `ChatCompletionRequest`. Backward-compatible: `bool` still coerces to `int`.
+- **`extract_multimodal_content` dropped `video` / `video_url` / `audio_url`
+  parts.** The helper only emitted `image_url` / `input_audio` branches, so
+  VLM video/audio inputs were silently lost and `has_multimodal` under-reported
+  multimodal requests. All three content types are now preserved and counted.
+- **`/v1/completions` logprob extraction crashed on `top_k <= 0`.**
+  `_extract_token_logprob` called `np.argpartition` without guarding the
+  empty / zero-k case. Added an early-return that emits the sampled token
+  with an empty `top_logprobs` list.
+- **Memory enforcer double-counted sustained over-ceiling pressure.**
+  `_is_emergency_pressure` mutated `_over_ceiling_polls` and was called twice
+  per check (initial + post-hot-cache-shrink recheck), inflating the
+  sustained-pressure counter and triggering premature emergency eviction.
+  Split into a side-effecting `_is_emergency_pressure` + a pure
+  `_evaluate_emergency_pressure`; the recheck now uses the pure variant.
+- **Engine pool unload blocked the pool lock on slow teardown.** `release_engine`
+  / `unload_if_idle_unpinned` performed full engine teardown under the pool
+  lock. Split into `_detach_engine` (under lock) + `_settle_unloaded_engine`
+  (outside lock); sync `unload_engine` now subtracts `estimated_size` from
+  accounting.
+- **`fusion-mlx serve --model-dir` ignored `--host` / `--port`.**
+  `_serve_from_model_dir` hardcoded `0.0.0.0:8000`. Now reads `args.host` /
+  `args.port` (defaulting to `0.0.0.0` / `8000`).
+- **LTX-2 distilled denoise returned bf16 latents.** `denoise_distilled`
+  computed in f32 then cast back to bf16, losing precision for the downstream
+  VAE decode. Now returns f32 latents (mirrors the dev path).
+- **`ContentPart` (api/openai_models.py) lacked `video` / `audio_url`.** Added
+  the `video` and `audio_url` fields plus an `AudioURL` model, restoring parity
+  with the sibling `api/models.py`.
+
 ## [0.4.5] - 2026-07-07
 
 ### Fixed

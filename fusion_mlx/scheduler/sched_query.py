@@ -36,12 +36,19 @@ def has_requests(self) -> bool:
     so that the engine loop keeps calling step() until the clear fires.
     Without this, an idle server would never reach the target step and
     stale buffers would accumulate indefinitely.
+
+    Also returns True when a deferred async store_cache remove is pending
+    (_pending_async_removes): _drain_pending_async_removes() runs at the
+    start of every step, so the engine must keep stepping until the
+    deferred batch_generator.remove() + uid cleanup fires. Otherwise the
+    last finishing request's async cleanup would leak indefinitely.
     """
     return bool(
         self.waiting
         or self.prefilling
         or self.running
         or self._deferred_clear_at is not None
+        or self._pending_async_removes
     )
 
 

@@ -54,7 +54,7 @@ from fusion_mlx.memory_cache import (  # noqa: E402
     MemoryAwarePrefixCache,
     MemoryCacheConfig,
 )
-from fusion_mlx.turboquant import (  # noqa: E402
+from fusion_mlx.turboquant_kv import (  # noqa: E402
     TurboQuantConfig,
     TurboQuantKVCache,
 )

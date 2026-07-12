@@ -113,6 +113,7 @@ class Scheduler:
     _ROTATING_BLOCK_SIZE_MIN: int = 512
     _ROTATING_BLOCK_SIZE_MAX: int = 1024
     _ARRAYS_CACHE_BLOCK_SIZE: int = 2048
+    _DEFERRED_CLEAR_DELAY: int = 4
 
     def add_request(self, *args, **kwargs):
         return add_request(self, *args, **kwargs)
@@ -295,3 +296,46 @@ for _mod_name in _sched_mod_names:
         _params = list(_sig.parameters.keys())
         if _params and _params[0] in ("self", "sched"):
             setattr(Scheduler, _attr_name, _fn)
+
+# Bind @staticmethod helpers skipped by the self/sched-first auto-bind loop.
+# _cache_tree_has_arrays_cache is called as self._cache_tree_has_arrays_cache
+# inside _enlarge_block_size_for_arrays_cache (sched_cache.py:402, reachable
+# when paged_ssd_cache_dir is set) and directly by unit tests.
+from .sched_cache import _cache_tree_has_arrays_cache as _cache_tree_has_arrays_cache
+
+Scheduler._cache_tree_has_arrays_cache = _cache_tree_has_arrays_cache
+
+# _format_bytes is a pure formatter (no self use) declared @staticmethod in
+# sched_misc; the self/sched-first auto-bind loop skips staticmethods, so bind
+# it explicitly. Called as self._format_bytes(...) and directly by unit tests
+# via Scheduler._format_bytes(...).
+from .sched_misc import _format_bytes as _format_bytes
+
+Scheduler._format_bytes = _format_bytes
+
+# _collect_arrays_from_extracted_cache is a @staticmethod pure helper in
+# sched_cache (no self use) that walks an _extracted_cache payload for lazy
+# mx.array refs to pre-eval on the inference thread. The self/sched-first
+# auto-bind loop skips staticmethods, so bind it explicitly. Called as
+# self._collect_arrays_from_extracted_cache(...) inside _cleanup_finished
+# (sched_response.py store_cache_main_collect phase). Without this binding the
+# call raised AttributeError, was swallowed by the surrounding except, and
+# silently skipped cache storage for every finished request.
+from .sched_cache import (
+    _collect_arrays_from_extracted_cache as _collect_arrays_from_extracted_cache,
+)
+
+Scheduler._collect_arrays_from_extracted_cache = _collect_arrays_from_extracted_cache
+
+# _merge_boundary_with_full_cache is a @staticmethod pure helper in
+# sched_boundary (no self use) that fills placeholder layers in a boundary
+# snapshot from the full extracted cache. Skipped by the self/sched-first
+# auto-bind loop; called as self._merge_boundary_with_full_cache(...) inside
+# _cleanup_finished (sched_response.py boundary_override branch). Without this
+# binding the call raised AttributeError and silently skipped cache storage
+# for every request ending on a partial trailing block.
+from .sched_boundary import (
+    _merge_boundary_with_full_cache as _merge_boundary_with_full_cache,
+)
+
+Scheduler._merge_boundary_with_full_cache = _merge_boundary_with_full_cache

@@ -5,9 +5,9 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from fusion_mlx.adapter.harmony import (
+from fusion_mlx.parsers.harmony import (
     HarmonyStreamingParser,
-    load_harmony_gpt_oss_encoding,
+    load_harmony_encoding,
     parse_tool_calls_from_tokens,
     preprocess_harmony_messages,
 )
@@ -16,7 +16,7 @@ from fusion_mlx.adapter.harmony import (
 @pytest.fixture(scope="session")
 def encoding():
     """Load HarmonyGptOss encoding."""
-    return load_harmony_gpt_oss_encoding()
+    return load_harmony_encoding("HarmonyGptOss")
 
 
 @pytest.fixture
@@ -332,8 +332,8 @@ class TestParseToolCallsFromTokens:
         assert analysis_text == ""
         assert "Hello world" in output_text
 
-    def test_unknown_channel_without_recipient_falls_back_to_final(self, encoding):
-        """Malformed channel names without recipients remain visible."""
+    def test_unknown_channel_without_recipient_is_dropped(self, encoding):
+        """Malformed channel names without recipients are dropped (not surfaced)."""
         tokens = encoding.encode(
             "<|channel|>mardown<|message|>visible text<|return|>",
             allowed_special="all",
@@ -343,7 +343,7 @@ class TestParseToolCallsFromTokens:
             tokens, prepend_start=True
         )
 
-        assert "visible text" in output_text
+        assert output_text == ""
         assert analysis_text == ""
         assert tool_calls == []
 

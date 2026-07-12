@@ -203,7 +203,32 @@ def _vlm_mtp_flush_batch(
         logger.warning("vlm_mtp batched prefill failed: %s", e)
         return []
 
-    # Sample first bonus token per row
+    # Sample first bonus token per row. Mask _model_suppress_tokens before
+    # sampling so the bonus (and downstream MTP decode via eff_sampler)
+    # never emits ids the model config marks as ungenerable.
+    # run_vlm_mtp_decode takes a single sampler callable with no
+    # logits-processors arg, so suppression must be baked into the sampler;
+    # all rows share the same _model_suppress_tokens set.
+    suppress_tokens = sorted(getattr(self, "_model_suppress_tokens", None) or set())
+    if suppress_tokens:
+        logger.debug(
+            "vlm_mtp flush: masking %d suppressed token id(s) in sampler",
+            len(suppress_tokens),
+        )
+
+    def _mask_suppressed(row_logits):
+        if not suppress_tokens:
+            return row_logits
+        masked = row_logits.astype(mx.float32)
+        masked[..., suppress_tokens] = float("-inf")
+        return masked
+
+    base_sampler = queue[0]["sampler"]
+    if suppress_tokens:
+        eff_sampler = lambda lg: base_sampler(_mask_suppressed(lg))
+    else:
+        eff_sampler = base_sampler
+
     logits = out.logits[:, -1, :]
     hidden_states = out.hidden_states
     hidden = hidden_states[-1] if isinstance(hidden_states, list) else hidden_states
@@ -212,7 +237,7 @@ def _vlm_mtp_flush_batch(
 
     first_bonus_list = []
     for i in range(B):
-        tok = queue[i]["sampler"](logits[i : i + 1])
+        tok = queue[i]["sampler"](_mask_suppressed(logits[i : i + 1]))
         mx.eval(tok)
         first_bonus_list.append(int(tok.item()))
     batched_first_bonus = mx.array(first_bonus_list, dtype=mx.int32)
@@ -230,7 +255,7 @@ def _vlm_mtp_flush_batch(
         eos_sets.append(eos)
 
     # Start batched MTP decode
-    from .vlm_mtp import run_vlm_mtp_decode
+    from ..speculative.vlm_mtp import run_vlm_mtp_decode
 
     draft_block_size = getattr(self, "_vlm_mtp_draft_block_size", None)
     try:
@@ -242,7 +267,7 @@ def _vlm_mtp_flush_batch(
             shared_kv_states=shared_kv,
             first_bonus=batched_first_bonus,
             max_tokens=queue[0]["request"].sampling_params.max_tokens,
-            sampler=queue[0]["sampler"],
+            sampler=eff_sampler,
             draft_block_size=draft_block_size,
             token_dtype=mx.int32,
         )

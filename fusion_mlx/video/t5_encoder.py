@@ -237,7 +237,7 @@ class T5Encoder(nn.Module):
         raw = {}
         for shard in shards:
             with safe_open(str(shard), framework="numpy") as f:
-                for k in f.keys():
+                for k in list(f.keys()):
                     raw[k] = f.get_tensor(k)
         mapped = _map_t5_weights(raw)
         pairs = [(k, mx.array(v).astype(dtype)) for k, v in mapped.items()]

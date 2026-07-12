@@ -517,8 +517,34 @@ def _resolve_request_alias_or_default(request_model: str | None) -> str | None:
     return request_model
 
 
-def _resolve_max_tokens(request_max_tokens: int | None) -> int | None:
-    return request_max_tokens
+def _resolve_max_tokens(
+    request_max_tokens: int | None,
+    enable_thinking: bool | None = None,
+) -> int | None:
+    # Explicit per-request cap is always a hard ceiling - honored verbatim,
+    # thinking or not (the operator/user set it deliberately).
+    if request_max_tokens is not None:
+        return request_max_tokens
+
+    # enable_thinking=None means the route did not resolve the thinking
+    # state - preserve the historical pass-through (None = "no cap / engine
+    # default") so chat/completions/responses routes keep behaving as before.
+    if enable_thinking is None:
+        return request_max_tokens
+
+    from ..config import get_config
+
+    cfg = get_config()
+    default = cfg.default_max_tokens
+
+    # Thinking on + an IMPLICIT operator default: add CoT headroom
+    # (default + thinking_token_budget) so reasoning isn't truncated before
+    # the answer. An EXPLICIT operator default is a hard cap - no headroom
+    # (the operator chose the ceiling knowingly).
+    if enable_thinking and not cfg.default_max_tokens_is_explicit:
+        return default + cfg.thinking_token_budget
+
+    return default
 
 
 def _resolve_temperature(request_temperature: float | None) -> float:
@@ -830,6 +856,19 @@ def _extract_token_logprob(
     if hasattr(logprobs_array, "astype"):
         logprobs_array = logprobs_array.astype(mx.float32)
     probs = np.array(logprobs_array).flatten()
+    # top_k <= 0 means the caller requested no alternative logprobs (OpenAI
+    # top_logprobs=0). np.argpartition(probs, -0)[-0:] would otherwise slice
+    # [:] and return the entire vocabulary sorted. Return just the sampled
+    # token with an empty list instead. (code-review #72)
+    if top_k <= 0:
+        sampled_text = tokenizer.decode([token_id])
+        sampled_bytes = list(sampled_text.encode("utf-8", errors="replace"))
+        return TokenLogProb(
+            token=sampled_text,
+            logprob=float(probs[token_id]) if token_id < len(probs) else 0.0,
+            bytes=sampled_bytes,
+            top_logprobs=[],
+        )
     top_k = min(top_k, len(probs))
     top_indices = np.argpartition(probs, -top_k)[-top_k:]
     top_indices = top_indices[np.argsort(probs[top_indices])][::-1]

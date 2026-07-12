@@ -647,6 +647,26 @@ def parse_tool_calls(
                         cleaned_text = cleaned_text[:idx].strip()
                 return cleaned_text, tool_calls
 
+    # Fallback: bare <tool_call>...</tool_call> tags. Reached when no
+    # tokenizer tool-calling is configured (streaming finalize passes the
+    # request dict, not a tokenizer) or the native parser found no calls.
+    # Wrap each body in the internal ␝/␞ delimiters so the shared
+    # _parse_xml_tool_calls recovers JSON / Qwen <function=> / GLM bodies
+    # (test_finalize_cross_format_fallback_recovers_xml_tool_call).
+    if "<tool_call>" in cleaned_text and "</tool_call>" in cleaned_text:
+        wrapped = re.sub(
+            r"<tool_call>(.*?)</tool_call>",
+            lambda m: f"␝{m.group(1)}␞",
+            cleaned_text,
+            flags=re.DOTALL,
+        )
+        if wrapped != cleaned_text:
+            logger.debug(
+                "parse_tool_calls: bare <tool_call> fallback engaged, "
+                "no tokenizer tool-calling available"
+            )
+            return _parse_xml_tool_calls(wrapped)
+
     # Fallback: parse XML <tool_call> tags (GLM, Qwen, generic formats)
     if "␝" in cleaned_text:
         return _parse_xml_tool_calls(cleaned_text)
@@ -1396,8 +1416,12 @@ def parse_json_output(
     if response_format is None:
         return text, None, True, None
 
-    # Normalize response_format to dict
-    if isinstance(response_format, ResponseFormat):
+    # Normalize response_format to dict. ``models.py`` and
+    # ``openai_models.py`` define identical ``ResponseFormat`` duplicates;
+    # duck-type via ``model_dump`` so an isinstance against one class does
+    # not miss an instance of the other (fixes ``'ResponseFormat' object has
+    # no attribute 'get'`` when the request model uses the models.py variant).
+    if hasattr(response_format, "model_dump"):
         rf_dict = {"type": response_format.type, "json_schema": None}
         if response_format.json_schema:
             rf_dict["json_schema"] = {
@@ -1459,8 +1483,12 @@ def build_json_system_prompt(
     if response_format is None:
         return None
 
-    # Normalize to dict
-    if isinstance(response_format, ResponseFormat):
+    # Normalize to dict. Two ResponseFormat pydantic classes coexist
+    # (api.models.ResponseFormat vs api.openai_models.ResponseFormat);
+    # isinstance only catches the openai_models one, so duck-type on
+    # model_dump to route both into the instance arm - mirrors
+    # extract_json_schema_for_guided / is_strict_json_schema below.
+    if hasattr(response_format, "model_dump"):
         rf_dict = {"type": response_format.type, "json_schema": None}
         if response_format.json_schema:
             rf_dict["json_schema"] = {
@@ -1524,7 +1552,7 @@ def extract_json_schema_for_guided(response_format) -> dict | None:
     if response_format is None:
         return None
     if hasattr(response_format, "model_dump"):
-        rf_dict = response_format.model_dump()
+        rf_dict = response_format.model_dump(by_alias=True)
     elif isinstance(response_format, dict):
         rf_dict = response_format
     else:
@@ -1543,7 +1571,7 @@ def is_strict_json_schema(response_format) -> bool:
     if response_format is None:
         return False
     if hasattr(response_format, "model_dump"):
-        rf_dict = response_format.model_dump()
+        rf_dict = response_format.model_dump(by_alias=True)
     elif isinstance(response_format, dict):
         rf_dict = response_format
     else:
