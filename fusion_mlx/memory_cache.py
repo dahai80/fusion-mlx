@@ -1338,7 +1338,7 @@ class MemoryAwarePrefixCache:
         # vanish in the microseconds between the recheck and the open().
         index_path = os.path.join(new_dir, "index.json")
         try:
-            with open(index_path, "w") as f:
+            with open(index_path, "w", encoding="utf-8") as f:
                 json.dump(index, f, indent=2)
         except OSError as e:
             # Catch the broader OSError (FileNotFoundError if dir vanished,
@@ -1409,7 +1409,7 @@ class MemoryAwarePrefixCache:
             if not os.path.exists(p):
                 return False
             try:
-                with open(p) as f:
+                with open(p, encoding="utf-8") as f:
                     obj = json.load(f)
             except (OSError, ValueError):
                 return False

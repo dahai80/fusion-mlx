@@ -8,7 +8,7 @@ import logging
 import secrets
 import threading
 import time
-from collections import defaultdict
+from collections import defaultdict, deque
 
 from fastapi import Depends, HTTPException, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
@@ -31,7 +31,7 @@ class RateLimiter:
         self.requests_per_minute = requests_per_minute
         self.enabled = enabled
         self.window_size = 60.0
-        self._requests: dict[str, list[float]] = defaultdict(list)
+        self._requests: dict[str, deque[float]] = defaultdict(deque)
         self._last_seen: dict[str, float] = {}
         self._last_cleanup_mono: float = float("-inf")
         self._lock = threading.Lock()
@@ -58,14 +58,18 @@ class RateLimiter:
         window_start = current_time - self.window_size
         with self._lock:
             self._maybe_cleanup(window_start, client_id)
-            timestamps = [t for t in self._requests[client_id] if t > window_start]
-            self._requests[client_id] = timestamps
-            if len(timestamps) >= self.requests_per_minute:
-                oldest = min(timestamps)
+            # #57: deque popleft until in-window -> amortized O(1) per hit
+            # instead of O(n) list rebuild + min() scan under the lock.
+            # Timestamps are append-right and monotonic, so deque[0] is oldest.
+            bucket = self._requests[client_id]
+            while bucket and bucket[0] <= window_start:
+                bucket.popleft()
+            if len(bucket) >= self.requests_per_minute:
+                oldest = bucket[0]
                 retry_after = int(oldest + self.window_size - current_time) + 1
                 self._last_seen[client_id] = current_time
                 return False, max(1, retry_after)
-            timestamps.append(current_time)
+            bucket.append(current_time)
             self._last_seen[client_id] = current_time
             return True, 0
 

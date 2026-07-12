@@ -309,7 +309,7 @@ def _load_model_config() -> dict[str, Any]:
     pkg_config = Path(__file__).parent / "model-config.json"
     if pkg_config.exists():
         try:
-            with open(pkg_config) as f:
+            with open(pkg_config, encoding="utf-8") as f:
                 config.update(json.load(f))
         except json.JSONDecodeError as e:
             logger.warning(
@@ -321,7 +321,7 @@ def _load_model_config() -> dict[str, Any]:
     user_config = Path.home() / ".fusion-mlx" / "model-config.json"
     if user_config.exists():
         try:
-            with open(user_config) as f:
+            with open(user_config, encoding="utf-8") as f:
                 user_data = json.load(f)
             config = _deep_merge(config, user_data)
         except json.JSONDecodeError as e:

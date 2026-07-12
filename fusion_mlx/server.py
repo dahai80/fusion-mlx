@@ -190,7 +190,14 @@ def _sync_config() -> None:
                 try:
                     setattr(cfg, _attr, _val)
                 except Exception:
-                    logger.debug("_sync_config: setattr %s failed (non-fatal)", _attr)
+                    # #69: setattr failures mean config silently drifts out of
+                    # sync (frozen dataclass / property setter). Warn so the
+                    # drift is visible, not buried at debug.
+                    logger.warning(
+                        "_sync_config: setattr %s failed (config may drift)",
+                        _attr,
+                        exc_info=True,
+                    )
     # Auth: propagate ``--api-key`` to the admin.auth module global the
     # middleware checks. Settings.json api_key is wired in Server.__init__;
     # this covers the CLI override for the single-model ``serve --model`` path.

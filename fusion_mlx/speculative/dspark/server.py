@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 import asyncio
+import atexit
 import json
 import logging
 import sys
@@ -38,6 +39,17 @@ logger = logging.getLogger(__name__)
 # (shared KV cache, single Metal stream). A 1-worker pool means at most
 # one generation in flight; the rest queue. Mirrors DFlash's contract.
 _dspark_executor: ThreadPoolExecutor | None = None
+
+
+@atexit.register
+def _shutdown_dspark_executor() -> None:
+    # #68: drain the DSpark worker on interpreter exit. Python registers an
+    # implicit atexit for ThreadPoolExecutor, but registering ours explicitly
+    # makes shutdown order deterministic and prevents worker-thread leaks
+    # across uvicorn reload / multi-instance test runs (mirrors dflash).
+    global _dspark_executor
+    if _dspark_executor is not None:
+        _dspark_executor.shutdown(wait=False, cancel_futures=True)
 
 
 def _load_runtime_blocking(

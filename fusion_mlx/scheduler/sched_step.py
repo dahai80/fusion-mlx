@@ -340,6 +340,12 @@ def step(self) -> SchedulerOutput:
         cache_threshold = self._periodic_clear_threshold_bytes()
         if _should_clear_on_fragmentation(frag) and cache_mem > cache_threshold:
             _sync_and_clear_cache(self._stream)
+            # #76: gc.collect() is stop-the-world and stalls the Metal command
+            # queue when tied to the step counter. Tie it to actual memory
+            # pressure (the cache-clear path) instead of firing every
+            # gc_cleanup_interval steps regardless of demand.
+            if self.config.gc_cleanup_interval > 0:
+                gc.collect()
         else:
             logger.debug(
                 "step(%d): skipping periodic clear_cache — frag=%.2f cache_mem=%dMB threshold=%dMB",
@@ -348,12 +354,6 @@ def step(self) -> SchedulerOutput:
                 cache_mem // (1024 * 1024),
                 cache_threshold // (1024 * 1024),
             )
-    if (
-        self.config.gc_cleanup_interval > 0
-        and self._step_counter % self.config.gc_cleanup_interval == 0
-    ):
-        gc.collect()
-
     if self._step_counter % self.config.admin_snapshot_interval == 0:
         self._publish_admin_snapshot()
 
