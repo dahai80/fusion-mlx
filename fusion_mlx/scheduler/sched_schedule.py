@@ -145,9 +145,9 @@ def _schedule_waiting(
                 )
                 continue
             if blocked_id is None:
-                self._store_cache_admission_blocked_request_id = (
-                    self.waiting[0].request_id
-                )
+                self._store_cache_admission_blocked_request_id = self.waiting[
+                    0
+                ].request_id
                 self._store_cache_admission_blocked_since = now
             logger.debug(
                 "Admission deferred: store-cache pipeline full "
@@ -195,8 +195,7 @@ def _schedule_waiting(
                 self._memory_admission_blocked_request_id = None
                 self._memory_admission_blocked_since = 0.0
                 logger.warning(
-                    "Rejecting %s: memory admission stalled %.1fs "
-                    "(limit=%s bytes)",
+                    "Rejecting %s: memory admission stalled %.1fs " "(limit=%s bytes)",
                     stalled_req.request_id,
                     now - mem_blocked_since,
                     self._memory_limit_bytes,

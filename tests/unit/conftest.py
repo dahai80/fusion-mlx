@@ -310,6 +310,19 @@ if sys.platform != "darwin":
         "test_telemetry_state.py",
         "test_telemetry_state_comprehensive.py",
         "test_telemetry_transport.py",
+        # mlx-dependent suites added by Phase 4/5/6 video ports + scheduler
+        # debt paydown: pass on macOS (real mlx), fail on Linux CI (no mlx).
+        "test_denoise_legacy.py",
+        "test_gen_acceleration_knobs.py",
+        "test_models_base.py",
+        "test_mtp_suffix_coexistence.py",
+        "test_scheduler.py",
+        "test_scheduler_legacy.py",
+        "test_t5_encoder.py",
+        "test_transformer_legacy.py",
+        "test_vae_legacy.py",
+        "test_video_backends.py",
+        "test_video_gen_engine.py",
     ]
     collect_ignore += _abs(*_linux_skip)
     collect_ignore_glob += [f"**/{s}" for s in _linux_skip]

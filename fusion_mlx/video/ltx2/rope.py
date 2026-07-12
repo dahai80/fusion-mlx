@@ -2,7 +2,6 @@
 # Pure-MLX port of LTX-2 rotary position embeddings (vendored from mlx-video).
 # Phase 4 LTX-2 direct-MLX port: model-layer foundation.
 import math
-from typing import List, Optional, Tuple
 
 import mlx.core as mx
 
@@ -11,7 +10,7 @@ from .config import LTXRopeType
 
 def apply_rotary_emb(
     input_tensor: mx.array,
-    freqs_cis: Tuple[mx.array, mx.array],
+    freqs_cis: tuple[mx.array, mx.array],
     rope_type: LTXRopeType = LTXRopeType.INTERLEAVED,
 ) -> mx.array:
     if rope_type == LTXRopeType.INTERLEAVED:
@@ -59,7 +58,7 @@ def apply_rotary_emb_1d(
     q: mx.array,
     k: mx.array,
     freqs_cis: mx.array,
-) -> Tuple[mx.array, mx.array]:
+) -> tuple[mx.array, mx.array]:
     cos = freqs_cis[..., 0]
     sin = freqs_cis[..., 1]
 
@@ -139,7 +138,7 @@ def generate_freq_grid(
 
 def get_fractional_positions(
     indices_grid: mx.array,
-    max_pos: List[int],
+    max_pos: list[int],
 ) -> mx.array:
     n_pos_dims = indices_grid.shape[1]
     assert n_pos_dims == len(
@@ -157,7 +156,7 @@ def get_fractional_positions(
 def generate_freqs(
     indices: mx.array,
     indices_grid: mx.array,
-    max_pos: List[int],
+    max_pos: list[int],
     use_middle_indices_grid: bool,
 ) -> mx.array:
     if use_middle_indices_grid:
@@ -187,7 +186,7 @@ def split_freqs_cis(
     freqs: mx.array,
     pad_size: int,
     num_attention_heads: int,
-) -> Tuple[mx.array, mx.array]:
+) -> tuple[mx.array, mx.array]:
     cos_freq = mx.cos(freqs)
     sin_freq = mx.sin(freqs)
 
@@ -212,7 +211,7 @@ def split_freqs_cis(
 def interleaved_freqs_cis(
     freqs: mx.array,
     pad_size: int,
-) -> Tuple[mx.array, mx.array]:
+) -> tuple[mx.array, mx.array]:
     cos_freq = mx.cos(freqs)
     sin_freq = mx.sin(freqs)
 
@@ -232,12 +231,12 @@ def precompute_freqs_cis(
     indices_grid: mx.array,
     dim: int,
     theta: float = 10000.0,
-    max_pos: Optional[List[int]] = None,
+    max_pos: list[int] | None = None,
     use_middle_indices_grid: bool = False,
     num_attention_heads: int = 32,
     rope_type: LTXRopeType = LTXRopeType.INTERLEAVED,
     double_precision: bool = False,
-) -> Tuple[mx.array, mx.array]:
+) -> tuple[mx.array, mx.array]:
     if max_pos is None:
         max_pos = [20, 2048, 2048]
 
@@ -274,11 +273,11 @@ def _precompute_freqs_cis_double_precision(
     indices_grid: mx.array,
     dim: int,
     theta: float,
-    max_pos: List[int],
+    max_pos: list[int],
     use_middle_indices_grid: bool,
     num_attention_heads: int,
     rope_type: LTXRopeType,
-) -> Tuple[mx.array, mx.array]:
+) -> tuple[mx.array, mx.array]:
     import numpy as np
 
     indices_grid_f32 = indices_grid.astype(mx.float32)

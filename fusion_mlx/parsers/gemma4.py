@@ -7,12 +7,8 @@ import json
 import re
 from typing import Any
 
-try:
-    from mlx_lm.tokenizer_utils import NaiveStreamingDetokenizer
-except ImportError:
-    NaiveStreamingDetokenizer = None
-
 from ..api.utils import _PRESERVE_BOUNDARY_KEY
+from ..utils.tokenizer import create_streaming_detokenizer
 from .output_parser import OutputParserFinalizeResult, OutputParserTokenResult
 
 _OPEN_MARKER = "<|channel>thought\n"
@@ -292,13 +288,7 @@ class Gemma4OutputParserSession:
         self._buffer = ""
         self._in_thought = False
 
-        if hasattr(tokenizer, "detokenizer"):
-            self._detokenizer = tokenizer.detokenizer
-        elif NaiveStreamingDetokenizer is not None:
-            self._detokenizer = NaiveStreamingDetokenizer(tokenizer)
-        else:
-            self._detokenizer = None
-
+        self._detokenizer = create_streaming_detokenizer(tokenizer, model_path)
         if self._detokenizer is not None:
             self._detokenizer.reset()
 

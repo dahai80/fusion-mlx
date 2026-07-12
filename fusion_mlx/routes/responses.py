@@ -267,9 +267,7 @@ async def _apply_responses_postgen_validation(
                     timeout=timeout,
                 )
             except TimeoutError:
-                raise HTTPException(
-                    status_code=504, detail="Generation timed out"
-                )
+                raise HTTPException(status_code=504, detail="Generation timed out")
             except Exception as repair_err:
                 logger.warning(
                     "R12-4 strict json_schema repair retry raised %s: %s "
@@ -301,9 +299,7 @@ async def _apply_responses_postgen_validation(
                     },
                 ) from repair_err
         if repair_output is not None:
-            ok2, failure2 = validate_and_envelope(
-                repair_output.text or "", json_schema
-            )
+            ok2, failure2 = validate_and_envelope(repair_output.text or "", json_schema)
             if ok2:
                 incr_strict_repair_success()
                 logger.info(
@@ -316,12 +312,9 @@ async def _apply_responses_postgen_validation(
                 initial_completion_tokens = output.completion_tokens
                 output = _dc_replace(
                     repair_output,
-                    prompt_tokens=(
-                        initial_prompt_tokens + repair_output.prompt_tokens
-                    ),
+                    prompt_tokens=(initial_prompt_tokens + repair_output.prompt_tokens),
                     completion_tokens=(
-                        initial_completion_tokens
-                        + repair_output.completion_tokens
+                        initial_completion_tokens + repair_output.completion_tokens
                     ),
                 )
                 ok = True
@@ -384,9 +377,7 @@ async def create_response(request: Request):
     # guided/postgen/disabled) once here so both the stream and non-stream
     # arms see it. The strict_stream_unsupported gate raises 400 for
     # strict+stream before we dispatch to the streaming helper.
-    strict_ctx = _resolve_strict_context(
-        openai_request, responses_request, engine
-    )
+    strict_ctx = _resolve_strict_context(openai_request, responses_request, engine)
 
     if responses_request.stream:
         return await _stream_responses(
@@ -494,9 +485,7 @@ async def _non_stream(
                 timeout=300.0,
             )
         if strict_mode and output is not None:
-            ok, err = validate_output_against_schema(
-                output.text or "", json_schema
-            )
+            ok, err = validate_output_against_schema(output.text or "", json_schema)
             if not ok:
                 incr_strict_violation()
                 logger.warning(

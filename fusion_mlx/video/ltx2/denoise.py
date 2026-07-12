@@ -149,7 +149,9 @@ def denoise_distilled(
     # f32; downcasting the final latent back to bf16 would discard the
     # precision distilled models (few steps) depend on. The VAE decoder
     # consumes f32. (code-review #76)
-    return latents.astype(mx.float32), audio_latents.astype(mx.float32) if enable_audio else None
+    return latents.astype(mx.float32), (
+        audio_latents.astype(mx.float32) if enable_audio else None
+    )
 
 
 def denoise_dev(

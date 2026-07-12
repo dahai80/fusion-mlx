@@ -463,7 +463,9 @@ def _cleanup_finished(self, finished_ids: set[str]) -> None:
                                 # single batched mx.eval materializes them before
                                 # the async store_cache worker reads their bytes.
                                 if intermediate_snapshots is not None:
-                                    for ic in intermediate_snapshots.iter_in_memory_values():
+                                    for (
+                                        ic
+                                    ) in intermediate_snapshots.iter_in_memory_values():
                                         pre_eval_arrays.extend(
                                             self._collect_arrays_from_extracted_cache(
                                                 ic

@@ -1,7 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 # Pure-MLX port of LTX-2 adaptive layer-norm (vendored from mlx-video).
 # Phase 4 LTX-2 direct-MLX port: model-layer foundation.
-from typing import Tuple
 
 import mlx.core as mx
 import mlx.nn as nn
@@ -36,7 +35,7 @@ class AdaLayerNormSingle(nn.Module):
         added_cond_kwargs: dict | None = None,
         batch_size: int | None = None,
         hidden_dtype: mx.Dtype | None = None,
-    ) -> Tuple[mx.array, mx.array]:
+    ) -> tuple[mx.array, mx.array]:
 
         added_cond_kwargs = added_cond_kwargs or {}
 

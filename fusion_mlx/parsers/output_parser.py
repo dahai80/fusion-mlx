@@ -284,6 +284,9 @@ class MiniMaxM3OutputParserSession:
     ) -> str:
         if not text:
             return ""
+        text = text.replace(_MINIMAX_TOOL_CALL_START, "").replace(
+            _MINIMAX_TOOL_CALL_END, ""
+        )
         if tool_filter is not None:
             text = tool_filter.feed(text)
         return normalizer.feed(text)
@@ -528,6 +531,19 @@ class Cohere2MoeOutputParserSession:
         )
 
 
+_GEMMA4_MODEL_TYPES = {"gemma4", "gemma4_unified"}
+
+
+def _is_gemma4_model(
+    model_name: str,
+    model_config: dict[str, Any] | None = None,
+) -> bool:
+    if is_gemma4_model(model_name):
+        return True
+    model_type = model_config.get("model_type") if model_config else None
+    return model_type in _GEMMA4_MODEL_TYPES
+
+
 # ---------------------------------------------------------------------------
 # Factory detection
 # ---------------------------------------------------------------------------
@@ -551,7 +567,7 @@ def detect_output_parser(
             thinking_end_trailing_text="<|start|>assistant<|channel|>final<|message|>",
         )
 
-    if is_gemma4_model(model_name):
+    if _is_gemma4_model(model_name, model_config):
         from .gemma4 import (
             _CLOSE_MARKER,
             _OPEN_MARKER_BARE,
@@ -633,7 +649,7 @@ def detect_message_extractor(
 
         return extract_harmony_messages
 
-    if is_gemma4_model(model_name):
+    if _is_gemma4_model(model_name, model_config):
         from .gemma4 import extract_gemma4_messages
 
         return extract_gemma4_messages

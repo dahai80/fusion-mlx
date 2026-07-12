@@ -13,6 +13,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from fusion_mlx.api.shared_models import IDPrefix, generate_id
+
 from .models import StreamOptions, _validate_token_budget
 
 ANTHROPIC_EFFORT_TO_REASONING_MAX_TOKENS: dict[str, int] = {

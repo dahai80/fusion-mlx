@@ -1207,9 +1207,7 @@ class TestPrefillAbortInterrupt:
 
         # Make _next() raise _PrefillAbortedError on the pure-decode fast
         # path (simulates a pending-prefill abort surfacing during step()).
-        scheduler.batch_generator._next.side_effect = _PrefillAbortedError(
-            [0], 1024
-        )
+        scheduler.batch_generator._next.side_effect = _PrefillAbortedError([0], 1024)
         # Need running requests for _next() to be called
         request = Request(
             request_id="req-prefill",
@@ -1468,10 +1466,7 @@ class TestSchedulerStopTokens:
         tokenizer = MockTokenizer()
         tokenizer.eot_token = "<turn|>"
         # Ensure eot_token_id is NOT present
-        assert (
-            not hasattr(tokenizer, "eot_token_id")
-            or tokenizer.eot_token_id is None
-        )
+        assert not hasattr(tokenizer, "eot_token_id") or tokenizer.eot_token_id is None
         scheduler = Scheduler(model=mock_model, tokenizer=tokenizer)
         stop_tokens = scheduler._get_stop_tokens()
         # The MockTokenizer.encode() returns char-derived IDs, so we get something
@@ -1641,9 +1636,7 @@ class TestSchedulerXtcSpecialTokens:
 
         assert 2 in tokens
 
-    def test_parser_stop_tokens_are_base_stops_and_xtc_protected(
-        self, mock_model
-    ):
+    def test_parser_stop_tokens_are_base_stops_and_xtc_protected(self, mock_model):
         """Parser (Harmony) stop tokens are base BatchGenerator stops and
         therefore XTC-protected: generation halts at action boundaries
         (sched_thinking.py combines "EOS, Harmony" into the stop state
@@ -2602,7 +2595,9 @@ class TestExtractCacheStatesCacheList:
         raw_cache = [mock_cache_list]
 
         # Patch HAS_CACHE_TYPE_HANDLERS to False
-        with patch("fusion_mlx.scheduler.sched_boundary.HAS_CACHE_TYPE_HANDLERS", False):
+        with patch(
+            "fusion_mlx.scheduler.sched_boundary.HAS_CACHE_TYPE_HANDLERS", False
+        ):
             extracted, config = scheduler._extract_cache_states(raw_cache)
 
         # Must still have 1 extracted entry (Issue #1: no layer count mismatch)
@@ -3106,7 +3101,9 @@ class TestStoreCacheAdmissionBackpressure:
         scheduler._memory_admission_blocked_request_id = request.request_id
         scheduler._memory_admission_blocked_since = 0.0
 
-        with patch("fusion_mlx.scheduler.sched_schedule.time.monotonic", return_value=61.0):
+        with patch(
+            "fusion_mlx.scheduler.sched_schedule.time.monotonic", return_value=61.0
+        ):
             scheduled, rejected = scheduler._schedule_waiting()
 
         assert scheduled == []
@@ -3135,7 +3132,9 @@ class TestStoreCacheAdmissionBackpressure:
         scheduler._store_cache_admission_blocked_since = 0.0
         scheduler._ensure_batch_generator = MagicMock()
 
-        with patch("fusion_mlx.scheduler.sched_schedule.time.monotonic", return_value=61.0):
+        with patch(
+            "fusion_mlx.scheduler.sched_schedule.time.monotonic", return_value=61.0
+        ):
             scheduled, rejected = scheduler._schedule_waiting()
 
         assert scheduled == []
@@ -3164,7 +3163,9 @@ class TestStoreCacheAdmissionBackpressure:
         scheduler._current_usage_bytes = MagicMock(return_value=50)
         scheduler._ensure_batch_generator = MagicMock()
 
-        with patch("fusion_mlx.scheduler.sched_schedule.time.monotonic", return_value=0.0):
+        with patch(
+            "fusion_mlx.scheduler.sched_schedule.time.monotonic", return_value=0.0
+        ):
             scheduled, rejected = scheduler._schedule_waiting()
 
         assert scheduled == []
@@ -3173,7 +3174,9 @@ class TestStoreCacheAdmissionBackpressure:
 
         gate.note_done()
         scheduler._should_defer_for_cache_freshness = MagicMock(return_value=True)
-        with patch("fusion_mlx.scheduler.sched_schedule.time.monotonic", return_value=30.0):
+        with patch(
+            "fusion_mlx.scheduler.sched_schedule.time.monotonic", return_value=30.0
+        ):
             scheduled, rejected = scheduler._schedule_waiting()
 
         assert scheduled == []
@@ -3183,7 +3186,9 @@ class TestStoreCacheAdmissionBackpressure:
 
         gate.note_submitted()
         scheduler._should_defer_for_cache_freshness = MagicMock(return_value=False)
-        with patch("fusion_mlx.scheduler.sched_schedule.time.monotonic", return_value=61.0):
+        with patch(
+            "fusion_mlx.scheduler.sched_schedule.time.monotonic", return_value=61.0
+        ):
             scheduled, rejected = scheduler._schedule_waiting()
 
         assert scheduled == []
@@ -3548,8 +3553,12 @@ class TestBatchGeneratorAllTokens:
         )
         scheduled = []
 
-        with patch("fusion_mlx.scheduler.sched_cache._materialize_cache_storage") as materialize:
-            with patch("fusion_mlx.scheduler.sched_batch._sync_and_clear_cache") as sync_clear:
+        with patch(
+            "fusion_mlx.scheduler.sched_cache._materialize_cache_storage"
+        ) as materialize:
+            with patch(
+                "fusion_mlx.scheduler.sched_batch._sync_and_clear_cache"
+            ) as sync_clear:
                 scheduler._insert_prefilled_request(request, state, scheduled)
 
         call_kwargs = scheduler.batch_generator.insert.call_args.kwargs
@@ -3609,8 +3618,12 @@ class TestBatchGeneratorAllTokens:
         )
         scheduled = []
 
-        with patch("fusion_mlx.scheduler.sched_cache._materialize_cache_storage") as materialize:
-            with patch("fusion_mlx.scheduler.sched_batch._sync_and_clear_cache") as sync_clear:
+        with patch(
+            "fusion_mlx.scheduler.sched_cache._materialize_cache_storage"
+        ) as materialize:
+            with patch(
+                "fusion_mlx.scheduler.sched_batch._sync_and_clear_cache"
+            ) as sync_clear:
                 scheduler._insert_prefilled_request(request, state, scheduled)
 
         call_kwargs = scheduler.batch_generator.insert.call_args.kwargs
@@ -3741,7 +3754,6 @@ class TestDetectNeedsThinkPrefix:
         in their mlx-lm tokenizer, causing think_start_id to raise TypeError.
         """
         from unittest.mock import PropertyMock
-
 
         tokenizer = MockTokenizer()
         type(tokenizer).think_start_id = PropertyMock(

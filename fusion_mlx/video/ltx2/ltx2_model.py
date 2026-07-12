@@ -5,7 +5,6 @@ import json
 import logging
 from dataclasses import replace
 from pathlib import Path
-from typing import List, Optional, Tuple
 
 import mlx.core as mx
 import mlx.nn as nn
@@ -26,16 +25,16 @@ class TransformerArgsPreprocessor:
         self,
         patchify_proj: nn.Linear,
         adaln: AdaLayerNormSingle,
-        caption_projection: Optional[PixArtAlphaTextProjection],
+        caption_projection: PixArtAlphaTextProjection | None,
         inner_dim: int,
-        max_pos: List[int],
+        max_pos: list[int],
         num_attention_heads: int,
         use_middle_indices_grid: bool,
         timestep_scale_multiplier: int,
         positional_embedding_theta: float,
         rope_type: LTXRopeType,
         double_precision_rope: bool = False,
-        prompt_adaln: Optional[AdaLayerNormSingle] = None,
+        prompt_adaln: AdaLayerNormSingle | None = None,
     ):
         self.patchify_proj = patchify_proj
         self.adaln = adaln
@@ -55,7 +54,7 @@ class TransformerArgsPreprocessor:
         timestep: mx.array,
         batch_size: int,
         hidden_dtype: mx.Dtype = None,
-    ) -> Tuple[mx.array, mx.array]:
+    ) -> tuple[mx.array, mx.array]:
 
         timestep = timestep * self.timestep_scale_multiplier
         timestep_emb, embedded_timestep = self.adaln(
@@ -77,7 +76,7 @@ class TransformerArgsPreprocessor:
         timestep: mx.array,
         batch_size: int,
         hidden_dtype: mx.Dtype = None,
-    ) -> Tuple[mx.array, mx.array]:
+    ) -> tuple[mx.array, mx.array]:
         timestep = timestep * self.timestep_scale_multiplier
         timestep_emb, embedded_timestep = adaln(
             timestep.reshape(-1), hidden_dtype=hidden_dtype
@@ -94,8 +93,8 @@ class TransformerArgsPreprocessor:
         self,
         context: mx.array,
         x: mx.array,
-        attention_mask: Optional[mx.array] = None,
-    ) -> Tuple[mx.array, Optional[mx.array]]:
+        attention_mask: mx.array | None = None,
+    ) -> tuple[mx.array, mx.array | None]:
         batch_size = x.shape[0]
 
         if self.caption_projection is not None:
@@ -105,9 +104,9 @@ class TransformerArgsPreprocessor:
 
     def _prepare_attention_mask(
         self,
-        attention_mask: Optional[mx.array],
+        attention_mask: mx.array | None,
         x_dtype: mx.Dtype,
-    ) -> Optional[mx.array]:
+    ) -> mx.array | None:
         if attention_mask is None:
             return None
 
@@ -124,10 +123,10 @@ class TransformerArgsPreprocessor:
         self,
         positions: mx.array,
         inner_dim: int,
-        max_pos: List[int],
+        max_pos: list[int],
         use_middle_indices_grid: bool,
         num_attention_heads: int,
-    ) -> Tuple[mx.array, mx.array]:
+    ) -> tuple[mx.array, mx.array]:
         pe = precompute_freqs_cis(
             positions,
             dim=inner_dim,
@@ -197,11 +196,11 @@ class MultiModalTransformerArgsPreprocessor:
         self,
         patchify_proj: nn.Linear,
         adaln: AdaLayerNormSingle,
-        caption_projection: Optional[PixArtAlphaTextProjection],
+        caption_projection: PixArtAlphaTextProjection | None,
         cross_scale_shift_adaln: AdaLayerNormSingle,
         cross_gate_adaln: AdaLayerNormSingle,
         inner_dim: int,
-        max_pos: List[int],
+        max_pos: list[int],
         num_attention_heads: int,
         cross_pe_max_pos: int,
         use_middle_indices_grid: bool,
@@ -211,7 +210,7 @@ class MultiModalTransformerArgsPreprocessor:
         rope_type: LTXRopeType,
         av_ca_timestep_scale_multiplier: int,
         double_precision_rope: bool = False,
-        prompt_adaln: Optional[AdaLayerNormSingle] = None,
+        prompt_adaln: AdaLayerNormSingle | None = None,
     ):
         self.simple_preprocessor = TransformerArgsPreprocessor(
             patchify_proj=patchify_proj,
@@ -266,7 +265,7 @@ class MultiModalTransformerArgsPreprocessor:
         timestep_scale_multiplier: int,
         batch_size: int,
         hidden_dtype: mx.Dtype = None,
-    ) -> Tuple[mx.array, mx.array]:
+    ) -> tuple[mx.array, mx.array]:
         timestep = timestep * timestep_scale_multiplier
 
         av_ca_factor = self.av_ca_timestep_scale_multiplier / timestep_scale_multiplier
@@ -381,9 +380,7 @@ class LTXModel(nn.Module):
         self.audio_norm_out = nn.LayerNorm(
             self.audio_inner_dim, eps=config.norm_eps, affine=False
         )
-        self.audio_proj_out = nn.Linear(
-            self.audio_inner_dim, config.audio_out_channels
-        )
+        self.audio_proj_out = nn.Linear(self.audio_inner_dim, config.audio_out_channels)
 
     def _init_audio_video(self, config: LTXModelConfig) -> None:
         num_scale_shift_values = 4
@@ -406,7 +403,7 @@ class LTXModel(nn.Module):
         )
 
     def _init_preprocessors(
-        self, config: LTXModelConfig, cross_pe_max_pos: Optional[int]
+        self, config: LTXModelConfig, cross_pe_max_pos: int | None
     ) -> None:
         if (
             config.model_type.is_video_enabled()
@@ -499,12 +496,12 @@ class LTXModel(nn.Module):
 
     def _process_transformer_blocks(
         self,
-        video: Optional[TransformerArgs],
-        audio: Optional[TransformerArgs],
-        stg_video_blocks: Optional[List[int]] = None,
-        stg_audio_blocks: Optional[List[int]] = None,
+        video: TransformerArgs | None,
+        audio: TransformerArgs | None,
+        stg_video_blocks: list[int] | None = None,
+        stg_audio_blocks: list[int] | None = None,
         skip_cross_modal: bool = False,
-    ) -> Tuple[Optional[TransformerArgs], Optional[TransformerArgs]]:
+    ) -> tuple[TransformerArgs | None, TransformerArgs | None]:
         stg_v_set = set(stg_video_blocks) if stg_video_blocks else set()
         stg_a_set = set(stg_audio_blocks) if stg_audio_blocks else set()
         for idx, block in self.transformer_blocks.items():
@@ -542,12 +539,12 @@ class LTXModel(nn.Module):
 
     def __call__(
         self,
-        video: Optional[Modality] = None,
-        audio: Optional[Modality] = None,
-        stg_video_blocks: Optional[List[int]] = None,
-        stg_audio_blocks: Optional[List[int]] = None,
+        video: Modality | None = None,
+        audio: Modality | None = None,
+        stg_video_blocks: list[int] | None = None,
+        stg_audio_blocks: list[int] | None = None,
         skip_cross_modal: bool = False,
-    ) -> Tuple[Optional[mx.array], Optional[mx.array]]:
+    ) -> tuple[mx.array | None, mx.array | None]:
 
         if not self.model_type.is_video_enabled() and video is not None:
             raise ValueError("Video is not enabled for this model")
@@ -633,7 +630,7 @@ class LTXModel(nn.Module):
     def from_pretrained(cls, model_path: Path, strict: bool = True) -> "LTXModel":
         config_dict = {}
         config_file = model_path / "config.json"
-        with open(config_file, "r") as f:
+        with open(config_file) as f:
             config_dict = json.load(f)
         config = LTXModelConfig(**config_dict)
         model = cls(config)
@@ -680,9 +677,7 @@ class LTXModel(nn.Module):
                     "ltx2 unmatched weight keys (first 30): %s", unmatched[:30]
                 )
             if missing:
-                logger.warning(
-                    "ltx2 missing model params (first 30): %s", missing[:30]
-                )
+                logger.warning("ltx2 missing model params (first 30): %s", missing[:30])
         except Exception as audit_err:
             logger.warning("ltx2 weight audit skipped: %s", audit_err)
 
@@ -702,12 +697,12 @@ class X0Model(nn.Module):
 
     def __call__(
         self,
-        video: Optional[Modality] = None,
-        audio: Optional[Modality] = None,
-        stg_video_blocks: Optional[List[int]] = None,
-        stg_audio_blocks: Optional[List[int]] = None,
+        video: Modality | None = None,
+        audio: Modality | None = None,
+        stg_video_blocks: list[int] | None = None,
+        stg_audio_blocks: list[int] | None = None,
         skip_cross_modal: bool = False,
-    ) -> Tuple[Optional[mx.array], Optional[mx.array]]:
+    ) -> tuple[mx.array | None, mx.array | None]:
 
         vx, ax = self.velocity_model(
             video,

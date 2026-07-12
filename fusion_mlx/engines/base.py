@@ -111,7 +111,9 @@ def _apply_reasoning_parser(
             if auto is not None:
                 parser_name = auto.reasoning_parser
         except Exception as e:
-            logger.debug("reasoning parser auto-detect failed for %s: %s", model_name, e)
+            logger.debug(
+                "reasoning parser auto-detect failed for %s: %s", model_name, e
+            )
     if not parser_name:
         return gen
     try:

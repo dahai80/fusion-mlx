@@ -151,13 +151,21 @@ def convert_responses_input_to_messages(
     if input_data is None:
         if system_parts:
             messages.insert(0, {"role": "system", "content": "\n\n".join(system_parts)})
-        return _consolidate_system_messages(messages) if consolidate_system_messages else messages
+        return (
+            _consolidate_system_messages(messages)
+            if consolidate_system_messages
+            else messages
+        )
 
     if isinstance(input_data, str):
         if system_parts:
             messages.insert(0, {"role": "system", "content": "\n\n".join(system_parts)})
         messages.append({"role": "user", "content": input_data})
-        return _consolidate_system_messages(messages) if consolidate_system_messages else messages
+        return (
+            _consolidate_system_messages(messages)
+            if consolidate_system_messages
+            else messages
+        )
 
     # Process input items
     # Track pending tool calls for grouping into a single assistant message

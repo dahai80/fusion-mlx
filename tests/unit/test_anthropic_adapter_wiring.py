@@ -100,10 +100,12 @@ async def test_stream_anthropic_threads_adapters_to_release_engine(
         _tokenizer=None,
         tokenizer=None,
     )
+
     # Make stream_chat raise to trigger the finally block
     async def _boom_stream(**kwargs):
         raise RuntimeError("boom-stream")
         yield  # noqa: unreachable — makes this an async generator  # pragma: no cover
+
     fake_engine.stream_chat = _boom_stream
 
     req = _make_req("/lora")

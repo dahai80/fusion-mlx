@@ -835,4 +835,3 @@ def _handle_generation_overflow(self, output: SchedulerOutput) -> None:
                 req.generation_overflow_retries,
             )
     output.has_work = True
-

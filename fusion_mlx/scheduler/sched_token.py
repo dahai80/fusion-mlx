@@ -130,7 +130,9 @@ def _load_generation_config_suppress_tokens(self) -> set[int]:
         else:
             ids = {int(raw)}
         if ids:
-            logger.info(f"Loaded {len(ids)} suppress token(s) from generation_config.json: {ids}")
+            logger.info(
+                f"Loaded {len(ids)} suppress token(s) from generation_config.json: {ids}"
+            )
         return ids
     except Exception as e:
         logger.debug(f"Could not load suppress_tokens: {e}")
@@ -171,10 +173,7 @@ def _get_stop_tokens(self) -> set[int]:
             stop_tokens.update(eot_id)
         else:
             stop_tokens.add(eot_id)
-    elif (
-        hasattr(self.tokenizer, "eot_token")
-        and self.tokenizer.eot_token
-    ):
+    elif hasattr(self.tokenizer, "eot_token") and self.tokenizer.eot_token:
         try:
             eot_seq = self.tokenizer.encode(
                 self.tokenizer.eot_token, add_special_tokens=False

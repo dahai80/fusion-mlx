@@ -171,9 +171,7 @@ def _do_abort_request(self, request_id: str) -> bool:
                 try:
                     close_fn()
                 except Exception:
-                    logger.debug(
-                        "vlm_mtp generator close failed for uid %d", uid
-                    )
+                    logger.debug("vlm_mtp generator close failed for uid %d", uid)
             logger.info("Released vlm_mtp drafter for aborted uid %d", uid)
         if hasattr(self.model, "unregister_rope_delta"):
             self.model.unregister_rope_delta(uid)

@@ -8,10 +8,9 @@ import sys
 import types
 from types import SimpleNamespace
 
-from fusion_mlx.parsers.output_parser import detect_output_parser
-
 from fusion_mlx.parsers.gemma4 import Gemma4OutputParserSession
 from fusion_mlx.parsers.harmony import load_harmony_encoding
+from fusion_mlx.parsers.output_parser import detect_output_parser
 
 
 class FakeDetokenizer:

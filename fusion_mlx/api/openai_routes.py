@@ -516,7 +516,9 @@ async def _stream_chat(request: ChatCompletionRequest) -> StreamingResponse:
                         "audio",
                         "input_audio",
                     ):
-                        await _pool.release_engine(model_name, adapter_path=adapter_path)
+                        await _pool.release_engine(
+                            model_name, adapter_path=adapter_path
+                        )
                         raise HTTPException(
                             status_code=400,
                             detail=(

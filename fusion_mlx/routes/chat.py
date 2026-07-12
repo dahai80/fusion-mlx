@@ -62,8 +62,8 @@ from ..api.utils import (
 )
 from ..config import get_config
 from ..engine import GenerationOutput
-from ..server_metrics import record_llm_metrics
 from ..middleware.auth import check_rate_limit, verify_api_key
+from ..server_metrics import record_llm_metrics
 from ..service.helpers import (
     _TOOL_USE_REQUIRED_SUFFIX,
     _TOOL_USE_SYSTEM_SUFFIX,

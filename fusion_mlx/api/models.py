@@ -174,8 +174,7 @@ def _validate_response_format_raw(v):
     strict = v.get("strict")
     if strict is not None and not isinstance(strict, bool):
         raise ValueError(
-            "response_format.strict must be a boolean "
-            f"(got {type(strict).__name__})"
+            "response_format.strict must be a boolean " f"(got {type(strict).__name__})"
         )
     if rf_type == "json_schema":
         js = v.get("json_schema")

@@ -102,7 +102,9 @@ def __init__(
     # Load suppress_tokens from generation_config.json. Standard HF field
     # forbidding certain tokens during generation (e.g. runaway-output
     # triggers). Empty set when absent; honored as a logits processor.
-    self._model_suppress_tokens: set[int] = self._load_generation_config_suppress_tokens()
+    self._model_suppress_tokens: set[int] = (
+        self._load_generation_config_suppress_tokens()
+    )
 
     # For strict RotatingKVCache reuse, align paged cache block size to
     # the model's rotating window size when paged cache is enabled.
