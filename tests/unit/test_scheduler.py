@@ -237,6 +237,83 @@ class TestSchedulerStepOutputs:
         assert output.finished_request_ids == {"running"}
         scheduler._cleanup_finished.assert_called_once_with({"running"})
 
+    def test_step_gc_collect_gated_on_memory_pressure(
+        self, mock_model, mock_tokenizer, monkeypatch
+    ):
+        import fusion_mlx.scheduler.sched_step as step_mod
+
+        gc_calls = {"n": 0}
+
+        def _count_gc():
+            gc_calls["n"] += 1
+
+        monkeypatch.setattr(step_mod.gc, "collect", _count_gc)
+        config = SchedulerConfig(
+            gc_cleanup_interval=10,
+            mlx_cache_cleanup_interval=0,
+            memory_check_interval=999,
+            admin_snapshot_interval=999,
+        )
+        scheduler = Scheduler(model=mock_model, tokenizer=mock_tokenizer, config=config)
+        scheduler._schedule_waiting = MagicMock(return_value=([], []))
+        scheduler._process_batch_responses = MagicMock(return_value=([], set()))
+        scheduler._cleanup_finished = MagicMock()
+        scheduler.running = {"r1": MagicMock(), "r2": MagicMock()}
+        scheduler.batch_generator = MagicMock()
+        scheduler.batch_generator.next_generated.return_value = iter([MagicMock()])
+
+        # No memory pressure: periodic clear skipped -> gc.collect NOT called.
+        scheduler._should_periodic_clear_cache = MagicMock(return_value=False)
+        scheduler.step()
+        assert gc_calls["n"] == 0
+
+        # Memory pressure: clear path taken, gc_cleanup_interval > 0 ->
+        # gc.collect called exactly once.
+        scheduler._should_periodic_clear_cache = MagicMock(return_value=True)
+        monkeypatch.setattr(
+            step_mod, "_should_clear_on_fragmentation", lambda frag: True
+        )
+        monkeypatch.setattr(step_mod, "_sync_and_clear_cache", lambda stream: None)
+        monkeypatch.setattr(step_mod.mx, "get_cache_memory", lambda: 10 * 1024**3)
+        scheduler._periodic_clear_threshold_bytes = MagicMock(return_value=0)
+        scheduler.step()
+        assert gc_calls["n"] == 1
+
+    def test_step_gc_collect_skipped_when_interval_zero(
+        self, mock_model, mock_tokenizer, monkeypatch
+    ):
+        import fusion_mlx.scheduler.sched_step as step_mod
+
+        gc_calls = {"n": 0}
+
+        def _count_gc():
+            gc_calls["n"] += 1
+
+        monkeypatch.setattr(step_mod.gc, "collect", _count_gc)
+        config = SchedulerConfig(
+            gc_cleanup_interval=0,
+            mlx_cache_cleanup_interval=0,
+            memory_check_interval=999,
+            admin_snapshot_interval=999,
+        )
+        scheduler = Scheduler(model=mock_model, tokenizer=mock_tokenizer, config=config)
+        scheduler._schedule_waiting = MagicMock(return_value=([], []))
+        scheduler._process_batch_responses = MagicMock(return_value=([], set()))
+        scheduler._cleanup_finished = MagicMock()
+        scheduler.running = {"r1": MagicMock(), "r2": MagicMock()}
+        scheduler.batch_generator = MagicMock()
+        scheduler.batch_generator.next_generated.return_value = iter([MagicMock()])
+        scheduler._should_periodic_clear_cache = MagicMock(return_value=True)
+        monkeypatch.setattr(
+            step_mod, "_should_clear_on_fragmentation", lambda frag: True
+        )
+        monkeypatch.setattr(step_mod, "_sync_and_clear_cache", lambda stream: None)
+        monkeypatch.setattr(step_mod.mx, "get_cache_memory", lambda: 10 * 1024**3)
+        scheduler._periodic_clear_threshold_bytes = MagicMock(return_value=0)
+
+        scheduler.step()
+        assert gc_calls["n"] == 0
+
 
 class TestSchedulerInitialization:
     """Tests for Scheduler initialization."""
