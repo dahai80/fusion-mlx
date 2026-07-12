@@ -19,6 +19,21 @@ REMEMBER_ME_MAX_AGE = 86400  # 24 hours
 _active_sessions: dict = {}
 _api_key: str = ""
 _global_settings_getter: Any = None
+_last_session_sweep = 0.0
+_SESSION_SWEEP_INTERVAL = 300.0
+
+
+def _cleanup_expired_sessions(now: float) -> None:
+    # #73: reap expired admin sessions so _active_sessions doesn't grow
+    # unbounded on long-lived servers. verify_session still reaps on
+    # access; this is bounded background GC throttled by the caller.
+    expired = [tok for tok, s in _active_sessions.items() if now > s["expires"]]
+    for tok in expired:
+        del _active_sessions[tok]
+    if expired:
+        logger.debug(
+            "_cleanup_expired_sessions: reaped %d expired session(s)", len(expired)
+        )
 
 
 def set_api_key(key: str):
@@ -35,10 +50,15 @@ def set_global_settings_getter(getter):
 
 def create_session_token(user: str = "admin", remember: bool = False) -> str:
     """Create a new session token."""
+    global _last_session_sweep
+    now = time.time()
+    if now - _last_session_sweep > _SESSION_SWEEP_INTERVAL:
+        _last_session_sweep = now
+        _cleanup_expired_sessions(now)
     token = secrets.token_hex(32)
     _active_sessions[token] = {
         "user": user,
-        "expires": time.time() + (REMEMBER_ME_MAX_AGE if remember else SESSION_MAX_AGE),
+        "expires": now + (REMEMBER_ME_MAX_AGE if remember else SESSION_MAX_AGE),
     }
     return token
 
