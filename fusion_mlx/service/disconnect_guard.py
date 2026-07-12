@@ -16,6 +16,10 @@ logger = logging.getLogger(__name__)
 _disconnect_abort_recorder = None
 _disconnect_abort_lock = threading.Lock()
 
+# Strong refs for fire-and-forget force-abort tasks so they are not GC'd
+# before completion; entries self-remove via the done-callback.
+_pending_force_abort_tasks: set[asyncio.Task] = set()
+
 
 def _resolve_sync_scheduler_for_abort(engine):
     if engine is None:
@@ -106,7 +110,9 @@ def _force_abort_request(engine, request_id_holder) -> bool:
                             exc_info=True,
                         )
 
-                asyncio.ensure_future(_await_and_record())
+                _t = asyncio.ensure_future(_await_and_record())
+                _pending_force_abort_tasks.add(_t)
+                _t.add_done_callback(_pending_force_abort_tasks.discard)
                 logger.warning(
                     f"[disconnect_guard] force-abort fell back to async "
                     f"engine.abort_request({str(request_id)[:12]}); the "

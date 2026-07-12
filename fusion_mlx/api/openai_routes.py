@@ -44,6 +44,10 @@ from ..server_metrics import record_llm_metrics
 
 logger = logging.getLogger(__name__)
 
+# Strong refs for fire-and-forget abort tasks so they are not GC'd before
+# completion; entries self-remove via the done-callback.
+_pending_abort_tasks: set[asyncio.Task] = set()
+
 router = APIRouter(prefix="/v1", tags=["openai"])
 
 # Set by server.py during startup
@@ -442,7 +446,20 @@ async def _stream_chat_generator(
         logger.info("Client disconnected during streaming: %s", request_id)
         if engine:
             try:
-                asyncio.create_task(engine.abort_request(request_id))
+                _t = asyncio.create_task(engine.abort_request(request_id))
+                _pending_abort_tasks.add(_t)
+                _t.add_done_callback(_pending_abort_tasks.discard)
+                _t.add_done_callback(
+                    lambda t: (
+                        logger.warning(
+                            "abort_request failed for %s: %s",
+                            request_id,
+                            t.exception(),
+                        )
+                        if not t.cancelled() and t.exception()
+                        else None
+                    )
+                )
             except Exception:
                 pass
         raise

@@ -2,6 +2,7 @@
 """Admin authentication helpers."""
 
 import hashlib
+import ipaddress
 import logging
 import secrets
 import time
@@ -111,6 +112,27 @@ def _is_skip_api_key_verification(gs) -> bool:
     return gs_dict.get("skip_api_key_verification", False)
 
 
+_LOOPBACK_LITERALS = frozenset({"127.0.0.1", "::1", "localhost"})
+
+
+def _is_loopback_request(request: Request) -> bool:
+    client = getattr(request, "client", None)
+    if client is None:
+        return False
+    host = getattr(client, "host", None)
+    if not host:
+        return False
+    for h in ("x-forwarded-for", "x-forwarded-host", "forwarded", "via"):
+        if request.headers.get(h):
+            return False
+    if host in _LOOPBACK_LITERALS:
+        return True
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return False
+
+
 async def require_admin(request: Request) -> bool:
     """FastAPI dependency for admin authentication.
 
@@ -140,14 +162,19 @@ async def require_admin(request: Request) -> bool:
             if verify_api_key(bearer_key, sk_key):
                 return True
 
-    # Allow browser-based access via ?key= or ?api_key= query param
-    query_key = request.query_params.get("key") or request.query_params.get("api_key")
-    if query_key:
-        if _api_key and verify_api_key(query_key, _api_key):
-            return True
-        server_key = _get_settings_api_key(gs)
-        if verify_api_key(query_key, server_key):
-            return True
+    # Allow browser-based access via ?key= or ?api_key= query param, but
+    # only from loopback: the key would otherwise leak into URL logs /
+    # Referer headers when the admin UI is exposed to the network.
+    if _is_loopback_request(request):
+        query_key = request.query_params.get("key") or request.query_params.get(
+            "api_key"
+        )
+        if query_key:
+            if _api_key and verify_api_key(query_key, _api_key):
+                return True
+            server_key = _get_settings_api_key(gs)
+            if verify_api_key(query_key, server_key):
+                return True
 
     raise HTTPException(
         status_code=401,

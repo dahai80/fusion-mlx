@@ -38,7 +38,7 @@ def _validate_model_path(model_path: str) -> str:
     resolved = Path(model_path).resolve()
     model_root = Path.home() / ".cache" / "fusion-mlx" / "models"
     model_root = model_root.resolve()
-    if not str(resolved).startswith(str(model_root)):
+    if not resolved.is_relative_to(model_root):
         raise HTTPException(
             status_code=403,
             detail="model_path must reside under the configured model directory",

@@ -386,9 +386,6 @@ def resolve_model_id(model_id: str) -> str:
     return model_id
 
 
-_server_instance: "Server | None" = None
-
-
 def get_settings() -> Any:
     from .settings import Settings
 
@@ -921,6 +918,20 @@ class Server:
                 logger.warning(f"GUI cleanup warning: {e}")
         if self.pool:
             await self.pool.shutdown()
+        try:
+            from .utils.video import cleanup_all_temp_files
+
+            cleaned = cleanup_all_temp_files()
+            if cleaned:
+                logger.info("Cleaned up %d temp video files on shutdown", cleaned)
+        except Exception:
+            logger.debug("temp video file cleanup failed (non-fatal)", exc_info=True)
+        try:
+            from ._tempfile_safe import _atexit_reap_all
+
+            _atexit_reap_all()
+        except Exception:
+            logger.debug("tempfile_safe reap failed (non-fatal)", exc_info=True)
         mx.clear_cache()
         logger.info("fusion-mlx shutdown complete")
 
