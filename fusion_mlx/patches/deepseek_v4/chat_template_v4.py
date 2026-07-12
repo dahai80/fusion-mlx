@@ -83,7 +83,10 @@ tool_output_template: str = "\n<result>{content}</result>"
 def to_json(value: Any) -> str:
     try:
         return json.dumps(value, ensure_ascii=False)
-    except:
+    except Exception:
+        # #82: was a bare except (caught SystemExit/KeyboardInterrupt).
+        # Narrow to Exception; fallback to ascii-safe dump on any
+        # serialization failure.
         return json.dumps(value, ensure_ascii=True)
 
 

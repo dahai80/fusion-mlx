@@ -548,7 +548,11 @@ class Server:
                     try:
                         model_memory_max = enforcer.get_final_ceiling()
                     except Exception:
-                        pass
+                        # #82: was a silent pass; log so a broken enforcer
+                        # surfaces in debug instead of hiding wrong stats.
+                        logger.debug(
+                            "stats: get_final_ceiling failed", exc_info=True
+                        )
                 for entry in self.pool._entries.values():
                     if getattr(entry, "is_loading", False):
                         models_loading += 1
