@@ -210,6 +210,7 @@ def _process_batch_responses(
             prompt_tokens=request.num_prompt_tokens,
             completion_tokens=request.num_output_tokens,
             cached_tokens=request.cached_tokens,
+            logprobs=getattr(response, "logprobs", None),
         )
 
         if not is_finished:
