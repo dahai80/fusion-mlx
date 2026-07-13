@@ -44,6 +44,7 @@ from fusion_mlx.custom_kernels.mfa.quantize import (
 from fusion_mlx.custom_kernels.xfuser_attention import (
     FastAttnMethod,
     MLXFastAttention,
+    calibrate_attention_strategy,
     compression_loss,
 )
 
@@ -287,6 +288,129 @@ class TestXfuserAttention:
         out0 = attn(q, k, v, step_idx=0)
         out1 = attn(q, k, v, step_idx=1)
         assert out1.shape == (B, H, N, D)
+
+
+class _ConstCalibModel:
+    # Returns a constant output independent of attention method -> every
+    # candidate is lossless, so calibration should pick the most aggressive.
+    def __call__(self, prompts, n_steps):
+        return mx.array(1.0)
+
+
+class _RealisticCalibModel:
+    # Actually drives each MLXFastAttention module, so different methods yield
+    # different outputs (lossy vs FULL_ATTN baseline). seq=256 so SPARSE_ATTN
+    # (block_size=64) and RESIDUAL_WINDOW_ATTN (window=8) genuinely compress
+    # instead of degrading to full attention on a too-short sequence.
+    def __init__(self, modules):
+        self.modules = modules
+        self.q = mx.random.normal((4, 4, 256, 64), dtype=mx.float32)
+        self.k = mx.random.normal((4, 4, 256, 64), dtype=mx.float32)
+        self.v = mx.random.normal((4, 4, 256, 64), dtype=mx.float32)
+
+    def __call__(self, prompts, n_steps):
+        outs = []
+        for step in range(n_steps):
+            for m in self.modules:
+                o = m(self.q, self.k, self.v, step, batch_size=4)
+                outs.append(mx.mean(o))
+        return outs
+
+
+class _ForwardAttrModel:
+    # Exposes calibration_forward instead of __call__.
+    def __init__(self, modules):
+        self.modules = modules
+
+    def calibration_forward(self, prompts, n_steps):
+        return mx.array(2.0)
+
+
+class TestCalibrateStrategy:
+    def test_calibrate_no_longer_raises(self):
+        mods = [MLXFastAttention(window_size=8) for _ in range(2)]
+        strategies = calibrate_attention_strategy(_ConstCalibModel(), mods, 3, ["p"])
+        assert len(strategies) == 2
+        for s in strategies:
+            assert len(s) == 3
+            assert all(isinstance(m, FastAttnMethod) for m in s)
+
+    def test_calibrate_empty_modules(self):
+        strategies = calibrate_attention_strategy(_ConstCalibModel(), [], 3, ["p"])
+        assert strategies == []
+
+    def test_calibrate_invalid_n_steps(self):
+        mods = [MLXFastAttention(window_size=8)]
+        try:
+            calibrate_attention_strategy(_ConstCalibModel(), mods, 0, ["p"])
+            assert False, "expected ValueError"
+        except ValueError:
+            pass
+
+    def test_calibrate_invalid_model(self):
+        mods = [MLXFastAttention(window_size=8)]
+        try:
+            calibrate_attention_strategy(object(), mods, 2, ["p"])
+            assert False, "expected TypeError"
+        except TypeError:
+            pass
+
+    def test_calibrate_picks_most_aggressive_when_lossless(self):
+        # Const model -> all candidates loss 0 <= threshold -> SPARSE_ATTN
+        # (first/most aggressive in _CALIB_CANDIDATES) chosen for every module.
+        mods = [MLXFastAttention(window_size=8) for _ in range(3)]
+        strategies = calibrate_attention_strategy(
+            _ConstCalibModel(), mods, 4, ["p"], threshold=0.1
+        )
+        for s in strategies:
+            assert all(m == FastAttnMethod.SPARSE_ATTN for m in s)
+
+    def test_calibrate_strict_threshold_keeps_full(self):
+        # Realistic model -> candidates are lossy; threshold=0 rejects all.
+        mods = [MLXFastAttention(window_size=8) for _ in range(2)]
+        strategies = calibrate_attention_strategy(
+            _RealisticCalibModel(mods), mods, 2, ["p"], threshold=0.0
+        )
+        for s in strategies:
+            assert all(m == FastAttnMethod.FULL_ATTN for m in s)
+
+    def test_calibrate_loose_threshold_picks_aggressive(self):
+        mods = [MLXFastAttention(window_size=8) for _ in range(2)]
+        strategies = calibrate_attention_strategy(
+            _RealisticCalibModel(mods), mods, 2, ["p"], threshold=100.0
+        )
+        # At least one module should move off FULL_ATTN to an aggressive method.
+        flat = {m for s in strategies for m in s}
+        assert FastAttnMethod.SPARSE_ATTN in flat or (
+            FastAttnMethod.RESIDUAL_WINDOW_ATTN in flat
+            or FastAttnMethod.FULL_ATTN_CFG_SHARE in flat
+        )
+
+    def test_calibrate_uses_calibration_forward_attr(self):
+        mods = [MLXFastAttention(window_size=8) for _ in range(2)]
+        strategies = calibrate_attention_strategy(
+            _ForwardAttrModel(mods), mods, 3, ["p"], threshold=0.1
+        )
+        # Const output -> all lossless -> SPARSE_ATTN.
+        for s in strategies:
+            assert all(m == FastAttnMethod.SPARSE_ATTN for m in s)
+
+    def test_calibrate_verbose_runs(self):
+        mods = [MLXFastAttention(window_size=8) for _ in range(2)]
+        strategies = calibrate_attention_strategy(
+            _ConstCalibModel(), mods, 2, ["p"], threshold=0.1, verbose=True
+        )
+        assert len(strategies) == 2
+
+    def test_calibrate_sets_methods_on_modules(self):
+        # After calibration, each module's steps_method must match the returned
+        # strategy (so inference can proceed immediately).
+        mods = [MLXFastAttention(window_size=8) for _ in range(2)]
+        strategies = calibrate_attention_strategy(
+            _ConstCalibModel(), mods, 3, ["p"], threshold=0.1
+        )
+        for m, s in zip(mods, strategies):
+            assert m.steps_method == s
 
 
 class TestMFABridge:

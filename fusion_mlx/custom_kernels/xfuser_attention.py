@@ -199,6 +199,40 @@ def compression_loss(
         return float(mx.clip(diff, 0.0, 10.0).mean())
 
 
+def _run_calib_model(
+    model: Any,
+    calib_prompts: list[str],
+    n_steps: int,
+) -> mx.array | list[mx.array]:
+    # Contract: model is callable(prompts, n_steps) -> outputs, or exposes
+    # calibration_forward(prompts, n_steps). Outputs are compared via
+    # compression_loss, so a single array or a list of arrays both work.
+    if hasattr(model, "calibration_forward"):
+        return model.calibration_forward(calib_prompts, n_steps)
+    if callable(model):
+        return model(calib_prompts, n_steps)
+    raise TypeError(
+        "calibrate_attention_strategy: model must be callable(prompts, n_steps) "
+        "or expose calibration_forward(prompts, n_steps)"
+    )
+
+
+def _reset_module_caches(attention_modules: list[MLXFastAttention]) -> None:
+    for m in attention_modules:
+        m.cached_output = None
+        m.cached_residual = None
+
+
+# Candidate methods ordered most->least aggressive. Only standalone-safe
+# methods are eligible: OUTPUT_SHARE is excluded because it requires a cached
+# output from a prior FULL_ATTN step and cannot run at step 0 on its own.
+_CALIB_CANDIDATES: list[FastAttnMethod] = [
+    FastAttnMethod.SPARSE_ATTN,
+    FastAttnMethod.RESIDUAL_WINDOW_ATTN,
+    FastAttnMethod.FULL_ATTN_CFG_SHARE,
+]
+
+
 def calibrate_attention_strategy(
     model: Any,
     attention_modules: list[MLXFastAttention],
@@ -209,9 +243,59 @@ def calibrate_attention_strategy(
     device: mx.Device | None = None,
     verbose: bool = False,
 ) -> list[list[FastAttnMethod]]:
-    raise NotImplementedError(
-        "calibrate_attention_strategy: real calibration not yet ported (Phase B step 2)"
+    if n_steps <= 0:
+        raise ValueError("n_steps must be >= 1")
+    if not attention_modules:
+        return []
+    if device is not None:
+        mx.set_default_device(device)
+
+    baseline = [FastAttnMethod.FULL_ATTN] * n_steps
+
+    def run(strategies: list[list[FastAttnMethod]]):
+        _reset_module_caches(attention_modules)
+        for m, methods in zip(attention_modules, strategies):
+            m.set_methods(methods)
+        return _run_calib_model(model, calib_prompts, n_steps)
+
+    ref = run([list(baseline) for _ in attention_modules])
+
+    # Greedy per-module: upgrade each module to the most aggressive candidate
+    # whose output stays within `threshold` of the FULL_ATTN baseline. Earlier
+    # modules' chosen strategies are kept when probing later ones, so the
+    # search reflects a realistic incremental compression cascade.
+    strategies = [list(baseline) for _ in attention_modules]
+    for mi in range(len(attention_modules)):
+        chosen = FastAttnMethod.FULL_ATTN
+        for cand in _CALIB_CANDIDATES:
+            trial = [list(s) for s in strategies]
+            trial[mi] = [cand] * n_steps
+            out = run(trial)
+            loss = compression_loss(out, ref)
+            if verbose:
+                logger.info(
+                    "calibrate module=%d candidate=%s loss=%.5f threshold=%.5f",
+                    mi,
+                    cand.name,
+                    loss,
+                    threshold,
+                )
+            if loss <= threshold:
+                chosen = cand
+                break
+        strategies[mi] = [chosen] * n_steps
+
+    _reset_module_caches(attention_modules)
+    for m, methods in zip(attention_modules, strategies):
+        m.set_methods(methods)
+    logger.info(
+        "calibrate_attention_strategy: %d modules, %d steps, threshold=%.3f -> %s",
+        len(attention_modules),
+        n_steps,
+        threshold,
+        {s[0].name for s in strategies if s},
     )
+    return strategies
 
 
 def save_strategy_config(
