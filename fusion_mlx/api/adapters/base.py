@@ -86,6 +86,9 @@ class InternalResponse:
     request_id: str | None = None
     model: str | None = None
 
+    # Logprobs (populated only when requested; None until engine plumbing lands)
+    logprobs: Any = None
+
 
 @dataclass
 class StreamChunk:
@@ -102,6 +105,9 @@ class StreamChunk:
     prompt_tokens: int = 0
     completion_tokens: int = 0
     cached_tokens: int = 0
+
+    # Logprobs (populated only when requested; None until engine plumbing lands)
+    logprobs: Any = None
 
 
 class BaseAdapter(ABC):

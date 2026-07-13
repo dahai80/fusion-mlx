@@ -306,6 +306,16 @@ class ChatCompletionRequest(BaseModel):
     specprefill_threshold: int | None = None
     # Seed for reproducible generation (best-effort)
     seed: int | None = None
+    # Logprobs: return log probabilities of output tokens (OpenAI-compatible).
+    logprobs: bool | None = None
+    top_logprobs: int | None = None
+
+    @field_validator("top_logprobs")
+    @classmethod
+    def _validate_top_logprobs(cls, v):
+        if v is not None and (v < 0 or v > 20):
+            raise ValueError("top_logprobs must be between 0 and 20")
+        return v
 
     @field_validator("stop", mode="before")
     @classmethod
@@ -340,6 +350,7 @@ class ChatCompletionChoice(BaseModel):
     index: int = 0
     message: AssistantMessage
     finish_reason: str | None = "stop"
+    logprobs: Any = None
 
 
 class PromptTokensDetails(BaseModel):
@@ -531,6 +542,7 @@ class ChatCompletionChunkChoice(BaseModel):
     index: int = 0
     delta: ChatCompletionChunkDelta
     finish_reason: str | None = None
+    logprobs: Any = None
 
 
 class ChatCompletionChunk(BaseModel):

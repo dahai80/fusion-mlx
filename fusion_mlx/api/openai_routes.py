@@ -136,6 +136,8 @@ def _build_sampling_params(req: ChatCompletionRequest) -> SamplingParams:
             else ([req.stop] if req.stop else None)
         ),
         stop_token_ids=getattr(req, "stop_token_ids", None),
+        logprobs=bool(req.logprobs),
+        top_logprobs=req.top_logprobs,
     )
 
 
@@ -152,6 +154,7 @@ def _gen_to_internal(
         tool_calls=gen.tool_calls,
         request_id=request_id,
         model=model,
+        logprobs=getattr(gen, "logprobs", None),
     )
 
 

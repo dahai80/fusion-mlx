@@ -675,3 +675,58 @@ class TestStopCoercion:
             stop=["a"],
         )
         assert req.stop == ["a"]
+
+
+class TestLogprobsFields:
+    def test_logprobs_defaults_none(self):
+        req = ChatCompletionRequest(
+            model="m",
+            messages=[Message(role="user", content="hi")],
+        )
+        assert req.logprobs is None
+        assert req.top_logprobs is None
+
+    def test_logprobs_true_accepted(self):
+        req = ChatCompletionRequest(
+            model="m",
+            messages=[Message(role="user", content="hi")],
+            logprobs=True,
+            top_logprobs=10,
+        )
+        assert req.logprobs is True
+        assert req.top_logprobs == 10
+
+    @pytest.mark.parametrize("bad", [-1, 21, 100])
+    def test_top_logprobs_out_of_range_rejected(self, bad):
+        with pytest.raises(ValidationError):
+            ChatCompletionRequest(
+                model="m",
+                messages=[Message(role="user", content="hi")],
+                logprobs=True,
+                top_logprobs=bad,
+            )
+
+    @pytest.mark.parametrize("ok", [0, 1, 20])
+    def test_top_logprobs_in_range_accepted(self, ok):
+        req = ChatCompletionRequest(
+            model="m",
+            messages=[Message(role="user", content="hi")],
+            logprobs=True,
+            top_logprobs=ok,
+        )
+        assert req.top_logprobs == ok
+
+    def test_choice_has_logprobs_field(self):
+        choice = ChatCompletionChoice(
+            message=AssistantMessage(content="x"),
+            finish_reason="stop",
+        )
+        assert choice.logprobs is None
+        dumped = choice.model_dump(exclude_none=True)
+        assert "logprobs" not in dumped
+
+    def test_chunk_choice_has_logprobs_field(self):
+        choice = ChatCompletionChunkChoice(
+            delta=ChatCompletionChunkDelta(content="x"),
+        )
+        assert choice.logprobs is None

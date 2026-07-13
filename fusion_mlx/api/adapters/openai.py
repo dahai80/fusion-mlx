@@ -135,6 +135,7 @@ class OpenAIAdapter(BaseAdapter):
                         tool_calls=response.tool_calls,
                     ),
                     finish_reason=finish_reason,
+                    logprobs=(response.logprobs if request.logprobs else None),
                 )
             ],
             usage=Usage(
@@ -189,6 +190,7 @@ class OpenAIAdapter(BaseAdapter):
                 ChatCompletionChunkChoice(
                     delta=delta,
                     finish_reason=chunk.finish_reason,
+                    logprobs=(chunk.logprobs if request.logprobs else None),
                 )
             ],
         )
