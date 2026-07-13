@@ -54,6 +54,12 @@ class GenerationOutput:
     # Unprocessed output (pre special-token cleanup) for reasoning/wire-leak
     # detection; engines may populate it, else ``or output.text`` falls back.
     raw_text: str | None = None
+    # Per-token full-vocab log-softmax vectors (mx.array) for OpenAI
+    # logprobs; populated only when the request asked for logprobs.
+    # Spec-decode paths (mtp/suffix/dflash/dspark) leave this None.
+    logprobs: Any = None
+    # Sampled token ids aligned 1:1 with ``logprobs``.
+    new_token_ids: list[int] = field(default_factory=list)
 
 
 class BaseEngine(ABC):

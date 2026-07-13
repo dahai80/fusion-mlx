@@ -119,7 +119,14 @@ class RequestOutputCollector:
             if isinstance(ec, list) and isinstance(nc, list):
                 merged["content"] = ec + nc
             return merged
-        return new
+
+        # Single MLX arrays (one full-vocab vector per decode step):
+        # accumulate into a list so aggregated outputs carry the full
+        # per-token sequence aligned with ``new_token_ids``.
+        def _as_list(x: Any) -> list:
+            return x if isinstance(x, list) else [x]
+
+        return _as_list(existing) + _as_list(new)
 
     def clear(self) -> None:
         if self.aggregate:

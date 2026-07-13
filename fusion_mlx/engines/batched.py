@@ -653,6 +653,8 @@ class BatchedEngine(BaseEngine):
             finish_reason=output.finish_reason,
             tool_calls=output.tool_calls,
             cached_tokens=output.cached_tokens,
+            logprobs=output.logprobs,
+            new_token_ids=output.new_token_ids,
         )
 
     async def stream_generate(
@@ -726,6 +728,8 @@ class BatchedEngine(BaseEngine):
                     finish_reason=output.finish_reason,
                     tool_calls=output.tool_calls,
                     cached_tokens=output.cached_tokens,
+                    logprobs=output.logprobs,
+                    new_token_ids=output.new_token_ids,
                 )
         except GeneratorExit:
             logger.info(f"[stream_generate] GeneratorExit for request {request_id}")
@@ -908,6 +912,8 @@ class BatchedEngine(BaseEngine):
                     finish_reason=output.finish_reason,
                     tool_calls=output.tool_calls,
                     cached_tokens=output.cached_tokens,
+                    logprobs=output.logprobs,
+                    new_token_ids=output.new_token_ids,
                 )
             return
 
