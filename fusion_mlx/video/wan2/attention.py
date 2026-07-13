@@ -14,8 +14,21 @@ except Exception:  # pragma: no cover - optional Metal Flash Attention extension
     _mfa_flash_attention = None
     _mfa_available = None
 
+try:
+    from fusion_mlx.custom_kernels.xfuser_attention import (
+        current_step as _fa_step,
+    )
+    from fusion_mlx.custom_kernels.xfuser_attention import (
+        is_active as _fa_active,
+    )
+except Exception:  # pragma: no cover - xfuser strategy optional
+    _fa_step = None
+    _fa_active = None
 
-def _sdpa(q, k, v, scale, mask=None):
+
+def _sdpa(q, k, v, scale, mask=None, *, fast_attn=None, step=0, batch_size=None):
+    if fast_attn is not None:
+        return fast_attn(q, k, v, step, scale=scale, mask=mask, batch_size=batch_size)
     if _mfa_available is not None and _mfa_available():
         return _mfa_flash_attention(q, k, v, scale=scale, mask=mask)
     if mask is not None:
@@ -134,7 +147,20 @@ class WanSelfAttention(nn.Module):
 
         # Use memory-efficient scaled dot-product attention
         # mx.fast.scaled_dot_product_attention expects [B, N, L, D]
-        out = _sdpa(q, k, v, self.scale, mask)
+        fa = getattr(self, "_fast_attn", None)
+        if fa is not None and _fa_active is not None and _fa_active():
+            out = _sdpa(
+                q,
+                k,
+                v,
+                self.scale,
+                mask,
+                fast_attn=fa,
+                step=_fa_step(),
+                batch_size=b,
+            )
+        else:
+            out = _sdpa(q, k, v, self.scale, mask)
 
         out = out.transpose(0, 2, 1, 3).reshape(b, s, -1)
         return self.o(out)
@@ -211,7 +237,20 @@ class WanCrossAttention(nn.Module):
             for i, cl in enumerate(context_lens):
                 mask[i, :, :, cl:] = -1e9
 
-        out = _sdpa(q, k, v, self.scale, mask)
+        fa = getattr(self, "_fast_attn", None)
+        if fa is not None and _fa_active is not None and _fa_active():
+            out = _sdpa(
+                q,
+                k,
+                v,
+                self.scale,
+                mask,
+                fast_attn=fa,
+                step=_fa_step(),
+                batch_size=b,
+            )
+        else:
+            out = _sdpa(q, k, v, self.scale, mask)
 
         out = out.transpose(0, 2, 1, 3).reshape(b, -1, n * d)
         return self.o(out)

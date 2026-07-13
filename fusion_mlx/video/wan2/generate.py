@@ -19,6 +19,13 @@ from .utils import (
     load_wan_model,
 )
 
+try:
+    from fusion_mlx.custom_kernels.xfuser_attention import (
+        fast_attn_step as _fa_step,
+    )
+except Exception:  # pragma: no cover - xfuser strategy optional
+    from contextlib import nullcontext as _fa_step
+
 
 class Colors:
 
@@ -569,15 +576,16 @@ def generate_video(
                 )
             else:
                 ctx = context_cond
-            preds = _call(
-                [latents],
-                t=t_batch,
-                context=ctx,
-                seq_len=seq_len,
-                cross_kv_caches=kv,
-                y=y_arg,
-                rope_cos_sin=rcs,
-            )
+            with _fa_step(i):
+                preds = _call(
+                    [latents],
+                    t=t_batch,
+                    context=ctx,
+                    seq_len=seq_len,
+                    cross_kv_caches=kv,
+                    y=y_arg,
+                    rope_cos_sin=rcs,
+                )
             noise_pred = preds[0]
             del preds
         else:
@@ -609,15 +617,16 @@ def generate_video(
                 if not is_dual
                 else (context_cfg_high if timestep_val >= boundary else context_cfg_low)
             )
-            preds = _call(
-                [latents, latents],
-                t=t_batch,
-                context=ctx,
-                seq_len=seq_len,
-                cross_kv_caches=kv,
-                y=y_arg,
-                rope_cos_sin=rcs,
-            )
+            with _fa_step(i):
+                preds = _call(
+                    [latents, latents],
+                    t=t_batch,
+                    context=ctx,
+                    seq_len=seq_len,
+                    cross_kv_caches=kv,
+                    y=y_arg,
+                    rope_cos_sin=rcs,
+                )
             noise_pred_cond, noise_pred_uncond = preds[0], preds[1]
             noise_pred = noise_pred_uncond + gs * (noise_pred_cond - noise_pred_uncond)
             del noise_pred_cond, noise_pred_uncond, preds

@@ -788,3 +788,111 @@ class TestFP8Linear:
         x = mx.random.uniform(shape=(2, 16, 64)).astype(mx.float16)
         out = layer(x)
         assert out.shape == (2, 16, 128)
+
+
+class TestVideoAttentionInjection:
+    def test_runtime_step_context(self):
+        from fusion_mlx.custom_kernels.xfuser_attention import (
+            current_step,
+            fast_attn_step,
+            is_active,
+        )
+
+        assert is_active() is False
+        with fast_attn_step(7):
+            assert is_active() is True
+            assert current_step() == 7
+        assert is_active() is False
+
+    def test_nested_step_context_restores(self):
+        from fusion_mlx.custom_kernels.xfuser_attention import (
+            current_step,
+            fast_attn_step,
+        )
+
+        with fast_attn_step(1):
+            assert current_step() == 1
+            with fast_attn_step(5):
+                assert current_step() == 5
+            assert current_step() == 1
+
+    def test_apply_fast_attention_ltx2(self):
+        from fusion_mlx.custom_kernels.xfuser_attention import (
+            FastAttnMethod,
+            apply_fast_attention,
+        )
+        from fusion_mlx.video.ltx2.attention import Attention as LtxAttention
+
+        attn = LtxAttention(query_dim=64, heads=4, dim_head=16)
+        fas = apply_fast_attention(attn, n_steps=3, window_size=4)
+        assert len(fas) == 1
+        assert getattr(attn, "_fast_attn", None) is fas[0]
+        assert len(fas[0].steps_method) == 3
+        assert all(m == FastAttnMethod.FULL_ATTN for m in fas[0].steps_method)
+
+    def test_apply_fast_attention_wan2(self):
+        from fusion_mlx.custom_kernels.xfuser_attention import (
+            apply_fast_attention,
+        )
+        from fusion_mlx.video.wan2.attention import WanSelfAttention
+
+        attn = WanSelfAttention(dim=64, num_heads=4)
+        fas = apply_fast_attention(attn, n_steps=2, window_size=-1)
+        assert len(fas) == 1
+        assert getattr(attn, "_fast_attn", None) is fas[0]
+
+    def test_ltx2_routes_through_fast_attn_when_active(self):
+        from fusion_mlx.custom_kernels.xfuser_attention import (
+            apply_fast_attention,
+            fast_attn_step,
+            is_active,
+        )
+        from fusion_mlx.video.ltx2.attention import Attention as LtxAttention
+
+        attn = LtxAttention(query_dim=64, heads=4, dim_head=16)
+        apply_fast_attention(attn, n_steps=1, window_size=-1)
+
+        x = mx.random.uniform(shape=(1, 16, 64)).astype(mx.float32)
+        ctx = mx.random.uniform(shape=(1, 16, 64)).astype(mx.float32)
+
+        out_default = attn(x, context=ctx)
+        assert out_default.shape == (1, 16, 64)
+
+        assert is_active() is False
+        with fast_attn_step(0):
+            out_routed = attn(x, context=ctx)
+        assert out_routed.shape == (1, 16, 64)
+
+    def test_ltx2_window_residual_changes_output(self):
+        from fusion_mlx.custom_kernels.xfuser_attention import (
+            FastAttnMethod,
+            apply_fast_attention,
+            fast_attn_step,
+        )
+        from fusion_mlx.video.ltx2.attention import Attention as LtxAttention
+
+        attn = LtxAttention(query_dim=64, heads=4, dim_head=16)
+        fas = apply_fast_attention(attn, n_steps=1, window_size=2)
+        fas[0].set_methods([FastAttnMethod.RESIDUAL_WINDOW_ATTN])
+
+        x = mx.random.uniform(shape=(1, 32, 64)).astype(mx.float32)
+        ctx = mx.random.uniform(shape=(1, 32, 64)).astype(mx.float32)
+
+        with fast_attn_step(0):
+            out_window = attn(x, context=ctx)
+        fas[0].set_methods([FastAttnMethod.FULL_ATTN])
+        with fast_attn_step(0):
+            out_full = attn(x, context=ctx)
+        assert out_window.shape == out_full.shape
+
+    def test_deactivate_clears_active(self):
+        from fusion_mlx.custom_kernels.xfuser_attention import (
+            deactivate_fast_attn,
+            is_active,
+            set_fast_attn_step,
+        )
+
+        set_fast_attn_step(3)
+        assert is_active() is True
+        deactivate_fast_attn()
+        assert is_active() is False

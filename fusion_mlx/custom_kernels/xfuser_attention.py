@@ -320,6 +320,135 @@ def load_strategy_config(file_path: str | Path) -> list[list[FastAttnMethod]]:
     return strategies
 
 
+class _FastAttnRuntime:
+    __slots__ = ("active", "step", "batch_size")
+
+    def __init__(self):
+        self.active = False
+        self.step = 0
+        self.batch_size = None
+
+
+_runtime = _FastAttnRuntime()
+
+
+class fast_attn_step:
+    def __init__(self, step_idx: int, *, batch_size: int | None = None):
+        self._step = step_idx
+        self._bs = batch_size
+        self._prev_active = False
+        self._prev_step = 0
+        self._prev_bs: int | None = None
+
+    def __enter__(self):
+        self._prev_active = _runtime.active
+        self._prev_step = _runtime.step
+        self._prev_bs = _runtime.batch_size
+        _runtime.active = True
+        _runtime.step = self._step
+        _runtime.batch_size = self._bs
+        return self
+
+    def __exit__(self, *exc):
+        _runtime.active = self._prev_active
+        _runtime.step = self._prev_step
+        _runtime.batch_size = self._prev_bs
+        return False
+
+
+def current_step() -> int:
+    return _runtime.step
+
+
+def is_active() -> bool:
+    return _runtime.active
+
+
+def set_fast_attn_step(step_idx: int, *, batch_size: int | None = None) -> None:
+    _runtime.active = True
+    _runtime.step = step_idx
+    _runtime.batch_size = batch_size
+
+
+def deactivate_fast_attn() -> None:
+    _runtime.active = False
+
+
+def _walk_modules(module: Any, seen: set | None = None) -> list:
+    if seen is None:
+        seen = set()
+    out: list = []
+    mid = id(module)
+    if mid in seen:
+        return out
+    seen.add(mid)
+    out.append(module)
+    children = getattr(module, "_modules", None)
+    if isinstance(children, dict):
+        for child in children.values():
+            if isinstance(child, (list, tuple)):
+                for c in child:
+                    out.extend(_walk_modules(c, seen))
+            else:
+                out.extend(_walk_modules(child, seen))
+    return out
+
+
+def apply_fast_attention(
+    model: Any,
+    n_steps: int,
+    *,
+    window_size: int = -1,
+    cond_first: bool = False,
+) -> list[MLXFastAttention]:
+    from fusion_mlx.video.ltx2.attention import Attention as LtxAttention
+    from fusion_mlx.video.wan2.attention import (
+        WanCrossAttention,
+        WanSelfAttention,
+    )
+
+    target_types = (WanSelfAttention, WanCrossAttention, LtxAttention)
+    mods = [m for m in _walk_modules(model) if isinstance(m, target_types)]
+    fas: list[MLXFastAttention] = []
+    for m in mods:
+        fa = MLXFastAttention(window_size=window_size, cond_first=cond_first)
+        fa.set_methods([FastAttnMethod.FULL_ATTN] * n_steps)
+        m._fast_attn = fa
+        fas.append(fa)
+    logger.info(
+        "apply_fast_attention: attached MLXFastAttention to %d attention modules "
+        "(n_steps=%d, window=%d)",
+        len(fas),
+        n_steps,
+        window_size,
+    )
+    return fas
+
+
+def calibrate_and_apply(
+    model: Any,
+    n_steps: int,
+    calib_prompts: list[str],
+    *,
+    window_size: int = -1,
+    threshold: float = 0.1,
+    verbose: bool = False,
+) -> list[list[FastAttnMethod]]:
+    fas = apply_fast_attention(model, n_steps, window_size=window_size)
+    if not fas:
+        logger.warning("calibrate_and_apply: no attention modules found on model")
+        return []
+    strategies = calibrate_attention_strategy(
+        model,
+        fas,
+        n_steps,
+        calib_prompts,
+        threshold=threshold,
+        verbose=verbose,
+    )
+    return strategies
+
+
 __all__ = [
     "FastAttnMethod",
     "MLXFastAttention",
@@ -327,4 +456,11 @@ __all__ = [
     "calibrate_attention_strategy",
     "save_strategy_config",
     "load_strategy_config",
+    "fast_attn_step",
+    "current_step",
+    "is_active",
+    "set_fast_attn_step",
+    "deactivate_fast_attn",
+    "apply_fast_attention",
+    "calibrate_and_apply",
 ]

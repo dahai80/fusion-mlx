@@ -8,6 +8,13 @@ from .guidance import apg_delta
 from .ltx2_model import LTXModel
 from .transformer import Modality
 
+try:
+    from fusion_mlx.custom_kernels.xfuser_attention import (
+        fast_attn_step as _fa_step,
+    )
+except Exception:  # pragma: no cover - xfuser strategy optional
+    from contextlib import nullcontext as _fa_step
+
 logger = logging.getLogger(__name__)
 
 
@@ -93,9 +100,10 @@ def denoise_distilled(
                 sigma=a_sig,
             )
 
-        velocity, audio_velocity = transformer(
-            video=video_modality, audio=audio_modality
-        )
+        with _fa_step(i):
+            velocity, audio_velocity = transformer(
+                video=video_modality, audio=audio_modality
+            )
         mx.eval(velocity)
         if audio_velocity is not None:
             mx.eval(audio_velocity)
@@ -233,7 +241,8 @@ def denoise_dev(
             positional_embeddings=precomputed_rope,
             sigma=sigma_array,
         )
-        velocity_pos, _ = transformer(video=video_modality_pos, audio=None)
+        with _fa_step(i):
+            velocity_pos, _ = transformer(video=video_modality_pos, audio=None)
 
         latents_flat_f32 = mx.transpose(mx.reshape(latents, (b, c, -1)), (0, 2, 1))
         timesteps_f32 = mx.expand_dims(timesteps.astype(mx.float32), axis=-1)
@@ -252,7 +261,8 @@ def denoise_dev(
                 positional_embeddings=precomputed_rope,
                 sigma=sigma_array,
             )
-            velocity_neg, _ = transformer(video=video_modality_neg, audio=None)
+            with _fa_step(i):
+                velocity_neg, _ = transformer(video=video_modality_neg, audio=None)
 
             x0_neg_f32 = latents_flat_f32 - timesteps_f32 * velocity_neg.astype(
                 mx.float32

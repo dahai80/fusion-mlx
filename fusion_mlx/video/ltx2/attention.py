@@ -20,6 +20,17 @@ except Exception:  # pragma: no cover - optional Metal Flash Attention extension
     _mfa_flash_attention = None
     _mfa_available = None
 
+try:
+    from fusion_mlx.custom_kernels.xfuser_attention import (
+        current_step as _fa_step,
+    )
+    from fusion_mlx.custom_kernels.xfuser_attention import (
+        is_active as _fa_active,
+    )
+except Exception:  # pragma: no cover - xfuser strategy optional
+    _fa_step = None
+    _fa_active = None
+
 
 def scaled_dot_product_attention(
     q: mx.array,
@@ -27,6 +38,10 @@ def scaled_dot_product_attention(
     v: mx.array,
     heads: int,
     mask: mx.array | None = None,
+    *,
+    fast_attn=None,
+    step: int = 0,
+    batch_size: int | None = None,
 ) -> mx.array:
 
     b, q_seq_len, dim = q.shape
@@ -49,7 +64,9 @@ def scaled_dot_product_attention(
 
     scale = 1.0 / math.sqrt(dim_head)
 
-    if _mfa_available is not None and _mfa_available():
+    if fast_attn is not None:
+        out = fast_attn(q, k, v, step, scale=scale, mask=mask, batch_size=batch_size)
+    elif _mfa_available is not None and _mfa_available():
         out = _mfa_flash_attention(q, k, v, scale=scale, mask=mask)
     else:
         out = mx.fast.scaled_dot_product_attention(q, k, v, scale=scale, mask=mask)
@@ -123,7 +140,19 @@ class Attention(nn.Module):
                 k_pe_to_use = pe if k_pe is None else k_pe
                 k = apply_rotary_emb(k, k_pe_to_use, self.rope_type)
 
-            out = scaled_dot_product_attention(q, k, v, self.heads, mask)
+            fa = getattr(self, "_fast_attn", None)
+            if fa is not None and _fa_active is not None and _fa_active():
+                out = scaled_dot_product_attention(
+                    q,
+                    k,
+                    v,
+                    self.heads,
+                    mask,
+                    fast_attn=fa,
+                    step=_fa_step(),
+                )
+            else:
+                out = scaled_dot_product_attention(q, k, v, self.heads, mask)
 
         if gate is not None:
             b, seq_len, _ = out.shape
