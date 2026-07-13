@@ -4,6 +4,7 @@
 import asyncio
 from collections import deque
 from dataclasses import dataclass
+from typing import Any
 
 from .request import RequestOutput
 
@@ -97,10 +98,28 @@ class RequestOutputCollector:
             ),
             tool_calls=new.tool_calls,
             cached_tokens=new.cached_tokens,
+            logprobs=self._merge_logprobs(existing.logprobs, new.logprobs),
             error=new.error or existing.error,
             error_code=new.error_code or existing.error_code,
             error_metadata=new.error_metadata or existing.error_metadata,
         )
+
+    @staticmethod
+    def _merge_logprobs(existing: Any, new: Any) -> Any:
+        if existing is None:
+            return new
+        if new is None:
+            return existing
+        if isinstance(existing, list) and isinstance(new, list):
+            return existing + new
+        if isinstance(existing, dict) and isinstance(new, dict):
+            merged = dict(existing)
+            ec = existing.get("content")
+            nc = new.get("content")
+            if isinstance(ec, list) and isinstance(nc, list):
+                merged["content"] = ec + nc
+            return merged
+        return new
 
     def clear(self) -> None:
         if self.aggregate:

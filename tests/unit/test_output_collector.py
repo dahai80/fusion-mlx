@@ -435,6 +435,65 @@ class TestRequestOutputCollectorMergeOutputs:
         assert result.generated_at == 10.0
         assert result.generated_until == 11.0
 
+    def test_merge_concats_logprobs_content(self):
+        collector = RequestOutputCollector()
+        existing = RequestOutput(
+            request_id="test-001",
+            new_token_ids=[100],
+            new_text="a",
+            logprobs={"content": [{"token": "a", "logprob": -0.1}], "refusal": None},
+        )
+        new = RequestOutput(
+            request_id="test-001",
+            new_token_ids=[101],
+            new_text="b",
+            logprobs={"content": [{"token": "b", "logprob": -0.2}], "refusal": None},
+        )
+        result = collector._merge_outputs(existing, new)
+        assert result.logprobs is not None
+        assert len(result.logprobs["content"]) == 2
+        assert result.logprobs["content"][0]["token"] == "a"
+        assert result.logprobs["content"][1]["token"] == "b"
+
+    def test_merge_logprobs_none_fallthrough(self):
+        collector = RequestOutputCollector()
+        existing = RequestOutput(
+            request_id="test-001",
+            new_token_ids=[100],
+            new_text="a",
+        )
+        new = RequestOutput(
+            request_id="test-001",
+            new_token_ids=[101],
+            new_text="b",
+            logprobs={"content": [{"token": "b", "logprob": -0.2}]},
+        )
+        result = collector._merge_outputs(existing, new)
+        assert result.logprobs == {"content": [{"token": "b", "logprob": -0.2}]}
+
+        result2 = collector._merge_outputs(
+            RequestOutput(request_id="x", new_token_ids=[1], new_text="a"),
+            RequestOutput(request_id="x", new_token_ids=[2], new_text="b"),
+        )
+        assert result2.logprobs is None
+
+    def test_merge_logprobs_list_concat(self):
+        collector = RequestOutputCollector()
+        existing = RequestOutput(
+            request_id="test-001",
+            new_token_ids=[100],
+            new_text="a",
+            logprobs=[{"token": "a"}],
+        )
+        new = RequestOutput(
+            request_id="test-001",
+            new_token_ids=[101],
+            new_text="b",
+            logprobs=[{"token": "b"}],
+        )
+        result = collector._merge_outputs(existing, new)
+        assert result.logprobs == [{"token": "a"}, {"token": "b"}]
+
 
 class TestRequestOutputCollectorHasWaitingConsumers:
     """Tests for RequestOutputCollector.has_waiting_consumers()."""
