@@ -3,12 +3,12 @@
 
 from __future__ import annotations
 
-from fusion_mlx.adapter.gemma4 import (
+from fusion_mlx.api.openai_models import Message
+from fusion_mlx.parsers.gemma4 import (
     Gemma4OutputParserSession,
     _strip_thinking,
     extract_gemma4_messages,
 )
-from fusion_mlx.api.openai_models import Message
 
 
 def _tool_call_dict(id: str, name: str, args: str = "{}") -> dict:
