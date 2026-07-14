@@ -5,6 +5,9 @@ The mlx-vlm e390667 pin removed the out-of-tree MiniMax M3 implementation
 that FusionMLX currently depends on. This module keeps the compatibility surface
 small: it vendors the removed model/parser modules and restores only the
 server-facing helpers FusionMLX uses.
+
+See ``vendor/UPSTREAM_REF.md`` for the snapshot source record, local-modification
+log, and re-sync procedure (issue #67).
 """
 
 from __future__ import annotations
