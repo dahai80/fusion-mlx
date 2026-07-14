@@ -628,7 +628,7 @@ def _extract_thinking_from_request(request) -> bool | None:
 
 
 def _resolve_enable_thinking(request) -> bool | None:
-    no_thinking = _get_server_attr("_no_thinking", False)
+    no_thinking = _get_cfg_attr("no_thinking", False)
     if no_thinking:
         return False
     return _extract_thinking_from_request(request)
@@ -790,7 +790,7 @@ def build_extended_sampling_kwargs(request) -> dict:
 
 
 def _build_usage(output: GenerationOutput, reasoning_text: str | None) -> Usage:
-    rp_name = _get_server_attr("_reasoning_parser_name")
+    rp_name = _get_cfg_attr("reasoning_parser_name")
     total_completion = output.completion_tokens
     cached_tokens = getattr(output, "cached_tokens", 0) or 0
     prompt_details = (
@@ -947,8 +947,8 @@ def get_engine(model_name: str | None = None) -> BaseEngine:
 
 
 def _resolve_reasoning_enabled(model_name: str | None) -> bool:
-    rp = _get_server_attr("_reasoning_parser")
-    rp_name = _get_server_attr("_reasoning_parser_name")
+    rp = _get_cfg_attr("reasoning_parser")
+    rp_name = _get_cfg_attr("reasoning_parser_name")
     return rp is not None or bool(rp_name)
 
 
@@ -1067,7 +1067,7 @@ def _parse_tool_calls_with_parser(
 
     enable_auto_tool_choice = _get_server_attr("_enable_auto_tool_choice", False)
     tool_call_parser_name = _get_server_attr("_tool_call_parser")
-    rp_name = _get_server_attr("_reasoning_parser_name")
+    rp_name = _get_cfg_attr("reasoning_parser_name")
 
     request_dict = request.model_dump() if request else None
 
@@ -1224,7 +1224,7 @@ def _inject_json_instruction(messages: list, instruction: str) -> list:
 
 
 def _maybe_pin_system_prompt(messages: list) -> None:
-    pin_system_prompt = _get_server_attr("_pin_system_prompt", False)
+    pin_system_prompt = _get_cfg_attr("pin_system_prompt", False)
     if not pin_system_prompt:
         return
 

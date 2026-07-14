@@ -1456,15 +1456,18 @@ def serve_command(args):
     if args.rate_limit > 0:
         server._rate_limiter = configure_rate_limiter(args.rate_limit, enabled=True)
 
+    # Staging globals now write directly to ServerConfig (#50 consolidation).
+    from fusion_mlx.config import get_config as _get_config
+
     # Configure GC control
     gc_control = args.gc_control and not args.no_gc_control
-    server._gc_control = gc_control
+    _get_config().gc_control = gc_control
 
     # Configure --no-thinking: suppress chain-of-thought in chat template
-    server._no_thinking = args.no_thinking
+    _get_config().no_thinking = args.no_thinking
 
     # Configure system prompt pinning
-    server._pin_system_prompt = args.pin_system_prompt
+    _get_config().pin_system_prompt = args.pin_system_prompt
 
     # Configure tool calling
     if args.enable_auto_tool_choice and args.tool_call_parser:
@@ -1480,8 +1483,6 @@ def serve_command(args):
 
     # Configure generation defaults -- written directly to ServerConfig
     # (consolidated #50: service/helpers._resolve_* reads cfg, not globals).
-    from fusion_mlx.config import get_config as _get_config
-
     if args.default_temperature is not None:
         _get_config().default_temperature = args.default_temperature
     if args.default_top_p is not None:
@@ -1503,8 +1504,8 @@ def serve_command(args):
             from .reasoning import get_parser
 
             parser_cls = get_parser(args.reasoning_parser)
-            server._reasoning_parser = parser_cls()
-            server._reasoning_parser_name = args.reasoning_parser
+            _get_config().reasoning_parser = parser_cls()
+            _get_config().reasoning_parser_name = args.reasoning_parser
             logger.info(f"Reasoning parser enabled: {args.reasoning_parser}")
         except KeyError as e:
             print(f"Error: {e}")
@@ -1519,7 +1520,7 @@ def serve_command(args):
             )
             sys.exit(1)
     else:
-        server._reasoning_parser = None
+        _get_config().reasoning_parser = None
 
     # R15-P1 #313 follow-up (#318): ``--spec-decode dflash`` routes to
     # the prod path. The originally vendored BatchedEngine adapter at

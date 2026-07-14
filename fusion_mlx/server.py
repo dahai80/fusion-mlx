@@ -123,14 +123,9 @@ _model_path: str | None = None
 _default_timeout: float = 1800.0
 _max_request_bytes: int | None = None
 _rate_limiter = None
-_gc_control: bool = True
-_no_thinking: bool = False
-_pin_system_prompt: bool = False
 _enable_auto_tool_choice: bool = False
 _tool_call_parser: str | None = None
 _enable_tool_logits_bias: bool = False
-_reasoning_parser = None
-_reasoning_parser_name: str | None = None
 _enable_audio_lane: bool = False
 _sse_keepalive_seconds: float = 0.0
 # Staged single-model request from ``serve --model <X>``. ``load_model``
@@ -160,20 +155,15 @@ def _sync_config() -> None:
             ("api_key", _api_key),
             ("max_request_bytes", _max_request_bytes),
             ("default_timeout", _default_timeout),
-            ("gc_control", _gc_control),
-            ("no_thinking", _no_thinking),
-            ("pin_system_prompt", _pin_system_prompt),
             ("enable_auto_tool_choice", _enable_auto_tool_choice),
             ("tool_call_parser", _tool_call_parser),
             ("enable_tool_logits_bias", _enable_tool_logits_bias),
-            ("reasoning_parser", _reasoning_parser),
-            ("reasoning_parser_name", _reasoning_parser_name),
             ("enable_audio_lane", _enable_audio_lane),
             ("sse_keepalive_seconds", _sse_keepalive_seconds),
-            # Sampling defaults (default_temperature/top_p/top_k/min_p/
-            # repetition_penalty/presence_penalty/frequency_penalty) are read
-            # directly from ServerConfig by service/helpers._resolve_* -- no
-            # longer staged through server globals (#50 consolidation).
+            # Sampling defaults + gc_control/no_thinking/pin_system_prompt/
+            # reasoning_parser(_name) are read directly from ServerConfig by
+            # service/helpers + chat.py -- no longer staged through server
+            # globals (#50 consolidation).
             # rate_limiter is intentionally excluded: it is a module-level
             # singleton in middleware/auth.py (configure_rate_limiter mutates
             # it in place and returns it), NOT a ServerConfig field. The
