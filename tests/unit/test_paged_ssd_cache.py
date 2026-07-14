@@ -1537,6 +1537,30 @@ class TestAsyncWriteAndTimeoutLoad:
         # Block should be removed from index (corrupted entry cleanup)
         assert not ssd_cache.has_block(block_hash)
 
+    def test_restore_corrupt_bytes_returns_none_not_zeros(self, mx):
+        # Regression (#82 broad-except audit): a corrupt/short byte payload must
+        # NOT be restored as a silent mx.zeros (which would poison the KV cache
+        # with zeroed pages). It must return None so the caller treats the block
+        # as a cache miss and recomputes.
+        corrupt_payload = b"\x00"  # 1 byte cannot fill a float32[2, 4, 8]
+        restored = _restore_tensor_from_bytes(corrupt_payload, "F32", [2, 4, 8])
+        assert restored is None
+
+    def test_reconstruct_layers_corrupt_tensor_invalidates_block(self, ssd_cache, mx):
+        # Regression (#82): if any tensor in a block fails to deserialize, the
+        # whole block must be discarded (None) rather than yielding a partial
+        # layer list (e.g. a 1-tuple where a 2-tuple is expected) that could
+        # misalign the KV cache or crash downstream unpacking.
+        valid = mx.zeros((1, 8, 4, 4))
+        mx.eval(valid)
+        tensors_raw = {
+            "layer_0_state_0": _extract_tensor_bytes(valid),
+            "layer_0_state_1": (b"\x00", "F32", [2, 4, 8]),
+        }
+        file_metadata = {"num_layers": 1, "layer_0_state_count": 2}
+        loaded = ssd_cache._reconstruct_layers(tensors_raw, file_metadata, 1, None)
+        assert loaded is None
+
     def test_load_no_executor_deadlock(self, ssd_cache, mx):
         """Regression test: _load_executor must not exist (prevents deadlock)."""
         # The old implementation used ThreadPoolExecutor(max_workers=1) which

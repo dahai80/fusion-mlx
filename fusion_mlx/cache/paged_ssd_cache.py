@@ -367,8 +367,14 @@ def _restore_tensor_from_bytes(data: bytes, dtype_str: str, shape: list[int]):
                 arr = mx.array(memoryview(data)).astype(mx_dtype).reshape(shape)
         mx.eval(arr)
         return arr
-    except Exception:
-        return mx.zeros(shape, dtype=mx_dtype)
+    except Exception as e:
+        logger.warning(
+            "Corrupt KV cache tensor (shape=%s, dtype=%s): %s; treating as cache miss",
+            shape,
+            dtype_str,
+            e,
+        )
+        return None
 
 
 def _write_safetensors_no_mx(
@@ -1050,6 +1056,8 @@ class PagedSSDCacheManager:
                                 arr = _restore_tensor_from_bytes(*raw)
                                 if arr is not None:
                                     items.append(arr)
+                                else:
+                                    return None
                         if sub_state_count >= 3 and sub_class:
                             sub_list.append(("__nstate__", sub_class, items))
                         elif len(items) == 2:
@@ -1066,6 +1074,8 @@ class PagedSSDCacheManager:
                             arr = _restore_tensor_from_bytes(*raw)
                             if arr is not None:
                                 items.append(arr)
+                            else:
+                                return None
                     if len(items) == 2:
                         layers.append((items[0], items[1]))
             else:
@@ -1078,6 +1088,8 @@ class PagedSSDCacheManager:
                         arr = _restore_tensor_from_bytes(*raw)
                         if arr is not None:
                             items.append(arr)
+                        else:
+                            return None
                 if state_count >= 3 and nstate_class:
                     layers.append(("__nstate__", nstate_class, items))
                 elif len(items) == 2:
@@ -1205,6 +1217,8 @@ class PagedSSDCacheManager:
             arr = _restore_tensor_from_bytes(raw, dtype_str, shape)
             if arr is not None:
                 arrays[name] = arr
+            else:
+                return None
         if not arrays:
             return None
         num_layers = int(file_metadata.get("num_layers", 0))
