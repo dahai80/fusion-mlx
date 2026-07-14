@@ -8,8 +8,8 @@ from fusion_mlx.utils.fatal import FATAL_EXIT_CODE, fatal_exit
 
 def test_fatal_exit_dumps_traceback_and_exits():
     with (
-        patch("omlx.utils.fatal.faulthandler.dump_traceback") as dump_traceback,
-        patch("omlx.utils.fatal.os._exit") as exit_process,
+        patch("fusion_mlx.utils.fatal.faulthandler.dump_traceback") as dump_traceback,
+        patch("fusion_mlx.utils.fatal.os._exit") as exit_process,
     ):
         fatal_exit("fatal test")
 

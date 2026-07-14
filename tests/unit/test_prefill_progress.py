@@ -77,7 +77,7 @@ class TestPrefillProgressTracker:
 
     def test_speed_and_eta_calculation(self):
         t = 100.0
-        with patch("omlx.prefill_progress.time") as mock_time:
+        with patch("fusion_mlx.prefill_progress.time") as mock_time:
             mock_time.monotonic.return_value = t
             self.tracker.update("req-1", 0, 8192, "llama-3b")
 
