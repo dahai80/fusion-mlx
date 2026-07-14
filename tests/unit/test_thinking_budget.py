@@ -13,10 +13,9 @@ try:
 except ImportError:
     HAS_MLX = False
 
-from fusion_mlx.adapter.output_parser import OutputParserFactory
-
 from fusion_mlx.api.thinking import ThinkingBudgetProcessor
 from fusion_mlx.model_settings import ModelSettings
+from fusion_mlx.parsers.output_parser import OutputParserFactory
 from fusion_mlx.request import Request, SamplingParams
 from fusion_mlx.scheduler import Scheduler
 

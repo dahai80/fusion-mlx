@@ -2,8 +2,11 @@
 
 import json
 
-from fusion_mlx.model_discovery import detect_preserve_thinking, detect_thinking_default
 from fusion_mlx.model_settings import ModelSettings
+from fusion_mlx.pool.model_discovery import (
+    detect_preserve_thinking,
+    detect_thinking_default,
+)
 
 # ---------------------------------------------------------------------------
 # detect_thinking_default

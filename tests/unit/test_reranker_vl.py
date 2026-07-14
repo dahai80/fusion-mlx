@@ -2,6 +2,7 @@
 """Tests for multimodal (Qwen3-VL) reranker support."""
 
 import json
+import sys
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -13,7 +14,7 @@ try:
 except ImportError:
     HAS_MLX = False
 
-from fusion_mlx.models.reranker import (
+from fusion_mlx.engines.reranker import (
     MLXRerankerModel,
     RerankOutput,
     _coerce_item_to_text,
@@ -76,7 +77,7 @@ class TestVLItemBuilder:
         model = MLXRerankerModel(str(tmp_path))
         fake_img = object()
         with patch(
-            "omlx.models.reranker.load_image", return_value=fake_img
+            "fusion_mlx.utils.image.load_image", return_value=fake_img
         ) as mock_load:
             result = model._build_vl_item({"image": "https://x/y.jpg"})
         mock_load.assert_called_once_with("https://x/y.jpg")
@@ -85,7 +86,7 @@ class TestVLItemBuilder:
     def test_dict_text_and_image(self, tmp_path):
         model = MLXRerankerModel(str(tmp_path))
         fake_img = object()
-        with patch("omlx.models.reranker.load_image", return_value=fake_img):
+        with patch("fusion_mlx.utils.image.load_image", return_value=fake_img):
             result = model._build_vl_item({"text": "t", "image": "i"})
         assert result == {"text": "t", "image": fake_img}
 
@@ -96,7 +97,9 @@ class TestVLItemBuilder:
 
 
 class TestVLRerankScoring:
-    @pytest.mark.skipif(not HAS_MLX, reason="MLX not available")
+    @pytest.mark.skipif(
+        not HAS_MLX or sys.platform != "darwin", reason="requires real MLX (macOS only)"
+    )
     def test_rerank_vl_wraps_process_output(self, tmp_path):
         """_rerank_vl sorts model.process() scores into RerankOutput."""
         model = MLXRerankerModel(str(tmp_path))
@@ -106,8 +109,8 @@ class TestVLRerankScoring:
         # Mock mlx-embeddings model: process() returns mx.array([0.2, 0.9, 0.5])
         mock_model = MagicMock()
         mock_model.process.return_value = mx.array([0.2, 0.9, 0.5])
-        model.model = mock_model
-        model.processor = MagicMock()
+        model._model = mock_model
+        model._processor = MagicMock()
 
         output = model._rerank_vl(
             query="cat",
@@ -132,7 +135,9 @@ class TestVLRerankScoring:
         ]
         assert call_args[1]["processor"] is model.processor
 
-    @pytest.mark.skipif(not HAS_MLX, reason="MLX not available")
+    @pytest.mark.skipif(
+        not HAS_MLX or sys.platform != "darwin", reason="requires real MLX (macOS only)"
+    )
     def test_rerank_vl_with_image_documents(self, tmp_path):
         """_rerank_vl threads image dicts through _build_vl_item."""
         model = MLXRerankerModel(str(tmp_path))
@@ -141,11 +146,11 @@ class TestVLRerankScoring:
 
         mock_model = MagicMock()
         mock_model.process.return_value = mx.array([0.7, 0.3])
-        model.model = mock_model
-        model.processor = MagicMock()
+        model._model = mock_model
+        model._processor = MagicMock()
 
         fake_img = object()
-        with patch("omlx.models.reranker.load_image", return_value=fake_img):
+        with patch("fusion_mlx.utils.image.load_image", return_value=fake_img):
             output = model._rerank_vl(
                 query={"text": "a dog"},
                 documents=[
