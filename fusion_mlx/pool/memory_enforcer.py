@@ -1236,7 +1236,7 @@ class ProcessMemoryEnforcer:
                             )
                             self._engine_pool._lock.release()
                             _lock_held = False
-                            await self._engine_pool._unload_engine(victim)
+                            await self._engine_pool.unload_engine_async(victim)
                             try:
                                 await asyncio.wait_for(
                                     self._engine_pool._lock.acquire(), timeout=2.0

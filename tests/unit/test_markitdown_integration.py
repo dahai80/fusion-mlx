@@ -971,7 +971,7 @@ def test_unload_if_idle_unpinned_skips_pinned_and_unloads_idle(monkeypatch):
     async def fake_unload(model_id):
         unloaded.append(model_id)
 
-    monkeypatch.setattr(pool, "_unload_engine", fake_unload)
+    monkeypatch.setattr(pool, "unload_engine_async", fake_unload)
 
     assert asyncio.run(pool.unload_if_idle_unpinned("OCR-Model")) is False
     assert unloaded == []

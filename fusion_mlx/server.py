@@ -622,7 +622,7 @@ class Server:
                 raise HTTPException(
                     status_code=400, detail=f"Model not loaded: {model_id}"
                 )
-            await self.pool._unload_engine(resolved)
+            await self.pool.unload_engine_async(resolved)
             return {"status": "ok", "model_id": model_id}
 
         return app

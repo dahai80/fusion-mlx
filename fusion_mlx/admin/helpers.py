@@ -247,7 +247,7 @@ async def _apply_model_dirs_runtime(model_dirs: list[str]) -> tuple[bool, str]:
     loaded_models = pool.get_loaded_model_ids()
     for model_id in loaded_models:
         try:
-            await pool._unload_engine(model_id)
+            await pool.unload_engine_async(model_id)
         except Exception as e:
             logger.warning(f"Error unloading {model_id}: {e}")
 
@@ -456,7 +456,7 @@ async def _apply_cache_settings_runtime(
     loaded_models = pool.get_loaded_model_ids()
     for model_id in loaded_models:
         try:
-            await pool._unload_engine(model_id)
+            await pool.unload_engine_async(model_id)
         except Exception as e:
             logger.warning(f"Error unloading {model_id}: {e}")
 

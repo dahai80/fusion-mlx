@@ -781,7 +781,7 @@ async def run_benchmark(run: BenchmarkRun, engine_pool: Any) -> None:
             )
             for model_id in loaded_ids:
                 try:
-                    await engine_pool._unload_engine(model_id)
+                    await engine_pool.unload_engine_async(model_id)
                     logger.info(f"Benchmark: unloaded {model_id}")
                 except Exception as e:
                     logger.warning(f"Benchmark: failed to unload {model_id}: {e}")
@@ -922,7 +922,7 @@ async def run_benchmark(run: BenchmarkRun, engine_pool: Any) -> None:
             },
         )
         try:
-            await engine_pool._unload_engine(request.model_id)
+            await engine_pool.unload_engine_async(request.model_id)
             logger.info(f"Benchmark: unloaded {request.model_id} after benchmark")
         except Exception as e:
             logger.warning(f"Benchmark: failed to unload {request.model_id}: {e}")
@@ -972,7 +972,7 @@ async def run_benchmark(run: BenchmarkRun, engine_pool: Any) -> None:
         )
         # Try to unload the model on cancellation
         try:
-            await engine_pool._unload_engine(request.model_id)
+            await engine_pool.unload_engine_async(request.model_id)
         except Exception:
             pass
 
@@ -989,6 +989,6 @@ async def run_benchmark(run: BenchmarkRun, engine_pool: Any) -> None:
         )
         # Try to unload the model on error
         try:
-            await engine_pool._unload_engine(request.model_id)
+            await engine_pool.unload_engine_async(request.model_id)
         except Exception:
             pass

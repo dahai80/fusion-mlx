@@ -444,7 +444,7 @@ class _FakeBenchEnginePool:
         self.force_lm_values.append(force_lm)
         return self._engine
 
-    async def _unload_engine(self, model_id):
+    async def unload_engine_async(self, model_id):
         pass
 
 

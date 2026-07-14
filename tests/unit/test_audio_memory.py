@@ -123,7 +123,7 @@ class TestAudioMemoryTracking:
             memory_after_load = pool.current_model_memory
             assert memory_after_load > 0
 
-            await pool._unload_engine("whisper-tiny")
+            await pool.unload_engine_async("whisper-tiny")
 
         assert pool.current_model_memory < memory_after_load
 
@@ -138,7 +138,7 @@ class TestAudioMemoryTracking:
 
         with patch("omlx.engine_pool.STTEngine", return_value=mock_engine, create=True):
             await pool.get_engine("whisper-tiny")
-            await pool._unload_engine("whisper-tiny")
+            await pool.unload_engine_async("whisper-tiny")
 
         assert pool._entries["whisper-tiny"].engine is None
 

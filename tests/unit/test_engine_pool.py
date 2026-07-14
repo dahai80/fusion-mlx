@@ -751,7 +751,7 @@ class TestEnginePoolDFlashIsolation:
             unloaded.append(model_id)
             pool._entries[model_id].engine = None
 
-        pool._unload_engine = fake_unload
+        pool.unload_engine_async = fake_unload
 
         await pool._unload_other_dflash_engines("new-dflash")
 
@@ -765,12 +765,12 @@ class TestEnginePoolDFlashIsolation:
             "active-dflash", self.DFlashEngine(active=True)
         )
         pool._entries["new-dflash"] = self._entry("new-dflash", None)
-        pool._unload_engine = AsyncMock()
+        pool.unload_engine_async = AsyncMock()
 
         with pytest.raises(RuntimeError, match="active-dflash"):
             await pool._unload_other_dflash_engines("new-dflash")
 
-        pool._unload_engine.assert_not_awaited()
+        pool.unload_engine_async.assert_not_awaited()
 
 
 class TestEnginePoolAsync:
@@ -1090,7 +1090,7 @@ class TestEnginePoolAsync:
             await pool.get_engine("model-a")
             initial_memory = pool.current_model_memory
 
-            await pool._unload_engine("model-a")
+            await pool.unload_engine_async("model-a")
 
         mock_engine.stop.assert_called_once()
         assert pool.current_model_memory < initial_memory
@@ -1305,7 +1305,7 @@ class TestEnginePoolPrefillEviction:
             entry.engine = None
             pool._current_model_memory -= entry.estimated_size
 
-        pool._unload_engine = fake_unload
+        pool.unload_engine_async = fake_unload
         req = PrefillEvictionRequest(
             request_id="req-1",
             model_id="target",
@@ -1339,7 +1339,7 @@ class TestEnginePoolPrefillEviction:
         pool._entries["pinned"].is_pinned = True
         pool._entries["loading"].is_loading = True
         pool._current_model_memory = 85 * gb
-        pool._unload_engine = AsyncMock()
+        pool.unload_engine_async = AsyncMock()
         req = PrefillEvictionRequest(
             request_id="req-1",
             model_id="target",
@@ -1357,7 +1357,7 @@ class TestEnginePoolPrefillEviction:
             evicted = await pool._evict_idle_lru_for_prefill("target", req)
 
         assert evicted is False
-        pool._unload_engine.assert_not_awaited()
+        pool.unload_engine_async.assert_not_awaited()
 
 
 class TestEnginePoolStatus:
@@ -1761,7 +1761,7 @@ class TestResolveModelId:
 
 
 class TestMemorySettleBarrier:
-    """Tests for memory settle barrier in _unload_engine()."""
+    """Tests for memory settle barrier in unload_engine_async()."""
 
     @pytest.fixture
     def pool_with_loaded_model(self, small_mock_model_dir):
@@ -1809,10 +1809,49 @@ class TestMemorySettleBarrier:
             mock_mx.synchronize = MagicMock()
             mock_mx.clear_cache = MagicMock()
 
-            await pool._unload_engine("model-a")
+            await pool.unload_engine_async("model-a")
 
         assert pool._entries["model-a"].engine is None
         assert pool._current_model_memory == initial_memory - est_size
+
+    @pytest.mark.asyncio
+    async def test_unload_with_settle_false_skips_barrier_but_decrements(
+        self, pool_with_loaded_model
+    ):
+        # with_settle=False fast path: detach + decrement counter + wake the
+        # enforcer, WITHOUT the gc/synchronize/clear_cache + 10-round poll
+        # barrier. Proves the barrier is skipped (no clear_cache, only the
+        # detach baseline poll) while the memory counter and enforcer wake
+        # still happen, so admission does not drift.
+        pool = pool_with_loaded_model
+        est_size = pool._entries["model-a"].estimated_size  # 5GB
+        initial_memory = pool._current_model_memory
+
+        settle_mock = AsyncMock()
+        wake_mock = MagicMock()
+        with (
+            patch.object(pool, "_settle_unloaded_engine", settle_mock),
+            patch.object(pool, "_wake_process_memory_enforcer", wake_mock),
+            patch("omlx.engine_pool.mx") as mock_mx,
+            patch("omlx.engine_pool.get_mlx_executor", return_value=None),
+            patch("asyncio.sleep", new_callable=AsyncMock),
+        ):
+            mock_mx.get_active_memory = MagicMock()
+            mock_mx.synchronize = MagicMock()
+            mock_mx.clear_cache = MagicMock()
+
+            await pool.unload_engine_async("model-a", with_settle=False)
+
+        # Engine detached, counter decremented from the estimate
+        assert pool._entries["model-a"].engine is None
+        assert pool._current_model_memory == initial_memory - est_size
+        # Settle barrier NOT run (no clear_cache/synchronize, no 10-round poll)
+        settle_mock.assert_not_called()
+        mock_mx.clear_cache.assert_not_called()
+        mock_mx.synchronize.assert_not_called()
+        assert mock_mx.get_active_memory.call_count == 1
+        # Enforcer still woken so admission re-polls the live gauge
+        wake_mock.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_settle_takes_multiple_rounds(self, pool_with_loaded_model):
@@ -1844,7 +1883,7 @@ class TestMemorySettleBarrier:
             mock_mx.synchronize = MagicMock()
             mock_mx.clear_cache = MagicMock()
 
-            await pool._unload_engine("model-a")
+            await pool.unload_engine_async("model-a")
 
         # Should have slept at least once (0.5s between rounds)
         assert any(d == 0.5 for d in sleep_calls)
@@ -1882,7 +1921,7 @@ class TestMemorySettleBarrier:
             mock_mx.synchronize = MagicMock()
             mock_mx.clear_cache = MagicMock()
 
-            await pool._unload_engine("model-a")
+            await pool.unload_engine_async("model-a")
 
         # Emergency reclaim uses 1.0s sleeps (3 rounds)
         assert sleep_calls.count(1.0) == 3
@@ -1904,7 +1943,7 @@ class TestMemorySettleBarrier:
             mock_mx.clear_cache = MagicMock()
 
             with patch("omlx.engine_pool.logger") as mock_logger:
-                await pool._unload_engine("model-a")
+                await pool.unload_engine_async("model-a")
 
             # Should have logged an error about emergency reclaim failure
             error_calls = [str(c) for c in mock_logger.error.call_args_list]
@@ -1940,7 +1979,7 @@ class TestMemorySettleBarrier:
             mock_mx.synchronize = MagicMock()
             mock_mx.clear_cache = MagicMock()
 
-            await pool._unload_engine("model-a")
+            await pool.unload_engine_async("model-a")
 
         # During settle barrier, memory counter should NOT have been decremented
         for mem in memory_during_settle[:-1]:
@@ -1992,7 +2031,7 @@ class TestMemorySettleBarrier:
             mock_mx.synchronize = MagicMock()
             mock_mx.clear_cache = MagicMock()
 
-            await pool._unload_engine("model-a")
+            await pool.unload_engine_async("model-a")
 
         assert pool._entries["model-a"].engine is None
         assert pool._current_model_memory == 0
@@ -2034,7 +2073,7 @@ class TestMemorySettleBarrier:
             mock_mx.synchronize = MagicMock()
             mock_mx.clear_cache = MagicMock()
 
-            await pool._unload_engine("model-a")
+            await pool.unload_engine_async("model-a")
 
         assert pool._entries["model-a"].engine is None
         assert pool._current_model_memory == 0
@@ -2080,7 +2119,7 @@ class TestMemorySettleBarrier:
             mock_mx.synchronize = MagicMock()
             mock_mx.clear_cache = MagicMock()
 
-            await pool._unload_engine("model-a")
+            await pool.unload_engine_async("model-a")
 
         assert "indeterminate under concurrent activity" in caplog.text
         # No settle-round burn, no timeout warning, no emergency reclaim.
@@ -2121,7 +2160,7 @@ class TestMemorySettleBarrier:
             mock_mx.synchronize = MagicMock()
             mock_mx.clear_cache = MagicMock()
 
-            await pool._unload_engine("model-a")
+            await pool.unload_engine_async("model-a")
 
         assert "indeterminate under concurrent activity" not in caplog.text
         assert "Settle barrier timed out" in caplog.text
@@ -2261,14 +2300,14 @@ class TestEnginePoolInUseLease:
         entry.pending_unload_reason = "hard memory pressure"
         entry.abort_requested = True
         pool._entries = {"leased": entry}
-        pool._unload_engine = AsyncMock()
+        pool.unload_engine_async = AsyncMock()
 
         await pool.release_engine("leased")
 
         assert entry.in_use == 0
         assert entry.pending_unload_reason is None
         assert entry.abort_requested is False
-        pool._unload_engine.assert_awaited_once_with("leased")
+        pool.unload_engine_async.assert_awaited_once_with("leased")
 
     @pytest.mark.asyncio
     async def test_release_engine_keeps_pending_while_scheduler_active(self):
@@ -2280,14 +2319,14 @@ class TestEnginePoolInUseLease:
         entry.pending_unload_reason = "hard memory pressure"
         entry.abort_requested = True
         pool._entries = {"leased": entry}
-        pool._unload_engine = AsyncMock()
+        pool.unload_engine_async = AsyncMock()
 
         await pool.release_engine("leased")
 
         assert entry.in_use == 0
         assert entry.pending_unload_reason == "hard memory pressure"
         assert entry.abort_requested is True
-        pool._unload_engine.assert_not_awaited()
+        pool.unload_engine_async.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_acquire_leases_then_releases_on_success(self):
@@ -2358,7 +2397,7 @@ class TestResetActivityTracking:
 
     @pytest.mark.asyncio
     async def test_unload_engine_calls_reset_on_teardown(self):
-        """EnginePool._unload_engine resets activity tracking after stop()."""
+        """EnginePool.unload_engine_async resets activity tracking after stop()."""
         pool = _make_pool(ceiling=0)
         engine = self._engine()
         with engine._active_lock:
@@ -2384,7 +2423,7 @@ class TestResetActivityTracking:
             mock_mx.synchronize = MagicMock()
             mock_mx.clear_cache = MagicMock()
 
-            await pool._unload_engine("model-a")
+            await pool.unload_engine_async("model-a")
 
         # Teardown reset the leaked counter (getattr-guarded reset called).
         assert engine._active_count == 0
