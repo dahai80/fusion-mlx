@@ -14,7 +14,7 @@
 # Pay down by updating each module to the current released API, then remove
 # its line here. See memory: fusion-mlx-rapid-mlx-test-debt.
 
-## uncollectable (111)
+## uncollectable (110)
 test_accuracy_benchmark.py
 test_admin_server_aliases.py
 test_agent_query_context_skip.py
@@ -49,7 +49,6 @@ test_community_bench_aggregate.py
 test_config.py
 test_context_scaling.py
 test_disk_space_check.py
-test_embedding.py
 test_enable_thinking_prompt_accounting.py
 test_enable_thinking_warning_header.py
 test_engine_pool.py
@@ -127,7 +126,8 @@ test_vlm_cohere2_moe_loader.py
 test_vlm_mtp_proxy.py
 test_vlm_torch_free_image_processor.py
 
-## runtime-fail (274)
+## runtime-fail (275)
+test_embedding.py
 test_gemma4_messages.py
 test_r12_4_strict_json_schema_constraint_matrix.py
 test_response_format_json_schema_strict.py

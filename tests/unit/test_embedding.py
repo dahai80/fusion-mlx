@@ -14,8 +14,6 @@ from unittest.mock import MagicMock, patch
 
 import numpy as np
 import pytest
-from fusion_mlx.engine.embedding import EmbeddingEngine
-from fusion_mlx.models.embedding import EmbeddingOutput
 
 from fusion_mlx.api.embedding_models import (
     EmbeddingData,
@@ -31,7 +29,8 @@ from fusion_mlx.api.embedding_utils import (
     normalize_input,
     truncate_embedding,
 )
-from fusion_mlx.model_discovery import detect_model_type
+from fusion_mlx.engines.embedding import EmbeddingEngine, EmbeddingOutput
+from fusion_mlx.pool.model_discovery import detect_model_type
 
 
 class TestEmbeddingModels:
@@ -383,7 +382,8 @@ class TestExtractEmbeddingsArray:
     def test_extract_text_embeds(self):
         """Test extraction from text_embeds field."""
         import mlx.core as mx
-        from fusion_mlx.models.embedding import MLXEmbeddingModel
+
+        from fusion_mlx.engines.embedding import MLXEmbeddingModel
 
         model = MLXEmbeddingModel("test-model")
         outputs = MagicMock(spec=[])
@@ -397,7 +397,8 @@ class TestExtractEmbeddingsArray:
     def test_extract_pooler_output(self):
         """Test extraction from pooler_output when text_embeds is absent."""
         import mlx.core as mx
-        from fusion_mlx.models.embedding import MLXEmbeddingModel
+
+        from fusion_mlx.engines.embedding import MLXEmbeddingModel
 
         model = MLXEmbeddingModel("test-model")
         outputs = MagicMock(spec=[])
@@ -410,7 +411,8 @@ class TestExtractEmbeddingsArray:
     def test_extract_last_hidden_state_mean_pool(self):
         """Test mean pooling fallback from last_hidden_state."""
         import mlx.core as mx
-        from fusion_mlx.models.embedding import MLXEmbeddingModel
+
+        from fusion_mlx.engines.embedding import MLXEmbeddingModel
 
         model = MLXEmbeddingModel("test-model")
         outputs = MagicMock(spec=[])
@@ -422,7 +424,7 @@ class TestExtractEmbeddingsArray:
 
     def test_extract_raises_when_no_fields(self):
         """Test ValueError when no embedding fields are present."""
-        from fusion_mlx.models.embedding import MLXEmbeddingModel
+        from fusion_mlx.engines.embedding import MLXEmbeddingModel
 
         model = MLXEmbeddingModel("test-model")
         outputs = MagicMock(spec=[])
@@ -433,7 +435,8 @@ class TestExtractEmbeddingsArray:
     def test_extract_text_embeds_3d_mean_pool(self):
         """Per-token text_embeds (e.g. ModernBERT MaskedLM) should be mean pooled."""
         import mlx.core as mx
-        from fusion_mlx.models.embedding import MLXEmbeddingModel
+
+        from fusion_mlx.engines.embedding import MLXEmbeddingModel
 
         model = MLXEmbeddingModel("test-model")
         outputs = MagicMock(spec=[])
@@ -450,7 +453,8 @@ class TestExtractEmbeddingsArray:
     def test_extract_pooler_output_3d_mean_pool(self):
         """Per-token pooler_output should also be mean pooled to 2D."""
         import mlx.core as mx
-        from fusion_mlx.models.embedding import MLXEmbeddingModel
+
+        from fusion_mlx.engines.embedding import MLXEmbeddingModel
 
         model = MLXEmbeddingModel("test-model")
         outputs = MagicMock(spec=[])
@@ -468,7 +472,8 @@ class TestEmbeddingCompileFallback:
     def test_compiled_path_fallback_on_failure(self):
         """Test that embed() falls back to eager when compiled path raises."""
         import mlx.core as mx
-        from fusion_mlx.models.embedding import MLXEmbeddingModel
+
+        from fusion_mlx.engines.embedding import MLXEmbeddingModel
 
         class StandardTokenizer:
             def encode(self, text, add_special_tokens=True):
@@ -502,7 +507,8 @@ class TestEmbeddingCompileFallback:
     def test_is_compiled_false_uses_eager_path(self):
         """Test that embed() uses eager path when _is_compiled is False."""
         import mlx.core as mx
-        from fusion_mlx.models.embedding import MLXEmbeddingModel
+
+        from fusion_mlx.engines.embedding import MLXEmbeddingModel
 
         model = MLXEmbeddingModel("test-model")
         model._loaded = True
@@ -524,7 +530,8 @@ class TestEmbeddingCompileFallback:
     def test_default_max_length_uses_model_config(self):
         """Omitted max_length should use model context metadata, not 512."""
         import mlx.core as mx
-        from fusion_mlx.models.embedding import MLXEmbeddingModel
+
+        from fusion_mlx.engines.embedding import MLXEmbeddingModel
 
         model = MLXEmbeddingModel("test-model")
         model._loaded = True
@@ -548,7 +555,8 @@ class TestEmbeddingCompileFallback:
     def test_default_max_length_uses_tokenizer_config_fallback(self):
         """Tokenizer model_max_length is used when model config lacks a limit."""
         import mlx.core as mx
-        from fusion_mlx.models.embedding import MLXEmbeddingModel
+
+        from fusion_mlx.engines.embedding import MLXEmbeddingModel
 
         model = MLXEmbeddingModel("test-model")
         model._loaded = True
@@ -570,7 +578,8 @@ class TestEmbeddingCompileFallback:
     def test_unknown_default_max_length_falls_back_to_512(self):
         """Keep a conservative final fallback when no metadata exists."""
         import mlx.core as mx
-        from fusion_mlx.models.embedding import MLXEmbeddingModel
+
+        from fusion_mlx.engines.embedding import MLXEmbeddingModel
 
         model = MLXEmbeddingModel("test-model")
         model._loaded = True
@@ -592,7 +601,8 @@ class TestEmbeddingCompileFallback:
     def test_explicit_max_length_is_respected(self):
         """Explicit max_length should override metadata."""
         import mlx.core as mx
-        from fusion_mlx.models.embedding import MLXEmbeddingModel
+
+        from fusion_mlx.engines.embedding import MLXEmbeddingModel
 
         model = MLXEmbeddingModel("test-model")
         model._loaded = True
@@ -616,7 +626,8 @@ class TestEmbeddingCompileFallback:
     def test_custom_processor_compiled_path_uses_prepare_embedding_inputs(self):
         """Custom embedding processors should use their own prepare API."""
         import mlx.core as mx
-        from fusion_mlx.models.embedding import MLXEmbeddingModel
+
+        from fusion_mlx.engines.embedding import MLXEmbeddingModel
 
         model = MLXEmbeddingModel("test-model")
         model._loaded = True
@@ -645,7 +656,8 @@ class TestEmbeddingCompileFallback:
     def test_custom_processor_eager_path_bypasses_generate(self):
         """Custom embedding processors should bypass mlx_embeddings.generate()."""
         import mlx.core as mx
-        from fusion_mlx.models.embedding import MLXEmbeddingModel
+
+        from fusion_mlx.engines.embedding import MLXEmbeddingModel
 
         model = MLXEmbeddingModel("test-model")
         model._loaded = True
@@ -680,7 +692,8 @@ class TestEmbeddingCompileFallback:
     def test_custom_processor_eager_path_remaps_input_ids_for_inputs_signature(self):
         """Models that accept `inputs` instead of `input_ids` should still work."""
         import mlx.core as mx
-        from fusion_mlx.models.embedding import MLXEmbeddingModel
+
+        from fusion_mlx.engines.embedding import MLXEmbeddingModel
 
         class InputsOnlyModel:
             def __call__(self, inputs, attention_mask=None):
@@ -718,7 +731,8 @@ class TestEmbeddingCompileFallback:
     def test_custom_processor_receives_image_items_unchanged(self):
         """Custom processors should receive raw image strings unchanged."""
         import mlx.core as mx
-        from fusion_mlx.models.embedding import MLXEmbeddingModel
+
+        from fusion_mlx.engines.embedding import MLXEmbeddingModel
 
         model = MLXEmbeddingModel("test-model")
         model._loaded = True
@@ -758,7 +772,8 @@ class TestEmbeddingCompileFallback:
     def test_custom_processor_counts_image_only_tokens_from_prepared_inputs(self):
         """Image-only custom processor inputs should contribute to usage stats."""
         import mlx.core as mx
-        from fusion_mlx.models.embedding import MLXEmbeddingModel
+
+        from fusion_mlx.engines.embedding import MLXEmbeddingModel
 
         model = MLXEmbeddingModel("test-model")
         model._loaded = True
@@ -786,7 +801,7 @@ class TestEmbeddingCompileFallback:
 
     def test_standard_processor_rejects_image_inputs(self):
         """Standard text embedding processors should reject image items."""
-        from fusion_mlx.models.embedding import MLXEmbeddingModel
+        from fusion_mlx.engines.embedding import MLXEmbeddingModel
 
         model = MLXEmbeddingModel("test-model")
         model._loaded = True
@@ -806,12 +821,12 @@ class TestEmbeddingEngine:
         """Test engine start and stop lifecycle."""
         import asyncio
 
-        from fusion_mlx.engine.embedding import EmbeddingEngine
+        from fusion_mlx.engines.embedding import EmbeddingEngine
 
         engine = EmbeddingEngine("test-model")
 
         # Mock the MLXEmbeddingModel
-        with patch("omlx.engine.embedding.MLXEmbeddingModel") as MockModel:
+        with patch("fusion_mlx.engines.embedding.MLXEmbeddingModel") as MockModel:
             mock_model = MagicMock()
             mock_model.hidden_size = 384
             MockModel.return_value = mock_model
@@ -827,12 +842,11 @@ class TestEmbeddingEngine:
         """Test embedding generation through engine."""
         import asyncio
 
-        from fusion_mlx.engine.embedding import EmbeddingEngine
-        from fusion_mlx.models.embedding import EmbeddingOutput
+        from fusion_mlx.engines.embedding import EmbeddingEngine, EmbeddingOutput
 
         engine = EmbeddingEngine("test-model")
 
-        with patch("omlx.engine.embedding.MLXEmbeddingModel") as MockModel:
+        with patch("fusion_mlx.engines.embedding.MLXEmbeddingModel") as MockModel:
             mock_model = MagicMock()
             mock_model.embed.return_value = EmbeddingOutput(
                 embeddings=[[0.1, 0.2, 0.3], [0.4, 0.5, 0.6]],
@@ -852,7 +866,7 @@ class TestEmbeddingEngine:
         """Test that embed raises error if engine not started."""
         import asyncio
 
-        from fusion_mlx.engine.embedding import EmbeddingEngine
+        from fusion_mlx.engines.embedding import EmbeddingEngine
 
         engine = EmbeddingEngine("test-model")
 
@@ -861,7 +875,7 @@ class TestEmbeddingEngine:
 
     def test_engine_get_stats(self):
         """Test engine statistics."""
-        from fusion_mlx.engine.embedding import EmbeddingEngine
+        from fusion_mlx.engines.embedding import EmbeddingEngine
 
         engine = EmbeddingEngine("test-model")
 
@@ -871,8 +885,7 @@ class TestEmbeddingEngine:
 
     def test_engine_uses_scheduler_embedding_batch_size(self):
         """Embedding chunk size should follow shared scheduler config."""
-        from fusion_mlx.engine.embedding import EmbeddingEngine
-
+        from fusion_mlx.engines.embedding import EmbeddingEngine
         from fusion_mlx.scheduler import SchedulerConfig
 
         engine = EmbeddingEngine(
@@ -887,8 +900,7 @@ class TestEmbeddingEngine:
 
     def test_engine_ignores_scheduler_completion_batch_size(self):
         """Completion batching should not affect embedding forward chunks."""
-        from fusion_mlx.engine.embedding import EmbeddingEngine
-
+        from fusion_mlx.engines.embedding import EmbeddingEngine
         from fusion_mlx.scheduler import SchedulerConfig
 
         engine = EmbeddingEngine(
@@ -900,7 +912,7 @@ class TestEmbeddingEngine:
 
     def test_engine_preserves_positional_batch_size_argument(self):
         """Keep EmbeddingEngine(model, trust_remote_code, batch_size) working."""
-        from fusion_mlx.engine.embedding import EmbeddingEngine
+        from fusion_mlx.engines.embedding import EmbeddingEngine
 
         engine = EmbeddingEngine("test-model", False, 3)
 
@@ -908,7 +920,7 @@ class TestEmbeddingEngine:
 
     def test_engine_get_model_info_not_loaded(self):
         """Test get_model_info when model is not loaded."""
-        from fusion_mlx.engine.embedding import EmbeddingEngine
+        from fusion_mlx.engines.embedding import EmbeddingEngine
 
         engine = EmbeddingEngine("test-model")
 
@@ -918,7 +930,7 @@ class TestEmbeddingEngine:
 
     def test_engine_repr(self):
         """Test engine string representation."""
-        from fusion_mlx.engine.embedding import EmbeddingEngine
+        from fusion_mlx.engines.embedding import EmbeddingEngine
 
         engine = EmbeddingEngine("test-model")
 
@@ -930,7 +942,7 @@ class TestEmbeddingEngine:
         """Test engine property accessors."""
         import asyncio
 
-        from fusion_mlx.engine.embedding import EmbeddingEngine
+        from fusion_mlx.engines.embedding import EmbeddingEngine
 
         engine = EmbeddingEngine("test-model")
 
@@ -939,7 +951,7 @@ class TestEmbeddingEngine:
         assert engine.hidden_size is None
 
         # After loading
-        with patch("omlx.engine.embedding.MLXEmbeddingModel") as MockModel:
+        with patch("fusion_mlx.engines.embedding.MLXEmbeddingModel") as MockModel:
             mock_model = MagicMock()
             mock_model.processor = MagicMock()
             mock_model.hidden_size = 384
@@ -955,8 +967,8 @@ class TestEmbeddingEngine:
         engine = EmbeddingEngine("test-model")
 
         with (
-            patch("omlx.engine.embedding.MLXEmbeddingModel") as MockModel,
-            patch("omlx.engine.embedding.mx") as mock_mx,
+            patch("fusion_mlx.engines.embedding.MLXEmbeddingModel") as MockModel,
+            patch("fusion_mlx.engines.embedding.mx") as mock_mx,
         ):
             mock_model = MagicMock()
             mock_model.embed.return_value = EmbeddingOutput(
@@ -983,8 +995,8 @@ class TestEmbeddingEngine:
         concurrency = 4
 
         with (
-            patch("omlx.engine.embedding.MLXEmbeddingModel") as MockModel,
-            patch("omlx.engine.embedding.mx") as mock_mx,
+            patch("fusion_mlx.engines.embedding.MLXEmbeddingModel") as MockModel,
+            patch("fusion_mlx.engines.embedding.mx") as mock_mx,
         ):
             mock_model = MagicMock()
             mock_model.embed.return_value = EmbeddingOutput(
@@ -1017,8 +1029,8 @@ class TestEmbeddingEngine:
             )
 
         with (
-            patch("omlx.engine.embedding.MLXEmbeddingModel") as MockModel,
-            patch("omlx.engine.embedding.mx") as mock_mx,
+            patch("fusion_mlx.engines.embedding.MLXEmbeddingModel") as MockModel,
+            patch("fusion_mlx.engines.embedding.mx") as mock_mx,
         ):
             mock_model = MagicMock()
             mock_model.embed.side_effect = embed_side_effect
@@ -1056,8 +1068,8 @@ class TestEmbeddingEngine:
             )
 
         with (
-            patch("omlx.engine.embedding.MLXEmbeddingModel") as MockModel,
-            patch("omlx.engine.embedding.mx"),
+            patch("fusion_mlx.engines.embedding.MLXEmbeddingModel") as MockModel,
+            patch("fusion_mlx.engines.embedding.mx"),
         ):
             mock_model = MagicMock()
             mock_model.embed.side_effect = embed_side_effect
@@ -1090,8 +1102,8 @@ class TestEmbeddingEngine:
             )
 
         with (
-            patch("omlx.engine.embedding.MLXEmbeddingModel") as MockModel,
-            patch("omlx.engine.embedding.mx"),
+            patch("fusion_mlx.engines.embedding.MLXEmbeddingModel") as MockModel,
+            patch("fusion_mlx.engines.embedding.mx"),
         ):
             mock_model = MagicMock()
             mock_model.embed.side_effect = embed_side_effect
@@ -1180,7 +1192,7 @@ class TestEmbeddingIntegration:
 
         pytest.importorskip("mlx_embeddings")
 
-        from fusion_mlx.engine.embedding import EmbeddingEngine
+        from fusion_mlx.engines.embedding import EmbeddingEngine
 
         # Use a small model for testing
         # This model should be available or downloaded from HuggingFace
@@ -1291,7 +1303,7 @@ class TestNativeEmbeddingLoading:
             str(tmp_path / "model.safetensors"),
         )
 
-        from fusion_mlx.models.embedding import MLXEmbeddingModel
+        from fusion_mlx.engines.embedding import MLXEmbeddingModel
 
         model = MLXEmbeddingModel(str(tmp_path))
         tokenizer = self.MockNativeTokenizer(vocab_size=vocab_size)
@@ -1346,7 +1358,7 @@ class TestNativeEmbeddingLoading:
             str(tmp_path / "model.safetensors"),
         )
 
-        from fusion_mlx.models.embedding import MLXEmbeddingModel
+        from fusion_mlx.engines.embedding import MLXEmbeddingModel
 
         model = MLXEmbeddingModel(str(tmp_path))
         tokenizer = self.MockNativeTokenizer(vocab_size=vocab_size)
@@ -1396,7 +1408,7 @@ class TestNativeEmbeddingLoading:
             {"embeddings.word_embeddings.weight": mx.ones((16, 4), dtype=mx.bfloat16)},
         )
 
-        from fusion_mlx.models.embedding import MLXEmbeddingModel
+        from fusion_mlx.engines.embedding import MLXEmbeddingModel
 
         model = MLXEmbeddingModel(str(tmp_path))
         tokenizer = self.MockNativeTokenizer(vocab_size=config["vocab_size"])
@@ -1449,7 +1461,7 @@ class TestNativeEmbeddingLoading:
             str(tmp_path / "model.safetensors"),
         )
 
-        from fusion_mlx.models.embedding import MLXEmbeddingModel
+        from fusion_mlx.engines.embedding import MLXEmbeddingModel
 
         model = MLXEmbeddingModel(str(tmp_path))
         tokenizer = self.MockNativeTokenizer(vocab_size=30522)
@@ -1495,7 +1507,7 @@ class TestNativeEmbeddingLoading:
         ).astype(np.float32)
         save_file(weights, str(tmp_path / "model.safetensors"))
 
-        from fusion_mlx.models.embedding import MLXEmbeddingModel
+        from fusion_mlx.engines.embedding import MLXEmbeddingModel
 
         model = MLXEmbeddingModel(str(tmp_path))
         tokenizer = self.MockNativeTokenizer(vocab_size=30522)
@@ -1522,7 +1534,7 @@ class TestNativeEmbeddingLoading:
         }
         (tmp_path / "config.json").write_text(json.dumps(config))
 
-        from fusion_mlx.models.embedding import MLXEmbeddingModel
+        from fusion_mlx.engines.embedding import MLXEmbeddingModel
 
         model = MLXEmbeddingModel(str(tmp_path))
         result = model._load_native()
@@ -1554,7 +1566,7 @@ class TestNativeEmbeddingLoading:
 
         self._write_full_native_checkpoint(tmp_path, config)
 
-        from fusion_mlx.models.embedding import MLXEmbeddingModel
+        from fusion_mlx.engines.embedding import MLXEmbeddingModel
 
         model = MLXEmbeddingModel(str(tmp_path))
         tokenizer = self.MockNativeTokenizer(vocab_size=vocab_size)
@@ -1656,7 +1668,7 @@ class TestNativeQwen2Embedding:
         save_file(weights, str(tmp_path / "model.safetensors"))
 
     def _load(self, tmp_path):
-        from fusion_mlx.models.embedding import MLXEmbeddingModel
+        from fusion_mlx.engines.embedding import MLXEmbeddingModel
 
         (tmp_path / "config.json").write_text(json.dumps(self._CONFIG))
         self._write_full_qwen2_checkpoint(tmp_path, self._CONFIG)
