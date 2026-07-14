@@ -1438,6 +1438,25 @@ class VLMBatchedEngine(BaseEngine):
             stop,
             **kwargs,
         )
+        # Mirror BatchedEngine.stream_generate (batched.py:691-705): forward
+        # per-request SpecPrefill overrides to add_request so VLM has parity
+        # with the LLM path. Without this the specprefill* kwargs passed via
+        # stream_chat(**kwargs) are silently dropped (code-review #80 debt).
+        specprefill_kwargs = {}
+        if kwargs.get("specprefill") is not None:
+            specprefill_kwargs["specprefill"] = kwargs.pop("specprefill")
+        if kwargs.get("specprefill_keep_pct") is not None:
+            specprefill_kwargs["specprefill_keep_pct"] = kwargs.pop(
+                "specprefill_keep_pct"
+            )
+        if kwargs.get("specprefill_threshold") is not None:
+            specprefill_kwargs["specprefill_threshold"] = kwargs.pop(
+                "specprefill_threshold"
+            )
+        if kwargs.get("specprefill_system_end") is not None:
+            specprefill_kwargs["specprefill_system_end"] = kwargs.pop(
+                "specprefill_system_end"
+            )
         engine = self._engine
         request_id = await engine.add_request(
             prompt=prompt,
@@ -1448,6 +1467,7 @@ class VLMBatchedEngine(BaseEngine):
             vlm_cache_key_start=vlm_cache_key_start,
             vlm_cache_key_ranges=vlm_cache_key_ranges,
             streaming=True,
+            **specprefill_kwargs,
         )
         finished_normally = False
         try:

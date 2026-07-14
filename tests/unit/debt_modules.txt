@@ -386,7 +386,6 @@ test_vision_feature_cache.py
 test_vlm_engine.py
 test_vlm_model_adapter.py
 test_vlm_mtp.py
-test_vlm_specprefill.py
 
 ## timeout (1)
 test_boundary_snapshot_store.py
