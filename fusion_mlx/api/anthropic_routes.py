@@ -15,8 +15,13 @@ from typing import Any
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
 
+from ..api._anthropic_helpers import (
+    _inject_tool_use_required_suffix,
+    enforce_tool_choice,
+)
 from ..api.adapters.anthropic import AnthropicAdapter
 from ..api.adapters.base import InternalResponse, StreamChunk
+from ..api.anthropic_adapter import _convert_tool_choice
 from ..api.anthropic_models import (
     MessagesRequest as AnthropicMessagesRequest,
 )
@@ -206,6 +211,16 @@ async def _run_anthropic_messages(
         engine, "tokenizer", None
     )
     messages = _anthropic_to_messages(req, tokenizer=tokenizer)
+    openai_tool_choice = (
+        _convert_tool_choice(req.tool_choice)
+        if getattr(req, "tool_choice", None)
+        else None
+    )
+    _inject_tool_use_required_suffix(
+        messages,
+        openai_tool_choice,
+        tools=getattr(req, "tools", None),
+    )
     sampling = _build_sampling_params(req)
     request_id = f"msg-{uuid.uuid4().hex[:12]}"
 
@@ -222,6 +237,17 @@ async def _run_anthropic_messages(
             stop=sampling.stop,
             chat_template_kwargs=ct_kwargs if ct_kwargs else None,
         )
+
+        # #71 Phase 2: enforce tool_choice post-generation. The live
+        # /v1/messages route previously ignored tool_choice entirely.
+        enforced_tool_calls, tc_err = enforce_tool_choice(
+            gen.tool_calls,
+            openai_tool_choice,
+            getattr(req, "tools", None),
+        )
+        if tc_err:
+            raise HTTPException(status_code=422, detail=tc_err)
+        gen_tool_calls = enforced_tool_calls
 
         # Log completion (Ollama-style)
         logger.info(
@@ -241,7 +267,7 @@ async def _run_anthropic_messages(
             prompt_tokens=gen.prompt_tokens,
             completion_tokens=gen.completion_tokens,
             cached_tokens=gen.cached_tokens,
-            tool_calls=gen.tool_calls,
+            tool_calls=gen_tool_calls,
             request_id=request_id,
             model=model_name,
         )
@@ -314,6 +340,16 @@ async def _stream_anthropic_generator(
         engine, "tokenizer", None
     )
     messages = _anthropic_to_messages(req, tokenizer=tokenizer)
+    openai_tool_choice = (
+        _convert_tool_choice(req.tool_choice)
+        if getattr(req, "tool_choice", None)
+        else None
+    )
+    _inject_tool_use_required_suffix(
+        messages,
+        openai_tool_choice,
+        tools=getattr(req, "tools", None),
+    )
     sampling = _build_sampling_params(req)
     request_id = f"msg-{uuid.uuid4().hex[:12]}"
 
@@ -363,9 +399,28 @@ async def _stream_anthropic_generator(
                     gen.cached_tokens,
                 )
 
+                # #71 Phase 2: enforce tool_choice post-generation on the
+                # streaming path too. On a 422-class violation mid-stream we
+                # surface an SSE error event and stop (cannot raise a status
+                # code after the 200/SSE headers are already sent).
+                stream_tool_calls, stream_tc_err = enforce_tool_choice(
+                    gen.tool_calls,
+                    openai_tool_choice,
+                    getattr(req, "tools", None),
+                )
+                if stream_tc_err:
+                    logger.warning(
+                        "Stream %s tool_choice enforcement failed: %s",
+                        request_id,
+                        stream_tc_err,
+                    )
+                    yield f'event: error\ndata: {{"error": {{"type": "invalid_request_error", "message": {stream_tc_err!r}}}, "status": 422}}\n\n'
+                    yield create_message_stop_event()
+                    return
+
                 # Emit tool_use content blocks if tool calls present
-                if gen.tool_calls:
-                    for i, tc in enumerate(gen.tool_calls):
+                if stream_tool_calls:
+                    for i, tc in enumerate(stream_tool_calls):
                         tc_id = tc.get("id", f"call_{i}")
                         tc_name = tc.get("function", {}).get("name", "")
                         tc_args = tc.get("function", {}).get("arguments", "{}")
@@ -383,7 +438,7 @@ async def _stream_anthropic_generator(
                 # Send message_delta and message_stop
                 stop_reason = map_finish_reason_to_stop_reason(
                     gen.finish_reason,
-                    bool(gen.tool_calls),
+                    bool(stream_tool_calls),
                 )
                 yield create_message_delta_event(
                     stop_reason=stop_reason,
