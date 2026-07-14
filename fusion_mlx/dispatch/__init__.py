@@ -1,4 +1,4 @@
-"""Router — request routing by modality and phase.
+"""Dispatch — request routing by modality and phase.
 
 Routes requests to the correct engine based on content type,
 prompt length, task priority, and cache hit rate. Supports

@@ -28,6 +28,7 @@ from ..api.openai_models import (
     ModelsResponse,
 )
 from ..api.thinking import ThinkingParser
+from ..dispatch import RequestRouter
 from ..engines.base import GenerationOutput
 from ..exceptions import (
     AdapterPathError,
@@ -39,7 +40,6 @@ from ..exceptions import (
 )
 from ..pool import EnginePool
 from ..request import SamplingParams
-from ..router import RequestRouter
 from ..server_metrics import record_llm_metrics
 
 logger = logging.getLogger(__name__)

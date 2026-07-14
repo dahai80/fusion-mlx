@@ -18,7 +18,7 @@ class TestChatRequestFlow:
         """Test: HTTP request -> router -> BatchedEngine.chat -> response."""
         from unittest.mock import AsyncMock, MagicMock
 
-        from fusion_mlx.router.smart_router import SmartRouter
+        from fusion_mlx.dispatch.smart_router import SmartRouter
 
         engine = AsyncMock()
         engine.chat = AsyncMock(
@@ -54,7 +54,7 @@ class TestChatRequestFlow:
         """Test: streaming request -> router -> engine.stream_chat -> SSE chunks."""
         from unittest.mock import AsyncMock
 
-        from fusion_mlx.router.smart_router import SmartRouter
+        from fusion_mlx.dispatch.smart_router import SmartRouter
 
         engine = AsyncMock()
 
@@ -84,7 +84,7 @@ class TestCloudFallbackFlow:
         """Test: large prompt -> cloud router -> cloud API -> response."""
         from unittest.mock import AsyncMock, MagicMock
 
-        from fusion_mlx.router.router import RequestRouter
+        from fusion_mlx.dispatch.router import RequestRouter
 
         llm = AsyncMock()
         llm.prefix_cache_enabled = True
@@ -114,7 +114,7 @@ class TestPhaseSplitFlow:
         """Test: long prompt -> prefill on omlx -> KV handoff -> decode on Rapid."""
         from unittest.mock import AsyncMock, MagicMock
 
-        from fusion_mlx.router.smart_router import RouterConfig, SmartRouter
+        from fusion_mlx.dispatch.smart_router import RouterConfig, SmartRouter
 
         prefill_engine = AsyncMock()
         prefill_engine.supports_prefill_only = True

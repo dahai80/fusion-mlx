@@ -61,7 +61,7 @@ fusion-mlx is a multi-modal inference server built on Apple MLX. It serves LLM, 
 
 1. **API Route** — Client sends request to `/v1/chat/completions` or `/v1/messages`
 2. **Adapter** — `OpenAIAdapter` or `AnthropicAdapter` normalizes request to `InternalRequest`
-3. **Router** — `RequestRouter` dispatches by modality, `SmartRouter` decides prefill/decode backends
+3. **Dispatch** — `RequestRouter` dispatches by modality, `SmartRouter` decides prefill/decode backends
 4. **EnginePool** — Looks up or loads the appropriate engine by model name
 5. **Engine** — `BatchedEngine` creates a `Request` with `SamplingParams`
 6. **EngineCore** — Submits request to the `Scheduler` via typed executor pool
@@ -74,6 +74,11 @@ fusion-mlx is a multi-modal inference server built on Apple MLX. It serves LLM, 
 ### 1. API Layer (`fusion_mlx/api/`)
 
 Handles HTTP request parsing, validation, and response formatting. Each API flavor has its own router and adapter.
+
+**Layering note** - three distinct packages collaborate and were historically confused by near-identical names:
+- `fusion_mlx/api/` - the **external** OpenAI/Anthropic-compatible API surface (`/v1/chat/completions`, `/v1/messages`, etc.), each flavor with its own router + adapter.
+- `fusion_mlx/routes/` - **internal** FastAPI APIRouters (`cache`, `health`, `metrics`, `responses`) mounted on the same app; these are operational/admin endpoints, not the public API.
+- `fusion_mlx/dispatch/` (see §7) - **request-dispatch logic** (`RequestRouter`/`SmartRouter`/`CloudRouter`), NOT a FastAPI router layer. Renamed from `router/` to `dispatch/` to disambiguate from `routes/`.
 
 - **OpenAI Routes** — `/v1/chat/completions`, `/v1/completions`, `/v1/models`, `/v1/embeddings`
 - **Anthropic Routes** — `/v1/messages`, `/v1/count_tokens` with streaming tool_use blocks
@@ -194,7 +199,7 @@ Four methods to accelerate token generation:
 | MTP | Multi-Token Prediction — native for Qwen3.5/3.6, DeepSeek | 2-5× |
 | VLM MTP | External assistant drafter for VLM models | 1.5-2× |
 
-### 7. Router (`fusion_mlx/router/`)
+### 7. Dispatch (`fusion_mlx/dispatch/`)
 
 Three routing layers, applied in order:
 

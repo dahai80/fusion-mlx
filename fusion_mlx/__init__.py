@@ -16,6 +16,7 @@ Key features:
 
 from ._version import __version__
 from .config import MemoryConfig, MemoryTier, ServerConfig
+from .dispatch import CloudRouter, RequestRouter
 from .engine_core import AsyncEngineCore, EngineConfig
 from .engines import (
     BaseEngine,
@@ -32,7 +33,6 @@ from .engines import (
 )
 from .pool import EnginePool, MemoryProfile, ModelDiscovery, ProcessMemoryEnforcer
 from .request import Request, RequestOutput, RequestStatus, SamplingParams
-from .router import CloudRouter, RequestRouter
 from .scheduler import Scheduler, SchedulerConfig, SchedulerOutput, SchedulingPolicy
 from .server import Server, create_app
 
