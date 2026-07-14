@@ -10,11 +10,11 @@
 #   runtime-fail  — collects but fails on stale assertions / removed attrs
 #   timeout       — hangs or exceeds the unit-gate budget (integration-style)
 #
-# Total: 387 modules excluded; 148 healthy modules remain in the CI gate.
+# Total: 385 modules excluded; 243 healthy modules remain in the CI gate.
 # Pay down by updating each module to the current released API, then remove
 # its line here. See memory: fusion-mlx-rapid-mlx-test-debt.
 
-## uncollectable (110)
+## uncollectable (108)
 test_accuracy_benchmark.py
 test_admin_server_aliases.py
 test_agent_query_context_skip.py
@@ -48,11 +48,9 @@ test_cli_models.py
 test_community_bench_aggregate.py
 test_config.py
 test_context_scaling.py
-test_disk_space_check.py
 test_enable_thinking_prompt_accounting.py
 test_enable_thinking_warning_header.py
 test_engine_pool.py
-test_eval.py
 test_finalize_harmony_raw_text.py
 test_gemma4_altup_autodetect.py
 test_generation_config_loader.py
@@ -126,8 +124,10 @@ test_vlm_cohere2_moe_loader.py
 test_vlm_mtp_proxy.py
 test_vlm_torch_free_image_processor.py
 
-## runtime-fail (275)
+## runtime-fail (276)
+test_disk_space_check.py
 test_embedding.py
+test_eval.py
 test_gemma4_messages.py
 test_r12_4_strict_json_schema_constraint_matrix.py
 test_response_format_json_schema_strict.py
