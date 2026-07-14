@@ -153,7 +153,7 @@ async def unload_model(
     if entry.engine is None:
         raise HTTPException(status_code=400, detail=f"Model not loaded: {model_id}")
 
-    await engine_pool._unload_engine(model_id)
+    await engine_pool.unload_engine_async(model_id)
     logger.info(f"Manually unloaded model: {model_id}")
     return {"status": "ok", "model_id": model_id, "message": f"Unloaded {model_id}"}
 
@@ -699,7 +699,7 @@ async def update_model_settings(
             logger.info(
                 f"Settings changed for loaded model {model_id}, auto-unloading."
             )
-            await engine_pool._unload_engine(model_id)
+            await engine_pool.unload_engine_async(model_id)
             auto_unloaded = True
         except Exception as e:
             logger.warning(f"Auto-unload failed for {model_id}: {e}")

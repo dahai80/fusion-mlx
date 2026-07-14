@@ -13,7 +13,7 @@ def _make_pool(ceiling: int = 0, **kwargs) -> EnginePool:
     pool = EnginePool(**kwargs)
     pool._get_final_ceiling = lambda c=int(ceiling): c
     # Avoid real mlx stop/settle paths in unit tests
-    pool._unload_engine = AsyncMock()
+    pool.unload_engine_async = AsyncMock()
     pool._unload_pending_if_idle_locked = AsyncMock()
     pool._wake_process_memory_enforcer = MagicMock()
     # Allow any absolute adapter path so hot-swap/cap tests focus on logic;
@@ -181,7 +181,7 @@ class TestAdapterCap:
         _install_load(pool)
         await pool.get_engine("base", _lease=True, adapter_path="/lora2")
         # a1 should have been unloaded to make room for the new derived entry
-        unloaded_keys = [c.args[0] for c in pool._unload_engine.await_args_list]
+        unloaded_keys = [c.args[0] for c in pool.unload_engine_async.await_args_list]
         assert "a1" in unloaded_keys
 
 

@@ -642,7 +642,7 @@ class EnginePool:
             model_id,
             reason,
         )
-        await self._unload_engine(model_id)
+        await self.unload_engine_async(model_id)
         return True
 
     def is_abort_requested(self, model_id: str | None) -> bool:
@@ -892,12 +892,12 @@ class EnginePool:
                 "Unloading %s before reload (outside lock)",
                 entry_key,
             )
-            await self._unload_engine(entry_key)
+            await self.unload_engine_async(entry_key)
 
         # Evict derived adapter engines over the soft cap (victims selected
-        # under the lock in Phase 1). _unload_engine is slow, so do it here.
+        # under the lock in Phase 1). unload_engine_async is slow, so do it here.
         for vk in adapter_victims:
-            await self._unload_engine(vk)
+            await self.unload_engine_async(vk)
 
         # Pre-load admission check (outside lock — memory state is approximate)
         ceiling = self._current_ceiling()
@@ -919,7 +919,7 @@ class EnginePool:
                         f"({format_size(projected)} > "
                         f"{format_size(ceiling)})"
                     )
-                    await self._unload_engine(victim)
+                    await self.unload_engine_async(victim)
                     continue
                 # Nothing to evict — clean up loading flag and raise
                 async with self._lock:
@@ -962,7 +962,7 @@ class EnginePool:
         """Release one in-use lease previously taken via get_engine(_lease=True)."""
         entry_key = self._adapter_key(model_id, adapter_path)
         # Detach under the lock (fast), settle outside it. Holding the pool
-        # lock across _unload_engine's ~settle barrier (gc + synchronize +
+        # lock across unload_engine_async's ~settle barrier (gc + synchronize +
         # clear_cache x10) blocks every concurrent get_engine for seconds.
         # _detach_engine stops the engine and sets entry.engine=None under the
         # lock (so get_engine's fast-path won't return it), then the slow
@@ -1059,7 +1059,7 @@ class EnginePool:
         if entry and entry.engine is not None:
             entry.engine = None
             entry.last_access = 0.0
-            # Mirror register_engine (+) / _unload_engine (-): keep the pool's
+            # Mirror register_engine (+) / unload_engine_async (-): keep the pool's
             # _current_model_memory tracker in sync. Without this the sync
             # unload path (server shutdown / external unregister) leaves the
             # tracker inflated, so pre-load admission over-counts loaded
@@ -1159,7 +1159,7 @@ class EnginePool:
 
         # Yield to the event loop before dropping the engine reference.
         #
-        # When abort_all_requests() fires before _unload_engine(), it sets
+        # When abort_all_requests() fires before unload_engine_async(), it sets
         # asyncio Events for each active request.  Server-side streaming
         # generators are then scheduled in the asyncio ready queue, but they
         # cannot run until the event loop gets control.  EngineCore.close()
@@ -1191,7 +1191,9 @@ class EnginePool:
         entry.runtime_settings_signature = None
         return pre_unload_active
 
-    async def _unload_engine(self, model_id: str) -> None:
+    async def unload_engine_async(
+        self, model_id: str, with_settle: bool = True
+    ) -> None:
         # Full unload (detach + settle). Used by get_engine's reload/evict
         # path (called outside the lock, guarded by entry.is_loading) and by
         # _unload_pending_if_idle_locked (memory_enforcer path). Callers that
@@ -1199,10 +1201,29 @@ class EnginePool:
         # instead call _detach_engine under the lock and _settle_unloaded_engine
         # outside it, so the ~settle barrier does not block all get_engine.
         # (code-review #74)
+        #
+        # with_settle=False is the fast teardown path: detach + decrement the
+        # memory counter from the estimate + wake the enforcer, WITHOUT the
+        # gc/synchronize/clear_cache + 10-round poll barrier. Use it when the
+        # caller does not need a precise post-unload memory baseline; this is
+        # the same recovery contract as the settle-indeterminate branch (the
+        # #1623 max() in get_engine re-reads the live gauge, so estimate drift
+        # self-corrects on the next admission).
         pre_unload_active = await self._detach_engine(model_id)
         if pre_unload_active is None:
             return
-        await self._settle_unloaded_engine(model_id, pre_unload_active)
+        if with_settle:
+            await self._settle_unloaded_engine(model_id, pre_unload_active)
+        else:
+            entry = self._entries.get(model_id)
+            if entry is not None:
+                self._current_model_memory -= entry.estimated_size
+            logger.debug(
+                f"Fast unload (no settle) for '{model_id}': "
+                f"estimate={format_size(entry.estimated_size if entry else 0)}, "
+                f"active_memory={format_size(pre_unload_active)}"
+            )
+            self._wake_process_memory_enforcer()
 
     async def _settle_unloaded_engine(
         self, model_id: str, pre_unload_active: int
@@ -1371,7 +1392,7 @@ class EnginePool:
                 victim,
                 model_id,
             )
-            await self._unload_engine(victim)
+            await self.unload_engine_async(victim)
 
     @staticmethod
     def _resolve_scheduler_from_engine(engine: object) -> object | None:
@@ -1459,18 +1480,18 @@ class EnginePool:
                     format_size(current + predicted),
                     format_size(target),
                 )
-                await self._unload_engine(victim)
+                await self.unload_engine_async(victim)
                 evicted_any = True
 
     def _other_entries_serving(self, model_id: str) -> bool:
         """True when any loaded entry other than ``model_id`` is serving.
 
-        Used by the settle barrier in ``_unload_engine``: the barrier's
+        Used by the settle barrier in ``unload_engine_async``: the barrier's
         freed-memory check is a delta of the process-global
         ``mx.get_active_memory()`` gauge, which only measures THIS unload
         while no other engine is allocating concurrently.
         """
-        # Snapshot the items: admin unload routes call _unload_engine without
+        # Snapshot the items: admin unload routes call unload_engine_async without
         # the pool lock, so discover_models() can mutate _entries mid-iteration.
         for mid, e in list(self._entries.items()):
             if mid == model_id or e.engine is None:
@@ -1500,7 +1521,7 @@ class EnginePool:
         entry = self._entries[model_id]
         # get_engine phase 1 reserves the loading slot under the lock before
         # calling us; the admin reload path (models_route) arrives here without
-        # a reservation after _unload_engine. Only reserve when no one has;
+        # a reservation after unload_engine_async. Only reserve when no one has;
         # re-raising here would reject our own phase-1 reservation and every
         # first load would fail with "already being loaded".
         if not entry.is_loading:
@@ -1972,7 +1993,7 @@ class EnginePool:
                 entry = self._entries.get(model_id)
                 if entry and entry.engine is not None:
                     try:
-                        await self._unload_engine(model_id)
+                        await self.unload_engine_async(model_id)
                     except Exception as e:
                         logger.error(f"Error unloading {model_id} during shutdown: {e}")
 
@@ -2071,7 +2092,7 @@ class EnginePool:
         # Unload expired models outside the lock to avoid blocking
         for model_id in expired:
             try:
-                await self._unload_engine(model_id)
+                await self.unload_engine_async(model_id)
             except Exception as e:
                 logger.error(f"Failed to unload expired model {model_id}: {e}")
 
