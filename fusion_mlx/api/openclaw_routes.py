@@ -70,6 +70,11 @@ class TurnRequest(BaseModel):
     max_tokens: int = Field(default=4096, ge=1, le=131072)
     temperature: float = Field(default=0.7, ge=0.0, le=2.0)
     model: str | None = None
+    auto_execute: bool = Field(
+        default=False,
+        description="If True, server auto-executes tool calls and loops until final answer",
+    )
+    max_auto_iterations: int = Field(default=10, ge=1, le=50)
 
 
 class TurnResponse(BaseModel):
@@ -192,7 +197,12 @@ async def list_sessions() -> list[SessionInfo]:
 
 @router.post("/turns", response_model=TurnResponse)
 async def execute_turn(session_id: str, req: TurnRequest):
-    """Execute one agent turn with optional tool calling."""
+    """Execute one agent turn with optional tool calling.
+
+    When ``auto_execute=True``, the server automatically executes tool calls
+    and loops until the model produces a final answer (no more tool calls)
+    or ``max_auto_iterations`` is reached.
+    """
     if session_id not in _sessions:
         raise HTTPException(404, f"Session {session_id} not found")
 
@@ -205,32 +215,123 @@ async def execute_turn(session_id: str, req: TurnRequest):
     if req.tools:
         session["tools"] = req.tools
 
-    messages = []
-    if session.get("system_prompt"):
-        messages.append({"role": "system", "content": session["system_prompt"]})
-    messages.extend(session["messages"])
+    pool = getattr(execute_turn, "_pool", None)
+    if pool is None:
+        raise HTTPException(450, "Engine pool not initialized")
 
-    body = {
-        "messages": messages,
-        "max_tokens": req.max_tokens,
-        "temperature": req.temperature,
-    }
-    if req.model:
-        body["model"] = req.model
-    if session.get("tools"):
-        body["tools"] = session["tools"]
+    if req.auto_execute:
+        return await _execute_turn_auto(pool, session, req, session_id)
 
+    return await _execute_single_turn(pool, session, req, session_id)
+
+
+async def _execute_single_turn(pool, session: dict, req: TurnRequest, session_id: str) -> TurnResponse:
+    """Execute a single LLM turn without auto tool-calling loop."""
+    messages = _build_request_messages(session, req)
+    body = _build_request_body(session, req, messages)
     try:
-        pool = getattr(execute_turn, "_pool", None)
-        if pool is None:
-            raise HTTPException(450, "Engine pool not initialized")
         result = await _call_chat_completion(pool, body)
+        result.session_id = session_id
         return result
     except HTTPException:
         raise
     except Exception as exc:
         logger.exception("Agent turn failed for session %s", session_id)
         raise HTTPException(500, str(exc))
+
+
+async def _execute_turn_auto(pool, session: dict, req: TurnRequest, session_id: str) -> TurnResponse:
+    """Execute a full auto-loop: LLM → tool calls → execute → submit → LLM → ... → final answer."""
+    all_usage = {"prompt_tokens": 0, "completion_tokens": 0}
+    final_content = ""
+    all_tool_calls = []
+
+    for iteration in range(req.max_auto_iterations):
+        messages = _build_request_messages(session, req)
+        body = _build_request_body(session, req, messages)
+
+        try:
+            result = await _call_chat_completion(pool, body)
+        except Exception as exc:
+            logger.exception("Auto-turn %d failed for session %s", iteration + 1, session_id)
+            raise HTTPException(500, str(exc))
+
+        # Accumulate usage
+        for key in ("prompt_tokens", "completion_tokens"):
+            all_usage[key] = all_usage.get(key, 0) + result.usage.get(key, 0)
+
+        # Store assistant response
+        assistant_msg = {"role": "assistant", "content": result.content}
+        if result.tool_calls:
+            assistant_msg["tool_calls"] = result.tool_calls
+        session["messages"].append(assistant_msg)
+
+        # Check for tool calls
+        if not result.tool_calls:
+            final_content = result.content
+            break
+
+        # Execute each tool call and submit results
+        for tc in result.tool_calls:
+            all_tool_calls.append(tc)
+            tool_result = _execute_local_tool(tc)
+            session["messages"].append({
+                "role": "tool",
+                "tool_call_id": tc.get("id", ""),
+                "content": tool_result,
+            })
+
+        if iteration == req.max_auto_iterations - 1:
+            final_content = result.content
+
+    return TurnResponse(
+        content=final_content,
+        tool_calls=all_tool_calls,
+        usage=all_usage,
+        session_id=session_id,
+    )
+
+
+def _execute_local_tool(tool_call: dict) -> str:
+    """Execute a single tool call locally.
+
+    For now, returns a stub result. In a full Agent Studio deployment this
+    would dispatch to the ToolRegistry.
+    """
+    import json
+    try:
+        func_name = tool_call.get("function", {}).get("name", "unknown")
+        args = tool_call.get("function", {}).get("arguments", "{}")
+        # Parse arguments for display
+        parsed = json.loads(args) if isinstance(args, str) else args
+        return json.dumps({"executed": func_name, "args": parsed, "status": "ok"}, ensure_ascii=False)
+    except (json.JSONDecodeError, TypeError, AttributeError) as e:
+        return json.dumps({"error": str(e), "status": "failed"}, ensure_ascii=False)
+
+
+def _build_request_messages(session: dict, req: TurnRequest) -> list[dict]:
+    """Build the message list for the LLM request."""
+    messages = []
+    if session.get("system_prompt"):
+        messages.append({"role": "system", "content": session["system_prompt"]})
+    messages.extend(session["messages"])
+    return messages
+
+
+def _build_request_body(session: dict, req: TurnRequest, messages: list[dict]) -> dict:
+    """Build the request body for the LLM call."""
+    body: dict = {
+        "messages": messages,
+        "max_tokens": req.max_tokens,
+        "temperature": req.temperature,
+    }
+    if req.model:
+        body["model"] = req.model
+    elif session.get("model"):
+        body["model"] = session["model"]
+    if session.get("tools"):
+        body["tools"] = session["tools"]
+    return body
 
 
 async def _call_chat_completion(pool, body: dict) -> TurnResponse:
