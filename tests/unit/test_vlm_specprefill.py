@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from fusion_mlx.engine.vlm import VLMBatchedEngine
+from fusion_mlx.engines.vlm import VLMBatchedEngine
 
 
 @pytest.mark.asyncio

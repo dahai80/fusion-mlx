@@ -4,6 +4,7 @@
 import asyncio
 import json
 import logging
+from dataclasses import dataclass
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -15,7 +16,20 @@ from fusion_mlx.exceptions import (
     ModelNotFoundError,
     ModelTooLargeError,
 )
-from fusion_mlx.scheduler import PrefillEvictionRequest
+
+
+@dataclass
+class PrefillEvictionRequest:
+    # Local stand-in for the omlx-era prefill-eviction request struct (never
+    # migrated to fusion_mlx). _evict_idle_lru_for_prefill duck-types it via
+    # getattr, so only the attribute shape matters.
+    request_id: str
+    model_id: str
+    current_bytes: int
+    target_cap_bytes: int
+    predicted_transient_bytes: int
+    requested_tokens: int
+    reason: str
 
 
 def _make_pool(ceiling: int | None = None, **kwargs) -> EnginePool:

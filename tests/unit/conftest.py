@@ -127,7 +127,6 @@ _OPT_DEP_SUITES: list[tuple[str, list[str]]] = [
             "test_vlm_engine.py",
             "test_vlm_model_adapter.py",
             "test_vlm_torch_free_image_processor.py",
-            "test_vlm_specprefill.py",
             "test_pflash_engine.py",
             "test_pflash_scheduler.py",
             "test_pflash_benchmark.py",
