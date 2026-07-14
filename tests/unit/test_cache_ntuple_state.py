@@ -485,12 +485,12 @@ class TestPrefixCacheNTupleSubState:
             ),
         }
 
-        from fusion_mlx.cache import paged_ssd_cache as psc
+        from fusion_mlx.cache import boundary_snapshot_store as bss
 
         def _fake_restore(data, dtype_str, shape):
             return _MockArray(shape)
 
-        monkeypatch.setattr(psc, "_restore_tensor_from_bytes", _fake_restore)
+        monkeypatch.setattr(bss, "_restore_tensor_from_bytes", _fake_restore)
 
         import mlx.core as mx
 
