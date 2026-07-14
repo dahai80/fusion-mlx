@@ -184,7 +184,11 @@ def _sync_config() -> None:
             ("default_repetition_penalty", _default_repetition_penalty),
             ("default_presence_penalty", _default_presence_penalty),
             ("default_frequency_penalty", _default_frequency_penalty),
-            ("rate_limiter", _rate_limiter),
+            # rate_limiter is intentionally excluded: it is a module-level
+            # singleton in middleware/auth.py (configure_rate_limiter mutates
+            # it in place and returns it), NOT a ServerConfig field. The
+            # previous ("rate_limiter", _rate_limiter) entry was dead code --
+            # hasattr(cfg, "rate_limiter") was always False so it never synced.
         ):
             if hasattr(cfg, _attr):
                 try:
