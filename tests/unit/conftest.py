@@ -275,6 +275,7 @@ if sys.platform != "darwin":
         "test_api_constants.py",
         "test_cache_rotating_subclass.py",
         "test_cors_configure.py",
+        "test_custom_kernels_mfa.py",
         "test_disk_kv_checkpoint.py",
         "test_exceptions.py",
         "test_gemma4_rendering.py",
