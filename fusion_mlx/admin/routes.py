@@ -108,6 +108,8 @@ from .settings import router as settings_router
 from .stats import router as stats_router
 from .subkey import router as subkey_router
 from .update_check import router as update_check_router
+from .canvas_routes import router as canvas_router
+from .canvas_routes import init_canvas
 
 # Register all sub-routers
 router.include_router(html_router)
@@ -127,3 +129,7 @@ router.include_router(bench_router)
 router.include_router(update_check_router)
 router.include_router(oq_router)
 router.include_router(hf_upload_router)
+router.include_router(canvas_router)
+
+# Initialize canvas with templates
+init_canvas(templates)
