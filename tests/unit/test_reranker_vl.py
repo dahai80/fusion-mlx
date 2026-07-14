@@ -2,6 +2,7 @@
 """Tests for multimodal (Qwen3-VL) reranker support."""
 
 import json
+import sys
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -96,7 +97,9 @@ class TestVLItemBuilder:
 
 
 class TestVLRerankScoring:
-    @pytest.mark.skipif(not HAS_MLX, reason="MLX not available")
+    @pytest.mark.skipif(
+        not HAS_MLX or sys.platform != "darwin", reason="requires real MLX (macOS only)"
+    )
     def test_rerank_vl_wraps_process_output(self, tmp_path):
         """_rerank_vl sorts model.process() scores into RerankOutput."""
         model = MLXRerankerModel(str(tmp_path))
@@ -132,7 +135,9 @@ class TestVLRerankScoring:
         ]
         assert call_args[1]["processor"] is model.processor
 
-    @pytest.mark.skipif(not HAS_MLX, reason="MLX not available")
+    @pytest.mark.skipif(
+        not HAS_MLX or sys.platform != "darwin", reason="requires real MLX (macOS only)"
+    )
     def test_rerank_vl_with_image_documents(self, tmp_path):
         """_rerank_vl threads image dicts through _build_vl_item."""
         model = MLXRerankerModel(str(tmp_path))
