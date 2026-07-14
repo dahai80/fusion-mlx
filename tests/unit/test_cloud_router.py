@@ -1,4 +1,4 @@
-from fusion_mlx.router.cloud_router import CloudRouter
+from fusion_mlx.dispatch.cloud_router import CloudRouter
 
 
 class TestCloudRouterCircuitBreaker:

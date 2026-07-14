@@ -43,7 +43,7 @@ class TestPrioritySchedulerSubmit:
         assert rid == "custom-id-123"
 
     def test_submit_with_task_priority(self):
-        from fusion_mlx.router.smart_router import TaskPriority
+        from fusion_mlx.dispatch.smart_router import TaskPriority
 
         sched = self._make_scheduler()
         rid = sched.submit("hello", priority=TaskPriority.REALTIME)

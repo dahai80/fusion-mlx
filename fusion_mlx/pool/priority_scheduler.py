@@ -24,8 +24,8 @@ from typing import Any, Protocol
 
 import mlx.core as mx
 
+from ..dispatch.smart_router import TaskPriority
 from ..request import Request, RequestOutput, SamplingParams
-from ..router.smart_router import TaskPriority
 
 logger = logging.getLogger(__name__)
 

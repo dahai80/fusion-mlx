@@ -6,8 +6,8 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from fusion_mlx.router.cloud_router import CloudRouter
-from fusion_mlx.router.smart_router import (
+from fusion_mlx.dispatch.cloud_router import CloudRouter
+from fusion_mlx.dispatch.smart_router import (
     BenchmarkResult,
     EngineBackend,
     RouterConfig,

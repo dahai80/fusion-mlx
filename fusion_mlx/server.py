@@ -77,9 +77,9 @@ from .api.rerank_routes import set_rerank_context
 from .api.videos_routes import router as videos_router
 from .api.videos_routes import set_videos_context
 from .config import ServerConfig
+from .dispatch import CloudRouter, RequestRouter
 from .engine_core import AsyncEngineCore
 from .pool import EnginePool, ProcessMemoryEnforcer
-from .router import CloudRouter, RequestRouter
 from .routes.cache import router as cache_router
 from .routes.health import probe_router as health_probe_router
 from .routes.health import router as health_router
