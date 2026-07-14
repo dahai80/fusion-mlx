@@ -30,6 +30,7 @@ from .api.anthropic_routes import router as anthropic_router
 from .api.anthropic_routes import set_anthropic_context
 from .api.audio_routes import router as audio_router
 from .api.audio_routes import set_audio_context
+from .api.agent_routes import router as agent_router
 from .api.images import router as images_router
 from .api.images import set_images_context
 from .api.mcp_routes import router as mcp_router
@@ -490,6 +491,7 @@ class Server:
         app.include_router(videos_router)
         app.include_router(mcp_router)
         app.include_router(openclaw_router)
+        app.include_router(agent_router)
         app.include_router(recommend_router)
         app.include_router(embeddings_router)
         app.include_router(rerank_router)
