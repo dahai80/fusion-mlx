@@ -129,13 +129,6 @@ _pin_system_prompt: bool = False
 _enable_auto_tool_choice: bool = False
 _tool_call_parser: str | None = None
 _enable_tool_logits_bias: bool = False
-_default_temperature: float | None = None
-_default_top_p: float | None = None
-_default_top_k: int | None = None
-_default_min_p: float | None = None
-_default_repetition_penalty: float | None = None
-_default_presence_penalty: float | None = None
-_default_frequency_penalty: float | None = None
 _reasoning_parser = None
 _reasoning_parser_name: str | None = None
 _enable_audio_lane: bool = False
@@ -177,13 +170,10 @@ def _sync_config() -> None:
             ("reasoning_parser_name", _reasoning_parser_name),
             ("enable_audio_lane", _enable_audio_lane),
             ("sse_keepalive_seconds", _sse_keepalive_seconds),
-            ("default_temperature", _default_temperature),
-            ("default_top_p", _default_top_p),
-            ("default_top_k", _default_top_k),
-            ("default_min_p", _default_min_p),
-            ("default_repetition_penalty", _default_repetition_penalty),
-            ("default_presence_penalty", _default_presence_penalty),
-            ("default_frequency_penalty", _default_frequency_penalty),
+            # Sampling defaults (default_temperature/top_p/top_k/min_p/
+            # repetition_penalty/presence_penalty/frequency_penalty) are read
+            # directly from ServerConfig by service/helpers._resolve_* -- no
+            # longer staged through server globals (#50 consolidation).
             # rate_limiter is intentionally excluded: it is a module-level
             # singleton in middleware/auth.py (configure_rate_limiter mutates
             # it in place and returns it), NOT a ServerConfig field. The

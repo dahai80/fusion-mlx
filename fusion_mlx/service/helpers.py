@@ -1,8 +1,9 @@
 # SPDX-License-Identifier: Apache-2.0
 """Shared helpers for route handlers.
 
-Adapted from Rapid-MLX service/helpers.py. Uses fusion-mlx server module
-globals instead of get_config() for sampling/thinking/reasoning defaults.
+Adapted from Rapid-MLX service/helpers.py. Sampling defaults read the
+ServerConfig singleton (get_config) directly; thinking/reasoning still use
+server module globals.
 Disconnect logic lives in disconnect_guard.py and is re-exported here.
 """
 
@@ -55,6 +56,15 @@ def _get_server_attr(name: str, default=None):
         from .. import server as _srv
 
         return getattr(_srv, name, default)
+    except Exception:
+        return default
+
+
+def _get_cfg_attr(name: str, default=None):
+    try:
+        from ..config import get_config
+
+        return getattr(get_config(), name, default)
     except Exception:
         return default
 
@@ -550,7 +560,7 @@ def _resolve_max_tokens(
 def _resolve_temperature(request_temperature: float | None) -> float:
     return _cascade(
         request_temperature,
-        _get_server_attr("_default_temperature"),
+        _get_cfg_attr("default_temperature"),
         _FALLBACK_TEMPERATURE,
     )
 
@@ -558,7 +568,7 @@ def _resolve_temperature(request_temperature: float | None) -> float:
 def _resolve_top_p(request_top_p: float | None) -> float:
     return _cascade(
         request_top_p,
-        _get_server_attr("_default_top_p"),
+        _get_cfg_attr("default_top_p"),
         _FALLBACK_TOP_P,
     )
 
@@ -566,7 +576,7 @@ def _resolve_top_p(request_top_p: float | None) -> float:
 def _resolve_top_k(request_top_k: int | None) -> int | None:
     return _cascade(
         request_top_k,
-        _get_server_attr("_default_top_k"),
+        _get_cfg_attr("default_top_k"),
         None,
     )
 
@@ -574,7 +584,7 @@ def _resolve_top_k(request_top_k: int | None) -> int | None:
 def _resolve_min_p(request_min_p: float | None) -> float | None:
     return _cascade(
         request_min_p,
-        _get_server_attr("_default_min_p"),
+        _get_cfg_attr("default_min_p"),
         None,
     )
 
@@ -582,7 +592,7 @@ def _resolve_min_p(request_min_p: float | None) -> float | None:
 def _resolve_repetition_penalty(request_rp: float | None) -> float | None:
     return _cascade(
         request_rp,
-        _get_server_attr("_default_repetition_penalty"),
+        _get_cfg_attr("default_repetition_penalty"),
         None,
     )
 
@@ -590,7 +600,7 @@ def _resolve_repetition_penalty(request_rp: float | None) -> float | None:
 def _resolve_presence_penalty(request_pp: float | None) -> float | None:
     return _cascade(
         request_pp,
-        _get_server_attr("_default_presence_penalty"),
+        _get_cfg_attr("default_presence_penalty"),
         None,
     )
 
@@ -598,7 +608,7 @@ def _resolve_presence_penalty(request_pp: float | None) -> float | None:
 def _resolve_frequency_penalty(request_fp: float | None) -> float | None:
     return _cascade(
         request_fp,
-        _get_server_attr("_default_frequency_penalty"),
+        _get_cfg_attr("default_frequency_penalty"),
         None,
     )
 
