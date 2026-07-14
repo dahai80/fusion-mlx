@@ -181,7 +181,6 @@ test_envelope_field_extraction.py
 test_eval.py
 test_event_loop.py
 test_exception_handlers.py
-test_fatal.py
 test_finalize_harmony_raw_text.py
 test_gemma4_messages.py
 test_gemma4_text_import_guard.py
@@ -237,7 +236,6 @@ test_nested_nstate_serialization.py
 test_no_mllm_flag.py
 test_no_out_of_band_routing.py
 test_no_pydantic_error_leak.py
-test_non_streaming_activity.py
 test_openai_tool_choice_validation.py
 test_openwebui.py
 test_oq.py
@@ -263,7 +261,6 @@ test_pflash_scheduler.py
 test_platform.py
 test_postprocessor.py
 test_prefill_oom_graceful.py
-test_prefill_progress.py
 test_prefix_boundary_path_parity.py
 test_prefix_cache_persistence.py
 test_prefix_cache_rotating_tip_strip.py
