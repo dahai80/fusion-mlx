@@ -258,7 +258,7 @@ class TestProfileFieldFiltering:
 class TestTemplatesCRUD:
     def test_list_templates_empty_by_default(self, mgr):
         # Shipped builtins were retired in favor of the client-side preset
-        # bundle (`omlx/admin/static/omlx_preset.json`); the server's
+        # bundle (`fusion_mlx/admin/static/omlx_preset.json`); the server's
         # /api/profile-templates surface now exposes user templates only.
         assert mgr.list_templates() == []
 
@@ -321,7 +321,7 @@ class TestTemplatesCRUD:
 class TestTemplatesPersistence:
     """The on-disk template file holds only user-created entries. Built-in
     seed templates were retired in favor of the client-side preset bundle
-    (`omlx/admin/static/omlx_preset.json`); /api/profile-templates is now a
+    (`fusion_mlx/admin/static/omlx_preset.json`); /api/profile-templates is now a
     pure user-store surface."""
 
     def test_no_file_created_when_empty(self, tmp_path):
@@ -512,13 +512,13 @@ class TestExposedProfileRequestSettings:
         _save_exposed_profile(mgr)
 
         settings = mgr.get_settings_for_request(
-            "omlx/qwen-base:thinking",
+            "fusion_mlx/qwen-base:thinking",
             resolved_model_id="qwen-base",
         )
 
         assert settings.temperature == 0.6
         assert (
-            mgr.get_exposed_profile_source_model_id("omlx/qwen-base:thinking")
+            mgr.get_exposed_profile_source_model_id("fusion_mlx/qwen-base:thinking")
             == "qwen-base"
         )
 

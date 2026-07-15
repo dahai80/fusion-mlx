@@ -15,7 +15,7 @@ class TestTryCompile:
         model = MLXEmbeddingModel("test-model")
         model.model = MagicMock()
 
-        with patch("omlx.models.embedding.mx") as mock_mx:
+        with patch("fusion_mlx.models.embedding.mx") as mock_mx:
             mock_compiled_fn = MagicMock(return_value=MagicMock())
             mock_mx.compile.return_value = mock_compiled_fn
             mock_mx.zeros.return_value = MagicMock()
@@ -32,7 +32,7 @@ class TestTryCompile:
         model = MLXEmbeddingModel("test-model")
         model.model = MagicMock()
 
-        with patch("omlx.models.embedding.mx") as mock_mx:
+        with patch("fusion_mlx.models.embedding.mx") as mock_mx:
             mock_mx.compile.side_effect = RuntimeError("compile failed")
             result = model._try_compile()
 
@@ -49,7 +49,7 @@ class TestEmbeddingEngineStartStop:
 
         engine = EmbeddingEngine("test-model")
 
-        with patch("omlx.engine.embedding.MLXEmbeddingModel") as MockModel:
+        with patch("fusion_mlx.engine.embedding.MLXEmbeddingModel") as MockModel:
             mock_model = MagicMock()
             mock_model._is_compiled = False
             mock_model.hidden_size = 384
@@ -69,7 +69,7 @@ class TestRerankerEngineStartStop:
 
         engine = RerankerEngine("test-model")
 
-        with patch("omlx.engine.reranker.MLXRerankerModel") as MockModel:
+        with patch("fusion_mlx.engine.reranker.MLXRerankerModel") as MockModel:
             mock_model = MagicMock()
             mock_model._is_compiled = False
             MockModel.return_value = mock_model

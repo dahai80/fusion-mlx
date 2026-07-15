@@ -52,7 +52,7 @@ class TestDivergenceProbe:
         sched._cache_probe_seqs.append(("req-old", stored))
         prompt = list(range(50)) + [999] + list(range(51, 80))
 
-        with caplog.at_level(logging.DEBUG, logger="omlx.scheduler"):
+        with caplog.at_level(logging.DEBUG, logger="fusion_mlx.scheduler"):
             sched._log_prefix_divergence(_request(prompt))
 
         text = caplog.text
@@ -68,7 +68,7 @@ class TestDivergenceProbe:
         # reusable tokens, so only the summary line should be emitted.
         prompt = stored + [200, 201]
 
-        with caplog.at_level(logging.DEBUG, logger="omlx.scheduler"):
+        with caplog.at_level(logging.DEBUG, logger="fusion_mlx.scheduler"):
             sched._log_prefix_divergence(_request(prompt, cached_tokens=100))
 
         assert "prefix probe" in caplog.text
@@ -80,7 +80,7 @@ class TestDivergenceProbe:
         sched._cache_probe_seqs.append(("req-b", [1, 2, 3, 4, 5]))
         prompt = [1, 2, 3, 7, 7]
 
-        with caplog.at_level(logging.DEBUG, logger="omlx.scheduler"):
+        with caplog.at_level(logging.DEBUG, logger="fusion_mlx.scheduler"):
             sched._log_prefix_divergence(_request(prompt))
 
         assert "vs stored req-b" in caplog.text
@@ -88,14 +88,14 @@ class TestDivergenceProbe:
 
     def test_noop_without_stored_sequences(self, caplog):
         sched = _make_scheduler()
-        with caplog.at_level(logging.DEBUG, logger="omlx.scheduler"):
+        with caplog.at_level(logging.DEBUG, logger="fusion_mlx.scheduler"):
             sched._log_prefix_divergence(_request([1, 2, 3]))
         assert caplog.text == ""
 
     def test_noop_with_empty_prompt(self, caplog):
         sched = _make_scheduler()
         sched._cache_probe_seqs.append(("req-old", [1, 2]))
-        with caplog.at_level(logging.DEBUG, logger="omlx.scheduler"):
+        with caplog.at_level(logging.DEBUG, logger="fusion_mlx.scheduler"):
             sched._log_prefix_divergence(_request([]))
         assert caplog.text == ""
 
@@ -105,7 +105,7 @@ class TestDivergenceProbe:
         sched.tokenizer.decode.side_effect = RuntimeError("boom")
         sched._cache_probe_seqs.append(("req-old", [1, 2, 3, 4]))
 
-        with caplog.at_level(logging.DEBUG, logger="omlx.scheduler"):
+        with caplog.at_level(logging.DEBUG, logger="fusion_mlx.scheduler"):
             sched._log_prefix_divergence(_request([1, 9, 9, 9]))
 
         assert "first divergence at token 1" in caplog.text

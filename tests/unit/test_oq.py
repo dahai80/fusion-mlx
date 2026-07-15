@@ -2088,8 +2088,8 @@ class TestBuildProxyForSensitivity:
         )
 
         with (
-            patch("omlx.oq._build_model_sanitizer", return_value=None),
-            patch("omlx.oq._build_non_quantizable_set", return_value=set()),
+            patch("fusion_mlx.oq._build_model_sanitizer", return_value=None),
+            patch("fusion_mlx.oq._build_non_quantizable_set", return_value=set()),
         ):
             _build_streaming_proxy_for_sensitivity(str(src), out, dtype="bfloat16")
 
@@ -2917,7 +2917,7 @@ class TestQuantizeOqStreamingFp8:
         out = tmp_path / "out"
 
         # Patch system RAM to 1 byte — any model exceeds it
-        with patch("omlx.settings.get_system_memory", return_value=1):
+        with patch("fusion_mlx.settings.get_system_memory", return_value=1):
             quantize_oq_streaming(str(src), str(out), oq_level=4)
 
         assert (out / "config.json").exists()
@@ -2939,7 +2939,7 @@ class TestQuantizeOqStreamingFp8:
         tmpdir = tempfile.gettempdir()
         before = set(os.listdir(tmpdir))
 
-        with patch("omlx.settings.get_system_memory", return_value=1):
+        with patch("fusion_mlx.settings.get_system_memory", return_value=1):
             quantize_oq_streaming(str(src), str(out), oq_level=4)
 
         # No new safetensors scratch files in tmp
@@ -3022,8 +3022,12 @@ class TestQuantizeOqStreamingFp8:
         _make_fp8_model(src, n_layers=1, hidden=64, fp8_convention="mxfp")
         out = tmp_path / "proxy"
 
-        monkeypatch.setattr("omlx.oq._build_model_sanitizer", lambda *_a, **_k: None)
-        monkeypatch.setattr("omlx.oq._build_non_quantizable_set", lambda _config: set())
+        monkeypatch.setattr(
+            "fusion_mlx.oq._build_model_sanitizer", lambda *_a, **_k: None
+        )
+        monkeypatch.setattr(
+            "fusion_mlx.oq._build_non_quantizable_set", lambda _config: set()
+        )
 
         _build_streaming_proxy_for_sensitivity(str(src), out, dtype="bfloat16")
 
@@ -3169,7 +3173,7 @@ class TestBuildModelSanitizerTextOnly:
 
         from fusion_mlx.oq import _build_model_sanitizer
 
-        with patch("omlx.oq.logger") as mock_logger:
+        with patch("fusion_mlx.oq.logger") as mock_logger:
             _build_model_sanitizer(self.VLM_CONFIG, text_only=False)
 
         debug_messages = [str(c) for c in mock_logger.debug.call_args_list]
@@ -3183,7 +3187,7 @@ class TestBuildModelSanitizerTextOnly:
 
         from fusion_mlx.oq import _build_model_sanitizer
 
-        with patch("omlx.oq.logger") as mock_logger:
+        with patch("fusion_mlx.oq.logger") as mock_logger:
             _build_model_sanitizer(self.VLM_CONFIG, text_only=True)
 
         debug_messages = [str(c) for c in mock_logger.debug.call_args_list]
@@ -3199,7 +3203,7 @@ class TestBuildModelSanitizerTextOnly:
         from fusion_mlx.oq import _build_model_sanitizer
 
         for text_only in (True, False):
-            with patch("omlx.oq.logger") as mock_logger:
+            with patch("fusion_mlx.oq.logger") as mock_logger:
                 _build_model_sanitizer(self.LLM_CONFIG, text_only=text_only)
 
             debug_messages = [str(c) for c in mock_logger.debug.call_args_list]
@@ -3256,7 +3260,7 @@ class TestBuildModelSanitizerMiniMaxCompat:
             unsupported_get_model_and_args,
         )
         monkeypatch.setattr(
-            "omlx.patches.mlx_vlm_minimax_m3_compat."
+            "fusion_mlx.patches.mlx_vlm_minimax_m3_compat."
             "apply_mlx_vlm_minimax_m3_compat_patch",
             apply_compat_patch,
         )
@@ -3367,11 +3371,11 @@ class TestBuildProxyForSensitivityMtpPatch:
             is_mtp_active=MagicMock(return_value=False),
             set_mtp_active=MagicMock(),
         )
-        monkeypatch.setitem(sys.modules, "omlx.patches.mlx_lm_mtp", mtp_mod)
+        monkeypatch.setitem(sys.modules, "fusion_mlx.patches.mlx_lm_mtp", mtp_mod)
 
         build_mock = MagicMock(side_effect=lambda _m, out, **_kw: out.mkdir())
         monkeypatch.setattr(
-            "omlx.oq._build_streaming_proxy_for_sensitivity",
+            "fusion_mlx.oq._build_streaming_proxy_for_sensitivity",
             build_mock,
         )
 
@@ -3396,7 +3400,7 @@ class TestBuildProxyForSensitivityMtpPatch:
     def test_streaming_helper_error_propagates(self, tmp_path, monkeypatch):
         build_mock = MagicMock(side_effect=RuntimeError("boom"))
         monkeypatch.setattr(
-            "omlx.oq._build_streaming_proxy_for_sensitivity",
+            "fusion_mlx.oq._build_streaming_proxy_for_sensitivity",
             build_mock,
         )
         with pytest.raises(RuntimeError, match="boom"):
@@ -3441,7 +3445,7 @@ class TestMeasureSensitivityVlmMtp:
 
         monkeypatch.setitem(
             sys.modules,
-            "omlx.utils.model_loading",
+            "fusion_mlx.utils.model_loading",
             MagicMock(
                 maybe_apply_pre_load_patches=MagicMock(),
                 _has_mtp_heads=MagicMock(return_value=has_mtp),
@@ -3450,12 +3454,12 @@ class TestMeasureSensitivityVlmMtp:
         )
         monkeypatch.setitem(
             sys.modules,
-            "omlx.patches.mlx_lm_mtp",
+            "fusion_mlx.patches.mlx_lm_mtp",
             MagicMock(is_mtp_active=mock_is_active, set_mtp_active=mock_set_active),
         )
         monkeypatch.setitem(
             sys.modules,
-            "omlx.patches.mlx_vlm_mtp",
+            "fusion_mlx.patches.mlx_vlm_mtp",
             MagicMock(
                 apply_mlx_vlm_mtp_patch=mock_apply_patch,
                 apply_mlx_vlm_mtp_runtime_patch=mock_apply_runtime,
@@ -3593,7 +3597,7 @@ class TestMeasureSensitivityQuantizedVlm:
         maybe_apply = MagicMock()
         monkeypatch.setitem(
             sys.modules,
-            "omlx.utils.model_loading",
+            "fusion_mlx.utils.model_loading",
             MagicMock(
                 maybe_apply_pre_load_patches=maybe_apply,
                 _has_mtp_heads=MagicMock(return_value=False),

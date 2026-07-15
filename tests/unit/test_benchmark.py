@@ -310,7 +310,9 @@ class TestRunSingleTest:
                     generated_until=1.2,
                 )
 
-        with patch("omlx.admin.benchmark.time.perf_counter", side_effect=[0.0, 1.3]):
+        with patch(
+            "fusion_mlx.admin.benchmark.time.perf_counter", side_effect=[0.0, 1.3]
+        ):
             metrics = await _run_single_test(
                 AggregatedEngine(),
                 prompt="prompt",
@@ -338,7 +340,9 @@ class TestRunSingleTest:
                     generated_at=0.2,
                 )
 
-        with patch("omlx.admin.benchmark.time.perf_counter", side_effect=[0.0, 1.2]):
+        with patch(
+            "fusion_mlx.admin.benchmark.time.perf_counter", side_effect=[0.0, 1.2]
+        ):
             metrics = await _run_single_test(
                 AggregatedEngine(),
                 prompt="prompt",
@@ -460,7 +464,7 @@ class TestBenchmarkEngineSelection:
             ),
         )
         pool = _FakeBenchEnginePool(settings)
-        with patch("omlx.admin.benchmark._upload_to_omlx_ai", AsyncMock()):
+        with patch("fusion_mlx.admin.benchmark._upload_to_omlx_ai", AsyncMock()):
             await run_benchmark(run, pool)
         return run, pool
 
@@ -516,7 +520,7 @@ class TestBenchmarkEngineSelection:
         )
         pool = _FakeBenchEnginePool(engine=_FakeBenchEngine())
 
-        with patch("omlx.admin.benchmark._upload_to_omlx_ai", AsyncMock()):
+        with patch("fusion_mlx.admin.benchmark._upload_to_omlx_ai", AsyncMock()):
             await run_benchmark(run, pool)
 
         assert run.status == "completed"
@@ -556,7 +560,7 @@ class TestBenchmarkEngineSelection:
         )
         pool = _FakeBenchEnginePool(engine=engine)
 
-        with patch("omlx.admin.benchmark._upload_to_omlx_ai", AsyncMock()):
+        with patch("fusion_mlx.admin.benchmark._upload_to_omlx_ai", AsyncMock()):
             await run_benchmark(run, pool)
 
         assert run.status == "completed"
@@ -981,7 +985,7 @@ _CF_INTERSTITIAL = (
 
 class TestSanitizeUploadError:
     """The Cloudflare interstitial pollutes the dashboard upload panel when
-    omlx.ai's API endpoint is gated behind a managed challenge. The
+    fusion_mlx.ai's API endpoint is gated behind a managed challenge. The
     sanitizer must detect that case and surface an actionable message
     without dumping the full 5KB HTML body."""
 

@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Tests for omlx._torch_stub.
+"""Tests for fusion_mlx._torch_stub.
 
 The stub is load-bearing for the DMG flow: it satisfies xgrammar /
 tvm_ffi's import-time torch references without the real ~500 MB torch
@@ -49,9 +49,9 @@ def _restore_sys_modules():
 def stub_module():
     """Import a fresh copy of the stub module so its module-level state
     doesn't leak between tests."""
-    if "omlx._torch_stub" in sys.modules:
-        importlib.reload(sys.modules["omlx._torch_stub"])
-        return sys.modules["omlx._torch_stub"]
+    if "fusion_mlx._torch_stub" in sys.modules:
+        importlib.reload(sys.modules["fusion_mlx._torch_stub"])
+        return sys.modules["fusion_mlx._torch_stub"]
     import fusion_mlx._torch_stub as m
 
     return m
@@ -67,7 +67,7 @@ def test_install_returns_true_and_populates_sys_modules(stub_module):
     for k in _TOUCHED:
         assert k in sys.modules, f"{k} not installed in sys.modules"
     torch = sys.modules["torch"]
-    assert torch.__version__.endswith("+omlx-stub")
+    assert torch.__version__.endswith("+fusion_mlx-stub")
     # The dtype set xgrammar/tvm_ffi look up at import time.
     for dt in (
         "int8",
@@ -297,7 +297,7 @@ def test_missing_top_level_attribute_raises_attributeerror_and_logs(
     with mock.patch("importlib.util.find_spec", side_effect=lambda name: None):
         stub_module.install()
     torch = sys.modules["torch"]
-    with caplog.at_level("WARNING", logger="omlx._torch_stub"):
+    with caplog.at_level("WARNING", logger="fusion_mlx._torch_stub"):
         with pytest.raises(AttributeError, match="torch.compile"):
             torch.compile  # noqa: B018
     assert any(
@@ -327,7 +327,7 @@ def test_known_probe_names_log_at_debug_not_warning(stub_module, caplog):
     # Probe one known dtype + one genuinely-missing attribute. Capture at
     # DEBUG so both log calls land in caplog.records and we can compare
     # their levels.
-    with caplog.at_level("DEBUG", logger="omlx._torch_stub"):
+    with caplog.at_level("DEBUG", logger="fusion_mlx._torch_stub"):
         with pytest.raises(AttributeError):
             torch.float8_e4m3fn  # noqa: B018
         with pytest.raises(AttributeError):
@@ -426,7 +426,7 @@ def test_install_is_thread_safe(stub_module):
     assert all(r is True for r in results)
     # All threads see the same single torch module instance.
     torch = sys.modules["torch"]
-    assert torch.__version__.endswith("+omlx-stub")
+    assert torch.__version__.endswith("+fusion_mlx-stub")
 
 
 @pytest.mark.skipif(

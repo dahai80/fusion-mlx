@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Tests for omlx.server module - sampling parameter resolution and exception handlers."""
+"""Tests for fusion_mlx.server module - sampling parameter resolution and exception handlers."""
 
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -39,7 +39,7 @@ class TestBoundarySnapshotLifecycle:
             _scheduler_config=SimpleNamespace(paged_ssd_cache_dir=tmp_path)
         )
 
-        with patch("omlx.server._server_state", state):
+        with patch("fusion_mlx.server._server_state", state):
             _reset_boundary_snapshots_for_server()
 
         assert (tmp_path / "_boundary_snapshots").exists()
@@ -57,7 +57,7 @@ class TestBoundarySnapshotLifecycle:
             _scheduler_config=SimpleNamespace(paged_ssd_cache_dir=None)
         )
 
-        with patch("omlx.server._server_state", state):
+        with patch("fusion_mlx.server._server_state", state):
             _reset_boundary_snapshots_for_server()
 
         assert stale_dir.exists()
@@ -168,7 +168,7 @@ class TestGetSamplingParams:
     def setup_server_state(self):
         """Set up a clean server state for each test."""
         state = ServerState()
-        with patch("omlx.server._server_state", state):
+        with patch("fusion_mlx.server._server_state", state):
             self._state = state
             yield
 
@@ -487,7 +487,7 @@ class TestModelFallback:
     def setup_server_state(self):
         """Set up a clean server state for each test."""
         state = ServerState()
-        with patch("omlx.server._server_state", state):
+        with patch("fusion_mlx.server._server_state", state):
             self._state = state
             yield
 
@@ -573,7 +573,7 @@ class TestGetEngineLLMTypeValidation:
     @pytest.fixture(autouse=True)
     def setup_server_state(self):
         state = ServerState()
-        with patch("omlx.server._server_state", state):
+        with patch("fusion_mlx.server._server_state", state):
             self._state = state
             yield
 
@@ -673,7 +673,7 @@ class TestGetMaxContextWindow:
     @pytest.fixture(autouse=True)
     def setup_server_state(self):
         state = ServerState()
-        with patch("omlx.server._server_state", state):
+        with patch("fusion_mlx.server._server_state", state):
             self._state = state
             yield
 

@@ -8,9 +8,9 @@ import fusion_mlx.utils.psutil_compat as psutil_compat
 
 def test_virtual_memory_uses_macos_host_stats():
     with (
-        patch("omlx.utils.psutil_compat.sys.platform", "darwin"),
+        patch("fusion_mlx.utils.psutil_compat.sys.platform", "darwin"),
         patch(
-            "omlx.utils.psutil_compat.get_macos_vm_stats",
+            "fusion_mlx.utils.psutil_compat.get_macos_vm_stats",
             return_value={
                 "free": 2 * 1024**3,
                 "inactive": 3 * 1024**3,
@@ -18,7 +18,9 @@ def test_virtual_memory_uses_macos_host_stats():
                 "wired": 1 * 1024**3,
             },
         ),
-        patch("omlx.utils.psutil_compat.get_total_memory", return_value=16 * 1024**3),
+        patch(
+            "fusion_mlx.utils.psutil_compat.get_total_memory", return_value=16 * 1024**3
+        ),
     ):
         vm = psutil_compat.virtual_memory()
 
@@ -38,13 +40,13 @@ Pages inactive:                           30.
 Pages wired down:                         40.
 """
     with (
-        patch("omlx.utils.psutil_compat.sys.platform", "darwin"),
-        patch("omlx.utils.psutil_compat.get_macos_vm_stats", return_value=None),
-        patch("omlx.utils.psutil_compat.get_total_memory", return_value=1024**3),
-        patch("omlx.utils.psutil_compat._cached_slow_virtual_memory", None),
-        patch("omlx.utils.psutil_compat._cached_slow_virtual_memory_at", 0.0),
+        patch("fusion_mlx.utils.psutil_compat.sys.platform", "darwin"),
+        patch("fusion_mlx.utils.psutil_compat.get_macos_vm_stats", return_value=None),
+        patch("fusion_mlx.utils.psutil_compat.get_total_memory", return_value=1024**3),
+        patch("fusion_mlx.utils.psutil_compat._cached_slow_virtual_memory", None),
+        patch("fusion_mlx.utils.psutil_compat._cached_slow_virtual_memory_at", 0.0),
         patch(
-            "omlx.utils.psutil_compat.subprocess.check_output",
+            "fusion_mlx.utils.psutil_compat.subprocess.check_output",
             return_value=vm_stat_output,
         ) as mock_check_output,
     ):

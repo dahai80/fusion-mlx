@@ -648,7 +648,7 @@ class TestPatchedLoadModelTrustRemoteCode:
 
 
 class TestCacheHandlerRegistration:
-    """omlx CacheTypeRegistry resolves the new cache types to their handlers."""
+    """fusion_mlx CacheTypeRegistry resolves the new cache types to their handlers."""
 
     def test_pooling_cache_resolves_to_handler(self, applied_patch):
         from fusion_mlx.cache.type_registry import CacheTypeRegistry

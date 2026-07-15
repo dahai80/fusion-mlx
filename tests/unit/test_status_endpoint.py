@@ -21,7 +21,7 @@ class TestStatusEndpoint:
     def setup_server_state(self):
         """Set up a clean server state for each test."""
         state = ServerState()
-        with patch("omlx.server._server_state", state):
+        with patch("fusion_mlx.server._server_state", state):
             self._state = state
             yield
 

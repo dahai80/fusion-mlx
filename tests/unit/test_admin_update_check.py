@@ -50,7 +50,7 @@ class TestCheckUpdate:
             ],
         )
 
-        with patch("omlx.admin.routes.asyncio") as mock_asyncio:
+        with patch("fusion_mlx.admin.routes.asyncio") as mock_asyncio:
             mock_asyncio.to_thread = _make_async_return(fake_resp)
 
             result = await admin_routes.check_update(is_admin=True)
@@ -72,7 +72,7 @@ class TestCheckUpdate:
             ],
         )
 
-        with patch("omlx.admin.routes.asyncio") as mock_asyncio:
+        with patch("fusion_mlx.admin.routes.asyncio") as mock_asyncio:
             mock_asyncio.to_thread = _make_async_return(fake_resp)
 
             result = await admin_routes.check_update(is_admin=True)
@@ -85,7 +85,7 @@ class TestCheckUpdate:
         """Should return update_available=False on HTTP error."""
         fake_resp = _FakeResponse(403)
 
-        with patch("omlx.admin.routes.asyncio") as mock_asyncio:
+        with patch("fusion_mlx.admin.routes.asyncio") as mock_asyncio:
             mock_asyncio.to_thread = _make_async_return(fake_resp)
 
             result = await admin_routes.check_update(is_admin=True)
@@ -99,7 +99,7 @@ class TestCheckUpdate:
         async def raise_error(*args, **kwargs):
             raise ConnectionError("no network")
 
-        with patch("omlx.admin.routes.asyncio") as mock_asyncio:
+        with patch("fusion_mlx.admin.routes.asyncio") as mock_asyncio:
             mock_asyncio.to_thread = raise_error
 
             result = await admin_routes.check_update(is_admin=True)
@@ -126,7 +126,7 @@ class TestCheckUpdate:
             call_count += 1
             return fake_resp
 
-        with patch("omlx.admin.routes.asyncio") as mock_asyncio:
+        with patch("fusion_mlx.admin.routes.asyncio") as mock_asyncio:
             mock_asyncio.to_thread = counting_to_thread
 
             # First call - should hit API
@@ -158,7 +158,7 @@ class TestCheckUpdate:
             call_count += 1
             return fake_resp
 
-        with patch("omlx.admin.routes.asyncio") as mock_asyncio:
+        with patch("fusion_mlx.admin.routes.asyncio") as mock_asyncio:
             mock_asyncio.to_thread = counting_to_thread
 
             # First call
@@ -186,12 +186,12 @@ class TestCheckUpdate:
         )
 
         with (
-            patch("omlx.admin.routes._omlx_version", "0.4.0rc1"),
+            patch("fusion_mlx.admin.routes._omlx_version", "0.4.0rc1"),
             patch(
-                "omlx.admin.routes._read_update_channel",
+                "fusion_mlx.admin.routes._read_update_channel",
                 return_value="release_candidate",
             ),
-            patch("omlx.admin.routes.asyncio") as mock_asyncio,
+            patch("fusion_mlx.admin.routes.asyncio") as mock_asyncio,
         ):
             mock_asyncio.to_thread = _make_async_return(fake_resp)
 
@@ -215,9 +215,11 @@ class TestCheckUpdate:
         )
 
         with (
-            patch("omlx.admin.routes._omlx_version", "0.4.0rc1"),
-            patch("omlx.admin.routes._read_update_channel", return_value="stable"),
-            patch("omlx.admin.routes.asyncio") as mock_asyncio,
+            patch("fusion_mlx.admin.routes._omlx_version", "0.4.0rc1"),
+            patch(
+                "fusion_mlx.admin.routes._read_update_channel", return_value="stable"
+            ),
+            patch("fusion_mlx.admin.routes.asyncio") as mock_asyncio,
         ):
             mock_asyncio.to_thread = _make_async_return(fake_resp)
 
@@ -241,12 +243,12 @@ class TestCheckUpdate:
         )
 
         with (
-            patch("omlx.admin.routes._omlx_version", "0.4.0rc2"),
+            patch("fusion_mlx.admin.routes._omlx_version", "0.4.0rc2"),
             patch(
-                "omlx.admin.routes._read_update_channel",
+                "fusion_mlx.admin.routes._read_update_channel",
                 return_value="release_candidate",
             ),
-            patch("omlx.admin.routes.asyncio") as mock_asyncio,
+            patch("fusion_mlx.admin.routes.asyncio") as mock_asyncio,
         ):
             mock_asyncio.to_thread = _make_async_return(fake_resp)
 
@@ -269,9 +271,9 @@ class TestCheckUpdate:
         )
 
         with (
-            patch("omlx.admin.routes._omlx_version", "0.4.0"),
-            patch("omlx.admin.routes._read_update_channel", return_value="dev"),
-            patch("omlx.admin.routes.asyncio") as mock_asyncio,
+            patch("fusion_mlx.admin.routes._omlx_version", "0.4.0"),
+            patch("fusion_mlx.admin.routes._read_update_channel", return_value="dev"),
+            patch("fusion_mlx.admin.routes.asyncio") as mock_asyncio,
         ):
             mock_asyncio.to_thread = _make_async_return(fake_resp)
 
@@ -303,12 +305,12 @@ class TestCheckUpdate:
             return fake_resp
 
         with (
-            patch("omlx.admin.routes._omlx_version", "0.4.0rc1"),
+            patch("fusion_mlx.admin.routes._omlx_version", "0.4.0rc1"),
             patch(
-                "omlx.admin.routes._read_update_channel",
+                "fusion_mlx.admin.routes._read_update_channel",
                 side_effect=lambda: next(channels),
             ),
-            patch("omlx.admin.routes.asyncio") as mock_asyncio,
+            patch("fusion_mlx.admin.routes.asyncio") as mock_asyncio,
         ):
             mock_asyncio.to_thread = counting_to_thread
 

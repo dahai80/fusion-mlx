@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Tests for omlx.utils.proc_memory.get_phys_footprint."""
+"""Tests for fusion_mlx.utils.proc_memory.get_phys_footprint."""
 
 import os
 import sys
@@ -52,6 +52,6 @@ class TestGetPhysFootprintDarwin:
 class TestGetPhysFootprintFallback:
     def test_returns_zero_on_non_darwin(self, monkeypatch):
         # Simulate libproc unavailable.
-        monkeypatch.setattr("omlx.utils.proc_memory._proc_pid_rusage", None)
+        monkeypatch.setattr("fusion_mlx.utils.proc_memory._proc_pid_rusage", None)
         assert get_phys_footprint() == 0
         assert get_phys_footprint(pid=12345) == 0

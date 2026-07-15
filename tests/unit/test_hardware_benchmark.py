@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Tests for hardware detection functions used in omlx.ai benchmark integration."""
+"""Tests for hardware detection functions used in fusion_mlx.ai benchmark integration."""
 
 from unittest.mock import MagicMock, patch
 
@@ -53,19 +53,19 @@ class TestSystemToolsUseAbsolutePath:
         return mock_run.call_args[0][0]
 
     def test_get_chip_name_absolute_path(self):
-        with patch("omlx.utils.hardware.subprocess.run") as mock_run:
+        with patch("fusion_mlx.utils.hardware.subprocess.run") as mock_run:
             mock_run.return_value = MagicMock(stdout="Apple M4 Pro\n")
             assert get_chip_name() == "Apple M4 Pro"
             assert self._cmd_of(mock_run)[0] == "/usr/sbin/sysctl"
 
     def test_get_total_memory_absolute_path(self):
-        with patch("omlx.utils.hardware.subprocess.run") as mock_run:
+        with patch("fusion_mlx.utils.hardware.subprocess.run") as mock_run:
             mock_run.return_value = MagicMock(stdout="68719476736\n")
             assert get_total_memory_bytes() == 68719476736
             assert self._cmd_of(mock_run)[0] == "/usr/sbin/sysctl"
 
     def test_get_gpu_core_count_absolute_path(self):
-        with patch("omlx.utils.hardware.subprocess.run") as mock_run:
+        with patch("fusion_mlx.utils.hardware.subprocess.run") as mock_run:
             mock_run.return_value = MagicMock(
                 stdout="      Total Number of Cores: 40\n"
             )
@@ -73,7 +73,7 @@ class TestSystemToolsUseAbsolutePath:
             assert self._cmd_of(mock_run)[0] == "/usr/sbin/system_profiler"
 
     def test_get_io_platform_uuid_absolute_path(self):
-        with patch("omlx.utils.hardware.subprocess.run") as mock_run:
+        with patch("fusion_mlx.utils.hardware.subprocess.run") as mock_run:
             mock_run.return_value = MagicMock(
                 stdout='    "IOPlatformUUID" = "ABC-123"\n'
             )
@@ -83,7 +83,9 @@ class TestSystemToolsUseAbsolutePath:
     def test_chip_name_falls_back_when_tool_missing(self):
         # Simulates /usr/sbin not on PATH (FileNotFoundError) -> M1 fallback,
         # which is exactly the #1322 symptom the absolute path prevents.
-        with patch("omlx.utils.hardware.subprocess.run", side_effect=FileNotFoundError):
+        with patch(
+            "fusion_mlx.utils.hardware.subprocess.run", side_effect=FileNotFoundError
+        ):
             assert get_chip_name() == "Apple Silicon"
             assert parse_chip_info(get_chip_name()) == ("M1", "")
 

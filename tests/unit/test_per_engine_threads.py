@@ -123,7 +123,7 @@ class TestPerEngineExecutor:
         mock_tokenizer = MagicMock()
         mock_tokenizer.eos_token_id = 0
 
-        with patch("omlx.engine_core.get_registry") as mock_registry:
+        with patch("fusion_mlx.engine_core.get_registry") as mock_registry:
             mock_registry.return_value.acquire.return_value = True
 
             engine_a = EngineCore(mock_model_a, mock_tokenizer)
@@ -141,7 +141,7 @@ class TestPerEngineExecutor:
         mock_tokenizer = MagicMock()
         mock_tokenizer.eos_token_id = 0
 
-        with patch("omlx.engine_core.get_registry") as mock_registry:
+        with patch("fusion_mlx.engine_core.get_registry") as mock_registry:
             mock_registry.return_value.acquire.return_value = True
 
             engine = EngineCore(mock_model, mock_tokenizer)
@@ -161,9 +161,12 @@ class TestPerEngineExecutor:
         mock_tokenizer.eos_token_id = 0
 
         with (
-            patch("omlx.engine_core.get_registry") as mock_registry,
-            patch("omlx.engine_core.compile_cache_clear_available", return_value=True),
-            patch("omlx.engine_core.clear_thread_compile_cache") as mock_clear,
+            patch("fusion_mlx.engine_core.get_registry") as mock_registry,
+            patch(
+                "fusion_mlx.engine_core.compile_cache_clear_available",
+                return_value=True,
+            ),
+            patch("fusion_mlx.engine_core.clear_thread_compile_cache") as mock_clear,
         ):
             mock_registry.return_value.acquire.return_value = True
 
@@ -190,8 +193,11 @@ class TestPerEngineExecutor:
         mock_tokenizer.eos_token_id = 0
 
         with (
-            patch("omlx.engine_core.get_registry") as mock_registry,
-            patch("omlx.engine_core.compile_cache_clear_available", return_value=False),
+            patch("fusion_mlx.engine_core.get_registry") as mock_registry,
+            patch(
+                "fusion_mlx.engine_core.compile_cache_clear_available",
+                return_value=False,
+            ),
         ):
             mock_registry.return_value.acquire.return_value = True
 

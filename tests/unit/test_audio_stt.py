@@ -93,7 +93,7 @@ def audio_client():
     mock_pool = _make_mock_pool()
 
     with (
-        patch("omlx.api.audio_routes._get_engine_pool", return_value=mock_pool),
+        patch("fusion_mlx.api.audio_routes._get_engine_pool", return_value=mock_pool),
         TestClient(app, raise_server_exceptions=False) as client,
     ):
         yield client, mock_pool
@@ -240,14 +240,14 @@ class TestSTTEngineLanguageForwarding:
 
 @pytest.fixture
 def server_audio_client():
-    """TestClient using the full omlx server app with mocked pool."""
+    """TestClient using the full fusion_mlx server app with mocked pool."""
     from fusion_mlx.server import app
 
     _ensure_audio_routes(app)
 
     mock_pool = _make_mock_pool()
 
-    with patch("omlx.server._server_state") as mock_state:
+    with patch("fusion_mlx.server._server_state") as mock_state:
         mock_state.engine_pool = mock_pool
         mock_state.global_settings = None
         mock_state.process_memory_enforcer = None
@@ -371,7 +371,7 @@ class TestSTTEndpointBasic:
 
         # No settings manager => model's own default applies; nothing forwarded.
         with patch(
-            "omlx.api.audio_routes._get_settings_manager",
+            "fusion_mlx.api.audio_routes._get_settings_manager",
             return_value=None,
         ):
             response = client.post(
@@ -405,7 +405,7 @@ class TestSTTEndpointBasic:
         fake_manager.get_settings.return_value = fake_settings
 
         with patch(
-            "omlx.api.audio_routes._get_settings_manager",
+            "fusion_mlx.api.audio_routes._get_settings_manager",
             return_value=fake_manager,
         ):
             response = client.post(
@@ -437,7 +437,7 @@ class TestSTTEndpointBasic:
         fake_manager.get_settings.return_value = fake_settings
 
         with patch(
-            "omlx.api.audio_routes._get_settings_manager",
+            "fusion_mlx.api.audio_routes._get_settings_manager",
             return_value=fake_manager,
         ):
             response = client.post(
@@ -642,7 +642,7 @@ class TestSTTModelAliasResolution:
         mock_pool = _make_mock_pool(model_id="Qwen3-ASR-1.7B-bf16")
         mock_pool.resolve_model_id = MagicMock(return_value="Qwen3-ASR-1.7B-bf16")
 
-        with patch("omlx.server._server_state") as mock_state:
+        with patch("fusion_mlx.server._server_state") as mock_state:
             mock_state.engine_pool = mock_pool
             mock_state.global_settings = None
             mock_state.process_memory_enforcer = None
@@ -670,7 +670,7 @@ class TestSTTModelAliasResolution:
         # resolve_model_id returns the same ID when no alias matches
         mock_pool.resolve_model_id = MagicMock(return_value="Qwen3-ASR-1.7B-bf16")
 
-        with patch("omlx.server._server_state") as mock_state:
+        with patch("fusion_mlx.server._server_state") as mock_state:
             mock_state.engine_pool = mock_pool
             mock_state.global_settings = None
             mock_state.process_memory_enforcer = None

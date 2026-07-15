@@ -10,7 +10,7 @@
 #   runtime-fail  - collects but fails on stale assertions / removed attrs
 #   timeout       - hangs or exceeds the unit-gate budget (integration-style)
 #
-# Total: 326 modules excluded; 269 healthy modules remain in the CI gate.
+# Total: 318 modules excluded; 277 healthy modules remain in the CI gate.
 # Pay down by updating each module to the current released API, then remove
 # its line here. See memory: fusion-mlx-rapid-mlx-test-debt.
 
@@ -72,9 +72,7 @@ test_batching_deterministic.py
 test_bench_vs_ollama.py
 test_benchmark.py
 test_body_receive_timeout.py
-test_cache_observability.py
 test_cache_routes.py
-test_cache_type_handlers.py
 test_cancelled_requests_metric.py
 test_capabilities_field.py
 test_casual_chat_auto_disable_thinking.py
@@ -108,7 +106,6 @@ test_cors_env_configurable.py
 test_cors_lockdown_response_shape.py
 test_d_anthro_validation.py
 test_deep_nest_dos.py
-test_deepseek_v4_patch.py
 test_deepseek_v4_vendored.py
 test_dense_sampler_fastpath.py
 test_dflash_adapter_signature.py
@@ -147,7 +144,6 @@ test_gemma4_text_import_guard.py
 test_generation_config_loader.py
 test_glm_moe_dsa_patch.py
 test_grammar.py
-test_hardware_benchmark.py
 test_harmony_finalize.py
 test_healthz_perf_budget.py
 test_help_fuzzy.py
@@ -185,7 +181,6 @@ test_model_aliases.py
 test_model_auto_config.py
 test_model_loading.py
 test_model_profiles_ssot.py
-test_model_settings_profiles.py
 test_models_command_layout.py
 test_mtp_inject_and_install.py
 test_mtp_spec_decode.py
@@ -211,7 +206,6 @@ test_param_validation_r7b.py
 test_parent_watchdog.py
 test_payload_builder_v2_full.py
 test_payload_builder_v2_kwargs.py
-test_per_engine_threads.py
 test_pflash.py
 test_pflash_benchmark.py
 test_pflash_engine.py
@@ -225,10 +219,8 @@ test_prefix_cache_persistence.py
 test_prefix_cache_rotating_tip_strip.py
 test_prefix_divergence_probe.py
 test_probe_fastpath.py
-test_proc_memory.py
 test_process_memory_enforcer.py
 test_prompt_lookup_bench.py
-test_psutil_compat.py
 test_pull_summary.py
 test_r10_scrub_validation_bundle.py
 test_r12_4_strict_json_schema_constraint_matrix.py

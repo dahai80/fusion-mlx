@@ -80,13 +80,13 @@ def test_pre_load_dispatch_applies_glm_patch(tmp_path, monkeypatch):
     monkeypatch.setattr(model_loading, "_patch_mlx_lm_load_config", lambda: None)
     monkeypatch.setitem(
         sys.modules,
-        "omlx.patches.mlx_lm_mtp",
+        "fusion_mlx.patches.mlx_lm_mtp",
         MagicMock(set_mtp_active=MagicMock()),
     )
     apply_mock = MagicMock(return_value=True)
     monkeypatch.setitem(
         sys.modules,
-        "omlx.patches.glm_moe_dsa",
+        "fusion_mlx.patches.glm_moe_dsa",
         MagicMock(apply_glm_moe_dsa_patch=apply_mock),
     )
 
@@ -214,7 +214,7 @@ def test_glm_native_fused_kernels_match_reference(monkeypatch):
     try:
         from fusion_mlx.custom_kernels.glm_moe_dsa import fast
     except Exception as exc:  # pragma: no cover - depends on local native build
-        pytest.skip(f"omlx.custom_kernels.glm_moe_dsa is unavailable: {exc}")
+        pytest.skip(f"fusion_mlx.custom_kernels.glm_moe_dsa is unavailable: {exc}")
 
     if not fast.is_native_available():
         pytest.skip("GLM MoE DSA native extension is unavailable")

@@ -78,18 +78,18 @@ class TestCacheRateTrackerRates:
             return fake_time[0]
 
         with patch(
-            "omlx.cache.observability.time.monotonic", side_effect=mock_monotonic
+            "fusion_mlx.cache.observability.time.monotonic", side_effect=mock_monotonic
         ):
             tracker.maybe_snapshot(old_counters)
 
         fake_time[0] = 1000.0 + elapsed
         with patch(
-            "omlx.cache.observability.time.monotonic", side_effect=mock_monotonic
+            "fusion_mlx.cache.observability.time.monotonic", side_effect=mock_monotonic
         ):
             tracker.maybe_snapshot(new_counters)
 
         with patch(
-            "omlx.cache.observability.time.monotonic", return_value=fake_time[0]
+            "fusion_mlx.cache.observability.time.monotonic", return_value=fake_time[0]
         ):
             return tracker.get_rates(windows=(60, 300, 900))
 
@@ -127,13 +127,19 @@ class TestCacheRateTrackerRates:
     def test_insufficient_data_returns_empty_window(self):
         tracker = CacheRateTracker(min_interval=0.0)
 
-        with patch("omlx.cache.observability.time.monotonic", return_value=1000.0):
+        with patch(
+            "fusion_mlx.cache.observability.time.monotonic", return_value=1000.0
+        ):
             tracker.maybe_snapshot(_make_counters(prefix_hits=10))
 
-        with patch("omlx.cache.observability.time.monotonic", return_value=1000.5):
+        with patch(
+            "fusion_mlx.cache.observability.time.monotonic", return_value=1000.5
+        ):
             tracker.maybe_snapshot(_make_counters(prefix_hits=20))
 
-        with patch("omlx.cache.observability.time.monotonic", return_value=1000.5):
+        with patch(
+            "fusion_mlx.cache.observability.time.monotonic", return_value=1000.5
+        ):
             result = tracker.get_rates(windows=(60,))
         assert result["windows"]["1m"] == {}
 
@@ -151,10 +157,14 @@ class TestCacheRateTrackerSnapshotAndGetRates:
     def test_combines_snapshot_and_rates(self):
         tracker = CacheRateTracker(min_interval=0.0)
 
-        with patch("omlx.cache.observability.time.monotonic", return_value=1000.0):
+        with patch(
+            "fusion_mlx.cache.observability.time.monotonic", return_value=1000.0
+        ):
             tracker.maybe_snapshot(_make_counters(prefix_hits=0))
 
-        with patch("omlx.cache.observability.time.monotonic", return_value=1060.0):
+        with patch(
+            "fusion_mlx.cache.observability.time.monotonic", return_value=1060.0
+        ):
             result = tracker.snapshot_and_get_rates(
                 _make_counters(prefix_hits=80, prefix_misses=20)
             )

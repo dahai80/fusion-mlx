@@ -474,7 +474,7 @@ class TestCompletionsThinkingBudget:
         from pathlib import Path
 
         source = (
-            Path(__file__).resolve().parents[1] / "omlx" / "server.py"
+            Path(__file__).resolve().parents[1] / "fusion_mlx" / "server.py"
         ).read_text()
 
         def _is_resolve_call(value) -> bool:
@@ -748,7 +748,7 @@ class TestCompletionsStreamThinkPrefixParity:
         from pathlib import Path
 
         source = (
-            Path(__file__).resolve().parents[1] / "omlx" / "server.py"
+            Path(__file__).resolve().parents[1] / "fusion_mlx" / "server.py"
         ).read_text()
         for node in ast.walk(ast.parse(source)):
             if (
@@ -798,7 +798,7 @@ class TestCompletionsStreamThinkPrefixParity:
         from pathlib import Path
 
         source = (
-            Path(__file__).resolve().parents[1] / "omlx" / "server.py"
+            Path(__file__).resolve().parents[1] / "fusion_mlx" / "server.py"
         ).read_text()
         for node in ast.walk(ast.parse(source)):
             if (
