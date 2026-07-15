@@ -43,6 +43,7 @@ download required, runs in CI) AND a real-Gemma-4 reproducer
 from __future__ import annotations
 
 import pytest
+
 try:
     from tokenizers import Tokenizer, decoders, models, pre_tokenizers
 except ImportError:

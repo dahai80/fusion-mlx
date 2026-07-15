@@ -33,6 +33,15 @@ import pytest
 
 from fusion_mlx.model_aliases import AliasProfile
 
+# Modality-routing symbols backed out of model_aliases (system removed
+# in the diffusion-gemma skeleton descope). Defined as placeholders so
+# the @pytest.mark.skip classes below stay statically valid for ruff;
+# they never execute. Replace with real imports if the modality lane
+# is revived.
+_coerce = None
+_VALID_MODALITIES = frozenset()
+_RESERVED_MODALITIES = frozenset()
+
 
 @pytest.mark.skip(
     reason="modality-routing system backed out of model_aliases: "

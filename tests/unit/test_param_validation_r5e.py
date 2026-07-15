@@ -37,7 +37,7 @@ from fusion_mlx.api.responses_models import ResponsesRequest
 # 2**63-1, negatives) are silently accepted. Kept here so the skipped
 # ``TestTopKUpperBound`` class stays structurally intact; restore the
 # gate, drop this constant, and unskip when the regression is fixed.
-_TOP_K_SENTINEL_CAP = 2 ** 20
+_TOP_K_SENTINEL_CAP = 2**20
 
 
 def _user_msg():

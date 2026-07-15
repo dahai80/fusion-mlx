@@ -25,6 +25,7 @@ the malformation — no model download required, runs in <100 ms in CI.
 from __future__ import annotations
 
 import pytest
+
 try:
     from tokenizers import Tokenizer, decoders, models, pre_tokenizers
 except ImportError:

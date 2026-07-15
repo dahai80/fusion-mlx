@@ -11,11 +11,9 @@ Provides the backend for the drag-and-drop agent graph canvas:
 
 from __future__ import annotations
 
-import json
 import logging
 import time
 import uuid
-from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request
@@ -60,14 +58,16 @@ async def list_canvas_graphs() -> list[dict[str, Any]]:
     """List all saved canvas graphs."""
     result = []
     for gid, g in _graphs.items():
-        result.append({
-            "id": gid,
-            "name": g.get("name", "Untitled"),
-            "description": g.get("description", ""),
-            "node_count": len(g.get("nodes", {})),
-            "edge_count": len(g.get("edges", [])),
-            "updated_at": g.get("updated_at", 0),
-        })
+        result.append(
+            {
+                "id": gid,
+                "name": g.get("name", "Untitled"),
+                "description": g.get("description", ""),
+                "node_count": len(g.get("nodes", {})),
+                "edge_count": len(g.get("edges", [])),
+                "updated_at": g.get("updated_at", 0),
+            }
+        )
     result.sort(key=lambda x: x["updated_at"], reverse=True)
     return result
 

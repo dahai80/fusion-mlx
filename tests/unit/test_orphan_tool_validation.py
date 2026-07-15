@@ -263,8 +263,7 @@ def test_properly_chained_tool_round_trip_succeeds() -> None:
     # tool reply is normalized to a user message for chat-template
     # compatibility: "[Tool Result (<id>)]: <content>"
     tool_msg = next(
-        m for m in seen
-        if m["role"] == "user" and "[Tool Result (c1)]" in m["content"]
+        m for m in seen if m["role"] == "user" and "[Tool Result (c1)]" in m["content"]
     )
     assert tool_msg["content"].endswith(": 4")
 
@@ -317,8 +316,7 @@ def test_multi_turn_tool_chain_with_array_and_string_content() -> None:
     seen = eng.last_messages
     # tool replies are normalized to user messages "[Tool Result (id)]: content"
     tool_msgs = [
-        m for m in seen
-        if m["role"] == "user" and "[Tool Result (" in m["content"]
+        m for m in seen if m["role"] == "user" and "[Tool Result (" in m["content"]
     ]
     ids = [m["content"].split("(")[1].split(")")[0] for m in tool_msgs]
     assert ids == ["a", "b"]
@@ -455,8 +453,7 @@ def test_pending_id_consumed_only_by_first_matching_reply() -> None:
     seen = eng.last_messages
     # tool replies are normalized to user messages "[Tool Result (id)]: content"
     tool_msgs = [
-        m for m in seen
-        if m["role"] == "user" and "[Tool Result (" in m["content"]
+        m for m in seen if m["role"] == "user" and "[Tool Result (" in m["content"]
     ]
     ids = [m["content"].split("(")[1].split(")")[0] for m in tool_msgs]
     assert ids == ["round1", "round2"]

@@ -303,6 +303,7 @@ if sys.platform != "darwin":
         "test_sampling.py",
         "test_signal_observability.py",
         "test_spec_recurrent_gate.py",
+        "test_streaming_detokenizer.py",
         "test_telemetry.py",
         "test_telemetry_consent.py",
         "test_telemetry_emit.py",
@@ -311,6 +312,7 @@ if sys.platform != "darwin":
         "test_telemetry_state.py",
         "test_telemetry_state_comprehensive.py",
         "test_telemetry_transport.py",
+        "test_tokenizer_gemma4_hybrid.py",
         # mlx-dependent suites added by Phase 4/5/6 video ports + scheduler
         # debt paydown: pass on macOS (real mlx), fail on Linux CI (no mlx).
         "test_denoise_legacy.py",

@@ -74,7 +74,10 @@ _logger = logging.getLogger(__name__)
 
 def _snapshot_vlm_mtp_patch():
     try:
-        from fusion_mlx.patches.mlx_vlm_mtp import qwen35_moe_vlm_model, qwen35_vlm_model
+        from fusion_mlx.patches.mlx_vlm_mtp import (
+            qwen35_moe_vlm_model,
+            qwen35_vlm_model,
+        )
     except Exception:
         return None
     items = []
@@ -86,7 +89,11 @@ def _snapshot_vlm_mtp_patch():
             pkg = __import__(mod_path, fromlist=[attr])
             cls = getattr(pkg, attr).Model
             items.append(
-                (cls, cls.sanitize, cls.__dict__.get("_fusion_mlx_mtp_vlm_patched", False))
+                (
+                    cls,
+                    cls.sanitize,
+                    cls.__dict__.get("_fusion_mlx_mtp_vlm_patched", False),
+                )
             )
         except Exception:
             items.append(None)
@@ -100,7 +107,10 @@ def _restore_vlm_mtp_patch(snap):
     if not snap:
         return
     try:
-        from fusion_mlx.patches.mlx_vlm_mtp import qwen35_moe_vlm_model, qwen35_vlm_model
+        from fusion_mlx.patches.mlx_vlm_mtp import (
+            qwen35_moe_vlm_model,
+            qwen35_vlm_model,
+        )
     except Exception:
         return
     for item in snap["items"]:
@@ -2959,7 +2969,7 @@ class TestQuantizeOqStreamingFp8:
 
         for sf in out.glob("*.safetensors"):
             with safe_open(str(sf), framework="numpy") as f:
-                for k in f.keys():
+                for k in f:
                     assert not k.endswith(".scale"), f"scale key leaked: {k}"
                     assert not k.endswith("_scale_inv"), f"scale_inv key leaked: {k}"
 

@@ -225,7 +225,9 @@ async def execute_turn(session_id: str, req: TurnRequest):
     return await _execute_single_turn(pool, session, req, session_id)
 
 
-async def _execute_single_turn(pool, session: dict, req: TurnRequest, session_id: str) -> TurnResponse:
+async def _execute_single_turn(
+    pool, session: dict, req: TurnRequest, session_id: str
+) -> TurnResponse:
     """Execute a single LLM turn without auto tool-calling loop."""
     messages = _build_request_messages(session, req)
     body = _build_request_body(session, req, messages)
@@ -240,7 +242,9 @@ async def _execute_single_turn(pool, session: dict, req: TurnRequest, session_id
         raise HTTPException(500, str(exc))
 
 
-async def _execute_turn_auto(pool, session: dict, req: TurnRequest, session_id: str) -> TurnResponse:
+async def _execute_turn_auto(
+    pool, session: dict, req: TurnRequest, session_id: str
+) -> TurnResponse:
     """Execute a full auto-loop: LLM → tool calls → execute → submit → LLM → ... → final answer."""
     all_usage = {"prompt_tokens": 0, "completion_tokens": 0}
     final_content = ""
@@ -253,7 +257,9 @@ async def _execute_turn_auto(pool, session: dict, req: TurnRequest, session_id: 
         try:
             result = await _call_chat_completion(pool, body)
         except Exception as exc:
-            logger.exception("Auto-turn %d failed for session %s", iteration + 1, session_id)
+            logger.exception(
+                "Auto-turn %d failed for session %s", iteration + 1, session_id
+            )
             raise HTTPException(500, str(exc))
 
         # Accumulate usage
@@ -275,11 +281,13 @@ async def _execute_turn_auto(pool, session: dict, req: TurnRequest, session_id: 
         for tc in result.tool_calls:
             all_tool_calls.append(tc)
             tool_result = _execute_local_tool(tc)
-            session["messages"].append({
-                "role": "tool",
-                "tool_call_id": tc.get("id", ""),
-                "content": tool_result,
-            })
+            session["messages"].append(
+                {
+                    "role": "tool",
+                    "tool_call_id": tc.get("id", ""),
+                    "content": tool_result,
+                }
+            )
 
         if iteration == req.max_auto_iterations - 1:
             final_content = result.content
@@ -299,12 +307,15 @@ def _execute_local_tool(tool_call: dict) -> str:
     would dispatch to the ToolRegistry.
     """
     import json
+
     try:
         func_name = tool_call.get("function", {}).get("name", "unknown")
         args = tool_call.get("function", {}).get("arguments", "{}")
         # Parse arguments for display
         parsed = json.loads(args) if isinstance(args, str) else args
-        return json.dumps({"executed": func_name, "args": parsed, "status": "ok"}, ensure_ascii=False)
+        return json.dumps(
+            {"executed": func_name, "args": parsed, "status": "ok"}, ensure_ascii=False
+        )
     except (json.JSONDecodeError, TypeError, AttributeError) as e:
         return json.dumps({"error": str(e), "status": "failed"}, ensure_ascii=False)
 
