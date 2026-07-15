@@ -10,7 +10,7 @@
 #   runtime-fail  - collects but fails on stale assertions / removed attrs
 #   timeout       - hangs or exceeds the unit-gate budget (integration-style)
 #
-# Total: 278 modules excluded; 317 healthy modules remain in the CI gate.
+# Total: 274 modules excluded; 321 healthy modules remain in the CI gate.
 # Pay down by updating each module to the current released API, then remove
 # its line here. See memory: fusion-mlx-rapid-mlx-test-debt.
 
@@ -49,7 +49,6 @@ test_audio_memory.py
 test_audio_path_shaped_model.py
 test_audio_probe_consistency.py
 test_audio_r11_b_bundle.py
-test_audio_r11_b_pure.py
 test_audio_r7_c_bundle.py
 test_audio_r8_a_bundle.py
 test_audio_route_registration_gate.py
@@ -64,7 +63,6 @@ test_batched_engine_chat_template.py
 test_batched_engine_output_router.py
 test_batched_engine_tool_call_normalization.py
 test_batching.py
-test_batching_deterministic.py
 test_bench_vs_ollama.py
 test_benchmark.py
 test_body_receive_timeout.py
@@ -103,7 +101,6 @@ test_deepseek_v4_vendored.py
 test_dense_sampler_fastpath.py
 test_dflash_adapter_signature.py
 test_dflash_engine.py
-test_dflash_integration.py
 test_dflash_multimodal_fallback.py
 test_dflash_prefill_memory_guard.py
 test_dflash_spec_decode.py
@@ -195,7 +192,6 @@ test_prefix_cache_persistence.py
 test_prefix_cache_rotating_tip_strip.py
 test_prefix_divergence_probe.py
 test_probe_fastpath.py
-test_prompt_lookup_bench.py
 test_pull_summary.py
 test_r10_scrub_validation_bundle.py
 test_r12_h06_repair_context_guard.py
