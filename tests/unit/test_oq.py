@@ -2,6 +2,7 @@
 """Tests for oQ (oMLX Universal Dynamic Quantization)."""
 
 import json
+import logging
 import sys
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -55,6 +56,76 @@ from fusion_mlx.oq import (
     universal_quant_predicate,
     validate_quantizable,
 )
+
+# =============================================================================
+# VLM MTP sanitize-patch isolation
+# =============================================================================
+# _build_model_sanitizer(<VLM config>, text_only=False) invokes
+# apply_mlx_vlm_mtp_patch as a side effect. That wraps mlx_vlm's
+# qwen3_5 / qwen3_5_moe Model.sanitize with an MTP-aware wrapper (module
+# _APPLIED + class _fusion_mlx_mtp_vlm_patched flags, NO undo, NOT tracked
+# in engines.vlm._VLM_ORIGINAL_SANITIZES). The wrapper shifts norms only for
+# raw-HF conv1d input, so if it leaks into a later test that captures
+# Model.sanitize as the "original" (test_vlm_sanitize_patch), the +/-1.0
+# norm math inverts. Snapshot/restore per test so test_oq never leaves the
+# wrapper behind for a downstream file to inherit.
+_logger = logging.getLogger(__name__)
+
+
+def _snapshot_vlm_mtp_patch():
+    try:
+        from fusion_mlx.patches.mlx_vlm_mtp import qwen35_moe_vlm_model, qwen35_vlm_model
+    except Exception:
+        return None
+    items = []
+    for mod_path, attr in (
+        ("mlx_vlm.models.qwen3_5", "qwen3_5"),
+        ("mlx_vlm.models.qwen3_5_moe", "qwen3_5_moe"),
+    ):
+        try:
+            pkg = __import__(mod_path, fromlist=[attr])
+            cls = getattr(pkg, attr).Model
+            items.append(
+                (cls, cls.sanitize, cls.__dict__.get("_fusion_mlx_mtp_vlm_patched", False))
+            )
+        except Exception:
+            items.append(None)
+    return {
+        "applied": (qwen35_vlm_model._APPLIED, qwen35_moe_vlm_model._APPLIED),
+        "items": items,
+    }
+
+
+def _restore_vlm_mtp_patch(snap):
+    if not snap:
+        return
+    try:
+        from fusion_mlx.patches.mlx_vlm_mtp import qwen35_moe_vlm_model, qwen35_vlm_model
+    except Exception:
+        return
+    for item in snap["items"]:
+        if item is None:
+            continue
+        cls, sanitize, flag = item
+        if cls.sanitize is not sanitize:
+            _logger.debug(
+                "test_oq restored %s.Model.sanitize after VLM MTP patch side effect",
+                cls.__module__,
+            )
+        cls.sanitize = sanitize
+        if flag:
+            cls._fusion_mlx_mtp_vlm_patched = flag
+        elif "_fusion_mlx_mtp_vlm_patched" in cls.__dict__:
+            delattr(cls, "_fusion_mlx_mtp_vlm_patched")
+    qwen35_vlm_model._APPLIED, qwen35_moe_vlm_model._APPLIED = snap["applied"]
+
+
+@pytest.fixture(autouse=True)
+def _isolate_vlm_mtp_sanitize_patch():
+    snap = _snapshot_vlm_mtp_patch()
+    yield
+    _restore_vlm_mtp_patch(snap)
+
 
 # =============================================================================
 # Test universal_quant_predicate
@@ -1997,7 +2068,7 @@ class TestBuildProxyForSensitivity:
             monkeypatch.undo()
         # tempfile.gettempdir() is the system temp root (e.g. /tmp).
         assert str(proxy_dir).startswith(tempfile.gettempdir())
-        assert proxy_dir.name.startswith("omlx_oq_proxy_")
+        assert proxy_dir.name.startswith("fmlx_oq_proxy_")
 
     def test_caller_is_responsible_for_cleanup(self, tmp_path):
         """The helper does not auto-delete the proxy; caller cleans up."""
@@ -2119,7 +2190,7 @@ class TestSensitivityRequiredEnforcement:
         (src / "config.json").write_text('{"model_type": "llama"}')
 
         # Force OOM by pretending system has 0 bytes of RAM.
-        from fusion_mlx import settings as _settings
+        from fusion_mlx.pool import settings as _settings
 
         monkeypatch.setattr(_settings, "get_system_memory", lambda: 0)
 
@@ -2155,7 +2226,7 @@ class TestSensitivityRequiredEnforcement:
         )
         (src / "config.json").write_text('{"model_type": "llama"}')
 
-        from fusion_mlx import settings as _settings
+        from fusion_mlx.pool import settings as _settings
 
         monkeypatch.setattr(_settings, "get_system_memory", lambda: 0)
 
@@ -2201,7 +2272,7 @@ class TestSensitivityRequiredEnforcement:
         )
         (src / "config.json").write_text('{"model_type": "llama"}')
 
-        from fusion_mlx import settings as _settings
+        from fusion_mlx.pool import settings as _settings
 
         monkeypatch.setattr(_settings, "get_system_memory", lambda: 0)
         from fusion_mlx import oq as _oq
@@ -2888,7 +2959,7 @@ class TestQuantizeOqStreamingFp8:
 
         for sf in out.glob("*.safetensors"):
             with safe_open(str(sf), framework="numpy") as f:
-                for k in f:
+                for k in f.keys():
                     assert not k.endswith(".scale"), f"scale key leaked: {k}"
                     assert not k.endswith("_scale_inv"), f"scale_inv key leaked: {k}"
 
@@ -2917,7 +2988,7 @@ class TestQuantizeOqStreamingFp8:
         out = tmp_path / "out"
 
         # Patch system RAM to 1 byte — any model exceeds it
-        with patch("fusion_mlx.settings.get_system_memory", return_value=1):
+        with patch("fusion_mlx.pool.settings.get_system_memory", return_value=1):
             quantize_oq_streaming(str(src), str(out), oq_level=4)
 
         assert (out / "config.json").exists()
@@ -2939,7 +3010,7 @@ class TestQuantizeOqStreamingFp8:
         tmpdir = tempfile.gettempdir()
         before = set(os.listdir(tmpdir))
 
-        with patch("fusion_mlx.settings.get_system_memory", return_value=1):
+        with patch("fusion_mlx.pool.settings.get_system_memory", return_value=1):
             quantize_oq_streaming(str(src), str(out), oq_level=4)
 
         # No new safetensors scratch files in tmp
@@ -3387,7 +3458,7 @@ class TestBuildProxyForSensitivityMtpPatch:
         )
 
         assert isinstance(result, Path)
-        assert result.name.startswith("omlx_oq_proxy_")
+        assert result.name.startswith("fmlx_oq_proxy_")
         assert result.parent == tmp_path
 
         mtp_mod.apply_mlx_lm_mtp_patch.assert_not_called()

@@ -53,27 +53,32 @@ Full unit suite green: 6695 passed, 0 failed.
 
 ## Case studies (investigated this session, NOT rescued - blockers documented)
 
-### test_oq.py (254p/8f) - BLOCKED by cross-test pollution
+### test_oq.py - RESCUED (Task #118, this session)  [was 254p/8f]
 
-All 8 failures are **clear test-only stale fixes** (no prod change needed):
+Root cause of all 8 failures = clear test-only stale fixes (no prod change):
 - 5x `get_system_memory` patch path: tests patch `fusion_mlx.settings` but the
-  symbol moved to `fusion_mlx.pool.settings` (prod `oq.py:3242` imports it there).
-- 2x `omlx_oq_proxy_` prefix: tests assert old prefix; prod `oq.py:4407` uses
+  symbol moved to `fusion_mlx.pool.settings` (prod `oq.py:3242` imports it
+  inside the function, so the patch target is `fusion_mlx.pool.settings`).
+- 2x `omlx_oq_proxy_` prefix: tests assert old prefix; prod uses
   `fmlx_oq_proxy_` (omlx->fmlx migration rename).
 - 1x `for k in f:` iteration: safetensors `safe_open` needs `f.keys()`.
 
-**Fixes applied + verified in isolation (262p/0f).** But un-quarantining test_oq
-**regresses `test_vlm_sanitize_patch.py`** (2 failures) via cross-test pollution:
-running test_oq before `test_vlm_sanitize_patch` inverts the
-`should_shift_norm_weights` decision (sanitize shifts when it shouldn't and
-vice-versa). Importing `fusion_mlx.oq` alone does NOT trigger the vlm patch
-(verified: `_VLM_SANITIZE_PATCHED=False`), so the leak is a runtime side-effect
-of some test_oq test that bisection has not yet isolated.
+**Cross-test pollution root-caused + fixed.** Un-quarantining test_oq regressed
+`test_vlm_sanitize_patch.py` (2 failures). The polluter: `_build_model_sanitizer`
+on a VLM config calls `apply_mlx_vlm_mtp_patch` as a side effect, which wraps
+`mlx_vlm qwen3_5/qwen3_5_moe Model.sanitize` with an MTP-aware wrapper (module
+`_APPLIED` + class `_fusion_mlx_mtp_vlm_patched` flags, NO undo, NOT tracked in
+`engines.vlm._VLM_ORIGINAL_SANITIZES`). When test_oq runs before the victim, the
+victim later captures that wrapper as the "original" via `_patch_vlm_sanitize`,
+inverting the +/-1.0 norm math (identity 1.5->0.5, MTP 0.5->0.5).
 
-**Fate: KEEP_QUARANTINED.** The 8 stale fixes are correct and ready (re-apply
-when the polluter is found). Blocker = isolate the test_oq test that mutates
-global vlm sanitize state, then add teardown. Reverted to pristine in this
-session to keep the suite green.
+**Fix:** autouse fixture `_isolate_vlm_mtp_sanitize_patch` in test_oq.py
+snapshots `Model.sanitize` + the class/module flags before each test and restores
+after, so test_oq never leaks the wrapper. Since test_oq starts pristine
+(alphabetically first), it leaves pristine.
+
+**Verification:** test_oq isolated 262p/0f; full suite 6957 passed, 0 failed
+(288 skipped, 6 xfailed). `debt_modules.txt` total 274->273.
 
 ### test_eval.py (66p/1f) - unmigrated VALID_BENCHMARKS
 
@@ -258,7 +263,7 @@ test_engine_keepalive.py
 
 ---
 
-## PARTIAL (161) - rescue candidates (pass+fail mix)
+## PARTIAL (160) - rescue candidates (pass+fail mix)
 
 Top rescue candidates by passing-test yield (highest value to rescue). Each
 needs the §Rescue Process: investigate failures, fix clear-stale only, **full-
@@ -266,7 +271,6 @@ suite pollution verify** (test_oq proved this mandatory).
 
 | File | pass/fail | Notes |
 |------|-----------|-------|
-| test_oq.py | 254/8 | BLOCKED - pollution into test_vlm_sanitize_patch (see case study) |
 | test_model_auto_config.py | 196/10 | uninvestigated |
 | test_tool_calling.py | 173/57 | high fail count - likely deep drift |
 | test_tool_parsers.py | 153/3 | bracket-contract change (see case study) |
@@ -302,9 +306,6 @@ reminder that low failure count does not guarantee easy rescue.
 
 ## Open issues to file (per "遇到上游问题，先提issue")
 
-- **test_oq pollution**: find the test_oq test that mutates global vlm sanitize
-  state and leaks into `test_vlm_sanitize_patch`. Once isolated, test_oq's 8
-  stale fixes can be re-applied and the file rescued (+262 tests).
 - **VALID_BENCHMARKS parity contract** (test_eval): decide whether the
   BENCHMARKS/VALID_BENCHMARKS parity check should be restored (migrate
   VALID_BENCHMARKS) or dropped (delete test_parity).
