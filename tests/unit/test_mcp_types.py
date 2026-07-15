@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 """
-Tests for MCP type definitions (omlx/mcp/types.py).
+Tests for MCP type definitions (fusion_mlx/mcp/types.py).
 """
 
 import pytest

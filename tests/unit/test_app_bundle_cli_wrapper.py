@@ -7,7 +7,7 @@ from pathlib import Path
 
 
 def _extract_cli_wrapper_script() -> str:
-    build_script = Path("apps/omlx-mac/Scripts/build.sh").read_text()
+    build_script = Path("apps/fusion_mlx-mac/Scripts/build.sh").read_text()
     match = re.search(
         r"cat > \"\$CLI_WRAPPER\" <<'EOF'\n(?P<script>.*?)\nEOF",
         build_script,
@@ -31,7 +31,7 @@ def _write_fake_python(path: Path) -> None:
 def test_app_bundle_cli_wrapper_resolves_symlinked_invocation(tmp_path):
     """The bundle wrapper must resolve paths from the app, not the symlink."""
     script = _extract_cli_wrapper_script()
-    cli = tmp_path / "Applications/oMLX.app/Contents/MacOS/omlx-cli"
+    cli = tmp_path / "Applications/oMLX.app/Contents/MacOS/fusion_mlx-cli"
     cli.parent.mkdir(parents=True)
     cli.write_text(script)
     cli.chmod(0o755)
@@ -40,7 +40,7 @@ def test_app_bundle_cli_wrapper_resolves_symlinked_invocation(tmp_path):
     python = app_root / "Resources/Python/cpython-3.11/bin/python3"
     _write_fake_python(python)
 
-    symlink = tmp_path / "usr/local/bin/omlx"
+    symlink = tmp_path / "usr/local/bin/fusion_mlx"
     symlink.parent.mkdir(parents=True)
     symlink.symlink_to(cli)
 
@@ -67,7 +67,7 @@ def test_app_bundle_cli_wrapper_resolves_symlinked_invocation(tmp_path):
         f"PYTHONPATH={app_root}/Resources:"
         f"{app_root}/Resources/Python/framework-mlx-base/lib/python3.11/site-packages"
     )
-    expected_args = "ARGS=-m omlx.cli --help"
+    expected_args = "ARGS=-m fusion_mlx.cli --help"
 
     assert direct.stdout.splitlines() == [
         expected_home,

@@ -175,7 +175,13 @@ _hf_hub_utils = MagicMock()
 _hf_hub_utils.RepositoryNotFoundError = Exception
 _hf_hub_utils.RevisionNotFoundError = Exception
 sys.modules["huggingface_hub.utils"] = _hf_hub_utils
-_mock_module("tokenizers")
+# tokenizers: preserve real package if available (BPE detokenizer tests)
+try:
+    import tokenizers as _real_tokenizers
+
+    sys.modules["tokenizers"] = _real_tokenizers
+except ImportError:
+    _mock_module("tokenizers")
 _mock_module("mistral_common")
 _mock_module("mistral_common.tokens")
 _mock_module("mistral_common.tokens.tokenizers")

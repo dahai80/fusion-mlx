@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 """
-Tests for MCP tool executor (omlx/mcp/executor.py).
+Tests for MCP tool executor (fusion_mlx/mcp/executor.py).
 """
 
 import asyncio

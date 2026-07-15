@@ -10,7 +10,7 @@ from fusion_mlx.exceptions import SchedulerQueueFullError
 def _build_test_app():
     """Build a minimal FastAPI app that re-uses the same exception handler.
 
-    Importing omlx.server would pull in heavy server-state init. We pluck the
+    Importing fusion_mlx.server would pull in heavy server-state init. We pluck the
     handler function out of the module and register it against a fresh app
     so the test stays fast and free of state.
     """

@@ -10,7 +10,7 @@
 #   runtime-fail  - collects but fails on stale assertions / removed attrs
 #   timeout       - hangs or exceeds the unit-gate budget (integration-style)
 #
-# Total: 327 modules excluded; 268 healthy modules remain in the CI gate.
+# Total: 326 modules excluded; 269 healthy modules remain in the CI gate.
 # Pay down by updating each module to the current released API, then remove
 # its line here. See memory: fusion-mlx-rapid-mlx-test-debt.
 
@@ -167,7 +167,6 @@ test_librechat_docker.py
 test_max_tokens_resolver.py
 test_mcp_client.py
 test_mcp_config.py
-test_mcp_executor.py
 test_mcp_manager.py
 test_mcp_types.py
 test_memory_cache.py

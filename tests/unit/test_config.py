@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Tests for omlx.config module."""
+"""Tests for fusion_mlx.config module."""
 
 import os
 from argparse import Namespace
