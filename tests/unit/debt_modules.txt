@@ -10,7 +10,7 @@
 #   runtime-fail  - collects but fails on stale assertions / removed attrs
 #   timeout       - hangs or exceeds the unit-gate budget (integration-style)
 #
-# Total: 313 modules excluded; 282 healthy modules remain in the CI gate.
+# Total: 312 modules excluded; 283 healthy modules remain in the CI gate.
 # Pay down by updating each module to the current released API, then remove
 # its line here. See memory: fusion-mlx-rapid-mlx-test-debt.
 
@@ -189,7 +189,6 @@ test_no_out_of_band_routing.py
 test_openai_tool_choice_validation.py
 test_openwebui.py
 test_oq.py
-test_output_collector.py
 test_output_parser.py
 test_packaging_data_files.py
 test_paged_cache_benefits.py

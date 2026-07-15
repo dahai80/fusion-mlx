@@ -126,7 +126,7 @@ class TestRequestOutputCollectorInit:
         """Test default initialization."""
         collector = RequestOutputCollector()
 
-        assert collector.output is None
+        assert collector._merged is None
         assert collector.aggregate is True
         assert collector._is_waiting is False
 
@@ -157,7 +157,7 @@ class TestRequestOutputCollectorPut:
         )
         collector.put(output)
 
-        assert collector.output is output
+        assert collector._merged is output
         assert collector.ready.is_set()
 
     def test_put_multiple_with_aggregation(self):
@@ -181,13 +181,13 @@ class TestRequestOutputCollectorPut:
         collector.put(output2)
 
         # Should be merged
-        assert collector.output is not None
-        assert collector.output.new_token_ids == [100, 101]
-        assert collector.output.new_text == "Hello world"
-        assert collector.output.completion_tokens == 2
+        assert collector._merged is not None
+        assert collector._merged.new_token_ids == [100, 101]
+        assert collector._merged.new_text == "Hello world"
+        assert collector._merged.completion_tokens == 2
 
     def test_put_multiple_without_aggregation(self):
-        """Test putting multiple outputs replaces without aggregation."""
+        """Test putting multiple outputs queues FIFO without aggregation."""
         collector = RequestOutputCollector(aggregate=False)
 
         output1 = RequestOutput(
@@ -204,10 +204,10 @@ class TestRequestOutputCollectorPut:
         collector.put(output1)
         collector.put(output2)
 
-        # Should be replaced, not merged
-        assert collector.output is not None
-        assert collector.output.new_token_ids == [101]
-        assert collector.output.new_text == " world"
+        # Streaming mode queues outputs FIFO; no merge.
+        assert len(collector._queue) == 2
+        assert collector._queue[0] is output1
+        assert collector._queue[1] is output2
 
 
 class TestRequestOutputCollectorGetNowait:
@@ -235,7 +235,7 @@ class TestRequestOutputCollectorGetNowait:
         result = collector.get_nowait()
 
         assert result is output
-        assert collector.output is None
+        assert collector._merged is None
         assert not collector.ready.is_set()
 
     def test_get_nowait_clears_ready(self):
@@ -323,7 +323,7 @@ class TestRequestOutputCollectorClear:
         collector.put(RequestOutput(request_id="test-001"))
         collector.clear()
 
-        assert collector.output is None
+        assert collector._merged is None
         assert not collector.ready.is_set()
 
     def test_clear_resets_waiting_flag(self):
