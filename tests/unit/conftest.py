@@ -326,6 +326,19 @@ if sys.platform != "darwin":
         "test_vae_legacy.py",
         "test_video_backends.py",
         "test_video_gen_engine.py",
+        "test_batching_deterministic.py",
+        "test_cache_type_handlers.py",
+        "test_completions_spec_parity.py",
+        "test_deep_nest_dos.py",
+        "test_deepseek_v4_patch.py",
+        "test_event_loop.py",
+        "test_help_fuzzy.py",
+        "test_mlx_lm_mtp_patch.py",
+        "test_oq.py",
+        "test_output_parser.py",
+        "test_per_engine_threads.py",
+        "test_process_memory_enforcer.py",
+        "test_sampler_fast_path.py",
     ]
     collect_ignore += _abs(*_linux_skip)
     collect_ignore_glob += [f"**/{s}" for s in _linux_skip]

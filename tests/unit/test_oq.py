@@ -2969,7 +2969,7 @@ class TestQuantizeOqStreamingFp8:
 
         for sf in out.glob("*.safetensors"):
             with safe_open(str(sf), framework="numpy") as f:
-                for k in f:
+                for k in f.keys():  # noqa: SIM118 - safe_open not iterable
                     assert not k.endswith(".scale"), f"scale key leaked: {k}"
                     assert not k.endswith("_scale_inv"), f"scale_inv key leaked: {k}"
 
