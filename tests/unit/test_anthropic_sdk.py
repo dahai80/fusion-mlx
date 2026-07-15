@@ -1,5 +1,9 @@
 """Anthropic SDK against rapid-mlx /v1/messages endpoint."""
 
+import pytest
+
+pytest.importorskip("anthropic")
+
 import os
 
 import httpx as _httpx

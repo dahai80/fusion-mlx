@@ -43,7 +43,11 @@ download required, runs in CI) AND a real-Gemma-4 reproducer
 from __future__ import annotations
 
 import pytest
-from tokenizers import Tokenizer, decoders, models, pre_tokenizers
+try:
+    from tokenizers import Tokenizer, decoders, models, pre_tokenizers
+except ImportError:
+    pytest.skip("real tokenizers unavailable", allow_module_level=True)
+
 from transformers import AutoTokenizer, PreTrainedTokenizerFast
 
 from fusion_mlx.utils.tokenizer import (

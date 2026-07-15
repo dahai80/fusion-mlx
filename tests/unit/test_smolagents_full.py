@@ -1,5 +1,9 @@
 """Thorough smolagents test suite against local rapid-mlx server."""
 
+import pytest
+
+pytest.importorskip("smolagents")
+
 import os
 
 import httpx as _httpx

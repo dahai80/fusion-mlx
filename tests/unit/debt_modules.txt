@@ -10,58 +10,22 @@
 #   runtime-fail  - collects but fails on stale assertions / removed attrs
 #   timeout       - hangs or exceeds the unit-gate budget (integration-style)
 #
-# Total: 371 modules excluded; 257 healthy modules remain in the CI gate.
+# Total: 327 modules excluded; 268 healthy modules remain in the CI gate.
 # Pay down by updating each module to the current released API, then remove
 # its line here. See memory: fusion-mlx-rapid-mlx-test-debt.
 
-## uncollectable (45)
-test_accuracy_benchmark.py
-test_admin_server_aliases.py
-test_agent_query_context_skip.py
-test_agent_test_runner_refresh_config.py
-test_aliases_contract.py
-test_anthropic_output_config.py
-test_anthropic_route_thinking_gate.py
-test_anthropic_sdk.py
-test_audio_discovery.py
-test_bench_tier_smoke.py
-test_benchmark_sse_replay.py
+## uncollectable (9)
 test_config.py
-test_context_scaling.py
 test_engine_pool.py
-test_gemma4_altup_autodetect.py
 test_integrations.py
-test_kv_cache_position_ids.py
-test_log_namespace_rebrand.py
 test_markitdown_integration.py
-test_max_generation_tokens_ceiling.py
-test_mlx_lm_mtp_patch.py
 test_modality_field.py
-test_mtp_lossless.py
 test_param_validation_r5e.py
 test_per_request_thinking_budget.py
-test_pr_validate_codex.py
-test_pr_validate_google_review.py
-test_pr_validate_runner.py
-test_pr_validate_stress_timeout.py
-test_pr_validate_test_env.py
-test_pr_validate_test_plan_check.py
-test_process_title.py
-test_pydantic_ai_full.py
-test_sampler_fast_path.py
 test_server.py
 test_settings.py
-test_smolagents_full.py
-test_streaming_detokenizer_bpe.py
-test_streaming_pipeline_integration.py
-test_text_model_from_vlm.py
-test_tokenizer_gemma4_hybrid.py
-test_vlm_audio_fallback.py
-test_vlm_cohere2_moe_loader.py
-test_vlm_mtp_proxy.py
-test_vlm_torch_free_image_processor.py
 
-## runtime-fail (325)
+## runtime-fail (317)
 test_447_stream_tool_choice_auto.py
 test_active_models_visibility.py
 test_admin_auth.py
@@ -105,9 +69,6 @@ test_batched_engine_output_router.py
 test_batched_engine_tool_call_normalization.py
 test_batching.py
 test_batching_deterministic.py
-test_bench_tier_all.py
-test_bench_tier_harness.py
-test_bench_tier_submit_combo.py
 test_bench_vs_ollama.py
 test_benchmark.py
 test_body_receive_timeout.py
@@ -137,7 +98,6 @@ test_cli_info.py
 test_cli_models.py
 test_codex_profile.py
 test_community_bench.py
-test_community_bench_aggregate.py
 test_completions_spec_parity.py
 test_config_and_middleware.py
 test_content_block_strict_types.py
@@ -346,7 +306,6 @@ test_structured_output.py
 test_stt_corrupted_file.py
 test_stt_response_format.py
 test_submit_gitignore.py
-test_suffix_bench_methodology.py
 test_suffix_decoding.py
 test_telemetry_cli.py
 test_tempfile_safe.py
@@ -356,7 +315,6 @@ test_thinking_budget.py
 test_tool_call_streaming_parity.py
 test_tool_calling.py
 test_tool_choice_enforcement.py
-test_tool_logits.py
 test_tool_logits_schema_guards.py
 test_tool_param_enforcement.py
 test_tool_param_enforcement_f141a.py
@@ -383,6 +341,17 @@ test_vision_feature_cache.py
 test_vlm_engine.py
 test_vlm_model_adapter.py
 test_vlm_mtp.py
+# test_streaming_pipeline_integration: SSE content-block count drift -
+# expects 2-4 blocks (thinking+text, thinking+tool_call), prod emits 0-1.
+# StreamingThinkRouter block-split semantics evolved; needs router
+# investigation.
+test_streaming_pipeline_integration.py
+# test_mtp_lossless: MTP all-accept path emits [7,11,13,15,19,21,0] vs
+# none-ref [7,11,13,15,17,19,21] - skips bonus token 17, appends spurious
+# 0. Possible MTP generator bonus-chain drift; investigate (file issue if
+# real bug).
+test_mtp_lossless.py
 
 ## timeout (1)
 test_boundary_snapshot_store.py
+

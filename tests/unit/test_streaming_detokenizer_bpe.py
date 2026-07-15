@@ -25,7 +25,11 @@ the malformation — no model download required, runs in <100 ms in CI.
 from __future__ import annotations
 
 import pytest
-from tokenizers import Tokenizer, decoders, models, pre_tokenizers
+try:
+    from tokenizers import Tokenizer, decoders, models, pre_tokenizers
+except ImportError:
+    pytest.skip("real tokenizers unavailable", allow_module_level=True)
+
 from transformers import PreTrainedTokenizerFast
 
 from fusion_mlx.utils.decode import IncrementalDecoder

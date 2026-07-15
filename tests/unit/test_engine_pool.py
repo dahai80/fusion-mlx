@@ -9,7 +9,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from fusion_mlx.engine_pool import EngineEntry, EnginePool
+from fusion_mlx.pool.engine_pool import EngineEntry, EnginePool
 from fusion_mlx.exceptions import (
     InsufficientMemoryError,
     ModelBusyError,

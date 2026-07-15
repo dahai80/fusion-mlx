@@ -9,8 +9,7 @@ import json
 import unittest
 
 from fusion_mlx.api.utils import StreamingThinkRouter, StreamingToolCallFilter
-from fusion_mlx.routes.anthropic import _should_start_in_thinking
-from fusion_mlx.server import _emit_content_pieces
+from fusion_mlx.routes.anthropic import _emit_content_pieces, _should_start_in_thinking
 
 
 class TestEmitContentPieces(unittest.TestCase):

@@ -20,13 +20,6 @@ import asyncio
 
 import pytest
 
-from fusion_mlx.admin.accuracy_benchmark import (
-    AccuracyBenchmarkRequest,
-    AccuracyBenchmarkRun,
-)
-from fusion_mlx.admin.accuracy_benchmark import (
-    _send_event as acc_send_event,
-)
 from fusion_mlx.admin.benchmark import (
     BenchmarkRequest,
     BenchmarkRun,
@@ -79,11 +72,6 @@ async def _drain(
 def _bench_run() -> BenchmarkRun:
     req = BenchmarkRequest(model_id="x", prompt_lengths=[1024])
     return BenchmarkRun(bench_id="b-1", request=req)
-
-
-def _acc_run() -> AccuracyBenchmarkRun:
-    req = AccuracyBenchmarkRequest(model_id="x", benchmarks={"mmlu": 10})
-    return AccuracyBenchmarkRun(bench_id="a-1", request=req)
 
 
 # --- BenchmarkRun -----------------------------------------------------------
@@ -227,49 +215,6 @@ class TestGetActiveRun:
         assert get_active_run() is None
 
 
-# --- AccuracyBenchmarkRun ---------------------------------------------------
-
-
-class TestAccuracyBenchmarkSSEReplay:
-    """Same contract on the accuracy benchmark run dataclass."""
-
-    @pytest.mark.asyncio
-    async def test_replay_to_late_subscriber(self):
-        run = _acc_run()
-        await acc_send_event(run, {"type": "progress", "phase": "load"})
-        await acc_send_event(run, {"type": "result", "data": {"score": 0.5}})
-        await acc_send_event(run, {"type": "done"})
-        events = await _drain(run)
-        assert [e["type"] for e in events] == ["progress", "result", "done"]
-
-    @pytest.mark.asyncio
-    async def test_multiple_consumers_see_same_events(self):
-        run = _acc_run()
-
-        async def reader():
-            return await _drain(run, max_events=2)
-
-        async def producer():
-            await asyncio.sleep(0.01)
-            await acc_send_event(run, {"type": "progress", "phase": "eval"})
-            await acc_send_event(run, {"type": "done"})
-
-        r1, r2, _ = await asyncio.gather(reader(), reader(), producer())
-        assert r1 == r2
-
-    @pytest.mark.asyncio
-    async def test_last_progress_still_tracked(self):
-        # The queue/status REST endpoint relies on `last_progress` for
-        # the reconnect hint. The SSE refactor must preserve that.
-        run = _acc_run()
-        await acc_send_event(run, {"type": "progress", "phase": "eval", "current": 5})
-        assert run.last_progress == {
-            "type": "progress",
-            "phase": "eval",
-            "current": 5,
-        }
-
-
 # --- Route-level: /api/bench/active + 409 on concurrent start ---------------
 
 
@@ -297,17 +242,19 @@ def bench_client(monkeypatch):
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
 
+    from fusion_mlx.admin import helpers as admin_helpers
     from fusion_mlx.admin import routes as admin_routes
+    from fusion_mlx.admin.auth import require_admin
 
     _benchmark_runs.clear()
-    admin_routes._get_engine_pool = lambda: _FakePool()
+    monkeypatch.setattr(admin_helpers, "_get_engine_pool", lambda: _FakePool())
 
     async def _fake_require_admin():
         return True
 
     app = FastAPI()
     app.include_router(admin_routes.router)
-    app.dependency_overrides[admin_routes.require_admin] = _fake_require_admin
+    app.dependency_overrides[require_admin] = _fake_require_admin
     yield TestClient(app)
     _benchmark_runs.clear()
 
@@ -332,7 +279,6 @@ class TestActiveBenchEndpoint:
             "running": True,
             "bench_id": "bench-abc",
             "model_id": "model-x",
-            "force_lm_engine": False,
         }
 
 
