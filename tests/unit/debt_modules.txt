@@ -10,7 +10,7 @@
 #   runtime-fail  - collects but fails on stale assertions / removed attrs
 #   timeout       - hangs or exceeds the unit-gate budget (integration-style)
 #
-# Total: 310 modules excluded; 285 healthy modules remain in the CI gate.
+# Total: 278 modules excluded; 317 healthy modules remain in the CI gate.
 # Pay down by updating each module to the current released API, then remove
 # its line here. See memory: fusion-mlx-rapid-mlx-test-debt.
 
@@ -32,7 +32,6 @@ test_admin_update_check.py
 test_alias_hybrid_classification.py
 test_alias_recommended_sampling.py
 test_anthropic_route_auth.py
-test_anthropic_route_streaming.py
 test_anthropic_spec_polish_bundle.py
 test_anthropic_stop_sequences.py
 test_anthropic_streaming_reasoning.py
@@ -45,7 +44,6 @@ test_app_bundle_cli_wrapper.py
 test_audio.py
 test_audio_alias_registry.py
 test_audio_api.py
-test_audio_boot_check.py
 test_audio_extras_lockin.py
 test_audio_memory.py
 test_audio_path_shaped_model.py
@@ -81,7 +79,6 @@ test_chat_route_forced_tool_prefix_wiring.py
 test_chat_route_tool_choice_enforcement.py
 test_chat_route_vlm_image.py
 test_chat_template_kwargs.py
-test_chat_template_sidecar.py
 test_check_gha_pinning.py
 test_check_mlx_upstream_calls.py
 test_clean_error_messages.py
@@ -94,7 +91,6 @@ test_cli_info.py
 test_cli_models.py
 test_codex_profile.py
 test_community_bench.py
-test_completions_spec_parity.py
 test_config_and_middleware.py
 test_content_block_strict_types.py
 test_context_length_exceeded.py
@@ -103,11 +99,9 @@ test_context_window.py
 test_cors_env_configurable.py
 test_cors_lockdown_response_shape.py
 test_d_anthro_validation.py
-test_deep_nest_dos.py
 test_deepseek_v4_vendored.py
 test_dense_sampler_fastpath.py
 test_dflash_adapter_signature.py
-test_dflash_eligibility.py
 test_dflash_engine.py
 test_dflash_integration.py
 test_dflash_multimodal_fallback.py
@@ -134,7 +128,6 @@ test_engine_router_non_stream.py
 test_engine_step_thread.py
 test_envelope_field_extraction.py
 test_eval.py
-test_event_loop.py
 test_exception_handlers.py
 test_finalize_harmony_raw_text.py
 test_gemma4_messages.py
@@ -143,18 +136,14 @@ test_generation_config_loader.py
 test_glm_moe_dsa_patch.py
 test_grammar.py
 test_harmony_finalize.py
-test_healthz_perf_budget.py
 test_hermes.py
 test_hermes_harness_contract.py
 test_hf_downloader.py
 test_hot_cache.py
-test_idle_event_wakeup.py
 test_image_url_must_be_object.py
 test_index_cache.py
 test_install_detection.py
 test_internal_route_auth.py
-test_kv_cache_dtype.py
-test_kv_cache_dtype_cli.py
 test_langchain.py
 test_librechat_docker.py
 test_mcp_client.py
@@ -171,7 +160,6 @@ test_mirror_pull.py
 test_mlx_compat.py
 test_mlx_embeddings_compat.py
 test_mlx_vlm_diffusion_patch.py
-test_mlx_vlm_minimax_m3_compat.py
 test_model_aliases.py
 test_model_auto_config.py
 test_model_loading.py
@@ -187,14 +175,11 @@ test_no_out_of_band_routing.py
 test_openai_tool_choice_validation.py
 test_openwebui.py
 test_oq.py
-test_output_parser.py
 test_packaging_data_files.py
 test_paged_cache_benefits.py
 test_paged_cache_real_inference.py
 test_paged_cache_real_model.py
 test_paired_compat.py
-test_parallel_tool_calls.py
-test_param_validation_r7b.py
 test_parent_watchdog.py
 test_payload_builder_v2_full.py
 test_payload_builder_v2_kwargs.py
@@ -204,34 +189,26 @@ test_pflash_engine.py
 test_pflash_metrics.py
 test_pflash_scheduler.py
 test_platform.py
-test_postprocessor.py
 test_prefill_oom_graceful.py
 test_prefix_boundary_path_parity.py
 test_prefix_cache_persistence.py
 test_prefix_cache_rotating_tip_strip.py
 test_prefix_divergence_probe.py
 test_probe_fastpath.py
-test_process_memory_enforcer.py
 test_prompt_lookup_bench.py
 test_pull_summary.py
 test_r10_scrub_validation_bundle.py
-test_r12_4_strict_json_schema_constraint_matrix.py
 test_r12_h06_repair_context_guard.py
 test_r12_m3_responses_stream_leading_items_order.py
 test_r12_reasoning_sanitizer_required.py
 test_r15_routes_stability_batch.py
 test_ready_banner_timing.py
 test_reasoning_content_null_rescue.py
-test_reasoning_finalize_stop_in_think.py
 test_release_check_random.py
 test_request_body_size_limit.py
 test_request_cancellation.py
 test_request_time_alias_resolution.py
 test_reranker_causal_lm.py
-test_response_format_json_schema_strict.py
-test_response_format_streaming_fence_strip.py
-test_response_format_strict_types.py
-test_responses.py
 test_responses_591_followups.py
 test_responses_budget_exhaust_streaming.py
 test_responses_bundle.py
@@ -241,9 +218,7 @@ test_responses_input_default_type.py
 test_responses_param_validation.py
 test_responses_route.py
 test_responses_sse_event_order.py
-test_router.py
 test_routes.py
-test_routes_cached_tokens.py
 test_routes_models.py
 test_routes_models_effective_parsers.py
 test_rst_mid_sse_zombie_kv.py
@@ -276,12 +251,7 @@ test_specprefill.py
 test_sse_keepalive.py
 test_status_endpoint.py
 test_step3p7_patch.py
-test_stop_matcher_completions.py
 test_stop_string_enforcement.py
-test_stream_forced_tool_reasoning.py
-test_stream_include_usage_honored.py
-test_streaming_detokenizer.py
-test_streaming_latency.py
 test_streaming_reasoning_split_r8c.py
 test_streaming_tool_filter.py
 test_stress_test_stream_usage.py
@@ -292,10 +262,8 @@ test_submit_gitignore.py
 test_suffix_decoding.py
 test_telemetry_cli.py
 test_tempfile_safe.py
-test_text_only_media_gate.py
 test_thinking.py
 test_thinking_budget.py
-test_tool_call_streaming_parity.py
 test_tool_calling.py
 test_tool_choice_enforcement.py
 test_tool_logits_schema_guards.py
