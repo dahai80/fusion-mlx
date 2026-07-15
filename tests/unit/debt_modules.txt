@@ -13,6 +13,11 @@
 # Total: 274 modules excluded; 321 healthy modules remain in the CI gate.
 # Pay down by updating each module to the current released API, then remove
 # its line here. See memory: fusion-mlx-rapid-mlx-test-debt.
+#
+# Per-file fate (FIX/DELETE/GUARD/KEEP_QUARANTINED) + case studies + rescue
+# process: see tests/unit/DEBT_FATES.md. Every excluded file has a deliberate
+# fate there; KEEP_QUARANTINED is documented (pollution / deep drift / ambiguous
+# prod contract), not silent.
 
 ## uncollectable (9)
 test_config.py
