@@ -164,6 +164,12 @@ class TestChunkedPrefillOrdering:
         req_a.num_prompt_tokens = 10
         req_a.cached_tokens = 0
         req_a.rope_deltas = None
+        # PR #85 (526be8f) made _insert_prefilled_request seed the per-row
+        # token history from request.prompt_token_ids. In prod the request is
+        # tokenized at admission (sched_admission.py), so this is always set;
+        # the unit test bypasses admission, so seed it explicitly.
+        req_a.prompt_token_ids = list(range(req_a.num_prompt_tokens))
+        req_b.prompt_token_ids = list(range(10))
 
         call_count = [0]
 
