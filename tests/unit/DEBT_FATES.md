@@ -23,14 +23,15 @@ files together produces massive false failures from monkeypatch leakage.
 
 | Category | Count | Signal | Fate |
 |----------|-------|--------|------|
-| PARTIAL | 161 | some pass + some fail | KEEP_QUARANTINED until per-file verified (see §Rescue Process) |
+| PARTIAL | 158 | some pass + some fail | KEEP_QUARANTINED until per-file verified (see §Rescue Process) |
 | BROKEN | 78 | 0 pass, all fail | KEEP_QUARANTINED (deep runtime-drift / removed API) |
 | TIMEOUT/ZERO | 24 | rc=1, unparseable or integration-timeout | KEEP_QUARANTINED (over unit-gate budget) |
 | DEEP | 12 | collection error (module-level import break) | KEEP_QUARANTINED (migration breakage) |
 | GUARD (opt-dep) | 3 | all-skipped; guarded by `_OPT_DEP_SUITES` | debt entry is REDUNDANT - safe to remove (done for 3+1) |
 
-Total: 278 categorized. 4 rescued this session (3 GUARD + 1 opt-dep double-list)
--> 274 remain quarantined.
+Total: 278 categorized. 7 rescued (3 GUARD + 1 opt-dep double-list + 3 stale-
+drift/pollution/branding: test_oq, test_eval, test_share_cli)
+-> 271 remain quarantined.
 
 ---
 
@@ -80,32 +81,33 @@ after, so test_oq never leaks the wrapper. Since test_oq starts pristine
 **Verification:** test_oq isolated 262p/0f; full suite 6957 passed, 0 failed
 (288 skipped, 6 xfailed). `debt_modules.txt` total 274->273.
 
-### test_eval.py (66p/1f) - unmigrated VALID_BENCHMARKS
+### test_eval.py - RESCUED (Task #119, this session)  [was 66p/1f]
 
-`test_parity` asserts `set(BENCHMARKS.keys()) == set(VALID_BENCHMARKS)`.
-- `BENCHMARKS` is real, in `fusion_mlx/eval/__init__.py:27` (16 keys: arc_challenge, bbq, ...).
-- `VALID_BENCHMARKS` is imported from `fusion_mlx.admin.accuracy_benchmark` -
-  but that module is a literal migration stub
-  (`"""Accuracy benchmark admin module (stub for test migration)."""`),
-  committed in `31ce9b6` (the omlx->fusion-mlx migration). `VALID_BENCHMARKS`
-  was **never migrated** to fusion-mlx prod (git log -S finds no occurrence).
+`test_parity` asserted `set(BENCHMARKS.keys()) == set(VALID_BENCHMARKS)`.
+`VALID_BENCHMARKS` was imported from `fusion_mlx.admin.accuracy_benchmark`, a
+literal migration stub (committed `31ce9b6`); the symbol was **never migrated**
+to fusion-mlx prod (git log -S finds no occurrence). `BENCHMARKS` is real
+(`fusion_mlx/eval/__init__.py:27`, 16 keys).
 
-**Fate: KEEP_QUARANTINED** (migration debt, not a regression). To rescue: either
-DELETE `test_parity` (unmigrated contract) or GUARD it (skip when
-`VALID_BENCHMARKS` absent). Per migration rule, do NOT add `VALID_BENCHMARKS` to
-prod for a debt test. If the parity contract is wanted, file an issue first.
+**Fix:** DELETE `test_parity` (unmigrated contract; per migration rule, do NOT
+add `VALID_BENCHMARKS` to prod for a debt test). The other 66 tests
+(`test_instantiate_all`, parametrized `test_load_sample_per_benchmark`) pass.
 
-### test_share_cli.py (65p/1f) - branding ambiguity
+**Verification:** test_eval isolated 66p/0f; full suite green.
 
-`test_banner_has_cheetah_brand_line` asserts `🐆` in the share command output.
-- The share banner (`fusion_mlx/share/warning.py:43`) uses `🔥 Fusion-MLX share`,
-  NOT `🐆`.
-- `🐆` appears only in the **serve** banner (`cli_commands.py:1489`, `cli_serve.py:1635`).
+### test_share_cli.py - RESCUED (Task #120, this session)  [was 65p/1f]
 
-**Fate: KEEP_QUARANTINED** (needs prod decision). Is the missing `🐆` in the
-share banner a branding-consistency gap (prod should add it) or an over-specified
-test (should expect `🔥`)? Either way it is a prod-contract question, not a
-test-only fix. File an issue; do not modify prod for a debt test.
+`test_banner_has_cheetah_brand_line` asserts `🐆` appears in the share banner
+before `PUBLIC INTERNET`. The share banner (`fusion_mlx/share/warning.py:43`)
+used `🔥 Fusion-MLX share`, while the **serve** banner
+(`cli_serve.py:1635`) uses `🐆 Fusion-MLX` - a branding-consistency gap.
+
+**Fix:** prod change `warning.py:43` `🔥` -> `🐆` (user authorized as a
+consistency-gap fix, not a debt-test accommodation). The serve banner is the
+canonical brand line. No other prod file used `🔥` (verified).
+
+**Verification:** test_share_cli isolated 66p/0f (incl. cheetah banner test);
+full suite green.
 
 ### test_tool_parsers.py (153p/3f) - bracket-format contract change
 
@@ -263,7 +265,7 @@ test_engine_keepalive.py
 
 ---
 
-## PARTIAL (160) - rescue candidates (pass+fail mix)
+## PARTIAL (158) - rescue candidates (pass+fail mix)
 
 Top rescue candidates by passing-test yield (highest value to rescue). Each
 needs the §Rescue Process: investigate failures, fix clear-stale only, **full-
@@ -281,8 +283,6 @@ suite pollution verify** (test_oq proved this mandatory).
 | test_diffusion_engine.py | 74/9 | uninvestigated |
 | test_tool_choice_enforcement.py | 73/7 | uninvestigated |
 | test_ui_tars_fixes.py | 68/3 | AST inspection of routes/responses.py - possible prod regression |
-| test_eval.py | 66/1 | unmigrated VALID_BENCHMARKS (see case study) |
-| test_share_cli.py | 65/1 | 🐆 branding ambiguity (see case study) |
 | test_ui_tars_lane_parity.py | 64/6 | uninvestigated |
 | test_embedding.py | 59/29 | high fail count |
 | test_sampling_param_finite_range.py | 59/81 | fail > pass - likely deep drift |
@@ -295,22 +295,19 @@ suite pollution verify** (test_oq proved this mandatory).
 | test_finalize_harmony_raw_text.py | 43/3 | uninvestigated |
 | test_benchmark.py | 41/20 | uninvestigated |
 | test_gemma4_messages.py | 40/7 | uninvestigated |
-| ... (135 more PARTIAL files) | | see debt_modules.txt |
+| ... (136 more PARTIAL files) | | see debt_modules.txt |
 
 **Fate: KEEP_QUARANTINED** until each is run through the §Rescue Process. The
-1-failure files (test_eval, test_share_cli) are highest-confidence targets but
-both turned out to be contract/branding questions, not mechanical fixes - a
-reminder that low failure count does not guarantee easy rescue.
+1-failure files (test_eval, test_share_cli) were the highest-confidence targets
+and are now RESCUED (Tasks #119/#120): test_eval needed DELETE of an unmigrated
+parity contract, test_share_cli needed a prod branding-consistency fix (`🔥`->
+`🐆`). A reminder that low failure count does not guarantee a purely mechanical
+fix.
 
 ---
 
 ## Open issues to file (per "遇到上游问题，先提issue")
 
-- **VALID_BENCHMARKS parity contract** (test_eval): decide whether the
-  BENCHMARKS/VALID_BENCHMARKS parity check should be restored (migrate
-  VALID_BENCHMARKS) or dropped (delete test_parity).
-- **Share banner `🐆` branding** (test_share_cli): decide whether the share
-  banner should match the serve banner's `🐆` branding or keep `🔥`.
 - **Bare `Calling tool:` format** (test_tool_parsers): decide whether bare
   (un-bracketed) tool-call format should be re-supported.
 
