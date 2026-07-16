@@ -13,9 +13,9 @@ import uvicorn
 from rich.console import Console
 from rich.table import Table
 
-from fusion_gui.database import get_database_manager
-from fusion_gui.server import create_app
-from fusion_gui.huggingface_integration import get_huggingface_client
+from fusion_mlx.gui_compat.database import get_database_manager
+from fusion_mlx.gui_compat.server import create_app
+from fusion_mlx.gui_compat.huggingface_integration import get_huggingface_client
 
 app = typer.Typer(
     name="mlx-gui",
@@ -46,7 +46,7 @@ def start(
 ╚═╝     ╚═╝╚══════╝╚═╝  ╚═╝      ╚═════╝  ╚═════╝ ╚═╝
 """, style="cyan")
     
-    from fusion_gui import __version__
+    from fusion_mlx.gui_compat import __version__
     console.print("MLX-GUI - Apple Silicon AI Model Server", style="bold white")
     console.print(f"Version {__version__}", style="bold green")
     console.print("By Matthew Rogers (@RamboRogers)", style="dim white")
@@ -140,7 +140,7 @@ def models():
     try:
         db_manager = get_database_manager()
         with db_manager.get_session() as session:
-            from fusion_gui.models import Model
+            from fusion_mlx.gui_compat.models import Model
             
             models = session.query(Model).all()
             
@@ -201,7 +201,7 @@ def config():
         db_manager = get_database_manager()
         
         with db_manager.get_session() as session:
-            from fusion_gui.models import AppSettings
+            from fusion_mlx.gui_compat.models import AppSettings
             
             settings = session.query(AppSettings).all()
             
@@ -295,7 +295,7 @@ def tray(
 ╚═╝     ╚═╝╚══════╝╚═╝  ╚═╝      ╚═════╝  ╚═════╝ ╚═╝
 """, style="cyan")
     
-    from fusion_gui import __version__
+    from fusion_mlx.gui_compat import __version__
     console.print("MLX-GUI - Apple Silicon AI Model Server", style="bold white")
     console.print(f"Version {__version__}", style="bold green")
     console.print("By Matthew Rogers (@RamboRogers)", style="dim white") 
@@ -322,7 +322,7 @@ def tray(
         console.print(f"   📊 Using bind setting from database: {'all interfaces (0.0.0.0)' if bind_to_all else 'localhost only (127.0.0.1)'}", style="dim blue")
     
     try:
-        from fusion_gui.tray import run_tray_app
+        from fusion_mlx.gui_compat.tray import run_tray_app
         success = run_tray_app(port=actual_port, host=actual_host)
         if not success:
             sys.exit(1)
@@ -354,7 +354,7 @@ def update_sizes():
 @app.command()
 def version():
     """Show version information."""
-    from fusion_gui import __version__
+    from fusion_mlx.gui_compat import __version__
     console.print(f"MLX-GUI version: {__version__}", style="green")
 
 

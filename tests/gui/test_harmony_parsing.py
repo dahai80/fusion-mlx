@@ -8,7 +8,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
-from fusion_gui.server import _parse_harmony_response
+from fusion_mlx.gui_compat.server import _parse_harmony_response
 
 
 def test_harmony_basic():

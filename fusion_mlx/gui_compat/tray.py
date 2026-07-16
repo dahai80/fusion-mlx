@@ -16,7 +16,7 @@ import requests
 import rumps
 import uvicorn
 
-from fusion_gui.database import get_database_manager
+from fusion_mlx.gui_compat.database import get_database_manager
 
 logger = logging.getLogger(__name__)
 
@@ -118,7 +118,7 @@ class MLXTrayApp(rumps.App):
         self.separator2 = rumps.MenuItem("---", callback=None)
         
         # Version info
-        from fusion_gui import __version__
+        from fusion_mlx.gui_compat import __version__
         self.version_item = rumps.MenuItem(f"ℹ️ Version {__version__}", callback=None)
         
         # GitHub link
@@ -170,7 +170,7 @@ class MLXTrayApp(rumps.App):
             self.server_running = True
             
             # Import server module here to avoid circular imports
-            from fusion_gui.server import create_app
+            from fusion_mlx.gui_compat.server import create_app
             fastapi_app = create_app()
             
             # Configure uvicorn directly (no CLI involvement)

@@ -52,8 +52,8 @@ from .middleware import (
 
 # GUI compatibility layer
 try:
-    from fusion_gui.database import close_database, get_database_manager
-    from fusion_gui.server import get_gui_compat_router
+    from fusion_mlx.gui_compat.database import close_database, get_database_manager
+    from fusion_mlx.gui_compat.server import get_gui_compat_router
 except ImportError:
     get_gui_compat_router = None
     get_database_manager = None
@@ -953,10 +953,10 @@ class Server:
         # Cleanup GUI resources
         if close_database:
             try:
-                from fusion_gui.inference_queue_manager import (
+                from fusion_mlx.gui_compat.inference_queue_manager import (
                     shutdown_inference_manager,
                 )
-                from fusion_gui.model_manager import shutdown_model_manager
+                from fusion_mlx.gui_compat.model_manager import shutdown_model_manager
 
                 shutdown_inference_manager()
                 shutdown_model_manager()

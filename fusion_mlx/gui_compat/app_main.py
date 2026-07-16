@@ -64,7 +64,7 @@ def setup_app_environment():
 ██║ ╚═╝ ██║███████╗██╔╝ ██╗     ╚██████╔╝╚██████╔╝██║
 ╚═╝     ╚═╝╚══════╝╚═╝  ╚═╝      ╚═════╝  ╚═════╝ ╚═╝
         """)
-        from fusion_gui import __version__
+        from fusion_mlx.gui_compat import __version__
         print("MLX-GUI - Apple Silicon AI Model Server")
         print(f"Version {__version__}")
         print("By Matthew Rogers (@RamboRogers)")
@@ -84,7 +84,7 @@ def setup_app_environment():
 ██║ ╚═╝ ██║███████╗██╔╝ ██╗     ╚██████╔╝╚██████╔╝██║
 ╚═╝     ╚═╝╚══════╝╚═╝  ╚═╝      ╚═════╝  ╚═════╝ ╚═╝
         """)
-        from fusion_gui import __version__
+        from fusion_mlx.gui_compat import __version__
         print("MLX-GUI - Apple Silicon AI Model Server")
         print(f"Version {__version__}")
         print("By Matthew Rogers (@RamboRogers)")
@@ -107,7 +107,7 @@ def main():
             sys.exit(1)
 
         # Import and run the tray app
-        from fusion_gui.tray import run_tray_app
+        from fusion_mlx.gui_compat.tray import run_tray_app
 
         print("Starting MLX-GUI tray app...")
 

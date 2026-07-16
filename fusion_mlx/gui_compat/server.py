@@ -31,15 +31,15 @@ from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
-from fusion_gui import __version__
-from fusion_gui.database import get_db_session, get_database_manager
-from fusion_gui.models import Model, AppSettings
-from fusion_gui.system_monitor import get_system_monitor
-from fusion_gui.huggingface_integration import get_huggingface_client
-from fusion_gui.model_manager import get_model_manager, shutdown_model_manager
-from fusion_gui.mlx_integration import GenerationConfig, get_inference_engine
-from fusion_gui.inference_queue_manager import get_inference_manager, shutdown_inference_manager, QueuedRequest
-from fusion_gui.queued_inference import (
+from fusion_mlx.gui_compat import __version__
+from fusion_mlx.gui_compat.database import get_db_session, get_database_manager
+from fusion_mlx.gui_compat.models import Model, AppSettings
+from fusion_mlx.gui_compat.system_monitor import get_system_monitor
+from fusion_mlx.gui_compat.huggingface_integration import get_huggingface_client
+from fusion_mlx.gui_compat.model_manager import get_model_manager, shutdown_model_manager
+from fusion_mlx.gui_compat.mlx_integration import GenerationConfig, get_inference_engine
+from fusion_mlx.gui_compat.inference_queue_manager import get_inference_manager, shutdown_inference_manager, QueuedRequest
+from fusion_mlx.gui_compat.queued_inference import (
     queued_generate_text,
     queued_generate_text_stream,
     queued_transcribe_audio,
@@ -394,7 +394,7 @@ def get_gui_compat_router() -> APIRouter:
 
     @router.get("/v1/system/version")
     async def sys_version():
-        from fusion_gui import __author__, __description__
+        from fusion_mlx.gui_compat import __author__, __description__
         return {"version": __version__, "author": __author__, "description": __description__, "name": "fusion_gui"}
 
     @router.post("/v1/system/shutdown")
@@ -526,9 +526,9 @@ def get_gui_compat_router() -> APIRouter:
 
     @router.get("/admin")
     async def admin_ui():
-        tp = (Path(sys._MEIPASS) / "fusion_gui" / "templates" / "admin.html"
+        tp = (Path(sys._MEIPASS) / "fusion_mlx" / "gui_compat" / "templates" / "admin.html"
               if (hasattr(sys, "frozen") and sys.frozen and hasattr(sys, "_MEIPASS"))
-              else (Path(sys.executable).parent / "fusion_gui" / "templates" / "admin.html"
+              else (Path(sys.executable).parent / "fusion_mlx" / "gui_compat" / "templates" / "admin.html"
                     if (hasattr(sys, "frozen") and sys.frozen)
                     else Path(__file__).parent / "templates" / "admin.html"))
         if not tp.exists():

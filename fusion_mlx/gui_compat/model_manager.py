@@ -16,8 +16,8 @@ from typing import Dict, Optional, Any, List, Callable
 import mlx.core as mx
 from sqlalchemy.orm import Session
 
-from fusion_gui.database import get_database_manager, get_db_session
-from fusion_gui.models import Model, ModelStatus, InferenceRequest, RequestQueue, QueueStatus
+from fusion_mlx.gui_compat.database import get_database_manager, get_db_session
+from fusion_mlx.gui_compat.models import Model, ModelStatus, InferenceRequest, RequestQueue, QueueStatus
 
 logger = logging.getLogger(__name__)
 
