@@ -119,13 +119,7 @@ app = None
 
 # Module-level server state — cli_serve.py reads/writes these directly
 _api_key: str | None = None
-_default_timeout: float = 1800.0
 _max_request_bytes: int | None = None
-_enable_auto_tool_choice: bool = False
-_tool_call_parser: str | None = None
-_enable_tool_logits_bias: bool = False
-_enable_audio_lane: bool = False
-_sse_keepalive_seconds: float = 0.0
 # Staged single-model request from ``serve --model <X>``. ``load_model``
 # populates this before uvicorn starts; ``Server._startup`` loads + registers
 # the engine into the pool once the pool exists. None on the multi-model
@@ -151,12 +145,6 @@ def _sync_config() -> None:
         for _attr, _val in (
             ("api_key", _api_key),
             ("max_request_bytes", _max_request_bytes),
-            ("default_timeout", _default_timeout),
-            ("enable_auto_tool_choice", _enable_auto_tool_choice),
-            ("tool_call_parser", _tool_call_parser),
-            ("enable_tool_logits_bias", _enable_tool_logits_bias),
-            ("enable_audio_lane", _enable_audio_lane),
-            ("sse_keepalive_seconds", _sse_keepalive_seconds),
             # Sampling defaults + gc_control/no_thinking/pin_system_prompt/
             # reasoning_parser(_name) are read directly from ServerConfig by
             # service/helpers + chat.py -- no longer staged through server

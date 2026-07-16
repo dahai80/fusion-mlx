@@ -99,7 +99,7 @@ def _serve_audio_mode(args, entry) -> None:
     # here would silently weaken the deployment posture for anyone who
     # added ``--api-key`` to their ``fusion-mlx serve kokoro`` command.
     server._api_key = server._resolve_api_key(args.api_key)
-    server._default_timeout = args.timeout
+    get_config().default_timeout = args.timeout
 
     _max_body_arg = getattr(args, "max_request_bytes", None)
     if _max_body_arg is not None:
@@ -1350,10 +1350,10 @@ def serve_command(args):
 
     _get_config().model_alias = getattr(args, "_original_alias", None)
 
-    # Task #292: forward the ``--enable-audio`` opt-in to the server
-    # module BEFORE ``load_model`` runs — the post-load hook in
+    # Task #292: forward the ``--enable-audio`` opt-in to the config singleton BEFORE ``load_model`` runs.
+    # The post-load hook in
     # ``load_model`` calls ``register_audio_routes_if_enabled``, which
-    # reads ``server._enable_audio_lane`` to decide whether to mount
+    # reads ``cfg.enable_audio_lane`` to decide whether to mount
     # the audio router on a text-only server. Setting it after
     # ``load_model`` would leave the router unmounted on the very boot
     # that asked for it.
@@ -1361,9 +1361,9 @@ def serve_command(args):
     # Codex r2 NIT #2: assign from the parsed value directly so a second
     # in-process ``serve_command`` call (test harness, embedded usage)
     # without ``--enable-audio`` clears any stale ``True`` from a prior
-    # run — the singleton ``server`` module persists across calls in
+    # run — the ``ServerConfig`` singleton persists across calls in
     # the same process.
-    server._enable_audio_lane = bool(getattr(args, "enable_audio", False))
+    _get_config().enable_audio_lane = bool(getattr(args, "enable_audio", False))
 
     # Configure server security settings. ``FUSION_MLX_API_KEY`` env var
     # is the secret-friendly form ``fusion-mlx share`` uses to avoid
@@ -1373,7 +1373,7 @@ def serve_command(args):
     # ``python -m`` entry call into it, so a future policy tweak (e.g.
     # a deprecation warning when argv is used) lands in one place.
     server._api_key = server._resolve_api_key(args.api_key)
-    server._default_timeout = args.timeout
+    _get_config().default_timeout = args.timeout
 
     # Per-request body-size cap. Resolution order:
     #   1. ``--max-request-bytes`` (explicit CLI flag, including 0 to disable)
@@ -1405,17 +1405,15 @@ def serve_command(args):
                 )
 
     # SSE keepalive interval (F-070). Env-only (no CLI flag yet — keep
-    # the surface small until operators ask for it). 0 disables. The
-    # value lands on ``server._sse_keepalive_seconds`` so ``_sync_config``
-    # propagates it into the live ``ServerConfig`` after ``load_model``;
-    # writing the config singleton directly here would be clobbered by
-    # the subsequent ``_sync_config`` (mirrors the ``_max_request_bytes``
-    # pattern just above).
+    # the surface small until operators ask for it). 0 disables. Written
+    # directly to the ``ServerConfig`` singleton (#50: no longer staged
+    # through a server global + ``_sync_config``, so a direct cfg write
+    # is not clobbered by a later sync).
     _sse_env_name = "FUSION_MLX_SSE_KEEPALIVE_SECONDS"
     _sse_env = os.environ.get(_sse_env_name, "").strip()
     if _sse_env:
         try:
-            server._sse_keepalive_seconds = max(0.0, float(_sse_env))
+            _get_config().sse_keepalive_seconds = max(0.0, float(_sse_env))
         except ValueError:
             # NOTE: the env-var name is interpolated via ``%s`` (not baked
             # into the format string) so the
@@ -1429,7 +1427,7 @@ def serve_command(args):
                 _sse_env_name,
                 _sse_env,
             )
-            server._sse_keepalive_seconds = 20.0
+            _get_config().sse_keepalive_seconds = 20.0
 
     # Body-receive idle timeout (F-072 / H-14 slow-DoS gate). Env-only.
     # 0 disables. Same ``_sync_config``-then-route-handler ordering
@@ -1474,15 +1472,15 @@ def serve_command(args):
 
     # Configure tool calling
     if args.enable_auto_tool_choice and args.tool_call_parser:
-        server._enable_auto_tool_choice = True
-        server._tool_call_parser = args.tool_call_parser
-        server._enable_tool_logits_bias = getattr(
+        _get_config().enable_auto_tool_choice = True
+        _get_config().tool_call_parser = args.tool_call_parser
+        _get_config().enable_tool_logits_bias = getattr(
             args, "enable_tool_logits_bias", False
         )
     else:
-        server._enable_auto_tool_choice = False
-        server._tool_call_parser = None
-        server._enable_tool_logits_bias = False
+        _get_config().enable_auto_tool_choice = False
+        _get_config().tool_call_parser = None
+        _get_config().enable_tool_logits_bias = False
 
     # Configure generation defaults -- written directly to ServerConfig
     # (consolidated #50: service/helpers._resolve_* reads cfg, not globals).

@@ -153,9 +153,9 @@ async def _disconnect_guard(
 
     if keepalive_seconds is None:
         try:
-            from ..server import _sse_keepalive_seconds
+            from ..config import get_config
 
-            keepalive_seconds = float(_sse_keepalive_seconds)
+            keepalive_seconds = float(get_config().sse_keepalive_seconds)
         except Exception:
             keepalive_seconds = 20.0
     keepalive_enabled = keepalive_seconds and keepalive_seconds > 0

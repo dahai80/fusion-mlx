@@ -1065,8 +1065,8 @@ def _parse_tool_calls_with_parser(
         ]
         return output_text or "", tool_calls
 
-    enable_auto_tool_choice = _get_server_attr("_enable_auto_tool_choice", False)
-    tool_call_parser_name = _get_server_attr("_tool_call_parser")
+    enable_auto_tool_choice = _get_cfg_attr("enable_auto_tool_choice", False)
+    tool_call_parser_name = _get_cfg_attr("tool_call_parser")
     rp_name = _get_cfg_attr("reasoning_parser_name")
 
     request_dict = request.model_dump() if request else None
