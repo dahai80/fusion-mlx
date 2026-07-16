@@ -460,6 +460,7 @@ class EnginePool:
         "audio_sts": "audio_sts",
         "image": "image_gen",
         "video": "video_gen",
+        "ti2v": "video_gen",
     }
 
     def apply_settings_overrides(self, settings_manager: ModelSettingsManager) -> None:

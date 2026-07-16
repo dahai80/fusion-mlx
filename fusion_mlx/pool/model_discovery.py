@@ -135,6 +135,16 @@ AMBIGUOUS_EMBEDDING_MODEL_TYPES = {
     "lfm2",
 }
 
+# Wan2.2 video sub-types that appear as the config.json ``model_type`` field.
+# Models shipping these may omit the ``configuration.json`` task manifest that
+# ``_is_video_model`` checks first, so we fall back to recognizing the
+# config.json model_type directly. Still gated on diffusers subdirs below.
+VIDEO_CONFIG_MODEL_TYPES = {
+    "t2v",
+    "i2v",
+    "ti2v",
+}
+
 # Known embedding architectures
 EMBEDDING_ARCHITECTURES = {
     "BertModel",
@@ -948,9 +958,27 @@ def _is_video_model(path: Path) -> bool:
     # to the task manifest, so an LLM dir that happens to carry a stray
     # text-to-video configuration.json is not misclassified as a video engine.
     # Real LTX-2/Wan models ship these subdirs; LLM dirs do not.
-    if not _is_task_model(path, "text-to-video"):
+    has_diffusers_subdirs = any(
+        (path / sub).is_dir() for sub in ("vae", "transformer", "audio_vae")
+    )
+    if _is_task_model(path, "text-to-video"):
+        return has_diffusers_subdirs
+    # Wan2.2 models ship config.json with model_type in {t2v, i2v, ti2v} but
+    # may omit the configuration.json task manifest. These sub-types are
+    # unambiguous video types (no LLM uses them), so accept them when the
+    # diffusers subdirs are present. Without this a ti2v model is misdetected
+    # as an LLM and mlx-lm raises "Model type ti2v not supported" on load.
+    if not has_diffusers_subdirs:
         return False
-    return any((path / sub).is_dir() for sub in ("vae", "transformer", "audio_vae"))
+    config_path = path / "config.json"
+    if not config_path.exists():
+        return False
+    try:
+        with open(config_path) as f:
+            mt = json.load(f).get("model_type", "")
+    except (OSError, json.JSONDecodeError):
+        return False
+    return mt in VIDEO_CONFIG_MODEL_TYPES
 
 
 def _is_model_dir(path: Path) -> bool:
