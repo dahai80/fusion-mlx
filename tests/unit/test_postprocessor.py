@@ -534,7 +534,7 @@ class TestStreamingPostProcessorToolCalls:
         from unittest.mock import patch
 
         with patch(
-            "vllm_mlx.service.postprocessor.parse_tool_calls",
+            "fusion_mlx.service.postprocessor.parse_tool_calls",
             side_effect=RuntimeError("boom"),
         ):
             events = pp.finalize()

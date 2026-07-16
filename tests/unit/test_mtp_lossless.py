@@ -83,7 +83,7 @@ mx = pytest.importorskip("mlx.core")
 # Re-import the mocked model from the unit-test file so the contract
 # only has ONE definition that needs to be maintained as the
 # generator evolves.
-from tests.test_mtp_spec_decode import _MockedQwen35Model  # noqa: E402
+from tests.unit.test_mtp_spec_decode import _MockedQwen35Model  # noqa: E402
 
 
 @pytest.fixture(autouse=True)
@@ -96,10 +96,11 @@ def _reset_mtp_module_state():
     import sys
 
     import mlx.core as mx
-    from fusion_mlx.spec_decode.mtp.accept_counter import (
+
+    from fusion_mlx.speculative.mtp.accept_counter import (
         reset_global_counter_for_tests,
     )
-    from fusion_mlx.spec_decode.mtp.cache_patch import _unpatch_for_tests
+    from fusion_mlx.speculative.mtp.cache_patch import _unpatch_for_tests
 
     _unpatch_for_tests()
     reset_global_counter_for_tests()
@@ -166,8 +167,8 @@ def _spec_decode_mtp_path(
     max_tokens: int,
 ) -> list[int]:
     """Run ``mtp_generate_step`` over a fresh mocked model."""
-    from fusion_mlx.spec_decode.mtp.accept_counter import MTPAcceptCounter
-    from fusion_mlx.spec_decode.mtp.generator import mtp_generate_step
+    from fusion_mlx.speculative.mtp.accept_counter import MTPAcceptCounter
+    from fusion_mlx.speculative.mtp.generator import mtp_generate_step
 
     model = _MockedQwen35Model(backbone_script, mtp_script)
     counter = MTPAcceptCounter()

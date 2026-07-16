@@ -6,7 +6,7 @@ prompt in session 1 and the same prompt arrived in session 2 (no
 shared in-memory state, no continuation — just identical text), the
 second session's first token came out garbage and the rest collapsed
 into repetition. Disabling prefix cache made session 2 work; reloading
-the model also worked. The cause was that omlx core stored only the
+the model also worked. The cause was that fusion_mlx core stored only the
 first two elements of every cache layer's state tuple, silently
 dropping `PoolingCache.state[2]` (the `pooled` compressed-attention
 buffer) on every save and reconstructing it as `None` on every load.
@@ -49,7 +49,7 @@ def _wait_for_file(path, timeout: float = 5.0) -> bool:
 def test_pooling_cache_round_trip_through_paged_ssd(applied_patch, tmp_path):
     """Full save → wait-for-disk → load round-trip via PagedSSDCacheManager.
 
-    Mirrors what omlx scheduler does on prefill block boundary: take
+    Mirrors what fusion_mlx scheduler does on prefill block boundary: take
     a layer state via the handler interface, hand it as an
     ``__nstate__`` marker to ``save_block``, then reconstruct on hit.
     """

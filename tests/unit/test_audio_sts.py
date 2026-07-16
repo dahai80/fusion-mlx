@@ -85,14 +85,14 @@ def _ensure_audio_routes(app):
 
 @pytest.fixture
 def server_sts_client():
-    """TestClient using the full omlx server app with mocked STS pool."""
+    """TestClient using the full fusion_mlx server app with mocked STS pool."""
     from fusion_mlx.server import app
 
     _ensure_audio_routes(app)
 
     mock_pool = _make_mock_pool()
 
-    with patch("omlx.server._server_state") as mock_state:
+    with patch("fusion_mlx.server._server_state") as mock_state:
         mock_state.engine_pool = mock_pool
         mock_state.global_settings = None
         mock_state.process_memory_enforcer = None
@@ -120,7 +120,7 @@ def audio_sts_client():
 
     mock_pool = _make_mock_pool()
 
-    with patch("omlx.api.audio_routes._get_engine_pool", return_value=mock_pool):
+    with patch("fusion_mlx.api.audio_routes._get_engine_pool", return_value=mock_pool):
         with TestClient(app, raise_server_exceptions=False) as client:
             yield client, mock_pool
 
@@ -282,7 +282,7 @@ class TestSTSModelAliasResolution:
         mock_pool = _make_mock_pool(model_id="MossFormer2-SE")
         mock_pool.resolve_model_id = MagicMock(return_value="MossFormer2-SE")
 
-        with patch("omlx.server._server_state") as mock_state:
+        with patch("fusion_mlx.server._server_state") as mock_state:
             mock_state.engine_pool = mock_pool
             mock_state.global_settings = None
             mock_state.process_memory_enforcer = None
@@ -309,7 +309,7 @@ class TestSTSModelAliasResolution:
         mock_pool = _make_mock_pool(model_id="MossFormer2-SE")
         mock_pool.resolve_model_id = MagicMock(return_value="MossFormer2-SE")
 
-        with patch("omlx.server._server_state") as mock_state:
+        with patch("fusion_mlx.server._server_state") as mock_state:
             mock_state.engine_pool = mock_pool
             mock_state.global_settings = None
             mock_state.process_memory_enforcer = None

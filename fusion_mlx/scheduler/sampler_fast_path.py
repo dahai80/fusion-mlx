@@ -86,11 +86,17 @@ def _fused_sample_top_p(
         axis=-1,
     )
     cumulative_probs = mx.take_along_axis(cumulative_probs, inverse_indices, axis=-1)
-    masked = mx.where(
-        cumulative_probs > 1 - (1.0 - one_minus_p),
-        logprobs,
-        -float("inf"),
-    )
+    keep_mask = cumulative_probs > 1 - (1.0 - one_minus_p)
+    # Guarantee the argmax survives the top-p cut. A sub-fp32-epsilon
+    # top_p rounds the threshold to 1.0 and the strict ``>`` then keeps
+    # no token: the argmax's cumulative == total prob mass == 1.0, and
+    # ``1.0 > 1.0`` is False. Without this belt all logits become -inf
+    # and ``mx.random.categorical`` returns a garbage token id. Mirrors
+    # the seeded path's top-1 belt (``sorted_mask | top_one``) and the
+    # top_p+min_p sibling below.
+    max_idx = mx.argmax(logprobs, axis=-1, keepdims=True)
+    keep_mask = mx.put_along_axis(keep_mask, max_idx, mx.array(True), axis=-1)
+    masked = mx.where(keep_mask, logprobs, -float("inf"))
     return mx.random.categorical(masked * temp_inv)
 
 

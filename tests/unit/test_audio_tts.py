@@ -83,14 +83,14 @@ def _ensure_audio_routes(app):
 
 @pytest.fixture
 def server_tts_client():
-    """TestClient using the full omlx server app with mocked TTS pool."""
+    """TestClient using the full fusion_mlx server app with mocked TTS pool."""
     from fusion_mlx.server import app
 
     _ensure_audio_routes(app)
 
     mock_pool = _make_mock_pool()
 
-    with patch("omlx.server._server_state") as mock_state:
+    with patch("fusion_mlx.server._server_state") as mock_state:
         mock_state.engine_pool = mock_pool
         mock_state.global_settings = None
         mock_state.process_memory_enforcer = None
@@ -547,7 +547,7 @@ class TestTTSModelAliasResolution:
 
         mock_settings_manager = MagicMock()
 
-        with patch("omlx.server._server_state") as mock_state:
+        with patch("fusion_mlx.server._server_state") as mock_state:
             mock_state.engine_pool = mock_pool
             mock_state.global_settings = None
             mock_state.process_memory_enforcer = None
@@ -578,7 +578,7 @@ class TestTTSModelAliasResolution:
             return_value="Qwen3-TTS-12Hz-1.7B-Base-bf16"
         )
 
-        with patch("omlx.server._server_state") as mock_state:
+        with patch("fusion_mlx.server._server_state") as mock_state:
             mock_state.engine_pool = mock_pool
             mock_state.global_settings = None
             mock_state.process_memory_enforcer = None
@@ -948,7 +948,7 @@ class TestTTSVoiceCloneEndpoint:
         _ensure_audio_routes(app)
         mock_pool = _make_mock_pool()
 
-        with patch("omlx.server._server_state") as mock_state:
+        with patch("fusion_mlx.server._server_state") as mock_state:
             mock_state.engine_pool = mock_pool
             mock_state.global_settings = None
             mock_state.process_memory_enforcer = None

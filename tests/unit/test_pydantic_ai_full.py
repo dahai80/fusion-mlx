@@ -1,5 +1,9 @@
 """Thorough PydanticAI test suite against local rapid-mlx server."""
 
+import pytest
+
+pytest.importorskip("pydantic_ai")
+
 import asyncio
 import os
 

@@ -70,7 +70,8 @@ def test_qwen3_vl_auto_image_processor_uses_mlx_vlm_torch_free_loader(monkeypatc
     )
 
     module_path = (
-        Path(__file__).resolve().parents[1] / "omlx/models/mlx_embeddings_compat.py"
+        Path(__file__).resolve().parents[1]
+        / "fusion_mlx/models/mlx_embeddings_compat.py"
     )
     spec = importlib.util.spec_from_file_location(
         "mlx_embeddings_compat_under_test", module_path
@@ -157,7 +158,8 @@ def test_qwen3_vl_build_processor_gets_multimodal_token_id_fields(monkeypatch):
     )
 
     module_path = (
-        Path(__file__).resolve().parents[1] / "omlx/models/mlx_embeddings_compat.py"
+        Path(__file__).resolve().parents[1]
+        / "fusion_mlx/models/mlx_embeddings_compat.py"
     )
     spec = importlib.util.spec_from_file_location(
         "mlx_embeddings_compat_under_test_mm_ids", module_path

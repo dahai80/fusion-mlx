@@ -861,20 +861,20 @@ class TestResponseFormatWarningHeader:
 
     def test_strict_header_names_strict_intent(self):
         header = self._call(self._strict_rf(True))
-        assert header.startswith('199 omlx "')
+        assert header.startswith('199 fusion_mlx "')
         assert header.endswith('"')
         assert "strict" in header
         assert "NOT schema-enforced" in header
 
     def test_non_strict_header_is_generic(self):
         header = self._call(self._strict_rf(False))
-        assert header.startswith('199 omlx "')
+        assert header.startswith('199 fusion_mlx "')
         assert "not enforced" in header
         assert "strict" not in header
 
     def test_json_object_header_is_generic(self):
         header = self._call({"type": "json_object"})
-        assert header.startswith('199 omlx "')
+        assert header.startswith('199 fusion_mlx "')
         assert "strict" not in header
 
     def test_header_value_is_single_line_ascii(self):
@@ -1261,7 +1261,7 @@ class TestListGrammarParsers:
         assert resp.json() == []
 
     def test_returns_empty_when_xgrammar_native_binding_fails(self, client):
-        # Reproduces the symptom in jundot/omlx#1005: the macOS arm64 wheel's
+        # Reproduces the symptom in jundot/fusion_mlx#1005: the macOS arm64 wheel's
         # libxgrammar_bindings.dylib fails to load, so calling into xgrammar
         # raises RuntimeError rather than ImportError. The route must still
         # return [] cleanly rather than 500.

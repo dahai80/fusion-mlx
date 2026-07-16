@@ -951,7 +951,7 @@ class TestApplyOcrPrompt:
 class TestProcessChatMessages:
     """Tests for VLMBatchedEngine._process_chat_messages()."""
 
-    @patch("omlx.engine.vlm.extract_images_from_messages")
+    @patch("fusion_mlx.engine.vlm.extract_images_from_messages")
     def test_text_only_uses_vlm_prepare_path(self, mock_extract):
         """Text-only turns on a VLM model still use _prepare_vision_inputs()."""
         text_msgs = [{"role": "user", "content": "Hello"}]
@@ -987,7 +987,7 @@ class TestProcessChatMessages:
             tools=None,
         )
 
-    @patch("omlx.engine.vlm.extract_images_from_messages")
+    @patch("fusion_mlx.engine.vlm.extract_images_from_messages")
     def test_text_only_passes_tools_to_prepare_vision(self, mock_extract):
         """Text-only + tools still convert and pass tools through VLM path."""
         text_msgs = [{"role": "user", "content": "Hello"}]
@@ -1001,7 +1001,7 @@ class TestProcessChatMessages:
         tools = [{"type": "function", "function": {"name": "test", "parameters": {}}}]
         messages = [{"role": "user", "content": "Hello"}]
 
-        with patch("omlx.engine.vlm.convert_tools_for_template") as mock_convert:
+        with patch("fusion_mlx.engine.vlm.convert_tools_for_template") as mock_convert:
             mock_convert.return_value = [{"converted": True}]
             engine._process_chat_messages(messages, tools=tools, kwargs={})
 
@@ -1009,7 +1009,7 @@ class TestProcessChatMessages:
         call_kwargs = engine._prepare_vision_inputs.call_args[1]
         assert call_kwargs["tools"] == [{"converted": True}]
 
-    @patch("omlx.engine.vlm.extract_images_from_messages")
+    @patch("fusion_mlx.engine.vlm.extract_images_from_messages")
     def test_image_path_calls_prepare_vision(self, mock_extract):
         """Messages with images → _prepare_vision_inputs() called."""
         from PIL import Image
@@ -1053,7 +1053,7 @@ class TestProcessChatMessages:
         assert image_cache_key_start == 12
         assert image_cache_key_ranges == [(12, "hash123")]
 
-    @patch("omlx.engine.vlm.extract_images_from_messages")
+    @patch("fusion_mlx.engine.vlm.extract_images_from_messages")
     def test_image_path_passes_tools(self, mock_extract):
         """Image + tools → tools converted and passed to _prepare_vision_inputs()."""
         from PIL import Image
@@ -1073,7 +1073,7 @@ class TestProcessChatMessages:
         ]
         messages = [{"role": "user", "content": "Describe"}]
 
-        with patch("omlx.engine.vlm.convert_tools_for_template") as mock_convert:
+        with patch("fusion_mlx.engine.vlm.convert_tools_for_template") as mock_convert:
             mock_convert.return_value = [{"converted": True}]
             engine._process_chat_messages(messages, tools=tools, kwargs={})
 
@@ -1082,7 +1082,7 @@ class TestProcessChatMessages:
         call_kwargs = engine._prepare_vision_inputs.call_args[1]
         assert call_kwargs["tools"] == [{"converted": True}]
 
-    @patch("omlx.engine.vlm.extract_images_from_messages")
+    @patch("fusion_mlx.engine.vlm.extract_images_from_messages")
     def test_image_path_without_tools(self, mock_extract):
         """Image + tools=None → _prepare_vision_inputs(tools=None)."""
         from PIL import Image

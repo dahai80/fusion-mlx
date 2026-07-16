@@ -99,7 +99,7 @@ class TestModelsListAudio:
         from fusion_mlx.server import app
 
         mock_pool = _make_pool([stt_entry])
-        with patch("omlx.server._server_state") as mock_state:
+        with patch("fusion_mlx.server._server_state") as mock_state:
             mock_state.engine_pool = mock_pool
             mock_state.global_settings = None
             mock_state.process_memory_enforcer = None
@@ -120,7 +120,7 @@ class TestModelsListAudio:
         from fusion_mlx.server import app
 
         mock_pool = _make_pool([stt_entry, tts_entry, llm_entry])
-        with patch("omlx.server._server_state") as mock_state:
+        with patch("fusion_mlx.server._server_state") as mock_state:
             mock_state.engine_pool = mock_pool
             mock_state.global_settings = None
             mock_state.process_memory_enforcer = None

@@ -1315,7 +1315,7 @@ class TestParseToolCallsSyntaxError:
         tok = self._qwen_tok(failing_parser)
         text = "<tool_call>not a function at all, just text</tool_call>"
 
-        with caplog.at_level(logging.WARNING, logger="omlx.api.tool_calling"):
+        with caplog.at_level(logging.WARNING, logger="fusion_mlx.api.tool_calling"):
             cleaned, tool_calls = parse_tool_calls(text, tok)
 
         assert tool_calls is None or len(tool_calls) == 0
@@ -2102,7 +2102,7 @@ class TestParseToolCallsGemma4Integration:
         # Completely unparseable content between markers
         text = "<|tool_call>garbage that matches no format<tool_call|>"
 
-        with caplog.at_level(logging.WARNING, logger="omlx.api.tool_calling"):
+        with caplog.at_level(logging.WARNING, logger="fusion_mlx.api.tool_calling"):
             cleaned, tool_calls = parse_tool_calls(text, tok, None)
 
         assert tool_calls is None
@@ -2429,7 +2429,7 @@ class TestRemapToolCallNames:
 
     def test_namespaced_name_remaps_to_unique_suffix(self, caplog):
         calls = [self._call("google:mcp:text_generation:create-pdf-file")]
-        with caplog.at_level(logging.INFO, logger="omlx.api.tool_calling"):
+        with caplog.at_level(logging.INFO, logger="fusion_mlx.api.tool_calling"):
             _remap_tool_call_names(calls, self._tools("create-pdf-file"))
         assert calls[0].function.name == "create-pdf-file"
         assert any("Remapped" in msg for msg in caplog.messages)
@@ -2837,7 +2837,7 @@ class TestSerializeToolCallArguments:
     """Tests for `_serialize_tool_call_arguments`.
 
     Guards the server-side exit: whatever the parser returns must leave
-    omlx as a valid JSON-object string so a subsequent turn's chat template
+    fusion_mlx as a valid JSON-object string so a subsequent turn's chat template
     (which iterates `arguments.items()`) never crashes on the echo.
     """
 
@@ -2854,13 +2854,13 @@ class TestSerializeToolCallArguments:
         assert "서울" in result
 
     def test_non_dict_bare_string_coerced_to_empty(self, caplog):
-        with caplog.at_level(logging.WARNING, logger="omlx.api.tool_calling"):
+        with caplog.at_level(logging.WARNING, logger="fusion_mlx.api.tool_calling"):
             result = _serialize_tool_call_arguments("Tokyo")
         assert result == "{}"
         assert any("non-dict" in r.message for r in caplog.records)
 
     def test_non_dict_list_coerced_to_empty(self, caplog):
-        with caplog.at_level(logging.WARNING, logger="omlx.api.tool_calling"):
+        with caplog.at_level(logging.WARNING, logger="fusion_mlx.api.tool_calling"):
             result = _serialize_tool_call_arguments([1, 2])
         assert result == "{}"
 
@@ -2870,7 +2870,7 @@ class TestSerializeToolCallArguments:
     def test_json_object_string_preserved(self, caplog):
         """mlx-vlm/mlx-lm gemma4 parser hands back a JSON-object string per
         the OpenAI spec; the validator must accept it instead of dropping it."""
-        with caplog.at_level(logging.WARNING, logger="omlx.api.tool_calling"):
+        with caplog.at_level(logging.WARNING, logger="fusion_mlx.api.tool_calling"):
             result = _serialize_tool_call_arguments('{"command": "ls /tmp\\n"}')
         assert json.loads(result) == {"command": "ls /tmp\n"}
         assert not any("non-dict" in r.message for r in caplog.records)
@@ -2878,7 +2878,7 @@ class TestSerializeToolCallArguments:
     def test_json_array_string_coerced_to_empty(self, caplog):
         """JSON arrays/scalars do not satisfy ``arguments.items()`` so they
         must still be coerced."""
-        with caplog.at_level(logging.WARNING, logger="omlx.api.tool_calling"):
+        with caplog.at_level(logging.WARNING, logger="fusion_mlx.api.tool_calling"):
             result = _serialize_tool_call_arguments("[1, 2]")
         assert result == "{}"
         assert any("non-dict" in r.message for r in caplog.records)

@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Tests for omlx.utils.model_loading.maybe_load_custom_quantization."""
+"""Tests for fusion_mlx.utils.model_loading.maybe_load_custom_quantization."""
 
 import sys
 import types
@@ -170,13 +170,13 @@ class TestLlama4PreLoadDispatch:
         monkeypatch.setattr(model_loading, "_patch_mlx_lm_load_config", lambda: None)
         monkeypatch.setitem(
             sys.modules,
-            "omlx.patches.mlx_lm_mtp",
+            "fusion_mlx.patches.mlx_lm_mtp",
             MagicMock(set_mtp_active=MagicMock()),
         )
         apply_mock = MagicMock(return_value=True)
         monkeypatch.setitem(
             sys.modules,
-            "omlx.patches.llama4_attention",
+            "fusion_mlx.patches.llama4_attention",
             MagicMock(apply_llama4_attention_patch=apply_mock),
         )
 
@@ -240,7 +240,7 @@ class TestVlmMtpPreLoadDispatch:
         monkeypatch.setattr(model_loading, "_patch_mlx_lm_load_config", lambda: None)
         monkeypatch.setitem(
             sys.modules,
-            "omlx.patches.mlx_lm_mtp",
+            "fusion_mlx.patches.mlx_lm_mtp",
             MagicMock(
                 set_mtp_active=MagicMock(),
                 apply_mlx_lm_mtp_patch=MagicMock(return_value=True),
@@ -248,7 +248,7 @@ class TestVlmMtpPreLoadDispatch:
         )
         monkeypatch.setitem(
             sys.modules,
-            "omlx.patches.mlx_vlm_mtp",
+            "fusion_mlx.patches.mlx_vlm_mtp",
             MagicMock(
                 apply_mlx_vlm_mtp_patch=sanitize_mock,
                 apply_mlx_vlm_mtp_runtime_patch=runtime_mock,

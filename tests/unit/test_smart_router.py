@@ -95,7 +95,7 @@ class TestSmartRouterDecide:
         )
         # Set EMA counts past cold-start threshold so measured values dominate
         router._ema_state["test-3b"] = {
-            "omlx": {"tps": 100.0, "latency_p50": 50.0, "count": 25},
+            "fusion_mlx": {"tps": 100.0, "latency_p50": 50.0, "count": 25},
             "rapid": {"tps": 80.0, "latency_p50": 30.0, "count": 25},
         }
         decision = router.decide(
@@ -271,7 +271,7 @@ class TestSmartRouterStats:
 
     def test_reset_stats_with_lock(self):
         router = SmartRouter(llm_engine=AsyncMock())
-        router._route_count["omlx"] = 10
+        router._route_count["fusion_mlx"] = 10
         router._split_count = 5
         router._cloud_count = 3
         router.reset_stats()

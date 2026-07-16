@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Tests for omlx.speculative.vlm_mtp.
+"""Tests for fusion_mlx.speculative.vlm_mtp.
 
 Phase 2A: covers drafter validation, lazy bind, and wrapper-level dispatch
 to mlx-vlm's ``_mtp_rounds`` / ``_mtp_rounds_batch``. The actual mlx-vlm

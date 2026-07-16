@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Tests for omlx/mcp/config.py — config file discovery, JSON/YAML
+"""Tests for fusion_mlx/mcp/config.py — config file discovery, JSON/YAML
 loading, schema validation, and the example-config helper.
 
 MCPConfig / MCPServerConfig / MCPTransport themselves are covered in
@@ -277,7 +277,7 @@ class TestEnvVarPath:
         logs a warning but continues to the search-path fallback rather
         than aborting — broken env vars must not kill the server."""
         monkeypatch.setenv(CONFIG_ENV_VAR, str(isolated_env / "missing.json"))
-        with caplog.at_level("WARNING", logger="omlx.mcp.config"):
+        with caplog.at_level("WARNING", logger="fusion_mlx.mcp.config"):
             cfg = load_mcp_config()
         assert isinstance(cfg, MCPConfig)
         assert cfg.servers == {}
@@ -379,7 +379,7 @@ class TestCreateExampleConfig:
         assert isinstance(data, dict)
 
     def test_example_round_trips_through_validate(self):
-        """The example written to disk by ``omlx mcp init`` (or similar)
+        """The example written to disk by ``fusion_mlx mcp init`` (or similar)
         must be a valid config — otherwise the bootstrap UX is broken."""
         example = create_example_config()
         data = json.loads(example)

@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 """
-Tests for MCP client manager (omlx/mcp/manager.py).
+Tests for MCP client manager (fusion_mlx/mcp/manager.py).
 """
 
 import json

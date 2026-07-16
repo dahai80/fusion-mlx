@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-I18N_DIR = Path(__file__).parent.parent / "omlx" / "admin" / "i18n"
+I18N_DIR = Path(__file__).parent.parent / "fusion_mlx" / "admin" / "i18n"
 
 # Required i18n keys used by chat image upload feature
 REQUIRED_IMAGE_KEYS = [

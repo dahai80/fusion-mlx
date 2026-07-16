@@ -303,6 +303,7 @@ if sys.platform != "darwin":
         "test_sampling.py",
         "test_signal_observability.py",
         "test_spec_recurrent_gate.py",
+        "test_streaming_detokenizer.py",
         "test_telemetry.py",
         "test_telemetry_consent.py",
         "test_telemetry_emit.py",
@@ -311,6 +312,7 @@ if sys.platform != "darwin":
         "test_telemetry_state.py",
         "test_telemetry_state_comprehensive.py",
         "test_telemetry_transport.py",
+        "test_tokenizer_gemma4_hybrid.py",
         # mlx-dependent suites added by Phase 4/5/6 video ports + scheduler
         # debt paydown: pass on macOS (real mlx), fail on Linux CI (no mlx).
         "test_denoise_legacy.py",
@@ -324,6 +326,19 @@ if sys.platform != "darwin":
         "test_vae_legacy.py",
         "test_video_backends.py",
         "test_video_gen_engine.py",
+        "test_batching_deterministic.py",
+        "test_cache_type_handlers.py",
+        "test_completions_spec_parity.py",
+        "test_deep_nest_dos.py",
+        "test_deepseek_v4_patch.py",
+        "test_event_loop.py",
+        "test_help_fuzzy.py",
+        "test_mlx_lm_mtp_patch.py",
+        "test_oq.py",
+        "test_output_parser.py",
+        "test_per_engine_threads.py",
+        "test_process_memory_enforcer.py",
+        "test_sampler_fast_path.py",
     ]
     collect_ignore += _abs(*_linux_skip)
     collect_ignore_glob += [f"**/{s}" for s in _linux_skip]

@@ -1313,11 +1313,11 @@ class TestNativeEmbeddingLoading:
                 return_value=tokenizer,
             ) as mock_from_pretrained,
             patch(
-                "omlx.models.embedding.MLXEmbeddingModel._validate_native_weights",
+                "fusion_mlx.models.embedding.MLXEmbeddingModel._validate_native_weights",
                 return_value=None,
             ) as mock_validate_weights,
             patch(
-                "omlx.models.xlm_roberta.Model.load_weights",
+                "fusion_mlx.models.xlm_roberta.Model.load_weights",
                 return_value=None,
             ) as mock_load_weights,
         ):
@@ -1368,11 +1368,11 @@ class TestNativeEmbeddingLoading:
                 return_value=tokenizer,
             ) as mock_from_pretrained,
             patch(
-                "omlx.models.embedding.MLXEmbeddingModel._validate_native_weights",
+                "fusion_mlx.models.embedding.MLXEmbeddingModel._validate_native_weights",
                 return_value=None,
             ) as mock_validate_weights,
             patch(
-                "omlx.models.xlm_roberta.Model.load_weights",
+                "fusion_mlx.models.xlm_roberta.Model.load_weights",
                 return_value=None,
             ) as mock_load_weights,
         ):
@@ -1418,11 +1418,11 @@ class TestNativeEmbeddingLoading:
                 return_value=tokenizer,
             ),
             patch(
-                "omlx.models.embedding.MLXEmbeddingModel._validate_native_weights",
+                "fusion_mlx.models.embedding.MLXEmbeddingModel._validate_native_weights",
                 return_value=None,
             ) as mock_validate_weights,
             patch(
-                "omlx.models.xlm_roberta.Model.load_weights",
+                "fusion_mlx.models.xlm_roberta.Model.load_weights",
                 return_value=None,
             ) as mock_load_weights,
         ):

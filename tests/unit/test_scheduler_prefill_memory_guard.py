@@ -98,8 +98,8 @@ def test_preflight_positive_control_passes_normal_request():
     # Huge limit — even a multi-GB peak fits comfortably.
     scheduler._memory_hard_limit_bytes = 10**18
     with (
-        patch("omlx.scheduler.mx.get_active_memory", return_value=0),
-        patch("omlx.scheduler.get_phys_footprint", return_value=0),
+        patch("fusion_mlx.scheduler.mx.get_active_memory", return_value=0),
+        patch("fusion_mlx.scheduler.get_phys_footprint", return_value=0),
     ):
         assert scheduler._preflight_memory_check(_make_request(32768)) is None
 
@@ -110,8 +110,8 @@ def test_preflight_rejects_when_estimated_peak_exceeds_hard_limit():
     scheduler._memory_hard_limit_bytes = 1  # any allocation exceeds
 
     with (
-        patch("omlx.scheduler.mx.get_active_memory", return_value=0),
-        patch("omlx.scheduler.get_phys_footprint", return_value=0),
+        patch("fusion_mlx.scheduler.mx.get_active_memory", return_value=0),
+        patch("fusion_mlx.scheduler.get_phys_footprint", return_value=0),
     ):
         rejection = scheduler._preflight_memory_check(_make_request(65536))
 
@@ -167,8 +167,8 @@ def test_current_usage_subtracts_shared_hot_cache_bytes_from_phys_side():
     scheduler.config.hot_cache_budget = SimpleNamespace(total_bytes=3 * 1024**3)
 
     with (
-        patch("omlx.scheduler.mx.get_active_memory", return_value=4 * 1024**3),
-        patch("omlx.scheduler.get_phys_footprint", return_value=10 * 1024**3),
+        patch("fusion_mlx.scheduler.mx.get_active_memory", return_value=4 * 1024**3),
+        patch("fusion_mlx.scheduler.get_phys_footprint", return_value=10 * 1024**3),
     ):
         assert scheduler._current_usage_bytes() == 7 * 1024**3
 
@@ -178,8 +178,8 @@ def test_current_usage_keeps_mlx_active_as_floor_after_hot_cache_subtract():
     scheduler.config.hot_cache_budget = SimpleNamespace(total_bytes=9 * 1024**3)
 
     with (
-        patch("omlx.scheduler.mx.get_active_memory", return_value=6 * 1024**3),
-        patch("omlx.scheduler.get_phys_footprint", return_value=10 * 1024**3),
+        patch("fusion_mlx.scheduler.mx.get_active_memory", return_value=6 * 1024**3),
+        patch("fusion_mlx.scheduler.get_phys_footprint", return_value=10 * 1024**3),
     ):
         assert scheduler._current_usage_bytes() == 6 * 1024**3
 
@@ -196,8 +196,8 @@ def test_current_usage_falls_back_to_local_hot_cache_counter():
     scheduler.paged_ssd_cache_manager = _LocalHotCacheManager()
 
     with (
-        patch("omlx.scheduler.mx.get_active_memory", return_value=1 * 1024**3),
-        patch("omlx.scheduler.get_phys_footprint", return_value=8 * 1024**3),
+        patch("fusion_mlx.scheduler.mx.get_active_memory", return_value=1 * 1024**3),
+        patch("fusion_mlx.scheduler.get_phys_footprint", return_value=8 * 1024**3),
     ):
         assert scheduler._current_usage_bytes() == 6 * 1024**3
 
@@ -233,8 +233,8 @@ def test_preflight_rejects_heavily_cached_long_context():
     req = _make_request(100_000)
     req.cached_tokens = 99_000  # only 1k new tokens but kv_len = 100k
     with (
-        patch("omlx.scheduler.mx.get_active_memory", return_value=0),
-        patch("omlx.scheduler.get_phys_footprint", return_value=0),
+        patch("fusion_mlx.scheduler.mx.get_active_memory", return_value=0),
+        patch("fusion_mlx.scheduler.get_phys_footprint", return_value=0),
     ):
         error = scheduler._preflight_memory_check(req)
     assert error is not None, (
@@ -256,8 +256,8 @@ def test_preflight_rejects_uncached_long_context():
     req = _make_request(100_000)
     req.cached_tokens = 1_000  # almost everything is new
     with (
-        patch("omlx.scheduler.mx.get_active_memory", return_value=0),
-        patch("omlx.scheduler.get_phys_footprint", return_value=0),
+        patch("fusion_mlx.scheduler.mx.get_active_memory", return_value=0),
+        patch("fusion_mlx.scheduler.get_phys_footprint", return_value=0),
     ):
         error = scheduler._preflight_memory_check(req)
     assert error is not None, "guard must trip on uncached long-context too"
@@ -358,8 +358,8 @@ def test_dict_nested_config_populates_estimator_dims_and_preflight_rejects():
     scheduler._prefill_memory_guard = True
     scheduler._memory_hard_limit_bytes = 2 * 1024**3
     with (
-        patch("omlx.scheduler.mx.get_active_memory", return_value=0),
-        patch("omlx.scheduler.get_phys_footprint", return_value=0),
+        patch("fusion_mlx.scheduler.mx.get_active_memory", return_value=0),
+        patch("fusion_mlx.scheduler.get_phys_footprint", return_value=0),
         pytest.raises(PrefillMemoryExceededError),
     ):
         scheduler.preflight_or_raise(num_prompt_tokens=50_000, request_id="dict-cfg")
@@ -481,8 +481,8 @@ def test_vlm_preflight_rejects_oversize_request():
     scheduler._memory_hard_limit_bytes = 36 * 1024 * 1024 * 1024  # 36 GiB hard limit
 
     with (
-        patch("omlx.scheduler.mx.get_active_memory", return_value=28 * 1024**3),
-        patch("omlx.scheduler.get_phys_footprint", return_value=28 * 1024**3),
+        patch("fusion_mlx.scheduler.mx.get_active_memory", return_value=28 * 1024**3),
+        patch("fusion_mlx.scheduler.get_phys_footprint", return_value=28 * 1024**3),
     ):
         # 100k tokens at head_dim=256 should push (28 GiB baseline + KV+SDPA
         # peak) past the 36 GiB limit.

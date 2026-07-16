@@ -40,7 +40,7 @@ def render(
         chat_line = ""
 
     return (
-        f"\n  🔥 {bold}Fusion-MLX share{reset}\n"
+        f"\n  🐆 {bold}Fusion-MLX share{reset}\n"
         f"\n{red}╔══════════════════════════════════════════════════════════════════╗{reset}\n"
         f"{red}║  ⚠  PUBLIC INTERNET — read this before sharing                   ║{reset}\n"
         f"{red}╠══════════════════════════════════════════════════════════════════╣{reset}\n"

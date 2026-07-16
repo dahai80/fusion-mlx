@@ -17,7 +17,6 @@ import pytest
 from fusion_mlx.model_settings import ModelSettings
 from fusion_mlx.utils.model_loading import (
     _has_mtp_heads,
-    _is_mtp_compatible,
     maybe_apply_pre_load_patches,
 )
 
@@ -139,7 +138,7 @@ class TestQwen35Model:
         # module is gated by the active-flag set right before mlx_lm.load.
         assert hasattr(TextModel, "mtp_forward")
         assert hasattr(TextModel, "make_mtp_cache")
-        assert hasattr(TextModel, "_omlx_mtp_patched")
+        assert hasattr(TextModel, "_fusion_mlx_mtp_patched")
 
     def test_set_mtp_active_toggles_module_flag(self):
         """The active-flag controls whether subsequent loads attach self.mtp."""
@@ -159,7 +158,7 @@ class TestQwen35Model:
 
         assert hasattr(Model, "mtp_forward")
         assert hasattr(Model, "make_mtp_cache")
-        assert hasattr(Model, "_omlx_mtp_patched")
+        assert hasattr(Model, "_fusion_mlx_mtp_patched")
 
     def test_decoder_layer_omits_n_confirmed_when_zero(self):
         """DFlash replaces linear_attn.__call__ with a hook that has no
@@ -501,7 +500,7 @@ class TestDeepseekV4Model:
         assert hasattr(dsv4, "MTPBlock")
         assert hasattr(dsv4.Model, "mtp_forward")
         assert hasattr(dsv4.Model, "make_mtp_cache")
-        assert hasattr(dsv4.Model, "_omlx_mtp_patched")
+        assert hasattr(dsv4.Model, "_fusion_mlx_mtp_patched")
         # Idempotent.
         applied_again = deepseek_v4_model.apply()
         assert applied_again is True
@@ -531,8 +530,8 @@ class TestBatchGeneratorDispatch:
     def test_generation_batch_is_patched(self):
         from mlx_lm.generate import BatchGenerator, GenerationBatch
 
-        assert hasattr(GenerationBatch, "_omlx_mtp_patched")
-        assert hasattr(BatchGenerator, "_omlx_mtp_patched")
+        assert hasattr(GenerationBatch, "_fusion_mlx_mtp_patched")
+        assert hasattr(BatchGenerator, "_fusion_mlx_mtp_patched")
 
     def test_next_realigns_rows_before_mtp_eligibility(self, monkeypatch):
         """Native MTP must not read stale row slots before scheduler realignment."""
@@ -543,7 +542,7 @@ class TestBatchGeneratorDispatch:
         calls = []
         batch = SimpleNamespace(
             uids=[],
-            _omlx_realign_rows=lambda: calls.append("realign"),
+            _fusion_mlx_realign_rows=lambda: calls.append("realign"),
         )
 
         monkeypatch.setattr(
@@ -576,19 +575,19 @@ class TestBatchGeneratorDispatch:
         model = SimpleNamespace(
             mtp=object(),
             mtp_forward=lambda *_, **__: None,
-            _omlx_mtp_decode_enabled=True,
+            _fusion_mlx_mtp_decode_enabled=True,
         )
         batch = SimpleNamespace(
             model=model,
             uids=[1],
             logits_processors=[],
-            _omlx_mtp_activation_safe=True,
+            _fusion_mlx_mtp_activation_safe=True,
         )
 
         def realign_rows():
             batch.logits_processors = [[processor]]
 
-        batch._omlx_realign_rows = realign_rows
+        batch._fusion_mlx_realign_rows = realign_rows
 
         monkeypatch.setattr(
             batch_generator,
@@ -620,7 +619,7 @@ class TestBatchGeneratorDispatch:
         model = SimpleNamespace(
             mtp=object(),
             mtp_forward=lambda *args, **kwargs: None,
-            _omlx_mtp_decode_enabled=True,
+            _fusion_mlx_mtp_decode_enabled=True,
         )
         gen_batch = SimpleNamespace(
             model=model,
@@ -635,7 +634,7 @@ class TestBatchGeneratorDispatch:
             set_mtp_active(False)
             assert batch_generator._mtp_common_eligible(gen_batch) is True
 
-            model._omlx_mtp_decode_enabled = False
+            model._fusion_mlx_mtp_decode_enabled = False
             assert batch_generator._mtp_common_eligible(gen_batch) is False
         finally:
             set_mtp_active(prior_active)
@@ -643,7 +642,7 @@ class TestBatchGeneratorDispatch:
     def test_decode_marker_is_found_on_wrapped_language_model(self):
         from fusion_mlx.patches.mlx_lm_mtp import batch_generator
 
-        inner = SimpleNamespace(_omlx_mtp_decode_enabled=True)
+        inner = SimpleNamespace(_fusion_mlx_mtp_decode_enabled=True)
 
         assert (
             batch_generator._model_mtp_decode_enabled(
@@ -660,7 +659,7 @@ class TestBatchGeneratorDispatch:
         assert (
             batch_generator._model_mtp_decode_enabled(
                 SimpleNamespace(
-                    language_model=SimpleNamespace(_omlx_mtp_decode_enabled=False)
+                    language_model=SimpleNamespace(_fusion_mlx_mtp_decode_enabled=False)
                 )
             )
             is False
@@ -691,7 +690,7 @@ class TestBatchGeneratorDispatch:
 
             def __init__(self, decode_enabled=True):
                 self.mtp = object()  # placeholder for an actual MTPModule
-                self._omlx_mtp_decode_enabled = decode_enabled
+                self._fusion_mlx_mtp_decode_enabled = decode_enabled
 
             def mtp_forward(self, *_):
                 pass
@@ -743,7 +742,7 @@ class TestBatchGeneratorDispatch:
         class _MtpModel:
             def __init__(self):
                 self.mtp = object()
-                self._omlx_mtp_decode_enabled = True
+                self._fusion_mlx_mtp_decode_enabled = True
 
             def mtp_forward(self, *_):
                 pass
@@ -755,11 +754,11 @@ class TestBatchGeneratorDispatch:
                 model=_MtpModel(),
                 uids=[1],
                 logits_processors=[],
-                _omlx_mtp_activation_safe=False,
+                _fusion_mlx_mtp_activation_safe=False,
             )
             assert batch_generator._is_mtp_eligible(batch) is False
 
-            batch._omlx_mtp_state = batch_generator._MtpState(uid=1)
+            batch._fusion_mlx_mtp_state = batch_generator._MtpState(uid=1)
             assert batch_generator._is_mtp_eligible(batch) is True
         finally:
             set_mtp_active(prior_active)
@@ -774,7 +773,7 @@ class TestBatchGeneratorDispatch:
         class _MtpModel:
             def __init__(self):
                 self.mtp = object()
-                self._omlx_mtp_decode_enabled = True
+                self._fusion_mlx_mtp_decode_enabled = True
 
             def mtp_forward(self, *_):
                 pass
@@ -786,12 +785,12 @@ class TestBatchGeneratorDispatch:
                 model=_MtpModel(),
                 uids=[1],
                 logits_processors=[],
-                _omlx_mtp_activation_safe=True,
-                _omlx_mtp_saw_standard_multirow_decode=True,
+                _fusion_mlx_mtp_activation_safe=True,
+                _fusion_mlx_mtp_saw_standard_multirow_decode=True,
             )
             assert batch_generator._is_mtp_eligible(batch) is False
 
-            batch._omlx_mtp_state = batch_generator._MtpState(uid=1)
+            batch._fusion_mlx_mtp_state = batch_generator._MtpState(uid=1)
             assert batch_generator._is_mtp_eligible(batch) is True
         finally:
             set_mtp_active(prior_active)
@@ -832,9 +831,9 @@ class TestBatchGeneratorDispatch:
                 self.next_calls = 0
                 self.extended_with = None
                 if active_state == "single":
-                    self._omlx_mtp_state = object()
+                    self._fusion_mlx_mtp_state = object()
                 elif active_state == "batch":
-                    self._omlx_mtp_batch_state = object()
+                    self._fusion_mlx_mtp_batch_state = object()
 
             def __len__(self):
                 return self.size
@@ -939,7 +938,7 @@ class TestBatchGeneratorDispatch:
         from fusion_mlx.patches.mlx_lm_mtp import batch_generator
 
         class _EmptyBatch:
-            _omlx_mtp_state = batch_generator._MtpState(uid=1)
+            _fusion_mlx_mtp_state = batch_generator._MtpState(uid=1)
 
             def __len__(self):
                 return 0
@@ -956,7 +955,7 @@ class TestBatchGeneratorDispatch:
         class _MtpModel:
             def __init__(self):
                 self.mtp = object()
-                self._omlx_mtp_decode_enabled = True
+                self._fusion_mlx_mtp_decode_enabled = True
 
             def mtp_forward(self, *_):
                 pass
@@ -968,15 +967,15 @@ class TestBatchGeneratorDispatch:
                 model=_MtpModel(),
                 uids=[1, 2],
                 logits_processors=[],
-                _omlx_mtp_activation_safe=True,
+                _fusion_mlx_mtp_activation_safe=True,
                 prompt_cache=[],
             )
             assert batch_generator._is_mtp_batch_eligible(batch) is True
 
-            batch._omlx_mtp_activation_safe = False
+            batch._fusion_mlx_mtp_activation_safe = False
             assert batch_generator._is_mtp_batch_eligible(batch) is False
 
-            batch._omlx_mtp_batch_state = batch_generator._MtpBatchState(
+            batch._fusion_mlx_mtp_batch_state = batch_generator._MtpBatchState(
                 states={1: batch_generator._MtpState(uid=1)}
             )
             assert batch_generator._is_mtp_batch_eligible(batch) is True
@@ -1000,7 +999,7 @@ class TestBatchGeneratorDispatch:
         class _MtpModel:
             def __init__(self):
                 self.mtp = object()
-                self._omlx_mtp_decode_enabled = True
+                self._fusion_mlx_mtp_decode_enabled = True
 
             def mtp_forward(self, *_):
                 pass
@@ -1012,7 +1011,7 @@ class TestBatchGeneratorDispatch:
                 model=_MtpModel(),
                 uids=[1, 2],
                 logits_processors=[],
-                _omlx_mtp_activation_safe=True,
+                _fusion_mlx_mtp_activation_safe=True,
                 prompt_cache=[SimpleNamespace(offset=_Offset([8, 5]))],
             )
             assert batch_generator._is_mtp_batch_eligible(batch) is False
@@ -1042,12 +1041,12 @@ class TestBatchGeneratorDispatch:
             _MtpState,
         )
 
-        batch = SimpleNamespace(uids=[1, 2], _omlx_mtp_state=_MtpState(uid=1))
+        batch = SimpleNamespace(uids=[1, 2], _fusion_mlx_mtp_state=_MtpState(uid=1))
 
         dropped = _drop_invalid_mtp_state(batch, "test-reshape")
 
         assert dropped is not None
-        assert not hasattr(batch, "_omlx_mtp_state")
+        assert not hasattr(batch, "_fusion_mlx_mtp_state")
 
     def test_drop_invalid_mtp_state_keeps_matching_singleton(self):
         from fusion_mlx.patches.mlx_lm_mtp.batch_generator import (
@@ -1056,12 +1055,12 @@ class TestBatchGeneratorDispatch:
         )
 
         state = _MtpState(uid=1)
-        batch = SimpleNamespace(uids=[1], _omlx_mtp_state=state)
+        batch = SimpleNamespace(uids=[1], _fusion_mlx_mtp_state=state)
 
         kept = _drop_invalid_mtp_state(batch, "test-filter")
 
         assert kept is state
-        assert batch._omlx_mtp_state is state
+        assert batch._fusion_mlx_mtp_state is state
 
     def test_prepare_mtp_state_lazy_activates_with_current_uid(self, monkeypatch):
         from fusion_mlx.patches.mlx_lm_mtp import batch_generator
@@ -1069,7 +1068,7 @@ class TestBatchGeneratorDispatch:
         class _MtpModel:
             def __init__(self):
                 self.mtp = object()
-                self._omlx_mtp_decode_enabled = True
+                self._fusion_mlx_mtp_decode_enabled = True
 
             def mtp_forward(self, *_):
                 pass
@@ -1081,13 +1080,15 @@ class TestBatchGeneratorDispatch:
         )
 
         def fake_post_init(gen_batch):
-            gen_batch._omlx_mtp_state = batch_generator._MtpState(uid=gen_batch.uids[0])
+            gen_batch._fusion_mlx_mtp_state = batch_generator._MtpState(
+                uid=gen_batch.uids[0]
+            )
 
         monkeypatch.setattr(batch_generator, "_post_init_mtp", fake_post_init)
 
         state = batch_generator._prepare_mtp_state_for_next(batch)
 
-        assert state is batch._omlx_mtp_state
+        assert state is batch._fusion_mlx_mtp_state
         assert state.uid == 42
 
     def test_prepare_mtp_state_drops_stale_owner_and_reinitializes(self, monkeypatch):
@@ -1096,7 +1097,7 @@ class TestBatchGeneratorDispatch:
         class _MtpModel:
             def __init__(self):
                 self.mtp = object()
-                self._omlx_mtp_decode_enabled = True
+                self._fusion_mlx_mtp_decode_enabled = True
 
             def mtp_forward(self, *_):
                 pass
@@ -1106,17 +1107,19 @@ class TestBatchGeneratorDispatch:
             model=_MtpModel(),
             uids=[2],
             logits_processors=[],
-            _omlx_mtp_state=old_state,
+            _fusion_mlx_mtp_state=old_state,
         )
 
         def fake_post_init(gen_batch):
-            gen_batch._omlx_mtp_state = batch_generator._MtpState(uid=gen_batch.uids[0])
+            gen_batch._fusion_mlx_mtp_state = batch_generator._MtpState(
+                uid=gen_batch.uids[0]
+            )
 
         monkeypatch.setattr(batch_generator, "_post_init_mtp", fake_post_init)
 
         state = batch_generator._prepare_mtp_state_for_next(batch)
 
-        assert state is batch._omlx_mtp_state
+        assert state is batch._fusion_mlx_mtp_state
         assert state is not old_state
         assert state.uid == 2
 
@@ -1173,7 +1176,7 @@ class TestBatchGeneratorDispatch:
             _next_logprobs=[],
             _token_context=[],
             prompt_cache=[object()],  # old MTP-advanced cache, to be replaced
-            _omlx_mtp_state=state,
+            _fusion_mlx_mtp_state=state,
         )
         return batch_generator, batch, state
 
@@ -1294,29 +1297,6 @@ class TestMtpCompatibilityHelpers:
 
     def test_has_mtp_heads_missing_is_false(self):
         assert _has_mtp_heads({"model_type": "llama"}) is False
-
-    def test_is_mtp_compatible_qwen3_5(self):
-        assert _is_mtp_compatible({"mtp_num_hidden_layers": 1}, "qwen3_5") is True
-
-    def test_is_mtp_compatible_qwen3_5_moe(self):
-        assert _is_mtp_compatible({"mtp_num_hidden_layers": 1}, "qwen3_5_moe") is True
-
-    def test_is_mtp_compatible_qwen3_6(self):
-        assert _is_mtp_compatible({"mtp_num_hidden_layers": 1}, "qwen3_6") is True
-
-    def test_is_mtp_compatible_deepseek_v4(self):
-        assert (
-            _is_mtp_compatible({"num_nextn_predict_layers": 1}, "deepseek_v4") is True
-        )
-
-    def test_is_mtp_compatible_llama_rejected(self):
-        assert _is_mtp_compatible({"mtp_num_hidden_layers": 1}, "llama") is False
-
-    def test_is_mtp_compatible_qwen_without_mtp_heads(self):
-        assert _is_mtp_compatible({}, "qwen3_5") is False
-
-    def test_is_mtp_compatible_unknown_model_type(self):
-        assert _is_mtp_compatible({"mtp_num_hidden_layers": 1}, None) is False
 
 
 class TestPreLoadPatchDispatch:
@@ -1662,7 +1642,7 @@ class TestMTPPatchSelfHealing:
         # Identity check: the current __call__ is the MTP-patched one
         # (has our marker attribute set in the new implementation).
         current_call = GatedDeltaNet.__dict__.get("__call__")
-        assert getattr(current_call, "_omlx_mtp_call_marker", False), (
+        assert getattr(current_call, "_fusion_mlx_mtp_call_marker", False), (
             "__call__ should carry the MTP marker after re-apply, "
             f"got {current_call!r}"
         )

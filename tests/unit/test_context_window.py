@@ -35,7 +35,7 @@ class TestGetMaxContextWindow:
         from fusion_mlx.server import get_max_context_window
 
         state = self._make_server_state(global_max_ctx=32768)
-        with patch("omlx.server._server_state", state):
+        with patch("fusion_mlx.server._server_state", state):
             result = get_max_context_window()
             assert result == 32768
 
@@ -50,7 +50,7 @@ class TestGetMaxContextWindow:
         )
         state.settings_manager = mock_manager
 
-        with patch("omlx.server._server_state", state):
+        with patch("fusion_mlx.server._server_state", state):
             result = get_max_context_window("test-model")
             assert result == 4096
 
@@ -65,7 +65,7 @@ class TestGetMaxContextWindow:
         )
         state.settings_manager = mock_manager
 
-        with patch("omlx.server._server_state", state):
+        with patch("fusion_mlx.server._server_state", state):
             result = get_max_context_window("test-model")
             assert result == 65536
 
@@ -74,7 +74,7 @@ class TestGetMaxContextWindow:
         from fusion_mlx.server import get_max_context_window
 
         state = self._make_server_state(global_max_ctx=16384)
-        with patch("omlx.server._server_state", state):
+        with patch("fusion_mlx.server._server_state", state):
             result = get_max_context_window(None)
             assert result == 16384
 
@@ -103,7 +103,7 @@ class TestGetMaxContextWindow:
         from fusion_mlx.server import get_max_context_window
 
         state = self._mount_native_and_policy(native_ctx=262_144, policy_cap=None)
-        with patch("omlx.server._server_state", state):
+        with patch("fusion_mlx.server._server_state", state):
             assert get_max_context_window("big-model") == 262_144
 
     def test_policy_set_clamps_native(self):
@@ -112,7 +112,7 @@ class TestGetMaxContextWindow:
         from fusion_mlx.server import get_max_context_window
 
         state = self._mount_native_and_policy(native_ctx=262_144, policy_cap=128_000)
-        with patch("omlx.server._server_state", state):
+        with patch("fusion_mlx.server._server_state", state):
             assert (
                 get_max_context_window("big-model") == 128_000
             ), "Policy of 128k must clamp a model that natively declares 256k"
@@ -123,7 +123,7 @@ class TestGetMaxContextWindow:
         from fusion_mlx.server import get_max_context_window
 
         state = self._mount_native_and_policy(native_ctx=32_768, policy_cap=128_000)
-        with patch("omlx.server._server_state", state):
+        with patch("fusion_mlx.server._server_state", state):
             assert get_max_context_window("small-model") == 32_768
 
     def test_per_model_override_escapes_policy(self):
@@ -139,7 +139,7 @@ class TestGetMaxContextWindow:
         state.settings_manager.get_settings_for_request.return_value = ModelSettings(
             max_context_window=200_000
         )
-        with patch("omlx.server._server_state", state):
+        with patch("fusion_mlx.server._server_state", state):
             assert (
                 get_max_context_window("override-model") == 200_000
             ), "Per-model override must escape the policy clamp"
@@ -155,7 +155,7 @@ class TestGetMaxContextWindow:
 
         # native_ctx=None: model config doesn't expose a context length
         state = self._mount_native_and_policy(native_ctx=None, policy_cap=16_000)
-        with patch("omlx.server._server_state", state):
+        with patch("fusion_mlx.server._server_state", state):
             # Fallback (32768) returned, not the policy (16_000).
             assert get_max_context_window("no-native-model") == 32_768
 
@@ -176,7 +176,7 @@ class TestValidateContextWindow:
         from fusion_mlx.server import validate_context_window
 
         state = self._make_server_state(global_max_ctx=1000)
-        with patch("omlx.server._server_state", state):
+        with patch("fusion_mlx.server._server_state", state):
             # Should not raise
             validate_context_window(500)
 
@@ -185,7 +185,7 @@ class TestValidateContextWindow:
         from fusion_mlx.server import validate_context_window
 
         state = self._make_server_state(global_max_ctx=1000)
-        with patch("omlx.server._server_state", state):
+        with patch("fusion_mlx.server._server_state", state):
             # Should not raise (equal is OK)
             validate_context_window(1000)
 
@@ -194,7 +194,7 @@ class TestValidateContextWindow:
         from fusion_mlx.server import validate_context_window
 
         state = self._make_server_state(global_max_ctx=1000)
-        with patch("omlx.server._server_state", state):
+        with patch("fusion_mlx.server._server_state", state):
             with pytest.raises(HTTPException) as exc_info:
                 validate_context_window(1001)
             assert exc_info.value.status_code == 400
@@ -212,7 +212,7 @@ class TestValidateContextWindow:
         )
         state.settings_manager = mock_manager
 
-        with patch("omlx.server._server_state", state):
+        with patch("fusion_mlx.server._server_state", state):
             with pytest.raises(HTTPException) as exc_info:
                 validate_context_window(200, "test-model")
             assert exc_info.value.status_code == 400

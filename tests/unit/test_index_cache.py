@@ -100,7 +100,7 @@ class TestApplyIndexCache:
         model.model_type = "deepseek_v32"
         assert apply_index_cache(model, 1) is False
 
-    @patch("omlx.patches.index_cache._class_patch_applied", True)
+    @patch("fusion_mlx.patches.index_cache._class_patch_applied", True)
     def test_applies_flags_to_layers(self):
         from fusion_mlx.patches.index_cache import apply_index_cache
 
@@ -132,7 +132,7 @@ class TestApplyIndexCache:
         assert hasattr(model.model, "_index_cache_state")
         assert model.model._index_cache_state["last_topk_indices"] is None
 
-    @patch("omlx.patches.index_cache._class_patch_applied", True)
+    @patch("fusion_mlx.patches.index_cache._class_patch_applied", True)
     def test_skips_none_layers(self):
         """None layers (pipeline parallel placeholders) should be skipped."""
         from fusion_mlx.patches.index_cache import apply_index_cache
@@ -172,7 +172,7 @@ class TestApplyPostLoadTransforms:
         result = apply_post_load_transforms(model, settings)
         assert result is model
 
-    @patch("omlx.patches.index_cache.apply_index_cache")
+    @patch("fusion_mlx.patches.index_cache.apply_index_cache")
     def test_calls_apply_index_cache(self, mock_apply):
         from fusion_mlx.utils.model_loading import apply_post_load_transforms
 
@@ -184,7 +184,7 @@ class TestApplyPostLoadTransforms:
         mock_apply.assert_called_once_with(model, 4)
         assert result is model
 
-    @patch("omlx.patches.index_cache.apply_index_cache")
+    @patch("fusion_mlx.patches.index_cache.apply_index_cache")
     def test_freq_1_skipped(self, mock_apply):
         from fusion_mlx.utils.model_loading import apply_post_load_transforms
 

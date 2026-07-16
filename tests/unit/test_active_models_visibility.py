@@ -66,11 +66,11 @@ def test_active_models_generation_includes_activity_and_waiting_rows():
         patch.object(
             admin_routes, "_get_engine_pool", return_value=FakePool(scheduler)
         ),
-        patch("omlx.admin.routes._get_server_state", return_value=None),
+        patch("fusion_mlx.admin.routes._get_server_state", return_value=None),
         patch.object(admin_routes, "_get_settings_manager", return_value=None),
         patch.object(admin_routes, "_get_global_settings", return_value=None),
         patch(
-            "omlx.prefill_progress.get_prefill_tracker",
+            "fusion_mlx.prefill_progress.get_prefill_tracker",
             return_value=FakePrefillTracker(),
         ),
         patch("time.monotonic", return_value=110.0),
@@ -122,11 +122,11 @@ def test_active_models_does_not_count_waiting_collectors_as_active():
         patch.object(
             admin_routes, "_get_engine_pool", return_value=FakePool(scheduler)
         ),
-        patch("omlx.admin.routes._get_server_state", return_value=None),
+        patch("fusion_mlx.admin.routes._get_server_state", return_value=None),
         patch.object(admin_routes, "_get_settings_manager", return_value=None),
         patch.object(admin_routes, "_get_global_settings", return_value=None),
         patch(
-            "omlx.prefill_progress.get_prefill_tracker",
+            "fusion_mlx.prefill_progress.get_prefill_tracker",
             return_value=EmptyPrefillTracker(),
         ),
         patch("time.monotonic", return_value=110.0),
@@ -152,11 +152,11 @@ def test_active_models_loading_includes_elapsed_and_percent_estimate():
             "_get_engine_pool",
             return_value=FakePool(scheduler, loading_started_at=102.0),
         ),
-        patch("omlx.admin.routes._get_server_state", return_value=None),
+        patch("fusion_mlx.admin.routes._get_server_state", return_value=None),
         patch.object(admin_routes, "_get_settings_manager", return_value=None),
         patch.object(admin_routes, "_get_global_settings", return_value=None),
         patch(
-            "omlx.prefill_progress.get_prefill_tracker",
+            "fusion_mlx.prefill_progress.get_prefill_tracker",
             return_value=FakePrefillTracker(),
         ),
         patch("time.monotonic", return_value=110.0),
@@ -218,11 +218,11 @@ def test_active_models_includes_non_streaming_activity_rows():
         patch.object(
             admin_routes, "_get_engine_pool", return_value=FakeNonStreamingPool()
         ),
-        patch("omlx.admin.routes._get_server_state", return_value=None),
+        patch("fusion_mlx.admin.routes._get_server_state", return_value=None),
         patch.object(admin_routes, "_get_settings_manager", return_value=None),
         patch.object(admin_routes, "_get_global_settings", return_value=None),
         patch(
-            "omlx.prefill_progress.get_prefill_tracker",
+            "fusion_mlx.prefill_progress.get_prefill_tracker",
             return_value=EmptyPrefillTracker(),
         ),
         patch("time.monotonic", return_value=110.0),
@@ -294,7 +294,7 @@ class EmptyPrefillTracker:
 def test_idle_seconds_computed_from_last_access():
     """idle_seconds = time.time() - last_access for a loaded model."""
     with (
-        patch("omlx.admin.routes._get_server_state", return_value=None),
+        patch("fusion_mlx.admin.routes._get_server_state", return_value=None),
         patch.object(
             admin_routes,
             "_get_engine_pool",
@@ -303,7 +303,7 @@ def test_idle_seconds_computed_from_last_access():
         patch.object(admin_routes, "_get_settings_manager", return_value=None),
         patch.object(admin_routes, "_get_global_settings", return_value=None),
         patch(
-            "omlx.prefill_progress.get_prefill_tracker",
+            "fusion_mlx.prefill_progress.get_prefill_tracker",
             return_value=EmptyPrefillTracker(),
         ),
         patch("time.time", return_value=115.0),
@@ -319,14 +319,14 @@ def test_idle_seconds_computed_from_last_access():
 def test_idle_seconds_none_when_no_last_access():
     """idle_seconds is None when last_access is missing or 0."""
     with (
-        patch("omlx.admin.routes._get_server_state", return_value=None),
+        patch("fusion_mlx.admin.routes._get_server_state", return_value=None),
         patch.object(
             admin_routes, "_get_engine_pool", return_value=FakeIdlePool(last_access=0)
         ),
         patch.object(admin_routes, "_get_settings_manager", return_value=None),
         patch.object(admin_routes, "_get_global_settings", return_value=None),
         patch(
-            "omlx.prefill_progress.get_prefill_tracker",
+            "fusion_mlx.prefill_progress.get_prefill_tracker",
             return_value=EmptyPrefillTracker(),
         ),
         patch("time.time", return_value=115.0),
@@ -340,7 +340,7 @@ def test_idle_seconds_none_when_no_last_access():
 def test_ttl_remaining_from_per_model_setting():
     """TTL countdown uses per-model ttl_seconds when available."""
     with (
-        patch("omlx.admin.routes._get_server_state", return_value=None),
+        patch("fusion_mlx.admin.routes._get_server_state", return_value=None),
         patch.object(
             admin_routes,
             "_get_engine_pool",
@@ -353,7 +353,7 @@ def test_ttl_remaining_from_per_model_setting():
         ),
         patch.object(admin_routes, "_get_global_settings", return_value=None),
         patch(
-            "omlx.prefill_progress.get_prefill_tracker",
+            "fusion_mlx.prefill_progress.get_prefill_tracker",
             return_value=EmptyPrefillTracker(),
         ),
         patch("time.time", return_value=115.0),
@@ -370,7 +370,7 @@ def test_ttl_remaining_from_per_model_setting():
 def test_ttl_remaining_falls_back_to_global_idle_timeout():
     """When per-model ttl_seconds is None, global idle_timeout is used."""
     with (
-        patch("omlx.admin.routes._get_server_state", return_value=None),
+        patch("fusion_mlx.admin.routes._get_server_state", return_value=None),
         patch.object(
             admin_routes,
             "_get_engine_pool",
@@ -387,7 +387,7 @@ def test_ttl_remaining_falls_back_to_global_idle_timeout():
             return_value=_make_global_settings(idle_timeout_seconds=60),
         ),
         patch(
-            "omlx.prefill_progress.get_prefill_tracker",
+            "fusion_mlx.prefill_progress.get_prefill_tracker",
             return_value=EmptyPrefillTracker(),
         ),
         patch("time.time", return_value=115.0),
@@ -404,7 +404,7 @@ def test_ttl_remaining_falls_back_to_global_idle_timeout():
 def test_ttl_remaining_per_model_takes_priority():
     """Per-model ttl_seconds overrides global idle_timeout."""
     with (
-        patch("omlx.admin.routes._get_server_state", return_value=None),
+        patch("fusion_mlx.admin.routes._get_server_state", return_value=None),
         patch.object(
             admin_routes,
             "_get_engine_pool",
@@ -421,7 +421,7 @@ def test_ttl_remaining_per_model_takes_priority():
             return_value=_make_global_settings(idle_timeout_seconds=300),
         ),
         patch(
-            "omlx.prefill_progress.get_prefill_tracker",
+            "fusion_mlx.prefill_progress.get_prefill_tracker",
             return_value=EmptyPrefillTracker(),
         ),
         patch("time.time", return_value=115.0),
@@ -437,7 +437,7 @@ def test_ttl_remaining_per_model_takes_priority():
 def test_ttl_remaining_clamped_to_zero():
     """ttl_remaining_seconds floors at 0 when TTL has expired."""
     with (
-        patch("omlx.admin.routes._get_server_state", return_value=None),
+        patch("fusion_mlx.admin.routes._get_server_state", return_value=None),
         patch.object(
             admin_routes,
             "_get_engine_pool",
@@ -450,7 +450,7 @@ def test_ttl_remaining_clamped_to_zero():
         ),
         patch.object(admin_routes, "_get_global_settings", return_value=None),
         patch(
-            "omlx.prefill_progress.get_prefill_tracker",
+            "fusion_mlx.prefill_progress.get_prefill_tracker",
             return_value=EmptyPrefillTracker(),
         ),
         patch("time.time", return_value=130.0),  # 30s idle, 10s TTL → expired
@@ -486,12 +486,12 @@ def test_idle_and_ttl_not_computed_for_loading_model():
             }
 
     with (
-        patch("omlx.admin.routes._get_server_state", return_value=None),
+        patch("fusion_mlx.admin.routes._get_server_state", return_value=None),
         patch.object(admin_routes, "_get_engine_pool", return_value=LoadingPool()),
         patch.object(admin_routes, "_get_settings_manager", return_value=None),
         patch.object(admin_routes, "_get_global_settings", return_value=None),
         patch(
-            "omlx.prefill_progress.get_prefill_tracker",
+            "fusion_mlx.prefill_progress.get_prefill_tracker",
             return_value=EmptyPrefillTracker(),
         ),
         patch("time.time", return_value=115.0),

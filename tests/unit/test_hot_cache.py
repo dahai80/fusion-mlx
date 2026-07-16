@@ -998,7 +998,7 @@ class TestHotCacheWriteBack:
         queue_depth = 4
         block_count = 12  # 3x the queue depth
 
-        with patch("omlx.cache.paged_ssd_cache._MAX_PENDING_WRITES", queue_depth):
+        with patch("fusion_mlx.cache.paged_ssd_cache._MAX_PENDING_WRITES", queue_depth):
             mgr = PagedSSDCacheManager(
                 cache_dir=tmp_path / "wb_queue_full_test",
                 max_size_bytes=100 * 1024**2,

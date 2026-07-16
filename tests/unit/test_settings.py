@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Tests for omlx.settings module."""
+"""Tests for fusion_mlx.settings module."""
 
 import json
 import os
@@ -779,7 +779,7 @@ class TestGlobalSettings:
         hf_cache.mkdir(parents=True)
         monkeypatch.setenv("HF_HUB_CACHE", str(hf_cache))
 
-        settings = GlobalSettings(base_path=tmp_path / "omlx")
+        settings = GlobalSettings(base_path=tmp_path / "fusion_mlx")
         settings.model.model_dirs = [str(primary), str(additional)]
 
         assert settings.get_effective_model_dirs() == [
@@ -798,7 +798,7 @@ class TestGlobalSettings:
         hf_cache.mkdir(parents=True)
         monkeypatch.setenv("HF_HUB_CACHE", str(hf_cache))
 
-        settings = GlobalSettings(base_path=tmp_path / "omlx")
+        settings = GlobalSettings(base_path=tmp_path / "fusion_mlx")
         settings.model.model_dirs = [str(primary)]
         settings.huggingface.hf_cache_enabled = False
 
@@ -967,7 +967,7 @@ class TestGlobalSettings:
     def test_save_creates_directory(self):
         """Test save creates base directory if needed."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            base = Path(tmpdir) / "nested" / "omlx"
+            base = Path(tmpdir) / "nested" / "fusion_mlx"
             settings = GlobalSettings(base_path=base)
             settings.save()
 
@@ -977,7 +977,7 @@ class TestGlobalSettings:
     def test_ensure_directories(self):
         """Test directory creation."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            base = Path(tmpdir) / "omlx"
+            base = Path(tmpdir) / "fusion_mlx"
             settings = GlobalSettings(base_path=base)
             settings.ensure_directories()
 
@@ -989,7 +989,7 @@ class TestGlobalSettings:
     def test_ensure_directories_custom_paths(self):
         """Test directory creation with custom paths."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            base = Path(tmpdir) / "omlx"
+            base = Path(tmpdir) / "fusion_mlx"
             custom_models = Path(tmpdir) / "custom_models"
             custom_cache = Path(tmpdir) / "custom_cache"
             custom_logs = Path(tmpdir) / "custom_logs"
@@ -1008,7 +1008,7 @@ class TestGlobalSettings:
     def test_ensure_directories_unavailable_model_dir(self):
         """Test that unavailable model dirs are skipped instead of crashing."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            base = Path(tmpdir) / "omlx"
+            base = Path(tmpdir) / "fusion_mlx"
             valid_models = Path(tmpdir) / "valid_models"
             unavailable = Path("/Volumes/NonExistentDrive/Models")
 
@@ -1025,7 +1025,7 @@ class TestGlobalSettings:
 
     def test_ensure_directories_unreadable_model_dir(self, tmp_path, monkeypatch):
         """Test that existing but unreadable model dirs are skipped."""
-        base = tmp_path / "omlx"
+        base = tmp_path / "fusion_mlx"
         valid_models = tmp_path / "valid_models"
         unreadable = tmp_path / "unreadable_models"
         unreadable.mkdir()
@@ -1644,9 +1644,9 @@ class TestHelperFunctions:
             raise ValueError(name)
 
         with (
-            patch("omlx.settings.os.sysconf", side_effect=fake_sysconf),
+            patch("fusion_mlx.settings.os.sysconf", side_effect=fake_sysconf),
             patch(
-                "omlx.utils.psutil_compat.get_total_memory",
+                "fusion_mlx.utils.psutil_compat.get_total_memory",
                 side_effect=AssertionError("compat should not be called"),
             ),
         ):
@@ -1654,9 +1654,11 @@ class TestHelperFunctions:
 
     def test_get_system_memory_falls_back_to_compat_when_sysconf_fails(self):
         with (
-            patch("omlx.settings.os.sysconf", side_effect=ValueError("unsupported")),
             patch(
-                "omlx.utils.psutil_compat.get_total_memory",
+                "fusion_mlx.settings.os.sysconf", side_effect=ValueError("unsupported")
+            ),
+            patch(
+                "fusion_mlx.utils.psutil_compat.get_total_memory",
                 return_value=32 * 1024**3,
             ),
         ):
@@ -1696,17 +1698,19 @@ class TestResolveDefaultBasePath:
     def test_falls_back_to_default_when_nothing_configured(self, monkeypatch):
         monkeypatch.delenv("OMLX_BASE_PATH", raising=False)
         monkeypatch.setattr(
-            "omlx.settings.BASE_PATH_BOOTSTRAP_FILE",
+            "fusion_mlx.settings.BASE_PATH_BOOTSTRAP_FILE",
             Path("/nonexistent/oMLX/base-path"),
         )
-        assert resolve_default_base_path() == Path.home() / ".omlx"
+        assert resolve_default_base_path() == Path.home() / ".fusion_mlx"
 
     def test_uses_bootstrap_file_when_present(self, monkeypatch, tmp_path):
         monkeypatch.delenv("OMLX_BASE_PATH", raising=False)
-        custom_base = tmp_path / "external-ssd" / "omlx-data"
+        custom_base = tmp_path / "external-ssd" / "fusion_mlx-data"
         bootstrap_file = tmp_path / "base-path"
         bootstrap_file.write_text(f"{custom_base}\n", encoding="utf-8")
-        monkeypatch.setattr("omlx.settings.BASE_PATH_BOOTSTRAP_FILE", bootstrap_file)
+        monkeypatch.setattr(
+            "fusion_mlx.settings.BASE_PATH_BOOTSTRAP_FILE", bootstrap_file
+        )
 
         assert resolve_default_base_path() == custom_base.resolve()
 
@@ -1715,7 +1719,9 @@ class TestResolveDefaultBasePath:
         bootstrap_base = tmp_path / "bootstrap-base"
         bootstrap_file = tmp_path / "base-path"
         bootstrap_file.write_text(str(bootstrap_base), encoding="utf-8")
-        monkeypatch.setattr("omlx.settings.BASE_PATH_BOOTSTRAP_FILE", bootstrap_file)
+        monkeypatch.setattr(
+            "fusion_mlx.settings.BASE_PATH_BOOTSTRAP_FILE", bootstrap_file
+        )
         monkeypatch.setenv("OMLX_BASE_PATH", str(env_base))
 
         assert resolve_default_base_path() == env_base.resolve()
@@ -1724,15 +1730,19 @@ class TestResolveDefaultBasePath:
         monkeypatch.delenv("OMLX_BASE_PATH", raising=False)
         bootstrap_file = tmp_path / "base-path"
         bootstrap_file.write_text("   \n", encoding="utf-8")
-        monkeypatch.setattr("omlx.settings.BASE_PATH_BOOTSTRAP_FILE", bootstrap_file)
+        monkeypatch.setattr(
+            "fusion_mlx.settings.BASE_PATH_BOOTSTRAP_FILE", bootstrap_file
+        )
 
-        assert resolve_default_base_path() == Path.home() / ".omlx"
+        assert resolve_default_base_path() == Path.home() / ".fusion_mlx"
 
     def test_global_settings_load_uses_resolver_when_no_base_path_given(
         self, monkeypatch, tmp_path
     ):
         resolved = tmp_path / "resolved-base"
-        monkeypatch.setattr("omlx.settings.resolve_default_base_path", lambda: resolved)
+        monkeypatch.setattr(
+            "fusion_mlx.settings.resolve_default_base_path", lambda: resolved
+        )
 
         settings = GlobalSettings.load()
 

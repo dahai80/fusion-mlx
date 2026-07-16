@@ -255,7 +255,7 @@ class TestGLMAdaptiveChunkedPrefill:
         req = _make_request("glm", n_tokens=8194)
         state = _make_prefill_state(sched, req, n_remaining=8193)
 
-        with patch("omlx.scheduler._sync_and_clear_cache"):
+        with patch("fusion_mlx.scheduler._sync_and_clear_cache"):
             done = sched._step_prefill_chunk(state)
 
         assert not done
@@ -269,7 +269,7 @@ class TestGLMAdaptiveChunkedPrefill:
         req = _make_request("deepseek", n_tokens=8193)
         state = _make_prefill_state(sched, req, n_remaining=8192)
 
-        with patch("omlx.scheduler._sync_and_clear_cache"):
+        with patch("fusion_mlx.scheduler._sync_and_clear_cache"):
             done = sched._step_prefill_chunk(state)
 
         assert not done
@@ -628,7 +628,7 @@ class TestScheduleWaitingChunkedFork:
         with patch.object(sched, "_begin_prefill", return_value=fake_state):
             with patch.object(sched, "_step_prefill_chunk", return_value=True):
                 with patch.object(sched, "_emit_final_boundary_if_needed"):
-                    with patch("omlx.scheduler._sync_and_clear_cache"):
+                    with patch("fusion_mlx.scheduler._sync_and_clear_cache"):
                         sched._schedule_waiting()
 
         assert req.request_id not in sched._prefill_states
@@ -698,9 +698,9 @@ class TestScheduleWaitingChunkedFork:
     def _mock_current(self, sched, current_gb):
         """Context manager-ish — patch both memory probes to current_gb."""
         target = int(current_gb * 1024**3)
-        return patch("omlx.scheduler.mx.get_active_memory", return_value=target), patch(
-            "omlx.scheduler.get_phys_footprint", return_value=target
-        )
+        return patch(
+            "fusion_mlx.scheduler.mx.get_active_memory", return_value=target
+        ), patch("fusion_mlx.scheduler.get_phys_footprint", return_value=target)
 
     def test_adaptive_throttle_below_soft_watermark_passthrough(self):
         """current < soft watermark → no throttle, full chunk."""

@@ -1,4 +1,4 @@
-"""Tests for TurboQuant KV cache (mlx-vlm backend + omlx BatchTurboQuantKVCache)."""
+"""Tests for TurboQuant KV cache (mlx-vlm backend + fusion_mlx BatchTurboQuantKVCache)."""
 
 import mlx.core as mx
 import pytest
@@ -732,7 +732,7 @@ def test_from_cache_merge_builds_working_batch():
     """Mirror the scheduler path: fp16 prefill -> from_cache (post-prefill
     quantize) -> _merge_caches builds a BatchTurboQuantKVCache that decodes.
 
-    Importing omlx.scheduler installs the TurboQuantKVCache.merge monkey-patch
+    Importing fusion_mlx.scheduler installs the TurboQuantKVCache.merge monkey-patch
     that _merge_caches() relies on, so caches[0].merge([...]) is what the
     BatchGenerator actually calls at insert() time.
     """

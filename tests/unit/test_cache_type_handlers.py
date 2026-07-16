@@ -1225,7 +1225,7 @@ class TestCacheListHandlerWithMLX:
         from unittest.mock import patch
 
         with patch.object(
-            logging.getLogger("omlx.cache.type_handlers"), "debug"
+            logging.getLogger("fusion_mlx.cache.type_handlers"), "debug"
         ) as mock_debug:
             cache = handler.reconstruct_cache(state, meta_state)
 

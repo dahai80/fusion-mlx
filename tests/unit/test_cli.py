@@ -41,7 +41,7 @@ class TestCLIHelp:
     def test_main_help(self):
         """Test main CLI help output."""
         result = subprocess.run(
-            [sys.executable, "-m", "omlx.cli", "--help"],
+            [sys.executable, "-m", "fusion_mlx.cli", "--help"],
             capture_output=True,
             text=True,
             timeout=10,
@@ -54,7 +54,7 @@ class TestCLIHelp:
     def test_main_version(self):
         """Test main CLI version output."""
         result = subprocess.run(
-            [sys.executable, "-m", "omlx.cli", "--version"],
+            [sys.executable, "-m", "fusion_mlx.cli", "--version"],
             capture_output=True,
             text=True,
             timeout=10,
@@ -66,7 +66,7 @@ class TestCLIHelp:
     def test_serve_help(self):
         """Test serve command help output."""
         result = subprocess.run(
-            [sys.executable, "-m", "omlx.cli", "serve", "--help"],
+            [sys.executable, "-m", "fusion_mlx.cli", "serve", "--help"],
             capture_output=True,
             text=True,
             timeout=10,
@@ -82,7 +82,7 @@ class TestCLIHelp:
     def test_lifecycle_commands_in_main_help(self):
         """Test start/stop/restart lifecycle commands are exposed."""
         result = subprocess.run(
-            [sys.executable, "-m", "omlx.cli", "--help"],
+            [sys.executable, "-m", "fusion_mlx.cli", "--help"],
             capture_output=True,
             text=True,
             timeout=10,
@@ -104,7 +104,7 @@ class TestLifecycleCommand:
         return SimpleNamespace(**values)
 
     def test_app_bundle_stop_without_running_app_is_success(self, monkeypatch, capsys):
-        """`omlx stop` must not launch the macOS app just to stop it."""
+        """`fusion_mlx stop` must not launch the macOS app just to stop it."""
         import fusion_mlx.utils.install as install
         from fusion_mlx import cli
 
@@ -118,7 +118,7 @@ class TestLifecycleCommand:
         cli._open_macos_app.assert_not_called()
 
     def test_app_bundle_start_sends_command_and_waits(self, monkeypatch):
-        """`omlx start` asks the app to start and waits for a running state."""
+        """`fusion_mlx start` asks the app to start and waits for a running state."""
         import fusion_mlx.utils.install as install
         from fusion_mlx import cli
 
@@ -154,7 +154,7 @@ class TestCLIEntryPoint:
         """Test that CLI module is runnable."""
         # Should not crash when running with --help
         result = subprocess.run(
-            [sys.executable, "-m", "omlx.cli", "--help"],
+            [sys.executable, "-m", "fusion_mlx.cli", "--help"],
             capture_output=True,
             text=True,
             timeout=10,
@@ -164,7 +164,7 @@ class TestCLIEntryPoint:
     def test_invalid_command_error(self):
         """Test error handling for invalid command."""
         result = subprocess.run(
-            [sys.executable, "-m", "omlx.cli", "invalid_command"],
+            [sys.executable, "-m", "fusion_mlx.cli", "invalid_command"],
             capture_output=True,
             text=True,
             timeout=10,
@@ -175,7 +175,7 @@ class TestCLIEntryPoint:
     def test_no_command_shows_help(self):
         """Test that no command shows help."""
         result = subprocess.run(
-            [sys.executable, "-m", "omlx.cli"],
+            [sys.executable, "-m", "fusion_mlx.cli"],
             capture_output=True,
             text=True,
             timeout=10,
@@ -190,7 +190,7 @@ class TestServeCommandOptions:
     def test_serve_has_model_dir_option(self):
         """Test that serve command has --model-dir option."""
         result = subprocess.run(
-            [sys.executable, "-m", "omlx.cli", "serve", "--help"],
+            [sys.executable, "-m", "fusion_mlx.cli", "serve", "--help"],
             capture_output=True,
             text=True,
             timeout=10,
@@ -200,7 +200,7 @@ class TestServeCommandOptions:
     def test_serve_has_no_max_memory_options(self):
         """The --max-model-memory and --max-process-memory CLI flags are removed."""
         result = subprocess.run(
-            [sys.executable, "-m", "omlx.cli", "serve", "--help"],
+            [sys.executable, "-m", "fusion_mlx.cli", "serve", "--help"],
             capture_output=True,
             text=True,
             timeout=10,
@@ -211,7 +211,7 @@ class TestServeCommandOptions:
     def test_serve_has_memory_guard_options(self):
         """Test that serve command exposes memory guard controls."""
         result = subprocess.run(
-            [sys.executable, "-m", "omlx.cli", "serve", "--help"],
+            [sys.executable, "-m", "fusion_mlx.cli", "serve", "--help"],
             capture_output=True,
             text=True,
             timeout=10,
@@ -225,7 +225,7 @@ class TestServeCommandOptions:
     def test_serve_no_model_specific_options(self):
         """Test that serve command does not have model-specific options (managed via admin page)."""
         result = subprocess.run(
-            [sys.executable, "-m", "omlx.cli", "serve", "--help"],
+            [sys.executable, "-m", "fusion_mlx.cli", "serve", "--help"],
             capture_output=True,
             text=True,
             timeout=10,
@@ -242,7 +242,7 @@ class TestServeCommandOptions:
     def test_serve_has_host_port_options(self):
         """Test that serve command has --host and --port options."""
         result = subprocess.run(
-            [sys.executable, "-m", "omlx.cli", "serve", "--help"],
+            [sys.executable, "-m", "fusion_mlx.cli", "serve", "--help"],
             capture_output=True,
             text=True,
             timeout=10,
@@ -253,7 +253,7 @@ class TestServeCommandOptions:
     def test_serve_has_scheduler_options(self):
         """Test that serve command has scheduler options."""
         result = subprocess.run(
-            [sys.executable, "-m", "omlx.cli", "serve", "--help"],
+            [sys.executable, "-m", "fusion_mlx.cli", "serve", "--help"],
             capture_output=True,
             text=True,
             timeout=10,
@@ -264,7 +264,7 @@ class TestServeCommandOptions:
     def test_serve_has_cache_options(self):
         """Test that serve command has cache options."""
         result = subprocess.run(
-            [sys.executable, "-m", "omlx.cli", "serve", "--help"],
+            [sys.executable, "-m", "fusion_mlx.cli", "serve", "--help"],
             capture_output=True,
             text=True,
             timeout=10,
@@ -276,7 +276,7 @@ class TestServeCommandOptions:
     def test_serve_has_mcp_option(self):
         """Test that serve command has --mcp-config option."""
         result = subprocess.run(
-            [sys.executable, "-m", "omlx.cli", "serve", "--help"],
+            [sys.executable, "-m", "fusion_mlx.cli", "serve", "--help"],
             capture_output=True,
             text=True,
             timeout=10,
@@ -286,7 +286,7 @@ class TestServeCommandOptions:
     def test_serve_has_base_path_option(self):
         """Test that serve command has --base-path option."""
         result = subprocess.run(
-            [sys.executable, "-m", "omlx.cli", "serve", "--help"],
+            [sys.executable, "-m", "fusion_mlx.cli", "serve", "--help"],
             capture_output=True,
             text=True,
             timeout=10,
@@ -296,7 +296,7 @@ class TestServeCommandOptions:
     def test_serve_has_api_key_option(self):
         """Test that serve command has --api-key option."""
         result = subprocess.run(
-            [sys.executable, "-m", "omlx.cli", "serve", "--help"],
+            [sys.executable, "-m", "fusion_mlx.cli", "serve", "--help"],
             capture_output=True,
             text=True,
             timeout=10,
@@ -310,7 +310,7 @@ class TestLaunchCommandOptions:
     def test_launch_has_host_port_options(self):
         """Test that launch command has --host and --port options."""
         result = subprocess.run(
-            [sys.executable, "-m", "omlx.cli", "launch", "--help"],
+            [sys.executable, "-m", "fusion_mlx.cli", "launch", "--help"],
             capture_output=True,
             text=True,
             timeout=10,
@@ -322,7 +322,7 @@ class TestLaunchCommandOptions:
     def test_launch_has_model_option(self):
         """Test that launch command has --model option."""
         result = subprocess.run(
-            [sys.executable, "-m", "omlx.cli", "launch", "--help"],
+            [sys.executable, "-m", "fusion_mlx.cli", "launch", "--help"],
             capture_output=True,
             text=True,
             timeout=10,
@@ -332,7 +332,7 @@ class TestLaunchCommandOptions:
     def test_launch_has_claude_tier_options(self):
         """Claude tier options should remain accepted for copied app commands."""
         result = subprocess.run(
-            [sys.executable, "-m", "omlx.cli", "launch", "--help"],
+            [sys.executable, "-m", "fusion_mlx.cli", "launch", "--help"],
             capture_output=True,
             text=True,
             timeout=10,
@@ -344,7 +344,7 @@ class TestLaunchCommandOptions:
     def test_launch_lists_hermes(self):
         """Test that launch help lists Hermes as an available integration."""
         result = subprocess.run(
-            [sys.executable, "-m", "omlx.cli", "launch", "--help"],
+            [sys.executable, "-m", "fusion_mlx.cli", "launch", "--help"],
             capture_output=True,
             text=True,
             timeout=10,
@@ -356,7 +356,7 @@ class TestLaunchCommandOptions:
     def test_launch_lists_codex_app(self):
         """Test that launch help lists the Codex Desktop App target."""
         result = subprocess.run(
-            [sys.executable, "-m", "omlx.cli", "launch", "--help"],
+            [sys.executable, "-m", "fusion_mlx.cli", "launch", "--help"],
             capture_output=True,
             text=True,
             timeout=10,
@@ -408,8 +408,8 @@ class TestLaunchCommandFunction:
 
         with (
             patch("requests.get", side_effect=[health_response, status_response]),
-            patch("omlx.integrations.get_integration", return_value=integration),
-            patch("omlx.settings.GlobalSettings.load", return_value=settings),
+            patch("fusion_mlx.integrations.get_integration", return_value=integration),
+            patch("fusion_mlx.settings.GlobalSettings.load", return_value=settings),
         ):
             launch_command(args)
 
@@ -466,8 +466,8 @@ class TestLaunchCommandFunction:
 
         with (
             patch("requests.get", side_effect=[health_response, status_response]),
-            patch("omlx.integrations.get_integration", return_value=integration),
-            patch("omlx.settings.GlobalSettings.load", return_value=settings),
+            patch("fusion_mlx.integrations.get_integration", return_value=integration),
+            patch("fusion_mlx.settings.GlobalSettings.load", return_value=settings),
         ):
             launch_command(args)
 
@@ -517,8 +517,8 @@ class TestLaunchCommandFunction:
 
         with (
             patch("requests.get", side_effect=[health_response, status_response]),
-            patch("omlx.integrations.get_integration", return_value=integration),
-            patch("omlx.settings.GlobalSettings.load", return_value=settings),
+            patch("fusion_mlx.integrations.get_integration", return_value=integration),
+            patch("fusion_mlx.settings.GlobalSettings.load", return_value=settings),
         ):
             launch_command(args, extra_args=["--resume", "abc123"])
 
@@ -526,7 +526,7 @@ class TestLaunchCommandFunction:
         assert ctx.extra_args == ("--resume", "abc123")
 
     def test_launch_command_shows_picker_and_clears_saved_tiers(self):
-        """Bare `omlx launch claude` shows the picker and ignores saved tier models."""
+        """Bare `fusion_mlx launch claude` shows the picker and ignores saved tier models."""
         from fusion_mlx.cli import launch_command
 
         integration = MagicMock()
@@ -577,8 +577,8 @@ class TestLaunchCommandFunction:
                 "requests.get",
                 side_effect=[health_response, status_map_response, models_response],
             ),
-            patch("omlx.integrations.get_integration", return_value=integration),
-            patch("omlx.settings.GlobalSettings.load", return_value=settings),
+            patch("fusion_mlx.integrations.get_integration", return_value=integration),
+            patch("fusion_mlx.settings.GlobalSettings.load", return_value=settings),
         ):
             launch_command(args)
 
@@ -629,8 +629,8 @@ class TestLaunchCommandFunction:
 
         with (
             patch("requests.get", side_effect=[health_response, status_response]),
-            patch("omlx.integrations.get_integration", return_value=integration),
-            patch("omlx.settings.GlobalSettings.load", return_value=settings),
+            patch("fusion_mlx.integrations.get_integration", return_value=integration),
+            patch("fusion_mlx.settings.GlobalSettings.load", return_value=settings),
         ):
             launch_command(args)
 
@@ -642,12 +642,12 @@ class TestLaunchCommandFunction:
 
 
 class TestLaunchArgvParsing:
-    """Tests for top-level argv parsing of `omlx launch ...`."""
+    """Tests for top-level argv parsing of `fusion_mlx launch ...`."""
 
     def test_serve_still_rejects_unknown_args(self):
         """Non-launch commands must keep strict argparse rejection."""
         result = subprocess.run(
-            [sys.executable, "-m", "omlx.cli", "serve", "--bogus-flag"],
+            [sys.executable, "-m", "fusion_mlx.cli", "serve", "--bogus-flag"],
             capture_output=True,
             text=True,
             timeout=10,
@@ -750,17 +750,17 @@ class TestServeCommandFunctions:
         assert callable(serve_command)
 
     def test_serve_model_dir_optional_with_default(self):
-        """Test that serve --model-dir is optional with default ~/.omlx/models."""
+        """Test that serve --model-dir is optional with default ~/.fusion_mlx/models."""
         result = subprocess.run(
-            [sys.executable, "-m", "omlx.cli", "serve", "--help"],
+            [sys.executable, "-m", "fusion_mlx.cli", "serve", "--help"],
             capture_output=True,
             text=True,
             timeout=10,
         )
         # Should show that model-dir has a default
         assert "default" in result.stdout.lower()
-        # Help text should mention ~/.omlx/models or similar
-        assert ".omlx" in result.stdout or "model" in result.stdout.lower()
+        # Help text should mention ~/.fusion_mlx/models or similar
+        assert ".fusion_mlx" in result.stdout or "model" in result.stdout.lower()
 
     def test_invalid_embedding_batch_size_is_not_persisted(self, tmp_path):
         """Invalid CLI scheduler values should fail before saving settings.json."""
@@ -768,7 +768,7 @@ class TestServeCommandFunctions:
             [
                 sys.executable,
                 "-m",
-                "omlx.cli",
+                "fusion_mlx.cli",
                 "serve",
                 "--base-path",
                 str(tmp_path),
@@ -790,7 +790,7 @@ class TestServeCommandFunctions:
             [
                 sys.executable,
                 "-m",
-                "omlx.cli",
+                "fusion_mlx.cli",
                 "serve",
                 "--base-path",
                 str(tmp_path),
@@ -812,7 +812,7 @@ class TestServeCommandFunctions:
             [
                 sys.executable,
                 "-m",
-                "omlx.cli",
+                "fusion_mlx.cli",
                 "serve",
                 "--base-path",
                 str(tmp_path),
@@ -840,7 +840,7 @@ class TestServeCommandFunctions:
         host, port = listener.getsockname()
         settings = self._make_settings(tmp_path, host=host, port=port)
         args = self._make_serve_args(tmp_path, host=host, port=port)
-        previous_server = sys.modules.pop("omlx.server", None)
+        previous_server = sys.modules.pop("fusion_mlx.server", None)
         events = []
 
         original_bind_socket = uvicorn.Config.bind_socket
@@ -849,9 +849,11 @@ class TestServeCommandFunctions:
             events.append("bind")
             return original_bind_socket(config)
 
-        monkeypatch.setattr("omlx.settings.init_settings", lambda **kwargs: settings)
         monkeypatch.setattr(
-            "omlx.logging_config.configure_file_logging",
+            "fusion_mlx.settings.init_settings", lambda **kwargs: settings
+        )
+        monkeypatch.setattr(
+            "fusion_mlx.logging_config.configure_file_logging",
             lambda **kwargs: None,
         )
         monkeypatch.setattr("faulthandler.enable", lambda *args, **kwargs: None)
@@ -862,17 +864,17 @@ class TestServeCommandFunctions:
 
             assert exc.value.code != 0
             assert events == ["bind"]
-            assert "omlx.server" not in sys.modules
+            assert "fusion_mlx.server" not in sys.modules
         finally:
             listener.close()
             if previous_server is not None:
-                sys.modules["omlx.server"] = previous_server
+                sys.modules["fusion_mlx.server"] = previous_server
 
     def test_serve_hands_prebound_socket_to_uvicorn(self, tmp_path, monkeypatch):
         """Successful serve startup should pass the pre-bound socket into uvicorn."""
-        import omlx
         import uvicorn
 
+        import fusion_mlx
         from fusion_mlx.cli import serve_command
 
         host, port = "127.0.0.1", 0
@@ -880,7 +882,7 @@ class TestServeCommandFunctions:
         args = self._make_serve_args(tmp_path, host=host, port=port)
         events = []
 
-        fake_server = ModuleType("omlx.server")
+        fake_server = ModuleType("fusion_mlx.server")
 
         async def app(scope, receive, send):
             return None
@@ -890,8 +892,8 @@ class TestServeCommandFunctions:
 
         fake_server.app = app
         fake_server.init_server = MagicMock(side_effect=fake_init_server)
-        monkeypatch.setitem(sys.modules, "omlx.server", fake_server)
-        monkeypatch.setattr(omlx, "server", fake_server, raising=False)
+        monkeypatch.setitem(sys.modules, "fusion_mlx.server", fake_server)
+        monkeypatch.setattr(fusion_mlx, "server", fake_server, raising=False)
 
         fake_mlx = ModuleType("mlx")
         fake_mlx_core = ModuleType("mlx.core")
@@ -901,9 +903,11 @@ class TestServeCommandFunctions:
         monkeypatch.setitem(sys.modules, "mlx", fake_mlx)
         monkeypatch.setitem(sys.modules, "mlx.core", fake_mlx_core)
 
-        monkeypatch.setattr("omlx.settings.init_settings", lambda **kwargs: settings)
         monkeypatch.setattr(
-            "omlx.logging_config.configure_file_logging",
+            "fusion_mlx.settings.init_settings", lambda **kwargs: settings
+        )
+        monkeypatch.setattr(
+            "fusion_mlx.logging_config.configure_file_logging",
             lambda **kwargs: None,
         )
         monkeypatch.setattr("faulthandler.enable", lambda *args, **kwargs: None)
@@ -1018,18 +1022,18 @@ class TestCLIDocstrings:
     def test_main_has_description(self):
         """Test that main help has description."""
         result = subprocess.run(
-            [sys.executable, "-m", "omlx.cli", "--help"],
+            [sys.executable, "-m", "fusion_mlx.cli", "--help"],
             capture_output=True,
             text=True,
             timeout=10,
         )
         # Should have some description
-        assert "omlx" in result.stdout.lower() or "llm" in result.stdout.lower()
+        assert "fusion_mlx" in result.stdout.lower() or "llm" in result.stdout.lower()
 
     def test_serve_has_description(self):
         """Test that serve command has description."""
         result = subprocess.run(
-            [sys.executable, "-m", "omlx.cli", "serve", "--help"],
+            [sys.executable, "-m", "fusion_mlx.cli", "serve", "--help"],
             capture_output=True,
             text=True,
             timeout=10,

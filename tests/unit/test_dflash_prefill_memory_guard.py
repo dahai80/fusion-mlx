@@ -59,8 +59,8 @@ def _make_guard(step: int = 2048) -> _DFlashPrefillGuard:
 
 def _zero_mem():
     """Patch live-memory probes so the estimate alone drives the check."""
-    return patch("omlx.engine.dflash.get_phys_footprint", return_value=0), patch(
-        "omlx.memory_monitor.mx.get_active_memory",
+    return patch("fusion_mlx.engine.dflash.get_phys_footprint", return_value=0), patch(
+        "fusion_mlx.memory_monitor.mx.get_active_memory",
         side_effect=AssertionError("preflight must not read MLX directly"),
     )
 
@@ -169,7 +169,7 @@ def test_shared_helper_uses_caller_supplied_usage_without_mlx_probe():
 
     with (
         patch(
-            "omlx.memory_monitor.mx.get_active_memory",
+            "fusion_mlx.memory_monitor.mx.get_active_memory",
             side_effect=AssertionError("preflight must not read MLX directly"),
         ),
         pytest.raises(PrefillMemoryExceededError),
@@ -194,9 +194,9 @@ def test_guard_uses_cached_active_and_physical_usage_without_mlx_probe():
     guard._memory_hard_limit_bytes = int(phys + peak - 1)
 
     with (
-        patch("omlx.engine.dflash.get_phys_footprint", return_value=phys),
+        patch("fusion_mlx.engine.dflash.get_phys_footprint", return_value=phys),
         patch(
-            "omlx.memory_monitor.mx.get_active_memory",
+            "fusion_mlx.memory_monitor.mx.get_active_memory",
             side_effect=AssertionError("preflight must not read MLX directly"),
         ),
         pytest.raises(PrefillMemoryExceededError) as exc,
@@ -217,9 +217,9 @@ def test_guard_uses_cached_active_when_larger_than_physical():
     guard._memory_hard_limit_bytes = int(cached + peak - 1)
 
     with (
-        patch("omlx.engine.dflash.get_phys_footprint", return_value=phys),
+        patch("fusion_mlx.engine.dflash.get_phys_footprint", return_value=phys),
         patch(
-            "omlx.memory_monitor.mx.get_active_memory",
+            "fusion_mlx.memory_monitor.mx.get_active_memory",
             side_effect=AssertionError("preflight must not read MLX directly"),
         ),
         pytest.raises(PrefillMemoryExceededError) as exc,
@@ -291,7 +291,7 @@ async def test_engine_preflight_chat_delegates_to_fallback_in_fallback_mode():
 
 async def test_engine_preflight_chat_noop_without_guard():
     eng = _bare_engine()  # _prefill_guard is None, not in fallback
-    with patch("omlx.engine.dflash._warn_scheduler_unreachable_once") as warn:
+    with patch("fusion_mlx.engine.dflash._warn_scheduler_unreachable_once") as warn:
         await eng.preflight_chat([{"role": "user", "content": "hi"}])
     warn.assert_called_once()
 

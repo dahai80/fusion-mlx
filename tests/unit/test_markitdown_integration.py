@@ -81,7 +81,7 @@ def test_openai_models_hides_markitdown_by_default():
     state.engine_pool = _EmptyPool()
     state.global_settings = GlobalSettings()
 
-    with patch("omlx.server._server_state", state):
+    with patch("fusion_mlx.server._server_state", state):
         client = TestClient(app, raise_server_exceptions=False)
         response = client.get("/v1/models")
 
@@ -95,7 +95,7 @@ def test_openai_models_includes_markitdown_when_exposed():
     state.engine_pool = _EmptyPool()
     state.global_settings = _settings_with_markitdown_model()
 
-    with patch("omlx.server._server_state", state):
+    with patch("fusion_mlx.server._server_state", state):
         client = TestClient(app, raise_server_exceptions=False)
         response = client.get("/v1/models")
 
@@ -110,7 +110,7 @@ def test_openai_models_hides_markitdown_when_disabled():
     state.global_settings = _settings_with_markitdown_model()
     state.global_settings.integrations.markitdown_enabled = False
 
-    with patch("omlx.server._server_state", state):
+    with patch("fusion_mlx.server._server_state", state):
         client = TestClient(app, raise_server_exceptions=False)
         response = client.get("/v1/models")
 
@@ -125,7 +125,7 @@ def test_openai_models_hides_markitdown_when_not_exposed():
     state.global_settings = GlobalSettings()
     state.global_settings.integrations.markitdown_expose_model = False
 
-    with patch("omlx.server._server_state", state):
+    with patch("fusion_mlx.server._server_state", state):
         client = TestClient(app, raise_server_exceptions=False)
         response = client.get("/v1/models")
 
@@ -143,9 +143,11 @@ def test_markitdown_chat_completion_converts_file(monkeypatch):
         assert file.filename == "sample.pdf"
         return "# Converted"
 
-    monkeypatch.setattr("omlx.api.markitdown.convert_file_to_markdown", fake_convert)
+    monkeypatch.setattr(
+        "fusion_mlx.api.markitdown.convert_file_to_markdown", fake_convert
+    )
 
-    with patch("omlx.server._server_state", state):
+    with patch("fusion_mlx.server._server_state", state):
         client = TestClient(app, raise_server_exceptions=False)
         response = client.post(
             "/v1/chat/completions",
@@ -169,9 +171,11 @@ def test_markitdown_chat_completion_uses_latest_user_turn(monkeypatch):
     def fake_convert(file: MarkItDownFile, **kwargs) -> str:
         return f"# Converted {file.filename}"
 
-    monkeypatch.setattr("omlx.api.markitdown.convert_file_to_markdown", fake_convert)
+    monkeypatch.setattr(
+        "fusion_mlx.api.markitdown.convert_file_to_markdown", fake_convert
+    )
 
-    with patch("omlx.server._server_state", state):
+    with patch("fusion_mlx.server._server_state", state):
         client = TestClient(app, raise_server_exceptions=False)
         response = client.post(
             "/v1/chat/completions",
@@ -202,7 +206,7 @@ def test_markitdown_chat_completion_disabled_returns_404():
     state.global_settings = GlobalSettings()
     state.global_settings.integrations.markitdown_enabled = False
 
-    with patch("omlx.server._server_state", state):
+    with patch("fusion_mlx.server._server_state", state):
         client = TestClient(app, raise_server_exceptions=False)
         response = client.post(
             "/v1/chat/completions",
@@ -222,7 +226,7 @@ def test_markitdown_chat_completion_hidden_model_returns_404():
     state.global_settings = GlobalSettings()
     state.global_settings.integrations.markitdown_expose_model = False
 
-    with patch("omlx.server._server_state", state):
+    with patch("fusion_mlx.server._server_state", state):
         client = TestClient(app, raise_server_exceptions=False)
         response = client.post(
             "/v1/chat/completions",
@@ -259,7 +263,7 @@ def test_markitdown_stream_response_starts_before_conversion(monkeypatch):
     )
 
     async def exercise():
-        with patch("omlx.server._server_state", state):
+        with patch("fusion_mlx.server._server_state", state):
             response = await server_module._create_markitdown_chat_completion(
                 request,
                 None,
@@ -307,7 +311,7 @@ def test_markitdown_non_stream_response_starts_before_conversion(monkeypatch):
     )
 
     async def exercise():
-        with patch("omlx.server._server_state", state):
+        with patch("fusion_mlx.server._server_state", state):
             response = await server_module._create_markitdown_chat_completion(
                 request,
                 None,
@@ -331,7 +335,9 @@ def test_preprocess_file_parts_for_llm(monkeypatch):
     def fake_convert(file: MarkItDownFile, **kwargs) -> str:
         return "Converted text"
 
-    monkeypatch.setattr("omlx.api.markitdown.convert_file_to_markdown", fake_convert)
+    monkeypatch.setattr(
+        "fusion_mlx.api.markitdown.convert_file_to_markdown", fake_convert
+    )
     messages = [
         Message(
             role="user",
@@ -359,7 +365,9 @@ def test_preprocess_file_parts_works_when_model_not_exposed(monkeypatch):
     def fake_convert(file: MarkItDownFile, **kwargs) -> str:
         return "Converted text"
 
-    monkeypatch.setattr("omlx.api.markitdown.convert_file_to_markdown", fake_convert)
+    monkeypatch.setattr(
+        "fusion_mlx.api.markitdown.convert_file_to_markdown", fake_convert
+    )
     settings = GlobalSettings()
     settings.integrations.markitdown_expose_model = False
 
@@ -382,7 +390,9 @@ def test_text_and_markdown_file_parts_are_inlined_without_converter(monkeypatch)
         called = True
         raise AssertionError("plain text attachments should not use MarkItDown")
 
-    monkeypatch.setattr("omlx.api.markitdown.convert_file_to_markdown", fake_convert)
+    monkeypatch.setattr(
+        "fusion_mlx.api.markitdown.convert_file_to_markdown", fake_convert
+    )
 
     processed = preprocess_markitdown_file_parts(
         [
@@ -419,7 +429,9 @@ def test_preprocess_file_parts_does_not_create_mixed_content_warning(monkeypatch
     def fake_convert(file: MarkItDownFile, **kwargs) -> str:
         return "Converted text"
 
-    monkeypatch.setattr("omlx.api.markitdown.convert_file_to_markdown", fake_convert)
+    monkeypatch.setattr(
+        "fusion_mlx.api.markitdown.convert_file_to_markdown", fake_convert
+    )
     messages = [
         Message(
             role="user",
@@ -450,7 +462,9 @@ def test_preprocess_allows_missing_historical_file_parts(monkeypatch):
     def fake_convert(file: MarkItDownFile, **kwargs) -> str:
         raise AssertionError("missing historical files should not be converted")
 
-    monkeypatch.setattr("omlx.api.markitdown.convert_file_to_markdown", fake_convert)
+    monkeypatch.setattr(
+        "fusion_mlx.api.markitdown.convert_file_to_markdown", fake_convert
+    )
 
     processed = preprocess_markitdown_file_parts(
         [
@@ -510,7 +524,9 @@ def test_async_preprocess_allows_missing_historical_file_parts(monkeypatch):
     def fake_convert(file: MarkItDownFile, **kwargs) -> str:
         raise AssertionError("missing historical files should not be converted")
 
-    monkeypatch.setattr("omlx.api.markitdown.convert_file_to_markdown", fake_convert)
+    monkeypatch.setattr(
+        "fusion_mlx.api.markitdown.convert_file_to_markdown", fake_convert
+    )
 
     async def exercise():
         return await preprocess_markitdown_file_parts_async(
@@ -547,7 +563,9 @@ def test_server_llm_preprocess_allows_stored_document_placeholders(monkeypatch):
     def fake_convert(file: MarkItDownFile, **kwargs) -> str:
         raise AssertionError("stored document placeholders should not be converted")
 
-    monkeypatch.setattr("omlx.api.markitdown.convert_file_to_markdown", fake_convert)
+    monkeypatch.setattr(
+        "fusion_mlx.api.markitdown.convert_file_to_markdown", fake_convert
+    )
 
     state = ServerState()
     state.engine_pool = _EmptyPool()
@@ -574,7 +592,7 @@ def test_server_llm_preprocess_allows_stored_document_placeholders(monkeypatch):
     )
 
     async def exercise():
-        with patch("omlx.server._server_state", state):
+        with patch("fusion_mlx.server._server_state", state):
             return await server_module._preprocess_markitdown_files_for_llm(request)
 
     processed = asyncio.run(exercise())
@@ -656,7 +674,7 @@ def test_empty_pdf_conversion_logs_warning(monkeypatch, caplog):
     fake_markitdown = types.ModuleType("markitdown")
     fake_markitdown.StreamInfo = FakeStreamInfo
     monkeypatch.setitem(sys.modules, "markitdown", fake_markitdown)
-    monkeypatch.setattr("omlx.api.markitdown._converter", FakeConverter())
+    monkeypatch.setattr("fusion_mlx.api.markitdown._converter", FakeConverter())
 
     caplog.set_level("WARNING")
     with pytest.raises(MarkItDownRequestError) as exc_info:
@@ -742,7 +760,7 @@ def test_ocr_pdf_engine_converts_pages_in_order_limits_concurrency_and_unloads(
     pool = FakePool()
 
     monkeypatch.setattr(
-        "omlx.api.markitdown_pdf_fallback.render_pdf_pages_to_image_data_uris",
+        "fusion_mlx.api.markitdown_pdf_fallback.render_pdf_pages_to_image_data_uris",
         lambda file: ["page1", "page2", "page3"],
     )
 
@@ -818,7 +836,7 @@ def test_ocr_pdf_engine_streams_ready_prefix_in_page_order(monkeypatch):
     settings = GlobalSettings()
     settings.scheduler.max_concurrent_requests = 3
     monkeypatch.setattr(
-        "omlx.api.markitdown_pdf_fallback.render_pdf_pages_to_image_data_uris",
+        "fusion_mlx.api.markitdown_pdf_fallback.render_pdf_pages_to_image_data_uris",
         lambda file: ["page1", "page2", "page3"],
     )
 
@@ -930,7 +948,7 @@ def test_async_preprocess_uses_ocr_pdf_processing_engine(monkeypatch):
     settings = GlobalSettings()
     settings.integrations.markitdown_pdf_processing_engine = "OCR-Model"
     monkeypatch.setattr(
-        "omlx.api.markitdown_pdf_fallback.convert_pdf_with_ocr_engine",
+        "fusion_mlx.api.markitdown_pdf_fallback.convert_pdf_with_ocr_engine",
         fake_convert,
     )
 

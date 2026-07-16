@@ -260,9 +260,12 @@ def test_properly_chained_tool_round_trip_succeeds() -> None:
     )
     assert r.status_code == 200, r.text
     seen = eng.last_messages
-    tool_msg = next(m for m in seen if m["role"] == "tool")
-    assert tool_msg["tool_call_id"] == "c1"
-    assert tool_msg["content"] == "4"
+    # tool reply is normalized to a user message for chat-template
+    # compatibility: "[Tool Result (<id>)]: <content>"
+    tool_msg = next(
+        m for m in seen if m["role"] == "user" and "[Tool Result (c1)]" in m["content"]
+    )
+    assert tool_msg["content"].endswith(": 4")
 
 
 def test_multi_turn_tool_chain_with_array_and_string_content() -> None:
@@ -311,10 +314,14 @@ def test_multi_turn_tool_chain_with_array_and_string_content() -> None:
     )
     assert r.status_code == 200, r.text
     seen = eng.last_messages
-    tool_msgs = [m for m in seen if m["role"] == "tool"]
-    assert [m["tool_call_id"] for m in tool_msgs] == ["a", "b"]
+    # tool replies are normalized to user messages "[Tool Result (id)]: content"
+    tool_msgs = [
+        m for m in seen if m["role"] == "user" and "[Tool Result (" in m["content"]
+    ]
+    ids = [m["content"].split("(")[1].split(")")[0] for m in tool_msgs]
+    assert ids == ["a", "b"]
     # Array form on second tool reply was flattened to a string.
-    assert tool_msgs[1]["content"] == "4"
+    assert tool_msgs[1]["content"].endswith(": 4")
 
 
 def test_parallel_assistant_tool_calls_each_id_routable() -> None:
@@ -444,8 +451,12 @@ def test_pending_id_consumed_only_by_first_matching_reply() -> None:
     )
     assert r.status_code == 200, r.text
     seen = eng.last_messages
-    tool_msgs = [m for m in seen if m["role"] == "tool"]
-    assert [m["tool_call_id"] for m in tool_msgs] == ["round1", "round2"]
+    # tool replies are normalized to user messages "[Tool Result (id)]: content"
+    tool_msgs = [
+        m for m in seen if m["role"] == "user" and "[Tool Result (" in m["content"]
+    ]
+    ids = [m["content"].split("(")[1].split(")")[0] for m in tool_msgs]
+    assert ids == ["round1", "round2"]
 
 
 # ---------------------------------------------------------------------------
