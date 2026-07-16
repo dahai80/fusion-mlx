@@ -83,11 +83,13 @@ class TestBatchedEngineLoraPath:
 class TestLoadModelStagesLoraPath:
     def test_load_model_stages_lora_path(self):
         from fusion_mlx import server
+        from fusion_mlx.config import get_config
 
         saved = server._pending_single_model
-        saved_name = server._model_name
-        saved_path = server._model_path
-        saved_alias = server._model_alias
+        cfg = get_config()
+        saved_name = cfg.model_name
+        saved_path = cfg.model_path
+        saved_alias = cfg.model_alias
         try:
             with (
                 patch.object(
@@ -100,9 +102,9 @@ class TestLoadModelStagesLoraPath:
             assert server._pending_single_model["lora_path"] == "/adapters/x"
         finally:
             server._pending_single_model = saved
-            server._model_name = saved_name
-            server._model_path = saved_path
-            server._model_alias = saved_alias
+            cfg.model_name = saved_name
+            cfg.model_path = saved_path
+            cfg.model_alias = saved_alias
 
 
 def _make_mock_model_dir(tmp_path):

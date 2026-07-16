@@ -119,9 +119,6 @@ app = None
 
 # Module-level server state — cli_serve.py reads/writes these directly
 _api_key: str | None = None
-_model_alias: str | None = None
-_model_name: str | None = None
-_model_path: str | None = None
 _default_timeout: float = 1800.0
 _max_request_bytes: int | None = None
 _enable_auto_tool_choice: bool = False
@@ -142,6 +139,8 @@ def _sync_config() -> None:
     # before uvicorn starts) with the config object middleware reads. Idempotent
     # — every assignment is a straight overwrite. Best-effort: ServerConfig
     # only carries a subset of these fields, so guard each with hasattr.
+    # NOTE: model_name / model_alias / model_path are NOT staged here - they
+    # are written directly to ServerConfig by cli_serve + load_model (#50).
     try:
         from .config import get_config
 
@@ -150,9 +149,6 @@ def _sync_config() -> None:
         cfg = None
     if cfg is not None:
         for _attr, _val in (
-            ("model_name", _model_name),
-            ("model_path", _model_path),
-            ("model_alias", _model_alias),
             ("api_key", _api_key),
             ("max_request_bytes", _max_request_bytes),
             ("default_timeout", _default_timeout),
@@ -366,13 +362,16 @@ def load_model(
     # loads + registers the engine into the pool once the pool exists (it is
     # created in the lifespan, after this call). Routes then resolve the engine
     # through the pool like the multi-model ``--model-dir`` path.
-    global _model_name, _model_path, _model_alias, _pending_single_model
+    global _pending_single_model
 
     resolved = _resolve_single_model_path(model_name)
-    _model_path = resolved
-    _model_name = served_model_name or resolved
-    if not _model_alias:
-        _model_alias = model_name
+    from .config import get_config
+
+    cfg = get_config()
+    cfg.model_path = resolved
+    cfg.model_name = served_model_name or resolved
+    if not cfg.model_alias:
+        cfg.model_alias = model_name
     _pending_single_model = {
         "model_path": resolved,
         "original_name": model_name,
@@ -402,7 +401,7 @@ def load_model(
         "load_model: staged single model %s (resolved=%s, served=%s)",
         model_name,
         resolved,
-        _model_name,
+        cfg.model_name,
     )
 
 
