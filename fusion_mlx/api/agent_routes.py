@@ -7,11 +7,9 @@ Provides endpoints for managing and executing agent graphs:
 
 from __future__ import annotations
 
-import json
 import logging
 import time
 import uuid
-from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, HTTPException
@@ -55,9 +53,13 @@ def _validate_graph(data: dict) -> list[str]:
             errors.append(f"Edge {i} must be an object")
             continue
         if edge.get("source_id") not in nodes:
-            errors.append(f"Edge {i}: source_id '{edge.get('source_id')}' not found in nodes")
+            errors.append(
+                f"Edge {i}: source_id '{edge.get('source_id')}' not found in nodes"
+            )
         if edge.get("target_id") not in nodes:
-            errors.append(f"Edge {i}: target_id '{edge.get('target_id')}' not found in nodes")
+            errors.append(
+                f"Edge {i}: target_id '{edge.get('target_id')}' not found in nodes"
+            )
     return errors
 
 
@@ -69,16 +71,18 @@ async def list_graphs() -> list[dict[str, Any]]:
     """List all saved agent graphs with metadata."""
     result = []
     for gid, g in _graphs.items():
-        result.append({
-            "id": gid,
-            "name": g.get("name", ""),
-            "description": g.get("description", ""),
-            "version": g.get("version", "1.0"),
-            "node_count": len(g.get("nodes", {})),
-            "edge_count": len(g.get("edges", [])),
-            "created_at": g.get("created_at", 0),
-            "updated_at": g.get("updated_at", 0),
-        })
+        result.append(
+            {
+                "id": gid,
+                "name": g.get("name", ""),
+                "description": g.get("description", ""),
+                "version": g.get("version", "1.0"),
+                "node_count": len(g.get("nodes", {})),
+                "edge_count": len(g.get("edges", [])),
+                "created_at": g.get("created_at", 0),
+                "updated_at": g.get("updated_at", 0),
+            }
+        )
     result.sort(key=lambda x: x["updated_at"], reverse=True)
     return result
 
@@ -238,34 +242,38 @@ def _generate_python_script(graph: dict) -> str:
     temperature = llm.get("temperature", 0.7)
 
     lines = [
-        '#!/usr/bin/env python3',
+        "#!/usr/bin/env python3",
         f'"""Auto-generated agent: {name}"""',
-        '',
-        'import httpx',
-        'import asyncio',
-        '',
-        '',
-        'async def main():',
+        "",
+        "import httpx",
+        "import asyncio",
+        "",
+        "",
+        "async def main():",
         '    client = httpx.AsyncClient(base_url="http://localhost:8000/v1", timeout=120.0)',
-        '    try:',
-        f'        messages = [{{"role": "system", "content": "{system_prompt}"}}]' if system_prompt else '        messages = []',
+        "    try:",
+        (
+            f'        messages = [{{"role": "system", "content": "{system_prompt}"}}]'
+            if system_prompt
+            else "        messages = []"
+        ),
         '        messages.append({"role": "user", "content": input("Enter your input: ")})',
-        '',
+        "",
         '        resp = await client.post("/chat/completions", json={',
         f'            "model": "{model}",',
         '            "messages": messages,',
         f'            "temperature": {temperature},',
         '            "max_tokens": 4096,',
-        '        })',
-        '        resp.raise_for_status()',
-        '        data = resp.json()',
+        "        })",
+        "        resp.raise_for_status()",
+        "        data = resp.json()",
         '        print(data["choices"][0]["message"]["content"])',
-        '    finally:',
-        '        await client.aclose()',
-        '',
-        '',
+        "    finally:",
+        "        await client.aclose()",
+        "",
+        "",
         'if __name__ == "__main__":',
-        '    asyncio.run(main())',
-        '',
+        "    asyncio.run(main())",
+        "",
     ]
     return "\n".join(lines)

@@ -26,11 +26,11 @@ from fastapi.middleware.cors import CORSMiddleware
 from ._version import __version__
 from .admin.auth import require_admin
 from .admin.routes import router as admin_router
+from .api.agent_routes import router as agent_router
 from .api.anthropic_routes import router as anthropic_router
 from .api.anthropic_routes import set_anthropic_context
 from .api.audio_routes import router as audio_router
 from .api.audio_routes import set_audio_context
-from .api.agent_routes import router as agent_router
 from .api.images import router as images_router
 from .api.images import set_images_context
 from .api.mcp_routes import router as mcp_router
