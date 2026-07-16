@@ -485,7 +485,7 @@ def _rate_limiter_state():
 
 
 def _make_chat_client(engine):
-    from fusion_mlx.routes.chat import router as chat_router
+    from fusion_mlx.routes_internal.chat import router as chat_router
 
     cfg = reset_config()
     cfg.engine = engine
@@ -574,7 +574,7 @@ class TestChatRoutePromptAccountingThreading:
 
 
 def _make_responses_client(engine):
-    from fusion_mlx.routes.responses import router as responses_router
+    from fusion_mlx.routes_internal.responses import router as responses_router
 
     cfg = reset_config()
     cfg.engine = engine

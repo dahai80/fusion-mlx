@@ -37,7 +37,7 @@ from fastapi.testclient import TestClient
 from fusion_mlx.config import reset_config
 from fusion_mlx.engine.base import GenerationOutput
 from fusion_mlx.middleware.exception_handlers import install_exception_handlers
-from fusion_mlx.routes.completions import router as completions_router
+from fusion_mlx.routes_internal.completions import router as completions_router
 
 _FENCED_TEXT = 'Just the JSON.\n```json\n{"answer": 42}\n```'
 _CLEAN_TEXT = '{"answer": 42}'

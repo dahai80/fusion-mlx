@@ -131,7 +131,7 @@ def responses_client(monkeypatch):
     from fusion_mlx.config import reset_config
     from fusion_mlx.middleware.auth import rate_limiter
     from fusion_mlx.middleware.exception_handlers import install_exception_handlers
-    from fusion_mlx.routes.responses import router
+    from fusion_mlx.routes_internal.responses import router
 
     cfg = reset_config()
     cfg.api_key = "test-secret"
@@ -341,7 +341,7 @@ class TestResponsesNonStream:
     def test_mllm_context_precheck_counts_text_without_image_payload(
         self, responses_client, monkeypatch
     ):
-        from fusion_mlx.routes import responses as responses_route
+        from fusion_mlx.routes_internal import responses as responses_route
 
         client = responses_client.client
         engine = responses_client.engine
@@ -385,7 +385,7 @@ class TestResponsesNonStream:
     def test_context_precheck_unexpected_error_is_not_swallowed(
         self, responses_client, monkeypatch
     ):
-        from fusion_mlx.routes import responses as responses_route
+        from fusion_mlx.routes_internal import responses as responses_route
 
         client = responses_client.client
 
@@ -407,7 +407,7 @@ class TestResponsesNonStream:
 
     def test_mllm_message_prepare_accepts_normalized_object_style_messages(self):
         """Responses MLLM path accepts Chat-normalized object-style messages."""
-        from fusion_mlx.routes.responses import _prepare_messages_for_engine
+        from fusion_mlx.routes_internal.responses import _prepare_messages_for_engine
 
         msg = SimpleNamespace(
             role="user",
@@ -438,7 +438,7 @@ class TestResponsesNonStream:
         ]
 
     def test_mllm_message_prepare_rejects_raw_responses_content_blocks(self):
-        from fusion_mlx.routes.responses import _prepare_messages_for_engine
+        from fusion_mlx.routes_internal.responses import _prepare_messages_for_engine
 
         msg = SimpleNamespace(
             role="user",
@@ -454,7 +454,7 @@ class TestResponsesNonStream:
             _prepare_messages_for_engine(engine, request)
 
     def test_message_prepare_defaults_missing_native_tool_flag(self):
-        from fusion_mlx.routes.responses import _prepare_messages_for_engine
+        from fusion_mlx.routes_internal.responses import _prepare_messages_for_engine
 
         request = SimpleNamespace(messages=[{"role": "user", "content": "hi"}])
 

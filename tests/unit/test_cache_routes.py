@@ -39,7 +39,7 @@ def sandbox(monkeypatch, tmp_path):
 def cache_client(monkeypatch, sandbox):
     """FastAPI TestClient with the cache router + auth enabled."""
     from fusion_mlx.config import reset_config
-    from fusion_mlx.routes.cache import router
+    from fusion_mlx.routes_internal.cache import router
 
     cfg = reset_config()
     cfg.api_key = "test-secret"

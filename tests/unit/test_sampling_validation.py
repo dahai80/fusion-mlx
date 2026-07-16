@@ -92,7 +92,7 @@ def _stub_engine_cfg(patch_cfg):
 
 def _build_chat_client(patch_cfg, monkeypatch):
     from fusion_mlx.middleware.exception_handlers import install_exception_handlers
-    from fusion_mlx.routes import chat as chat_route
+    from fusion_mlx.routes_internal import chat as chat_route
 
     engine = _stub_engine_cfg(patch_cfg)
     monkeypatch.setattr(chat_route, "get_engine", lambda *_a, **_kw: engine)
@@ -109,7 +109,7 @@ def _build_chat_client(patch_cfg, monkeypatch):
 
 def _build_completions_client(patch_cfg, monkeypatch):
     from fusion_mlx.middleware.exception_handlers import install_exception_handlers
-    from fusion_mlx.routes import completions as comp_route
+    from fusion_mlx.routes_internal import completions as comp_route
 
     engine = _stub_engine_cfg(patch_cfg)
     monkeypatch.setattr(comp_route, "get_engine", lambda *_a, **_kw: engine)
@@ -385,7 +385,7 @@ def _stub_chat_impl(monkeypatch) -> dict:
             },
         }
 
-    from fusion_mlx.routes import chat as chat_route
+    from fusion_mlx.routes_internal import chat as chat_route
 
     monkeypatch.setattr(chat_route, "_create_chat_completion_impl", _impl, raising=True)
     return captured

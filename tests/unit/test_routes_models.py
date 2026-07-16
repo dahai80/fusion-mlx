@@ -39,7 +39,7 @@ def _mount_models_app(*, embedding_model_locked: str | None):
     interleave can't bleed state across cases.
     """
     from fusion_mlx.config import get_config
-    from fusion_mlx.routes import models as models_route
+    from fusion_mlx.routes_internal import models as models_route
 
     app = FastAPI()
     app.include_router(models_route.router)

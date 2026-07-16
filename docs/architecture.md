@@ -77,8 +77,8 @@ Handles HTTP request parsing, validation, and response formatting. Each API flav
 
 **Layering note** - three distinct packages collaborate and were historically confused by near-identical names:
 - `fusion_mlx/api/` - the **external** OpenAI/Anthropic-compatible API surface (`/v1/chat/completions`, `/v1/messages`, etc.), each flavor with its own router + adapter.
-- `fusion_mlx/routes/` - **internal** FastAPI APIRouters (`cache`, `health`, `metrics`, `responses`) mounted on the same app; these are operational/admin endpoints, not the public API.
-- `fusion_mlx/dispatch/` (see §7) - **request-dispatch logic** (`RequestRouter`/`SmartRouter`/`CloudRouter`), NOT a FastAPI router layer. Renamed from `router/` to `dispatch/` to disambiguate from `routes/`.
+- `fusion_mlx/routes_internal/` - **internal** FastAPI APIRouters (`cache`, `health`, `metrics`, `responses`) mounted on the same app; these are operational/admin endpoints, not the public API. Renamed from `routes/` to `routes_internal/` to disambiguate from the `api/` public surface and the `dispatch/` request-routing layer. (Legacy `chat`/`anthropic`/`completions` modules remain here for test coverage but are superseded at runtime by `api/openai_routes.py` + `api/anthropic_routes.py`.)
+- `fusion_mlx/dispatch/` (see §7) - **request-dispatch logic** (`RequestRouter`/`SmartRouter`/`CloudRouter`), NOT a FastAPI router layer. Renamed from `router/` to `dispatch/` to disambiguate from `routes_internal/`.
 
 - **OpenAI Routes** — `/v1/chat/completions`, `/v1/completions`, `/v1/models`, `/v1/embeddings`
 - **Anthropic Routes** — `/v1/messages`, `/v1/count_tokens` with streaming tool_use blocks

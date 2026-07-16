@@ -80,7 +80,7 @@ def _restore_config(originals):
 
 
 def _make_app():
-    from fusion_mlx.routes.health import probe_router
+    from fusion_mlx.routes_internal.health import probe_router
 
     app = FastAPI()
     app.include_router(probe_router)

@@ -95,7 +95,7 @@ class _StreamChunk:
 
 def _build_app(patch_cfg, monkeypatch, engine):
     """Mount /v1/completions wired to ``engine``."""
-    from fusion_mlx.routes import completions as comp_route
+    from fusion_mlx.routes_internal import completions as comp_route
 
     app = FastAPI()
     app.include_router(comp_route.router)

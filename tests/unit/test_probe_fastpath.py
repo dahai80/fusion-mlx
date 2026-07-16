@@ -52,7 +52,7 @@ def _make_minimal_app(*, with_fastpath: bool = True) -> FastAPI:
     probe surface is exercised. We rely on the existing route module
     so the fall-through JSON shape stays in lockstep.
     """
-    from fusion_mlx.routes.health import probe_router
+    from fusion_mlx.routes_internal.health import probe_router
 
     app = FastAPI()
     app.include_router(probe_router)

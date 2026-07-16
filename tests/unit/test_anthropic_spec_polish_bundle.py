@@ -31,7 +31,7 @@ from fastapi.testclient import TestClient
 from fusion_mlx.config import reset_config
 from fusion_mlx.engine.base import GenerationOutput
 from fusion_mlx.middleware.exception_handlers import install_exception_handlers
-from fusion_mlx.routes.anthropic import router as anthropic_router
+from fusion_mlx.routes_internal.anthropic import router as anthropic_router
 
 
 class _StubTokenizer:

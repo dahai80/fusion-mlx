@@ -132,7 +132,7 @@ def _patch_common_route_deps(monkeypatch, module, engine):
 @pytest.mark.asyncio
 async def test_chat_route_passes_resolved_max_tokens_to_engine(monkeypatch):
     from fusion_mlx.api.models import ChatCompletionRequest
-    from fusion_mlx.routes import chat
+    from fusion_mlx.routes_internal import chat
 
     engine = _CaptureChatEngine()
     resolver_calls = _patch_common_route_deps(monkeypatch, chat, engine)
@@ -162,7 +162,7 @@ async def test_chat_route_passes_resolved_max_tokens_to_engine(monkeypatch):
 @pytest.mark.asyncio
 async def test_completions_route_passes_resolved_max_tokens_to_engine(monkeypatch):
     from fusion_mlx.api.models import CompletionRequest
-    from fusion_mlx.routes import completions
+    from fusion_mlx.routes_internal import completions
 
     engine = _CaptureCompletionEngine()
     resolver_calls = _patch_common_route_deps(monkeypatch, completions, engine)
@@ -183,7 +183,7 @@ async def test_completions_route_passes_resolved_max_tokens_to_engine(monkeypatc
 async def test_responses_route_passes_resolved_max_tokens_to_engine(monkeypatch):
     from fusion_mlx.api.models import ChatCompletionRequest
     from fusion_mlx.api.responses_models import ResponsesRequest
-    from fusion_mlx.routes import responses
+    from fusion_mlx.routes_internal import responses
 
     engine = _CaptureChatEngine()
     resolver_calls = []
@@ -218,7 +218,7 @@ async def test_responses_route_passes_resolved_max_tokens_to_engine(monkeypatch)
 
 @pytest.mark.asyncio
 async def test_anthropic_route_passes_resolved_max_tokens_to_engine(monkeypatch):
-    from fusion_mlx.routes import anthropic
+    from fusion_mlx.routes_internal import anthropic
 
     engine = _CaptureChatEngine()
     resolver_calls = _patch_common_route_deps(monkeypatch, anthropic, engine)

@@ -53,7 +53,7 @@ def client_factory():
     satisfies the 503-check guard in the route handlers.
     """
     from fusion_mlx.config import get_config
-    from fusion_mlx.routes.health import admin_router, router
+    from fusion_mlx.routes_internal.health import admin_router, router
 
     cfg = get_config()
     prev = {
@@ -239,7 +239,7 @@ def test_cache_export_501_envelope_does_not_leak_operator_path(client_factory):
     bearer-token holder. After the #728 revert the route runs on plain
     ``verify_api_key``, so this leak shape matters even more when
     ``--api-key`` is unset."""
-    from fusion_mlx.routes.cache import router as cache_router
+    from fusion_mlx.routes_internal.cache import router as cache_router
 
     build, _ = client_factory
     client = build(api_key=None)
@@ -290,7 +290,7 @@ def test_cache_export_403_sandbox_escape_does_not_leak_operator_path(
     """
     from pathlib import Path
 
-    from fusion_mlx.routes.cache import router as cache_router
+    from fusion_mlx.routes_internal.cache import router as cache_router
 
     build, _ = client_factory
     client = build(api_key=None)
@@ -322,7 +322,7 @@ def test_cache_import_501_envelope_does_not_leak_operator_path(
     import json
 
     from fusion_mlx.cache.protocol import PROTOCOL_VERSION
-    from fusion_mlx.routes.cache import router as cache_router
+    from fusion_mlx.routes_internal.cache import router as cache_router
 
     manifest = {
         "protocol_version": PROTOCOL_VERSION,
@@ -394,7 +394,7 @@ def test_cache_info_does_not_leak_operator_path(
     import json
 
     from fusion_mlx.cache.protocol import PROTOCOL_VERSION
-    from fusion_mlx.routes.cache import router as cache_router
+    from fusion_mlx.routes_internal.cache import router as cache_router
 
     manifest = {
         "protocol_version": PROTOCOL_VERSION,
@@ -436,7 +436,7 @@ def test_cache_info_returns_canonical_shape_without_path_field(
     import json
 
     from fusion_mlx.cache.protocol import PROTOCOL_VERSION
-    from fusion_mlx.routes.cache import router as cache_router
+    from fusion_mlx.routes_internal.cache import router as cache_router
 
     manifest = {
         "protocol_version": PROTOCOL_VERSION,

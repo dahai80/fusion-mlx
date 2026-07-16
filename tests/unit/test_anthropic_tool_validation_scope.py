@@ -41,7 +41,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from fusion_mlx.config import reset_config
-from fusion_mlx.routes.anthropic import router
+from fusion_mlx.routes_internal.anthropic import router
 
 
 class _StubTokenizer:
@@ -678,7 +678,7 @@ def test_filter_returns_input_unchanged_for_non_named_tool_choice():
     no defined "wrong tool" case. The filter must pass calls through
     unchanged so the validator runs against the full set.
     """
-    from fusion_mlx.routes.anthropic import _filter_tool_calls_by_tool_choice
+    from fusion_mlx.routes_internal.anthropic import _filter_tool_calls_by_tool_choice
 
     calls = [_call("a", {}), _call("b", {})]
     # ``None`` (unset).
@@ -707,7 +707,7 @@ def test_enforce_named_tool_choice_present_noop_for_non_named_choice():
     synthesized)`` instead of raising. The non-pinned case must
     return its input verbatim with ``synthesized=False``.
     """
-    from fusion_mlx.routes.anthropic import _enforce_named_tool_choice_present
+    from fusion_mlx.routes_internal.anthropic import _enforce_named_tool_choice_present
 
     # Returns ``([], False)`` verbatim for ``None``, ``"auto"``, or a
     # ``{"type":"function"}`` shape without a name.
@@ -735,7 +735,7 @@ def test_enforce_named_tool_choice_present_noop_when_pinned_call_survives():
     already met).
     """
     from fusion_mlx.api.models import FunctionCall, ToolCall
-    from fusion_mlx.routes.anthropic import _enforce_named_tool_choice_present
+    from fusion_mlx.routes_internal.anthropic import _enforce_named_tool_choice_present
 
     pinned_call = ToolCall(
         id="c1",
@@ -757,7 +757,7 @@ def test_enforce_named_tool_choice_present_synthesizes_when_pinned_call_missing(
     pinned call. Call sites then validate that empty input against the
     tool schema before deciding whether to ship it or surface 422.
     """
-    from fusion_mlx.routes.anthropic import _enforce_named_tool_choice_present
+    from fusion_mlx.routes_internal.anthropic import _enforce_named_tool_choice_present
 
     calls_out, synthesized, err = _enforce_named_tool_choice_present(
         [],
@@ -777,7 +777,7 @@ def test_enforce_named_tool_choice_present_synthesizes_when_only_wrong_tool_emit
     uses ``original_call_count > 0`` only to log a different warning for
     operator debugging. Wire shape is identical to the no-calls case.
     """
-    from fusion_mlx.routes.anthropic import _enforce_named_tool_choice_present
+    from fusion_mlx.routes_internal.anthropic import _enforce_named_tool_choice_present
 
     calls_out, synthesized, err = _enforce_named_tool_choice_present(
         [],

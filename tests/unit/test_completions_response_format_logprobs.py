@@ -35,7 +35,7 @@ from fastapi.testclient import TestClient
 from fusion_mlx.config import reset_config
 from fusion_mlx.engine.base import GenerationOutput
 from fusion_mlx.middleware.exception_handlers import install_exception_handlers
-from fusion_mlx.routes.completions import router as completions_router
+from fusion_mlx.routes_internal.completions import router as completions_router
 
 # A fenced-JSON output that vlad r10-R1 / bo r10-R1 reproduced on the
 # wire. The fence-strip helper (``extract_json_from_response``) must

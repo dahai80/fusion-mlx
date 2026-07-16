@@ -97,7 +97,7 @@ def audio_client(monkeypatch):
 
     # Reset the cached module-level engine in routes.audio between tests so
     # the second test does not reuse the first test's fake.
-    from fusion_mlx.routes import audio as audio_route
+    from fusion_mlx.routes_internal import audio as audio_route
 
     monkeypatch.setattr(audio_route, "_stt_engine", None, raising=False)
 
@@ -121,7 +121,7 @@ def test_oversized_audio_upload_returns_413(audio_client, monkeypatch):
     This is the regression test for issue #193 — DoS via memory exhaustion
     on the audio transcription endpoint."""
 
-    from fusion_mlx.routes import audio as audio_route
+    from fusion_mlx.routes_internal import audio as audio_route
 
     # Shrink the cap so the test stays fast and memory-light while still
     # exercising the streaming guard.
@@ -159,7 +159,7 @@ def test_streaming_cap_rejects_chunked_upload_before_engine_load(monkeypatch):
 
     from fastapi import HTTPException
 
-    from fusion_mlx.routes import audio as audio_route
+    from fusion_mlx.routes_internal import audio as audio_route
 
     monkeypatch.setattr(audio_route, "MAX_AUDIO_UPLOAD_SIZE", 1024, raising=True)
     monkeypatch.setattr(audio_route, "_stt_engine", None, raising=False)
@@ -247,7 +247,7 @@ def test_content_length_guard_rejects_before_multipart_parsing(monkeypatch):
     no other way to land bytes server-side."""
     import asyncio
 
-    from fusion_mlx.routes import audio as audio_route
+    from fusion_mlx.routes_internal import audio as audio_route
 
     monkeypatch.setattr(audio_route, "MAX_AUDIO_UPLOAD_SIZE", 1024, raising=True)
     monkeypatch.setattr(audio_route, "_REQUEST_BODY_SLACK_BYTES", 256, raising=True)
@@ -340,7 +340,7 @@ def test_chunked_no_content_length_aborts_mid_stream(monkeypatch):
     a correctly-formatted multipart payload to prove the cap fires."""
     import asyncio
 
-    from fusion_mlx.routes import audio as audio_route
+    from fusion_mlx.routes_internal import audio as audio_route
 
     # Effective limit = cap + slack = 1024 + 256 = 1280 bytes.
     monkeypatch.setattr(audio_route, "MAX_AUDIO_UPLOAD_SIZE", 1024, raising=True)
@@ -438,7 +438,7 @@ def test_chunked_real_fastapi_app_returns_413(monkeypatch):
     real app exercises when it sees the disconnect we inject."""
     import asyncio
 
-    from fusion_mlx.routes import audio as audio_route
+    from fusion_mlx.routes_internal import audio as audio_route
 
     monkeypatch.setattr(audio_route, "MAX_AUDIO_UPLOAD_SIZE", 1024, raising=True)
     monkeypatch.setattr(audio_route, "_REQUEST_BODY_SLACK_BYTES", 256, raising=True)
@@ -552,7 +552,7 @@ def test_normal_audio_upload_succeeds(audio_client, monkeypatch):
     return a JSON transcription response. Positive control to confirm
     the size guard did not break the happy path."""
 
-    from fusion_mlx.routes import audio as audio_route
+    from fusion_mlx.routes_internal import audio as audio_route
 
     monkeypatch.setattr(audio_route, "MAX_AUDIO_UPLOAD_SIZE", 1024, raising=True)
 

@@ -48,7 +48,7 @@ import pytest
 #     a collection ERROR — which is what codex r0 BLOCKING on PR #863
 #     flagged would happen if the import chain weren't actually clean.
 try:
-    import fusion_mlx.routes.audio  # noqa: F401
+    import fusion_mlx.routes_internal.audio  # noqa: F401
 except ImportError as _audio_route_import_error:  # pragma: no cover
     pytest.skip(
         f"vllm_mlx.routes.audio import failed at module load "
@@ -203,7 +203,7 @@ class TestAudioCapabilityShortCircuit:
         ``modality="audio"`` + the expected ``audio.<kind>`` capability.
         Reverse-HF-id lookup in ``resolve_audio_alias`` powers the
         HF-id half of this matrix."""
-        from fusion_mlx.routes.models import _build_model_info
+        from fusion_mlx.routes_internal.models import _build_model_info
 
         for model_id in (alias, hf_id):
             info = _build_model_info(model_id)
@@ -226,7 +226,7 @@ class TestAudioCapabilityShortCircuit:
         """Regression guard: a text-only model id MUST keep
         ``capabilities=["text"]`` — the audio short-circuit must only
         fire for registered audio aliases."""
-        from fusion_mlx.routes.models import _build_model_info
+        from fusion_mlx.routes_internal.models import _build_model_info
 
         info = _build_model_info("mlx-community/Qwen3.5-4B-MLX-4bit")
         assert "text" in info.capabilities, info.capabilities
@@ -251,13 +251,13 @@ class TestResolveDefaultVoiceLiteral:
     end-to-end wiring; this file pins the helper contract."""
 
     def test_default_literal_resolves_for_kokoro_short_alias(self):
-        from fusion_mlx.routes.audio import _resolve_default_voice_literal
+        from fusion_mlx.routes_internal.audio import _resolve_default_voice_literal
 
         # kokoro's registry default_voice is af_heart.
         assert _resolve_default_voice_literal("kokoro", "default") == "af_heart"
 
     def test_default_literal_resolves_for_kokoro_hf_id(self):
-        from fusion_mlx.routes.audio import _resolve_default_voice_literal
+        from fusion_mlx.routes_internal.audio import _resolve_default_voice_literal
 
         # Reverse HF-id lookup in resolve_audio_alias makes this work.
         assert (
@@ -269,7 +269,7 @@ class TestResolveDefaultVoiceLiteral:
         """The helper only fires for the literal ``"default"`` —
         everything else passes through unchanged. Pin so a future
         edit can't accidentally broaden the substitution."""
-        from fusion_mlx.routes.audio import _resolve_default_voice_literal
+        from fusion_mlx.routes_internal.audio import _resolve_default_voice_literal
 
         assert _resolve_default_voice_literal("kokoro", "af_heart") == "af_heart"
         assert _resolve_default_voice_literal("kokoro", "alloy") == "alloy"
@@ -280,7 +280,7 @@ class TestResolveDefaultVoiceLiteral:
         ``"default"`` passes through unchanged so the route's family
         detector (``_allowed_voices_for``) still owns the decision
         (it returns ``["default"]`` for unknown families)."""
-        from fusion_mlx.routes.audio import _resolve_default_voice_literal
+        from fusion_mlx.routes_internal.audio import _resolve_default_voice_literal
 
         assert (
             _resolve_default_voice_literal("mlx-community/Some-Future-TTS", "default")
@@ -291,6 +291,6 @@ class TestResolveDefaultVoiceLiteral:
         """chatterbox's registry default_voice is the literal ``"default"``
         (the engine's catch-all). The helper still returns that value
         so the downstream allowlist accepts it without rejection."""
-        from fusion_mlx.routes.audio import _resolve_default_voice_literal
+        from fusion_mlx.routes_internal.audio import _resolve_default_voice_literal
 
         assert _resolve_default_voice_literal("chatterbox", "default") == "default"

@@ -1459,7 +1459,7 @@ class TestConcurrentRequests:
 
         from fusion_mlx.config import reset_config
         from fusion_mlx.engine.base import GenerationOutput
-        from fusion_mlx.routes.chat import router as chat_router
+        from fusion_mlx.routes_internal.chat import router as chat_router
 
         class _DiffusionEngineStub:
             supports_tool_calls = False
@@ -1544,7 +1544,7 @@ class TestConcurrentRequests:
 
         from fusion_mlx.config import reset_config
         from fusion_mlx.engine.base import GenerationOutput
-        from fusion_mlx.routes.chat import router as chat_router
+        from fusion_mlx.routes_internal.chat import router as chat_router
 
         class _DiffusionEngineStub:
             supports_tool_calls = False
@@ -1617,7 +1617,7 @@ class TestConcurrentRequests:
 
         from fusion_mlx.config import reset_config
         from fusion_mlx.engine.base import GenerationOutput
-        from fusion_mlx.routes.chat import router as chat_router
+        from fusion_mlx.routes_internal.chat import router as chat_router
 
         class _DiffusionEngineStub:
             supports_tool_calls = False
@@ -1690,7 +1690,7 @@ class TestConcurrentRequests:
 
         from fusion_mlx.config import reset_config
         from fusion_mlx.engine.base import GenerationOutput
-        from fusion_mlx.routes.chat import router as chat_router
+        from fusion_mlx.routes_internal.chat import router as chat_router
 
         class _DiffusionEngineStub:
             supports_tool_calls = False
@@ -1758,7 +1758,7 @@ class TestConcurrentRequests:
         # supports_tool_calls attribute is False, regardless of
         # tokenizer shape.
         _install_mlx_vlm_mock(monkeypatch)
-        from fusion_mlx.routes.chat import (
+        from fusion_mlx.routes_internal.chat import (
             _engine_supports_channel_routed_tool_calls,
         )
         from fusion_mlx.runtime.diffusion_lane import DiffusionEngine

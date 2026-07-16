@@ -222,7 +222,7 @@ class TestEmbeddingsRouteAliasResolution:
 
         from fastapi import FastAPI
         from fastapi.testclient import TestClient
-        from fusion_mlx.routes.embeddings import router
+        from fusion_mlx.routes_internal.embeddings import router
 
         from fusion_mlx.config import get_config
 
@@ -347,7 +347,7 @@ class TestEmbeddingsRouteAliasResolution:
 
         from fastapi import FastAPI
         from fastapi.testclient import TestClient
-        from fusion_mlx.routes.embeddings import router
+        from fusion_mlx.routes_internal.embeddings import router
 
         from fusion_mlx.config import get_config
 
@@ -418,7 +418,7 @@ class TestAudioRouteAliasResolution:
         resolve to the same HF path as ``"whisper-large-v3"`` so
         drop-in OpenAI-SDK code works without a manual model override.
         """
-        from fusion_mlx.routes.audio import (
+        from fusion_mlx.routes_internal.audio import (
             DEFAULT_STT_ALIAS,
             STT_MODEL_ALIASES,
             _resolve_stt_model,
@@ -434,7 +434,7 @@ class TestAudioRouteAliasResolution:
         F-167 / F-210 contract pinned by ``test_audio_path_shaped_model``.
         """
         from fastapi import HTTPException
-        from fusion_mlx.routes.audio import _resolve_stt_model
+        from fusion_mlx.routes_internal.audio import _resolve_stt_model
 
         with pytest.raises(HTTPException) as exc:
             _resolve_stt_model("non-existent-stt-alias")
@@ -446,14 +446,17 @@ class TestAudioRouteAliasResolution:
 
     def test_stt_resolver_passes_through_known_alias(self):
         """No regression on the known-alias path."""
-        from fusion_mlx.routes.audio import STT_MODEL_ALIASES, _resolve_stt_model
+        from fusion_mlx.routes_internal.audio import (
+            STT_MODEL_ALIASES,
+            _resolve_stt_model,
+        )
 
         for alias, hf in STT_MODEL_ALIASES.items():
             assert _resolve_stt_model(alias) == hf
 
     def test_stt_resolver_passes_through_hf_id(self):
         """No regression on the HF-org/name pass-through path."""
-        from fusion_mlx.routes.audio import _resolve_stt_model
+        from fusion_mlx.routes_internal.audio import _resolve_stt_model
 
         assert (
             _resolve_stt_model("mlx-community/whisper-medium-mlx")
@@ -464,7 +467,7 @@ class TestAudioRouteAliasResolution:
         """Empty string still 400 — ``"default"`` is the only sentinel
         recognized; bare ``""`` is a client bug."""
         from fastapi import HTTPException
-        from fusion_mlx.routes.audio import _resolve_stt_model
+        from fusion_mlx.routes_internal.audio import _resolve_stt_model
 
         with pytest.raises(HTTPException) as exc:
             _resolve_stt_model("")

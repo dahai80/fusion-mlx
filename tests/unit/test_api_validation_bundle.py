@@ -70,7 +70,7 @@ class TestValidateModelName:
         """The OpenAI chat route must still reject unknown model names with 404.
         This confirms that removing _validate_model_name from the Anthropic
         route did NOT affect the OpenAI route."""
-        from fusion_mlx.routes import chat as chat_route
+        from fusion_mlx.routes_internal import chat as chat_route
 
         engine = MagicMock()
         engine.is_mllm = False
@@ -110,7 +110,7 @@ class TestValidateModelName:
 def _build_chat_app(patch_cfg, monkeypatch):
     """Mount the chat router with a stub engine so we can hit the
     validation block without touching mlx weights."""
-    from fusion_mlx.routes import chat as chat_route
+    from fusion_mlx.routes_internal import chat as chat_route
 
     app = FastAPI()
     app.include_router(chat_route.router)
@@ -247,7 +247,7 @@ class TestChatValidation:
 
 
 def _build_embed_app(patch_cfg, monkeypatch, embed_return):
-    from fusion_mlx.routes import embeddings as emb_route
+    from fusion_mlx.routes_internal import embeddings as emb_route
 
     app = FastAPI()
     app.include_router(emb_route.router)
@@ -651,7 +651,7 @@ class TestPsCommandPortParsing:
 
 class TestCompletionsSuffixRejection:
     def _build_completions_app(self, patch_cfg, monkeypatch):
-        from fusion_mlx.routes import completions as comp_route
+        from fusion_mlx.routes_internal import completions as comp_route
 
         app = FastAPI()
         app.include_router(comp_route.router)

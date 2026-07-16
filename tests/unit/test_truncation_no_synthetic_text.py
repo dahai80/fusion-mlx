@@ -193,7 +193,7 @@ def test_chat_completions_nonstream_no_truncated_injection():
     from fastapi.testclient import TestClient
 
     from fusion_mlx.config import reset_config
-    from fusion_mlx.routes.chat import router as chat_router
+    from fusion_mlx.routes_internal.chat import router as chat_router
 
     cfg = reset_config()
     _seed_cfg(cfg)
@@ -241,7 +241,7 @@ def test_chat_completions_stream_no_truncated_injection():
     from fastapi.testclient import TestClient
 
     from fusion_mlx.config import reset_config
-    from fusion_mlx.routes.chat import router as chat_router
+    from fusion_mlx.routes_internal.chat import router as chat_router
 
     cfg = reset_config()
     _seed_cfg(cfg)
@@ -307,7 +307,7 @@ def test_responses_nonstream_no_truncated_injection():
     from fastapi.testclient import TestClient
 
     from fusion_mlx.config import reset_config
-    from fusion_mlx.routes.responses import router as responses_router
+    from fusion_mlx.routes_internal.responses import router as responses_router
 
     cfg = reset_config()
     _seed_cfg(cfg)
@@ -356,7 +356,7 @@ def test_responses_stream_no_truncated_injection():
     from fastapi.testclient import TestClient
 
     from fusion_mlx.config import reset_config
-    from fusion_mlx.routes.responses import router as responses_router
+    from fusion_mlx.routes_internal.responses import router as responses_router
 
     cfg = reset_config()
     _seed_cfg(cfg)
@@ -410,7 +410,7 @@ def test_messages_nonstream_no_truncated_injection():
     from fastapi.testclient import TestClient
 
     from fusion_mlx.config import reset_config
-    from fusion_mlx.routes.anthropic import router as anthropic_router
+    from fusion_mlx.routes_internal.anthropic import router as anthropic_router
 
     cfg = reset_config()
     _seed_cfg(cfg)
@@ -460,7 +460,7 @@ def test_messages_stream_no_truncated_injection():
     from fastapi.testclient import TestClient
 
     from fusion_mlx.config import reset_config
-    from fusion_mlx.routes.anthropic import router as anthropic_router
+    from fusion_mlx.routes_internal.anthropic import router as anthropic_router
 
     cfg = reset_config()
     _seed_cfg(cfg)

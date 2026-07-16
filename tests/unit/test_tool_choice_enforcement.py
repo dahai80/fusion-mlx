@@ -52,7 +52,7 @@ from fastapi.testclient import TestClient
 from fusion_mlx.config import reset_config
 from fusion_mlx.engine.base import GenerationOutput
 from fusion_mlx.reasoning.qwen3_parser import Qwen3ReasoningParser
-from fusion_mlx.routes.chat import (
+from fusion_mlx.routes_internal.chat import (
     _contains_structural_tool_wire_leak,
     _contains_tool_wire_literal,
     _forced_tool_call_prefix,
@@ -61,7 +61,7 @@ from fusion_mlx.routes.chat import (
     _scrub_visible_tool_wire_leaks,
     _synthesize_forced_tool_call,
 )
-from fusion_mlx.routes.chat import router as chat_router
+from fusion_mlx.routes_internal.chat import router as chat_router
 from fusion_mlx.service.helpers import (
     _TOOL_USE_REQUIRED_SUFFIX,
     _TOOL_USE_SYSTEM_SUFFIX,

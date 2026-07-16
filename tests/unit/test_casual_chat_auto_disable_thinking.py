@@ -625,7 +625,7 @@ def _rate_limiter_state():
 def _make_chat_client(
     engine: _ChatEngine, *, reasoning_parser_name="qwen3"
 ) -> TestClient:
-    from fusion_mlx.routes.chat import router as chat_router
+    from fusion_mlx.routes_internal.chat import router as chat_router
 
     cfg = reset_config()
     cfg.engine = engine
@@ -789,7 +789,7 @@ class TestChatRouteAutoDisableForCasualChat:
         client = _make_chat_client(engine)
 
         captured_ctk: list[dict | None] = []
-        import fusion_mlx.routes.chat as _chat_mod
+        import fusion_mlx.routes_internal.chat as _chat_mod
 
         original = _chat_mod._resolve_enable_thinking
 
@@ -921,7 +921,7 @@ class _ResponsesEngine:
 def _make_responses_client(
     engine: _ResponsesEngine, *, reasoning_parser_name="qwen3"
 ) -> TestClient:
-    from fusion_mlx.routes.responses import router as responses_router
+    from fusion_mlx.routes_internal.responses import router as responses_router
 
     cfg = reset_config()
     cfg.engine = engine

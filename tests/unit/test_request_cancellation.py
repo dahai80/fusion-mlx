@@ -2,7 +2,7 @@
 """Tests for /v1/requests/{id}/cancel and BatchedEngine.abort_request routing.
 
 Adapted from Rapid-MLX. Tests depending on ``fusion_mlx.engine.batched``,
-``fusion_mlx.routes.health``, or ``fusion_mlx.config.get_config`` are
+``fusion_mlx.routes_internal.health``, or ``fusion_mlx.config.get_config`` are
 skipped as those modules don't exist in fusion-mlx.
 """
 
@@ -45,6 +45,8 @@ class TestBaseEngineDefaultAbort:
     pass
 
 
-@pytest.mark.skip(reason="rapid-mlx-only: fusion_mlx.routes.health does not exist")
+@pytest.mark.skip(
+    reason="rapid-mlx-only: fusion_mlx.routes_internal.health does not exist"
+)
 class TestCancelRequestEndpoint:
     pass

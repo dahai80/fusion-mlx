@@ -131,10 +131,10 @@ class TestRouteIntegration:
         from fastapi.testclient import TestClient
 
         # Patch the tool-call parser the route uses so we control output.
-        import fusion_mlx.routes.chat as chat_module
+        import fusion_mlx.routes_internal.chat as chat_module
         from fusion_mlx.config import reset_config
         from fusion_mlx.engine.base import GenerationOutput
-        from fusion_mlx.routes.chat import router as chat_router
+        from fusion_mlx.routes_internal.chat import router as chat_router
 
         def _fake_parse(text, request, *, structured_tool_calls=None):
             return (

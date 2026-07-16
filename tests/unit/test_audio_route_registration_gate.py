@@ -63,7 +63,7 @@ class TestAudioRoutesShouldRegister:
     """Behaviour of :func:`audio_routes_should_register` in isolation."""
 
     def test_text_only_model_no_flag_returns_false(self):
-        from fusion_mlx.routes.audio import audio_routes_should_register
+        from fusion_mlx.routes_internal.audio import audio_routes_should_register
 
         assert (
             audio_routes_should_register(
@@ -75,7 +75,7 @@ class TestAudioRoutesShouldRegister:
         )
 
     def test_text_only_model_with_flag_returns_true(self):
-        from fusion_mlx.routes.audio import audio_routes_should_register
+        from fusion_mlx.routes_internal.audio import audio_routes_should_register
 
         assert (
             audio_routes_should_register(
@@ -87,7 +87,7 @@ class TestAudioRoutesShouldRegister:
         )
 
     def test_audio_alias_returns_true(self):
-        from fusion_mlx.routes.audio import audio_routes_should_register
+        from fusion_mlx.routes_internal.audio import audio_routes_should_register
 
         # Bare short alias — matches the audio registry.
         assert (
@@ -100,7 +100,7 @@ class TestAudioRoutesShouldRegister:
         )
 
     def test_audio_hf_id_returns_true(self):
-        from fusion_mlx.routes.audio import audio_routes_should_register
+        from fusion_mlx.routes_internal.audio import audio_routes_should_register
 
         # Full HF id — registry reverse-index covers it too.
         assert (
@@ -116,7 +116,7 @@ class TestAudioRoutesShouldRegister:
         """``--served-model-name foo`` + ``kokoro`` alias: model_name is
         the served-model-name, the registry-known id sits on
         model_alias. The gate must consult both fields."""
-        from fusion_mlx.routes.audio import audio_routes_should_register
+        from fusion_mlx.routes_internal.audio import audio_routes_should_register
 
         assert (
             audio_routes_should_register(
@@ -128,7 +128,7 @@ class TestAudioRoutesShouldRegister:
         )
 
     def test_none_inputs_return_false(self):
-        from fusion_mlx.routes.audio import audio_routes_should_register
+        from fusion_mlx.routes_internal.audio import audio_routes_should_register
 
         assert (
             audio_routes_should_register(
@@ -140,7 +140,7 @@ class TestAudioRoutesShouldRegister:
         )
 
     def test_empty_string_inputs_return_false(self):
-        from fusion_mlx.routes.audio import audio_routes_should_register
+        from fusion_mlx.routes_internal.audio import audio_routes_should_register
 
         assert (
             audio_routes_should_register(
@@ -161,7 +161,7 @@ class TestRegisterAudioRoutes:
     """Idempotency + route-table mutation."""
 
     def test_attaches_router_on_first_call(self):
-        from fusion_mlx.routes.audio import register_audio_routes
+        from fusion_mlx.routes_internal.audio import register_audio_routes
 
         app = FastAPI()
         attached = register_audio_routes(app)
@@ -175,7 +175,7 @@ class TestRegisterAudioRoutes:
         assert "/v1/audio/speech" in paths
 
     def test_second_call_is_noop(self):
-        from fusion_mlx.routes.audio import register_audio_routes
+        from fusion_mlx.routes_internal.audio import register_audio_routes
 
         app = FastAPI()
         first = register_audio_routes(app)
@@ -360,7 +360,7 @@ class TestModelsListingReflectsAudioGate:
         return new_app
 
     def test_audio_lane_snapshot_none_on_text_only_app(self, monkeypatch, fresh_app):
-        from fusion_mlx.routes.models import _audio_lane_snapshot
+        from fusion_mlx.routes_internal.models import _audio_lane_snapshot
 
         from fusion_mlx import server
         from fusion_mlx.config import get_config
@@ -385,8 +385,11 @@ class TestModelsListingReflectsAudioGate:
         """When the audio router is attached, the snapshot returns
         EITHER ``None`` (if the deep probe never ran) or a non-empty
         dict — but never a hidden None from the gate."""
-        from fusion_mlx.routes.audio import register_audio_routes
-        from fusion_mlx.routes.models import _audio_lane_snapshot, _audio_routes_mounted
+        from fusion_mlx.routes_internal.audio import register_audio_routes
+        from fusion_mlx.routes_internal.models import (
+            _audio_lane_snapshot,
+            _audio_routes_mounted,
+        )
 
         register_audio_routes(fresh_app)
         assert _audio_routes_mounted() is True
@@ -410,7 +413,7 @@ class TestModelsListingReflectsAudioGate:
         advertise ``audio_lanes`` while ``/v1/audio/*`` still 404s —
         the exact contradictory state this PR was opened to eliminate.
         """
-        from fusion_mlx.routes.models import _audio_routes_mounted
+        from fusion_mlx.routes_internal.models import _audio_routes_mounted
 
         from fusion_mlx.config import get_config
 
@@ -431,7 +434,7 @@ class TestModelsListingReflectsAudioGate:
         check did a prefix scan on ``/v1/audio/`` which collided with
         any operator subroute under that prefix; the fix uses an
         app-local sentinel attribute instead."""
-        from fusion_mlx.routes.audio import register_audio_routes
+        from fusion_mlx.routes_internal.audio import register_audio_routes
 
         app = FastAPI()
 

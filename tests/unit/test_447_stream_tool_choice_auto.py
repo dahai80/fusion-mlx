@@ -462,7 +462,7 @@ def _drive_stream(engine, request) -> tuple[list[dict], str | None]:
 
     Returns ``(chunks, final_finish_reason)``.
     """
-    from fusion_mlx.routes.chat import stream_chat_completion
+    from fusion_mlx.routes_internal.chat import stream_chat_completion
 
     chunks: list[dict] = []
 

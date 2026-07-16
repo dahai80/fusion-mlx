@@ -40,8 +40,8 @@ from fastapi.testclient import TestClient
 from fusion_mlx.config import reset_config
 from fusion_mlx.engine.base import GenerationOutput
 from fusion_mlx.middleware.exception_handlers import install_exception_handlers
-from fusion_mlx.routes.chat import _tool_call_name
-from fusion_mlx.routes.chat import router as chat_router
+from fusion_mlx.routes_internal.chat import _tool_call_name
+from fusion_mlx.routes_internal.chat import router as chat_router
 
 
 class _RecordingEngine:
@@ -699,7 +699,7 @@ def test_tool_choice_required_with_stream_channel_routed_bypasses_422(monkeypatc
     probe to True so we exercise the bypass deterministically without
     needing a real harmony tokenizer in the test fixture.
     """
-    from fusion_mlx.routes import chat as chat_module
+    from fusion_mlx.routes_internal import chat as chat_module
 
     engine = _RecordingEngine()
     monkeypatch.setattr(
@@ -728,7 +728,9 @@ def test_engine_supports_channel_routed_helper_returns_false_on_no_tokenizer():
     engine has no tokenizer attribute or it is ``None`` — the gate
     must fall back to the parser-only path safely.
     """
-    from fusion_mlx.routes.chat import _engine_supports_channel_routed_tool_calls
+    from fusion_mlx.routes_internal.chat import (
+        _engine_supports_channel_routed_tool_calls,
+    )
 
     class _NoTokenizerEngine:
         tokenizer = None
@@ -747,7 +749,9 @@ def test_engine_supports_channel_routed_helper_returns_true_for_harmony_router(
     from types import SimpleNamespace
 
     from fusion_mlx.output_router import OutputRouter
-    from fusion_mlx.routes.chat import _engine_supports_channel_routed_tool_calls
+    from fusion_mlx.routes_internal.chat import (
+        _engine_supports_channel_routed_tool_calls,
+    )
 
     fake_router = SimpleNamespace(map=SimpleNamespace(format_tag="harmony"))
     monkeypatch.setattr(
@@ -772,7 +776,9 @@ def test_engine_supports_channel_routed_helper_returns_false_for_unsupported_for
     from types import SimpleNamespace
 
     from fusion_mlx.output_router import OutputRouter
-    from fusion_mlx.routes.chat import _engine_supports_channel_routed_tool_calls
+    from fusion_mlx.routes_internal.chat import (
+        _engine_supports_channel_routed_tool_calls,
+    )
 
     fake_router = SimpleNamespace(map=SimpleNamespace(format_tag="think_tag"))
     monkeypatch.setattr(
@@ -1216,7 +1222,7 @@ def test_synthesize_forced_tool_call_helper_shape():
     Stops future refactors from accidentally emitting ``arguments`` as
     a dict (the OpenAI ToolCall spec uses a JSON string).
     """
-    from fusion_mlx.routes.chat import _synthesize_forced_tool_call
+    from fusion_mlx.routes_internal.chat import _synthesize_forced_tool_call
 
     tc = _synthesize_forced_tool_call("get_weather")
     assert tc.id.startswith("call_")
@@ -1251,7 +1257,7 @@ def test_named_function_outside_tools_returns_422(monkeypatch):
     bypass of the early 400 gate. The synthesis branch must then refuse
     rather than fabricating, surfacing as 422.
     """
-    from fusion_mlx.routes import chat as chat_module
+    from fusion_mlx.routes_internal import chat as chat_module
 
     synth_calls: list[str] = []
     real_synth = chat_module._synthesize_forced_tool_call

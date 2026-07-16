@@ -42,7 +42,7 @@ from fusion_mlx.api.models import ContentPart, Message
 from fusion_mlx.api.utils import extract_multimodal_content
 from fusion_mlx.config import reset_config
 from fusion_mlx.engine.base import GenerationOutput
-from fusion_mlx.routes.chat import router as chat_router
+from fusion_mlx.routes_internal.chat import router as chat_router
 from fusion_mlx.utils.chat_template import (
     _is_text_only_content_array,
     _join_text_parts,

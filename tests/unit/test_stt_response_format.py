@@ -79,7 +79,7 @@ def _stub_engine(monkeypatch):
     import importlib.machinery
 
     from fusion_mlx.audio import probe
-    from fusion_mlx.routes import audio as audio_route
+    from fusion_mlx.routes_internal import audio as audio_route
 
     fake_mlx_audio = types.ModuleType("mlx_audio")
     fake_mlx_audio.__path__ = []
@@ -125,7 +125,7 @@ def _stub_engine(monkeypatch):
 def _mount_audio_app() -> tuple[TestClient, callable]:
     """Mount the audio router on a bare FastAPI app, bypassing auth."""
     from fusion_mlx.config import get_config
-    from fusion_mlx.routes import audio as audio_route
+    from fusion_mlx.routes_internal import audio as audio_route
 
     app = FastAPI()
     app.include_router(audio_route.router)
@@ -351,7 +351,7 @@ class TestSubtitleTimestampRollover:
     def test_timestamp_rollover_carries_correctly(
         self, seconds, expected_srt, expected_vtt
     ):
-        from fusion_mlx.routes.audio import (
+        from fusion_mlx.routes_internal.audio import (
             _format_srt_timestamp,
             _format_vtt_timestamp,
         )
@@ -378,7 +378,7 @@ class TestSubtitleTimestampRollover:
         """
         import re
 
-        from fusion_mlx.routes.audio import (
+        from fusion_mlx.routes_internal.audio import (
             _format_srt_timestamp,
             _format_vtt_timestamp,
         )
