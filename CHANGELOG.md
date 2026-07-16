@@ -2,6 +2,31 @@
 
 ## [Unreleased]
 
+## [0.4.8] - 2026-07-13
+
+### Added
+- **`/v1/convert` + `/v1/quantize` async job API.** Conversion and
+  quantization load a full model into memory and write a new artifact, so a
+  synchronous endpoint would block a worker for minutes. The new endpoints
+  use an async job model: `POST /v1/{convert,quantize}` ->
+  `{ "job_id", "status": "queued" }`, polled via
+  `GET /v1/{convert,quantize}/jobs/{job_id}` ->
+  `{ "status", "progress", "output_path", "error", ... }`. Jobs run on a
+  single-worker thread pool (serialized to avoid OOM) and reuse the existing
+  `fusion-mlx convert` CLI pipeline as the job body, so API behavior matches
+  the CLI. `/v1/quantize` requires `quant_bits` or a float `quant_mode`
+  (mxfp4/nvfp4/mxfp8). (`#110`, closes `#103`)
+
+### Fixed
+- **Code injection in agent graph Python export (`/v1/agents/.../export`).**
+  `_generate_python_script` f-string-interpolated untrusted graph field
+  values into generated Python source: `temperature` was interpolated
+  unquoted into an expression (direct code injection) and `name` / `model` /
+  `system_prompt` were interpolated into quoted strings without escaping
+  (quote/newline breakout). All untrusted values are now embedded as a single
+  `json.dumps` config literal (a valid, escaped Python dict), and
+  `temperature` is coerced to a float and clamped to `[0.0, 2.0]`. (`#109`)
+
 ## [0.4.7] - 2026-07-13
 
 ### Added
