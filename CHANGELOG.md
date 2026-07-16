@@ -2,7 +2,26 @@
 
 ## [Unreleased]
 
+## [0.4.7] - 2026-07-13
+
+### Added
+- **Agent Graph API (`/v1/agents/*`).** New CRUD + execution endpoints for
+  agent workflow graphs: list/create/read/update/delete graphs, export, and
+  run a graph against a loaded model. (`#106`)
+- **`/v1/base` endpoint for base-binding detection.** Exposes MLX runtime
+  capabilities (version, Metal availability, KV-cache support, quantization
+  formats, GPU info) so ecosystem components like Fusion-Model-Hub can verify
+  the base before model operations. Honest about mlx limits: `gpu_cores` and
+  `metal_family` are not reported by `mx.device_info()` and stay `null` rather
+  than fabricated. (`#104`)
+
 ### Fixed
+- **Wan2.2 `ti2v` models failed to load (`Model type ti2v not supported`).**
+  Wan2.2 ti2v ships `config.json` with `model_type="ti2v"` but no
+  `configuration.json` task manifest, so `_is_video_model` returned False and
+  the model was misdetected as an LLM - mlx-lm then raised on load (HTTP 500).
+  The check now falls back to recognizing config.json `model_type` in
+  `{t2v, i2v, ti2v}` (still gated on diffusers subdirs). (`#95`)
 - **`/v1/completions` silently dropped OpenAI params and mistyped `logprobs`.**
   `CompletionRequest.logprobs` was declared `bool | None` (copy-pasted from
   `ChatCompletionRequest`), but the OpenAI legacy-completions spec - and the
