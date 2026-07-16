@@ -10,7 +10,7 @@ from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker, Session
 from sqlalchemy.engine import Engine
 
-from fusion_gui.models import Base, AppSettings
+from fusion_mlx.gui_compat.models import Base, AppSettings
 
 
 class DatabaseManager:
@@ -83,7 +83,7 @@ class DatabaseManager:
     def _reset_model_statuses(self):
         try:
             with self.get_session() as session:
-                from fusion_gui.models import Model
+                from fusion_mlx.gui_compat.models import Model
                 models = session.query(Model).all()
                 for model in models:
                     if model.status != "unloaded":
@@ -140,7 +140,7 @@ class DatabaseManager:
     def update_model_sizes_from_disk(self):
         try:
             with self.get_session() as session:
-                from fusion_gui.models import Model
+                from fusion_mlx.gui_compat.models import Model
                 import os
 
                 models = session.query(Model).all()

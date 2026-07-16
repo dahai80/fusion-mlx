@@ -65,7 +65,7 @@ except Exception as e:  # broader than ImportError; transformers/metadata issues
     except Exception:
         pass
 
-from fusion_gui.huggingface_integration import get_huggingface_client
+from fusion_mlx.gui_compat.huggingface_integration import get_huggingface_client
 
 logger = logging.getLogger(__name__)
 

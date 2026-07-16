@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Unit tests for fusion_gui.models — ORM Enum + Base model methods.
+"""Unit tests for fusion_mlx.gui_compat.models — ORM Enum + Base model methods.
 
 These cover the Enum values, the typed-value codec on AppSettings, the
 metadata JSON helpers on Model/InferenceRequest/RequestQueue, the
@@ -15,7 +15,7 @@ from __future__ import annotations
 import json
 from datetime import datetime
 
-from fusion_gui.models import (
+from fusion_mlx.gui_compat.models import (
     AppSettings,
     Base,
     InferenceRequest,

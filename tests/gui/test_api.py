@@ -6,7 +6,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
-from fusion_gui.huggingface_integration import get_huggingface_client
+from fusion_mlx.gui_compat.huggingface_integration import get_huggingface_client
 
 
 async def test_hf_integration():

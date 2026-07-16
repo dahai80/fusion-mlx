@@ -144,12 +144,12 @@ version = {attr = "fusion_mlx._version.__version__"}
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["fusion_mlx*", "fusion_gui*"]
+include = ["fusion_mlx*"]
 
 [tool.setuptools.package-data]
 "fusion_mlx" = ["aliases.json"]
 "fusion_mlx.admin" = ["templates/**/*.html", "static/**/*", "i18n/*.json"]
-"fusion_gui" = ["templates/**/*.html"]
+"fusion_mlx.gui_compat" = ["templates/**/*.html"]
 
 [tool.uv]
 override-dependencies = [
@@ -159,12 +159,17 @@ override-dependencies = [
 [tool.black]
 line-length = 88
 target-version = ["py311", "py312", "py313"]
+# gui_compat/ is adapted MLX-GUI code moved in from the former top-level
+# fusion_gui/ package (#63); not yet brought to black compliance.
+extend-exclude = '/fusion_mlx/gui_compat/'
 
 [tool.ruff]
 line-length = 88
 # patches/ holds upstream-derived model/patch code (mlx_vlm vendor, mlx_lm_mtp,
 # deepseek_v4, glm_moe_dsa). Not authored here; linting it creates merge churn.
-extend-exclude = ["fusion_mlx/patches"]
+# gui_compat/ is adapted MLX-GUI code moved in from the former top-level
+# fusion_gui/ package (#63); not yet brought to ruff compliance.
+extend-exclude = ["fusion_mlx/patches", "fusion_mlx/gui_compat"]
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "N", "UP", "B", "SIM"]

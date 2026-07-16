@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Unit tests for fusion_gui.database.DatabaseManager.
+"""Unit tests for fusion_mlx.gui_compat.database.DatabaseManager.
 
 DatabaseManager owns SQLite connection setup, app-settings defaults, model
 status reset on startup, and a few helpers (vacuum/backup/size/info). The
@@ -19,7 +19,7 @@ from pathlib import Path
 
 import pytest
 
-from fusion_gui.database import (
+from fusion_mlx.gui_compat.database import (
     DatabaseManager,
 )
 
@@ -135,7 +135,7 @@ class TestResetModelStatuses:
         db._reset_model_statuses()
 
     def test_reset_marks_loaded_as_unloaded(self, db):
-        from fusion_gui.models import Model
+        from fusion_mlx.gui_compat.models import Model
 
         with db.get_session() as sess:
             m = Model(
@@ -210,7 +210,7 @@ class TestUpdateModelSizesFromDisk:
         db.update_model_sizes_from_disk()  # should not raise
 
     def test_model_with_missing_path_logs_warning(self, db):
-        from fusion_gui.models import Model
+        from fusion_mlx.gui_compat.models import Model
 
         with db.get_session() as sess:
             m = Model(
@@ -226,7 +226,7 @@ class TestUpdateModelSizesFromDisk:
         db.update_model_sizes_from_disk()
 
     def test_model_with_safetensors_updates_size(self, db, tmp_path):
-        from fusion_gui.models import Model
+        from fusion_mlx.gui_compat.models import Model
 
         model_dir = tmp_path / "realmodel"
         model_dir.mkdir()
@@ -254,7 +254,7 @@ class TestUpdateModelSizesFromDisk:
 
 class TestGlobalHelpers:
     def test_get_database_manager_singleton(self, monkeypatch, tmp_path):
-        import fusion_gui.database as mod
+        import fusion_mlx.gui_compat.database as mod
 
         monkeypatch.setattr("appdirs.user_data_dir", lambda *a, **k: str(tmp_path))
         mod.db_manager = None
@@ -265,7 +265,7 @@ class TestGlobalHelpers:
         assert mod.db_manager is None
 
     def test_get_db_session_generator(self, monkeypatch, tmp_path):
-        import fusion_gui.database as mod
+        import fusion_mlx.gui_compat.database as mod
 
         monkeypatch.setattr("appdirs.user_data_dir", lambda *a, **k: str(tmp_path))
         mod.db_manager = None
@@ -276,7 +276,7 @@ class TestGlobalHelpers:
         mod.close_database()
 
     def test_close_database_when_none(self):
-        import fusion_gui.database as mod
+        import fusion_mlx.gui_compat.database as mod
 
         mod.db_manager = None
         mod.close_database()  # should not raise
