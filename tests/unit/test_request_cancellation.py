@@ -45,6 +45,8 @@ class TestBaseEngineDefaultAbort:
     pass
 
 
-@pytest.mark.skip(reason="rapid-mlx-only: fusion_mlx.routes_internal.health does not exist")
+@pytest.mark.skip(
+    reason="rapid-mlx-only: fusion_mlx.routes_internal.health does not exist"
+)
 class TestCancelRequestEndpoint:
     pass

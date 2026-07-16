@@ -728,7 +728,9 @@ def test_engine_supports_channel_routed_helper_returns_false_on_no_tokenizer():
     engine has no tokenizer attribute or it is ``None`` — the gate
     must fall back to the parser-only path safely.
     """
-    from fusion_mlx.routes_internal.chat import _engine_supports_channel_routed_tool_calls
+    from fusion_mlx.routes_internal.chat import (
+        _engine_supports_channel_routed_tool_calls,
+    )
 
     class _NoTokenizerEngine:
         tokenizer = None
@@ -747,7 +749,9 @@ def test_engine_supports_channel_routed_helper_returns_true_for_harmony_router(
     from types import SimpleNamespace
 
     from fusion_mlx.output_router import OutputRouter
-    from fusion_mlx.routes_internal.chat import _engine_supports_channel_routed_tool_calls
+    from fusion_mlx.routes_internal.chat import (
+        _engine_supports_channel_routed_tool_calls,
+    )
 
     fake_router = SimpleNamespace(map=SimpleNamespace(format_tag="harmony"))
     monkeypatch.setattr(
@@ -772,7 +776,9 @@ def test_engine_supports_channel_routed_helper_returns_false_for_unsupported_for
     from types import SimpleNamespace
 
     from fusion_mlx.output_router import OutputRouter
-    from fusion_mlx.routes_internal.chat import _engine_supports_channel_routed_tool_calls
+    from fusion_mlx.routes_internal.chat import (
+        _engine_supports_channel_routed_tool_calls,
+    )
 
     fake_router = SimpleNamespace(map=SimpleNamespace(format_tag="think_tag"))
     monkeypatch.setattr(

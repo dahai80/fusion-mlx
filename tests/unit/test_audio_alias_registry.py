@@ -227,7 +227,10 @@ class TestAudioAliasRegistry:
         """The STT/TTS alias maps in routes.audio mirror the registry
         — a single JSON edit must reach every consumer.
         """
-        from fusion_mlx.routes_internal.audio import STT_MODEL_ALIASES, TTS_MODEL_ALIASES
+        from fusion_mlx.routes_internal.audio import (
+            STT_MODEL_ALIASES,
+            TTS_MODEL_ALIASES,
+        )
 
         from fusion_mlx.audio.registry import stt_aliases, tts_aliases
 

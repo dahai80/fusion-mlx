@@ -446,7 +446,10 @@ class TestAudioRouteAliasResolution:
 
     def test_stt_resolver_passes_through_known_alias(self):
         """No regression on the known-alias path."""
-        from fusion_mlx.routes_internal.audio import STT_MODEL_ALIASES, _resolve_stt_model
+        from fusion_mlx.routes_internal.audio import (
+            STT_MODEL_ALIASES,
+            _resolve_stt_model,
+        )
 
         for alias, hf in STT_MODEL_ALIASES.items():
             assert _resolve_stt_model(alias) == hf

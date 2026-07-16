@@ -2768,7 +2768,9 @@ def test_r12_metrics_exposes_save_drift_drops():
     # a cheap structural check; deep wiring is exercised in the
     # /metrics route's own tests.
     import fusion_mlx.routes_internal.metrics as metrics_mod
-    from fusion_mlx.routes_internal.metrics import _coerce_number  # noqa: F401 — import probe
+    from fusion_mlx.routes_internal.metrics import (
+        _coerce_number,  # noqa: F401 — import probe
+    )
 
     src = Path(metrics_mod.__file__).read_text()
     assert (

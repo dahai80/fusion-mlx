@@ -167,7 +167,10 @@ class TestSTTShortWhisperAlias:
         repo so a bare ``model="whisper"`` request from drop-in OpenAI
         SDK code lands on the supported variant.
         """
-        from fusion_mlx.routes_internal.audio import STT_MODEL_ALIASES, _resolve_stt_model
+        from fusion_mlx.routes_internal.audio import (
+            STT_MODEL_ALIASES,
+            _resolve_stt_model,
+        )
 
         # The mapping must exist…
         assert "whisper" in STT_MODEL_ALIASES, (
@@ -186,7 +189,10 @@ class TestSTTShortWhisperAlias:
     def test_whisper_1_legacy_alias_resolves(self):
         """OpenAI's legacy ``whisper-1`` placeholder maps to the same
         Whisper variant so legacy SDKs don't 404."""
-        from fusion_mlx.routes_internal.audio import STT_MODEL_ALIASES, _resolve_stt_model
+        from fusion_mlx.routes_internal.audio import (
+            STT_MODEL_ALIASES,
+            _resolve_stt_model,
+        )
 
         assert "whisper-1" in STT_MODEL_ALIASES, (
             "Legacy ``whisper-1`` placeholder must be accepted; some "
