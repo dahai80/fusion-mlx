@@ -252,6 +252,50 @@ def register_audio_routes_if_enabled(*args, **kwargs):
     pass
 
 
+def _runtime_base_info(pool) -> dict[str, Any]:
+    # Issue #104: base-binding runtime info for Fusion-Model-Hub. Exposes MLX
+    # capabilities (Metal, quant formats, GPU) so ecosystem components verify
+    # the base before model operations. Honest about mlx limits: gpu_cores and
+    # metal_family are NOT reported by mx.device_info, so they stay None rather
+    # than fabricated. max_context_length is model-dependent, not a constant.
+    try:
+        import mlx.core as mx
+
+        metal_available = bool(mx.metal.is_available())
+        di = mx.device_info() if metal_available else {}
+    except Exception:
+        logger.debug("base info: mlx probe failed", exc_info=True)
+        metal_available = False
+        di = {}
+    mem_bytes = di.get("memory_size", 0) if isinstance(di, dict) else 0
+    compatible: list[str] = []
+    if pool is not None:
+        try:
+            compatible = list(pool.get_loaded_model_ids())
+        except Exception:
+            logger.debug("base info: get_loaded_model_ids failed", exc_info=True)
+    return {
+        "version": __version__,
+        "metal_available": metal_available,
+        "metal_family": None,
+        "kv_cache_supported": True,
+        "quantization_formats": [
+            "mxfp4",
+            "mxfp8",
+            "mixed_3_4",
+            "quant2",
+            "quant2_all",
+        ],
+        "max_context_length": None,
+        "gpu_info": {
+            "chip_name": di.get("device_name") if isinstance(di, dict) else None,
+            "gpu_cores": None,
+            "memory_gb": round(mem_bytes / 1e9, 1) if mem_bytes else None,
+        },
+        "compatible_models": compatible,
+    }
+
+
 def load_embedding_model(*args, **kwargs):
     raise NotImplementedError("Embedding models not available in this build")
 
@@ -512,6 +556,13 @@ class Server:
             pool_status = self.pool.get_status() if self.pool else {}
             metrics = get_server_metrics().to_dict()
             return {**pool_status, **metrics}
+
+        # Issue #104: base-binding runtime info (version/Metal/quant/GPU) for
+        # Fusion-Model-Hub. Separate from /stats so existing consumers are
+        # unaffected; /stats stays the pool+metrics shape.
+        @app.get("/v1/base")
+        async def base_info():
+            return _runtime_base_info(self.pool)
 
         @app.get("/api/status")
         async def api_status():
