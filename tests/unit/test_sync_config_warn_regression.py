@@ -12,12 +12,13 @@ import fusion_mlx.server as server_mod
 
 
 class _DriftyConfig:
-    # Read-only property: hasattr(cfg, "model_name") is True, but setattr
+    # Read-only property: hasattr(cfg, "api_key") is True, but setattr
     # raises AttributeError (no setter). All other _sync_config target attrs
-    # are absent -> hasattr False -> skipped, so only model_name hits the
-    # warn path.
+    # are absent -> hasattr False -> skipped, so only api_key hits the
+    # warn path. (model_name is no longer a _sync_config target - #50 writes
+    # it directly to ServerConfig - so it cannot drive this regression test.)
     @property
-    def model_name(self):
+    def api_key(self):
         return "drift"
 
 
@@ -33,7 +34,7 @@ def test_sync_config_warns_on_setattr_failure(monkeypatch, caplog):
         server_mod._sync_config()
 
     msgs = [r.getMessage() for r in caplog.records if r.levelno >= logging.WARNING]
-    assert any("setattr model_name failed" in m for m in msgs), msgs
+    assert any("setattr api_key failed" in m for m in msgs), msgs
 
 
 def test_sync_config_no_warn_when_all_attrs_settable(monkeypatch, caplog):

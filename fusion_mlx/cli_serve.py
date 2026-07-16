@@ -40,7 +40,7 @@ def _serve_audio_mode(args, entry) -> None:
     * Stamp the resolved HF id on ``args.model`` so the audio routes
       treat it as a known engine (``STT_MODEL_ALIASES`` /
       ``TTS_MODEL_ALIASES`` map both the short and full forms).
-    * Capture the alias on ``server._model_alias`` so ``/v1/models``
+    * Capture the alias on ``cfg.model_alias`` so ``/v1/models``
       advertises it.
     * Configure server security knobs (api-key, body-size cap, CORS)
       the SAME way the text path does — audio endpoints share the
@@ -60,37 +60,38 @@ def _serve_audio_mode(args, entry) -> None:
     # ``[audio]`` extra; we don't want the text-LM engine machinery to
     # boot until / unless it's actually needed.
     from . import server
+    from .config import get_config
     from .middleware.auth import configure_rate_limiter
     from .server import app
 
     uvicorn_log_level = server.configure_logging(args.log_level)
 
     # Stamp the resolved model id so the audio routes find the same
-    # alias mapping the registry has. ``server._model_alias`` is read
-    # by ``/v1/models`` to surface the operator-facing alias name;
-    # ``server._model_name`` / ``server._model_path`` populate
-    # ``ServerConfig.model_name`` / ``model_path`` so /v1/models lists
-    # the served audio model (codex r1 HIGH #1 follow-up).
+    # alias mapping the registry has. Written directly to ServerConfig
+    # (#50): ``cfg.model_alias`` is read by ``/v1/models`` to surface
+    # the operator-facing alias name; ``cfg.model_name`` / ``cfg.model_path``
+    # let /v1/models list the served audio model (codex r1 HIGH #1 follow-up).
+    _cfg = get_config()
     if hasattr(args, "_original_alias") and args._original_alias is not None:
-        server._model_alias = args._original_alias
+        _cfg.model_alias = args._original_alias
     else:
         # No prior alias hop (e.g. user passed a full HF id). Use the
         # short alias from the registry so /v1/models still shows the
         # friendly name, not the bare HF path.
-        server._model_alias = entry.alias
+        _cfg.model_alias = entry.alias
     # R11-K / task #258: honor ``--served-model-name`` on the audio
     # path, mirroring the text-mode contract at ``server.load_model``
-    # (``_model_name = served_model_name or model_name``). Pre-fix the
+    # (``cfg.model_name = served_model_name or model_name``). Pre-fix the
     # audio dispatcher ignored the flag, so operators wrapping
     # ``fusion-mlx serve kokoro`` behind a gateway with a stable
     # ``model_name`` saw the raw HF id on ``/v1/models`` and the
     # gateway's model-id allowlist 404'd. The underlying HF id stays
-    # on ``_model_path`` (cache dir / engine input), and the friendly
-    # short alias stays on ``_model_alias`` so ``/v1/models`` lists
+    # on ``cfg.model_path`` (cache dir / engine input), and the friendly
+    # short alias stays on ``cfg.model_alias`` so ``/v1/models`` lists
     # both the custom name AND the alias — same wire shape as text.
     _served_name = getattr(args, "served_model_name", None)
-    server._model_name = _served_name or entry.hf_id
-    server._model_path = entry.hf_id
+    _cfg.model_name = _served_name or entry.hf_id
+    _cfg.model_path = entry.hf_id
 
     # Mirror the text path's security configuration. Audio routes use
     # the SAME middleware stack as chat/embeddings — the same env vars
@@ -130,8 +131,8 @@ def _serve_audio_mode(args, entry) -> None:
     # accept unauthenticated /v1/audio/* requests. Codex r1 HIGH #1.
     server._sync_config()
 
-    # Task #292: register ``/v1/audio/*`` routes. ``server._model_alias``
-    # / ``server._model_name`` were just stamped with the registry-known
+    # Task #292: register ``/v1/audio/*`` routes. ``cfg.model_alias``
+    # / ``cfg.model_name`` were just stamped with the registry-known
     # audio alias above, so the registry-driven branch of
     # :func:`register_audio_routes_if_enabled` is what fires here — the
     # ``--enable-audio`` flag is for the text-mode-with-audio escape
@@ -196,7 +197,6 @@ def _serve_audio_mode(args, entry) -> None:
         )
 
     from fusion_mlx._version_check import print_staleness_warning_if_any
-    from fusion_mlx.config import get_config
 
     print_staleness_warning_if_any()
     print()
@@ -1344,8 +1344,11 @@ def serve_command(args):
     except Exception as e:  # noqa: BLE001
         logger.debug(f"deepseek_v3 misbind check failed (non-fatal): {e}")
 
-    # Pass alias info to server (for /v1/models)
-    server._model_alias = getattr(args, "_original_alias", None)
+    # Pass alias info to server (for /v1/models). Written directly to
+    # ServerConfig (#50) so load_model + /v1/models read the locked alias.
+    from fusion_mlx.config import get_config as _get_config
+
+    _get_config().model_alias = getattr(args, "_original_alias", None)
 
     # Task #292: forward the ``--enable-audio`` opt-in to the server
     # module BEFORE ``load_model`` runs — the post-load hook in
@@ -1457,7 +1460,7 @@ def serve_command(args):
         configure_rate_limiter(args.rate_limit, enabled=True)
 
     # Staging globals now write directly to ServerConfig (#50 consolidation).
-    from fusion_mlx.config import get_config as _get_config
+    # get_config imported above near the locked-alias write.
 
     # Configure GC control
     gc_control = args.gc_control and not args.no_gc_control
