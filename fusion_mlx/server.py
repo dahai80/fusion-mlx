@@ -124,7 +124,6 @@ _model_name: str | None = None
 _model_path: str | None = None
 _default_timeout: float = 1800.0
 _max_request_bytes: int | None = None
-_rate_limiter = None
 _enable_auto_tool_choice: bool = False
 _tool_call_parser: str | None = None
 _enable_tool_logits_bias: bool = False
@@ -168,9 +167,7 @@ def _sync_config() -> None:
             # globals (#50 consolidation).
             # rate_limiter is intentionally excluded: it is a module-level
             # singleton in middleware/auth.py (configure_rate_limiter mutates
-            # it in place and returns it), NOT a ServerConfig field. The
-            # previous ("rate_limiter", _rate_limiter) entry was dead code --
-            # hasattr(cfg, "rate_limiter") was always False so it never synced.
+            # it in place and returns it), NOT a ServerConfig field.
         ):
             if hasattr(cfg, _attr):
                 try:

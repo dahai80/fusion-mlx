@@ -117,7 +117,7 @@ def _serve_audio_mode(args, entry) -> None:
     # CORS — same friendly default the text path uses.
     server.configure_cors_from_env(args.cors_origins)
     if args.rate_limit > 0:
-        server._rate_limiter = configure_rate_limiter(args.rate_limit, enabled=True)
+        configure_rate_limiter(args.rate_limit, enabled=True)
 
     # CRITICAL: copy the just-set server globals into the
     # ServerConfig singleton the middleware actually reads.
@@ -1454,7 +1454,7 @@ def serve_command(args):
     # ``Authorization`` auto-forwarding must pin to specific origins.
     cors_origins = server.configure_cors_from_env(args.cors_origins)
     if args.rate_limit > 0:
-        server._rate_limiter = configure_rate_limiter(args.rate_limit, enabled=True)
+        configure_rate_limiter(args.rate_limit, enabled=True)
 
     # Staging globals now write directly to ServerConfig (#50 consolidation).
     from fusion_mlx.config import get_config as _get_config
