@@ -104,7 +104,7 @@ def _mount_audio_app() -> tuple[TestClient, callable]:
     default FastAPI 422)."""
     from fusion_mlx.config import get_config
     from fusion_mlx.middleware.exception_handlers import install_exception_handlers
-    from fusion_mlx.routes import audio as audio_route
+    from fusion_mlx.routes_internal import audio as audio_route
 
     app = FastAPI()
     app.include_router(audio_route.router)
@@ -130,7 +130,7 @@ def _stub_engine(monkeypatch, *, voice_observed=None, format_observed=None):
 
     from fusion_mlx.audio import probe as probe_mod
     from fusion_mlx.audio import tts as tts_mod
-    from fusion_mlx.routes import audio as audio_route
+    from fusion_mlx.routes_internal import audio as audio_route
 
     observed_models: list[str] = []
     real_to_bytes = tts_mod.TTSEngine.to_bytes
@@ -508,7 +508,7 @@ def _mount_models_app(monkeypatch, **cfg_overrides):
     """Mount the models router with controlled config state. Mirrors
     :func:`tests.test_capabilities_field._mount_models_app`."""
     from fusion_mlx.config import get_config
-    from fusion_mlx.routes import models as models_route
+    from fusion_mlx.routes_internal import models as models_route
 
     app = FastAPI()
     app.include_router(models_route.router)

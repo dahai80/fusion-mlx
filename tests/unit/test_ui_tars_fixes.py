@@ -4,8 +4,8 @@
 Bugs covered:
 - C-05 (CRIT): UI-TARS Computer-Use system prompt not auto-prepended on
   the chat lane; parser silently no-ops on raw model output. Fixed by
-  ``maybe_inject_ui_tars_system_prompt`` wired into ``routes/chat.py``
-  and ``routes/anthropic.py``.
+  ``maybe_inject_ui_tars_system_prompt`` wired into ``routes_internal/chat.py``
+  and ``routes_internal/anthropic.py``.
 - C-07 (CRIT): ``tool_choice="none"`` ignored — UI-TARS still emits a
   ``computer`` tool_call. Fixed by (a) skipping the sysprompt inject
   when ``tool_choice="none"`` (REQUEST-time) and (b) defensive
@@ -649,8 +649,8 @@ class TestLaneInjectionParity:
     so the model emitted different coords across surfaces.
 
     The fix is the SHARED ``maybe_inject_ui_tars_system_prompt``
-    helper wired into both ``routes/chat.py`` AND
-    ``routes/anthropic.py``. So long as both routes feed the helper
+    helper wired into both ``routes_internal/chat.py`` AND
+    ``routes_internal/anthropic.py``. So long as both routes feed the helper
     the same UI-TARS-bound request, the prompts they pass to the
     engine are byte-identical AT the sysprompt level.
 
@@ -785,20 +785,20 @@ class TestLaneInjectionParity:
         # Codex r4 BLOCKING: walk the route's AST and assert a real
         # ``Call`` node to the helper exists. A dead ``import`` no
         # longer satisfies this — only a live call site counts.
-        from fusion_mlx.routes import chat as chat_route
+        from fusion_mlx.routes_internal import chat as chat_route
 
         calls = self._find_helper_calls(chat_route)
         assert len(calls) >= 1, (
-            "routes/chat.py must contain at least one Call node to"
+            "routes_internal/chat.py must contain at least one Call node to"
             " maybe_inject_ui_tars_system_prompt — dogfood C-05"
         )
 
     def test_anthropic_route_actually_invokes_helper(self):
-        from fusion_mlx.routes import anthropic as anthropic_route
+        from fusion_mlx.routes_internal import anthropic as anthropic_route
 
         calls = self._find_helper_calls(anthropic_route)
         assert len(calls) >= 1, (
-            "routes/anthropic.py must contain at least one Call node"
+            "routes_internal/anthropic.py must contain at least one Call node"
             " to maybe_inject_ui_tars_system_prompt — dogfood F-R2-04"
         )
 
@@ -808,10 +808,10 @@ class TestLaneInjectionParity:
         # and the request's ``tool_choice`` — not just that those
         # tokens appear anywhere in the source. AST-level check
         # over the actual ``Call`` node's keyword arguments.
-        from fusion_mlx.routes import chat as chat_route
+        from fusion_mlx.routes_internal import chat as chat_route
 
         calls = self._find_helper_calls(chat_route)
-        assert calls, "routes/chat.py must call the helper"
+        assert calls, "routes_internal/chat.py must call the helper"
         # Pick the first live call (route only has one).
         call = calls[0]
         parser_expr = self._call_kwarg_value_source(call, "tool_call_parser")
@@ -837,10 +837,10 @@ class TestLaneInjectionParity:
         assert tools_expr == "request.tools"
 
     def test_anthropic_route_invokes_helper_with_parser_and_tool_choice(self):
-        from fusion_mlx.routes import anthropic as anthropic_route
+        from fusion_mlx.routes_internal import anthropic as anthropic_route
 
         calls = self._find_helper_calls(anthropic_route)
-        assert calls, "routes/anthropic.py must call the helper"
+        assert calls, "routes_internal/anthropic.py must call the helper"
         call = calls[0]
         parser_expr = self._call_kwarg_value_source(call, "tool_call_parser")
         tc_expr = self._call_kwarg_value_source(call, "tool_choice")
@@ -862,11 +862,11 @@ class TestLaneInjectionParity:
         # the model described actions in prose instead of emitting
         # ``Action: ...`` text the parser could surface as
         # ``computer_call`` output items (dogfood F-R2-D).
-        from fusion_mlx.routes import responses as responses_route
+        from fusion_mlx.routes_internal import responses as responses_route
 
         calls = self._find_helper_calls(responses_route)
         assert len(calls) >= 1, (
-            "routes/responses.py must contain at least one Call node"
+            "routes_internal/responses.py must contain at least one Call node"
             " to maybe_inject_ui_tars_system_prompt — dogfood F-R2-D"
         )
 
@@ -875,10 +875,10 @@ class TestLaneInjectionParity:
         # MUST pass ``tools=openai_request.tools`` so the tool-coupled
         # gate fires correctly. Otherwise the route bypasses the C-09
         # fix on the responses lane.
-        from fusion_mlx.routes import responses as responses_route
+        from fusion_mlx.routes_internal import responses as responses_route
 
         calls = self._find_helper_calls(responses_route)
-        assert calls, "routes/responses.py must call the helper"
+        assert calls, "routes_internal/responses.py must call the helper"
         # The responses route has both a non-stream and a streaming
         # call site; check every one is tool-coupled.
         for call in calls:

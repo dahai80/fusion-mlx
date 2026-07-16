@@ -1099,7 +1099,7 @@ class TestR7H1ChatLaneCoordinateParity:
         # Black-box: drive the chat-route helper that streaming +
         # non-streaming both call so the test fails if either site
         # bypasses the translation.
-        from fusion_mlx.routes.chat import _normalize_ui_tars_tcs_for_chat
+        from fusion_mlx.routes_internal.chat import _normalize_ui_tars_tcs_for_chat
 
         tcs = [
             {
@@ -1131,7 +1131,7 @@ class TestR7H1ChatLaneCoordinateParity:
         assert json.loads(out[1]["function"]["arguments"]) == {"point": [10, 20]}
 
     def test_chat_lane_none_and_empty_tool_lists_pass_through(self):
-        from fusion_mlx.routes.chat import _normalize_ui_tars_tcs_for_chat
+        from fusion_mlx.routes_internal.chat import _normalize_ui_tars_tcs_for_chat
 
         assert _normalize_ui_tars_tcs_for_chat(None) is None
         assert _normalize_ui_tars_tcs_for_chat([]) == []
@@ -1140,7 +1140,7 @@ class TestR7H1ChatLaneCoordinateParity:
         # Defense-in-depth: the upstream postprocessor may reference
         # the same event.tool_calls list elsewhere; the normaliser
         # must return new dicts rather than mutating in place.
-        from fusion_mlx.routes.chat import _normalize_ui_tars_tcs_for_chat
+        from fusion_mlx.routes_internal.chat import _normalize_ui_tars_tcs_for_chat
 
         tcs = [
             {
@@ -1347,7 +1347,7 @@ class TestR10C2NoReasoningAliasOnChatWire:
         # keys) must be absent.
         import inspect
 
-        import fusion_mlx.routes.chat as _chat_mod
+        import fusion_mlx.routes_internal.chat as _chat_mod
 
         route_src = inspect.getsource(_chat_mod)
         # R10-C2 invariant — the dup-emission template must be gone.

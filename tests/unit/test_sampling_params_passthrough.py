@@ -114,7 +114,7 @@ def _build_chat_kwargs(req: ChatCompletionRequest) -> dict:
     This must stay aligned with vllm_mlx/routes/chat.py around the
     ``chat_kwargs = { ... }`` block — if that block moves, update here.
     """
-    from fusion_mlx.routes.chat import _resolve_temperature, _resolve_top_p
+    from fusion_mlx.routes_internal.chat import _resolve_temperature, _resolve_top_p
 
     chat_kwargs: dict = {
         "max_tokens": req.max_tokens or 256,

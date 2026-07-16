@@ -1248,7 +1248,7 @@ def _stream_post(
 
     from fusion_mlx.config import reset_config
     from fusion_mlx.reasoning.qwen3_parser import Qwen3ReasoningParser
-    from fusion_mlx.routes.chat import router as chat_router
+    from fusion_mlx.routes_internal.chat import router as chat_router
 
     cfg = reset_config()
     cfg.engine = _StreamEngine(
@@ -1414,7 +1414,7 @@ def test_streaming_happy_path_no_sentinel_when_content_streamed(monkeypatch):
 
     from fusion_mlx.config import reset_config
     from fusion_mlx.engine.base import GenerationOutput
-    from fusion_mlx.routes.chat import router as chat_router
+    from fusion_mlx.routes_internal.chat import router as chat_router
 
     class _ContentEngine:
         preserve_native_tool_format = False
@@ -1495,7 +1495,7 @@ def test_anthropic_route_helper_call_site_present():
     so the env-knob behaviour applies uniformly to Anthropic SDK
     consumers. Source-level grep guards against a future refactor that
     deletes the call site but leaves the import intact."""
-    src = _route_source("fusion_mlx.routes.anthropic")
+    src = _route_source("fusion_mlx.routes_internal.anthropic")
     assert "_apply_reasoning_cutoff_notice(" in src, (
         "Anthropic route must invoke the cutoff sentinel helper "
         "(not just import it) — single source of truth"
@@ -1504,7 +1504,7 @@ def test_anthropic_route_helper_call_site_present():
 
 def test_responses_route_helper_call_site_present():
     """Same call-site grep for ``/v1/responses``."""
-    src = _route_source("fusion_mlx.routes.responses")
+    src = _route_source("fusion_mlx.routes_internal.responses")
     assert "_apply_reasoning_cutoff_notice(" in src, (
         "Responses route must invoke the cutoff sentinel helper "
         "(not just import it) — single source of truth"
@@ -1515,7 +1515,7 @@ def test_chat_route_helper_call_site_present():
     """Same call-site grep for ``/v1/chat/completions``. The chat
     module hosts BOTH the non-stream and stream paths, so the helper
     must be invoked twice."""
-    src = _route_source("fusion_mlx.routes.chat")
+    src = _route_source("fusion_mlx.routes_internal.chat")
     invocation_count = src.count("_apply_reasoning_cutoff_notice(")
     assert invocation_count >= 2, (
         "Chat route must invoke the cutoff sentinel helper from "
@@ -1591,7 +1591,7 @@ def test_chat_route_opt_out_no_sentinel_on_length_cut(monkeypatch):
     from fastapi.testclient import TestClient
 
     from fusion_mlx.config import reset_config
-    from fusion_mlx.routes.chat import router as chat_router
+    from fusion_mlx.routes_internal.chat import router as chat_router
 
     cfg = reset_config()
     _seed_length_cut_engine(cfg)
@@ -1641,7 +1641,7 @@ def test_chat_route_enabled_surfaces_sentinel_on_length_cut(monkeypatch):
     from fastapi.testclient import TestClient
 
     from fusion_mlx.config import reset_config
-    from fusion_mlx.routes.chat import router as chat_router
+    from fusion_mlx.routes_internal.chat import router as chat_router
 
     cfg = reset_config()
     _seed_length_cut_engine(cfg)
@@ -1699,7 +1699,7 @@ def test_chat_route_default_env_surfaces_sentinel_regression_858(monkeypatch):
     from fastapi.testclient import TestClient
 
     from fusion_mlx.config import reset_config
-    from fusion_mlx.routes.chat import router as chat_router
+    from fusion_mlx.routes_internal.chat import router as chat_router
 
     cfg = reset_config()
     _seed_length_cut_engine(cfg)
@@ -1745,7 +1745,7 @@ def test_anthropic_route_opt_out_no_sentinel_on_length_cut(monkeypatch):
     from fastapi.testclient import TestClient
 
     from fusion_mlx.config import reset_config
-    from fusion_mlx.routes.anthropic import router as anthropic_router
+    from fusion_mlx.routes_internal.anthropic import router as anthropic_router
 
     cfg = reset_config()
     _seed_length_cut_engine(cfg)
@@ -1797,7 +1797,7 @@ def test_anthropic_route_enabled_surfaces_sentinel(monkeypatch):
     from fastapi.testclient import TestClient
 
     from fusion_mlx.config import reset_config
-    from fusion_mlx.routes.anthropic import router as anthropic_router
+    from fusion_mlx.routes_internal.anthropic import router as anthropic_router
 
     cfg = reset_config()
     _seed_length_cut_engine(cfg)
@@ -1846,7 +1846,7 @@ def test_responses_route_opt_out_no_sentinel_on_length_cut(monkeypatch):
     from fastapi.testclient import TestClient
 
     from fusion_mlx.config import reset_config
-    from fusion_mlx.routes.responses import router as responses_router
+    from fusion_mlx.routes_internal.responses import router as responses_router
 
     cfg = reset_config()
     _seed_length_cut_engine(cfg)
@@ -1894,7 +1894,7 @@ def test_responses_route_enabled_surfaces_sentinel(monkeypatch):
     from fastapi.testclient import TestClient
 
     from fusion_mlx.config import reset_config
-    from fusion_mlx.routes.responses import router as responses_router
+    from fusion_mlx.routes_internal.responses import router as responses_router
 
     cfg = reset_config()
     _seed_length_cut_engine(cfg)

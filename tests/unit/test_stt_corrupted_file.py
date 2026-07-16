@@ -39,7 +39,7 @@ def _stub_engine_raising(monkeypatch):
     import importlib.machinery
 
     from fusion_mlx.audio import probe
-    from fusion_mlx.routes import audio as audio_route
+    from fusion_mlx.routes_internal import audio as audio_route
 
     fake_mlx_audio = types.ModuleType("mlx_audio")
     fake_mlx_audio.__path__ = []
@@ -93,7 +93,7 @@ def _stub_engine_raising(monkeypatch):
 
 def _mount_audio_app():
     from fusion_mlx.config import get_config
-    from fusion_mlx.routes import audio as audio_route
+    from fusion_mlx.routes_internal import audio as audio_route
 
     app = FastAPI()
     app.include_router(audio_route.router)
@@ -186,7 +186,7 @@ class TestNonDecodeErrorStillReturns500:
         import importlib.machinery
 
         from fusion_mlx.audio import probe
-        from fusion_mlx.routes import audio as audio_route
+        from fusion_mlx.routes_internal import audio as audio_route
 
         fake_mlx_audio = types.ModuleType("mlx_audio")
         fake_mlx_audio.__path__ = []
@@ -325,7 +325,7 @@ class TestAudioModuleImports:
         # future refactor breaks the import chain (e.g. by deleting
         # ``import re``), ``importlib.reload`` raises NameError /
         # ModuleNotFoundError and this test fails loudly.
-        import fusion_mlx.routes.audio as audio_route
+        import fusion_mlx.routes_internal.audio as audio_route
 
         importlib.reload(audio_route)
         # Spot-check the sanitiser is callable and the regex compiled.
@@ -341,7 +341,7 @@ class TestDecodeErrorEnvelopeSanitisation:
     """
 
     def test_sanitiser_strips_quoted_unix_paths(self):
-        from fusion_mlx.routes.audio import _sanitize_decode_reason
+        from fusion_mlx.routes_internal.audio import _sanitize_decode_reason
 
         # Common librosa shape: "Error opening '/var/folders/.../tmpXYZ.wav': Format not recognised."
         msg = "Error opening '/var/folders/qz/T/tmpXYZ.wav': Format not recognised."
@@ -351,7 +351,7 @@ class TestDecodeErrorEnvelopeSanitisation:
         assert "Format not recognised" in out, out
 
     def test_sanitiser_strips_bare_unix_paths(self):
-        from fusion_mlx.routes.audio import _sanitize_decode_reason
+        from fusion_mlx.routes_internal.audio import _sanitize_decode_reason
 
         msg = "could not decode audio file: /tmp/audio_xyz.wav header is truncated"
         out = _sanitize_decode_reason(msg)
@@ -359,7 +359,7 @@ class TestDecodeErrorEnvelopeSanitisation:
         assert "header is truncated" in out, out
 
     def test_sanitiser_strips_quoted_windows_paths(self):
-        from fusion_mlx.routes.audio import _sanitize_decode_reason
+        from fusion_mlx.routes_internal.audio import _sanitize_decode_reason
 
         msg = "Error opening 'C:\\Users\\srv\\tmp\\x.wav': Format not recognised."
         out = _sanitize_decode_reason(msg)
@@ -367,7 +367,7 @@ class TestDecodeErrorEnvelopeSanitisation:
         assert "Format not recognised" in out, out
 
     def test_sanitiser_caps_length(self):
-        from fusion_mlx.routes.audio import _sanitize_decode_reason
+        from fusion_mlx.routes_internal.audio import _sanitize_decode_reason
 
         msg = "x" * 5000
         out = _sanitize_decode_reason(msg)
@@ -378,7 +378,7 @@ class TestDecodeErrorEnvelopeSanitisation:
         """End-to-end via the route: a decode error echoing the temp
         path must reach the client with the path redacted."""
         from fusion_mlx.audio import probe
-        from fusion_mlx.routes import audio as audio_route
+        from fusion_mlx.routes_internal import audio as audio_route
 
         _install_fake_mlx_audio(monkeypatch)
         probe._reset_probe_cache()
@@ -455,7 +455,7 @@ class TestServerMisconfigStays500:
     )
     def test_misconfig_stays_500(self, monkeypatch, message):
         from fusion_mlx.audio import probe
-        from fusion_mlx.routes import audio as audio_route
+        from fusion_mlx.routes_internal import audio as audio_route
 
         _install_fake_mlx_audio(monkeypatch)
         probe._reset_probe_cache()

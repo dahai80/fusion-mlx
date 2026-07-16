@@ -118,7 +118,7 @@ def _reset_audio_probe():
 def _mount_audio_app() -> tuple[TestClient, callable]:
     """Mount the audio router on a bare FastAPI app, bypassing auth."""
     from fusion_mlx.config import get_config
-    from fusion_mlx.routes import audio as audio_route
+    from fusion_mlx.routes_internal import audio as audio_route
 
     app = FastAPI()
     app.include_router(audio_route.router)
@@ -135,7 +135,7 @@ def _mount_audio_app() -> tuple[TestClient, callable]:
 def _mount_models_app() -> tuple[TestClient, callable]:
     """Mount the models router on a bare FastAPI app, bypassing auth."""
     from fusion_mlx.config import get_config
-    from fusion_mlx.routes import models as models_route
+    from fusion_mlx.routes_internal import models as models_route
 
     app = FastAPI()
     app.include_router(models_route.router)
@@ -352,7 +352,7 @@ class TestTranscriptionsCleanEnvelopeOnProcessorFailure:
     def test_processor_not_found_returns_clean_503(
         self, monkeypatch, _reset_audio_probe
     ):
-        from fusion_mlx.routes import audio as audio_route
+        from fusion_mlx.routes_internal import audio as audio_route
 
         # Force a Whisper model with _processor=None to slip past the
         # integration-layer patch (e.g. the OpenAI fetch failed).
@@ -415,7 +415,7 @@ class TestTranscriptionsRouteEndToEnd:
     def test_transcriptions_returns_200_with_text(
         self, monkeypatch, _reset_audio_probe
     ):
-        from fusion_mlx.routes import audio as audio_route
+        from fusion_mlx.routes_internal import audio as audio_route
 
         fake_model = _FakeWhisperModel()
         sentinel = object()
@@ -470,7 +470,7 @@ class TestTranslationsRoute:
         Pre-fix this 404'd at the FastAPI routing layer because the
         decorator was never written.
         """
-        from fusion_mlx.routes import audio as audio_route
+        from fusion_mlx.routes_internal import audio as audio_route
 
         paths = {r.path for r in audio_route.router.routes}
         assert "/v1/audio/translations" in paths, (
@@ -480,7 +480,7 @@ class TestTranslationsRoute:
         )
 
     def test_translations_returns_200_with_text(self, monkeypatch, _reset_audio_probe):
-        from fusion_mlx.routes import audio as audio_route
+        from fusion_mlx.routes_internal import audio as audio_route
 
         fake_model = _FakeWhisperModel()
 
@@ -538,7 +538,7 @@ class TestTranslationsRoute:
     ):
         """Model validation should fire on translations the same way it
         fires on transcriptions — unknown alias → clean 404."""
-        from fusion_mlx.routes import audio as audio_route
+        from fusion_mlx.routes_internal import audio as audio_route
 
         audio_route._stt_engine = None
 
@@ -573,7 +573,7 @@ class TestTranslationsRoute:
         bypasses the alias map by passing the repo path directly still
         hits the gate.
         """
-        from fusion_mlx.routes import audio as audio_route
+        from fusion_mlx.routes_internal import audio as audio_route
 
         audio_route._stt_engine = None
 
@@ -615,7 +615,7 @@ class TestTranslationsRoute:
         accepted Parakeet (English-only source-language output is the
         contract); a regression here would break F-165."""
         from fusion_mlx.audio import stt as stt_mod
-        from fusion_mlx.routes import audio as audio_route
+        from fusion_mlx.routes_internal import audio as audio_route
 
         fake_model = _FakeParakeetModel()
 
@@ -886,7 +886,7 @@ class TestKokoroMisakiGate:
 
         monkeypatch.setattr(tts_mod, "TTSEngine", _NoopTTSEngine)
 
-        from fusion_mlx.routes import audio as audio_route
+        from fusion_mlx.routes_internal import audio as audio_route
 
         audio_route._tts_engine = None
 
@@ -1175,7 +1175,7 @@ class TestAudioBodyLimitCoversTranslations:
     exhaust the worker."""
 
     def test_translations_in_guarded_paths(self):
-        from fusion_mlx.routes import audio as audio_route
+        from fusion_mlx.routes_internal import audio as audio_route
 
         guarded = audio_route.AudioBodyLimitMiddleware._GUARDED_PATHS
         assert "/v1/audio/translations" in guarded, (

@@ -16,7 +16,7 @@ model is in the smoke section of the PR body.
 
 from __future__ import annotations
 
-from fusion_mlx.routes.chat import _forced_tool_call_prefix
+from fusion_mlx.routes_internal.chat import _forced_tool_call_prefix
 
 
 def test_prefix_hermes_named_function():

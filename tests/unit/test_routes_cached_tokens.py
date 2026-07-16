@@ -20,8 +20,8 @@ from fastapi.testclient import TestClient
 
 from fusion_mlx.config import reset_config
 from fusion_mlx.engine.base import GenerationOutput
-from fusion_mlx.routes.chat import router as chat_router
-from fusion_mlx.routes.completions import router as completions_router
+from fusion_mlx.routes_internal.chat import router as chat_router
+from fusion_mlx.routes_internal.completions import router as completions_router
 
 
 class _CacheReportingChatEngine:

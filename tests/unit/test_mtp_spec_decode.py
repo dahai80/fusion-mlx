@@ -478,7 +478,7 @@ def test_metrics_renders_spec_decode_counters_zero_at_cold_start():
         reset_global_counter_for_tests,
     )
 
-    from fusion_mlx.routes.metrics import _render_spec_decode_mtp_counters
+    from fusion_mlx.routes_internal.metrics import _render_spec_decode_mtp_counters
 
     reset_global_counter_for_tests()
 
@@ -503,7 +503,7 @@ def test_metrics_renders_post_acceptance_counters():
         reset_global_counter_for_tests,
     )
 
-    from fusion_mlx.routes.metrics import _render_spec_decode_mtp_counters
+    from fusion_mlx.routes_internal.metrics import _render_spec_decode_mtp_counters
 
     reset_global_counter_for_tests()
     counter = get_global_counter()
@@ -539,7 +539,7 @@ def test_metrics_renders_zero_ratio_when_no_attempts():
         reset_global_counter_for_tests,
     )
 
-    from fusion_mlx.routes.metrics import _render_spec_decode_mtp_counters
+    from fusion_mlx.routes_internal.metrics import _render_spec_decode_mtp_counters
 
     reset_global_counter_for_tests()
 
@@ -557,7 +557,7 @@ def test_metrics_route_includes_spec_decode_series_at_cold_start():
     carry the spec_decode series before any engine is up — matches the
     response_format + mxfp4 pre-engine surface convention.
     """
-    from fusion_mlx.routes.metrics import _render_prometheus
+    from fusion_mlx.routes_internal.metrics import _render_prometheus
 
     class _Cfg:
         engine = None

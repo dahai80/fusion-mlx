@@ -192,7 +192,7 @@ class TestAnthropicStreamingWithReasoningParser:
         default finalize returns None there, breaking the duplication
         chain.
         """
-        from fusion_mlx.routes.anthropic import (
+        from fusion_mlx.routes_internal.anthropic import (
             AnthropicRequest,
             ChatCompletionRequest,
             _stream_anthropic_messages,
@@ -252,7 +252,7 @@ class TestAnthropicStreamingWithReasoningParser:
 
     def test_both_think_tags_emits_thinking_and_text(self, cfg_with_reasoning_parser):
         """Model outputs <think>...</think> → separated thinking + text blocks."""
-        from fusion_mlx.routes.anthropic import (
+        from fusion_mlx.routes_internal.anthropic import (
             AnthropicRequest,
             ChatCompletionRequest,
             _stream_anthropic_messages,
@@ -312,7 +312,7 @@ class TestAnthropicStreamingWithReasoningParser:
 
     def test_only_close_tag_implicit_think(self, cfg_with_reasoning_parser):
         """Only </think> in output (think injected in prompt) → correct split."""
-        from fusion_mlx.routes.anthropic import (
+        from fusion_mlx.routes_internal.anthropic import (
             AnthropicRequest,
             ChatCompletionRequest,
             _stream_anthropic_messages,
@@ -368,7 +368,7 @@ class TestAnthropicStreamingWithoutReasoningParser:
         everything stays as thinking — this is the *current* limitation.
         But the fallback path must still work (no crash, events emitted).
         """
-        from fusion_mlx.routes.anthropic import (
+        from fusion_mlx.routes_internal.anthropic import (
             AnthropicRequest,
             ChatCompletionRequest,
             _stream_anthropic_messages,
@@ -418,7 +418,7 @@ class TestAnthropicStreamingChannelRouting:
         are dropped (logged at WARNING) and the loop ``continue``s,
         so the delta never reaches the client SSE stream.
         """
-        from fusion_mlx.routes.anthropic import (
+        from fusion_mlx.routes_internal.anthropic import (
             AnthropicRequest,
             ChatCompletionRequest,
             _stream_anthropic_messages,

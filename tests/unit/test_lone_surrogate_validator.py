@@ -246,7 +246,7 @@ def patched_config():
 
 
 def _build_chat_app(patch_cfg, monkeypatch):
-    from fusion_mlx.routes import chat as chat_route
+    from fusion_mlx.routes_internal import chat as chat_route
 
     app = FastAPI()
     app.include_router(chat_route.router)
@@ -278,7 +278,7 @@ class TestChatRouteLoneSurrogate:
     ):
         """F-130: a bare lone surrogate in the user message returns
         400, NOT 500, and NEVER reaches the engine."""
-        from fusion_mlx.routes import chat as chat_route
+        from fusion_mlx.routes_internal import chat as chat_route
 
         # Trip-wire: if the engine is ever invoked, the test fails.
         def _explode(*_a, **_kw):
@@ -315,7 +315,7 @@ class TestChatRouteLoneSurrogate:
         SSE stream. The pre-fix behavior was HTTP 200 followed by a
         ``data:`` chunk carrying raw Python ``TypeError`` text — both
         the status code AND the body contract were violated."""
-        from fusion_mlx.routes import chat as chat_route
+        from fusion_mlx.routes_internal import chat as chat_route
 
         def _explode(*_a, **_kw):
             raise AssertionError(

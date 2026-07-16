@@ -155,7 +155,7 @@ def _extract_error(body: dict) -> dict:
 def test_chat_completions_rejects_over_context_window():
     """``/v1/chat/completions`` must surface the structured 400
     envelope when ``prompt + max_tokens > context_window``."""
-    from fusion_mlx.routes.chat import router as chat_router
+    from fusion_mlx.routes_internal.chat import router as chat_router
 
     client = _make_app([chat_router])
 
@@ -180,7 +180,7 @@ def test_completions_rejects_over_context_window():
     """``/v1/completions`` (raw-prompt API) must enforce the same
     cap. The helper here is ``enforce_context_length_for_prompt``
     — no chat template applied."""
-    from fusion_mlx.routes.completions import router as completions_router
+    from fusion_mlx.routes_internal.completions import router as completions_router
 
     client = _make_app([completions_router])
 
@@ -203,7 +203,7 @@ def test_anthropic_messages_rejects_over_context_window():
     """``/v1/messages`` (Anthropic shape) must enforce the same cap.
     Anthropic SDKs branch on ``error.type`` so we pin the envelope
     matches the chat lane."""
-    from fusion_mlx.routes.anthropic import router as anthropic_router
+    from fusion_mlx.routes_internal.anthropic import router as anthropic_router
 
     client = _make_app([anthropic_router])
 
@@ -227,7 +227,7 @@ def test_responses_rejects_over_context_window():
     same cap. The route re-extracts multimodal content before the
     gate, so this also pins that the gate fires on the re-extracted
     text-only shape."""
-    from fusion_mlx.routes.responses import router as responses_router
+    from fusion_mlx.routes_internal.responses import router as responses_router
 
     client = _make_app([responses_router])
 
@@ -252,7 +252,7 @@ def test_chat_completions_passes_when_within_context_window():
     enforcement is bounded — over-strict gates would block legitimate
     long-context requests."""
     from fusion_mlx.engine.base import GenerationOutput
-    from fusion_mlx.routes.chat import router as chat_router
+    from fusion_mlx.routes_internal.chat import router as chat_router
 
     # Build the app, then swap in a chat impl that returns a real
     # response (the default stub raises on .chat to catch silent

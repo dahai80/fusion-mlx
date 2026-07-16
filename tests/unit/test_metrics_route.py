@@ -28,7 +28,7 @@ def metrics_client():
     starting state.
     """
     from fusion_mlx.config import reset_config
-    from fusion_mlx.routes.metrics import _reset_accumulator_for_tests, router
+    from fusion_mlx.routes_internal.metrics import _reset_accumulator_for_tests, router
 
     cfg = reset_config()
     cfg.model_name = "qwen3.5-4b"
@@ -463,7 +463,7 @@ def test_sticky_accumulator_unit_behavior():
     accumulator handles a multi-key state (each key independent) and a
     no-op same-value advance correctly.
     """
-    from fusion_mlx.routes.metrics import _StickyCounterAccumulator
+    from fusion_mlx.routes_internal.metrics import _StickyCounterAccumulator
 
     acc = _StickyCounterAccumulator()
 

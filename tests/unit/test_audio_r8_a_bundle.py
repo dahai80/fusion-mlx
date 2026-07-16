@@ -100,7 +100,7 @@ def _mount_audio_app() -> tuple[TestClient, callable]:
     default FastAPI 422)."""
     from fusion_mlx.config import get_config
     from fusion_mlx.middleware.exception_handlers import install_exception_handlers
-    from fusion_mlx.routes import audio as audio_route
+    from fusion_mlx.routes_internal import audio as audio_route
 
     app = FastAPI()
     app.include_router(audio_route.router)
@@ -122,7 +122,7 @@ def _stub_engine(monkeypatch, *, voice_observed=None):
 
     from fusion_mlx.audio import probe as probe_mod
     from fusion_mlx.audio import tts as tts_mod
-    from fusion_mlx.routes import audio as audio_route
+    from fusion_mlx.routes_internal import audio as audio_route
 
     observed_models: list[str] = []
     # Capture the REAL ``to_bytes`` BEFORE ``monkeypatch.setattr``
@@ -186,7 +186,7 @@ class TestFullAliasResolution:
         ],
     )
     def test_full_kokoro_alias_resolves_to_kokoro_repo(self, alias):
-        from fusion_mlx.routes.audio import _resolve_tts_model
+        from fusion_mlx.routes_internal.audio import _resolve_tts_model
 
         resolved = _resolve_tts_model(alias)
         assert "kokoro" in resolved.lower(), (
@@ -203,7 +203,7 @@ class TestFullAliasResolution:
         """The short ``kokoro`` and full ``kokoro-82m-bf16`` MUST map to
         the same repo so both paths go through identical model init —
         the regression Bo flagged was a divergence between the two."""
-        from fusion_mlx.routes.audio import _resolve_tts_model
+        from fusion_mlx.routes_internal.audio import _resolve_tts_model
 
         assert _resolve_tts_model("kokoro") == _resolve_tts_model("kokoro-82m-bf16")
 
@@ -211,7 +211,7 @@ class TestFullAliasResolution:
         """Pass-through behaviour for unrecognised names is preserved —
         a client opting in to a HF repo not in the alias table must
         still reach mlx_audio with the verbatim id."""
-        from fusion_mlx.routes.audio import _resolve_tts_model
+        from fusion_mlx.routes_internal.audio import _resolve_tts_model
 
         # HF-style ids contain '/' so they're untouched (case preserved).
         hf_path = "mlx-community/Some-Future-TTS-Model"
@@ -433,7 +433,7 @@ class TestTTSContentTypeTable:
     directions so a future addition can't drift."""
 
     def test_content_type_table_covers_allowed_formats(self):
-        from fusion_mlx.routes.audio import _TTS_CONTENT_TYPES
+        from fusion_mlx.routes_internal.audio import _TTS_CONTENT_TYPES
 
         from fusion_mlx.api.models import _TTS_ALLOWED_RESPONSE_FORMATS
 
@@ -450,7 +450,7 @@ class TestTTSContentTypeTable:
         ``audio/opus`` which are not the IANA-registered types
         (``audio/mpeg`` and ``audio/ogg`` respectively). Clients that
         follow the registry get the right type."""
-        from fusion_mlx.routes.audio import _TTS_CONTENT_TYPES
+        from fusion_mlx.routes_internal.audio import _TTS_CONTENT_TYPES
 
         assert _TTS_CONTENT_TYPES["mp3"] == "audio/mpeg"
         assert _TTS_CONTENT_TYPES["opus"] == "audio/ogg"
@@ -579,7 +579,7 @@ class TestAllowedVoicesHelper:
         # Pin the static-fallback branch by forcing the dynamic
         # enumeration to return empty. The dynamic-success path is
         # covered by ``TestAllowedVoicesDynamicEnumeration`` below.
-        import fusion_mlx.routes.audio as audio_route
+        import fusion_mlx.routes_internal.audio as audio_route
 
         # ``_allowed_voices_for`` calls ``_list_snapshot_voices`` via
         # a lazy ``from ..audio.tts import ...`` inside the helper, so
@@ -590,14 +590,14 @@ class TestAllowedVoicesHelper:
         yield audio_route  # nothing for the tests to consume
 
     def test_kokoro_short_alias_returns_kokoro_voices(self):
-        from fusion_mlx.routes.audio import _allowed_voices_for
+        from fusion_mlx.routes_internal.audio import _allowed_voices_for
 
         from fusion_mlx.audio.tts import KOKORO_VOICES
 
         assert _allowed_voices_for("kokoro") == list(KOKORO_VOICES)
 
     def test_kokoro_hf_path_returns_kokoro_voices(self):
-        from fusion_mlx.routes.audio import _allowed_voices_for
+        from fusion_mlx.routes_internal.audio import _allowed_voices_for
 
         from fusion_mlx.audio.tts import KOKORO_VOICES
 
@@ -606,7 +606,7 @@ class TestAllowedVoicesHelper:
         )
 
     def test_chatterbox_returns_chatterbox_voices(self):
-        from fusion_mlx.routes.audio import _allowed_voices_for
+        from fusion_mlx.routes_internal.audio import _allowed_voices_for
 
         from fusion_mlx.audio.tts import CHATTERBOX_VOICES
 
@@ -620,7 +620,7 @@ class TestAllowedVoicesHelper:
         # before the snapshot has been downloaded — and so a request
         # carrying ``voice="en-Grace_woman"`` (the registry default)
         # passes voice validation on the first call.
-        from fusion_mlx.routes.audio import _allowed_voices_for
+        from fusion_mlx.routes_internal.audio import _allowed_voices_for
 
         voices = _allowed_voices_for("vibevoice")
         assert "en-Grace_woman" in voices, (
@@ -636,7 +636,7 @@ class TestAllowedVoicesHelper:
         )
 
     def test_unknown_family_returns_default(self):
-        from fusion_mlx.routes.audio import _allowed_voices_for
+        from fusion_mlx.routes_internal.audio import _allowed_voices_for
 
         assert _allowed_voices_for("some/UnknownEngine") == ["default"]
 

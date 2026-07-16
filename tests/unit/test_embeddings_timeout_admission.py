@@ -160,7 +160,7 @@ class TestEmbeddingRouteEmptyTokens:
 def _build_embed_app(monkeypatch, engine):
     """Mount the embeddings router with a stubbed engine."""
     from fusion_mlx.config import get_config
-    from fusion_mlx.routes import embeddings as emb_route
+    from fusion_mlx.routes_internal import embeddings as emb_route
 
     app = FastAPI()
     app.include_router(emb_route.router)
@@ -416,7 +416,7 @@ class TestAdmissionControl:
         # Build a stub chat route that hits a stub engine; the engine's
         # generate() raises BackpressureError to simulate cap-exceeded.
         from fusion_mlx.config import get_config
-        from fusion_mlx.routes import chat as chat_route
+        from fusion_mlx.routes_internal import chat as chat_route
         from fusion_mlx.scheduler import BackpressureError
 
         app = FastAPI()
@@ -486,7 +486,7 @@ class TestAdmissionControl:
         starts. Triggered by setting ``engine.check_admission`` to
         raise (simulating a saturated scheduler)."""
         from fusion_mlx.config import get_config
-        from fusion_mlx.routes import chat as chat_route
+        from fusion_mlx.routes_internal import chat as chat_route
         from fusion_mlx.scheduler import BackpressureError
 
         app = FastAPI()
@@ -638,7 +638,7 @@ class TestAdmissionControl:
         from fusion_mlx.config import get_config
         from fusion_mlx.engine.batched import BatchedEngine
         from fusion_mlx.middleware.exception_handlers import install_exception_handlers
-        from fusion_mlx.routes import chat as chat_route
+        from fusion_mlx.routes_internal import chat as chat_route
         from fusion_mlx.scheduler import SchedulerConfig
 
         app = FastAPI()
@@ -841,7 +841,7 @@ class TestAdmissionControl:
 
         from fusion_mlx.config import get_config
         from fusion_mlx.engine.batched import BatchedEngine
-        from fusion_mlx.routes import chat as chat_route
+        from fusion_mlx.routes_internal import chat as chat_route
         from fusion_mlx.scheduler import SchedulerConfig
 
         app = FastAPI()
@@ -1026,7 +1026,7 @@ class TestAdmissionControl:
 
         from fusion_mlx.config import get_config
         from fusion_mlx.engine.batched import BatchedEngine
-        from fusion_mlx.routes import chat as chat_route
+        from fusion_mlx.routes_internal import chat as chat_route
         from fusion_mlx.scheduler import SchedulerConfig
 
         app = FastAPI()

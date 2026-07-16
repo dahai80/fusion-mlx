@@ -55,7 +55,7 @@ class TestHealthzDrainState:
     """``cfg.draining=True`` flips ``/healthz`` from 200 to 503."""
 
     def _make_app(self):
-        from fusion_mlx.routes.health import probe_router
+        from fusion_mlx.routes_internal.health import probe_router
 
         app = FastAPI()
         app.include_router(probe_router)
@@ -391,7 +391,7 @@ class _StubGenerationOutput:
 
 def _build_completions_app(patch_cfg, monkeypatch, *, engine_factory=None):
     """Wire a stub completions app with a MagicMock engine."""
-    from fusion_mlx.routes import completions as comp_route
+    from fusion_mlx.routes_internal import completions as comp_route
 
     app = FastAPI()
     app.include_router(comp_route.router)
@@ -622,7 +622,7 @@ class _LogprobsCapableEngine:
 
 def _make_chat_client(engine) -> TestClient:
     from fusion_mlx.config import reset_config
-    from fusion_mlx.routes.chat import router as chat_router
+    from fusion_mlx.routes_internal.chat import router as chat_router
 
     cfg = reset_config()
     cfg.engine = engine

@@ -625,7 +625,7 @@ class TestMetricsRoute:
         /metrics with the value from get_stats."""
         import types
 
-        from fusion_mlx.routes.metrics import _render_prometheus
+        from fusion_mlx.routes_internal.metrics import _render_prometheus
 
         cfg = types.SimpleNamespace(
             model_name="test",

@@ -143,8 +143,8 @@ def _build_app(monkeypatch, *, with_handlers: bool = True):
 
     from fusion_mlx.config import reset_config
     from fusion_mlx.middleware.auth import rate_limiter
-    from fusion_mlx.routes.anthropic import router as anthropic_router
-    from fusion_mlx.routes.responses import router as responses_router
+    from fusion_mlx.routes_internal.anthropic import router as anthropic_router
+    from fusion_mlx.routes_internal.responses import router as responses_router
 
     cfg = reset_config()
     cfg.api_key = None  # turn off auth so the test focuses on validation
@@ -416,13 +416,13 @@ def test_count_tokens_accepts_explicit_null_model(client):
 
 
 def test_audio_resolve_stt_model_known_alias():
-    from fusion_mlx.routes.audio import _resolve_stt_model
+    from fusion_mlx.routes_internal.audio import _resolve_stt_model
 
     assert _resolve_stt_model("whisper-small") == "mlx-community/whisper-small-mlx"
 
 
 def test_audio_resolve_stt_model_passthrough_repo_path():
-    from fusion_mlx.routes.audio import _resolve_stt_model
+    from fusion_mlx.routes_internal.audio import _resolve_stt_model
 
     # Anything containing a "/" is treated as a HuggingFace repo id —
     # the STT engine attempts to load it directly.
@@ -433,7 +433,7 @@ def test_audio_resolve_stt_model_rejects_bogus_name():
     """F-165: bogus aliases (no slash, not in the curated map) must
     raise a structured 404 BEFORE any STT engine load is attempted."""
     from fastapi import HTTPException
-    from fusion_mlx.routes.audio import _resolve_stt_model
+    from fusion_mlx.routes_internal.audio import _resolve_stt_model
 
     with pytest.raises(HTTPException) as exc_info:
         _resolve_stt_model("definitely-not-a-whisper")
@@ -455,7 +455,7 @@ def test_audio_route_accepts_model_via_query_for_back_compat(monkeypatch):
     from fastapi.testclient import TestClient
 
     monkeypatch.setattr("vllm_mlx.middleware.auth.verify_api_key", lambda: None)
-    from fusion_mlx.routes.audio import router
+    from fusion_mlx.routes_internal.audio import router
 
     app = FastAPI()
     app.include_router(router)
@@ -488,7 +488,7 @@ def test_audio_route_form_field_overrides_query(monkeypatch):
     from fastapi.testclient import TestClient
 
     monkeypatch.setattr("vllm_mlx.middleware.auth.verify_api_key", lambda: None)
-    from fusion_mlx.routes.audio import router
+    from fusion_mlx.routes_internal.audio import router
 
     app = FastAPI()
     app.include_router(router)
@@ -506,7 +506,7 @@ def test_audio_route_form_field_overrides_query(monkeypatch):
 
 def test_audio_resolve_stt_model_rejects_empty_string():
     from fastapi import HTTPException
-    from fusion_mlx.routes.audio import _resolve_stt_model
+    from fusion_mlx.routes_internal.audio import _resolve_stt_model
 
     with pytest.raises(HTTPException) as exc_info:
         _resolve_stt_model("")

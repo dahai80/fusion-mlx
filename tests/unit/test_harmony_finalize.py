@@ -508,7 +508,7 @@ def _drive_streaming_harmony(finish_reason: str) -> list[dict]:
 
     from fusion_mlx.config import reset_config
     from fusion_mlx.reasoning.harmony_parser import HarmonyReasoningParser
-    from fusion_mlx.routes.chat import router as chat_router
+    from fusion_mlx.routes_internal.chat import router as chat_router
 
     cfg = reset_config()
     cfg.engine = _HarmonyReasoningOnlyStreamEngine(
@@ -643,7 +643,7 @@ def test_production_helper_skips_synthetic_raw_when_tool_calls_detected():
     from the route would break this test immediately.
     """
     from fusion_mlx.reasoning.harmony_parser import HarmonyReasoningParser
-    from fusion_mlx.routes.chat import _is_harmony_cut_short_stream
+    from fusion_mlx.routes_internal.chat import _is_harmony_cut_short_stream
 
     rp = HarmonyReasoningParser()
     # No tool-call detected: gate fires (harmony cut-short → suppress).
@@ -702,7 +702,7 @@ def test_streaming_route_imports_production_harmony_predicate():
     """
     import inspect
 
-    from fusion_mlx.routes import chat as chat_module
+    from fusion_mlx.routes_internal import chat as chat_module
 
     # The stream_chat_completion function specifically must use the
     # helper (the helper's own definition also has the symbol, but we
@@ -735,7 +735,7 @@ def test_streaming_route_call_site_passes_tool_calls_detected_arg():
     import ast
     import inspect
 
-    from fusion_mlx.routes import chat as chat_module
+    from fusion_mlx.routes_internal import chat as chat_module
 
     stream_src = inspect.getsource(chat_module.stream_chat_completion)
     tree = ast.parse(stream_src)

@@ -48,7 +48,7 @@ def _build_embed_app(monkeypatch, engine, *, embedding_model_locked):
     """
     from fusion_mlx.config import get_config
     from fusion_mlx.middleware.exception_handlers import install_exception_handlers
-    from fusion_mlx.routes import embeddings as emb_route
+    from fusion_mlx.routes_internal import embeddings as emb_route
 
     app = FastAPI()
     app.include_router(emb_route.router)

@@ -25,7 +25,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from fusion_mlx.routes import anthropic as anthropic_route
+from fusion_mlx.routes_internal import anthropic as anthropic_route
 
 
 class _FakeOutput:

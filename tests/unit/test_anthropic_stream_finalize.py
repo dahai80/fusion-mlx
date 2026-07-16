@@ -40,7 +40,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from fusion_mlx.config import reset_config
-from fusion_mlx.routes.anthropic import (
+from fusion_mlx.routes_internal.anthropic import (
     _split_tool_input_json,
     router,
 )

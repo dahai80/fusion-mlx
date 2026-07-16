@@ -111,7 +111,7 @@ def anthropic_client(monkeypatch):
 
     from fusion_mlx.config import reset_config
     from fusion_mlx.middleware.auth import rate_limiter
-    from fusion_mlx.routes.anthropic import router
+    from fusion_mlx.routes_internal.anthropic import router
 
     cfg = reset_config()
     cfg.api_key = "test-secret"

@@ -59,7 +59,7 @@ def mock_registry():
 
 class TestHealthRoutes:
     def _make_app(self):
-        from fusion_mlx.routes.health import admin_router, probe_router, router
+        from fusion_mlx.routes_internal.health import admin_router, probe_router, router
 
         app = FastAPI()
         app.include_router(probe_router)
@@ -534,7 +534,7 @@ class TestHealthRoutes:
 
 class TestModelsRoutes:
     def _make_app(self):
-        from fusion_mlx.routes.models import router
+        from fusion_mlx.routes_internal.models import router
 
         app = FastAPI()
         app.include_router(router)
@@ -1136,7 +1136,7 @@ class TestModelsRoutes:
 
 class TestMCPRoutes:
     def _make_app(self):
-        from fusion_mlx.routes.mcp_routes import router
+        from fusion_mlx.routes_internal.mcp_routes import router
 
         app = FastAPI()
         app.include_router(router)
@@ -1233,7 +1233,7 @@ class TestMCPRoutes:
 
 class TestEmbeddingsRoutes:
     def _make_app(self):
-        from fusion_mlx.routes.embeddings import router
+        from fusion_mlx.routes_internal.embeddings import router
 
         app = FastAPI()
         app.include_router(router)

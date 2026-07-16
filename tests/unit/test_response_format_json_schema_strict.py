@@ -46,8 +46,8 @@ from fusion_mlx.api.tool_calling import (
 from fusion_mlx.config import reset_config
 from fusion_mlx.engine.base import GenerationOutput
 from fusion_mlx.middleware.exception_handlers import install_exception_handlers
-from fusion_mlx.routes.chat import router as chat_router
-from fusion_mlx.routes.metrics import router as metrics_router
+from fusion_mlx.routes_internal.chat import router as chat_router
+from fusion_mlx.routes_internal.metrics import router as metrics_router
 
 # ---------------------------------------------------------------------------
 # Test fixtures
@@ -836,7 +836,7 @@ def test_strict_true_streaming_emits_done_even_without_upstream_done():
     """
     import json as _json
 
-    from fusion_mlx.routes import chat as chat_module
+    from fusion_mlx.routes_internal import chat as chat_module
 
     async def _fake_stream(engine, messages, request, **kwargs):
         response_id = kwargs.get("response_id", "chatcmpl-test")
@@ -941,7 +941,7 @@ def test_strict_true_streaming_emits_done_on_upstream_raise():
     """
     import json as _json
 
-    from fusion_mlx.routes import chat as chat_module
+    from fusion_mlx.routes_internal import chat as chat_module
 
     async def _raising_stream(engine, messages, request, **kwargs):
         response_id = kwargs.get("response_id", "chatcmpl-test")
@@ -1065,7 +1065,7 @@ def test_strict_true_streaming_propagates_cancelled_error():
     """
     import json as _json
 
-    from fusion_mlx.routes import chat as chat_module
+    from fusion_mlx.routes_internal import chat as chat_module
 
     async def _cancelling_stream(engine, messages, request, **kwargs):
         response_id = kwargs.get("response_id", "chatcmpl-test")
@@ -1161,7 +1161,7 @@ def test_strict_true_streaming_bounds_buffer_with_overflow_error(monkeypatch):
 
     import json as _json
 
-    from fusion_mlx.routes import chat as chat_module
+    from fusion_mlx.routes_internal import chat as chat_module
 
     async def _runaway_stream(engine, messages, request, **kwargs):
         response_id = kwargs.get("response_id", "chatcmpl-test")
@@ -1260,7 +1260,7 @@ def test_strict_true_streaming_overflow_closes_upstream_generator(monkeypatch):
 
     import json as _json
 
-    from fusion_mlx.routes import chat as chat_module
+    from fusion_mlx.routes_internal import chat as chat_module
 
     aclose_called = [False]
 
@@ -1358,7 +1358,7 @@ def test_strict_true_streaming_buffer_cap_counts_bytes_not_chars(monkeypatch):
 
     import json as _json
 
-    from fusion_mlx.routes import chat as chat_module
+    from fusion_mlx.routes_internal import chat as chat_module
 
     # U+1F525 (FIRE emoji) is 4 bytes in UTF-8.
     fire = "\U0001f525"
@@ -1647,7 +1647,7 @@ def _make_responses_client(engine: _Engine, rate_limiter_state=None) -> TestClie
     it, the disabled state leaks into subsequent tests.
     """
     from fusion_mlx.middleware.auth import rate_limiter
-    from fusion_mlx.routes.responses import router as responses_router
+    from fusion_mlx.routes_internal.responses import router as responses_router
 
     cfg = reset_config()
     cfg.engine = engine
@@ -2134,7 +2134,7 @@ async def test_strict_true_stream_helper_strips_colliding_raise_on_failure():
     from fastapi import Request
 
     from fusion_mlx.api.models import ChatCompletionRequest
-    from fusion_mlx.routes.chat import stream_chat_completion_guided
+    from fusion_mlx.routes_internal.chat import stream_chat_completion_guided
 
     engine = _Engine(supports_guided=True)
     # Minimal valid ChatCompletionRequest pin — only the fields
@@ -2208,7 +2208,7 @@ def test_strict_true_responses_strips_colliding_raise_on_failure(
     # is composed) to inject a colliding key. The simplest hook is
     # to monkeypatch ``_resolved_sampling_kwargs`` to add the field
     # to its return value.
-    from fusion_mlx.routes import responses as responses_mod
+    from fusion_mlx.routes_internal import responses as responses_mod
 
     original_sampler = responses_mod._resolved_sampling_kwargs
 

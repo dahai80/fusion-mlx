@@ -68,7 +68,7 @@ from fusion_mlx.api.utils import (
 from fusion_mlx.config import reset_config
 from fusion_mlx.engine.base import GenerationOutput
 from fusion_mlx.reasoning.qwen3_parser import Qwen3ReasoningParser
-from fusion_mlx.routes.chat import router as chat_router
+from fusion_mlx.routes_internal.chat import router as chat_router
 
 # Markers Vlad's report singled out, plus the canonical set every other
 # parser-leak hardening test asserts.

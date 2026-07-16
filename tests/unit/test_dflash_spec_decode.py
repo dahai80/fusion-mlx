@@ -1069,7 +1069,7 @@ def test_metrics_renders_dflash_counters_zero_at_cold_start():
         reset_global_counter_for_tests,
     )
 
-    from fusion_mlx.routes.metrics import _render_spec_decode_dflash_counters
+    from fusion_mlx.routes_internal.metrics import _render_spec_decode_dflash_counters
 
     reset_global_counter_for_tests()
 
@@ -1100,7 +1100,7 @@ def test_metrics_renders_post_acceptance_dflash_counters():
         reset_global_counter_for_tests,
     )
 
-    from fusion_mlx.routes.metrics import _render_spec_decode_dflash_counters
+    from fusion_mlx.routes_internal.metrics import _render_spec_decode_dflash_counters
 
     reset_global_counter_for_tests()
     counter = get_global_counter()
@@ -1135,7 +1135,7 @@ def test_metrics_renders_post_acceptance_dflash_counters():
 
 def test_metrics_route_includes_dflash_series_at_cold_start():
     """End-to-end /metrics body carries the dflash series pre-engine."""
-    from fusion_mlx.routes.metrics import _render_prometheus
+    from fusion_mlx.routes_internal.metrics import _render_prometheus
 
     class _Cfg:
         engine = None

@@ -137,7 +137,7 @@ def _mount_audio_app() -> tuple[TestClient, callable]:
     """
     from fusion_mlx.config import get_config
     from fusion_mlx.middleware.exception_handlers import install_exception_handlers
-    from fusion_mlx.routes import audio as audio_route
+    from fusion_mlx.routes_internal import audio as audio_route
 
     app = FastAPI()
     app.include_router(audio_route.router)
@@ -167,7 +167,7 @@ class TestSTTShortWhisperAlias:
         repo so a bare ``model="whisper"`` request from drop-in OpenAI
         SDK code lands on the supported variant.
         """
-        from fusion_mlx.routes.audio import STT_MODEL_ALIASES, _resolve_stt_model
+        from fusion_mlx.routes_internal.audio import STT_MODEL_ALIASES, _resolve_stt_model
 
         # The mapping must exist…
         assert "whisper" in STT_MODEL_ALIASES, (
@@ -186,7 +186,7 @@ class TestSTTShortWhisperAlias:
     def test_whisper_1_legacy_alias_resolves(self):
         """OpenAI's legacy ``whisper-1`` placeholder maps to the same
         Whisper variant so legacy SDKs don't 404."""
-        from fusion_mlx.routes.audio import STT_MODEL_ALIASES, _resolve_stt_model
+        from fusion_mlx.routes_internal.audio import STT_MODEL_ALIASES, _resolve_stt_model
 
         assert "whisper-1" in STT_MODEL_ALIASES, (
             "Legacy ``whisper-1`` placeholder must be accepted; some "
@@ -202,7 +202,7 @@ class TestSTTShortWhisperAlias:
         observe the resolved model name).
         """
         from fusion_mlx.audio import stt as stt_mod
-        from fusion_mlx.routes import audio as audio_route
+        from fusion_mlx.routes_internal import audio as audio_route
 
         observed: list[str] = []
 
@@ -256,7 +256,7 @@ class TestSTTShortWhisperAlias:
         Whisper engine; ``whisper`` → whisper-large-v3 satisfies that.
         """
         from fusion_mlx.audio import stt as stt_mod
-        from fusion_mlx.routes import audio as audio_route
+        from fusion_mlx.routes_internal import audio as audio_route
 
         observed: list[str] = []
 
@@ -401,7 +401,7 @@ class TestSpeechBodyHonored:
     def test_json_body_input_reaches_engine(self, monkeypatch):
         from fusion_mlx.audio import tts as tts_mod
         from fusion_mlx.audio.probe import require_kokoro_runtime  # noqa: F401
-        from fusion_mlx.routes import audio as audio_route
+        from fusion_mlx.routes_internal import audio as audio_route
 
         observed: list[str] = []
 
@@ -476,7 +476,7 @@ class TestSpeechCatchAllShape:
         import logging
 
         from fusion_mlx.audio import tts as tts_mod
-        from fusion_mlx.routes import audio as audio_route
+        from fusion_mlx.routes_internal import audio as audio_route
 
         class _BoomEngine:
             def __init__(self, model_name: str):
@@ -595,7 +595,7 @@ class TestTTSAliasResolver:
     """
 
     def test_tts_alias_map_includes_canonical_engines(self):
-        from fusion_mlx.routes.audio import TTS_MODEL_ALIASES
+        from fusion_mlx.routes_internal.audio import TTS_MODEL_ALIASES
 
         for alias in ("kokoro", "chatterbox", "vibevoice", "voxcpm"):
             assert alias in TTS_MODEL_ALIASES, (
@@ -606,7 +606,7 @@ class TestTTSAliasResolver:
             )
 
     def test_tts_default_alias_resolves(self):
-        from fusion_mlx.routes.audio import _resolve_tts_model
+        from fusion_mlx.routes_internal.audio import _resolve_tts_model
 
         # ``None``, ``""``, and ``"default"`` all map to the default
         # alias's HF path — drop-in OpenAI SDK compatibility (R-03).
@@ -620,7 +620,7 @@ class TestTTSAliasResolver:
     def test_tts_pass_through_for_full_hf_path(self):
         """A HuggingFace-shaped id passes through verbatim so callers
         can opt in to repos not in the alias map."""
-        from fusion_mlx.routes.audio import _resolve_tts_model
+        from fusion_mlx.routes_internal.audio import _resolve_tts_model
 
         hf_path = "mlx-community/Kokoro-82M-bf16"
         assert _resolve_tts_model(hf_path) == hf_path

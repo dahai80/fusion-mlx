@@ -48,7 +48,7 @@ def _reset_audio_probe():
 
 def _mount_audio_app():
     from fusion_mlx.config import get_config
-    from fusion_mlx.routes import audio as audio_route
+    from fusion_mlx.routes_internal import audio as audio_route
 
     app = FastAPI()
     app.include_router(audio_route.router)

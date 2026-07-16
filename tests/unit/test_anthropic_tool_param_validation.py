@@ -25,7 +25,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from fusion_mlx.config import reset_config
-from fusion_mlx.routes.anthropic import router
+from fusion_mlx.routes_internal.anthropic import router
 
 
 class _StubTokenizer:

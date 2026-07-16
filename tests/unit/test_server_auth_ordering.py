@@ -45,7 +45,7 @@ def _make_models_app() -> FastAPI:
     Mirrors ``vllm_mlx/server.py`` router wiring for the surface most
     likely to be polled by a supervisor: ``/v1/models``.
     """
-    from fusion_mlx.routes.models import router as models_router
+    from fusion_mlx.routes_internal.models import router as models_router
 
     app = FastAPI()
     app.include_router(models_router)

@@ -244,7 +244,7 @@ def _make_responses_client(engine: _Engine) -> TestClient:
     Note: ``cfg.no_thinking = False`` — we want to exercise the
     request-level resolution path, NOT the operator-level kill switch.
     """
-    from fusion_mlx.routes.responses import router as responses_router
+    from fusion_mlx.routes_internal.responses import router as responses_router
 
     cfg = reset_config()
     cfg.engine = engine
@@ -417,7 +417,7 @@ class TestStrictAutoDisableThinking:
         # first, then chat_kwargs build). Snapshot the request's
         # chat_template_kwargs at the first call — that's the
         # post-merge state.
-        import fusion_mlx.routes.responses as _responses_mod
+        import fusion_mlx.routes_internal.responses as _responses_mod
 
         original = _responses_mod._resolve_enable_thinking
 

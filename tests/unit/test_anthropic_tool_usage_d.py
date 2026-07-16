@@ -25,7 +25,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from fusion_mlx.config import reset_config
-from fusion_mlx.routes.anthropic import (
+from fusion_mlx.routes_internal.anthropic import (
     _enforce_required_tool_choice_present,
     _estimate_anthropic_prompt_tokens,
     _inject_tool_use_required_suffix,
@@ -820,7 +820,7 @@ def test_stream_helper_forwards_prepared_multimodal_to_engine():
 
     from fusion_mlx.api.anthropic_models import AnthropicRequest
     from fusion_mlx.api.models import ChatCompletionRequest
-    from fusion_mlx.routes.anthropic import _stream_anthropic_messages
+    from fusion_mlx.routes_internal.anthropic import _stream_anthropic_messages
 
     sentinel_messages = [{"role": "user", "content": "stream this"}]
     sentinel_images: list = [b"img-bytes-0", b"img-bytes-1"]
@@ -879,7 +879,7 @@ def test_stream_helper_skips_empty_multimodal_kwargs():
 
     from fusion_mlx.api.anthropic_models import AnthropicRequest
     from fusion_mlx.api.models import ChatCompletionRequest
-    from fusion_mlx.routes.anthropic import _stream_anthropic_messages
+    from fusion_mlx.routes_internal.anthropic import _stream_anthropic_messages
 
     direct_engine = _ToolStreamingEngine(["ok"], engine_prompt_tokens=4)
     cfg = reset_config()

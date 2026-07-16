@@ -82,11 +82,11 @@ from .config import ServerConfig
 from .dispatch import CloudRouter, RequestRouter
 from .engine_core import AsyncEngineCore
 from .pool import EnginePool, ProcessMemoryEnforcer
-from .routes.cache import router as cache_router
-from .routes.health import probe_router as health_probe_router
-from .routes.health import router as health_router
-from .routes.metrics import router as metrics_router
-from .routes.responses import router as responses_router
+from .routes_internal.cache import router as cache_router
+from .routes_internal.health import probe_router as health_probe_router
+from .routes_internal.health import router as health_router
+from .routes_internal.metrics import router as metrics_router
+from .routes_internal.responses import router as responses_router
 from .server_metrics import get_server_metrics
 from .settings import Settings
 

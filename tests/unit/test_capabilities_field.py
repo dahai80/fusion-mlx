@@ -24,7 +24,7 @@ from fastapi.testclient import TestClient
 def _mount_models_app(monkeypatch, **cfg_overrides):
     """Mount the models router with controlled config + server state."""
     from fusion_mlx.config import get_config
-    from fusion_mlx.routes import models as models_route
+    from fusion_mlx.routes_internal import models as models_route
 
     app = FastAPI()
     app.include_router(models_route.router)
@@ -309,7 +309,7 @@ class TestToolsCapability:
         from fastapi import FastAPI
 
         from fusion_mlx.config import get_config
-        from fusion_mlx.routes import models as models_route
+        from fusion_mlx.routes_internal import models as models_route
 
         served_unregistered = "operator/served-custom-tools-model"
         other_unregistered = "operator/discovered-other-model"
@@ -381,7 +381,7 @@ class TestToolsCapability:
         from fastapi import FastAPI
 
         from fusion_mlx.config import get_config
-        from fusion_mlx.routes import models as models_route
+        from fusion_mlx.routes_internal import models as models_route
 
         app = FastAPI()
         app.include_router(models_route.router)

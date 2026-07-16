@@ -50,7 +50,7 @@ from fastapi.testclient import TestClient
 
 from fusion_mlx.config import reset_config
 from fusion_mlx.engine.base import GenerationOutput
-from fusion_mlx.routes.chat import router as chat_router
+from fusion_mlx.routes_internal.chat import router as chat_router
 from fusion_mlx.service.postprocessor import StreamingPostProcessor
 from fusion_mlx.tool_parsers.abstract_tool_parser import (
     ExtractedToolCallInformation,
@@ -160,7 +160,7 @@ def test_non_guided_streaming_pins_single_created_timestamp(monkeypatch):
     import time as _time_mod
 
     import fusion_mlx.api.models as _models_mod
-    import fusion_mlx.routes.chat as _chat_mod
+    import fusion_mlx.routes_internal.chat as _chat_mod
 
     monkeypatch.setattr(_time_mod, "time", _stepping_time)
     monkeypatch.setattr(_chat_mod.time, "time", _stepping_time, raising=False)

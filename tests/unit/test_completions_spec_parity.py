@@ -52,7 +52,7 @@ def _build_completions_app(patch_cfg, monkeypatch, *, engine_factory=None):
     streaming async generator into ``stream_generate``). When omitted,
     a MagicMock with sensible defaults is used.
     """
-    from fusion_mlx.routes import completions as comp_route
+    from fusion_mlx.routes_internal import completions as comp_route
 
     app = FastAPI()
     app.include_router(comp_route.router)
@@ -485,7 +485,7 @@ class TestLogprobsEngineCapability:
     sends ``logprobs:N`` — return a controlled 501 instead."""
 
     def test_structural_fallback_supports_non_base_engine(self):
-        from fusion_mlx.routes.completions import _engine_supports_completion_logprobs
+        from fusion_mlx.routes_internal.completions import _engine_supports_completion_logprobs
 
         class _Engine:
             tokenizer = object()
@@ -497,7 +497,7 @@ class TestLogprobsEngineCapability:
         assert _engine_supports_completion_logprobs(_Engine()) is True
 
     def test_sync_callable_capability_is_evaluated(self):
-        from fusion_mlx.routes.completions import _engine_supports_completion_logprobs
+        from fusion_mlx.routes_internal.completions import _engine_supports_completion_logprobs
 
         class _Engine:
             tokenizer = object()
@@ -516,7 +516,7 @@ class TestLogprobsEngineCapability:
         assert engine.called is True
 
     def test_sync_callable_false_capability_is_evaluated(self):
-        from fusion_mlx.routes.completions import _engine_supports_completion_logprobs
+        from fusion_mlx.routes_internal.completions import _engine_supports_completion_logprobs
 
         class _Engine:
             tokenizer = object()
@@ -531,7 +531,7 @@ class TestLogprobsEngineCapability:
         assert _engine_supports_completion_logprobs(_Engine()) is False
 
     def test_non_bool_capability_attribute_is_unsupported(self):
-        from fusion_mlx.routes.completions import _engine_supports_completion_logprobs
+        from fusion_mlx.routes_internal.completions import _engine_supports_completion_logprobs
 
         class _Engine:
             tokenizer = object()
@@ -544,7 +544,7 @@ class TestLogprobsEngineCapability:
         assert _engine_supports_completion_logprobs(_Engine()) is False
 
     def test_async_callable_capability_is_not_invoked(self):
-        from fusion_mlx.routes.completions import _engine_supports_completion_logprobs
+        from fusion_mlx.routes_internal.completions import _engine_supports_completion_logprobs
 
         class _Engine:
             tokenizer = object()
@@ -979,7 +979,7 @@ class TestStreamingCompletionIdStable:
         once per request we see 1. This makes the test actually
         exercise the fix instead of accidentally passing on timing.
         """
-        from fusion_mlx.routes import completions as comp_route
+        from fusion_mlx.routes_internal import completions as comp_route
 
         _tick = iter(range(1000, 2000))
 
