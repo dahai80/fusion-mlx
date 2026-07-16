@@ -505,13 +505,13 @@ def _tool_use_required_named_suffix(tool_name: str) -> str:
 def _resolve_model_name(request_model: str | None) -> str:
     if request_model:
         return request_model
-    return _get_server_attr("_model_name") or "default"
+    return _get_cfg_attr("model_name") or "default"
 
 
 def _aliases_match(request_model: str) -> bool:
-    model_name = _get_server_attr("_model_name")
-    model_alias = _get_server_attr("_model_alias")
-    model_path = _get_server_attr("_model_path")
+    model_name = _get_cfg_attr("model_name")
+    model_alias = _get_cfg_attr("model_alias")
+    model_path = _get_cfg_attr("model_path")
     if request_model == model_name:
         return True
     if model_alias and request_model == model_alias:
@@ -523,7 +523,7 @@ def _aliases_match(request_model: str) -> bool:
 
 def _resolve_request_alias_or_default(request_model: str | None) -> str | None:
     if not request_model or request_model == "default":
-        return _get_server_attr("_model_name")
+        return _get_cfg_attr("model_name")
     return request_model
 
 
@@ -1024,9 +1024,9 @@ def _validate_model_name(request_model: str) -> None:
             status_code=400,
             detail="model must not be empty",
         )
-    model_name = _get_server_attr("_model_name")
-    model_alias = _get_server_attr("_model_alias")
-    model_path = _get_server_attr("_model_path")
+    model_name = _get_cfg_attr("model_name")
+    model_alias = _get_cfg_attr("model_alias")
+    model_path = _get_cfg_attr("model_path")
     if not model_name:
         return
     accepted = {model_name}
