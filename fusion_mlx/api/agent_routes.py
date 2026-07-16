@@ -7,6 +7,7 @@ Provides endpoints for managing and executing agent graphs:
 
 from __future__ import annotations
 
+import json
 import logging
 import time
 import uuid
@@ -164,6 +165,7 @@ async def export_graph(graph_id: str, fmt: str = "json") -> dict[str, Any]:
     elif fmt == "python":
         # Generate a simple Python script representation
         py_code = _generate_python_script(graph)
+        logger.info("Exported agent graph %s as executable python script", graph_id)
         return {"format": "python", "data": py_code}
     else:
         raise HTTPException(400, detail=f"Unsupported format: {fmt}")
@@ -235,34 +237,55 @@ def _find_first_llm_node(graph: dict) -> dict[str, Any] | None:
 
 def _generate_python_script(graph: dict) -> str:
     """Generate a simple Python script to execute the graph."""
-    name = graph.get("name", "untitled")
     llm = _find_first_llm_node(graph) or {}
-    model = llm.get("model", "qwen3.5-9b")
-    system_prompt = llm.get("system_prompt", "")
+    model = str(llm.get("model") or "qwen3.5-9b")
+    system_prompt = str(llm.get("system_prompt") or "")
     temperature = llm.get("temperature", 0.7)
+    try:
+        temperature = float(temperature)
+    except (TypeError, ValueError):
+        temperature = 0.7
+    if not (0.0 <= temperature <= 2.0):
+        temperature = 0.7
+
+    # Security: embed all untrusted graph values as a JSON literal. json.dumps
+    # output is a valid Python dict literal for str/float/dict and escapes
+    # quotes/newslashes/control chars, so no value can break out of the string
+    # or inject a statement. Previously name/system_prompt/model were
+    # f-string-interpolated into source (quote breakout) and temperature was
+    # interpolated unquoted into an expression (direct code injection).
+    config = json.dumps(
+        {
+            "name": str(graph.get("name") or "untitled"),
+            "model": model,
+            "system_prompt": system_prompt,
+            "temperature": temperature,
+        },
+        ensure_ascii=True,
+    )
 
     lines = [
         "#!/usr/bin/env python3",
-        f'"""Auto-generated agent: {name}"""',
+        "# Auto-generated agent graph script (fusion-mlx export)",
         "",
-        "import httpx",
         "import asyncio",
+        "import httpx",
+        "",
+        f"_CONFIG = {config}",
         "",
         "",
         "async def main():",
         '    client = httpx.AsyncClient(base_url="http://localhost:8000/v1", timeout=120.0)',
         "    try:",
-        (
-            f'        messages = [{{"role": "system", "content": "{system_prompt}"}}]'
-            if system_prompt
-            else "        messages = []"
-        ),
+        "        messages = []",
+        '        if _CONFIG["system_prompt"]:',
+        '            messages.append({"role": "system", "content": _CONFIG["system_prompt"]})',
         '        messages.append({"role": "user", "content": input("Enter your input: ")})',
         "",
         '        resp = await client.post("/chat/completions", json={',
-        f'            "model": "{model}",',
+        '            "model": _CONFIG["model"],',
         '            "messages": messages,',
-        f'            "temperature": {temperature},',
+        '            "temperature": _CONFIG["temperature"],',
         '            "max_tokens": 4096,',
         "        })",
         "        resp.raise_for_status()",
