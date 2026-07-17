@@ -74,11 +74,18 @@ class UMT5Encoder(nn.Module):
 
     复用 fusion_mlx.video.t5_encoder.T5Encoder 底座实现,
     仅调整配置以匹配 UMT5-XXL.
+
+    内置 tokenizer (transformers.AutoTokenizer from "google/umt5-xxl"),
+    encode_text(prompt) 直接返回 embedding, 无需外部 tokenize.
     """
+
+    # 默认 tokenizer repo (与底座 wan2/generate.py 一致)
+    DEFAULT_TOKENIZER_REPO = "google/umt5-xxl"
 
     def __init__(self, config: UMT5Config | None = None):
         super().__init__()
         self.config = config or UMT5Config()
+        self._tokenizer = None  # 惰性加载
 
         # 复用底座 T5Encoder
         try:
@@ -102,12 +109,99 @@ class UMT5Encoder(nn.Module):
             self.encoder = None
             self._uses_base = False
 
+    # ------------------------------------------------------------------
+    # tokenizer 接入 (任务 #2 遗留修复)
+    # ------------------------------------------------------------------
+    def _ensure_tokenizer(self) -> None:
+        """惰性加载 UMT5 tokenizer (transformers.AutoTokenizer)."""
+        if self._tokenizer is not None:
+            return
+
+        try:
+            from transformers import AutoTokenizer
+
+            self._tokenizer = AutoTokenizer.from_pretrained(
+                self.DEFAULT_TOKENIZER_REPO,
+                legacy=False,
+                padding_side="right",
+            )
+            logger.info(
+                "UMT5 tokenizer loaded: %s", self.DEFAULT_TOKENIZER_REPO,
+            )
+        except Exception as exc:
+            logger.warning(
+                "UMT5 tokenizer 加载失败 (%s); encode_text 将退回 stub",
+                exc,
+            )
+            self._tokenizer = "stub"  # 哨兵, 避免重复尝试
+
+    def tokenize(
+        self,
+        prompt: str,
+        *,
+        max_length: int = 512,
+    ) -> tuple[mx.array, mx.array]:
+        """tokenize 文本 -> (input_ids, attention_mask).
+
+        Args:
+            prompt: 文本 prompt
+            max_length: 最大 token 长度
+
+        Returns:
+            (input_ids [1, L], attention_mask [1, L])
+        """
+        self._ensure_tokenizer()
+
+        if self._tokenizer == "stub":
+            # stub: 返回零张量
+            return mx.zeros((1, max_length), dtype=mx.int32), mx.zeros((1, max_length))
+
+        tokens = self._tokenizer(
+            prompt,
+            max_length=max_length,
+            padding="max_length",
+            truncation=True,
+            return_tensors="np",
+        )
+        ids = mx.array(tokens["input_ids"])
+        mask = mx.array(tokens["attention_mask"])
+        return ids, mask
+
+    def encode_text(
+        self,
+        prompt: str,
+        *,
+        max_length: int = 512,
+    ) -> mx.array:
+        """端到端文本编码: prompt -> embedding.
+
+        内部 tokenize + 前向, 返回非 padding 部分的 embedding.
+
+        Args:
+            prompt: 文本 prompt
+            max_length: 最大 token 长度
+
+        Returns:
+            [1, L_valid, d_model] 文本 embedding (L_valid = 非 padding token 数)
+        """
+        ids, mask = self.tokenize(prompt, max_length=max_length)
+
+        if self._tokenizer == "stub" or self.encoder is None:
+            # stub: 返回零张量
+            return mx.zeros((1, max_length, self.config.d_model))
+
+        embeddings = self.encoder(ids, attention_mask=mask)
+
+        # 截断到非 padding 部分 (与底座 wan2/utils.py encode_text 一致)
+        seq_len = int(mask.sum().item())
+        return embeddings[0, :seq_len][None]  # [1, L_valid, d_model]
+
     def __call__(
         self,
         input_ids: mx.array,
         attention_mask: mx.array | None = None,
     ) -> mx.array:
-        """前向: token ids -> text embedding.
+        """前向: token ids -> text embedding (底层 encoder 调用).
 
         Args:
             input_ids: [B, L] token ids
@@ -159,41 +253,68 @@ class UMT5Encoder(nn.Module):
 # CLIP 文本编码器 (短 Prompt CPU 兜底)
 # ---------------------------------------------------------------------------
 class CLIPTextEncoder:
-    """CLIP 文本编码器.
+    """CLIP 文本编码器 (三级兜底链路).
 
-    两种方案:
-      方案1 (最优): 完整迁移 CLIP 到 MLX, 全局推理链路闭环
-      方案2 (兜底): 短 Prompt 用 CPU 预处理, 大批量生成用 MLX
+    优先级:
+      1. mlx_clip (底座 MLX CLIP, 纯 MLX 端口, 最优)
+      2. transformers CLIPModel (CPU 兜底, 需 torch)
+      3. stub 零张量 (无依赖环境, 测试用)
 
-    本实现走方案2 (CPU 预处理兜底),
-    完整 MLX CLIP 端口可后续基于 fusion_mlx/mlx_clip 实现.
+    与原版差异:
+      - mlx_clip 路径: 批量 encode_text, 避免逐条调用
+      - transformers 路径: 支持 torch 与 numpy 双后端 (无 torch 时退 numpy)
+      - stub 路径: 返回正确维度的零张量, 不报错
     """
 
-    def __init__(self, model_name: str = "openai/clip-vit-large-patch14"):
-        self.model_name = model_name
-        self._clip_model = None
+    # 默认 CLIP repo (SkyReels-V3 用 openai/clip-vit-large-patch14)
+    DEFAULT_REPO = "openai/clip-vit-large-patch14"
+    # CLIP text embedding 维度 (ViT-L/14)
+    EMBED_DIM = 768
+
+    def __init__(self, model_name: str | None = None):
+        self.model_name = model_name or self.DEFAULT_REPO
+        self._clip_model = None  # "stub" 哨兵或实际模型
         self._tokenizer = None
+        self._backend: str | None = None  # "mlx_clip" / "transformers" / "stub"
 
     def _ensure_loaded(self) -> None:
-        """惰性加载 CLIP 模型 + tokenizer."""
+        """惰性加载 CLIP, 按三级兜底链路尝试."""
         if self._clip_model is not None:
             return
 
+        # 1. 优先 mlx_clip (纯 MLX)
         try:
-            # 优先尝试 mlx_clip (底座 MLX CLIP)
             import mlx_clip
+
             self._clip_model = mlx_clip.load(self.model_name)
-            logger.info("CLIP loaded via mlx_clip")
-        except Exception:
-            try:
-                # 兜底: transformers CLIPModel (CPU)
-                from transformers import CLIPModel, CLIPTokenizer
-                self._clip_model = CLIPModel.from_pretrained(self.model_name)
-                self._tokenizer = CLIPTokenizer.from_pretrained(self.model_name)
-                logger.info("CLIP loaded via transformers (CPU)")
-            except Exception as exc:
-                logger.warning("CLIP unavailable (%s), using stub", exc)
-                self._clip_model = "stub"
+            self._backend = "mlx_clip"
+            logger.info("CLIP loaded via mlx_clip: %s", self.model_name)
+            return
+        except ImportError:
+            pass  # mlx_clip 未安装, 继续兜底
+        except Exception as exc:
+            logger.warning("mlx_clip 加载失败 (%s), 尝试 transformers", exc)
+
+        # 2. transformers CPU 兜底
+        try:
+            from transformers import CLIPModel, CLIPTokenizer
+
+            self._clip_model = CLIPModel.from_pretrained(self.model_name)
+            self._tokenizer = CLIPTokenizer.from_pretrained(self.model_name)
+            self._backend = "transformers"
+            logger.info("CLIP loaded via transformers (CPU): %s", self.model_name)
+            return
+        except ImportError:
+            pass  # transformers 未安装
+        except Exception as exc:
+            logger.warning("transformers CLIP 加载失败 (%s), 退 stub", exc)
+
+        # 3. stub 兜底
+        self._clip_model = "stub"
+        self._backend = "stub"
+        logger.warning(
+            "CLIP unavailable (无 mlx_clip/transformers), 使用 stub 零张量",
+        )
 
     def encode_text(
         self,
@@ -208,38 +329,65 @@ class CLIPTextEncoder:
             max_length: 最大 token 长度
 
         Returns:
-            [B, L, dim] CLIP 文本 embedding
+            [B, L, dim] 或 [B, dim] CLIP 文本 embedding
+            (mlx_clip/transformers 返回 [B, dim], stub 返回 [B, L, dim])
         """
         self._ensure_loaded()
 
         if isinstance(text, str):
             text = [text]
+        b = len(text)
 
-        if self._clip_model == "stub":
-            # Stub: 返回零张量
-            b = len(text)
-            return mx.zeros((b, max_length, 768))
+        # stub 兜底
+        if self._backend == "stub":
+            return mx.zeros((b, max_length, self.EMBED_DIM))
 
-        if self._tokenizer is not None:
-            # transformers CPU 路径
+        # mlx_clip 路径 (纯 MLX)
+        if self._backend == "mlx_clip":
+            try:
+                # mlx_clip.encode_text 支持批量
+                emb = self._clip_model.encode_text(text)
+                if isinstance(emb, list):
+                    return mx.stack([mx.array(e) for e in emb], axis=0)
+                return mx.array(emb) if not isinstance(emb, mx.array) else emb
+            except Exception as exc:
+                # mlx_clip.encode_text 可能不支持批量, 退逐条
+                logger.warning(
+                    "mlx_clip.encode_text 批量失败 (%s), 退逐条", exc,
+                )
+                embeddings = []
+                for t in text:
+                    e = self._clip_model.encode_text(t)
+                    embeddings.append(mx.array(e) if not isinstance(e, mx.array) else e)
+                return mx.stack(embeddings, axis=0)
+
+        # transformers CPU 路径 (支持 torch 与 numpy 双后端)
+        if self._backend == "transformers":
             inputs = self._tokenizer(
                 text, padding="max_length", truncation=True,
-                max_length=max_length, return_tensors="pt",
+                max_length=max_length, return_tensors="np",  # numpy 后端, 无需 torch
             )
-            import torch
-            with torch.no_grad():
+            try:
+                # 优先 torch (更快)
+                import torch
+
+                inputs_pt = {k: torch.from_numpy(v) for k, v in inputs.items()}
+                with torch.no_grad():
+                    outputs = self._clip_model.get_text_features(**inputs_pt)
+                return mx.array(outputs.numpy())
+            except ImportError:
+                # 无 torch: 用 transformers 的 numpy 前向
                 outputs = self._clip_model.get_text_features(**inputs)
-            return mx.array(outputs.numpy())
-        else:
-            # mlx_clip 路径
-            embeddings = []
-            for t in text:
-                emb = self._clip_model.encode_text(t)
-                if isinstance(emb, mx.array):
-                    embeddings.append(emb)
-                else:
-                    embeddings.append(mx.array(emb))
-            return mx.stack(embeddings, axis=0)
+                if hasattr(outputs, "numpy"):
+                    outputs = outputs.numpy()
+                return mx.array(outputs)
+
+        # 理论不可达
+        return mx.zeros((b, max_length, self.EMBED_DIM))
+
+    def is_stub(self) -> bool:
+        """是否处于 stub 模式 (无真实 CLIP 可用)."""
+        return self._backend == "stub"
 
 
 __all__ = [

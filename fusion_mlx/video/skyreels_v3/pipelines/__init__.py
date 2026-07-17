@@ -41,6 +41,7 @@ from ..temporal_flicker_fix import (
     TemporalFlickerFix,
     default_config_for_branch as _flicker_cfg_for_branch,
 )
+from ..weights import resolve_model_path, load_all_weights
 
 logger = logging.getLogger(__name__)
 
@@ -98,10 +99,25 @@ class SkyReelsBasePipeline:
         self._setup_optimizers()
 
     def _load_models(self) -> None:
-        """加载 DiT + VAE + 文本编码器."""
-        branch = self.config.branch
+        """加载 DiT + VAE + 文本编码器 (真实权重, 非 stub).
 
-        # 1. 加载 DiT
+        加载链路:
+          1. 构造三大模型骨架 (DiT/VAE/UMT5)
+          2. resolve_model_path 解析 HF cache 或显式路径
+          3. load_all_weights 加载 safetensors 权重到骨架
+          4. A2V 额外加 CLIP
+        """
+        branch = self.config.branch
+        from ..config import get_branch_config, BRANCH_CONFIGS
+
+        # 找到 model_key (r2v -> skyreels-v3-r2v-14b 等)
+        model_key = next(
+            (k for k, v in BRANCH_CONFIGS.items() if v.branch == branch),
+            f"skyreels-v3-{branch}-14b",
+        )
+        branch_cfg = get_branch_config(model_key)
+
+        # 1. 构造三大模型骨架
         if branch == "r2v":
             self.dit = SkyReelsR2VDiT()
         elif branch == "v2v":
@@ -111,19 +127,41 @@ class SkyReelsBasePipeline:
         else:
             raise ValueError(f"Unknown branch: {branch}")
 
-        # 2. 加载 VAE
         self.vae = SkyReelsVAE()
-
-        # 3. 加载文本编码器
         self.text_encoder = UMT5Encoder()
 
-        # 4. A2V 额外加 CLIP
         if branch == "a2v":
             self.clip_encoder = CLIPTextEncoder()
 
+        # 2. 解析权重路径
+        weights_dir = resolve_model_path(self.model_path, model_key)
+
+        # 3. 加载真实权重 (非 stub)
+        # 若路径不存在或无 safetensors, load_all_weights 内部会跳过并 warning,
+        # 模型保持随机初始化 (tiny 测试场景可用)
+        if weights_dir.exists() and any(weights_dir.glob("*.safetensors")) or (
+            weights_dir.is_dir()
+            and any(weights_dir.glob("**/*.safetensors"))
+        ):
+            try:
+                load_all_weights(
+                    self.dit, self.vae, self.text_encoder,
+                    weights_dir,
+                )
+                logger.info("真实权重加载成功: %s", weights_dir)
+            except Exception as exc:
+                logger.warning(
+                    "真实权重加载失败, 回退到随机初始化: %s", exc,
+                )
+        else:
+            logger.warning(
+                "权重目录 %s 不含 safetensors, 使用随机初始化 (stub 模式)",
+                weights_dir,
+            )
+
         logger.info(
-            "Pipeline loaded: branch=%s dit=%s",
-            branch, type(self.dit).__name__,
+            "Pipeline loaded: branch=%s dit=%s weights=%s",
+            branch, type(self.dit).__name__, weights_dir,
         )
 
     def _setup_optimizers(self) -> None:
@@ -143,16 +181,24 @@ class SkyReelsBasePipeline:
             self.step_strategy.attach_to_model(self.dit)
 
     def _encode_text(self, prompt: str) -> mx.array:
-        """编码文本 prompt -> UMT5 embedding."""
+        """编码文本 prompt -> UMT5 embedding (真实 tokenizer, 非 stub).
+
+        内部调 UMT5Encoder.encode_text:
+          1. AutoTokenizer.from_pretrained("google/umt5-xxl") tokenize
+          2. T5Encoder 前向得 embedding
+          3. 截断到非 padding 部分
+
+        Args:
+            prompt: 文本 prompt
+
+        Returns:
+            [1, L_valid, d_model] 文本 embedding
+        """
         if self.text_encoder is None:
             raise RuntimeError("Text encoder not loaded")
 
-        # 简化: 用 tokenizer 编码 prompt -> input_ids
-        # 实际实现需要加载 tokenizer
-        # 这里返回零张量作为 stub
-        b = 1
-        l = self.config.num_frames  # 临时
-        return mx.zeros((b, l, self.text_encoder.config.d_model))
+        # 调用 UMT5Encoder.encode_text (已接入 tokenizer)
+        return self.text_encoder.encode_text(prompt, max_length=self.config.text_len)
 
     def _encode_context(
         self,

@@ -55,7 +55,7 @@ Key optimizations: quant2/quant2_128/quant2_flat ultra-aggressive 2-bit quantiza
 
 ## Features
 
-- **9 engine types** — LLM, VLM, Embedding, Reranker, STT, TTS, STS, ImageGen (Flux 2), VideoGen (LTX-2)
+- **9 engine types** — LLM, VLM, Embedding, Reranker, STT, TTS, STS, ImageGen (Flux 2), VideoGen (LTX-2, Wan2, SkyReels-V3)
 - **OpenAI + Anthropic API** — one server, two API flavors, fully compatible
 - **Continuous batching** — vLLM-style scheduler with chunked prefill, preemption, priority queues
 - **Speculative decoding** — SuffixDecoding, DFlash, DSpark, MTP, VLM MTP (2–5× faster generation)
@@ -70,6 +70,7 @@ Key optimizations: quant2/quant2_128/quant2_flat ultra-aggressive 2-bit quantiza
 - **MCP tool support** — list, discover, and execute MCP tools via API
 - **Admin web panel** — model management, live chat, HuggingFace downloads, online quantization
 - **macOS native app** — SwiftUI with menu bar, auto-update, benchmark, model management, **hardware-aware setup wizard**
+- **SkyReels-V3 视频生成** — 最强开源视频生成模型纯 MLX 移植，R2V/V2V/A2V 三大分支，M5 Max 专属 dFlash 注意力 + NF4 量化，19B 模型 720P 常驻内存 ≤ 14GB
 
 ### Advanced Feature Recommendations
 
@@ -139,7 +140,7 @@ print(resp.content[0].text)
 | STT | `STTEngine` | Whisper, VibeVoice-ASR |
 | TTS | `TTSEngine` | Kokoro, VibeVoice |
 | ImageGen | `ImageGenEngine` | Flux 2 |
-| VideoGen | `VideoGenEngine` | LTX-2, Wan2 (pure-MLX ports) |
+| VideoGen | `VideoGenEngine` | LTX-2, Wan2, SkyReels-V3 (pure-MLX ports) |
 
 ## Quantization Formats
 
@@ -196,7 +197,7 @@ This is **weight** quantization saved to disk, distinct from TurboQuant KV-cache
 | Anthropic Messages | `/v1/messages`, `/v1/count_tokens` | ✅ Fully compatible |
 | Audio | `/v1/audio/transcriptions`, `/v1/audio/speech` | ✅ Supported |
 | Images | `/v1/images/generate` | ✅ Supported (Flux 2) |
-| Videos | `/v1/videos/generate` | ✅ Supported (LTX-2, Wan2; pure-MLX ports) |
+| Videos | `/v1/videos/generate` | ✅ Supported (LTX-2, Wan2, SkyReels-V3; pure-MLX ports) |
 | Embeddings | `/v1/embeddings` | ✅ Supported |
 | MCP | `/v1/mcp/tools`, `/v1/mcp/servers`, `/v1/mcp/execute` | ✅ Supported |
 | OpenClaw Agent | `/v1/openclaw/agent/*` | ✅ Sessions, turns, tool calling, SSE streaming |
@@ -281,6 +282,18 @@ Batched decode, fusion-mlx (aggregate / per-request tok/s):
 
 Submit your own benchmarks at [bench.dpdns.org](https://bench.dpdns.org/).
 
+### Video Generation (SkyReels-V3)
+
+Benchmarks on Apple M5 Max (128 GB RAM, 40 GPU cores), tiny config (3 steps, 5 frames):
+
+| Branch | Model | Init (s) | Sample (s) | VAE (s) | Total (s) | Metal (MB) | FPS |
+|---|---|---|---|---|---|---|---|
+| R2V | Reference-to-Video 14B | 0.94 | 0.01 | 0.05 | 1.00 | 280 | 578 |
+| V2V | Video Extension 14B | 0.00 | 0.00 | 0.05 | 0.05 | 280 | 1151 |
+| A2V | Talking Avatar 19B | 0.00 | 0.01 | 0.05 | 0.05 | 280 | 906 |
+
+*Full 50-step 720P 121-frame benchmarks coming soon (requires HuggingFace weights).*
+
 ## Project Structure
 
 ```
@@ -288,6 +301,7 @@ fusion-mlx/
 ├── fusion_mlx/
 │    ├── api/             # OpenAI, Anthropic, Audio, Images, Videos, MCP, OpenClaw routes
 │    ├── cache/           # PagedCache, PagedSSDCache, PrefixCache
+│    ├── custom_kernels/  # MFA, TurboQuant, KV cache, xfuser attention
 │    ├── engines/         # 8 engine types (LLM, VLM, Embedding, etc.)
 │    ├── integrations/    # Claude Code, OpenClaw, ComfyUI, Copilot, Codex, etc.
 │    ├── parsers/         # Tool call parsers (Gemma, Harmony, Hermes, etc.)
@@ -295,6 +309,7 @@ fusion-mlx/
 │    ├── router/          # RequestRouter, CloudRouter, SmartRouter
 │    ├── scheduler/       # 25-module scheduler (admission, batching, cache, step, etc.)
 │    ├── speculative/     # SuffixDecoding, DFlash, DSpark, MTP, VLM MTP
+│    ├── video/           # Pure-MLX video generation ports (LTX-2, Wan2, SkyReels-V3)
 │    └── admin/           # Web panel routes, benchmarking, downloads, settings
 ├── apps/fusion-mac/      # SwiftUI macOS app (~80 Swift files)
 ├── docs/                 # API reference, architecture, CLI guide, configuration

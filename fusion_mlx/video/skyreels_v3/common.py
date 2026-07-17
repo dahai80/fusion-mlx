@@ -346,15 +346,138 @@ def mul_add_add(x: mx.array, y: mx.array, z: mx.array) -> mx.array:
 def maybe_compile(func: Any) -> Any:
     """条件编译: M5 Max 默认开启 mx.compile, 其他设备或测试环境直通.
 
-    用法: dit_block = maybe_compile(dit_block)
+    用法 1 (函数): dit_block = maybe_compile(dit_block)
+    用法 2 (nn.Module): block = maybe_compile(block)  # 编译 block.__call__
+
+    Args:
+        func: 可调用函数 或 nn.Module 实例
+
+    Returns:
+        编译后的 callable (若启用) 或原 func (若禁用/失败)
     """
-    if _device.should_compile():
-        try:
-            return mx.compile(func)
-        except Exception as exc:  # pragma: no cover - 编译失败兜底
-            logger.warning("mx.compile failed, falling back to eager: %s", exc)
+    if not _device.should_compile():
+        return func
+
+    # 提取 callable: nn.Module 的 __call__ 或直接 callable
+    target = func.__call__ if isinstance(func, nn.Module) else func
+    if not callable(target):
+        return func
+
+    try:
+        compiled = mx.compile(target)
+        # 若是 nn.Module, 把编译后的 __call__ 挂回 (保留 parameters/state)
+        if isinstance(func, nn.Module):
+            object.__setattr__(func, "__call__", compiled)
             return func
-    return func
+        return compiled
+    except Exception as exc:  # pragma: no cover - 编译失败兜底
+        logger.warning("mx.compile failed, falling back to eager: %s", exc)
+        return func
+
+
+def verify_compile_stability(
+    model: nn.Module,
+    *,
+    sample_input: tuple,
+    warmup: int = 2,
+) -> dict:
+    """验证 mx.compile 在真实输入下的稳定性.
+
+    跑 warmup 轮编译 + eager 对照, 检查:
+      1. 编译是否成功 (不抛异常)
+      2. 编译输出与 eager 输出数值一致 (max abs diff)
+      3. 编译是否真的更快 (时间比)
+
+    Args:
+        model: 待验证的 nn.Module (DiT block 等)
+        sample_input: 前向输入元组 (将 unpack 调用)
+        warmup: 预热轮数 (默认 2)
+
+    Returns:
+        {
+            "compile_ok": bool,
+            "max_abs_diff": float,
+            "eager_time_s": float,
+            "compile_time_s": float,
+            "speedup": float,
+        }
+    """
+    import time
+
+    result = {
+        "compile_ok": False,
+        "max_abs_diff": float("inf"),
+        "eager_time_s": 0.0,
+        "compile_time_s": 0.0,
+        "speedup": 0.0,
+    }
+
+    # 1. Eager 基准
+    try:
+        eager_out = model(*sample_input)
+        mx.eval(eager_out)
+    except Exception as exc:
+        logger.warning("Eager forward 失败, 跳过编译验证: %s", exc)
+        return result
+
+    # 2. 编译
+    if not _device.should_compile():
+        logger.info("should_compile()=False, 跳过编译验证")
+        result["compile_ok"] = True
+        result["max_abs_diff"] = 0.0
+        return result
+
+    try:
+        compiled_fn = mx.compile(model.__call__)
+    except Exception as exc:
+        logger.warning("mx.compile 失败: %s", exc)
+        return result
+
+    # 3. 编译前向 (含 warmup)
+    try:
+        for _ in range(warmup):
+            _ = compiled_fn(*sample_input)
+        compile_out = compiled_fn(*sample_input)
+        mx.eval(compile_out)
+        result["compile_ok"] = True
+    except Exception as exc:
+        logger.warning("编译前向失败: %s", exc)
+        return result
+
+    # 4. 数值对照
+    try:
+        diff = mx.abs(compile_out - eager_out)
+        mx.eval(diff)
+        result["max_abs_diff"] = float(diff.max().item())
+    except Exception as exc:
+        logger.warning("数值对照失败: %s", exc)
+        result["max_abs_diff"] = float("inf")
+
+    # 5. 性能对照 (简糙)
+    try:
+        t0 = time.time()
+        for _ in range(3):
+            _ = model(*sample_input)
+        mx.eval(model(*sample_input))
+        result["eager_time_s"] = (time.time() - t0) / 4
+
+        t0 = time.time()
+        for _ in range(3):
+            _ = compiled_fn(*sample_input)
+        mx.eval(compiled_fn(*sample_input))
+        result["compile_time_s"] = (time.time() - t0) / 4
+
+        if result["compile_time_s"] > 0:
+            result["speedup"] = result["eager_time_s"] / result["compile_time_s"]
+    except Exception as exc:
+        logger.warning("性能对照失败: %s", exc)
+
+    logger.info(
+        "编译验证: ok=%s diff=%.2e eager=%.3fs compile=%.3fs speedup=%.2fx",
+        result["compile_ok"], result["max_abs_diff"],
+        result["eager_time_s"], result["compile_time_s"], result["speedup"],
+    )
+    return result
 
 
 __all__ = [
