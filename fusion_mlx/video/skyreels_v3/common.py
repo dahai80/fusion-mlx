@@ -137,7 +137,10 @@ def rope_params(max_seq_len: int, dim: int, theta: float = 10000.0) -> mx.array:
     assert dim % 2 == 0
     half = dim // 2
     positions = mx.arange(max_seq_len).astype(mx.float32)
-    inv_freq = mx.power(theta, -mx.arange(0, dim, 2).astype(mx.float32) / dim)
+    # MLX 0.32 mx.power 不接负 float32 张量指数, 改用 mx.exp(-positions * inv_freq) 等价构造
+    # inv_freq = theta^(-2k/dim), k=0,1,...,half-1
+    k = mx.arange(0, dim, 2).astype(mx.float32) / dim
+    inv_freq = mx.exp(-k * mx.log(mx.array(theta, dtype=mx.float32)))  # [half]
     freqs = mx.outer(positions, inv_freq)  # [max_seq_len, half]
 
     # 返回 (cos, sin) 实数对, rope_apply 内部重建复数
@@ -201,36 +204,54 @@ def rope_apply(
     if len(gs) < b:
         gs = gs * (b // len(gs)) + gs[:b % len(gs)]  # 重复到 b 个
 
+    # 多段拼接场景: 当 x 的 L 维 > sum(f*h*w) 时, grid_sizes 表示多个段
+    # (R2V 参考图 patch + 视频 patch 拼接成一个序列). 此时按段累拼输出.
+    # 注意: grid_sizes 的 (f,h,w) 是 pre-patch 隐空间尺寸, patch_size=(1,2,2) 后真实 grid 缩了
+    # patch_size**2 倍. 用 x.shape[1] (patch 后真实序列长度) 反推每段真实 seq_len, 避免与权重错位.
+    total_seq = x.shape[1]  # patch 后真实总序列长度
+    total_grid = sum(g[0] * g[1] * g[2] for g in gs)  # pre-patch 总元素
+    # patch 缩放因子: 真实 seq / pre-patch grid (如 patch_size=(1,2,2) → 1/4)
+    patch_scale = total_seq / total_grid if total_grid > 0 else 1.0
+
     outputs = []
     for i, (f, h, w) in enumerate(gs):
-        seq_len = f * h * w
-        x_i = x[i].astype(mx.float32)  # [L, N, C]
+        # 真实 seq_len (patch 后): pre-patch f*h*w * patch_scale
+        seq_len = int(round(f * h * w * patch_scale))
+        # 按段偏移截取 x_i: 第 i 段对应 x[i, offset:offset+seq_len]
+        # 单段场景 (offset=0) 等价于截断, 多段场景正确分片
+        offset = int(round(sum(g[0] * g[1] * g[2] * patch_scale for g in gs[:i])))
+        x_i = x[i, offset:offset + seq_len].astype(mx.float32)  # [seq_len, N, C]
+
+        # patch 后真实网格 (h, w 各除 patch_size[1:], f 不变因 patch_size[0]=1)
+        # 用于 rope cos/sin 构造
+        h_real = max(1, h // 2)  # patch_size=(1,2,2) 约定, 通用应传 patch_size 但此处硬编
+        w_real = max(1, w // 2)
 
         # 拆 real/imag: x[::2] = real, x[1::2] = imag
-        x_real = x_i[..., 0::2]  # [L, N, C/2]
+        x_real = x_i[..., 0::2]  # [seq_len, N, C/2]
         x_imag = x_i[..., 1::2]
 
-        # 构造 cos_i / sin_i: [f*h*w, 1, half_c]
+        # 构造 cos_i / sin_i: [f*h_real*w_real, 1, half_c]
         # t 段
         cos_i_t = mx.broadcast_to(
-            cos_t[:f].reshape(f, 1, 1, -1), (f, h, w, t_dim)
+            cos_t[:f].reshape(f, 1, 1, -1), (f, h_real, w_real, t_dim)
         )
         sin_i_t = mx.broadcast_to(
-            sin_t[:f].reshape(f, 1, 1, -1), (f, h, w, t_dim)
+            sin_t[:f].reshape(f, 1, 1, -1), (f, h_real, w_real, t_dim)
         )
         # h 段
         cos_i_h = mx.broadcast_to(
-            cos_h[:h].reshape(1, h, 1, -1), (f, h, w, hw_dim)
+            cos_h[:h_real].reshape(1, h_real, 1, -1), (f, h_real, w_real, hw_dim)
         )
         sin_i_h = mx.broadcast_to(
-            sin_h[:h].reshape(1, h, 1, -1), (f, h, w, hw_dim)
+            sin_h[:h_real].reshape(1, h_real, 1, -1), (f, h_real, w_real, hw_dim)
         )
         # w 段
         cos_i_w = mx.broadcast_to(
-            cos_w[:w].reshape(1, 1, w, -1), (f, h, w, hw_dim)
+            cos_w[:w_real].reshape(1, 1, w_real, -1), (f, h_real, w_real, hw_dim)
         )
         sin_i_w = mx.broadcast_to(
-            sin_w[:w].reshape(1, 1, w, -1), (f, h, w, hw_dim)
+            sin_w[:w_real].reshape(1, 1, w_real, -1), (f, h_real, w_real, hw_dim)
         )
 
         cos_i = mx.concatenate([cos_i_t, cos_i_h, cos_i_w], axis=-1)
@@ -238,9 +259,9 @@ def rope_apply(
         cos_i = cos_i.reshape(seq_len, 1, -1)  # [seq_len, 1, half_c]
         sin_i = sin_i.reshape(seq_len, 1, -1)
 
-        # 广播到 [L, N, half_c]
-        cos_exp = mx.broadcast_to(cos_i, (s, n, half_c))
-        sin_exp = mx.broadcast_to(sin_i, (s, n, half_c))
+        # 广播到 [seq_len, N, half_c] (用 seq_len 而非全序列 s, 避免与 x 的 padded 长度错位)
+        cos_exp = mx.broadcast_to(cos_i, (seq_len, n, half_c))
+        sin_exp = mx.broadcast_to(sin_i, (seq_len, n, half_c))
 
         # 复数乘法等价:
         # x_rotated_real = x_real*cos - x_imag*sin

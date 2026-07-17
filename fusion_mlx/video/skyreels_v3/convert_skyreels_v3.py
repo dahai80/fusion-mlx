@@ -101,9 +101,14 @@ def load_pytorch_state_dict(checkpoint_path: str | Path) -> dict[str, Any]:
     """
     checkpoint_path = Path(checkpoint_path)
     if checkpoint_path.is_dir():
-        # 寻找目录下的 safetensors 或 bin 文件
+        # 寻找目录下的 safetensors 或 bin 文件 (含子目录 transformer/ vae/ text_encoder/ 等)
         safetensor_files = sorted(checkpoint_path.glob("*.safetensors"))
         bin_files = sorted(checkpoint_path.glob("*.bin"))
+        # 递归子目录 (SkyReels-V3 HF 真实布局: transformer/*.safetensors, vae/*.safetensors, text_encoder/*.safetensors)
+        if not safetensor_files:
+            safetensor_files = sorted(checkpoint_path.rglob("*.safetensors"))
+        if not bin_files:
+            bin_files = sorted(checkpoint_path.rglob("*.bin"))
         if safetensor_files:
             return _load_safetensors_dir(safetensor_files)
         if bin_files:
@@ -118,15 +123,39 @@ def load_pytorch_state_dict(checkpoint_path: str | Path) -> dict[str, Any]:
 
 
 def _load_safetensors_dir(files: list[Path]) -> dict[str, Any]:
-    """从多个 safetensors 文件加载, 合并 state_dict."""
+    """从多个 safetensors 文件加载, 合并 state_dict.
+
+    优先用 framework="pt" (torch 支持 bfloat16);
+    fallback framework="numpy" 但 bfloat16 需 upcast 到 float32.
+    """
     from safetensors import safe_open
 
     state_dict: dict[str, Any] = {}
+    # 尝试 torch 路径 (支持 bfloat16)
+    try:
+        import torch  # noqa: F401
+        use_pt = True
+    except ImportError:
+        use_pt = False
+
     for f in files:
         logger.info("Loading %s ...", f.name)
-        with safe_open(str(f), framework="numpy", device="cpu") as st:
+        fw = "pt" if use_pt else "numpy"
+        with safe_open(str(f), framework=fw, device="cpu") as st:
             for key in st.keys():
-                state_dict[key] = st.get_tensor(key)
+                tensor = st.get_tensor(key)
+                if not use_pt and hasattr(tensor, "dtype") and "bfloat16" in str(getattr(tensor, "dtype", "")):
+                    # numpy 不认 bfloat16, 上转 float32
+                    tensor = tensor.astype("float32") if hasattr(tensor, "astype") else tensor
+                if use_pt:
+                    # torch.Tensor → numpy (bfloat16 先 upcast float32 保精度, 其余原 dtype)
+                    import torch as _torch
+                    if hasattr(tensor, "detach"):
+                        tensor = tensor.detach().cpu()
+                        if tensor.dtype == _torch.bfloat16:
+                            tensor = tensor.to(_torch.float32)
+                        tensor = tensor.numpy()
+                state_dict[key] = tensor
     return state_dict
 
 
@@ -392,8 +421,16 @@ def _write_sharded_safetensors(
         shard_idx += 1
 
     for key, mlx_weight in weights.items():
-        # 转 numpy for safetensors
-        np_weight = np.array(mlx_weight)
+        # 转 numpy for safetensors (bfloat16 先 upcast float32, numpy 不认 bf16 buffer)
+        try:
+            np_weight = np.array(mlx_weight)
+        except (RuntimeError, TypeError):
+            # mlx bfloat16 → numpy 不兼容, 上转 float32 保精度
+            import mlx.core as mx
+            if mlx_weight.dtype == mx.bfloat16:
+                np_weight = np.array(mlx_weight.astype(mx.float32))
+            else:
+                raise
         tensor_bytes = np_weight.nbytes
 
         if current_size + tensor_bytes > max_shard_bytes and current_shard:
@@ -409,7 +446,14 @@ def _write_sharded_safetensors(
         json.dump(weight_map, f, indent=2)
 
     # 写入 model.safetensors.index.json (HuggingFace 兼容格式)
-    total_size = sum(np.array(w).nbytes for w in weights.values())
+    # bfloat16 先 upcast float32 求 nbytes (numpy 不认 bf16 buffer)
+    import mlx.core as mx
+    def _safe_nbytes(w):
+        try:
+            return np.array(w).nbytes
+        except (RuntimeError, TypeError):
+            return np.array(w.astype(mx.float32) if w.dtype == mx.bfloat16 else w).nbytes
+    total_size = sum(_safe_nbytes(w) for w in weights.values())
     index_data = {
         "metadata": {"total_size": total_size},
         "weight_map": weight_map,
