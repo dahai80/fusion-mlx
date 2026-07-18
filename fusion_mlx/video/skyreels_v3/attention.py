@@ -296,14 +296,21 @@ class WanTemporalAttention(nn.Module):
         v = self.v(x_w).reshape(b, s, n, d).transpose(0, 2, 1, 3)
 
         # 滑动窗口掩码 (时序方向)
+        # 优化: 缓存 sw_mask 避每 block 重构造 (40 blocks × s²张量致 Metal 峰值翻倍)
+        # + 缩 dtype float16 降显存 (V2V 146GB → 预期 < 100GB)
         mask = attn_mask
         if ws > 0:
-            i = mx.arange(s, dtype=mx.float32)[:, None]
-            j = mx.arange(s, dtype=mx.float32)[None, :]
-            sw_mask = mx.where(
-                mx.abs(i - j) < ws, 0.0, -float("inf")
-            ).astype(q.dtype)
-            sw_mask = sw_mask.reshape(1, 1, s, s)
+            cache_key = (s, ws, q.dtype)
+            cached = getattr(self, "_sw_mask_cache", None)
+            if cached is None or cached[0] != cache_key:
+                i = mx.arange(s, dtype=mx.float16)[:, None]
+                j = mx.arange(s, dtype=mx.float16)[None, :]
+                sw_mask = mx.where(
+                    mx.abs(i - j) < ws, mx.array(0.0, dtype=mx.float16), mx.array(float("-inf"), dtype=mx.float16)
+                ).astype(q.dtype)
+                sw_mask = sw_mask.reshape(1, 1, s, s)
+                self._sw_mask_cache = (cache_key, sw_mask)
+            sw_mask = self._sw_mask_cache[1]
             mask = sw_mask if mask is None else mask + sw_mask
 
         fa = self._fast_attn

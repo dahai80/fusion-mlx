@@ -206,20 +206,43 @@ def load_text_encoder_weights(
         logger.warning("UMT5 权重目录 %s 为空, 跳过加载", weights_dir)
         return encoder
 
-    # 文本编码器权重保 float32 (与底座 wan2/utils.py load_t5_encoder 一致)
-    weights = {k: v.astype(mx.float32) for k, v in weights.items()}
+    # T5 保 float32 (与底座 wan2/utils.py load_t5_encoder 一致), 但改 bf16 常驻 Metal 降显存
+    # (V2V/A2V 加载 T5 11GB float32 致 Metal 峰值翻倍 + GPU Command Buffer Timeout)
+    # 转 bf16 常驻: 11GB float32 → 5.5GB bf16, 释放 5.5GB Metal 给 DiT temporal 分支用
+    weights = {k: v.astype(mx.bfloat16) for k, v in weights.items()}
 
     try:
         encoder.load_weights(list(weights.items()), strict=strict)
-        mx.eval(encoder.parameters())
+        # 分批 eval 避一次性提交 11GB 致 GPU Timeout (>10s 阜默)
+        _eval_params_batched(encoder, batch_mb=512)
         logger.info("UMT5 权重加载成功: %d tensors", len(weights))
     except Exception as exc:
         logger.warning("UMT5 权重加载失败 (strict=%s): %s", strict, exc)
         if strict:
             encoder.load_weights(list(weights.items()), strict=False)
-            mx.eval(encoder.parameters())
+            _eval_params_batched(encoder, batch_mb=512)
 
     return encoder
+
+
+def _eval_params_batched(module, batch_mb: int = 512) -> None:
+    """分批 eval 模块参数, 避一次性提交大体积致 GPU Command Buffer Timeout.
+
+    按 batch_mb 切分参数列表, 每批 ≤ batch_mb MB, 逐批 mx.eval.
+    """
+    import mlx.core as mx
+    params = module.parameters()
+    if not params:
+        return
+    max_bytes = batch_mb * 1024**2
+    cur = []; cur_bytes = 0
+    for k, v in params.items():
+        nb = v.nbytes if hasattr(v, 'nbytes') else 0
+        if cur_bytes + nb > max_bytes and cur:
+            mx.eval(cur); cur = []; cur_bytes = 0
+        cur.append(v); cur_bytes += nb
+    if cur:
+        mx.eval(cur)
 
 
 # ---------------------------------------------------------------------------
