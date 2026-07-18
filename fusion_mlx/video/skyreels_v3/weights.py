@@ -178,17 +178,70 @@ def load_vae_weights(
     # VAE 权重上转 float32 保画质 (与底座 wan2/utils.py 一致)
     weights = {k: v.astype(mx.float32) for k, v in weights.items()}
 
+    # wan2/vae.py 底座用普通 list 存子层 (residual/middle/upsamples/head/resample),
+    # MLX nn.Module 不收录 list 属性, parameters() 丢子层权重致 load_weights 加载 0.
+    # 解法: 先 load_weights 跑可见层, 再手动按 key 路径递归注入 list 子层.
+    # 注意: 真实权重 key 是 "decoder.*" (无 vae. 前缀), 需注入到 vae.vae 底座 (WanVAE) 而非包装层
+    inject_target = getattr(vae, "vae", None) or vae  # SkyReelsVAE.vae → WanVAE 底座
     try:
         vae.load_weights(list(weights.items()), strict=strict)
+        _inject_list_child_weights(inject_target, weights)
         mx.eval(vae.parameters())
         logger.info("VAE 权重加载成功: %d tensors", len(weights))
     except Exception as exc:
         logger.warning("VAE 权重加载失败 (strict=%s): %s", strict, exc)
         if strict:
             vae.load_weights(list(weights.items()), strict=False)
+            _inject_list_child_weights(inject_target, weights)
             mx.eval(vae.parameters())
 
     return vae
+
+
+def _inject_list_child_weights(module: nn.Module, weights: dict) -> None:
+    """手动注入 list 属性子层权重 (绕开 MLX 不收录 list 属性的限制).
+
+    遍历 weights 的 key 路径 (e.g. "decoder.middle.0.residual.0.gamma"),
+    若某段对应 list 属性则按索引定位子模块, 逐层递归注入参数.
+    同时覆盖 CausalConv3d/RMS_norm 裸 mx.array 属性 (非 _parameters 槽).
+    """
+    for key, value in weights.items():
+        parts = key.split(".")
+        cur = module
+        try:
+            # 逐段定位到目标模块 (处理 list 属性)
+            for part in parts[:-1]:  # 最后一段是参数名 (weight/bias/gamma)
+                if hasattr(cur, part):
+                    cur = getattr(cur, part)
+                elif part.isdigit() and isinstance(cur, (list, tuple)):
+                    cur = cur[int(part)]
+                else:
+                    cur = None
+                    break
+            if cur is None:
+                continue
+            param_name = parts[-1]
+            # 优先setattr 裸 mx.array 属性 (CausalConv3d.weight/bias, RMS_norm.gamma)
+            if hasattr(cur, param_name):
+                val = value
+                # Conv2d 权重布局对齐: 真实 (out,in,kh,kw) → MLX nn.Conv2d 期望 (out,kh,kw,in)
+                # 触发条件: cur 是 nn.Conv2d + weight 4D + 真实布局第2维是 in (非 kh/kw)
+                # 判据: 真实权重 shape[1] (in_c) == cur 期望权重的末维 (in_c), 且 shape[1] > 1
+                if param_name == "weight" and hasattr(cur, "weight"):
+                    import mlx.nn as _nn
+                    if isinstance(cur, _nn.Conv2d) and value.ndim == 4:
+                        out_c, in_c, kh, kw = value.shape
+                        cur_w = getattr(cur, "weight")
+                        # 真实布局 (out,in,kh,kw) vs MLX 期望 (out,kh,kw,in):
+                        # 简判: 真实 shape[1] (in_c) > 1 且 in_c 既不等于 kh 也不等于 kw
+                        # (即第2维确是 in_c 而非 kh/kw, 需转置到末维)
+                        if in_c > 1 and in_c != kh and in_c != kw:
+                            val = value.transpose(0, 2, 3, 1)  # (out,in,kh,kw) → (out,kh,kw,in)
+                setattr(cur, param_name, val)
+            elif hasattr(cur, "_parameters") and param_name in getattr(cur, "_parameters", {}):
+                cur._parameters[param_name] = value
+        except (IndexError, AttributeError):
+            continue
 
 
 # ---------------------------------------------------------------------------
@@ -346,6 +399,8 @@ def load_all_weights(
     t5_dir = model_path / "text_encoder"
     if not t5_dir.exists() or not list(t5_dir.glob("*.safetensors")):
         t5_dir = model_path / "umt5"
+    if not t5_dir.exists() or not list(t5_dir.glob("*.safetensors")):
+        t5_dir = model_path / "t5"  # SkyReels-V3 真实布局: t5/ 子目录
     if not t5_dir.exists() or not list(t5_dir.glob("*.safetensors")):
         t5_dir = model_path
     load_text_encoder_weights(text_encoder, t5_dir)

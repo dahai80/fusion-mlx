@@ -201,21 +201,22 @@ class T5Encoder(nn.Module):
     def __init__(self, cfg: T5EncoderConfig):
         super().__init__()
         self.cfg = cfg
-        self.embed_tokens = nn.Embedding(cfg.vocab_size, cfg.d_model)
-        self.block = [T5Block(cfg, has_bias=(i == 0)) for i in range(cfg.num_layers)]
-        self.final_layer_norm = T5LayerNorm(cfg.d_model, cfg.layer_norm_eps)
+        # 命名严格对齐 SkyReels-V3 真实权重: token_embedding.weight / blocks.N.* / norm.weight
+        self.token_embedding = nn.Embedding(cfg.vocab_size, cfg.d_model)
+        self.blocks = [T5Block(cfg, has_bias=(i == 0)) for i in range(cfg.num_layers)]
+        self.norm = T5LayerNorm(cfg.d_model, cfg.layer_norm_eps)
 
     def __call__(self, input_ids, attention_mask=None):
-        hidden = self.embed_tokens(input_ids)
+        hidden = self.token_embedding(input_ids)
         s = hidden.shape[1]
-        position_bias = self.block[0].layer[0].SelfAttention.compute_bias(s, s)
+        position_bias = self.blocks[0].layer[0].SelfAttention.compute_bias(s, s)
         mask = None
         if attention_mask is not None:
             ext = attention_mask[:, None, None, :].astype(mx.float32)
             mask = ((1.0 - ext) * _MASK_NEG).astype(hidden.dtype)
-        for blk in self.block:
+        for blk in self.blocks:
             hidden = blk(hidden, position_bias, mask)
-        return self.final_layer_norm(hidden)
+        return self.norm(hidden)
 
     @classmethod
     def from_pretrained(cls, model_path, dtype=mx.float32) -> "T5Encoder":

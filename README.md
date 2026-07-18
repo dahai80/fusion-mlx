@@ -295,6 +295,24 @@ Benchmarks on Apple M5 Max (128 GB RAM, 40 GPU cores), MLX 0.32.0 — 2026-07-18
 | V2V | Video Extension 14B | 75 GB (14+6+1 shards) | 3.11 | **0.329** | 82.7 | **15.2** | ✅ 跑通 (mx.compile 融合 3.3×) |
 | A2V | Talking Avatar 19B | 123 GB (18+6+1+1+1 shards) | 3.16 | **0.328** | 24.8 | **3.0** | ✅ 跑通 (audio_cross_attn+norm_x 重构 + kv_linear 转置 + mx.compile, 18×加速) |
 
+**真 T5/VAE 端到端** (A2V-19B, 非 stub `text_emb`, 真实 UMT5Encoder.encode_text + WanVAE.decode, 5 frames 128×128 latent, bf16, 2026-07-18):
+
+| 阶段 | 耗时 | 输出 shape | 说明 |
+|---|---|---|---|
+| T5 encode_text | 3.05 s | (1, 14, 4096) | 真前向, token_embedding 零占比 0% |
+| DiT 30 步去噪 | 8.43 s (281 ms/step) | (1, 16, 5, 16, 16) | mx.compile 融合, Metal 峰值 24.8 GB |
+| VAE decode | 0.30 s | (1, 3, 20, 128, 128) | 真前向, 零占比 0% (出真非零画面) |
+| **端到端总耗** | **11.78 s** | 5 帧 128×128 | **0.42 FPS** (首版真端到端) |
+
+**T5/VAE 修复关键** (解除真端到端阻塞的 4 个 bug):
+
+| Bug | 位置 | 修复 |
+|---|---|---|
+| T5 加载路径漏 `t5/` 子目录 | weights:346 | 加 `t5_dir = model_path / "t5"` 分支 |
+| `T5Encoder` 命名失配 (`embed_tokens`/`final_layer_norm`/`block`) | t5_encoder:204 | 改 `token_embedding`/`norm`/`blocks` 对齐真实权重 |
+| `WanVAE` list 属性不入 MLX `_children` 致 `parameters()` 丢子层 | weights:181 | 加 `_inject_list_child_weights` 手动递归注入 |
+| `nn.Conv2d` 权重布局 `(out,in,kh,kw)` vs MLX 期望 `(out,kh,kw,in)` | weights:233 | `_inject` 内 `transpose(0,2,3,1)` 自动转置 |
+
 **MLX 全模型转换产物** (PyTorch → MLX safetensors, `convert_skyreels_v3.py`):
 
 | 分支 | DiT shards | T5 shards | VAE | CLIP | audio | 总体积 |
