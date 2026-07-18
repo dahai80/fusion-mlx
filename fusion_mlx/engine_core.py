@@ -80,6 +80,11 @@ def _init_mlx_thread() -> None:
     sched_mod = sys.modules.get("fusion_mlx.scheduler")
     if sched_mod is not None:
         sched_mod.generation_stream = stream
+    # VLM: mlx_vlm 前向也跑在 executor 线程, 需绑定同一线程局部 Metal Stream
+    # (遗漏致 "There is no Stream(gpu, 1) in current thread" prefill 报错)
+    vlm_gen_mod = sys.modules.get("mlx_vlm.generate")
+    if vlm_gen_mod is not None:
+        vlm_gen_mod.generation_stream = stream
     logger.debug("MLX executor thread initialized: generation_stream = %s", stream)
 
 
@@ -171,6 +176,7 @@ class EngineCore:
         self._mlx_executor = concurrent.futures.ThreadPoolExecutor(
             max_workers=1,
             thread_name_prefix=f"mlx-engine-{self._engine_id[:8]}",
+            initializer=_init_mlx_thread,
         )
 
         # Scheduler must be created on the executor thread so it uses the
@@ -840,6 +846,12 @@ class EngineCore:
             raise RuntimeError("No scheduler for prefill")
 
         def _prefill_loop():
+            # VLM: mlx_vlm.generation_stream 是模块级单例 (import 时绑主线程),
+            # executor 线程跑 prefill 前需显式注入线程局部 stream 避 "There is no Stream(gpu,1)" 报错
+            import sys as _sys
+            _vlm_gen = _sys.modules.get("mlx_vlm.generate")
+            if _vlm_gen is not None:
+                _vlm_gen.generation_stream = self._mlx_stream
             for _ in range(1000):
                 sched.step()
                 req = sched.requests.get(request_id)

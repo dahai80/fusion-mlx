@@ -69,9 +69,11 @@ class CausalConv3d(nn.Module):
         self._pad_w = padding[2]
 
         # MLX Conv3d: weight shape [O, D, H, W, I]
-        self.weight = mx.zeros(
-            (out_channels, kernel_size[0], kernel_size[1], kernel_size[2], in_channels)
-        )
+        # MLX 0.32 mx.zeros/mx.ones 对 5D tuple 报 std::bad_cast, broadcast_to 不接 mx.array
+        # 绕开: numpy 构零张量再 mx.array (load_weights 后会被真实权重覆盖)
+        import numpy as np
+        w_shape = (out_channels, kernel_size[0], kernel_size[1], kernel_size[2], in_channels)
+        self.weight = mx.array(np.zeros(w_shape, dtype=np.float32))
         self.bias = mx.zeros((out_channels,))
 
     def __call__(self, x: mx.array, cache_x: mx.array = None) -> mx.array:

@@ -167,6 +167,7 @@ class A2VAttentionBlock(nn.Module):
         self.ffn = WanFFN(dim, ffn_dim)
 
         # Learned modulation: 6 vectors for scale/shift/gate (kept in float32)
+        # modulation 保普通 mx.array (与底座 wan2/transformer.py 一致, load_weights 会按 key 映射加载)
         self.modulation = (
             mx.random.normal((1, 6, dim)) * (dim ** -0.5)
         ).astype(mx.float32)
@@ -257,9 +258,11 @@ class SkyReelsA2VDiT(nn.Module):
     def __init__(self, config: dict | None = None):
         super().__init__()
         cfg = config or {}
-        self.dim = cfg.get("dim", 6144)
-        self.ffn_dim = cfg.get("ffn_dim", 24576)
-        self.num_heads = cfg.get("num_heads", 48)
+        # A2V-19B 真实权重 DiT 主干 dim=5120 (与 R2V/V2V 一致), 非 6144
+        # (audio_embedding 分支 audio_dim=1024 独立, 不影响主干 dim)
+        self.dim = cfg.get("dim", 5120)
+        self.ffn_dim = cfg.get("ffn_dim", 13824)
+        self.num_heads = cfg.get("num_heads", 40)
         self.num_kv_heads = cfg.get("num_kv_heads", self.num_heads)
         self.num_layers = cfg.get("num_layers", 60)
         self.patch_size = cfg.get("patch_size", (1, 2, 2))
@@ -330,9 +333,13 @@ class SkyReelsA2VDiT(nn.Module):
         # Output head
         self.head = Head(self.dim, self.out_dim, self.patch_size, self.eps)
 
-        # 编译优化
+        # 编译优化: 逐 block maybe_compile (已存在)
         if _device.should_compile():
             self.blocks = [maybe_compile(b) for b in self.blocks]
+        # 关键优化: 显式 mx.compile 整个 __call__ 融合 60-block 顺序循环
+        # (与 V2V 同根: MLX 0.32 编译器对 for block in blocks: x=block(x) 循环无法自动融合,
+        #  致算子图按 60× 累积, Metal 峰值翻倍 + 耗时暴涨. mx.compile 后预期 3×+)
+        self._compiled_call = None  # lazy compile (首步触发)
 
     def __call__(
         self,
@@ -354,11 +361,37 @@ class SkyReelsA2VDiT(nn.Module):
             t: [B] 时间步
             audio_embeds: [B, L_audio, audio_dim] 音频 embedding (wav2vec2)
             text_embeds: [B, L_text, text_dim] 文本 embedding (xlm_roberta)
-            temporal_len: 时序长度 (帧数), A2V 必传
+            temporal_len: 时序长度 (帧数), A2V 必传 (保嘴型连贯)
 
         Returns:
             [B, C_out, T, H, W] 去噪 latent
         """
+        # lazy compile: 首步用原始路径, 触发后切 mx.compile 融合循环
+        if self._compiled_call is None:
+            out = self._call_raw(x, t, audio_embeds, text_embeds, seq_lens, grid_sizes, context_lens, rope_cos_sin, attn_mask, temporal_len)
+            try:
+                self._compiled_call = mx.compile(self._call_raw)
+            except Exception:
+                self._compiled_call = False
+            return out
+        if self._compiled_call is False:
+            return self._call_raw(x, t, audio_embeds, text_embeds, seq_lens, grid_sizes, context_lens, rope_cos_sin, attn_mask, temporal_len)
+        return self._compiled_call(x, t, audio_embeds, text_embeds, seq_lens, grid_sizes, context_lens, rope_cos_sin, attn_mask, temporal_len)
+
+    def _call_raw(
+        self,
+        x: mx.array,
+        t: mx.array,
+        audio_embeds: mx.array,
+        text_embeds: mx.array,
+        seq_lens: list,
+        grid_sizes: list,
+        context_lens: list | None = None,
+        rope_cos_sin: tuple | None = None,
+        attn_mask: mx.array | None = None,
+        temporal_len: int | None = None,
+    ) -> mx.array:
+        """原始前向路径 (mx.compile 融合目标)."""
         # 1. Patch embedding
         x = self.patch_embedding(x)
 
