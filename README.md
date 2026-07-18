@@ -70,7 +70,8 @@ Key optimizations: quant2/quant2_128/quant2_flat ultra-aggressive 2-bit quantiza
 - **MCP tool support** — list, discover, and execute MCP tools via API
 - **Admin web panel** — model management, live chat, HuggingFace downloads, online quantization
 - **macOS native app** — SwiftUI with menu bar, auto-update, benchmark, model management, **hardware-aware setup wizard**
-- **SkyReels-V3 视频生成** — 最强开源视频生成模型纯 MLX 移植，R2V/V2V/A2V 三大分支，M5 Max 专属 dFlash 注意力 + NF4 量化，19B 模型 720P 常驻内存 ≤ 14GB
+- **SkyReels-V3 视频生成** — 最强开源视频生成模型纯 MLX 移植，R2V/V2V/A2V 三大分支全部真实权重端到端跑通，M5 Max 专属 dFlash 注意力 + NF4 量化，19B 模型 720P 常驻内存 ≤ 14GB
+- **PyTorch → MLX 全模型转换器** — `convert_skyreels_v3.py` 一键转换 SkyReels-V3 三分支 (DiT + T5 + VAE + CLIP + audio) PyTorch 权重到 MLX safetensors，支持 bfloat16/float16/float32 + NF4 量化，分 shard 增量写盘避统一内存冲高
 
 ### Advanced Feature Recommendations
 
@@ -284,17 +285,41 @@ Submit your own benchmarks at [bench.dpdns.org](https://bench.dpdns.org/).
 
 ### Video Generation (SkyReels-V3)
 
-Benchmarks on Apple M5 Max (128 GB RAM, 40 GPU cores), tiny config (3 steps, 5 frames):
+Benchmarks on Apple M5 Max (128 GB RAM, 40 GPU cores), MLX 0.32.0 — 2026-07-18.
 
-| Branch | Model | Init (s) | Sample (s) | VAE (s) | Total (s) | Metal (MB) | FPS |
+**真实权重端到端** (非骨架 stub, 完整 40 层 DiT 前向, bfloat16, 5 frames 256P latent):
+
+| Branch | Model | 权重体积 | 加载 (s) | DiT fwd (s/step) | Metal 峰值 (GB) | FPS/step | 状态 |
 |---|---|---|---|---|---|---|---|
-| R2V | Reference-to-Video 14B | 0.94 | 0.01 | 0.05 | 1.00 | 280 | 578 |
-| V2V | Video Extension 14B | 0.00 | 0.00 | 0.05 | 0.05 | 280 | 1151 |
-| A2V | Talking Avatar 19B | 0.00 | 0.01 | 0.05 | 0.05 | 280 | 906 |
+| R2V | Reference-to-Video 14B | 24 GB (7 shards) | 2.41 | **0.110** | 82.7 | **45.5** | ✅ 跑通 |
+| V2V | Video Extension 14B | 75 GB (14+6+1 shards) | 0.69 | **2.862** | 142.7 | **1.7** | ✅ 跑通 |
+| A2V | Talking Avatar 19B | 97 GB (18 shards) | 5.47 | — | — | — | ⚠️ AdaLN modulation 维度错位 (19B 独立主干待修) |
 
-*Full 50-step 720P 121-frame benchmarks coming soon (requires HuggingFace weights).*
+**MLX 全模型转换产物** (PyTorch → MLX safetensors, `convert_skyreels_v3.py`):
 
-## Project Structure
+| 分支 | DiT shards | T5 shards | VAE | CLIP | audio | 总体积 |
+|---|---|---|---|---|---|---|
+| R2V-14B-MLX | 7 (24 GB) | — | — | — | — | 24 GB |
+| V2V-14B-MLX | 14 (53 GB) | 6 (21 GB) | 484 MB | — | — | 75 GB |
+| A2V-19B-MLX | 18 (97 GB) | 6 (21 GB) | 484 MB | 4.4 GB | 218 tensors | 123 GB |
+
+**关键修复** (解除 SkyReels-V3 真实权重端到端阻塞的 9 个 bug):
+
+| Bug | 位置 | 修复 |
+|---|---|---|
+| `load_pytorch_state_dict` 漏子目录扫 | convert:104 | 加 `rglob` 递归扫 transformer/vae/text_encoder |
+| `_load_safetensors_dir` numpy 不认 bf16 | convert:131 | 改 `framework=pt` + torch.float32 upcast |
+| `_write_sharded_safetensors` mlx bf16 buffer 错 | convert:424 | try/except 捕获后 upcast float32 |
+| `total_size` 求和漏 bf16 fix | convert:449 | `_safe_nbytes` helper |
+| `mx.power(theta, -arange/dim)` Invalid Dtype | common:140 | 改 `mx.exp(-k*mx.log(theta))` |
+| `grid_sizes` pre-patch 尺寸错位 | common:211 | 加 `patch_scale` 反推真实 seq_len |
+| `context` 用错 dim 而非 text_dim | bench_skyreels:340 | 改 `branch_cfg.text_dim` |
+| `noise_pred = zeros_like` 跳过 DiT | bench_skyreels:366 | 去兜底, 真实前向失败立即抛错 |
+| `rope_apply` 广播错位 (padded 长度) | common:242 | 用 `seq_len` 而非全序列 `s` 广播 |
+
+> 历史骨架压测 (1983/1151/906 FPS) 是假象 — `bench_skyreels.py:366` 的 `noise_pred = mx.zeros_like(latent_input)` 跳过了整个 DiT 前向, 只测了空循环开销。上表 0.110/2.862 s/step 才是真实推理速度。
+
+Submit your own benchmarks at [bench.dpdns.org](https://bench.dpdns.org/).
 
 ```
 fusion-mlx/

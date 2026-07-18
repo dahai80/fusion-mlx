@@ -232,6 +232,7 @@ def bench_branch(
     num_inference_steps: int = 50,
     seed: int = 42,
     tiny: bool = False,
+    mlx_weights_dir: str | None = None,
 ) -> BenchResult:
     """压测单个分支.
 
@@ -315,6 +316,14 @@ def bench_branch(
         # 构造 VAE
         vae = SkyReelsVAE()
 
+        # 真实权重加载 (非骨架): 若 mlx_weights_dir 提供, 加载 DiT/VAE/T5 真实权重
+        if mlx_weights_dir:
+            from fusion_mlx.video.skyreels_v3.weights import load_all_weights
+            from fusion_mlx.video.skyreels_v3.text_encoder import UMT5Encoder
+            t5 = UMT5Encoder()
+            load_all_weights(dit, vae, t5, Path(mlx_weights_dir))
+            logger.info("[%s] 真实权重加载完成: %s", branch, mlx_weights_dir)
+
         result.init_time_s = time.time() - t0
         logger.info("[%s] model init: %.2fs", branch, result.init_time_s)
 
@@ -328,7 +337,8 @@ def bench_branch(
         latent_t = max(1, (num_frames - 1) // 4 + 1)
 
         latents = mx.random.normal((1, 16, latent_t, latent_h, latent_w))
-        context = mx.zeros((1, 512 + 257, branch_cfg.dim))
+        # context 用 text_dim (4096) 而非 dim (5120), 因 text_embedding 投影层权重期望输入末维 text_dim
+        context = mx.zeros((1, 512 + 257, branch_cfg.text_dim))
 
         scheduler = FlowUniPCMultistepScheduler(
             num_inference_steps=num_inference_steps,
@@ -361,17 +371,17 @@ def bench_branch(
                         audio_input, text_input,
                         seq_lens, grid_sizes,
                     )
-                except TypeError:
-                    # A2V 桩可能不接受所有参数
-                    noise_pred = mx.zeros_like(latent_input)
+                except TypeError as exc:
+                    # A2V 案可能不接受所有参数 — 必须抛错, 不能静默 zeros_like
+                    # (历史骨架压测 zeros_like 致 1983 FPS 假象, 跳过了真实 DiT 前向)
+                    logger.error("[%s] A2V DiT 前向 TypeError: %s", branch, exc)
+                    raise
             else:
-                try:
-                    noise_pred = dit(
-                        latent_input, t_mx, context_input,
-                        seq_lens, grid_sizes,
-                    )
-                except Exception:
-                    noise_pred = mx.zeros_like(latent_input)
+                # 真实 DiT 前向 — 不兜底 zeros_like, 失败立即抛错保压测真实性
+                noise_pred = dit(
+                    latent_input, t_mx, context_input,
+                    seq_lens, grid_sizes,
+                )
 
             # CFG 合并
             try:
@@ -487,6 +497,12 @@ def main() -> None:
         "--output", default="bench_skyreels_results.json",
         help="Output JSON file for benchmark results",
     )
+    parser.add_argument(
+        "--mlx-weights", default=None,
+        help="Root dir of MLX-converted real weights (e.g. ~/.fusion-mlx/models/Skywork/Skyreels-V3-R2V-14B-MLX). "
+             "If set, loads real DiT/VAE/T5 weights instead of骨架 stub. "
+             "Use {branch} placeholder to auto-map per-branch dirs.",
+    )
 
     args = parser.parse_args()
     logging.basicConfig(
@@ -524,6 +540,10 @@ def main() -> None:
             num_inference_steps=args.steps,
             seed=args.seed,
             tiny=args.tiny,
+            mlx_weights_dir=(
+                os.path.expanduser(args.mlx_weights.replace("{branch}", branch).replace("{BRANCH}", branch))
+                if args.mlx_weights else None
+            ),
         )
         results.append(result.to_dict())
 
