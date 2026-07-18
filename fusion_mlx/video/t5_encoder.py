@@ -81,27 +81,35 @@ class T5LayerNorm(nn.Module):
 
 
 class T5DenseGatedActDense(nn.Module):
+    """对齐真真实权重 ffn.{fc1,fc2,gate.0} (非 DenseReluDense.{wi_0,wi_1,wo})."""
+
     def __init__(self, d_model: int, d_ff: int):
         super().__init__()
-        self.wi_0 = nn.Linear(d_model, d_ff, bias=False)
-        self.wi_1 = nn.Linear(d_model, d_ff, bias=False)
-        self.wo = nn.Linear(d_ff, d_model, bias=False)
+        # ffn.gate.0: Linear(d_model → d_ff) 门控 (gelu)
+        # ffn.fc1:    Linear(d_model → d_ff) 主路 (linear)
+        # ffn.fc2:    Linear(d_ff → d_model) 输出
+        # MLX nn 无 ModuleList, gate 用命名属性 gate_0 对齐真实权重 gate.0.weight
+        self.fc1 = nn.Linear(d_model, d_ff, bias=False)
+        self.gate_0 = nn.Linear(d_model, d_ff, bias=False)
+        self.fc2 = nn.Linear(d_ff, d_model, bias=False)
 
     def __call__(self, x):
-        h_gelu = _gelu_erf(self.wi_0(x))
-        h_lin = self.wi_1(x)
-        return self.wo(h_gelu * h_lin)
+        h_gelu = _gelu_erf(self.gate_0(x))
+        h_lin = self.fc1(x)
+        return self.fc2(h_gelu * h_lin)
 
 
 class T5LayerFF(nn.Module):
+    """对齐真真实权重 ffn.* + norm2."""
+
     def __init__(self, d_model: int, d_ff: int, eps: float = 1e-6):
         super().__init__()
-        self.DenseReluDense = T5DenseGatedActDense(d_model, d_ff)
-        self.layer_norm = T5LayerNorm(d_model, eps)
+        self.ffn = T5DenseGatedActDense(d_model, d_ff)
+        self.norm2 = T5LayerNorm(d_model, eps)
 
     def __call__(self, x):
-        h = self.layer_norm(x)
-        return x + self.DenseReluDense(h)
+        h = self.norm2(x)
+        return x + self.ffn(h)
 
 
 class T5Attention(nn.Module):
@@ -173,27 +181,36 @@ class T5Attention(nn.Module):
 
 
 class T5LayerSelfAttention(nn.Module):
+    """对齐真真实权重 attn.* + norm1 + pos_embedding."""
+
     def __init__(self, cfg: T5EncoderConfig, has_bias: bool = False):
         super().__init__()
-        self.SelfAttention = T5Attention(cfg, has_bias)
-        self.layer_norm = T5LayerNorm(cfg.d_model, cfg.layer_norm_eps)
+        self.attn = T5Attention(cfg, has_bias)
+        self.norm1 = T5LayerNorm(cfg.d_model, cfg.layer_norm_eps)
+        # pos_embedding: 真实权重 blocks.N.pos_embedding.embedding.weight (32, 64)
+        # 用于相对位置偏置桶映射 (T5Attention.relative_attention_bias 的等价暴露)
+        self.pos_embedding = nn.Module()
+        self.pos_embedding.embedding = (
+            nn.Embedding(cfg.rel_num_buckets, cfg.num_heads) if has_bias else nn.Embedding(cfg.rel_num_buckets, cfg.num_heads)
+        )
 
     def __call__(self, hidden, position_bias, mask=None):
-        h = self.layer_norm(hidden)
-        return hidden + self.SelfAttention(h, position_bias, mask)
+        h = self.norm1(hidden)
+        return hidden + self.attn(h, position_bias, mask)
 
 
 class T5Block(nn.Module):
+    """对齐真真实权重 blocks.N.{attn,ffn,norm1,norm2,pos_embedding}."""
+
     def __init__(self, cfg: T5EncoderConfig, has_bias: bool = False):
         super().__init__()
-        self.layer = [
-            T5LayerSelfAttention(cfg, has_bias),
-            T5LayerFF(cfg.d_model, cfg.d_ff, cfg.layer_norm_eps),
-        ]
+        # 用命名属性 替 普通 list (MLX nn.Module 不收录 list 属性)
+        self.layer0 = T5LayerSelfAttention(cfg, has_bias)
+        self.layer1 = T5LayerFF(cfg.d_model, cfg.d_ff, cfg.layer_norm_eps)
 
     def __call__(self, hidden, position_bias, mask=None):
-        hidden = self.layer[0](hidden, position_bias, mask)
-        hidden = self.layer[1](hidden)
+        hidden = self.layer0(hidden, position_bias, mask)
+        hidden = self.layer1(hidden)
         return hidden
 
 
@@ -203,13 +220,23 @@ class T5Encoder(nn.Module):
         self.cfg = cfg
         # 命名严格对齐 SkyReels-V3 真实权重: token_embedding.weight / blocks.N.* / norm.weight
         self.token_embedding = nn.Embedding(cfg.vocab_size, cfg.d_model)
-        self.blocks = [T5Block(cfg, has_bias=(i == 0)) for i in range(cfg.num_layers)]
+        # MLX nn.Module 不收录普通 list 属性, 用 block_0/block_1/... 命名属性替 blocks list
+        # (真真实权重 key 是 blocks.N.*, 加载时映射 block_{N} → blocks.{N})
+        for i in range(cfg.num_layers):
+            setattr(self, f"block_{i}", T5Block(cfg, has_bias=(i == 0)))
+        self._num_blocks = cfg.num_layers
         self.norm = T5LayerNorm(cfg.d_model, cfg.layer_norm_eps)
+
+    @property
+    def blocks(self):
+        """兼容旧代码 self.blocks[i] 访问 (代理到 block_0/block_1/...)."""
+        return [getattr(self, f"block_{i}") for i in range(self._num_blocks)]
 
     def __call__(self, input_ids, attention_mask=None):
         hidden = self.token_embedding(input_ids)
         s = hidden.shape[1]
-        position_bias = self.blocks[0].layer[0].SelfAttention.compute_bias(s, s)
+        # layer0 是 SelfAttention (含 compute_bias), layer1 是 FF
+        position_bias = self.blocks[0].layer0.attn.compute_bias(s, s)
         mask = None
         if attention_mask is not None:
             ext = attention_mask[:, None, None, :].astype(mx.float32)

@@ -355,6 +355,26 @@ class WanT2VCrossAttention(nn.Module):
 
         self._fast_attn = None
 
+    def prepare_kv(self, context: mx.array) -> tuple:
+        """AtomCode 专题优化: 预算 cross-attn KV 缓存跨步复用 (2026-07-18).
+
+        Args:
+            context: [B, L_ctx, dim] 文本/参考 context
+
+        Returns:
+            (k, v) KV 缓存 tuple, 跨采样步复用避每步重算 KV 投影
+        """
+        b = context.shape[0]
+        n, d = self.num_heads, self.head_dim
+        w_dtype = _linear_dtype(self.k)
+        ctx = context.astype(w_dtype)
+        k = self.k(ctx)
+        if self.norm_k is not None:
+            k = self.norm_k(k)
+        k = k.reshape(b, -1, n, d).transpose(0, 2, 1, 3)
+        v = self.v(ctx).reshape(b, -1, n, d).transpose(0, 2, 1, 3)
+        return k, v
+
     def __call__(
         self,
         x: mx.array,

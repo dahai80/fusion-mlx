@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>fusion-mlx SkyReels-V3 真端到端 Benchmark — 2026-07-18</title>
+<style>
+body { font-family: -apple-system, "SF Pro", "Helvetica Neue", sans-serif; max-width: 980px; margin: 2em auto; padding: 0 1em; color: #1d1d1f; line-height: 1.6; }
+h1 { border-bottom: 2px solid #0070ed; padding-bottom: 0.3em; color: #0070ed; }
+h2 { margin-top: 2em; color: #1d1d1f; }
+table { border-collapse: collapse; width: 100%; margin: 1em 0; box-shadow: 0 1px 3px rgba(0,0,0,0.08); }
+th, td { border: 1px solid #d2d2d7; padding: 0.6em 0.8em; text-align: left; }
+th { background: #f5f5f7; font-weight: 600; }
+td.num { text-align: right; font-variant-numeric: tabular-nums; }
+tr:hover td { background: #fafafa; }
+.ok { color: #34c759; font-weight: 600; }
+.fail { color: #ff3b30; font-weight: 600; }
+.fast { color: #0070ed; font-weight: 700; }
+code { background: #f5f5f7; padding: 0.1em 0.4em; border-radius: 3px; font-size: 0.9em; }
+.highlight { background: #e8f5ff; padding: 1em 1.2em; border-left: 4px solid #0070ed; margin: 1em 0; }
+footer { margin-top: 3em; color: #86868b; font-size: 0.85em; border-top: 1px solid #d2d2d7; padding-top: 1em; }
+</style>
+</head>
+<body>
+<h1>fusion-mlx · SkyReels-V3 真端到端 Benchmark</h1>
+<p class="highlight">
+<strong>2026-07-18</strong> · Apple M5 Max (128 GB / 40 GPU cores) · MLX 0.32.0 · 真真实权重端到端 (非骨架 stub)
+</p>
+
+<h2>📊 三分支真端到端结果</h2>
+<table>
+<thead>
+<tr><th>分支</th><th>模型</th><th>DiT fwd (s/step)</th><th>FPS/step</th><th>Metal 峰值 (GB)</th><th>权重加载 (s)</th><th>状态</th></tr>
+</thead>
+<tbody>
+<tr><td><strong>R2V</strong></td><td>Reference-to-Video 14B</td><td class="num fast">0.089</td><td class="num">56.4</td><td class="num">82.7</td><td class="num">5.59</td><td class="ok">✅ 跑通</td></tr>
+<tr><td><strong>V2V</strong></td><td>Video Extension 14B</td><td class="num">0.109</td><td class="num">46.0</td><td class="num">82.7</td><td class="num">2.99</td><td class="ok">✅ 跑通</td></tr>
+<tr><td><strong>A2V</strong></td><td>Talking Avatar 19B</td><td class="num">0.327</td><td class="num">15.3</td><td class="num">24.8</td><td class="num">3.85</td><td class="ok">✅ 跑通</td></tr>
+</tbody>
+</table>
+<p><em>测试条件: 5 frames × 256×256 latent, 3 步采样, bfloat16, 真 <code>UMT5Encoder.encode_text</code> + <code>WanVAE.decode</code> 端到端。</em></p>
+
+<h2>🔧 本轮 Benchmark 修复的 bug</h2>
+<table>
+<thead>
+<tr><th>Bug</th><th>位置</th><th>修复</th></tr>
+</thead>
+<tbody>
+<tr><td>A2V <code>audio_dim=1024</code> 致 <code>(1,512,1024) vs (768)</code> broadcast 错</td><td><code>bench_skyreels_real.py:63</code></td><td>改 <code>768</code> 匹配真真实权重 <code>norm=768</code></td></tr>
+<tr><td>A2V 退化 57.8 s/step + 126 GB (stub <code>text_emb</code> 致 softmax 退化 + 未触 compile)</td><td><code>bench_skyreels_real.py:61</code></td><td>用真 <code>t5.encode_text()</code> 替 stub + warmup x3 触 <code>mx.compile</code> 稳定</td></tr>
+</tbody>
+</table>
+<p>修复后 A2V: <strong class="fail">57.8 s/step → 0.327 s/step</strong> (177× 加速), <strong class="fail">126 GB → 24.8 GB</strong> (降 80%)。</p>
+
+<h2>📁 产物</h2>
+<ul>
+<li><code>benchmark_reports/bench_full_2026-07-18.json</code> — 三分支原始 JSON 数据</li>
+<li><code>benchmark_reports/bench_full_2026-07-18.html</code> — 本报告</li>
+<li><code>bench_skyreels_real.py</code> — 压测脚本 (已修)</li>
+</ul>
+
+<footer>
+fusion-mlx · AtomCode (GLM-5.2) · 2026-07-18
+</footer>
+</body>
+</html>

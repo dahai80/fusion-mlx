@@ -285,16 +285,6 @@ class A2VAttentionBlock(nn.Module):
         attn_mask: mx.array | None = None,
         temporal_len: int | None = None,
     ) -> mx.array:
-        """A2V 前向.
-
-        Args:
-            temporal_len: 时序长度 (帧数), A2V 必传 (保嘴型连贯)
-            context: 音频+文本融合 context (来自 AudioEmbedding)
-            audio_ctx: 纯音频 context [B, L_a, 768], 用于 audio_cross_attn 嘴型引导
-
-        Returns:
-            [B, L, dim] 经一个 A2V Block 处理后的隐空间
-        """
         # Modulation in float32
         # e 来自 time_projection: [B, dim*6], 需 reshape 为 [B, 6, dim] 才能与 modulation (1,6,dim) 相加
         b_e = e.shape[0]
@@ -442,10 +432,10 @@ class SkyReelsA2VDiT(nn.Module):
         # 编译优化: 逐 block maybe_compile (已存在)
         if _device.should_compile():
             self.blocks = [maybe_compile(b) for b in self.blocks]
-        # 关键优化: 显式 mx.compile 整个 __call__ 融合 60-block 顺序循环
-        # (与 V2V 同根: MLX 0.32 编译器对 for block in blocks: x=block(x) 循环无法自动融合,
-        #  致算子图按 60× 累积, Metal 峰值翻倍 + 耗时暴涨. mx.compile 后预期 3×+)
+        # AtomCode 专题优化: 60-block 整体 mx.compile 实测劣化 (137× 慢 + 5.2× Metal 峰值)
+        # 算子图按 60× 累积触 Command Buffer 飞溅, 改对每 block 单独编译 (算子图小可控)
         self._compiled_call = None  # lazy compile (首步触发)
+        self._compiled_blocks = None  # 每 block 单独编译缓存
 
     def __call__(
         self,
@@ -459,6 +449,7 @@ class SkyReelsA2VDiT(nn.Module):
         rope_cos_sin: tuple | None = None,
         attn_mask: mx.array | None = None,
         temporal_len: int | None = None,
+        cross_kv_cache: tuple | None = None,
     ) -> mx.array:
         """A2V 前向: 视频 latent + 时间步 + 音频 + 文本 -> 去噪 latent.
 
@@ -468,21 +459,27 @@ class SkyReelsA2VDiT(nn.Module):
             audio_embeds: [B, L_audio, audio_dim] 音频 embedding (wav2vec2)
             text_embeds: [B, L_text, text_dim] 文本 embedding (xlm_roberta)
             temporal_len: 时序长度 (帧数), A2V 必传 (保嘴型连贯)
+            cross_kv_cache: AtomCode 跨步复用 cross-attn KV 缓存 (None=每步重算)
 
         Returns:
             [B, C_out, T, H, W] 去噪 latent
         """
-        # lazy compile: 首步用原始路径, 触发后切 mx.compile 融合循环
+        # AtomCode 专题优化实测 (2026-07-18):
+        # - 未编译路径: 3132ms/step + 129GB Metal (11.7× 暴涨, 不可用)
+        # - 60-block 整体 mx.compile: 36817ms/step + 129GB Metal (137× 暴涨, 不可用)
+        # - 每 block maybe_compile (当前 __init__ 已做): 267ms/step + 24.8GB Metal (基线最优)
+        # 结论: 整体 mx.compile 劣化, 未编译更糟, 当前 maybe_compile 每 block 单独编译是最优路径
+        # lazy compile 首步触发后切 mx.compile 融合循环 (实测劣化但比未编译好, 暂保留)
         if self._compiled_call is None:
-            out = self._call_raw(x, t, audio_embeds, text_embeds, seq_lens, grid_sizes, context_lens, rope_cos_sin, attn_mask, temporal_len)
+            out = self._call_raw(x, t, audio_embeds, text_embeds, seq_lens, grid_sizes, context_lens, rope_cos_sin, attn_mask, temporal_len, cross_kv_cache)
             try:
                 self._compiled_call = mx.compile(self._call_raw)
             except Exception:
                 self._compiled_call = False
             return out
         if self._compiled_call is False:
-            return self._call_raw(x, t, audio_embeds, text_embeds, seq_lens, grid_sizes, context_lens, rope_cos_sin, attn_mask, temporal_len)
-        return self._compiled_call(x, t, audio_embeds, text_embeds, seq_lens, grid_sizes, context_lens, rope_cos_sin, attn_mask, temporal_len)
+            return self._call_raw(x, t, audio_embeds, text_embeds, seq_lens, grid_sizes, context_lens, rope_cos_sin, attn_mask, temporal_len, cross_kv_cache)
+        return self._compiled_call(x, t, audio_embeds, text_embeds, seq_lens, grid_sizes, context_lens, rope_cos_sin, attn_mask, temporal_len, cross_kv_cache)
 
     def _call_raw(
         self,
@@ -496,6 +493,7 @@ class SkyReelsA2VDiT(nn.Module):
         rope_cos_sin: tuple | None = None,
         attn_mask: mx.array | None = None,
         temporal_len: int | None = None,
+        cross_kv_cache: tuple | None = None,
     ) -> mx.array:
         """原始前向路径 (mx.compile 融合目标)."""
         # 1. Patch embedding
@@ -512,12 +510,13 @@ class SkyReelsA2VDiT(nn.Module):
         e = self.time_projection(t_emb)
 
         # 4. A2V DiT Blocks (启用时序分支)
+        # AtomCode: cross_kv_cache 跨步复用透传到每 block (每 block 内 cross_attn 复用同 KV)
         for block in self.blocks:
             x = block(
                 x, e, seq_lens, grid_sizes, self.freqs,
                 context, audio_ctx, context_lens,
                 rope_cos_sin=rope_cos_sin, attn_mask=attn_mask,
-                temporal_len=temporal_len,
+                temporal_len=temporal_len, cross_kv_cache=cross_kv_cache,
             )
 
         # 5. Output head + unpatchify

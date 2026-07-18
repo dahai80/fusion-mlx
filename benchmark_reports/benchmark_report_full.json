@@ -1,0 +1,651 @@
+{
+  "model": "/Users/dahai/.cache/huggingface/hub/models--mlx-community--Qwen3.5-9B-4bit/snapshots/8b2b98c00a6b4d291155e4890773ca8f769aee53",
+  "hardware": {
+    "platform": "macOS-26.5.1-arm64-arm-64bit-Mach-O",
+    "processor": "arm",
+    "machine": "arm64",
+    "python_version": "3.14.6",
+    "device_name": "Device(gpu, 0)",
+    "mlx_version": "0.31.2",
+    "metal_device": "{'device_name': 'Apple M5 Max', 'max_recommended_working_set_size': 137438953472, 'memory_size': 137438953472, 'architecture': 'applegpu_g17s', 'max_buffer_length': 86586540032, 'resource_limit': 499000}",
+    "memory_total_gb": 137.4,
+    "memory_available_gb": 102.8
+  },
+  "started_at": "2026-07-13T07:49:45.022504",
+  "finished_at": "2026-07-13T07:50:52.853210",
+  "results": [
+    {
+      "category": "llm_single",
+      "name": "pp128_tg64",
+      "metrics": {
+        "ttft_ms": 389.5,
+        "gen_tps": 175.5,
+        "processing_tps": 310.6,
+        "pp_tps": 439.1,
+        "prompt_tokens": 171,
+        "completion_tokens": 65,
+        "total_time_s": 0.76,
+        "gen_time_s": 0.37,
+        "peak_memory_bytes": 5528468890,
+        "peak_memory_human": "5.1GB",
+        "cached_tokens": 0
+      },
+      "model": "/Users/dahai/.cache/huggingface/hub/models--mlx-community--Qwen3.5-9B-4bit/snapshots/8b2b98c00a6b4d291155e4890773ca8f769aee53",
+      "config": {
+        "prompt_tokens": 128,
+        "generation_tokens": 64
+      }
+    },
+    {
+      "category": "llm_single",
+      "name": "pp512_tg64",
+      "metrics": {
+        "ttft_ms": 543.2,
+        "gen_tps": 129.3,
+        "processing_tps": 719.7,
+        "pp_tps": 1257.4,
+        "prompt_tokens": 683,
+        "completion_tokens": 64,
+        "total_time_s": 1.038,
+        "gen_time_s": 0.495,
+        "peak_memory_bytes": 5999762058,
+        "peak_memory_human": "5.6GB",
+        "cached_tokens": 0
+      },
+      "model": "/Users/dahai/.cache/huggingface/hub/models--mlx-community--Qwen3.5-9B-4bit/snapshots/8b2b98c00a6b4d291155e4890773ca8f769aee53",
+      "config": {
+        "prompt_tokens": 512,
+        "generation_tokens": 64
+      }
+    },
+    {
+      "category": "llm_single",
+      "name": "pp1024_tg64",
+      "metrics": {
+        "ttft_ms": 740.6,
+        "gen_tps": 129.2,
+        "processing_tps": 1156.1,
+        "pp_tps": 1843.1,
+        "prompt_tokens": 1365,
+        "completion_tokens": 64,
+        "total_time_s": 1.236,
+        "gen_time_s": 0.495,
+        "peak_memory_bytes": 6481152600,
+        "peak_memory_human": "6.0GB",
+        "cached_tokens": 0
+      },
+      "model": "/Users/dahai/.cache/huggingface/hub/models--mlx-community--Qwen3.5-9B-4bit/snapshots/8b2b98c00a6b4d291155e4890773ca8f769aee53",
+      "config": {
+        "prompt_tokens": 1024,
+        "generation_tokens": 64
+      }
+    },
+    {
+      "category": "llm_single",
+      "name": "pp2048_tg64",
+      "metrics": {
+        "ttft_ms": 1304.0,
+        "gen_tps": 612.5,
+        "processing_tps": 1821.1,
+        "pp_tps": 1918.0,
+        "prompt_tokens": 2501,
+        "completion_tokens": 64,
+        "total_time_s": 1.408,
+        "gen_time_s": 0.104,
+        "peak_memory_bytes": 6766815826,
+        "peak_memory_human": "6.3GB",
+        "cached_tokens": 0
+      },
+      "model": "/Users/dahai/.cache/huggingface/hub/models--mlx-community--Qwen3.5-9B-4bit/snapshots/8b2b98c00a6b4d291155e4890773ca8f769aee53",
+      "config": {
+        "prompt_tokens": 2048,
+        "generation_tokens": 64
+      }
+    },
+    {
+      "category": "llm_single",
+      "name": "pp4096_tg64",
+      "metrics": {
+        "ttft_ms": 1980.7,
+        "gen_tps": 595.8,
+        "processing_tps": 2186.2,
+        "pp_tps": 2272.5,
+        "prompt_tokens": 4501,
+        "completion_tokens": 64,
+        "total_time_s": 2.088,
+        "gen_time_s": 0.107,
+        "peak_memory_bytes": 6970288708,
+        "peak_memory_human": "6.5GB",
+        "cached_tokens": 0
+      },
+      "model": "/Users/dahai/.cache/huggingface/hub/models--mlx-community--Qwen3.5-9B-4bit/snapshots/8b2b98c00a6b4d291155e4890773ca8f769aee53",
+      "config": {
+        "prompt_tokens": 4096,
+        "generation_tokens": 64
+      }
+    },
+    {
+      "category": "llm_single",
+      "name": "pp128_tg128",
+      "metrics": {
+        "ttft_ms": 562.1,
+        "gen_tps": 261.7,
+        "processing_tps": 284.4,
+        "pp_tps": 304.2,
+        "prompt_tokens": 171,
+        "completion_tokens": 128,
+        "total_time_s": 1.051,
+        "gen_time_s": 0.489,
+        "peak_memory_bytes": 5528468890,
+        "peak_memory_human": "5.1GB",
+        "cached_tokens": 0
+      },
+      "model": "/Users/dahai/.cache/huggingface/hub/models--mlx-community--Qwen3.5-9B-4bit/snapshots/8b2b98c00a6b4d291155e4890773ca8f769aee53",
+      "config": {
+        "prompt_tokens": 128,
+        "generation_tokens": 128
+      }
+    },
+    {
+      "category": "llm_single",
+      "name": "pp512_tg128",
+      "metrics": {
+        "ttft_ms": 670.1,
+        "gen_tps": 136.1,
+        "processing_tps": 467.3,
+        "pp_tps": 1019.3,
+        "prompt_tokens": 683,
+        "completion_tokens": 152,
+        "total_time_s": 1.787,
+        "gen_time_s": 1.117,
+        "peak_memory_bytes": 5999762058,
+        "peak_memory_human": "5.6GB",
+        "cached_tokens": 0
+      },
+      "model": "/Users/dahai/.cache/huggingface/hub/models--mlx-community--Qwen3.5-9B-4bit/snapshots/8b2b98c00a6b4d291155e4890773ca8f769aee53",
+      "config": {
+        "prompt_tokens": 512,
+        "generation_tokens": 128
+      }
+    },
+    {
+      "category": "llm_single",
+      "name": "pp1024_tg128",
+      "metrics": {
+        "ttft_ms": 917.4,
+        "gen_tps": 135.3,
+        "processing_tps": 741.1,
+        "pp_tps": 1488.0,
+        "prompt_tokens": 1365,
+        "completion_tokens": 153,
+        "total_time_s": 2.048,
+        "gen_time_s": 1.131,
+        "peak_memory_bytes": 6481152600,
+        "peak_memory_human": "6.0GB",
+        "cached_tokens": 0
+      },
+      "model": "/Users/dahai/.cache/huggingface/hub/models--mlx-community--Qwen3.5-9B-4bit/snapshots/8b2b98c00a6b4d291155e4890773ca8f769aee53",
+      "config": {
+        "prompt_tokens": 1024,
+        "generation_tokens": 128
+      }
+    },
+    {
+      "category": "llm_single",
+      "name": "pp2048_tg128",
+      "metrics": {
+        "ttft_ms": 1452.2,
+        "gen_tps": 250.5,
+        "processing_tps": 1339.1,
+        "pp_tps": 1722.2,
+        "prompt_tokens": 2501,
+        "completion_tokens": 128,
+        "total_time_s": 1.963,
+        "gen_time_s": 0.511,
+        "peak_memory_bytes": 6766815826,
+        "peak_memory_human": "6.3GB",
+        "cached_tokens": 0
+      },
+      "model": "/Users/dahai/.cache/huggingface/hub/models--mlx-community--Qwen3.5-9B-4bit/snapshots/8b2b98c00a6b4d291155e4890773ca8f769aee53",
+      "config": {
+        "prompt_tokens": 2048,
+        "generation_tokens": 128
+      }
+    },
+    {
+      "category": "llm_single",
+      "name": "pp4096_tg128",
+      "metrics": {
+        "ttft_ms": 2449.0,
+        "gen_tps": 236.2,
+        "processing_tps": 1547.7,
+        "pp_tps": 1837.9,
+        "prompt_tokens": 4501,
+        "completion_tokens": 128,
+        "total_time_s": 2.991,
+        "gen_time_s": 0.542,
+        "peak_memory_bytes": 6970288708,
+        "peak_memory_human": "6.5GB",
+        "cached_tokens": 0
+      },
+      "model": "/Users/dahai/.cache/huggingface/hub/models--mlx-community--Qwen3.5-9B-4bit/snapshots/8b2b98c00a6b4d291155e4890773ca8f769aee53",
+      "config": {
+        "prompt_tokens": 4096,
+        "generation_tokens": 128
+      }
+    },
+    {
+      "category": "llm_single",
+      "name": "pp128_tg256",
+      "metrics": {
+        "ttft_ms": 604.9,
+        "gen_tps": 176.0,
+        "processing_tps": 207.4,
+        "pp_tps": 282.7,
+        "prompt_tokens": 171,
+        "completion_tokens": 256,
+        "total_time_s": 2.059,
+        "gen_time_s": 1.454,
+        "peak_memory_bytes": 5528468890,
+        "peak_memory_human": "5.1GB",
+        "cached_tokens": 0
+      },
+      "model": "/Users/dahai/.cache/huggingface/hub/models--mlx-community--Qwen3.5-9B-4bit/snapshots/8b2b98c00a6b4d291155e4890773ca8f769aee53",
+      "config": {
+        "prompt_tokens": 128,
+        "generation_tokens": 256
+      }
+    },
+    {
+      "category": "llm_single",
+      "name": "pp512_tg256",
+      "metrics": {
+        "ttft_ms": 807.7,
+        "gen_tps": 119.3,
+        "processing_tps": 294.6,
+        "pp_tps": 845.6,
+        "prompt_tokens": 683,
+        "completion_tokens": 303,
+        "total_time_s": 3.346,
+        "gen_time_s": 2.539,
+        "peak_memory_bytes": 5999762058,
+        "peak_memory_human": "5.6GB",
+        "cached_tokens": 0
+      },
+      "model": "/Users/dahai/.cache/huggingface/hub/models--mlx-community--Qwen3.5-9B-4bit/snapshots/8b2b98c00a6b4d291155e4890773ca8f769aee53",
+      "config": {
+        "prompt_tokens": 512,
+        "generation_tokens": 256
+      }
+    },
+    {
+      "category": "llm_single",
+      "name": "pp1024_tg256",
+      "metrics": {
+        "ttft_ms": 1158.8,
+        "gen_tps": 112.2,
+        "processing_tps": 434.5,
+        "pp_tps": 1178.0,
+        "prompt_tokens": 1365,
+        "completion_tokens": 300,
+        "total_time_s": 3.832,
+        "gen_time_s": 2.673,
+        "peak_memory_bytes": 6481152600,
+        "peak_memory_human": "6.0GB",
+        "cached_tokens": 0
+      },
+      "model": "/Users/dahai/.cache/huggingface/hub/models--mlx-community--Qwen3.5-9B-4bit/snapshots/8b2b98c00a6b4d291155e4890773ca8f769aee53",
+      "config": {
+        "prompt_tokens": 1024,
+        "generation_tokens": 256
+      }
+    },
+    {
+      "category": "llm_single",
+      "name": "pp2048_tg256",
+      "metrics": {
+        "ttft_ms": 1902.7,
+        "gen_tps": 182.2,
+        "processing_tps": 833.4,
+        "pp_tps": 1314.4,
+        "prompt_tokens": 2501,
+        "completion_tokens": 256,
+        "total_time_s": 3.308,
+        "gen_time_s": 1.405,
+        "peak_memory_bytes": 6766815826,
+        "peak_memory_human": "6.3GB",
+        "cached_tokens": 0
+      },
+      "model": "/Users/dahai/.cache/huggingface/hub/models--mlx-community--Qwen3.5-9B-4bit/snapshots/8b2b98c00a6b4d291155e4890773ca8f769aee53",
+      "config": {
+        "prompt_tokens": 2048,
+        "generation_tokens": 256
+      }
+    },
+    {
+      "category": "llm_single",
+      "name": "pp4096_tg256",
+      "metrics": {
+        "ttft_ms": 2587.6,
+        "gen_tps": 172.4,
+        "processing_tps": 1168.2,
+        "pp_tps": 1739.5,
+        "prompt_tokens": 4501,
+        "completion_tokens": 256,
+        "total_time_s": 4.072,
+        "gen_time_s": 1.485,
+        "peak_memory_bytes": 6970288708,
+        "peak_memory_human": "6.5GB",
+        "cached_tokens": 0
+      },
+      "model": "/Users/dahai/.cache/huggingface/hub/models--mlx-community--Qwen3.5-9B-4bit/snapshots/8b2b98c00a6b4d291155e4890773ca8f769aee53",
+      "config": {
+        "prompt_tokens": 4096,
+        "generation_tokens": 256
+      }
+    },
+    {
+      "category": "continuous_batching",
+      "name": "batch2_pp512_tg128",
+      "metrics": {
+        "batch_size": 2,
+        "pp_tps": 969.2,
+        "tg_tps": 167.2,
+        "avg_ttft_ms": 1056.6,
+        "e2e_latency_s": 2.587,
+        "total_prompt_tokens": 1024,
+        "total_gen_tokens": 256,
+        "throughput_per_user": 83.6
+      },
+      "model": "/Users/dahai/.cache/huggingface/hub/models--mlx-community--Qwen3.5-9B-4bit/snapshots/8b2b98c00a6b4d291155e4890773ca8f769aee53",
+      "config": {
+        "batch_size": 2,
+        "pp": 512,
+        "tg": 128
+      }
+    },
+    {
+      "category": "continuous_batching",
+      "name": "batch4_pp512_tg128",
+      "metrics": {
+        "batch_size": 4,
+        "pp_tps": 847.1,
+        "tg_tps": 213.5,
+        "avg_ttft_ms": 2417.8,
+        "e2e_latency_s": 4.816,
+        "total_prompt_tokens": 2048,
+        "total_gen_tokens": 512,
+        "throughput_per_user": 53.4
+      },
+      "model": "/Users/dahai/.cache/huggingface/hub/models--mlx-community--Qwen3.5-9B-4bit/snapshots/8b2b98c00a6b4d291155e4890773ca8f769aee53",
+      "config": {
+        "batch_size": 4,
+        "pp": 512,
+        "tg": 128
+      }
+    },
+    {
+      "category": "continuous_batching",
+      "name": "batch8_pp512_tg128",
+      "metrics": {
+        "batch_size": 8,
+        "pp_tps": 1029.7,
+        "tg_tps": 225.1,
+        "avg_ttft_ms": 3977.7,
+        "e2e_latency_s": 8.526,
+        "total_prompt_tokens": 4096,
+        "total_gen_tokens": 1024,
+        "throughput_per_user": 28.1
+      },
+      "model": "/Users/dahai/.cache/huggingface/hub/models--mlx-community--Qwen3.5-9B-4bit/snapshots/8b2b98c00a6b4d291155e4890773ca8f769aee53",
+      "config": {
+        "batch_size": 8,
+        "pp": 512,
+        "tg": 128
+      }
+    },
+    {
+      "category": "ttft_memory",
+      "name": "pp1024",
+      "metrics": {
+        "prompt_tokens": 1024,
+        "ttft_ms": 1074.3,
+        "peak_memory_bytes": 6484656076,
+        "peak_memory_human": "6.0GB",
+        "base_memory_estimate": 5038565912,
+        "gen_tokens": 32,
+        "memory_per_token": 6140773
+      },
+      "model": "/Users/dahai/.cache/huggingface/hub/models--mlx-community--Qwen3.5-9B-4bit/snapshots/8b2b98c00a6b4d291155e4890773ca8f769aee53",
+      "config": {
+        "prompt_tokens": 1024,
+        "generation_tokens": 32
+      }
+    },
+    {
+      "category": "ttft_memory",
+      "name": "pp4096",
+      "metrics": {
+        "prompt_tokens": 4096,
+        "ttft_ms": 2530.8,
+        "peak_memory_bytes": 6970305092,
+        "peak_memory_human": "6.5GB",
+        "base_memory_estimate": 5038549528,
+        "gen_tokens": 32,
+        "memory_per_token": 1688543
+      },
+      "model": "/Users/dahai/.cache/huggingface/hub/models--mlx-community--Qwen3.5-9B-4bit/snapshots/8b2b98c00a6b4d291155e4890773ca8f769aee53",
+      "config": {
+        "prompt_tokens": 4096,
+        "generation_tokens": 32
+      }
+    },
+    {
+      "category": "ttft_memory",
+      "name": "pp8192",
+      "metrics": {
+        "prompt_tokens": 8192,
+        "ttft_ms": 4360.8,
+        "peak_memory_bytes": 7372958276,
+        "peak_memory_human": "6.9GB",
+        "base_memory_estimate": 5038565912,
+        "gen_tokens": 32,
+        "memory_per_token": 896517
+      },
+      "model": "/Users/dahai/.cache/huggingface/hub/models--mlx-community--Qwen3.5-9B-4bit/snapshots/8b2b98c00a6b4d291155e4890773ca8f769aee53",
+      "config": {
+        "prompt_tokens": 8192,
+        "generation_tokens": 32
+      }
+    },
+    {
+      "category": "kv_cache",
+      "name": "standard",
+      "metrics": {
+        "ttft_ms": 1126.4,
+        "gen_tps": 177.4,
+        "processing_tps": 807.9,
+        "pp_tps": 1211.8,
+        "prompt_tokens": 1365,
+        "completion_tokens": 128,
+        "total_time_s": 1.848,
+        "gen_time_s": 0.722,
+        "peak_memory_bytes": 0,
+        "peak_memory_human": "?",
+        "cached_tokens": 0
+      },
+      "model": "/Users/dahai/.cache/huggingface/hub/models--mlx-community--Qwen3.5-9B-4bit/snapshots/8b2b98c00a6b4d291155e4890773ca8f769aee53",
+      "config": {
+        "kv_cache_mode": "standard"
+      }
+    },
+    {
+      "category": "kv_cache",
+      "name": "prefix_cache",
+      "metrics": {
+        "shared_prefix_tokens": 1001,
+        "cached_tokens": 0,
+        "cache_hit_rate": 0.0,
+        "ttft_with_cache_ms": 825.0
+      },
+      "model": "/Users/dahai/.cache/huggingface/hub/models--mlx-community--Qwen3.5-9B-4bit/snapshots/8b2b98c00a6b4d291155e4890773ca8f769aee53",
+      "config": {
+        "test": "prefix_cache_hit"
+      }
+    },
+    {
+      "category": "spec_decode",
+      "name": "ngram_status",
+      "metrics": {
+        "ngram_order": 5,
+        "ngram_num_draft": 3,
+        "enabled": true
+      },
+      "model": "/Users/dahai/.cache/huggingface/hub/models--mlx-community--Qwen3.5-9B-4bit/snapshots/8b2b98c00a6b4d291155e4890773ca8f769aee53",
+      "config": {}
+    },
+    {
+      "category": "spec_decode",
+      "name": "spec_generation_pp512_tg256",
+      "metrics": {
+        "gen_tps": 118.8,
+        "ttft_ms": 806.9,
+        "gen_tokens": 323,
+        "prompt_tokens": 683,
+        "spec_decode_enabled": true
+      },
+      "model": "/Users/dahai/.cache/huggingface/hub/models--mlx-community--Qwen3.5-9B-4bit/snapshots/8b2b98c00a6b4d291155e4890773ca8f769aee53",
+      "config": {
+        "pp": 512,
+        "tg": 256
+      }
+    },
+    {
+      "category": "memory",
+      "name": "memory_overview",
+      "metrics": {
+        "active_memory_bytes": 5038549528,
+        "active_memory_human": "4.7GB",
+        "cache_memory_bytes": 233281689,
+        "cache_memory_human": "222.5MB",
+        "peak_memory_bytes": 7372958276,
+        "peak_memory_human": "6.9GB",
+        "total_allocated_bytes": 5271831217,
+        "total_allocated_human": "4.9GB"
+      },
+      "model": "/Users/dahai/.cache/huggingface/hub/models--mlx-community--Qwen3.5-9B-4bit/snapshots/8b2b98c00a6b4d291155e4890773ca8f769aee53",
+      "config": {}
+    },
+    {
+      "category": "multi_engine",
+      "name": "engine_availability",
+      "metrics": {
+        "available_engines": [
+          "EmbeddingEngine",
+          "RerankerEngine",
+          "STSEngine",
+          "ImageGenEngine",
+          "VideoGenEngine",
+          "STTEngine",
+          "TTSEngine"
+        ],
+        "engine_count": 7
+      },
+      "model": "/Users/dahai/.cache/huggingface/hub/models--mlx-community--Qwen3.5-9B-4bit/snapshots/8b2b98c00a6b4d291155e4890773ca8f769aee53",
+      "config": {}
+    }
+  ],
+  "summary": {
+    "total_tests": 27,
+    "categories": {
+      "llm_single": {
+        "count": 15,
+        "tests": [
+          "pp128_tg64",
+          "pp512_tg64",
+          "pp1024_tg64",
+          "pp2048_tg64",
+          "pp4096_tg64",
+          "pp128_tg128",
+          "pp512_tg128",
+          "pp1024_tg128",
+          "pp2048_tg128",
+          "pp4096_tg128",
+          "pp128_tg256",
+          "pp512_tg256",
+          "pp1024_tg256",
+          "pp2048_tg256",
+          "pp4096_tg256"
+        ]
+      },
+      "continuous_batching": {
+        "count": 3,
+        "tests": [
+          "batch2_pp512_tg128",
+          "batch4_pp512_tg128",
+          "batch8_pp512_tg128"
+        ]
+      },
+      "ttft_memory": {
+        "count": 3,
+        "tests": [
+          "pp1024",
+          "pp4096",
+          "pp8192"
+        ]
+      },
+      "kv_cache": {
+        "count": 2,
+        "tests": [
+          "standard",
+          "prefix_cache"
+        ]
+      },
+      "spec_decode": {
+        "count": 2,
+        "tests": [
+          "ngram_status",
+          "spec_generation_pp512_tg256"
+        ]
+      },
+      "memory": {
+        "count": 1,
+        "tests": [
+          "memory_overview"
+        ]
+      },
+      "multi_engine": {
+        "count": 1,
+        "tests": [
+          "engine_availability"
+        ]
+      }
+    },
+    "highlights": {
+      "best_gen_tps": {
+        "value": 612.5,
+        "unit": "tok/s",
+        "test": "pp2048_tg64"
+      },
+      "best_ttft": {
+        "value": 389.5,
+        "unit": "ms",
+        "test": "pp128_tg64"
+      },
+      "best_batch_tg_tps": {
+        "value": 225.1,
+        "unit": "tok/s",
+        "batch_size": 8,
+        "test": "batch8_pp512_tg128"
+      },
+      "peak_memory": {
+        "value": "6.9GB",
+        "bytes": 7372958276
+      },
+      "active_memory": {
+        "value": "4.7GB",
+        "bytes": 5038549528
+      }
+    }
+  }
+}

@@ -58,20 +58,26 @@ def bench_branch(branch: str, steps: int, frames: int, size: int) -> dict:
     latent_t = max(1, (frames - 1) // 4 + 1)
     x = mx.random.normal((1, 16, latent_t, latent_h, latent_w))
     t = mx.array([0.5])
-    text_emb = mx.zeros((1, 512, 4096))  # stub text emb (真实需 tokenizer)
-    # A2V 霝额外 audio_embeds (wav2vec2 输出, audio_dim=1024)
-    audio_emb = mx.zeros((1, latent_t * latent_h * latent_w, 1024)) if branch == "a2v" else None
+    # 真 T5 encode_text 替 stub text_emb (避 A2V audio_cross_attn 收零致 softmax 退化 + 126GB)
+    try:
+        text_emb = t5.encode_text("a cinematic video", max_length=512)
+        mx.eval(text_emb)
+    except Exception:
+        text_emb = mx.zeros((1, 512, 4096))  # 降级 stub
+    # A2V 霝额外 audio_embeds (wav2vec2 输出, audio_dim=768 真实权重 norm=768)
+    audio_emb = mx.zeros((1, latent_t * latent_h * latent_w, 768)) if branch == "a2v" else None
     # grid_sizes 用 pre-patch 隐空间尺寸 (latent_h, latent_w 不预缩),
     # rope_apply 内部 patch_scale 会正确缩放 (patch_size=(1,2,2) 缩 1/4)
     seq_lens = [latent_t * latent_h * latent_w]
     grid_sizes = [(latent_t, latent_h, latent_w)]
 
-    # warmup (1 步)
+    # warmup x3 (触 mx.compile 编译稳定, 避压测首步重算 + Metal 峰值冲高)
     try:
-        if branch == "a2v":
-            _ = dit(x, t, audio_emb, text_emb, seq_lens=seq_lens, grid_sizes=grid_sizes)
-        else:
-            _ = dit(x, t, text_emb, seq_lens=seq_lens, grid_sizes=grid_sizes)
+        for _ in range(3):
+            if branch == "a2v":
+                _ = dit(x, t, audio_emb, text_emb, seq_lens=seq_lens, grid_sizes=grid_sizes)
+            else:
+                _ = dit(x, t, text_emb, seq_lens=seq_lens, grid_sizes=grid_sizes)
         mx.eval(_)
         mx.clear_cache()
     except Exception as exc:

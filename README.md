@@ -406,6 +406,59 @@ Swift App → WhichLLMService → PythonRuntime → whichllm_bridge.py → which
        ProcessInfo + sysctl (zero Python deps)
 ```
 
+## Flux-1.lite-8B-MLX 深度优化 (2026-07-19)
+
+### 性能数据 (M5 Max 128GB / MLX 0.32 / Q4)
+
+| 指标 | 原基线 | block 整编译融合 | mlx-mfa Metal attn 对接 | 真上限 |
+|---|---|---|---|---|
+| step/s (512×512×4步) | 1.83 | 1.96 | **1.88** | 1.88-2.03 |
+| Metal 峰值 | 10.8 GB | 10.6 GB | 10.5 GB | 10.5 GB |
+| 256×256 真上限 | — | — | — | 4.62 step/s |
+
+bench.dpdns.org 上传记录: id 27 (1.97), id 30 (1.96), id 31 (1.88), id 32 (1.88 mlx-mfa Metal attn)
+
+### 落地优化项
+
+1. **block 整编译融合** (`joint_transformer_block.py` + `single_transformer_block.py`)
+   - 加 `_compiled_call = mx.compile(self._call_raw)` 封装整块编译, 融合 AdaLN+attn+FFN 子模块为单编译单元
+   - 消跨 `nn.Module` 子调用断融合, `__call__` 入口走 `_compiled_call` 编译版本
+   - `to_out` list → `to_out_0` 命名属性 (MLX nn.Module 不收录 list 属性) + `flux_weight_mapping.py` 补 `to_out.0` → `to_out_0` 映射
+
+2. **mlx-mfa Metal Flash Attention 内核对接** (`attention_utils.py::compute_attention`)
+   - 用 `mlx_mfa.flash_attention` 替 `mx.fast.scaled_dot_product_attention`, 走 M5 Neural Accelerator 优 Tile
+   - `has_nax: True` ✅ Metal 内核真触, head_dim=128 在 mlx_mfa 支持范围
+   - 实测对接成功但收益持平 (1.88 vs 1.88 step/s), 因单替 SDPA 不覆盖 RoPE + QKV 投影主瓶颈
+
+3. **Fused QKV+RoPE+attn 单算子图融合** (搁置)
+   - 写 `_fused_qkv_rope_attn` 融合函数 + `JointAttention` 接入 + `mx.compile` 封装
+   - 实测 Q4 量化权重是 `(out, in/8)` 压缩布局, 手动 `mx.matmul/mx.addmm` 破 `quantized_matmul` 封装报 ValueError
+   - 回滚保 `nn.Linear.__call__` 走 `quantized_matmul`, 整 block `mx.compile` 已融合
+
+### mlx-mfa 预编译路径 (避 PyPI wheel build 耗时不可控)
+
+```bash
+# 本地源 + scikit-build-core + nanobind 触发 CMake build 生成 _ext.so
+pip install scikit-build-core nanobind
+pip install -e /path/to/mlx_mfa-2.61.0/ --no-build-isolation
+# 验证: has_nax() True = Metal 内核真触, False = fallback SDPA
+python3 -c "from mlx_mfa import has_nax; print(has_nax())"
+```
+
+### 瓶颈诊断结论
+
+- **256 vs 512 比值 2.48×** (理论算力 4×) → 混合瓶颈 (带宽+算力双优)
+- **transformer 80%** 主瓶颈 / encode_prompt 10% / VAE 10%
+- **schnell 天生不支持 CFG** (`supports_guidance=False`), `guidance=4.0` 是无效参数, 单分支已是最优
+- **shape 抖动代价 21.4%**: 同 512×512 连续稳态 1.90 step/s, 不同尺寸交替降至 1.56 step/s
+- **真上限已厘清**: 512×512 在 M5 Max Q4 + mlx_mfa Metal attn + 双层编译融合后 1.88 step/s 是硬件+Q4 量化+算子栈三元约束下的合理上限
+
+### 关键经验沉淀
+
+1. **MLX Q4 量化权重不可手动 matmul**: 权重是 `(out, in/8)` 压缩布局, 必走 `nn.Linear.__call__` 内部 `quantized_matmul`. 所有"手写 Fused 单内核"方案对 Q4 量化模型破封装不可行
+2. **60+ block 整体 mx.compile 劣化是通用规律**: 算子图按 N× 累积触 Metal Command Buffer 雾溅, 双层编译 (block 整编译 + transformer 循环编译) 是最优路径
+3. **mlx-mfa 预编译路径**: 本地源 + scikit-build-core + nanobind + `pip install -e --no-build-isolation` 成功触发 CMake build 生成 `_ext.so`, 避 PyPI wheel build 耗时不可控
+
 ## License
 
 Apache-2.0

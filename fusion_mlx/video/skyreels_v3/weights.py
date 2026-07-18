@@ -273,6 +273,22 @@ def load_text_encoder_weights(
     # 转 bf16 常驻: 11GB float32 → 5.5GB bf16, 释放 5.5GB Metal 给 DiT temporal 分支用
     weights = {k: v.astype(mx.bfloat16) for k, v in weights.items()}
 
+    # AtomCode 专题优化: 映射 blocks.{N}.* → block_{N}.* (T5Encoder 用命名属性替 list)
+    # MLX nn.Module 不收录普通 list 属性, T5Encoder.block_0/block_1/... 才入 _children
+    # 同时 gate.0.* → gate_0.* (T5DenseGatedActDense 用 gate_0 命名属性替 ModuleList)
+    remapped = {}
+    for k, v in weights.items():
+        nk = k
+        if k.startswith("blocks."):
+            parts = k.split(".", 2)  # ["blocks", "{N}", "{sub}"]
+            n = parts[1]
+            sub = parts[2] if len(parts) > 2 else ""
+            nk = f"block_{n}.{sub}" if sub else f"block_{n}"
+        # gate.0.* → gate_0.* (MLX nn 无 ModuleList, 用命名属性)
+        nk = nk.replace(".gate.0.", ".gate_0.")
+        remapped[nk] = v
+    weights = remapped
+
     try:
         encoder.load_weights(list(weights.items()), strict=strict)
         # 分批 eval 避一次性提交 11GB 致 GPU Timeout (>10s 阜默)

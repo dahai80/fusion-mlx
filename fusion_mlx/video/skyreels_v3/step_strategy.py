@@ -136,6 +136,8 @@ def _default_config_for_branch(branch: str, total_steps: int = 50) -> StepStrate
         )
     elif branch == "a2v":
         # A2V 数字人: 音频驱动, 中等激进度
+        # AtomCode 专题优化: total_steps 50→30 (2026-07-18)
+        # DiT 74% 主瓶颈 × 30步 vs 50步 = 降 40% DiT 耗时, UniPC corrector 保稳 (solver_order=2 历史预测仍可用)
         cfg = StepStrategyConfig(
             total_steps=total_steps,
             warmup_steps=6,
