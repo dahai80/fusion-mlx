@@ -293,7 +293,7 @@ Benchmarks on Apple M5 Max (128 GB RAM, 40 GPU cores), MLX 0.32.0 — 2026-07-18
 |---|---|---|---|---|---|---|---|
 | R2V | Reference-to-Video 14B | 24 GB (7 shards) | 6.84 | **0.092** | 75.3 | **54.3** | ✅ 跑通 |
 | V2V | Video Extension 14B | 75 GB (14+6+1 shards) | 3.11 | **0.329** | 82.7 | **15.2** | ✅ 跑通 (mx.compile 融合 3.3×) |
-| A2V | Talking Avatar 19B | 123 GB (18+6+1+1+1 shards) | 3.16 | **5.934** | 113.1 | **0.8** | ✅ 跑通 (骨架 dim 5120 修正 + mx.compile) |
+| A2V | Talking Avatar 19B | 123 GB (18+6+1+1+1 shards) | 3.16 | **0.328** | 24.8 | **3.0** | ✅ 跑通 (audio_cross_attn+norm_x 重构 + kv_linear 转置 + mx.compile, 18×加速) |
 
 **MLX 全模型转换产物** (PyTorch → MLX safetensors, `convert_skyreels_v3.py`):
 

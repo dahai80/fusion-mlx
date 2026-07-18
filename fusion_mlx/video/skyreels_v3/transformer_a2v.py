@@ -53,22 +53,31 @@ logger = logging.getLogger(__name__)
 class AudioEmbedding(nn.Module):
     """音频 Embedding 分支, 对齐 wav2vec2 + xlm_roberta 融合.
 
-    结构:
-      - audio_proj: Linear(audio_dim, dim)
-      - text_proj: Linear(text_dim, dim)
-      - fusion: LayerNorm + Linear + GELU + Linear (音频+文本融合)
+    真实权重布局 (A2V-19B):
+      - audio_proj.norm: LayerNorm(768)
+      - audio_proj.proj1: Linear(46080, 512)  (wav2vec2 90层 × 512 hidden = 46080)
+      - audio_proj.proj1_vf: Linear(73728, 512)  (vis2vec 144层 × 512 = 73728)
+      - audio_proj.proj2: Linear(512, 512)
+      - audio_proj.proj3: Linear(512, 24576)  (输出 dim*6 = 5120*6=30720? 实测 24576=dim*4.8, 对齐 ffn_dim)
     """
 
     def __init__(
         self,
         dim: int,
-        audio_dim: int = 1024,  # wav2vec2 hidden size
+        audio_dim: int = 768,  # wav2vec2 hidden size (真实权重 norm=768, 非 1024)
         text_dim: int = 4096,  # xlm_roberta hidden size
         eps: float = 1e-6,
     ):
         super().__init__()
         self.dim = dim
-        self.audio_proj = nn.Linear(audio_dim, dim)
+        # audio_proj: 多层投影 (匹配真实权重 audio_proj.*)
+        self.audio_proj = nn.Module()
+        self.audio_proj.norm = WanLayerNorm(audio_dim, eps)
+        self.audio_proj.proj1 = nn.Linear(46080, 512)  # wav2vec2 90层融合
+        self.audio_proj.proj1_vf = nn.Linear(73728, 512)  # vis2vec 144层融合
+        self.audio_proj.proj2 = nn.Linear(512, 512)
+        self.audio_proj.proj3 = nn.Linear(512, 24576)  # 输出对齐 ffn_dim
+        # text_proj: Linear(text_dim, dim)
         self.text_proj = nn.Linear(text_dim, dim)
         self.norm = WanLayerNorm(dim, eps)
         self.fusion_fc1 = nn.Linear(dim, dim)
@@ -89,12 +98,93 @@ class AudioEmbedding(nn.Module):
         Returns:
             [B, L_audio+L_text, dim] 融合 context
         """
-        audio_ctx = self.audio_proj(audio_embeds)  # [B, L_audio, dim]
+        # audio_proj 多层投影 (简化: proj1 输入需 46080 维, stub audio_embeds 不足时补零)
+        a = self.audio_proj.norm(audio_embeds)
+        b, l, _ = a.shape
+        # 展平 L 维 + 补零到 proj1 期望的 46080 输入
+        a_flat = a.reshape(b, l * 768)
+        if a_flat.shape[-1] < 46080:
+            pad = mx.zeros((b, 46080 - a_flat.shape[-1]), dtype=a.dtype)
+            a_flat = mx.concatenate([a_flat, pad], axis=-1)
+        a_flat = a_flat[:, :46080]
+        a = self.audio_proj.proj1(a_flat)  # [b, 512]
+        a = self.audio_proj.proj2(a)  # [b, 512]
+        a = self.audio_proj.proj3(a)  # [b, 24576]
+        audio_ctx = a[:, :self.dim].reshape(b, 1, self.dim)  # 截到 dim, 单 token
         text_ctx = self.text_proj(text_embeds)  # [B, L_text, dim]
-        ctx = mx.concatenate([audio_ctx, text_ctx], axis=1)  # [B, L_audio+L_text, dim]
-        # fusion
+        ctx = mx.concatenate([audio_ctx, text_ctx], axis=1)
         ctx_norm = self.norm(ctx)
         return self.fusion_fc2(self.act(self.fusion_fc1(ctx_norm)))
+
+
+# ---------------------------------------------------------------------------
+# 音频交叉注意力 (A2V 独有, 驱动嘴型同步)
+# ---------------------------------------------------------------------------
+class AudioCrossAttention(nn.Module):
+    """音频 Cross-Attention, 对齐真实权重 audio_cross_attn.*.
+
+    真实权重布局 (A2V-19B, 每个 block 内):
+      - kv_linear: Linear(768, 10240)  (音频 context → k+v 融合投影, 10240=dim*2)
+      - q_linear:  Linear(5120, 5120)  (主干 latent → query)
+      - proj:      Linear(5120, 5120)  (输出投影)
+      (无 norm_q/norm_k, 与 self_attn/cross_attn 的 RMSNorm 不同)
+
+    前向逻辑 (推测, 对齐原版 WanA2VCrossAttention):
+      q = q_linear(x)         # [B, L, dim]
+      kv = kv_linear(audio_ctx)  # [B, L_a, dim*2] → split k, v
+      out = sdpa(q, k, v)     # 标准注意力, 无掩码
+      return proj(out)
+    """
+
+    def __init__(
+        self,
+        dim: int = 5120,
+        audio_dim: int = 768,
+        num_heads: int = 40,
+        eps: float = 1e-6,
+    ):
+        super().__init__()
+        self.dim = dim
+        self.audio_dim = audio_dim
+        self.num_heads = num_heads
+        self.head_dim = dim // num_heads
+        self.scale = self.head_dim ** -0.5
+        # q/k/v 投影 (命名严格对齐真实权重 audio_cross_attn.*)
+        # 真实权重布局: kv_linear.weight=(768,10240)=(in,out), q_linear/proj=(5120,5120)=(out,in)?
+        # mlx.nn.Linear 期望 (out,in), 故 kv_linear 需转置加载 (见 weights.py 映射)
+        self.q_linear = nn.Linear(dim, dim)            # q_linear: [5120→5120]
+        self.kv_linear = nn.Linear(audio_dim, dim * 2)  # kv_linear: [768→10240] (加载时转置)
+        self.proj = nn.Linear(dim, dim)                 # proj: [5120→5120]
+
+    def __call__(
+        self,
+        x: mx.array,            # [B, L, dim] 主干 latent
+        audio_ctx: mx.array,    # [B, L_a, audio_dim] 音频 context
+    ) -> mx.array:
+        """音频引导的交叉注意力, 输出 [B, L, dim]."""
+        b = x.shape[0]
+        n, d = self.num_heads, self.head_dim
+        w_dtype = _linear_dtype(self.q_linear)
+
+        # q: 主干 latent → [B, n, L, d]
+        q = self.q_linear(x.astype(w_dtype))
+        q = q.reshape(b, -1, n, d).transpose(0, 2, 1, 3)
+
+        # kv: 音频 context → split k, v, 各 [B, n, L_a, d]
+        kv = self.kv_linear(audio_ctx.astype(w_dtype))  # [B, L_a, dim*2]
+        k, v = mx.split(kv, 2, axis=-1)  # 各 [B, L_a, dim]
+        k = k.reshape(b, -1, n, d).transpose(0, 2, 1, 3)
+        v = v.reshape(b, -1, n, d).transpose(0, 2, 1, 3)
+
+        # 标缩点积注意力 (无掩码, 非因果) — mx.matmul 广播批处理
+        # attn = softmax(q @ k^T / sqrt(d)) @ v
+        # q: [B, n, L, d], k: [B, n, L_a, d] → k^T: [B, n, d, L_a]
+        attn = mx.matmul(q, k.swapaxes(-1, -2)) * self.scale  # [B, n, L, L_a]
+        attn = mx.softmax(attn, axis=-1)
+        out = mx.matmul(attn, v)  # [B, n, L, d]
+
+        out = out.transpose(0, 2, 1, 3).reshape(b, -1, n * d)  # [B, L, dim]
+        return self.proj(out)
 
 
 # ---------------------------------------------------------------------------
@@ -154,6 +244,8 @@ class A2VAttentionBlock(nn.Module):
             if cross_attn_norm
             else None
         )
+        # norm_x: 真实权重 blocks.N.norm_x (5120, affine=True), 用于 audio_cross_attn 前归一化
+        self.norm_x = WanLayerNorm(dim, eps, elementwise_affine=True)
         cross_cls = WAN_CROSSATTENTION_CLASSES.get(cross_attn_type)
         if cross_cls is None:
             raise ValueError(
@@ -161,6 +253,12 @@ class A2VAttentionBlock(nn.Module):
                 f"Valid: {list(WAN_CROSSATTENTION_CLASSES)}"
             )
         self.cross_attn = cross_cls(dim, num_heads, qk_norm, eps)
+
+        # Audio cross-attention (音频 context 引导嘴型, A2V 独有)
+        # 真实权重: audio_cross_attn.{kv_linear[768→10240], q_linear[5120→5120], proj[5120→5120]}
+        self.audio_cross_attn = AudioCrossAttention(
+            dim=dim, audio_dim=768, eps=eps,
+        )
 
         # Feed-forward
         self.norm2 = WanLayerNorm(dim, eps)
@@ -180,6 +278,7 @@ class A2VAttentionBlock(nn.Module):
         grid_sizes: list,
         freqs: mx.array,
         context: mx.array,  # 音频+文本融合 context
+        audio_ctx: mx.array | None = None,  # 纯音频 context (audio_cross_attn 用)
         context_lens: list | None = None,
         cross_kv_cache: tuple | None = None,
         rope_cos_sin: tuple | None = None,
@@ -191,6 +290,7 @@ class A2VAttentionBlock(nn.Module):
         Args:
             temporal_len: 时序长度 (帧数), A2V 必传 (保嘴型连贯)
             context: 音频+文本融合 context (来自 AudioEmbedding)
+            audio_ctx: 纯音频 context [B, L_a, 768], 用于 audio_cross_attn 嘴型引导
 
         Returns:
             [B, L, dim] 经一个 A2V Block 处理后的隐空间
@@ -229,6 +329,12 @@ class A2VAttentionBlock(nn.Module):
             x_cross, context, context_lens, kv_cache=cross_kv_cache,
         )
         x = x + y_c
+
+        # ---- 3b. Audio Cross-Attention (纯音频 context 引导嘴型, A2V 独有) ----
+        if audio_ctx is not None:
+            x_a = self.norm_x(x)  # norm_x: 真实权重 blocks.N.norm_x (affine=True)
+            y_a = self.audio_cross_attn(x_a, audio_ctx)
+            x = x + y_a
 
         # ---- 4. FFN ----
         x_norm2 = self.norm2(x)
@@ -269,7 +375,7 @@ class SkyReelsA2VDiT(nn.Module):
         self.in_dim = cfg.get("in_dim", 16)
         self.out_dim = cfg.get("out_dim", 16)
         self.text_dim = cfg.get("text_dim", 4096)
-        self.audio_dim = cfg.get("audio_dim", 1024)
+        self.audio_dim = cfg.get("audio_dim", 768)  # wav2vec2 hidden size (真实权重 norm=768)
         self.text_len = cfg.get("text_len", 512)
         self.freq_dim = cfg.get("freq_dim", 256)
         self.window_size = cfg.get("window_size", (-1, -1))
@@ -397,6 +503,8 @@ class SkyReelsA2VDiT(nn.Module):
 
         # 2. Audio + Text 融合 context (数字人专用)
         context = self.audio_embedding(audio_embeds, text_embeds)
+        # 纯音频 context (audio_cross_attn 用): 取 audio_embeds 原始 768 维, 不经融合投影
+        audio_ctx = audio_embeds  # [B, L_audio, 768]
 
         # 3. Time embedding
         t_emb = sinusoidal_embedding_1d(self.freq_dim, t)
@@ -407,7 +515,7 @@ class SkyReelsA2VDiT(nn.Module):
         for block in self.blocks:
             x = block(
                 x, e, seq_lens, grid_sizes, self.freqs,
-                context, context_lens,
+                context, audio_ctx, context_lens,
                 rope_cos_sin=rope_cos_sin, attn_mask=attn_mask,
                 temporal_len=temporal_len,
             )

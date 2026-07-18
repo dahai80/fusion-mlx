@@ -121,6 +121,15 @@ def load_dit_weights(
         )
 
     # 权重名对齐 (convert_skyreels_v3.py 已处理转置, 这里直接加载)
+    # A2V 独有: audio_cross_attn.kv_linear.weight 真实布局 (768,10240)=(in,out),
+    # mlx.nn.Linear 期望 (out,in)=(10240,768), 需转置后加载
+    for k in list(weights.keys()):
+        if k.endswith("audio_cross_attn.kv_linear.weight"):
+            w = weights[k]
+            if w.shape == (768, 10240):  # (in, out) 反布局
+                weights[k] = w.T.astype(w.dtype)  # → (10240, 768)=(out, in)
+                logger.info("audio_cross_attn.kv_linear.weight 转置: %s→%s",
+                            w.shape, weights[k].shape)
     try:
         model.load_weights(list(weights.items()), strict=strict)
         mx.eval(model.parameters())
