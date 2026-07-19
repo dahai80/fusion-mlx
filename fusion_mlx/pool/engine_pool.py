@@ -461,6 +461,10 @@ class EnginePool:
         "image": "image_gen",
         "video": "video_gen",
         "ti2v": "video_gen",
+        # SkyReels-V3 分支类型 (fix #127)
+        "r2v_14b": "video_gen",
+        "a2v_19b": "video_gen",
+        "v2v_14b": "video_gen",
     }
 
     def apply_settings_overrides(self, settings_manager: ModelSettingsManager) -> None:
