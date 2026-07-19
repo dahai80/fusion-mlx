@@ -55,7 +55,7 @@ BRANCH_CONFIGS: dict[str, SkyReelsBranchConfig] = {
         cross_attn_type="i2v_cross_attn",
         temporal_window=-1,  # R2V 不用时序分支
         has_audio=False, audio_dim=0,
-        hf_model_id="Skywork/SkyReels-V3-R2V-14B",
+        hf_model_id="Skywork/SkyReels-V3-R2V-14B-MLX",
     ),
     "skyreels-v3-v2v-14b": SkyReelsBranchConfig(
         model_type="v2v_14b",
@@ -67,7 +67,7 @@ BRANCH_CONFIGS: dict[str, SkyReelsBranchConfig] = {
         cross_attn_type="i2v_cross_attn",
         temporal_window=96,  # V2V 保连贯
         has_audio=False, audio_dim=0,
-        hf_model_id="Skywork/SkyReels-V3-V2V-14B",
+        hf_model_id="Skywork/SkyReels-V3-V2V-14B-MLX",
     ),
     "skyreels-v3-a2v-19b": SkyReelsBranchConfig(
         model_type="a2v_19b",
@@ -79,7 +79,7 @@ BRANCH_CONFIGS: dict[str, SkyReelsBranchConfig] = {
         cross_attn_type="i2v_cross_attn",
         temporal_window=32,  # A2V 保嘴型连贯
         has_audio=True, audio_dim=1024,  # wav2vec2
-        hf_model_id="Skywork/SkyReels-V3-A2V-19B",
+        hf_model_id="Skywork/SkyReels-V3-A2V-19B-MLX",
     ),
 }
 

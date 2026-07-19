@@ -7,17 +7,19 @@ import logging
 import os
 import threading
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from enum import Enum
-from pathlib import Path
-from typing import Dict, Optional, Any, List, Callable
+from typing import Any
 
 import mlx.core as mx
-from sqlalchemy.orm import Session
 
-from fusion_mlx.gui_compat.database import get_database_manager, get_db_session
-from fusion_mlx.gui_compat.models import Model, ModelStatus, InferenceRequest, RequestQueue, QueueStatus
+from fusion_mlx.gui_compat.database import get_database_manager
+from fusion_mlx.gui_compat.models import (
+    Model,
+    ModelStatus,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -47,7 +49,7 @@ class LoadRequest:
     model_path: str
     priority: int = 0
     requester_id: str = "system"
-    callback: Optional[Callable] = None
+    callback: Callable | None = None
     created_at: datetime = None
 
     def __post_init__(self):
@@ -59,7 +61,7 @@ class ModelLoadingQueue:
     """Thread-safe priority queue for model loading requests."""
 
     def __init__(self):
-        self._queue: List[LoadRequest] = []
+        self._queue: list[LoadRequest] = []
         self._lock = threading.Lock()
         self._event = threading.Event()
 
@@ -71,7 +73,7 @@ class ModelLoadingQueue:
             self._event.set()
             return position
 
-    def get_next_request(self, timeout: Optional[float] = None) -> Optional[LoadRequest]:
+    def get_next_request(self, timeout: float | None = None) -> LoadRequest | None:
         if timeout:
             self._event.wait(timeout)
         with self._lock:
@@ -90,7 +92,7 @@ class ModelLoadingQueue:
                     return True
             return False
 
-    def get_queue_status(self) -> List[Dict[str, Any]]:
+    def get_queue_status(self) -> list[dict[str, Any]]:
         with self._lock:
             return [
                 {
@@ -115,11 +117,13 @@ class ModelManager:
     """
 
     def __init__(self, max_concurrent_models: int = 3):
-        self.max_concurrent_models = self._get_max_concurrent_models(max_concurrent_models)
+        self.max_concurrent_models = self._get_max_concurrent_models(
+            max_concurrent_models
+        )
 
         # Model metadata cache (sync with DB)
-        self._loaded_models: Dict[str, LoadedModel] = {}
-        self._loading_status: Dict[str, LoadingStatus] = {}
+        self._loaded_models: dict[str, LoadedModel] = {}
+        self._loading_status: dict[str, LoadingStatus] = {}
         self._lock = threading.RLock()
 
         # Queue system
@@ -139,6 +143,7 @@ class ModelManager:
         self._cleanup_interval = 60
 
         import atexit
+
         atexit.register(self._force_cleanup)
 
     # ── EnginePool backend ──
@@ -148,6 +153,7 @@ class ModelManager:
             with self._engine_pool_lock:
                 if self._engine_pool is None:
                     from fusion_mlx.pool.engine_pool import EnginePool
+
                     self._engine_pool = EnginePool()
         return self._engine_pool
 
@@ -164,7 +170,9 @@ class ModelManager:
     def _get_inactivity_timeout(self) -> timedelta:
         try:
             db_manager = get_database_manager()
-            timeout_minutes = db_manager.get_setting("model_inactivity_timeout_minutes", 5)
+            timeout_minutes = db_manager.get_setting(
+                "model_inactivity_timeout_minutes", 5
+            )
             return timedelta(minutes=timeout_minutes)
         except Exception as e:
             logger.warning(f"Failed to read inactivity timeout from database: {e}")
@@ -183,7 +191,10 @@ class ModelManager:
             self._queue_worker_thread.start()
 
     def _start_cleanup_worker(self):
-        if self._cleanup_worker_thread is None or not self._cleanup_worker_thread.is_alive():
+        if (
+            self._cleanup_worker_thread is None
+            or not self._cleanup_worker_thread.is_alive()
+        ):
             self._cleanup_worker_thread = threading.Thread(
                 target=self._cleanup_worker,
                 name="model_cleanup",
@@ -202,7 +213,9 @@ class ModelManager:
                         self._load_model_sync(request)
                     except Exception as e:
                         logger.error(f"Error loading model {request.model_name}: {e}")
-                        self._set_loading_status(request.model_name, LoadingStatus.FAILED)
+                        self._set_loading_status(
+                            request.model_name, LoadingStatus.FAILED
+                        )
             except Exception as e:
                 logger.error(f"Queue worker error: {e}")
                 time.sleep(1)
@@ -281,7 +294,9 @@ class ModelManager:
             actual_path = self._resolve_model_path(model_path)
             for root, dirs, files in os.walk(actual_path):
                 for file in files:
-                    if file.endswith(('.safetensors', '.bin', '.pth', '.pt', '.gguf', '.npz')):
+                    if file.endswith(
+                        (".safetensors", ".bin", ".pth", ".pt", ".gguf", ".npz")
+                    ):
                         file_path = os.path.join(root, file)
                         if os.path.exists(file_path):
                             total_size_bytes += os.path.getsize(file_path)
@@ -297,7 +312,9 @@ class ModelManager:
             )
             return max(actual_memory_gb, 0.1)
         except Exception as e:
-            logger.warning(f"Could not calculate actual memory usage for {model_path}: {e}")
+            logger.warning(
+                f"Could not calculate actual memory usage for {model_path}: {e}"
+            )
             return 2.0
 
     def _resolve_model_path(self, model_path: str) -> str:
@@ -311,7 +328,8 @@ class ModelManager:
                 snapshots_dir = os.path.join(cache_path, "snapshots")
                 if os.path.exists(snapshots_dir):
                     snapshot_dirs = [
-                        d for d in os.listdir(snapshots_dir)
+                        d
+                        for d in os.listdir(snapshots_dir)
                         if os.path.isdir(os.path.join(snapshots_dir, d))
                     ]
                     if snapshot_dirs:
@@ -320,10 +338,16 @@ class ModelManager:
 
     def _check_memory_constraints(self, required_memory_gb: float) -> tuple[bool, str]:
         if len(self._loaded_models) >= self.max_concurrent_models:
-            return False, f"Maximum concurrent models ({self.max_concurrent_models}) already loaded"
-        current_model_memory = sum(m.memory_usage_gb for m in self._loaded_models.values())
+            return (
+                False,
+                f"Maximum concurrent models ({self.max_concurrent_models}) already loaded",
+            )
+        current_model_memory = sum(
+            m.memory_usage_gb for m in self._loaded_models.values()
+        )
         try:
             import psutil
+
             total_gb = psutil.virtual_memory().total / (1024**3)
         except ImportError:
             total_gb = 16.0
@@ -352,27 +376,39 @@ class ModelManager:
 
             db_manager = get_database_manager()
             with db_manager.get_session() as session:
-                model_record = session.query(Model).filter(Model.name == model_name).first()
+                model_record = (
+                    session.query(Model).filter(Model.name == model_name).first()
+                )
                 if not model_record:
                     raise ValueError(f"Model {model_name} not found in database")
                 self._ensure_capacity_for_model(model_record.memory_required_gb)
-                can_load, memory_warning = self._check_memory_constraints(model_record.memory_required_gb)
+                can_load, memory_warning = self._check_memory_constraints(
+                    model_record.memory_required_gb
+                )
                 if not can_load:
                     raise RuntimeError(memory_warning)
                 elif memory_warning:
-                    logger.warning(f"Loading model {model_name} with memory warning: {memory_warning}")
+                    logger.warning(
+                        f"Loading model {model_name} with memory warning: {memory_warning}"
+                    )
 
             logger.info(f"Loading model from {model_path} via EnginePool")
-            mlx_wrapper = self._run_async(self._load_model_via_pool(model_name, model_path))
+            mlx_wrapper = self._run_async(
+                self._load_model_via_pool(model_name, model_path)
+            )
 
             actual_memory = self._calculate_actual_memory_usage(model_path)
             db_manager = get_database_manager()
             with db_manager.get_session() as session:
-                model_record = session.query(Model).filter(Model.name == model_name).first()
+                model_record = (
+                    session.query(Model).filter(Model.name == model_name).first()
+                )
                 if model_record:
                     model_record.memory_required_gb = actual_memory
                     session.commit()
-                    logger.info(f"Updated {model_name} memory requirement in DB: {actual_memory:.1f}GB")
+                    logger.info(
+                        f"Updated {model_name} memory requirement in DB: {actual_memory:.1f}GB"
+                    )
 
             loaded_model = LoadedModel(
                 model_id=model_name,
@@ -393,7 +429,9 @@ class ModelManager:
             try:
                 db_manager = get_database_manager()
                 with db_manager.get_session() as session:
-                    model_record = session.query(Model).filter(Model.name == model_name).first()
+                    model_record = (
+                        session.query(Model).filter(Model.name == model_name).first()
+                    )
                     if model_record:
                         model_record.error_message = str(e)
                         session.commit()
@@ -450,6 +488,7 @@ class ModelManager:
         success = self.unload_model(lru_model_name)
         if success:
             import gc
+
             gc.collect()
             try:
                 mx.clear_cache()
@@ -461,10 +500,17 @@ class ModelManager:
         error_str = str(error).lower()
         error_type = type(error).__name__
         memory_indicators = [
-            "out of memory", "memory allocation", "insufficient memory",
-            "memory error", "cuda out of memory", "device out of memory",
-            "metal out of memory", "failed to allocate", "allocation failed",
-            "not enough memory", "memory limit exceeded",
+            "out of memory",
+            "memory allocation",
+            "insufficient memory",
+            "memory error",
+            "cuda out of memory",
+            "device out of memory",
+            "metal out of memory",
+            "failed to allocate",
+            "allocation failed",
+            "not enough memory",
+            "memory limit exceeded",
         ]
         if any(indicator in error_str for indicator in memory_indicators):
             return True
@@ -478,7 +524,9 @@ class ModelManager:
 
     # ── Public async API ──
 
-    async def load_model_async(self, model_name: str, model_path: str, priority: int = 0) -> bool:
+    async def load_model_async(
+        self, model_name: str, model_path: str, priority: int = 0
+    ) -> bool:
         with self._lock:
             if model_name in self._loaded_models:
                 self._loaded_models[model_name].update_last_used()
@@ -492,7 +540,9 @@ class ModelManager:
             self._start_queue_worker()
             self._start_cleanup_worker()
 
-        request = LoadRequest(model_name=model_name, model_path=model_path, priority=priority)
+        request = LoadRequest(
+            model_name=model_name, model_path=model_path, priority=priority
+        )
         position = self._loading_queue.add_request(request)
         logger.info(f"Added {model_name} to loading queue at position {position}")
 
@@ -504,7 +554,9 @@ class ModelManager:
             elif status == LoadingStatus.FAILED:
                 return False
             elif status == LoadingStatus.IDLE:
-                if not any(req.model_name == model_name for req in self._loading_queue._queue):
+                if not any(
+                    req.model_name == model_name for req in self._loading_queue._queue
+                ):
                     return False
 
     def unload_model(self, model_name: str) -> bool:
@@ -531,7 +583,7 @@ class ModelManager:
 
     # ── Queries ──
 
-    def get_loaded_models(self) -> Dict[str, Dict[str, Any]]:
+    def get_loaded_models(self) -> dict[str, dict[str, Any]]:
         with self._lock:
             return {
                 name: {
@@ -542,7 +594,7 @@ class ModelManager:
                 for name, model in self._loaded_models.items()
             }
 
-    def get_model_status(self, model_name: str) -> Dict[str, Any]:
+    def get_model_status(self, model_name: str) -> dict[str, Any]:
         with self._lock:
             status = self._loading_status.get(model_name, LoadingStatus.IDLE)
             loaded_model = self._loaded_models.get(model_name)
@@ -550,11 +602,19 @@ class ModelManager:
                 "name": model_name,
                 "status": status.value,
                 "loaded": loaded_model is not None,
-                "loaded_at": loaded_model.loaded_at.isoformat() if loaded_model else None,
-                "last_used_at": loaded_model.last_used_at.isoformat() if loaded_model else None,
+                "loaded_at": (
+                    loaded_model.loaded_at.isoformat() if loaded_model else None
+                ),
+                "last_used_at": (
+                    loaded_model.last_used_at.isoformat() if loaded_model else None
+                ),
                 "memory_usage_gb": loaded_model.memory_usage_gb if loaded_model else 0,
                 "queue_position": next(
-                    (i for i, req in enumerate(self._loading_queue._queue) if req.model_name == model_name),
+                    (
+                        i
+                        for i, req in enumerate(self._loading_queue._queue)
+                        if req.model_name == model_name
+                    ),
                     None,
                 ),
             }
@@ -564,17 +624,20 @@ class ModelManager:
         self.max_concurrent_models = self._get_max_concurrent_models(3)
         self._inactivity_timeout = self._get_inactivity_timeout()
 
-    def get_system_status(self) -> Dict[str, Any]:
+    def get_system_status(self) -> dict[str, Any]:
         self.refresh_settings()
         try:
             import psutil
+
             vm = psutil.virtual_memory()
             total_gb = vm.total / (1024**3)
             available_gb = vm.available / (1024**3)
         except ImportError:
             total_gb, available_gb = 16.0, 8.0
         with self._lock:
-            total_model_memory = sum(m.memory_usage_gb for m in self._loaded_models.values())
+            total_model_memory = sum(
+                m.memory_usage_gb for m in self._loaded_models.values()
+            )
         return {
             "loaded_models_count": len(self._loaded_models),
             "max_concurrent_models": self.max_concurrent_models,
@@ -582,12 +645,14 @@ class ModelManager:
             "total_model_memory_gb": total_model_memory,
             "system_memory_total_gb": total_gb,
             "system_memory_available_gb": available_gb,
-            "memory_usage_percent": (total_model_memory / total_gb) * 100 if total_gb else 0,
+            "memory_usage_percent": (
+                (total_model_memory / total_gb) * 100 if total_gb else 0
+            ),
             "auto_unload_enabled": self._auto_unload_enabled,
             "inactivity_timeout_minutes": self._inactivity_timeout.total_seconds() / 60,
         }
 
-    def get_model_for_inference(self, model_name: str) -> Optional[LoadedModel]:
+    def get_model_for_inference(self, model_name: str) -> LoadedModel | None:
         with self._lock:
             loaded_model = self._loaded_models.get(model_name)
             if loaded_model:
@@ -623,7 +688,9 @@ class ModelManager:
         try:
             db_manager = get_database_manager()
             with db_manager.get_session() as session:
-                model_record = session.query(Model).filter(Model.name == model_name).first()
+                model_record = (
+                    session.query(Model).filter(Model.name == model_name).first()
+                )
                 if model_record:
                     model_record.increment_use_count()
                     session.commit()
@@ -633,7 +700,7 @@ class ModelManager:
 
 # ── Global singleton ──
 
-_model_manager: Optional[ModelManager] = None
+_model_manager: ModelManager | None = None
 
 
 def get_model_manager() -> ModelManager:

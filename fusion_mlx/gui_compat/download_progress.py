@@ -4,11 +4,11 @@ This module provides actual progress tracking for HuggingFace downloads.
 """
 
 import logging
+import re
 import threading
 import time
-from typing import Dict, Any, Optional
 from dataclasses import dataclass
-import re
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -16,6 +16,7 @@ logger = logging.getLogger(__name__)
 @dataclass
 class DownloadProgress:
     """Represents the current download progress."""
+
     status: str = "not_started"
     progress: float = 0.0
     downloaded_mb: float = 0.0
@@ -23,14 +24,14 @@ class DownloadProgress:
     speed_mbps: float = 0.0
     eta_seconds: float = 0.0
     stage: str = "Starting download..."
-    error: Optional[str] = None
+    error: str | None = None
 
 
 class DownloadProgressTracker:
     """Tracks real download progress from HuggingFace downloads."""
 
     def __init__(self):
-        self._downloads: Dict[str, DownloadProgress] = {}
+        self._downloads: dict[str, DownloadProgress] = {}
         self._lock = threading.Lock()
         self._cleanup_thread = None
         self._running = False
@@ -39,9 +40,7 @@ class DownloadProgressTracker:
         """Start tracking download progress for a model."""
         with self._lock:
             self._downloads[model_id] = DownloadProgress(
-                status="downloading",
-                progress=0.0,
-                stage="Starting download..."
+                status="downloading", progress=0.0, stage="Starting download..."
             )
 
         # Start cleanup thread if not running
@@ -56,7 +55,7 @@ class DownloadProgressTracker:
                     if hasattr(self._downloads[model_id], key):
                         setattr(self._downloads[model_id], key, value)
 
-    def get_progress(self, model_id: str) -> Dict[str, Any]:
+    def get_progress(self, model_id: str) -> dict[str, Any]:
         """Get current download progress for a model."""
         with self._lock:
             if model_id in self._downloads:
@@ -68,7 +67,7 @@ class DownloadProgressTracker:
                     "total_mb": progress.total_mb,
                     "speed_mbps": progress.speed_mbps,
                     "eta_seconds": progress.eta_seconds,
-                    "stage": progress.stage
+                    "stage": progress.stage,
                 }
             else:
                 return {
@@ -78,7 +77,7 @@ class DownloadProgressTracker:
                     "total_mb": 0,
                     "speed_mbps": 0,
                     "eta_seconds": 0,
-                    "stage": "No download in progress"
+                    "stage": "No download in progress",
                 }
 
     def complete_download(self, model_id: str) -> None:
@@ -100,7 +99,7 @@ class DownloadProgressTracker:
     def parse_huggingface_progress(self, log_line: str, model_id: str) -> bool:
         """Parse HuggingFace download progress from log line."""
         # Pattern: "  136M/5.31G [00:59<26:37, 3.24MB/s]"
-        pattern = r'(\d+(?:\.\d+)?[KMGT]?B?)/(\d+(?:\.\d+)?[KMGT]?B?) \[.*?, (\d+(?:\.\d+)?[KMGT]?B?/s)\]'
+        pattern = r"(\d+(?:\.\d+)?[KMGT]?B?)/(\d+(?:\.\d+)?[KMGT]?B?) \[.*?, (\d+(?:\.\d+)?[KMGT]?B?/s)\]"
         match = re.search(pattern, log_line)
 
         if match:
@@ -130,7 +129,7 @@ class DownloadProgressTracker:
                 total_mb=total_mb,
                 speed_mbps=speed_mbps,
                 eta_seconds=eta_seconds,
-                stage=f"Downloading... {downloaded_str}/{total_str}"
+                stage=f"Downloading... {downloaded_str}/{total_str}",
             )
             return True
 
@@ -141,11 +140,11 @@ class DownloadProgressTracker:
         size_str = size_str.upper()
 
         # Remove 'B' suffix if present
-        if size_str.endswith('B'):
+        if size_str.endswith("B"):
             size_str = size_str[:-1]
 
         # Extract number and unit
-        match = re.match(r'(\d+(?:\.\d+)?)\s*([KMGT]?)', size_str)
+        match = re.match(r"(\d+(?:\.\d+)?)\s*([KMGT]?)", size_str)
         if not match:
             return 0.0
 
@@ -154,11 +153,11 @@ class DownloadProgressTracker:
 
         # Convert to MB
         multipliers = {
-            '': 1/1024/1024,  # Assume bytes if no unit
-            'K': 1/1024,      # KB to MB
-            'M': 1,           # Already MB
-            'G': 1024,        # GB to MB
-            'T': 1024*1024    # TB to MB
+            "": 1 / 1024 / 1024,  # Assume bytes if no unit
+            "K": 1 / 1024,  # KB to MB
+            "M": 1,  # Already MB
+            "G": 1024,  # GB to MB
+            "T": 1024 * 1024,  # TB to MB
         }
 
         return number * multipliers.get(unit, 1)
@@ -170,8 +169,7 @@ class DownloadProgressTracker:
 
         self._running = True
         self._cleanup_thread = threading.Thread(
-            target=self._cleanup_old_downloads,
-            daemon=True
+            target=self._cleanup_old_downloads, daemon=True
         )
         self._cleanup_thread.start()
 
@@ -206,12 +204,11 @@ class DownloadProgressTracker:
             if model_id in self._downloads:
                 del self._downloads[model_id]
 
-    def get_all_progress(self) -> Dict[str, Dict[str, Any]]:
+    def get_all_progress(self) -> dict[str, dict[str, Any]]:
         """Get progress for all tracked downloads."""
         with self._lock:
             return {
-                model_id: self.get_progress(model_id)
-                for model_id in self._downloads.keys()
+                model_id: self.get_progress(model_id) for model_id in self._downloads
             }
 
 
@@ -237,14 +234,14 @@ class HuggingFaceDownloadHandler(logging.Handler):
 
     def emit(self, record):
         """Process log records for download progress."""
-        if record.name.startswith('huggingface_hub'):
+        if record.name.startswith("huggingface_hub"):
             message = str(record.getMessage())
 
             # Extract model ID from log context if available
-            model_id = getattr(record, 'model_id', None)
+            model_id = getattr(record, "model_id", None)
             if not model_id:
                 # Try to extract from message
-                match = re.search(r'Repository\s+([^\s]+)', message)
+                match = re.search(r"Repository\s+([^\s]+)", message)
                 if match:
                     model_id = match.group(1)
 
@@ -259,11 +256,14 @@ def install_progress_handler():
     handler.setLevel(logging.INFO)
 
     # Add to huggingface_hub logger
-    hf_logger = logging.getLogger('huggingface_hub')
+    hf_logger = logging.getLogger("huggingface_hub")
     hf_logger.addHandler(handler)
 
     # Also add to general loggers that might contain download info
-    for logger_name in ['huggingface_hub.file_download', 'huggingface_hub.snapshot_download']:
+    for logger_name in [
+        "huggingface_hub.file_download",
+        "huggingface_hub.snapshot_download",
+    ]:
         logger = logging.getLogger(logger_name)
         logger.addHandler(handler)
 

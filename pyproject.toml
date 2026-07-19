@@ -161,7 +161,7 @@ line-length = 88
 target-version = ["py311", "py312", "py313"]
 # gui_compat/ is adapted MLX-GUI code moved in from the former top-level
 # fusion_gui/ package (#63); not yet brought to black compliance.
-extend-exclude = '/fusion_mlx/gui_compat/'
+extend-exclude = ''
 
 [tool.ruff]
 line-length = 88
@@ -169,7 +169,7 @@ line-length = 88
 # deepseek_v4, glm_moe_dsa). Not authored here; linting it creates merge churn.
 # gui_compat/ is adapted MLX-GUI code moved in from the former top-level
 # fusion_gui/ package (#63); not yet brought to ruff compliance.
-extend-exclude = ["fusion_mlx/patches", "fusion_mlx/gui_compat"]
+extend-exclude = ["fusion_mlx/patches"]
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "N", "UP", "B", "SIM"]

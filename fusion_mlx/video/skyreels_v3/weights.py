@@ -72,6 +72,19 @@ def resolve_model_path(model_path: str | Path | None, model_key: str) -> Path:
             if sha_dirs:
                 return sha_dirs[0]
 
+    # AtomCode fix #121: 兜底 ~/.fusion-mlx/models/<repo_id>/ 本地路径 (2026-07-19)
+    # 原 resolve_model_path 仅走 HF cache, 用户模型在 ~/.fusion-mlx/models/Skywork/ 下致解析失败
+    # config.py:291 self.model_dir = Path.home() / ".fusion-mlx" / "models" 已是约定本地路径
+    local_base = Path.home() / ".fusion-mlx" / "models" / repo_id
+    if local_base.exists() and any(local_base.glob("*.safetensors")):
+        logger.info("命中本地模型路径 %s (非 HF cache)", local_base)
+        return local_base
+    # 兜底子目录 (Skywork/SkyReels-V3-R2V-14B 嵌套结构)
+    for sub in [local_base, Path.home() / ".fusion-mlx" / "models" / repo_dir]:
+        if sub.exists() and any(sub.glob("*.safetensors")):
+            logger.info("命中本地模型路径 %s", sub)
+            return sub
+
     # 兜底: 返回原值, 调用方报错
     return Path(model_path) if model_path else cache_base
 

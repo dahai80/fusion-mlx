@@ -1018,8 +1018,20 @@ class EngineCore:
 
 
 class AsyncEngineCore:
-    def __init__(self, model: Any, tokenizer: Any, config: EngineConfig | None = None):
+    def __init__(
+        self,
+        model: Any,
+        tokenizer: Any,
+        config: EngineConfig | None = None,
+        *,
+        executor: Any | None = None,
+    ):
+        # AtomCode fix #113: 补 executor kwarg 对齐 test_batching_deterministic.py:113 (2026-07-19)
+        # 原签名缺 executor 致 TypeError: unexpected keyword argument 'executor'
+        # executor 透到 EngineCore._mlx_executor (Metal 流调度), None 时 EngineCore 内默自建
         self.engine = EngineCore(model, tokenizer, config)
+        if executor is not None:
+            self.engine._mlx_executor = executor
         self._start_task: asyncio.Task | None = None
 
     @property

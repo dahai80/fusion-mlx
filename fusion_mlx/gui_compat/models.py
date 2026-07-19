@@ -2,18 +2,23 @@
 SQLAlchemy models for fusion_gui database schema.
 """
 
+import json
 from datetime import datetime
 from enum import Enum
-from typing import Optional, List, Dict, Any
-import json
+from typing import Any
 
 from sqlalchemy import (
-    Column, Integer, String, Text, DateTime, Boolean, Float,
-    ForeignKey, UniqueConstraint, Index, event
+    Column,
+    DateTime,
+    Float,
+    ForeignKey,
+    Index,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
 )
-from sqlalchemy.orm import declarative_base
-from sqlalchemy.orm import relationship, Session
-from sqlalchemy.sql import func
+from sqlalchemy.orm import declarative_base, relationship
 
 Base = declarative_base()
 
@@ -62,20 +67,28 @@ class Model(Base):
     last_used_at = Column(DateTime)
     use_count = Column(Integer, default=0)
     error_message = Column(Text)
-    model_metadata = Column(Text)   # JSON string
+    model_metadata = Column(Text)  # JSON string
 
     # Relationships
-    capabilities = relationship("ModelCapability", back_populates="model", cascade="all, delete-orphan")
-    inference_sessions = relationship("InferenceSession", back_populates="model", cascade="all, delete-orphan")
-    inference_requests = relationship("InferenceRequest", back_populates="model", cascade="all, delete-orphan")
-    queue_items = relationship("RequestQueue", back_populates="model", cascade="all, delete-orphan")
+    capabilities = relationship(
+        "ModelCapability", back_populates="model", cascade="all, delete-orphan"
+    )
+    inference_sessions = relationship(
+        "InferenceSession", back_populates="model", cascade="all, delete-orphan"
+    )
+    inference_requests = relationship(
+        "InferenceRequest", back_populates="model", cascade="all, delete-orphan"
+    )
+    queue_items = relationship(
+        "RequestQueue", back_populates="model", cascade="all, delete-orphan"
+    )
 
-    def get_metadata(self) -> Dict[str, Any]:
+    def get_metadata(self) -> dict[str, Any]:
         if self.model_metadata:
             return json.loads(self.model_metadata)
         return {}
 
-    def set_metadata(self, metadata: Dict[str, Any]):
+    def set_metadata(self, metadata: dict[str, Any]):
         self.model_metadata = json.dumps(metadata)
 
     def increment_use_count(self):
@@ -96,9 +109,7 @@ class ModelCapability(Base):
     # Relationships
     model = relationship("Model", back_populates="capabilities")
 
-    __table_args__ = (
-        UniqueConstraint("model_id", "capability"),
-    )
+    __table_args__ = (UniqueConstraint("model_id", "capability"),)
 
     def __repr__(self):
         return f"<ModelCapability(model_id={self.model_id}, capability='{self.capability}')>"
@@ -131,8 +142,8 @@ class InferenceRequest(Base):
     session_id = Column(String, nullable=False)
     model_id = Column(Integer, ForeignKey("models.id"), nullable=False)
     request_type = Column(String, nullable=False)
-    input_data = Column(Text, nullable=False)   # JSON string
-    output_data = Column(Text)   # JSON string
+    input_data = Column(Text, nullable=False)  # JSON string
+    output_data = Column(Text)  # JSON string
     created_at = Column(DateTime, default=datetime.utcnow)
     completed_at = Column(DateTime)
     duration_ms = Column(Integer)
@@ -141,35 +152,43 @@ class InferenceRequest(Base):
 
     # Relationships
     model = relationship("Model", back_populates="inference_requests")
-    session = relationship("InferenceSession", foreign_keys=[session_id], primaryjoin="InferenceRequest.session_id == InferenceSession.session_id")
+    session = relationship(
+        "InferenceSession",
+        foreign_keys=[session_id],
+        primaryjoin="InferenceRequest.session_id == InferenceSession.session_id",
+    )
 
-    def get_input_data(self) -> Dict[str, Any]:
+    def get_input_data(self) -> dict[str, Any]:
         return json.loads(self.input_data)
 
-    def set_input_data(self, data: Dict[str, Any]):
+    def set_input_data(self, data: dict[str, Any]):
         self.input_data = json.dumps(data)
 
-    def get_output_data(self) -> Optional[Dict[str, Any]]:
+    def get_output_data(self) -> dict[str, Any] | None:
         if self.output_data:
             return json.loads(self.output_data)
         return None
 
-    def set_output_data(self, data: Dict[str, Any]):
+    def set_output_data(self, data: dict[str, Any]):
         self.output_data = json.dumps(data)
 
-    def mark_completed(self, output_data: Dict[str, Any]):
+    def mark_completed(self, output_data: dict[str, Any]):
         self.status = InferenceStatus.COMPLETED.value
         self.completed_at = datetime.utcnow()
         self.set_output_data(output_data)
         if self.created_at and self.completed_at:
-            self.duration_ms = int((self.completed_at - self.created_at).total_seconds() * 1000)
+            self.duration_ms = int(
+                (self.completed_at - self.created_at).total_seconds() * 1000
+            )
 
     def mark_failed(self, error_message: str):
         self.status = InferenceStatus.FAILED.value
         self.completed_at = datetime.utcnow()
         self.error_message = error_message
         if self.created_at and self.completed_at:
-            self.duration_ms = int((self.completed_at - self.created_at).total_seconds() * 1000)
+            self.duration_ms = int(
+                (self.completed_at - self.created_at).total_seconds() * 1000
+            )
 
     def __repr__(self):
         return f"<InferenceRequest(id={self.id}, session_id='{self.session_id}', status='{self.status}')>"
@@ -242,7 +261,7 @@ class RequestQueue(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     session_id = Column(String, nullable=False)
     model_id = Column(Integer, ForeignKey("models.id"), nullable=False)
-    request_data = Column(Text, nullable=False)   # JSON string
+    request_data = Column(Text, nullable=False)  # JSON string
     priority = Column(Integer, default=0)
     created_at = Column(DateTime, default=datetime.utcnow)
     started_at = Column(DateTime)
@@ -251,10 +270,10 @@ class RequestQueue(Base):
     # Relationships
     model = relationship("Model", back_populates="queue_items")
 
-    def get_request_data(self) -> Dict[str, Any]:
+    def get_request_data(self) -> dict[str, Any]:
         return json.loads(self.request_data)
 
-    def set_request_data(self, data: Dict[str, Any]):
+    def set_request_data(self, data: dict[str, Any]):
         self.request_data = json.dumps(data)
 
     def start_processing(self):
