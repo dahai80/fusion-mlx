@@ -30,6 +30,12 @@ class SkyReelsBackend(VideoBackend):
     def __init__(self, model_name: str, **kwargs: Any) -> None:
         self._model_name = model_name
         self._loaded = False
+        # AtomCode fix #130: 缓存 pipeline 实例避内存泄漏 (2026-07-19)
+        # 每次 generate() 新建 pipeline 会加载 DiT~14B+VAE+T5 三个大模型到 Metal 显存,
+        # 不释放则多次调用累积显存撑爆 M5 Max 统一内存. 缓存 pipeline 实例,
+        # stop() 时显式释放大模型引用 + gc.collect + mx.clear_cache.
+        self._pipeline: Any = None
+        self._pipeline_class: type | None = None
 
     @classmethod
     def detect(cls, model_path: str) -> bool:
@@ -46,6 +52,18 @@ class SkyReelsBackend(VideoBackend):
         if not self._loaded:
             return
         self._loaded = False
+        # AtomCode fix #130: 显式释放 pipeline 大模型引用 (2026-07-19)
+        # 不清除 DiT/VAE/T5 引用则 Metal 显存累积, 多次调用撑爆统一内存
+        if self._pipeline is not None:
+            try:
+                # 释放 pipeline 内部大模型引用
+                for attr in ("dit", "vae", "text_encoder", "clip_encoder", "m5_optimizer", "step_strategy"):
+                    if hasattr(self._pipeline, attr):
+                        setattr(self._pipeline, attr, None)
+                self._pipeline = None
+            except Exception:
+                pass
+        self._pipeline_class = None
         gc.collect()
         loop = asyncio.get_running_loop()
         await asyncio.wait_for(
@@ -54,6 +72,7 @@ class SkyReelsBackend(VideoBackend):
             ),
             timeout=5.0,
         )
+        logger.info("SkyReels backend stopped: %s", self._model_name)
 
     async def generate(self, params: VideoGenParams) -> list[bytes]:
         # Detect branch from model name
@@ -69,6 +88,33 @@ class SkyReelsBackend(VideoBackend):
             logger.warning("Unknown SkyReels branch, defaulting to R2V: %s", self._model_name)
             return await self._generate_r2v(params)
 
+    async def _get_or_create_pipeline(self, pipeline_class: type) -> Any:
+        """AtomCode fix #130: 获取或创建缓存 pipeline 实例.
+
+        复用已加载的 pipeline 避每次 generate() 重建 DiT/VAE/T5 大模型,
+        显存泄漏防护: 同一 pipeline_class 复用, 不同 class 时释放旧 pipeline.
+        """
+        if self._pipeline is not None and self._pipeline_class is pipeline_class:
+            logger.debug("Reusing cached pipeline: %s", pipeline_class.__name__)
+            return self._pipeline
+        # 不同 class 时释放旧 pipeline 再建新
+        if self._pipeline is not None:
+            logger.info("Pipeline class changed, releasing old pipeline")
+            try:
+                for attr in ("dit", "vae", "text_encoder", "clip_encoder", "m5_optimizer", "step_strategy"):
+                    if hasattr(self._pipeline, attr):
+                        setattr(self._pipeline, attr, None)
+                self._pipeline = None
+            except Exception:
+                pass
+            gc.collect()
+            mx.synchronize()
+            mx.clear_cache()
+        self._pipeline = pipeline_class(self._model_name)
+        self._pipeline_class = pipeline_class
+        logger.info("Created pipeline: %s", pipeline_class.__name__)
+        return self._pipeline
+
     async def _generate_r2v(self, params: VideoGenParams) -> list[bytes]:
         """R2V: 参考图 + Prompt -> 视频."""
         from fusion_mlx.video.skyreels_v3.pipelines import SkyReelsR2VPipeline
@@ -77,7 +123,7 @@ class SkyReelsBackend(VideoBackend):
         duration = max(1, params.num_frames // 24)  # fps=24 → duration in seconds
 
         def _gen_one() -> bytes:
-            pipeline = SkyReelsR2VPipeline(self._model_name)
+            pipeline = self._pipeline
             ref_images = [params.image] if params.image else None
             video = pipeline.generate(
                 prompt=params.prompt,
@@ -90,6 +136,7 @@ class SkyReelsBackend(VideoBackend):
                 with open(handle.path, "rb") as f:
                     return f.read()
 
+        await self._get_or_create_pipeline(SkyReelsR2VPipeline)
         loop = asyncio.get_running_loop()
         results = await asyncio.wait_for(
             loop.run_in_executor(get_executor("video"), _gen_one), timeout=600.0
@@ -104,7 +151,7 @@ class SkyReelsBackend(VideoBackend):
         duration = max(1, params.num_frames // 24)
 
         def _gen_one() -> bytes:
-            pipeline = SkyReelsV2VPipeline(self._model_name)
+            pipeline = self._pipeline
             video = pipeline.generate(
                 prompt=params.prompt,
                 input_video=params.image,  # V2V 可接受视频路径作为 image
@@ -116,6 +163,7 @@ class SkyReelsBackend(VideoBackend):
                 with open(handle.path, "rb") as f:
                     return f.read()
 
+        await self._get_or_create_pipeline(SkyReelsV2VPipeline)
         loop = asyncio.get_running_loop()
         results = await asyncio.wait_for(
             loop.run_in_executor(get_executor("video"), _gen_one), timeout=600.0
@@ -130,7 +178,7 @@ class SkyReelsBackend(VideoBackend):
         duration = max(1, params.num_frames // 24)
 
         def _gen_one() -> bytes:
-            pipeline = SkyReelsA2VPipeline(self._model_name)
+            pipeline = self._pipeline
             # A2V pipeline 需要 audio 和 ref_image 参数
             video = pipeline.generate(
                 prompt=params.prompt,
@@ -144,6 +192,7 @@ class SkyReelsBackend(VideoBackend):
                 with open(handle.path, "rb") as f:
                     return f.read()
 
+        await self._get_or_create_pipeline(SkyReelsA2VPipeline)
         loop = asyncio.get_running_loop()
         results = await asyncio.wait_for(
             loop.run_in_executor(get_executor("video"), _gen_one), timeout=600.0

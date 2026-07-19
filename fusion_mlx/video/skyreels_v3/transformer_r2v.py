@@ -184,7 +184,7 @@ class WanAttentionBlock(nn.Module):
                 f"Unknown cross_attn_type: {cross_attn_type}. "
                 f"Valid: {list(WAN_CROSSATTENTION_CLASSES)}"
             )
-        self.cross_attn = cross_cls(dim, num_heads, qk_norm, eps, context_dim=text_dim)
+        self.cross_attn = cross_cls(dim, num_heads, qk_norm, eps)
 
         # Feed-forward
         self.norm2 = WanLayerNorm(dim, eps)
