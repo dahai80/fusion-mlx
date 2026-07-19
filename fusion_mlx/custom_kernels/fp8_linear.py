@@ -110,4 +110,20 @@ class FP8Linear(nn.Module):
         return out
 
 
-__all__ = ["FP8Linear", "fp8_matmul", "quantize_fp8", "is_available"]
+__all__ = ["FP8Linear", "fp8_matmul", "quantize_fp8", "is_available", "convert_to_fp8_linear"]
+
+
+def convert_to_fp8_linear(model: nn.Module) -> nn.Module:
+    """将模型中的 nn.Linear 层转换为 FP8Linear (m5_optimizer.py 兼容入口).
+
+    Args:
+        model: 包含 nn.Linear 层的 MLX 模型
+
+    Returns:
+        转换后的模型
+    """
+    for name, module in list(model.__dict__.items()):
+        if isinstance(module, nn.Linear):
+            setattr(model, name, FP8Linear.from_linear(module))
+            logger.info("convert_to_fp8_linear: %s 已转换", name)
+    return model

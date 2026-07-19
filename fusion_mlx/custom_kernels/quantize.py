@@ -76,4 +76,24 @@ def get_quantize_config(weight_bits: int = 4, kv_bits: int = 4) -> dict[str, Any
     }
 
 
-__all__ = ["quantize_linear", "get_quantize_config"]
+__all__ = ["quantize_linear", "get_quantize_config", "quantize_model"]
+
+
+def quantize_model(model: nn.Module, bits: int = 4, group_size: int = 32) -> nn.Module:
+    """将模型量化为指定位数 (m5_optimizer.py 兼容入口).
+
+    Args:
+        model: MLX 模型
+        bits: 4=NF4, 8=FP8, 16=bf16
+        group_size: NF4 分组大小 (默认 32)
+
+    Returns:
+        量化后的模型
+    """
+    for name, module in list(model.__dict__.items()):
+        if isinstance(module, nn.Linear):
+            q = quantize_linear(module, bits=bits, group_size=group_size)
+            if q is not module:
+                setattr(model, name, q)
+                logger.info("quantize_model: %s %d-bit 量化完成", name, bits)
+    return model
