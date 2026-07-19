@@ -1531,3 +1531,19 @@ def normalize_responses_content_part(item) -> dict:
     if item_type == "input_audio":
         raise ValueError("Responses input_audio content blocks are not supported")
     raise ValueError(f"Unsupported Responses content block type: {item_type!r}")
+
+
+def resolve_enable_thinking_default(ct_kwargs: dict) -> dict:
+    """AtomCode 专题优化: enable_thinking 默认禁思考收敛单点 (2026-07-19).
+
+    Qwen3.6 思考模式默认 enable_thinking=True 致 max_tokens 全耗在 reasoning 阶段,
+    content=None + finish_reason=length. 默认禁思考兜底, 用户显式传 True 时覆盖.
+
+    Args:
+        ct_kwargs: chat_template_kwargs 字典 (openai_routes/anthropic_routes 共用)
+
+    Returns:
+        dict: 补 enable_thinking=False 后的 ct_kwargs (setdefault 不覆显式值)
+    """
+    ct_kwargs.setdefault("enable_thinking", False)
+    return ct_kwargs

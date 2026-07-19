@@ -119,6 +119,12 @@ class OpenAIAdapter(BaseAdapter):
         thinking_content, regular_content = extract_thinking(raw_text)
         content = regular_content.strip() if regular_content else None
 
+        # AtomCode 专题优化: tool_calls 场景清空 content 避双份数据冲突 (2026-07-19)
+        # 原 content 含原始 <function=Bash> 模板文本, 与 tool_calls 双份数据致 claude /init 解析冲突停止
+        # tool_calls 场景 content 清空 (OpenAI 规范: tool_calls 时 content 可 null)
+        if response.tool_calls:
+            content = None
+
         # Determine finish reason
         finish_reason = "tool_calls" if response.tool_calls else response.finish_reason
 

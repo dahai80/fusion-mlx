@@ -226,8 +226,9 @@ async def _run_anthropic_messages(
 
     try:
         ct_kwargs = dict(getattr(req, "chat_template_kwargs", {}) or {})
-        if getattr(req, "tools", None) and "enable_thinking" not in ct_kwargs:
-            ct_kwargs["enable_thinking"] = False
+        # AtomCode 专题优化: enable_thinking 默认禁思考收敛单点 (2026-07-19)
+        from .utils import resolve_enable_thinking_default
+        resolve_enable_thinking_default(ct_kwargs)
         gen = await engine.chat(
             messages=messages,
             max_tokens=sampling.max_tokens,
@@ -367,8 +368,9 @@ async def _stream_anthropic_generator(
         )
 
         ct_kwargs_stream = dict(getattr(req, "chat_template_kwargs", {}) or {})
-        if getattr(req, "tools", None) and "enable_thinking" not in ct_kwargs_stream:
-            ct_kwargs_stream["enable_thinking"] = False
+        # AtomCode 专题优化: enable_thinking 默认禁思考收敛单点 (流式路径, 2026-07-19)
+        from .utils import resolve_enable_thinking_default
+        resolve_enable_thinking_default(ct_kwargs_stream)
         async for gen in engine.stream_chat(
             messages=messages,
             max_tokens=sampling.max_tokens,

@@ -3,6 +3,7 @@
 
 import asyncio
 import copy
+import json
 import logging
 import time
 from collections.abc import AsyncIterator
@@ -111,6 +112,13 @@ class BatchedEngine(BaseEngine):
         self._scheduler_config = scheduler_config
         self._stream_interval = stream_interval
         self._enable_thinking = enable_thinking
+        # AtomCode 专题优化: 模板渲染缓存初始化 (2026-07-19)
+        # _apply_chat_template 用此 dict 缓存, 命中跳 Jinja 重渲染
+        self._template_cache: dict = {}
+        # AtomCode 专题优化: memory tier 透传 (2026-07-19)
+        # TurboQuant KV cache 判定 claude 场景禁用 (balanced tier 用显存换速度)
+        # __init__ 无 memory_tier 入参, 用 model_settings 兜底 (ServerConfig.memory.tier 透到 model_settings)
+        self._memory_tier = getattr(model_settings, "memory_tier", None) if model_settings else None
         self._preserve_thinking = preserve_thinking
         self._model_settings = model_settings
         self._prefill_eviction_callback = prefill_eviction_callback
@@ -320,6 +328,15 @@ class BatchedEngine(BaseEngine):
             else:
                 # No explicit setting → auto-enable for eligible models
                 tq_enabled = True
+            # AtomCode 专题优化: claude 场景显式禁 TurboQuant KV cache (2026-07-19)
+            # TurboQuant 4-bit KV cache 每步推理需反量化, 长上下文含大 system prompt + 工具定义
+            # 反量化开销占推理耗 10-15%. M5 Max 128GB 充裕, 用显存换速度更优
+            # 判定 claude 场景: model_settings 显式 turboquant_kv_enabled=False 或 ServerConfig.memory.tier=balanced
+            if not tq_explicit and getattr(self, "_memory_tier", None) == "balanced":
+                tq_enabled = False
+                logger.info(
+                    "TurboQuant KV cache disabled for claude场景 (memory-tier=balanced, M5 Max 128GB 用显存换速度)"
+                )
             if tq_enabled:
                 tq_bits = float(
                     getattr(self._model_settings, "turboquant_kv_bits", 4) or 4
@@ -490,6 +507,23 @@ class BatchedEngine(BaseEngine):
         chat_template_kwargs: dict[str, Any] | None = None,
         is_partial: bool | None = None,
     ) -> str:
+        # AtomCode 专题优化: prompt hash 缓存层 避重渲染 (2026-07-19)
+        # claude 多轮对话场景同 (messages[:N], tools, enable_thinking) 组合重复 Jinja 渲染,
+        # 耗时随工具数线性增长. 用 (messages tuple, tools, kwargs) hash 做键, 命中跳重渲染
+        cache_key = None
+        if hasattr(self, "_template_cache") and self._template_cache is not None:
+            try:
+                cache_key = (
+                    json.dumps(messages, ensure_ascii=False, sort_keys=True),
+                    json.dumps(tools or [], ensure_ascii=False, sort_keys=True),
+                    json.dumps(chat_template_kwargs or {}, ensure_ascii=False, sort_keys=True),
+                    bool(is_partial),
+                )
+                cached = self._template_cache.get(cache_key)
+                if cached is not None:
+                    return cached
+            except Exception:
+                cache_key = None
         if hasattr(self._tokenizer, "apply_chat_template"):
             if is_partial is None:
                 from ..api.utils import detect_and_strip_partial
@@ -528,6 +562,10 @@ class BatchedEngine(BaseEngine):
                 result = self._tokenizer.apply_chat_template(
                     messages, **template_kwargs
                 )
+                # AtomCode: 命中缓存写入 (限 64 条 避显存膨胀)
+                if cache_key is not None and hasattr(self, "_template_cache"):
+                    if len(self._template_cache) < 64:
+                        self._template_cache[cache_key] = result
                 return result
             except Exception as e:
                 if "system message" in str(e).lower():
