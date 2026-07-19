@@ -1,18 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""多级量化方案统一入口 (NF4/FP8/bf16).
-
-对接 fusion_mlx.custom_kernels.fp8_linear (FP8 算子) +
-mlx-lm 原生 NF4 量化 (mlx-community/NF4 权重布局).
-
-量化层级:
-  - weight_bits=4: NF4 权重 (mlx-lm 原生 QuantizedLinear, 19B 常驻 14GB)
-  - weight_bits=8: FP8 权重 (fp8_linear.FP8Linear, M5 Neural Accelerator)
-  - weight_bits=16: bf16 (无量化, 精度最高)
-
-KV Cache 量化:
-  - kv_bits=4: TurboQuant 4-bit (mlx-lm 原生, 长上下文显存省 8×)
-  - kv_bits=8: FP8 KV (兼容兜底)
-"""
+"""多级量化方案统一入口 (NF4/FP8/bf16)."""
 from __future__ import annotations
 
 import logging
@@ -25,16 +12,6 @@ logger = logging.getLogger(__name__)
 
 
 def quantize_linear(layer: nn.Linear, bits: int = 4, group_size: int = 32) -> nn.Module:
-    """将 nn.Linear 量化为指定位数.
-
-    Args:
-        layer: nn.Linear 待量化层
-        bits: 4=NF4, 8=FP8, 16=bf16 (不量化)
-        group_size: NF4 分组大小 (默认 32, mlx-community 约定)
-
-    Returns:
-        量化后模块 (QuantizedLinear 或 FP8Linear 或原 Linear)
-    """
     if bits == 16:
         return layer
     if bits == 8:
@@ -44,7 +21,6 @@ def quantize_linear(layer: nn.Linear, bits: int = 4, group_size: int = 32) -> nn
         logger.warning("FP8 硬件不可用, 降级 bf16 (weight_bits=8 → 16)")
         return layer
     if bits == 4:
-        # NF4 走 mlx-lm 原生 QuantizedLinear (mlx-community 权重布局)
         try:
             from mlx_lm.tuner.quant import quantize
             q_layer = quantize(layer, bits=4, group_size=group_size)
@@ -58,57 +34,31 @@ def quantize_linear(layer: nn.Linear, bits: int = 4, group_size: int = 32) -> nn
 
 
 def get_quantize_config(weight_bits: int = 4, kv_bits: int = 4) -> dict[str, Any]:
-    """获取量化配置字典 (透传到 SkyReels DiT 加载器).
-
-    Args:
-        weight_bits: 权重位数 (4/8/16)
-        kv_bits: KV Cache 位数 (4/8/16)
-
-    Returns:
-        dict: {weight_bits, kv_bits, group_size, fp8_available}
-    """
     from .fp8_linear import is_available as _fp8_ok
     return {
         "weight_bits": weight_bits,
         "kv_bits": kv_bits,
-        "group_size": 32,  # mlx-community NF4 约定
+        "group_size": 32,
         "fp8_available": _fp8_ok(),
     }
-
-
-__all__ = ["quantize_linear", "get_quantize_config", "quantize_model"]
 
 
 def quantize_model(model: nn.Module, bits: int = 4, group_size: int = 32) -> nn.Module:
     """将模型量化为指定位数 (m5_optimizer.py 兼容入口).
 
-    AtomCode fix #131: 递归遍历所有子模块, 非仅顶层属性 (2026-07-19).
-    原 only 遍历 model.__dict__ 致 blocks[0].cross_attn.k_img 等嵌套层漏量化.
-    用 mlx.nn.Module.apply_to_modules 真递归 API (mlx 0.32 无 ModuleList).
-
-    Args:
-        model: MLX 模型
-        bits: 4=NF4, 8=FP8, 16=bf16
-        group_size: NF4 分组大小 (默认 32)
-
-    Returns:
-        量化后的模型 (原地修改)
+    AtomCode fix #131 #132: 递归遍历所有子模块含 list 内嵌套 (2026-07-19).
+    用 fp8_linear._iter_submodules 遍历含 list 属性的嵌套子模块.
     """
-    def _quantize(name, module):
-        if isinstance(module, nn.Linear):
-            q = quantize_linear(module, bits=bits, group_size=group_size)
-            if q is not module:
-                parent = model
-                path = name.split(".")
-                for p in path[:-1]:
-                    parent = parent._modules.get(p) if hasattr(parent, "_modules") else getattr(parent, p, None)
-                    if parent is None:
-                        return
-                leaf = path[-1]
-                if hasattr(parent, "_modules"):
-                    parent._modules[leaf] = q
-                else:
-                    setattr(parent, leaf, q)
-                logger.info("quantize_model: %s %d-bit 量化完成", name, bits)
-    model.apply_to_modules(_quantize)
+    from .fp8_linear import _iter_submodules
+    for parent, key, name, module, container_kind in _iter_submodules(model):
+        q = quantize_linear(module, bits=bits, group_size=group_size)
+        if q is not module:
+            if container_kind == "list":
+                parent[int(key)] = q
+            else:
+                setattr(parent, key, q)
+            logger.info("quantize_model: %s %d-bit 量化完成", name, bits)
     return model
+
+
+__all__ = ["quantize_linear", "get_quantize_config", "quantize_model"]
