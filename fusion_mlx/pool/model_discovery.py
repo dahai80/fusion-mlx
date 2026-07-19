@@ -975,7 +975,7 @@ def _is_video_model(path: Path) -> bool:
         # /v1/videos/generate 返回 404 "not loaded"
         # 视频模型目录名通常含 wan/ti2v/i2v/t2v/ltx-video 等关键词
         name_lower = path.name.lower()
-        if any(kw in name_lower for kw in ("wan", "ti2v", "i2v", "t2v", "ltx-video", "ltx_video", "cogvideo")):
+        if any(kw in name_lower for kw in ("wan", "ti2v", "i2v", "t2v", "ltx-video", "ltx_video", "cogvideo", "cog_video", "skyreels")):
             return True
         return False
     config_path = path / "config.json"
