@@ -143,6 +143,11 @@ VIDEO_CONFIG_MODEL_TYPES = {
     "t2v",
     "i2v",
     "ti2v",
+    # SkyReels-V3 分支类型 (fix #128): config.json 中 model_type 为 r2v_14b/a2v_19b/v2v_14b
+    # 不在 VIDEO_CONFIG_MODEL_TYPES 中致 _is_video_model 返回 False 误判为 LLM
+    "r2v_14b",
+    "a2v_19b",
+    "v2v_14b",
 }
 
 # Known embedding architectures
