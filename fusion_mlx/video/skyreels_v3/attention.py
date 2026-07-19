@@ -338,6 +338,7 @@ class WanT2VCrossAttention(nn.Module):
         num_heads: int,
         qk_norm: bool = True,
         eps: float = 1e-6,
+        context_dim: int | None = None,
     ):
         super().__init__()
         assert dim % num_heads == 0
@@ -345,9 +346,14 @@ class WanT2VCrossAttention(nn.Module):
         self.head_dim = dim // num_heads
         self.scale = self.head_dim ** -0.5
 
+        # AtomCode fix #125: context_dim 参数用于 k/v 投影输入维度
+        # SkyReels-V3 text_embedding 将文本编码器输出从 text_dim=4096 投影到 dim=5120,
+        # 但 k/v 投影的 nn.Linear 需要与 context 张量维度匹配.
+        # context_dim 默认为 dim, 兼容旧调用.
+        ctx_dim = context_dim if context_dim is not None else dim
         self.q = nn.Linear(dim, dim)
-        self.k = nn.Linear(dim, dim)
-        self.v = nn.Linear(dim, dim)
+        self.k = nn.Linear(ctx_dim, dim)
+        self.v = nn.Linear(ctx_dim, dim)
         self.o = nn.Linear(dim, dim)
 
         self.norm_q = WanRMSNorm(dim, eps=eps) if qk_norm else None
@@ -438,10 +444,12 @@ class WanI2VCrossAttention(WanT2VCrossAttention):
         num_heads: int,
         qk_norm: bool = True,
         eps: float = 1e-6,
+        context_dim: int | None = None,
     ):
-        super().__init__(dim, num_heads, qk_norm, eps)
-        self.k_img = nn.Linear(dim, dim)
-        self.v_img = nn.Linear(dim, dim)
+        super().__init__(dim, num_heads, qk_norm, eps, context_dim=context_dim)
+        ctx_dim = context_dim if context_dim is not None else dim
+        self.k_img = nn.Linear(ctx_dim, dim)
+        self.v_img = nn.Linear(ctx_dim, dim)
         self.norm_k_img = WanRMSNorm(dim, eps=eps) if qk_norm else None
 
     def __call__(

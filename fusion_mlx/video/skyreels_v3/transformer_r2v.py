@@ -143,6 +143,7 @@ class WanAttentionBlock(nn.Module):
         num_kv_heads: int | None = None,
         has_temporal: bool = False,
         temporal_window: int = -1,
+        text_dim: int | None = None,  # AtomCode fix #125: k/v 投影输入维度
     ):
         super().__init__()
         self.dim = dim
@@ -154,6 +155,7 @@ class WanAttentionBlock(nn.Module):
         self.cross_attn_norm = cross_attn_norm
         self.eps = eps
         self.has_temporal = has_temporal
+        self.text_dim = text_dim
 
         # Self-attention (空间分支)
         self.norm1 = WanLayerNorm(dim, eps)
@@ -170,7 +172,7 @@ class WanAttentionBlock(nn.Module):
             )
             self.norm_temporal = WanLayerNorm(dim, eps)
 
-        # Cross-attention (文本/参考图引导)
+        # Cross-attention (文本/参考图引导) - AtomCode fix #125: 传 text_dim 作为 context_dim
         self.norm3 = (
             WanLayerNorm(dim, eps, elementwise_affine=True)
             if cross_attn_norm
@@ -182,7 +184,7 @@ class WanAttentionBlock(nn.Module):
                 f"Unknown cross_attn_type: {cross_attn_type}. "
                 f"Valid: {list(WAN_CROSSATTENTION_CLASSES)}"
             )
-        self.cross_attn = cross_cls(dim, num_heads, qk_norm, eps)
+        self.cross_attn = cross_cls(dim, num_heads, qk_norm, eps, context_dim=text_dim)
 
         # Feed-forward
         self.norm2 = WanLayerNorm(dim, eps)
@@ -349,6 +351,7 @@ class SkyReelsR2VDiT(nn.Module):
                 cross_attn_type=self.cross_attn_type,
                 num_kv_heads=self.num_kv_heads,
                 has_temporal=False,  # R2V 不用时序分支
+                text_dim=self.text_dim,  # AtomCode fix #125: 传 text_dim 给 cross-attn k/v 投影
             )
             for _ in range(self.num_layers)
         ]
