@@ -82,18 +82,33 @@ __all__ = ["quantize_linear", "get_quantize_config", "quantize_model"]
 def quantize_model(model: nn.Module, bits: int = 4, group_size: int = 32) -> nn.Module:
     """将模型量化为指定位数 (m5_optimizer.py 兼容入口).
 
+    AtomCode fix #131: 递归遍历所有子模块, 非仅顶层属性 (2026-07-19).
+    原 only 遍历 model.__dict__ 致 blocks[0].cross_attn.k_img 等嵌套层漏量化.
+    用 mlx.nn.Module.apply_to_modules 真递归 API (mlx 0.32 无 ModuleList).
+
     Args:
         model: MLX 模型
         bits: 4=NF4, 8=FP8, 16=bf16
         group_size: NF4 分组大小 (默认 32)
 
     Returns:
-        量化后的模型
+        量化后的模型 (原地修改)
     """
-    for name, module in list(model.__dict__.items()):
+    def _quantize(name, module):
         if isinstance(module, nn.Linear):
             q = quantize_linear(module, bits=bits, group_size=group_size)
             if q is not module:
-                setattr(model, name, q)
+                parent = model
+                path = name.split(".")
+                for p in path[:-1]:
+                    parent = parent._modules.get(p) if hasattr(parent, "_modules") else getattr(parent, p, None)
+                    if parent is None:
+                        return
+                leaf = path[-1]
+                if hasattr(parent, "_modules"):
+                    parent._modules[leaf] = q
+                else:
+                    setattr(parent, leaf, q)
                 logger.info("quantize_model: %s %d-bit 量化完成", name, bits)
+    model.apply_to_modules(_quantize)
     return model

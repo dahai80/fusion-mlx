@@ -116,14 +116,30 @@ __all__ = ["FP8Linear", "fp8_matmul", "quantize_fp8", "is_available", "convert_t
 def convert_to_fp8_linear(model: nn.Module) -> nn.Module:
     """将模型中的 nn.Linear 层转换为 FP8Linear (m5_optimizer.py 兼容入口).
 
+    AtomCode fix #131: 递归遍历所有子模块, 非仅顶层属性 (2026-07-19).
+    原 only 遍历 model.__dict__ 致 blocks[0].cross_attn.k_img 等嵌套层漏转.
+    用 mlx.nn.Module.apply_to_modules 真递归 API (mlx 0.32 无 ModuleList).
+
     Args:
         model: 包含 nn.Linear 层的 MLX 模型
 
     Returns:
-        转换后的模型
+        转换后的模型 (原地修改)
     """
-    for name, module in list(model.__dict__.items()):
+    def _convert(name, module):
         if isinstance(module, nn.Linear):
-            setattr(model, name, FP8Linear.from_linear(module))
+            # 找父模块路径并替换 (用 mlx.nn.Module._modules 字典)
+            parent = model
+            path = name.split(".")
+            for p in path[:-1]:
+                parent = parent._modules.get(p) if hasattr(parent, "_modules") else getattr(parent, p, None)
+                if parent is None:
+                    return
+            leaf = path[-1]
+            if hasattr(parent, "_modules"):
+                parent._modules[leaf] = FP8Linear.from_linear(module)
+            else:
+                setattr(parent, leaf, FP8Linear.from_linear(module))
             logger.info("convert_to_fp8_linear: %s 已转换", name)
+    model.apply_to_modules(_convert)
     return model
