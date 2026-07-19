@@ -969,6 +969,14 @@ def _is_video_model(path: Path) -> bool:
     # diffusers subdirs are present. Without this a ti2v model is misdetected
     # as an LLM and mlx-lm raises "Model type ti2v not supported" on load.
     if not has_diffusers_subdirs:
+        # AtomCode fix #122: 模型名兜底检测 WAN 视频模型 (2026-07-19)
+        # 当模型目录结构不完整时（如 symlink 目标不存在），通过目录名中的
+        # 已知视频模型关键词兜底识别, 避免模型被误判为 LLM 类型致
+        # /v1/videos/generate 返回 404 "not loaded"
+        # 视频模型目录名通常含 wan/ti2v/i2v/t2v/ltx-video 等关键词
+        name_lower = path.name.lower()
+        if any(kw in name_lower for kw in ("wan", "ti2v", "i2v", "t2v", "ltx-video", "ltx_video", "cogvideo")):
+            return True
         return False
     config_path = path / "config.json"
     if not config_path.exists():
