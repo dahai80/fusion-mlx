@@ -214,6 +214,7 @@ async def _run_chat(request: ChatCompletionRequest) -> ChatCompletionResponse:
         ct_kwargs = dict(getattr(request, "chat_template_kwargs", {}) or {})
         # AtomCode 专题优化: enable_thinking 默认禁思考收敛单点 (2026-07-19)
         from .utils import resolve_enable_thinking_default
+
         resolve_enable_thinking_default(ct_kwargs)
         gen = await engine.chat(
             messages=messages,
@@ -340,6 +341,7 @@ async def _stream_chat_generator(
         ct_kwargs_stream = dict(getattr(request, "chat_template_kwargs", {}) or {})
         # AtomCode 专题优化: enable_thinking 默认禁思考收敛单点 (流式路径, 2026-07-19)
         from .utils import resolve_enable_thinking_default
+
         resolve_enable_thinking_default(ct_kwargs_stream)
         async for gen in engine.stream_chat(
             messages=messages,

@@ -19,9 +19,9 @@ Flow-Matching 核心公式 (flow_prediction):
 from __future__ import annotations
 
 import logging
-import math
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any, Callable
+from typing import Any
 
 import mlx.core as mx
 import numpy as np
@@ -155,7 +155,9 @@ class FlowUniPCMultistepScheduler:
 
         logger.debug(
             "FlowUniPC set_timesteps: steps=%d solver_order=%d shift=%s",
-            num_inference_steps, cfg.solver_order, cfg.shift,
+            num_inference_steps,
+            cfg.solver_order,
+            cfg.shift,
         )
 
     # ------------------------------------------------------------------
@@ -193,7 +195,11 @@ class FlowUniPCMultistepScheduler:
 
         # 获取当前和下一个 sigma
         sigma_t = float(self.sigmas[step_index])
-        sigma_t_next = float(self.sigmas[step_index + 1]) if step_index + 1 < len(self.sigmas) else 0.0
+        sigma_t_next = (
+            float(self.sigmas[step_index + 1])
+            if step_index + 1 < len(self.sigmas)
+            else 0.0
+        )
 
         # UniPC: 更新 model_outputs 缓存
         self._model_outputs.append(model_output)
@@ -206,7 +212,11 @@ class FlowUniPCMultistepScheduler:
 
         # 核心 UniPC 更新
         prev_sample = self._unipc_update(
-            sample, model_output, sigma_t, sigma_t_next, step_index,
+            sample,
+            model_output,
+            sigma_t,
+            sigma_t_next,
+            step_index,
         )
 
         if return_dict:

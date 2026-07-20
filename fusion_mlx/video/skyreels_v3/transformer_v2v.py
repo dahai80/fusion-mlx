@@ -16,34 +16,27 @@ V2V 续写场景:
 from __future__ import annotations
 
 import logging
-import math
-from typing import Any
 
 import mlx.core as mx
 import mlx.nn as nn
 
 from . import _device
 from .attention import (
+    WAN_CROSSATTENTION_CLASSES,
     WanSelfAttention,
     WanTemporalAttention,
-    WanT2VCrossAttention,
-    WanI2VCrossAttention,
-    WAN_CROSSATTENTION_CLASSES,
-    _linear_dtype,
 )
 from .common import (
-    WanLayerNorm,
-    WanRMSNorm,
     GELUApprox,
-    sinusoidal_embedding_1d,
-    rope_params,
-    rope_apply,
     PatchEmbed3D,
+    WanLayerNorm,
+    maybe_compile,
     mul_add,
     mul_add_add,
-    maybe_compile,
+    rope_params,
+    sinusoidal_embedding_1d,
 )
-from .transformer_r2v import WanAttentionBlock, WanFFN, Head
+from .transformer_r2v import Head, WanFFN
 
 logger = logging.getLogger(__name__)
 
@@ -93,22 +86,27 @@ class V2VAttentionBlock(nn.Module):
         # Self-attention (空间分支)
         self.norm1 = WanLayerNorm(dim, eps)
         self.self_attn = WanSelfAttention(
-            dim, num_heads, window_size, qk_norm, eps,
+            dim,
+            num_heads,
+            window_size,
+            qk_norm,
+            eps,
             num_kv_heads=num_kv_heads,
         )
 
         # Temporal attention (时序分支, SW-FA)
         self.temporal_attn = WanTemporalAttention(
-            dim, num_heads, window_size=temporal_window,
-            qk_norm=qk_norm, eps=eps,
+            dim,
+            num_heads,
+            window_size=temporal_window,
+            qk_norm=qk_norm,
+            eps=eps,
         )
         self.norm_temporal = WanLayerNorm(dim, eps)
 
         # Cross-attention (文本引导)
         self.norm3 = (
-            WanLayerNorm(dim, eps, elementwise_affine=True)
-            if cross_attn_norm
-            else None
+            WanLayerNorm(dim, eps, elementwise_affine=True) if cross_attn_norm else None
         )
         cross_cls = WAN_CROSSATTENTION_CLASSES.get(cross_attn_type)
         if cross_cls is None:
@@ -123,9 +121,9 @@ class V2VAttentionBlock(nn.Module):
         self.ffn = WanFFN(dim, ffn_dim)
 
         # Learned modulation: 6 vectors for scale/shift/gate (kept in float32)
-        self.modulation = (
-            mx.random.normal((1, 6, dim)) * (dim ** -0.5)
-        ).astype(mx.float32)
+        self.modulation = (mx.random.normal((1, 6, dim)) * (dim**-0.5)).astype(
+            mx.float32
+        )
 
     def __call__(
         self,
@@ -157,16 +155,24 @@ class V2VAttentionBlock(nn.Module):
         e_6 = e.reshape(b_e, 6, -1).astype(mx.float32)  # [B, 6, dim]
         mod = self.modulation + e_6  # float32
         e0, e1, e2, e3, e4, e5 = (
-            mod[:, 0, :], mod[:, 1, :], mod[:, 2, :],
-            mod[:, 3, :], mod[:, 4, :], mod[:, 5, :],
+            mod[:, 0, :],
+            mod[:, 1, :],
+            mod[:, 2, :],
+            mod[:, 3, :],
+            mod[:, 4, :],
+            mod[:, 5, :],
         )
 
         # ---- 1. Self-Attention (空间) ----
         x_norm = self.norm1(x)
         x_mod = mul_add_add(x_norm, e1, e0)
         y = self.self_attn(
-            x_mod, seq_lens, grid_sizes, freqs,
-            rope_cos_sin=rope_cos_sin, attn_mask=attn_mask,
+            x_mod,
+            seq_lens,
+            grid_sizes,
+            freqs,
+            rope_cos_sin=rope_cos_sin,
+            attn_mask=attn_mask,
         )
         x = mul_add(x, y, e2)
 
@@ -174,7 +180,8 @@ class V2VAttentionBlock(nn.Module):
         if temporal_len is not None:
             x_t = self.norm_temporal(x)
             y_t = self.temporal_attn(
-                x_t, temporal_len,
+                x_t,
+                temporal_len,
                 rope_cos_sin=rope_cos_sin,
             )
             x = x + y_t
@@ -182,7 +189,10 @@ class V2VAttentionBlock(nn.Module):
         # ---- 3. Cross-Attention (文本引导) ----
         x_cross = self.norm3(x) if self.norm3 is not None else x
         y_c = self.cross_attn(
-            x_cross, context, context_lens, kv_cache=cross_kv_cache,
+            x_cross,
+            context,
+            context_lens,
+            kv_cache=cross_kv_cache,
         )
         x = x + y_c
 
@@ -235,7 +245,9 @@ class SkyReelsV2VDiT(nn.Module):
 
         # Patch embedding
         self.patch_embedding = PatchEmbed3D(
-            self.in_dim, self.dim, self.patch_size,
+            self.in_dim,
+            self.dim,
+            self.patch_size,
         )
 
         # Text embedding
@@ -252,7 +264,8 @@ class SkyReelsV2VDiT(nn.Module):
             nn.Linear(self.dim, self.dim),
         )
         self.time_projection = nn.Sequential(
-            nn.SiLU(), nn.Linear(self.dim, self.dim * 6),
+            nn.SiLU(),
+            nn.Linear(self.dim, self.dim * 6),
         )
 
         # RoPE 频率表
@@ -313,15 +326,45 @@ class SkyReelsV2VDiT(nn.Module):
         """
         # lazy compile: 首步用原始路径, 触发后切 mx.compile 融合循环
         if self._compiled_call is None:
-            out = self._call_raw(x, t, context, seq_lens, grid_sizes, context_lens, rope_cos_sin, attn_mask, temporal_len)
+            out = self._call_raw(
+                x,
+                t,
+                context,
+                seq_lens,
+                grid_sizes,
+                context_lens,
+                rope_cos_sin,
+                attn_mask,
+                temporal_len,
+            )
             try:
                 self._compiled_call = mx.compile(self._call_raw)
             except Exception:
                 self._compiled_call = False
             return out
         if self._compiled_call is False:
-            return self._call_raw(x, t, context, seq_lens, grid_sizes, context_lens, rope_cos_sin, attn_mask, temporal_len)
-        return self._compiled_call(x, t, context, seq_lens, grid_sizes, context_lens, rope_cos_sin, attn_mask, temporal_len)
+            return self._call_raw(
+                x,
+                t,
+                context,
+                seq_lens,
+                grid_sizes,
+                context_lens,
+                rope_cos_sin,
+                attn_mask,
+                temporal_len,
+            )
+        return self._compiled_call(
+            x,
+            t,
+            context,
+            seq_lens,
+            grid_sizes,
+            context_lens,
+            rope_cos_sin,
+            attn_mask,
+            temporal_len,
+        )
 
     def _call_raw(
         self,
@@ -350,9 +393,15 @@ class SkyReelsV2VDiT(nn.Module):
         # 4. V2V DiT Blocks (启用时序分支, context_window_size 复用前置帧)
         for block in self.blocks:
             x = block(
-                x, e, seq_lens, grid_sizes, self.freqs,
-                context, context_lens,
-                rope_cos_sin=rope_cos_sin, attn_mask=attn_mask,
+                x,
+                e,
+                seq_lens,
+                grid_sizes,
+                self.freqs,
+                context,
+                context_lens,
+                rope_cos_sin=rope_cos_sin,
+                attn_mask=attn_mask,
                 temporal_len=temporal_len,
                 context_window_size=self.context_window_size,
             )
@@ -368,12 +417,12 @@ class SkyReelsV2VDiT(nn.Module):
         pt, ph, pw = self.patch_size
         outputs = []
         for i, (f, h, w) in enumerate(grid_sizes):
-            h_p, w_p = h // ph, w // pw
-            seq_len = f * h_p * w_p
+            # grid_sizes (f, h, w) 为 patch 后 token 网格 (对齐 wan2 unpatchify)
+            seq_len = f * h * w
             x_i = x[i, :seq_len]
-            x_i = x_i.reshape(f, h_p, w_p, pt, ph, pw, self.out_dim)
+            x_i = x_i.reshape(f, h, w, pt, ph, pw, self.out_dim)
             x_i = x_i.transpose(6, 0, 3, 1, 4, 2, 5)
-            x_i = x_i.reshape(self.out_dim, f * pt, h_p * ph, w_p * pw)
+            x_i = x_i.reshape(self.out_dim, f * pt, h * ph, w * pw)
             outputs.append(x_i)
         return mx.stack(outputs, axis=0)
 

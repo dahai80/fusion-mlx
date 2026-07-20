@@ -675,22 +675,34 @@ def parse_tool_calls(
         # 失败时降级到自研三轮正则 fallback 保兼容
         try:
             from mlx_lm.tool_parsers.qwen3_coder import parse_tool_call as _mfa_parse
+
             mfa_result = _mfa_parse(cleaned_text, tools=None)
             if mfa_result is not None:
                 # 兼容 mlx-lm 多版本返回格式 (tuple/dict/object)
                 if isinstance(mfa_result, tuple):
                     fn_name, fn_args = mfa_result[0], mfa_result[1]
                 elif hasattr(mfa_result, "name"):
-                    fn_name, fn_args = mfa_result.name, getattr(mfa_result, "arguments", "{}")
+                    fn_name, fn_args = mfa_result.name, getattr(
+                        mfa_result, "arguments", "{}"
+                    )
                 else:
                     fn_name, fn_args = None, "{}"
                 stripped = re.sub(r"␝.*?␞", "", cleaned_text, flags=re.DOTALL).strip()
-                from .openai_models import ToolCall
-                tc = [ToolCall(
-                    id=f"call_{_gen_id()}",
-                    type="function",
-                    function={"name": fn_name, "arguments": fn_args if isinstance(fn_args, str) else json.dumps(fn_args)},
-                )]
+
+                tc = [
+                    ToolCall(
+                        id=f"call_{uuid.uuid4().hex[:8]}",
+                        type="function",
+                        function={
+                            "name": fn_name,
+                            "arguments": (
+                                fn_args
+                                if isinstance(fn_args, str)
+                                else json.dumps(fn_args)
+                            ),
+                        },
+                    )
+                ]
                 return stripped, tc
         except Exception as e:
             logger.debug(f"mlx-lm qwen3_coder 解析失败, 降级自研正则: {e}")

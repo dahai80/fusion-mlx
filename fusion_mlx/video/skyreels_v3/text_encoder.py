@@ -19,11 +19,9 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
 
 import mlx.core as mx
 import mlx.nn as nn
-import numpy as np
 
 logger = logging.getLogger(__name__)
 
@@ -34,6 +32,7 @@ logger = logging.getLogger(__name__)
 @dataclass
 class UMT5Config:
     """UMT5-XXL 配置, 对齐 transformers.UMT5EncoderModel 默认值."""
+
     d_model: int = 4096
     num_layers: int = 24
     num_heads: int = 64
@@ -51,7 +50,7 @@ class UMT5Config:
         return self.num_heads * self.d_kv
 
     @classmethod
-    def from_hf_config(cls, cfg: dict) -> "UMT5Config":
+    def from_hf_config(cls, cfg: dict) -> UMT5Config:
         eps = cfg.get("layer_norm_epsilon", cfg.get("layer_norm_eps", 1e-6))
         return cls(
             d_model=cfg.get("d_model", 4096),
@@ -126,7 +125,8 @@ class UMT5Encoder(nn.Module):
                 padding_side="right",
             )
             logger.info(
-                "UMT5 tokenizer loaded: %s", self.DEFAULT_TOKENIZER_REPO,
+                "UMT5 tokenizer loaded: %s",
+                self.DEFAULT_TOKENIZER_REPO,
             )
         except Exception as exc:
             logger.warning(
@@ -218,7 +218,7 @@ class UMT5Encoder(nn.Module):
         return self.encoder(input_ids, attention_mask)
 
     @classmethod
-    def from_pretrained(cls, path: str | Path) -> "UMT5Encoder":
+    def from_pretrained(cls, path: str | Path) -> UMT5Encoder:
         """从 HuggingFace 权重目录加载 UMT5 编码器.
 
         Args:
@@ -233,6 +233,7 @@ class UMT5Encoder(nn.Module):
             raise FileNotFoundError(f"config.json not found in {path}")
 
         import json
+
         with open(cfg_path) as f:
             hf_cfg = json.load(f)
 
@@ -242,7 +243,10 @@ class UMT5Encoder(nn.Module):
         if instance._uses_base:
             try:
                 from fusion_mlx.video.t5_encoder import load_t5_encoder
-                instance.encoder = load_t5_encoder(str(path), config=instance.encoder.config)
+
+                instance.encoder = load_t5_encoder(
+                    str(path), config=instance.encoder.config
+                )
             except Exception as exc:
                 logger.warning("Failed to load UMT5 weights: %s", exc)
 
@@ -353,7 +357,8 @@ class CLIPTextEncoder:
             except Exception as exc:
                 # mlx_clip.encode_text 可能不支持批量, 退逐条
                 logger.warning(
-                    "mlx_clip.encode_text 批量失败 (%s), 退逐条", exc,
+                    "mlx_clip.encode_text 批量失败 (%s), 退逐条",
+                    exc,
                 )
                 embeddings = []
                 for t in text:
@@ -364,8 +369,11 @@ class CLIPTextEncoder:
         # transformers CPU 路径 (支持 torch 与 numpy 双后端)
         if self._backend == "transformers":
             inputs = self._tokenizer(
-                text, padding="max_length", truncation=True,
-                max_length=max_length, return_tensors="np",  # numpy 后端, 无需 torch
+                text,
+                padding="max_length",
+                truncation=True,
+                max_length=max_length,
+                return_tensors="np",  # numpy 后端, 无需 torch
             )
             try:
                 # 优先 torch (更快)

@@ -963,8 +963,17 @@ def _is_video_model(path: Path) -> bool:
     # to the task manifest, so an LLM dir that happens to carry a stray
     # text-to-video configuration.json is not misclassified as a video engine.
     # Real LTX-2/Wan models ship these subdirs; LLM dirs do not.
+    # AtomCode fix #139 (2026-07-20): subdir 检测纳入 broken symlink (入口存在但
+    # 目标缺失, is_dir() 返回 False), 替代 #122 的目录名关键词兜底. #122 兜底过宽
+    # (任意含 ti2v/i2v/t2v 的目录名都误判为 video, 含 test tmp_path), 且真正缺
+    # 子目录时即便注册为 video 也会在加载时失败. broken symlink 仍按 video 处理
+    # (用户恢复 symlink 后可重载), 真正无子目录入口时诚实返回 False (Rule 12).
+    def _has_diffusers_subdir(sub: str) -> bool:
+        p = path / sub
+        return p.is_dir() or p.is_symlink()
+
     has_diffusers_subdirs = any(
-        (path / sub).is_dir() for sub in ("vae", "transformer", "audio_vae")
+        _has_diffusers_subdir(sub) for sub in ("vae", "transformer", "audio_vae")
     )
     if _is_task_model(path, "text-to-video"):
         return has_diffusers_subdirs
@@ -974,14 +983,7 @@ def _is_video_model(path: Path) -> bool:
     # diffusers subdirs are present. Without this a ti2v model is misdetected
     # as an LLM and mlx-lm raises "Model type ti2v not supported" on load.
     if not has_diffusers_subdirs:
-        # AtomCode fix #122: 模型名兜底检测 WAN 视频模型 (2026-07-19)
-        # 当模型目录结构不完整时（如 symlink 目标不存在），通过目录名中的
-        # 已知视频模型关键词兜底识别, 避免模型被误判为 LLM 类型致
-        # /v1/videos/generate 返回 404 "not loaded"
-        # 视频模型目录名通常含 wan/ti2v/i2v/t2v/ltx-video 等关键词
-        name_lower = path.name.lower()
-        if any(kw in name_lower for kw in ("wan", "ti2v", "i2v", "t2v", "ltx-video", "ltx_video", "cogvideo", "cog_video", "skyreels")):
-            return True
+        # 无子目录入口 (非 broken symlink) 且无 task manifest -> 非可加载视频模型.
         return False
     config_path = path / "config.json"
     if not config_path.exists():

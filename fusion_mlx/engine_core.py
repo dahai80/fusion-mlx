@@ -849,6 +849,7 @@ class EngineCore:
             # VLM: mlx_vlm.generation_stream 是模块级单例 (import 时绑主线程),
             # executor 线程跑 prefill 前需显式注入线程局部 stream 避 "There is no Stream(gpu,1)" 报错
             import sys as _sys
+
             _vlm_gen = _sys.modules.get("mlx_vlm.generate")
             if _vlm_gen is not None:
                 _vlm_gen.generation_stream = self._mlx_stream

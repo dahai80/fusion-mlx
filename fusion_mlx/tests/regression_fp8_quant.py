@@ -9,12 +9,11 @@
 运行: python -m fusion_mlx.tests.regression_fp8_quant
 退出码: 0=全通过, 1=有失败
 """
+
 from __future__ import annotations
 
-import importlib
 import logging
 import sys
-import traceback
 import unittest
 from unittest.mock import patch
 
@@ -29,29 +28,32 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 class CrossAttn(nn.Module):
     """交叉注意力: 文本 Prompt 引导画面生成 (含 k_img/v_img/q_txt 三 Linear)."""
+
     def __init__(self, d: int = 5120, d_img: int = 4096):
         super().__init__()
-        self.k_img = nn.Linear(d, d_img)   # (d_img, d) = (4096, 5120) ← #133/#134 报错层
-        self.v_img = nn.Linear(d, d_img)   # (4096, 5120)
-        self.q_txt = nn.Linear(d, d)       # (5120, 5120)
+        self.k_img = nn.Linear(d, d_img)  # (d_img, d) = (4096, 5120) ← #133/#134 报错层
+        self.v_img = nn.Linear(d, d_img)  # (4096, 5120)
+        self.q_txt = nn.Linear(d, d)  # (5120, 5120)
 
 
 class Block(nn.Module):
     """DiT Block: AdaLN-Zero + 双注意力分支 + FFN 前馈."""
+
     def __init__(self, d: int = 5120):
         super().__init__()
         self.cross_attn = CrossAttn(d=d, d_img=4096)
-        self.self_attn = nn.Linear(d, d)        # (5120, 5120)
-        self.ffn = nn.Linear(d, 4 * d)          # (20480, 5120)
-        self.ffn_out = nn.Linear(4 * d, d)      # (5120, 20480) 非对称形状回归
+        self.self_attn = nn.Linear(d, d)  # (5120, 5120)
+        self.ffn = nn.Linear(d, 4 * d)  # (20480, 5120)
+        self.ffn_out = nn.Linear(4 * d, d)  # (5120, 20480) 非对称形状回归
 
 
 class DiT(nn.Module):
     """SkyReels DiT 主干: blocks 用 list 孜 (非 _modules 字典)."""
+
     def __init__(self, d: int = 5120, n_blocks: int = 2):
         super().__init__()
         self.blocks = [Block(d) for _ in range(n_blocks)]  # list 孜 ← #132 根因
-        self.head = nn.Linear(d, 4096)                     # (4096, 5120)
+        self.head = nn.Linear(d, 4096)  # (4096, 5120)
 
 
 # ---------------------------------------------------------------------------
@@ -63,6 +65,7 @@ class TestIterSubmodulesRecursive(unittest.TestCase):
     def test_iter_catches_all_linear_in_list(self):
         """list 孜的 blocks 内所有 nn.Linear 应被抓到 (含 cross_attn.k_img 嵌套)."""
         from fusion_mlx.custom_kernels.fp8_linear import _iter_submodules
+
         model = DiT(d=5120, n_blocks=2)
         paths = [name for _, _, name, _, _ in _iter_submodules(model)]
         # 2 blocks × (cross_attn 3 + self_attn 1 + ffn 1 + ffn_out 1) + head 1 = 13
@@ -76,13 +79,17 @@ class TestIterSubmodulesRecursive(unittest.TestCase):
     def test_convert_to_fp8_linear_recurses_list(self):
         """convert_to_fp8_linear 应把 list 内所有嵌套 nn.Linear 转 FP8Linear."""
         from fusion_mlx.custom_kernels.fp8_linear import (
-            FP8Linear, convert_to_fp8_linear, _iter_submodules,
+            FP8Linear,
+            _iter_submodules,
+            convert_to_fp8_linear,
         )
+
         model = DiT(d=5120, n_blocks=3)
         convert_to_fp8_linear(model)
         # 残留 nn.Linear 应为 0 (全转 FP8Linear)
         leftover = sum(
-            1 for _, _, _, m, _ in _iter_submodules(model)
+            1
+            for _, _, _, m, _ in _iter_submodules(model)
             if type(m).__name__ == "Linear"
         )
         self.assertEqual(leftover, 0, f"残留 {leftover} nn.Linear 未转")
@@ -94,6 +101,7 @@ class TestIterSubmodulesRecursive(unittest.TestCase):
     def test_quantize_model_recurses_list(self):
         """quantize_model bits=16 不量化但应递归遍历不报错."""
         from fusion_mlx.custom_kernels.quantize import quantize_model
+
         model = DiT(d=5120, n_blocks=2)
         quantize_model(model, bits=16)
         # bits=16 保持 nn.Linear 不量化
@@ -110,10 +118,11 @@ class TestFp8MatmulTranspose(unittest.TestCase):
     def test_fp8_matmul_degrade_path(self):
         """降级路径 (非 FP8 硬件): x (...,in) @ (out,in).T → (...,out)."""
         from fusion_mlx.custom_kernels.fp8_linear import fp8_matmul, is_available
+
         if is_available():
             self.skipTest("FP8 硬件可用, 降级路径不测")
-        x = mx.random.normal((2, 769, 5120), dtype=mx.float32)   # in=5120
-        w = mx.random.normal((4096, 5120), dtype=mx.float32)     # (out, in)
+        x = mx.random.normal((2, 769, 5120), dtype=mx.float32)  # in=5120
+        w = mx.random.normal((4096, 5120), dtype=mx.float32)  # (out, in)
         scale = mx.ones((4096,), dtype=mx.float32)
         out = fp8_matmul(x, w, scale)
         self.assertEqual(out.shape, (2, 769, 4096), f"应 (2,769,4096), 实 {out.shape}")
@@ -121,6 +130,7 @@ class TestFp8MatmulTranspose(unittest.TestCase):
     def test_fp8_matmul_fp8_path(self):
         """FP8 路径: 若硬件可用, astype+scale+transpose 链式不报错."""
         from fusion_mlx.custom_kernels.fp8_linear import fp8_matmul, is_available
+
         if not is_available():
             self.skipTest("FP8 �硬件不可用, FP8 路径不测")
         x = mx.random.normal((2, 769, 5120), dtype=mx.float32)
@@ -132,6 +142,7 @@ class TestFp8MatmulTranspose(unittest.TestCase):
     def test_mixed_weight_shapes(self):
         """多层混合形状: k_img (4096,5120) / ffn (20480,5120) / ffn_out (5120,20480)."""
         from fusion_mlx.custom_kernels.fp8_linear import fp8_matmul
+
         x_5120 = mx.random.normal((2, 769, 5120), dtype=mx.float32)
         x_20480 = mx.random.normal((2, 769, 20480), dtype=mx.float32)
         # k_img: in=5120 → out=4096
@@ -146,6 +157,107 @@ class TestFp8MatmulTranspose(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
+# #139: 方阵权重转置 + FP8Linear==nn.Linear + context 维度回归
+#   #137 bug: fp8_matmul (out,in)/(in,out) 自动检测对方阵权重 (5120x5120) 误判跳过转置
+#           -> 产出 x@W 而非 x@W.T (方阵时形状同但数值错)
+#   #138 bug: __call__ bias 截断掩盖 #137 产出的错误维度
+#   #139 fix: fp8_matmul 恒转置 + 移除 bias 截断 + _encode_context 返 text_dim(4096) 非 dim(5120)
+# ---------------------------------------------------------------------------
+class TestFix139Fp8AndContext(unittest.TestCase):
+    """#139 修复链路回归: 方阵转置 / FP8Linear 降级等价 / context 维度."""
+
+    def test_fp8_matmul_square_weight(self):
+        # #137 回归: 方阵权重 (5120x5120) 必须正确转置.
+        # 自动检测在 x.shape[-1]==fp8_w.shape[0] (方阵时均=5120) 误判为 (in,out) 跳过转置,
+        # 产出 x@W 而非 x@W.T. W 非对称时两者数值不同 (方阵时形状同, 故必须验数值非形状).
+        from fusion_mlx.custom_kernels.fp8_linear import fp8_matmul, is_available
+
+        if is_available():
+            self.skipTest("FP8 硬件可用, 降级路径不测")
+        mx.random.seed(42)
+        x = mx.random.normal((2, 769, 5120), dtype=mx.float32)
+        w = mx.random.normal((5120, 5120), dtype=mx.float32)
+        scale = mx.ones((5120,), dtype=mx.float32)
+        out = fp8_matmul(x, w, scale)
+        expected = x @ mx.transpose(w, (1, 0))
+        self.assertEqual(out.shape, (2, 769, 5120))
+        self.assertTrue(
+            mx.allclose(out, expected, atol=1e-4),
+            "方阵权重 fp8_matmul 应 == x@W.T, 实不等 (#137 自动检测残留)",
+        )
+
+    def test_fp8_linear_matches_nn_linear(self):
+        # #137+#138 回归: 降级模式 FP8Linear 前向应 == nn.Linear (方阵+非方阵+bias 全场景).
+        # 降级路径退化为 f32 matmul (quantize_fp8 原样返权重), 数学上与 nn.Linear 完全一致.
+        # #137 转置错 / #138 bias 截断 都会致数值偏差或形状错.
+        from fusion_mlx.custom_kernels.fp8_linear import FP8Linear, is_available
+
+        if is_available():
+            self.skipTest("FP8 硬件可用, 降级路径不测")
+        mx.random.seed(7)
+        cases = [
+            # (in_features, out_features, has_bias, input_shape)
+            (5120, 4096, True, (2, 769, 5120)),  # text_embedding.0 非方阵
+            (5120, 5120, True, (2, 769, 5120)),  # text_embedding.1 方阵 (#137 触发点)
+            (5120, 13824, False, (2, 769, 5120)),  # FFN proj 无 bias
+        ]
+        for in_f, out_f, has_bias, in_shape in cases:
+            lin = nn.Linear(in_f, out_f, bias=has_bias)
+            fp8 = FP8Linear.from_linear(lin)
+            x = mx.random.normal(in_shape, dtype=mx.float32)
+            ref = lin(x)
+            got = fp8(x)
+            self.assertEqual(
+                got.shape,
+                ref.shape,
+                f"({in_f}->{out_f}) 形状不符: {got.shape} vs {ref.shape}",
+            )
+            self.assertTrue(
+                mx.allclose(got, ref, atol=1e-4),
+                f"({in_f}->{out_f}) FP8Linear 应 == nn.Linear (#137/#138 残留)",
+            )
+
+    def test_config_text_dim_text_len(self):
+        # #139 回归: config 必须含 text_dim=4096 / text_len=512.
+        # text_dim = DiT text_embedding.0 输入维度 (UMT5 输出), 非 dim(5120).
+        from fusion_mlx.video.skyreels_v3.pipelines import SkyReelsPipelineConfig
+
+        cfg = SkyReelsPipelineConfig()
+        self.assertEqual(cfg.text_dim, 4096)
+        self.assertEqual(cfg.text_len, 512)
+        self.assertNotEqual(cfg.text_dim, 5120)
+
+    def test_encode_context_returns_text_dim(self):
+        # #139 回归: _encode_context 输出末维 = text_dim(4096), 非 dim(5120).
+        # DiT text_embedding.0 = Linear(4096->5120) 期望 4096 输入.
+        # 原返 5120 -> text_embedding.0 维度错配 -> #137/#138/#139 连锁.
+        # 绕 __init__ (避 _load_models/_setup_optimizers 重载), 直测方法契约.
+        from fusion_mlx.video.skyreels_v3.pipelines import (
+            SkyReelsBasePipeline,
+            SkyReelsPipelineConfig,
+        )
+
+        pipeline = SkyReelsBasePipeline.__new__(SkyReelsBasePipeline)
+        pipeline.config = SkyReelsPipelineConfig()
+        ctx = pipeline._encode_context("a cat playing piano")
+        self.assertEqual(
+            ctx.shape,
+            (1, 769, 4096),
+            f"应 (1,769,4096) text_dim, 实 {ctx.shape} (#139 维度错)",
+        )
+
+    def test_context_feeds_text_embedding(self):
+        # #139 契约: context (text_dim=4096) 喂 Linear(text_dim, dim) 无维度错.
+        from fusion_mlx.video.skyreels_v3.pipelines import SkyReelsPipelineConfig
+
+        cfg = SkyReelsPipelineConfig()
+        proj = nn.Linear(cfg.text_dim, 5120)
+        ctx = mx.zeros((1, 769, cfg.text_dim))
+        out = proj(ctx)
+        self.assertEqual(out.shape, (1, 769, 5120))
+
+
+# ---------------------------------------------------------------------------
 # #134: 非 M5 设备也执行转换回归
 # ---------------------------------------------------------------------------
 class TestM5OptimizerNonM5(unittest.TestCase):
@@ -153,8 +265,9 @@ class TestM5OptimizerNonM5(unittest.TestCase):
 
     def test_apply_to_model_non_m5_executes(self):
         """is_m5=False 模拟: apply_to_model 不早退, 真 FP8Linear 转换."""
+        from fusion_mlx.custom_kernels.fp8_linear import _iter_submodules
         from fusion_mlx.video.skyreels_v3.m5_optimizer import M5Optimizer
-        from fusion_mlx.custom_kernels.fp8_linear import FP8Linear, _iter_submodules
+
         model = DiT(d=5120, n_blocks=2)
         with patch("fusion_mlx.video.skyreels_v3._device.is_m5", return_value=False):
             opt = M5Optimizer()
@@ -162,7 +275,8 @@ class TestM5OptimizerNonM5(unittest.TestCase):
             opt.apply_to_model(model)
         # 非M5 也应全转 (bf16 降级, 但仍是 FP8Linear 类)
         leftover = sum(
-            1 for _, _, _, m, _ in _iter_submodules(model)
+            1
+            for _, _, _, m, _ in _iter_submodules(model)
             if type(m).__name__ == "Linear"
         )
         self.assertEqual(leftover, 0, f"非M5 残留 {leftover} nn.Linear")
@@ -170,6 +284,7 @@ class TestM5OptimizerNonM5(unittest.TestCase):
     def test_forward_no_addmm_error_non_m5(self):
         """非 M5 设备前向不应报原始 addmm 维度错 (5120 vs 4096)."""
         from fusion_mlx.video.skyreels_v3.m5_optimizer import M5Optimizer
+
         model = DiT(d=5120, n_blocks=2)
         with patch("fusion_mlx.video.skyreels_v3._device.is_m5", return_value=False):
             opt = M5Optimizer()
@@ -180,19 +295,23 @@ class TestM5OptimizerNonM5(unittest.TestCase):
         self.assertEqual(out_k.shape, (2, 769, 4096))
         out_head = model.head(x)
         self.assertEqual(out_head.shape, (2, 769, 4096))
-        out_fo = model.blocks[0].ffn_out(mx.random.normal((2, 769, 20480), dtype=mx.float32))
+        out_fo = model.blocks[0].ffn_out(
+            mx.random.normal((2, 769, 20480), dtype=mx.float32)
+        )
         self.assertEqual(out_fo.shape, (2, 769, 5120))
 
     def test_m5_device_still_optimizes(self):
         """M5 设备 (is_m5=True) 也应真执行转换 (回归保护, 避删早退致 M5 也漏转)."""
-        from fusion_mlx.video.skyreels_v3.m5_optimizer import M5Optimizer
         from fusion_mlx.custom_kernels.fp8_linear import _iter_submodules
+        from fusion_mlx.video.skyreels_v3.m5_optimizer import M5Optimizer
+
         model = DiT(d=5120, n_blocks=2)
         with patch("fusion_mlx.video.skyreels_v3._device.is_m5", return_value=True):
             opt = M5Optimizer()
             opt.apply_to_model(model)
         leftover = sum(
-            1 for _, _, _, m, _ in _iter_submodules(model)
+            1
+            for _, _, _, m, _ in _iter_submodules(model)
             if type(m).__name__ == "Linear"
         )
         self.assertEqual(leftover, 0, f"M5 残留 {leftover} nn.Linear")
@@ -210,8 +329,11 @@ class TestFreshImportAfterServerRestart(unittest.TestCase):
             if "fusion_mlx.custom_kernels" in mod:
                 del sys.modules[mod]
         from fusion_mlx.custom_kernels.fp8_linear import (
-            convert_to_fp8_linear, _iter_submodules, FP8Linear, fp8_matmul,
+            _iter_submodules,
+            convert_to_fp8_linear,
+            fp8_matmul,
         )
+
         self.assertTrue(callable(convert_to_fp8_linear))
         self.assertTrue(callable(_iter_submodules))
         self.assertTrue(callable(fp8_matmul))
@@ -220,7 +342,8 @@ class TestFreshImportAfterServerRestart(unittest.TestCase):
         for mod in list(sys.modules.keys()):
             if "fusion_mlx.custom_kernels" in mod:
                 del sys.modules[mod]
-        from fusion_mlx.custom_kernels.quantize import quantize_model, quantize_linear
+        from fusion_mlx.custom_kernels.quantize import quantize_linear, quantize_model
+
         self.assertTrue(callable(quantize_model))
         self.assertTrue(callable(quantize_linear))
 
@@ -229,6 +352,7 @@ class TestFreshImportAfterServerRestart(unittest.TestCase):
             if "fusion_mlx.video.skyreels_v3" in mod:
                 del sys.modules[mod]
         from fusion_mlx.video.skyreels_v3.m5_optimizer import M5Optimizer
+
         opt = M5Optimizer()
         self.assertIsNotNone(opt.is_m5)
 
@@ -238,9 +362,12 @@ class TestFreshImportAfterServerRestart(unittest.TestCase):
 # ---------------------------------------------------------------------------
 # 真权重路径: ~/.fusion-mlx/models/models--Skywork--SkyReels-V3-R2V-14B/snapshots/<hash>
 import os
+
 _HOME = os.path.expanduser("~")
 _SKY_BASE = os.path.join(
-    _HOME, ".fusion-mlx", "models",
+    _HOME,
+    ".fusion-mlx",
+    "models",
     "models--Skywork--SkyReels-V3-R2V-14B",
 )
 _SKY_SNAPSHOT = None
@@ -267,19 +394,22 @@ class TestRealWeightsLoad(unittest.TestCase):
     def test_text_encoder_real_weights(self):
         """text_encoder 真载入 + encode_text 前向 (真权重 >90% 非零)."""
         from fusion_mlx.video.skyreels_v3.text_encoder import UMT5Encoder
+
         enc = UMT5Encoder.from_pretrained(os.path.join(_SKY_SNAPSHOT, "text_encoder"))
         emb = enc.encode_text("a cat playing piano", max_length=77)
         self.assertEqual(emb.ndim, 3, f"emb 应 3D, 实 {emb.ndim}D")
         # 真权重非全零验 (随机初始化会全零或极小值)
         nonzero = mx.sum(emb != 0).item()
         self.assertGreater(
-            nonzero, emb.size * 0.9,
+            nonzero,
+            emb.size * 0.9,
             f"真权重应 >90% 非零, 实 {100*nonzero/emb.size:.1f}%",
         )
 
     def test_vae_real_weights_load(self):
         """vae 真载入 (from_pretrained 真调 load_weights, 非 0s 载入)."""
         from fusion_mlx.video.skyreels_v3.vae import SkyReelsVAE
+
         vae = SkyReelsVAE.from_pretrained(os.path.join(_SKY_SNAPSHOT, "vae"))
         self.assertIsNotNone(vae.vae, "底座 WanVAE 应真载入")
         self.assertTrue(vae._uses_base, "应走底座真载入非 stub")
@@ -287,15 +417,18 @@ class TestRealWeightsLoad(unittest.TestCase):
         # load_weights 应真读 safetensors 注入子模块, 非假载入 0.0s
         # mlx.nn.Module 子模块用 apply_to_modules 递归抓
         params = []
+
         def collect(name, mod):
             for k, v in mod.items():
                 if hasattr(v, "size") and v.size > 16:
                     params.append((f"{name}.{k}", v))
+
         vae.vae.apply_to_modules(collect)
         self.assertGreater(len(params), 20, f"底座应 >20 真权重张量, 实 {len(params)}")
         nonzero = sum(1 for _, p in params if mx.sum(p != 0).item() > 0)
         self.assertGreater(
-            nonzero, len(params) * 0.1,
+            nonzero,
+            len(params) * 0.1,
             f"底座真权重应 >10% 张量非零, 实 {nonzero}/{len(params)}",
         )
 
@@ -307,14 +440,14 @@ class TestRealWeightsLoad(unittest.TestCase):
             self.skipTest("DiT 28.58GB 权重未下完, 跳过 (后台下载中)")
         # 真载入 + 一步前向验无 [matmul]/[addmm] 报错
         from fusion_mlx.video.skyreels_v3.pipelines import SkyReelsR2VPipeline
+
         pipeline = SkyReelsR2VPipeline(_SKY_SNAPSHOT)
         self.assertIsNotNone(pipeline.dit)
         self.assertIsNotNone(pipeline.m5_optimizer)
         # 验 DiT 真权重已注入 (blocks 非全零)
-        import mlx.nn as nn
         has_weights = False
         for k, v in pipeline.dit.items():
-            if hasattr(v, 'shape') and v.size > 100 and 'weight' in k.lower():
+            if hasattr(v, "shape") and v.size > 100 and "weight" in k.lower():
                 nz = mx.sum(v != 0).item()
                 if nz > v.size * 0.5:
                     has_weights = True
@@ -331,6 +464,7 @@ class TestRepeatedConversionStress(unittest.TestCase):
     def test_repeated_convert_5_iterations(self):
         """5 次重复 convert_to_fp8_linear 不报错 (避 mlx 内部状态泄漏)."""
         from fusion_mlx.custom_kernels.fp8_linear import convert_to_fp8_linear
+
         for i in range(5):
             model = DiT(d=5120, n_blocks=2)
             convert_to_fp8_linear(model)
@@ -341,10 +475,13 @@ class TestRepeatedConversionStress(unittest.TestCase):
 
     def test_repeated_quantize_5_iterations(self):
         from fusion_mlx.custom_kernels.quantize import quantize_model
+
         for i in range(5):
             model = DiT(d=5120, n_blocks=1)
             quantize_model(model, bits=16)
-            out = model.blocks[0].self_attn(mx.random.normal((1, 10, 5120), dtype=mx.float32))
+            out = model.blocks[0].self_attn(
+                mx.random.normal((1, 10, 5120), dtype=mx.float32)
+            )
             self.assertEqual(out.shape, (1, 10, 5120), f"迭代 {i} 前向错")
 
 
@@ -356,6 +493,7 @@ def run_all() -> int:
     for cls in [
         TestIterSubmodulesRecursive,
         TestFp8MatmulTranspose,
+        TestFix139Fp8AndContext,
         TestM5OptimizerNonM5,
         TestFreshImportAfterServerRestart,
         TestRealWeightsLoad,

@@ -25,23 +25,25 @@ import mlx.core as mx
 import mlx.nn as nn
 
 from .. import _device
-from ..transformer_r2v import SkyReelsR2VDiT
-from ..transformer_v2v import SkyReelsV2VDiT
-from ..transformer_a2v import SkyReelsA2VDiT
-from ..vae import SkyReelsVAE, decode_to_video, save_video
-from ..text_encoder import UMT5Encoder, CLIPTextEncoder
+from ..m5_optimizer import M5Optimizer
 from ..scheduler.fm_solvers_unipc import (
     FlowUniPCMultistepScheduler,
-    perform_guidance,
     flow_match_sample,
+    perform_guidance,
 )
 from ..step_strategy import SkyReelsStepStrategy
-from ..m5_optimizer import M5Optimizer
 from ..temporal_flicker_fix import (
     TemporalFlickerFix,
+)
+from ..temporal_flicker_fix import (
     default_config_for_branch as _flicker_cfg_for_branch,
 )
-from ..weights import resolve_model_path, load_all_weights
+from ..text_encoder import CLIPTextEncoder, UMT5Encoder
+from ..transformer_a2v import SkyReelsA2VDiT
+from ..transformer_r2v import SkyReelsR2VDiT
+from ..transformer_v2v import SkyReelsV2VDiT
+from ..vae import SkyReelsVAE, decode_to_video, save_video
+from ..weights import load_all_weights, resolve_model_path
 
 logger = logging.getLogger(__name__)
 
@@ -52,6 +54,7 @@ logger = logging.getLogger(__name__)
 @dataclass
 class SkyReelsPipelineConfig:
     """Pipeline 通用配置."""
+
     branch: str = "r2v"  # r2v / v2v / a2v
     width: int = 1280  # 720P
     height: int = 720
@@ -73,6 +76,12 @@ class SkyReelsPipelineConfig:
     # A2V 音频参数
     audio_sample_rate: int = 16000
     audio_dim: int = 1024  # wav2vec2 hidden size
+
+    # 文本/上下文维度 (SkyReels-V3 config.json 架构常量)
+    # text_dim: UMT5 输出维度 = DiT text_embedding 输入维度 (喂入 DiT 的 context 维度, 非 dim)
+    # text_len: 文本 token 上限 (context 中 txt 段长度)
+    text_dim: int = 4096
+    text_len: int = 512
 
     # 优化开关
     use_m5_optimizer: bool = True
@@ -110,7 +119,7 @@ class SkyReelsBasePipeline:
           4. A2V 额外加 CLIP
         """
         branch = self.config.branch
-        from ..config import get_branch_config, BRANCH_CONFIGS
+        from ..config import BRANCH_CONFIGS, get_branch_config
 
         # 找到 model_key (r2v -> skyreels-v3-r2v-14b 等)
         model_key = next(
@@ -141,19 +150,23 @@ class SkyReelsBasePipeline:
         # 3. 加载真实权重 (非 stub)
         # 若路径不存在或无 safetensors, load_all_weights 内部会跳过并 warning,
         # 模型保持随机初始化 (tiny 测试场景可用)
-        if weights_dir.exists() and any(weights_dir.glob("*.safetensors")) or (
-            weights_dir.is_dir()
-            and any(weights_dir.glob("**/*.safetensors"))
+        if (
+            weights_dir.exists()
+            and any(weights_dir.glob("*.safetensors"))
+            or (weights_dir.is_dir() and any(weights_dir.glob("**/*.safetensors")))
         ):
             try:
                 load_all_weights(
-                    self.dit, self.vae, self.text_encoder,
+                    self.dit,
+                    self.vae,
+                    self.text_encoder,
                     weights_dir,
                 )
                 logger.info("真实权重加载成功: %s", weights_dir)
             except Exception as exc:
                 logger.warning(
-                    "真实权重加载失败, 回退到随机初始化: %s", exc,
+                    "真实权重加载失败, 回退到随机初始化: %s",
+                    exc,
                 )
         else:
             logger.warning(
@@ -163,7 +176,9 @@ class SkyReelsBasePipeline:
 
         logger.info(
             "Pipeline loaded: branch=%s dit=%s weights=%s",
-            branch, type(self.dit).__name__, weights_dir,
+            branch,
+            type(self.dit).__name__,
+            weights_dir,
         )
 
     def _setup_optimizers(self) -> None:
@@ -207,11 +222,16 @@ class SkyReelsBasePipeline:
         prompt: str,
         ref_images: list[Any] | None = None,
     ) -> mx.array:
-        """编码完整 context (prompt + 参考图)."""
-        # 简化: 返回零张量
+        """编码完整 context (prompt + 参考图).
+
+        AtomCode fix #139 (2026-07-20): context 维度 = text_dim (4096), 非 dim (5120).
+        DiT text_embedding = Linear(text_dim=4096 -> dim=5120) 在 __call__ 内做投影,
+        喂入 DiT 的 context 必须是 text_dim. 原返回 5120-dim 致 text_embedding.0 输入维度
+        错配 (5120 vs 期望 4096), 连锁触发 #137 自动检测误判 / #138 bias 截断 / #139 matmul 错配.
+        """
         b = 1
         l = 257 + 512  # img + text
-        return mx.zeros((b, l, 5120))  # R2V dim
+        return mx.zeros((b, l, self.config.text_dim))
 
     def _denoise_sample(
         self,
@@ -255,13 +275,17 @@ class SkyReelsBasePipeline:
 
             # 模型前向
             noise_pred = self.dit(
-                latent_input, t_mx, context_input,
-                seq_lens, grid_sizes,
+                latent_input,
+                t_mx,
+                context_input,
+                seq_lens,
+                grid_sizes,
             )
 
             # CFG 合并
             noise_pred = perform_guidance(
-                noise_pred, self.config.guidance_scale,
+                noise_pred,
+                self.config.guidance_scale,
             )
 
             # 时序闪烁修复: 采样步连贯滤波 (防步间预测跳变)
@@ -269,7 +293,9 @@ class SkyReelsBasePipeline:
 
             # 采样步
             latents = scheduler.step(
-                noise_pred, float(t), latents,
+                noise_pred,
+                float(t),
+                latents,
             ).prev_sample
 
             # 时序闪烁修复: 帧间 EMA 平滑 (防相邻帧跳变)
@@ -278,7 +304,8 @@ class SkyReelsBasePipeline:
             # V2V 续写: 边界对齐 (续写首帧与输入末帧对齐)
             if flicker_cfg.enable_boundary_align and input_end_latent is not None:
                 latents = flicker_fix.align_boundary(
-                    latents, input_end_latent,
+                    latents,
+                    input_end_latent,
                 )
 
         return latents
@@ -347,9 +374,9 @@ class SkyReelsR2VPipeline(SkyReelsBasePipeline):
         latent_w = cfg.width // 16
         latent_t = (cfg.num_frames - 1) // 4 + 1
 
-        latents = mx.random.normal(
-            (b, 16, latent_t, latent_h, latent_w)
-        ) * 1.0  # init_noise_sigma
+        latents = (
+            mx.random.normal((b, 16, latent_t, latent_h, latent_w)) * 1.0
+        )  # init_noise_sigma
 
         # 3. 采样参数
         seq_lens = [latent_t * latent_h * latent_w]
@@ -357,19 +384,26 @@ class SkyReelsR2VPipeline(SkyReelsBasePipeline):
 
         # 4. 去噪采样
         latents = self._denoise_sample(
-            latents, context,
-            seq_lens=seq_lens, grid_sizes=grid_sizes,
+            latents,
+            context,
+            seq_lens=seq_lens,
+            grid_sizes=grid_sizes,
         )
 
         # 5. VAE 解码
         video = decode_to_video(
-            self.vae, latents,
-            fps=cfg.fps, tiling=cfg.use_tiling,
+            self.vae,
+            latents,
+            fps=cfg.fps,
+            tiling=cfg.use_tiling,
         )
 
         logger.info(
             "R2V generated: %dx%dx%d (%.1fs)",
-            cfg.width, cfg.height, cfg.num_frames, cfg.num_frames / cfg.fps,
+            cfg.width,
+            cfg.height,
+            cfg.num_frames,
+            cfg.num_frames / cfg.fps,
         )
         return video
 
@@ -441,9 +475,7 @@ class SkyReelsV2VPipeline(SkyReelsBasePipeline):
 
         # V2V: 前置帧 latent + 续写帧噪声
         # 简化: 全部初始化为噪声
-        latents = mx.random.normal(
-            (b, 16, latent_t, latent_h, latent_w)
-        )
+        latents = mx.random.normal((b, 16, latent_t, latent_h, latent_w))
 
         # 3. 采样参数
         seq_lens = [latent_t * latent_h * latent_w]
@@ -451,19 +483,26 @@ class SkyReelsV2VPipeline(SkyReelsBasePipeline):
 
         # 4. 去噪采样 (V2V 启用时序分支)
         latents = self._denoise_sample(
-            latents, context,
-            seq_lens=seq_lens, grid_sizes=grid_sizes,
+            latents,
+            context,
+            seq_lens=seq_lens,
+            grid_sizes=grid_sizes,
         )
 
         # 5. VAE 解码
         video = decode_to_video(
-            self.vae, latents,
-            fps=cfg.fps, tiling=cfg.use_tiling,
+            self.vae,
+            latents,
+            fps=cfg.fps,
+            tiling=cfg.use_tiling,
         )
 
         logger.info(
             "V2V generated: %dx%dx%d (%.1fs)",
-            cfg.width, cfg.height, cfg.num_frames, cfg.num_frames / cfg.fps,
+            cfg.width,
+            cfg.height,
+            cfg.num_frames,
+            cfg.num_frames / cfg.fps,
         )
         return video
 
@@ -520,9 +559,7 @@ class SkyReelsA2VPipeline(SkyReelsBasePipeline):
 
         # 1. 编码音频 (wav2vec2) + 文本 (xlm_roberta)
         # 简化: 用零张量作为 stub
-        audio_embeds = mx.zeros(
-            (1, cfg.num_frames, cfg.audio_dim)
-        )
+        audio_embeds = mx.zeros((1, cfg.num_frames, cfg.audio_dim))
         text_embeds = mx.zeros((1, 512, 4096))
 
         # 2. 初始化 latent
@@ -531,9 +568,7 @@ class SkyReelsA2VPipeline(SkyReelsBasePipeline):
         latent_w = cfg.width // 16
         latent_t = (cfg.num_frames - 1) // 4 + 1
 
-        latents = mx.random.normal(
-            (b, 16, latent_t, latent_h, latent_w)
-        )
+        latents = mx.random.normal((b, 16, latent_t, latent_h, latent_w))
 
         # 3. 采样参数
         seq_lens = [latent_t * latent_h * latent_w]
@@ -567,31 +602,42 @@ class SkyReelsA2VPipeline(SkyReelsBasePipeline):
 
                 # A2V DiT 前向
                 noise_pred = self.dit(
-                    latent_input, t_mx,
-                    audio_input, text_input,
-                    seq_lens, grid_sizes,
+                    latent_input,
+                    t_mx,
+                    audio_input,
+                    text_input,
+                    seq_lens,
+                    grid_sizes,
                     cross_kv_cache=cross_kv_cache,
                 )
 
                 # CFG 合并
                 noise_pred = perform_guidance(
-                    noise_pred, cfg.guidance_scale,
+                    noise_pred,
+                    cfg.guidance_scale,
                 )
 
                 # 采样步
                 latents = scheduler.step(
-                    noise_pred, float(t), latents,
+                    noise_pred,
+                    float(t),
+                    latents,
                 ).prev_sample
 
         # 5. VAE 解码
         video = decode_to_video(
-            self.vae, latents,
-            fps=cfg.fps, tiling=cfg.use_tiling,
+            self.vae,
+            latents,
+            fps=cfg.fps,
+            tiling=cfg.use_tiling,
         )
 
         logger.info(
             "A2V generated: %dx%dx%d (%.1fs)",
-            cfg.width, cfg.height, cfg.num_frames, cfg.num_frames / cfg.fps,
+            cfg.width,
+            cfg.height,
+            cfg.num_frames,
+            cfg.num_frames / cfg.fps,
         )
         return video
 

@@ -16,17 +16,16 @@
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any
-
-import mlx.core as mx
 
 try:
     from fusion_mlx.custom_kernels.xfuser_attention import (
-        MLXFastAttention,
         FastAttnMethod,
+        MLXFastAttention,
         calibrate_attention_strategy,
     )
+
     _HAS_XFUSER = True
 except Exception:  # pragma: no cover - xfuser optional
     MLXFastAttention = None
@@ -102,7 +101,9 @@ class StepStrategyConfig:
 # ---------------------------------------------------------------------------
 # 三大分支默认配置
 # ---------------------------------------------------------------------------
-def _default_config_for_branch(branch: str, total_steps: int = 50) -> StepStrategyConfig:
+def _default_config_for_branch(
+    branch: str, total_steps: int = 50
+) -> StepStrategyConfig:
     """根据分支 (r2v/v2v/a2v) 返回默认 StepStrategyConfig.
 
     M5 Max 上启用更激进的 SPARSE + CFG_SHARE 组合.
@@ -219,7 +220,9 @@ class SkyReelsStepStrategy:
         self._attached = True
         logger.info(
             "xfuser step strategy attached: branch=%s steps=%d modules=%d",
-            self.branch, self.total_steps, len(self._fast_attn_modules),
+            self.branch,
+            self.total_steps,
+            len(self._fast_attn_modules),
         )
 
     def set_current_step(self, step: int) -> None:
@@ -232,9 +235,12 @@ class SkyReelsStepStrategy:
         # 同步到全局 xfuser 状态 (current_step / is_active)
         try:
             from fusion_mlx.custom_kernels.xfuser_attention import (
-                set_current_step as _set_step,
                 set_active as _set_active,
             )
+            from fusion_mlx.custom_kernels.xfuser_attention import (
+                set_current_step as _set_step,
+            )
+
             _set_step(step)
             _set_active(True)
         except Exception:  # pragma: no cover - xfuser optional
@@ -281,7 +287,8 @@ class SkyReelsStepStrategy:
 
         logger.info(
             "calibrated %d modules x %d steps: %s",
-            len(strategies), self.total_steps,
+            len(strategies),
+            self.total_steps,
             {s[0].name if s else "NONE" for s in strategies},
         )
         return strategies

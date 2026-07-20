@@ -26,17 +26,13 @@
 from __future__ import annotations
 
 import logging
-from pathlib import Path
 from typing import Any
 
-import mlx.core as mx
-
-from . import _device
-from .config import get_branch_config, BRANCH_CONFIGS
+from .config import get_branch_config
 from .pipelines import (
+    SkyReelsA2VPipeline,
     SkyReelsR2VPipeline,
     SkyReelsV2VPipeline,
-    SkyReelsA2VPipeline,
 )
 
 logger = logging.getLogger(__name__)
@@ -98,8 +94,7 @@ def generate_video(
     """
     if task_type not in TASK_TO_MODEL:
         raise ValueError(
-            f"Unknown task_type: {task_type}. "
-            f"Valid: {list(TASK_TO_MODEL)}"
+            f"Unknown task_type: {task_type}. " f"Valid: {list(TASK_TO_MODEL)}"
         )
 
     model_key = TASK_TO_MODEL[task_type]
@@ -111,7 +106,9 @@ def generate_video(
 
     logger.info(
         "generate_video: task=%s model=%s branch=%s",
-        task_type, model_key, branch_cfg.branch,
+        task_type,
+        model_key,
+        branch_cfg.branch,
     )
 
     # 分派到对应 Pipeline
@@ -193,25 +190,30 @@ def cli_main() -> None:
         description="SkyReels-V3 video generation (fusion-mlx MLX port)."
     )
     parser.add_argument(
-        "--task-type", required=True,
+        "--task-type",
+        required=True,
         choices=list(TASK_TO_MODEL.keys()),
         help="Task type",
     )
     parser.add_argument("--prompt", default="", help="Text prompt")
     parser.add_argument(
-        "--ref-imgs", default=None,
+        "--ref-imgs",
+        default=None,
         help="Reference images (comma-separated paths/URLs, R2V only)",
     )
     parser.add_argument(
-        "--input-video", default=None,
+        "--input-video",
+        default=None,
         help="Input video path (V2V only)",
     )
     parser.add_argument(
-        "--audio", default=None,
+        "--audio",
+        default=None,
         help="Audio path (A2V only)",
     )
     parser.add_argument(
-        "--ref-image", default=None,
+        "--ref-image",
+        default=None,
         help="Reference face image (A2V only)",
     )
     parser.add_argument("--duration", type=int, default=5, help="Duration in seconds")
@@ -222,15 +224,20 @@ def cli_main() -> None:
     parser.add_argument("--height", type=int, default=720, help="Output height")
     parser.add_argument("--fps", type=int, default=24, help="Output fps")
     parser.add_argument(
-        "--num-inference-steps", type=int, default=50,
+        "--num-inference-steps",
+        type=int,
+        default=50,
         help="Number of inference steps",
     )
     parser.add_argument(
-        "--guidance-scale", type=float, default=5.0,
+        "--guidance-scale",
+        type=float,
+        default=5.0,
         help="CFG guidance scale",
     )
     parser.add_argument(
-        "--tiling", action="store_true",
+        "--tiling",
+        action="store_true",
         help="Enable tiling decode (save memory for large resolution)",
     )
 

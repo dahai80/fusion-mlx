@@ -22,8 +22,6 @@ from __future__ import annotations
 import argparse
 import json
 import logging
-import os
-import shutil
 from pathlib import Path
 from typing import Any
 
@@ -134,6 +132,7 @@ def _load_safetensors_dir(files: list[Path]) -> dict[str, Any]:
     # 尝试 torch 路径 (支持 bfloat16)
     try:
         import torch  # noqa: F401
+
         use_pt = True
     except ImportError:
         use_pt = False
@@ -142,14 +141,23 @@ def _load_safetensors_dir(files: list[Path]) -> dict[str, Any]:
         logger.info("Loading %s ...", f.name)
         fw = "pt" if use_pt else "numpy"
         with safe_open(str(f), framework=fw, device="cpu") as st:
-            for key in st.keys():
+            for key in st:
                 tensor = st.get_tensor(key)
-                if not use_pt and hasattr(tensor, "dtype") and "bfloat16" in str(getattr(tensor, "dtype", "")):
+                if (
+                    not use_pt
+                    and hasattr(tensor, "dtype")
+                    and "bfloat16" in str(getattr(tensor, "dtype", ""))
+                ):
                     # numpy 不认 bfloat16, 上转 float32
-                    tensor = tensor.astype("float32") if hasattr(tensor, "astype") else tensor
+                    tensor = (
+                        tensor.astype("float32")
+                        if hasattr(tensor, "astype")
+                        else tensor
+                    )
                 if use_pt:
                     # torch.Tensor → numpy (bfloat16 先 upcast float32 保精度, 其余原 dtype)
                     import torch as _torch
+
                     if hasattr(tensor, "detach"):
                         tensor = tensor.detach().cpu()
                         if tensor.dtype == _torch.bfloat16:
@@ -164,7 +172,7 @@ def _load_safetensors_file(file: Path) -> dict[str, Any]:
 
     state_dict: dict[str, Any] = {}
     with safe_open(str(file), framework="numpy", device="cpu") as st:
-        for key in st.keys():
+        for key in st:
             state_dict[key] = st.get_tensor(key)
     return state_dict
 
@@ -276,7 +284,9 @@ def convert_skyreels_v3(
         输出目录 Path.
     """
     if model_type not in MODEL_TYPES:
-        raise ValueError(f"Unknown model_type: {model_type}. Valid: {list(MODEL_TYPES)}")
+        raise ValueError(
+            f"Unknown model_type: {model_type}. Valid: {list(MODEL_TYPES)}"
+        )
 
     config = MODEL_TYPES[model_type]
     mlx_out_dir = Path(mlx_out_dir)
@@ -295,9 +305,7 @@ def convert_skyreels_v3(
     patch_size = config["patch_size"]
 
     for pt_key, np_weight in pt_state_dict.items():
-        mlx_key, mlx_weight = _convert_one_key(
-            pt_key, np_weight, patch_size, config
-        )
+        mlx_key, mlx_weight = _convert_one_key(pt_key, np_weight, patch_size, config)
         if mlx_weight is not None:
             mlx_weights[mlx_key] = mlx_weight.astype(dtype)
 
@@ -414,8 +422,12 @@ def _write_sharded_safetensors(
         save_numpy(current_shard, str(shard_path))
         for k in current_shard:
             weight_map[k] = shard_name
-        logger.info("  Wrote shard %s (%d tensors, %.1f MB)",
-                    shard_name, len(current_shard), current_size / 1024 / 1024)
+        logger.info(
+            "  Wrote shard %s (%d tensors, %.1f MB)",
+            shard_name,
+            len(current_shard),
+            current_size / 1024 / 1024,
+        )
         current_shard = {}
         current_size = 0
         shard_idx += 1
@@ -427,6 +439,7 @@ def _write_sharded_safetensors(
         except (RuntimeError, TypeError):
             # mlx bfloat16 → numpy 不兼容, 上转 float32 保精度
             import mlx.core as mx
+
             if mlx_weight.dtype == mx.bfloat16:
                 np_weight = np.array(mlx_weight.astype(mx.float32))
             else:
@@ -448,11 +461,15 @@ def _write_sharded_safetensors(
     # 写入 model.safetensors.index.json (HuggingFace 兼容格式)
     # bfloat16 先 upcast float32 求 nbytes (numpy 不认 bf16 buffer)
     import mlx.core as mx
+
     def _safe_nbytes(w):
         try:
             return np.array(w).nbytes
         except (RuntimeError, TypeError):
-            return np.array(w.astype(mx.float32) if w.dtype == mx.bfloat16 else w).nbytes
+            return np.array(
+                w.astype(mx.float32) if w.dtype == mx.bfloat16 else w
+            ).nbytes
+
     total_size = sum(_safe_nbytes(w) for w in weights.values())
     index_data = {
         "metadata": {"total_size": total_size},

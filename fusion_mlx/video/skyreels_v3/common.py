@@ -12,7 +12,7 @@
 
 from __future__ import annotations
 
-import math
+import logging
 from typing import Any
 
 import mlx.core as mx
@@ -20,7 +20,8 @@ import mlx.nn as nn
 
 from . import _device
 
-logger = logging.getLogger(__name__) if False else __import__("logging").getLogger(__name__)
+logger = logging.getLogger(__name__)
+
 
 # ---------------------------------------------------------------------------
 # LayerNorm / RMSNorm
@@ -81,7 +82,7 @@ class WanRMSNorm(nn.Module):
 
     def __call__(self, x: mx.array) -> mx.array:
         x_f32 = x.astype(mx.float32)
-        ms = mx.mean(x_f32 ** 2, axis=-1, keepdims=True)
+        ms = mx.mean(x_f32**2, axis=-1, keepdims=True)
         x_norm = x_f32 * mx.rsqrt(ms + self.eps)
         return (x_norm * self.weight.astype(mx.float32)).astype(x.dtype)
 
@@ -193,16 +194,16 @@ def rope_apply(
     # 拆分 [t_dim, hw_dim, hw_dim]
     cos_t = freqs_cos[:, :t_dim]
     sin_t = freqs_sin[:, :t_dim]
-    cos_h = freqs_cos[:, t_dim:t_dim + hw_dim]
-    sin_h = freqs_sin[:, t_dim:t_dim + hw_dim]
-    cos_w = freqs_cos[:, t_dim + hw_dim:t_dim + 2 * hw_dim]
-    sin_w = freqs_sin[:, t_dim + hw_dim:t_dim + 2 * hw_dim]
+    cos_h = freqs_cos[:, t_dim : t_dim + hw_dim]
+    sin_h = freqs_sin[:, t_dim : t_dim + hw_dim]
+    cos_w = freqs_cos[:, t_dim + hw_dim : t_dim + 2 * hw_dim]
+    sin_w = freqs_sin[:, t_dim + hw_dim : t_dim + 2 * hw_dim]
 
     # 处理 batch 维度: 当 grid_sizes 只有一个元素但 B>1 时, 广播给所有样本
     # (CFG 拼接场景: latent_input = mx.concatenate([latents]*2) 导致 B>1)
     gs = grid_sizes
     if len(gs) < b:
-        gs = gs * (b // len(gs)) + gs[:b % len(gs)]  # 重复到 b 个
+        gs = gs * (b // len(gs)) + gs[: b % len(gs)]  # 重复到 b 个
 
     # 多段拼接场景: 当 x 的 L 维 > sum(f*h*w) 时, grid_sizes 表示多个段
     # (R2V 参考图 patch + 视频 patch 拼接成一个序列). 此时按段累拼输出.
@@ -220,12 +221,12 @@ def rope_apply(
         # 按段偏移截取 x_i: 第 i 段对应 x[i, offset:offset+seq_len]
         # 单段场景 (offset=0) 等价于截断, 多段场景正确分片
         offset = int(round(sum(g[0] * g[1] * g[2] * patch_scale for g in gs[:i])))
-        x_i = x[i, offset:offset + seq_len].astype(mx.float32)  # [seq_len, N, C]
+        x_i = x[i, offset : offset + seq_len].astype(mx.float32)  # [seq_len, N, C]
 
-        # patch 后真实网格 (h, w 各除 patch_size[1:], f 不变因 patch_size[0]=1)
-        # 用于 rope cos/sin 构造
-        h_real = max(1, h // 2)  # patch_size=(1,2,2) 约定, 通用应传 patch_size 但此处硬编
-        w_real = max(1, w // 2)
+        # patch 后真实网格: h, w 即 token 网格维 (grid_sizes 已含 patch, 对齐 wan2 rope_apply;
+        # patch_size[0]=1 故 f 不变). 用于 rope cos/sin 构造.
+        h_real = max(1, h)
+        w_real = max(1, w)
 
         # 拆 real/imag: x[::2] = real, x[1::2] = imag
         x_real = x_i[..., 0::2]  # [seq_len, N, C/2]
@@ -495,8 +496,11 @@ def verify_compile_stability(
 
     logger.info(
         "编译验证: ok=%s diff=%.2e eager=%.3fs compile=%.3fs speedup=%.2fx",
-        result["compile_ok"], result["max_abs_diff"],
-        result["eager_time_s"], result["compile_time_s"], result["speedup"],
+        result["compile_ok"],
+        result["max_abs_diff"],
+        result["eager_time_s"],
+        result["compile_time_s"],
+        result["speedup"],
     )
     return result
 

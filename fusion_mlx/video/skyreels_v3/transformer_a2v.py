@@ -15,34 +15,28 @@ A2V 数字人场景:
 from __future__ import annotations
 
 import logging
-import math
-from typing import Any
 
 import mlx.core as mx
 import mlx.nn as nn
 
 from . import _device
 from .attention import (
+    WAN_CROSSATTENTION_CLASSES,
     WanSelfAttention,
     WanTemporalAttention,
-    WanT2VCrossAttention,
-    WanI2VCrossAttention,
-    WAN_CROSSATTENTION_CLASSES,
     _linear_dtype,
 )
 from .common import (
-    WanLayerNorm,
-    WanRMSNorm,
     GELUApprox,
-    sinusoidal_embedding_1d,
-    rope_params,
-    rope_apply,
     PatchEmbed3D,
+    WanLayerNorm,
+    maybe_compile,
     mul_add,
     mul_add_add,
-    maybe_compile,
+    rope_params,
+    sinusoidal_embedding_1d,
 )
-from .transformer_r2v import WanFFN, Head
+from .transformer_r2v import Head, WanFFN
 
 logger = logging.getLogger(__name__)
 
@@ -110,7 +104,7 @@ class AudioEmbedding(nn.Module):
         a = self.audio_proj.proj1(a_flat)  # [b, 512]
         a = self.audio_proj.proj2(a)  # [b, 512]
         a = self.audio_proj.proj3(a)  # [b, 24576]
-        audio_ctx = a[:, :self.dim].reshape(b, 1, self.dim)  # 截到 dim, 单 token
+        audio_ctx = a[:, : self.dim].reshape(b, 1, self.dim)  # 截到 dim, 单 token
         text_ctx = self.text_proj(text_embeds)  # [B, L_text, dim]
         ctx = mx.concatenate([audio_ctx, text_ctx], axis=1)
         ctx_norm = self.norm(ctx)
@@ -148,18 +142,20 @@ class AudioCrossAttention(nn.Module):
         self.audio_dim = audio_dim
         self.num_heads = num_heads
         self.head_dim = dim // num_heads
-        self.scale = self.head_dim ** -0.5
+        self.scale = self.head_dim**-0.5
         # q/k/v 投影 (命名严格对齐真实权重 audio_cross_attn.*)
         # 真实权重布局: kv_linear.weight=(768,10240)=(in,out), q_linear/proj=(5120,5120)=(out,in)?
         # mlx.nn.Linear 期望 (out,in), 故 kv_linear 需转置加载 (见 weights.py 映射)
-        self.q_linear = nn.Linear(dim, dim)            # q_linear: [5120→5120]
-        self.kv_linear = nn.Linear(audio_dim, dim * 2)  # kv_linear: [768→10240] (加载时转置)
-        self.proj = nn.Linear(dim, dim)                 # proj: [5120→5120]
+        self.q_linear = nn.Linear(dim, dim)  # q_linear: [5120→5120]
+        self.kv_linear = nn.Linear(
+            audio_dim, dim * 2
+        )  # kv_linear: [768→10240] (加载时转置)
+        self.proj = nn.Linear(dim, dim)  # proj: [5120→5120]
 
     def __call__(
         self,
-        x: mx.array,            # [B, L, dim] 主干 latent
-        audio_ctx: mx.array,    # [B, L_a, audio_dim] 音频 context
+        x: mx.array,  # [B, L, dim] 主干 latent
+        audio_ctx: mx.array,  # [B, L_a, audio_dim] 音频 context
     ) -> mx.array:
         """音频引导的交叉注意力, 输出 [B, L, dim]."""
         b = x.shape[0]
@@ -227,22 +223,27 @@ class A2VAttentionBlock(nn.Module):
         # Self-attention (空间分支)
         self.norm1 = WanLayerNorm(dim, eps)
         self.self_attn = WanSelfAttention(
-            dim, num_heads, window_size, qk_norm, eps,
+            dim,
+            num_heads,
+            window_size,
+            qk_norm,
+            eps,
             num_kv_heads=num_kv_heads,
         )
 
         # Temporal attention (时序分支, SW-FA window=32)
         self.temporal_attn = WanTemporalAttention(
-            dim, num_heads, window_size=temporal_window,
-            qk_norm=qk_norm, eps=eps,
+            dim,
+            num_heads,
+            window_size=temporal_window,
+            qk_norm=qk_norm,
+            eps=eps,
         )
         self.norm_temporal = WanLayerNorm(dim, eps)
 
         # Cross-attention (音频+文本融合 context 引导)
         self.norm3 = (
-            WanLayerNorm(dim, eps, elementwise_affine=True)
-            if cross_attn_norm
-            else None
+            WanLayerNorm(dim, eps, elementwise_affine=True) if cross_attn_norm else None
         )
         # norm_x: 真实权重 blocks.N.norm_x (5120, affine=True), 用于 audio_cross_attn 前归一化
         self.norm_x = WanLayerNorm(dim, eps, elementwise_affine=True)
@@ -257,7 +258,9 @@ class A2VAttentionBlock(nn.Module):
         # Audio cross-attention (音频 context 引导嘴型, A2V 独有)
         # 真实权重: audio_cross_attn.{kv_linear[768→10240], q_linear[5120→5120], proj[5120→5120]}
         self.audio_cross_attn = AudioCrossAttention(
-            dim=dim, audio_dim=768, eps=eps,
+            dim=dim,
+            audio_dim=768,
+            eps=eps,
         )
 
         # Feed-forward
@@ -266,9 +269,9 @@ class A2VAttentionBlock(nn.Module):
 
         # Learned modulation: 6 vectors for scale/shift/gate (kept in float32)
         # modulation 保普通 mx.array (与底座 wan2/transformer.py 一致, load_weights 会按 key 映射加载)
-        self.modulation = (
-            mx.random.normal((1, 6, dim)) * (dim ** -0.5)
-        ).astype(mx.float32)
+        self.modulation = (mx.random.normal((1, 6, dim)) * (dim**-0.5)).astype(
+            mx.float32
+        )
 
     def __call__(
         self,
@@ -291,16 +294,24 @@ class A2VAttentionBlock(nn.Module):
         e_6 = e.reshape(b_e, 6, -1).astype(mx.float32)  # [B, 6, dim]
         mod = self.modulation + e_6  # float32
         e0, e1, e2, e3, e4, e5 = (
-            mod[:, 0, :], mod[:, 1, :], mod[:, 2, :],
-            mod[:, 3, :], mod[:, 4, :], mod[:, 5, :],
+            mod[:, 0, :],
+            mod[:, 1, :],
+            mod[:, 2, :],
+            mod[:, 3, :],
+            mod[:, 4, :],
+            mod[:, 5, :],
         )
 
         # ---- 1. Self-Attention (空间) ----
         x_norm = self.norm1(x)
         x_mod = mul_add_add(x_norm, e1, e0)
         y = self.self_attn(
-            x_mod, seq_lens, grid_sizes, freqs,
-            rope_cos_sin=rope_cos_sin, attn_mask=attn_mask,
+            x_mod,
+            seq_lens,
+            grid_sizes,
+            freqs,
+            rope_cos_sin=rope_cos_sin,
+            attn_mask=attn_mask,
         )
         x = mul_add(x, y, e2)
 
@@ -308,7 +319,8 @@ class A2VAttentionBlock(nn.Module):
         if temporal_len is not None:
             x_t = self.norm_temporal(x)
             y_t = self.temporal_attn(
-                x_t, temporal_len,
+                x_t,
+                temporal_len,
                 rope_cos_sin=rope_cos_sin,
             )
             x = x + y_t
@@ -316,7 +328,10 @@ class A2VAttentionBlock(nn.Module):
         # ---- 3. Cross-Attention (音频+文本融合 context 引导) ----
         x_cross = self.norm3(x) if self.norm3 is not None else x
         y_c = self.cross_attn(
-            x_cross, context, context_lens, kv_cache=cross_kv_cache,
+            x_cross,
+            context,
+            context_lens,
+            kv_cache=cross_kv_cache,
         )
         x = x + y_c
 
@@ -365,7 +380,9 @@ class SkyReelsA2VDiT(nn.Module):
         self.in_dim = cfg.get("in_dim", 16)
         self.out_dim = cfg.get("out_dim", 16)
         self.text_dim = cfg.get("text_dim", 4096)
-        self.audio_dim = cfg.get("audio_dim", 768)  # wav2vec2 hidden size (真实权重 norm=768)
+        self.audio_dim = cfg.get(
+            "audio_dim", 768
+        )  # wav2vec2 hidden size (真实权重 norm=768)
         self.text_len = cfg.get("text_len", 512)
         self.freq_dim = cfg.get("freq_dim", 256)
         self.window_size = cfg.get("window_size", (-1, -1))
@@ -377,7 +394,9 @@ class SkyReelsA2VDiT(nn.Module):
 
         # Patch embedding
         self.patch_embedding = PatchEmbed3D(
-            self.in_dim, self.dim, self.patch_size,
+            self.in_dim,
+            self.dim,
+            self.patch_size,
         )
 
         # Text embedding (基础文本, 与 AudioEmbedding 融合后作为 context)
@@ -402,7 +421,8 @@ class SkyReelsA2VDiT(nn.Module):
             nn.Linear(self.dim, self.dim),
         )
         self.time_projection = nn.Sequential(
-            nn.SiLU(), nn.Linear(self.dim, self.dim * 6),
+            nn.SiLU(),
+            nn.Linear(self.dim, self.dim * 6),
         )
 
         # RoPE 频率表
@@ -471,15 +491,51 @@ class SkyReelsA2VDiT(nn.Module):
         # 结论: 整体 mx.compile 劣化, 未编译更糟, 当前 maybe_compile 每 block 单独编译是最优路径
         # lazy compile 首步触发后切 mx.compile 融合循环 (实测劣化但比未编译好, 暂保留)
         if self._compiled_call is None:
-            out = self._call_raw(x, t, audio_embeds, text_embeds, seq_lens, grid_sizes, context_lens, rope_cos_sin, attn_mask, temporal_len, cross_kv_cache)
+            out = self._call_raw(
+                x,
+                t,
+                audio_embeds,
+                text_embeds,
+                seq_lens,
+                grid_sizes,
+                context_lens,
+                rope_cos_sin,
+                attn_mask,
+                temporal_len,
+                cross_kv_cache,
+            )
             try:
                 self._compiled_call = mx.compile(self._call_raw)
             except Exception:
                 self._compiled_call = False
             return out
         if self._compiled_call is False:
-            return self._call_raw(x, t, audio_embeds, text_embeds, seq_lens, grid_sizes, context_lens, rope_cos_sin, attn_mask, temporal_len, cross_kv_cache)
-        return self._compiled_call(x, t, audio_embeds, text_embeds, seq_lens, grid_sizes, context_lens, rope_cos_sin, attn_mask, temporal_len, cross_kv_cache)
+            return self._call_raw(
+                x,
+                t,
+                audio_embeds,
+                text_embeds,
+                seq_lens,
+                grid_sizes,
+                context_lens,
+                rope_cos_sin,
+                attn_mask,
+                temporal_len,
+                cross_kv_cache,
+            )
+        return self._compiled_call(
+            x,
+            t,
+            audio_embeds,
+            text_embeds,
+            seq_lens,
+            grid_sizes,
+            context_lens,
+            rope_cos_sin,
+            attn_mask,
+            temporal_len,
+            cross_kv_cache,
+        )
 
     def _call_raw(
         self,
@@ -513,10 +569,18 @@ class SkyReelsA2VDiT(nn.Module):
         # AtomCode: cross_kv_cache 跨步复用透传到每 block (每 block 内 cross_attn 复用同 KV)
         for block in self.blocks:
             x = block(
-                x, e, seq_lens, grid_sizes, self.freqs,
-                context, audio_ctx, context_lens,
-                rope_cos_sin=rope_cos_sin, attn_mask=attn_mask,
-                temporal_len=temporal_len, cross_kv_cache=cross_kv_cache,
+                x,
+                e,
+                seq_lens,
+                grid_sizes,
+                self.freqs,
+                context,
+                audio_ctx,
+                context_lens,
+                rope_cos_sin=rope_cos_sin,
+                attn_mask=attn_mask,
+                temporal_len=temporal_len,
+                cross_kv_cache=cross_kv_cache,
             )
 
         # 5. Output head + unpatchify
@@ -530,12 +594,12 @@ class SkyReelsA2VDiT(nn.Module):
         pt, ph, pw = self.patch_size
         outputs = []
         for i, (f, h, w) in enumerate(grid_sizes):
-            h_p, w_p = h // ph, w // pw
-            seq_len = f * h_p * w_p
+            # grid_sizes (f, h, w) 为 patch 后 token 网格 (对齐 wan2 unpatchify)
+            seq_len = f * h * w
             x_i = x[i, :seq_len]
-            x_i = x_i.reshape(f, h_p, w_p, pt, ph, pw, self.out_dim)
+            x_i = x_i.reshape(f, h, w, pt, ph, pw, self.out_dim)
             x_i = x_i.transpose(6, 0, 3, 1, 4, 2, 5)
-            x_i = x_i.reshape(self.out_dim, f * pt, h_p * ph, w_p * pw)
+            x_i = x_i.reshape(self.out_dim, f * pt, h * ph, w * pw)
             outputs.append(x_i)
         return mx.stack(outputs, axis=0)
 

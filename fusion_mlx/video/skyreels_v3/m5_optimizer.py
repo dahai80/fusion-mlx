@@ -37,13 +37,14 @@ class ComputePlacement:
       - 卷积 (VAE): Neural Accelerator (如果可用)
       - 注意力: Metal GPU (dFlash)
     """
+
     large_matmul_device: str = "gpu"
     convolution_device: str = "gpu"  # Neural Accelerator 不可见时走 GPU
     attention_device: str = "gpu"
     use_neural_accelerator: bool = False
 
     @classmethod
-    def for_current_device(cls) -> "ComputePlacement":
+    def for_current_device(cls) -> ComputePlacement:
         """根据当前设备自动配置."""
         is_m5 = _device.is_m5()
         return cls(
@@ -116,6 +117,7 @@ class QuantizationConfig:
     FP8 推理: fusion_mlx.custom_kernels.fp8_linear
     NF4 权重加载: 19B 720P 常驻内存压缩至 14GB
     """
+
     weight_bits: int = 4  # 4=NF4, 8=FP8, 16=BF16
     kv_bits: int = 4  # KV Cache 量化位数
     activation_dtype: mx.Dtype = mx.bfloat16
@@ -124,7 +126,7 @@ class QuantizationConfig:
     use_turboquant_kv: bool = True
 
     @classmethod
-    def for_m5_max(cls) -> "QuantizationConfig":
+    def for_m5_max(cls) -> QuantizationConfig:
         """M5 Max 默认配置: 最激进量化."""
         return cls(
             weight_bits=4,  # NF4
@@ -135,7 +137,7 @@ class QuantizationConfig:
         )
 
     @classmethod
-    def for_m4(cls) -> "QuantizationConfig":
+    def for_m4(cls) -> QuantizationConfig:
         """M4 默认配置: 中等量化."""
         return cls(
             weight_bits=8,  # FP8
@@ -146,7 +148,7 @@ class QuantizationConfig:
         )
 
     @classmethod
-    def auto(cls) -> "QuantizationConfig":
+    def auto(cls) -> QuantizationConfig:
         """根据当前设备自动选择量化方案."""
         gen = _device.detect_generation()
         if gen == _device.DeviceGeneration.M5:
@@ -273,6 +275,7 @@ class M5Optimizer:
                 from fusion_mlx.custom_kernels.fp8_linear import (
                     convert_to_fp8_linear,
                 )
+
                 convert_to_fp8_linear(model)
                 logger.info("Applied FP8 Linear to DiT model")
             except Exception as exc:
@@ -282,6 +285,7 @@ class M5Optimizer:
         if self.quant_config.use_nf4_weights:
             try:
                 from fusion_mlx.custom_kernels.quantize import quantize_model
+
                 quantize_model(model, bits=4)
                 logger.info("Applied NF4 quantization to DiT model")
             except Exception as exc:
