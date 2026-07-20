@@ -214,12 +214,20 @@ class SkyReelsVAE(nn.Module):
         instance = cls()
 
         if instance._uses_base:
-            try:
-                # 底座 WanVAE 自带权重加载逻辑
-                # 这里仅确保实例可用
-                logger.info("SkyReelsVAE loaded via WanVAE base")
-            except Exception as exc:
-                logger.warning("Failed to load VAE weights: %s", exc)
+            # 真读 safetensors 权重注入底座 WanVAE (避假载入致 decode 全零)
+            import glob
+            safetensors_files = sorted(glob.glob(str(path / "*.safetensors")))
+            if not safetensors_files:
+                logger.warning("VAE 权重目录 %s 无 safetensors, stub 模式", path)
+            else:
+                for wf in safetensors_files:
+                    try:
+                        instance.vae.load_weights(wf, strict=False)
+                        logger.info("VAE 权重已真注入: %s", wf)
+                    except Exception as exc:
+                        logger.warning("Failed to load VAE weights %s: %s", wf, exc)
+        else:
+            logger.warning("WanVAE base unavailable, VAE stub mode")
 
         return instance
 

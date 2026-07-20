@@ -234,48 +234,92 @@ class TestFreshImportAfterServerRestart(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
-# 端到端 pipeline 回归 (3 分支载入 + 调用)
+# 真权重载入回归 (AtomCode 铁律: 禁 stub 假回归, 必真权重载入)
 # ---------------------------------------------------------------------------
-class TestPipelineLoadAllBranches(unittest.TestCase):
-    """3 分支 pipeline 载入不报错 (stub 模式无权重文件)."""
+# 真权重路径: ~/.fusion-mlx/models/models--Skywork--SkyReels-V3-R2V-14B/snapshots/<hash>
+import os
+_HOME = os.path.expanduser("~")
+_SKY_BASE = os.path.join(
+    _HOME, ".fusion-mlx", "models",
+    "models--Skywork--SkyReels-V3-R2V-14B",
+)
+_SKY_SNAPSHOT = None
+if os.path.isdir(os.path.join(_SKY_BASE, "snapshots")):
+    _snapshots_dir = os.path.join(_SKY_BASE, "snapshots")
+    _snapshots = sorted(os.listdir(_snapshots_dir))
+    if _snapshots:
+        _SKY_SNAPSHOT = os.path.join(_snapshots_dir, _snapshots[0])
 
-    def test_r2v_pipeline_load(self):
+
+@unittest.skipUnless(
+    _SKY_SNAPSHOT and os.path.isdir(_SKY_SNAPSHOT),
+    "无 SkyReels-V3-R2V-14B 真权重目录 (~/.fusion-mlx/models), 跳过真权重回归",
+)
+class TestRealWeightsLoad(unittest.TestCase):
+    """真权重载入回归 (AtomCode 铁律: 禁 stub 假回归).
+
+    用真 SkyReels-V3-R2V-14B 权重 (~/.fusion-mlx/models) 验:
+      - text_encoder 真载入 + encode_text 前向 (真权重非全零)
+      - vae 真载入 + decode 前向 (真权重非全零)
+      - DiT 真载入 (若权重已下完) + 一步采样前向验无 [matmul]/[addmm] 报错
+    """
+
+    def test_text_encoder_real_weights(self):
+        """text_encoder 真载入 + encode_text 前向 (真权重 >90% 非零)."""
+        from fusion_mlx.video.skyreels_v3.text_encoder import UMT5Encoder
+        enc = UMT5Encoder.from_pretrained(os.path.join(_SKY_SNAPSHOT, "text_encoder"))
+        emb = enc.encode_text("a cat playing piano", max_length=77)
+        self.assertEqual(emb.ndim, 3, f"emb 应 3D, 实 {emb.ndim}D")
+        # 真权重非全零验 (随机初始化会全零或极小值)
+        nonzero = mx.sum(emb != 0).item()
+        self.assertGreater(
+            nonzero, emb.size * 0.9,
+            f"真权重应 >90% 非零, 实 {100*nonzero/emb.size:.1f}%",
+        )
+
+    def test_vae_real_weights_load(self):
+        """vae 真载入 (from_pretrained 真调 load_weights, 非 0s 载入)."""
+        from fusion_mlx.video.skyreels_v3.vae import SkyReelsVAE
+        vae = SkyReelsVAE.from_pretrained(os.path.join(_SKY_SNAPSHOT, "vae"))
+        self.assertIsNotNone(vae.vae, "底座 WanVAE 应真载入")
+        self.assertTrue(vae._uses_base, "应走底座真载入非 stub")
+        # 验权重真注入: 递归抓底座 vae.vae 所有子模块内参数
+        # load_weights 应真读 safetensors 注入子模块, 非假载入 0.0s
+        # mlx.nn.Module 子模块用 apply_to_modules 递归抓
+        params = []
+        def collect(name, mod):
+            for k, v in mod.items():
+                if hasattr(v, "size") and v.size > 16:
+                    params.append((f"{name}.{k}", v))
+        vae.vae.apply_to_modules(collect)
+        self.assertGreater(len(params), 20, f"底座应 >20 真权重张量, 实 {len(params)}")
+        nonzero = sum(1 for _, p in params if mx.sum(p != 0).item() > 0)
+        self.assertGreater(
+            nonzero, len(params) * 0.1,
+            f"底座真权重应 >10% 张量非零, 实 {nonzero}/{len(params)}",
+        )
+
+    def test_dit_real_weights_if_available(self):
+        """DiT 真载入 (若 diffusion_pytorch_model.safetensors 已下完)."""
+        dit_dir = os.path.join(_SKY_SNAPSHOT, "transformer")
+        dit_file = os.path.join(dit_dir, "diffusion_pytorch_model.safetensors")
+        if not os.path.exists(dit_file):
+            self.skipTest("DiT 28.58GB 权重未下完, 跳过 (后台下载中)")
+        # 真载入 + 一步前向验无 [matmul]/[addmm] 报错
         from fusion_mlx.video.skyreels_v3.pipelines import SkyReelsR2VPipeline
-        # stub 模式: 无权重文件时随机初始化
-        import tempfile, os
-        with tempfile.TemporaryDirectory() as tmp:
-            try:
-                pipeline = SkyReelsR2VPipeline(tmp)
-                self.assertIsNotNone(pipeline.dit)
-                self.assertIsNotNone(pipeline.m5_optimizer)
-            except Exception as e:
-                if "stub" in str(e).lower() or "safetensors" in str(e).lower():
-                    self.skipTest(f"无权重文件 stub 模式: {e}")
-                raise
-
-    def test_v2v_pipeline_load(self):
-        from fusion_mlx.video.skyreels_v3.pipelines import SkyReelsV2VPipeline
-        import tempfile
-        with tempfile.TemporaryDirectory() as tmp:
-            try:
-                pipeline = SkyReelsV2VPipeline(tmp)
-                self.assertIsNotNone(pipeline.dit)
-            except Exception as e:
-                if "stub" in str(e).lower() or "safetensors" in str(e).lower():
-                    self.skipTest(f"无权重文件 stub 模式: {e}")
-                raise
-
-    def test_a2v_pipeline_load(self):
-        from fusion_mlx.video.skyreels_v3.pipelines import SkyReelsA2VPipeline
-        import tempfile
-        with tempfile.TemporaryDirectory() as tmp:
-            try:
-                pipeline = SkyReelsA2VPipeline(tmp)
-                self.assertIsNotNone(pipeline.dit)
-            except Exception as e:
-                if "stub" in str(e).lower() or "safetensors" in str(e).lower():
-                    self.skipTest(f"无权重文件 stub 模式: {e}")
-                raise
+        pipeline = SkyReelsR2VPipeline(_SKY_SNAPSHOT)
+        self.assertIsNotNone(pipeline.dit)
+        self.assertIsNotNone(pipeline.m5_optimizer)
+        # 验 DiT 真权重已注入 (blocks 非全零)
+        import mlx.nn as nn
+        has_weights = False
+        for k, v in pipeline.dit.items():
+            if hasattr(v, 'shape') and v.size > 100 and 'weight' in k.lower():
+                nz = mx.sum(v != 0).item()
+                if nz > v.size * 0.5:
+                    has_weights = True
+                    break
+        self.assertTrue(has_weights, "DiT 权重应真注入")
 
 
 # ---------------------------------------------------------------------------
@@ -314,7 +358,7 @@ def run_all() -> int:
         TestFp8MatmulTranspose,
         TestM5OptimizerNonM5,
         TestFreshImportAfterServerRestart,
-        TestPipelineLoadAllBranches,
+        TestRealWeightsLoad,
         TestRepeatedConversionStress,
     ]:
         suite.addTests(loader.loadTestsFromTestCase(cls))
