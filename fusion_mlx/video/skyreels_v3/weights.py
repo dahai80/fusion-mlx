@@ -19,7 +19,6 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import Any
 
 import mlx.core as mx
 import mlx.nn as nn
@@ -142,7 +141,7 @@ def _remap_diffusers_to_mlx(
         elif "scale_shift_table" in nk:
             nk = nk.replace("scale_shift_table", "modulation")
         if nk.startswith("proj_out"):
-            nk = "head.head" + nk[len("proj_out"):]
+            nk = "head.head" + nk[len("proj_out") :]
         nk = _re.sub(r"\.attn1\.", ".self_attn.", nk)
         nk = _re.sub(r"\.attn2\.", ".cross_attn.", nk)
         nk = _re.sub(r"\.to_out\.0\.", ".o.", nk)
@@ -157,7 +156,7 @@ def _remap_diffusers_to_mlx(
             v = v.transpose(0, 3, 4, 1, 2).reshape(out_c, kh, kw, in_c * kt)
             nk = "patch_embedding.conv2d.weight"
         elif nk.startswith("patch_embedding."):
-            nk = "patch_embedding.conv2d." + nk[len("patch_embedding."):]
+            nk = "patch_embedding.conv2d." + nk[len("patch_embedding.") :]
         # 仅保留命中模型的 key (丢弃 norm2.bias 等模型不存在的源 key)
         if nk in model_keys:
             new_w[nk] = v
@@ -211,16 +210,15 @@ def load_dit_weights(
     if transformer_dir.is_dir() and list(transformer_dir.glob("*.safetensors")):
         logger.info(
             "DiT 权重重定向: %s -> %s (diffusers transformer/ 约定)",
-            weights_dir, transformer_dir,
+            weights_dir,
+            transformer_dir,
         )
         weights_dir = transformer_dir
 
     # 加载权重
     weights = _load_safetensors_dir(weights_dir)
     if not weights:
-        raise FileNotFoundError(
-            f"未找到 safetensors 权重文件于 {weights_dir}"
-        )
+        raise FileNotFoundError(f"未找到 safetensors 权重文件于 {weights_dir}")
 
     # 权重名重映射: diffusers-Wan -> MLX SkyReels-V3 (源 Linear 已是 (out,in), 无需转置).
     # 未命中模型的源 key 在此丢弃, 未覆盖的模型参数保留 init (见下方统计).
@@ -233,8 +231,11 @@ def load_dit_weights(
             w = weights[k]
             if w.shape == (768, 10240):  # (in, out) 反布局
                 weights[k] = w.T.astype(w.dtype)  # → (10240, 768)=(out, in)
-                logger.info("audio_cross_attn.kv_linear.weight 转置: %s→%s",
-                            w.shape, weights[k].shape)
+                logger.info(
+                    "audio_cross_attn.kv_linear.weight 转置: %s→%s",
+                    w.shape,
+                    weights[k].shape,
+                )
     # 统计匹配情况: strict=False 会静默跳过未匹配 key, 需显式暴露未加载的模型参数
     # (img 分支 / norm1 / norm3 等架构差异, 见 issue 跟踪).
     model_keys = set(k for k, _ in nn.utils.tree_flatten(model.parameters()))
@@ -244,23 +245,27 @@ def load_dit_weights(
         mx.eval(model.parameters())
         logger.info(
             "DiT 权重加载: %d/%d 模型参数命中, 未覆盖 %d 保留 init from %s",
-            len(weights), len(model_keys), len(uncovered), weights_dir,
+            len(weights),
+            len(model_keys),
+            len(uncovered),
+            weights_dir,
         )
         if uncovered:
             # Rule 12: fail visibly - 暴露停留在 init 的参数, 避免静默错误输出
-            from collections import Counter
             import re as _re
-            pats = Counter(
-                _re.sub(r"blocks\.\d+\.", "blocks.N.", k) for k in uncovered
-            )
+            from collections import Counter
+
+            pats = Counter(_re.sub(r"blocks\.\d+\.", "blocks.N.", k) for k in uncovered)
             logger.warning(
                 "DiT %d 个模型参数无源权重 (保留 init): %s",
-                len(uncovered), dict(pats.most_common(12)),
+                len(uncovered),
+                dict(pats.most_common(12)),
             )
     except Exception as exc:
         logger.warning(
             "DiT 权重加载部分失败 (strict=%s): %s",
-            strict, exc,
+            strict,
+            exc,
         )
         if strict:
             # 降级为非严格模式重试
@@ -349,16 +354,21 @@ def _inject_list_child_weights(module: nn.Module, weights: dict) -> None:
                 # 判据: 真实权重 shape[1] (in_c) == cur 期望权重的末维 (in_c), 且 shape[1] > 1
                 if param_name == "weight" and hasattr(cur, "weight"):
                     import mlx.nn as _nn
+
                     if isinstance(cur, _nn.Conv2d) and value.ndim == 4:
                         out_c, in_c, kh, kw = value.shape
-                        cur_w = getattr(cur, "weight")
+                        cur_w = cur.weight
                         # 真实布局 (out,in,kh,kw) vs MLX 期望 (out,kh,kw,in):
                         # 简判: 真实 shape[1] (in_c) > 1 且 in_c 既不等于 kh 也不等于 kw
                         # (即第2维确是 in_c 而非 kh/kw, 需转置到末维)
                         if in_c > 1 and in_c != kh and in_c != kw:
-                            val = value.transpose(0, 2, 3, 1)  # (out,in,kh,kw) → (out,kh,kw,in)
+                            val = value.transpose(
+                                0, 2, 3, 1
+                            )  # (out,in,kh,kw) → (out,kh,kw,in)
                 setattr(cur, param_name, val)
-            elif hasattr(cur, "_parameters") and param_name in getattr(cur, "_parameters", {}):
+            elif hasattr(cur, "_parameters") and param_name in getattr(
+                cur, "_parameters", {}
+            ):
                 cur._parameters[param_name] = value
         except (IndexError, AttributeError):
             continue
@@ -429,16 +439,21 @@ def _eval_params_batched(module, batch_mb: int = 512) -> None:
     按 batch_mb 切分参数列表, 每批 ≤ batch_mb MB, 逐批 mx.eval.
     """
     import mlx.core as mx
+
     params = module.parameters()
     if not params:
         return
     max_bytes = batch_mb * 1024**2
-    cur = []; cur_bytes = 0
+    cur = []
+    cur_bytes = 0
     for k, v in params.items():
-        nb = v.nbytes if hasattr(v, 'nbytes') else 0
+        nb = v.nbytes if hasattr(v, "nbytes") else 0
         if cur_bytes + nb > max_bytes and cur:
-            mx.eval(cur); cur = []; cur_bytes = 0
-        cur.append(v); cur_bytes += nb
+            mx.eval(cur)
+            cur = []
+            cur_bytes = 0
+        cur.append(v)
+        cur_bytes += nb
     if cur:
         mx.eval(cur)
 

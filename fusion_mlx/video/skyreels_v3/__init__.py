@@ -8,14 +8,13 @@ and the existing wan2/ltx2 DiT ports as blueprints.
 """
 
 from . import _device  # noqa: F401 - ensures device/stream init on import
-
 from .config import (
-    SkyReelsBranchConfig,
     BRANCH_CONFIGS,
+    SkyReelsBranchConfig,
     get_branch_config,
     list_models,
 )
-from .generate import generate_video, TASK_TO_MODEL
+from .generate import TASK_TO_MODEL, generate_video
 
 __all__ = [
     "_device",

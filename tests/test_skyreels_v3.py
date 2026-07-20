@@ -36,11 +36,12 @@ class TestImportClosure:
 
     def test_top_level_import(self):
         from fusion_mlx.video.skyreels_v3 import (
-            generate_video,
-            list_models,
-            get_branch_config,
             BRANCH_CONFIGS,
+            generate_video,
+            get_branch_config,
+            list_models,
         )
+
         assert callable(generate_video)
         assert callable(list_models)
         assert callable(get_branch_config)
@@ -48,6 +49,7 @@ class TestImportClosure:
 
     def test_device_module(self):
         from fusion_mlx.video.skyreels_v3 import _device
+
         assert hasattr(_device, "get_stream")
         assert hasattr(_device, "is_m5")
         assert hasattr(_device, "detect_generation")
@@ -56,53 +58,46 @@ class TestImportClosure:
 
     def test_common_module(self):
         from fusion_mlx.video.skyreels_v3.common import (
-            WanLayerNorm,
-            WanRMSNorm,
-            GELUApprox,
-            sinusoidal_embedding_1d,
-            rope_params,
             PatchEmbed3D,
-            mul_add,
-            mul_add_add,
+            WanLayerNorm,
         )
+
         assert WanLayerNorm is not None
         assert PatchEmbed3D is not None
 
     def test_attention_module(self):
         from fusion_mlx.video.skyreels_v3.attention import (
-            WanSelfAttention,
-            WanTemporalAttention,
-            WanT2VCrossAttention,
-            WanI2VCrossAttention,
             WAN_CROSSATTENTION_CLASSES,
         )
+
         assert "t2v_cross_attn" in WAN_CROSSATTENTION_CLASSES
         assert "i2v_cross_attn" in WAN_CROSSATTENTION_CLASSES
 
     def test_scheduler_module(self):
         from fusion_mlx.video.skyreels_v3.scheduler import (
             FlowUniPCConfig,
-            FlowUniPCMultistepScheduler,
             perform_guidance,
-            flow_match_sample,
         )
+
         assert FlowUniPCConfig is not None
         assert callable(perform_guidance)
 
     def test_transformer_modules(self):
+        from fusion_mlx.video.skyreels_v3.transformer_a2v import SkyReelsA2VDiT
         from fusion_mlx.video.skyreels_v3.transformer_r2v import SkyReelsR2VDiT
         from fusion_mlx.video.skyreels_v3.transformer_v2v import SkyReelsV2VDiT
-        from fusion_mlx.video.skyreels_v3.transformer_a2v import SkyReelsA2VDiT
+
         assert SkyReelsR2VDiT is not None
         assert SkyReelsV2VDiT is not None
         assert SkyReelsA2VDiT is not None
 
     def test_pipelines_import(self):
         from fusion_mlx.video.skyreels_v3.pipelines import (
+            SkyReelsA2VPipeline,
             SkyReelsR2VPipeline,
             SkyReelsV2VPipeline,
-            SkyReelsA2VPipeline,
         )
+
         assert SkyReelsR2VPipeline is not None
         assert SkyReelsV2VPipeline is not None
         assert SkyReelsA2VPipeline is not None
@@ -110,39 +105,31 @@ class TestImportClosure:
     def test_kv_cache_import(self):
         from fusion_mlx.video.skyreels_v3.kv_cache import (
             SkyReelsKVCache,
-            _KVPool,
-            _PoolConfig,
         )
+
         assert SkyReelsKVCache is not None
 
     def test_flicker_fix_import(self):
         from fusion_mlx.video.skyreels_v3.temporal_flicker_fix import (
             FlickerFixConfig,
-            TemporalFlickerFix,
-            StepCoherenceFilter,
-            temporal_ema_smooth,
-            temporal_ema_batch,
-            boundary_align,
             default_config_for_branch,
         )
+
         assert FlickerFixConfig is not None
         assert callable(default_config_for_branch)
 
     def test_m5_optimizer_import(self):
         from fusion_mlx.video.skyreels_v3.m5_optimizer import (
             M5Optimizer,
-            ComputePlacement,
-            AdaptiveTileScheduler,
-            QuantizationConfig,
-            AsyncVideoStream,
         )
+
         assert M5Optimizer is not None
 
     def test_step_strategy_import(self):
         from fusion_mlx.video.skyreels_v3.step_strategy import (
             StepStrategyConfig,
-            SkyReelsStepStrategy,
         )
+
         assert StepStrategyConfig is not None
 
 
@@ -154,6 +141,7 @@ class TestConfigRegistry:
 
     def test_three_branches_registered(self):
         from fusion_mlx.video.skyreels_v3 import list_models
+
         models = list_models()
         assert "skyreels-v3-r2v-14b" in models
         assert "skyreels-v3-v2v-14b" in models
@@ -161,6 +149,7 @@ class TestConfigRegistry:
 
     def test_r2v_config(self):
         from fusion_mlx.video.skyreels_v3 import get_branch_config
+
         cfg = get_branch_config("skyreels-v3-r2v-14b")
         assert cfg.branch == "r2v"
         assert cfg.dim == 5120
@@ -169,12 +158,14 @@ class TestConfigRegistry:
 
     def test_v2v_config(self):
         from fusion_mlx.video.skyreels_v3 import get_branch_config
+
         cfg = get_branch_config("skyreels-v3-v2v-14b")
         assert cfg.branch == "v2v"
         assert cfg.temporal_window == 96
 
     def test_a2v_config(self):
         from fusion_mlx.video.skyreels_v3 import get_branch_config
+
         cfg = get_branch_config("skyreels-v3-a2v-19b")
         assert cfg.branch == "a2v"
         assert cfg.has_audio is True
@@ -182,6 +173,7 @@ class TestConfigRegistry:
 
     def test_unknown_model_raises(self):
         from fusion_mlx.video.skyreels_v3 import get_branch_config
+
         with pytest.raises(ValueError, match="Unknown model_key"):
             get_branch_config("nonexistent-model")
 
@@ -213,6 +205,7 @@ class TestDiTForwardSmoke:
 
     def test_r2v_dit_forward(self):
         from fusion_mlx.video.skyreels_v3.transformer_r2v import SkyReelsR2VDiT
+
         dit = SkyReelsR2VDiT(TINY_CFG)
 
         b, c, t, h, w = 1, 16, 2, 8, 8
@@ -231,6 +224,7 @@ class TestDiTForwardSmoke:
 
     def test_v2v_dit_construction(self):
         from fusion_mlx.video.skyreels_v3.transformer_v2v import SkyReelsV2VDiT
+
         dit = SkyReelsV2VDiT(TINY_CFG)
         # 仅检查构造不抛异常
         assert dit is not None
@@ -238,6 +232,7 @@ class TestDiTForwardSmoke:
 
     def test_a2v_dit_construction(self):
         from fusion_mlx.video.skyreels_v3.transformer_a2v import SkyReelsA2VDiT
+
         a2v_cfg = dict(TINY_CFG)
         a2v_cfg["audio_dim"] = 1024
         dit = SkyReelsA2VDiT(a2v_cfg)
@@ -256,6 +251,7 @@ class TestStepCoherenceFilter:
         from fusion_mlx.video.skyreels_v3.temporal_flicker_fix import (
             StepCoherenceFilter,
         )
+
         f = StepCoherenceFilter(beta=0.1)
         x = mx.array([1.0, 2.0, 3.0])
         out = f(x)
@@ -267,6 +263,7 @@ class TestStepCoherenceFilter:
         from fusion_mlx.video.skyreels_v3.temporal_flicker_fix import (
             StepCoherenceFilter,
         )
+
         f = StepCoherenceFilter(beta=0.1)
         prev = mx.array([1.0, 2.0, 3.0])
         curr = mx.array([2.0, 3.0, 4.0])
@@ -281,6 +278,7 @@ class TestStepCoherenceFilter:
         from fusion_mlx.video.skyreels_v3.temporal_flicker_fix import (
             StepCoherenceFilter,
         )
+
         f = StepCoherenceFilter(beta=0.0)
         x = mx.array([1.0, 2.0, 3.0])
         out = f(x)
@@ -292,6 +290,7 @@ class TestStepCoherenceFilter:
         from fusion_mlx.video.skyreels_v3.temporal_flicker_fix import (
             StepCoherenceFilter,
         )
+
         f = StepCoherenceFilter(beta=0.1)
         f(mx.array([1.0, 2.0, 3.0]))
         f.reset()
@@ -312,6 +311,7 @@ class TestFlickerFix:
         from fusion_mlx.video.skyreels_v3.temporal_flicker_fix import (
             temporal_ema_smooth,
         )
+
         latent = mx.array([1.0, 2.0, 3.0])
         prev = mx.array([0.0, 0.0, 0.0])
         out = temporal_ema_smooth(latent, prev, alpha=0.0)
@@ -323,6 +323,7 @@ class TestFlickerFix:
         from fusion_mlx.video.skyreels_v3.temporal_flicker_fix import (
             temporal_ema_smooth,
         )
+
         latent = mx.array([1.0, 2.0, 3.0])
         prev = mx.array([0.0, 0.0, 0.0])
         out = temporal_ema_smooth(latent, prev, alpha=1.0)
@@ -334,6 +335,7 @@ class TestFlickerFix:
         from fusion_mlx.video.skyreels_v3.temporal_flicker_fix import (
             temporal_ema_smooth,
         )
+
         latent = mx.array([2.0, 3.0, 4.0])
         prev = mx.array([1.0, 2.0, 3.0])
         out = temporal_ema_smooth(latent, prev, alpha=0.3)
@@ -346,6 +348,7 @@ class TestFlickerFix:
         from fusion_mlx.video.skyreels_v3.temporal_flicker_fix import (
             boundary_align,
         )
+
         latent = mx.zeros((1, 16, 5, 8, 8))
         end = mx.ones((1, 16, 8, 8))
         out = boundary_align(latent, end, alpha=0.0)
@@ -357,6 +360,7 @@ class TestFlickerFix:
         from fusion_mlx.video.skyreels_v3.temporal_flicker_fix import (
             boundary_align,
         )
+
         latent = mx.zeros((1, 16, 5, 8, 8))
         end = mx.ones((1, 16, 8, 8)) * 9.0
         out = boundary_align(latent, end, alpha=1.0, num_align_frames=1)
@@ -371,6 +375,7 @@ class TestFlickerFix:
         from fusion_mlx.video.skyreels_v3.temporal_flicker_fix import (
             default_config_for_branch,
         )
+
         for branch in ("r2v", "v2v", "a2v"):
             cfg = default_config_for_branch(branch)
             assert 0.0 <= cfg.temporal_ema_alpha <= 1.0
@@ -382,6 +387,7 @@ class TestFlickerFix:
         from fusion_mlx.video.skyreels_v3.temporal_flicker_fix import (
             default_config_for_branch,
         )
+
         with pytest.raises(ValueError, match="Unknown branch"):
             default_config_for_branch("unknown")
 
@@ -395,12 +401,14 @@ class TestKVCache:
     def test_kv_cache_construction(self):
         """双池构造不抛异常."""
         from fusion_mlx.video.skyreels_v3.kv_cache import SkyReelsKVCache
+
         cache = SkyReelsKVCache(
             num_layers=2,
             num_heads=8,
             head_dim=64,
             max_frames=16,
-            h=8, w=8,
+            h=8,
+            w=8,
         )
         assert cache is not None
         assert cache.num_layers == 2
@@ -408,9 +416,14 @@ class TestKVCache:
     def test_spatial_pool_append_get(self):
         """空间池 append + get."""
         from fusion_mlx.video.skyreels_v3.kv_cache import SkyReelsKVCache
+
         cache = SkyReelsKVCache(
-            num_layers=1, num_heads=4, head_dim=32,
-            max_frames=4, h=4, w=4,
+            num_layers=1,
+            num_heads=4,
+            head_dim=32,
+            max_frames=4,
+            h=4,
+            w=4,
         )
         k = mx.random.normal((1, 4, 8, 32))  # [B, H, L, D]
         v = mx.random.normal((1, 4, 8, 32))
@@ -422,9 +435,14 @@ class TestKVCache:
     def test_temporal_pool_append_get(self):
         """时序池 append + get."""
         from fusion_mlx.video.skyreels_v3.kv_cache import SkyReelsKVCache
+
         cache = SkyReelsKVCache(
-            num_layers=1, num_heads=4, head_dim=32,
-            max_frames=4, h=4, w=4,
+            num_layers=1,
+            num_heads=4,
+            head_dim=32,
+            max_frames=4,
+            h=4,
+            w=4,
         )
         k = mx.random.normal((1, 4, 8, 32))
         v = mx.random.normal((1, 4, 8, 32))
@@ -436,9 +454,14 @@ class TestKVCache:
     def test_reset(self):
         """reset 清空所有池."""
         from fusion_mlx.video.skyreels_v3.kv_cache import SkyReelsKVCache
+
         cache = SkyReelsKVCache(
-            num_layers=1, num_heads=4, head_dim=32,
-            max_frames=4, h=4, w=4,
+            num_layers=1,
+            num_heads=4,
+            head_dim=32,
+            max_frames=4,
+            h=4,
+            w=4,
         )
         k = mx.random.normal((1, 4, 8, 32))
         v = mx.random.normal((1, 4, 8, 32))
@@ -459,6 +482,7 @@ class TestScheduler:
         from fusion_mlx.video.skyreels_v3.scheduler import (
             FlowUniPCMultistepScheduler,
         )
+
         s = FlowUniPCMultistepScheduler(num_inference_steps=10)
         s.set_timesteps(10)
         assert s.timesteps is not None
@@ -469,6 +493,7 @@ class TestScheduler:
         from fusion_mlx.video.skyreels_v3.scheduler import (
             FlowUniPCMultistepScheduler,
         )
+
         s = FlowUniPCMultistepScheduler(num_inference_steps=5)
         s.set_timesteps(5)
         sample = mx.random.normal((1, 16, 2, 8, 8))
@@ -481,11 +506,14 @@ class TestScheduler:
     def test_perform_guidance(self):
         """perform_guidance CFG 合并."""
         from fusion_mlx.video.skyreels_v3.scheduler import perform_guidance
+
         # [2B, ...] uncond 在前
-        noise_pred = mx.array([
-            [1.0, 2.0],  # uncond
-            [3.0, 4.0],  # cond
-        ])
+        noise_pred = mx.array(
+            [
+                [1.0, 2.0],  # uncond
+                [3.0, 4.0],  # cond
+            ]
+        )
         out = perform_guidance(noise_pred, guidance_scale=2.0)
         mx.eval(out)
         # uncond + scale * (cond - uncond)
@@ -504,6 +532,7 @@ class TestVAE:
     def test_vae_construction(self):
         """VAE 构造不抛异常."""
         from fusion_mlx.video.skyreels_v3.vae import SkyReelsVAE
+
         vae = SkyReelsVAE()
         assert vae is not None
         assert vae.vae_mean.shape[1] == 16
@@ -511,6 +540,7 @@ class TestVAE:
     def test_decode_returns_video(self):
         """decode 返回视频张量."""
         from fusion_mlx.video.skyreels_v3.vae import SkyReelsVAE
+
         vae = SkyReelsVAE()
         latent = mx.random.normal((1, 16, 2, 8, 8))
         # 即使底座 VAE 不可用, stub 也应返回张量
@@ -535,6 +565,7 @@ class TestM5Optimizer:
             ComputePlacement,
             get_compute_placement,
         )
+
         cp = ComputePlacement()
         assert cp.large_matmul_device == "gpu"
         cp2 = get_compute_placement()
@@ -545,6 +576,7 @@ class TestM5Optimizer:
         from fusion_mlx.video.skyreels_v3.m5_optimizer import (
             AdaptiveTileScheduler,
         )
+
         ts = AdaptiveTileScheduler()
         # 短序列: 用基础 block
         block = ts.adapt(seq_len=512, head_dim=64)
@@ -559,6 +591,7 @@ class TestM5Optimizer:
             QuantizationConfig,
             get_quantization_config,
         )
+
         cfg = QuantizationConfig.auto()
         assert cfg.weight_bits in (4, 8, 16)
         cfg2 = get_quantization_config()
@@ -567,6 +600,7 @@ class TestM5Optimizer:
     def test_async_video_stream(self):
         """AsyncVideoStream prefetch + consume."""
         from fusion_mlx.video.skyreels_v3.m5_optimizer import AsyncVideoStream
+
         s = AsyncVideoStream()
         data = mx.array([1.0, 2.0, 3.0])
         s.prefetch(data)
@@ -587,6 +621,7 @@ class TestStepStrategy:
         from fusion_mlx.video.skyreels_v3.step_strategy import (
             StepStrategyConfig,
         )
+
         cfg = StepStrategyConfig(total_steps=10)
         methods = cfg.build_step_methods()
         assert len(methods) == 10
@@ -596,6 +631,7 @@ class TestStepStrategy:
         from fusion_mlx.video.skyreels_v3.step_strategy import (
             _default_config_for_branch,
         )
+
         for branch in ("r2v", "v2v", "a2v"):
             cfg = _default_config_for_branch(branch, total_steps=50)
             assert cfg.total_steps == 50
@@ -625,7 +661,9 @@ class TestWeightRemap:
         dim = TINY_CFG["dim"]
         in_dim = TINY_CFG["in_dim"]
         src = {
-            "condition_embedder.text_embedder.linear_1.weight": mx.zeros((dim, TINY_CFG["text_dim"])),
+            "condition_embedder.text_embedder.linear_1.weight": mx.zeros(
+                (dim, TINY_CFG["text_dim"])
+            ),
             "condition_embedder.time_embedder.linear_1.weight": mx.zeros((dim, dim)),
             "condition_embedder.time_proj.weight": mx.zeros((dim, dim)),
             "scale_shift_table": mx.zeros((1, 6, dim)),
@@ -683,7 +721,9 @@ class TestWeightRemap:
         dim = TINY_CFG["dim"]
         src = {
             "blocks.0.norm2.bias": mx.zeros((dim,)),
-            "condition_embedder.text_embedder.linear_1.weight": mx.zeros((dim, TINY_CFG["text_dim"])),
+            "condition_embedder.text_embedder.linear_1.weight": mx.zeros(
+                (dim, TINY_CFG["text_dim"])
+            ),
         }
         out = _remap_diffusers_to_mlx(src, dit)
         assert "blocks.0.norm2.bias" not in out
@@ -697,7 +737,9 @@ REAL_MODEL_DIR = Path.home() / ".fusion-mlx/models/Skywork/SkyReels-V3-R2V-14B-M
 
 
 @pytest.mark.skipif(
-    not (REAL_MODEL_DIR / "transformer" / "diffusion_pytorch_model.safetensors").exists(),
+    not (
+        REAL_MODEL_DIR / "transformer" / "diffusion_pytorch_model.safetensors"
+    ).exists(),
     reason="真实 SkyReels-V3-R2V-14B 权重未下载 (26.6GB)",
 )
 class TestRealWeightLoad:
@@ -705,27 +747,29 @@ class TestRealWeightLoad:
 
     def test_real_weights_load_over_1000_keys(self):
         import json
+
         import mlx.nn as nn
+
         from fusion_mlx.video.skyreels_v3.transformer_r2v import SkyReelsR2VDiT
         from fusion_mlx.video.skyreels_v3.weights import load_dit_weights
 
         cfg = json.loads((REAL_MODEL_DIR / "config.json").read_text())["config"]
         dit = SkyReelsR2VDiT(cfg)
         before = dict(nn.utils.tree_flatten(dit.parameters()))
-        probe_before = float(__import__("mlx").core.sum(
-            before["blocks.0.self_attn.q.weight"]
-        ).item())
+        probe_before = float(
+            __import__("mlx").core.sum(before["blocks.0.self_attn.q.weight"]).item()
+        )
 
         dit = load_dit_weights(dit, REAL_MODEL_DIR / "transformer", strict=False)
         after = dict(nn.utils.tree_flatten(dit.parameters()))
-        probe_after = float(__import__("mlx").core.sum(
-            after["blocks.0.self_attn.q.weight"]
-        ).item())
+        probe_after = float(
+            __import__("mlx").core.sum(after["blocks.0.self_attn.q.weight"]).item()
+        )
 
         # 修复前仅 40/1377 命中, 修复后探测参数必须变化 (真实权重落地)
-        assert abs(probe_after - probe_before) > 1e-3, (
-            "探测参数加载前后未变化 -> 真实权重未落地 (重映射回归)"
-        )
+        assert (
+            abs(probe_after - probe_before) > 1e-3
+        ), "探测参数加载前后未变化 -> 真实权重未落地 (重映射回归)"
 
 
 # ============================================================================

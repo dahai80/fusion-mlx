@@ -14,31 +14,26 @@ from __future__ import annotations
 
 import logging
 import math
-from typing import Any
 
 import mlx.core as mx
 import mlx.nn as nn
 
 from . import _device
 from .attention import (
+    WAN_CROSSATTENTION_CLASSES,
     WanSelfAttention,
     WanTemporalAttention,
-    WanT2VCrossAttention,
-    WanI2VCrossAttention,
-    WAN_CROSSATTENTION_CLASSES,
     _linear_dtype,
 )
 from .common import (
-    WanLayerNorm,
-    WanRMSNorm,
     GELUApprox,
-    sinusoidal_embedding_1d,
-    rope_params,
-    rope_apply,
     PatchEmbed3D,
+    WanLayerNorm,
+    maybe_compile,
     mul_add,
     mul_add_add,
-    maybe_compile,
+    rope_params,
+    sinusoidal_embedding_1d,
 )
 
 logger = logging.getLogger(__name__)
@@ -86,9 +81,9 @@ class Head(nn.Module):
         proj_dim = math.prod(patch_size) * out_dim
         self.norm = WanLayerNorm(dim, eps)
         self.head = nn.Linear(dim, proj_dim)
-        self.modulation = (
-            mx.random.normal((1, 2, dim)) * (dim ** -0.5)
-        ).astype(mx.float32)
+        self.modulation = (mx.random.normal((1, 2, dim)) * (dim**-0.5)).astype(
+            mx.float32
+        )
 
     def __call__(self, x: mx.array, e: mx.array) -> mx.array:
         # e 来自 time_projection: [B, dim*6], Head 只需最后 dim*2 部分
@@ -160,23 +155,28 @@ class WanAttentionBlock(nn.Module):
         # Self-attention (空间分支)
         self.norm1 = WanLayerNorm(dim, eps)
         self.self_attn = WanSelfAttention(
-            dim, num_heads, window_size, qk_norm, eps,
+            dim,
+            num_heads,
+            window_size,
+            qk_norm,
+            eps,
             num_kv_heads=num_kv_heads,
         )
 
         # 可选时序分支 (V2V/A2V 启用)
         if has_temporal:
             self.temporal_attn = WanTemporalAttention(
-                dim, num_heads, window_size=temporal_window,
-                qk_norm=qk_norm, eps=eps,
+                dim,
+                num_heads,
+                window_size=temporal_window,
+                qk_norm=qk_norm,
+                eps=eps,
             )
             self.norm_temporal = WanLayerNorm(dim, eps)
 
         # Cross-attention (文本/参考图引导) - AtomCode fix #125: 传 text_dim 作为 context_dim
         self.norm3 = (
-            WanLayerNorm(dim, eps, elementwise_affine=True)
-            if cross_attn_norm
-            else None
+            WanLayerNorm(dim, eps, elementwise_affine=True) if cross_attn_norm else None
         )
         cross_cls = WAN_CROSSATTENTION_CLASSES.get(cross_attn_type)
         if cross_cls is None:
@@ -191,9 +191,9 @@ class WanAttentionBlock(nn.Module):
         self.ffn = WanFFN(dim, ffn_dim)
 
         # Learned modulation: 6 vectors for scale/shift/gate (kept in float32 for precision)
-        self.modulation = (
-            mx.random.normal((1, 6, dim)) * (dim ** -0.5)
-        ).astype(mx.float32)
+        self.modulation = (mx.random.normal((1, 6, dim)) * (dim**-0.5)).astype(
+            mx.float32
+        )
 
     def __call__(
         self,
@@ -245,8 +245,12 @@ class WanAttentionBlock(nn.Module):
         x_norm = self.norm1(x)
         x_mod = mul_add_add(x_norm, e1, e0)  # x*(1+scale)+shift
         y = self.self_attn(
-            x_mod, seq_lens, grid_sizes, freqs,
-            rope_cos_sin=rope_cos_sin, attn_mask=attn_mask,
+            x_mod,
+            seq_lens,
+            grid_sizes,
+            freqs,
+            rope_cos_sin=rope_cos_sin,
+            attn_mask=attn_mask,
         )
         x = mul_add(x, y, e2)  # x + y*gate
 
@@ -259,7 +263,10 @@ class WanAttentionBlock(nn.Module):
         # ---- 3. Cross-Attention (文本/参考图引导) ----
         x_cross = self.norm3(x) if self.norm3 is not None else x
         y_c = self.cross_attn(
-            x_cross, context, context_lens, kv_cache=cross_kv_cache,
+            x_cross,
+            context,
+            context_lens,
+            kv_cache=cross_kv_cache,
         )
         x = x + y_c
 
@@ -311,7 +318,9 @@ class SkyReelsR2VDiT(nn.Module):
 
         # Patch embedding (Conv3d)
         self.patch_embedding = PatchEmbed3D(
-            self.in_dim, self.dim, self.patch_size,
+            self.in_dim,
+            self.dim,
+            self.patch_size,
         )
 
         # Text embedding
@@ -328,7 +337,8 @@ class SkyReelsR2VDiT(nn.Module):
             nn.Linear(self.dim, self.dim),
         )
         self.time_projection = nn.Sequential(
-            nn.SiLU(), nn.Linear(self.dim, self.dim * 6),
+            nn.SiLU(),
+            nn.Linear(self.dim, self.dim * 6),
         )
 
         # RoPE 频率表 (buffer)
@@ -406,9 +416,15 @@ class SkyReelsR2VDiT(nn.Module):
         # 4. DiT Blocks
         for block in self.blocks:
             x = block(
-                x, e, seq_lens, grid_sizes, self.freqs,
-                context, context_lens,
-                rope_cos_sin=rope_cos_sin, attn_mask=attn_mask,
+                x,
+                e,
+                seq_lens,
+                grid_sizes,
+                self.freqs,
+                context,
+                context_lens,
+                rope_cos_sin=rope_cos_sin,
+                attn_mask=attn_mask,
             )
 
         # 5. Output head
@@ -444,9 +460,7 @@ class SkyReelsR2VDiT(nn.Module):
             x_i = x_i.reshape(f, h, w, pt, ph, pw, self.out_dim)
             # 转置到 [C_out, T, H, W]
             x_i = x_i.transpose(6, 0, 3, 1, 4, 2, 5)  # [C_out, f, pt, h, ph, w, pw]
-            x_i = x_i.reshape(
-                self.out_dim, f * pt, h * ph, w * pw
-            )  # [C_out, T, H, W]
+            x_i = x_i.reshape(self.out_dim, f * pt, h * ph, w * pw)  # [C_out, T, H, W]
             outputs.append(x_i)
         return mx.stack(outputs, axis=0)  # [B, C_out, T, H, W]
 

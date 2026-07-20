@@ -20,9 +20,8 @@ SkyReels-V3 VAE 特点:
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
 
 import mlx.core as mx
 import mlx.nn as nn
@@ -42,6 +41,7 @@ class SkyReelsVAEConfig:
       attn_scales=[], temperal_downsample=[True,True,False,False]
       patch_size=(1,8,8), spatio_temporal=True
     """
+
     z_dim: int = 16
     dim: int = 128
     dim_mult: tuple = (1, 2, 4, 4)
@@ -77,6 +77,7 @@ class SkyReelsVAE(nn.Module):
         # 复用底座 WanVAE
         try:
             from fusion_mlx.video.wan2.vae import WanVAE
+
             self.vae = WanVAE()
             self._uses_base = True
         except Exception as exc:  # pragma: no cover - 底座不可用时降级
@@ -86,19 +87,47 @@ class SkyReelsVAE(nn.Module):
 
         # 16 通道 per-channel 归一化 (与底座 wan2/vae.py VAE_MEAN/STD 一致)
         # 这里硬编码 16 通道均值/方差, 与 WanVAE 内部一致
-        self.vae_mean = mx.array([
-            -0.7571, -0.7089, -0.9113, 0.1075,
-            -0.1745, 0.9653, -0.1517, 1.5508,
-            0.4134, -0.0715, 0.5517, -0.3632,
-            -0.1922, -0.9497, 0.2503, -0.2921,
-        ]).reshape(1, self.config.z_dim, 1, 1, 1)
+        self.vae_mean = mx.array(
+            [
+                -0.7571,
+                -0.7089,
+                -0.9113,
+                0.1075,
+                -0.1745,
+                0.9653,
+                -0.1517,
+                1.5508,
+                0.4134,
+                -0.0715,
+                0.5517,
+                -0.3632,
+                -0.1922,
+                -0.9497,
+                0.2503,
+                -0.2921,
+            ]
+        ).reshape(1, self.config.z_dim, 1, 1, 1)
 
-        self.vae_std = mx.array([
-            2.8184, 1.4541, 2.3275, 2.6558,
-            1.2196, 1.7708, 2.6052, 2.0743,
-            3.2687, 2.1526, 2.8652, 1.5579,
-            1.6382, 1.1253, 2.8251, 3.2704,
-        ]).reshape(1, self.config.z_dim, 1, 1, 1)
+        self.vae_std = mx.array(
+            [
+                2.8184,
+                1.4541,
+                2.3275,
+                2.6558,
+                1.2196,
+                1.7708,
+                2.6052,
+                2.0743,
+                3.2687,
+                2.1526,
+                2.8652,
+                1.5579,
+                1.6382,
+                1.1253,
+                2.8251,
+                3.2704,
+            ]
+        ).reshape(1, self.config.z_dim, 1, 1, 1)
 
     def decode(
         self,
@@ -201,7 +230,7 @@ class SkyReelsVAE(nn.Module):
         return latent
 
     @classmethod
-    def from_pretrained(cls, path: str | Path) -> "SkyReelsVAE":
+    def from_pretrained(cls, path: str | Path) -> SkyReelsVAE:
         """从 HuggingFace 权重目录加载 VAE.
 
         Args:
@@ -216,6 +245,7 @@ class SkyReelsVAE(nn.Module):
         if instance._uses_base:
             # 真读 safetensors 权重注入底座 WanVAE (避假载入致 decode 全零)
             import glob
+
             safetensors_files = sorted(glob.glob(str(path / "*.safetensors")))
             if not safetensors_files:
                 logger.warning("VAE 权重目录 %s 无 safetensors, stub 模式", path)
@@ -292,8 +322,9 @@ def save_video(
         for frame in frames:
             writer.append_data(frame)
         writer.close()
-        logger.info("Video saved: %s (%d frames, %dx%d@%dfps)",
-                    output_path, t, h, w, fps)
+        logger.info(
+            "Video saved: %s (%d frames, %dx%d@%dfps)", output_path, t, h, w, fps
+        )
     except Exception as exc:
         logger.warning("Failed to save video: %s", exc)
         # 兜底: 保存为 numpy

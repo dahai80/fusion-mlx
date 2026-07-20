@@ -11,7 +11,6 @@ import asyncio
 import gc
 import logging
 import random
-from pathlib import Path
 from typing import Any
 
 import mlx.core as mx
@@ -57,7 +56,14 @@ class SkyReelsBackend(VideoBackend):
         if self._pipeline is not None:
             try:
                 # 释放 pipeline 内部大模型引用
-                for attr in ("dit", "vae", "text_encoder", "clip_encoder", "m5_optimizer", "step_strategy"):
+                for attr in (
+                    "dit",
+                    "vae",
+                    "text_encoder",
+                    "clip_encoder",
+                    "m5_optimizer",
+                    "step_strategy",
+                ):
                     if hasattr(self._pipeline, attr):
                         setattr(self._pipeline, attr, None)
                 self._pipeline = None
@@ -85,7 +91,9 @@ class SkyReelsBackend(VideoBackend):
             return await self._generate_a2v(params)
         else:
             # Default to R2V for SkyReels models
-            logger.warning("Unknown SkyReels branch, defaulting to R2V: %s", self._model_name)
+            logger.warning(
+                "Unknown SkyReels branch, defaulting to R2V: %s", self._model_name
+            )
             return await self._generate_r2v(params)
 
     async def _get_or_create_pipeline(self, pipeline_class: type) -> Any:
@@ -101,7 +109,14 @@ class SkyReelsBackend(VideoBackend):
         if self._pipeline is not None:
             logger.info("Pipeline class changed, releasing old pipeline")
             try:
-                for attr in ("dit", "vae", "text_encoder", "clip_encoder", "m5_optimizer", "step_strategy"):
+                for attr in (
+                    "dit",
+                    "vae",
+                    "text_encoder",
+                    "clip_encoder",
+                    "m5_optimizer",
+                    "step_strategy",
+                ):
                     if hasattr(self._pipeline, attr):
                         setattr(self._pipeline, attr, None)
                 self._pipeline = None
@@ -119,7 +134,9 @@ class SkyReelsBackend(VideoBackend):
         """R2V: 参考图 + Prompt -> 视频."""
         from fusion_mlx.video.skyreels_v3.pipelines import SkyReelsR2VPipeline
 
-        base_seed = params.seed if params.seed is not None else random.randint(0, 2**31 - 1)
+        base_seed = (
+            params.seed if params.seed is not None else random.randint(0, 2**31 - 1)
+        )
         duration = max(1, params.num_frames // 24)  # fps=24 → duration in seconds
 
         def _gen_one() -> bytes:
@@ -131,7 +148,9 @@ class SkyReelsBackend(VideoBackend):
                 duration=duration,
                 seed=base_seed,
             )
-            with managed_tempfile_path(prefix="fusion_skyreels_", suffix=".mp4") as handle:
+            with managed_tempfile_path(
+                prefix="fusion_skyreels_", suffix=".mp4"
+            ) as handle:
                 pipeline.save(video, handle.path)
                 with open(handle.path, "rb") as f:
                     return f.read()
@@ -147,7 +166,9 @@ class SkyReelsBackend(VideoBackend):
         """V2V: 输入视频 -> 续写视频."""
         from fusion_mlx.video.skyreels_v3.pipelines import SkyReelsV2VPipeline
 
-        base_seed = params.seed if params.seed is not None else random.randint(0, 2**31 - 1)
+        base_seed = (
+            params.seed if params.seed is not None else random.randint(0, 2**31 - 1)
+        )
         duration = max(1, params.num_frames // 24)
 
         def _gen_one() -> bytes:
@@ -158,7 +179,9 @@ class SkyReelsBackend(VideoBackend):
                 duration=duration,
                 seed=base_seed,
             )
-            with managed_tempfile_path(prefix="fusion_skyreels_", suffix=".mp4") as handle:
+            with managed_tempfile_path(
+                prefix="fusion_skyreels_", suffix=".mp4"
+            ) as handle:
                 pipeline.save(video, handle.path)
                 with open(handle.path, "rb") as f:
                     return f.read()
@@ -174,7 +197,9 @@ class SkyReelsBackend(VideoBackend):
         """A2V: 音频 + 参考图 -> 数字人视频."""
         from fusion_mlx.video.skyreels_v3.pipelines import SkyReelsA2VPipeline
 
-        base_seed = params.seed if params.seed is not None else random.randint(0, 2**31 - 1)
+        base_seed = (
+            params.seed if params.seed is not None else random.randint(0, 2**31 - 1)
+        )
         duration = max(1, params.num_frames // 24)
 
         def _gen_one() -> bytes:
@@ -187,7 +212,9 @@ class SkyReelsBackend(VideoBackend):
                 duration=duration,
                 seed=base_seed,
             )
-            with managed_tempfile_path(prefix="fusion_skyreels_", suffix=".mp4") as handle:
+            with managed_tempfile_path(
+                prefix="fusion_skyreels_", suffix=".mp4"
+            ) as handle:
                 pipeline.save(video, handle.path)
                 with open(handle.path, "rb") as f:
                     return f.read()

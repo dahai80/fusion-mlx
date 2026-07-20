@@ -118,7 +118,9 @@ class BatchedEngine(BaseEngine):
         # AtomCode 专题优化: memory tier 透传 (2026-07-19)
         # TurboQuant KV cache 判定 claude 场景禁用 (balanced tier 用显存换速度)
         # __init__ 无 memory_tier 入参, 用 model_settings 兜底 (ServerConfig.memory.tier 透到 model_settings)
-        self._memory_tier = getattr(model_settings, "memory_tier", None) if model_settings else None
+        self._memory_tier = (
+            getattr(model_settings, "memory_tier", None) if model_settings else None
+        )
         self._preserve_thinking = preserve_thinking
         self._model_settings = model_settings
         self._prefill_eviction_callback = prefill_eviction_callback
@@ -516,7 +518,9 @@ class BatchedEngine(BaseEngine):
                 cache_key = (
                     json.dumps(messages, ensure_ascii=False, sort_keys=True),
                     json.dumps(tools or [], ensure_ascii=False, sort_keys=True),
-                    json.dumps(chat_template_kwargs or {}, ensure_ascii=False, sort_keys=True),
+                    json.dumps(
+                        chat_template_kwargs or {}, ensure_ascii=False, sort_keys=True
+                    ),
                     bool(is_partial),
                 )
                 cached = self._template_cache.get(cache_key)

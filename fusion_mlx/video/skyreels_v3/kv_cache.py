@@ -17,8 +17,7 @@
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass, field
-from typing import Any
+from dataclasses import dataclass
 
 import mlx.core as mx
 
@@ -28,7 +27,8 @@ except Exception:  # pragma: no cover - kv_cache optional
     KVCacheProtocol = object  # type: ignore[misc,assignment]
 
 try:
-    from fusion_mlx.turboquant_kv import quantize_kv, dequantize_kv
+    from fusion_mlx.turboquant_kv import dequantize_kv, quantize_kv
+
     _HAS_TURBOQUANT = True
 except Exception:  # pragma: no cover - turboquant optional
     _HAS_TURBOQUANT = False
@@ -54,6 +54,7 @@ class _PoolConfig:
         window_size: 滑动窗口大小 (>0 启用 SW 淘汰, -1 全局)
         quantize_bits: 量化位数 (0=不量化, 4=TurboQuant)
     """
+
     max_seq_len: int
     num_heads: int
     head_dim: int
@@ -88,8 +89,8 @@ class _KVPool:
             # 保留最近 (ws - n_new) 帧, 丢弃最早的 n_new 帧
             keep = ws - n_new
             if keep > 0:
-                self._k[:, :, :keep, :] = self._k[:, :, n_new:n_new + keep, :]
-                self._v[:, :, :keep, :] = self._v[:, :, n_new:n_new + keep, :]
+                self._k[:, :, :keep, :] = self._k[:, :, n_new : n_new + keep, :]
+                self._v[:, :, :keep, :] = self._v[:, :, n_new : n_new + keep, :]
             self._offset = keep
 
         new_offset = self._offset + n_new
@@ -108,23 +109,23 @@ class _KVPool:
             k_new = mx.transpose(k_new, (0, 2, 1, 3))
             v_new = mx.transpose(v_new, (0, 2, 1, 3))
 
-        self._k[:, :, self._offset:new_offset, :] = k_new
-        self._v[:, :, self._offset:new_offset, :] = v_new
+        self._k[:, :, self._offset : new_offset, :] = k_new
+        self._v[:, :, self._offset : new_offset, :] = v_new
         self._offset = new_offset
 
     def k_for_attention(self) -> mx.array:
         """返回当前有效的 K (滑动窗口内)."""
         ws = self.cfg.window_size
         if ws > 0 and self._offset > ws:
-            return self._k[:, :, self._offset - ws:self._offset, :]
-        return self._k[:, :, :self._offset, :]
+            return self._k[:, :, self._offset - ws : self._offset, :]
+        return self._k[:, :, : self._offset, :]
 
     def v_for_attention(self) -> mx.array:
         """返回当前有效的 V (滑动窗口内)."""
         ws = self.cfg.window_size
         if ws > 0 and self._offset > ws:
-            return self._v[:, :, self._offset - ws:self._offset, :]
-        return self._v[:, :, :self._offset, :]
+            return self._v[:, :, self._offset - ws : self._offset, :]
+        return self._v[:, :, : self._offset, :]
 
     @property
     def seqlen(self) -> int:
@@ -210,31 +211,44 @@ class SkyReelsKVCache(KVCacheProtocol):  # type: ignore[misc]
         temporal_max = max_frames * h * w
 
         self._spatial_pools: list[_KVPool] = [
-            _KVPool(_PoolConfig(
-                max_seq_len=spatial_max,
-                num_heads=num_heads, head_dim=head_dim,
-                batch_size=batch_size, dtype=dtype,
-                window_size=spatial_window,
-                quantize_bits=quantize_bits,
-            ))
+            _KVPool(
+                _PoolConfig(
+                    max_seq_len=spatial_max,
+                    num_heads=num_heads,
+                    head_dim=head_dim,
+                    batch_size=batch_size,
+                    dtype=dtype,
+                    window_size=spatial_window,
+                    quantize_bits=quantize_bits,
+                )
+            )
             for _ in range(num_layers)
         ]
         self._temporal_pools: list[_KVPool] = [
-            _KVPool(_PoolConfig(
-                max_seq_len=temporal_max,
-                num_heads=num_heads, head_dim=head_dim,
-                batch_size=batch_size, dtype=dtype,
-                window_size=temporal_window,
-                quantize_bits=quantize_bits,
-            ))
+            _KVPool(
+                _PoolConfig(
+                    max_seq_len=temporal_max,
+                    num_heads=num_heads,
+                    head_dim=head_dim,
+                    batch_size=batch_size,
+                    dtype=dtype,
+                    window_size=temporal_window,
+                    quantize_bits=quantize_bits,
+                )
+            )
             for _ in range(num_layers)
         ]
 
         logger.info(
             "SkyReelsKVCache: layers=%d heads=%d D=%d max_frames=%d "
             "spatial_ws=%s temporal_ws=%d quant=%dbit",
-            num_layers, num_heads, head_dim, max_frames,
-            spatial_window, temporal_window, quantize_bits,
+            num_layers,
+            num_heads,
+            head_dim,
+            max_frames,
+            spatial_window,
+            temporal_window,
+            quantize_bits,
         )
 
     # --- 空间池接口 ---
@@ -305,7 +319,7 @@ class SkyReelsKVCache(KVCacheProtocol):  # type: ignore[misc]
     # --- 复用前置帧缓存 (V2V 续写) ---
     def reuse_prefix(
         self,
-        prefix_cache: "SkyReelsKVCache",
+        prefix_cache: SkyReelsKVCache,
         num_prefix_frames: int,
     ) -> None:
         """复用前置帧缓存 (V2V 续写场景).

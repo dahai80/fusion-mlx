@@ -191,7 +191,9 @@ class T5LayerSelfAttention(nn.Module):
         # 用于相对位置偏置桶映射 (T5Attention.relative_attention_bias 的等价暴露)
         self.pos_embedding = nn.Module()
         self.pos_embedding.embedding = (
-            nn.Embedding(cfg.rel_num_buckets, cfg.num_heads) if has_bias else nn.Embedding(cfg.rel_num_buckets, cfg.num_heads)
+            nn.Embedding(cfg.rel_num_buckets, cfg.num_heads)
+            if has_bias
+            else nn.Embedding(cfg.rel_num_buckets, cfg.num_heads)
         )
 
     def __call__(self, hidden, position_bias, mask=None):

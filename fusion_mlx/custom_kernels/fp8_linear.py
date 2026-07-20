@@ -4,10 +4,10 @@
 兼容兜底:
   - M5 无 FP8 硬件支持时, 透明降级到 bf16 matmul (无性能损失)
 """
+
 from __future__ import annotations
 
 import logging
-from typing import Any
 
 import mlx.core as mx
 import mlx.nn as nn
@@ -57,12 +57,17 @@ class FP8Linear(nn.Module):
         super().__init__()
         self.out_features = out_features
         self.in_features = in_features
-        self.fp8_weight: mx.array = mx.zeros((out_features, in_features), dtype=mx.float8_e4m3fn if _FP8_AVAILABLE else mx.float32)
+        self.fp8_weight: mx.array = mx.zeros(
+            (out_features, in_features),
+            dtype=mx.float8_e4m3fn if _FP8_AVAILABLE else mx.float32,
+        )
         self.scale: mx.array = mx.ones((out_features,), dtype=mx.float32)
-        self.bias: mx.array | None = mx.zeros((out_features,), dtype=mx.bfloat16) if bias else None
+        self.bias: mx.array | None = (
+            mx.zeros((out_features,), dtype=mx.bfloat16) if bias else None
+        )
 
     @classmethod
-    def from_linear(cls, linear: nn.Linear) -> "FP8Linear":
+    def from_linear(cls, linear: nn.Linear) -> FP8Linear:
         """从 nn.Linear 创建 FP8Linear (权重恒 (out,in), __call__ 转置)."""
         out_f, in_f = linear.weight.shape
         bias = hasattr(linear, "bias") and linear.bias is not None
@@ -95,7 +100,11 @@ def _iter_submodules(parent: nn.Module, prefix: str = ""):
     for key in list(parent.keys()):
         val = parent[key]
         # mlx.nn.Module/nn.Linear 是 dict 子类 (issubclass=True), 故不可用 dict 早退过滤
-        if val is None or isinstance(val, (mx.array, int, float, str, bool, tuple)) or type(val) is dict:
+        if (
+            val is None
+            or isinstance(val, (mx.array, int, float, str, bool, tuple))
+            or type(val) is dict
+        ):
             continue
         name = f"{prefix}.{key}" if prefix else key
         # nn.Linear 子模块: yield (parent, key, name, val, None)
@@ -131,4 +140,11 @@ def convert_to_fp8_linear(model: nn.Module) -> nn.Module:
     return model
 
 
-__all__ = ["FP8Linear", "fp8_matmul", "quantize_fp8", "is_available", "convert_to_fp8_linear", "_iter_submodules"]
+__all__ = [
+    "FP8Linear",
+    "fp8_matmul",
+    "quantize_fp8",
+    "is_available",
+    "convert_to_fp8_linear",
+    "_iter_submodules",
+]

@@ -16,7 +16,6 @@
 from __future__ import annotations
 
 import logging
-import math
 from typing import Any
 
 import mlx.core as mx
@@ -33,9 +32,13 @@ except Exception:  # pragma: no cover - optional extension
 
 try:
     from fusion_mlx.custom_kernels.xfuser_attention import (
-        MLXFastAttention,
         FastAttnMethod,
+        MLXFastAttention,
+    )
+    from fusion_mlx.custom_kernels.xfuser_attention import (
         current_step as _fa_step,
+    )
+    from fusion_mlx.custom_kernels.xfuser_attention import (
         is_active as _fa_active,
     )
 except Exception:  # pragma: no cover - xfuser strategy optional
@@ -45,7 +48,7 @@ except Exception:  # pragma: no cover - xfuser strategy optional
     _fa_active = None
 
 from . import _device
-from .common import WanRMSNorm, rope_apply, rope_params
+from .common import WanRMSNorm, rope_apply
 
 logger = logging.getLogger(__name__)
 
@@ -74,15 +77,11 @@ def _sdpa(
 ) -> mx.array:
     """统一注意力分派: fast_attn > MFA > mx.fast.sdpa."""
     if fast_attn is not None:
-        return fast_attn(
-            q, k, v, step, scale=scale, mask=mask, batch_size=batch_size
-        )
+        return fast_attn(q, k, v, step, scale=scale, mask=mask, batch_size=batch_size)
     if _mfa_available is not None and _mfa_available():
         return _mfa_flash_attention(q, k, v, scale=scale, mask=mask)
     if mask is not None:
-        return mx.fast.scaled_dot_product_attention(
-            q, k, v, scale=scale, mask=mask
-        )
+        return mx.fast.scaled_dot_product_attention(q, k, v, scale=scale, mask=mask)
     return mx.fast.scaled_dot_product_attention(q, k, v, scale=scale)
 
 
@@ -117,7 +116,7 @@ class WanSelfAttention(nn.Module):
         self.head_dim = dim // num_heads
         self.kv_head_dim = dim // self.num_kv_heads
         self.window_size = window_size
-        self.scale = self.head_dim ** -0.5
+        self.scale = self.head_dim**-0.5
 
         self.q = nn.Linear(dim, dim)
         self.k = nn.Linear(dim, dim // (num_heads // self.num_kv_heads))
@@ -198,9 +197,7 @@ class WanSelfAttention(nn.Module):
         if ws > 0:
             i = mx.arange(s, dtype=mx.float32)[:, None]
             j = mx.arange(s, dtype=mx.float32)[None, :]
-            sw_mask = mx.where(
-                mx.abs(i - j) < ws, 0.0, -float("inf")
-            ).astype(q.dtype)
+            sw_mask = mx.where(mx.abs(i - j) < ws, 0.0, -float("inf")).astype(q.dtype)
             sw_mask = sw_mask.reshape(1, 1, s, s)
             mask = sw_mask if mask is None else mask + sw_mask
 
@@ -251,8 +248,10 @@ class WanTemporalAttention(nn.Module):
         self.num_heads = num_heads
         self.head_dim = dim // num_heads
         # 时序窗口: -1 全局, >0 滑动窗口
-        self.window_size = window_size if window_size > 0 else _device.get_window_size_default()
-        self.scale = self.head_dim ** -0.5
+        self.window_size = (
+            window_size if window_size > 0 else _device.get_window_size_default()
+        )
+        self.scale = self.head_dim**-0.5
 
         self.q = nn.Linear(dim, dim)
         self.k = nn.Linear(dim, dim)
@@ -306,7 +305,9 @@ class WanTemporalAttention(nn.Module):
                 i = mx.arange(s, dtype=mx.float16)[:, None]
                 j = mx.arange(s, dtype=mx.float16)[None, :]
                 sw_mask = mx.where(
-                    mx.abs(i - j) < ws, mx.array(0.0, dtype=mx.float16), mx.array(float("-inf"), dtype=mx.float16)
+                    mx.abs(i - j) < ws,
+                    mx.array(0.0, dtype=mx.float16),
+                    mx.array(float("-inf"), dtype=mx.float16),
                 ).astype(q.dtype)
                 sw_mask = sw_mask.reshape(1, 1, s, s)
                 self._sw_mask_cache = (cache_key, sw_mask)
@@ -316,8 +317,14 @@ class WanTemporalAttention(nn.Module):
         fa = self._fast_attn
         if fa is not None and _fa_active is not None and _fa_active():
             out = _sdpa(
-                q, k, v, self.scale, mask,
-                fast_attn=fa, step=_fa_step(), batch_size=b,
+                q,
+                k,
+                v,
+                self.scale,
+                mask,
+                fast_attn=fa,
+                step=_fa_step(),
+                batch_size=b,
             )
         else:
             out = _sdpa(q, k, v, self.scale, mask)
@@ -344,7 +351,7 @@ class WanT2VCrossAttention(nn.Module):
         assert dim % num_heads == 0
         self.num_heads = num_heads
         self.head_dim = dim // num_heads
-        self.scale = self.head_dim ** -0.5
+        self.scale = self.head_dim**-0.5
 
         # AtomCode fix #125: context_dim 参数用于 k/v 投影输入维度
         # SkyReels-V3 text_embedding 将文本编码器输出从 text_dim=4096 投影到 dim=5120,
@@ -418,8 +425,14 @@ class WanT2VCrossAttention(nn.Module):
         fa = self._fast_attn
         if fa is not None and _fa_active is not None and _fa_active():
             out = _sdpa(
-                q, k, v, self.scale, mask,
-                fast_attn=fa, step=_fa_step(), batch_size=b,
+                q,
+                k,
+                v,
+                self.scale,
+                mask,
+                fast_attn=fa,
+                step=_fa_step(),
+                batch_size=b,
             )
         else:
             out = _sdpa(q, k, v, self.scale, mask)
