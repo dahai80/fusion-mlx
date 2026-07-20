@@ -611,6 +611,102 @@ class TestM5Optimizer:
 
 
 # ============================================================================
+# 9b. FP8Linear weight/compute_dtype + _linear_dtype 回归 (#142)
+# ============================================================================
+class TestFP8LinearDtype:
+    # 回归 #142: FP8Linear 曾无 .weight, _linear_dtype 访问 inner.weight.dtype 崩溃.
+    # 验证: weight 属性 + compute_dtype (非 fp8_weight.dtype) + _linear_dtype 两处.
+
+    def test_fp8linear_weight_property(self):
+        import mlx.nn as nn
+
+        from fusion_mlx.custom_kernels.fp8_linear import FP8Linear
+
+        fpl = FP8Linear.from_linear(nn.Linear(8, 16))
+        assert hasattr(fpl, "weight")
+        assert fpl.weight is fpl.fp8_weight
+        assert fpl.weight.shape == (16, 8)
+        assert fpl.weight.dtype == fpl.fp8_weight.dtype
+
+    def test_fp8linear_compute_dtype_not_fp8(self):
+        from fusion_mlx.custom_kernels.fp8_linear import (
+            _FP8_AVAILABLE,
+            FP8Linear,
+        )
+
+        fpl = FP8Linear(out_features=16, in_features=8)
+        expected = mx.bfloat16 if _FP8_AVAILABLE else mx.float32
+        assert fpl.compute_dtype == expected
+        # FP8 硬件下 compute_dtype (bf16) 必须不同于 fp8_weight.dtype (float8).
+        if _FP8_AVAILABLE:
+            assert fpl.compute_dtype != fpl.fp8_weight.dtype
+
+    def test_linear_dtype_fp8linear_returns_compute_dtype(self):
+        import mlx.nn as nn
+
+        from fusion_mlx.custom_kernels.fp8_linear import FP8Linear
+        from fusion_mlx.video.skyreels_v3.attention import (
+            _linear_dtype as sky_ld,
+        )
+        from fusion_mlx.video.wan2.attention import _linear_dtype as wan_ld
+
+        fpl = FP8Linear.from_linear(nn.Linear(8, 16))
+        # 核心: 返回 compute_dtype (bf16/f32), 非 fp8_weight.dtype, 不崩溃.
+        assert sky_ld(fpl) == fpl.compute_dtype
+        assert wan_ld(fpl) == fpl.compute_dtype
+
+    def test_linear_dtype_plain_linear_no_regression(self):
+        import mlx.nn as nn
+
+        from fusion_mlx.video.skyreels_v3.attention import (
+            _linear_dtype as sky_ld,
+        )
+        from fusion_mlx.video.wan2.attention import _linear_dtype as wan_ld
+
+        lin = nn.Linear(8, 16)
+        assert sky_ld(lin) == lin.weight.dtype
+        assert wan_ld(lin) == lin.weight.dtype
+
+    def test_fp8linear_forward_with_compute_dtype(self):
+        import mlx.nn as nn
+
+        from fusion_mlx.custom_kernels.fp8_linear import FP8Linear
+
+        fpl = FP8Linear.from_linear(nn.Linear(8, 16))
+        x = mx.random.uniform(shape=(2, 8)).astype(fpl.compute_dtype)
+        out = fpl(x)
+        mx.eval(out)
+        assert out.shape == (2, 16)
+
+    def test_convert_to_fp8_linear_then_linear_dtype(self):
+        import mlx.nn as nn
+
+        from fusion_mlx.custom_kernels.fp8_linear import (
+            FP8Linear,
+            convert_to_fp8_linear,
+        )
+        from fusion_mlx.video.skyreels_v3.attention import (
+            _linear_dtype as sky_ld,
+        )
+
+        class Tiny(nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.fc = nn.Linear(8, 16)
+
+            def __call__(self, x):
+                return self.fc(x)
+
+        m = Tiny()
+        convert_to_fp8_linear(m)
+        assert isinstance(m.fc, FP8Linear)
+        assert sky_ld(m.fc) == m.fc.compute_dtype
+        out = m(mx.random.uniform(shape=(1, 8)).astype(m.fc.compute_dtype))
+        mx.eval(out)
+        assert out.shape == (1, 16)
+
+
+# ============================================================================
 # 10. step_strategy 基本行为
 # ============================================================================
 class TestStepStrategy:

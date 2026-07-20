@@ -61,6 +61,11 @@ def _linear_dtype(layer: nn.Module) -> mx.Dtype:
     inner = getattr(layer, "linear", layer)
     if isinstance(inner, nn.QuantizedLinear):
         return inner.scales.dtype
+    # FP8Linear 无 .weight (存 fp8_weight), 用 compute_dtype (fp8_matmul 实际 dtype) (#142).
+    # 不能用 fp8_weight.dtype: FP8 硬件下为 float8, x.astype(float8) 与 bf16 权重 matmul 错配.
+    compute_dtype = getattr(inner, "compute_dtype", None)
+    if compute_dtype is not None:
+        return compute_dtype
     return inner.weight.dtype
 
 
