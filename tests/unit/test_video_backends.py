@@ -603,3 +603,59 @@ class TestLTX2BackendPureMLX:
         assert call["num_inference_steps"] == 10
         assert call["cfg_scale"] == 3.0
         assert call["tiling"] == "auto"
+
+
+class TestVideoGenTimeout:
+    # #148: SkyReels-V3 R2V 720p 30-step is ~1hr (~115s/step + VAE). The prior
+    # hardcoded 600s ceiling killed in-progress jobs. get_video_gen_timeout()
+    # returns a configurable value (env FUSION_VIDEO_GEN_TIMEOUT) defaulting to
+    # 7200s; invalid/<=0 env values fall back to the default with a warning.
+
+    def test_default_when_env_unset(self, monkeypatch):
+        monkeypatch.delenv("FUSION_VIDEO_GEN_TIMEOUT", raising=False)
+        from fusion_mlx.engine_core import get_video_gen_timeout
+
+        assert get_video_gen_timeout() == 7200.0
+
+    def test_env_override_respected(self, monkeypatch):
+        monkeypatch.setenv("FUSION_VIDEO_GEN_TIMEOUT", "1800")
+        from fusion_mlx.engine_core import get_video_gen_timeout
+
+        assert get_video_gen_timeout() == 1800.0
+
+    def test_invalid_falls_back_to_default(self, monkeypatch):
+        monkeypatch.setenv("FUSION_VIDEO_GEN_TIMEOUT", "notanumber")
+        from fusion_mlx.engine_core import get_video_gen_timeout
+
+        assert get_video_gen_timeout() == 7200.0
+
+    def test_non_positive_falls_back_to_default(self, monkeypatch):
+        monkeypatch.setenv("FUSION_VIDEO_GEN_TIMEOUT", "-5")
+        from fusion_mlx.engine_core import get_video_gen_timeout
+
+        assert get_video_gen_timeout() == 7200.0
+
+    @pytest.mark.parametrize(
+        "backend_module",
+        ["skyreels", "wan2", "ltx2"],
+    )
+    def test_backends_use_get_video_gen_timeout(self, backend_module):
+        # Source-level guard: each backend's generate() must call
+        # get_video_gen_timeout() rather than a hardcoded 600.0, so a long
+        # 720p 30-step job is not killed mid-generation.
+        from fusion_mlx.engines.video_backends import (
+            ltx2 as ltx2_mod,
+        )
+        from fusion_mlx.engines.video_backends import (
+            skyreels as skyreels_mod,
+        )
+        from fusion_mlx.engines.video_backends import (
+            wan2 as wan2_mod,
+        )
+
+        mod = {"skyreels": skyreels_mod, "wan2": wan2_mod, "ltx2": ltx2_mod}[
+            backend_module
+        ]
+        src = Path(mod.__file__).read_text()
+        assert "get_video_gen_timeout" in src
+        assert "timeout=600.0" not in src

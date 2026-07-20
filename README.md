@@ -364,6 +364,18 @@ issue #142 修复 (FP8Linear `.weight`/`compute_dtype`) 解除 DiT 前向后, R2
 
 修复后: 真实 14B R2V 端到端跑通 (DiT 前向 + UniPC 采样 + VAE 解码), 输出 `(1,3,28,720,1280)`; 55 skyreels + 46 video_backends 测试全绿.
 
+**#148 视频生成后端超时修复** (2026-07-20, 解除 720p 30 步长任务被 600s 超时杀死的运维阻塞):
+
+#146 (每步 `mx.eval` 打断惰性图累积) 解除 R2V 推理 hang 后, 720p 30 步完整跑需 ~1hr (`~115s/步 × 30 + VAE`, NF4/FP4 量化下). 但 5 个视频后端 (skyreels R2V/V2V/A2V + wan2 + ltx2) 的 `generate()` 均硬编码 `asyncio.wait_for(..., timeout=600.0)`, 10 分钟天花板在生成中途抛 `TimeoutError` 杀死任务 (ThreadPoolExecutor 任务不可中途取消, 后台线程继续跑但结果丢失).
+
+| 根因 | 位置 | 修复 |
+|---|---|---|
+| 5 处 `timeout=600.0` 硬编码 << 720p 30 步 ~1hr 实际耗时 | `engine_core.py` + `skyreels.py`(×3) + `wan2.py` + `ltx2.py` | 新增 `get_video_gen_timeout()` 助手 (env `FUSION_VIDEO_GEN_TIMEOUT`, 默认 7200s/2hr, 覆盖 720p 30 步 + VAE 余量); 5 处统一调用; 非法/≤0 值回退默认并告警 |
+
+进度可见性 (#146 已落地): 每步 `denoise: start/step=i/N/done` + `vae decode: start/done` 日志, 服务端可观测生成进度. 默认 7200s 覆盖绝大多数配置; 超长任务可 `FUSION_VIDEO_GEN_TIMEOUT=14400` 等覆盖. (完整异步任务模型 + 客户端进度 API 为独立未来增强, 非本次范围.)
+
+修复后: 真实 14B R2V 256×256 3 步端到端跑通 (`get_video_gen_timeout()=7200.0s`, 25.5s 完成 << 上限, mp4 ftyp 合法, 每步日志齐全); 53 video_backends 测试全绿 (含 7 个超时助手新测试).
+
 Submit your own benchmarks at [bench.dpdns.org](https://bench.dpdns.org/).
 
 ```
