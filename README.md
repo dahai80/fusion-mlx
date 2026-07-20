@@ -386,6 +386,29 @@ issue #142 修复 (FP8Linear `.weight`/`compute_dtype`) 解除 DiT 前向后, R2
 
 修复后: 真实 14B R2V 256×256 3 步端到端跑通, `denoise: start` 与 `denoise: step=1/3 starting` **同秒打印** (前向前即报进度), 步间不再静默, VAE 解码 + `R2V generated` 日志齐全, mp4 合法, 14.6s 完成; 57 video_backends 测试全绿 (含 4 个进度日志新测试).
 
+**#154 性能调优 Tier 1 + T2-1** (2026-07-20, SkyReels-V3 R2V 性能可见性 + 降速手段):
+
+#149 修复进度可见性后, 720p 30 步 ~1hr 的系统慢速本身仍是问题. Tier 1 旨在让 xfuser 步级注意力策略生效; T1-3 证明 xfuser 在 mx.compile 下**根本无法生效**:
+
+| 层 | 结论 | 证据 |
+|---|---|---|
+| T1-1 可见性 | `_log_optimizer_status` 打印 `should_compile/has_xfuser/step_strategy_modules/m5_applied/dit_blocks/branch/steps` + xfuser 被 compile 旁路时告警 | 真实 14B 运行 emit 告警 |
+| T1-2 warmup | `warmup()` (256×256/9f/1step 去噪) 预编译 + 权重 Metal 常驻, `FUSION_SKYREELS_WARMUP` 门控 (默认 "1"), 非致命 | `skyreels.py` 建管道后调用 |
+| **T1-3 根因 (xfuser 运行时 no-op)** | xfuser `attach_to_model` 注入 80 个 `MLXFastAttention` 模块到 DiT `_fast_attn`, 但 `mx.compile` 在 `SkyReelsDiT.__init__` (attach **前**) 已 trace, `_fast_attn=None` + `if False` 被 **bake 进固化 trace** -> 运行时 `fa_calls=0` (no-op). `mx.disable_compile()` (MLX 0.32) 是**全局切换函数返 None** (非 context manager, `with mx.disable_compile():` 抛 TypeError), 无法 un-bake 已固化 trace. 114s/step = compiled-no-xfuser DiT 前向**真实成本** (非每步 recompile). xfuser + mx.compile **根本不兼容**: attach 前 compile 则 bake fa=None; attach 后 compile 则 `step_idx` (Python int + `steps_method[step_idx]` 列表索引 + `method.has()` 控制流) 入 trace -> 每步 recompile (抵消编译收益) | monkey-patch `MLXFastAttention.__call__` 计数器 `fa_calls=0`; scheme-6 `disable_compile` 包裹 TypeError 后回退 |
+
+**T2-1 降速手段 (env 覆盖采样步数)**: `FUSION_SKYREELS_STEPS` 覆盖 `num_inference_steps` (默认 30), 720p 30->20 步 ~ **-33% wall-clock** (UniPC `solver_order=2` 历史预测保稳). 在管道 init 时 (`_setup_optimizers` 前) 生效, 使 xfuser `step_methods` 长度与实际步数一致. 非法/≤0/非 int -> 告警并保留默认.
+
+```bash
+# 720p 默认 30 步 ~1hr; 降到 20 步 ~40min
+FUSION_SKYREELS_STEPS=20 fusion-mlx serve --model SkyReels-V3-R2V-14B-MLX
+# 关闭 warmup (默认开)
+FUSION_SKYREELS_WARMUP=0 fusion-mlx serve --model SkyReels-V3-R2V-14B-MLX
+```
+
+> **T1-3 结论**: 不要再尝试在 mx.compile 下让 xfuser 生效 (已证根本不兼容). 降速用 `FUSION_SKYREELS_STEPS` 减步 (T2-1). 后续 T2-2 (DiT w8a16 权重量化, 复用 `/v1/convert`, DiT=74% 瓶颈 ~2x 加速) + T2-3 (CFG halve 研究) 为独立 follow-up.
+
+修复后: 真实 14B R2V `FUSION_SKYREELS_STEPS=3` 生效 (`cfg.num_inference_steps=3`), xfuser 旁路告警 emit, `fa_calls=0` (no-op 确认), 生成 OK shape=(1,3,28,256,256), VERIFY_OK; 128 单元测试全绿.
+
 Submit your own benchmarks at [bench.dpdns.org](https://bench.dpdns.org/).
 
 ```
