@@ -478,6 +478,49 @@ Swift App → WhichLLMService → PythonRuntime → whichllm_bridge.py → which
        ProcessInfo + sysctl (zero Python deps)
 ```
 
+## Flux 2 Klein 切换 (mx.compile denoise 加速, 2026-07-20)
+
+`ImageGenEngine` 从 Flux1 切到 `Flux2Klein` (mflux 0.18.0)。Flux2Klein 在
+`flux2_klein.py:281` 用 `mx.compile(predict)` 包裹 denoise，Flux1 无此编译。
+编译 warmup 后首步 2.98s -> 稳定 1.56s/step (1.9x 加速)。
+
+### 性能数据 (M5 Max / FLUX.2-klein-base-4B bf16 / 1024x1024)
+
+| 步数 | 总时间 | s/step |
+|---|---|---|
+| 4 | 6.8s | 1.59 |
+| 8 | 13.6s | 1.70 |
+
+首次含模型加载 8.5s (9.6G lazy load)。
+
+### Serve 步骤
+
+mflux Flux2 repo 是 diffusers 格式 (`model_index.json`)，**无** mflux 的
+`configuration.json` task manifest，discovery 会误判为 llm -> `BatchedEngine`
+加载失败。需手动补 manifest:
+
+```bash
+# 下载 (FLUX.2-klein-base-4B 非 gated; 9b/4b/kv 均 gated 需 HF approval)
+HF_ENDPOINT=https://hf-mirror.com hf download black-forest-labs/FLUX.2-klein-base-4B \
+  --local-dir ~/.fusion-mlx/models/FLUX.2-klein-base-4B
+
+# 补 task manifest (discovery 识别为 image)
+echo '{"task":"text-to-image"}' > ~/.fusion-mlx/models/FLUX.2-klein-base-4B/configuration.json
+
+# serve (必须 --model-dir discovery 路径; --model 单模型路径用 BatchedEngine 不支持 image)
+fusion-mlx serve --model-dir ~/.fusion-mlx/models --port 11434
+
+# 生成
+curl -s http://127.0.0.1:11434/v1/images/generate \
+  -H 'Content-Type: application/json' \
+  -d '{"model":"FLUX.2-klein-base-4B","prompt":"a cat","width":1024,"height":1024,"steps":4,"n":1}'
+```
+
+`_infer_flux2_config` 按路径名解析变体: `base+4b` -> `flux2_klein_base_4b`,
+`base+9b` -> `flux2_klein_base_9b`, `4b` -> `flux2_klein_4b`, `kv+9b` ->
+`flux2_klein_9b_kv`, 默认 `flux2_klein_9b`。`negative_prompt` 降级为 warning
+(Flux2Klein.generate_image 无此参数)。
+
 ## Flux-1.lite-8B-MLX 深度优化 (2026-07-19)
 
 ### 性能数据 (M5 Max 128GB / MLX 0.32 / Q4)
