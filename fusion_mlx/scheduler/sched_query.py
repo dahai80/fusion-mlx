@@ -292,6 +292,20 @@ def _format_rejection_message(
     )
 
 
+def _predicted_chunk_transient(self, n_tokens: int, kv_len: int) -> int:
+    # Static fallback: SDPA activation estimate for one prefill chunk
+    # attending over kv_len context. Returns 0 when no memory monitor is
+    # configured. The measured/EWMA predictor (max of last-sample / EWMA /
+    # static x _PREFILL_TRANSIENT_SAFETY) is debt - see quarantined
+    # test_prefill_oom_graceful.py. Previously the call site reached for
+    # self.memory_monitor._predicted_chunk_transient which never existed
+    # (rapid-mlx migration gap) -> AttributeError 500 on every cached
+    # request once block_aware_cache was actually wired (#KV-Cache-0).
+    if self.memory_monitor is None:
+        return 0
+    return self.memory_monitor.estimate_chunk_transient_bytes(n_tokens, kv_len)
+
+
 def _preflight_safety_rejection(
     self,
     *,
@@ -321,7 +335,7 @@ def _preflight_safety_rejection(
     new_kv, _cached_kv = self.memory_monitor.estimate_prompt_kv_bytes(
         new_tokens, cached_tokens
     )
-    min_transient = self.memory_monitor._predicted_chunk_transient(floor_chunk, kv_len)
+    min_transient = self._predicted_chunk_transient(floor_chunk, kv_len)
     if new_kv <= 0 and min_transient <= 0:
         return None
 

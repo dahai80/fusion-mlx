@@ -214,8 +214,14 @@ def _do_external_prefill(
                 )
 
         _throttle_pre = get_phys_footprint()
-        self.model(input_arr[:, :n_to_process], cache=prompt_cache, **model_kwargs)
-        mx.eval([c.state for c in prompt_cache])
+        # External prefill runs self.model(...) outside mlx-lm BatchGenerator,
+        # so it does NOT pick up generation_stream. On MLX 0.31 the executor
+        # thread has no default gpu stream -> "There is no Stream(gpu, 0) in
+        # current thread" 500 on every request (#KV-Cache-0 Llama-1B prefill).
+        # Pin forward+eval to this engine's thread-local stream explicitly.
+        with mx.stream(self._stream):
+            self.model(input_arr[:, :n_to_process], cache=prompt_cache, **model_kwargs)
+            mx.eval([c.state for c in prompt_cache])
         _throttle_post = get_phys_footprint()
         self._record_chunk_transient(
             n_to_process,

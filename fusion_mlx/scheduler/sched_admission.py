@@ -82,6 +82,11 @@ def add_request(self, request: Request) -> None:
             extra_key_token_start=request.vlm_extra_key_token_start_for_cache,
             extra_key_ranges=request.vlm_extra_key_ranges_for_cache,
         )
+        logger.info(
+            f"[CACHE-DIAG] admission req={request.request_id} fetch_bt={block_table is not None} "
+            f"num_tok={block_table.num_tokens if block_table else 0} "
+            f"rem={len(remaining) if remaining else 0}"
+        )
         if block_table and block_table.num_tokens > 0:
             bypass_hot_cache = self._bypass_hot_cache_under_pressure()
             if bypass_hot_cache:
@@ -102,11 +107,20 @@ def add_request(self, request: Request) -> None:
                 )
             else:
                 reconstructed = self.block_aware_cache.reconstruct_cache(block_table)
+            logger.info(
+                f"[CACHE-DIAG] admission req={request.request_id} "
+                f"reconstructed_truthy={bool(reconstructed)} type={type(reconstructed).__name__}"
+            )
             if reconstructed:
                 request.prompt_cache = reconstructed
                 request.block_table = block_table
                 request.cached_tokens = block_table.num_tokens
                 request.shared_prefix_blocks = len(block_table.block_ids)
+                logger.info(
+                    f"[CACHE-DIAG] admission req={request.request_id} reconstructed OK "
+                    f"cached={request.cached_tokens} blocks={request.shared_prefix_blocks} "
+                    f"remaining={len(request.remaining_tokens)} original={original_tokens}"
+                )
                 # Recalculate remaining_tokens in case block_table was truncated
                 request.remaining_tokens = request.prompt_token_ids[
                     block_table.num_tokens :
@@ -174,6 +188,10 @@ def add_request(self, request: Request) -> None:
                         f"{len(request.remaining_tokens)} tokens remaining, cache reconstructed"
                     )
             else:
+                logger.info(
+                    f"[CACHE-DIAG] admission req={request.request_id} reconstruct FAILED else-branch "
+                    f"original_tokens={original_tokens}"
+                )
                 # Reconstruction failed, treat as cache miss
                 if self.paged_cache_manager is not None:
                     self.paged_cache_manager.delete_block_table(request.request_id)
@@ -569,6 +587,11 @@ def _prepare_prefix_cache_for_request(self, request: Request) -> None:
             extra_key_token_start=request.vlm_extra_key_token_start_for_cache,
             extra_key_ranges=request.vlm_extra_key_ranges_for_cache,
         )
+        logger.info(
+            f"[CACHE-DIAG] admission req={request.request_id} fetch_bt={block_table is not None} "
+            f"num_tok={block_table.num_tokens if block_table else 0} "
+            f"rem={len(remaining) if remaining else 0}"
+        )
         if block_table and block_table.num_tokens > 0:
             bypass_hot_cache = self._bypass_hot_cache_under_pressure()
             if bypass_hot_cache:
@@ -586,11 +609,20 @@ def _prepare_prefix_cache_for_request(self, request: Request) -> None:
                 )
             else:
                 reconstructed = self.block_aware_cache.reconstruct_cache(block_table)
+            logger.info(
+                f"[CACHE-DIAG] admission req={request.request_id} "
+                f"reconstructed_truthy={bool(reconstructed)} type={type(reconstructed).__name__}"
+            )
             if reconstructed:
                 request.prompt_cache = reconstructed
                 request.block_table = block_table
                 request.cached_tokens = block_table.num_tokens
                 request.shared_prefix_blocks = len(block_table.block_ids)
+                logger.info(
+                    f"[CACHE-DIAG] admission req={request.request_id} reconstructed OK "
+                    f"cached={request.cached_tokens} blocks={request.shared_prefix_blocks} "
+                    f"remaining={len(request.remaining_tokens)} original={original_tokens}"
+                )
                 request.remaining_tokens = request.prompt_token_ids[
                     block_table.num_tokens :
                 ]

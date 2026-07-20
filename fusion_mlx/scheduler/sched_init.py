@@ -294,8 +294,11 @@ def __init__(
     self._cache_rate_tracker = CacheRateTracker()
     self.memory_monitor: MemoryMonitor | None = None
 
-    # Initialize paged SSD cache if paged_ssd_cache_dir is specified
-    if self.config.paged_ssd_cache_dir:
+    # Initialize prefix cache: pure-memory when enable_prefix_cache (default
+    # True), SSD-backed when paged_ssd_cache_dir is also set. Previously gated
+    # solely on paged_ssd_cache_dir, which left the default (no SSD dir) with
+    # block_aware_cache=None and cached_tokens always 0 (#KV-Cache-0).
+    if self.config.enable_prefix_cache or self.config.paged_ssd_cache_dir:
         # Calculate max_blocks automatically if not specified
         if self.config.max_cache_blocks is not None:
             max_blocks = self.config.max_cache_blocks

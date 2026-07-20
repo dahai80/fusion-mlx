@@ -155,8 +155,9 @@ class BatchedEngine(BaseEngine):
             model=self._model,
             tokenizer=self._tokenizer,
             config=engine_config,
+            executor=self._model_load_executor,
         )
-        await self._engine.engine.start(executor=self._model_load_executor)
+        await self._engine.engine.start()
 
     async def stop(self) -> None:
         if self._engine:

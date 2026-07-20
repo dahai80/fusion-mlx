@@ -67,11 +67,24 @@ _global_executors: dict[str, concurrent.futures.ThreadPoolExecutor] = {}
 
 
 def _init_mlx_step_thread() -> None:
-    pass
+    # model load + scheduler creation + step all run on this thread (the
+    # executor is reused as EngineCore._mlx_executor via AsyncEngineCore(
+    # executor=...)). Must set generation_stream here too (same as
+    # _init_mlx_thread) so mlx-lm BatchGenerator prefill uses the same
+    # default stream model weights are bound to (#KV-0). Prior empty pass
+    # left generation_stream unset -> cross-stream "no Stream(gpu, 0)".
+    _init_mlx_thread()
 
 
 def _init_mlx_thread() -> None:
-    stream = mx.new_thread_local_stream(mx.default_device())
+    # Use the thread's DEFAULT stream (same stream model load binds weights to)
+    # rather than a separate new_thread_local_stream. MLX 0.31.3+ binds model
+    # weights to the stream that first touches them at load (the worker's
+    # default stream 0). mlx-lm BatchGenerator runs prefill on generation_stream;
+    # if that is a different stream (new_thread_local_stream, non-zero index),
+    # cross-stream weight access raises "There is no Stream(gpu, 0) in current
+    # thread" on every request (#KV-0).
+    stream = mx.default_stream(mx.default_device())
     import sys
 
     gen_mod = sys.modules.get("mlx_lm.generate")
@@ -183,6 +196,7 @@ class EngineCore:
         config: EngineConfig | None = None,
         engine_id: str | None = None,
         force_model_ownership: bool = True,
+        executor: Any = None,
     ):
         self.model = model
         self.tokenizer = tokenizer
@@ -205,11 +219,20 @@ class EngineCore:
         # Each EngineCore gets its own thread + GPU stream so different
         # models can run scheduler.step() concurrently.
         self._mlx_stream = mx.new_thread_local_stream(mx.default_device())
-        self._mlx_executor = concurrent.futures.ThreadPoolExecutor(
-            max_workers=1,
-            thread_name_prefix=f"mlx-engine-{self._engine_id[:8]}",
-            initializer=_init_mlx_thread,
-        )
+        if executor is not None:
+            # Reuse caller-provided executor (BatchedEngine._start_llm's
+            # _model_load_executor) so scheduler creation + model load + step
+            # run on the SAME thread. MLX 0.31.3+ binds model weights to the
+            # stream of the thread that first touches them; creating the
+            # scheduler on a different thread than load -> cross-thread weight
+            # access -> "There is no Stream(gpu, N) in current thread" (#KV-0).
+            self._mlx_executor = executor
+        else:
+            self._mlx_executor = concurrent.futures.ThreadPoolExecutor(
+                max_workers=1,
+                thread_name_prefix=f"mlx-engine-{self._engine_id[:8]}",
+                initializer=_init_mlx_thread,
+            )
 
         # Scheduler must be created on the executor thread so it uses the
         # thread-local MLX stream (not the main thread's stream).
@@ -220,6 +243,13 @@ class EngineCore:
         _sched_result: list = []
 
         def _make_scheduler():
+            # Resolve the stream ON the executor thread so it is the SAME
+            # default stream model load used there. MLX 0.31.3+ binds weights
+            # to the load thread's default stream; using a different stream
+            # (new_thread_local_stream created in __init__ on the main thread)
+            # -> cross-stream "There is no Stream(gpu, N) in current thread"
+            # on every forward (#KV-0).
+            self._mlx_stream = mx.default_stream(mx.default_device())
             _sched_result.append(
                 Scheduler(
                     model=model,
@@ -1062,9 +1092,7 @@ class AsyncEngineCore:
         # AtomCode fix #113: 补 executor kwarg 对齐 test_batching_deterministic.py:113 (2026-07-19)
         # 原签名缺 executor 致 TypeError: unexpected keyword argument 'executor'
         # executor 透到 EngineCore._mlx_executor (Metal 流调度), None 时 EngineCore 内默自建
-        self.engine = EngineCore(model, tokenizer, config)
-        if executor is not None:
-            self.engine._mlx_executor = executor
+        self.engine = EngineCore(model, tokenizer, config, executor=executor)
         self._start_task: asyncio.Task | None = None
 
     @property

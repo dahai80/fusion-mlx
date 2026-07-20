@@ -276,12 +276,18 @@ def _process_batch_responses(
             # Extract cache for future reuse.
             # In the new API, prompt_cache is a direct value (not callable).
             raw_cache = getattr(response, "prompt_cache", None)
+            logger.info(
+                f"[CACHE-DIAG] finalize req={request_id} raw_cache_set={raw_cache is not None} "
+                f"specprefill={request.specprefill_indices is not None} "
+                f"block_aware={self.block_aware_cache is not None} resp_type={type(response).__name__}"
+            )
             if raw_cache is not None:
                 try:
                     # SpecPrefill: sparse KV data can't be stored in
                     # paged cache (hash mismatch with full token IDs).
                     if request.specprefill_indices is not None:
                         raw_cache = None
+                        logger.info(f"[CACHE-DIAG] finalize req={request_id} NULL by specprefill")
 
                     # For paged cache, extract actual tensor states
                     # This allows cache to survive BatchGenerator recreation
@@ -292,16 +298,24 @@ def _process_batch_responses(
                         if extracted_cache:
                             request._extracted_cache = extracted_cache
                             request._model_cache_config = model_cache_config
-                            logger.debug(
-                                f"Extracted {len(extracted_cache)} layer states "
-                                f"for request {request_id}"
+                            logger.info(
+                                f"[CACHE-DIAG] finalize extracted {len(extracted_cache)} layers "
+                                f"-> _extracted_cache SET for {request_id}"
+                            )
+                        else:
+                            logger.info(
+                                f"[CACHE-DIAG] finalize extracted EMPTY for {request_id} "
+                                f"raw_type={type(raw_cache).__name__} raw_len={len(raw_cache) if hasattr(raw_cache, '__len__') else '?'}"
                             )
                     else:
                         # Standard cache stores object references
                         request._extracted_cache = raw_cache
                         request._model_cache_config = None
+                        logger.info(f"[CACHE-DIAG] finalize standard-cache SET for {request_id}")
                 except Exception as e:
-                    logger.debug(f"Failed to extract cache for {request_id}: {e}")
+                    logger.warning(f"[CACHE-DIAG] finalize extract FAILED for {request_id}: {e}")
+            else:
+                logger.info(f"[CACHE-DIAG] finalize req={request_id} raw_cache is None - NO EXTRACT")
 
             self.total_completion_tokens += request.num_output_tokens
             self.num_requests_processed += 1

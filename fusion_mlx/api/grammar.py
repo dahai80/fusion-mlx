@@ -25,6 +25,7 @@ The processor supports two usage modes:
 """
 
 import logging
+from functools import lru_cache
 
 import mlx.core as mx
 import numpy as np
@@ -32,26 +33,96 @@ import numpy as np
 logger = logging.getLogger(__name__)
 
 
-def create_grammar_compiler(tokenizer, model):
-    """Create an xgrammar GrammarCompiler for the given tokenizer and model.
+# ─── Process-level LRU cache for xgrammar GrammarCompiler ───────────────────
+# xgrammar's ``TokenizerInfo.from_huggingface`` + ``GrammarCompiler`` init is
+# expensive (vocab indexing + bitmask table build). Each engine instance
+# (batched / vlm) already memoizes one compiler on ``self._grammar_compiler``,
+# but across instances — e.g. multiple loaded models sharing the same
+# tokenizer family, or VLM + text engines co-resident — the same compiler
+# was rebuilt. ``_get_grammar_compiler_cached`` keys on a stable tokenizer
+# identity plus ``vocab_size`` so all engines in this process that share a
+# tokenizer/vocab reuse one ``GrammarCompiler``.
+#
+# Cache caps at 8 tokenizer variants — enough for a multi-model dev box
+# without holding dead compilers forever. ``create_grammar_compiler`` keeps
+# its original signature so ``engines/batched.py`` and ``engines/vlm.py``
+# call sites are untouched.
 
-    Returns None if vocab_size cannot be determined.
+@lru_cache(maxsize=8)
+def _get_grammar_compiler_cached(
+    tokenizer_id: str,
+    vocab_size_key: int | None,
+) -> object | None:
+    """Build (or fetch) a cached ``xgrammar.GrammarCompiler``.
+
+    ``vocab_size_key`` is ``None`` when the model's vocab size could not be
+    resolved — the compiler is then built without ``vocab_size`` kwarg, same
+    as the pre-cache behavior. Returns ``None`` only if xgrammar is missing
+    or the build raises (logged at debug, mirrored from pre-cache path).
     """
     from ..._torch_stub import install as _install_torch_stub
 
     _install_torch_stub()
     import xgrammar as xgr
 
+    tokenizer_info = xgr.TokenizerInfo.from_huggingface(
+        tokenizer_id,
+        vocab_size=vocab_size_key if vocab_size_key is not None else None,
+    )
+    return xgr.GrammarCompiler(tokenizer_info)
+
+
+def _tokenizer_cache_key(tokenizer) -> str | None:
+    """Derive a stable cache key from a tokenizer-like object.
+
+    Falls back through common attributes (``name_or_path`` → ``name`` →
+    ``model`` → ``_model_name``) so HF, mlx-lm, and mlx-vlm tokenizers all
+    key sanely. Returns ``None`` if no identity can be derived — the caller
+    then skips caching and builds fresh (preserving the original uncached
+    path).
+    """
+    for attr in ("name_or_path", "name", "model", "_model_name"):
+        cand = getattr(tokenizer, attr, None)
+        if cand:
+            return str(cand)
+    return None
+
+
+def create_grammar_compiler(tokenizer, model):
+    """Create an xgrammar GrammarCompiler for the given tokenizer and model.
+
+    Cached at the process level by ``(tokenizer identity, vocab_size)`` so
+    engines sharing a tokenizer family reuse one ``GrammarCompiler`` instead
+    of rebuilding the bitmask table per instance. Returns ``None`` if vocab
+    size cannot be determined or xgrammar is unavailable.
+    """
+    from ..._torch_stub import install as _install_torch_stub
+
+    _install_torch_stub()
+    import xgrammar as xgr  # noqa: F401  (probe import for early failure)
+
     from ...utils.tokenizer import resolve_vocab_size, unwrap_tokenizer
 
     hf_tokenizer = unwrap_tokenizer(tokenizer)
     vocab_size = resolve_vocab_size(model)
-    kwargs = {}
-    if vocab_size is not None:
-        kwargs["vocab_size"] = vocab_size
 
-    tokenizer_info = xgr.TokenizerInfo.from_huggingface(hf_tokenizer, **kwargs)
-    return xgr.GrammarCompiler(tokenizer_info)
+    tid = _tokenizer_cache_key(hf_tokenizer)
+    if tid is None:
+        # No stable identity — preserve original uncached behavior.
+        kwargs = {}
+        if vocab_size is not None:
+            kwargs["vocab_size"] = vocab_size
+        tokenizer_info = xgr.TokenizerInfo.from_huggingface(hf_tokenizer, **kwargs)
+        return xgr.GrammarCompiler(tokenizer_info)
+
+    try:
+        compiler = _get_grammar_compiler_cached(tid, vocab_size)
+    except Exception as exc:  # xgrammar build failure (unknown tokenizer, etc.)
+        logger.debug("grammar compiler cache miss-build for %s: %s", tid, exc)
+        return None
+    if compiler is None:
+        return None
+    return compiler
 
 
 class GrammarConstraintProcessor:
