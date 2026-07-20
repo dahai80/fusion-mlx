@@ -263,7 +263,21 @@ class SkyReelsBasePipeline:
         # V2V 边界对齐: 输入视频末帧 latent (stub: None 表示不对齐)
         input_end_latent: mx.array | None = None
 
-        for step_idx, t in enumerate(scheduler.timesteps):
+        # #146 fix: 每步 mx.eval 打断 MLX 惰性计算图跨步累积.
+        # 不 eval 则 latents_{N+1}=latents_N+dt*dit(...) 的图持有 latents_N 及整条
+        # DiT 前向激活, 30 步累积全部前向 -> 128GB OOM -> kernel 静默 kill.
+        # eval 后仅保留当步 latents, 激活归还 MLX 内存池供下步同形复用.
+        timesteps = scheduler.timesteps
+        n_steps = timesteps.shape[0]
+        logger.info(
+            "denoise: start branch=%s steps=%d cfg=%.2f latent_shape=%s",
+            self.config.branch,
+            n_steps,
+            self.config.guidance_scale,
+            latents.shape,
+        )
+
+        for step_idx, t in enumerate(timesteps):
             # 设置当前步 (xfuser 步级策略)
             self.step_strategy.set_current_step(step_idx)
 
@@ -311,6 +325,11 @@ class SkyReelsBasePipeline:
                     input_end_latent,
                 )
 
+            # #146: 强制 eval 当步 latents, 释放整条前向图, 控内存在单步工作集
+            mx.eval(latents)
+            logger.info("denoise: step=%d/%d t=%.4f", step_idx + 1, n_steps, float(t))
+
+        logger.info("denoise: done steps=%d", n_steps)
         return latents
 
     def generate(self, *args, **kwargs) -> mx.array:
@@ -591,7 +610,17 @@ class SkyReelsA2VPipeline(SkyReelsBasePipeline):
             scheduler.set_timesteps(cfg.num_inference_steps)
             self.step_strategy.reset()
 
-            for step_idx, t in enumerate(scheduler.timesteps):
+            # #146 fix: 每步 mx.eval 打断 MLX 惰性计算图跨步累积 (同 R2V/V2V)
+            timesteps = scheduler.timesteps
+            n_steps = timesteps.shape[0]
+            logger.info(
+                "denoise: start branch=a2v steps=%d cfg=%.2f latent_shape=%s",
+                n_steps,
+                cfg.guidance_scale,
+                latents.shape,
+            )
+
+            for step_idx, t in enumerate(timesteps):
                 self.step_strategy.set_current_step(step_idx)
                 t_mx = mx.array([float(t)])
 
@@ -634,6 +663,17 @@ class SkyReelsA2VPipeline(SkyReelsBasePipeline):
                     float(t),
                     latents,
                 ).prev_sample
+
+                # #146: 强制 eval 当步 latents, 释放整条前向图, 控内存在单步工作集
+                mx.eval(latents)
+                logger.info(
+                    "denoise: step=%d/%d t=%.4f",
+                    step_idx + 1,
+                    n_steps,
+                    float(t),
+                )
+
+            logger.info("denoise: done steps=%d", n_steps)
 
         # 5. VAE 解码
         video = decode_to_video(

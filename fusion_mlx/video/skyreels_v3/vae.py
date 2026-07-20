@@ -284,7 +284,11 @@ def decode_to_video(
         [B, 3, T, H', W'] 视频帧 (像素 [0, 1])
     """
     # VAE 解码
+    logger.info("vae decode: start latent_shape=%s tiling=%s", latent.shape, tiling)
     video = vae.decode(latent, tiling=tiling)
+    # #146: 强制 eval 解码图, 释放 latent 依赖, 控内存 + 显式暴露解码异常
+    mx.eval(video)
+    logger.info("vae decode: done video_shape=%s", video.shape)
 
     # 像素归一化: [-1, 1] -> [0, 1]
     video = (video + 1.0) / 2.0
