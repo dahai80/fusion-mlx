@@ -257,10 +257,15 @@ class M5Optimizer:
 
         Args:
             model: SkyReelsR2VDiT / SkyReelsV2VDiT / SkyReelsA2VDiT
+
+        AtomCode fix #134: 非 M5 设备也执行 FP8/NF4 转换 (2026-07-20).
+        原版 if not self.is_m5: return 致 M2/M3/M4 设备跳过转换,
+        nn.Linear 未转 FP8Linear, 原始 addmm 失败表现为 [matmul] 错.
+        convert_to_fp8_linear 内部已处理 _FP8_AVAILABLE=False 降级到 bf16,
+        quantize_model bits=4 在无 NF4 硬件时也降级, 故非 M5 设备也安全执行.
         """
         if not self.is_m5:
-            logger.info("Non-M5 device, skip M5 optimization")
-            return
+            logger.info("Non-M5 device, apply FP8/NF4 conversion with bf16 fallback")
 
         # 1. 应用 FP8 Linear (如果可用)
         if self.quant_config.use_fp8_linear:
