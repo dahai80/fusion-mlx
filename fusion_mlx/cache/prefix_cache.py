@@ -356,8 +356,8 @@ class BlockAwarePrefixCache(CacheManager):
             self._tokens_matched_total += num_prefix_tokens
             self._tokens_requested_total += len(tokens)
 
-            logger.info(
-                f"[CACHE-DIAG] Cache hit for {request_id}: "
+            logger.debug(
+                f"Cache hit for {request_id}: "
                 f"{len(shared_block_ids)} blocks, {num_prefix_tokens} tokens"
             )
 
@@ -392,7 +392,7 @@ class BlockAwarePrefixCache(CacheManager):
         # No cache hit
         self._misses += 1
         self._tokens_requested_total += len(tokens)
-        logger.info(f"[CACHE-DIAG] Cache miss for {request_id}")
+        logger.debug(f"Cache miss for {request_id}")
         return None, tokens
 
     def store_cache(
@@ -431,11 +431,6 @@ class BlockAwarePrefixCache(CacheManager):
         """
         if not tokens:
             return None
-
-        logger.info(
-            f"[CACHE-DIAG] store_cache ENTER req={request_id} num_tokens={len(tokens)} "
-            f"is_tensor={bool(cache_data) and isinstance(cache_data[0], dict) and 'state' in cache_data[0] if cache_data else False}"
-        )
 
         # Check if cache_data contains extracted tensor states
         is_tensor_data = (
@@ -584,10 +579,6 @@ class BlockAwarePrefixCache(CacheManager):
             if len(block_tokens) == self.block_size:
                 self.paged_cache.register_block_hash(
                     block, block_tokens, parent_hash, extra_keys=block_extra_keys
-                )
-                logger.info(
-                    f"[CACHE-DIAG] register_block_hash req={request_id} block_id={block.block_id} "
-                    f"num_tokens={len(block_tokens)} hash={block.block_hash.hex()[:16] if block.block_hash else None}"
                 )
 
             # Extract tensor slice and save to paged SSD
