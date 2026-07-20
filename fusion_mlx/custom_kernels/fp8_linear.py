@@ -93,7 +93,13 @@ class FP8Linear(nn.Module):
         """
         out = fp8_matmul(x, self.fp8_weight, self.scale)
         if self.bias is not None:
-            out = out + self.bias
+            # AtomCode fix #138: bias 形状可能 != out 末维 (因权重格式错配)
+            # fp8_matmul 自动检测权重格式, 但 bias 创建时用 out_features
+            # 若权重是 (in,out) 格式, out_features 读错, bias 形状错配
+            b = self.bias
+            if b.shape[0] != out.shape[-1]:
+                b = b[:out.shape[-1]]  # 截断到匹配输出
+            out = out + b
         return out
 
 
