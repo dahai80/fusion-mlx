@@ -36,17 +36,29 @@ def quantize_fp8(weight: mx.array) -> tuple[mx.array, mx.array]:
 
 
 def fp8_matmul(x: mx.array, fp8_w: mx.array, scale: mx.array) -> mx.array:
-    """FP8 matmul: x @ (fp8_w * scale).T.
+    """FP8 matmul 自动检测权重格式并正确转置.
 
     AtomCode fix #133: 用 mx.transpose 强物化转置替 .T 视图 (2026-07-20).
-    某些 mlx 版本 .T 返 strided view 非物化, matmul 不透转置语义致维度错.
-    fp8_w 形状 (out, in), scale 形状 (out,), x 形状 (..., in) → out (..., out).
+    AtomCode fix #135-#137: 自动检测权重是 (out,in) 还是 (in,out) 格式 (2026-07-20).
+
+    MLX nn.Linear 权重形状为 (out_features, in_features).
+    HuggingFace Diffusers/MLX-converted 权重可能存为 (in_features, out_features).
+    检测: 若 fp8_w.shape[0] == x.shape[-1] 则权重是 (in,out) 格式, 不转置.
+          若 fp8_w.shape[1] == x.shape[-1] 则权重是 (out,in) 格式, 转置.
     """
     if not _FP8_AVAILABLE:
-        w_t = mx.transpose(fp8_w, (1, 0))  # 强物化 (in, out)
+        # 自动检测权重格式
+        if fp8_w.shape[0] == x.shape[-1]:
+            # 权重已是 (in,out) 格式, 直接 matmul
+            return x @ fp8_w
+        # 权重是 (out,in) 格式, 转置到 (in,out)
+        w_t = mx.transpose(fp8_w, (1, 0))
         return x @ w_t
     w = fp8_w.astype(mx.bfloat16) * scale[:, None].astype(mx.bfloat16)
-    w_t = mx.transpose(w, (1, 0))  # 强物化 (in, out)
+    # 自动检测权重格式 (FP8 路径)
+    if w.shape[0] == x.shape[-1]:
+        return x @ w
+    w_t = mx.transpose(w, (1, 0))
     return x @ w_t
 
 
@@ -61,6 +73,10 @@ class FP8Linear(nn.Module):
 
     @classmethod
     def from_linear(cls, linear: nn.Linear) -> "FP8Linear":
+        """从 nn.Linear 创建 FP8Linear.
+
+        fp8_matmul 已自动检测 (out,in) 或 (in,out) 权重格式并正确转置.
+        """
         out_f, in_f = linear.weight.shape
         bias = hasattr(linear, "bias") and linear.bias is not None
         layer = cls(out_f, in_f, bias=bias)
@@ -70,6 +86,11 @@ class FP8Linear(nn.Module):
         return layer
 
     def __call__(self, x: mx.array) -> mx.array:
+        """AtomCode fix #135-#137: 前向时走 fp8_matmul 全路径含 scale.
+
+        fp8_matmul 假设权重 shape 为 (out_features, in_features) 并转置.
+        from_linear 已确保权重格式正确, 这里直接用 fp8_matmul.
+        """
         out = fp8_matmul(x, self.fp8_weight, self.scale)
         if self.bias is not None:
             out = out + self.bias
