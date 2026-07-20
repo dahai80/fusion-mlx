@@ -290,6 +290,14 @@ class SkyReelsBasePipeline:
             cfg_grid_sizes = list(grid_sizes) * 2
             cfg_seq_lens = list(seq_lens) * 2
 
+            # #149: 步级起始日志 - 当步前向开始即报进度, 避免两步间 ~115s 静默误判卡死
+            logger.info(
+                "denoise: step=%d/%d starting t=%.4f",
+                step_idx + 1,
+                n_steps,
+                float(t),
+            )
+
             # 模型前向
             noise_pred = self.dit(
                 latent_input,
@@ -639,6 +647,14 @@ class SkyReelsA2VPipeline(SkyReelsBasePipeline):
                     cross_kv_cache = self._prepare_cross_kv_cache(text_input)
                 else:
                     cross_kv_cache = self._cross_kv_cache  # 预分配复用
+
+                # #149: 步级起始日志 - 当步前向开始即报进度
+                logger.info(
+                    "denoise: step=%d/%d starting t=%.4f",
+                    step_idx + 1,
+                    n_steps,
+                    float(t),
+                )
 
                 # A2V DiT 前向
                 noise_pred = self.dit(

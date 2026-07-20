@@ -659,3 +659,86 @@ class TestVideoGenTimeout:
         src = Path(mod.__file__).read_text()
         assert "get_video_gen_timeout" in src
         assert "timeout=600.0" not in src
+
+
+class TestSkyreelsProgressLogs:
+    # #149: SkyReels-V3 video generation must emit end-to-end progress logs so
+    # operators can see request received -> pipeline loading -> denoise steps ->
+    # done, instead of minutes of silence that look like a hang (the original
+    # report: "服务器日志无推理进度日志"). The 10min timeout aspect was fixed by
+    # #148 (get_video_gen_timeout, 7200s default); this covers the visibility gap.
+
+    def _skyreels_src(self):
+        from fusion_mlx.engines.video_backends import skyreels as mod
+
+        return Path(mod.__file__).read_text()
+
+    def _pipelines_src(self):
+        import fusion_mlx.video.skyreels_v3.pipelines as mod
+
+        return Path(mod.__file__).read_text()
+
+    def test_backend_emits_request_level_start_done_logs(self):
+        src = self._skyreels_src()
+        # Each branch must log "video gen: start" at entry and "video gen: done"
+        # at exit so a request is never silently in-flight.
+        for branch in ("r2v", "v2v", "a2v"):
+            assert src.count(f"video gen: start branch={branch}") == 1, branch
+            assert src.count(f"video gen: done branch={branch}") == 1, branch
+
+    def test_backend_logs_pipeline_loading_before_eager_load(self):
+        src = self._skyreels_src()
+        # _get_or_create_pipeline must log BEFORE pipeline_class(...) triggers the
+        # eager _load_models (DiT/VAE/T5, minutes on first call). Assert ordering.
+        log_idx = src.index("Loading pipeline %s (DiT/VAE/T5 weights")
+        load_idx = src.index("self._pipeline = pipeline_class(self._model_name)")
+        assert log_idx < load_idx
+
+    def test_pipeline_emits_step_starting_log_before_each_forward(self):
+        src = self._pipelines_src()
+        # _denoise_sample (R2V/V2V) + A2V inline loop must each log "step ...
+        # starting" BEFORE the DiT forward, so ~115s inter-step gaps are visible
+        # as progress rather than mistaken for a hang.
+        assert src.count("denoise: step=%d/%d starting t=%.4f") == 2
+        # The existing post-step "done" marker stays.
+        assert src.count("denoise: step=%d/%d t=%.4f") >= 2
+
+    async def test_generate_r2v_emits_progress_logs_at_runtime(
+        self, monkeypatch, caplog
+    ):
+        import logging
+
+        import fusion_mlx.video.skyreels_v3.pipelines as pipelines_mod
+        from fusion_mlx.engines.video_backends import skyreels as skyreels_mod
+
+        class FakePipeline:
+            # Bypass the real multi-minute _load_models (DiT/VAE/T5).
+            def __init__(self, _model_name):
+                pass
+
+            def generate(self, prompt, ref_images=None, duration=1, seed=0):
+                return b"FAKEVIDEO"
+
+            def save(self, video, path):
+                with open(path, "wb") as f:
+                    f.write(b"SKYMP4")
+
+        # Swap the pipeline class so _get_or_create_pipeline constructs FakePipeline
+        # instead of loading real 14B weights.
+        monkeypatch.setattr(pipelines_mod, "SkyReelsR2VPipeline", FakePipeline)
+
+        backend = skyreels_mod.SkyReelsBackend("SkyReels-V3-R2V-14B-MLX")
+        await backend.start("SkyReels-V3-R2V-14B-MLX")
+        params = VideoGenParams(
+            prompt="a cat", num_frames=9, width=1280, height=720, seed=42
+        )
+
+        caplog.set_level(logging.INFO)
+        result = await backend.generate(params)
+
+        assert result == [b"SKYMP4"]
+        text = caplog.text
+        assert "video gen: start branch=r2v" in text
+        assert "Loading pipeline" in text
+        assert "Created pipeline: FakePipeline" in text
+        assert "video gen: done branch=r2v" in text
