@@ -16,7 +16,7 @@ from typing import Any
 import mlx.core as mx
 
 from ..._tempfile_safe import managed_tempfile_path
-from ...engine_core import get_executor
+from ...engine_core import get_executor, get_video_gen_timeout
 from .base import VideoBackend, VideoConstraints, VideoGenParams
 
 logger = logging.getLogger(__name__)
@@ -158,7 +158,8 @@ class SkyReelsBackend(VideoBackend):
         await self._get_or_create_pipeline(SkyReelsR2VPipeline)
         loop = asyncio.get_running_loop()
         results = await asyncio.wait_for(
-            loop.run_in_executor(get_executor("video"), _gen_one), timeout=600.0
+            loop.run_in_executor(get_executor("video"), _gen_one),
+            timeout=get_video_gen_timeout(),
         )
         return [results]
 
@@ -189,7 +190,8 @@ class SkyReelsBackend(VideoBackend):
         await self._get_or_create_pipeline(SkyReelsV2VPipeline)
         loop = asyncio.get_running_loop()
         results = await asyncio.wait_for(
-            loop.run_in_executor(get_executor("video"), _gen_one), timeout=600.0
+            loop.run_in_executor(get_executor("video"), _gen_one),
+            timeout=get_video_gen_timeout(),
         )
         return [results]
 
@@ -222,7 +224,8 @@ class SkyReelsBackend(VideoBackend):
         await self._get_or_create_pipeline(SkyReelsA2VPipeline)
         loop = asyncio.get_running_loop()
         results = await asyncio.wait_for(
-            loop.run_in_executor(get_executor("video"), _gen_one), timeout=600.0
+            loop.run_in_executor(get_executor("video"), _gen_one),
+            timeout=get_video_gen_timeout(),
         )
         return [results]
 

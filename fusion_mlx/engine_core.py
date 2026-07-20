@@ -107,6 +107,38 @@ def get_mlx_executor() -> concurrent.futures.ThreadPoolExecutor:
     return get_executor("llm")
 
 
+# Video diffusion is long-running: SkyReels-V3 R2V 14B 720p 30-step is ~1hr
+# (~115s/step x 30 + VAE decode). The prior hardcoded 600s (10min) ceiling
+# killed in-progress jobs via TimeoutError before they could finish (#148).
+# Default 7200s (2hr) covers 720p 30-step + VAE with headroom; override via
+# FUSION_VIDEO_GEN_TIMEOUT (seconds). Invalid/non-positive values fall back
+# to the default with a warning.
+_VIDEO_GEN_TIMEOUT_DEFAULT_S = 7200.0
+
+
+def get_video_gen_timeout() -> float:
+    raw = os.environ.get("FUSION_VIDEO_GEN_TIMEOUT")
+    if not raw:
+        return _VIDEO_GEN_TIMEOUT_DEFAULT_S
+    try:
+        val = float(raw)
+    except (TypeError, ValueError):
+        logger.warning(
+            "FUSION_VIDEO_GEN_TIMEOUT=%r is not a number, using default %.0fs",
+            raw,
+            _VIDEO_GEN_TIMEOUT_DEFAULT_S,
+        )
+        return _VIDEO_GEN_TIMEOUT_DEFAULT_S
+    if val <= 0:
+        logger.warning(
+            "FUSION_VIDEO_GEN_TIMEOUT=%r <= 0, using default %.0fs",
+            raw,
+            _VIDEO_GEN_TIMEOUT_DEFAULT_S,
+        )
+        return _VIDEO_GEN_TIMEOUT_DEFAULT_S
+    return val
+
+
 @dataclass
 class RequestContext:
     collector: RequestOutputCollector

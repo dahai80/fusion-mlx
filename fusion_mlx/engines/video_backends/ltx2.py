@@ -15,7 +15,7 @@ from typing import Any
 import mlx.core as mx
 
 from ..._tempfile_safe import managed_tempfile_path
-from ...engine_core import get_executor
+from ...engine_core import get_executor, get_video_gen_timeout
 from .base import VideoBackend, VideoConstraints, VideoGenParams
 
 logger = logging.getLogger(__name__)
@@ -69,8 +69,9 @@ class LTX2Backend(VideoBackend):
         gc.collect()
         loop = asyncio.get_running_loop()
         # Use the io executor (max_workers=2) rather than the single-worker
-        # video executor so a stop() issued while a 600s generation is running
-        # does not queue behind that generation and trip the 5s timeout.
+        # video executor so a stop() issued while a long video generation
+        # (up to FUSION_VIDEO_GEN_TIMEOUT, default 7200s) is running does not
+        # queue behind that generation and trip the 5s timeout.
         await asyncio.wait_for(
             loop.run_in_executor(
                 get_executor("io"), lambda: (mx.synchronize(), mx.clear_cache())
@@ -106,7 +107,8 @@ class LTX2Backend(VideoBackend):
 
         loop = asyncio.get_running_loop()
         return await asyncio.wait_for(
-            loop.run_in_executor(get_executor("video"), _generate), timeout=600.0
+            loop.run_in_executor(get_executor("video"), _generate),
+            timeout=get_video_gen_timeout(),
         )
 
     def constraints(self) -> VideoConstraints:
