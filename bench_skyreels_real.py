@@ -4,6 +4,7 @@
 用法:
   python3 bench_skyreels_real.py --branch all --steps 3 --frames 5 --size 256
 """
+
 from __future__ import annotations
 import argparse, json, os, sys, time
 from pathlib import Path
@@ -15,7 +16,10 @@ sys.path.insert(0, ".")
 
 def bench_branch(branch: str, steps: int, frames: int, size: int) -> dict:
     """直调 dit 前向压测, 用已验证的端到端路径 (非 bench_skyreels.py)."""
-    print(f"{'=' * 60}\n=== {branch.upper()} 真实权重端到端 (steps={steps} frames={frames} {size}x{size}) ===", flush=True)
+    print(
+        f"{'=' * 60}\n=== {branch.upper()} 真实权重端到端 (steps={steps} frames={frames} {size}x{size}) ===",
+        flush=True,
+    )
     t0 = time.time()
 
     # 加载已验证的端到端组件
@@ -34,12 +38,17 @@ def bench_branch(branch: str, steps: int, frames: int, size: int) -> dict:
     mod_name, cls_name, mlx_dir_name, _b = branch_map[branch]
 
     import importlib
+
     mod = importlib.import_module(f"fusion_mlx.video.skyreels_v3.{mod_name}")
     DiT = getattr(mod, cls_name)
 
     mlx_dir = os.path.expanduser(f"~/.fusion-mlx/models/Skywork/{mlx_dir_name}")
     if not os.path.exists(mlx_dir):
-        return {"branch": branch, "error": f"MLX weights not found: {mlx_dir}", "success": False}
+        return {
+            "branch": branch,
+            "error": f"MLX weights not found: {mlx_dir}",
+            "success": False,
+        }
 
     # 构造骨架 + 加载真实权重
     dit = DiT()
@@ -53,8 +62,9 @@ def bench_branch(branch: str, steps: int, frames: int, size: int) -> dict:
     print(f"  真实权重加载: {load_s:.2f}s", flush=True)
 
     # latent 输入 (frames 帧, size P latent)
-    latent_h = max(4, size // 16)
-    latent_w = max(4, size // 16)
+    # VAE 下采样 8x (vae.py patch_size=(1,8,8)): 720P latent [B,16,T,90,160]
+    latent_h = max(4, size // 8)
+    latent_w = max(4, size // 8)
     latent_t = max(1, (frames - 1) // 4 + 1)
     x = mx.random.normal((1, 16, latent_t, latent_h, latent_w))
     t = mx.array([0.5])
@@ -65,17 +75,22 @@ def bench_branch(branch: str, steps: int, frames: int, size: int) -> dict:
     except Exception:
         text_emb = mx.zeros((1, 512, 4096))  # 降级 stub
     # A2V 霝额外 audio_embeds (wav2vec2 输出, audio_dim=768 真实权重 norm=768)
-    audio_emb = mx.zeros((1, latent_t * latent_h * latent_w, 768)) if branch == "a2v" else None
-    # grid_sizes 用 pre-patch 隐空间尺寸 (latent_h, latent_w 不预缩),
-    # rope_apply 内部 patch_scale 会正确缩放 (patch_size=(1,2,2) 缩 1/4)
-    seq_lens = [latent_t * latent_h * latent_w]
-    grid_sizes = [(latent_t, latent_h, latent_w)]
+    audio_emb = (
+        mx.zeros((1, latent_t * latent_h * latent_w, 768)) if branch == "a2v" else None
+    )
+    # grid_sizes 用 patch 后 token 网格 (对齐 wan2 约定, rope_apply/_unpatchify 按此切片)
+    pt, ph, pw = dit.patch_size
+    grid_t, grid_h, grid_w = latent_t // pt, latent_h // ph, latent_w // pw
+    seq_lens = [grid_t * grid_h * grid_w]
+    grid_sizes = [(grid_t, grid_h, grid_w)]
 
     # warmup x3 (触 mx.compile 编译稳定, 避压测首步重算 + Metal 峰值冲高)
     try:
         for _ in range(3):
             if branch == "a2v":
-                _ = dit(x, t, audio_emb, text_emb, seq_lens=seq_lens, grid_sizes=grid_sizes)
+                _ = dit(
+                    x, t, audio_emb, text_emb, seq_lens=seq_lens, grid_sizes=grid_sizes
+                )
             else:
                 _ = dit(x, t, text_emb, seq_lens=seq_lens, grid_sizes=grid_sizes)
         mx.eval(_)
@@ -87,7 +102,9 @@ def bench_branch(branch: str, steps: int, frames: int, size: int) -> dict:
     t0 = time.time()
     for _ in range(steps):
         if branch == "a2v":
-            out = dit(x, t, audio_emb, text_emb, seq_lens=seq_lens, grid_sizes=grid_sizes)
+            out = dit(
+                x, t, audio_emb, text_emb, seq_lens=seq_lens, grid_sizes=grid_sizes
+            )
         else:
             out = dit(x, t, text_emb, seq_lens=seq_lens, grid_sizes=grid_sizes)
     mx.eval(out)
@@ -100,9 +117,15 @@ def bench_branch(branch: str, steps: int, frames: int, size: int) -> dict:
     fps_diT = frames / fwd_s if fwd_s > 0 else 0
     fps_per_step = frames / per_step if per_step > 0 else 0
 
-    print(f"  DiT fwd: {per_step:.3f}s/step ({steps}步/{fwd_s:.2f}s) shape={out_shape}", flush=True)
+    print(
+        f"  DiT fwd: {per_step:.3f}s/step ({steps}步/{fwd_s:.2f}s) shape={out_shape}",
+        flush=True,
+    )
     print(f"  Metal peak: {peak_mb:.0f} MB", flush=True)
-    print(f"  综合指标: per_step={per_step:.3f}s fps_per_step={fps_per_step:.1f} fps_total={fps_diT:.1f}", flush=True)
+    print(
+        f"  综合指标: per_step={per_step:.3f}s fps_per_step={fps_per_step:.1f} fps_total={fps_diT:.1f}",
+        flush=True,
+    )
     print(f"  ✅ {branch.upper()} 真实权重端到端成功", flush=True)
 
     return {
@@ -140,12 +163,18 @@ def main():
             mx.clear_cache()
         except Exception as exc:
             import traceback
+
             traceback.print_exc()
             results.append({"branch": b, "error": str(exc), "success": False})
 
     report = {
         "system": {"chip": "Apple M5 Max", "mlx": "0.32.0", "memory_gb": 128},
-        "args": {"branch": args.branch, "steps": args.steps, "frames": args.frames, "size": args.size},
+        "args": {
+            "branch": args.branch,
+            "steps": args.steps,
+            "frames": args.frames,
+            "size": args.size,
+        },
         "results": results,
         "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
     }
@@ -157,13 +186,19 @@ def main():
     print("\n" + "=" * 80)
     print("SkyReels-V3 真实权重端到端压测汇总")
     print("=" * 80)
-    print(f"{'Branch':<8} {'Per-step(s)':<14} {'FPS/step':<10} {'Metal(GB)':<10} {'Status':<10}")
+    print(
+        f"{'Branch':<8} {'Per-step(s)':<14} {'FPS/step':<10} {'Metal(GB)':<10} {'Status':<10}"
+    )
     print("-" * 80)
     for r in results:
         if r.get("success"):
-            print(f"{r['branch'].upper():<8} {r['per_step_s']:<14.3f} {r['fps_per_step']:<10.1f} {r['metal_peak_mb']/1024:<10.2f} ✅")
+            print(
+                f"{r['branch'].upper():<8} {r['per_step_s']:<14.3f} {r['fps_per_step']:<10.1f} {r['metal_peak_mb']/1024:<10.2f} ✅"
+            )
         else:
-            print(f"{r['branch'].upper():<8} {'-':<14} {'-':<10} {'-':<10} ❌ {r.get('error','')[:40]}")
+            print(
+                f"{r['branch'].upper():<8} {'-':<14} {'-':<10} {'-':<10} ❌ {r.get('error','')[:40]}"
+            )
     print("=" * 80)
 
 

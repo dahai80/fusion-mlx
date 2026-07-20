@@ -154,44 +154,18 @@ def rope_apply(
     x: mx.array,
     grid_sizes: list[tuple[int, int, int]],
     freqs: mx.array,
-    context_window_size: int = 0,
-    num_token_list: list[int] | None = None,
-    num_frame_list: list[int] | None = None,
-    grid_size_list: list[tuple[int, int, int]] | None = None,
 ) -> mx.array:
-    """应用 RoPE 到 Q/K, 对齐原版 rope_apply (3D video rope).
-
-    原版拆分 freqs 为 [t, h, w] 三段, 然后广播到 [f*h*w, 1, dim/2].
-    本实现用实数对 (cos, sin) 等价复数乘法:
-      x_complex = x[::2] + i * x[1::2]
-      x_rotated = x_complex * (cos + i*sin)
-               = (x_real*cos - x_imag*sin) + i*(x_real*sin + x_imag*cos)
-
-    Args:
-        x: [B, L, N, C], C 为 head_dim (实数)
-        grid_sizes: [(f, h, w), ...] 每个样本的网格大小
-        freqs: RoPE 频率表 [max_seq, dim/2, 2] (cos, sin 实数对)
-        context_window_size: 上下文窗口大小 (0=标准 rope)
-        num_token_list/num_frame_list/grid_size_list: 多段上下文参数
-
-    Returns:
-        mx.array [B, L, N, C] 应用了 RoPE 的张量
-    """
+    # 3D video RoPE, 对齐 wan2/rope.py: grid_sizes (f,h,w) 为 patch 后 token 网格.
+    # 每样本独立处理, seq_len = f*h*w, 截取 x[i, :seq_len]; 尾部 padding 原样保留.
+    # grid_sizes 长度需等于 B (wan2 约定: CFG 时调用方传 B 条, 不在此广播).
     b, s, n, c = x.shape
-    num_token_list = num_token_list or []
-    num_frame_list = num_frame_list or []
-    grid_size_list = grid_size_list or []
-
     half_c = c // 2
     t_dim = half_c - 2 * (half_c // 3)
     hw_dim = half_c // 3
 
-    # freqs: [max_seq, dim/2, 2] -> 拆 (cos, sin)
-    # 注意: freqs 最后一维 2 = (cos, sin)
-    freqs_cos = freqs[..., 0]  # [max_seq, dim/2]
+    # freqs: [max_seq, half_c, 2] (cos, sin) -> 拆 [t, h, w] 三段
+    freqs_cos = freqs[..., 0]
     freqs_sin = freqs[..., 1]
-
-    # 拆分 [t_dim, hw_dim, hw_dim]
     cos_t = freqs_cos[:, :t_dim]
     sin_t = freqs_sin[:, :t_dim]
     cos_h = freqs_cos[:, t_dim : t_dim + hw_dim]
@@ -199,81 +173,44 @@ def rope_apply(
     cos_w = freqs_cos[:, t_dim + hw_dim : t_dim + 2 * hw_dim]
     sin_w = freqs_sin[:, t_dim + hw_dim : t_dim + 2 * hw_dim]
 
-    # 处理 batch 维度: 当 grid_sizes 只有一个元素但 B>1 时, 广播给所有样本
-    # (CFG 拼接场景: latent_input = mx.concatenate([latents]*2) 导致 B>1)
-    gs = grid_sizes
-    if len(gs) < b:
-        gs = gs * (b // len(gs)) + gs[: b % len(gs)]  # 重复到 b 个
-
-    # 多段拼接场景: 当 x 的 L 维 > sum(f*h*w) 时, grid_sizes 表示多个段
-    # (R2V 参考图 patch + 视频 patch 拼接成一个序列). 此时按段累拼输出.
-    # 注意: grid_sizes 的 (f,h,w) 是 pre-patch 隐空间尺寸, patch_size=(1,2,2) 后真实 grid 缩了
-    # patch_size**2 倍. 用 x.shape[1] (patch 后真实序列长度) 反推每段真实 seq_len, 避免与权重错位.
-    total_seq = x.shape[1]  # patch 后真实总序列长度
-    total_grid = sum(g[0] * g[1] * g[2] for g in gs)  # pre-patch 总元素
-    # patch 缩放因子: 真实 seq / pre-patch grid (如 patch_size=(1,2,2) → 1/4)
-    patch_scale = total_seq / total_grid if total_grid > 0 else 1.0
-
     outputs = []
-    for i, (f, h, w) in enumerate(gs):
-        # 真实 seq_len (patch 后): pre-patch f*h*w * patch_scale
-        seq_len = int(round(f * h * w * patch_scale))
-        # 按段偏移截取 x_i: 第 i 段对应 x[i, offset:offset+seq_len]
-        # 单段场景 (offset=0) 等价于截断, 多段场景正确分片
-        offset = int(round(sum(g[0] * g[1] * g[2] * patch_scale for g in gs[:i])))
-        x_i = x[i, offset : offset + seq_len].astype(mx.float32)  # [seq_len, N, C]
+    for i in range(b):
+        f, h, w = grid_sizes[i]
+        seq_len = f * h * w
+        # 拆 real/imag: 相邻对 (x0,x1)=(real,imag) -> reshape(half_c,2)[...,0/1]
+        x_i = x[i, :seq_len].astype(mx.float32).reshape(seq_len, n, half_c, 2)
+        x_real = x_i[..., 0]
+        x_imag = x_i[..., 1]
 
-        # patch 后真实网格: h, w 即 token 网格维 (grid_sizes 已含 patch, 对齐 wan2 rope_apply;
-        # patch_size[0]=1 故 f 不变). 用于 rope cos/sin 构造.
-        h_real = max(1, h)
-        w_real = max(1, w)
+        # 构造 cos_i/sin_i: [f,h,w,half_c] -> [seq_len, 1, half_c]
+        cos_i_t = mx.broadcast_to(cos_t[:f].reshape(f, 1, 1, -1), (f, h, w, t_dim))
+        sin_i_t = mx.broadcast_to(sin_t[:f].reshape(f, 1, 1, -1), (f, h, w, t_dim))
+        cos_i_h = mx.broadcast_to(cos_h[:h].reshape(1, h, 1, -1), (f, h, w, hw_dim))
+        sin_i_h = mx.broadcast_to(sin_h[:h].reshape(1, h, 1, -1), (f, h, w, hw_dim))
+        cos_i_w = mx.broadcast_to(cos_w[:w].reshape(1, 1, w, -1), (f, h, w, hw_dim))
+        sin_i_w = mx.broadcast_to(sin_w[:w].reshape(1, 1, w, -1), (f, h, w, hw_dim))
 
-        # 拆 real/imag: x[::2] = real, x[1::2] = imag
-        x_real = x_i[..., 0::2]  # [seq_len, N, C/2]
-        x_imag = x_i[..., 1::2]
-
-        # 构造 cos_i / sin_i: [f*h_real*w_real, 1, half_c]
-        # t 段
-        cos_i_t = mx.broadcast_to(
-            cos_t[:f].reshape(f, 1, 1, -1), (f, h_real, w_real, t_dim)
+        cos_i = mx.concatenate([cos_i_t, cos_i_h, cos_i_w], axis=-1).reshape(
+            seq_len, 1, half_c
         )
-        sin_i_t = mx.broadcast_to(
-            sin_t[:f].reshape(f, 1, 1, -1), (f, h_real, w_real, t_dim)
-        )
-        # h 段
-        cos_i_h = mx.broadcast_to(
-            cos_h[:h_real].reshape(1, h_real, 1, -1), (f, h_real, w_real, hw_dim)
-        )
-        sin_i_h = mx.broadcast_to(
-            sin_h[:h_real].reshape(1, h_real, 1, -1), (f, h_real, w_real, hw_dim)
-        )
-        # w 段
-        cos_i_w = mx.broadcast_to(
-            cos_w[:w_real].reshape(1, 1, w_real, -1), (f, h_real, w_real, hw_dim)
-        )
-        sin_i_w = mx.broadcast_to(
-            sin_w[:w_real].reshape(1, 1, w_real, -1), (f, h_real, w_real, hw_dim)
+        sin_i = mx.concatenate([sin_i_t, sin_i_h, sin_i_w], axis=-1).reshape(
+            seq_len, 1, half_c
         )
 
-        cos_i = mx.concatenate([cos_i_t, cos_i_h, cos_i_w], axis=-1)
-        sin_i = mx.concatenate([sin_i_t, sin_i_h, sin_i_w], axis=-1)
-        cos_i = cos_i.reshape(seq_len, 1, -1)  # [seq_len, 1, half_c]
-        sin_i = sin_i.reshape(seq_len, 1, -1)
-
-        # 广播到 [seq_len, N, half_c] (用 seq_len 而非全序列 s, 避免与 x 的 padded 长度错位)
         cos_exp = mx.broadcast_to(cos_i, (seq_len, n, half_c))
         sin_exp = mx.broadcast_to(sin_i, (seq_len, n, half_c))
 
-        # 复数乘法等价:
-        # x_rotated_real = x_real*cos - x_imag*sin
-        # x_rotated_imag = x_real*sin + x_imag*cos
+        # 复数乘法: (real*cos - imag*sin, real*sin + imag*cos)
         rot_real = x_real * cos_exp - x_imag * sin_exp
         rot_imag = x_real * sin_exp + x_imag * cos_exp
 
-        # 交错合并回 [L, N, C]: [real_0, imag_0, real_1, imag_1, ...]
-        x_out = mx.stack([rot_real, rot_imag], axis=-1)  # [L, N, half_c, 2]
-        x_out = x_out.reshape(s, n, c)
-        outputs.append(x_out)
+        x_rotated = mx.stack([rot_real, rot_imag], axis=-1).reshape(seq_len, n, c)
+
+        # varlen padding: 尾部超出 seq_len 的 token 原样接回
+        if seq_len < s:
+            x_rotated = mx.concatenate([x_rotated, x[i, seq_len:]], axis=0)
+
+        outputs.append(x_rotated)
 
     return mx.stack(outputs, axis=0)
 

@@ -269,17 +269,20 @@ class SkyReelsBasePipeline:
 
             t_mx = mx.array([float(t)])
 
-            # CFG: 拼接 cond + uncond
+            # CFG: 拼接 cond + uncond (b=2)
             latent_input = mx.concatenate([latents] * 2)
             context_input = mx.concatenate([context] * 2)
+            # grid_sizes/seq_lens 对齐 wan2 约定: 每个批次元素一条 (CFG b=2)
+            cfg_grid_sizes = list(grid_sizes) * 2
+            cfg_seq_lens = list(seq_lens) * 2
 
             # 模型前向
             noise_pred = self.dit(
                 latent_input,
                 t_mx,
                 context_input,
-                seq_lens,
-                grid_sizes,
+                cfg_seq_lens,
+                cfg_grid_sizes,
             )
 
             # CFG 合并
@@ -367,11 +370,10 @@ class SkyReelsR2VPipeline(SkyReelsBasePipeline):
         context = self._encode_context(prompt, ref_images)
 
         # 2. 初始化 latent 噪声
-        # latent shape: [B, 16, T//4+1, H//8//2, W//8//2]
-        # 简化: 用 720P latent
+        # VAE 下采样 8x (vae.py patch_size=(1,8,8)): 720P latent [B,16,T,90,160]
         b = 1
-        latent_h = cfg.height // 16  # 简化
-        latent_w = cfg.width // 16
+        latent_h = cfg.height // 8
+        latent_w = cfg.width // 8
         latent_t = (cfg.num_frames - 1) // 4 + 1
 
         latents = (
@@ -379,8 +381,10 @@ class SkyReelsR2VPipeline(SkyReelsBasePipeline):
         )  # init_noise_sigma
 
         # 3. 采样参数
-        seq_lens = [latent_t * latent_h * latent_w]
-        grid_sizes = [(latent_t, latent_h, latent_w)]
+        pt, ph, pw = self.dit.patch_size
+        grid_t, grid_h, grid_w = latent_t // pt, latent_h // ph, latent_w // pw
+        seq_lens = [grid_t * grid_h * grid_w]
+        grid_sizes = [(grid_t, grid_h, grid_w)]
 
         # 4. 去噪采样
         latents = self._denoise_sample(
@@ -469,8 +473,8 @@ class SkyReelsV2VPipeline(SkyReelsBasePipeline):
 
         # 2. 初始化 latent (含前置帧)
         b = 1
-        latent_h = cfg.height // 16
-        latent_w = cfg.width // 16
+        latent_h = cfg.height // 8
+        latent_w = cfg.width // 8
         latent_t = (cfg.num_frames - 1) // 4 + 1
 
         # V2V: 前置帧 latent + 续写帧噪声
@@ -478,8 +482,10 @@ class SkyReelsV2VPipeline(SkyReelsBasePipeline):
         latents = mx.random.normal((b, 16, latent_t, latent_h, latent_w))
 
         # 3. 采样参数
-        seq_lens = [latent_t * latent_h * latent_w]
-        grid_sizes = [(latent_t, latent_h, latent_w)]
+        pt, ph, pw = self.dit.patch_size
+        grid_t, grid_h, grid_w = latent_t // pt, latent_h // ph, latent_w // pw
+        seq_lens = [grid_t * grid_h * grid_w]
+        grid_sizes = [(grid_t, grid_h, grid_w)]
 
         # 4. 去噪采样 (V2V 启用时序分支)
         latents = self._denoise_sample(
@@ -564,15 +570,17 @@ class SkyReelsA2VPipeline(SkyReelsBasePipeline):
 
         # 2. 初始化 latent
         b = 1
-        latent_h = cfg.height // 16
-        latent_w = cfg.width // 16
+        latent_h = cfg.height // 8
+        latent_w = cfg.width // 8
         latent_t = (cfg.num_frames - 1) // 4 + 1
 
         latents = mx.random.normal((b, 16, latent_t, latent_h, latent_w))
 
         # 3. 采样参数
-        seq_lens = [latent_t * latent_h * latent_w]
-        grid_sizes = [(latent_t, latent_h, latent_w)]
+        pt, ph, pw = self.dit.patch_size
+        grid_t, grid_h, grid_w = latent_t // pt, latent_h // ph, latent_w // pw
+        seq_lens = [grid_t * grid_h * grid_w]
+        grid_sizes = [(grid_t, grid_h, grid_w)]
 
         # 4. 去噪采样 (A2V 启用时序分支保嘴型连贯)
         # 注意: A2V DiT 前向签名不同 (audio + text embeds)
@@ -587,10 +595,13 @@ class SkyReelsA2VPipeline(SkyReelsBasePipeline):
                 self.step_strategy.set_current_step(step_idx)
                 t_mx = mx.array([float(t)])
 
-                # A2V CFG: 拼接 cond + uncond
+                # A2V CFG: 拼接 cond + uncond (b=2)
                 latent_input = mx.concatenate([latents] * 2)
                 audio_input = mx.concatenate([audio_embeds] * 2)
                 text_input = mx.concatenate([text_embeds] * 2)
+                # grid_sizes/seq_lens 对齐 wan2 约定: 每个批次元素一条 (CFG b=2)
+                cfg_grid_sizes = list(grid_sizes) * 2
+                cfg_seq_lens = list(seq_lens) * 2
 
                 # AtomCode 专题优化: cross_kv_cache 跨步复用 (2026-07-18)
                 # context (text_input) 跨采样步固定不变, 每步重算 cross-attn KV 是浪费
@@ -606,8 +617,8 @@ class SkyReelsA2VPipeline(SkyReelsBasePipeline):
                     t_mx,
                     audio_input,
                     text_input,
-                    seq_lens,
-                    grid_sizes,
+                    cfg_seq_lens,
+                    cfg_grid_sizes,
                     cross_kv_cache=cross_kv_cache,
                 )
 
