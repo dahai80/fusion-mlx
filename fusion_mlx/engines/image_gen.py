@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
-# Image generation engine (Flux) for fusion-mlx.
-# Loads mlx-community Flux models (diffusers layout) via mflux.
+# Image generation engine (Flux 2) for fusion-mlx.
+# Loads FLUX.2-klein via mflux (Flux2Klein uses mx.compile -> faster denoise).
 import asyncio
 import gc
 import io
@@ -23,13 +23,17 @@ def _to_latent_size(image_size: tuple[int, int]) -> tuple[int, int]:
     return (h // 8, w // 8)
 
 
-def _infer_model_config_label(model_path: str) -> str:
-    name = model_path.lower()
-    if "dev" in name and "schnell" not in name:
-        return "dev"
-    if "schnell" in name or "lite" in name:
-        return "schnell"
-    return "schnell"
+def _infer_flux2_config(model_path: str) -> str:
+    name = (model_path or "").lower()
+    if "base" in name and "4b" in name:
+        return "flux2_klein_base_4b"
+    if "base" in name and "9b" in name:
+        return "flux2_klein_base_9b"
+    if "4b" in name:
+        return "flux2_klein_4b"
+    if "kv" in name and "9b" in name:
+        return "flux2_klein_9b_kv"
+    return "flux2_klein_9b"
 
 
 class ImageGenEngine(BaseNonStreamingEngine):
@@ -41,8 +45,8 @@ class ImageGenEngine(BaseNonStreamingEngine):
         self._mflux_missing = False
         self._kwargs = kwargs
         # Load-time quantization (4/8-bit) reduces memory and often speeds up
-        # Flux dev. None = load at the model's native precision. Passed through
-        # to mflux Flux1(quantize=...).
+        # Flux2 klein. None = load at the model's native precision. Passed
+        # through to mflux Flux2Klein(quantize=...).
         self._quantize = kwargs.get("quantize")
 
     @property
@@ -54,7 +58,7 @@ class ImageGenEngine(BaseNonStreamingEngine):
             return
         try:
             from mflux.models.common.config.model_config import ModelConfig
-            from mflux.models.flux.variants.txt2img.flux import Flux1
+            from mflux.models.flux2.variants.txt2img.flux2_klein import Flux2Klein
         except ImportError as exc:
             logger.warning(
                 "ImageGen engine disabled: mflux-fusion not installed. "
@@ -63,20 +67,17 @@ class ImageGenEngine(BaseNonStreamingEngine):
             )
             self._mflux_missing = True
             return
-        logger.info("Starting ImageGen engine (mflux): %s", self._model_path)
+        logger.info("Starting ImageGen engine (mflux Flux2Klein): %s", self._model_path)
 
         def _load():
-            label = _infer_model_config_label(self._model_path)
-            if label == "dev":
-                model_config = ModelConfig.dev()
-            else:
-                model_config = ModelConfig.schnell()
+            label = _infer_flux2_config(self._model_path)
+            model_config = getattr(ModelConfig, label)()
             logger.info(
-                "ImageGen loading model_config=%s path=%s",
+                "ImageGen loading flux2 config=%s path=%s",
                 label,
                 self._model_path,
             )
-            flux = Flux1(
+            flux = Flux2Klein(
                 model_config=model_config,
                 model_path=self._model_path,
                 quantize=self._quantize,
@@ -85,7 +86,7 @@ class ImageGenEngine(BaseNonStreamingEngine):
 
         loop = asyncio.get_running_loop()
         self._flux = await asyncio.wait_for(
-            loop.run_in_executor(get_executor("image"), _load), timeout=180.0
+            loop.run_in_executor(get_executor("image"), _load), timeout=600.0
         )
         logger.info("ImageGen engine loaded: %s", self._model_name)
 
@@ -146,7 +147,11 @@ class ImageGenEngine(BaseNonStreamingEngine):
                 if scheduler is not None:
                     gen_kwargs["scheduler"] = scheduler
                 if negative_prompt is not None:
-                    gen_kwargs["negative_prompt"] = negative_prompt
+                    logger.warning(
+                        "Flux2Klein does not support negative_prompt; "
+                        "ignoring (got %d chars)",
+                        len(negative_prompt),
+                    )
                 gen = flux.generate_image(**gen_kwargs)
                 buf = io.BytesIO()
                 gen.image.save(buf, format=output_format)
@@ -156,7 +161,7 @@ class ImageGenEngine(BaseNonStreamingEngine):
         try:
             loop = asyncio.get_running_loop()
             result = await asyncio.wait_for(
-                loop.run_in_executor(get_executor("image"), _generate), timeout=300.0
+                loop.run_in_executor(get_executor("image"), _generate), timeout=600.0
             )
             elapsed = time.monotonic() - t0
             self._update_activity(activity_id, elapsed_seconds=elapsed)
