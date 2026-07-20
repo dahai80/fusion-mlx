@@ -107,6 +107,9 @@ class SkyReelsBasePipeline:
         self.step_strategy: SkyReelsStepStrategy | None = None
 
         self._load_models()
+        # T2-1: env 覆盖采样步数早于 _setup_optimizers, 使 xfuser step_methods
+        # 长度与实际步数一致 (FUSION_SKYREELS_STEPS, 默认 30).
+        self._apply_steps_env_override()
         self._setup_optimizers()
 
     def _load_models(self) -> None:
@@ -196,6 +199,115 @@ class SkyReelsBasePipeline:
                 total_steps=self.config.num_inference_steps,
             )
             self.step_strategy.attach_to_model(self.dit)
+
+        # T1-1: 优化生效可见性 (定位 xfuser/compile 是否真生效, modules=0 即未注入)
+        self._log_optimizer_status()
+
+    def _log_optimizer_status(self) -> None:
+        from .. import step_strategy as _ss
+
+        _xfuser = bool(getattr(_ss, "_HAS_XFUSER", False))
+        _modules = 0
+        _blocks = 0
+        if self.dit is not None:
+            _blocks_list = getattr(self.dit, "blocks", []) or []
+            _blocks = len(_blocks_list)
+            for b in _blocks_list:
+                for attr in ("self_attn", "cross_attn", "temporal_attn"):
+                    sub = getattr(b, attr, None)
+                    if sub is not None and getattr(sub, "_fast_attn", None) is not None:
+                        _modules += 1
+        logger.info(
+            "optimizers: should_compile=%s has_xfuser=%s step_strategy_modules=%d m5_applied=%s dit_blocks=%d branch=%s steps=%d",
+            _device.should_compile(),
+            _xfuser,
+            _modules,
+            self.m5_optimizer is not None,
+            _blocks,
+            self.config.branch,
+            self.config.num_inference_steps,
+        )
+        # T1-3: xfuser 注入成功 (modules>0) 但 mx.compile 在 attach 前 trace 已 bake
+        # _fast_attn=None, 运行时 fa_calls=0 (no-op). 114s/step = compiled-no-xfuser
+        # DiT forward 真实成本 (非 recompile). 降速用 FUSION_SKYREELS_STEPS 减步.
+        if _modules > 0 and _device.should_compile():
+            logger.warning(
+                "xfuser injected (modules=%d) but BYPASSED by mx.compile: "
+                "DiT __init__ compile bakes _fast_attn=None before attach; "
+                "runtime no-op. Use FUSION_SKYREELS_STEPS to cut steps.",
+                _modules,
+            )
+
+    def _apply_steps_env_override(self) -> None:
+        # T2-1: FUSION_SKYREELS_STEPS 覆盖 num_inference_steps (默认 30).
+        # 720p 30步 ~1hr; 20步 ~40min (-33%). UniPC solver_order=2 历史预测保稳.
+        import os
+
+        env = os.environ.get("FUSION_SKYREELS_STEPS")
+        if not env:
+            return
+        try:
+            n = int(env)
+        except ValueError:
+            logger.warning(
+                "FUSION_SKYREELS_STEPS=%s not int, keep %d",
+                env,
+                self.config.num_inference_steps,
+            )
+            return
+        if n < 1:
+            logger.warning(
+                "FUSION_SKYREELS_STEPS=%s <1, keep %d",
+                env,
+                self.config.num_inference_steps,
+            )
+            return
+        logger.info(
+            "FUSION_SKYREELS_STEPS=%d override steps (was %d)",
+            n,
+            self.config.num_inference_steps,
+        )
+        self.config.num_inference_steps = n
+
+    def warmup(self) -> None:
+        # T1-2: 触发权重 Metal residency + mx.compile 首次编译, 前移首请求成本.
+        # 256x256/9帧/1步: 满足 (nf-1)%4==0 与 %16==0, 最小形状跑通 DiT+VAE 链路.
+        import os
+
+        if os.environ.get("FUSION_SKYREELS_WARMUP", "1") == "0":
+            logger.info("warmup: skipped (FUSION_SKYREELS_WARMUP=0)")
+            return
+        if self.dit is None:
+            logger.warning("warmup skipped: DiT not loaded")
+            return
+        cfg = self.config
+        _saved = (cfg.width, cfg.height, cfg.num_frames, cfg.num_inference_steps)
+        try:
+            cfg.width = 256
+            cfg.height = 256
+            cfg.num_frames = 9
+            cfg.num_inference_steps = 1
+            b = 1
+            latent_h = cfg.height // 8
+            latent_w = cfg.width // 8
+            latent_t = (cfg.num_frames - 1) // 4 + 1
+            latents = mx.random.normal((b, 16, latent_t, latent_h, latent_w))
+            context = mx.zeros((b, 257 + 512, cfg.text_dim))
+            pt, ph, pw = self.dit.patch_size
+            grid_t = latent_t // pt
+            grid_h = latent_h // ph
+            grid_w = latent_w // pw
+            seq_lens = [grid_t * grid_h * grid_w]
+            grid_sizes = [(grid_t, grid_h, grid_w)]
+            logger.info("warmup: start 256x256 1-step (compile + weights residency)")
+            _ = self._denoise_sample(
+                latents, context, seq_lens=seq_lens, grid_sizes=grid_sizes
+            )
+            logger.info("warmup: done")
+        except Exception as exc:
+            logger.warning("warmup failed (non-fatal): %s", exc)
+        finally:
+            cfg.width, cfg.height, cfg.num_frames, cfg.num_inference_steps = _saved
 
     def _encode_text(self, prompt: str) -> mx.array:
         """编码文本 prompt -> UMT5 embedding (真实 tokenizer, 非 stub).

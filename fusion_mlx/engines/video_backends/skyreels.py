@@ -132,6 +132,10 @@ class SkyReelsBackend(VideoBackend):
         self._pipeline = pipeline_class(self._model_name)
         self._pipeline_class = pipeline_class
         logger.info("Created pipeline: %s", pipeline_class.__name__)
+        try:
+            self._pipeline.warmup()
+        except Exception as exc:
+            logger.warning("pipeline warmup raised (non-fatal): %s", exc)
         return self._pipeline
 
     async def _generate_r2v(self, params: VideoGenParams) -> list[bytes]:
