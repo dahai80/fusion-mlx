@@ -36,10 +36,18 @@ def quantize_fp8(weight: mx.array) -> tuple[mx.array, mx.array]:
 
 
 def fp8_matmul(x: mx.array, fp8_w: mx.array, scale: mx.array) -> mx.array:
+    """FP8 matmul: x @ (fp8_w * scale).T.
+
+    AtomCode fix #133: 用 mx.transpose 强物化转置替 .T 视图 (2026-07-20).
+    某些 mlx 版本 .T 返 strided view 非物化, matmul 不透转置语义致维度错.
+    fp8_w 形状 (out, in), scale 形状 (out,), x 形状 (..., in) → out (..., out).
+    """
     if not _FP8_AVAILABLE:
-        return x @ fp8_w.T
+        w_t = mx.transpose(fp8_w, (1, 0))  # 强物化 (in, out)
+        return x @ w_t
     w = fp8_w.astype(mx.bfloat16) * scale[:, None].astype(mx.bfloat16)
-    return x @ w.T
+    w_t = mx.transpose(w, (1, 0))  # 强物化 (in, out)
+    return x @ w_t
 
 
 class FP8Linear(nn.Module):
