@@ -602,6 +602,133 @@ class TestStepStrategy:
 
 
 # ============================================================================
+# 11. DiT 权重重映射 (diffusers-Wan -> MLX SkyReels-V3)
+# ============================================================================
+class TestWeightRemap:
+    """_remap_diffusers_to_mlx 重映射逻辑回归.
+
+    回归 #130-#139 审计发现: load_dit_weights(strict=False) 曾静默跳过 ~97%
+    源 key (仅 blocks.N.norm2.weight 偶然同名), 模型停留在随机 init.
+    重映射让真实权重落地. 此测试锁定重映射命名规则 + patch_embedding 5D->4D.
+    """
+
+    def test_remap_basic_naming(self):
+        from fusion_mlx.video.skyreels_v3.transformer_r2v import SkyReelsR2VDiT
+        from fusion_mlx.video.skyreels_v3.weights import _remap_diffusers_to_mlx
+
+        dit = SkyReelsR2VDiT(TINY_CFG)
+        model_keys = set(
+            k for k, _ in __import__("mlx").nn.utils.tree_flatten(dit.parameters())
+        )
+
+        mx = __import__("mlx").core
+        dim = TINY_CFG["dim"]
+        in_dim = TINY_CFG["in_dim"]
+        src = {
+            "condition_embedder.text_embedder.linear_1.weight": mx.zeros((dim, TINY_CFG["text_dim"])),
+            "condition_embedder.time_embedder.linear_1.weight": mx.zeros((dim, dim)),
+            "condition_embedder.time_proj.weight": mx.zeros((dim, dim)),
+            "scale_shift_table": mx.zeros((1, 6, dim)),
+            "proj_out.weight": mx.zeros((in_dim, dim)),
+            "patch_embedding.weight": mx.zeros((dim, in_dim, 1, 2, 2)),
+            "patch_embedding.bias": mx.zeros((dim,)),
+            "blocks.0.attn1.to_q.weight": mx.zeros((dim, dim)),
+            "blocks.0.attn2.to_k.weight": mx.zeros((dim, dim)),
+            "blocks.0.attn1.to_out.0.weight": mx.zeros((dim, dim)),
+            "blocks.0.ffn.net.0.proj.weight": mx.zeros((TINY_CFG["ffn_dim"], dim)),
+            "blocks.0.ffn.net.2.weight": mx.zeros((dim, TINY_CFG["ffn_dim"])),
+            "blocks.0.scale_shift_table": mx.zeros((1, 6, dim)),
+        }
+        out = _remap_diffusers_to_mlx(src, dit)
+
+        for k in out:
+            assert k in model_keys, f"重映射产物未命中模型: {k}"
+
+        assert "text_embedding.layers.0.weight" in out
+        assert "time_embedding.layers.0.weight" in out
+        assert "time_projection.layers.1.weight" in out
+        assert "head.modulation" in out
+        assert "head.head.weight" in out
+        assert "patch_embedding.conv2d.weight" in out
+        assert "patch_embedding.conv2d.bias" in out
+        assert "blocks.0.self_attn.q.weight" in out
+        assert "blocks.0.cross_attn.k.weight" in out
+        assert "blocks.0.self_attn.o.weight" in out
+        assert "blocks.0.ffn.fc1.weight" in out
+        assert "blocks.0.ffn.fc2.weight" in out
+        assert "blocks.0.modulation" in out
+
+    def test_patch_embedding_5d_to_4d_channels_last(self):
+        from fusion_mlx.video.skyreels_v3.transformer_r2v import SkyReelsR2VDiT
+        from fusion_mlx.video.skyreels_v3.weights import _remap_diffusers_to_mlx
+
+        dit = SkyReelsR2VDiT(TINY_CFG)
+        mx = __import__("mlx").core
+        dim = TINY_CFG["dim"]
+        in_dim = TINY_CFG["in_dim"]
+        w5 = mx.ones((dim, in_dim, 1, 2, 2))
+        src = {"patch_embedding.weight": w5}
+        out = _remap_diffusers_to_mlx(src, dit)
+        assert "patch_embedding.conv2d.weight" in out
+        # MLX Conv2d channels-last: [out, kh, kw, in*t]
+        assert out["patch_embedding.conv2d.weight"].shape == (dim, 2, 2, in_dim * 1)
+
+    def test_remap_drops_unmatched_source_keys(self):
+        """源中不存在于模型的 key (如 norm2.bias) 应被丢弃, 不进入返回 dict."""
+        from fusion_mlx.video.skyreels_v3.transformer_r2v import SkyReelsR2VDiT
+        from fusion_mlx.video.skyreels_v3.weights import _remap_diffusers_to_mlx
+
+        dit = SkyReelsR2VDiT(TINY_CFG)
+        mx = __import__("mlx").core
+        dim = TINY_CFG["dim"]
+        src = {
+            "blocks.0.norm2.bias": mx.zeros((dim,)),
+            "condition_embedder.text_embedder.linear_1.weight": mx.zeros((dim, TINY_CFG["text_dim"])),
+        }
+        out = _remap_diffusers_to_mlx(src, dit)
+        assert "blocks.0.norm2.bias" not in out
+        assert "text_embedding.layers.0.weight" in out
+
+
+# ============================================================================
+# 12. 真实权重加载集成测试 (需本地模型, 缺失则 skip)
+# ============================================================================
+REAL_MODEL_DIR = Path.home() / ".fusion-mlx/models/Skywork/SkyReels-V3-R2V-14B-MLX"
+
+
+@pytest.mark.skipif(
+    not (REAL_MODEL_DIR / "transformer" / "diffusion_pytorch_model.safetensors").exists(),
+    reason="真实 SkyReels-V3-R2V-14B 权重未下载 (26.6GB)",
+)
+class TestRealWeightLoad:
+    """真实权重加载集成测试: 验证重映射让 >1000 参数命中 (而非修复前的 40)."""
+
+    def test_real_weights_load_over_1000_keys(self):
+        import json
+        import mlx.nn as nn
+        from fusion_mlx.video.skyreels_v3.transformer_r2v import SkyReelsR2VDiT
+        from fusion_mlx.video.skyreels_v3.weights import load_dit_weights
+
+        cfg = json.loads((REAL_MODEL_DIR / "config.json").read_text())["config"]
+        dit = SkyReelsR2VDiT(cfg)
+        before = dict(nn.utils.tree_flatten(dit.parameters()))
+        probe_before = float(__import__("mlx").core.sum(
+            before["blocks.0.self_attn.q.weight"]
+        ).item())
+
+        dit = load_dit_weights(dit, REAL_MODEL_DIR / "transformer", strict=False)
+        after = dict(nn.utils.tree_flatten(dit.parameters()))
+        probe_after = float(__import__("mlx").core.sum(
+            after["blocks.0.self_attn.q.weight"]
+        ).item())
+
+        # 修复前仅 40/1377 命中, 修复后探测参数必须变化 (真实权重落地)
+        assert abs(probe_after - probe_before) > 1e-3, (
+            "探测参数加载前后未变化 -> 真实权重未落地 (重映射回归)"
+        )
+
+
+# ============================================================================
 # 测试入口
 # ============================================================================
 if __name__ == "__main__":

@@ -291,7 +291,7 @@ Benchmarks on Apple M5 Max (128 GB RAM, 40 GPU cores), MLX 0.32.0 — 2026-07-18
 
 | Branch | Model | 权重体积 | 加载 (s) | DiT fwd (s/step) | Metal 峰值 (GB) | FPS/step | 状态 |
 |---|---|---|---|---|---|---|---|
-| R2V | Reference-to-Video 14B | 24 GB (7 shards) | 6.84 | **0.092** | 75.3 | **54.3** | ✅ 跑通 |
+| R2V | Reference-to-Video 14B | 28.6 GB (`transformer/`) ⚠️ | 6.84 | **0.092** | 75.3 | **54.3** | ✅ 跑通 (权重见 #139) |
 | V2V | Video Extension 14B | 75 GB (14+6+1 shards) | 3.11 | **0.329** | 82.7 | **15.2** | ✅ 跑通 (mx.compile 融合 3.3×) |
 | A2V | Talking Avatar 19B | 123 GB (18+6+1+1+1 shards) | 3.16 | **0.328** | 24.8 | **3.0** | ✅ 跑通 (audio_cross_attn+norm_x 重构 + kv_linear 转置 + mx.compile, 18×加速) |
 
@@ -336,6 +336,21 @@ Benchmarks on Apple M5 Max (128 GB RAM, 40 GPU cores), MLX 0.32.0 — 2026-07-18
 | `rope_apply` 广播错位 (padded 长度) | common:242 | 用 `seq_len` 而非全序列 `s` 广播 |
 
 > 历史骨架压测 (1983/1151/906 FPS) 是假象 — `bench_skyreels.py:366` 的 `noise_pred = mx.zeros_like(latent_input)` 跳过了整个 DiT 前向, 只测了空循环开销。上表 0.110/2.862 s/step 才是真实推理速度。
+
+**#139 权重加载修复** (2026-07-20, 解除 R2V 真实完整权重加载阻塞):
+
+issue #122-#138 的修复策略经审视均为**症状追逐** (在随机初始化的 DiT 上修维度错误). 真正根因及修复:
+
+| 根因 | 位置 | 修复 |
+|---|---|---|
+| `_load_safetensors_dir(MODEL_DIR)` 优先命中根目录 7 个**不完整分片** (315 keys, 仅 block 0-10, 无 index.json), 致 ~97% DiT 参数停留 init -> 前向 NaN/shape 错 | `weights.py:load_dit_weights` | 检测 `transformer/` 子目录存在时显式重定向 (diffusers 约定: DiT 权重位于 `transformer/diffusion_pytorch_model.safetensors`, 1095 keys, 28.6GB, 完整 40 层) |
+| `_encode_context` 返回 `dim=5120` 而非 `text_dim=4096`, 致 `text_embedding.0` (Linear 4096->5120) 输入维度错配 | `pipelines/__init__.py` | context 维度改为 `text_dim=4096`, DiT `__call__` 内 `text_embedding` 做投影 |
+| #137 `fp8_matmul` (out,in)/(in,out) 自动检测对方阵权重 (如 5120x5120) 误判 | `fp8_linear.py` | 移除自动检测, 权重恒 (out,in) 恒转置 (与 `nn.Linear` 一致) |
+| #138 `FP8Linear` bias 截断 (掩盖 #137 的胶布) | `fp8_linear.py` | 移除截断, bias 恒 (out_features,) 形状必然匹配 |
+
+修复后: **1055/1377** 模型参数命中源权重 (修复前 71/1377), 前向产出**有限值** (shape `(1,16,2,16,16)`, finite=True), 140 测试全绿 (49 skyreels + 20 fp8 回归 + 71 mfa).
+
+> **#140 已知限制 (非阻塞)**: checkpoint 缺失 200 个 img-branch cross-attn 权重 (`k_img/v_img/norm_k_img`), 参考图引导分支停留随机初始化. config 声明 `cross_attn_type: i2v_cross_attn` (MLX 正确实例化 img-branch), 但源 checkpoint 的 `attn2` 仅含文本 cross-attn (无 `to_k_img/to_v_img`). 属上游 checkpoint 缺口, 待 Skywork 确认. 其余 121 个未覆盖参数 (`norm1`/`norm3`/`head.norm`, weight=ones=identity) + 1 `freqs` (rope buffer) 均良性, 不影响前向正确性.
 
 Submit your own benchmarks at [bench.dpdns.org](https://bench.dpdns.org/).
 

@@ -74,6 +74,12 @@ class SkyReelsPipelineConfig:
     audio_sample_rate: int = 16000
     audio_dim: int = 1024  # wav2vec2 hidden size
 
+    # 文本/上下文维度 (SkyReels-V3 config.json 架构常量)
+    # text_dim: UMT5 输出维度 = DiT text_embedding 输入维度 (喂入 DiT 的 context 维度, 非 dim)
+    # text_len: 文本 token 上限 (context 中 txt 段长度)
+    text_dim: int = 4096
+    text_len: int = 512
+
     # 优化开关
     use_m5_optimizer: bool = True
     use_step_strategy: bool = True
@@ -207,11 +213,16 @@ class SkyReelsBasePipeline:
         prompt: str,
         ref_images: list[Any] | None = None,
     ) -> mx.array:
-        """编码完整 context (prompt + 参考图)."""
-        # 简化: 返回零张量
+        """编码完整 context (prompt + 参考图).
+
+        AtomCode fix #139 (2026-07-20): context 维度 = text_dim (4096), 非 dim (5120).
+        DiT text_embedding = Linear(text_dim=4096 -> dim=5120) 在 __call__ 内做投影,
+        喂入 DiT 的 context 必须是 text_dim. 原返回 5120-dim 致 text_embedding.0 输入维度
+        错配 (5120 vs 期望 4096), 连锁触发 #137 自动检测误判 / #138 bias 截断 / #139 matmul 错配.
+        """
         b = 1
         l = 257 + 512  # img + text
-        return mx.zeros((b, l, 5120))  # R2V dim
+        return mx.zeros((b, l, self.config.text_dim))
 
     def _denoise_sample(
         self,

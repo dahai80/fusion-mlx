@@ -90,6 +90,81 @@ def resolve_model_path(model_path: str | Path | None, model_key: str) -> Path:
 
 
 # ---------------------------------------------------------------------------
+# diffusers-Wan -> MLX SkyReels-V3 权重 key 重映射
+# ---------------------------------------------------------------------------
+# 源 safetensors (modelscope/HF 下载的 diffusers 格式) 用 diffusers-Wan 命名,
+# MLX 模型用自定义命名. 直接 load_weights(strict=False) 会静默跳过 ~97% key
+# (仅 blocks.N.norm2.weight 偶然同名命中), 模型实际停留在随机 init.
+# 在此显式重映射, 让真实权重真正落地. (源 Linear 权重已是 (out,in), 与 MLX
+# nn.Linear 一致, 无需转置; convert_skyreels_v3.py 的 weight.T 反而错误.)
+_DIFFUSERS_KEY_REMAPS: list[tuple[str, str]] = [
+    ("condition_embedder.text_embedder.linear_1", "text_embedding.layers.0"),
+    ("condition_embedder.text_embedder.linear_2", "text_embedding.layers.2"),
+    ("condition_embedder.time_embedder.linear_1", "time_embedding.layers.0"),
+    ("condition_embedder.time_embedder.linear_2", "time_embedding.layers.2"),
+    ("condition_embedder.time_proj", "time_projection.layers.1"),
+    ("ffn.net.0.proj", "ffn.fc1"),
+    ("ffn.net.2", "ffn.fc2"),
+]
+
+
+def _remap_diffusers_to_mlx(
+    weights: dict[str, mx.array],
+    model: nn.Module,
+) -> dict[str, mx.array]:
+    """将 diffusers-Wan 命名的权重 key 重映射为 MLX SkyReels-V3 模型命名.
+
+    映射规则:
+      attn1.* / attn2.*        -> self_attn.* / cross_attn.*
+      to_q/to_k/to_v/to_out.0  -> q/k/v/o
+      to_k_img/to_v_img        -> k_img/v_img
+      scale_shift_table (顶层) -> head.modulation
+      scale_shift_table (块级) -> blocks.N.modulation
+      proj_out                 -> head.head
+      patch_embedding.weight (5D [out,in,t,h,w]) -> patch_embedding.conv2d.weight
+        (4D [out,h,w,in*t], MLX Conv2d channels-last; pt=1 时 in*t=in)
+      patch_embedding.bias     -> patch_embedding.conv2d.bias
+
+    未覆盖的模型参数 (img 分支 / norm1 / norm3 / freqs / head.norm) 保留 init,
+    由调用方统计并告警 (架构差异, 见 issue 跟踪).
+    """
+    import re as _re
+
+    model_keys = set(k for k, _ in nn.utils.tree_flatten(model.parameters()))
+    new_w: dict[str, mx.array] = {}
+    for k, v in weights.items():
+        nk = k
+        for src, dst in _DIFFUSERS_KEY_REMAPS:
+            nk = nk.replace(src, dst)
+        # 顶层 scale_shift_table -> head.modulation; 块级 -> blocks.N.modulation
+        if nk == "scale_shift_table":
+            nk = "head.modulation"
+        elif "scale_shift_table" in nk:
+            nk = nk.replace("scale_shift_table", "modulation")
+        if nk.startswith("proj_out"):
+            nk = "head.head" + nk[len("proj_out"):]
+        nk = _re.sub(r"\.attn1\.", ".self_attn.", nk)
+        nk = _re.sub(r"\.attn2\.", ".cross_attn.", nk)
+        nk = _re.sub(r"\.to_out\.0\.", ".o.", nk)
+        nk = _re.sub(r"\.to_q\.", ".q.", nk)
+        nk = _re.sub(r"\.to_k_img\.", ".k_img.", nk)
+        nk = _re.sub(r"\.to_v_img\.", ".v_img.", nk)
+        nk = _re.sub(r"\.to_k\.", ".k.", nk)
+        nk = _re.sub(r"\.to_v\.", ".v.", nk)
+        # patch_embedding.weight 5D Conv3d -> 4D Conv2d (channels-last)
+        if nk == "patch_embedding.weight" and v.ndim == 5:
+            out_c, in_c, kt, kh, kw = v.shape
+            v = v.transpose(0, 3, 4, 1, 2).reshape(out_c, kh, kw, in_c * kt)
+            nk = "patch_embedding.conv2d.weight"
+        elif nk.startswith("patch_embedding."):
+            nk = "patch_embedding.conv2d." + nk[len("patch_embedding."):]
+        # 仅保留命中模型的 key (丢弃 norm2.bias 等模型不存在的源 key)
+        if nk in model_keys:
+            new_w[nk] = v
+    return new_w
+
+
+# ---------------------------------------------------------------------------
 # DiT 主干权重加载
 # ---------------------------------------------------------------------------
 def load_dit_weights(
@@ -126,6 +201,20 @@ def load_dit_weights(
         except Exception as exc:
             logger.warning("DiT 量化失败, 跳过: %s", exc)
 
+    # diffusers 约定: DiT 权重位于 transformer/ 子目录 (diffusion_pytorch_model.safetensors).
+    # 模型根目录可能残留不完整分片 (model-0000N-of-XXXXX.safetensors 无 index.json,
+    # 实测仅 315/1095 key 覆盖 block 0-10), _load_safetensors_dir 会优先命中根分片
+    # 致 ~97% 参数停留 init -> 前向 NaN/shape 错. 显式重定向到 transformer/ 完整文件.
+    # (AtomCode fix #139 真正根因, 2026-07-20)
+    weights_dir = Path(weights_dir)
+    transformer_dir = weights_dir / "transformer"
+    if transformer_dir.is_dir() and list(transformer_dir.glob("*.safetensors")):
+        logger.info(
+            "DiT 权重重定向: %s -> %s (diffusers transformer/ 约定)",
+            weights_dir, transformer_dir,
+        )
+        weights_dir = transformer_dir
+
     # 加载权重
     weights = _load_safetensors_dir(weights_dir)
     if not weights:
@@ -133,7 +222,10 @@ def load_dit_weights(
             f"未找到 safetensors 权重文件于 {weights_dir}"
         )
 
-    # 权重名对齐 (convert_skyreels_v3.py 已处理转置, 这里直接加载)
+    # 权重名重映射: diffusers-Wan -> MLX SkyReels-V3 (源 Linear 已是 (out,in), 无需转置).
+    # 未命中模型的源 key 在此丢弃, 未覆盖的模型参数保留 init (见下方统计).
+    weights = _remap_diffusers_to_mlx(weights, model)
+
     # A2V 独有: audio_cross_attn.kv_linear.weight 真实布局 (768,10240)=(in,out),
     # mlx.nn.Linear 期望 (out,in)=(10240,768), 需转置后加载
     for k in list(weights.keys()):
@@ -143,13 +235,28 @@ def load_dit_weights(
                 weights[k] = w.T.astype(w.dtype)  # → (10240, 768)=(out, in)
                 logger.info("audio_cross_attn.kv_linear.weight 转置: %s→%s",
                             w.shape, weights[k].shape)
+    # 统计匹配情况: strict=False 会静默跳过未匹配 key, 需显式暴露未加载的模型参数
+    # (img 分支 / norm1 / norm3 等架构差异, 见 issue 跟踪).
+    model_keys = set(k for k, _ in nn.utils.tree_flatten(model.parameters()))
+    uncovered = sorted(k for k in model_keys if k not in weights)
     try:
         model.load_weights(list(weights.items()), strict=strict)
         mx.eval(model.parameters())
         logger.info(
-            "DiT 权重加载成功: %d tensors from %s",
-            len(weights), weights_dir,
+            "DiT 权重加载: %d/%d 模型参数命中, 未覆盖 %d 保留 init from %s",
+            len(weights), len(model_keys), len(uncovered), weights_dir,
         )
+        if uncovered:
+            # Rule 12: fail visibly - 暴露停留在 init 的参数, 避免静默错误输出
+            from collections import Counter
+            import re as _re
+            pats = Counter(
+                _re.sub(r"blocks\.\d+\.", "blocks.N.", k) for k in uncovered
+            )
+            logger.warning(
+                "DiT %d 个模型参数无源权重 (保留 init): %s",
+                len(uncovered), dict(pats.most_common(12)),
+            )
     except Exception as exc:
         logger.warning(
             "DiT 权重加载部分失败 (strict=%s): %s",

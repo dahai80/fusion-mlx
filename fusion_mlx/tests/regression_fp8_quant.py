@@ -146,6 +146,99 @@ class TestFp8MatmulTranspose(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
+# #139: 方阵权重转置 + FP8Linear==nn.Linear + context 维度回归
+#   #137 bug: fp8_matmul (out,in)/(in,out) 自动检测对方阵权重 (5120x5120) 误判跳过转置
+#           -> 产出 x@W 而非 x@W.T (方阵时形状同但数值错)
+#   #138 bug: __call__ bias 截断掩盖 #137 产出的错误维度
+#   #139 fix: fp8_matmul 恒转置 + 移除 bias 截断 + _encode_context 返 text_dim(4096) 非 dim(5120)
+# ---------------------------------------------------------------------------
+class TestFix139Fp8AndContext(unittest.TestCase):
+    """#139 修复链路回归: 方阵转置 / FP8Linear 降级等价 / context 维度."""
+
+    def test_fp8_matmul_square_weight(self):
+        # #137 回归: 方阵权重 (5120x5120) 必须正确转置.
+        # 自动检测在 x.shape[-1]==fp8_w.shape[0] (方阵时均=5120) 误判为 (in,out) 跳过转置,
+        # 产出 x@W 而非 x@W.T. W 非对称时两者数值不同 (方阵时形状同, 故必须验数值非形状).
+        from fusion_mlx.custom_kernels.fp8_linear import fp8_matmul, is_available
+        if is_available():
+            self.skipTest("FP8 硬件可用, 降级路径不测")
+        mx.random.seed(42)
+        x = mx.random.normal((2, 769, 5120), dtype=mx.float32)
+        w = mx.random.normal((5120, 5120), dtype=mx.float32)
+        scale = mx.ones((5120,), dtype=mx.float32)
+        out = fp8_matmul(x, w, scale)
+        expected = x @ mx.transpose(w, (1, 0))
+        self.assertEqual(out.shape, (2, 769, 5120))
+        self.assertTrue(
+            mx.allclose(out, expected, atol=1e-4),
+            "方阵权重 fp8_matmul 应 == x@W.T, 实不等 (#137 自动检测残留)",
+        )
+
+    def test_fp8_linear_matches_nn_linear(self):
+        # #137+#138 回归: 降级模式 FP8Linear 前向应 == nn.Linear (方阵+非方阵+bias 全场景).
+        # 降级路径退化为 f32 matmul (quantize_fp8 原样返权重), 数学上与 nn.Linear 完全一致.
+        # #137 转置错 / #138 bias 截断 都会致数值偏差或形状错.
+        from fusion_mlx.custom_kernels.fp8_linear import FP8Linear, is_available
+        if is_available():
+            self.skipTest("FP8 硬件可用, 降级路径不测")
+        mx.random.seed(7)
+        cases = [
+            # (in_features, out_features, has_bias, input_shape)
+            (5120, 4096, True, (2, 769, 5120)),    # text_embedding.0 非方阵
+            (5120, 5120, True, (2, 769, 5120)),    # text_embedding.1 方阵 (#137 触发点)
+            (5120, 13824, False, (2, 769, 5120)),  # FFN proj 无 bias
+        ]
+        for in_f, out_f, has_bias, in_shape in cases:
+            lin = nn.Linear(in_f, out_f, bias=has_bias)
+            fp8 = FP8Linear.from_linear(lin)
+            x = mx.random.normal(in_shape, dtype=mx.float32)
+            ref = lin(x)
+            got = fp8(x)
+            self.assertEqual(
+                got.shape, ref.shape,
+                f"({in_f}->{out_f}) 形状不符: {got.shape} vs {ref.shape}",
+            )
+            self.assertTrue(
+                mx.allclose(got, ref, atol=1e-4),
+                f"({in_f}->{out_f}) FP8Linear 应 == nn.Linear (#137/#138 残留)",
+            )
+
+    def test_config_text_dim_text_len(self):
+        # #139 回归: config 必须含 text_dim=4096 / text_len=512.
+        # text_dim = DiT text_embedding.0 输入维度 (UMT5 输出), 非 dim(5120).
+        from fusion_mlx.video.skyreels_v3.pipelines import SkyReelsPipelineConfig
+        cfg = SkyReelsPipelineConfig()
+        self.assertEqual(cfg.text_dim, 4096)
+        self.assertEqual(cfg.text_len, 512)
+        self.assertNotEqual(cfg.text_dim, 5120)
+
+    def test_encode_context_returns_text_dim(self):
+        # #139 回归: _encode_context 输出末维 = text_dim(4096), 非 dim(5120).
+        # DiT text_embedding.0 = Linear(4096->5120) 期望 4096 输入.
+        # 原返 5120 -> text_embedding.0 维度错配 -> #137/#138/#139 连锁.
+        # 绕 __init__ (避 _load_models/_setup_optimizers 重载), 直测方法契约.
+        from fusion_mlx.video.skyreels_v3.pipelines import (
+            SkyReelsBasePipeline, SkyReelsPipelineConfig,
+        )
+        pipeline = SkyReelsBasePipeline.__new__(SkyReelsBasePipeline)
+        pipeline.config = SkyReelsPipelineConfig()
+        ctx = pipeline._encode_context("a cat playing piano")
+        self.assertEqual(
+            ctx.shape, (1, 769, 4096),
+            f"应 (1,769,4096) text_dim, 实 {ctx.shape} (#139 维度错)",
+        )
+
+    def test_context_feeds_text_embedding(self):
+        # #139 契约: context (text_dim=4096) 喂 Linear(text_dim, dim) 无维度错.
+        from fusion_mlx.video.skyreels_v3.pipelines import SkyReelsPipelineConfig
+        cfg = SkyReelsPipelineConfig()
+        proj = nn.Linear(cfg.text_dim, 5120)
+        ctx = mx.zeros((1, 769, cfg.text_dim))
+        out = proj(ctx)
+        self.assertEqual(out.shape, (1, 769, 5120))
+
+
+# ---------------------------------------------------------------------------
 # #134: 非 M5 设备也执行转换回归
 # ---------------------------------------------------------------------------
 class TestM5OptimizerNonM5(unittest.TestCase):
@@ -356,6 +449,7 @@ def run_all() -> int:
     for cls in [
         TestIterSubmodulesRecursive,
         TestFp8MatmulTranspose,
+        TestFix139Fp8AndContext,
         TestM5OptimizerNonM5,
         TestFreshImportAfterServerRestart,
         TestRealWeightsLoad,

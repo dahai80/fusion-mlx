@@ -36,28 +36,18 @@ def quantize_fp8(weight: mx.array) -> tuple[mx.array, mx.array]:
 
 
 def fp8_matmul(x: mx.array, fp8_w: mx.array, scale: mx.array) -> mx.array:
-    """FP8 matmul 自动检测权重格式并正确转置.
+    """FP8 matmul: 权重恒为 (out_features, in_features), 转置后与 x 相乘 (等价 nn.Linear 的 x @ W.T).
 
-    AtomCode fix #133: 用 mx.transpose 强物化转置替 .T 视图 (2026-07-20).
-    AtomCode fix #135-#137: 自动检测权重是 (out,in) 还是 (in,out) 格式 (2026-07-20).
-
-    MLX nn.Linear 权重形状为 (out_features, in_features).
-    HuggingFace Diffusers/MLX-converted 权重可能存为 (in_features, out_features).
-    检测: 若 fp8_w.shape[0] == x.shape[-1] 则权重是 (in,out) 格式, 不转置.
-          若 fp8_w.shape[1] == x.shape[-1] 则权重是 (out,in) 格式, 转置.
+    AtomCode fix #139 (2026-07-20): 移除 #137 引入的 (out,in)/(in,out) 自动检测.
+    自动检测在 x.shape[-1] 恰好等于 fp8_w.shape[0] (out) 时误判为 (in,out) 跳过转置,
+    对方阵权重 (如 SkyReels text_embedding.1 5120x5120) 产出 x@W 而非 x@W.T, 数学错误,
+    连锁触发 #138 bias 截断 / #139 维度错配. 权重恒 (out,in), 恒转置, 与 nn.Linear 一致.
+    AtomCode fix #133: 用 mx.transpose 强物化转置替 .T 视图.
     """
     if not _FP8_AVAILABLE:
-        # 自动检测权重格式
-        if fp8_w.shape[0] == x.shape[-1]:
-            # 权重已是 (in,out) 格式, 直接 matmul
-            return x @ fp8_w
-        # 权重是 (out,in) 格式, 转置到 (in,out)
         w_t = mx.transpose(fp8_w, (1, 0))
         return x @ w_t
     w = fp8_w.astype(mx.bfloat16) * scale[:, None].astype(mx.bfloat16)
-    # 自动检测权重格式 (FP8 路径)
-    if w.shape[0] == x.shape[-1]:
-        return x @ w
     w_t = mx.transpose(w, (1, 0))
     return x @ w_t
 
@@ -73,10 +63,7 @@ class FP8Linear(nn.Module):
 
     @classmethod
     def from_linear(cls, linear: nn.Linear) -> "FP8Linear":
-        """从 nn.Linear 创建 FP8Linear.
-
-        fp8_matmul 已自动检测 (out,in) 或 (in,out) 权重格式并正确转置.
-        """
+        """从 nn.Linear 创建 FP8Linear (权重恒 (out,in), __call__ 转置)."""
         out_f, in_f = linear.weight.shape
         bias = hasattr(linear, "bias") and linear.bias is not None
         layer = cls(out_f, in_f, bias=bias)
@@ -86,20 +73,15 @@ class FP8Linear(nn.Module):
         return layer
 
     def __call__(self, x: mx.array) -> mx.array:
-        """AtomCode fix #135-#137: 前向时走 fp8_matmul 全路径含 scale.
+        """前向: fp8_matmul (含 scale) + bias, 等价 nn.Linear 的 x @ W.T + b.
 
-        fp8_matmul 假设权重 shape 为 (out_features, in_features) 并转置.
-        from_linear 已确保权重格式正确, 这里直接用 fp8_matmul.
+        AtomCode fix #139 (2026-07-20): 移除 #138 的 bias 截断.
+        bias 恒为 (out_features,), fp8_matmul 恒输出 (..., out_features), 形状必然匹配;
+        截断只在 fp8_matmul 产出错误维度时才 "需要", 本就是掩盖 #137 自动检测 bug 的胶布.
         """
         out = fp8_matmul(x, self.fp8_weight, self.scale)
         if self.bias is not None:
-            # AtomCode fix #138: bias 形状可能 != out 末维 (因权重格式错配)
-            # fp8_matmul 自动检测权重格式, 但 bias 创建时用 out_features
-            # 若权重是 (in,out) 格式, out_features 读错, bias 形状错配
-            b = self.bias
-            if b.shape[0] != out.shape[-1]:
-                b = b[:out.shape[-1]]  # 截断到匹配输出
-            out = out + b
+            out = out + self.bias
         return out
 
 

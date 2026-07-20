@@ -437,16 +437,15 @@ class SkyReelsR2VDiT(nn.Module):
         pt, ph, pw = self.patch_size
         outputs = []
         for i, (f, h, w) in enumerate(grid_sizes):
-            # L = f * (h//ph) * (w//pw)
-            h_p, w_p = h // ph, w // pw
-            seq_len = f * h_p * w_p
+            # grid_sizes (f, h, w) 为 patch 后 token 网格 (对齐 wan2 unpatchify)
+            seq_len = f * h * w
             # x_i: [seq_len, pt*ph*pw*out_dim]
             x_i = x[i, :seq_len]  # [L, P*C_out]
-            x_i = x_i.reshape(f, h_p, w_p, pt, ph, pw, self.out_dim)
+            x_i = x_i.reshape(f, h, w, pt, ph, pw, self.out_dim)
             # 转置到 [C_out, T, H, W]
-            x_i = x_i.transpose(6, 0, 3, 1, 4, 2, 5)  # [C_out, f, pt, h_p, ph, w_p, pw]
+            x_i = x_i.transpose(6, 0, 3, 1, 4, 2, 5)  # [C_out, f, pt, h, ph, w, pw]
             x_i = x_i.reshape(
-                self.out_dim, f * pt, h_p * ph, w_p * pw
+                self.out_dim, f * pt, h * ph, w * pw
             )  # [C_out, T, H, W]
             outputs.append(x_i)
         return mx.stack(outputs, axis=0)  # [B, C_out, T, H, W]

@@ -222,10 +222,10 @@ def rope_apply(
         offset = int(round(sum(g[0] * g[1] * g[2] * patch_scale for g in gs[:i])))
         x_i = x[i, offset:offset + seq_len].astype(mx.float32)  # [seq_len, N, C]
 
-        # patch 后真实网格 (h, w 各除 patch_size[1:], f 不变因 patch_size[0]=1)
-        # 用于 rope cos/sin 构造
-        h_real = max(1, h // 2)  # patch_size=(1,2,2) 约定, 通用应传 patch_size 但此处硬编
-        w_real = max(1, w // 2)
+        # patch 后真实网格: h, w 即 token 网格维 (grid_sizes 已含 patch, 对齐 wan2 rope_apply;
+        # patch_size[0]=1 故 f 不变). 用于 rope cos/sin 构造.
+        h_real = max(1, h)
+        w_real = max(1, w)
 
         # 拆 real/imag: x[::2] = real, x[1::2] = imag
         x_real = x_i[..., 0::2]  # [seq_len, N, C/2]
