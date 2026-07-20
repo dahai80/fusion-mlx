@@ -94,8 +94,15 @@ class TestResolveBackend:
     def test_backends_registry_has_all(self):
         # ltx2 + wan2 ship real mlx-video impls; ltx_video_legacy is a pure-MLX
         # port (Phase 3); cogvideo is a stub that raises NotImplementedError
-        # (no MLX port exists upstream).
-        assert set(BACKENDS) == {"ltx2", "wan2", "ltx_video_legacy", "cogvideo"}
+        # (no MLX port exists upstream); skyreels is a pure-MLX port
+        # (SkyReels-V3 R2V/V2V/A2V, Phase 4).
+        assert set(BACKENDS) == {
+            "ltx2",
+            "wan2",
+            "skyreels",
+            "ltx_video_legacy",
+            "cogvideo",
+        }
 
 
 class TestUnimplementedBackends:
