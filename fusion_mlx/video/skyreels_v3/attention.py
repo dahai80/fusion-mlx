@@ -207,6 +207,11 @@ class WanSelfAttention(nn.Module):
             mask = sw_mask if mask is None else mask + sw_mask
 
         # xfuser 步级策略
+        # T1-3 NOTE: mx.compile 在 DiT __init__(xfuser attach 前) 已 trace,
+        # _fast_attn=None + if False 被 bake 进 trace 固化. 运行时 disable_compile
+        # (MLX 0.32: 全局切换函数非 context manager, 调用返 None) 无法改变已固化
+        # trace. 故 xfuser 运行时 no-op (fa_calls=0); 114s/step = compiled-no-xfuser
+        # DiT forward 真实成本 (非 recompile). 待 attach 后 compile 或 eager 方案.
         fa = self._fast_attn
         if fa is not None and _fa_active is not None and _fa_active():
             out = _sdpa(
@@ -319,20 +324,26 @@ class WanTemporalAttention(nn.Module):
             sw_mask = self._sw_mask_cache[1]
             mask = sw_mask if mask is None else mask + sw_mask
 
-        fa = self._fast_attn
-        if fa is not None and _fa_active is not None and _fa_active():
-            out = _sdpa(
-                q,
-                k,
-                v,
-                self.scale,
-                mask,
-                fast_attn=fa,
-                step=_fa_step(),
-                batch_size=b,
-            )
-        else:
-            out = _sdpa(q, k, v, self.scale, mask)
+        # T1-3: mx.compile 在 DiT __init__(xfuser attach 前) trace, 会 bake
+        # _fast_attn=None + if 条件 False -> xfuser 运行时被绕过 (fa_calls=0, no-op).
+        # disable_compile 必须包裹 fa 读取 + if 条件 + _sdpa 整段: 强制 eager,
+        # _fast_attn 运行时读取, if 运行时求值, xfuser 生效; step_idx 不进 block
+        # compile trace 避每步 recompile. block 其余 (FFN/norm) 仍 compiled 复用.
+        with mx.disable_compile():
+            fa = self._fast_attn
+            if fa is not None and _fa_active is not None and _fa_active():
+                out = _sdpa(
+                    q,
+                    k,
+                    v,
+                    self.scale,
+                    mask,
+                    fast_attn=fa,
+                    step=_fa_step(),
+                    batch_size=b,
+                )
+            else:
+                out = _sdpa(q, k, v, self.scale, mask)
 
         out = out.transpose(0, 2, 1, 3).reshape(b, s, -1)
         return self.o(out)
@@ -427,20 +438,26 @@ class WanT2VCrossAttention(nn.Module):
             for i, cl in enumerate(context_lens):
                 mask[i, :, :, cl:] = -1e9
 
-        fa = self._fast_attn
-        if fa is not None and _fa_active is not None and _fa_active():
-            out = _sdpa(
-                q,
-                k,
-                v,
-                self.scale,
-                mask,
-                fast_attn=fa,
-                step=_fa_step(),
-                batch_size=b,
-            )
-        else:
-            out = _sdpa(q, k, v, self.scale, mask)
+        # T1-3: mx.compile 在 DiT __init__(xfuser attach 前) trace, 会 bake
+        # _fast_attn=None + if 条件 False -> xfuser 运行时被绕过 (fa_calls=0, no-op).
+        # disable_compile 必须包裹 fa 读取 + if 条件 + _sdpa 整段: 强制 eager,
+        # _fast_attn 运行时读取, if 运行时求值, xfuser 生效; step_idx 不进 block
+        # compile trace 避每步 recompile. block 其余 (FFN/norm) 仍 compiled 复用.
+        with mx.disable_compile():
+            fa = self._fast_attn
+            if fa is not None and _fa_active is not None and _fa_active():
+                out = _sdpa(
+                    q,
+                    k,
+                    v,
+                    self.scale,
+                    mask,
+                    fast_attn=fa,
+                    step=_fa_step(),
+                    batch_size=b,
+                )
+            else:
+                out = _sdpa(q, k, v, self.scale, mask)
 
         out = out.transpose(0, 2, 1, 3).reshape(b, -1, n * d)
         return self.o(out)
