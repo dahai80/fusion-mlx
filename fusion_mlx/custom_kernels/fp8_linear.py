@@ -66,6 +66,18 @@ class FP8Linear(nn.Module):
             mx.zeros((out_features,), dtype=mx.bfloat16) if bias else None
         )
 
+    @property
+    def weight(self) -> mx.array:
+        # AtomCode fix #142: 对齐 nn.QuantizedLinear.weight 约定, 返回量化存储 fp8_weight.
+        # 仅供值访问/内省; 计算 dtype 用 compute_dtype (fp8_matmul 实际 dtype, 非 float8).
+        return self.fp8_weight
+
+    @property
+    def compute_dtype(self) -> mx.Dtype:
+        # AtomCode fix #142: fp8_matmul 实际计算 dtype. _FP8_AVAILABLE 时 bf16, 否则 f32 兜底.
+        # _linear_dtype 必须返回此值, 不能用 fp8_weight.dtype (float8) 否则 x.astype(float8) 错配.
+        return mx.bfloat16 if _FP8_AVAILABLE else mx.float32
+
     @classmethod
     def from_linear(cls, linear: nn.Linear) -> FP8Linear:
         """从 nn.Linear 创建 FP8Linear (权重恒 (out,in), __call__ 转置)."""
