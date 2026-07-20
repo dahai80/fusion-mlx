@@ -376,6 +376,16 @@ issue #142 修复 (FP8Linear `.weight`/`compute_dtype`) 解除 DiT 前向后, R2
 
 修复后: 真实 14B R2V 256×256 3 步端到端跑通 (`get_video_gen_timeout()=7200.0s`, 25.5s 完成 << 上限, mp4 ftyp 合法, 每步日志齐全); 53 video_backends 测试全绿 (含 7 个超时助手新测试).
 
+**#149 SkyReels-V3 推理进度日志补全** (2026-07-20, 解除服务端生成期间无任何进度日志的可见性阻塞):
+
+#148 解除 7200s 超时后, 720p 30 步完整跑 ~1hr 期间服务端日志仍静默: 后端 `_generate_r2v/v2v/a2v` 无请求级日志, 首次调用 `_load_models` (加载 DiT~14B + VAE + UMT5) 完成前数分钟无输出, 且每步日志 (`denoise: step=i/N t=...`, #146 落地) 仅在 ~115s 前向完成后才打印 -> 两行日志间 ~115s 静默, 误判卡死 (即 #149 "服务器日志无推理进度日志").
+
+| 根因 | 位置 | 修复 |
+|---|---|---|
+| (1) 后端无请求级日志 (2) 首次加载模型静默 (3) 步级日志仅在前向后打印 | `skyreels.py` (后端) + `pipelines/__init__.py` (R2V/V2V + A2V) | (1) `video gen: start/done branch=r2v\|v2v\|a2v` + `Loading pipeline <Class> (DiT/VAE/T5, 首次可能数分钟)` 前置于 eager 加载 + `Created pipeline`; (2) `denoise: step=i/N starting t=...` 前置于每步 DiT 前向 (R2V/V2V 共享循环 + A2V 内联循环), 步开始即报, 不再等前向完成 |
+
+修复后: 真实 14B R2V 256×256 3 步端到端跑通, `denoise: start` 与 `denoise: step=1/3 starting` **同秒打印** (前向前即报进度), 步间不再静默, VAE 解码 + `R2V generated` 日志齐全, mp4 合法, 14.6s 完成; 57 video_backends 测试全绿 (含 4 个进度日志新测试).
+
 Submit your own benchmarks at [bench.dpdns.org](https://bench.dpdns.org/).
 
 ```

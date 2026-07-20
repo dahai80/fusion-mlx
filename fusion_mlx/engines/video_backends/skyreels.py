@@ -125,6 +125,10 @@ class SkyReelsBackend(VideoBackend):
             gc.collect()
             mx.synchronize()
             mx.clear_cache()
+        logger.info(
+            "Loading pipeline %s (DiT/VAE/T5 weights, first call may take minutes)...",
+            pipeline_class.__name__,
+        )
         self._pipeline = pipeline_class(self._model_name)
         self._pipeline_class = pipeline_class
         logger.info("Created pipeline: %s", pipeline_class.__name__)
@@ -138,6 +142,14 @@ class SkyReelsBackend(VideoBackend):
             params.seed if params.seed is not None else random.randint(0, 2**31 - 1)
         )
         duration = max(1, params.num_frames // 24)  # fps=24 → duration in seconds
+
+        logger.info(
+            "video gen: start branch=r2v model=%s prompt_len=%d duration=%ds seed=%d",
+            self._model_name,
+            len(params.prompt or ""),
+            duration,
+            base_seed,
+        )
 
         def _gen_one() -> bytes:
             pipeline = self._pipeline
@@ -161,6 +173,7 @@ class SkyReelsBackend(VideoBackend):
             loop.run_in_executor(get_executor("video"), _gen_one),
             timeout=get_video_gen_timeout(),
         )
+        logger.info("video gen: done branch=r2v seed=%d", base_seed)
         return [results]
 
     async def _generate_v2v(self, params: VideoGenParams) -> list[bytes]:
@@ -171,6 +184,13 @@ class SkyReelsBackend(VideoBackend):
             params.seed if params.seed is not None else random.randint(0, 2**31 - 1)
         )
         duration = max(1, params.num_frames // 24)
+        logger.info(
+            "video gen: start branch=v2v model=%s prompt_len=%d duration=%ds seed=%d",
+            self._model_name,
+            len(params.prompt or ""),
+            duration,
+            base_seed,
+        )
 
         def _gen_one() -> bytes:
             pipeline = self._pipeline
@@ -193,6 +213,7 @@ class SkyReelsBackend(VideoBackend):
             loop.run_in_executor(get_executor("video"), _gen_one),
             timeout=get_video_gen_timeout(),
         )
+        logger.info("video gen: done branch=v2v seed=%d", base_seed)
         return [results]
 
     async def _generate_a2v(self, params: VideoGenParams) -> list[bytes]:
@@ -203,6 +224,13 @@ class SkyReelsBackend(VideoBackend):
             params.seed if params.seed is not None else random.randint(0, 2**31 - 1)
         )
         duration = max(1, params.num_frames // 24)
+        logger.info(
+            "video gen: start branch=a2v model=%s prompt_len=%d duration=%ds seed=%d",
+            self._model_name,
+            len(params.prompt or ""),
+            duration,
+            base_seed,
+        )
 
         def _gen_one() -> bytes:
             pipeline = self._pipeline
@@ -227,6 +255,7 @@ class SkyReelsBackend(VideoBackend):
             loop.run_in_executor(get_executor("video"), _gen_one),
             timeout=get_video_gen_timeout(),
         )
+        logger.info("video gen: done branch=a2v seed=%d", base_seed)
         return [results]
 
     def constraints(self) -> VideoConstraints:
