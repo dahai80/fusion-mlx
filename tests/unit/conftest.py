@@ -49,6 +49,8 @@ def _opt_present(mod: str) -> bool:
         try:
             import mlx.core as _mx
 
+            if type(_mx).__name__ != "module":
+                return False
             _mx.zeros((1,))
             return True
         except Exception:
