@@ -65,6 +65,9 @@ from .prefix_cache import (
     BlockCacheEntry,
 )
 
+# Radix diffusion cache (text-encoder output reuse across shots, #178)
+from .radix_diffusion_cache import DiffusionRadixCache, RadixCacheStats
+
 # Managers
 from .recovery import CacheRecoveryManager
 from .stats import (
@@ -168,4 +171,7 @@ __all__ = [
     "CacheRateTracker",
     # Boundary snapshots
     "BoundarySnapshotSSDStore",
+    # Radix diffusion cache
+    "DiffusionRadixCache",
+    "RadixCacheStats",
 ]
