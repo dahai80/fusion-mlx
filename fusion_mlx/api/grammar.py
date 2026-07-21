@@ -48,6 +48,7 @@ logger = logging.getLogger(__name__)
 # its original signature so ``engines/batched.py`` and ``engines/vlm.py``
 # call sites are untouched.
 
+
 @lru_cache(maxsize=8)
 def _get_grammar_compiler_cached(
     tokenizer_id: str,
