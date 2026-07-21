@@ -884,6 +884,7 @@ class TestR2VArchIssue164:
 
     def test_r2v_no_img_branch_params(self):
         import mlx.nn as nn
+
         from fusion_mlx.video.skyreels_v3.transformer_r2v import SkyReelsR2VDiT
 
         m = SkyReelsR2VDiT()
@@ -893,6 +894,7 @@ class TestR2VArchIssue164:
 
     def test_r2v_norm1_norm3_no_affine_norm2_affine(self):
         import mlx.nn as nn
+
         from fusion_mlx.video.skyreels_v3.transformer_r2v import SkyReelsR2VDiT
 
         m = SkyReelsR2VDiT()
@@ -906,6 +908,7 @@ class TestR2VArchIssue164:
 
     def test_r2v_head_norm_no_affine(self):
         import mlx.nn as nn
+
         from fusion_mlx.video.skyreels_v3.transformer_r2v import SkyReelsR2VDiT
 
         m = SkyReelsR2VDiT()
