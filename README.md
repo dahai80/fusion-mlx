@@ -229,6 +229,59 @@ fusion-mlx launch comfyui
 fusion-mlx launch copilot
 ```
 
+## Pipeline Stage API & Step Callbacks (Fusion-ComfyUI)
+
+For ComfyUI-style integrations that need per-stage control of the generation
+pipeline (rather than a single `generate()` call), the image and video engines
+expose a streaming stage API plus a per-step progress callback.
+
+### Stage API (#170)
+
+`ImageGenEngine` and `VideoGenEngine` expose paired load / run / unload methods
+so a host can hold the text encoder, DiT, and VAE independently and free memory
+between stages (`gc.collect()` + `mx.metal.clear_cache()` + active-memory log):
+
+| Stage | Load | Run | Unload |
+|---|---|---|---|
+| Text encoder | `load_text_encoder()` | `encode_text(prompt) -> {"embed","text_ids"}` | `unload_text_encoder()` |
+| DiT | `load_dit()` | `denoise(latent, pos_embed, neg_embed, steps, cfg, seed[, num_frames])` | `unload_dit()` |
+| VAE | `load_vae()` | `decode(latent)` / `decode_tiled(latent, tile_size=256)` | `unload_vae()` |
+
+Latents flow as unpacked `(batch, c, h, w)` `mx.array` across all stages
+(matches mflux `prepare_latents` output and `decode_packed_latents` input;
+`h`/`w` derive from the array shape, no extra size params).
+
+> **MLX stream constraint:** latents/embeds must be engine-native - created by
+> `encode_text` or another stage running in the single image-executor thread
+> (`max_workers=1`, `_init_mlx_thread`). Arrays created in a caller thread hit
+> `RuntimeError: There is no Stream(gpu, 0) in current thread` on the per-step
+> `mx.eval`. Stage-to-stage flow stays native because the executor is
+> single-threaded.
+
+`unload_*` drops the submodule reference to `None`; mflux loads all stages in
+`__init__`, so reloading a single unloaded stage requires re-instantiating the
+engine (the load methods raise `RuntimeError` with that guidance).
+
+Video backends inherit `NotImplementedError` defaults for the stage API (issue
+#170 phase 2); `LegacyLTXBackend` and `Wan2Backend` wire real per-step denoise,
+`LTX2Backend` / `SkyReelsBackend` accept-but-log.
+
+### Step callback (#171)
+
+`generate()` (image) and `VideoGenEngine.generate()` accept
+`on_step: Callable[[int, int], Awaitable[None]] | None`, fired as
+`on_step(step, total_steps)` after each denoise step. The async callback is
+bridged onto the synchronous mflux denoise loop via
+`asyncio.run_coroutine_threadsafe` (fire-and-forget; errors logged, never
+block generation). Image uses a real per-step subscriber on `flux.callbacks`;
+video wires it through `VideoGenParams.on_step`.
+
+### Model registry listing (#172)
+
+`list_available_models()` in `fusion_mlx/model_registry.py` now returns the
+full set of discoverable models additively (registered + discovered), so hosts
+can enumerate models without a separate discovery call.
+
 ## Admin Panel
 
 Access at `http://localhost:8000/admin`:

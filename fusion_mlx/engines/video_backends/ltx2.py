@@ -80,6 +80,11 @@ class LTX2Backend(VideoBackend):
         )
 
     async def generate(self, params: VideoGenParams) -> list[bytes]:
+        if params.on_step is not None:
+            logger.debug(
+                "ltx2: on_step progress callback accepted but per-step "
+                "streaming not yet emitted for this backend (issue #171 follow-up)"
+            )
         base_seed = (
             params.seed if params.seed is not None else random.randint(0, 2**31 - 1)
         )

@@ -10,7 +10,10 @@ import logging
 import time
 from typing import Any
 
+import mlx.core as mx
+
 from .base import BaseNonStreamingEngine
+from ._progress import StepCallback
 from .video_backends import VideoGenParams, resolve_backend
 
 logger = logging.getLogger(__name__)
@@ -48,6 +51,7 @@ class VideoGenEngine(BaseNonStreamingEngine):
         fps: int = 24,
         seed: int | None = None,
         n: int = 1,
+        on_step: StepCallback | None = None,
         **kwargs,
     ) -> list[bytes]:
         if not self._loaded:
@@ -73,6 +77,7 @@ class VideoGenEngine(BaseNonStreamingEngine):
             tiling=kwargs.get("tiling"),
             no_compile=kwargs.get("no_compile"),
             enhance_prompt=kwargs.get("enhance_prompt"),
+            on_step=on_step,
         )
 
         t0 = time.monotonic()
@@ -89,6 +94,54 @@ class VideoGenEngine(BaseNonStreamingEngine):
             return result
         finally:
             await self._finish_activity(activity_id)
+
+    # ------------------------------------------------------------------
+    # Pipeline stage API (issue #170). Thin delegation to the backend.
+    # Backends override VideoBackend stage methods to expose individual
+    # stages for Fusion-ComfyUI sequential offload. Video latents are 5D
+    # (batch, c, num_frames, h, w); denoise carries num_frames. Backends
+    # that have not implemented a stage raise NotImplementedError.
+    # ------------------------------------------------------------------
+    async def load_text_encoder(self) -> None:
+        await self._backend.load_text_encoder()
+
+    async def encode_text(self, prompt: str) -> dict:
+        return await self._backend.encode_text(prompt)
+
+    async def unload_text_encoder(self) -> None:
+        await self._backend.unload_text_encoder()
+
+    async def load_dit(self) -> None:
+        await self._backend.load_dit()
+
+    async def denoise(
+        self,
+        latent: mx.array,
+        pos_embed: mx.array,
+        neg_embed: mx.array | None,
+        steps: int,
+        cfg: float,
+        seed: int,
+        num_frames: int,
+    ) -> mx.array:
+        return await self._backend.denoise(
+            latent, pos_embed, neg_embed, steps, cfg, seed, num_frames
+        )
+
+    async def unload_dit(self) -> None:
+        await self._backend.unload_dit()
+
+    async def load_vae(self) -> None:
+        await self._backend.load_vae()
+
+    async def decode(self, latent: mx.array) -> mx.array:
+        return await self._backend.decode(latent)
+
+    async def decode_tiled(self, latent: mx.array, tile_size: int = 256) -> mx.array:
+        return await self._backend.decode_tiled(latent, tile_size)
+
+    async def unload_vae(self) -> None:
+        await self._backend.unload_vae()
 
     def get_stats(self) -> dict[str, Any]:
         return {"model_name": self._model_name, "loaded": self._loaded}
