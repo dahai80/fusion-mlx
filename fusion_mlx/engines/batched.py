@@ -263,6 +263,7 @@ class BatchedEngine(BaseEngine):
             return model, tokenizer
 
         from concurrent.futures import ThreadPoolExecutor
+
         from ..engine_core import _init_mlx_step_thread
         # Dedicated single-worker executor: model load + scheduler + prefill +
         # decode all run on this SAME thread so MLX binds model weights and runs
