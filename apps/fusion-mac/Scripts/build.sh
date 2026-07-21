@@ -449,6 +449,25 @@ rsync -a \
     "$REPO_ROOT/fusion_mlx/" "$RESOURCES_DIR/fusion_mlx/"
 ok "  + fusion package"
 
+# --- Verify critical backends synced (issue #165: stale .app shipped
+# without skyreels backend -> I2V 422). Canary files must exist post-rsync;
+# die loud if missing so an incomplete sync never ships silently.
+CANARY_FILES=(
+    "engines/video_backends/skyreels.py"
+    "engines/video_backends/__init__.py"
+    "video/skyreels_v3/__init__.py"
+    "video/ltx2/__init__.py"
+    "video/wan2/__init__.py"
+    "pool/model_discovery.py"
+)
+for canary in "${CANARY_FILES[@]}"; do
+    if [ ! -f "$RESOURCES_DIR/fusion_mlx/$canary" ]; then
+        die "sync verify failed: fusion_mlx/$canary missing in staged app. " \
+            "rsync did not copy the full source tree (stale/incomplete build)."
+    fi
+done
+ok "  + backend canary verify (${#CANARY_FILES[@]} files)"
+
 log "Writing engine commit metadata..."
 "$PYTHON_BIN" "$PACKAGING_DIR/build.py" --write-engine-commits "$RESOURCES_DIR/fusion_mlx" \
     || die "failed to write engine commit metadata."
