@@ -45,6 +45,16 @@ import importlib.util as _ilu
 
 
 def _opt_present(mod: str) -> bool:
+    if mod == "mlx":
+        try:
+            import mlx.core as _mx
+
+            if type(_mx).__name__ != "module":
+                return False
+            _mx.zeros((1,))
+            return True
+        except Exception:
+            return False
     try:
         return _ilu.find_spec(mod) is not None
     except (ModuleNotFoundError, ImportError, ValueError):
@@ -104,6 +114,7 @@ _OPT_DEP_SUITES: list[tuple[str, list[str]]] = [
             "test_videos_routes.py",
             "test_video_discovery.py",
             "test_custom_kernels_mfa.py",
+            "test_skyreels_quant.py",
         ],
     ),
     (

@@ -808,7 +808,7 @@ class TestWeightRemap:
         assert out["patch_embedding.conv2d.weight"].shape == (dim, 2, 2, in_dim * 1)
 
     def test_remap_drops_unmatched_source_keys(self):
-        """源中不存在于模型的 key (如 norm2.bias) 应被丢弃, 不进入返回 dict."""
+        """源中不存在于模型的 key (如 norm1.bias, norm1/3 affine=False 无 bias) 应被丢弃."""
         from fusion_mlx.video.skyreels_v3.transformer_r2v import SkyReelsR2VDiT
         from fusion_mlx.video.skyreels_v3.weights import _remap_diffusers_to_mlx
 
@@ -816,13 +816,13 @@ class TestWeightRemap:
         mx = __import__("mlx").core
         dim = TINY_CFG["dim"]
         src = {
-            "blocks.0.norm2.bias": mx.zeros((dim,)),
+            "blocks.0.norm1.bias": mx.zeros((dim,)),
             "condition_embedder.text_embedder.linear_1.weight": mx.zeros(
                 (dim, TINY_CFG["text_dim"])
             ),
         }
         out = _remap_diffusers_to_mlx(src, dit)
-        assert "blocks.0.norm2.bias" not in out
+        assert "blocks.0.norm1.bias" not in out
         assert "text_embedding.layers.0.weight" in out
 
 
