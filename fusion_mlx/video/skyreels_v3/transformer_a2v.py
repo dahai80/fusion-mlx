@@ -221,7 +221,10 @@ class A2VAttentionBlock(nn.Module):
         self.temporal_window = temporal_window
 
         # Self-attention (空间分支)
-        self.norm1 = WanLayerNorm(dim, eps)
+        # issue #164: 对齐 diffusers SkyReelsV2TransformerBlock.norm1
+        # (FP32LayerNorm elementwise_affine=False, 无可学习参数). 旧实现用有参
+        # WanLayerNorm -> blocks.N.norm1.weight 无源权重, 停留 init.
+        self.norm1 = WanLayerNorm(dim, eps, elementwise_affine=False)
         self.self_attn = WanSelfAttention(
             dim,
             num_heads,
@@ -242,7 +245,11 @@ class A2VAttentionBlock(nn.Module):
         self.norm_temporal = WanLayerNorm(dim, eps)
 
         # Cross-attention (音频+文本融合 context 引导)
-        self.norm3 = (
+        # issue #164: 对齐 diffusers SkyReelsV2TransformerBlock.norm2
+        # (cross-attn 前, FP32LayerNorm affine=True). 旧名 norm3 -> norm2,
+        # 让源权重 blocks.N.norm2.{weight,bias} 正确落到 cross-attn 前 norm
+        # (旧实现 norm3 命名致 norm2 权重错位加载到 ffn 前 norm, 语义错乱).
+        self.norm2 = (
             WanLayerNorm(dim, eps, elementwise_affine=True) if cross_attn_norm else None
         )
         # norm_x: 真实权重 blocks.N.norm_x (5120, affine=True), 用于 audio_cross_attn 前归一化
@@ -264,7 +271,9 @@ class A2VAttentionBlock(nn.Module):
         )
 
         # Feed-forward
-        self.norm2 = WanLayerNorm(dim, eps)
+        # issue #164: 对齐 diffusers block.norm3 (ffn 前, affine=False 无参).
+        # 旧名 norm2(有参) -> norm3(无参); 旧 norm2.weight 无源权重且语义错位.
+        self.norm3 = WanLayerNorm(dim, eps, elementwise_affine=False)
         self.ffn = WanFFN(dim, ffn_dim)
 
         # Learned modulation: 6 vectors for scale/shift/gate (kept in float32)
@@ -326,7 +335,8 @@ class A2VAttentionBlock(nn.Module):
             x = x + y_t
 
         # ---- 3. Cross-Attention (音频+文本融合 context 引导) ----
-        x_cross = self.norm3(x) if self.norm3 is not None else x
+        # issue #164: cross-attn 前 norm = self.norm2 (对齐 diffusers block.norm2)
+        x_cross = self.norm2(x) if self.norm2 is not None else x
         y_c = self.cross_attn(
             x_cross,
             context,
@@ -342,8 +352,9 @@ class A2VAttentionBlock(nn.Module):
             x = x + y_a
 
         # ---- 4. FFN ----
-        x_norm2 = self.norm2(x)
-        x_mod2 = mul_add_add(x_norm2, e4, e3)
+        # issue #164: ffn 前 norm = self.norm3 (对齐 diffusers block.norm3, 无参)
+        x_norm3 = self.norm3(x)
+        x_mod2 = mul_add_add(x_norm3, e4, e3)
         y_f = self.ffn(x_mod2)
         x = mul_add(x, y_f, e5)
 
@@ -389,7 +400,17 @@ class SkyReelsA2VDiT(nn.Module):
         self.qk_norm = cfg.get("qk_norm", True)
         self.cross_attn_norm = cfg.get("cross_attn_norm", True)
         self.eps = cfg.get("eps", 1e-6)
-        self.cross_attn_type = cfg.get("cross_attn_type", "i2v_cross_attn")
+        # issue #164: 对齐 R2V 修复. 默认 t2v_cross_attn (纯 T2V cross-attn, 无
+        # k_img/v_img 分支); 若 config 显式给 cross_attn_type 或 added_kv_proj_dim
+        # 非 None (i2v 风格, 需 k_img/v_img) 则 i2v. 旧默认 i2v_cross_attn 多创建
+        # k_img/v_img/norm_k_img (每层 5 参数 ×N 层未覆盖, 停留 init).
+        added_kv = cfg.get("added_kv_proj_dim", None)
+        if "cross_attn_type" in cfg:
+            self.cross_attn_type = cfg["cross_attn_type"]
+        elif added_kv is not None:
+            self.cross_attn_type = "i2v_cross_attn"
+        else:
+            self.cross_attn_type = "t2v_cross_attn"
         self.temporal_window = cfg.get("temporal_window", 32)
 
         # Patch embedding
