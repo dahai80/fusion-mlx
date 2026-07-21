@@ -39,8 +39,8 @@ class TestResolveProfile(unittest.TestCase):
     def test_known_profile(self):
         # 尝试已知 profile 名
         result = resolve_profile("gpt-4o")
-        # 返回 AliasProfile 或 None
-        self.assertTrue(result is None or hasattr(result, "model"))
+        # 返回 AliasProfile 或 None; AliasProfile 的必填字段是 hf_path
+        self.assertTrue(result is None or hasattr(result, "hf_path"))
 
     def test_unknown_profile_returns_none(self):
         self.assertIsNone(resolve_profile("nonexistent-profile-xyz"))
