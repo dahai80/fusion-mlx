@@ -16,14 +16,26 @@ UMT5 (Universal Multilingual T5) 与标准 T5 差异:
 
 from __future__ import annotations
 
+import hashlib
 import logging
+import os
 from dataclasses import dataclass
 from pathlib import Path
 
 import mlx.core as mx
 import mlx.nn as nn
 
+from fusion_mlx.cache.radix_diffusion_cache import DiffusionRadixCache
+
 logger = logging.getLogger(__name__)
+
+
+def _text_cache_enabled() -> bool:
+    return os.getenv("FUSION_DIFFUSION_TEXT_CACHE", "1") == "1"
+
+
+def _prompt_hash(text: str) -> str:
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()[:16]
 
 
 # ---------------------------------------------------------------------------
@@ -85,6 +97,10 @@ class UMT5Encoder(nn.Module):
         super().__init__()
         self.config = config or UMT5Config()
         self._tokenizer = None  # 惰性加载
+        # #178: per-instance radix text-embedding cache (multi-shot reuse)
+        self._text_cache = (
+            DiffusionRadixCache(max_mb=512) if _text_cache_enabled() else None
+        )
 
         # 复用底座 T5Encoder
         try:
@@ -184,6 +200,16 @@ class UMT5Encoder(nn.Module):
         Returns:
             [1, L_valid, d_model] 文本 embedding (L_valid = 非 padding token 数)
         """
+        # #178: radix text-embedding cache (skip stub mode)
+        cache = self._text_cache
+        key = None
+        if cache is not None:
+            key = f"umt5:{max_length}:{_prompt_hash(prompt)}"
+            cached = cache.get(key)
+            if cached is not None:
+                logger.debug("umt5 text cache hit: %s", key)
+                return cached
+
         ids, mask = self.tokenize(prompt, max_length=max_length)
 
         if self._tokenizer == "stub" or self.encoder is None:
@@ -194,7 +220,13 @@ class UMT5Encoder(nn.Module):
 
         # 截断到非 padding 部分 (与底座 wan2/utils.py encode_text 一致)
         seq_len = int(mask.sum().item())
-        return embeddings[0, :seq_len][None]  # [1, L_valid, d_model]
+        result = embeddings[0, :seq_len][None]  # [1, L_valid, d_model]
+
+        if key is not None:
+            cache.put(key, result)
+            logger.debug("umt5 text cache miss+insert: %s", key)
+
+        return result
 
     def __call__(
         self,

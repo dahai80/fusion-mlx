@@ -484,6 +484,25 @@ FUSION_SKYREELS_DYNAMIC_CFG=0 fusion-mlx serve --model SkyReels-V3-R2V-14B-MLX
 
 Submit your own benchmarks at [bench.dpdns.org](https://bench.dpdns.org/).
 
+### Radix 文本编码缓存 (#178)
+
+多镜头短剧流水线中, 同一 prompt 跨镜头重复编码 (UMT5-XXL 24 层 4096 维, 单次编码数百 ms~秒级). `UMT5Encoder.encode_text` 接入 `DiffusionRadixCache` (radix 树 + LRU 字节预算 + pin/unpin), 相同 `prompt+max_length` 二次命中走零拷贝指针复用 (返回同一 `mx.array` 引用), 文本编码延迟 -> ~0ms.
+
+- 缓存键: `f"umt5:{max_length}:{sha256(prompt)[:16]}"`, per-encoder 实例 (模型重载自动失效, 无陈旧 embedding).
+- 零拷贝: `mx.array` 不可变, 命中直接返回缓存引用, 无内存拷贝.
+- stub 模式不缓存 (避免零张量污染).
+- LRU 字节预算默认 512MB (UMT5-XXL `[1,512,4096]` bf16 ~4MB/条, ~128 条).
+- env `FUSION_DIFFUSION_TEXT_CACHE` (默认 `"1"` 开, `"0"` 关).
+
+```bash
+# 默认开
+fusion-mlx serve --model SkyReels-V3-R2V-14B-MLX
+# 关闭 (每次重新编码, 调试用)
+FUSION_DIFFUSION_TEXT_CACHE=0 fusion-mlx serve --model SkyReels-V3-R2V-14B-MLX
+```
+
+> **范围 (phase-1)**: 本 PR 落地 UMT5Encoder 全键缓存 (相同 prompt -> 0ms). 后续 phase-2: token 级前缀 KV 共享 (公共前缀只编码一次, 仅编码变化后缀) + CLIPTextEncoder 接入 + 视频时序 latent 复用 + admin 统计端点.
+
 ```
 fusion-mlx/
 ├── fusion_mlx/
