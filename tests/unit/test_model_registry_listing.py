@@ -160,12 +160,8 @@ def test_video_backend_resolve_failure_is_safe(monkeypatch):
     def boom(model_name, **kw):
         raise RuntimeError("backend explode")
 
-    monkeypatch.setattr(
-        "fusion_mlx.engines.video_backends.resolve_backend", boom
-    )
-    monkeypatch.setattr(
-        "fusion_mlx.engines.video_backends.constraints_for", boom
-    )
+    monkeypatch.setattr("fusion_mlx.engines.video_backends.resolve_backend", boom)
+    monkeypatch.setattr("fusion_mlx.engines.video_backends.constraints_for", boom)
     models = model_registry.list_available_models("video")
     assert len(models) == 1
     entry = models[0]
