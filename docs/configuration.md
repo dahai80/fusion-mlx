@@ -102,6 +102,18 @@ Copy-on-write prefix sharing for common prompts:
 |---------|---------|-------------|
 | `prefix_cache_enabled` | `True` | Enable prefix cache |
 | `prefix_cache_max_size` | 100 | Maximum cached prefixes |
+| `paged_ssd_cache_dir` | `None` | SSD cache dir; `None` = pure-memory mode (default) |
+| `hot_cache_max_size` | `0` | In-memory KV budget bytes; `0` = 1 GiB in pure-memory mode |
+
+**Pure-memory mode (#158)**: When `prefix_cache_enabled=True` and `paged_ssd_cache_dir` is unset (the default), prefix-cache hits reconstruct KV tensors from an in-memory LRU store instead of always reporting `cached_tokens=0`. KV tensors are kept in `hot_cache` bounded by `hot_cache_max_size` (1 GiB default when unset); evicted blocks are dropped cleanly with no disk backing. This is the default `serve` behavior - no extra flags required.
+
+To opt into SSD offload for larger working sets, set `paged_ssd_cache_dir` (a `SchedulerConfig` field, advanced/internal):
+
+```python
+# Programmatic: enable SSD-backed prefix cache
+config.paged_ssd_cache_dir = "~/.fusion-mlx/ssd-cache"
+config.hot_cache_max_size = 4 * 1024 ** 3  # 4 GiB hot layer
+```
 
 ## SmartRouter
 

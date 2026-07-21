@@ -194,9 +194,56 @@ def _init_tiered_cache(self) -> None:
             )
         return
 
-    # In paged SSD-only mode, paged_ssd_cache_dir is required
+    # #158: pure-memory prefix cache. When no SSD dir is configured but prefix
+    # caching is enabled, build an in-memory KV tensor store so prefix hits
+    # reconstruct with cached_tokens > 0 instead of always missing.
     if not self.config.paged_ssd_cache_dir:
-        logger.debug("paged SSD cache not configured (no --ssd-cache-dir specified)")
+        if self.block_aware_cache is None:
+            logger.debug(
+                "pure-memory prefix cache skipped (block_aware_cache disabled)"
+            )
+            return
+        try:
+            expected_num_layers = self.block_aware_cache.expected_num_layers
+            expected_block_size_tokens = self.config.paged_cache_block_size
+            expected_kv_bytes_per_token = 200_000  # default
+            if (
+                self.memory_monitor is not None
+                and self.memory_monitor.has_model_info()
+            ):
+                expected_kv_bytes_per_token = (
+                    self.memory_monitor.estimate_block_memory(1)
+                )
+            # Default to 1 GiB when hot_cache_max_size is 0 (unbounded footgun).
+            hot_cache_max_bytes = (
+                self.config.hot_cache_max_size or (1 * 1024 ** 3)
+            )
+            self.paged_ssd_cache_manager = PagedSSDCacheManager(
+                cache_dir=None,
+                max_size_bytes=self.config.paged_ssd_cache_max_size,
+                hot_cache_max_bytes=hot_cache_max_bytes,
+                hot_cache_only=True,
+                expected_model_name=self.config.model_name or "",
+                expected_num_layers=expected_num_layers,
+                expected_block_size_tokens=expected_block_size_tokens,
+                expected_kv_bytes_per_token=expected_kv_bytes_per_token,
+            )
+            if self.paged_cache_manager is not None:
+                self.paged_cache_manager.set_paged_ssd_cache_manager(
+                    self.paged_ssd_cache_manager
+                )
+            self.block_aware_cache.set_paged_ssd_cache_manager(
+                self.paged_ssd_cache_manager
+            )
+            logger.info(
+                f"pure-memory prefix cache enabled (#158): "
+                f"hot_cache_max={self._format_bytes(hot_cache_max_bytes)}, "
+                f"block_size={expected_block_size_tokens} tokens "
+                f"(no SSD dir; in-memory LRU)"
+            )
+        except Exception as e:
+            logger.error(f"Failed to initialize pure-memory prefix cache: {e}")
+            self.paged_ssd_cache_manager = None
         return
 
     try:
