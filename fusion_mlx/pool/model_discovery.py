@@ -150,6 +150,32 @@ VIDEO_CONFIG_MODEL_TYPES = {
     "v2v_14b",
 }
 
+# Diffusers ``model_index.json`` ``_class_name`` -> task. Raw diffusers
+# image/video models ship ``model_index.json`` (not ``configuration.json``),
+# so without this map discovery misclassifies them as ``llm`` (方案B, #158).
+# Consulted by ``_is_task_model`` as a fallback when no task manifest exists.
+DIFFUSERS_PIPELINE_TASKS = {
+    "Flux2KleinPipeline": "text-to-image",
+    "FluxPipeline": "text-to-image",
+    "FluxImg2ImgPipeline": "text-to-image",
+    "FluxInpaintPipeline": "text-to-image",
+    "StableDiffusionPipeline": "text-to-image",
+    "StableDiffusionXLPipeline": "text-to-image",
+    "StableDiffusion3Pipeline": "text-to-image",
+    "StableDiffusion3Img2ImgPipeline": "text-to-image",
+    "PixArtAlphaPipeline": "text-to-image",
+    "PixArtSigmaPipeline": "text-to-image",
+    "CogView3Pipeline": "text-to-image",
+    "CogView4Pipeline": "text-to-image",
+    "WuerstchenPipeline": "text-to-image",
+    "Kandinsky3Pipeline": "text-to-image",
+    "LTXImagePipeline": "text-to-image",
+    "LTXVideoPipeline": "text-to-video",
+    "WanPipeline": "text-to-video",
+    "WanTextToVideoPipeline": "text-to-video",
+    "WanImageToVideoPipeline": "text-to-video",
+}
+
 # Known embedding architectures
 EMBEDDING_ARCHITECTURES = {
     "BertModel",
@@ -944,14 +970,29 @@ def _is_task_model(path: Path, task: str) -> bool:
     # ``configuration.json`` with ``"task": ...`` and diffusers subdirectories
     # instead of a top-level ``config.json``.
     manifest = path / "configuration.json"
-    if not manifest.exists():
-        return False
-    try:
-        with open(manifest) as f:
-            data = json.load(f)
-        return data.get("task") == task
-    except (OSError, json.JSONDecodeError):
-        return False
+    if manifest.exists():
+        try:
+            with open(manifest) as f:
+                data = json.load(f)
+            if data.get("task") == task:
+                return True
+        except (OSError, json.JSONDecodeError):
+            pass
+    # 方案B (#158): diffusers ``model_index.json`` fallback. Raw diffusers
+    # image/video models ship ``model_index.json`` (no ``configuration.json``);
+    # map the pipeline ``_class_name`` to a task so discovery does not
+    # misclassify them as ``llm``.
+    model_index = path / "model_index.json"
+    if model_index.exists():
+        try:
+            with open(model_index) as f:
+                data = json.load(f)
+            class_name = data.get("_class_name", "")
+            if DIFFUSERS_PIPELINE_TASKS.get(class_name) == task:
+                return True
+        except (OSError, json.JSONDecodeError):
+            pass
+    return False
 
 
 def _is_image_model(path: Path) -> bool:
