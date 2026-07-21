@@ -263,7 +263,9 @@ class BatchedEngine(BaseEngine):
             return model, tokenizer
 
         from concurrent.futures import ThreadPoolExecutor
+
         from ..engine_core import _init_mlx_step_thread
+
         # Dedicated single-worker executor: model load + scheduler + prefill +
         # decode all run on this SAME thread so MLX binds model weights and runs
         # all ops on one thread-local default stream. Reusing a separate io/llm
@@ -277,7 +279,8 @@ class BatchedEngine(BaseEngine):
             initializer=_init_mlx_step_thread,
         )
         self._model, self._tokenizer = await asyncio.wait_for(
-            loop.run_in_executor(self._model_load_executor, _load_model_sync), timeout=120.0
+            loop.run_in_executor(self._model_load_executor, _load_model_sync),
+            timeout=120.0,
         )
 
         scheduler_config = (
@@ -292,7 +295,9 @@ class BatchedEngine(BaseEngine):
             stream_interval=self._stream_interval,
         )
         self._engine = AsyncEngineCore(
-            model=self._model, tokenizer=self._tokenizer, config=engine_config,
+            model=self._model,
+            tokenizer=self._tokenizer,
+            config=engine_config,
             executor=self._model_load_executor,
         )
         await self._engine.engine.start()
