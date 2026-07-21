@@ -521,6 +521,23 @@ curl -s http://127.0.0.1:11434/v1/images/generate \
 `flux2_klein_9b_kv`, 默认 `flux2_klein_9b`。`negative_prompt` 降级为 warning
 (Flux2Klein.generate_image 无此参数)。
 
+### Flux2Klein 权重量化 (FUSION_FLUX_QUANT, 内存优化非速度)
+
+`ImageGenEngine.__init__` 读取 `FUSION_FLUX_QUANT` env -> `mflux.Flux2Klein(quantize=...)`。
+取值: `w8a16`/`w8`/`int8`/`8` -> 8-bit, `w4`/`nf4`/`int4`/`4` -> 4-bit,
+`off`/`0`/`none`/`bf16`/空 -> bf16 (默认)。大小写不敏感。
+
+**⚠️ 实测结论 (M5 Max / FLUX.2-klein-base-4B / 1024x1024 / 4 step)**:
+
+| 模式 | 总时间 | s/step |
+|---|---|---|
+| bf16 | 6.81s | 1.70 |
+| w8a16 | 8.20s | 2.05 |
+
+w8a16 **慢 20%**。4B 模型在 bf16 下已完全装入统一内存, int8 反量化开销超过
+带宽收益, 且 `mx.compile` 已优化 bf16 路径。**量化不是 Flux2Klein 的速度优化**,
+仅作**内存优化** (9B 模型权重 ~18G -> ~9G, 适配 16G Mac)。
+
 ## Flux-1.lite-8B-MLX 深度优化 (2026-07-19)
 
 ### 性能数据 (M5 Max 128GB / MLX 0.32 / Q4)
