@@ -6,6 +6,7 @@ import asyncio
 from unittest.mock import AsyncMock
 
 import mlx.core as mx
+import pytest
 
 from fusion_mlx.engines._progress import make_sync_step_callback
 from fusion_mlx.engines.image_gen import _StepProgressInLoop
@@ -40,6 +41,7 @@ def test_make_sync_step_callback_schedules_and_drains():
 
 
 def test_step_progress_in_loop_via_generation_context():
+    pytest.importorskip("mflux")
     from mflux.callbacks.callback_registry import CallbackRegistry
     from mflux.callbacks.generation_context import GenerationContext
 
@@ -121,6 +123,7 @@ def test_video_engine_generate_on_step_defaults_none(monkeypatch):
 
 
 def test_legacy_denoise_on_step_sync_fires_per_step():
+    pytest.importorskip("mflux")
     from fusion_mlx.video.ltx_video_legacy.denoise import denoise
 
     n_tokens = 4

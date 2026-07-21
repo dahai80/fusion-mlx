@@ -64,6 +64,7 @@ def test_image_load_unload_lifecycle():
 
 
 def test_image_decode_validates_ndim_and_delegates():
+    pytest.importorskip("mflux")
     eng, flux = _make_engine_with_fake_flux()
     with pytest.raises(ValueError, match="batch,c,h,w"):
         asyncio.run(eng.decode(mx.zeros((1, 8, 4))))
@@ -73,6 +74,7 @@ def test_image_decode_validates_ndim_and_delegates():
 
 
 def test_image_decode_tiled_passes_tiling_config():
+    pytest.importorskip("mflux")
     eng, flux = _make_engine_with_fake_flux()
     received: dict = {}
 
@@ -88,6 +90,7 @@ def test_image_decode_tiled_passes_tiling_config():
 
 
 def test_image_denoise_validates_ndim_and_unloaded():
+    pytest.importorskip("mflux")
     eng, flux = _make_engine_with_fake_flux()
     with pytest.raises(ValueError, match="batch,c,h,w"):
         asyncio.run(eng.denoise(mx.zeros((1, 8, 4)), None, None, 3, 1.0, 0))
@@ -97,6 +100,7 @@ def test_image_denoise_validates_ndim_and_unloaded():
 
 
 def test_image_denoise_loop_runs_and_returns_4d(monkeypatch):
+    pytest.importorskip("mflux")
     eng, flux = _make_engine_with_fake_flux()
     import mflux.models.common.config.config as cfg_mod
     import mflux.models.flux2.latent_creator.flux2_latent_creator as lc_mod
@@ -165,6 +169,7 @@ def test_image_denoise_loop_runs_and_returns_4d(monkeypatch):
 
 
 def test_image_encode_text_with_fake_flux(monkeypatch):
+    pytest.importorskip("mflux")
     eng, flux = _make_engine_with_fake_flux()
     import mflux.models.flux2.model.flux2_text_encoder.prompt_encoder as pe_mod
 
