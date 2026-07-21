@@ -54,6 +54,14 @@ class FakeTokenizer:
     all_special_ids = [0, 1, 2]
 
     class _StoppingCriteria:
+        # Model mlx-vlm 0.6.4's StoppingCriteria: ``eos_token_ids`` is
+        # a list set in ``__init__``. Without it the #698 aliasing
+        # workaround at diffusion_lane.py:209 raises AttributeError
+        # (caught + logged as a false ERROR) and the workaround stays
+        # inactive - so the load path never exercises the copy logic.
+        def __init__(self) -> None:
+            self.eos_token_ids: list[int] = []
+
         def reset(self, *_args: Any) -> None:
             pass
 
@@ -2871,7 +2879,7 @@ class TestR10Regressions:
         original_start = threading.Thread.start
 
         def _capture_start(self_t: threading.Thread) -> None:
-            if self_t.name == "rapid-mlx-diffusion-pump":
+            if self_t.name == "fusion-mlx-diffusion-pump":
                 captured_pumps.append(self_t)
             original_start(self_t)
 
