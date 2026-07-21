@@ -109,6 +109,11 @@ def step(self) -> SchedulerOutput:
         # objects (prefill is handled externally before insert).
         if (self.batch_generator is not None or self._vlm_mtp_active) and self.running:
             _decode_t0 = time.perf_counter()
+            # #173: track whether this step mixed in prefill work. Prefill-
+            # contaminated step times spike the contention CV to ~100% on an
+            # idle GPU (false positive). Such steps are excluded from the
+            # decode-timing window below.
+            _step_had_prefill = True
             if self.batch_generator is not None:
                 # Fast path for pure decode: when no prompts are pending,
                 # _next() returns (prompt_resp=[], gen_resp=[...]) in one
@@ -121,6 +126,7 @@ def step(self) -> SchedulerOutput:
                 )
                 if not has_pending:
                     _, responses = bg._next()
+                    _step_had_prefill = False
                 else:
                     responses = list(bg.next_generated())
             else:
@@ -129,7 +135,13 @@ def step(self) -> SchedulerOutput:
             # GPU contention detection: track decode step time in rolling
             # window and compute CV. Bimodal latency (fast ~80ms vs slow
             # ~400ms) indicates competing GPU processes.
-            self._step_time_window.append(_decode_dt)
+            #
+            # #173: only sample pure-decode steps. When prefill is in flight
+            # _decode_dt mixes prefill+decode and CV spikes to ~100% on an
+            # idle GPU - a false positive blaming the server's own long
+            # prefill work on external contention.
+            if not _step_had_prefill:
+                self._step_time_window.append(_decode_dt)
             if len(self._step_time_window) > self._step_time_window_size:
                 self._step_time_window.pop(0)
             if len(self._step_time_window) >= 8:
