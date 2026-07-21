@@ -117,6 +117,7 @@ _OPT_DEP_SUITES: list[tuple[str, list[str]]] = [
             "test_skyreels_quant.py",
             "test_pure_memory_kv_reconstruct.py",
             "test_skyreels_dynamic_cfg.py",
+            "test_skyreels_v2v_a2v_norm.py",
         ],
     ),
     (
