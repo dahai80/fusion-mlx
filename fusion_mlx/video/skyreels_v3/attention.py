@@ -329,7 +329,9 @@ class WanTemporalAttention(nn.Module):
         # disable_compile 必须包裹 fa 读取 + if 条件 + _sdpa 整段: 强制 eager,
         # _fast_attn 运行时读取, if 运行时求值, xfuser 生效; step_idx 不进 block
         # compile trace 避每步 recompile. block 其余 (FFN/norm) 仍 compiled 复用.
-        with mx.disable_compile():
+        # mlx 0.32: disable_compile() 返回 None 非 context manager, 用 try/finally 配对 enable_compile
+        mx.disable_compile()
+        try:
             fa = self._fast_attn
             if fa is not None and _fa_active is not None and _fa_active():
                 out = _sdpa(
@@ -344,6 +346,8 @@ class WanTemporalAttention(nn.Module):
                 )
             else:
                 out = _sdpa(q, k, v, self.scale, mask)
+        finally:
+            mx.enable_compile()
 
         out = out.transpose(0, 2, 1, 3).reshape(b, s, -1)
         return self.o(out)
@@ -443,7 +447,9 @@ class WanT2VCrossAttention(nn.Module):
         # disable_compile 必须包裹 fa 读取 + if 条件 + _sdpa 整段: 强制 eager,
         # _fast_attn 运行时读取, if 运行时求值, xfuser 生效; step_idx 不进 block
         # compile trace 避每步 recompile. block 其余 (FFN/norm) 仍 compiled 复用.
-        with mx.disable_compile():
+        # mlx 0.32: disable_compile() 返回 None 非 context manager, 用 try/finally 配对 enable_compile
+        mx.disable_compile()
+        try:
             fa = self._fast_attn
             if fa is not None and _fa_active is not None and _fa_active():
                 out = _sdpa(
@@ -458,6 +464,8 @@ class WanT2VCrossAttention(nn.Module):
                 )
             else:
                 out = _sdpa(q, k, v, self.scale, mask)
+        finally:
+            mx.enable_compile()
 
         out = out.transpose(0, 2, 1, 3).reshape(b, -1, n * d)
         return self.o(out)
