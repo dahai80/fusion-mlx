@@ -207,17 +207,12 @@ def _init_tiered_cache(self) -> None:
             expected_num_layers = self.block_aware_cache.expected_num_layers
             expected_block_size_tokens = self.config.paged_cache_block_size
             expected_kv_bytes_per_token = 200_000  # default
-            if (
-                self.memory_monitor is not None
-                and self.memory_monitor.has_model_info()
-            ):
-                expected_kv_bytes_per_token = (
-                    self.memory_monitor.estimate_block_memory(1)
+            if self.memory_monitor is not None and self.memory_monitor.has_model_info():
+                expected_kv_bytes_per_token = self.memory_monitor.estimate_block_memory(
+                    1
                 )
             # Default to 1 GiB when hot_cache_max_size is 0 (unbounded footgun).
-            hot_cache_max_bytes = (
-                self.config.hot_cache_max_size or (1 * 1024 ** 3)
-            )
+            hot_cache_max_bytes = self.config.hot_cache_max_size or (1 * 1024**3)
             self.paged_ssd_cache_manager = PagedSSDCacheManager(
                 cache_dir=None,
                 max_size_bytes=self.config.paged_ssd_cache_max_size,

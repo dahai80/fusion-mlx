@@ -1327,7 +1327,9 @@ class PagedSSDCacheManager:
                             file_path.unlink()
                             count += 1
                     except OSError as e:
-                        logger.debug("Failed to unlink incompatible during clear: %s", e)
+                        logger.debug(
+                            "Failed to unlink incompatible during clear: %s", e
+                        )
             self._index = PagedSSDCacheIndex(max_size_bytes=self._max_size)
             self._incompatible_index = PagedSSDCacheIndex(max_size_bytes=self._max_size)
         with self._hot_cache_lock:

@@ -37,8 +37,8 @@ class TestPureMemoryKVReconstruct:
     def manager(self):
         mgr = PagedSSDCacheManager(
             cache_dir=None,
-            max_size_bytes=100 * 1024 ** 2,
-            hot_cache_max_bytes=1 * 1024 ** 2,
+            max_size_bytes=100 * 1024**2,
+            hot_cache_max_bytes=1 * 1024**2,
             hot_cache_only=True,
             expected_num_layers=2,
             expected_block_size_tokens=64,
@@ -55,8 +55,7 @@ class TestPureMemoryKVReconstruct:
         block_hash = b"pure_mem_roundtrip_0001"
         # Non-zero tensors so equality is meaningful (not just zeros).
         cache_data = [
-            (mx.ones((1, 2, 8, 4)) * 3.0, mx.ones((1, 2, 8, 4)) * 5.0)
-            for _ in range(2)
+            (mx.ones((1, 2, 8, 4)) * 3.0, mx.ones((1, 2, 8, 4)) * 5.0) for _ in range(2)
         ]
         ok = manager.save_block(
             block_hash=block_hash,
@@ -74,7 +73,9 @@ class TestPureMemoryKVReconstruct:
         assert len(data) == 2
         for (k_orig, v_orig), (k_rest, v_rest) in zip(cache_data, data):
             assert mx.array_equal(k_orig, k_rest), "key tensor mismatch after roundtrip"
-            assert mx.array_equal(v_orig, v_rest), "value tensor mismatch after roundtrip"
+            assert mx.array_equal(
+                v_orig, v_rest
+            ), "value tensor mismatch after roundtrip"
         assert meta["num_layers"] == 2
         assert meta["token_count"] == 8
 
@@ -98,7 +99,7 @@ class TestPureMemoryKVReconstruct:
         stale metadata from _index."""
         mgr = PagedSSDCacheManager(
             cache_dir=None,
-            max_size_bytes=100 * 1024 ** 2,
+            max_size_bytes=100 * 1024**2,
             hot_cache_max_bytes=1,  # evict aggressively
             hot_cache_only=True,
             expected_num_layers=2,
