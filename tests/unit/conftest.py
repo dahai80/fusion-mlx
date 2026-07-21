@@ -45,6 +45,14 @@ import importlib.util as _ilu
 
 
 def _opt_present(mod: str) -> bool:
+    if mod == "mlx":
+        try:
+            import mlx.core as _mx
+
+            _mx.zeros((1,))
+            return True
+        except Exception:
+            return False
     try:
         return _ilu.find_spec(mod) is not None
     except (ModuleNotFoundError, ImportError, ValueError):
