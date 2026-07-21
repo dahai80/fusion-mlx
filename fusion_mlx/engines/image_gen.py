@@ -6,7 +6,7 @@ import gc
 import io
 import logging
 import time
-from collections.abc import Awaitable, Callable
+from collections.abc import Callable
 from typing import Any
 
 import mlx.core as mx

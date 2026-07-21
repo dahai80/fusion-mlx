@@ -6,7 +6,6 @@ import asyncio
 from unittest.mock import AsyncMock
 
 import mlx.core as mx
-import pytest
 
 from fusion_mlx.engines._progress import make_sync_step_callback
 from fusion_mlx.engines.image_gen import _StepProgressInLoop

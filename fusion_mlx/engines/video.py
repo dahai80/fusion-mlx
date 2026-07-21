@@ -12,8 +12,8 @@ from typing import Any
 
 import mlx.core as mx
 
-from .base import BaseNonStreamingEngine
 from ._progress import StepCallback
+from .base import BaseNonStreamingEngine
 from .video_backends import VideoGenParams, resolve_backend
 
 logger = logging.getLogger(__name__)
