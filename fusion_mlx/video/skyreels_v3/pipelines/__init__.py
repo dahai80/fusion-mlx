@@ -297,6 +297,49 @@ class SkyReelsBasePipeline:
         )
         return keep
 
+    def _deepcache_config(self) -> tuple[int, int]:
+        # B2 DeepCache: 返回 (K, end). K<=1 关闭; end=缓存残差的 block 索引.
+        # full 步 (每 K 步) 跑全部 block 并在 block end 后捕获残差;
+        # cache 步跳过 [0..end] 注入残差, 仅跑尾段 [end+1..].
+        # FUSION_SKYREELS_DEEPCACHE_K 默认 "0" 关; >1 启用.
+        # FUSION_SKYREELS_DEEPCACHE_END 默认 num_layers//2, clamp [1, n-2].
+        import os
+
+        env = os.environ.get("FUSION_SKYREELS_DEEPCACHE_K", "0")
+        try:
+            k = int(env)
+        except ValueError:
+            logger.warning(
+                "FUSION_SKYREELS_DEEPCACHE_K=%s not int, use 0",
+                env,
+            )
+            return 0, 0
+        if k <= 1:
+            return 0, 0
+        n_layers = len(getattr(self.dit, "blocks", []) or [])
+        if n_layers == 0:
+            return 0, 0
+        end_env = os.environ.get("FUSION_SKYREELS_DEEPCACHE_END")
+        try:
+            end = int(end_env) if end_env else n_layers // 2
+        except ValueError:
+            logger.warning(
+                "FUSION_SKYREELS_DEEPCACHE_END=%s not int, use %d",
+                end_env,
+                n_layers // 2,
+            )
+            end = n_layers // 2
+        end = max(1, min(end, n_layers - 2))
+        logger.info(
+            "denoise: deepcache on K=%d end=%d/%d (skip [0..%d], run [%d..])",
+            k,
+            end,
+            n_layers,
+            end,
+            end + 1,
+        )
+        return k, end
+
     def warmup(self) -> None:
         # T1-2: 触发权重 Metal residency + mx.compile 首次编译, 前移首请求成本.
         # 256x256/9帧/1步: 满足 (nf-1)%4==0 与 %16==0, 最小形状跑通 DiT+VAE 链路.
@@ -421,6 +464,15 @@ class SkyReelsBasePipeline:
         # b=1 步 DiT 前向算力减半; mx.compile 按 input shape 缓存, b=1/b=2 各编译一次.
         cfg_keep_steps = self._cfg_keep_steps(n_steps)
 
+        # B2 DeepCache: 每 K 步跑一次 full DiT (缓存中段残差), 其余步跳过中段注入残差.
+        # 仅 _supports_deepcache DiT (R2V) 生效; v2v/a2v 跳过 (dc_supported=False).
+        # 与 B1 动态 CFG 正交: cache 步检查 batch 一致, b=2->b=1 边界 cache miss 自动降级 full.
+        dc_k, dc_end = self._deepcache_config()
+        dc_supported = dc_k > 1 and bool(
+            getattr(self.dit, "_supports_deepcache", False)
+        )
+        dc_cached: mx.array | None = None
+
         for step_idx, t in enumerate(timesteps):
             # 设置当前步 (xfuser 步级策略)
             self.step_strategy.set_current_step(step_idx)
@@ -449,14 +501,53 @@ class SkyReelsBasePipeline:
                 "on" if run_cfg else "off(cond-only)",
             )
 
-            # 模型前向
-            noise_pred = self.dit(
-                latent_input,
-                t_mx,
-                context_input,
-                cfg_seq_lens,
-                cfg_grid_sizes,
+            # 模型前向 (B2 DeepCache: full 步缓存残差, cache 步跳中段注入)
+            # cache 步条件: DeepCache 开 + 非 full 节拍 + 缓存可用 + batch 一致.
+            # batch 不一致 (B1 b=2->b=1 边界) -> 降级 full 并重缓存, 保证形状对齐.
+            dc_cache_step = (
+                dc_supported
+                and step_idx % dc_k != 0
+                and dc_cached is not None
+                and dc_cached.shape[0] == latent_input.shape[0]
             )
+            if dc_cache_step:
+                noise_pred = self.dit(
+                    latent_input,
+                    t_mx,
+                    context_input,
+                    cfg_seq_lens,
+                    cfg_grid_sizes,
+                    skip_blocks=(0, dc_end),
+                    cached_residual=dc_cached,
+                )
+                logger.info(
+                    "denoise: step=%d/%d deepcache=cached",
+                    step_idx + 1,
+                    n_steps,
+                )
+            elif dc_supported:
+                # full 节拍 (step_idx % K == 0) 或 cache miss: 跑全 block 并缓存残差
+                noise_pred, dc_cached = self.dit(
+                    latent_input,
+                    t_mx,
+                    context_input,
+                    cfg_seq_lens,
+                    cfg_grid_sizes,
+                    cache_at=dc_end,
+                )
+                logger.info(
+                    "denoise: step=%d/%d deepcache=full(cached)",
+                    step_idx + 1,
+                    n_steps,
+                )
+            else:
+                noise_pred = self.dit(
+                    latent_input,
+                    t_mx,
+                    context_input,
+                    cfg_seq_lens,
+                    cfg_grid_sizes,
+                )
 
             # CFG 合并 (仅 b=2 步; b=1 步 noise_pred 已是 cond, guidance=1.0)
             if run_cfg:

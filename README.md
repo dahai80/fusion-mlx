@@ -414,6 +414,17 @@ FUSION_SKYREELS_DYNAMIC_CFG=1 FUSION_SKYREELS_CFG_KEEP_RATIO=0.6 fusion-mlx serv
 FUSION_SKYREELS_DYNAMIC_CFG=0 fusion-mlx serve --model SkyReels-V3-R2V-14B-MLX
 ```
 
+**B2 DeepCache (sampler-level block-skip, compile-friendly)**: 每 K 步跑一次 full DiT (缓存中段 block `end` 输出残差), 中间 K-1 步跳过 `[0..end]` block 头段、直接注入缓存残差给 block `end+1`, 仅跑尾段 block. 非浪费式 (head 不跑-then-discard, 而是直接 skip). 参考 DeepCache (Gupta et al. CVPR 2024) 的顺序 DiT 跳块. compile 安全: DiT 仅 per-block `maybe_compile`, `__call__` 未整体编译, Python 控制流 (跳块/注入/捕获) 不触发 recompile, 跳过的 block 直接不调用. 与 B1 动态 CFG 正交组合: b=2->b=1 边界时 cache 步 batch 不匹配自动降级 full + 重缓存. `SkyReelsR2VDiT._supports_deepcache=True` 标记支持, pipeline 检测此 attr 决定是否启用.
+
+```bash
+# 默认关. 开启: K=3 (每 3 步 1 full + 2 cached), end=层中点 (40 层 -> end=20)
+FUSION_SKYREELS_DEEPCACHE_K=3 fusion-mlx serve --model SkyReels-V3-R2V-14B-MLX
+# 自定义缓存点 + 与 B1 叠加
+FUSION_SKYREELS_DYNAMIC_CFG=1 FUSION_SKYREELS_DEEPCACHE_K=2 FUSION_SKYREELS_DEEPCACHE_END=10 fusion-mlx serve --model SkyReels-V3-R2V-14B-MLX
+# 关闭 (K<=1)
+FUSION_SKYREELS_DEEPCACHE_K=0 fusion-mlx serve --model SkyReels-V3-R2V-14B-MLX
+```
+
 > **T1-3 结论**: 不要再尝试在 mx.compile 下让 xfuser 生效 (已证根本不兼容). 降速用 `FUSION_SKYREELS_STEPS` 减步 (T2-1). 后续 T2-2 (DiT w8a16 权重量化, 复用 `/v1/convert`, DiT=74% 瓶颈 ~2x 加速) + T2-3 (CFG halve 研究) 为独立 follow-up.
 
 修复后: 真实 14B R2V `FUSION_SKYREELS_STEPS=3` 生效 (`cfg.num_inference_steps=3`), xfuser 旁路告警 emit, `fa_calls=0` (no-op 确认), 生成 OK shape=(1,3,28,256,256), VERIFY_OK; 128 单元测试全绿.

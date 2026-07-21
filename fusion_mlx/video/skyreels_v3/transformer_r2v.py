@@ -373,6 +373,10 @@ class SkyReelsR2VDiT(nn.Module):
         if _device.should_compile():
             self.blocks = [maybe_compile(b) for b in self.blocks]
 
+        # B2 DeepCache: 标记本 DiT 支持 sampler 级跳块缓存 (pipeline 检测此 attr).
+        # 仅 __call__ 加可选 kwargs, per-block 编译不变, 跳过的 block 直接不调用.
+        self._supports_deepcache = True
+
     def __call__(
         self,
         x: mx.array,
@@ -383,6 +387,9 @@ class SkyReelsR2VDiT(nn.Module):
         context_lens: list | None = None,
         rope_cos_sin: tuple | None = None,
         attn_mask: mx.array | None = None,
+        skip_blocks: tuple[int, int] | None = None,
+        cached_residual: mx.array | None = None,
+        cache_at: int | None = None,
     ) -> mx.array:
         """前向: 视频 latent + 时间步 + 文本 -> 去噪 latent.
 
@@ -414,7 +421,20 @@ class SkyReelsR2VDiT(nn.Module):
         e = self.time_projection(t_emb)  # [B, dim*6]
 
         # 4. DiT Blocks
-        for block in self.blocks:
+        # B2 DeepCache (compile-friendly): __call__ 未整体编译 (仅 per-block
+        # maybe_compile), Python 控制流不触发重编译, 跳过的 block 直接不调用.
+        #   skip_blocks=(start,end): 跳过 [start..end] block, 在最后被跳过的 block
+        #     处把 x 替换为 cached_residual (作为 block end+1 的输入, 替代被跳过
+        #     段的输出). 非浪费: start=0 时 head 段不跑.
+        #   cache_at=N: full 步跑完 block N 后捕获 x 作为缓存残差返回.
+        #   三者皆 None = 完整前向 (现有行为不变).
+        skip_start, skip_end = (-1, -1) if skip_blocks is None else skip_blocks
+        captured: mx.array | None = None
+        for i, block in enumerate(self.blocks):
+            if skip_start <= i <= skip_end:
+                if i == skip_end:
+                    x = cached_residual
+                continue
             x = block(
                 x,
                 e,
@@ -426,6 +446,8 @@ class SkyReelsR2VDiT(nn.Module):
                 rope_cos_sin=rope_cos_sin,
                 attn_mask=attn_mask,
             )
+            if cache_at is not None and i == cache_at:
+                captured = x
 
         # 5. Output head
         out = self.head(x, e)  # [B, L, prod(patch_size)*out_dim]
@@ -433,6 +455,8 @@ class SkyReelsR2VDiT(nn.Module):
         # 6. Unpatchify: [B, L, prod(patch_size)*out_dim] -> [B, C_out, T, H, W]
         out = self._unpatchify(out, grid_sizes)
 
+        if cache_at is not None:
+            return out, captured
         return out
 
     def _unpatchify(
