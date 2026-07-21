@@ -157,3 +157,20 @@ class TestPureMemoryKVReconstruct:
     def test_close_without_writer_thread(self, manager):
         # close() must not blow up when _writer_thread is None (hot_cache_only).
         manager.close()
+
+    def test_get_effective_max_size_no_crash(self, manager):
+        # _get_effective_max_size must skip shutil.disk_usage when
+        # _cache_dir is None (hot_cache_only) - guard prevents NoneType crash.
+        result = manager._get_effective_max_size()
+        assert result == manager._max_size
+
+    def test_verify_and_repair_index_no_crash(self, manager):
+        # verify_and_repair_index must skip the rglob loop when
+        # _cache_dir is None (hot_cache_only) - guard prevents NoneType crash.
+        report = manager.verify_and_repair_index()
+        assert report == {"orphaned_files_removed": 0, "stale_entries_evicted": 0}
+
+    def test_cache_dir_properties_return_none(self, manager):
+        # API contract: cache_dir/cache_path are Path | None in pure-memory mode.
+        assert manager.cache_dir is None
+        assert manager.cache_path is None

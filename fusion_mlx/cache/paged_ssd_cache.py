@@ -671,11 +671,11 @@ class PagedSSDCacheManager:
         self._writer_thread.start()
 
     @property
-    def cache_dir(self) -> Path:
+    def cache_dir(self) -> Path | None:
         return self._cache_dir
 
     @property
-    def cache_path(self) -> Path:
+    def cache_path(self) -> Path | None:
         return self._cache_dir
 
     @property
@@ -1792,6 +1792,8 @@ class PagedSSDCacheManager:
         return True
 
     def _get_effective_max_size(self) -> int:
+        if self._cache_dir is None:
+            return self._max_size
         now = time.time()
         if (
             self._disk_usage_cache_value is not None
@@ -2020,6 +2022,8 @@ class PagedSSDCacheManager:
 
     def verify_and_repair_index(self) -> dict[str, int]:
         report = {"orphaned_files_removed": 0, "stale_entries_evicted": 0}
+        if self._cache_dir is None:
+            return report
         for f in self._cache_dir.rglob("*.tmp"):
             if f.is_file():
                 try:
