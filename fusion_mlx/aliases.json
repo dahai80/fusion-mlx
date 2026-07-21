@@ -1,0 +1,13 @@
+{
+  "diffusion-gemma-26b-4bit": {
+    "hf_path": "mlx-community/diffusiongemma-26B-A4B-it-4bit",
+    "tool_call_parser": "gemma4",
+    "reasoning_parser": "gemma4",
+    "modality": "text-diffusion",
+    "supports_spec_decode": false,
+    "supports_dflash": false,
+    "supports_mllm": false,
+    "is_audio": false,
+    "description": "Block-diffusion text model (DiffusionGemma 26B A4B 4bit). Native gemma4 tool-call + reasoning wire format; batch-1 only."
+  }
+}
