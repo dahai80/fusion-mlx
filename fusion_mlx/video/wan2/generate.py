@@ -3,6 +3,7 @@ import gc
 import math
 import random
 import time
+from collections.abc import Callable
 from pathlib import Path
 
 import mlx.core as mx
@@ -85,6 +86,7 @@ def generate_video(
     no_compile: bool = False,
     trim_first_frames: int = 0,
     debug_latents: bool = False,
+    on_step_sync: Callable[[int, int], None] | None = None,
 ):
     import json
 
@@ -640,6 +642,8 @@ def generate_video(
         # Release temporaries before eval to free memory for graph execution
         del noise_pred
         mx.eval(latents)
+        if on_step_sync is not None:
+            on_step_sync(i + 1, steps)
 
     print(f"{Colors.DIM}  Denoising: {time.time() - t3:.1f}s{Colors.RESET}")
 

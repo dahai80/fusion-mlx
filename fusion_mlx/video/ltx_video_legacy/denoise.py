@@ -5,6 +5,7 @@
 # image conditioning, and the learned-sigma chunk (out_channels//2 != in_channels).
 
 import logging
+from collections.abc import Callable
 
 import mlx.core as mx
 
@@ -25,6 +26,7 @@ def denoise(
     frame_rate,
     latent_shape,
     dtype=mx.float32,
+    on_step_sync: Callable[[int, int], None] | None = None,
 ):
     # CFG batch order is [negative, prompt] (matches the reference cat); the
     # 3rd STG copy is intentionally dropped.
@@ -77,6 +79,8 @@ def denoise(
 
         latents = scheduler.step(noise_pred, t, latents)
         logger.info("denoise: step=%d/%d t=%.4f", i + 1, n_steps, t)
+        if on_step_sync is not None:
+            on_step_sync(i + 1, n_steps)
 
     logger.info("denoise: done steps=%d", n_steps)
     return latents

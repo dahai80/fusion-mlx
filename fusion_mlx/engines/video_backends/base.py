@@ -10,9 +10,11 @@ from __future__ import annotations
 
 import logging
 from abc import ABC, abstractmethod
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any
+
+import mlx.core as mx
 
 logger = logging.getLogger(__name__)
 
@@ -43,6 +45,12 @@ class VideoGenParams:
     tiling: str | None = None
     no_compile: bool | None = None
     enhance_prompt: bool | None = None
+    # Streaming progress hook (issue #171). Async callback fired once per
+    # denoise step as on_step(step, total) with 1-indexed step. Backends that
+    # run denoise in a thread executor bridge it via make_sync_step_callback.
+    # None = no progress reporting (default, backwards compatible). Backends
+    # without an instrumented denoise loop accept but do not emit the callback.
+    on_step: Callable[[int, int], Awaitable[None]] | None = None
     extra: dict[str, Any] = field(default_factory=dict)
 
 
@@ -83,6 +91,73 @@ class VideoBackend(ABC):
 
     def get_stats(self) -> dict[str, Any]:
         return {"backend": self.name}
+
+    # ------------------------------------------------------------------
+    # Pipeline stage API (issue #170). Default implementations raise
+    # NotImplementedError so existing backends keep working unchanged.
+    # Backends override these to expose individual pipeline stages for
+    # Fusion-ComfyUI sequential offload. Video latents are 5D
+    # (batch, c, num_frames, h, w); denoise carries num_frames for the
+    # temporal dimension. Reference impl: ImageGenEngine.
+    # ------------------------------------------------------------------
+    async def load_text_encoder(self) -> None:
+        raise NotImplementedError(
+            f"{self.name} stage API not implemented (issue #170 phase 2)"
+        )
+
+    async def encode_text(self, prompt: str) -> dict:
+        raise NotImplementedError(
+            f"{self.name} stage API not implemented (issue #170 phase 2)"
+        )
+
+    async def unload_text_encoder(self) -> None:
+        raise NotImplementedError(
+            f"{self.name} stage API not implemented (issue #170 phase 2)"
+        )
+
+    async def load_dit(self) -> None:
+        raise NotImplementedError(
+            f"{self.name} stage API not implemented (issue #170 phase 2)"
+        )
+
+    async def denoise(
+        self,
+        latent: mx.array,
+        pos_embed: mx.array,
+        neg_embed: mx.array | None,
+        steps: int,
+        cfg: float,
+        seed: int,
+        num_frames: int,
+    ) -> mx.array:
+        raise NotImplementedError(
+            f"{self.name} stage API not implemented (issue #170 phase 2)"
+        )
+
+    async def unload_dit(self) -> None:
+        raise NotImplementedError(
+            f"{self.name} stage API not implemented (issue #170 phase 2)"
+        )
+
+    async def load_vae(self) -> None:
+        raise NotImplementedError(
+            f"{self.name} stage API not implemented (issue #170 phase 2)"
+        )
+
+    async def decode(self, latent: mx.array) -> mx.array:
+        raise NotImplementedError(
+            f"{self.name} stage API not implemented (issue #170 phase 2)"
+        )
+
+    async def decode_tiled(self, latent: mx.array, tile_size: int = 256) -> mx.array:
+        raise NotImplementedError(
+            f"{self.name} stage API not implemented (issue #170 phase 2)"
+        )
+
+    async def unload_vae(self) -> None:
+        raise NotImplementedError(
+            f"{self.name} stage API not implemented (issue #170 phase 2)"
+        )
 
 
 def validate_params(

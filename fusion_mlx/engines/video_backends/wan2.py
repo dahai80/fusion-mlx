@@ -12,12 +12,14 @@ import asyncio
 import gc
 import logging
 import random
+from collections.abc import Callable
 from typing import Any
 
 import mlx.core as mx
 
 from ..._tempfile_safe import managed_tempfile_path
 from ...engine_core import get_executor, get_video_gen_timeout
+from .._progress import make_sync_step_callback
 from .base import VideoBackend, VideoConstraints, VideoGenParams
 
 logger = logging.getLogger(__name__)
@@ -101,11 +103,13 @@ class Wan2Backend(VideoBackend):
                     scheduler=scheduler,
                     no_compile=no_compile,
                     tiling=params.tiling,
+                    on_step_sync=sync_cb,
                 )
                 results.append(mp4_bytes)
             return results
 
         loop = asyncio.get_running_loop()
+        sync_cb = make_sync_step_callback(params.on_step, loop)
         return await asyncio.wait_for(
             loop.run_in_executor(get_executor("video"), _generate),
             timeout=get_video_gen_timeout(),
@@ -141,6 +145,7 @@ def _generate_one(
     scheduler: str,
     no_compile: bool = True,
     tiling: str | None = None,
+    on_step_sync: Callable[[int, int], None] | None = None,
 ) -> bytes:
     from fusion_mlx.video.wan2.generate import generate_video
 
@@ -175,6 +180,8 @@ def _generate_one(
         )
         if tiling is not None:
             gen_kwargs["tiling"] = tiling
+        if on_step_sync is not None:
+            gen_kwargs["on_step_sync"] = on_step_sync
         generate_video(model_dir, prompt, **gen_kwargs)
         with open(temp_path, "rb") as f:
             return f.read()

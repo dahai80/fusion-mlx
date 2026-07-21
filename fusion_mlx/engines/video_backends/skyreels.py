@@ -81,6 +81,11 @@ class SkyReelsBackend(VideoBackend):
         logger.info("SkyReels backend stopped: %s", self._model_name)
 
     async def generate(self, params: VideoGenParams) -> list[bytes]:
+        if params.on_step is not None:
+            logger.debug(
+                "skyreels: on_step progress callback accepted but per-step "
+                "streaming not yet emitted for this backend (issue #171 follow-up)"
+            )
         # Detect branch from model name
         model_lower = self._model_name.lower()
         if "r2v" in model_lower or "r2v_14b" in model_lower:

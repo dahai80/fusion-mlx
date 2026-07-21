@@ -8,6 +8,7 @@ import asyncio
 import gc
 import logging
 import random
+from collections.abc import Callable
 from typing import Any
 
 import mlx.core as mx
@@ -15,6 +16,7 @@ import numpy as np
 
 from ..._tempfile_safe import managed_tempfile_path
 from ...engine_core import get_executor
+from .._progress import make_sync_step_callback
 from .base import VideoBackend, VideoConstraints, VideoGenParams
 
 logger = logging.getLogger(__name__)
@@ -117,11 +119,13 @@ class LegacyLTXBackend(VideoBackend):
                     seed=base_seed + i,
                     num_inference_steps=params.num_inference_steps,
                     cfg_scale=params.cfg_scale,
+                    on_step_sync=sync_cb,
                 )
                 results.append(mp4_bytes)
             return results
 
         loop = asyncio.get_running_loop()
+        sync_cb = make_sync_step_callback(params.on_step, loop)
         return await asyncio.wait_for(
             loop.run_in_executor(get_executor("video"), _generate), timeout=600.0
         )
@@ -239,6 +243,7 @@ def _generate_one(
     seed: int,
     num_inference_steps: int | None,
     cfg_scale: float | None,
+    on_step_sync: Callable[[int, int], None] | None = None,
 ) -> bytes:
     from ...video.ltx_video_legacy.denoise import denoise
 
@@ -297,6 +302,7 @@ def _generate_one(
         float(fps),
         latent_shape,
         dtype=dtype,
+        on_step_sync=on_step_sync,
     )
 
     # unpatchify (1, n, c) -> (1, c, lf, lh, lw) then VAE decode.
