@@ -360,10 +360,9 @@ class TestModelsListingReflectsAudioGate:
         return new_app
 
     def test_audio_lane_snapshot_none_on_text_only_app(self, monkeypatch, fresh_app):
-        from fusion_mlx.routes_internal.models import _audio_lane_snapshot
-
         from fusion_mlx import server
         from fusion_mlx.config import get_config
+        from fusion_mlx.routes_internal.models import _audio_lane_snapshot
 
         # Force the routes-mounted predicate to False by ensuring the
         # gate doesn't see audio + flag + routes.
@@ -386,6 +385,7 @@ class TestModelsListingReflectsAudioGate:
         EITHER ``None`` (if the deep probe never ran) or a non-empty
         dict — but never a hidden None from the gate."""
         from fusion_mlx.routes_internal.audio import register_audio_routes
+
         from fusion_mlx.routes_internal.models import (
             _audio_lane_snapshot,
             _audio_routes_mounted,
@@ -413,9 +413,8 @@ class TestModelsListingReflectsAudioGate:
         advertise ``audio_lanes`` while ``/v1/audio/*`` still 404s —
         the exact contradictory state this PR was opened to eliminate.
         """
-        from fusion_mlx.routes_internal.models import _audio_routes_mounted
-
         from fusion_mlx.config import get_config
+        from fusion_mlx.routes_internal.models import _audio_routes_mounted
 
         cfg = get_config()
         old_flag = cfg.enable_audio_lane
