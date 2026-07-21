@@ -577,8 +577,17 @@ class PagedSSDCacheManager:
         hot_cache_only: bool = False,
     ):
         if cache_dir is None:
-            cache_dir = "/tmp/fusion_mlx_ssd_cache"
-        self._cache_dir = Path(cache_dir)
+            if hot_cache_only:
+                # Pure-memory mode with no SSD dir: keep _cache_dir=None so
+                # every disk path is a no-op. (If a caller explicitly passes a
+                # cache_dir alongside hot_cache_only, honor it - some unit
+                # tests use that hybrid to exercise inline eviction without a
+                # writer thread.)
+                self._cache_dir = None
+            else:
+                self._cache_dir = Path("/tmp/fusion_mlx_ssd_cache")
+        else:
+            self._cache_dir = Path(cache_dir)
         effective_max = max_cache_size if max_cache_size is not None else max_size_bytes
         self._max_size = effective_max
         self._configured_max_size = effective_max
@@ -638,6 +647,16 @@ class PagedSSDCacheManager:
         self._disk_usage_cache_value: int | None = None
         self._shutting_down = False
 
+        if self._hot_cache_only:
+            self._writer_thread = None
+            logger.info(
+                "paged_ssd_cache hot_cache_only mode: in-memory LRU only, "
+                "no disk backing (hot_cache_max_bytes=%s, block_size=%s tokens)",
+                self._hot_cache_max_bytes,
+                self._expected_block_size_tokens,
+            )
+            return
+
         self._cache_dir.mkdir(parents=True, exist_ok=True)
         for char in "0123456789abcdef":
             (self._cache_dir / char).mkdir(parents=True, exist_ok=True)
@@ -652,11 +671,11 @@ class PagedSSDCacheManager:
         self._writer_thread.start()
 
     @property
-    def cache_dir(self) -> Path:
+    def cache_dir(self) -> Path | None:
         return self._cache_dir
 
     @property
-    def cache_path(self) -> Path:
+    def cache_path(self) -> Path | None:
         return self._cache_dir
 
     @property
@@ -678,7 +697,11 @@ class PagedSSDCacheManager:
     def _tracked_ssd_count(self) -> int:
         return self._index.count + self._incompatible_index.count
 
-    def _get_file_path(self, block_hash: bytes) -> Path:
+    def _get_file_path(self, block_hash: bytes) -> Path | None:
+        if self._cache_dir is None:
+            # Pure-memory mode: no disk path. Callers that touch disk guard
+            # on hot_cache_only / file_path is not None.
+            return None
         hex_str = block_hash.hex()
         sub_dir = hex_str[0]
         return self._cache_dir / sub_dir / f"{hex_str}.safetensors"
@@ -829,12 +852,16 @@ class PagedSSDCacheManager:
             self._index.add(block_metadata)
             self._stats["saves"] += 1
 
+        if self._hot_cache_only:
+            # Pure-memory mode: hot_cache (populated above) is the sole store.
+            # Skip _pending_writes - the writer thread never runs in this mode,
+            # so pending entries would never drain and would leak memory while
+            # pinning the tensors even after hot_cache LRU eviction.
+            return True
+
         with self._pending_write_hashes_lock:
             self._pending_write_hashes.add(block_hash)
             self._pending_writes[block_hash] = hot_entry
-
-        if self._hot_cache_only:
-            return True
 
         try:
             self._write_queue.put(
@@ -976,6 +1003,16 @@ class PagedSSDCacheManager:
 
         meta_obj = self.get_block_metadata(block_hash)
         if meta_obj is None:
+            return None, None
+
+        if self._hot_cache_only:
+            # Pure-memory mode: hot_cache miss with metadata present means the
+            # tensor was evicted by LRU and there is no disk backing. Drop the
+            # now-stale metadata so the index does not grow unbounded, and
+            # report a miss (avoids crashing in _get_file_path on cache_dir=None).
+            with self._state_lock:
+                self._index.remove(block_hash)
+            self._stats["misses"] += 1
             return None, None
 
         data = self.load_block(block_hash)
@@ -1239,12 +1276,13 @@ class PagedSSDCacheManager:
             meta = self._index.remove(block_hash)
             if meta is None:
                 return False
-            file_path = self._get_file_path(block_hash)
-            try:
-                if file_path.exists():
-                    file_path.unlink()
-            except OSError as e:
-                logger.debug("Failed to unlink %s: %s", file_path, e)
+            if not self._hot_cache_only:
+                file_path = self._get_file_path(block_hash)
+                try:
+                    if file_path.exists():
+                        file_path.unlink()
+                except OSError as e:
+                    logger.debug("Failed to unlink %s: %s", file_path, e)
             self._hot_cache_remove(block_hash)
             return True
 
@@ -1271,22 +1309,27 @@ class PagedSSDCacheManager:
     def clear(self) -> int:
         count = 0
         with self._state_lock:
-            for block_hash in list(self._index.blocks.keys()):
-                file_path = self._get_file_path(block_hash)
-                try:
-                    if file_path.exists():
-                        file_path.unlink()
-                        count += 1
-                except OSError as e:
-                    logger.debug("Failed to unlink during clear: %s", e)
-            for block_hash in list(self._incompatible_index.blocks.keys()):
-                file_path = self._get_file_path(block_hash)
-                try:
-                    if file_path.exists():
-                        file_path.unlink()
-                        count += 1
-                except OSError as e:
-                    logger.debug("Failed to unlink incompatible during clear: %s", e)
+            if self._hot_cache_only:
+                count = len(self._index.blocks) + len(self._incompatible_index.blocks)
+            else:
+                for block_hash in list(self._index.blocks.keys()):
+                    file_path = self._get_file_path(block_hash)
+                    try:
+                        if file_path.exists():
+                            file_path.unlink()
+                            count += 1
+                    except OSError as e:
+                        logger.debug("Failed to unlink during clear: %s", e)
+                for block_hash in list(self._incompatible_index.blocks.keys()):
+                    file_path = self._get_file_path(block_hash)
+                    try:
+                        if file_path.exists():
+                            file_path.unlink()
+                            count += 1
+                    except OSError as e:
+                        logger.debug(
+                            "Failed to unlink incompatible during clear: %s", e
+                        )
             self._index = PagedSSDCacheIndex(max_size_bytes=self._max_size)
             self._incompatible_index = PagedSSDCacheIndex(max_size_bytes=self._max_size)
         with self._hot_cache_lock:
@@ -1303,12 +1346,13 @@ class PagedSSDCacheManager:
 
     def close(self):
         self._shutting_down = True
-        try:
-            self._write_queue.put(None, timeout=5.0)
-        except queue.Full:
-            pass
-        if self._writer_thread.is_alive():
-            self._writer_thread.join(timeout=10.0)
+        if self._writer_thread is not None:
+            try:
+                self._write_queue.put(None, timeout=5.0)
+            except queue.Full:
+                pass
+            if self._writer_thread.is_alive():
+                self._writer_thread.join(timeout=10.0)
         logger.info("PagedSSDCacheManager closed")
 
     def get_stats(self) -> _SSDCacheStats:
@@ -1750,6 +1794,8 @@ class PagedSSDCacheManager:
         return True
 
     def _get_effective_max_size(self) -> int:
+        if self._cache_dir is None:
+            return self._max_size
         now = time.time()
         if (
             self._disk_usage_cache_value is not None
@@ -1978,6 +2024,8 @@ class PagedSSDCacheManager:
 
     def verify_and_repair_index(self) -> dict[str, int]:
         report = {"orphaned_files_removed": 0, "stale_entries_evicted": 0}
+        if self._cache_dir is None:
+            return report
         for f in self._cache_dir.rglob("*.tmp"):
             if f.is_file():
                 try:

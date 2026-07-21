@@ -115,6 +115,7 @@ _OPT_DEP_SUITES: list[tuple[str, list[str]]] = [
             "test_video_discovery.py",
             "test_custom_kernels_mfa.py",
             "test_skyreels_quant.py",
+            "test_pure_memory_kv_reconstruct.py",
         ],
     ),
     (

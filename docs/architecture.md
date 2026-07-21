@@ -139,9 +139,10 @@ Three-tier caching for KV states:
     - Dynamic allocation with LRU eviction
     - Up to 1000 blocks by default
 
-2. **PagedSSDCache** — SSD cold layer for evicted blocks
-    - Spills inactive blocks to SSD when GPU memory is full
-    - 20 GB default capacity
+2. **PagedSSDCache** — Tiered cold layer for evicted blocks
+    - Default (pure-memory mode, #158): in-memory LRU `hot_cache` only, no disk backing — prefix hits reconstruct with `cached_tokens > 0` without an SSD dir
+    - With `paged_ssd_cache_dir` set: spills inactive blocks to SSD when memory is full
+    - Bounded by `hot_cache_max_size` (1 GiB default in pure-memory mode); 100 GiB SSD cap when disk-backed
     - Transparent recovery when blocks are needed again
 
 3. **BlockAwarePrefixCache** — Copy-on-write prefix sharing
@@ -287,7 +288,7 @@ System RAM (e.g., 128 GB)
 ├── 64 GB — OS / other apps (Balanced tier: 50%)
 └── 64 GB — fusion-mlx budget
      ├── Model weights (GPU)
-     ├── KV cache (PagedCache → PagedSSDCache → disk)
+     ├── KV cache (PagedCache → PagedSSDCache hot_cache LRU; → disk only if paged_ssd_cache_dir set)
      ├── TurboQuant KV (4-bit compressed, ~4× less memory traffic)
      └── Prefix cache (shared blocks with COW)
 ```
