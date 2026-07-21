@@ -269,6 +269,34 @@ class SkyReelsBasePipeline:
         )
         self.config.num_inference_steps = n
 
+    def _cfg_keep_steps(self, n_steps: int) -> int:
+        # B1: 返回跑 b=2 (cond+uncond) 的步数, 其余步 b=1 (cond-only).
+        # 早期步 CFG 引导塑造结构, 晚期步结构已定, cond-only 算力减半且视觉无显著损失.
+        # 参考 Wang et al. "Faster Diffusion" (IAR 2024) late-step CFG reduction.
+        # FUSION_SKYREELS_DYNAMIC_CFG=0 关闭 (全部 b=2, 保持旧行为).
+        # FUSION_SKYREELS_CFG_KEEP_RATIO 默认 0.6 (前 60% 步跑 CFG).
+        import os
+
+        if os.environ.get("FUSION_SKYREELS_DYNAMIC_CFG", "1") == "0":
+            return n_steps
+        try:
+            ratio = float(os.environ.get("FUSION_SKYREELS_CFG_KEEP_RATIO", "0.6"))
+        except ValueError:
+            logger.warning(
+                "FUSION_SKYREELS_CFG_KEEP_RATIO=%s not float, use 0.6",
+                os.environ.get("FUSION_SKYREELS_CFG_KEEP_RATIO"),
+            )
+            ratio = 0.6
+        ratio = max(0.0, min(1.0, ratio))
+        keep = int(n_steps * ratio)
+        logger.info(
+            "denoise: dynamic_cfg on keep=%d/%d ratio=%.2f",
+            keep,
+            n_steps,
+            ratio,
+        )
+        return keep
+
     def warmup(self) -> None:
         # T1-2: 触发权重 Metal residency + mx.compile 首次编译, 前移首请求成本.
         # 256x256/9帧/1步: 满足 (nf-1)%4==0 与 %16==0, 最小形状跑通 DiT+VAE 链路.
@@ -389,25 +417,36 @@ class SkyReelsBasePipeline:
             latents.shape,
         )
 
+        # B1: 动态 CFG - 前 cfg_keep_steps 步跑 b=2 (cond+uncond), 余下步 b=1 (cond-only).
+        # b=1 步 DiT 前向算力减半; mx.compile 按 input shape 缓存, b=1/b=2 各编译一次.
+        cfg_keep_steps = self._cfg_keep_steps(n_steps)
+
         for step_idx, t in enumerate(timesteps):
             # 设置当前步 (xfuser 步级策略)
             self.step_strategy.set_current_step(step_idx)
 
             t_mx = mx.array([float(t)])
 
-            # CFG: 拼接 cond + uncond (b=2)
-            latent_input = mx.concatenate([latents] * 2)
-            context_input = mx.concatenate([context] * 2)
-            # grid_sizes/seq_lens 对齐 wan2 约定: 每个批次元素一条 (CFG b=2)
-            cfg_grid_sizes = list(grid_sizes) * 2
-            cfg_seq_lens = list(seq_lens) * 2
+            # B1: 动态 CFG - 早期步 b=2 (cond+uncond), 晚期步 b=1 (cond-only)
+            run_cfg = step_idx < cfg_keep_steps
+            if run_cfg:
+                latent_input = mx.concatenate([latents] * 2)
+                context_input = mx.concatenate([context] * 2)
+                cfg_grid_sizes = list(grid_sizes) * 2
+                cfg_seq_lens = list(seq_lens) * 2
+            else:
+                latent_input = latents
+                context_input = context
+                cfg_grid_sizes = list(grid_sizes)
+                cfg_seq_lens = list(seq_lens)
 
             # #149: 步级起始日志 - 当步前向开始即报进度, 避免两步间 ~115s 静默误判卡死
             logger.info(
-                "denoise: step=%d/%d starting t=%.4f",
+                "denoise: step=%d/%d starting t=%.4f cfg=%s",
                 step_idx + 1,
                 n_steps,
                 float(t),
+                "on" if run_cfg else "off(cond-only)",
             )
 
             # 模型前向
@@ -419,11 +458,12 @@ class SkyReelsBasePipeline:
                 cfg_grid_sizes,
             )
 
-            # CFG 合并
-            noise_pred = perform_guidance(
-                noise_pred,
-                self.config.guidance_scale,
-            )
+            # CFG 合并 (仅 b=2 步; b=1 步 noise_pred 已是 cond, guidance=1.0)
+            if run_cfg:
+                noise_pred = perform_guidance(
+                    noise_pred,
+                    self.config.guidance_scale,
+                )
 
             # 时序闪烁修复: 采样步连贯滤波 (防步间预测跳变)
             noise_pred = flicker_fix.filter_step(noise_pred)
