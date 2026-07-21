@@ -112,6 +112,30 @@ class SkyReelsBasePipeline:
         self._apply_steps_env_override()
         self._setup_optimizers()
 
+    def _dit_quantization_config(self) -> dict | None:
+        # C DiT 权重量化: FUSION_SKYREELS_QUANT 选 w8a16/w4/off.
+        # w8a16 = 8-bit 权重 (MLX nn.quantize bits=8) + bf16 激活 (MLX 默认).
+        # w4/nf4 = 4-bit 权重 (bits=4). off/未设 = None (全精度 bf16).
+        # 量化在 load_dit_weights 内 nn.quantize(model) 先于 load_weights,
+        # 源 bf16 权重按量化格式加载. compile 安全: mx.compile 懒编译, 首次
+        # 前向 (warmup) 在量化后构建 trace, 见 QuantizedLinear 结构.
+        import os
+
+        env = os.environ.get("FUSION_SKYREELS_QUANT", "").strip().lower()
+        if env in ("", "0", "off", "none", "bf16"):
+            return None
+        if env in ("w8a16", "w8", "int8", "8"):
+            logger.info("DiT 量化: w8a16 (bits=8 group=64)")
+            return {"bits": 8, "group_size": 64}
+        if env in ("w4", "nf4", "int4", "4"):
+            logger.info("DiT 量化: w4 (bits=4 group=64)")
+            return {"bits": 4, "group_size": 64}
+        logger.warning(
+            "FUSION_SKYREELS_QUANT=%s 未知, 支持 w8a16/w4/off, 跳过量化",
+            env,
+        )
+        return None
+
     def _load_models(self) -> None:
         """加载 DiT + VAE + 文本编码器 (真实权重, 非 stub).
 
@@ -164,6 +188,7 @@ class SkyReelsBasePipeline:
                     self.vae,
                     self.text_encoder,
                     weights_dir,
+                    quantization=self._dit_quantization_config(),
                 )
                 logger.info("真实权重加载成功: %s", weights_dir)
             except Exception as exc:

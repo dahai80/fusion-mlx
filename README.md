@@ -405,6 +405,17 @@ FUSION_SKYREELS_STEPS=20 fusion-mlx serve --model SkyReels-V3-R2V-14B-MLX
 FUSION_SKYREELS_WARMUP=0 fusion-mlx serve --model SkyReels-V3-R2V-14B-MLX
 ```
 
+**C DiT w8a16 权重量化 (load-level)**: `FUSION_SKYREELS_QUANT=w8a16` 在 `_load_models` 经 `load_all_weights(quantization=...)` -> `load_dit_weights` -> `nn.quantize(dit, bits=8, group_size=64)` 将 DiT 全部 `nn.Linear` 转 `QuantizedLinear` (8-bit 权重 + bf16 激活 = w8a16), 源 bf16 权重按量化格式加载. DiT=74% 瓶颈, 8-bit 权重显存减半 + int8 matmul 加速, 预期 ~2x. compile 安全: `mx.compile` 懒编译, 首次前向 (warmup) 在量化后构建 trace, 直接见 `QuantizedLinear` 结构 (非 stale). `nn.quantize` 递归 DiT `self.blocks` list (MLX nn.Module 收录 list-of-Module 子层). 也支持 `w4`/`nf4` (4-bit). 默认 off (全精度 bf16).
+
+```bash
+# w8a16 (8-bit 权重 + bf16 激活)
+FUSION_SKYREELS_QUANT=w8a16 fusion-mlx serve --model SkyReels-V3-R2V-14B-MLX
+# w4 / nf4 (4-bit 权重, 显存更省)
+FUSION_SKYREELS_QUANT=w4 fusion-mlx serve --model SkyReels-V3-R2V-14B-MLX
+# 关闭 (默认, 全精度 bf16)
+FUSION_SKYREELS_QUANT=off fusion-mlx serve --model SkyReels-V3-R2V-14B-MLX
+```
+
 > **T1-3 结论**: 不要再尝试在 mx.compile 下让 xfuser 生效 (已证根本不兼容). 降速用 `FUSION_SKYREELS_STEPS` 减步 (T2-1). 后续 T2-2 (DiT w8a16 权重量化, 复用 `/v1/convert`, DiT=74% 瓶颈 ~2x 加速) + T2-3 (CFG halve 研究) 为独立 follow-up.
 
 修复后: 真实 14B R2V `FUSION_SKYREELS_STEPS=3` 生效 (`cfg.num_inference_steps=3`), xfuser 旁路告警 emit, `fa_calls=0` (no-op 确认), 生成 OK shape=(1,3,28,256,256), VERIFY_OK; 128 单元测试全绿.
