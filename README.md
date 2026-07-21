@@ -416,6 +416,15 @@ FUSION_SKYREELS_QUANT=w4 fusion-mlx serve --model SkyReels-V3-R2V-14B-MLX
 FUSION_SKYREELS_QUANT=off fusion-mlx serve --model SkyReels-V3-R2V-14B-MLX
 ```
 
+**B1 动态 CFG (sampler-level, compile-friendly)**: 早期步跑 cond+uncond (b=2, CFG 引导塑造结构), 晚期步仅跑 cond (b=1, guidance=1.0). 晚期步 DiT 前向算力减半; mx.compile 按 input shape 缓存 (b=1/b=2 各编译一次, 非逐步 recompile), 不触碰 DiT 固化 trace. 参考 Wang et al. "Faster Diffusion" (IAR 2024) late-step CFG reduction. `_cfg_keep_steps(n_steps)` 返回跑 b=2 的步数 = `int(n_steps * keep_ratio)`; b=1 步跳过 `perform_guidance` (noise_pred 已是 cond, scheduler 见 [1,...] 与 b=2 合并后一致).
+
+```bash
+# 默认开 (前 60% 步跑 CFG, 后 40% cond-only)
+FUSION_SKYREELS_DYNAMIC_CFG=1 FUSION_SKYREELS_CFG_KEEP_RATIO=0.6 fusion-mlx serve --model SkyReels-V3-R2V-14B-MLX
+# 关闭 (全部 b=2, 保持旧行为)
+FUSION_SKYREELS_DYNAMIC_CFG=0 fusion-mlx serve --model SkyReels-V3-R2V-14B-MLX
+```
+
 > **T1-3 结论**: 不要再尝试在 mx.compile 下让 xfuser 生效 (已证根本不兼容). 降速用 `FUSION_SKYREELS_STEPS` 减步 (T2-1). 后续 T2-2 (DiT w8a16 权重量化, 复用 `/v1/convert`, DiT=74% 瓶颈 ~2x 加速) + T2-3 (CFG halve 研究) 为独立 follow-up.
 
 修复后: 真实 14B R2V `FUSION_SKYREELS_STEPS=3` 生效 (`cfg.num_inference_steps=3`), xfuser 旁路告警 emit, `fa_calls=0` (no-op 确认), 生成 OK shape=(1,3,28,256,256), VERIFY_OK; 128 单元测试全绿.
