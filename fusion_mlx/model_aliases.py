@@ -3,8 +3,9 @@
 
 import logging
 import os
+import re
 from dataclasses import dataclass
-from difflib import get_close_matches
+from difflib import SequenceMatcher
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -90,6 +91,10 @@ def list_profiles() -> list[AliasProfile]:
 
 
 def resolve_model(name: str) -> str:
+    # Local path takes priority over alias: a local dir matching an alias name
+    # wins (operator intent). Bare HF ids ("/" in name) skip the exists check.
+    if "/" not in name and os.path.exists(name):
+        return name
     aliases = _load_aliases()
     if name in aliases:
         entry = aliases[name]
@@ -97,10 +102,6 @@ def resolve_model(name: str) -> str:
             return entry
         if isinstance(entry, dict):
             return entry.get("hf_path", entry.get("path", name))
-    if "/" in name:
-        return name
-    if os.path.exists(name):
-        return name
     return name
 
 
@@ -111,6 +112,73 @@ def resolve_profile(name: str) -> AliasProfile | None:
     return None
 
 
+_SIZE_PATTERN = re.compile(r"\d+(?:\.\d+)?[bm](?:it)?\b", re.IGNORECASE)
+_SIZE_TOKEN_START = re.compile(r"^\d")
+_SEPARATOR_SPLIT = re.compile(r"[-_./]")
+
+
+def _letters_only_prefix(raw: str) -> str:
+    out = []
+    for ch in raw:
+        if ch.isalpha():
+            out.append(ch.lower())
+        else:
+            break
+    return "".join(out)
+
+
+def _has_size_token(name: str) -> bool:
+    return bool(_SIZE_PATTERN.search(name))
+
+
+def _family_prefix(name: str) -> str:
+    tokens = [t for t in _SEPARATOR_SPLIT.split(name) if t]
+    family_tokens = []
+    for tok in tokens:
+        if _SIZE_TOKEN_START.match(tok):
+            break
+        family_tokens.append(tok)
+    if not family_tokens:
+        return _letters_only_prefix(name)
+    return "-".join(family_tokens).lower()
+
+
 def suggest_similar(name: str, n: int = 3, cutoff: float = 0.6) -> list[str]:
+    # Family-aware suggest: gate on family-prefix match (or letter-only fallback
+    # for separator-mismatch / collapsed-hyphen inputs). Family filter IS the
+    # matcher - SequenceMatcher only ranks, cutoff is not applied as a gate
+    # (prefix matches like "hermes"->"hermes3-8b-4bit" sit below 0.6 but are
+    # correct). cutoff retained for API signature stability.
     aliases = _load_aliases()
-    return get_close_matches(name, aliases.keys(), n=n, cutoff=cutoff)
+    alias_names = list(aliases.keys())
+    if not alias_names:
+        return []
+    if len(name) < 2:
+        return []
+    has_size = _has_size_token(name)
+    tokens = [t for t in _SEPARATOR_SPLIT.split(name) if t]
+    is_multi_segment = len(tokens) > 1
+    # Legit-looking HF id: multi-segment without a size token
+    # (bert-base-uncased, qwen-coder), or single-segment with a digit but no
+    # size token (gpt2, xyzabc12345). Must NOT bait-and-switch into an alias.
+    if is_multi_segment and not has_size:
+        return []
+    if not is_multi_segment and not name.isalpha() and not has_size:
+        return []
+    family = _family_prefix(name)
+    candidates = [a for a in alias_names if a.lower().startswith(family)]
+    if not candidates:
+        # Letter-only fallback (collapsed separator / version-digit mash).
+        letters = _letters_only_prefix(name)
+        if len(letters) < 3:
+            return []
+        candidates = [a for a in alias_names if a.lower().startswith(letters)]
+    if not candidates:
+        return []
+    ranked = sorted(
+        candidates,
+        key=lambda a: SequenceMatcher(None, name, a).ratio(),
+        reverse=True,
+    )
+    logger.debug("suggest_similar: name=%s family=%s -> %s", name, family, ranked[:n])
+    return ranked[:n]

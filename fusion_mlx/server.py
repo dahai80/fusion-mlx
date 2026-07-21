@@ -125,6 +125,13 @@ _max_request_bytes: int | None = None
 # the engine into the pool once the pool exists. None on the multi-model
 # ``--model-dir`` path (which discovers into the pool directly).
 _pending_single_model: dict | None = None
+# Effective parser state - cli_serve / model_auto_config set these from explicit
+# --tool-call-parser / --reasoning-parser flags OR auto-detect. routes_internal.
+# models reads them to surface LIVE parsers on /v1/models (not just static
+# alias-profile defaults). embedding_model_locked pins the embed model.
+_tool_call_parser: str | None = None
+_reasoning_parser_name: str | None = None
+_embedding_model_locked: str | None = None
 
 
 def _sync_config() -> None:
