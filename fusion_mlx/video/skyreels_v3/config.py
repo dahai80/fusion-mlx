@@ -63,7 +63,10 @@ BRANCH_CONFIGS: dict[str, SkyReelsBranchConfig] = {
         qk_norm=True,
         cross_attn_norm=True,
         eps=1e-6,
-        cross_attn_type="i2v_cross_attn",
+        # issue #164: R2V-14B transformer/config.json added_kv_proj_dim=null,
+        # 纯 T2V cross-attn 无 k_img/v_img 分支. 旧 i2v_cross_attn 多创建 img 分支
+        # 致 200+ 参数停留 init.
+        cross_attn_type="t2v_cross_attn",
         temporal_window=-1,  # R2V 不用时序分支
         has_audio=False,
         audio_dim=0,

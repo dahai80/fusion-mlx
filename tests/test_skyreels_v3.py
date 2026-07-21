@@ -868,6 +868,66 @@ class TestRealWeightLoad:
         ), "探测参数加载前后未变化 -> 真实权重未落地 (重映射回归)"
 
 
+class TestR2VArchIssue164:
+    """issue #164: R2V-14B arch 对齐 diffusers SkyReelsV2TransformerBlock.
+
+    修复前: cross_attn_type=i2v (多 k_img/v_img/norm_k_img 随机 init) +
+    norm1 有参 + norm2/3 命名错位 (diffusers norm2=cross-attn前 被加载到
+    MLX ffn前 norm2) + Head.norm 有参 -> 322 参数未覆盖/错位, 生成劣化.
+    """
+
+    def test_r2v_default_cross_attn_is_t2v(self):
+        from fusion_mlx.video.skyreels_v3.transformer_r2v import SkyReelsR2VDiT
+
+        m = SkyReelsR2VDiT()
+        assert m.cross_attn_type == "t2v_cross_attn"
+
+    def test_r2v_no_img_branch_params(self):
+        import mlx.nn as nn
+
+        from fusion_mlx.video.skyreels_v3.transformer_r2v import SkyReelsR2VDiT
+
+        m = SkyReelsR2VDiT()
+        keys = set(k for k, _ in nn.utils.tree_flatten(m.parameters()))
+        img = [k for k in keys if "k_img" in k or "v_img" in k or "norm_k_img" in k]
+        assert img == [], f"R2V 不该有 img 分支 (added_kv_proj_dim=null): {img[:3]}"
+
+    def test_r2v_norm1_norm3_no_affine_norm2_affine(self):
+        import mlx.nn as nn
+
+        from fusion_mlx.video.skyreels_v3.transformer_r2v import SkyReelsR2VDiT
+
+        m = SkyReelsR2VDiT()
+        keys = set(k for k, _ in nn.utils.tree_flatten(m.parameters()))
+        # norm1 (attn1前) / norm3 (ffn前): affine=False -> 无 bias
+        assert "blocks.0.norm1.bias" not in keys, "norm1 应 affine=False 无 bias"
+        assert "blocks.0.norm3.bias" not in keys, "norm3 应 affine=False 无 bias"
+        # norm2 (cross-attn前, cross_attn_norm=True): affine=True -> 有 weight+bias
+        assert "blocks.0.norm2.weight" in keys, "norm2 (cross-attn前) 应有 weight"
+        assert "blocks.0.norm2.bias" in keys, "norm2 (cross-attn前) 应有 bias"
+
+    def test_r2v_head_norm_no_affine(self):
+        import mlx.nn as nn
+
+        from fusion_mlx.video.skyreels_v3.transformer_r2v import SkyReelsR2VDiT
+
+        m = SkyReelsR2VDiT()
+        keys = set(k for k, _ in nn.utils.tree_flatten(m.parameters()))
+        assert "head.norm.bias" not in keys, "Head.norm 应 affine=False 无 bias"
+
+    def test_r2v_added_kv_proj_dim_routes_i2v(self):
+        from fusion_mlx.video.skyreels_v3.transformer_r2v import SkyReelsR2VDiT
+
+        m = SkyReelsR2VDiT({"added_kv_proj_dim": 5120})
+        assert m.cross_attn_type == "i2v_cross_attn"
+
+    def test_r2v_config_preset_t2v(self):
+        from fusion_mlx.video.skyreels_v3 import get_branch_config
+
+        cfg = get_branch_config("skyreels-v3-r2v-14b")
+        assert cfg.cross_attn_type == "t2v_cross_attn"
+
+
 # ============================================================================
 # 测试入口
 # ============================================================================
