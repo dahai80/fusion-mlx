@@ -36,6 +36,25 @@ def _infer_flux2_config(model_path: str) -> str:
     return "flux2_klein_9b"
 
 
+def _flux_quantize_from_env() -> int | None:
+    import os
+
+    env = os.environ.get("FUSION_FLUX_QUANT", "").strip().lower()
+    if env in ("", "0", "off", "none", "bf16"):
+        return None
+    if env in ("w8a16", "w8", "int8", "8"):
+        logger.info("Flux2Klein 量化: w8a16 (quantize=8)")
+        return 8
+    if env in ("w4", "nf4", "int4", "4"):
+        logger.info("Flux2Klein 量化: w4 (quantize=4)")
+        return 4
+    logger.warning(
+        "FUSION_FLUX_QUANT=%s 未知, 支持 w8a16/w4/off, 跳过量化",
+        env,
+    )
+    return None
+
+
 class ImageGenEngine(BaseNonStreamingEngine):
     def __init__(self, model_name: str, **kwargs):
         super().__init__()
@@ -48,6 +67,8 @@ class ImageGenEngine(BaseNonStreamingEngine):
         # Flux2 klein. None = load at the model's native precision. Passed
         # through to mflux Flux2Klein(quantize=...).
         self._quantize = kwargs.get("quantize")
+        if self._quantize is None:
+            self._quantize = _flux_quantize_from_env()
 
     @property
     def model_name(self) -> str:
