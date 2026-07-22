@@ -48,7 +48,10 @@ MODEL_TYPES: dict[str, dict[str, Any]] = {
         "text_len": 512,
         "window_size": (-1, -1),
         "model_type": "i2v",
-        "cross_attn_type": "i2v_cross_attn",
+        # issue #188: R2V 源权重 (SkyReelsA2WanI2v3DModel) 无 k_img/v_img/norm_k_img,
+        # 参考图+文本 769 token 经同一 k/v 投影 -> t2v_cross_attn.
+        # i2v_cross_attn 会创建 40 层 × 5 = 200 个无源权重的随机初始化参数.
+        "cross_attn_type": "t2v_cross_attn",
         "has_audio": False,
     },
     "v2v_14b": {

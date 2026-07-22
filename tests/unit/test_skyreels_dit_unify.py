@@ -156,3 +156,36 @@ def test_a2v_lazy_compile_tolerance():
     mx.eval(o2)
     md = float(mx.max(mx.abs(o1 - o2)))
     assert md < 1e-2, f"A2V compile maxdiff {md} >= 1e-2"
+
+
+def test_r2v_config_t2v_cross_attn_no_image_proj():
+    # issue #188: R2V-14B 源权重 (SkyReelsA2WanI2v3DModel) 无 k_img/v_img/norm_k_img,
+    # 参考图+文本 769 token 经同一 k/v 投影 -> r2v_14b MODEL_TYPES 必须用 t2v_cross_attn.
+    # i2v_cross_attn 会创建 40 层 × 5 = 200 个无源权重的随机初始化 k_img/v_img/norm_k_img.
+    from mlx.utils import tree_flatten
+
+    from fusion_mlx.video.skyreels_v3.convert_skyreels_v3 import MODEL_TYPES
+
+    assert (
+        MODEL_TYPES["r2v_14b"]["cross_attn_type"] == "t2v_cross_attn"
+    ), "r2v_14b MODEL_TYPES 必须用 t2v_cross_attn (源权重无 k_img/v_img/norm_k_img)"
+
+    def _leaves(model):
+        # tree_flatten 已返回点分路径字符串, 直接取 str(path)
+        return [str(p) for p, _ in tree_flatten(model.parameters())]
+
+    # t2v: 参考图 k_img/v_img/norm_k_img 不存在 (源权重无对应键, 不应随机初始化)
+    mx.random.seed(7)
+    t2v = SkyReelsR2VDiT(dict(TINY, cross_attn_type="t2v_cross_attn"))
+    lt = _leaves(t2v)
+    assert not any("k_img" in n for n in lt), "t2v 不应有 k_img"
+    assert not any("v_img" in n for n in lt), "t2v 不应有 v_img"
+    assert not any("norm_k_img" in n for n in lt), "t2v 不应有 norm_k_img"
+
+    # 负对照: i2v 必须创建 k_img/v_img/norm_k_img (证明本断言能抓到 #188 回归)
+    mx.random.seed(7)
+    i2v = SkyReelsR2VDiT(dict(TINY, cross_attn_type="i2v_cross_attn"))
+    li = _leaves(i2v)
+    assert any("k_img" in n for n in li), "i2v 负对照必须有 k_img"
+    assert any("v_img" in n for n in li), "i2v 负对照必须有 v_img"
+    assert any("norm_k_img" in n for n in li), "i2v 负对照必须有 norm_k_img"
