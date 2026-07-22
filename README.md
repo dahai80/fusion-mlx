@@ -416,6 +416,33 @@ fusion-mlx serve --model SkyReels-V3-R2V-14B-MLX
 > default off, zero prod risk) as infrastructure for a future distilled small draft.
 > See `fusion_mlx/video/skyreels_v3/SPECULATIVE_DENOISE.md`.
 
+### Metal Async Dispatch (#180)
+
+Attempt to recover GPU idle during the serial denoise loop: each step's `mx.eval`
+blocks the CPU until the GPU finishes, leaving the GPU idle while Python builds the
+next step's graph. MLX 0.32 has no CommandBuffer API, so the path uses `mx.async_eval`
+per step (non-blocking, still materializes and frees like `eval`) with a final
+`mx.synchronize` before VAE decode.
+
+- Env: `FUSION_ASYNC_DENOISE` (default `"0"` off) - the prod sync path is
+  byte-identical when off, zero risk.
+- Memory-safe per #146: `async_eval` materializes each step's latents and frees the
+  forward graph (just non-blocking), so peak ≈ single-step working set, not 2×/30×.
+
+```bash
+# env-gated, default off - does not affect the existing SkyReels-V3 generation path
+FUSION_ASYNC_DENOISE=1 fusion-mlx serve --model SkyReels-V3-R2V-14B-MLX
+```
+
+> **Result (no speedup)**: numerically bit-identical to the sync path and memory-safe
+> (peak unchanged), but `mx.async_eval` adds overhead that exceeds the GPU-idle
+> (CPU graph-build) it recovers. A tiny DiT is flat (0.994×); a medium DiT
+> (12L/dim256) is 16.8% **slower** (0.832×) and degrades across runs (60->72 ms while
+> sync stays 57-58 ms). The #180 hypothesis is falsified at small/medium scale; the
+> real 14B E2E was skipped per this negative signal (#177 precedent). The machinery
+> stays landed (env-gated, default off, zero prod risk) as infrastructure. See
+> `scripts/bench_async_denoise.py`.
+
 ## Project Structure
 
 ```
