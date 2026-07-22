@@ -228,6 +228,7 @@ async def _run_chat(request: ChatCompletionRequest) -> ChatCompletionResponse:
             tools=request.tools,
             stop=sampling.stop,
             chat_template_kwargs=ct_kwargs if ct_kwargs else None,
+            prefix_cache_boundary=getattr(request, "prefix_cache_boundary", None),
         )
         # Honor parallel_tool_calls=false by capping to 1 call
         tool_calls = gen.tool_calls
@@ -355,6 +356,7 @@ async def _stream_chat_generator(
             tools=request.tools,
             stop=sampling.stop,
             chat_template_kwargs=ct_kwargs_stream if ct_kwargs_stream else None,
+            prefix_cache_boundary=getattr(request, "prefix_cache_boundary", None),
         ):
             if gen.new_text:
                 accumulated += gen.new_text

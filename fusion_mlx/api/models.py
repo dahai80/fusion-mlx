@@ -367,6 +367,9 @@ class ChatCompletionRequest(BaseModel):
     # accepted (no Pydantic drop) but not yet forwarded — see
     # ``_resolve_enable_thinking`` in service/helpers.py for precedence.
     chat_template_kwargs: dict | None = None
+    # Prefix cache boundary token count — hint from Anthropic cache_control blocks.
+    # When set, the engine can reuse cached KV blocks for tokens 0..boundary-1.
+    prefix_cache_boundary: int | None = None
     # Number of completions (only n=1 supported)
     n: int | None = None
 

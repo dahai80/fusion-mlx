@@ -96,14 +96,20 @@ def _extract_anthropic_text(msg: Any) -> str:
 def _anthropic_to_messages(
     req: AnthropicMessagesRequest,
     tokenizer: Any | None = None,
-) -> list[dict]:
+) -> tuple[list[dict], int | None]:
     """Convert Anthropic MessagesRequest to engine messages.
+
+    Returns (messages, prefix_cache_boundary) where prefix_cache_boundary
+    is an estimated token count of the static prefix (derived from
+    cache_control blocks or SYSTEM_PROMPT_DYNAMIC_BOUNDARY marker).
 
     Uses convert_anthropic_to_internal() when a tokenizer is available
     so that tool_use/tool_result blocks are preserved rather than
     flattened to plain text.  Falls back to the legacy text-only
     path when no tokenizer is provided.
     """
+    prefix_cache_boundary = None
+
     if tokenizer is not None:
         from .anthropic_utils import convert_anthropic_to_internal
 
@@ -113,28 +119,76 @@ def _anthropic_to_messages(
             preserve_images=True,
             native_reasoning_content=True,
         )
-        return messages
+        # Detect boundary from cache_control in system blocks
+        prefix_cache_boundary = _extract_prefix_cache_boundary(req)
+        return messages, prefix_cache_boundary
 
     # Legacy text-only fallback (no tokenizer available)
     messages = []
     if hasattr(req, "system") and req.system:
         if isinstance(req.system, str):
-            messages.append({"role": "system", "content": req.system})
+            system_text = req.system
+            boundary_marker = "SYSTEM_PROMPT_DYNAMIC_BOUNDARY"
+            marker_idx = system_text.find(boundary_marker)
+            if marker_idx != -1:
+                prefix_cache_boundary = len(system_text[:marker_idx]) // 4
+                system_text = (
+                    system_text[:marker_idx]
+                    + system_text[marker_idx + len(boundary_marker) :]
+                )
+            messages.append({"role": "system", "content": system_text})
         elif isinstance(req.system, list):
             parts = []
+            cached_char_count = 0
             for part in req.system:
+                txt = ""
+                has_cache_control = False
                 if isinstance(part, dict) and part.get("type") == "text":
                     txt = part.get("text", "")
-                    if txt:
-                        parts.append(txt)
+                    has_cache_control = part.get("cache_control") is not None
+                elif hasattr(part, "type") and part.type == "text":
+                    txt = getattr(part, "text", "")
+                    has_cache_control = getattr(part, "cache_control", None) is not None
+                if txt:
+                    parts.append(txt)
+                if has_cache_control:
+                    cached_char_count = sum(len(p) for p in parts) + len(parts) - 1
             if parts:
                 messages.append({"role": "system", "content": "\n\n".join(parts)})
+            if cached_char_count > 0:
+                prefix_cache_boundary = cached_char_count // 4
 
     for msg in req.messages or []:
         role = msg.role if hasattr(msg, "role") else msg.get("role", "user")
         content = _extract_anthropic_text(msg)
         messages.append({"role": role, "content": content})
-    return messages
+    return messages, prefix_cache_boundary
+
+
+def _extract_prefix_cache_boundary(req: AnthropicMessagesRequest) -> int | None:
+    """Extract prefix cache boundary from cache_control in system blocks."""
+    if not hasattr(req, "system") or not req.system:
+        return None
+    if isinstance(req.system, str):
+        marker_idx = req.system.find("SYSTEM_PROMPT_DYNAMIC_BOUNDARY")
+        if marker_idx != -1:
+            return len(req.system[:marker_idx]) // 4
+        return None
+    if isinstance(req.system, list):
+        cached_char_count = 0
+        for part in req.system:
+            has_cache_control = False
+            txt = ""
+            if isinstance(part, dict) and part.get("type") == "text":
+                txt = part.get("text", "")
+                has_cache_control = part.get("cache_control") is not None
+            elif hasattr(part, "type") and part.type == "text":
+                txt = getattr(part, "text", "")
+                has_cache_control = getattr(part, "cache_control", None) is not None
+            if has_cache_control:
+                cached_char_count += len(txt)
+        return cached_char_count // 4 if cached_char_count > 0 else None
+    return None
 
 
 def _build_sampling_params(req: AnthropicMessagesRequest) -> SamplingParams:
@@ -210,7 +264,7 @@ async def _run_anthropic_messages(
     tokenizer = getattr(engine, "_tokenizer", None) or getattr(
         engine, "tokenizer", None
     )
-    messages = _anthropic_to_messages(req, tokenizer=tokenizer)
+    messages, prefix_cache_boundary = _anthropic_to_messages(req, tokenizer=tokenizer)
     openai_tool_choice = (
         _convert_tool_choice(req.tool_choice)
         if getattr(req, "tool_choice", None)
@@ -238,6 +292,7 @@ async def _run_anthropic_messages(
             tools=getattr(req, "tools", None),
             stop=sampling.stop,
             chat_template_kwargs=ct_kwargs if ct_kwargs else None,
+            prefix_cache_boundary=prefix_cache_boundary,
         )
 
         # #71 Phase 2: enforce tool_choice post-generation. The live
@@ -341,7 +396,7 @@ async def _stream_anthropic_generator(
     tokenizer = getattr(engine, "_tokenizer", None) or getattr(
         engine, "tokenizer", None
     )
-    messages = _anthropic_to_messages(req, tokenizer=tokenizer)
+    messages, prefix_cache_boundary = _anthropic_to_messages(req, tokenizer=tokenizer)
     openai_tool_choice = (
         _convert_tool_choice(req.tool_choice)
         if getattr(req, "tool_choice", None)
@@ -381,6 +436,7 @@ async def _stream_anthropic_generator(
             tools=getattr(req, "tools", None),
             stop=sampling.stop,
             chat_template_kwargs=ct_kwargs_stream if ct_kwargs_stream else None,
+            prefix_cache_boundary=prefix_cache_boundary,
         ):
             if gen.new_text:
                 chunk = StreamChunk(
