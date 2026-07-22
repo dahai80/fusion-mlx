@@ -12,6 +12,7 @@ Closes #178
 
 import logging
 import time
+import weakref
 from dataclasses import dataclass
 
 logger = logging.getLogger(__name__)
@@ -22,6 +23,29 @@ try:
     HAS_MLX = True
 except ImportError:
     HAS_MLX = False
+
+# #178 Phase-2: module-level registry of live caches so the admin stats
+# endpoint can aggregate per-encoder caches without threading references
+# through the lazy-loaded server->engine->pipeline chain. WeakSet keeps
+# caches alive only while their owning encoder is alive (auto-removed on GC).
+_REGISTRY: "weakref.WeakSet[DiffusionRadixCache]" = weakref.WeakSet()
+
+
+def all_cache_stats() -> list[dict]:
+    """Aggregate stats for every live DiffusionRadixCache instance.
+
+    Returns one dict per cache, each = {"name": str|None, **stats()}.
+    Caches that have been garbage-collected (encoder unloaded) are absent.
+    """
+    out = []
+    for cache in _REGISTRY:
+        try:
+            entry = {"name": cache.name}
+            entry.update(cache.stats())
+            out.append(entry)
+        except ReferenceError:
+            continue
+    return out
 
 
 @dataclass
@@ -65,11 +89,15 @@ class DiffusionRadixCache:
         stats = cache.stats()
     """
 
-    def __init__(self, max_mb: int = 512):
+    def __init__(self, max_mb: int = 512, name: str | None = None):
         self.max_bytes = max_mb * 1024 * 1024
         self._root = _RadixNode()
         self._stats = RadixCacheStats()
         self._clock = 0.0
+        # #178 Phase-2: human-readable label surfaced by all_cache_stats()
+        self.name = name
+        _REGISTRY.add(self)
+        logger.debug("radix cache created: name=%s max_mb=%d", name, max_mb)
 
     def get(self, key: str) -> object | None:
         """Look up a key in the radix tree.

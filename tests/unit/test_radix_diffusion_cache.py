@@ -185,3 +185,110 @@ class TestUMT5EncoderCache:
         r2 = enc.encode_text("stubbed", max_length=16)
         assert mx.array_equal(r1, r2)
         assert enc._text_cache.stats()["insertions"] == 0
+
+
+# #178 Phase-2: weakref registry + all_cache_stats() aggregator
+class TestCacheRegistry:
+    def test_all_cache_stats_registry(self):
+        from fusion_mlx.cache.radix_diffusion_cache import all_cache_stats
+
+        c1 = DiffusionRadixCache(max_mb=1, name="umt5")
+        c2 = DiffusionRadixCache(max_mb=1, name="clip")
+        c1.put("a", mx.ones((2, 2)))
+        c2.get("miss")
+        stats = all_cache_stats()
+        names = {s["name"] for s in stats}
+        assert "umt5" in names
+        assert "clip" in names
+        umt5 = next(s for s in stats if s["name"] == "umt5")
+        clip = next(s for s in stats if s["name"] == "clip")
+        assert umt5["insertions"] == 1
+        assert clip["misses"] == 1
+
+    def test_registry_weakref_gc(self):
+        import gc
+
+        from fusion_mlx.cache.radix_diffusion_cache import all_cache_stats
+
+        c = DiffusionRadixCache(max_mb=1, name="gc_target")
+        assert any(s["name"] == "gc_target" for s in all_cache_stats())
+        del c
+        gc.collect()
+        assert not any(s["name"] == "gc_target" for s in all_cache_stats())
+
+    def test_unnamed_cache_has_none_name(self):
+        from fusion_mlx.cache.radix_diffusion_cache import all_cache_stats
+
+        c = DiffusionRadixCache(max_mb=1)  # default name=None
+        stats = all_cache_stats()
+        assert any(s.get("name") is None for s in stats)
+
+
+# #178 Phase-2: CLIP text-encoding cache wiring
+class TestCLIPTextEncoderCache:
+    def test_clip_encoder_has_named_cache(self):
+        from fusion_mlx.video.skyreels_v3.text_encoder import CLIPTextEncoder
+
+        enc = CLIPTextEncoder()
+        assert enc._text_cache is not None
+        assert enc._text_cache.name == "clip"
+
+    def test_clip_cache_hit_skips_load(self):
+        from fusion_mlx.video.skyreels_v3.text_encoder import (
+            CLIPTextEncoder,
+            _prompt_hash,
+        )
+
+        enc = CLIPTextEncoder()
+        # pre-populate cache with the exact key encode_text computes
+        key = f"clip:77:{_prompt_hash('a cat')}"
+        sentinel = mx.ones((1, enc.EMBED_DIM)) * 7.0
+        enc._text_cache.put(key, sentinel)
+        # hit path must NOT call _ensure_loaded -> backend/model stay unloaded
+        out = enc.encode_text("a cat")
+        assert enc._backend is None
+        assert enc._clip_model is None
+        assert mx.array_equal(out, sentinel)
+        assert enc._text_cache.stats()["hits"] == 1
+
+    def test_clip_stub_mode_not_cached(self):
+        from fusion_mlx.video.skyreels_v3.text_encoder import CLIPTextEncoder
+
+        enc = CLIPTextEncoder()
+        # force stub without real load: _ensure_loaded early-returns when
+        # _clip_model is already set, leaving _backend="stub"
+        enc._clip_model = "stub"
+        enc._backend = "stub"
+        r1 = enc.encode_text("stubbed clip")
+        r2 = enc.encode_text("stubbed clip")
+        assert mx.array_equal(r1, r2)
+        assert enc._text_cache.stats()["insertions"] == 0
+
+    def test_clip_different_prompts_no_hit(self):
+        from fusion_mlx.video.skyreels_v3.text_encoder import CLIPTextEncoder
+
+        enc = CLIPTextEncoder()
+        enc._clip_model = "stub"
+        enc._backend = "stub"
+        enc.encode_text("prompt one")
+        enc.encode_text("prompt two")
+        assert enc._text_cache.stats()["hits"] == 0
+
+
+# #178 Phase-2: /v1/cache/stats endpoint aggregation
+class TestCacheStatsEndpoint:
+    def test_stats_endpoint_aggregates_registry(self):
+        import asyncio
+
+        from fusion_mlx.routes_internal.cache import cache_stats
+
+        c = DiffusionRadixCache(max_mb=1, name="endpoint_test")
+        c.put("k", mx.ones((2, 2)))
+        result = asyncio.run(cache_stats(is_admin=True))
+        assert result["cache_type"] == "diffusion_text_encoding"
+        names = {s["name"] for s in result["caches"]}
+        assert "endpoint_test" in names
+        totals = result["totals"]
+        assert totals["cache_count"] >= 1
+        assert "hit_rate" in totals
+        assert totals["insertions"] >= 1

@@ -186,5 +186,39 @@ async def clear_cache(is_admin: bool = Depends(require_admin)):
 
 
 @router.get("/stats")
-async def cache_stats():
-    return {"message": "Cache stats not available in this build"}
+async def cache_stats(is_admin: bool = Depends(require_admin)):
+    # #178 Phase-2: aggregate diffusion text-encoding radix cache stats.
+    # Reports per-encoder caches (UMT5/CLIP) via the module-level weakref
+    # registry. This is NOT the LLM KV/prefix cache - labeled explicitly.
+    from ..cache.radix_diffusion_cache import all_cache_stats
+
+    caches = all_cache_stats()
+    if not caches:
+        return {
+            "cache_type": "diffusion_text_encoding",
+            "caches": [],
+            "message": "No diffusion text caches active",
+        }
+
+    total_hits = sum(c.get("hits", 0) for c in caches)
+    total_misses = sum(c.get("misses", 0) for c in caches)
+    totals = {
+        "cache_count": len(caches),
+        "hits": total_hits,
+        "misses": total_misses,
+        "evictions": sum(c.get("evictions", 0) for c in caches),
+        "insertions": sum(c.get("insertions", 0) for c in caches),
+        "total_bytes": sum(c.get("total_bytes", 0) for c in caches),
+        "hit_rate": total_hits / max(total_hits + total_misses, 1),
+    }
+    logger.debug(
+        "cache stats: %d caches, %d hits/%d misses",
+        len(caches),
+        total_hits,
+        total_misses,
+    )
+    return {
+        "cache_type": "diffusion_text_encoding",
+        "caches": caches,
+        "totals": totals,
+    }

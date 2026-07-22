@@ -477,7 +477,12 @@ fusion-mlx serve --model SkyReels-V3-R2V-14B-MLX
 FUSION_DIFFUSION_TEXT_CACHE=0 fusion-mlx serve --model SkyReels-V3-R2V-14B-MLX
 ```
 
-> **范围 (phase-1)**: 本 PR 落地 UMT5Encoder 全键缓存 (相同 prompt -> 0ms). 后续 phase-2: token 级前缀 KV 共享 (公共前缀只编码一次, 仅编码变化后缀) + CLIPTextEncoder 接入 + 视频时序 latent 复用 + admin 统计端点.
+> **范围**: phase-1 = UMT5Encoder 全键缓存 (相同 prompt -> 0ms). Phase-2 (本变更) = CLIPTextEncoder 接入 + admin 统计端点. 仍延期: 视频时序 latent 复用 (高风险, #177 负面先例). token 级前缀 KV 共享对 T5/UMT5 **语义无效** - T5 是双向编码器 (位置 i 的隐状态依赖完整序列), 前缀隐状态复用会破坏输出 (不同于因果 decoder LLM), 全键缓存才是正确做法.
+
+**Phase-2 补充:**
+
+- **CLIP 编码器接入**: `CLIPTextEncoder.encode_text` (Flux/SD 路径) 同样缓存 - 键 `f"clip:{max_length}:{sha256(text)[:16]}"` (列表输入用 `NUL` 连接). 命中在 `_ensure_loaded()` 之前返回, 重复 prompt 根本不加载 CLIP 模型 (价值超过去掉单次 forward). stub 模式不缓存.
+- **admin 统计端点**: `GET /v1/cache/stats` (admin 鉴权) 通过模块级 `weakref` 注册表聚合所有存活缓存. 响应: `{"cache_type": "diffusion_text_encoding", "caches": [{name, hits, misses, evictions, insertions, leaf_count, total_bytes, max_bytes, hit_rate}, ...], "totals": {cache_count, hits, misses, evictions, insertions, total_bytes, hit_rate}}`. 已卸载编码器的缓存自动移除 (weakref). 报告的是扩散文本编码缓存, 非 LLM KV/prefix cache.
 
 ### Speculative Denoise (#177)
 
