@@ -134,6 +134,20 @@ class SpecStats:
             return 0.0
         return self.baseline_steps / self.full_forwards
 
+    def to_dict(self) -> dict:
+        # issue #177 Phase-3: plain-dict serialization for the denoise-stats
+        # stage surface (VideoBackend.last_denoise_stats / GET /denoise-stats).
+        # Adds nothing to the denoise hot path; only called by the poll route.
+        return {
+            "macro_steps": self.macro_steps,
+            "accepted": list(self.accepted),
+            "avg_accept": self.avg_accept,
+            "full_forwards": self.full_forwards,
+            "draft_forwards": self.draft_forwards,
+            "baseline_steps": self.baseline_steps,
+            "speedup": self.speedup,
+        }
+
 
 def speculative_denoise(
     full_velocity: VelocityFn,

@@ -146,6 +146,12 @@ class VideoGenEngine(BaseNonStreamingEngine):
     def get_stats(self) -> dict[str, Any]:
         return {"model_name": self._model_name, "loaded": self._loaded}
 
+    def last_denoise_stats(self) -> dict[str, Any]:
+        # issue #177 Phase-3: delegate to the backend. VideoBackend provides a
+        # {} default, so this is safe for every backend (no spec-denoise path
+        # -> empty dict, no break to the released stage API).
+        return self._backend.last_denoise_stats()
+
     def __repr__(self) -> str:
         status = "running" if self._loaded else "stopped"
         return f"<VideoGenEngine model={self._model_name} status={status}>"

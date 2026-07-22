@@ -139,6 +139,9 @@ _OPT_DEP_SUITES: list[tuple[str, list[str]]] = [
             # hard-imports mlx + SkyReelsBasePipeline stub (#180 Metal async dispatch);
             # skip on Linux CI (mlx absent/mocked), run on macOS.
             "test_async_denoise_180.py",
+            # hard-imports mlx + speculative_denoise + videos_routes (#177 Phase-3
+            # spec-denoise stats stage API); skip on Linux CI (mlx absent/mocked).
+            "test_spec_denoise_stats.py",
         ],
     ),
     (

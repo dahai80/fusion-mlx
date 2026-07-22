@@ -5,12 +5,14 @@ Draft DiT predicts K future denoise steps cheaply; the full DiT verifies all K i
 one batched forward; the longest agreeing prefix is accepted and the full model
 corrects at the divergence point. Target: 2-3x speedup on 14B.
 
-Status: **Phase 1 + Phase 2 landed.** Phase 1 = algorithm + draft co-load API +
+Status: **Phase 1 + Phase 2 + Phase 3 landed.** Phase 1 = algorithm + draft co-load API +
 synthetic-DiT unit tests (env-gated, zero production risk). Phase 2 = real 14B
 R2V wiring (`forward_partial` + spec denoise loop) + 14B acceptance sweep.
 **Phase-2 result: layer-pruned draft gives 0% acceptance at safe epsilon and NO
 speedup (0.2-0.4x, i.e. slower than baseline).** See "Phase 2 results" below.
-Phase 3 (fusion-comfyUI Stage API) is a follow-up.
+Phase 3 = additive stats surface (`VideoBackend.last_denoise_stats` +
+`GET /v1/videos/denoise-stats`) so clients can read the last run's acceptance
+stats; feature surface for when a real distilled draft arrives.
 
 ## Algorithm
 
@@ -84,6 +86,7 @@ checkpoint.
 | `FUSION_SPEC_K` | `4` | draft lookahead depth |
 | `FUSION_SPEC_EPSILON` | `0.1` | relative velocity error threshold |
 | `FUSION_SPEC_DRAFT_BLOCKS` | - | layer-pruned block count (Phase 2) |
+| `FUSION_SPEC_EVAL_STEPS` | `1` | eval draft velocities each step for stats (`SpecStats`) |
 
 ## Feasibility evidence
 
@@ -160,9 +163,61 @@ checkpoint.
 - Deferred: UniPC 2nd-order corrector in spec mode; production `mx.compile`
   of the spec path.
 
-## Phase 3 (follow-up)
+## Phase 3 (landed) - denoise-stats surface
 
-- fusion-comfyUI Stage API exposure (`on_step` reports `SpecStats`).
+The released Stage API (`denoise() -> mx.array`, PR #170) and step callback
+(`on_step: Callable[[int, int], Awaitable[None]]`, PR #171) signatures cannot
+carry a stats dict without breaking the released contracts, and `SpecStats` is
+computed once at the end of `_denoise_sample_speculative` (a single batched
+verify call), not per-step. So the Phase-3 surface is an **additive accessor +
+poll route**, not a per-step callback argument:
+
+- `SpecStats.to_dict() -> dict`: plain-dict serialization
+  (`macro_steps`, `accepted`, `avg_accept`, `full_forwards`, `draft_forwards`,
+  `baseline_steps`, `speedup`).
+- `VideoBackend.last_denoise_stats() -> dict[str, Any]`: base default `{}` (every
+  backend without a spec-denoise path returns empty - no break to the released
+  stage API).
+- `SkyReelsBackend.last_denoise_stats()`: serializes the pipeline's
+  `_last_spec_stats` (set by `_denoise_sample_speculative`) plus the current env
+  config. When spec is off or no run happened, returns `available=False` with
+  zeroed counters - honest "feature surface", no speedup claimed today.
+- `VideoGenEngine.last_denoise_stats()`: delegates to the backend.
+- `GET /v1/videos/denoise-stats?model=<name>`: HTTP surface. Default model
+  `ltx-2`; 404 if the model is not loaded / not a video model; 503 if the engine
+  pool is not initialized.
+
+Response schema:
+
+```json
+{
+  "model": "skyreels-r2v-14b",
+  "stats": {
+    "macro_steps": 0,
+    "accepted": [],
+    "avg_accept": 0.0,
+    "full_forwards": 0,
+    "draft_forwards": 0,
+    "baseline_steps": 0,
+    "speedup": 0.0,
+    "available": false,
+    "enabled": false,
+    "config": { "K": 4, "epsilon": 0.1, "relative": true, "eval_steps": true }
+  }
+}
+```
+
+`available=false` + zeroed counters is the honest state today (Phase-2 falsified
+the layer-pruned draft). When a real distilled draft lands and
+`FUSION_SPECULATIVE_DENOISE=1` produces accepted runs, the same endpoint reports
+`available=true` with non-zero `accepted` / `avg_accept` / `speedup` - no further
+code change needed.
+
+Tests: `tests/unit/test_spec_denoise_stats.py` (18 tests, macOS-only via the
+`_OPT_DEP_SUITES` "mlx" skip list). Covers `SpecStats.to_dict` roundtrip, the
+backend default + SkyReels override (available reflects a run, enabled/config
+reflect env), engine delegation, and the route (ok / default model / 404 / 503 /
+500).
 
 ## Draft-quality caveat (resolved by Phase 2)
 
