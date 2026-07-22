@@ -518,11 +518,12 @@ FUSION_DIFFUSION_TEXT_CACHE=0 fusion-mlx serve --model SkyReels-V3-R2V-14B-MLX
 ```bash
 # phase-1: 模块 + API + 合成 DiT 单元测试 (env-gated, 不改生产 denoise 环)
 # phase-2: R2V DiT forward_partial 接线 + 真 14B 接受率 sweep (负向结论, 见下)
+# #186 item 3: V2V/A2V pipeline 接线 (V2V 复用 base spec 路径; A2V 自有 override, audio+text 约定)
 # 默认关, 不影响现有 SkyReels-V3 生成路径
 fusion-mlx serve --model SkyReels-V3-R2V-14B-MLX
 ```
 
-> **范围 (phase-1 + phase-2)**: phase-1 落地推测去噪算法 + 草稿协同加载 API (`DraftDiTMixin.forward_partial` / `LayerPrunedDraft`) + 合成 DiT 单元测试, env-gated, **零生产风险**. phase-2 落地 R2V DiT `forward_partial` 接线 + 真 14B 接受率 sweep. **phase-2 实测结论 (负向)**: 层剪枝 draft 在安全 epsilon(0.1) 下接受率 0% (保留 25%-75% blocks), 仅保留 95% blocks 时出现接受但 draft 成本≈full 无加速且质量劣化(maxdiff 0.097); 放宽 epsilon 到 0.5 无效 (draft 速度场误差远超 0.5). #177 假设在 MLX SkyReels-V3 14B 上证伪: DiT 速度场需完整深度, 不可由子网络预测 (异于 LLM token 预测). 机制正确 (全拒绝时 spec==baseline Euler, 误差 7e-4), 保持落地 (env-gated 默认关, 零生产风险) 作为未来蒸馏小 draft 的基础设施. phase-3: fusion-comfyUI Stage API 接入. 详见 `fusion_mlx/video/skyreels_v3/SPECULATIVE_DENOISE.md`.
+> **范围 (phase-1 + phase-2)**: phase-1 落地推测去噪算法 + 草稿协同加载 API (`DraftDiTMixin.forward_partial` / `LayerPrunedDraft`) + 合成 DiT 单元测试, env-gated, **零生产风险**. phase-2 落地 R2V DiT `forward_partial` 接线 + 真 14B 接受率 sweep. **phase-2 实测结论 (负向)**: 层剪枝 draft 在安全 epsilon(0.1) 下接受率 0% (保留 25%-75% blocks), 仅保留 95% blocks 时出现接受但 draft 成本≈full 无加速且质量劣化(maxdiff 0.097); 放宽 epsilon 到 0.5 无效 (draft 速度场误差远超 0.5). #177 假设在 MLX SkyReels-V3 14B 上证伪: DiT 速度场需完整深度, 不可由子网络预测 (异于 LLM token 预测). 机制正确 (全拒绝时 spec==baseline Euler, 误差 7e-4), 保持落地 (env-gated 默认关, 零生产风险) 作为未来蒸馏小 draft 的基础设施. **#186 item 3 (V2V/A2V pipeline 接线)**: V2V DiT 与 R2V 同为单 context 前向约定, 复用 base spec 路径 (无生产改动); A2V DiT 前向签名不同 (audio + text embeds), 走自有 `_denoise_sample_speculative` override + base branch guard. phase-3: fusion-comfyUI Stage API 接入. 详见 `fusion_mlx/video/skyreels_v3/SPECULATIVE_DENOISE.md`.
 
 ```
 fusion-mlx/
