@@ -48,10 +48,13 @@ x86+CUDA stack structurally cannot match. These are **landed and running today**
 - **Metal Flash Attention (MFA) (#86)** - vendored Metal kernels for DiT
   attention (LTX-2, Wan2).
 
-**Next milestone: UMA Radix *Latent* cache** - extending the radix cache from
-text KV to video frame latents, so a multi-shot pipeline reuses the previous
-shot's tail-frame latent as the next shot's first-frame latent with zero-copy
-pointer sharing. The UMA advantage the CUDA stack cannot replicate.
+**Phase-1 LANDED: UMA Radix *Latent* cache** - the radix cache now extends
+from text KV to video frame latents: repeat I2V requests reuse the
+input-image's VAE-encoded latent with zero-copy `mx.array` pointer sharing,
+skipping the VAE load + forward (LTX-2, Wan2.2). See
+[cache/LATENT_CACHE.md](fusion_mlx/cache/LATENT_CACHE.md). **Phase-2 (next):**
+reuse a multi-shot pipeline's previous tail-frame latent as the next shot's
+first-frame latent. The UMA advantage the CUDA stack cannot replicate.
 
 **Benchmark** (Qwen3.6-27B, Apple M2 Ultra 137GB):
 
