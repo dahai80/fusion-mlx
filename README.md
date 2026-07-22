@@ -435,6 +435,15 @@ fusion-mlx serve --model SkyReels-V3-R2V-14B-MLX
 > default off, zero prod risk) as infrastructure for a future distilled small draft.
 > See `fusion_mlx/video/skyreels_v3/SPECULATIVE_DENOISE.md`.
 
+- **Phase-3 stats surface (landed)**: `VideoBackend.last_denoise_stats()` +
+  `GET /v1/videos/denoise-stats?model=<name>` expose the last spec run's
+  acceptance stats (`macro_steps`, `accepted`, `avg_accept`, `full_forwards`,
+  `draft_forwards`, `baseline_steps`, `speedup`, `available`, `enabled`,
+  `config`). Additive and default-off: returns `available=false` with zeroed
+  counters when spec is off or no run happened - honest feature surface for when
+  a real distilled draft arrives (no per-step callback change, no break to the
+  released Stage API / `on_step` contract).
+
 ### Metal Async Dispatch (#180)
 
 Attempt to recover GPU idle during the serial denoise loop: each step's `mx.eval`

@@ -279,3 +279,49 @@ class SkyReelsBackend(VideoBackend):
             "(e.g. 9, 41, 81, 121)",
             dim_hint="width and height must be divisible by 16",
         )
+
+    def last_denoise_stats(self) -> dict[str, Any]:
+        # issue #177 Phase-3: serialize the last _denoise_sample_speculative
+        # run's SpecStats (set on the pipeline as _last_spec_stats) plus the
+        # current env config, for the GET /v1/videos/denoise-stats surface.
+        # Default-off path: when spec is off or no run happened, returns
+        # available=False with zeroed counters (honest "feature surface").
+        from fusion_mlx.video.skyreels_v3.speculative_denoise import (
+            SpeculativeConfig,
+            speculative_enabled,
+        )
+
+        config = SpeculativeConfig.from_env()
+        stats = (
+            getattr(self._pipeline, "_last_spec_stats", None)
+            if self._pipeline is not None
+            else None
+        )
+        if stats is not None:
+            data = stats.to_dict()
+            data["available"] = True
+        else:
+            data = {
+                "macro_steps": 0,
+                "accepted": [],
+                "avg_accept": 0.0,
+                "full_forwards": 0,
+                "draft_forwards": 0,
+                "baseline_steps": 0,
+                "speedup": 0.0,
+                "available": False,
+            }
+        data["enabled"] = speculative_enabled()
+        data["config"] = {
+            "K": config.K,
+            "epsilon": config.epsilon,
+            "relative": config.relative,
+            "eval_steps": config.eval_steps,
+        }
+        logger.debug(
+            "skyreels last_denoise_stats: enabled=%s available=%s avg_accept=%.2f",
+            data["enabled"],
+            data["available"],
+            data["avg_accept"],
+        )
+        return data

@@ -204,3 +204,41 @@ async def generate_video(request: VideoGenerateRequest) -> VideoGenerateResponse
     except Exception as exc:
         logger.exception("Video generation failed")
         raise HTTPException(500, str(exc))
+
+
+@router.get("/denoise-stats")
+async def video_denoise_stats(model: str | None = None) -> dict:
+    # issue #177 Phase-3: expose the last speculative-denoise run's acceptance
+    # stats for Fusion-ComfyUI / clients. Additive, default-off: returns
+    # available=False (zeroed counters) when spec is off or no run happened -
+    # feature surface for when a real distilled draft arrives. No speedup is
+    # claimed today (layer-pruned draft was falsified on real 14B, see #177).
+    try:
+        if _pool is None:
+            raise HTTPException(503, "Engine pool not initialized")
+
+        model_name = model or "ltx-2"
+        try:
+            engine = await _pool.get_engine(model_name)
+        except ModelNotFoundError:
+            engine = None
+        if engine is None or not isinstance(engine, VideoGenEngine):
+            raise HTTPException(
+                404,
+                f"Video generation model '{model_name}' not loaded. "
+                "Load a video model first.",
+            )
+
+        stats = engine.last_denoise_stats()
+        logger.info(
+            "denoise-stats: model=%s enabled=%s available=%s",
+            model_name,
+            stats.get("enabled"),
+            stats.get("available"),
+        )
+        return {"model": model_name, "stats": stats}
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.exception("denoise-stats failed")
+        raise HTTPException(500, str(exc))

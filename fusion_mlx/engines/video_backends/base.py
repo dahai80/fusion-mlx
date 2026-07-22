@@ -92,6 +92,13 @@ class VideoBackend(ABC):
     def get_stats(self) -> dict[str, Any]:
         return {"backend": self.name}
 
+    def last_denoise_stats(self) -> dict[str, Any]:
+        # issue #177 Phase-3: additive speculative-denoise stats accessor.
+        # Backends without a spec-denoise path return {} (no break to the
+        # released stage API). Backends that run _denoise_sample_speculative
+        # override this to serialize their pipeline's _last_spec_stats.
+        return {}
+
     # ------------------------------------------------------------------
     # Pipeline stage API (issue #170). Default implementations raise
     # NotImplementedError so existing backends keep working unchanged.
