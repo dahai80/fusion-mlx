@@ -149,9 +149,16 @@ checkpoint.
   zero prod risk) as infrastructure for a future separately-distilled small
   draft (the path classic speculative-diffusion papers take for high
   acceptance).
-- Deferred: `forward_partial` + spec path on V2V/A2V DiT (same modulation fix
-  needed there, tracked as a follow-up issue); UniPC 2nd-order corrector in
-  spec mode; production `mx.compile` of the spec path.
+- Done (#186): `forward_partial` + spec path on V2V/A2V DiT. V2V shares R2V's
+  single-context forward convention, so it reuses the base spec path (no
+  production change). A2V's DiT forward signature differs (audio + text
+  embeds), so it gets its own `_denoise_sample_speculative` override
+  (`cross_kv_cache=None` since spec batches K steps at varying batch sizes)
+  plus a base branch guard (`branch != "a2v"`) keeping the single-context
+  base path R2V/V2V-only. Items 1 (modulation B>1 fix) + 2 (V2V/A2V
+  `forward_partial`) landed in PR #187; item 3 (pipeline wiring) in PR #189.
+- Deferred: UniPC 2nd-order corrector in spec mode; production `mx.compile`
+  of the spec path.
 
 ## Phase 3 (follow-up)
 
