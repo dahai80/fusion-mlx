@@ -56,6 +56,21 @@ class GenerationOutput:
     new_token_ids: list[int] = field(default_factory=list)
 
 
+def _normalize_tools_to_dicts(tools: list[dict] | None) -> list[dict] | None:
+    """Normalize tool definitions to pure dicts for parse_tool_calls.
+
+    The chat route passes request.tools (Pydantic ToolDefinition objects)
+    to engine.generate(), and those objects lack .get() which mlx-lm's
+    native parsers call unconditionally.  See #191.
+    """
+    if not tools:
+        return tools
+    from ..api.tool_calling import convert_tools_for_template
+
+    converted = convert_tools_for_template(tools)
+    return converted if converted else tools
+
+
 def _fallback_parse_tool_calls(
     gen: GenerationOutput, tokenizer: Any, tools: list[dict]
 ) -> GenerationOutput:
@@ -63,7 +78,8 @@ def _fallback_parse_tool_calls(
     try:
         from ..api.tool_calling import parse_tool_calls
 
-        cleaned, tc_list = parse_tool_calls(gen.text, tokenizer, tools)
+        dict_tools = _normalize_tools_to_dicts(tools)
+        cleaned, tc_list = parse_tool_calls(gen.text, tokenizer, dict_tools)
         if tc_list:
             tc_dicts = []
             for tc in tc_list:
