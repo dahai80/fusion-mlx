@@ -122,6 +122,9 @@ _OPT_DEP_SUITES: list[tuple[str, list[str]]] = [
             # hard-imports mlx + triggers nvfp4.py top-level mx.array (#179);
             # skip on Linux CI (mlx absent/mocked), run on macOS.
             "test_nvfp4_reader.py",
+            # hard-imports mlx + mlx.nn (#177 speculative denoise);
+            # skip on Linux CI (mlx absent/mocked), run on macOS.
+            "test_speculative_denoise.py",
         ],
     ),
     (
