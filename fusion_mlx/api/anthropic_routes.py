@@ -132,7 +132,10 @@ def _anthropic_to_messages(
             marker_idx = system_text.find(boundary_marker)
             if marker_idx != -1:
                 prefix_cache_boundary = len(system_text[:marker_idx]) // 4
-                system_text = system_text[:marker_idx] + system_text[marker_idx + len(boundary_marker):]
+                system_text = (
+                    system_text[:marker_idx]
+                    + system_text[marker_idx + len(boundary_marker) :]
+                )
             messages.append({"role": "system", "content": system_text})
         elif isinstance(req.system, list):
             parts = []

@@ -79,7 +79,10 @@ def anthropic_to_openai(request: MessagesRequest) -> ChatCompletionRequest:
                 # Rough token estimate: ~4 chars per token for English/code
                 prefix_cache_boundary = len(system_text[:marker_idx]) // 4
                 # Remove the marker itself from the text
-                system_text = system_text[:marker_idx] + system_text[marker_idx + len(boundary_marker):]
+                system_text = (
+                    system_text[:marker_idx]
+                    + system_text[marker_idx + len(boundary_marker) :]
+                )
         elif isinstance(request.system, list):
             # System can be a list of SystemContent models or dicts
             parts = []
@@ -92,18 +95,24 @@ def anthropic_to_openai(request: MessagesRequest) -> ChatCompletionRequest:
                     has_cache_control = block.get("cache_control") is not None
                 elif hasattr(block, "type") and block.type == "text":
                     block_text = getattr(block, "text", "")
-                    has_cache_control = getattr(block, "cache_control", None) is not None
+                    has_cache_control = (
+                        getattr(block, "cache_control", None) is not None
+                    )
                 elif isinstance(block, str):
                     block_text = block
                 parts.append(block_text)
                 # The boundary is at the END of the last cache_control-marked block
                 if has_cache_control:
-                    cached_char_count = sum(len(p) for p in parts) + len(parts) - 1  # include newlines
+                    cached_char_count = (
+                        sum(len(p) for p in parts) + len(parts) - 1
+                    )  # include newlines
                 # Also detect explicit boundary marker
                 boundary_marker = "SYSTEM_PROMPT_DYNAMIC_BOUNDARY"
                 marker_idx = block_text.find(boundary_marker)
                 if marker_idx != -1:
-                    cached_char_count = sum(len(p) for p in parts[:-1]) + len(parts) - 2 + marker_idx
+                    cached_char_count = (
+                        sum(len(p) for p in parts[:-1]) + len(parts) - 2 + marker_idx
+                    )
             system_text = "\n".join(parts)
             if cached_char_count > 0:
                 prefix_cache_boundary = cached_char_count // 4
