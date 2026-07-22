@@ -119,6 +119,9 @@ _OPT_DEP_SUITES: list[tuple[str, list[str]]] = [
             "test_skyreels_quant.py",
             "test_pure_memory_kv_reconstruct.py",
             "test_radix_diffusion_cache.py",
+            # hard-imports mlx.core (#2 UMA Radix Latent cache image latents);
+            # skip on Linux CI (mlx absent/mocked), run on macOS.
+            "test_latent_cache.py",
             "test_skyreels_dynamic_cfg.py",
             "test_skyreels_v2v_a2v_norm.py",
             # hard-imports mlx + triggers nvfp4.py top-level mx.array (#179);

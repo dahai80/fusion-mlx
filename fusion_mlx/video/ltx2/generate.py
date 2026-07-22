@@ -9,6 +9,11 @@ import mlx.core as mx
 import numpy as np
 from PIL import Image
 
+from fusion_mlx.cache.latent_cache import (
+    get_image_latent_cache,
+    image_latent_key,
+)
+
 from .audio import (
     AUDIO_SAMPLE_RATE,
     load_audio_decoder,
@@ -410,49 +415,48 @@ def generate_video(
         stage2_end_image_latent = None
         if is_i2v:
             logger.info("Loading VAE encoder and encoding image(s)...")
-            vae_encoder = VideoEncoder.from_pretrained(model_path / "vae" / "encoder")
+            # UMA Radix Latent cache (#2 Phase-1): repeat I2V requests with
+            # the same image+resolution reuse the cached VAE latent and skip
+            # the VAE encoder load + forward entirely (zero-copy on UMA).
+            latent_cache = get_image_latent_cache(model_repo)
+            vae_encoder = None
 
             s1_h, s1_w = stage1_h * 32, stage1_w * 32
             s2_h, s2_w = stage2_h * 32, stage2_w * 32
 
+            def _encode_image_latent(src, h, w):
+                nonlocal vae_encoder
+                key = image_latent_key(model_repo, src, h, w, model_dtype)
+                if latent_cache is not None:
+                    cached = latent_cache.get(key)
+                    if cached is not None:
+                        logger.info("latent cache hit: %dx%d (%s)", h, w, key)
+                        return cached
+                if vae_encoder is None:
+                    vae_encoder = VideoEncoder.from_pretrained(
+                        model_path / "vae" / "encoder"
+                    )
+                loaded = load_image(src, height=h, width=w, dtype=model_dtype)
+                latent = vae_encoder(
+                    prepare_image_for_encoding(loaded, h, w, dtype=model_dtype)
+                )
+                mx.eval(latent)
+                if latent_cache is not None:
+                    latent_cache.put(key, latent)
+                    logger.info("latent cache miss+insert: %dx%d (%s)", h, w, key)
+                return latent
+
             if image is not None:
-                input_image = load_image(
-                    image, height=s1_h, width=s1_w, dtype=model_dtype
-                )
-                stage1_image_latent = vae_encoder(
-                    prepare_image_for_encoding(
-                        input_image, s1_h, s1_w, dtype=model_dtype
-                    )
-                )
-                mx.eval(stage1_image_latent)
-                input_image = load_image(
-                    image, height=s2_h, width=s2_w, dtype=model_dtype
-                )
-                stage2_image_latent = vae_encoder(
-                    prepare_image_for_encoding(
-                        input_image, s2_h, s2_w, dtype=model_dtype
-                    )
-                )
-                mx.eval(stage2_image_latent)
+                stage1_image_latent = _encode_image_latent(image, s1_h, s1_w)
+                stage2_image_latent = _encode_image_latent(image, s2_h, s2_w)
 
             if has_end_image:
-                end_input = load_image(
-                    end_image, height=s1_h, width=s1_w, dtype=model_dtype
-                )
-                stage1_end_image_latent = vae_encoder(
-                    prepare_image_for_encoding(end_input, s1_h, s1_w, dtype=model_dtype)
-                )
-                mx.eval(stage1_end_image_latent)
-                end_input = load_image(
-                    end_image, height=s2_h, width=s2_w, dtype=model_dtype
-                )
-                stage2_end_image_latent = vae_encoder(
-                    prepare_image_for_encoding(end_input, s2_h, s2_w, dtype=model_dtype)
-                )
-                mx.eval(stage2_end_image_latent)
+                stage1_end_image_latent = _encode_image_latent(end_image, s1_h, s1_w)
+                stage2_end_image_latent = _encode_image_latent(end_image, s2_h, s2_w)
 
-            del vae_encoder
-            mx.clear_cache()
+            if vae_encoder is not None:
+                del vae_encoder
+                mx.clear_cache()
             logger.info("VAE encoder loaded and image(s) encoded")
 
         logger.info(
@@ -612,32 +616,43 @@ def generate_video(
         end_image_latent = None
         if is_i2v:
             logger.info("Loading VAE encoder and encoding image(s)...")
-            vae_encoder = VideoEncoder.from_pretrained(model_path / "vae" / "encoder")
+            # UMA Radix Latent cache (#2 Phase-1): repeat I2V requests with
+            # the same image+resolution reuse the cached VAE latent and skip
+            # the VAE encoder load + forward entirely (zero-copy on UMA).
+            latent_cache = get_image_latent_cache(model_repo)
+            vae_encoder = None
+
+            def _encode_image_latent(src, h, w):
+                nonlocal vae_encoder
+                key = image_latent_key(model_repo, src, h, w, model_dtype)
+                if latent_cache is not None:
+                    cached = latent_cache.get(key)
+                    if cached is not None:
+                        logger.info("latent cache hit: %dx%d (%s)", h, w, key)
+                        return cached
+                if vae_encoder is None:
+                    vae_encoder = VideoEncoder.from_pretrained(
+                        model_path / "vae" / "encoder"
+                    )
+                loaded = load_image(src, height=h, width=w, dtype=model_dtype)
+                latent = vae_encoder(
+                    prepare_image_for_encoding(loaded, h, w, dtype=model_dtype)
+                )
+                mx.eval(latent)
+                if latent_cache is not None:
+                    latent_cache.put(key, latent)
+                    logger.info("latent cache miss+insert: %dx%d (%s)", h, w, key)
+                return latent
 
             if image is not None:
-                input_image = load_image(
-                    image, height=height, width=width, dtype=model_dtype
-                )
-                image_latent = vae_encoder(
-                    prepare_image_for_encoding(
-                        input_image, height, width, dtype=model_dtype
-                    )
-                )
-                mx.eval(image_latent)
+                image_latent = _encode_image_latent(image, height, width)
 
             if has_end_image:
-                end_input = load_image(
-                    end_image, height=height, width=width, dtype=model_dtype
-                )
-                end_image_latent = vae_encoder(
-                    prepare_image_for_encoding(
-                        end_input, height, width, dtype=model_dtype
-                    )
-                )
-                mx.eval(end_image_latent)
+                end_image_latent = _encode_image_latent(end_image, height, width)
 
-            del vae_encoder
-            mx.clear_cache()
+            if vae_encoder is not None:
+                del vae_encoder
+                mx.clear_cache()
             logger.info("VAE encoder loaded and image(s) encoded")
 
         sigmas = ltx2_scheduler(steps=num_inference_steps)
@@ -740,49 +755,48 @@ def generate_video(
         stage2_end_image_latent = None
         if is_i2v:
             logger.info("Loading VAE encoder and encoding image(s)...")
-            vae_encoder = VideoEncoder.from_pretrained(model_path / "vae" / "encoder")
+            # UMA Radix Latent cache (#2 Phase-1): repeat I2V requests with
+            # the same image+resolution reuse the cached VAE latent and skip
+            # the VAE encoder load + forward entirely (zero-copy on UMA).
+            latent_cache = get_image_latent_cache(model_repo)
+            vae_encoder = None
 
             s1_h, s1_w = stage1_h * 32, stage1_w * 32
             s2_h, s2_w = stage2_h * 32, stage2_w * 32
 
+            def _encode_image_latent(src, h, w):
+                nonlocal vae_encoder
+                key = image_latent_key(model_repo, src, h, w, model_dtype)
+                if latent_cache is not None:
+                    cached = latent_cache.get(key)
+                    if cached is not None:
+                        logger.info("latent cache hit: %dx%d (%s)", h, w, key)
+                        return cached
+                if vae_encoder is None:
+                    vae_encoder = VideoEncoder.from_pretrained(
+                        model_path / "vae" / "encoder"
+                    )
+                loaded = load_image(src, height=h, width=w, dtype=model_dtype)
+                latent = vae_encoder(
+                    prepare_image_for_encoding(loaded, h, w, dtype=model_dtype)
+                )
+                mx.eval(latent)
+                if latent_cache is not None:
+                    latent_cache.put(key, latent)
+                    logger.info("latent cache miss+insert: %dx%d (%s)", h, w, key)
+                return latent
+
             if image is not None:
-                input_image = load_image(
-                    image, height=s1_h, width=s1_w, dtype=model_dtype
-                )
-                stage1_image_latent = vae_encoder(
-                    prepare_image_for_encoding(
-                        input_image, s1_h, s1_w, dtype=model_dtype
-                    )
-                )
-                mx.eval(stage1_image_latent)
-                input_image = load_image(
-                    image, height=s2_h, width=s2_w, dtype=model_dtype
-                )
-                stage2_image_latent = vae_encoder(
-                    prepare_image_for_encoding(
-                        input_image, s2_h, s2_w, dtype=model_dtype
-                    )
-                )
-                mx.eval(stage2_image_latent)
+                stage1_image_latent = _encode_image_latent(image, s1_h, s1_w)
+                stage2_image_latent = _encode_image_latent(image, s2_h, s2_w)
 
             if has_end_image:
-                end_input = load_image(
-                    end_image, height=s1_h, width=s1_w, dtype=model_dtype
-                )
-                stage1_end_image_latent = vae_encoder(
-                    prepare_image_for_encoding(end_input, s1_h, s1_w, dtype=model_dtype)
-                )
-                mx.eval(stage1_end_image_latent)
-                end_input = load_image(
-                    end_image, height=s2_h, width=s2_w, dtype=model_dtype
-                )
-                stage2_end_image_latent = vae_encoder(
-                    prepare_image_for_encoding(end_input, s2_h, s2_w, dtype=model_dtype)
-                )
-                mx.eval(stage2_end_image_latent)
+                stage1_end_image_latent = _encode_image_latent(end_image, s1_h, s1_w)
+                stage2_end_image_latent = _encode_image_latent(end_image, s2_h, s2_w)
 
-            del vae_encoder
-            mx.clear_cache()
+            if vae_encoder is not None:
+                del vae_encoder
+                mx.clear_cache()
             logger.info("VAE encoder loaded and image(s) encoded")
 
         sigmas = ltx2_scheduler(steps=num_inference_steps)
@@ -993,49 +1007,48 @@ def generate_video(
         stage2_end_image_latent = None
         if is_i2v:
             logger.info("Loading VAE encoder and encoding image(s)...")
-            vae_encoder = VideoEncoder.from_pretrained(model_path / "vae" / "encoder")
+            # UMA Radix Latent cache (#2 Phase-1): repeat I2V requests with
+            # the same image+resolution reuse the cached VAE latent and skip
+            # the VAE encoder load + forward entirely (zero-copy on UMA).
+            latent_cache = get_image_latent_cache(model_repo)
+            vae_encoder = None
 
             s1_h, s1_w = stage1_h * 32, stage1_w * 32
             s2_h, s2_w = stage2_h * 32, stage2_w * 32
 
+            def _encode_image_latent(src, h, w):
+                nonlocal vae_encoder
+                key = image_latent_key(model_repo, src, h, w, model_dtype)
+                if latent_cache is not None:
+                    cached = latent_cache.get(key)
+                    if cached is not None:
+                        logger.info("latent cache hit: %dx%d (%s)", h, w, key)
+                        return cached
+                if vae_encoder is None:
+                    vae_encoder = VideoEncoder.from_pretrained(
+                        model_path / "vae" / "encoder"
+                    )
+                loaded = load_image(src, height=h, width=w, dtype=model_dtype)
+                latent = vae_encoder(
+                    prepare_image_for_encoding(loaded, h, w, dtype=model_dtype)
+                )
+                mx.eval(latent)
+                if latent_cache is not None:
+                    latent_cache.put(key, latent)
+                    logger.info("latent cache miss+insert: %dx%d (%s)", h, w, key)
+                return latent
+
             if image is not None:
-                input_image = load_image(
-                    image, height=s1_h, width=s1_w, dtype=model_dtype
-                )
-                stage1_image_latent = vae_encoder(
-                    prepare_image_for_encoding(
-                        input_image, s1_h, s1_w, dtype=model_dtype
-                    )
-                )
-                mx.eval(stage1_image_latent)
-                input_image = load_image(
-                    image, height=s2_h, width=s2_w, dtype=model_dtype
-                )
-                stage2_image_latent = vae_encoder(
-                    prepare_image_for_encoding(
-                        input_image, s2_h, s2_w, dtype=model_dtype
-                    )
-                )
-                mx.eval(stage2_image_latent)
+                stage1_image_latent = _encode_image_latent(image, s1_h, s1_w)
+                stage2_image_latent = _encode_image_latent(image, s2_h, s2_w)
 
             if has_end_image:
-                end_input = load_image(
-                    end_image, height=s1_h, width=s1_w, dtype=model_dtype
-                )
-                stage1_end_image_latent = vae_encoder(
-                    prepare_image_for_encoding(end_input, s1_h, s1_w, dtype=model_dtype)
-                )
-                mx.eval(stage1_end_image_latent)
-                end_input = load_image(
-                    end_image, height=s2_h, width=s2_w, dtype=model_dtype
-                )
-                stage2_end_image_latent = vae_encoder(
-                    prepare_image_for_encoding(end_input, s2_h, s2_w, dtype=model_dtype)
-                )
-                mx.eval(stage2_end_image_latent)
+                stage1_end_image_latent = _encode_image_latent(end_image, s1_h, s1_w)
+                stage2_end_image_latent = _encode_image_latent(end_image, s2_h, s2_w)
 
-            del vae_encoder
-            mx.clear_cache()
+            if vae_encoder is not None:
+                del vae_encoder
+                mx.clear_cache()
             logger.info("VAE encoder loaded and image(s) encoded")
 
         if lora_path is None:
