@@ -125,6 +125,9 @@ _OPT_DEP_SUITES: list[tuple[str, list[str]]] = [
             # hard-imports mlx + mlx.nn (#177 speculative denoise);
             # skip on Linux CI (mlx absent/mocked), run on macOS.
             "test_speculative_denoise.py",
+            # hard-imports mlx + mlx.nn + SkyReelsR2VDiT (#177 Phase-2 wiring);
+            # skip on Linux CI (mlx absent/mocked), run on macOS.
+            "test_speculative_denoise_phase2.py",
         ],
     ),
     (

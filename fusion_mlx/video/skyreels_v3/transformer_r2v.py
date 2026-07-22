@@ -97,8 +97,8 @@ class Head(nn.Module):
         e_2 = e_head.reshape(b_e, 1, 2, dim).astype(mx.float32)
         # modulation in float32 (matching reference's autocast(float32))
         mod = self.modulation[:, None, :, :] + e_2  # float32
-        e0 = mod[:, 0, 0, :]  # shift
-        e1 = mod[:, 0, 1, :]  # scale
+        e0 = mod[:, 0, 0:1, :]  # shift [B,1,dim]
+        e1 = mod[:, 0, 1:2, :]  # scale [B,1,dim]
 
         x_norm = self.norm(x)
         x_mod = mul_add_add(x_norm, e1, e0)  # x * (1+scale) + shift
@@ -240,10 +240,12 @@ class WanAttentionBlock(nn.Module):
             [B, L, dim] 经一个 DiT Block 处理后的隐空间
         """
         # Modulation: compute in float32 for precision
-        # e 来自 time_projection: [B, dim*6], 需 reshape 为 [B, 6, dim] 才能与 modulation (1,6,dim) 相加
+        # e 来自 time_projection: [B, dim*6], reshape 为 [B,6,1,dim] 使切片为 [B,1,dim]
+        # 广播到 x_norm [B,L,dim]. 旧 [B,6,dim] 切片 [B,dim] 在 B>1 (CFG b=2 / 投机 b=2K)
+        # 时与 [B,L,dim] 广播失败 (L!=B) -> b=2 CFG 崩溃. B=1 数值不变 (广播等价).
         b_e = e.shape[0]
-        e_6 = e.reshape(b_e, 6, -1).astype(mx.float32)  # [B, 6, dim]
-        mod = self.modulation + e_6  # float32, broadcast (1,6,dim) + (B,6,dim)
+        e_6 = e.reshape(b_e, 6, 1, -1).astype(mx.float32)  # [B, 6, 1, dim]
+        mod = self.modulation[:, :, None, :] + e_6  # (1,6,1,dim) + (B,6,1,dim)
         e0, e1, e2, e3, e4, e5 = (
             mod[:, 0, :],  # shift for self-attn
             mod[:, 1, :],  # scale for self-attn
@@ -457,6 +459,43 @@ class SkyReelsR2VDiT(nn.Module):
         # 6. Unpatchify: [B, L, prod(patch_size)*out_dim] -> [B, C_out, T, H, W]
         out = self._unpatchify(out, grid_sizes)
 
+        return out
+
+    def forward_partial(
+        self,
+        x: mx.array,
+        t: mx.array,
+        context: mx.array,
+        seq_lens: list,
+        grid_sizes: list,
+        n_blocks: int | None = None,
+        context_lens: list | None = None,
+        rope_cos_sin: tuple | None = None,
+        attn_mask: mx.array | None = None,
+    ) -> mx.array:
+        # issue #177 Phase-2: layer-pruned draft 前向 (首 n_blocks + 共享 head/patch/time embed).
+        # 与 __call__ 完全一致, 仅 self.blocks[:n_blocks]; n_blocks==num_layers 时 bit-identical.
+        b = x.shape[0]
+        x = self.patch_embedding(x)
+        context = self.text_embedding(context)
+        t_emb = sinusoidal_embedding_1d(self.freq_dim, t)
+        t_emb = self.time_embedding(t_emb)
+        e = self.time_projection(t_emb)
+        blocks = self.blocks if n_blocks is None else self.blocks[:n_blocks]
+        for block in blocks:
+            x = block(
+                x,
+                e,
+                seq_lens,
+                grid_sizes,
+                self.freqs,
+                context,
+                context_lens,
+                rope_cos_sin=rope_cos_sin,
+                attn_mask=attn_mask,
+            )
+        out = self.head(x, e)
+        out = self._unpatchify(out, grid_sizes)
         return out
 
     def _unpatchify(

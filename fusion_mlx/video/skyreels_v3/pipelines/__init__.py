@@ -31,6 +31,11 @@ from ..scheduler.fm_solvers_unipc import (
     flow_match_sample,
     perform_guidance,
 )
+from ..speculative_denoise import (
+    SpeculativeConfig,
+    speculative_denoise,
+    speculative_enabled,
+)
 from ..step_strategy import SkyReelsStepStrategy
 from ..temporal_flicker_fix import (
     TemporalFlickerFix,
@@ -407,6 +412,13 @@ class SkyReelsBasePipeline:
         grid_sizes: list,
     ) -> mx.array:
         """完整去噪采样循环."""
+        # issue #177 Phase-2: 投机去噪并行路径 (默认关). 仅 DiT 有 forward_partial 时启用.
+        # 1st-order Euler (vs 生产 UniPC 2nd-order); 关闭时下方 UniPC 路径字节不变.
+        if speculative_enabled() and hasattr(self.dit, "forward_partial"):
+            return self._denoise_sample_speculative(
+                latents, context, seq_lens=seq_lens, grid_sizes=grid_sizes
+            )
+
         if self.dit is None or self.step_strategy is None:
             raise RuntimeError("DiT or step strategy not loaded")
 
@@ -516,6 +528,94 @@ class SkyReelsBasePipeline:
 
         logger.info("denoise: done steps=%d", n_steps)
         return latents
+
+    def _denoise_sample_speculative(
+        self,
+        latents: mx.array,
+        context: mx.array,
+        *,
+        seq_lens: list,
+        grid_sizes: list,
+    ) -> mx.array:
+        # issue #177 Phase-2: 投机去噪 (layer-pruned draft 预测 K 步 + 全量 DiT 单次批量 verify).
+        # 1st-order Euler 路径 (vs 生产 UniPC 2nd-order); 默认关, FUSION_SPECULATIVE_DENOISE=1 开.
+        import os
+        import time
+
+        if self.dit is None:
+            raise RuntimeError("DiT not loaded")
+
+        config = SpeculativeConfig.from_env()
+        num_layers = len(self.dit.blocks)
+        m_default = max(1, num_layers // 4)
+        try:
+            n_blocks = int(os.environ.get("FUSION_SPEC_DRAFT_BLOCKS", m_default))
+        except ValueError:
+            n_blocks = m_default
+        n_blocks = max(1, min(n_blocks, num_layers))
+        guidance = self.config.guidance_scale
+
+        scheduler = FlowUniPCMultistepScheduler(
+            num_inference_steps=self.config.num_inference_steps,
+        )
+        scheduler.set_timesteps(self.config.num_inference_steps)
+        timesteps = scheduler.timesteps
+
+        logger.info(
+            "spec-denoise: start branch=%s steps=%d K=%d eps=%g draft_blocks=%d/%d cfg=%.2f latent=%s",
+            self.config.branch,
+            timesteps.shape[0],
+            config.K,
+            config.epsilon,
+            n_blocks,
+            num_layers,
+            guidance,
+            latents.shape,
+        )
+
+        # spec 模块期望无 batch 维 latent [C,T,H,W]; 生产 latents 为 [1,C,T,H,W].
+        latents_1d = latents[0]
+
+        def _cfg_expand(x_batch, t_batch):
+            # [K,...] -> cond+uncond [2K,...] (生产 b=2 CFG 约定: 前半 uncond 后半 cond).
+            k = x_batch.shape[0]
+            x_2k = mx.concatenate([x_batch, x_batch], axis=0)
+            t_2k = mx.concatenate([t_batch, t_batch], axis=0)
+            ctx_2k = mx.concatenate([context] * (2 * k), axis=0)
+            seq_2k = list(seq_lens) * (2 * k)
+            grid_2k = list(grid_sizes) * (2 * k)
+            return x_2k, t_2k, ctx_2k, seq_2k, grid_2k
+
+        def full_velocity(x_batch, t_batch):
+            x_2k, t_2k, ctx_2k, seq_2k, grid_2k = _cfg_expand(x_batch, t_batch)
+            noise = self.dit(x_2k, t_2k, ctx_2k, seq_2k, grid_2k)
+            return perform_guidance(noise, guidance)
+
+        def draft_velocity(x_batch, t_batch):
+            x_2k, t_2k, ctx_2k, seq_2k, grid_2k = _cfg_expand(x_batch, t_batch)
+            noise = self.dit.forward_partial(
+                x_2k, t_2k, ctx_2k, seq_2k, grid_2k, n_blocks=n_blocks
+            )
+            return perform_guidance(noise, guidance)
+
+        t0 = time.time()
+        out, stats = speculative_denoise(
+            full_velocity, draft_velocity, latents_1d, timesteps, config
+        )
+        out = mx.expand_dims(out, 0)
+        mx.eval(out)
+        elapsed = time.time() - t0
+        logger.info(
+            "spec-denoise: done macro=%d avg_accept=%.2f full_fwds=%d draft_fwds=%d speedup=%.2fx elapsed=%.1fs",
+            stats.macro_steps,
+            stats.avg_accept,
+            stats.full_forwards,
+            stats.draft_forwards,
+            stats.speedup,
+            elapsed,
+        )
+        self._last_spec_stats = stats
+        return out
 
     def generate(self, *args, **kwargs) -> mx.array:
         """子类实现具体生成逻辑."""

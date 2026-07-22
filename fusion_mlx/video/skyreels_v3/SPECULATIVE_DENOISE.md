@@ -5,9 +5,12 @@ Draft DiT predicts K future denoise steps cheaply; the full DiT verifies all K i
 one batched forward; the longest agreeing prefix is accepted and the full model
 corrects at the divergence point. Target: 2-3x speedup on 14B.
 
-Status: **Phase 1 landed** (algorithm + draft co-load API + synthetic-DiT unit
-tests, env-gated, zero production risk). Phase 2 (real 14B wiring + benchmark)
-and Phase 3 (fusion-comfyUI Stage API) are follow-ups.
+Status: **Phase 1 + Phase 2 landed.** Phase 1 = algorithm + draft co-load API +
+synthetic-DiT unit tests (env-gated, zero production risk). Phase 2 = real 14B
+R2V wiring (`forward_partial` + spec denoise loop) + 14B acceptance sweep.
+**Phase-2 result: layer-pruned draft gives 0% acceptance at safe epsilon and NO
+speedup (0.2-0.4x, i.e. slower than baseline).** See "Phase 2 results" below.
+Phase 3 (fusion-comfyUI Stage API) is a follow-up.
 
 ## Algorithm
 
@@ -107,28 +110,61 @@ checkpoint.
   "mlx" skip list (Linux CI has mlx absent/mocked; runs on macOS).
 - No production path changed. Default-off. Zero regression risk.
 
-## Phase 2 (follow-up)
+## Phase 2 results (landed)
 
-- Implement `forward_partial` on the SkyReels-V3 T2V DiT (`blocks[:M]` + head +
-  unpatchify, reusing patch/time/cross-KV).
-- Wire `speculative_denoise` into the T2V `generate()` denoise loop behind
-  `FUSION_SPECULATIVE_DENOISE`. Handle CFG by batching 2K (cond + uncond) with
-  per-element timesteps; `perform_guidance` on the verified velocities.
-- Real 14B E2E benchmark; tune `K` / `epsilon` / `M`. The achievable speedup
-  depends on layer-pruned draft acceptance - measure before claiming 2-3x.
-- Decide 1st-order Euler speculative loop vs UniPC 2nd-order corrector (the
-  corrector needs the previous full output; speculative mode currently bypasses
-  it).
+- Implemented `forward_partial` on `SkyReelsR2VDiT` (`blocks[:M]` + shared head,
+  reusing patch/time/cross-KV + unpatchify). Bit-identical to `__call__` at
+  `n_blocks == num_layers` for B=1 and B=2 (unit-tested).
+- Fixed a modulation broadcast bug in `WanAttentionBlock.__call__` that crashed
+  for batch B>1 (`mod[:, k, :]` [B,dim] vs `x_norm` [B,L,dim]); reshaped
+  modulation to `[B,6,1,dim]`. Broadcast-equivalent (byte-identical) at B=1, so
+  production (single-video B=1) is unchanged; only enables the B=2K CFG verify.
+- Wired `speculative_denoise` into the R2V denoise loop behind
+  `FUSION_SPECULATIVE_DENOISE` (1st-order Euler; UniPC 2nd-order corrector
+  bypassed in spec mode). CFG batched 2K (cond+uncond) with per-element
+  timesteps; `perform_guidance` on the verified velocities.
+- Real 14B R2V acceptance sweep (128x128, 5 frames, N=6, K=3, bf16, no compile):
+
+  | draft blocks | % kept | epsilon | avg accept | full fw | draft fw | wall vs baseline | maxdiff vs baseline |
+  | --- | --- | --- | --- | --- | --- | --- | --- |
+  | 10/40 | 25% | 0.10 | 0.00 | 5 | 12 | 0.34x (slower) | 0.00073 |
+  | 20/40 | 50% | 0.10 | 0.00 | 5 | 12 | 0.25x (slower) | 0.00073 |
+  | 30/40 | 75% | 0.10 | 0.00 | 5 | 12 | 0.20x (slower) | 0.00073 |
+  | 38/40 | 95% | 0.10 | 2.50 | 2 | 5  | 0.42x (slower) | 0.09687 |
+  | 20/40 | 50% | 0.30 | 0.00 | 5 | 12 | 0.23x (slower) | 0.00073 |
+  | 20/40 | 50% | 0.50 | 0.00 | 5 | 12 | 0.23x (slower) | 0.00073 |
+  | 30/40 | 75% | 0.30 | 0.00 | 5 | 12 | 0.19x (slower) | 0.00073 |
+
+- **Conclusion**: at safe epsilon (0.1), acceptance is 0% for any layer-prune
+  down to 25% blocks kept (75% pruned). Acceptance only appears at 95% blocks
+  kept (near-full draft) where the draft costs ~= full -> no speedup (0.42x,
+  still slower) AND quality degrades (maxdiff 0.097 vs 0.00073). Loosening
+  epsilon to 0.5 does not help at moderate depth -> the pruned-draft velocity
+  error is far above 0.5, i.e. a fundamentally different velocity field, not a
+  marginally-off one. The #177 hypothesis (layer-pruned draft + batched verify
+  -> 2-3x) is **falsified on MLX SkyReels-V3 R2V 14B**: DiT velocity fields
+  require full depth; unlike LLM token prediction, denoise steps are not
+  predictable from a sub-network. The machinery is correct (all-rejected spec
+  matches baseline Euler to 7e-4) and stays landed (env-gated, default off,
+  zero prod risk) as infrastructure for a future separately-distilled small
+  draft (the path classic speculative-diffusion papers take for high
+  acceptance).
+- Deferred: `forward_partial` + spec path on V2V/A2V DiT (same modulation fix
+  needed there, tracked as a follow-up issue); UniPC 2nd-order corrector in
+  spec mode; production `mx.compile` of the spec path.
 
 ## Phase 3 (follow-up)
 
 - fusion-comfyUI Stage API exposure (`on_step` reports `SpecStats`).
 
-## Draft-quality caveat
+## Draft-quality caveat (resolved by Phase 2)
 
-Layer-pruned drafts are shallow-feature predictors (DeepCache / Delta-DiT style).
-Their acceptance rate on a 14B flow-matching DiT is empirically unknown in MLX;
-classic speculative-diffusion papers train a separate small draft for high
-acceptance. Phase 1 deliberately lands the machinery without a speedup claim;
-Phase 2 measures whether the layer-pruned draft is good enough, or whether a
-separately distilled small draft is needed.
+Layer-pruned drafts are shallow-feature predictors (DeepCache / Delta-DiT
+style). Phase 2 measured their acceptance on the real 14B R2V flow-matching
+DiT: **0% at safe epsilon for any prune down to 25% blocks kept**; acceptance
+only at 95% kept, where the draft is near-full-cost and quality breaks. So a
+layer-pruned draft is NOT good enough on MLX SkyReels-V3. A separately
+distilled small draft (the classic speculative-diffusion approach for high
+acceptance) remains the path to a real speedup; the landed machinery
+(`forward_partial`, `LayerPrunedDraft`, `speculative_denoise`, env knobs) is
+the infrastructure that draft would plug into.

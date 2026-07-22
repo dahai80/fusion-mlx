@@ -11,6 +11,7 @@ ENV_FLAG = "FUSION_SPECULATIVE_DENOISE"
 ENV_K = "FUSION_SPEC_K"
 ENV_EPSILON = "FUSION_SPEC_EPSILON"
 ENV_DRAFT_BLOCKS = "FUSION_SPEC_DRAFT_BLOCKS"
+ENV_EVAL_STEPS = "FUSION_SPEC_EVAL_STEPS"
 
 
 def speculative_enabled() -> bool:
@@ -22,6 +23,7 @@ class SpeculativeConfig:
     K: int = 4
     epsilon: float = 0.1
     relative: bool = True
+    eval_steps: bool = True
 
     @classmethod
     def from_env(cls) -> "SpeculativeConfig":
@@ -43,10 +45,19 @@ class SpeculativeConfig:
                 )
                 return default
 
+        def _env_bool(name, default):
+            return os.environ.get(name, "1" if default else "0").lower() in (
+                "1",
+                "true",
+                "yes",
+                "on",
+            )
+
         return cls(
             K=max(1, _env_int(ENV_K, 4)),
             epsilon=_env_float(ENV_EPSILON, 0.1),
             relative=True,
+            eval_steps=_env_bool(ENV_EVAL_STEPS, True),
         )
 
 
@@ -159,8 +170,12 @@ def speculative_denoise(
             t_n = ts[i + j + 1]
             v_d = draft_velocity(mx.expand_dims(cur, 0), mx.array([t_j]))[0]
             stats.draft_forwards += 1
+            if config.eval_steps:
+                mx.eval(v_d)
             vs_d.append(v_d)
             cur = _euler_step(cur, v_d, t_j, t_n)
+            if config.eval_steps:
+                mx.eval(cur)
             if j < K_eff - 1:
                 xs.append(cur)
 
@@ -191,6 +206,9 @@ def speculative_denoise(
         else:
             x = cur
             i = i + K_eff
+
+        if config.eval_steps:
+            mx.eval(x)
 
         stats.accepted.append(a)
         stats.macro_steps += 1
