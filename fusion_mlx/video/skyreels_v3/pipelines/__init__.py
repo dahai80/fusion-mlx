@@ -33,6 +33,7 @@ from ..scheduler.fm_solvers_unipc import (
 )
 from ..speculative_denoise import (
     SpeculativeConfig,
+    async_denoise_enabled,
     speculative_denoise,
     speculative_enabled,
 )
@@ -425,6 +426,13 @@ class SkyReelsBasePipeline:
                 latents, context, seq_lens=seq_lens, grid_sizes=grid_sizes
             )
 
+        # issue #180: Metal 异步派发 (双缓冲去噪). 默认关 (FUSION_ASYNC_DENOISE=1 开),
+        # 关闭时下方 UniPC 同步路径字节不变. 内存安全同 #146 (async_eval 逐步物化).
+        if async_denoise_enabled():
+            return self._denoise_sample_async(
+                latents, context, seq_lens=seq_lens, grid_sizes=grid_sizes
+            )
+
         if self.dit is None or self.step_strategy is None:
             raise RuntimeError("DiT or step strategy not loaded")
 
@@ -533,6 +541,122 @@ class SkyReelsBasePipeline:
             logger.info("denoise: step=%d/%d t=%.4f", step_idx + 1, n_steps, float(t))
 
         logger.info("denoise: done steps=%d", n_steps)
+        return latents
+
+    def _denoise_sample_async(
+        self,
+        latents: mx.array,
+        context: mx.array,
+        *,
+        seq_lens: list,
+        grid_sizes: list,
+    ) -> mx.array:
+        # issue #180: 异步双缓冲去噪. 与 _denoise_sample 同步路径同体, 仅三处差异:
+        #   1. 每步 mx.eval(latents) -> mx.async_eval(latents): 入队即返回, CPU
+        #      立即构建下一步图与 GPU 当步计算重叠 (MLX 依依赖串行调度, 不改数值).
+        #   2. 循环末尾 mx.synchronize(): 排空所有排队计算, 确保 latents 物化
+        #      后再 VAE 解码/返回.
+        #   3. 步级 "queued" 日志在图构建时即报 (非 GPU 完成时), 仅日志时序差异.
+        # 内存安全同 #146: async_eval 仍逐步物化 latents 并释放整条前向图 (仅非
+        # 阻塞), 峰值≈单步工作集; 不 eval 才会 30 步累积 -> OOM.
+        # 数值与同步路径逐位一致 (同 op 同序, 仅 eval 时机不同).
+        if self.dit is None or self.step_strategy is None:
+            raise RuntimeError("DiT or step strategy not loaded")
+
+        scheduler = FlowUniPCMultistepScheduler(
+            num_inference_steps=self.config.num_inference_steps,
+        )
+        scheduler.set_timesteps(self.config.num_inference_steps)
+
+        self.step_strategy.reset()
+
+        flicker_cfg = _flicker_cfg_for_branch(self.config.branch)
+        if self.config.branch == "v2v":
+            flicker_cfg.enable_boundary_align = True
+        flicker_fix = TemporalFlickerFix(flicker_cfg)
+        flicker_fix.reset_step_filter()
+
+        input_end_latent: mx.array | None = None
+
+        timesteps = scheduler.timesteps
+        n_steps = timesteps.shape[0]
+        logger.info(
+            "denoise(async): start branch=%s steps=%d cfg=%.2f latent_shape=%s",
+            self.config.branch,
+            n_steps,
+            self.config.guidance_scale,
+            latents.shape,
+        )
+
+        cfg_keep_steps = self._cfg_keep_steps(n_steps)
+
+        for step_idx, t in enumerate(timesteps):
+            self.step_strategy.set_current_step(step_idx)
+
+            t_mx = mx.array([float(t)])
+
+            run_cfg = step_idx < cfg_keep_steps
+            if run_cfg:
+                latent_input = mx.concatenate([latents] * 2)
+                context_input = mx.concatenate([context] * 2)
+                cfg_grid_sizes = list(grid_sizes) * 2
+                cfg_seq_lens = list(seq_lens) * 2
+            else:
+                latent_input = latents
+                context_input = context
+                cfg_grid_sizes = list(grid_sizes)
+                cfg_seq_lens = list(seq_lens)
+
+            logger.info(
+                "denoise(async): step=%d/%d starting t=%.4f cfg=%s",
+                step_idx + 1,
+                n_steps,
+                float(t),
+                "on" if run_cfg else "off(cond-only)",
+            )
+
+            noise_pred = self.dit(
+                latent_input,
+                t_mx,
+                context_input,
+                cfg_seq_lens,
+                cfg_grid_sizes,
+            )
+
+            if run_cfg:
+                noise_pred = perform_guidance(
+                    noise_pred,
+                    self.config.guidance_scale,
+                )
+
+            noise_pred = flicker_fix.filter_step(noise_pred)
+
+            latents = scheduler.step(
+                noise_pred,
+                float(t),
+                latents,
+            ).prev_sample
+
+            latents = flicker_fix.smooth_temporal(latents)
+
+            if flicker_cfg.enable_boundary_align and input_end_latent is not None:
+                latents = flicker_fix.align_boundary(
+                    latents,
+                    input_end_latent,
+                )
+
+            # #180: 入队当步 latents (非阻塞), CPU 立即进入下一步图构建.
+            mx.async_eval(latents)
+            logger.info(
+                "denoise(async): step=%d/%d t=%.4f queued",
+                step_idx + 1,
+                n_steps,
+                float(t),
+            )
+
+        # 排空所有排队计算, 确保 latents 物化后再 VAE 解码/返回.
+        mx.synchronize()
+        logger.info("denoise(async): done steps=%d synced", n_steps)
         return latents
 
     def _denoise_sample_speculative(

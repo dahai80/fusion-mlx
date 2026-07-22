@@ -12,10 +12,17 @@ ENV_K = "FUSION_SPEC_K"
 ENV_EPSILON = "FUSION_SPEC_EPSILON"
 ENV_DRAFT_BLOCKS = "FUSION_SPEC_DRAFT_BLOCKS"
 ENV_EVAL_STEPS = "FUSION_SPEC_EVAL_STEPS"
+ENV_ASYNC_FLAG = "FUSION_ASYNC_DENOISE"
 
 
 def speculative_enabled() -> bool:
     return os.environ.get(ENV_FLAG, "0").lower() in ("1", "true", "yes", "on")
+
+
+def async_denoise_enabled() -> bool:
+    # issue #180: Metal 异步派发 (双缓冲去噪). 默认关 - 生产同步路径字节不变.
+    # 开启时每步 mx.async_eval 入队 (非阻塞) + 末尾 mx.synchronize 排空.
+    return os.environ.get(ENV_ASYNC_FLAG, "0").lower() in ("1", "true", "yes", "on")
 
 
 @dataclass
