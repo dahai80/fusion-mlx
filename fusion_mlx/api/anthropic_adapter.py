@@ -68,20 +68,45 @@ def anthropic_to_openai(request: MessagesRequest) -> ChatCompletionRequest:
     messages = []
 
     # Convert system to system message
+    prefix_cache_boundary = None
     if request.system:
         if isinstance(request.system, str):
             system_text = request.system
+            # Detect explicit boundary marker from clients (e.g. fusion-code)
+            boundary_marker = "SYSTEM_PROMPT_DYNAMIC_BOUNDARY"
+            marker_idx = system_text.find(boundary_marker)
+            if marker_idx != -1:
+                # Rough token estimate: ~4 chars per token for English/code
+                prefix_cache_boundary = len(system_text[:marker_idx]) // 4
+                # Remove the marker itself from the text
+                system_text = system_text[:marker_idx] + system_text[marker_idx + len(boundary_marker):]
         elif isinstance(request.system, list):
             # System can be a list of SystemContent models or dicts
             parts = []
+            cached_char_count = 0
             for block in request.system:
+                block_text = ""
+                has_cache_control = False
                 if isinstance(block, dict) and block.get("type") == "text":
-                    parts.append(block.get("text", ""))
+                    block_text = block.get("text", "")
+                    has_cache_control = block.get("cache_control") is not None
                 elif hasattr(block, "type") and block.type == "text":
-                    parts.append(getattr(block, "text", ""))
+                    block_text = getattr(block, "text", "")
+                    has_cache_control = getattr(block, "cache_control", None) is not None
                 elif isinstance(block, str):
-                    parts.append(block)
+                    block_text = block
+                parts.append(block_text)
+                # The boundary is at the END of the last cache_control-marked block
+                if has_cache_control:
+                    cached_char_count = sum(len(p) for p in parts) + len(parts) - 1  # include newlines
+                # Also detect explicit boundary marker
+                boundary_marker = "SYSTEM_PROMPT_DYNAMIC_BOUNDARY"
+                marker_idx = block_text.find(boundary_marker)
+                if marker_idx != -1:
+                    cached_char_count = sum(len(p) for p in parts[:-1]) + len(parts) - 2 + marker_idx
             system_text = "\n".join(parts)
+            if cached_char_count > 0:
+                prefix_cache_boundary = cached_char_count // 4
         else:
             system_text = str(request.system)
         # Strip per-request billing/tracking headers injected by some
@@ -109,6 +134,7 @@ def anthropic_to_openai(request: MessagesRequest) -> ChatCompletionRequest:
         model=request.model,
         messages=messages,
         max_tokens=request.max_tokens,
+        prefix_cache_boundary=prefix_cache_boundary,
         # Forward None when the Anthropic client omits the field so the
         # server-side sampling cascade (request > CLI > alias overlay >
         # generation_config.json > fallback) can fire. Hard-coding 0.7
