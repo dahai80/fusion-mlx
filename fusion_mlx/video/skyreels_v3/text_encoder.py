@@ -99,7 +99,9 @@ class UMT5Encoder(nn.Module):
         self._tokenizer = None  # 惰性加载
         # #178: per-instance radix text-embedding cache (multi-shot reuse)
         self._text_cache = (
-            DiffusionRadixCache(max_mb=512) if _text_cache_enabled() else None
+            DiffusionRadixCache(max_mb=512, name="umt5")
+            if _text_cache_enabled()
+            else None
         )
 
         # 复用底座 T5Encoder
@@ -312,6 +314,14 @@ class CLIPTextEncoder:
         self._clip_model = None  # "stub" 哨兵或实际模型
         self._tokenizer = None
         self._backend: str | None = None  # "mlx_clip" / "transformers" / "stub"
+        # #178 Phase-2: radix text-embedding cache (mirror UMT5). A cache hit
+        # skips _ensure_loaded() entirely, so CLIP model never loads on repeat
+        # prompts - real value beyond just skipping the encode forward.
+        self._text_cache = (
+            DiffusionRadixCache(max_mb=512, name="clip")
+            if _text_cache_enabled()
+            else None
+        )
 
     def _ensure_loaded(self) -> None:
         """惰性加载 CLIP, 按三级兜底链路尝试."""
@@ -368,16 +378,41 @@ class CLIPTextEncoder:
             [B, L, dim] 或 [B, dim] CLIP 文本 embedding
             (mlx_clip/transformers 返回 [B, dim], stub 返回 [B, L, dim])
         """
+        # #178 Phase-2: radix cache lookup BEFORE _ensure_loaded() - a hit
+        # skips CLIP model load entirely on repeat prompts.
+        cache = self._text_cache
+        key = None
+        if cache is not None:
+            key_text = text if isinstance(text, str) else "\x00".join(text)
+            key = f"clip:{max_length}:{_prompt_hash(key_text)}"
+            cached = cache.get(key)
+            if cached is not None:
+                logger.debug("clip text cache hit: %s", key)
+                return cached
+
         self._ensure_loaded()
 
         if isinstance(text, str):
             text = [text]
         b = len(text)
 
-        # stub 兜底
+        # stub 兜底 - 不缓存 (维度/后端不稳定, stub 无复用价值)
         if self._backend == "stub":
             return mx.zeros((b, max_length, self.EMBED_DIM))
 
+        result = self._encode_uncached(text, max_length, b)
+        if key is not None:
+            cache.put(key, result)
+            logger.debug("clip text cache miss+insert: %s", key)
+        return result
+
+    def _encode_uncached(
+        self,
+        text: list[str],
+        max_length: int,
+        b: int,
+    ) -> mx.array:
+        """真实后端编码 (mlx_clip / transformers), 无缓存."""
         # mlx_clip 路径 (纯 MLX)
         if self._backend == "mlx_clip":
             try:

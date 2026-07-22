@@ -385,9 +385,28 @@ fusion-mlx serve --model SkyReels-V3-R2V-14B-MLX                          # defa
 FUSION_DIFFUSION_TEXT_CACHE=0 fusion-mlx serve --model SkyReels-V3-R2V-14B-MLX  # off (debug)
 ```
 
-> **Scope (phase-1)**: full-key UMT5 cache (same prompt -> 0 ms). Deferred phase-2:
-> token-level prefix KV sharing, CLIP encoder wiring, video temporal latent reuse,
-> admin stats endpoint.
+**Phase-2 additions:**
+
+- **CLIP encoder wiring**: `CLIPTextEncoder.encode_text` (Flux/SD path) is now
+  cached the same way — key `f"clip:{max_length}:{sha256(text)[:16]}"` (list
+  inputs joined by `NUL`). A cache hit returns before `_ensure_loaded()`, so the
+  CLIP model never loads on repeat prompts — real value beyond skipping the
+  forward. Stub mode is not cached.
+- **Admin stats endpoint**: `GET /v1/cache/stats` (admin-guarded) aggregates
+  every live cache via a module-level `weakref` registry. Response:
+  `{"cache_type": "diffusion_text_encoding", "caches": [{name, hits, misses,
+  evictions, insertions, leaf_count, total_bytes, max_bytes, hit_rate}, ...],
+  "totals": {cache_count, hits, misses, evictions, insertions, total_bytes,
+  hit_rate}}`. Caches belonging to unloaded encoders are auto-dropped (weakref).
+  This reports the diffusion text-encoding cache, not the LLM KV/prefix cache.
+
+> **Scope**: phase-1 = full-key UMT5 cache (same prompt -> 0 ms). Phase-2 (this
+> change) = CLIP wiring + admin stats endpoint. Still deferred: video temporal
+> latent reuse (high-risk, #177-negative precedent). Token-level prefix KV
+> sharing for T5/UMT5 is **semantically invalid** — T5 is a bidirectional
+> encoder (hidden state at position `i` depends on the full sequence), so
+> prefix-hidden-state reuse corrupts output, unlike causal decoder LLMs;
+> full-key caching is the correct approach.
 
 ### Speculative Denoise (#177)
 
