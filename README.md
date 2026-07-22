@@ -59,6 +59,7 @@ Key optimizations: quant2/quant2_128/quant2_flat ultra-aggressive 2-bit quantiza
 - **macOS native app** - SwiftUI with menu bar, auto-update, benchmark, model management, **hardware-aware setup wizard**
 - **SkyReels-V3 video generation** - Pure-MLX port of the strongest open-source video model; all three branches (R2V/V2V/A2V) run end-to-end on real weights, with M5 Max dFlash attention + NF4 quantization keeping a 19B model at 720P under 14 GB resident memory
 - **PyTorch -> MLX full-model converter** - `convert_skyreels_v3.py` one-shot converts SkyReels-V3's three branches (DiT + T5 + VAE + CLIP + audio) PyTorch weights to MLX safetensors, supporting bfloat16/float16/float32 + NF4 quantization with incremental per-shard writes to avoid unified-memory spikes
+- **UMA Radix Latent cache** - repeat I2V requests skip the VAE-encode (model load + forward) via zero-copy `mx.array` reuse on Apple Silicon unified memory; extends the #178 radix cache from text KV to video frame latents (Phase-1: input-image latents, LTX-2 + Wan2.2). The UMA advantage the discrete-GPU CUDA stack cannot replicate. See [cache/LATENT_CACHE.md](fusion_mlx/cache/LATENT_CACHE.md)
 
 ### Advanced Feature Recommendations
 

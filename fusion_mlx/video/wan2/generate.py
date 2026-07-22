@@ -10,6 +10,11 @@ import mlx.core as mx
 import numpy as np
 from tqdm import tqdm
 
+from fusion_mlx.cache.latent_cache import (
+    get_image_latent_cache,
+    image_latent_key,
+)
+
 from .i2v_utils import build_i2v_mask, preprocess_image
 from .postprocess import save_video
 from .utils import (
@@ -392,16 +397,40 @@ def generate_video(
             del vae_enc, img_arr, img_chw, video, z_video, msk
         else:
             # TI2V-5B: encode single image, blend with noise via mask
+            # UMA Radix Latent cache (#2 Phase-1): repeat I2V requests with
+            # the same image+resolution reuse the cached VAE latent and skip
+            # the VAE encoder load + forward entirely (zero-copy on UMA).
             img_tensor = preprocess_image(image, width, height)
             mx.eval(img_tensor)
 
-            vae_enc = load_vae_encoder(vae_path, config)
-            z_img = vae_enc.encode(img_tensor)  # [1, 1, H_lat, W_lat, z_dim]
-            mx.eval(z_img)
+            latent_cache = get_image_latent_cache(str(model_dir))
+            z_img = None
+            cache_key = None
+            if latent_cache is not None:
+                cache_key = image_latent_key(
+                    str(model_dir), image, height, width, mx.float32
+                )
+                z_img = latent_cache.get(cache_key)
+                if z_img is not None:
+                    print(
+                        f"{Colors.DIM}  latent cache hit: "
+                        f"{height}x{width} ({cache_key}){Colors.RESET}"
+                    )
+            if z_img is None:
+                vae_enc = load_vae_encoder(vae_path, config)
+                z_img = vae_enc.encode(img_tensor)  # [1, 1, H_lat, W_lat, z_dim]
+                mx.eval(z_img)
+                if latent_cache is not None:
+                    latent_cache.put(cache_key, z_img)
+                    print(
+                        f"{Colors.DIM}  latent cache miss+insert: "
+                        f"{height}x{width} ({cache_key}){Colors.RESET}"
+                    )
+                del vae_enc
             z_img = z_img[0].transpose(3, 0, 1, 2)  # [z_dim, 1, H_lat, W_lat]
             i2v_mask, i2v_mask_tokens = build_i2v_mask(target_shape, config.patch_size)
 
-            del vae_enc, img_tensor
+            del img_tensor
 
         gc.collect()
         mx.clear_cache()
