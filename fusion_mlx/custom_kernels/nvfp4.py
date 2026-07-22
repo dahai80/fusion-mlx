@@ -31,8 +31,22 @@ NVFP4_BLOCK_SIZE = 16
 # Magnitudes follow the NVIDIA NVFP4 E2M1 value set.
 _NVFP4_LUT = mx.array(
     [
-        0.0, 0.5, 1.0, 1.5, 2.0, 3.0, 4.0, 6.0,
-        -0.0, -0.5, -1.0, -1.5, -2.0, -3.0, -4.0, -6.0,
+        0.0,
+        0.5,
+        1.0,
+        1.5,
+        2.0,
+        3.0,
+        4.0,
+        6.0,
+        -0.0,
+        -0.5,
+        -1.0,
+        -1.5,
+        -2.0,
+        -3.0,
+        -4.0,
+        -6.0,
     ],
     dtype=mx.float32,
 )
@@ -89,9 +103,7 @@ def dequant_nvfp4(
     scale_f = mx.reshape(_scale_to_float32(scales), (-1,))
     n_blocks = numel // NVFP4_BLOCK_SIZE
     if scale_f.size < n_blocks:
-        raise ValueError(
-            f"nvfp4: need {n_blocks} block scales, got {scale_f.size}"
-        )
+        raise ValueError(f"nvfp4: need {n_blocks} block scales, got {scale_f.size}")
     scale_per_elem = mx.repeat(scale_f[:n_blocks], NVFP4_BLOCK_SIZE, axis=0)
     out = values * scale_per_elem
     return mx.reshape(out, shape).astype(mx.bfloat16)

@@ -36,8 +36,24 @@ def test_e2m1_lut_known_answer_all_codes():
     packed = _pack(codes)
     scale = mx.array([_E4M3_1_0], dtype=mx.uint8)
     out = dequant_nvfp4(packed, scale, (16,)).astype(mx.float32)
-    expected = [0.0, 0.5, 1.0, 1.5, 2.0, 3.0, 4.0, 6.0,
-                -0.0, -0.5, -1.0, -1.5, -2.0, -3.0, -4.0, -6.0]
+    expected = [
+        0.0,
+        0.5,
+        1.0,
+        1.5,
+        2.0,
+        3.0,
+        4.0,
+        6.0,
+        -0.0,
+        -0.5,
+        -1.0,
+        -1.5,
+        -2.0,
+        -3.0,
+        -4.0,
+        -6.0,
+    ]
     for got, exp in zip(out.tolist(), expected):
         assert got == pytest.approx(exp, abs=1e-2), (got, exp)
 
@@ -79,8 +95,24 @@ def test_round_trip_pack_dequant_self_consistent():
     # pack/unpack/LUT path end-to-end.
     mag = [0.0, 0.5, 1.0, 1.5, 2.0, 3.0, 4.0, 6.0]
     lut_signed = mag + [-m for m in mag]
-    src = [0.4, 0.6, 1.2, 2.9, -3.1, -5.9, 4.1, 0.0,
-           1.4, 2.2, 3.0, 5.9, -0.5, -1.5, -4.0, 6.0]
+    src = [
+        0.4,
+        0.6,
+        1.2,
+        2.9,
+        -3.1,
+        -5.9,
+        4.1,
+        0.0,
+        1.4,
+        2.2,
+        3.0,
+        5.9,
+        -0.5,
+        -1.5,
+        -4.0,
+        6.0,
+    ]
     # Nearest E2M1 code (index into lut_signed).
     quant_codes = [min(range(16), key=lambda c: abs(lut_signed[c] - v)) for v in src]
     expected = [lut_signed[c] for c in quant_codes]
