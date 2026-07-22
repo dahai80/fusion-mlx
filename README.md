@@ -506,6 +506,24 @@ FUSION_DIFFUSION_TEXT_CACHE=0 fusion-mlx serve --model SkyReels-V3-R2V-14B-MLX
 
 > **范围 (phase-1)**: 本 PR 落地 UMT5Encoder 全键缓存 (相同 prompt -> 0ms). 后续 phase-2: token 级前缀 KV 共享 (公共前缀只编码一次, 仅编码变化后缀) + CLIPTextEncoder 接入 + 视频时序 latent 复用 + admin 统计端点.
 
+### Speculative Denoise (#177)
+
+扩散模型版的 speculative decoding: 草稿 DiT (层剪枝, 跑前 M/N 个 transformer block + 共享 head) 顺序预测 K=3-5 步未来速度场, 完整 DiT 单次 batched forward 验证 K 步 (per-element timestep, Wan2/SkyReels DiT 原生支持 `t.ndim==1`), 接受最长一致前缀, 分歧处用完整速度场补一步 (bonus step, 永不卡住). 目标 14B 上 2-3x 加速.
+
+- 草稿协同加载: `LayerPrunedDraft(dit, n_blocks=M)` 复用同一份权重, 无需独立 draft checkpoint (MLX 量化非速度路径, 见 #166; 暂无 1B/3B SkyReels draft).
+- 验证: K 个 latent 在 K 个不同 timestep 上单次前向 (批 per-element timestep embedding), 接受 `||v_draft - v_full|| / ||v_full|| < epsilon` 的最长前缀.
+- 1 阶 Euler 推测环 (UniPC 2 阶 corrector 需上一步 full 输出, 推测模式旁路).
+- env: `FUSION_SPECULATIVE_DENOISE` (默认 `"0"` 关), `FUSION_SPEC_K` (默认 4), `FUSION_SPEC_EPSILON` (默认 0.1), `FUSION_SPEC_DRAFT_BLOCKS` (phase-2 已接线, 默认 `num_layers//4`).
+
+```bash
+# phase-1: 模块 + API + 合成 DiT 单元测试 (env-gated, 不改生产 denoise 环)
+# phase-2: R2V DiT forward_partial 接线 + 真 14B 接受率 sweep (负向结论, 见下)
+# 默认关, 不影响现有 SkyReels-V3 生成路径
+fusion-mlx serve --model SkyReels-V3-R2V-14B-MLX
+```
+
+> **范围 (phase-1 + phase-2)**: phase-1 落地推测去噪算法 + 草稿协同加载 API (`DraftDiTMixin.forward_partial` / `LayerPrunedDraft`) + 合成 DiT 单元测试, env-gated, **零生产风险**. phase-2 落地 R2V DiT `forward_partial` 接线 + 真 14B 接受率 sweep. **phase-2 实测结论 (负向)**: 层剪枝 draft 在安全 epsilon(0.1) 下接受率 0% (保留 25%-75% blocks), 仅保留 95% blocks 时出现接受但 draft 成本≈full 无加速且质量劣化(maxdiff 0.097); 放宽 epsilon 到 0.5 无效 (draft 速度场误差远超 0.5). #177 假设在 MLX SkyReels-V3 14B 上证伪: DiT 速度场需完整深度, 不可由子网络预测 (异于 LLM token 预测). 机制正确 (全拒绝时 spec==baseline Euler, 误差 7e-4), 保持落地 (env-gated 默认关, 零生产风险) 作为未来蒸馏小 draft 的基础设施. phase-3: fusion-comfyUI Stage API 接入. 详见 `fusion_mlx/video/skyreels_v3/SPECULATIVE_DENOISE.md`.
+
 ```
 fusion-mlx/
 ├── fusion_mlx/
