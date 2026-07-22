@@ -130,6 +130,12 @@ _OPT_DEP_SUITES: list[tuple[str, list[str]]] = [
             # hard-imports mlx + mlx.nn + SkyReelsR2VDiT (#177 Phase-2 wiring);
             # skip on Linux CI (mlx absent/mocked), run on macOS.
             "test_speculative_denoise_phase2.py",
+            # hard-imports mlx + mlx.nn + SkyReelsBaseDiT (#186 Tier-2 DiT unify);
+            # skip on Linux CI (mlx absent/mocked), run on macOS.
+            "test_skyreels_dit_unify.py",
+            # hard-imports mlx + mlx.nn + V2V/A2V DiT (#186 item 3 spec wiring);
+            # skip on Linux CI (mlx absent/mocked), run on macOS.
+            "test_speculative_denoise_v2v_a2v.py",
         ],
     ),
     (

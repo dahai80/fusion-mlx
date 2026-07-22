@@ -414,7 +414,13 @@ class SkyReelsBasePipeline:
         """完整去噪采样循环."""
         # issue #177 Phase-2: 投机去噪并行路径 (默认关). 仅 DiT 有 forward_partial 时启用.
         # 1st-order Euler (vs 生产 UniPC 2nd-order); 关闭时下方 UniPC 路径字节不变.
-        if speculative_enabled() and hasattr(self.dit, "forward_partial"):
+        # issue #186 item 3: base spec 路径仅适用单 context 约定 (R2V/V2V);
+        # A2V DiT 前向签名不同 (audio + text embeds), 走自有 override, 此处跳过.
+        if (
+            speculative_enabled()
+            and hasattr(self.dit, "forward_partial")
+            and self.config.branch != "a2v"
+        ):
             return self._denoise_sample_speculative(
                 latents, context, seq_lens=seq_lens, grid_sizes=grid_sizes
             )
@@ -888,7 +894,17 @@ class SkyReelsA2VPipeline(SkyReelsBasePipeline):
 
         # 4. 去噪采样 (A2V 启用时序分支保嘴型连贯)
         # 注意: A2V DiT 前向签名不同 (audio + text embeds)
-        if self.dit is not None and self.step_strategy is not None:
+        # issue #186 item 3: 投机去噪并行路径 (默认关, FUSION_SPECULATIVE_DENOISE=1 开).
+        # A2V 走自有 _denoise_sample_speculative override (audio + text 约定).
+        if speculative_enabled() and hasattr(self.dit, "forward_partial"):
+            latents = self._denoise_sample_speculative(
+                latents,
+                audio_embeds,
+                text_embeds,
+                seq_lens=seq_lens,
+                grid_sizes=grid_sizes,
+            )
+        elif self.dit is not None and self.step_strategy is not None:
             scheduler = FlowUniPCMultistepScheduler(
                 num_inference_steps=cfg.num_inference_steps,
             )
@@ -984,6 +1000,101 @@ class SkyReelsA2VPipeline(SkyReelsBasePipeline):
             cfg.num_frames / cfg.fps,
         )
         return video
+
+    def _denoise_sample_speculative(
+        self,
+        latents: mx.array,
+        audio_embeds: mx.array,
+        text_embeds: mx.array,
+        *,
+        seq_lens: list,
+        grid_sizes: list,
+    ) -> mx.array:
+        # issue #186 item 3: A2V 投机去噪 (layer-pruned draft 预测 K 步 + 全量 DiT 单次批量 verify).
+        # A2V DiT 前向签名 (audio + text embeds) 与 R2V/V2V 不同, 故独立 override.
+        # 1st-order Euler (vs 生产 UniPC 2nd-order); 默认关, FUSION_SPECULATIVE_DENOISE=1 开.
+        import os
+        import time
+
+        if self.dit is None:
+            raise RuntimeError("DiT not loaded")
+
+        config = SpeculativeConfig.from_env()
+        num_layers = len(self.dit.blocks)
+        m_default = max(1, num_layers // 4)
+        try:
+            n_blocks = int(os.environ.get("FUSION_SPEC_DRAFT_BLOCKS", m_default))
+        except ValueError:
+            n_blocks = m_default
+        n_blocks = max(1, min(n_blocks, num_layers))
+        guidance = self.config.guidance_scale
+
+        scheduler = FlowUniPCMultistepScheduler(
+            num_inference_steps=self.config.num_inference_steps,
+        )
+        scheduler.set_timesteps(self.config.num_inference_steps)
+        timesteps = scheduler.timesteps
+
+        logger.info(
+            "spec-denoise: start branch=a2v steps=%d K=%d eps=%g draft_blocks=%d/%d cfg=%.2f latent=%s",
+            timesteps.shape[0],
+            config.K,
+            config.epsilon,
+            n_blocks,
+            num_layers,
+            guidance,
+            latents.shape,
+        )
+
+        # spec 模块期望无 batch 维 latent [C,T,H,W]; 生产 latents 为 [1,C,T,H,W].
+        latents_1d = latents[0]
+
+        def _cfg_expand(x_batch, t_batch):
+            # [K,...] -> cond+uncond [2K,...] (生产 b=2 CFG 约定: 前半 uncond 后半 cond).
+            k = x_batch.shape[0]
+            x_2k = mx.concatenate([x_batch, x_batch], axis=0)
+            t_2k = mx.concatenate([t_batch, t_batch], axis=0)
+            audio_2k = mx.concatenate([audio_embeds] * (2 * k), axis=0)
+            text_2k = mx.concatenate([text_embeds] * (2 * k), axis=0)
+            seq_2k = list(seq_lens) * (2 * k)
+            grid_2k = list(grid_sizes) * (2 * k)
+            return x_2k, t_2k, audio_2k, text_2k, seq_2k, grid_2k
+
+        def full_velocity(x_batch, t_batch):
+            x_2k, t_2k, audio_2k, text_2k, seq_2k, grid_2k = _cfg_expand(
+                x_batch, t_batch
+            )
+            # cross_kv_cache=None: spec 批量步 K 变化, 单一预分配 KV 不匹配, 每步重算.
+            noise = self.dit(x_2k, t_2k, audio_2k, text_2k, seq_2k, grid_2k)
+            return perform_guidance(noise, guidance)
+
+        def draft_velocity(x_batch, t_batch):
+            x_2k, t_2k, audio_2k, text_2k, seq_2k, grid_2k = _cfg_expand(
+                x_batch, t_batch
+            )
+            noise = self.dit.forward_partial(
+                x_2k, t_2k, audio_2k, text_2k, seq_2k, grid_2k, n_blocks=n_blocks
+            )
+            return perform_guidance(noise, guidance)
+
+        t0 = time.time()
+        out, stats = speculative_denoise(
+            full_velocity, draft_velocity, latents_1d, timesteps, config
+        )
+        out = mx.expand_dims(out, 0)
+        mx.eval(out)
+        elapsed = time.time() - t0
+        logger.info(
+            "spec-denoise: done macro=%d avg_accept=%.2f full_fwds=%d draft_fwds=%d speedup=%.2fx elapsed=%.1fs",
+            stats.macro_steps,
+            stats.avg_accept,
+            stats.full_forwards,
+            stats.draft_forwards,
+            stats.speedup,
+            elapsed,
+        )
+        self._last_spec_stats = stats
+        return out
 
     def _prepare_cross_kv_cache(self, text_input: mx.array) -> tuple:
         """AtomCode 专题优化: 预分配 cross-attn KV 缓存跨步复用 (2026-07-18).
