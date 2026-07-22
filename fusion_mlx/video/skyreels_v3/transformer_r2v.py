@@ -1,304 +1,25 @@
 # SPDX-License-Identifier: Apache-2.0
-"""SkyReels-V3 DiT 主干 WanAttentionBlock 纯 MLX 端口 (R2V 14B).
+"""SkyReels-V3 R2V 14B-720P DiT 主干 (纯 MLX 端口, Tier-2 薄子类).
 
-基于 fusion-mlx wan2/transformer.py 蓝本, 适配 SkyReels-V3 R2V 14B-720P:
-  - dim=5120, ffn_dim=13824, num_heads=40, num_layers=40
-  - cross_attn_type="i2v_cross_attn" (参考图引导)
-  - modulation(1, 6, dim) float32 保 AdaLN-Zero 精度
-  - WanRMSNorm qk_norm, WanLayerNorm 残差流
+Block 层 (WanFFN / Head / WanAttentionBlock) 统一在 .blocks; DiT 公共主干
+(config 解析 / embed / freqs / head / _unpatchify / _run_blocks / _lazy_call)
+统一在 .dit_base.SkyReelsBaseDiT. 本模块仅保留 R2V 变体差异:
+  - block = WanAttentionBlock(has_temporal=False, text_dim=...)
+  - 无 lazy mx.compile (R2V 逐 block maybe_compile 已足够, 不改编译行为)
+  - forward_partial (issue #177 Phase-2 spec draft)
 
 原版权重映射严格对齐, 参数不可修改.
 """
 
 from __future__ import annotations
 
-import logging
-import math
-
 import mlx.core as mx
-import mlx.nn as nn
 
-from . import _device
-from .attention import (
-    WAN_CROSSATTENTION_CLASSES,
-    WanSelfAttention,
-    WanTemporalAttention,
-    _linear_dtype,
-)
-from .common import (
-    GELUApprox,
-    PatchEmbed3D,
-    WanLayerNorm,
-    maybe_compile,
-    mul_add,
-    mul_add_add,
-    rope_params,
-    sinusoidal_embedding_1d,
-)
-
-logger = logging.getLogger(__name__)
+from .blocks import Head, WanAttentionBlock, WanFFN
+from .dit_base import SkyReelsBaseDiT
 
 
-# ---------------------------------------------------------------------------
-# FFN (前馈网络)
-# ---------------------------------------------------------------------------
-class WanFFN(nn.Module):
-    """FFN: Linear -> GELU(tanh) -> Linear.
-
-    开启 MLX 算子融合, 消除中间临时张量, 减少统一内存读写开销.
-    """
-
-    def __init__(self, dim: int, ffn_dim: int):
-        super().__init__()
-        self.fc1 = nn.Linear(dim, ffn_dim)
-        self.act = GELUApprox()
-        self.fc2 = nn.Linear(ffn_dim, dim)
-
-    def __call__(self, x: mx.array) -> mx.array:
-        x_w = x.astype(_linear_dtype(self.fc1))
-        return self.fc2(self.act(self.fc1(x_w)))
-
-
-# ---------------------------------------------------------------------------
-# Head (输出投影)
-# ---------------------------------------------------------------------------
-class Head(nn.Module):
-    """输出投影 Head, 对齐原版 Head 类.
-
-    modulation(1, 2, dim) float32, head=Linear(dim, prod(patch_size)*out_dim).
-    """
-
-    def __init__(
-        self,
-        dim: int,
-        out_dim: int,
-        patch_size: tuple[int, int, int],
-        eps: float = 1e-6,
-    ):
-        super().__init__()
-        self.out_dim = out_dim
-        self.patch_size = patch_size
-        proj_dim = math.prod(patch_size) * out_dim
-        # issue #164: 对齐 diffusers SkyReelsV2Transformer3DModel.norm_out
-        # (FP32LayerNorm affine=False 无参). 旧 Head.norm 有参 -> head.norm.weight
-        # 无源权重停留 init.
-        self.norm = WanLayerNorm(dim, eps, elementwise_affine=False)
-        self.head = nn.Linear(dim, proj_dim)
-        self.modulation = (mx.random.normal((1, 2, dim)) * (dim**-0.5)).astype(
-            mx.float32
-        )
-
-    def __call__(self, x: mx.array, e: mx.array) -> mx.array:
-        # e 来自 time_projection: [B, dim*6], Head 只需最后 dim*2 部分
-        b_e = e.shape[0]
-        dim = self.modulation.shape[-1]
-        e_head = e.reshape(b_e, 6, dim)[:, 4:6, :].reshape(b_e, 2 * dim)
-        # reshape 为 [B, 1, 2, dim] 才能与 modulation (1,1,2,dim) 相加
-        e_2 = e_head.reshape(b_e, 1, 2, dim).astype(mx.float32)
-        # modulation in float32 (matching reference's autocast(float32))
-        mod = self.modulation[:, None, :, :] + e_2  # float32
-        e0 = mod[:, 0, 0:1, :]  # shift [B,1,dim]
-        e1 = mod[:, 0, 1:2, :]  # scale [B,1,dim]
-
-        x_norm = self.norm(x)
-        x_mod = mul_add_add(x_norm, e1, e0)  # x * (1+scale) + shift
-        out = self.head(x_mod)
-        return out
-
-
-# ---------------------------------------------------------------------------
-# DiT 主干 Block (WanAttentionBlock 纯 MLX 端口)
-# ---------------------------------------------------------------------------
-class WanAttentionBlock(nn.Module):
-    """SkyReels-V3 DiT 主干 Block, 对齐 WanAttentionBlock.
-
-    结构:
-      1. Self-Attention (空间, 非因果)
-         x_mod = norm1(x) * (1+e1) + e0
-         y = self_attn(x_mod, ...)
-         x = x + y * e2
-      2. Cross-Attention (文本/参考图引导)
-         x_cross = norm3(x) if cross_attn_norm else x
-         x = x + cross_attn(x_cross, context)
-      3. FFN (前馈网络)
-         x_mod = norm2(x) * (1+e4) + e3
-         y = ffn(x_mod)
-         x = x + y * e5
-
-    modulation(1, 6, dim) float32 保 AdaLN-Zero 精度, 残差流全程 float32.
-    """
-
-    def __init__(
-        self,
-        dim: int,
-        ffn_dim: int,
-        num_heads: int,
-        window_size: tuple = (-1, -1),
-        qk_norm: bool = True,
-        cross_attn_norm: bool = False,
-        eps: float = 1e-6,
-        cross_attn_type: str = "i2v_cross_attn",
-        num_kv_heads: int | None = None,
-        has_temporal: bool = False,
-        temporal_window: int = -1,
-        text_dim: int | None = None,  # AtomCode fix #125: k/v 投影输入维度
-    ):
-        super().__init__()
-        self.dim = dim
-        self.ffn_dim = ffn_dim
-        self.num_heads = num_heads
-        self.num_kv_heads = num_kv_heads
-        self.window_size = window_size
-        self.qk_norm = qk_norm
-        self.cross_attn_norm = cross_attn_norm
-        self.eps = eps
-        self.has_temporal = has_temporal
-        self.text_dim = text_dim
-
-        # Self-attention (空间分支)
-        # issue #164: 对齐 diffusers SkyReelsV2TransformerBlock.norm1
-        # (FP32LayerNorm elementwise_affine=False, 无可学习参数). 旧实现用有参
-        # WanLayerNorm -> blocks.N.norm1.weight 无源权重, 停留 init.
-        self.norm1 = WanLayerNorm(dim, eps, elementwise_affine=False)
-        self.self_attn = WanSelfAttention(
-            dim,
-            num_heads,
-            window_size,
-            qk_norm,
-            eps,
-            num_kv_heads=num_kv_heads,
-        )
-
-        # 可选时序分支 (V2V/A2V 启用)
-        if has_temporal:
-            self.temporal_attn = WanTemporalAttention(
-                dim,
-                num_heads,
-                window_size=temporal_window,
-                qk_norm=qk_norm,
-                eps=eps,
-            )
-            self.norm_temporal = WanLayerNorm(dim, eps)
-
-        # Cross-attention (文本/参考图引导) - AtomCode fix #125: 传 text_dim 作为 context_dim
-        # issue #164: 对齐 diffusers SkyReelsV2TransformerBlock.norm2
-        # (cross-attn 前, FP32LayerNorm affine=True). 旧名 norm3 -> norm2,
-        # 让源权重 blocks.N.norm2.{weight,bias} 正确落到 cross-attn 前 norm
-        # (旧实现 norm3 命名致 norm2 权重错位加载到 ffn 前 norm, 语义错乱).
-        self.norm2 = (
-            WanLayerNorm(dim, eps, elementwise_affine=True) if cross_attn_norm else None
-        )
-        cross_cls = WAN_CROSSATTENTION_CLASSES.get(cross_attn_type)
-        if cross_cls is None:
-            raise ValueError(
-                f"Unknown cross_attn_type: {cross_attn_type}. "
-                f"Valid: {list(WAN_CROSSATTENTION_CLASSES)}"
-            )
-        self.cross_attn = cross_cls(dim, num_heads, qk_norm, eps)
-
-        # Feed-forward
-        # issue #164: 对齐 diffusers block.norm3 (ffn 前, affine=False 无参).
-        # 旧名 norm2(有参) -> norm3(无参); 旧 norm2.weight 无源权重且语义错位.
-        self.norm3 = WanLayerNorm(dim, eps, elementwise_affine=False)
-        self.ffn = WanFFN(dim, ffn_dim)
-
-        # Learned modulation: 6 vectors for scale/shift/gate (kept in float32 for precision)
-        self.modulation = (mx.random.normal((1, 6, dim)) * (dim**-0.5)).astype(
-            mx.float32
-        )
-
-    def __call__(
-        self,
-        x: mx.array,
-        e: mx.array,
-        seq_lens: list,
-        grid_sizes: list,
-        freqs: mx.array,
-        context: mx.array,
-        context_lens: list | None = None,
-        cross_kv_cache: tuple | None = None,
-        rope_cos_sin: tuple | None = None,
-        attn_mask: mx.array | None = None,
-        temporal_len: int | None = None,
-    ) -> mx.array:
-        """前向.
-
-        Args:
-            x: [B, L, dim] 视频隐空间
-            e: [B, dim*6] 时间步嵌入 (经 time_projection)
-            seq_lens: 每个样本的序列长度
-            grid_sizes: 每个样本的 (F, H, W) 网格
-            freqs: RoPE 频率表
-            context: [B, L_ctx, dim] 文本/参考图上下文
-            context_lens: 每个样本的 context 长度
-            cross_kv_cache: 可选 cross-attention KV 缓存
-            rope_cos_sin: 预计算的 rope cos/sin
-            attn_mask: 注意力掩码
-            temporal_len: 时序分支的帧数 (has_temporal=True 时必传)
-
-        Returns:
-            [B, L, dim] 经一个 DiT Block 处理后的隐空间
-        """
-        # Modulation: compute in float32 for precision
-        # e 来自 time_projection: [B, dim*6], reshape 为 [B,6,1,dim] 使切片为 [B,1,dim]
-        # 广播到 x_norm [B,L,dim]. 旧 [B,6,dim] 切片 [B,dim] 在 B>1 (CFG b=2 / 投机 b=2K)
-        # 时与 [B,L,dim] 广播失败 (L!=B) -> b=2 CFG 崩溃. B=1 数值不变 (广播等价).
-        b_e = e.shape[0]
-        e_6 = e.reshape(b_e, 6, 1, -1).astype(mx.float32)  # [B, 6, 1, dim]
-        mod = self.modulation[:, :, None, :] + e_6  # (1,6,1,dim) + (B,6,1,dim)
-        e0, e1, e2, e3, e4, e5 = (
-            mod[:, 0, :],  # shift for self-attn
-            mod[:, 1, :],  # scale for self-attn
-            mod[:, 2, :],  # gate for self-attn
-            mod[:, 3, :],  # shift for ffn
-            mod[:, 4, :],  # scale for ffn
-            mod[:, 5, :],  # gate for ffn
-        )
-
-        # ---- 1. Self-Attention (空间) ----
-        x_norm = self.norm1(x)
-        x_mod = mul_add_add(x_norm, e1, e0)  # x*(1+scale)+shift
-        y = self.self_attn(
-            x_mod,
-            seq_lens,
-            grid_sizes,
-            freqs,
-            rope_cos_sin=rope_cos_sin,
-            attn_mask=attn_mask,
-        )
-        x = mul_add(x, y, e2)  # x + y*gate
-
-        # ---- 2. Optional Temporal Attention (时序分支) ----
-        if self.has_temporal and temporal_len is not None:
-            x_t = self.norm_temporal(x)
-            y_t = self.temporal_attn(x_t, temporal_len, rope_cos_sin=rope_cos_sin)
-            x = x + y_t
-
-        # ---- 3. Cross-Attention (文本/参考图引导) ----
-        # issue #164: cross-attn 前 norm = self.norm2 (对齐 diffusers block.norm2)
-        x_cross = self.norm2(x) if self.norm2 is not None else x
-        y_c = self.cross_attn(
-            x_cross,
-            context,
-            context_lens,
-            kv_cache=cross_kv_cache,
-        )
-        x = x + y_c
-
-        # ---- 4. FFN ----
-        # issue #164: ffn 前 norm = self.norm3 (对齐 diffusers block.norm3, 无参)
-        x_norm3 = self.norm3(x)
-        x_mod2 = mul_add_add(x_norm3, e4, e3)
-        y_f = self.ffn(x_mod2)
-        x = mul_add(x, y_f, e5)
-
-        return x
-
-
-# ---------------------------------------------------------------------------
-# 完整 R2V 14B 主干 (SkyReelsDiT)
-# ---------------------------------------------------------------------------
-class SkyReelsR2VDiT(nn.Module):
+class SkyReelsR2VDiT(SkyReelsBaseDiT):
     """SkyReels-V3 R2V 14B-720P 完整 DiT 主干.
 
     配置:
@@ -312,92 +33,17 @@ class SkyReelsR2VDiT(nn.Module):
     """
 
     def __init__(self, config: dict | None = None):
-        super().__init__()
-        # 默认 R2V 14B 配置
-        cfg = config or {}
-        self.dim = cfg.get("dim", 5120)
-        self.ffn_dim = cfg.get("ffn_dim", 13824)
-        self.num_heads = cfg.get("num_heads", 40)
-        self.num_kv_heads = cfg.get("num_kv_heads", self.num_heads)
-        self.num_layers = cfg.get("num_layers", 40)
-        self.patch_size = cfg.get("patch_size", (1, 2, 2))
-        self.in_dim = cfg.get("in_dim", 16)
-        self.out_dim = cfg.get("out_dim", 16)
-        self.text_dim = cfg.get("text_dim", 4096)
-        self.text_len = cfg.get("text_len", 512)
-        self.freq_dim = cfg.get("freq_dim", 256)
-        self.window_size = cfg.get("window_size", (-1, -1))
-        self.qk_norm = cfg.get("qk_norm", True)
-        self.cross_attn_norm = cfg.get("cross_attn_norm", True)
-        self.eps = cfg.get("eps", 1e-6)
-        # issue #164: R2V-14B 权重 added_kv_proj_dim=null (transformer/config.json),
-        # 即纯 T2V cross-attn, 无 k_img/v_img 分支. 旧默认 i2v_cross_attn 多创建
-        # k_img/v_img/norm_k_img (每层 5 参数 ×40 = 200+ 未覆盖, 停留 init).
-        # 默认改 t2v_cross_attn; 若 config 显式给 added_kv_proj_dim 非 None 则 i2v.
-        added_kv = cfg.get("added_kv_proj_dim", None)
-        if "cross_attn_type" in cfg:
-            self.cross_attn_type = cfg["cross_attn_type"]
-        elif added_kv is not None:
-            self.cross_attn_type = "i2v_cross_attn"
-        else:
-            self.cross_attn_type = "t2v_cross_attn"
-
-        # Patch embedding (Conv3d)
-        self.patch_embedding = PatchEmbed3D(
-            self.in_dim,
-            self.dim,
-            self.patch_size,
+        super().__init__(
+            config,
+            num_layers_default=40,
+            temporal_window_default=96,
+            lazy_compile=False,
         )
 
-        # Text embedding
-        self.text_embedding = nn.Sequential(
-            nn.Linear(self.text_dim, self.dim),
-            GELUApprox(),
-            nn.Linear(self.dim, self.dim),
-        )
-
-        # Time embedding
-        self.time_embedding = nn.Sequential(
-            nn.Linear(self.freq_dim, self.dim),
-            nn.SiLU(),
-            nn.Linear(self.dim, self.dim),
-        )
-        self.time_projection = nn.Sequential(
-            nn.SiLU(),
-            nn.Linear(self.dim, self.dim * 6),
-        )
-
-        # RoPE 频率表 (buffer)
-        head_dim = self.dim // self.num_heads
-        # 原版: rope_params(2048, d - 4*(d//6)) + rope_params(2048, 2*(d//6)) + rope_params(2048, 2*(d//6))
-        # 即 t/h/w 三段: t 占 1/3, h 占 1/3, w 占 1/3 (复杂维度拆分)
-        # 简化: 统一 rope_params(2048, head_dim)
-        self.freqs = rope_params(2048, head_dim)
-
-        # DiT Blocks
-        self.blocks = [
-            WanAttentionBlock(
-                dim=self.dim,
-                ffn_dim=self.ffn_dim,
-                num_heads=self.num_heads,
-                window_size=self.window_size,
-                qk_norm=self.qk_norm,
-                cross_attn_norm=self.cross_attn_norm,
-                eps=self.eps,
-                cross_attn_type=self.cross_attn_type,
-                num_kv_heads=self.num_kv_heads,
-                has_temporal=False,  # R2V 不用时序分支
-                text_dim=self.text_dim,  # AtomCode fix #125: 传 text_dim 给 cross-attn k/v 投影
-            )
-            for _ in range(self.num_layers)
-        ]
-
-        # Output head
-        self.head = Head(self.dim, self.out_dim, self.patch_size, self.eps)
-
-        # 编译优化 (M5 Max 默认开启)
-        if _device.should_compile():
-            self.blocks = [maybe_compile(b) for b in self.blocks]
+    def _build_blocks(self) -> list:
+        kw = self._block_kwargs()
+        kw.update(has_temporal=False, text_dim=self.text_dim)
+        return [WanAttentionBlock(**kw) for _ in range(self.num_layers)]
 
     def __call__(
         self,
@@ -425,40 +71,14 @@ class SkyReelsR2VDiT(nn.Module):
         Returns:
             [B, C_out, T, H, W] 去噪 latent
         """
-        b = x.shape[0]
-
-        # 1. Patch embedding
         x = self.patch_embedding(x)  # [B, L, dim]
-
-        # 2. Text embedding
         context = self.text_embedding(context)  # [B, L_ctx, dim]
-
-        # 3. Time embedding
-        # 原版: sinusoidal_embedding_1d(freq_dim, t) -> time_embedding -> time_projection
-        t_emb = sinusoidal_embedding_1d(self.freq_dim, t)  # [B, freq_dim]
-        t_emb = self.time_embedding(t_emb)  # [B, dim]
-        e = self.time_projection(t_emb)  # [B, dim*6]
-
-        # 4. DiT Blocks
-        for block in self.blocks:
-            x = block(
-                x,
-                e,
-                seq_lens,
-                grid_sizes,
-                self.freqs,
-                context,
-                context_lens,
-                rope_cos_sin=rope_cos_sin,
-                attn_mask=attn_mask,
-            )
-
-        # 5. Output head
+        e = self._time_embed(t)  # [B, dim*6]
+        x = self._run_blocks(
+            x, e, seq_lens, grid_sizes, context, context_lens, rope_cos_sin, attn_mask
+        )
         out = self.head(x, e)  # [B, L, prod(patch_size)*out_dim]
-
-        # 6. Unpatchify: [B, L, prod(patch_size)*out_dim] -> [B, C_out, T, H, W]
-        out = self._unpatchify(out, grid_sizes)
-
+        out = self._unpatchify(out, grid_sizes)  # [B, C_out, T, H, W]
         return out
 
     def forward_partial(
@@ -475,57 +95,23 @@ class SkyReelsR2VDiT(nn.Module):
     ) -> mx.array:
         # issue #177 Phase-2: layer-pruned draft 前向 (首 n_blocks + 共享 head/patch/time embed).
         # 与 __call__ 完全一致, 仅 self.blocks[:n_blocks]; n_blocks==num_layers 时 bit-identical.
-        b = x.shape[0]
         x = self.patch_embedding(x)
         context = self.text_embedding(context)
-        t_emb = sinusoidal_embedding_1d(self.freq_dim, t)
-        t_emb = self.time_embedding(t_emb)
-        e = self.time_projection(t_emb)
-        blocks = self.blocks if n_blocks is None else self.blocks[:n_blocks]
-        for block in blocks:
-            x = block(
-                x,
-                e,
-                seq_lens,
-                grid_sizes,
-                self.freqs,
-                context,
-                context_lens,
-                rope_cos_sin=rope_cos_sin,
-                attn_mask=attn_mask,
-            )
+        e = self._time_embed(t)
+        x = self._run_blocks(
+            x,
+            e,
+            seq_lens,
+            grid_sizes,
+            context,
+            context_lens,
+            rope_cos_sin,
+            attn_mask,
+            n_blocks=n_blocks,
+        )
         out = self.head(x, e)
         out = self._unpatchify(out, grid_sizes)
         return out
-
-    def _unpatchify(
-        self,
-        x: mx.array,
-        grid_sizes: list,
-    ) -> mx.array:
-        """Unpatchify: [B, L, P*C_out] -> [B, C_out, T, H, W].
-
-        Args:
-            x: [B, L, prod(patch_size)*out_dim]
-            grid_sizes: [(F, H, W), ...]
-
-        Returns:
-            [B, C_out, T, H, W]
-        """
-        b = x.shape[0]
-        pt, ph, pw = self.patch_size
-        outputs = []
-        for i, (f, h, w) in enumerate(grid_sizes):
-            # grid_sizes (f, h, w) 为 patch 后 token 网格 (对齐 wan2 unpatchify)
-            seq_len = f * h * w
-            # x_i: [seq_len, pt*ph*pw*out_dim]
-            x_i = x[i, :seq_len]  # [L, P*C_out]
-            x_i = x_i.reshape(f, h, w, pt, ph, pw, self.out_dim)
-            # 转置到 [C_out, T, H, W]
-            x_i = x_i.transpose(6, 0, 3, 1, 4, 2, 5)  # [C_out, f, pt, h, ph, w, pw]
-            x_i = x_i.reshape(self.out_dim, f * pt, h * ph, w * pw)  # [C_out, T, H, W]
-            outputs.append(x_i)
-        return mx.stack(outputs, axis=0)  # [B, C_out, T, H, W]
 
 
 __all__ = [
