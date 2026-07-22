@@ -1,0 +1,35 @@
+dspark-metal
+Copyright (c) 2026 dspark-metal contributors
+
+This project includes and adapts software from third-party open-source
+projects. The original copyright notices and license terms of those projects
+are retained below.
+
+================================================================================
+dflash-mlx — https://github.com/Aryagm/dflash-mlx
+License: MIT
+Copyright (c) 2026 Arya Manjaramkar
+--------------------------------------------------------------------------------
+dspark-metal started as a renamed and trimmed import of the dflash-mlx skeleton
+(package layout, target-adapter pattern, hidden-state extraction, KV-cache
+trim/rewind, generation loop, streaming API, CLI, and benchmark scaffolding).
+The upstream MIT license text is identical to the LICENSE file in this
+repository; the upstream copyright notice is retained above and in LICENSE.
+
+================================================================================
+DeepSpec (DSpark) — https://github.com/deepseek-ai/DeepSpec
+License: MIT
+Copyright (c) 2026 The DeepSpec Authors
+--------------------------------------------------------------------------------
+The DSpark algorithm (semi-autoregressive block drafter, Markov head,
+calibrated confidence head, and confidence-scheduled verification) originates
+from DeepSeek's DeepSpec project and paper. DeepSpec's PyTorch implementation
+is the correctness reference for this port, and portions of the modeling and
+verification semantics are adapted from it.
+
+================================================================================
+Not included
+--------------------------------------------------------------------------------
+bstnxbt/dflash-mlx (https://github.com/bstnxbt/dflash-mlx, Apache-2.0) is an
+independent project consulted as a read-only reference only. No code from it
+is included in this repository.

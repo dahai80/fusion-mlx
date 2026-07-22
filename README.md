@@ -528,6 +528,18 @@ fusion-mlx/
 └── downstream/           # Sync scripts for omlx and Rapid-MLX forks
 ```
 
+## DSpark 投机解码 (vendored from dspark-metal, 2026-07-22)
+
+DSpark = DeepSeek DeepSpec 块级投机解码, 针对纯文本 Qwen3 系列. 与 token 级 spec decode 不同, DSpark 用目标模型第 7 层隐藏状态训练轻量 draft (block7), 在线拒绝采样保证 lossless. fusion-mlx 将上游 `stefanopineda/dspark-metal` (MIT) **vendor 进** `fusion_mlx/speculative/dspark/engine/`, 不再依赖 pip 包 - 上游仓库已停滞 20+ 天无活动, fusion-mlx 独立演进.
+
+- 引擎: `fusion_mlx/speculative/dspark/engine/` (13 模块 + LICENSE + NOTICE 上游归属).
+- 边界: `runtime.py` 用 `from .engine import DSparkGenerator` 加载本地 vendored 引擎; `eligibility.have_runtime()` 探测 vendored 路径, 始终可用 (无需 `pip install dspark-metal`).
+- VLM 扩展 (PR#2): `Qwen3VLTargetAdapter` (Direction B 原生多模态) 将 DSpark 扩展到 mlx-vlm 目标, ctx_taps 仅作用于 text position, 懒加载 mlx_vlm. 22 个 weight-free 测试见 `tests/unit/test_dspark_vlm_adapter.py`.
+- 尺寸绑定: draft = 目标 block 7, 故 `dspark_qwen3_{4b,8b,14b}_block7` 须配同尺寸 Qwen3-{4B,8B,14B} (bf16/8bit+; 4-bit 被 eligibility gate 拒绝).
+- convert: `python -m fusion_mlx.speculative.dspark.engine.convert <source> --target <target> -o <outdir>` (勿传 `--reuse-target-embeddings`).
+
+> **E2E 状态**: vendoring (Phase 1+2) 已落地, 40 个 dspark 测试通过 (1 skipped), arch-handler 静态去风险 (`load_draft_model` 自构 `DSparkDraftModel`, 不走 mlx-lm registry). 真实模型 E2E (convert + load_runtime + generate) 因本地无匹配 Qwen3-4B/8B/14B 目标, 草稿+目标需经 hf-mirror 下载, 暂缓为后续验证项.
+
 ## Examples
 
 | # | Example | Description |

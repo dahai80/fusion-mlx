@@ -10,7 +10,7 @@
 # KV cache). Multi-turn chat is rendered via the target tokenizer's chat
 # template, then generate_from_tokens / stream_from_tokens runs the
 # spec-decode loop on the pre-built token array (bypassing build_prompt,
-# which is single-turn only — see dspark_metal/adapters.py).
+# which is single-turn only — see engine/adapters.py).
 
 from __future__ import annotations
 
@@ -587,9 +587,9 @@ def run_dspark_server(
 
     if not have_runtime():
         print(
-            "\n  Error: --enable-dspark requires dspark-metal (DeepSeek DeepSpec "
-            "MLX port). Install with `uv add dspark-metal` or "
-            "`pip install -e /path/to/dspark-metal`.\n"
+            "\n  Error: --enable-dspark requires the vendored dspark-metal "
+            "engine (fusion_mlx.speculative.dspark.engine), which ships with "
+            "fusion-mlx - this should never be missing; check your install.\n"
         )
         sys.exit(1)
     import os
@@ -609,8 +609,8 @@ def run_dspark_server(
         print(
             "\n  Error: --enable-dspark requires --dspark-drafter-path "
             "<path-to-converted-mlx-draft>. Convert one with:\n"
-            "    dspark-metal-convert deepseek-ai/dspark_qwen3_8b_block7 "
-            "--target mlx-community/Qwen3-8B-bf16\n"
+            "    python -m fusion_mlx.speculative.dspark.engine.convert "
+            "deepseek-ai/dspark_qwen3_8b_block7 --target mlx-community/Qwen3-8B-bf16\n"
             "  → produces models/dspark_qwen3_8b_block7-mlx/\n"
         )
         sys.exit(1)
@@ -618,8 +618,8 @@ def run_dspark_server(
         print(
             f"\n  Error: --dspark-drafter-path {drafter_path!r} does not exist. "
             "Convert one with:\n"
-            "    dspark-metal-convert deepseek-ai/dspark_qwen3_8b_block7 "
-            "--target mlx-community/Qwen3-8B-bf16\n"
+            "    python -m fusion_mlx.speculative.dspark.engine.convert "
+            "deepseek-ai/dspark_qwen3_8b_block7 --target mlx-community/Qwen3-8B-bf16\n"
         )
         sys.exit(1)
 
