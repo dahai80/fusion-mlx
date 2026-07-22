@@ -152,6 +152,9 @@ print(resp.content[0].text)
 | TurboQuant | TQ1_0, TQ2_0 |
 | MLX-native | mxfp4, mxfp8, 6bit (ParoQuant), 4bit, 8bit, F16, BF16, F32 |
 | MLX Recipes | mixed_3_4, mixed_2_6, mixed_2_4, mixed_3_6, mixed_4_6, quant2_all, quant2, quant2_128, quant2_flat (see below) |
+| NVFP4 (read-only) | NVFP4 (E2M1 + E4M3 block scale) - NVIDIA 4-bit checkpoints dequantized to bf16 at load (#179) |
+
+> **NVFP4** is a format-compatibility bridge, not a speed path: NVIDIA NVFP4 weights (4-bit E2M1, 2 per byte, with E4M3 block scales) are detected and dequantized to bf16 during `safetensors` load, so externally-quantized NVFP4 DiT checkpoints run without a separate conversion step. The 4-bit storage win is not retained at inference. Detection is conservative (uint8 weight + sibling block-scale with 1-scale-per-16-elements) and is a silent no-op on non-NVFP4 checkpoints.
 
 ### Quantization Recipes
 
