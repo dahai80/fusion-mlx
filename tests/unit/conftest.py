@@ -105,6 +105,8 @@ _OPT_DEP_SUITES: list[tuple[str, list[str]]] = [
             "test_llama4_attention_patch.py",
             "test_lora_hotswap.py",
             "test_dspark_integration.py",
+            # PR#2 VLM adapter suite: hard-imports mlx.core + numpy (#vendor).
+            "test_dspark_vlm_adapter.py",
             "test_pflash_engine.py",
             "test_pflash_scheduler.py",
             "test_pflash_benchmark.py",

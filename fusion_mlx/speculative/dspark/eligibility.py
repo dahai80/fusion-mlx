@@ -108,13 +108,14 @@ def check(profile: AliasProfile, alias: str | None = None) -> None:
 
 
 def have_runtime() -> bool:
-    # Probe dspark-metal without importing it (cheap on the hot CLI path).
-    # A partial install would have the package missing entirely; the
-    # DSparkGenerator symbol is checked at load_runtime time.
+    # dspark-metal is vendored under fusion_mlx.speculative.dspark.engine,
+    # so the runtime ships with fusion-mlx (no external pip install). Probe
+    # the vendored module without importing it (cheap on the hot CLI path);
+    # the DSparkGenerator symbol is checked at load_runtime time.
     try:
         import importlib
 
-        spec = importlib.util.find_spec("dspark_metal")
+        spec = importlib.util.find_spec("fusion_mlx.speculative.dspark.engine")
         return spec is not None
-    except (ImportError, AttributeError):
+    except (ImportError, AttributeError, ModuleNotFoundError):
         return False

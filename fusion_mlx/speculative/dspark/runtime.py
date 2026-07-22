@@ -1,12 +1,13 @@
 # SPDX-License-Identifier: Apache-2.0
-# DSpark runtime wrapper — lazy-loads dspark-metal's DSparkGenerator.
+# DSpark runtime wrapper - loads the vendored DSparkGenerator.
 #
-# DSparkGenerator is self-contained: it loads its own target model AND
-# the converted MLX draft, runs the propose→verify→accept loop, and
-# exposes generate_from_tokens / stream_from_tokens with lossless
-# rejection-sampling output. This wrapper keeps the import lazy so the
-# base fusion-mlx install (without dspark-metal) boots fine; the
-# eligibility have_runtime() probe is the gate.
+# dspark-metal (DeepSeek DeepSpec MLX port) is vendored under
+# fusion_mlx.speculative.dspark.engine, so no external pip install is
+# needed. DSparkGenerator is self-contained: it loads its own target
+# model AND the converted MLX draft, runs the propose->verify->accept
+# loop, and exposes generate_from_tokens / stream_from_tokens with
+# lossless rejection-sampling output. The import stays local to
+# load_runtime so the heavy mlx_lm dependency only loads on demand.
 
 from __future__ import annotations
 
@@ -45,8 +46,9 @@ def load_runtime(
     draft_path: str,
     draft_quant_bits: int = 8,
 ) -> DSparkRuntime:
-    # Lazy import so fusion-mlx boots without dspark-metal installed.
-    from dspark_metal import DSparkGenerator
+    # Local import: the vendored engine pulls mlx_lm at load time; keep
+    # it deferred so CLI/help paths stay light.
+    from .engine import DSparkGenerator
 
     logger.info(
         "loading DSparkGenerator target=%s draft=%s draft_quant_bits=%d",
