@@ -119,6 +119,9 @@ _OPT_DEP_SUITES: list[tuple[str, list[str]]] = [
             "test_radix_diffusion_cache.py",
             "test_skyreels_dynamic_cfg.py",
             "test_skyreels_v2v_a2v_norm.py",
+            # hard-imports mlx + triggers nvfp4.py top-level mx.array (#179);
+            # skip on Linux CI (mlx absent/mocked), run on macOS.
+            "test_nvfp4_reader.py",
         ],
     ),
     (

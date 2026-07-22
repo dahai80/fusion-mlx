@@ -23,6 +23,8 @@ from pathlib import Path
 import mlx.core as mx
 import mlx.nn as nn
 
+from fusion_mlx.custom_kernels.nvfp4 import dequant_nvfp4_weights
+
 logger = logging.getLogger(__name__)
 
 
@@ -481,7 +483,7 @@ def _load_safetensors_dir(weights_dir: Path) -> dict[str, mx.array]:
 
     # 单文件
     if weights_dir.is_file() and weights_dir.suffix == ".safetensors":
-        return dict(mx.load(str(weights_dir)))
+        return dequant_nvfp4_weights(dict(mx.load(str(weights_dir))))
 
     # 目录: 寻找 *.safetensors
     if weights_dir.is_dir():
@@ -504,7 +506,7 @@ def _load_safetensors_dir(weights_dir: Path) -> dict[str, mx.array]:
                 logger.debug("加载 %s: %d tensors", f.name, len(w))
             except Exception as exc:
                 logger.warning("加载 %s 失败: %s", f, exc)
-        return all_weights
+        return dequant_nvfp4_weights(all_weights)
 
     return {}
 
