@@ -21,6 +21,38 @@ Drop-in replacement for Ollama / vLLM - runs natively on Metal via MLX
 
 ## Why fusion-mlx?
 
+fusion-mlx doesn't just port existing runtimes to Metal - it builds capabilities
+that are only possible on Apple Silicon's unified memory (UMA) and that the
+x86+CUDA stack structurally cannot match. These are **landed and running today**:
+
+- **UMA Radix text-KV cache (#178)** - radix-tree + LRU + pin/unpin over
+  diffusion text encoders (UMT5/CLIP) with zero-copy reuse. Repeated prompts
+  across multi-shot pipelines encode once; `/v1/cache/stats` surfaces it.
+- **DSpark speculative decode, vendored for MLX (#190)** - 1.47× validated
+  end-to-end on real 14B (`serve --enable-dspark`); the speculative win the LLM
+  side already has.
+- **Speculative denoise for DiT (#177)** - the diffusion analog of speculative
+  decoding: a draft DiT predicts K velocity steps, the full DiT batched-verifies
+  in one forward. Machinery landed (env-gated, default off); Phase-2 honestly
+  **falsified** the layer-pruned draft on real 14B (0% acceptance) - the
+  negative result + `GET /v1/videos/denoise-stats` surface are themselves a first
+  in open-source MLX.
+- **Fusion-ComfyUI Stage API + `on_step` (#170-172)** - 10 stage methods across
+  text-encoder / DiT / VAE plus a thread->async `on_step` bridge; native ComfyUI
+  integration no other MLX server offers.
+- **SkyReels-V3 full family + upstream arch fixes (#164/#168/#193)** -
+  R2V/V2V/A2V/A2W all run end-to-end on real 14B weights; fixed upstream config
+  bugs (cross_attn_type routing, norm affine) that otherwise broke the model.
+- **Flux2 Klein + `mx.compile` (#166)** - 1.9× (1.56s/step) with raw-diffusers
+  Flux2 auto-detect.
+- **Metal Flash Attention (MFA) (#86)** - vendored Metal kernels for DiT
+  attention (LTX-2, Wan2).
+
+**Next milestone: UMA Radix *Latent* cache** - extending the radix cache from
+text KV to video frame latents, so a multi-shot pipeline reuses the previous
+shot's tail-frame latent as the next shot's first-frame latent with zero-copy
+pointer sharing. The UMA advantage the CUDA stack cannot replicate.
+
 **Benchmark** (Qwen3.6-27B, Apple M2 Ultra 137GB):
 
 | Quantization | Model Size | bpw | Decode Speed | vs mxfp8 | vs mixed_3_4 |
