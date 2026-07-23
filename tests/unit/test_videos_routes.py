@@ -272,17 +272,19 @@ class TestVideoGenerateBackendAware:
 
 
 class TestVideoGenerateI2V:
-    def test_ltx_rejects_image_422(self):
+    def test_ltx_image_forwarded(self):
+        engine = _make_video_engine([b"M"])
         pool = MagicMock()
-        pool.get_engine = AsyncMock(return_value=_make_video_engine([b"M"]))
+        pool.get_engine = AsyncMock(return_value=engine)
         client = _make_app(pool)
-        # LTX-2 backend does not support I2V (Phase 1) -> 422
+        # LTX-2 now supports I2V (Phase-2 UMA Radix Latent cache #2)
         resp = client.post(
             "/v1/videos/generate",
             json={"prompt": "p", "model": "ltx-2", "image": "/tmp/x.png"},
         )
-        assert resp.status_code == 422
-        pool.get_engine.assert_not_awaited()
+        assert resp.status_code == 200
+        _, kwargs = engine.generate.call_args
+        assert kwargs["image"] == "/tmp/x.png"
 
     def test_wan_image_path_forwarded(self):
         engine = _make_video_engine([b"M"])

@@ -104,6 +104,7 @@ class Wan2Backend(VideoBackend):
                     no_compile=no_compile,
                     tiling=params.tiling,
                     on_step_sync=sync_cb,
+                    session_id=params.session_id,
                 )
                 results.append(mp4_bytes)
             return results
@@ -146,6 +147,7 @@ def _generate_one(
     no_compile: bool = True,
     tiling: str | None = None,
     on_step_sync: Callable[[int, int], None] | None = None,
+    session_id: str | None = None,
 ) -> bytes:
     from fusion_mlx.video.wan2.generate import generate_video
 
@@ -182,6 +184,8 @@ def _generate_one(
             gen_kwargs["tiling"] = tiling
         if on_step_sync is not None:
             gen_kwargs["on_step_sync"] = on_step_sync
+        if session_id is not None:
+            gen_kwargs["session_id"] = session_id
         generate_video(model_dir, prompt, **gen_kwargs)
         with open(temp_path, "rb") as f:
             return f.read()

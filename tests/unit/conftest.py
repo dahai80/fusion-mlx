@@ -145,6 +145,9 @@ _OPT_DEP_SUITES: list[tuple[str, list[str]]] = [
             # hard-imports mlx + speculative_denoise + videos_routes (#177 Phase-3
             # spec-denoise stats stage API); skip on Linux CI (mlx absent/mocked).
             "test_spec_denoise_stats.py",
+            # hard-imports mlx.core (#2 UMA Radix Latent cache session tail);
+            # skip on Linux CI (mlx absent/mocked), run on macOS.
+            "test_latent_cache_session.py",
         ],
     ),
     (

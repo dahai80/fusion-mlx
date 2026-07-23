@@ -142,6 +142,7 @@ def generate_video(
     audio_file: str | None = None,
     audio_start_time: float = 0.0,
     spatial_upscaler: str | None = None,
+    session_id: str | None = None,
 ):
     start_time = time.time()
 
@@ -615,45 +616,74 @@ def generate_video(
         image_latent = None
         end_image_latent = None
         if is_i2v:
-            logger.info("Loading VAE encoder and encoding image(s)...")
-            # UMA Radix Latent cache (#2 Phase-1): repeat I2V requests with
-            # the same image+resolution reuse the cached VAE latent and skip
-            # the VAE encoder load + forward entirely (zero-copy on UMA).
-            latent_cache = get_image_latent_cache(model_repo)
-            vae_encoder = None
+            # Phase-2: check session tail cache first (reuse previous shot's
+            # denoised tail-frame latent as this shot's first-frame conditioning).
+            from fusion_mlx.cache.latent_cache import get_session_tail
 
-            def _encode_image_latent(src, h, w):
-                nonlocal vae_encoder
-                key = image_latent_key(model_repo, src, h, w, model_dtype)
-                if latent_cache is not None:
-                    cached = latent_cache.get(key)
-                    if cached is not None:
-                        logger.info("latent cache hit: %dx%d (%s)", h, w, key)
-                        return cached
-                if vae_encoder is None:
-                    vae_encoder = VideoEncoder.from_pretrained(
-                        model_path / "vae" / "encoder"
+            session_tail_reused = False
+            if session_id is not None and image is not None:
+                tail_latent = get_session_tail(session_id, model_repo)
+                if tail_latent is not None:
+                    # Resize if resolution changed between shots
+                    if (
+                        tail_latent.shape[2] == 1
+                        and tail_latent.shape[3] == latent_h
+                        and tail_latent.shape[4] == latent_w
+                    ):
+                        image_latent = tail_latent
+                        session_tail_reused = True
+                        logger.info(
+                            "session tail reused as first-frame latent (skip VAE encode)"
+                        )
+                    else:
+                        logger.info(
+                            "session tail shape mismatch: got %s expected [1,C,1,%d,%d], "
+                            "falling back to image encode",
+                            tail_latent.shape,
+                            latent_h,
+                            latent_w,
+                        )
+
+            if not session_tail_reused:
+                logger.info("Loading VAE encoder and encoding image(s)...")
+                # UMA Radix Latent cache (#2 Phase-1): repeat I2V requests with
+                # the same image+resolution reuse the cached VAE latent and skip
+                # the VAE encoder load + forward entirely (zero-copy on UMA).
+                latent_cache = get_image_latent_cache(model_repo)
+                vae_encoder = None
+
+                def _encode_image_latent(src, h, w):
+                    nonlocal vae_encoder
+                    key = image_latent_key(model_repo, src, h, w, model_dtype)
+                    if latent_cache is not None:
+                        cached = latent_cache.get(key)
+                        if cached is not None:
+                            logger.info("latent cache hit: %dx%d (%s)", h, w, key)
+                            return cached
+                    if vae_encoder is None:
+                        vae_encoder = VideoEncoder.from_pretrained(
+                            model_path / "vae" / "encoder"
+                        )
+                    loaded = load_image(src, height=h, width=w, dtype=model_dtype)
+                    latent = vae_encoder(
+                        prepare_image_for_encoding(loaded, h, w, dtype=model_dtype)
                     )
-                loaded = load_image(src, height=h, width=w, dtype=model_dtype)
-                latent = vae_encoder(
-                    prepare_image_for_encoding(loaded, h, w, dtype=model_dtype)
-                )
-                mx.eval(latent)
-                if latent_cache is not None:
-                    latent_cache.put(key, latent)
-                    logger.info("latent cache miss+insert: %dx%d (%s)", h, w, key)
-                return latent
+                    mx.eval(latent)
+                    if latent_cache is not None:
+                        latent_cache.put(key, latent)
+                        logger.info("latent cache miss+insert: %dx%d (%s)", h, w, key)
+                    return latent
 
-            if image is not None:
-                image_latent = _encode_image_latent(image, height, width)
+                if image is not None:
+                    image_latent = _encode_image_latent(image, height, width)
 
-            if has_end_image:
-                end_image_latent = _encode_image_latent(end_image, height, width)
+                if has_end_image:
+                    end_image_latent = _encode_image_latent(end_image, height, width)
 
-            if vae_encoder is not None:
-                del vae_encoder
-                mx.clear_cache()
-            logger.info("VAE encoder loaded and image(s) encoded")
+                if vae_encoder is not None:
+                    del vae_encoder
+                    mx.clear_cache()
+                logger.info("VAE encoder loaded and image(s) encoded")
 
         sigmas = ltx2_scheduler(steps=num_inference_steps)
         mx.eval(sigmas)
@@ -745,6 +775,13 @@ def generate_video(
             modality_scale=modality_scale,
             audio_frozen=is_a2v,
         )
+
+        # Phase-2: capture tail-frame latent for multi-shot session reuse
+        if session_id is not None:
+            from fusion_mlx.cache.latent_cache import put_session_tail
+
+            tail = latents[:, :, -1:, :, :]
+            put_session_tail(session_id, model_repo, tail)
 
         vae_decoder = VideoDecoder.from_pretrained(str(model_path / "vae" / "decoder"))
 

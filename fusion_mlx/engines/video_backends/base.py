@@ -51,6 +51,9 @@ class VideoGenParams:
     # None = no progress reporting (default, backwards compatible). Backends
     # without an instrumented denoise loop accept but do not emit the callback.
     on_step: Callable[[int, int], Awaitable[None]] | None = None
+    # Session ID for multi-shot latent reuse (Phase-2 UMA Radix Latent cache).
+    # Same session_id across sequential requests enables tail→first-frame reuse.
+    session_id: str | None = None
     extra: dict[str, Any] = field(default_factory=dict)
 
 

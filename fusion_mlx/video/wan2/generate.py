@@ -92,6 +92,7 @@ def generate_video(
     trim_first_frames: int = 0,
     debug_latents: bool = False,
     on_step_sync: Callable[[int, int], None] | None = None,
+    session_id: str | None = None,
 ):
     import json
 
@@ -340,7 +341,23 @@ def generate_video(
 
         vae_path = model_dir / "vae.safetensors"
 
-        if is_i2v_channel_concat:
+        # Phase-2: check session tail cache first (reuse previous shot's
+        # denoised tail-frame latent as this shot's first-frame conditioning).
+        from fusion_mlx.cache.latent_cache import get_session_tail
+
+        _session_tail_reused = False
+        if session_id is not None and is_i2v_mask_blend:
+            tail_latent = get_session_tail(session_id, str(model_dir))
+            if tail_latent is not None:
+                z_img = tail_latent
+                _session_tail_reused = True
+                logger.info(
+                    "session tail reused as first-frame latent (skip VAE encode)"
+                )
+
+        if _session_tail_reused:
+            i2v_mask, i2v_mask_tokens = build_i2v_mask(target_shape, config.patch_size)
+        elif is_i2v_channel_concat:
             # I2V-14B: encode full video (first frame = image, rest = zeros)
             # and construct y tensor with mask + encoded latents
             from PIL import Image
@@ -675,6 +692,14 @@ def generate_video(
             on_step_sync(i + 1, steps)
 
     print(f"{Colors.DIM}  Denoising: {time.time() - t3:.1f}s{Colors.RESET}")
+
+    # Phase-2: capture tail-frame latent for multi-shot session reuse
+    if session_id is not None:
+        from fusion_mlx.cache.latent_cache import put_session_tail
+
+        # Wan2 latents shape: [C, T, H, W] -> tail = [:, -1:, :, :]
+        tail = latents[:, -1:, :, :]
+        put_session_tail(session_id, str(model_dir), tail)
 
     # Diagnostic: per-temporal-position latent statistics
     if debug_latents:

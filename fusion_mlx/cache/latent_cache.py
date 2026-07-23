@@ -6,7 +6,8 @@
 # so a repeat I2V request with the same image+resolution reuses the cached
 # mx.array via zero-copy pointer share and skips the full VAE load+forward.
 #
-# Milestone #2 (UMA Radix Latent cache), Phase-1.
+# Milestone #2 (UMA Radix Latent cache), Phase-1 (image latent cache) +
+# Phase-2 (session tail-frame latent cache for multi-shot reuse).
 
 import hashlib
 import logging
@@ -19,10 +20,15 @@ logger = logging.getLogger(__name__)
 _DEFAULT_MAX_MB = 2048
 
 _IMAGE_LATENT_CACHES: "dict[str, DiffusionRadixCache]" = {}
+_SESSION_TAIL_CACHE: DiffusionRadixCache | None = None
 
 
 def latent_cache_enabled() -> bool:
     return os.getenv("FUSION_LATENT_CACHE", "1") == "1"
+
+
+def session_tail_cache_enabled() -> bool:
+    return latent_cache_enabled() and os.getenv("FUSION_SESSION_TAIL_CACHE", "0") == "1"
 
 
 def latent_cache_max_mb() -> int:
@@ -57,3 +63,44 @@ def get_image_latent_cache(model_id, max_mb=None):
     _IMAGE_LATENT_CACHES[model_id] = cache
     logger.info("latent cache created: model=%s max_mb=%d", model_id, mb)
     return cache
+
+
+def session_tail_key(session_id: str, model_id: str) -> str:
+    return f"session_tail:{model_id}:{session_id}"
+
+
+def get_session_tail_cache() -> DiffusionRadixCache | None:
+    global _SESSION_TAIL_CACHE
+    if not session_tail_cache_enabled():
+        logger.debug("session tail cache disabled (FUSION_SESSION_TAIL_CACHE=0)")
+        return None
+    if _SESSION_TAIL_CACHE is not None:
+        return _SESSION_TAIL_CACHE
+    _SESSION_TAIL_CACHE = DiffusionRadixCache(
+        max_mb=latent_cache_max_mb(), name="session_tail"
+    )
+    logger.info("session tail cache created: max_mb=%d", latent_cache_max_mb())
+    return _SESSION_TAIL_CACHE
+
+
+def put_session_tail(session_id: str, model_id: str, latents) -> bool:
+    cache = get_session_tail_cache()
+    if cache is None:
+        return False
+    key = session_tail_key(session_id, model_id)
+    cache.put(key, latents)
+    logger.info("session tail put: %s", key)
+    return True
+
+
+def get_session_tail(session_id: str, model_id: str):
+    cache = get_session_tail_cache()
+    if cache is None:
+        return None
+    key = session_tail_key(session_id, model_id)
+    result = cache.get(key)
+    if result is not None:
+        logger.info("session tail hit: %s", key)
+    else:
+        logger.debug("session tail miss: %s", key)
+    return result

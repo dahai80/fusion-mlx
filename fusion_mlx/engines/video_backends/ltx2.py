@@ -25,7 +25,7 @@ _DEFAULT_PIPELINE = "distilled"
 
 class LTX2Backend(VideoBackend):
     name = "ltx2"
-    supports_i2v = False
+    supports_i2v = True
 
     def __init__(
         self,
@@ -106,6 +106,10 @@ class LTX2Backend(VideoBackend):
                     cfg_scale=params.cfg_scale,
                     tiling=params.tiling,
                     enhance_prompt=params.enhance_prompt,
+                    image=params.image,
+                    image_strength=params.image_strength,
+                    image_frame_idx=0,
+                    session_id=params.session_id,
                 )
                 results.append(mp4_bytes)
             return results
@@ -118,7 +122,7 @@ class LTX2Backend(VideoBackend):
 
     def constraints(self) -> VideoConstraints:
         return VideoConstraints(
-            supports_i2v=False,
+            supports_i2v=True,
             max_n=4,
             dim_divisibility=64,
             num_frames_validator=lambda nf: nf % 8 == 1,
@@ -142,6 +146,10 @@ def _generate_one(
     cfg_scale: float | None = None,
     tiling: str | None = None,
     enhance_prompt: bool | None = None,
+    image: str | None = None,
+    image_strength: float = 1.0,
+    image_frame_idx: int = 0,
+    session_id: str | None = None,
 ) -> bytes:
     from fusion_mlx.video.ltx2.generate import PipelineType, generate_video
 
@@ -167,12 +175,18 @@ def _generate_one(
         gen_kwargs["tiling"] = tiling
     if enhance_prompt is not None:
         gen_kwargs["enhance_prompt"] = enhance_prompt
+    if image is not None:
+        gen_kwargs["image"] = image
+        gen_kwargs["image_strength"] = image_strength
+        gen_kwargs["image_frame_idx"] = image_frame_idx
+    if session_id is not None:
+        gen_kwargs["session_id"] = session_id
     with managed_tempfile_path(prefix="fusion_video_", suffix=".mp4") as handle:
         temp_path = handle.path
         gen_kwargs["output_path"] = temp_path
         logger.info(
             "VideoGen generate: prompt_len=%d frames=%d %dx%d@%dfps seed=%d "
-            "steps=%s cfg=%s tiling=%s",
+            "steps=%s cfg=%s tiling=%s image=%s",
             len(prompt),
             num_frames,
             width,
@@ -182,6 +196,7 @@ def _generate_one(
             num_inference_steps,
             cfg_scale,
             tiling,
+            image is not None,
         )
         generate_video(model_repo, text_encoder_repo, prompt, **gen_kwargs)
         with open(temp_path, "rb") as f:

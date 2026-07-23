@@ -69,6 +69,9 @@ class VideoGenerateRequest(BaseModel):
     tiling: str | None = None
     no_compile: bool | None = None
     enhance_prompt: bool | None = None
+    # Session ID for multi-shot latent reuse (Phase-2 UMA Radix Latent cache).
+    # Same session_id across sequential requests enables tail→first-frame reuse.
+    session_id: str | None = None
 
 
 class VideoOutput(BaseModel):
@@ -185,6 +188,8 @@ async def generate_video(request: VideoGenerateRequest) -> VideoGenerateResponse
                 gen_kwargs["no_compile"] = request.no_compile
             if request.enhance_prompt is not None:
                 gen_kwargs["enhance_prompt"] = request.enhance_prompt
+            if request.session_id is not None:
+                gen_kwargs["session_id"] = request.session_id
 
             video_bytes_list = await engine.generate(**gen_kwargs)
             outputs = [
