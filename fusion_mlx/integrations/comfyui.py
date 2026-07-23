@@ -29,27 +29,64 @@ class ComfyUIIntegration(Integration):
 """ComfyUI custom node — Image generation via fusion-mlx backend.
 
 Drop this node into any ComfyUI workflow to offload image generation to a
-local fusion-mlx server running Flux 2 on Apple Silicon.
+local fusion-mlx server running Flux variants on Apple Silicon.
 """
 
 import json
+import os
 import urllib.request
 
 
+def _call_fusion_mlx(payload):
+    """POST to fusion-mlx /v1/images/generate and return decoded images."""
+    import base64
+    import numpy as np
+    from PIL import Image
+
+    mlx_url = os.environ.get("FUSION_MLX_URL", "http://127.0.0.1:8000")
+    url = f"{mlx_url}/v1/images/generate"
+
+    req = urllib.request.Request(
+        url,
+        data=json.dumps(payload).encode(),
+        headers={"Content-Type": "application/json"},
+    )
+
+    try:
+        with urllib.request.urlopen(req, timeout=600) as resp:
+            result = json.loads(resp.read())
+    except urllib.error.HTTPError as e:
+        raise RuntimeError(f"fusion-mlx image generation failed: {e.code} {e.read().decode()}")
+
+    images = []
+    for item in result.get("data", []):
+        b64 = item.get("b64_json", "")
+        if not b64:
+            continue
+        img = Image.open(__import__("io").BytesIO(base64.b64decode(b64)))
+        array = np.array(img).astype(np.float32) / 255.0
+        if array.shape[2] == 4:
+            array = array[:, :, :3]
+        images.append(array)
+
+    if not images:
+        raise RuntimeError("No images returned from fusion-mlx")
+    return images
+
+
 class FusionMlxImageGenerate:
-    """Generate images using fusion-mlx as the backend."""
+    """Generate images using fusion-mlx as the backend (txt2img)."""
 
     @classmethod
     def define(cls, prompt) -> dict:
-        """Return node definition for the ComfyUI frontend."""
         return {
             "input": {
                 "required": {
                     "prompt": ("STRING", {"default": "", "multiline": True}),
                     "width": ("INT", {"default": 1024, "min": 256, "max": 2048, "step": 64}),
                     "height": ("INT", {"default": 1024, "min": 256, "max": 2048, "step": 64}),
-                    "steps": ("INT", {"default": 20, "min": 1, "max": 50}),
-                    "guidance": ("FLOAT", {"default": 7.5, "min": 1.0, "max": 20.0, "step": 0.1}),
+                    "steps": ("INT", {"default": 4, "min": 1, "max": 50}),
+                    "guidance": ("FLOAT", {"default": 1.0, "min": 1.0, "max": 20.0, "step": 0.1}),
                     "seed": ("INT", {"default": 0, "min": 0, "max": 2**32 - 1}),
                     "n_images": ("INT", {"default": 1, "min": 1, "max": 4}),
                 },
@@ -57,72 +94,229 @@ class FusionMlxImageGenerate:
             "output": ["IMAGE"],
             "name": "FusionMLXImageGen",
             "display_name": "Fusion MLX Image Generate",
-            "description": "Generate images via fusion-mlx Flux 2 backend",
+            "description": "Generate images via fusion-mlx Flux 2 txt2img",
             "category": "image",
             "documentation": "https://github.com/dahai80/fusion-mlx",
         }
 
     @classmethod
-    def execute(
-        cls,
-        prompt: str,
-        width: int = 1024,
-        height: int = 1024,
-        steps: int = 20,
-        guidance: float = 7.5,
-        seed: int = 0,
-        n_images: int = 1,
-    ):
-        import numpy as np
-        from PIL import Image
-
-        mlx_url = os.environ.get("FUSION_MLX_URL", "http://127.0.0.1:8000")
-        url = f"{mlx_url}/v1/images/generate"
-
+    def execute(cls, prompt, width=1024, height=1024, steps=4, guidance=1.0, seed=0, n_images=1):
         payload = {
             "prompt": prompt,
-            "width": width,
-            "height": height,
-            "steps": steps,
-            "guidance": guidance,
-            "seed": seed if seed > 0 else None,
-            "n": n_images,
+            "width": width, "height": height, "steps": steps,
+            "guidance": guidance, "seed": seed if seed > 0 else None,
+            "n": n_images, "variant": "txt2img",
             "response_format": "b64_json",
         }
-
-        req = urllib.request.Request(
-            url,
-            data=json.dumps(payload).encode(),
-            headers={"Content-Type": "application/json"},
-        )
-
-        try:
-            with urllib.request.urlopen(req, timeout=600) as resp:
-                result = json.loads(resp.read())
-        except urllib.error.HTTPError as e:
-            raise RuntimeError(f"fusion-mlx image generation failed: {e.code} {e.read().decode()}")
-
-        images = []
-        for item in result.get("data", []):
-            b64 = item.get("b64_json", "")
-            if not b64:
-                continue
-            import base64
-            img = Image.open(__import__("io").BytesIO(base64.b64decode(b64)))
-            array = np.array(img).astype(np.float32) / 255.0
-            # ComfyUI expects shape (H, W, C) with C=3 or 4
-            if array.shape[2] == 4:
-                array = array[:, :, :3]  # RGBA -> RGB
-            images.append(array)
-
-        if not images:
-            raise RuntimeError("No images returned from fusion-mlx")
-
-        return {"result": images}
+        return {"result": _call_fusion_mlx(payload)}
 
 
-NODE_CLASS_NAME = "FusionMlxImageGenerate"
-NODE_DISPLAY_NAME = "Fusion MLX Image Generate"
+class FusionMlxControlNet:
+    """ControlNet (Canny/Upscaler) image generation via fusion-mlx."""
+
+    @classmethod
+    def define(cls, prompt) -> dict:
+        return {
+            "input": {
+                "required": {
+                    "prompt": ("STRING", {"default": "", "multiline": True}),
+                    "control_image": ("STRING", {"default": ""}),
+                    "variant": (["controlnet_canny", "controlnet_upscaler"], {"default": "controlnet_canny"}),
+                    "width": ("INT", {"default": 1024, "min": 256, "max": 2048, "step": 64}),
+                    "height": ("INT", {"default": 1024, "min": 256, "max": 2048, "step": 64}),
+                    "steps": ("INT", {"default": 4, "min": 1, "max": 50}),
+                    "guidance": ("FLOAT", {"default": 4.0, "min": 1.0, "max": 20.0, "step": 0.1}),
+                    "controlnet_strength": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 2.0, "step": 0.05}),
+                    "seed": ("INT", {"default": 0, "min": 0, "max": 2**32 - 1}),
+                },
+            },
+            "output": ["IMAGE"],
+            "name": "FusionMLXControlNet",
+            "display_name": "Fusion MLX ControlNet",
+            "description": "ControlNet Canny/Upscaler via fusion-mlx",
+            "category": "image",
+        }
+
+    @classmethod
+    def execute(cls, prompt, control_image, variant="controlnet_canny", width=1024, height=1024, steps=4, guidance=4.0, controlnet_strength=1.0, seed=0):
+        payload = {
+            "prompt": prompt, "variant": variant,
+            "control_image": control_image, "controlnet_strength": controlnet_strength,
+            "width": width, "height": height, "steps": steps,
+            "guidance": guidance, "seed": seed if seed > 0 else None,
+            "response_format": "b64_json",
+        }
+        return {"result": _call_fusion_mlx(payload)}
+
+
+class FusionMlxDepth:
+    """Depth-guided image generation via fusion-mlx."""
+
+    @classmethod
+    def define(cls, prompt) -> dict:
+        return {
+            "input": {
+                "required": {
+                    "prompt": ("STRING", {"default": "", "multiline": True}),
+                    "depth_image": ("STRING", {"default": ""}),
+                    "width": ("INT", {"default": 1024, "min": 256, "max": 2048, "step": 64}),
+                    "height": ("INT", {"default": 1024, "min": 256, "max": 2048, "step": 64}),
+                    "steps": ("INT", {"default": 4, "min": 1, "max": 50}),
+                    "guidance": ("FLOAT", {"default": 4.0, "min": 1.0, "max": 20.0, "step": 0.1}),
+                    "image_strength": ("FLOAT", {"default": 0.5, "min": 0.0, "max": 1.0, "step": 0.05}),
+                    "seed": ("INT", {"default": 0, "min": 0, "max": 2**32 - 1}),
+                },
+            },
+            "output": ["IMAGE"],
+            "name": "FusionMLXDepth",
+            "display_name": "Fusion MLX Depth",
+            "description": "Depth-guided generation via fusion-mlx",
+            "category": "image",
+        }
+
+    @classmethod
+    def execute(cls, prompt, depth_image, width=1024, height=1024, steps=4, guidance=4.0, image_strength=0.5, seed=0):
+        payload = {
+            "prompt": prompt, "variant": "depth",
+            "depth_image": depth_image, "image_strength": image_strength,
+            "width": width, "height": height, "steps": steps,
+            "guidance": guidance, "seed": seed if seed > 0 else None,
+            "response_format": "b64_json",
+        }
+        return {"result": _call_fusion_mlx(payload)}
+
+
+class FusionMlxFill:
+    """Inpainting (Fill) image generation via fusion-mlx."""
+
+    @classmethod
+    def define(cls, prompt) -> dict:
+        return {
+            "input": {
+                "required": {
+                    "prompt": ("STRING", {"default": "", "multiline": True}),
+                    "edit_image": ("STRING", {"default": ""}),
+                    "mask_image": ("STRING", {"default": ""}),
+                    "width": ("INT", {"default": 1024, "min": 256, "max": 2048, "step": 64}),
+                    "height": ("INT", {"default": 1024, "min": 256, "max": 2048, "step": 64}),
+                    "steps": ("INT", {"default": 4, "min": 1, "max": 50}),
+                    "guidance": ("FLOAT", {"default": 4.0, "min": 1.0, "max": 20.0, "step": 0.1}),
+                    "image_strength": ("FLOAT", {"default": 0.5, "min": 0.0, "max": 1.0, "step": 0.05}),
+                    "seed": ("INT", {"default": 0, "min": 0, "max": 2**32 - 1}),
+                },
+            },
+            "output": ["IMAGE"],
+            "name": "FusionMLXFill",
+            "display_name": "Fusion MLX Fill",
+            "description": "Inpainting via fusion-mlx Flux Fill",
+            "category": "image",
+        }
+
+    @classmethod
+    def execute(cls, prompt, edit_image, mask_image, width=1024, height=1024, steps=4, guidance=4.0, image_strength=0.5, seed=0):
+        payload = {
+            "prompt": prompt, "variant": "fill",
+            "edit_image": edit_image, "mask_image": mask_image,
+            "image_strength": image_strength,
+            "width": width, "height": height, "steps": steps,
+            "guidance": guidance, "seed": seed if seed > 0 else None,
+            "response_format": "b64_json",
+        }
+        return {"result": _call_fusion_mlx(payload)}
+
+
+class FusionMlxKontext:
+    """Kontext (in-context) image generation via fusion-mlx."""
+
+    @classmethod
+    def define(cls, prompt) -> dict:
+        return {
+            "input": {
+                "required": {
+                    "prompt": ("STRING", {"default": "", "multiline": True}),
+                    "edit_image": ("STRING", {"default": ""}),
+                    "width": ("INT", {"default": 1024, "min": 256, "max": 2048, "step": 64}),
+                    "height": ("INT", {"default": 1024, "min": 256, "max": 2048, "step": 64}),
+                    "steps": ("INT", {"default": 4, "min": 1, "max": 50}),
+                    "guidance": ("FLOAT", {"default": 4.0, "min": 1.0, "max": 20.0, "step": 0.1}),
+                    "image_strength": ("FLOAT", {"default": 0.5, "min": 0.0, "max": 1.0, "step": 0.05}),
+                    "seed": ("INT", {"default": 0, "min": 0, "max": 2**32 - 1}),
+                },
+            },
+            "output": ["IMAGE"],
+            "name": "FusionMLXKontext",
+            "display_name": "Fusion MLX Kontext",
+            "description": "In-context generation via fusion-mlx Flux Kontext",
+            "category": "image",
+        }
+
+    @classmethod
+    def execute(cls, prompt, edit_image, width=1024, height=1024, steps=4, guidance=4.0, image_strength=0.5, seed=0):
+        payload = {
+            "prompt": prompt, "variant": "kontext",
+            "edit_image": edit_image, "image_strength": image_strength,
+            "width": width, "height": height, "steps": steps,
+            "guidance": guidance, "seed": seed if seed > 0 else None,
+            "response_format": "b64_json",
+        }
+        return {"result": _call_fusion_mlx(payload)}
+
+
+class FusionMlxRedux:
+    """Redux (IP-Adapter) image generation via fusion-mlx."""
+
+    @classmethod
+    def define(cls, prompt) -> dict:
+        return {
+            "input": {
+                "required": {
+                    "prompt": ("STRING", {"default": "", "multiline": True}),
+                    "reference_images": ("STRING", {"default": ""}),
+                    "width": ("INT", {"default": 1024, "min": 256, "max": 2048, "step": 64}),
+                    "height": ("INT", {"default": 1024, "min": 256, "max": 2048, "step": 64}),
+                    "steps": ("INT", {"default": 4, "min": 1, "max": 50}),
+                    "guidance": ("FLOAT", {"default": 4.0, "min": 1.0, "max": 20.0, "step": 0.1}),
+                    "image_strength": ("FLOAT", {"default": 0.5, "min": 0.0, "max": 1.0, "step": 0.05}),
+                    "seed": ("INT", {"default": 0, "min": 0, "max": 2**32 - 1}),
+                },
+            },
+            "output": ["IMAGE"],
+            "name": "FusionMLXRedux",
+            "display_name": "Fusion MLX Redux",
+            "description": "IP-Adapter generation via fusion-mlx Flux Redux",
+            "category": "image",
+        }
+
+    @classmethod
+    def execute(cls, prompt, reference_images, width=1024, height=1024, steps=4, guidance=4.0, image_strength=0.5, seed=0):
+        paths = [p.strip() for p in reference_images.split(",") if p.strip()]
+        payload = {
+            "prompt": prompt, "variant": "redux",
+            "reference_images": paths, "image_strength": image_strength,
+            "width": width, "height": height, "steps": steps,
+            "guidance": guidance, "seed": seed if seed > 0 else None,
+            "response_format": "b64_json",
+        }
+        return {"result": _call_fusion_mlx(payload)}
+
+
+NODE_CLASS_MAPPINGS = {
+    "FusionMlxImageGenerate": FusionMlxImageGenerate,
+    "FusionMlxControlNet": FusionMlxControlNet,
+    "FusionMlxDepth": FusionMlxDepth,
+    "FusionMlxFill": FusionMlxFill,
+    "FusionMlxKontext": FusionMlxKontext,
+    "FusionMlxRedux": FusionMlxRedux,
+}
+
+NODE_DISPLAY_NAME_MAPPINGS = {
+    "FusionMlxImageGenerate": "Fusion MLX Image Generate",
+    "FusionMlxControlNet": "Fusion MLX ControlNet",
+    "FusionMlxDepth": "Fusion MLX Depth",
+    "FusionMlxFill": "Fusion MLX Fill",
+    "FusionMlxKontext": "Fusion MLX Kontext",
+    "FusionMlxRedux": "Fusion MLX Redux",
+}
 '''
 
     def __init__(self):
