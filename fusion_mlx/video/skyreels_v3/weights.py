@@ -405,32 +405,106 @@ def load_text_encoder_weights(
     # 转 bf16 常驻: 11GB float32 → 5.5GB bf16, 释放 5.5GB Metal 给 DiT temporal 分支用
     weights = {k: v.astype(mx.bfloat16) for k, v in weights.items()}
 
-    # AtomCode 专题优化: 映射 blocks.{N}.* → block_{N}.* (T5Encoder 用命名属性替 list)
-    # MLX nn.Module 不收录普通 list 属性, T5Encoder.block_0/block_1/... 才入 _children
-    # 同时 gate.0.* → gate_0.* (T5DenseGatedActDense 用 gate_0 命名属性替 ModuleList)
+    # 仅保留 UMT5 相关 key (过滤 DiT blocks.* 等无关权重)
+    umt5_keys = {k: v for k, v in weights.items()
+                 if k.startswith(("encoder.", "shared."))}
+    if not umt5_keys:
+        logger.warning("UMT5 权重中无 encoder.*/shared.* key, 跳过映射")
+        return encoder
+    weights = umt5_keys
+
+    # HF → MLX 映射 (与 t5_encoder._map_t5_weights 一致, 但加 encoder. 前缀)
+    # HuggingFace 格式: encoder.block.N.layer.M.SelfAttention.k.weight
+    # MLX 模型格式:     encoder.block_N.layer0.attn.k.weight
+    import re
     remapped = {}
     for k, v in weights.items():
         nk = k
-        if k.startswith("blocks."):
-            parts = k.split(".", 2)  # ["blocks", "{N}", "{sub}"]
+        if k == "shared.weight":
+            # HF 存 (d_model, vocab_size), MLX nn.Embedding 期望 (vocab_size, d_model)
+            v = mx.transpose(v)
+            nk = "encoder.token_embedding.weight"
+        elif k == "encoder.final_layer_norm.weight":
+            nk = "encoder.norm.weight"
+        elif k.startswith("encoder.block."):
+            m = re.match(r"encoder\.block\.(\d+)\.layer\.(\d+)\.(.+)", k)
+            if m:
+                block_n, layer_n, rest = m.group(1), m.group(2), m.group(3)
+                new_prefix = f"encoder.block_{block_n}.layer{layer_n}"
+                if layer_n == "0":
+                    if rest == "SelfAttention.relative_attention_bias.weight":
+                        # HF (num_heads, rel_buckets) → MLX (rel_buckets, num_heads)
+                        v = mx.transpose(v)
+                        # T5Encoder 只给 block_0 设 has_bias=True (relative_attention_bias),
+                        # block_1..23 无此参数, 跳过; block_0 同时映射 pos_embedding
+                        if block_n == "0":
+                            remapped[f"{new_prefix}.pos_embedding.embedding.weight"] = v
+                            nk = f"{new_prefix}.attn.relative_attention_bias.weight"
+                        else:
+                            # block 1+ 无 relative_attention_bias, 仅 pos_embedding
+                            remapped[f"{new_prefix}.pos_embedding.embedding.weight"] = v
+                            nk = None
+                    elif rest in ("SelfAttention.q.weight",
+                                  "SelfAttention.k.weight",
+                                  "SelfAttention.v.weight",
+                                  "SelfAttention.o.weight"):
+                        # HF T5 线性层 (d_model, inner), MLX nn.Linear 期望 (inner, d_model)
+                        v = mx.transpose(v)
+                        attr = rest[len("SelfAttention."):]
+                        nk = f"{new_prefix}.attn.{attr}"
+                    elif rest.startswith("SelfAttention."):
+                        attr = rest[len("SelfAttention."):]
+                        nk = f"{new_prefix}.attn.{attr}"
+                    elif rest.startswith("layer_norm."):
+                        attr = rest[len("layer_norm."):]
+                        nk = f"{new_prefix}.norm1.{attr}"
+                    else:
+                        nk = f"{new_prefix}.{rest}"
+                elif layer_n == "1":
+                    if rest in ("DenseReluDense.wi_0.weight",
+                                "DenseReluDense.wi_1.weight",
+                                "DenseReluDense.wo.weight"):
+                        # HF T5 FFN 线性层也需转置: (in, out) → (out, in)
+                        v = mx.transpose(v)
+                        if rest == "DenseReluDense.wi_0.weight":
+                            nk = f"{new_prefix}.ffn.gate_0.weight"
+                        elif rest == "DenseReluDense.wi_1.weight":
+                            nk = f"{new_prefix}.ffn.fc1.weight"
+                        else:
+                            nk = f"{new_prefix}.ffn.fc2.weight"
+                    elif rest.startswith("layer_norm."):
+                        attr = rest[len("layer_norm."):]
+                        nk = f"{new_prefix}.norm2.{attr}"
+                    else:
+                        nk = f"{new_prefix}.{rest}"
+                else:
+                    nk = f"{new_prefix}.{rest}"
+        # 兼容已映射格式: blocks.N.* → encoder.block_N.* (非 encoder. 前缀)
+        elif k.startswith("blocks."):
+            parts = k.split(".", 2)
             n = parts[1]
             sub = parts[2] if len(parts) > 2 else ""
-            nk = f"block_{n}.{sub}" if sub else f"block_{n}"
+            nk = f"encoder.block_{n}.{sub}" if sub else f"encoder.block_{n}"
         # gate.0.* → gate_0.* (MLX nn 无 ModuleList, 用命名属性)
+        if nk is None:
+            continue
         nk = nk.replace(".gate.0.", ".gate_0.")
         remapped[nk] = v
     weights = remapped
 
     try:
         encoder.load_weights(list(weights.items()), strict=strict)
-        # 分批 eval 避一次性提交 11GB 致 GPU Timeout (>10s 阜默)
         _eval_params_batched(encoder, batch_mb=512)
         logger.info("UMT5 权重加载成功: %d tensors", len(weights))
     except Exception as exc:
         logger.warning("UMT5 权重加载失败 (strict=%s): %s", strict, exc)
         if strict:
-            encoder.load_weights(list(weights.items()), strict=False)
-            _eval_params_batched(encoder, batch_mb=512)
+            try:
+                encoder.load_weights(list(weights.items()), strict=False)
+                _eval_params_batched(encoder, batch_mb=512)
+                logger.info("UMT5 权重加载成功 (strict=False 降级): %d tensors", len(weights))
+            except Exception as exc2:
+                logger.error("UMT5 权重加载彻底失败: %s", exc2)
 
     return encoder
 
