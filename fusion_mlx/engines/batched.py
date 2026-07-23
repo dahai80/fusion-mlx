@@ -796,13 +796,33 @@ class BatchedEngine(BaseEngine):
                 # Per-token delta: must NOT strip, otherwise the leading space
                 # carried by BPE tokens (e.g. " world") is dropped from every
                 # delta and streamed text collapses ("Hello world" -> "Helloworld").
-                from ..api.utils import remove_special_tokens_preserve_whitespace
+                from ..api.utils import (
+                    clean_special_tokens,
+                    remove_special_tokens_preserve_whitespace,
+                )
 
                 text = remove_special_tokens_preserve_whitespace(output.new_text)
                 if output.finished:
                     finished_normally = True
+                # full_text: accumulated full text for fallback tool-call parsing.
+                # stream_chat runs _fallback_parse_tool_calls at finish using
+                # gen.text; if gen.text is only the last delta (e.g. "</tool_call>")
+                # the parser cannot see the full <tool_call>...</tool_call> block
+                # and tool_calls stays empty (issue #203). Non-streaming generate
+                # and the kv_handoff path both use output.output_text here.
+                # new_text stays the per-token delta so streamed content is intact.
+                if output.finished and output.output_text:
+                    full_text = clean_special_tokens(output.output_text)
+                    logger.debug(
+                        "[stream_generate] request=%s finished full_text_len=%d "
+                        "for tool-call fallback",
+                        request_id,
+                        len(full_text),
+                    )
+                else:
+                    full_text = ""
                 yield GenerationOutput(
-                    text=text,
+                    text=full_text,
                     new_text=text,
                     prompt_tokens=output.prompt_tokens,
                     completion_tokens=output.completion_tokens,
