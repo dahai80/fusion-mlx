@@ -28,7 +28,7 @@ def latent_cache_enabled() -> bool:
 
 
 def session_tail_cache_enabled() -> bool:
-    return latent_cache_enabled() and os.getenv("FUSION_SESSION_TAIL_CACHE", "0") == "1"
+    return latent_cache_enabled() and os.getenv("FUSION_SESSION_TAIL_CACHE", "1") == "1"
 
 
 def latent_cache_max_mb() -> int:

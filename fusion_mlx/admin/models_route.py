@@ -158,6 +158,67 @@ async def unload_model(
     return {"status": "ok", "model_id": model_id, "message": f"Unloaded {model_id}"}
 
 
+@_router.post("/api/models/unload-batch")
+async def unload_models_batch(
+    model_ids: list[str],
+    is_admin: bool = Depends(require_admin),
+):
+    """Parallel unload: detach all engines first, then settle once.
+
+    #74: Batch unload is faster than N sequential unload_engine_async calls
+    because the expensive settle (gc + mx.synchronize + clear_cache + poll)
+    runs once after all detaches, not once per model.
+    """
+    import asyncio
+
+    engine_pool = _get_engine_pool()
+    if engine_pool is None:
+        raise HTTPException(status_code=503, detail="Engine pool not initialized")
+
+    results = {}
+    detach_tasks = []
+    valid_ids = []
+    for mid in model_ids:
+        entry = engine_pool.get_entry(mid)
+        if entry is None:
+            results[mid] = "not_found"
+            continue
+        if entry.engine is None:
+            results[mid] = "not_loaded"
+            continue
+        valid_ids.append(mid)
+        detach_tasks.append(engine_pool._detach_engine(mid))
+
+    # Parallel detach (fast, under lock sequentially but no settle)
+    detach_results = await asyncio.gather(*detach_tasks, return_exceptions=True)
+
+    # Single settle for all detached engines
+    settled_ids = []
+    for mid, pre_active in zip(valid_ids, detach_results):
+        if isinstance(pre_active, Exception):
+            results[mid] = f"error: {pre_active}"
+            logger.error("batch unload detach failed for %s: %s", mid, pre_active)
+        elif pre_active is not None:
+            settled_ids.append((mid, pre_active))
+            results[mid] = "detached"
+        else:
+            results[mid] = "already_none"
+
+    # One settle pass for all (the expensive gc+sync+clear)
+    if settled_ids:
+        for mid, pre_active in settled_ids:
+            try:
+                await engine_pool._settle_unloaded_engine(mid, pre_active)
+                results[mid] = "unloaded"
+            except Exception as exc:
+                results[mid] = f"settle_error: {exc}"
+                logger.error("batch unload settle failed for %s: %s", mid, exc)
+
+    unloaded = sum(1 for v in results.values() if v == "unloaded")
+    logger.info("batch unload: %d/%d unloaded", unloaded, len(model_ids))
+    return {"status": "ok", "results": results, "unloaded": unloaded, "total": len(model_ids)}
+
+
 @_router.post("/api/models/{model_id}/load")
 async def load_model(
     model_id: str,

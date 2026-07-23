@@ -2763,17 +2763,43 @@ async def _create_chat_completion_impl(
                 # still held by the wrapper's ``finally`` — no
                 # re-acquire needed (the helper does not release on
                 # its own now that release lives at the route level).
-                output = await _wait_with_disconnect(
-                    engine.chat(messages=messages, **chat_kwargs),
-                    raw_request,
-                    timeout=timeout,
-                )
+                # #6 streaming enforcement: buffer stream_chat instead
+                # of blocking engine.chat().
+                output = None
+                async for chunk in engine.stream_chat(messages=messages, **chat_kwargs):
+                    output = chunk
+                if output is None:
+                    return Response(status_code=499)
         else:
-            output = await _wait_with_disconnect(
-                engine.chat(messages=messages, **chat_kwargs),
-                raw_request,
-                timeout=timeout,
-            )
+            # Chat streaming enforcement (#6): route stream=False requests
+            # through stream_chat internally to avoid blocking the event loop.
+            # The blocking engine.chat() holds the inference thread for the
+            # entire generation, preventing other async tasks (health checks,
+            # progress callbacks, concurrent request scheduling) from running.
+            # stream_chat yields per-token, so the event loop gets control
+            # between tokens. We buffer all chunks and reconstruct the final
+            # output identically to engine.chat().
+            from dataclasses import replace as _dc_replace2
+
+            output = None
+            routed_content_parts: list[str] = []
+            routed_reasoning_parts: list[str] = []
+            saw_channel = False
+            async for chunk in engine.stream_chat(messages=messages, **chat_kwargs):
+                output = chunk
+                ch = getattr(chunk, "channel", None)
+                if ch:
+                    saw_channel = True
+                    if ch == "reasoning":
+                        routed_reasoning_parts.append(chunk.new_text or "")
+                    elif ch == "content":
+                        routed_content_parts.append(chunk.new_text or "")
+            if saw_channel and output is not None:
+                output = _dc_replace2(
+                    output,
+                    text="".join(routed_content_parts),
+                    reasoning_text="".join(routed_reasoning_parts),
+                )
     except HTTPException:
         raise
     except Exception as e:
@@ -2972,11 +2998,11 @@ async def _create_chat_completion_impl(
                     failure_details.get("reason") if failure_details else "?",
                 )
                 try:
-                    repair_output = await _wait_with_disconnect(
-                        engine.chat(messages=repair_messages, **repair_kwargs),
-                        raw_request,
-                        timeout=timeout,
-                    )
+                    # #6 streaming enforcement: buffer stream_chat instead
+                    # of blocking engine.chat().
+                    repair_output = None
+                    async for chunk in engine.stream_chat(messages=repair_messages, **repair_kwargs):
+                        repair_output = chunk
                 except HTTPException:
                     raise
                 except (TimeoutError, asyncio.CancelledError):

@@ -27,15 +27,15 @@ class TestSessionTailKey:
 
 
 class TestSessionTailCacheEnabled:
-    def test_disabled_by_default(self, monkeypatch):
+    def test_enabled_by_default(self, monkeypatch):
         monkeypatch.delenv("FUSION_SESSION_TAIL_CACHE", raising=False)
         monkeypatch.setenv("FUSION_LATENT_CACHE", "1")
-        assert not session_tail_cache_enabled()
-
-    def test_enabled_when_both_on(self, monkeypatch):
-        monkeypatch.setenv("FUSION_LATENT_CACHE", "1")
-        monkeypatch.setenv("FUSION_SESSION_TAIL_CACHE", "1")
         assert session_tail_cache_enabled()
+
+    def test_explicit_disable(self, monkeypatch):
+        monkeypatch.setenv("FUSION_LATENT_CACHE", "1")
+        monkeypatch.setenv("FUSION_SESSION_TAIL_CACHE", "0")
+        assert not session_tail_cache_enabled()
 
     def test_disabled_when_master_off(self, monkeypatch):
         monkeypatch.setenv("FUSION_LATENT_CACHE", "0")
@@ -64,7 +64,7 @@ class TestSessionTailPutGet:
 
     def test_disabled_returns_false_put(self, monkeypatch):
         monkeypatch.setenv("FUSION_LATENT_CACHE", "1")
-        monkeypatch.delenv("FUSION_SESSION_TAIL_CACHE", raising=False)
+        monkeypatch.setenv("FUSION_SESSION_TAIL_CACHE", "0")
         import mlx.core as mx
 
         tail = mx.ones((1, 128, 1, 16, 32))
@@ -73,7 +73,7 @@ class TestSessionTailPutGet:
 
     def test_disabled_returns_none_get(self, monkeypatch):
         monkeypatch.setenv("FUSION_LATENT_CACHE", "1")
-        monkeypatch.delenv("FUSION_SESSION_TAIL_CACHE", raising=False)
+        monkeypatch.setenv("FUSION_SESSION_TAIL_CACHE", "0")
         result = get_session_tail("sess-1", "model-a")
         assert result is None
 

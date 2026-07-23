@@ -66,6 +66,7 @@ def generate_video(
     num_inference_steps: int = 50,
     guidance_scale: float = 5.0,
     tiling: bool = False,
+    session_id: str | None = None,
 ) -> str:
     """统一视频生成入口.
 
@@ -121,6 +122,7 @@ def generate_video(
             ref_images=ref_images,
             duration=duration,
             seed=seed,
+            session_id=session_id,
         )
     elif branch_cfg.branch == "v2v":
         pipeline = SkyReelsV2VPipeline(model_path)
@@ -131,6 +133,7 @@ def generate_video(
             prompt=prompt,
             duration=duration,
             seed=seed,
+            session_id=session_id,
         )
     elif branch_cfg.branch == "a2v":
         pipeline = SkyReelsA2VPipeline(model_path)
@@ -142,6 +145,7 @@ def generate_video(
             prompt=prompt,
             duration=duration,
             seed=seed,
+            session_id=session_id,
         )
     else:
         raise ValueError(f"Unknown branch: {branch_cfg.branch}")
