@@ -1,6 +1,6 @@
 # UMA Radix Latent Cache
 
-fusion-mlx 的下一个主打特性:把 #178 的 DiffusionRadixCache 从 **文本 KV**
+fusion-mlx 的主打特性:把 #178 的 DiffusionRadixCache 从 **文本 KV**
 扩展到 **视频帧 latent**,在 Apple Silicon 统一内存(UMA)上做零拷贝复用。
 
 ## 为什么这是独创的
@@ -35,18 +35,65 @@ latent:{model_id}:{height}x{width}:{dtype}:{sha256(image)[:16]}
 
 同一张图 + 同一分辨率 + 同一精度 = 同一个键 = 命中。
 
+## Phase-2(已落地):多镜头尾帧→首帧零拷贝复用
+
+多镜头 pipeline 中,镜头 N 去噪后的尾帧 latent 被 pin 住,
+作为镜头 N+1 的首帧 conditioning 零拷贝复用,跳过 VAE decode→re-encode。
+
+### 工作流程
+
+1. Shot N 生成完成 → denoise 后、VAE decode 前捕获尾帧 latent:
+   - LTX-2: `latents[:, :, -1:, :, :]` (5D)
+   - Wan2: `latents[:, -1:, :, :]` (4D)
+2. `put_session_tail(session_id, model_id, tail)` 写入独立缓存实例
+3. Shot N+1 请求(同一 `session_id` + `image` 参数):
+   - `get_session_tail` 命中 → 直接用作 `image_latent`,跳过 VAE encode
+   - 未命中 → 回退到 Phase-1 `_encode_image_latent` 路径
+
+### 接入点
+
+- **LTX-2** (`fusion_mlx/video/ltx2/generate.py`):I2V 分支首帧复用 + 尾帧捕获
+- **Wan2.2** (`fusion_mlx/video/wan2/generate.py`):mask-blend (TI2V-5B) 首帧复用 + 尾帧捕获
+- **HTTP API** (`fusion_mlx/api/videos_routes.py`):`session_id` 字段透传
+- **Backend** (`base.py`/`ltx2.py`/`wan2.py`):`session_id` 参数传递链
+
+### 缓存键
+
+`session_tail_key(session_id, model_id)` 生成:
+
+```
+session_tail:{model_id}:{session_id}
+```
+
+不同 session 隔离,不同 model 隔离。
+
 ### 配置(环境变量)
 
 | 变量 | 默认 | 说明 |
 |------|------|------|
-| `FUSION_LATENT_CACHE` | `1` | 开关(`0` 关闭,缓存工厂返回 `None`) |
+| `FUSION_LATENT_CACHE` | `1` | 总开关(`0` 关闭所有 latent 缓存) |
+| `FUSION_SESSION_TAIL_CACHE` | `0` | Phase-2 session tail 开关(需同时开启 `FUSION_LATENT_CACHE=1`) |
 | `FUSION_LATENT_CACHE_MAX_MB` | `2048` | 单模型 latent 缓存上限(MB),LRU 淘汰 |
 
-### 统计
+### HTTP 用法
 
-缓存通过 `DiffusionRadixCache` 的 WeakSet 注册到 `all_cache_stats()`,
-经 `GET /v1/cache/stats` 暴露(label = `latent:<model_id>`),含
-`entries` / `hits` / `size_bytes` / `max_bytes`。
+```bash
+# Shot 1: 生成视频并缓存尾帧
+curl -X POST http://localhost:11434/v1/videos/generate \
+  -H "Content-Type: application/json" \
+  -d '{"prompt": "a cat walking", "model": "ltx-2", "image": "/path/to/img.png", "session_id": "my-session-1"}'
+
+# Shot 2: 复用上一镜头尾帧作为首帧(跳过 VAE encode)
+curl -X POST http://localhost:11434/v1/videos/generate \
+  -H "Content-Type: application/json" \
+  -d '{"prompt": "the cat jumps", "model": "ltx-2", "image": "/path/to/img.png", "session_id": "my-session-1"}'
+```
+
+### 验证门控
+
+若 shot-2 输出不连贯 → 将 `FUSION_SESSION_TAIL_CACHE` 保持默认 OFF,
+文档记录为 NEGATIVE 结果(类似 #177 speculative denoise 的做法)。
+Machinery 已落地,env-gated,default-OFF 直到 E2E 验证通过。
 
 ## 设计原则
 
@@ -55,30 +102,25 @@ latent:{model_id}:{height}x{width}:{dtype}:{sha256(image)[:16]}
 2. **miss 路径字节一致** -- 未命中时执行原始 encode 代码 + `put`,
    输出与无缓存时完全一致;命中时才跳过 load + encode。
 3. **VAE 无关** -- 缓存的是任意 `mx.array`,与具体 VAE 类解耦。
+4. **session tail 独立实例** -- 不与 image latent 缓存共享,通过 WeakSet
+   注册到 `all_cache_stats()`,label = `session_tail`。
 
 ## Phase 路线
 
 | Phase | 内容 | 状态 |
 |-------|------|------|
 | 1 | 输入图像 latent 复用(跳过 VAE-encode) | ✅ 已落地 |
-| 2 | 多镜头尾帧 -> 下一镜头首帧零拷贝复用 | validation-gated,未开始 |
-| 3 | cached vs naive 基准对比 | 未开始 |
-
-Phase-2 是真正的"多镜头零拷贝":捕获上一镜头去噪后的尾帧 latent,pin 住,
-作为下一镜头首帧 conditioning 零拷贝复用。这是 PR #199 README 里
-"Next milestone" 的完整形态。若复用导致画面不连贯,回退到重新编码。
+| 2 | 多镜头尾帧→首帧零拷贝复用(session_id) | ✅ 代码落地,env-gated 默认 OFF |
+| 3 | LTX-2-dev E2E 验证 + cached vs naive 基准 | 🔄 进行中 |
 
 ## 验证状态
 
-- `tests/unit/test_latent_cache.py`:15 个单测全绿(真实 `mx.array` 的
-  hit/miss/eviction/pin/registry/`all_cache_stats` 字节记账)。
+- `tests/unit/test_latent_cache.py`:15 个单测全绿(Phase-1)
+- `tests/unit/test_latent_cache_session.py`:11 个单测全绿(Phase-2 session tail)
 - ruff + black --fast 干净。
-- **完整 HTTP I2V E2E 待模型重下**:本机 `wan22-ti2v-5b` 是指向
-  `~/.cache/mlx-video-models/wan22-ti2v-5b` 的失效符号链接(目标已删),
-  LTX-2-dev-bf16 已释放;两条接入路径目前无本机视频模型可跑端到端。
-  需通过 https://hf-mirror.com 重下后补 E2E。
+- conftest.py mlx skip-list 已更新。
 
 ## 相关
 
 - #178 DiffusionRadixCache(文本 KV,Phase-1/2 已合并 PR #183/#195)
-- PR #199 README 原创性区块(顶部,把本特性列为 "Next milestone")
+- #2 UMA Radix Latent cache(本特性的 issue tracker)

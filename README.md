@@ -48,13 +48,15 @@ x86+CUDA stack structurally cannot match. These are **landed and running today**
 - **Metal Flash Attention (MFA) (#86)** - vendored Metal kernels for DiT
   attention (LTX-2, Wan2).
 
-**Phase-1 LANDED: UMA Radix *Latent* cache** - the radix cache now extends
-from text KV to video frame latents: repeat I2V requests reuse the
+**Phase-2 LANDED: UMA Radix *Latent* cache** - the radix cache extends
+from text KV to video frame latents. Phase-1: repeat I2V requests reuse the
 input-image's VAE-encoded latent with zero-copy `mx.array` pointer sharing,
-skipping the VAE load + forward (LTX-2, Wan2.2). See
-[cache/LATENT_CACHE.md](fusion_mlx/cache/LATENT_CACHE.md). **Phase-2 (next):**
-reuse a multi-shot pipeline's previous tail-frame latent as the next shot's
-first-frame latent. The UMA advantage the CUDA stack cannot replicate.
+skipping the VAE load + forward (LTX-2, Wan2.2). Phase-2: multi-shot
+pipeline's previous tail-frame latent is reused as the next shot's first-frame
+latent, skipping VAE decode→re-encode on UMA. `session_id` parameter on
+`/v1/videos/generate` enables multi-shot continuity. See
+[cache/LATENT_CACHE.md](fusion_mlx/cache/LATENT_CACHE.md).
+Env: `FUSION_SESSION_TAIL_CACHE=1` (default OFF until E2E validated).
 
 **Benchmark** (Qwen3.6-27B, Apple M2 Ultra 137GB):
 
@@ -436,13 +438,14 @@ FUSION_DIFFUSION_TEXT_CACHE=0 fusion-mlx serve --model SkyReels-V3-R2V-14B-MLX  
   hit_rate}}`. Caches belonging to unloaded encoders are auto-dropped (weakref).
   This reports the diffusion text-encoding cache, not the LLM KV/prefix cache.
 
-> **Scope**: phase-1 = full-key UMT5 cache (same prompt -> 0 ms). Phase-2 (this
-> change) = CLIP wiring + admin stats endpoint. Still deferred: video temporal
-> latent reuse (high-risk, #177-negative precedent). Token-level prefix KV
-> sharing for T5/UMT5 is **semantically invalid** — T5 is a bidirectional
-> encoder (hidden state at position `i` depends on the full sequence), so
-> prefix-hidden-state reuse corrupts output, unlike causal decoder LLMs;
-> full-key caching is the correct approach.
+> **Scope**: phase-1 = full-key UMT5 cache (same prompt -> 0 ms). Phase-2 = CLIP
+> wiring + admin stats endpoint. Phase-3 = session tail cache (multi-shot latent
+> reuse via `session_id` on `/v1/videos/generate`, env
+> `FUSION_SESSION_TAIL_CACHE=1` default OFF until E2E validated). Token-level
+> prefix KV sharing for T5/UMT5 is **semantically invalid** — T5 is a
+> bidirectional encoder (hidden state at position `i` depends on the full
+> sequence), so prefix-hidden-state reuse corrupts output, unlike causal decoder
+> LLMs; full-key caching is the correct approach.
 
 ### Speculative Denoise (#177)
 
