@@ -35,6 +35,7 @@ from ..scheduler.fm_solvers_unipc import (
 from ..speculative_denoise import (
     SpeculativeConfig,
     async_denoise_enabled,
+    create_extrap_draft,
     speculative_denoise,
     speculative_enabled,
 )
@@ -826,7 +827,10 @@ class SkyReelsBasePipeline:
         seq_lens: list,
         grid_sizes: list,
     ) -> mx.array:
-        # issue #177 Phase-2: 投机去噪 (layer-pruned draft 预测 K 步 + 全量 DiT 单次批量 verify).
+        # issue #177 Phase-2: 投机去噪 (velocity extrapolation draft 预测 K 步 + 全量 DiT 单次批量 verify).
+        # Extrapolation draft uses previously verified velocities to predict future
+        # steps — zero model forward cost. Layer-pruned draft (falsified: 0% acceptance)
+        # available via FUSION_SPEC_DRAFT_STRATEGY=layer_pruned.
         # 1st-order Euler 路径 (vs 生产 UniPC 2nd-order); 默认关, FUSION_SPECULATIVE_DENOISE=1 开.
         import os
         import time
@@ -835,13 +839,6 @@ class SkyReelsBasePipeline:
             raise RuntimeError("DiT not loaded")
 
         config = SpeculativeConfig.from_env()
-        num_layers = len(self.dit.blocks)
-        m_default = max(1, num_layers // 4)
-        try:
-            n_blocks = int(os.environ.get("FUSION_SPEC_DRAFT_BLOCKS", m_default))
-        except ValueError:
-            n_blocks = m_default
-        n_blocks = max(1, min(n_blocks, num_layers))
         guidance = self.config.guidance_scale
 
         scheduler = FlowUniPCMultistepScheduler(
@@ -850,14 +847,24 @@ class SkyReelsBasePipeline:
         scheduler.set_timesteps(self.config.num_inference_steps)
         timesteps = scheduler.timesteps
 
+        # Layer-pruned draft config (only used when strategy=layer_pruned)
+        draft_velocity = None
+        if config.draft_strategy == "layer_pruned":
+            num_layers = len(self.dit.blocks)
+            m_default = max(1, num_layers // 4)
+            try:
+                n_blocks = int(os.environ.get("FUSION_SPEC_DRAFT_BLOCKS", m_default))
+            except ValueError:
+                n_blocks = m_default
+            n_blocks = max(1, min(n_blocks, num_layers))
+
         logger.info(
-            "spec-denoise: start branch=%s steps=%d K=%d eps=%g draft_blocks=%d/%d cfg=%.2f latent=%s",
+            "spec-denoise: start branch=%s steps=%d K=%d eps=%g strategy=%s cfg=%.2f latent=%s",
             self.config.branch,
             timesteps.shape[0],
             config.K,
             config.epsilon,
-            n_blocks,
-            num_layers,
+            config.draft_strategy,
             guidance,
             latents.shape,
         )
@@ -880,12 +887,14 @@ class SkyReelsBasePipeline:
             noise = self.dit(x_2k, t_2k, ctx_2k, seq_2k, grid_2k)
             return perform_guidance(noise, guidance)
 
-        def draft_velocity(x_batch, t_batch):
-            x_2k, t_2k, ctx_2k, seq_2k, grid_2k = _cfg_expand(x_batch, t_batch)
-            noise = self.dit.forward_partial(
-                x_2k, t_2k, ctx_2k, seq_2k, grid_2k, n_blocks=n_blocks
-            )
-            return perform_guidance(noise, guidance)
+        if config.draft_strategy == "layer_pruned":
+
+            def draft_velocity(x_batch, t_batch):
+                x_2k, t_2k, ctx_2k, seq_2k, grid_2k = _cfg_expand(x_batch, t_batch)
+                noise = self.dit.forward_partial(
+                    x_2k, t_2k, ctx_2k, seq_2k, grid_2k, n_blocks=n_blocks
+                )
+                return perform_guidance(noise, guidance)
 
         t0 = time.time()
         out, stats = speculative_denoise(
@@ -895,12 +904,13 @@ class SkyReelsBasePipeline:
         mx.eval(out)
         elapsed = time.time() - t0
         logger.info(
-            "spec-denoise: done macro=%d avg_accept=%.2f full_fwds=%d draft_fwds=%d speedup=%.2fx elapsed=%.1fs",
+            "spec-denoise: done macro=%d avg_accept=%.2f full_fwds=%d draft_fwds=%d speedup=%.2fx strategy=%s elapsed=%.1fs",
             stats.macro_steps,
             stats.avg_accept,
             stats.full_forwards,
             stats.draft_forwards,
             stats.speedup,
+            stats.draft_strategy,
             elapsed,
         )
         self._last_spec_stats = stats
@@ -944,6 +954,7 @@ class SkyReelsR2VPipeline(SkyReelsBasePipeline):
         controlnet_strength: float = 1.0,
         control_type: str = "canny",
         animatediff_scale: float = 0.0,
+        session_id: str | None = None,
     ) -> mx.array:
         """生成视频.
 
@@ -954,6 +965,7 @@ class SkyReelsR2VPipeline(SkyReelsBasePipeline):
             seed: 随机种子
             ip_adapter_image: IP-Adapter 参考图路径 (subject-driven generation)
             ip_adapter_scale: IP-Adapter 缩放因子 (默认 1.0)
+            session_id: 会话 ID, 多镜头复用尾帧 latent (Phase-2 UMA Radix)
 
         Returns:
             [B, 3, T, H, W] 视频帧 (像素 [0, 1])
@@ -982,6 +994,33 @@ class SkyReelsR2VPipeline(SkyReelsBasePipeline):
             ip_adapter_image=ip_adapter_image,
             ip_adapter_scale=ip_adapter_scale,
         )
+
+        # Phase-2: check session tail cache (reuse previous shot's
+        # denoised tail-frame latent as this shot's first-frame conditioning).
+        session_tail_reused = False
+        if session_id is not None and ref_images is not None:
+            from fusion_mlx.cache.latent_cache import get_session_tail
+
+            tail_latent = get_session_tail(session_id, str(self.model_path))
+            if tail_latent is not None:
+                if (
+                    tail_latent.ndim == 5
+                    and tail_latent.shape[2] == 1
+                    and tail_latent.shape[3] == cfg.height // 8
+                    and tail_latent.shape[4] == cfg.width // 8
+                ):
+                    logger.info(
+                        "session tail reused as R2V first-frame latent (skip VAE encode)"
+                    )
+                    session_tail_reused = True
+                else:
+                    logger.info(
+                        "session tail shape mismatch: got %s expected [B,C,1,%d,%d], "
+                        "falling back to normal encode",
+                        tail_latent.shape,
+                        cfg.height // 8,
+                        cfg.width // 8,
+                    )
 
         # 2. 初始化 latent 噪声
         # VAE 下采样 8x (vae.py patch_size=(1,8,8)): 720P latent [B,16,T,90,160]
@@ -1016,12 +1055,22 @@ class SkyReelsR2VPipeline(SkyReelsBasePipeline):
             tiling=cfg.use_tiling,
         )
 
+        # Phase-2: capture tail-frame latent for multi-shot session reuse
+        if session_id is not None:
+            from fusion_mlx.cache.latent_cache import put_session_tail
+
+            # SkyReels latents shape: [B, C, T, H, W] -> tail = [:, :, -1:, :, :]
+            tail = latents[:, :, -1:, :, :]
+            put_session_tail(session_id, str(self.model_path), tail)
+            logger.debug("R2V session tail cached for session_id=%s", session_id)
+
         logger.info(
-            "R2V generated: %dx%dx%d (%.1fs)",
+            "R2V generated: %dx%dx%d (%.1fs) tail_reused=%s",
             cfg.width,
             cfg.height,
             cfg.num_frames,
             cfg.num_frames / cfg.fps,
+            session_tail_reused,
         )
         return video
 
@@ -1068,6 +1117,7 @@ class SkyReelsV2VPipeline(SkyReelsBasePipeline):
         controlnet_strength: float = 1.0,
         control_type: str = "canny",
         animatediff_scale: float = 0.0,
+        session_id: str | None = None,
     ) -> mx.array:
         """续写视频.
 
@@ -1076,6 +1126,7 @@ class SkyReelsV2VPipeline(SkyReelsBasePipeline):
             prompt: 续写 prompt
             duration: 续写后总时长 (秒)
             seed: 随机种子
+            session_id: 会话 ID, 多镜头复用尾帧 latent (Phase-2 UMA Radix)
 
         Returns:
             [B, 3, T, H, W] 续写视频
@@ -1127,6 +1178,14 @@ class SkyReelsV2VPipeline(SkyReelsBasePipeline):
             tiling=cfg.use_tiling,
         )
 
+        # Phase-2: capture tail-frame latent for multi-shot session reuse
+        if session_id is not None:
+            from fusion_mlx.cache.latent_cache import put_session_tail
+
+            tail = latents[:, :, -1:, :, :]
+            put_session_tail(session_id, str(self.model_path), tail)
+            logger.debug("V2V session tail cached for session_id=%s", session_id)
+
         logger.info(
             "V2V generated: %dx%dx%d (%.1fs)",
             cfg.width,
@@ -1172,6 +1231,7 @@ class SkyReelsA2VPipeline(SkyReelsBasePipeline):
         controlnet_strength: float = 1.0,
         control_type: str = "canny",
         animatediff_scale: float = 0.0,
+        session_id: str | None = None,
     ) -> mx.array:
         """生成数字人说话视频.
 
@@ -1181,6 +1241,7 @@ class SkyReelsA2VPipeline(SkyReelsBasePipeline):
             prompt: 文本 prompt (辅助)
             duration: 视频时长 (秒)
             seed: 随机种子
+            session_id: 会话 ID, 多镜头复用尾帧 latent (Phase-2 UMA Radix)
 
         Returns:
             [B, 3, T, H, W] 数字人视频
@@ -1318,6 +1379,14 @@ class SkyReelsA2VPipeline(SkyReelsBasePipeline):
             tiling=cfg.use_tiling,
         )
 
+        # Phase-2: capture tail-frame latent for multi-shot session reuse
+        if session_id is not None:
+            from fusion_mlx.cache.latent_cache import put_session_tail
+
+            tail = latents[:, :, -1:, :, :]
+            put_session_tail(session_id, str(self.model_path), tail)
+            logger.debug("A2V session tail cached for session_id=%s", session_id)
+
         logger.info(
             "A2V generated: %dx%dx%d (%.1fs)",
             cfg.width,
@@ -1336,8 +1405,9 @@ class SkyReelsA2VPipeline(SkyReelsBasePipeline):
         seq_lens: list,
         grid_sizes: list,
     ) -> mx.array:
-        # issue #186 item 3: A2V 投机去噪 (layer-pruned draft 预测 K 步 + 全量 DiT 单次批量 verify).
+        # issue #186 item 3: A2V 投机去噪 (velocity extrapolation draft 预测 K 步 + 全量 DiT 单次批量 verify).
         # A2V DiT 前向签名 (audio + text embeds) 与 R2V/V2V 不同, 故独立 override.
+        # Extrapolation draft: zero-cost velocity prediction from history.
         # 1st-order Euler (vs 生产 UniPC 2nd-order); 默认关, FUSION_SPECULATIVE_DENOISE=1 开.
         import os
         import time
@@ -1346,13 +1416,6 @@ class SkyReelsA2VPipeline(SkyReelsBasePipeline):
             raise RuntimeError("DiT not loaded")
 
         config = SpeculativeConfig.from_env()
-        num_layers = len(self.dit.blocks)
-        m_default = max(1, num_layers // 4)
-        try:
-            n_blocks = int(os.environ.get("FUSION_SPEC_DRAFT_BLOCKS", m_default))
-        except ValueError:
-            n_blocks = m_default
-        n_blocks = max(1, min(n_blocks, num_layers))
         guidance = self.config.guidance_scale
 
         scheduler = FlowUniPCMultistepScheduler(
@@ -1361,13 +1424,23 @@ class SkyReelsA2VPipeline(SkyReelsBasePipeline):
         scheduler.set_timesteps(self.config.num_inference_steps)
         timesteps = scheduler.timesteps
 
+        # Layer-pruned draft config (only used when strategy=layer_pruned)
+        draft_velocity = None
+        if config.draft_strategy == "layer_pruned":
+            num_layers = len(self.dit.blocks)
+            m_default = max(1, num_layers // 4)
+            try:
+                n_blocks = int(os.environ.get("FUSION_SPEC_DRAFT_BLOCKS", m_default))
+            except ValueError:
+                n_blocks = m_default
+            n_blocks = max(1, min(n_blocks, num_layers))
+
         logger.info(
-            "spec-denoise: start branch=a2v steps=%d K=%d eps=%g draft_blocks=%d/%d cfg=%.2f latent=%s",
+            "spec-denoise: start branch=a2v steps=%d K=%d eps=%g strategy=%s cfg=%.2f latent=%s",
             timesteps.shape[0],
             config.K,
             config.epsilon,
-            n_blocks,
-            num_layers,
+            config.draft_strategy,
             guidance,
             latents.shape,
         )
@@ -1394,14 +1467,16 @@ class SkyReelsA2VPipeline(SkyReelsBasePipeline):
             noise = self.dit(x_2k, t_2k, audio_2k, text_2k, seq_2k, grid_2k)
             return perform_guidance(noise, guidance)
 
-        def draft_velocity(x_batch, t_batch):
-            x_2k, t_2k, audio_2k, text_2k, seq_2k, grid_2k = _cfg_expand(
-                x_batch, t_batch
-            )
-            noise = self.dit.forward_partial(
-                x_2k, t_2k, audio_2k, text_2k, seq_2k, grid_2k, n_blocks=n_blocks
-            )
-            return perform_guidance(noise, guidance)
+        if config.draft_strategy == "layer_pruned":
+
+            def draft_velocity(x_batch, t_batch):
+                x_2k, t_2k, audio_2k, text_2k, seq_2k, grid_2k = _cfg_expand(
+                    x_batch, t_batch
+                )
+                noise = self.dit.forward_partial(
+                    x_2k, t_2k, audio_2k, text_2k, seq_2k, grid_2k, n_blocks=n_blocks
+                )
+                return perform_guidance(noise, guidance)
 
         t0 = time.time()
         out, stats = speculative_denoise(
@@ -1411,12 +1486,13 @@ class SkyReelsA2VPipeline(SkyReelsBasePipeline):
         mx.eval(out)
         elapsed = time.time() - t0
         logger.info(
-            "spec-denoise: done macro=%d avg_accept=%.2f full_fwds=%d draft_fwds=%d speedup=%.2fx elapsed=%.1fs",
+            "spec-denoise: done macro=%d avg_accept=%.2f full_fwds=%d draft_fwds=%d speedup=%.2fx strategy=%s elapsed=%.1fs",
             stats.macro_steps,
             stats.avg_accept,
             stats.full_forwards,
             stats.draft_forwards,
             stats.speedup,
+            stats.draft_strategy,
             elapsed,
         )
         self._last_spec_stats = stats

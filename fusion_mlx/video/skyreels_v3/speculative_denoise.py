@@ -11,6 +11,7 @@ ENV_FLAG = "FUSION_SPECULATIVE_DENOISE"
 ENV_K = "FUSION_SPEC_K"
 ENV_EPSILON = "FUSION_SPEC_EPSILON"
 ENV_DRAFT_BLOCKS = "FUSION_SPEC_DRAFT_BLOCKS"
+ENV_DRAFT_STRATEGY = "FUSION_SPEC_DRAFT_STRATEGY"
 ENV_EVAL_STEPS = "FUSION_SPEC_EVAL_STEPS"
 ENV_ASYNC_FLAG = "FUSION_ASYNC_DENOISE"
 
@@ -31,6 +32,7 @@ class SpeculativeConfig:
     epsilon: float = 0.1
     relative: bool = True
     eval_steps: bool = True
+    draft_strategy: str = "extrapolation"
 
     @classmethod
     def from_env(cls) -> "SpeculativeConfig":
@@ -60,11 +62,20 @@ class SpeculativeConfig:
                 "on",
             )
 
+        strategy = os.environ.get(ENV_DRAFT_STRATEGY, "extrapolation").lower().strip()
+        if strategy not in ("extrapolation", "layer_pruned"):
+            logger.warning(
+                "spec-denoise: unknown draft_strategy=%s, fallback extrapolation",
+                strategy,
+            )
+            strategy = "extrapolation"
+
         return cls(
             K=max(1, _env_int(ENV_K, 4)),
             epsilon=_env_float(ENV_EPSILON, 0.1),
             relative=True,
             eval_steps=_env_bool(ENV_EVAL_STEPS, True),
+            draft_strategy=strategy,
         )
 
 
@@ -99,6 +110,59 @@ class LayerPrunedDraft:
         )
 
 
+class ExtrapolationDraft:
+    """Zero-cost velocity draft using polynomial extrapolation from history.
+
+    Instead of a separate model forward, predicts velocity from previously
+    verified (full-model) velocities. This is an ODE predictor-corrector at
+    the speculative level: linear or quadratic extrapolation predicts K steps,
+    full model batch-verifies. Even modest acceptance rates yield speedup
+    because draft cost is ~0 (no model forward).
+
+    History is populated by the speculative loop after each full-verify pass:
+    the verified velocities are fed back via record_verified().
+
+    Modes:
+      "linear"  — 1st-order: v_{i+1} = v_i  (constant velocity assumption)
+      "quadratic" — 2nd-order: uses v_{i-1}, v_i to extrapolate via
+                   linear velocity trend: v_{i+1} = 2*v_i - v_{i-1}
+    """
+
+    def __init__(self, mode: str = "linear"):
+        self.mode = mode
+        self._history: list[mx.array] = []
+        self._t_history: list[float] = []
+
+    def record_verified(self, v: mx.array, t: float) -> None:
+        self._history.append(v)
+        self._t_history.append(t)
+
+    def __call__(self, x_batch: mx.array, t_batch: mx.array) -> mx.array:
+        k = t_batch.shape[0]
+        if not self._history:
+            return mx.zeros_like(x_batch)
+
+        last_v = self._history[-1]
+
+        if self.mode == "quadratic" and len(self._history) >= 2:
+            prev_v = self._history[-2]
+            dv = last_v - prev_v
+            batch = []
+            for j in range(k):
+                v_pred = last_v + dv * (j + 1)
+                batch.append(v_pred)
+            return mx.stack(batch, axis=0)
+        else:
+            batch = []
+            for j in range(k):
+                batch.append(last_v)
+            return mx.stack(batch, axis=0)
+
+    def reset(self) -> None:
+        self._history.clear()
+        self._t_history.clear()
+
+
 def _velocity_error(
     v_draft: mx.array, v_full: mx.array, relative: bool = True
 ) -> float:
@@ -121,6 +185,7 @@ class SpecStats:
     full_forwards: int = 0
     draft_forwards: int = 0
     baseline_steps: int = 0
+    draft_strategy: str = "extrapolation"
 
     @property
     def avg_accept(self) -> float:
@@ -146,18 +211,33 @@ class SpecStats:
             "draft_forwards": self.draft_forwards,
             "baseline_steps": self.baseline_steps,
             "speedup": self.speedup,
+            "draft_strategy": self.draft_strategy,
         }
 
 
 def speculative_denoise(
     full_velocity: VelocityFn,
-    draft_velocity: VelocityFn,
+    draft_velocity: VelocityFn | None,
     latents: mx.array,
     timesteps: mx.array,
     config: SpeculativeConfig | None = None,
 ) -> tuple:
     if config is None:
         config = SpeculativeConfig()
+
+    # If caller provides draft_velocity but config says extrapolation,
+    # auto-switch to layer_pruned (caller explicitly opted in to model-based draft).
+    if draft_velocity is not None and config.draft_strategy == "extrapolation":
+        config = SpeculativeConfig(
+            K=config.K,
+            epsilon=config.epsilon,
+            relative=config.relative,
+            eval_steps=config.eval_steps,
+            draft_strategy="layer_pruned",
+        )
+        logger.info(
+            "spec-denoise: draft_velocity provided, auto-switching strategy to layer_pruned"
+        )
 
     timesteps = mx.array(timesteps)
     N = timesteps.shape[0]
@@ -167,15 +247,21 @@ def speculative_denoise(
 
     K = config.K
     eps = config.epsilon
-    stats = SpecStats(baseline_steps=N - 1)
+    use_extrap = config.draft_strategy == "extrapolation"
+    stats = SpecStats(baseline_steps=N - 1, draft_strategy=config.draft_strategy)
     ts = [float(timesteps[k]) for k in range(N)]
 
+    extrap_draft = None
+    if use_extrap:
+        extrap_draft = ExtrapolationDraft(mode="linear")
+
     logger.info(
-        "spec-denoise start: N=%d K=%d eps=%g relative=%s",
+        "spec-denoise start: N=%d K=%d eps=%g relative=%s strategy=%s",
         N,
         K,
         eps,
         config.relative,
+        config.draft_strategy,
     )
 
     i = 0
@@ -183,14 +269,38 @@ def speculative_denoise(
     while i < N - 1:
         K_eff = min(K, N - 1 - i)
 
+        # First macro step with no history: run full model to bootstrap
+        if use_extrap and not extrap_draft._history:
+            v_f = full_velocity(mx.expand_dims(x, 0), mx.array([ts[i]]))[0]
+            stats.full_forwards += 1
+            if config.eval_steps:
+                mx.eval(v_f)
+            x = _euler_step(x, v_f, ts[i], ts[i + 1])
+            if config.eval_steps:
+                mx.eval(x)
+            extrap_draft.record_verified(v_f, ts[i])
+            stats.accepted.append(0)
+            stats.macro_steps += 1
+            i += 1
+            logger.info(
+                "spec-denoise macro %d: bootstrap (no history) -> step %d/%d",
+                stats.macro_steps,
+                i,
+                N - 1,
+            )
+            continue
+
         xs = [x]
         vs_d = []
         cur = x
         for j in range(K_eff):
             t_j = ts[i + j]
             t_n = ts[i + j + 1]
-            v_d = draft_velocity(mx.expand_dims(cur, 0), mx.array([t_j]))[0]
-            stats.draft_forwards += 1
+            if use_extrap:
+                v_d = extrap_draft(mx.expand_dims(cur, 0), mx.array([t_j]))[0]
+            else:
+                v_d = draft_velocity(mx.expand_dims(cur, 0), mx.array([t_j]))[0]
+                stats.draft_forwards += 1
             if config.eval_steps:
                 mx.eval(v_d)
             vs_d.append(v_d)
@@ -221,6 +331,11 @@ def speculative_denoise(
                 )
                 break
 
+        # Feed verified velocities back to extrapolation draft
+        if use_extrap:
+            for j in range(a + 1):
+                extrap_draft.record_verified(vs_f[j], ts[i + j])
+
         if a < K_eff:
             x = _euler_step(xs[a], vs_f[a], ts[i + a], ts[i + a + 1])
             i = i + a + 1
@@ -243,12 +358,13 @@ def speculative_denoise(
         )
 
     logger.info(
-        "spec-denoise done: macro=%d avg_accept=%.2f full_fwds=%d draft_fwds=%d speedup=%.2fx",
+        "spec-denoise done: macro=%d avg_accept=%.2f full_fwds=%d draft_fwds=%d speedup=%.2fx strategy=%s",
         stats.macro_steps,
         stats.avg_accept,
         stats.full_forwards,
         stats.draft_forwards,
         stats.speedup,
+        config.draft_strategy,
     )
     return x, stats
 
@@ -267,3 +383,7 @@ def baseline_euler(
         x = _euler_step(x, v, ts[i], ts[i + 1])
         mx.eval(x)
     return x
+
+
+def create_extrap_draft(mode: str = "linear") -> ExtrapolationDraft:
+    return ExtrapolationDraft(mode=mode)

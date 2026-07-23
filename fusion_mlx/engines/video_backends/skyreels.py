@@ -169,6 +169,9 @@ class SkyReelsBackend(VideoBackend):
                 "duration": duration,
                 "seed": base_seed,
             }
+            # Phase-2: session tail cache for multi-shot latent reuse
+            if params.session_id is not None:
+                gen_kwargs["session_id"] = params.session_id
             # IP-Adapter: subject-driven image-to-video
             if params.ip_adapter_image is not None:
                 gen_kwargs["ip_adapter_image"] = params.ip_adapter_image
@@ -221,6 +224,9 @@ class SkyReelsBackend(VideoBackend):
                 "duration": duration,
                 "seed": base_seed,
             }
+            # Phase-2: session tail cache for multi-shot latent reuse
+            if params.session_id is not None:
+                gen_kwargs["session_id"] = params.session_id
             # ControlNet: structural guidance via control image
             if params.controlnet_image is not None:
                 gen_kwargs["controlnet_image"] = params.controlnet_image
@@ -271,6 +277,9 @@ class SkyReelsBackend(VideoBackend):
                 "duration": duration,
                 "seed": base_seed,
             }
+            # Phase-2: session tail cache for multi-shot latent reuse
+            if params.session_id is not None:
+                gen_kwargs["session_id"] = params.session_id
             # ControlNet: structural guidance via control image
             if params.controlnet_image is not None:
                 gen_kwargs["controlnet_image"] = params.controlnet_image
@@ -337,6 +346,7 @@ class SkyReelsBackend(VideoBackend):
                 "draft_forwards": 0,
                 "baseline_steps": 0,
                 "speedup": 0.0,
+                "draft_strategy": config.draft_strategy,
                 "available": False,
             }
         data["enabled"] = speculative_enabled()
@@ -345,6 +355,7 @@ class SkyReelsBackend(VideoBackend):
             "epsilon": config.epsilon,
             "relative": config.relative,
             "eval_steps": config.eval_steps,
+            "draft_strategy": config.draft_strategy,
         }
         logger.debug(
             "skyreels last_denoise_stats: enabled=%s available=%s avg_accept=%.2f",

@@ -129,6 +129,7 @@ def test_a2v_spec_override_runs(monkeypatch):
     dit = _build_a2v_dit()
     pipe = _make_pipe(SkyReelsA2VPipeline, "a2v", dit, temporal_window=32)
     monkeypatch.setenv("FUSION_SPEC_DRAFT_BLOCKS", str(dit.num_layers))
+    monkeypatch.setenv("FUSION_SPEC_DRAFT_STRATEGY", "layer_pruned")
     latents = mx.random.normal(LATENT_SHAPE)
     audio_embeds = mx.random.normal((1, 10, 768))
     text_embeds = mx.random.normal((1, 32, 80))
@@ -149,6 +150,7 @@ def test_a2v_spec_override_draft_equals_full_invariant(monkeypatch):
     num_layers = dit.num_layers
     pipe = _make_pipe(SkyReelsA2VPipeline, "a2v", dit, temporal_window=32)
     monkeypatch.setenv("FUSION_SPEC_DRAFT_BLOCKS", str(num_layers))
+    monkeypatch.setenv("FUSION_SPEC_DRAFT_STRATEGY", "layer_pruned")
     latents = mx.random.normal(LATENT_SHAPE)
     audio_embeds = mx.random.normal((1, 10, 768))
     text_embeds = mx.random.normal((1, 32, 80))

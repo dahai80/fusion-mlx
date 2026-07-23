@@ -133,6 +133,7 @@ class TestSkyReelsBackendStats:
             "epsilon": 0.1,
             "relative": True,
             "eval_steps": True,
+            "draft_strategy": "extrapolation",
         }
 
     def test_with_run_available_true(self):
