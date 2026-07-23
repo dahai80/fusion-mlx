@@ -25,6 +25,7 @@ def async_denoise_enabled() -> bool:
     return os.environ.get(ENV_ASYNC_FLAG, "0").lower() in ("1", "true", "yes", "on")
 
 
+
 @dataclass
 class SpeculativeConfig:
     K: int = 4
@@ -147,6 +148,7 @@ class SpecStats:
             "baseline_steps": self.baseline_steps,
             "speedup": self.speedup,
         }
+
 
 
 def speculative_denoise(

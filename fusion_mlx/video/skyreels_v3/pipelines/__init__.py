@@ -433,6 +433,7 @@ class SkyReelsBasePipeline:
                 latents, context, seq_lens=seq_lens, grid_sizes=grid_sizes
             )
 
+
         if self.dit is None or self.step_strategy is None:
             raise RuntimeError("DiT or step strategy not loaded")
 
@@ -543,6 +544,7 @@ class SkyReelsBasePipeline:
         logger.info("denoise: done steps=%d", n_steps)
         return latents
 
+<<<<<<< HEAD
     def _denoise_sample_async(
         self,
         latents: mx.array,
@@ -658,6 +660,7 @@ class SkyReelsBasePipeline:
         mx.synchronize()
         logger.info("denoise(async): done steps=%d synced", n_steps)
         return latents
+
 
     def _denoise_sample_speculative(
         self,
