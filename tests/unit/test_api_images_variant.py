@@ -1,4 +1,3 @@
-import pytest
 
 from fusion_mlx.api.images import ImageGenerateRequest
 
@@ -29,11 +28,15 @@ class TestImageGenerateRequestVariant:
         assert req.controlnet_strength == 0.8
 
     def test_reference_images_optional(self):
-        req = ImageGenerateRequest(prompt="test", reference_images=["/tmp/a.png", "/tmp/b.png"])
+        req = ImageGenerateRequest(
+            prompt="test", reference_images=["/tmp/a.png", "/tmp/b.png"]
+        )
         assert len(req.reference_images) == 2
 
     def test_edit_image_and_mask(self):
-        req = ImageGenerateRequest(prompt="test", edit_image="/tmp/edit.png", mask_image="/tmp/mask.png")
+        req = ImageGenerateRequest(
+            prompt="test", edit_image="/tmp/edit.png", mask_image="/tmp/mask.png"
+        )
         assert req.edit_image == "/tmp/edit.png"
         assert req.mask_image == "/tmp/mask.png"
 

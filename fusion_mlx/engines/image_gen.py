@@ -19,12 +19,19 @@ from .base import BaseNonStreamingEngine
 
 def _text_cache_enabled() -> bool:
     import os
-    return os.environ.get("FUSION_DIFFUSION_TEXT_CACHE", "1").strip() not in ("0", "off", "false")
+
+    return os.environ.get("FUSION_DIFFUSION_TEXT_CACHE", "1").strip() not in (
+        "0",
+        "off",
+        "false",
+    )
 
 
 def _prompt_hash(prompt: str) -> str:
     import hashlib
+
     return hashlib.sha256(prompt.encode()).hexdigest()[:16]
+
 
 logger = logging.getLogger(__name__)
 
@@ -163,8 +170,7 @@ class ImageGenEngine(BaseNonStreamingEngine):
         self._variant = variant or _infer_variant(model_name)
         if self._variant not in VARIANT_MAP:
             logger.warning(
-                "Unknown variant '%s', falling back to txt2img. "
-                "Available: %s",
+                "Unknown variant '%s', falling back to txt2img. " "Available: %s",
                 self._variant,
                 list(VARIANT_MAP.keys()),
             )
@@ -200,21 +206,28 @@ class ImageGenEngine(BaseNonStreamingEngine):
             )
             self._mflux_missing = True
             return
-        module_path, cls_name, config_label, default_guidance = VARIANT_MAP[self._variant]
+        module_path, cls_name, config_label, default_guidance = VARIANT_MAP[
+            self._variant
+        ]
         # For Flux2 txt2img, refine config_label from model path
         if self._variant == "txt2img":
             config_label = _infer_flux2_config(self._model_path)
         logger.info(
             "Starting ImageGen engine variant=%s class=%s path=%s",
-            self._variant, cls_name, self._model_path,
+            self._variant,
+            cls_name,
+            self._model_path,
         )
 
         def _load():
             import importlib
+
             model_config = getattr(ModelConfig, config_label)()
             logger.info(
                 "ImageGen loading variant=%s config=%s path=%s",
-                self._variant, config_label, self._model_path,
+                self._variant,
+                config_label,
+                self._model_path,
             )
             mod = importlib.import_module(module_path)
             cls = getattr(mod, cls_name)
@@ -229,7 +242,9 @@ class ImageGenEngine(BaseNonStreamingEngine):
         self._flux = await asyncio.wait_for(
             loop.run_in_executor(get_executor("image"), _load), timeout=600.0
         )
-        logger.info("ImageGen engine loaded: %s variant=%s", self._model_name, self._variant)
+        logger.info(
+            "ImageGen engine loaded: %s variant=%s", self._model_name, self._variant
+        )
 
     async def stop(self) -> None:
         if self._flux is None:
@@ -285,7 +300,11 @@ class ImageGenEngine(BaseNonStreamingEngine):
         t0 = time.monotonic()
         activity_id = self._begin_activity(
             "generating images",
-            metadata={"prompt_len": len(prompt), "n_images": n_images, "variant": self._variant},
+            metadata={
+                "prompt_len": len(prompt),
+                "n_images": n_images,
+                "variant": self._variant,
+            },
         )
 
         loop = asyncio.get_running_loop()
@@ -308,9 +327,7 @@ class ImageGenEngine(BaseNonStreamingEngine):
                 variant = self._variant
                 if variant == "controlnet_canny" or variant == "controlnet_upscaler":
                     if control_image is None:
-                        raise ValueError(
-                            f"variant '{variant}' requires control_image"
-                        )
+                        raise ValueError(f"variant '{variant}' requires control_image")
                     gen_kwargs["controlnet_image_path"] = control_image
                     if controlnet_strength is not None:
                         gen_kwargs["controlnet_strength"] = controlnet_strength
@@ -339,9 +356,7 @@ class ImageGenEngine(BaseNonStreamingEngine):
                         gen_kwargs["image_strength"] = image_strength
                 elif variant == "redux":
                     if not reference_images:
-                        raise ValueError(
-                            "variant 'redux' requires reference_images"
-                        )
+                        raise ValueError("variant 'redux' requires reference_images")
                     gen_kwargs["redux_image_paths"] = reference_images
                     if reference_strengths is not None:
                         gen_kwargs["redux_image_strengths"] = reference_strengths

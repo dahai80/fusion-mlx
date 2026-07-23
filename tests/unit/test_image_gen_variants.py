@@ -2,11 +2,11 @@ import pytest
 
 from fusion_mlx.engines.image_gen import (
     VARIANT_MAP,
-    _infer_variant,
+    ImageGenEngine,
     _infer_flux2_config,
+    _infer_variant,
     _prompt_hash,
     _text_cache_enabled,
-    ImageGenEngine,
 )
 
 
@@ -126,6 +126,7 @@ class TestTextCache:
 
     def test_text_cache_enabled_default(self):
         import os
+
         old = os.environ.pop("FUSION_DIFFUSION_TEXT_CACHE", None)
         try:
             assert _text_cache_enabled() is True
@@ -135,6 +136,7 @@ class TestTextCache:
 
     def test_text_cache_disabled(self):
         import os
+
         old = os.environ.get("FUSION_DIFFUSION_TEXT_CACHE")
         os.environ["FUSION_DIFFUSION_TEXT_CACHE"] = "0"
         try:
@@ -151,6 +153,7 @@ class TestTextCache:
 
     def test_engine_text_cache_disabled(self):
         import os
+
         old = os.environ.get("FUSION_DIFFUSION_TEXT_CACHE")
         os.environ["FUSION_DIFFUSION_TEXT_CACHE"] = "0"
         try:
@@ -169,6 +172,7 @@ class TestTextCache:
 
     def test_stats_no_text_cache_when_disabled(self):
         import os
+
         old = os.environ.get("FUSION_DIFFUSION_TEXT_CACHE")
         os.environ["FUSION_DIFFUSION_TEXT_CACHE"] = "0"
         try:
