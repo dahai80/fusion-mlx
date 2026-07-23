@@ -7,7 +7,7 @@ import pytest
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
-from fusion_mlx.engine_pool import EngineEntry
+from fusion_mlx.pool.engine_pool import EngineEntry
 from fusion_mlx.exceptions import InvalidRequestError, ModelNotFoundError
 from fusion_mlx.model_settings import ModelSettings, ModelSettingsManager
 from fusion_mlx.server import (
@@ -23,7 +23,7 @@ from fusion_mlx.server import (
     get_max_context_window,
     get_sampling_params,
 )
-from fusion_mlx.settings import GlobalSettings
+from fusion_mlx.settings import Settings as GlobalSettings
 
 
 class TestBoundarySnapshotLifecycle:

@@ -103,14 +103,14 @@ def _serve_audio_mode(args, entry) -> None:
 
     _max_body_arg = getattr(args, "max_request_bytes", None)
     if _max_body_arg is not None:
-        server._max_request_bytes = max(0, int(_max_body_arg))
+        get_config().max_request_bytes = max(0, int(_max_body_arg))
     else:
         _env = os.environ.get("FUSION_MLX_MAX_REQUEST_BYTES", "").strip()
         if _env:
             try:
-                server._max_request_bytes = max(0, int(_env))
+                get_config().max_request_bytes = max(0, int(_env))
             except ValueError:
-                server._max_request_bytes = 8 * 1024 * 1024
+                get_config().max_request_bytes = 8 * 1024 * 1024
 
     # Body-receive timeout — same env-driven hook the text path uses.
     _apply_body_receive_timeout_env(server)
@@ -1382,13 +1382,13 @@ def serve_command(args):
     # See fusion_mlx/middleware/body_size.py for the DoS rationale.
     _max_body_arg = getattr(args, "max_request_bytes", None)
     if _max_body_arg is not None:
-        server._max_request_bytes = max(0, int(_max_body_arg))
+        get_config().max_request_bytes = max(0, int(_max_body_arg))
     else:
         _env_name = "FUSION_MLX_MAX_REQUEST_BYTES"
         _env = os.environ.get(_env_name, "").strip()
         if _env:
             try:
-                server._max_request_bytes = max(0, int(_env))
+                get_config().max_request_bytes = max(0, int(_env))
             except ValueError:
                 # Explicit reset (codex round-2 NIT): without this,
                 # an in-process callsite that mutated ``_max_request_bytes``
@@ -1397,7 +1397,7 @@ def serve_command(args):
                 # possible failure shape — bigger cap than the operator
                 # intended. Fall back to the documented 8 MiB default
                 # explicitly.
-                server._max_request_bytes = 8 * 1024 * 1024
+                get_config().max_request_bytes = 8 * 1024 * 1024
                 logger.warning(
                     "%s=%r is not an integer; falling back to the 8 MiB default",
                     _env_name,

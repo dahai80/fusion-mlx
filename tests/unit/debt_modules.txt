@@ -20,8 +20,6 @@
 # prod contract), not silent.
 
 ## uncollectable (9)
-test_engine_pool.py
-test_integrations.py
 test_markitdown_integration.py
 test_per_request_thinking_budget.py
 test_server.py
