@@ -159,7 +159,7 @@ class TestUnimplementedBackends:
 class TestConstraints:
     def test_ltx_constraints(self):
         c = constraints_for("ltx-2")
-        assert c.supports_i2v is False
+        assert c.supports_i2v is True
         assert c.dim_divisibility == 64
         assert c.num_frames_validator(97) is True
         assert c.num_frames_validator(16) is False
@@ -181,16 +181,15 @@ class TestConstraints:
 
 
 class TestValidateParams:
-    def test_ltx_rejects_image(self):
-        with pytest.raises(ValueError, match="image-to-video"):
-            validate_params(
-                constraints_for("ltx-2"),
-                num_frames=97,
-                width=768,
-                height=512,
-                n=1,
-                image="/tmp/x.png",
-            )
+    def test_ltx_accepts_image(self):
+        validate_params(
+            constraints_for("ltx-2"),
+            num_frames=97,
+            width=768,
+            height=512,
+            n=1,
+            image="/tmp/x.png",
+        )
 
     def test_wan_accepts_image(self):
         validate_params(
