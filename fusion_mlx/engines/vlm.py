@@ -1478,9 +1478,12 @@ class VLMBatchedEngine(BaseEngine):
                 # strip special tokens from the streamed delta so they don't
                 # leak into the VLM SSE stream. Both text and new_text carry
                 # the cleaned value (new_text is the delta clients append).
-                from ..api.utils import clean_special_tokens
+                # Per-token delta: must NOT strip, otherwise the leading space
+                # carried by BPE tokens (e.g. " world") is dropped from every
+                # delta and streamed text collapses ("Hello world" -> "Helloworld").
+                from ..api.utils import remove_special_tokens_preserve_whitespace
 
-                text = clean_special_tokens(output.new_text)
+                text = remove_special_tokens_preserve_whitespace(output.new_text)
                 yield GenerationOutput(
                     text=text,
                     new_text=text,

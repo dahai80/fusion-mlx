@@ -793,9 +793,12 @@ class BatchedEngine(BaseEngine):
         finished_normally = False
         try:
             async for output in engine.stream_outputs(request_id):
-                from ..api.utils import clean_special_tokens
+                # Per-token delta: must NOT strip, otherwise the leading space
+                # carried by BPE tokens (e.g. " world") is dropped from every
+                # delta and streamed text collapses ("Hello world" -> "Helloworld").
+                from ..api.utils import remove_special_tokens_preserve_whitespace
 
-                text = clean_special_tokens(output.new_text)
+                text = remove_special_tokens_preserve_whitespace(output.new_text)
                 if output.finished:
                     finished_normally = True
                 yield GenerationOutput(
