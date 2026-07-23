@@ -685,6 +685,7 @@ class EngineCore:
                 )
             )
         self._mark_request_finished(request_id)
+        self._cleanup_request(request_id)
         self._wake_engine_loop()
         return result
 

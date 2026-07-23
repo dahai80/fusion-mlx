@@ -26,3 +26,4 @@ packaging/requirements/
 
 # macOS app runtime data dir
 apps/fusion-mac/.fusion-mlx/
+scripts/bench_extrapolation_draft_results.json

@@ -6,7 +6,7 @@ Lookup order (effective_parsers_for):
   Tier 1 - per-entry live state: registry entry whose matches(id) is True.
            Strict ``is True`` guard rejects truthy-non-bool returns.
   Tier 2 - per-server live state: id is the served model_name / model_alias.
-           Reads server._tool_call_parser / _reasoning_parser_name. Each side
+           Reads ServerConfig.tool_call_parser / .reasoning_parser_name. Each side
            independent - no backfill from profile.
   Tier 3 - alias-profile default (profile.tool_call_parser / .reasoning_parser).
   Tier 4 - None.
@@ -41,11 +41,10 @@ def effective_parsers_for(model_id, profile_tool, profile_reasoning):
         entry = registry.get_entry(model_id)
         if entry is not None and entry.matches(model_id) is True:
             return (entry.tool_call_parser, entry.reasoning_parser)
-    # Tier 2: per-server live state. Each side independent - no profile backfill.
+    # Tier 2: per-server live state from ServerConfig (#50 globals consolidation).
+    # Each side independent - no profile backfill.
     if _is_served_model(model_id):
-        import fusion_mlx.server as srv
-
-        return (srv._tool_call_parser, srv._reasoning_parser_name)
+        return (cfg.tool_call_parser, cfg.reasoning_parser_name)
     # Tier 3/4: alias-profile default, or None.
     return (profile_tool, profile_reasoning)
 

@@ -253,7 +253,11 @@ def speculative_denoise(
 
     extrap_draft = None
     if use_extrap:
-        extrap_draft = ExtrapolationDraft(mode="linear")
+        _extrap_mode = os.environ.get("FUSION_SPEC_EXTRAP_MODE", "linear").lower()
+        if _extrap_mode not in ("linear", "quadratic"):
+            logger.warning("FUSION_SPEC_EXTRAP_MODE=%s unknown, using linear", _extrap_mode)
+            _extrap_mode = "linear"
+        extrap_draft = ExtrapolationDraft(mode=_extrap_mode)
 
     logger.info(
         "spec-denoise start: N=%d K=%d eps=%g relative=%s strategy=%s",

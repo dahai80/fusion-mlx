@@ -131,7 +131,6 @@ _pending_single_model: dict | None = None
 # alias-profile defaults). embedding_model_locked pins the embed model.
 _tool_call_parser: str | None = None
 _reasoning_parser_name: str | None = None
-_embedding_model_locked: str | None = None
 
 
 def _sync_config() -> None:
@@ -152,6 +151,8 @@ def _sync_config() -> None:
         for _attr, _val in (
             ("api_key", _api_key),
             ("max_request_bytes", _max_request_bytes),
+            ("tool_call_parser", _tool_call_parser),
+            ("reasoning_parser_name", _reasoning_parser_name),
             # Sampling defaults + gc_control/no_thinking/pin_system_prompt/
             # reasoning_parser(_name) are read directly from ServerConfig by
             # service/helpers + chat.py -- no longer staged through server
