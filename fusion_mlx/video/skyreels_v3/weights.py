@@ -186,22 +186,6 @@ def load_dit_weights(
     Returns:
         加载权重后的 model (in-place)
     """
-    # 可选量化 (在加载权重前应用, 后续权重会按量化格式加载)
-    if quantization:
-        try:
-            nn.quantize(
-                model,
-                group_size=quantization.get("group_size", 64),
-                bits=quantization.get("bits", 4),
-            )
-            logger.info(
-                "DiT 量化: bits=%d group=%d",
-                quantization.get("bits", 4),
-                quantization.get("group_size", 64),
-            )
-        except Exception as exc:
-            logger.warning("DiT 量化失败, 跳过: %s", exc)
-
     # diffusers 约定: DiT 权重位于 transformer/ 子目录 (diffusion_pytorch_model.safetensors).
     # 模型根目录可能残留不完整分片 (model-0000N-of-XXXXX.safetensors 无 index.json,
     # 实测仅 315/1095 key 覆盖 block 0-10), _load_safetensors_dir 会优先命中根分片
@@ -274,6 +258,23 @@ def load_dit_weights(
             model.load_weights(list(weights.items()), strict=False)
             mx.eval(model.parameters())
             logger.info("DiT 权重加载 (strict=False) 成功")
+
+    # 可选量化 (在加载权重后应用: 先 load_weights(bf16) 再 quantize)
+    # 先 quantize 会把 Linear→QuantizedLinear, 然后 bf16 权重无法加载到 uint32 格式
+    if quantization:
+        try:
+            nn.quantize(
+                model,
+                group_size=quantization.get("group_size", 64),
+                bits=quantization.get("bits", 4),
+            )
+            logger.info(
+                "DiT 量化: bits=%d group=%d",
+                quantization.get("bits", 4),
+                quantization.get("group_size", 64),
+            )
+        except Exception as exc:
+            logger.warning("DiT 量化失败, 跳过: %s", exc)
 
     return model
 

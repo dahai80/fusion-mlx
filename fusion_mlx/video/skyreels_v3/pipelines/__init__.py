@@ -122,9 +122,9 @@ class SkyReelsBasePipeline:
         # C DiT 权重量化: FUSION_SKYREELS_QUANT 选 w8a16/w4/off.
         # w8a16 = 8-bit 权重 (MLX nn.quantize bits=8) + bf16 激活 (MLX 默认).
         # w4/nf4 = 4-bit 权重 (bits=4). off/未设 = None (全精度 bf16).
-        # 量化在 load_dit_weights 内 nn.quantize(model) 先于 load_weights,
-        # 源 bf16 权重按量化格式加载. compile 安全: mx.compile 懒编译, 首次
-        # 前向 (warmup) 在量化后构建 trace, 见 QuantizedLinear 结构.
+        # 量化在 load_dit_weights 内 load_weights(bf16) 后再 nn.quantize,
+        # 先 quantize 会把 Linear→QuantizedLinear, bf16 权重无法加载.
+        # compile 安全: mx.compile 懒编译, 首次前向在量化后构建 trace.
         import os
 
         env = os.environ.get("FUSION_SKYREELS_QUANT", "").strip().lower()
