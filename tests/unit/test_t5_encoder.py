@@ -119,20 +119,20 @@ class TestGatedGeluFF:
         # matches the float64 numpy reference at tight tolerance (the check is
         # on the math, not on float accumulation noise).
         rng = np.random.RandomState(42)
-        ff.wi_0.weight = mx.array(
+        ff.gate_0.weight = mx.array(
             (rng.randn(d_ff, d_model) / np.sqrt(d_model)).astype(np.float32)
         )
-        ff.wi_1.weight = mx.array(
+        ff.fc1.weight = mx.array(
             (rng.randn(d_ff, d_model) / np.sqrt(d_model)).astype(np.float32)
         )
-        ff.wo.weight = mx.array(
+        ff.fc2.weight = mx.array(
             (rng.randn(d_model, d_ff) / np.sqrt(d_ff)).astype(np.float32)
         )
         x = (rng.randn(2, 3, d_model) * 0.5).astype(np.float32)
         out = np.array(ff(mx.array(x)))
-        h_gelu = _gelu_np(x @ np.array(ff.wi_0.weight).T)
-        h_lin = x @ np.array(ff.wi_1.weight).T
-        ref = (h_gelu * h_lin) @ np.array(ff.wo.weight).T
+        h_gelu = _gelu_np(x @ np.array(ff.gate_0.weight).T)
+        h_lin = x @ np.array(ff.fc1.weight).T
+        ref = (h_gelu * h_lin) @ np.array(ff.fc2.weight).T
         # float32 matmul accumulation differs ~1e-3 between mlx and numpy; a
         # wrong formula (e.g. missing gate) would error at O(0.1)+.
         np.testing.assert_allclose(out, ref, rtol=1e-2, atol=2e-3)
@@ -226,19 +226,19 @@ class TestFromPretrained:
         )
         w = self._write_mock(tmp_path, cfg)
         model = T5Encoder.from_pretrained(tmp_path, dtype=mx.float32)
-        # embed_tokens must come from shared.weight (mapping correctness).
+        # token_embedding must come from shared.weight (mapping correctness).
         np.testing.assert_allclose(
-            np.array(model.embed_tokens.weight), w["shared.weight"], rtol=1e-6
+            np.array(model.token_embedding.weight), w["shared.weight"], rtol=1e-6
         )
         # relative_attention_bias must load on block 0 only.
         np.testing.assert_allclose(
             np.array(
-                model.block[0].layer[0].SelfAttention.relative_attention_bias.weight
+                model.blocks[0].layer0.attn.relative_attention_bias.weight
             ),
             w["encoder.block.0.layer.0.SelfAttention.relative_attention_bias.weight"],
             rtol=1e-6,
         )
-        assert model.block[1].layer[0].SelfAttention.relative_attention_bias is None
+        assert model.blocks[1].layer0.attn.relative_attention_bias is None
         ids = mx.array([[1, 2, 3, 0, 0]])
         am = mx.array([[1, 1, 1, 0, 0]])
         out = model(ids, am)

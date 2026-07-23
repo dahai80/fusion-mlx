@@ -309,12 +309,58 @@ class T5Encoder(nn.Module):
 
 def _map_t5_weights(raw: dict) -> dict:
     # Keep encoder + shared embeddings only; drop decoder/lm_head.
+    # Maps HuggingFace T5 weight names to our attribute names:
+    #   shared.weight / encoder.embed_tokens.weight -> token_embedding.weight
+    #   encoder.block.N.layer.0.SelfAttention.* -> block_N.layer0.attn.*
+    #   encoder.block.N.layer.0.layer_norm.* -> block_N.layer0.norm1.*
+    #   encoder.block.N.layer.1.DenseReluDense.wi_0 -> block_N.layer1.ffn.gate_0
+    #   encoder.block.N.layer.1.DenseReluDense.wi_1 -> block_N.layer1.ffn.fc1
+    #   encoder.block.N.layer.1.DenseReluDense.wo  -> block_N.layer1.ffn.fc2
+    #   encoder.block.N.layer.1.layer_norm.* -> block_N.layer1.norm2.*
+    #   encoder.final_layer_norm.* -> norm.*
+    # Also pass through already-mapped keys (blocks.N.*, token_embedding.*).
+    import re
+
     out = {}
     for k, v in raw.items():
         if k in ("shared.weight", "encoder.embed_tokens.weight"):
-            out["embed_tokens.weight"] = v
-        elif k.startswith("encoder."):
-            out[k[len("encoder.") :]] = v
+            out["token_embedding.weight"] = v
+        elif k == "encoder.final_layer_norm.weight":
+            out["norm.weight"] = v
+        elif k.startswith("encoder.block."):
+            m = re.match(
+                r"encoder\.block\.(\d+)\.layer\.(\d+)\.(.+)", k
+            )
+            if m:
+                block_n, layer_n, rest = m.group(1), m.group(2), m.group(3)
+                new_prefix = f"block_{block_n}.layer{layer_n}"
+                if layer_n == "0":
+                    if rest.startswith("SelfAttention."):
+                        attr = rest[len("SelfAttention."):]
+                        out[f"{new_prefix}.attn.{attr}"] = v
+                    elif rest.startswith("layer_norm."):
+                        attr = rest[len("layer_norm."):]
+                        out[f"{new_prefix}.norm1.{attr}"] = v
+                    else:
+                        out[f"{new_prefix}.{rest}"] = v
+                elif layer_n == "1":
+                    if rest == "DenseReluDense.wi_0.weight":
+                        out[f"{new_prefix}.ffn.gate_0.weight"] = v
+                    elif rest == "DenseReluDense.wi_1.weight":
+                        out[f"{new_prefix}.ffn.fc1.weight"] = v
+                    elif rest == "DenseReluDense.wo.weight":
+                        out[f"{new_prefix}.ffn.fc2.weight"] = v
+                    elif rest.startswith("layer_norm."):
+                        attr = rest[len("layer_norm."):]
+                        out[f"{new_prefix}.norm2.{attr}"] = v
+                    else:
+                        out[f"{new_prefix}.{rest}"] = v
+                else:
+                    out[f"{new_prefix}.{rest}"] = v
+            else:
+                out[k[len("encoder.") :]] = v
+        elif not k.startswith(("decoder.", "lm_head.")):
+            out[k] = v
     return out
 
 

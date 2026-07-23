@@ -157,36 +157,32 @@ class TestImageGenKnobFlow:
                 capture["generate_calls"].append(kwargs)
                 return FakeImage()
 
-        monkeypatch.setattr(mod, "_infer_model_config_label", lambda p: "schnell")
-
         fake_cfg_mod = types.ModuleType("mflux.models.common.config.model_config")
 
         class ModelConfig:
             @staticmethod
-            def schnell():
-                return "schnell_cfg"
-
-            @staticmethod
-            def dev():
-                return "dev_cfg"
+            def flux2_klein_9b():
+                return "flux2_klein_9b_cfg"
 
         fake_cfg_mod.ModelConfig = ModelConfig
-        fake_flux_mod = types.ModuleType("mflux.models.flux.variants.txt2img.flux")
-        fake_flux_mod.Flux1 = FakeFlux
+        fake_flux_mod = types.ModuleType("mflux.models.flux2.variants.txt2img.flux2_klein")
+        fake_flux_mod.Flux2Klein = FakeFlux
         fake_mflux = types.ModuleType("mflux")
         fake_mflux_pkg_models = types.ModuleType("mflux.models")
         fake_mflux_pkg_common = types.ModuleType("mflux.models.common")
+        fake_mflux_pkg_flux2 = types.ModuleType("mflux.models.flux2")
+        fake_mflux_pkg_flux2_variants = types.ModuleType("mflux.models.flux2.variants")
+        fake_mflux_pkg_flux2_variants_txt2img = types.ModuleType("mflux.models.flux2.variants.txt2img")
         monkeypatch.setitem(sys.modules, "mflux", fake_mflux)
         monkeypatch.setitem(sys.modules, "mflux.models", fake_mflux_pkg_models)
         monkeypatch.setitem(sys.modules, "mflux.models.common", fake_mflux_pkg_common)
+        monkeypatch.setitem(sys.modules, "mflux.models.common.config.model_config", fake_cfg_mod)
+        monkeypatch.setitem(sys.modules, "mflux.models.flux2", fake_mflux_pkg_flux2)
+        monkeypatch.setitem(sys.modules, "mflux.models.flux2.variants", fake_mflux_pkg_flux2_variants)
+        monkeypatch.setitem(sys.modules, "mflux.models.flux2.variants.txt2img", fake_mflux_pkg_flux2_variants_txt2img)
         monkeypatch.setitem(
             sys.modules,
-            "mflux.models.common.config.model_config",
-            fake_cfg_mod,
-        )
-        monkeypatch.setitem(
-            sys.modules,
-            "mflux.models.flux.variants.txt2img.flux",
+            "mflux.models.flux2.variants.txt2img.flux2_klein",
             fake_flux_mod,
         )
         engine = mod.ImageGenEngine("flux-schnell", quantize=4)
@@ -210,7 +206,7 @@ class TestImageGenKnobFlow:
         )
         call = capture["generate_calls"][0]
         assert call["scheduler"] == "sdrm"
-        assert call["negative_prompt"] == "blurry"
+        assert "negative_prompt" not in call
 
     async def test_scheduler_omitted_when_none(self, monkeypatch):
         capture = {"init_kwargs": None, "generate_calls": []}
