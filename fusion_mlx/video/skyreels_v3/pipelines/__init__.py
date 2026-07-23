@@ -544,7 +544,6 @@ class SkyReelsBasePipeline:
         logger.info("denoise: done steps=%d", n_steps)
         return latents
 
-<<<<<<< HEAD
     def _denoise_sample_async(
         self,
         latents: mx.array,
