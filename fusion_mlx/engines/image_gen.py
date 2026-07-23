@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
-# Image generation engine (Flux 2) for fusion-mlx.
-# Loads FLUX.2-klein via mflux (Flux2Klein uses mx.compile -> faster denoise).
+# Image generation engine for fusion-mlx.
+# Supports Flux1 variants (ControlNet/Depth/Fill/Kontext/Redux) and Flux2 Klein.
 import asyncio
 import gc
 import io
@@ -11,9 +11,20 @@ from typing import Any
 
 import mlx.core as mx
 
+from ..cache.radix_diffusion_cache import DiffusionRadixCache
 from ..engine_core import get_executor
 from ._progress import StepCallback, make_sync_step_callback
 from .base import BaseNonStreamingEngine
+
+
+def _text_cache_enabled() -> bool:
+    import os
+    return os.environ.get("FUSION_DIFFUSION_TEXT_CACHE", "1").strip() not in ("0", "off", "false")
+
+
+def _prompt_hash(prompt: str) -> str:
+    import hashlib
+    return hashlib.sha256(prompt.encode()).hexdigest()[:16]
 
 logger = logging.getLogger(__name__)
 
@@ -23,6 +34,73 @@ def _to_latent_size(image_size: tuple[int, int]) -> tuple[int, int]:
     h = ((h + 15) // 16) * 16
     w = ((w + 15) // 16) * 16
     return (h // 8, w // 8)
+
+
+# variant -> (mflux module path, class name, ModelConfig label, default guidance)
+# Flux1 variants all default to guidance=4.0; Flux2 Klein uses 1.0.
+VARIANT_MAP: dict[str, tuple[str, str, str, float]] = {
+    "txt2img": (
+        "mflux.models.flux2.variants.txt2img.flux2_klein",
+        "Flux2Klein",
+        "flux2_klein_9b",
+        1.0,
+    ),
+    "controlnet_canny": (
+        "mflux.models.flux.variants.controlnet.flux_controlnet",
+        "Flux1Controlnet",
+        "dev_controlnet_canny",
+        4.0,
+    ),
+    "controlnet_upscaler": (
+        "mflux.models.flux.variants.controlnet.flux_controlnet",
+        "Flux1Controlnet",
+        "dev_controlnet_upscaler",
+        4.0,
+    ),
+    "depth": (
+        "mflux.models.flux.variants.depth.flux_depth",
+        "Flux1Depth",
+        "dev_depth",
+        4.0,
+    ),
+    "fill": (
+        "mflux.models.flux.variants.fill.flux_fill",
+        "Flux1Fill",
+        "dev_fill",
+        4.0,
+    ),
+    "kontext": (
+        "mflux.models.flux.variants.kontext.flux_kontext",
+        "Flux1Kontext",
+        "dev_kontext",
+        4.0,
+    ),
+    "redux": (
+        "mflux.models.flux.variants.redux.flux_redux",
+        "Flux1Redux",
+        "dev_redux",
+        4.0,
+    ),
+}
+
+
+def _infer_variant(model_path: str) -> str:
+    name = (model_path or "").lower()
+    if "controlnet" in name and "upscaler" in name:
+        return "controlnet_upscaler"
+    if "controlnet" in name and "canny" in name:
+        return "controlnet_canny"
+    if "controlnet" in name:
+        return "controlnet_canny"
+    if "depth" in name:
+        return "depth"
+    if "fill" in name:
+        return "fill"
+    if "kontext" in name:
+        return "kontext"
+    if "redux" in name:
+        return "redux"
+    return "txt2img"
 
 
 def _infer_flux2_config(model_path: str) -> str:
@@ -45,10 +123,10 @@ def _flux_quantize_from_env() -> int | None:
     if env in ("", "0", "off", "none", "bf16"):
         return None
     if env in ("w8a16", "w8", "int8", "8"):
-        logger.info("Flux2Klein 量化: w8a16 (quantize=8)")
+        logger.info("Flux 量化: w8a16 (quantize=8)")
         return 8
     if env in ("w4", "nf4", "int4", "4"):
-        logger.info("Flux2Klein 量化: w4 (quantize=4)")
+        logger.info("Flux 量化: w4 (quantize=4)")
         return 4
     logger.warning(
         "FUSION_FLUX_QUANT=%s 未知, 支持 w8a16/w4/off, 跳过量化",
@@ -75,30 +153,45 @@ class _StepProgressInLoop:
 
 
 class ImageGenEngine(BaseNonStreamingEngine):
-    def __init__(self, model_name: str, **kwargs):
+    def __init__(self, model_name: str, variant: str | None = None, **kwargs):
         super().__init__()
         self._model_name = model_name
         self._model_path = model_name
         self._flux = None
         self._mflux_missing = False
         self._kwargs = kwargs
-        # Load-time quantization (4/8-bit) reduces memory and often speeds up
-        # Flux2 klein. None = load at the model's native precision. Passed
-        # through to mflux Flux2Klein(quantize=...).
+        self._variant = variant or _infer_variant(model_name)
+        if self._variant not in VARIANT_MAP:
+            logger.warning(
+                "Unknown variant '%s', falling back to txt2img. "
+                "Available: %s",
+                self._variant,
+                list(VARIANT_MAP.keys()),
+            )
+            self._variant = "txt2img"
         self._quantize = kwargs.get("quantize")
         if self._quantize is None:
             self._quantize = _flux_quantize_from_env()
+        # #178 UMA radix text-embedding cache (mirrors UMT5/CLIP pattern)
+        self._text_cache = (
+            DiffusionRadixCache(max_mb=512, name="flux_img")
+            if _text_cache_enabled()
+            else None
+        )
 
     @property
     def model_name(self) -> str:
         return self._model_name
+
+    @property
+    def variant(self) -> str:
+        return self._variant
 
     async def start(self) -> None:
         if self._flux is not None:
             return
         try:
             from mflux.models.common.config.model_config import ModelConfig
-            from mflux.models.flux2.variants.txt2img.flux2_klein import Flux2Klein
         except ImportError as exc:
             logger.warning(
                 "ImageGen engine disabled: mflux-fusion not installed. "
@@ -107,17 +200,25 @@ class ImageGenEngine(BaseNonStreamingEngine):
             )
             self._mflux_missing = True
             return
-        logger.info("Starting ImageGen engine (mflux Flux2Klein): %s", self._model_path)
+        module_path, cls_name, config_label, default_guidance = VARIANT_MAP[self._variant]
+        # For Flux2 txt2img, refine config_label from model path
+        if self._variant == "txt2img":
+            config_label = _infer_flux2_config(self._model_path)
+        logger.info(
+            "Starting ImageGen engine variant=%s class=%s path=%s",
+            self._variant, cls_name, self._model_path,
+        )
 
         def _load():
-            label = _infer_flux2_config(self._model_path)
-            model_config = getattr(ModelConfig, label)()
+            import importlib
+            model_config = getattr(ModelConfig, config_label)()
             logger.info(
-                "ImageGen loading flux2 config=%s path=%s",
-                label,
-                self._model_path,
+                "ImageGen loading variant=%s config=%s path=%s",
+                self._variant, config_label, self._model_path,
             )
-            flux = Flux2Klein(
+            mod = importlib.import_module(module_path)
+            cls = getattr(mod, cls_name)
+            flux = cls(
                 model_config=model_config,
                 model_path=self._model_path,
                 quantize=self._quantize,
@@ -128,7 +229,7 @@ class ImageGenEngine(BaseNonStreamingEngine):
         self._flux = await asyncio.wait_for(
             loop.run_in_executor(get_executor("image"), _load), timeout=600.0
         )
-        logger.info("ImageGen engine loaded: %s", self._model_name)
+        logger.info("ImageGen engine loaded: %s variant=%s", self._model_name, self._variant)
 
     async def stop(self) -> None:
         if self._flux is None:
@@ -150,12 +251,21 @@ class ImageGenEngine(BaseNonStreamingEngine):
         height: int = 1024,
         steps: int = 4,
         seed: int | None = None,
-        guidance: float = 4.0,
+        guidance: float | None = None,
         n_images: int = 1,
         output_format: str = "PNG",
         scheduler: str | None = None,
         negative_prompt: str | None = None,
         on_step: StepCallback | None = None,
+        # Variant-specific image inputs
+        control_image: str | None = None,
+        controlnet_strength: float | None = None,
+        reference_images: list[str] | None = None,
+        reference_strengths: list[float] | None = None,
+        edit_image: str | None = None,
+        mask_image: str | None = None,
+        depth_image: str | None = None,
+        image_strength: float | None = None,
         **kwargs,
     ) -> list[bytes]:
         if self._flux is None:
@@ -168,10 +278,14 @@ class ImageGenEngine(BaseNonStreamingEngine):
 
         flux = self._flux
         base_seed = seed if seed is not None else 0
+        # Use variant default guidance when caller doesn't specify
+        if guidance is None:
+            _, _, _, default_guidance = VARIANT_MAP[self._variant]
+            guidance = default_guidance
         t0 = time.monotonic()
         activity_id = self._begin_activity(
             "generating images",
-            metadata={"prompt_len": len(prompt), "n_images": n_images},
+            metadata={"prompt_len": len(prompt), "n_images": n_images, "variant": self._variant},
         )
 
         loop = asyncio.get_running_loop()
@@ -190,9 +304,58 @@ class ImageGenEngine(BaseNonStreamingEngine):
                 )
                 if scheduler is not None:
                     gen_kwargs["scheduler"] = scheduler
+                # Variant-specific generate_image kwargs
+                variant = self._variant
+                if variant == "controlnet_canny" or variant == "controlnet_upscaler":
+                    if control_image is None:
+                        raise ValueError(
+                            f"variant '{variant}' requires control_image"
+                        )
+                    gen_kwargs["controlnet_image_path"] = control_image
+                    if controlnet_strength is not None:
+                        gen_kwargs["controlnet_strength"] = controlnet_strength
+                elif variant == "depth":
+                    if depth_image is not None:
+                        gen_kwargs["depth_image_path"] = depth_image
+                    elif control_image is not None:
+                        gen_kwargs["image_path"] = control_image
+                    if image_strength is not None:
+                        gen_kwargs["image_strength"] = image_strength
+                elif variant == "fill":
+                    if edit_image is None or mask_image is None:
+                        raise ValueError(
+                            "variant 'fill' requires edit_image and mask_image"
+                        )
+                    gen_kwargs["image_path"] = edit_image
+                    gen_kwargs["masked_image_path"] = mask_image
+                    if image_strength is not None:
+                        gen_kwargs["image_strength"] = image_strength
+                elif variant == "kontext":
+                    if edit_image is not None:
+                        gen_kwargs["image_path"] = edit_image
+                    elif control_image is not None:
+                        gen_kwargs["image_path"] = control_image
+                    if image_strength is not None:
+                        gen_kwargs["image_strength"] = image_strength
+                elif variant == "redux":
+                    if not reference_images:
+                        raise ValueError(
+                            "variant 'redux' requires reference_images"
+                        )
+                    gen_kwargs["redux_image_paths"] = reference_images
+                    if reference_strengths is not None:
+                        gen_kwargs["redux_image_strengths"] = reference_strengths
+                    if image_strength is not None:
+                        gen_kwargs["image_strength"] = image_strength
+                elif variant == "txt2img":
+                    if edit_image is not None or control_image is not None:
+                        img = edit_image or control_image
+                        gen_kwargs["image_path"] = img
+                        if image_strength is not None:
+                            gen_kwargs["image_strength"] = image_strength
                 if negative_prompt is not None:
                     logger.warning(
-                        "Flux2Klein does not support negative_prompt; "
+                        "Flux does not support negative_prompt; "
                         "ignoring (got %d chars)",
                         len(negative_prompt),
                     )
@@ -226,9 +389,10 @@ class ImageGenEngine(BaseNonStreamingEngine):
             elapsed = time.monotonic() - t0
             self._update_activity(activity_id, elapsed_seconds=elapsed)
             logger.info(
-                "ImageGen generated %d image(s) in %.2fs",
+                "ImageGen generated %d image(s) in %.2fs variant=%s",
                 len(result),
                 elapsed,
+                self._variant,
             )
             return result
         finally:
@@ -283,6 +447,16 @@ class ImageGenEngine(BaseNonStreamingEngine):
         logger.info("stage:text_encoder load active_mem=%s", self._active_mem())
 
     async def encode_text(self, prompt: str) -> dict:
+        # #178: radix cache lookup before encoding
+        cache = self._text_cache
+        key = None
+        if cache is not None:
+            key = f"flux_img:512:{_prompt_hash(prompt)}"
+            cached = cache.get(key)
+            if cached is not None:
+                logger.debug("flux_img text cache hit: %s", key)
+                return cached
+
         flux = self._require_flux()
         if flux.text_encoder is None:
             raise RuntimeError("text_encoder is unloaded; call load_text_encoder().")
@@ -308,7 +482,11 @@ class ImageGenEngine(BaseNonStreamingEngine):
             len(prompt),
             tuple(embed.shape),
         )
-        return {"embed": embed, "text_ids": text_ids}
+        result = {"embed": embed, "text_ids": text_ids}
+        if key is not None:
+            cache.put(key, result)
+            logger.debug("flux_img text cache miss+insert: %s", key)
+        return result
 
     async def unload_text_encoder(self) -> None:
         flux = self._require_flux()
@@ -468,11 +646,15 @@ class ImageGenEngine(BaseNonStreamingEngine):
         logger.info("stage:vae unload active_mem=%s", self._active_mem())
 
     def get_stats(self) -> dict[str, Any]:
-        return {
+        stats = {
             "model_name": self._model_name,
+            "variant": self._variant,
             "loaded": self._flux is not None,
             "mflux_missing": self._mflux_missing,
         }
+        if self._text_cache is not None:
+            stats["text_cache"] = self._text_cache.stats()
+        return stats
 
     def __repr__(self) -> str:
         if self._mflux_missing:
@@ -481,4 +663,4 @@ class ImageGenEngine(BaseNonStreamingEngine):
             status = "running"
         else:
             status = "stopped"
-        return f"<ImageGenEngine model={self._model_name} status={status}>"
+        return f"<ImageGenEngine model={self._model_name} variant={self._variant} status={status}>"
