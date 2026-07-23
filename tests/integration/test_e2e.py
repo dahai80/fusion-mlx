@@ -111,7 +111,7 @@ class TestPhaseSplitFlow:
     @pytest.mark.skip(reason="Requires two running MLX engines")
     @pytest.mark.asyncio
     async def test_phase_split_prefill_decode(self):
-        """Test: long prompt -> prefill on omlx -> KV handoff -> decode on Rapid."""
+        """Test: long prompt -> prefill on fusion-mlx -> KV handoff -> decode on Rapid."""
         from unittest.mock import AsyncMock, MagicMock
 
         from fusion_mlx.dispatch.smart_router import RouterConfig, SmartRouter

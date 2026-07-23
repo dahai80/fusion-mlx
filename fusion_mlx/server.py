@@ -300,7 +300,7 @@ def get_app():
 
 
 def _resolve_single_model_path(name: str) -> str:
-    # Resolve a model name to a loadable path/id. Reuses the omlx
+    # Resolve a model name to a loadable path/id. Reuses the fusion-mlx
     # model-discovery advantage: a bare name like ``Qwen3.6-27B-mxfp8``
     # resolves to a local model directory under the standard model dirs
     # instead of falling through to a HuggingFace lookup that 404s (the
@@ -315,8 +315,8 @@ def _resolve_single_model_path(name: str) -> str:
         return resolved
     home = Path.home()
     for cand in (
-        home / ".omlx" / "models" / "mlx-community" / resolved,
-        home / ".omlx" / "models" / resolved,
+        home / ".fusion-mlx" / "models" / "mlx-community" / resolved,
+        home / ".fusion-mlx" / "models" / resolved,
         home / ".fusion-mlx" / "models" / resolved,
     ):
         if cand.exists():
@@ -409,7 +409,7 @@ def resolve_model_id(model_id: str) -> str:
     if resolved:
         return resolved
     # Only strip known provider prefixes — preserve HF paths
-    for prefix in ["omlx/", "fusion/"]:
+    for prefix in ["fusion-mlx/", "fusion/"]:
         if model_id.startswith(prefix):
             return model_id[len(prefix) :]
     return model_id
@@ -828,7 +828,7 @@ class Server:
 
         # Initialize the oQ quantizer, ModelScope downloader, and HF uploader.
         # All three share a refresh callback that re-discovers models in the
-        # pool after a download/quantization completes (mirrors omlx wiring).
+        # pool after a download/quantization completes (mirrors fusion-mlx wiring).
         if self.config.model_dir:
             model_dirs = [self.config.model_dir]
 

@@ -1,6 +1,6 @@
 """Global configuration for fusion-mlx.
 
-Merged from omlx model_settings + Rapid-MLX SchedulerConfig.
+Merged from fusion-mlx model_settings + Rapid-MLX SchedulerConfig.
 """
 
 import asyncio
@@ -32,7 +32,7 @@ class SchedulingPolicy(Enum):
 
 @dataclass
 class SchedulerConfig:
-    """Scheduler configuration (merged from omlx + Rapid-MLX)."""
+    """Scheduler configuration (merged from fusion-mlx + Rapid-MLX)."""
 
     # Concurrency limits
     max_num_seqs: int = 256
@@ -121,7 +121,7 @@ class SchedulerConfig:
     embedding_batch_size: int = 32
     # Paged cache runtime sizing.
     initial_cache_blocks: int = 256
-    # Paged SSD cache (oMLX prefix-reuse layer); None = disabled.
+    # Paged SSD cache (FusionMLX prefix-reuse layer); None = disabled.
     paged_ssd_cache_dir: str | None = None
     hot_cache_only: bool = False
     paged_ssd_cache_max_size: int = 100 * 1024 * 1024 * 1024  # 100 GiB

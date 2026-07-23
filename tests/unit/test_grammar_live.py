@@ -2,10 +2,10 @@
 """Live integration tests for grammar-constrained decoding.
 
 Tests grammar correctness and measures performance across model families
-(Qwen, Gemma, Harmony/OSS) against a running oMLX server.
+(Qwen, Gemma, Harmony/OSS) against a running Fusion-MLX server.
 
 Prerequisites:
-  - oMLX server running on OMLX_TEST_URL (default: http://127.0.0.1:8899)
+  - Fusion-MLX server running on FUSION_TEST_URL (default: http://127.0.0.1:8899)
   - Models loaded: Qwen3.5-4B-4bit, gemma-3-4b-it-qat-4bit, gpt-oss-20b-MXFP4-Q4
   - reasoning_parser set via admin UI: qwen, (none), harmony respectively
 
@@ -26,8 +26,8 @@ import pytest
 
 pytestmark = [pytest.mark.slow, pytest.mark.integration]
 
-BASE_URL = os.environ.get("OMLX_TEST_URL", "http://127.0.0.1:8899")
-API_KEY = os.environ.get("OMLX_TEST_API_KEY", "1234")
+BASE_URL = os.environ.get("FUSION_TEST_URL", "http://127.0.0.1:8899")
+API_KEY = os.environ.get("FUSION_TEST_API_KEY", "1234")
 
 MODELS = {
     "qwen": "Qwen3.5-4B-4bit",
@@ -168,7 +168,7 @@ def _server_available():
 
 pytestmark = pytest.mark.skipif(
     not _server_available(),
-    reason=f"oMLX server not reachable at {BASE_URL}",
+    reason=f"Fusion-MLX server not reachable at {BASE_URL}",
 )
 
 
@@ -309,7 +309,7 @@ class TestNoGrammar:
 # Performance Benchmarks
 # =========================================================================
 
-BENCH_DURATION = int(os.environ.get("OMLX_BENCH_DURATION", "60"))
+BENCH_DURATION = int(os.environ.get("FUSION_BENCH_DURATION", "60"))
 BENCH_MAX_TOKENS = 128
 CONCURRENCY_LEVELS = [1, 2, 4]
 
@@ -459,7 +459,7 @@ def _print_results(results):
 class TestPerformance:
     """Time-boxed performance benchmarks.
 
-    For each model, runs requests for OMLX_BENCH_DURATION seconds (default 60)
+    For each model, runs requests for FUSION_BENCH_DURATION seconds (default 60)
     at each concurrency level, with and without grammar, with thinking on/off.
     Reports mean +/- stdev for TTFT, duration, and TPS.
     """

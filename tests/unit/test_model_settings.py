@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Tests for omlx.model_settings module."""
+"""Tests for fusion_mlx.model_settings module."""
 
 import json
 import tempfile

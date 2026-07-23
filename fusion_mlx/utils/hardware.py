@@ -241,7 +241,7 @@ def get_mlx_vlm_version() -> str:
 
 
 # =============================================================================
-# Benchmark / omlx.ai Integration
+# Benchmark / fusion-mlx.ai Integration
 # =============================================================================
 
 _OWNER_HASH_ALPHABET = "0123456789abcdefghijklmnopqrstuvwxyz"
@@ -305,7 +305,7 @@ def parse_chip_info(chip_string: str) -> tuple[str, str]:
 def compute_owner_hash(
     uuid: str, chip_name: str, gpu_cores: int | None, memory_gb: int
 ) -> str:
-    """Compute owner_hash for omlx.ai benchmark submissions.
+    """Compute owner_hash for fusion-mlx.ai benchmark submissions.
 
     Format: SHA-256(uuid + chip_name + gpu_cores + memory_gb) + verify_char
     The verify_char is ALPHABET[sum(charCodes of hash) % 36].

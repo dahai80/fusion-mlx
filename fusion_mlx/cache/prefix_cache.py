@@ -1,9 +1,9 @@
 # SPDX-License-Identifier: Apache-2.0
 """
-Block-Aware Prefix Cache for oMLX.
+Block-Aware Prefix Cache for FusionMLX.
 
 Provides prefix caching using PagedCacheManager for block-based storage
-with SSD persistence. oMLX only supports paged SSD-based caching.
+with SSD persistence. FusionMLX only supports paged SSD-based caching.
 """
 
 import asyncio
@@ -56,7 +56,7 @@ class BlockAwarePrefixCache(CacheManager):
     - Reference counting for memory efficiency
 
     Implements the CacheManager ABC interface for consistency with other
-    cache implementations in oMLX.
+    cache implementations in FusionMLX.
 
     In paged SSD-only mode:
     - All KV cache data is stored on paged SSD via PagedSSDCacheManager

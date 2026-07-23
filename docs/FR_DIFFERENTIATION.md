@@ -20,11 +20,11 @@ against the source.
 The FR positioned fusion-mlx as needing to "catch up" on spec decode,
 TurboQuant, and scheduling. In fact:
 
-| FR theme | fusion-mlx status | omlx / Ollama / vLLM-mac |
+| FR theme | fusion-mlx status | upstream fusion-mlx / Ollama / vLLM-mac |
 |---|---|---|
 | Speculative decoding | **5 methods** (Suffix, DFlash, DSpark, MTP, VLM-MTP) | ❌ none ship a spec path |
-| TurboQuant | Runtime KV-cache quant (`--kv-cache-turboquant {v4,k8v4}`) | omlx has KV quant; others don't |
-| Continuous batching | vLLM-style scheduler, 25 modules | omlx yes; Ollama no |
+| TurboQuant | Runtime KV-cache quant (`--kv-cache-turboquant {v4,k8v4}`) | upstream fusion-mlx has KV quant; others don't |
+| Continuous batching | vLLM-style scheduler, 25 modules | upstream fusion-mlx yes; Ollama no |
 | 2-bit quant recipes | quant2 family, up to +167% decode speed | none |
 | Paged KV cache + SSD cold layer | yes | no |
 | Hardware-adaptive scheduling | per-method adaptive gating, 4-tier memory enforcer | partial / none |

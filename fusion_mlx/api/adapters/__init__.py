@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 """
-API Adapters for oMLX.
+API Adapters for FusionMLX.
 
 This package provides adapters for different API formats (OpenAI, Anthropic),
 enabling clean separation between API-specific logic and core inference.

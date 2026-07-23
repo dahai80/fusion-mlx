@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 """
-Scheduler for oMLX continuous batching.
+Scheduler for FusionMLX continuous batching.
 
 This module provides a Scheduler class that manages request scheduling
 using mlx-lm's BatchGenerator for efficient continuous batching.
@@ -287,7 +287,7 @@ def __init__(
     # SSD store for offloading boundary snapshots (initialized in _init_tiered_cache).
     self._boundary_snapshot_store: BoundarySnapshotSSDStore | None = None
 
-    # paged SSD cache for KV state persistence (oMLX only supports paged SSD-based caching)
+    # paged SSD cache for KV state persistence (FusionMLX only supports paged SSD-based caching)
     self.paged_cache_manager: PagedCacheManager | None = None
     self.block_aware_cache: BlockAwarePrefixCache | None = None
     self.paged_ssd_cache_manager: PagedSSDCacheManager | None = None
@@ -351,7 +351,7 @@ def __init__(
         # never have two stores racing on the same paged_ssd index.
         self._store_cache_executor = concurrent.futures.ThreadPoolExecutor(
             max_workers=1,
-            thread_name_prefix="omlx-store-cache",
+            thread_name_prefix="fusion-mlx-store-cache",
         )
         # Gate caps the post-completion store-cache pipeline so a burst
         # of finishes cannot pile up unbounded KV caches in memory while
@@ -359,7 +359,7 @@ def __init__(
         # and is shrunk by ProcessMemoryEnforcer under pressure (#1383).
         self._store_cache_gate = _StoreCacheGate(cap=self.config.max_num_seqs)
     else:
-        logger.info("oMLX cache disabled (mlx-lm BatchGenerator manages KV internally)")
+        logger.info("FusionMLX cache disabled (mlx-lm BatchGenerator manages KV internally)")
 
     # Streaming detokenizers for proper UTF-8 handling (one per active request)
     # NOTE: No pooling - each request gets a fresh instance to prevent state contamination

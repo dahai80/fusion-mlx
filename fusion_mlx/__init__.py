@@ -1,6 +1,6 @@
 """fusion-mlx — unified local model management for Apple Silicon.
 
-Merges the best of omlx (long-context, memory control, multi-model
+Merges the best of fusion-mlx (long-context, memory control, multi-model
 concurrency) with Rapid-MLX (speculative decoding, multi-modal,
 cloud routing) into a single codebase.
 

@@ -12,7 +12,7 @@ implementation could not provide:
    timeout for a subsequent event that will never come.
 
 The reader helper mirrors the loop the SSE endpoint uses in
-`omlx/admin/routes.py`: snapshot events under the lock, release,
+`fusion_mlx/admin/routes.py`: snapshot events under the lock, release,
 yield, repeat.
 """
 

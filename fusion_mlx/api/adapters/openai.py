@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 """
-OpenAI API adapter for oMLX.
+OpenAI API adapter for FusionMLX.
 
 This adapter handles conversion between OpenAI API format and the internal
 request/response format used by the inference engine.

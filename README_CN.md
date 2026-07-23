@@ -295,7 +295,7 @@ Apple M5 Max (128 GB RAM, 40 GPU 核心)，MLX 0.32.0.dev - 2026-07-04。
 | 引擎 | TG 均值 (tok/s) | 中位数 | 标准差 | CV | 步长 (ms) |
 |---|---|---|---|---|---|
 | fusion-mlx | 18.46 | 18.52 | 0.18 | 1.0% | 54.17 |
-| omlx | 18.49 | 18.53 | 0.18 | 1.0% | 54.09 |
+| fusion-mlx | 18.49 | 18.53 | 0.18 | 1.0% | 54.09 |
 
 比值 0.998 - 完全持平。对 GatedDeltaNet 混合模型自动关闭投机解码以保持输出连贯。
 
@@ -524,7 +524,7 @@ fusion-mlx/
 ├── docs/                 # API 参考、架构、CLI 指南、配置
 ├── examples/             # 12 个可运行的代码示例
 ├── tests/                # 1200+ 测试 (单元、GUI、集成、性能)
-└── downstream/           # omlx 和 Rapid-MLX 分支的同步脚本
+└── downstream/           # fusion-mlx 分支的同步脚本
 ```
 
 ## DSpark 投机解码 (vendored from dspark-metal, 2026-07-22)
@@ -708,7 +708,7 @@ Apache-2.0
 - [MLX](https://github.com/ml-explore/mlx) 和 [mlx-lm](https://github.com/ml-explore/mlx-lm) - Apple 出品
 - [mlx-vlm](https://github.com/Blaizzy/mlx-vlm) - Apple Silicon 上的视觉语言模型推理
 - [vllm-mlx](https://github.com/waybarrios/vllm-mlx) - oMLX 起源于 vllm-mlx v0.1.0
-- [omlx](https://github.com/jundot/omlx) - Continuous batching 和分层 KV 缓存
+- [fusion-mlx](https://github.com/dahai80/fusion-mlx) - Continuous batching 和分层 KV 缓存
 - [Rapid-MLX](https://github.com/raullenchai/Rapid-MLX) - Speculative decoding、多模态、云路由
 - [dflash-mlx](https://github.com/bstnxbt/dflash-mlx) - Block diffusion speculative decoding
 - [DeepSpec (DSpark)](https://github.com/deepseek-ai/DeepSpec) - 无损块级投机解码

@@ -1,6 +1,6 @@
 """Fused sampler for the common chat sampler configs.
 
-Ported from oMLX/Rapid-MLX vllm_mlx/_sampler_fast_path.py and extended
+Ported from FusionMLX/Rapid-MLX vllm_mlx/_sampler_fast_path.py and extended
 with top_k + min_p support.
 
 mlx-lm's ``make_sampler`` builds a closure chain of independent

@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Tests for omlx/eval/mbpp.py's _extract_code helper — the regex/
+"""Tests for fusion_mlx/eval/mbpp.py's _extract_code helper — the regex/
 heuristic parser that pulls Python source out of an LLM response
 before MBPP runs it through the subprocess executor. The
 benchmark-runner logic itself is exercised by test_eval.py; here we

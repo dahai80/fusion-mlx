@@ -23,7 +23,7 @@ execute_process(
   OUTPUT_STRIP_TRAILING_WHITESPACE
   OUTPUT_VARIABLE MLX_ROOT)
 find_package(MLX CONFIG REQUIRED)
-list(GET MLX_INCLUDE_DIRS 0 OMLX_GLM_MLX_INCLUDE_DIR)
+list(GET MLX_INCLUDE_DIRS 0 FUSION_GLM_MLX_INCLUDE_DIR)
 
 add_library(fusion_mlx_glm_kernel_ops)
 target_sources(
@@ -38,19 +38,19 @@ target_include_directories(
   PUBLIC ${CMAKE_CURRENT_LIST_DIR})
 target_compile_definitions(
   fusion_mlx_glm_kernel_ops
-  PUBLIC OMLX_GLM_KERNEL_SOURCE_DIR="${CMAKE_CURRENT_LIST_DIR}"
-         OMLX_GLM_MLX_INCLUDE_DIR="${OMLX_GLM_MLX_INCLUDE_DIR}")
+  PUBLIC FUSION_GLM_KERNEL_SOURCE_DIR="${CMAKE_CURRENT_LIST_DIR}"
+         FUSION_GLM_MLX_INCLUDE_DIR="${FUSION_GLM_MLX_INCLUDE_DIR}")
 target_link_libraries(fusion_mlx_glm_kernel_ops PUBLIC mlx)
 
 if(MLX_BUILD_METAL)
-  set(OMLX_GLM_METAL_SOURCES
+  set(FUSION_GLM_METAL_SOURCES
       ${CMAKE_CURRENT_LIST_DIR}/dsa_indexer.metal
       ${CMAKE_CURRENT_LIST_DIR}/exact_block_attention.metal
       ${CMAKE_CURRENT_LIST_DIR}/fused_moe.metal
       ${CMAKE_CURRENT_LIST_DIR}/sparse_mla.metal)
-  file(GLOB_RECURSE OMLX_GLM_METAL_HEADERS CONFIGURE_DEPENDS
+  file(GLOB_RECURSE FUSION_GLM_METAL_HEADERS CONFIGURE_DEPENDS
        ${CMAKE_CURRENT_LIST_DIR}/*.h)
-  set(OMLX_GLM_METAL_FLAGS
+  set(FUSION_GLM_METAL_FLAGS
       -x
       metal
       -Wall
@@ -59,41 +59,41 @@ if(MLX_BUILD_METAL)
       -Wno-c++17-extensions
       -Wno-c++20-extensions)
   if(MLX_METAL_DEBUG)
-    set(OMLX_GLM_METAL_FLAGS ${OMLX_GLM_METAL_FLAGS} -gline-tables-only
+    set(FUSION_GLM_METAL_FLAGS ${FUSION_GLM_METAL_FLAGS} -gline-tables-only
                              -frecord-sources)
   endif()
   if(NOT CMAKE_OSX_DEPLOYMENT_TARGET STREQUAL "")
-    set(OMLX_GLM_METAL_FLAGS
-        ${OMLX_GLM_METAL_FLAGS}
+    set(FUSION_GLM_METAL_FLAGS
+        ${FUSION_GLM_METAL_FLAGS}
         "-mmacosx-version-min=${CMAKE_OSX_DEPLOYMENT_TARGET}")
   endif()
-  set(OMLX_GLM_METAL_INCLUDE_DIRS ${CMAKE_CURRENT_LIST_DIR}
+  set(FUSION_GLM_METAL_INCLUDE_DIRS ${CMAKE_CURRENT_LIST_DIR}
                                   ${MLX_INCLUDE_DIRS})
-  set(OMLX_GLM_METAL_INCLUDE_ARGS)
-  foreach(INCLUDE_DIR IN LISTS OMLX_GLM_METAL_INCLUDE_DIRS)
-    list(APPEND OMLX_GLM_METAL_INCLUDE_ARGS -I${INCLUDE_DIR})
+  set(FUSION_GLM_METAL_INCLUDE_ARGS)
+  foreach(INCLUDE_DIR IN LISTS FUSION_GLM_METAL_INCLUDE_DIRS)
+    list(APPEND FUSION_GLM_METAL_INCLUDE_ARGS -I${INCLUDE_DIR})
   endforeach()
-  set(OMLX_GLM_METAL_AIR)
-  foreach(SRCFILE IN LISTS OMLX_GLM_METAL_SOURCES)
+  set(FUSION_GLM_METAL_AIR)
+  foreach(SRCFILE IN LISTS FUSION_GLM_METAL_SOURCES)
     get_filename_component(TARGET_NAME ${SRCFILE} NAME_WE)
     set(AIR_FILE ${CMAKE_CURRENT_BINARY_DIR}/${TARGET_NAME}.air)
     add_custom_command(
       OUTPUT ${AIR_FILE}
-      COMMAND xcrun -sdk macosx metal ${OMLX_GLM_METAL_FLAGS} -c ${SRCFILE}
-              ${OMLX_GLM_METAL_INCLUDE_ARGS} -o ${AIR_FILE}
-      DEPENDS ${SRCFILE} ${OMLX_GLM_METAL_HEADERS}
+      COMMAND xcrun -sdk macosx metal ${FUSION_GLM_METAL_FLAGS} -c ${SRCFILE}
+              ${FUSION_GLM_METAL_INCLUDE_ARGS} -o ${AIR_FILE}
+      DEPENDS ${SRCFILE} ${FUSION_GLM_METAL_HEADERS}
       COMMENT "Building ${TARGET_NAME}.air"
       VERBATIM)
-    list(APPEND OMLX_GLM_METAL_AIR ${AIR_FILE})
+    list(APPEND FUSION_GLM_METAL_AIR ${AIR_FILE})
   endforeach()
 
   set(FUSION_MLX_GLM_METALLIB
       ${CMAKE_LIBRARY_OUTPUT_DIRECTORY}/fusion_mlx_glm_kernels.metallib)
   add_custom_command(
     OUTPUT ${FUSION_MLX_GLM_METALLIB}
-    COMMAND xcrun -sdk macosx metal ${OMLX_GLM_METAL_AIR} -o
+    COMMAND xcrun -sdk macosx metal ${FUSION_GLM_METAL_AIR} -o
             ${FUSION_MLX_GLM_METALLIB}
-    DEPENDS ${OMLX_GLM_METAL_AIR}
+    DEPENDS ${FUSION_GLM_METAL_AIR}
     COMMENT "Building fusion_mlx_glm_kernels.metallib"
     VERBATIM)
   add_custom_target(fusion_mlx_glm_kernels_metallib DEPENDS ${FUSION_MLX_GLM_METALLIB})

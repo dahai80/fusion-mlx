@@ -61,12 +61,12 @@ class TestIntegrationCommands:
     def test_commands_quote_full_app_cli_prefix(self):
         with patch(
             "fusion_mlx.utils.install.get_cli_prefix",
-            return_value="/Users/me/My Apps/oMLX.app/Contents/MacOS/omlx-cli",
+            return_value="/Users/me/My Apps/FusionMLX.app/Contents/MacOS/fusion-cli",
         ):
             cmd = ClaudeCodeIntegration().get_command(ctx())
 
         assert (
-            cmd == "'/Users/me/My Apps/oMLX.app/Contents/MacOS/omlx-cli' launch claude"
+            cmd == "'/Users/me/My Apps/FusionMLX.app/Contents/MacOS/fusion-cli' launch claude"
         )
 
 
@@ -74,7 +74,7 @@ class TestCodexIntegration:
     def test_get_command(self):
         codex = CodexIntegration()
         cmd = codex.get_command(ctx(port=8000, api_key="test-key", model="qwen3.5"))
-        assert "fusion_mlx launch codex" in cmd
+        assert "fusion-mlx launch codex" in cmd
         assert "--model qwen3.5" in cmd
 
     def test_get_command_no_model(self):
@@ -91,9 +91,9 @@ class TestCodexIntegration:
         assert config_path.exists()
         content = config_path.read_text()
         assert 'model = "qwen3.5"' in content
-        assert 'model_provider = "fusion_mlx"' in content
+        assert 'model_provider = "fusion-mlx"' in content
         assert 'base_url = "http://127.0.0.1:8000/v1"' in content
-        assert 'env_key = "OMLX_API_KEY"' in content
+        assert 'env_key = "FUSION_API_KEY"' in content
 
     def test_configure_custom_host(self, tmp_path):
         codex = CodexIntegration()
@@ -133,8 +133,8 @@ other_key = "value"
 name = "Custom"
 model = "should-not-override"
 
-[model_providers.fusion_mlx]
-name = "old-fusion_mlx"
+[model_providers.fusion-mlx]
+name = "old-fusion-mlx"
 """
         config_path.write_text(existing)
 
@@ -144,13 +144,13 @@ name = "old-fusion_mlx"
 
         content = config_path.read_text()
         assert 'model = "new-model"' in content
-        assert 'model_provider = "fusion_mlx"' in content
+        assert 'model_provider = "fusion-mlx"' in content
         assert 'other_key = "value"' in content
         assert "[model_providers.custom]" in content
         assert 'model = "should-not-override"' in content
-        assert "[model_providers.fusion_mlx]" in content
-        assert 'name = "oMLX"' in content
-        assert "old-fusion_mlx" not in content
+        assert "[model_providers.fusion-mlx]" in content
+        assert 'name = "Fusion-MLX"' in content
+        assert "old-fusion-mlx" not in content
 
     def test_configure_reasoning_model(self, tmp_path):
         config_path = tmp_path / "config.toml"
@@ -195,7 +195,7 @@ name = "old-fusion_mlx"
         config_path = tmp_path / "config.toml"
         config_path.write_text(
             'model = "old-thinking-model"\n'
-            'model_provider = "fusion_mlx"\n'
+            'model_provider = "fusion-mlx"\n'
             'model_reasoning_effort = "high"\n'
         )
 
@@ -237,7 +237,7 @@ name = "old-fusion_mlx"
             )
 
         assert captured["argv"] == ["codex", "-m", "qwen3.5", "--yolo"]
-        assert captured["env"]["OMLX_API_KEY"] == "key"
+        assert captured["env"]["FUSION_API_KEY"] == "key"
         assert "PYTHONHOME" not in captured["env"]
         assert "PYTHONPATH" not in captured["env"]
         assert "PYTHONDONTWRITEBYTECODE" not in captured["env"]
@@ -247,7 +247,7 @@ class TestCodexAppIntegration:
     def test_get_command(self):
         codex_app = CodexAppIntegration()
         cmd = codex_app.get_command(ctx(port=8000, api_key="key", model="qwen3.5"))
-        assert "fusion_mlx launch codex_app" in cmd
+        assert "fusion-mlx launch codex_app" in cmd
         assert "--model qwen3.5" in cmd
 
     def test_configure(self, tmp_path):
@@ -259,9 +259,9 @@ class TestCodexAppIntegration:
         assert config_path.exists()
         content = config_path.read_text()
         assert 'model = "qwen3.5"' in content
-        assert 'model_provider = "fusion_mlx"' in content
+        assert 'model_provider = "fusion-mlx"' in content
         assert 'base_url = "http://127.0.0.1:8000/v1"' in content
-        assert 'env_key = "OMLX_API_KEY"' in content
+        assert 'env_key = "FUSION_API_KEY"' in content
 
     def test_launch_app(self, tmp_path):
         codex_app = CodexAppIntegration()
@@ -296,7 +296,7 @@ class TestCodexAppIntegration:
 
         # Codex App should launch with "app" subcommand, not "-m <model>"
         assert captured["argv"] == ["codex", "app"]
-        assert captured["env"]["OMLX_API_KEY"] == "key"
+        assert captured["env"]["FUSION_API_KEY"] == "key"
         assert "PYTHONHOME" not in captured["env"]
         assert "PYTHONPATH" not in captured["env"]
         assert "PYTHONDONTWRITEBYTECODE" not in captured["env"]
@@ -312,7 +312,7 @@ class TestOpenCodeIntegration:
     def test_get_command(self):
         oc = OpenCodeIntegration()
         cmd = oc.get_command(ctx(port=8000, api_key="key", model="qwen3.5"))
-        assert "fusion_mlx launch opencode" in cmd
+        assert "fusion-mlx launch opencode" in cmd
         assert "--model qwen3.5" in cmd
 
     def test_configure_new_file(self, tmp_path):
@@ -325,19 +325,19 @@ class TestOpenCodeIntegration:
         assert config_path.exists()
         config = json.loads(config_path.read_text())
         assert (
-            config["provider"]["fusion_mlx"]["options"]["baseURL"]
+            config["provider"]["fusion-mlx"]["options"]["baseURL"]
             == "http://127.0.0.1:8000/v1"
         )
-        assert config["provider"]["fusion_mlx"]["npm"] == "@ai-sdk/openai-compatible"
-        assert config["provider"]["fusion_mlx"]["options"]["apiKey"] == "test-key"
+        assert config["provider"]["fusion-mlx"]["npm"] == "@ai-sdk/openai-compatible"
+        assert config["provider"]["fusion-mlx"]["options"]["apiKey"] == "test-key"
         assert (
-            config["provider"]["fusion_mlx"]["models"]["qwen3.5"]["name"] == "qwen3.5"
+            config["provider"]["fusion-mlx"]["models"]["qwen3.5"]["name"] == "qwen3.5"
         )
-        assert config["provider"]["fusion_mlx"]["models"]["qwen3.5"]["modalities"] == {
+        assert config["provider"]["fusion-mlx"]["models"]["qwen3.5"]["modalities"] == {
             "input": ["text"],
             "output": ["text"],
         }
-        assert config["model"] == "fusion_mlx/qwen3.5"
+        assert config["model"] == "fusion-mlx/qwen3.5"
 
     def test_configure_custom_host(self, tmp_path):
         oc = OpenCodeIntegration()
@@ -347,7 +347,7 @@ class TestOpenCodeIntegration:
 
         config = json.loads(config_path.read_text())
         assert (
-            config["provider"]["fusion_mlx"]["options"]["baseURL"]
+            config["provider"]["fusion-mlx"]["options"]["baseURL"]
             == "http://10.0.0.5:9000/v1"
         )
 
@@ -377,10 +377,10 @@ class TestOpenCodeIntegration:
             config["provider"]["ollama"]["options"]["baseURL"]
             == "http://localhost:11434/v1"
         )
-        # fusion_mlx provider added
-        assert "fusion_mlx" in config["provider"]
+        # fusion-mlx provider added
+        assert "fusion-mlx" in config["provider"]
         assert (
-            config["provider"]["fusion_mlx"]["options"]["baseURL"]
+            config["provider"]["fusion-mlx"]["options"]["baseURL"]
             == "http://127.0.0.1:9000/v1"
         )
         # Other keys preserved
@@ -410,7 +410,7 @@ class TestOpenCodeIntegration:
 
         # Should create new config despite invalid existing file
         config = json.loads(config_path.read_text())
-        assert "fusion_mlx" in config["provider"]
+        assert "fusion-mlx" in config["provider"]
 
     def test_configure_with_limits(self, tmp_path):
         oc = OpenCodeIntegration()
@@ -428,7 +428,7 @@ class TestOpenCodeIntegration:
             )
 
         config = json.loads(config_path.read_text())
-        model_config = config["provider"]["fusion_mlx"]["models"]["qwen3.5"]
+        model_config = config["provider"]["fusion-mlx"]["models"]["qwen3.5"]
         assert model_config["limit"]["context"] == 32768
         assert model_config["limit"]["output"] == 8192
 
@@ -447,7 +447,7 @@ class TestOpenCodeIntegration:
             )
 
         config = json.loads(config_path.read_text())
-        model_config = config["provider"]["fusion_mlx"]["models"]["qwen2.5-vl"]
+        model_config = config["provider"]["fusion-mlx"]["models"]["qwen2.5-vl"]
         assert model_config["attachment"] is True
         assert model_config["modalities"] == {
             "input": ["text", "image"],
@@ -469,7 +469,7 @@ class TestOpenCodeIntegration:
             )
 
         config = json.loads(config_path.read_text())
-        model_config = config["provider"]["fusion_mlx"]["models"]["qwen3.5"]
+        model_config = config["provider"]["fusion-mlx"]["models"]["qwen3.5"]
         assert model_config["limit"]["context"] == 32768
         assert model_config["limit"]["output"] == 32768
 
@@ -481,7 +481,7 @@ class TestOpenCodeIntegration:
             oc.configure(ctx(port=8000, api_key="key", model="qwen3.5"))
 
         config = json.loads(config_path.read_text())
-        model_config = config["provider"]["fusion_mlx"]["models"]["qwen3.5"]
+        model_config = config["provider"]["fusion-mlx"]["models"]["qwen3.5"]
         assert "limit" not in model_config
 
     def test_launch_scrubs_python_env(self, tmp_path):
@@ -523,7 +523,7 @@ class TestOpenClawIntegration:
     def test_get_command(self):
         ocl = OpenClawIntegration()
         cmd = ocl.get_command(ctx(port=8000, api_key="key", model="qwen3.5"))
-        assert "fusion_mlx launch openclaw" in cmd
+        assert "fusion-mlx launch openclaw" in cmd
         assert "--model qwen3.5" in cmd
 
     def test_configure_new_file(self, tmp_path):
@@ -536,14 +536,14 @@ class TestOpenClawIntegration:
         assert config_path.exists()
         config = json.loads(config_path.read_text())
         assert (
-            config["models"]["providers"]["fusion_mlx"]["baseUrl"]
+            config["models"]["providers"]["fusion-mlx"]["baseUrl"]
             == "http://127.0.0.1:8000/v1"
         )
         assert (
-            config["models"]["providers"]["fusion_mlx"]["api"] == "openai-completions"
+            config["models"]["providers"]["fusion-mlx"]["api"] == "openai-completions"
         )
-        assert config["models"]["providers"]["fusion_mlx"]["apiKey"] == "test-key"
-        assert config["agents"]["defaults"]["model"]["primary"] == "fusion_mlx/qwen3.5"
+        assert config["models"]["providers"]["fusion-mlx"]["apiKey"] == "test-key"
+        assert config["agents"]["defaults"]["model"]["primary"] == "fusion-mlx/qwen3.5"
         assert config["tools"]["profile"] == "coding"
 
     def test_configure_model_metadata_from_context(self, tmp_path):
@@ -563,7 +563,7 @@ class TestOpenClawIntegration:
             )
 
         model_config = json.loads(config_path.read_text())["models"]["providers"][
-            "fusion_mlx"
+            "fusion-mlx"
         ]["models"][0]
         assert model_config["reasoning"] is True
         assert model_config["input"] == ["text", "image"]
@@ -577,7 +577,7 @@ class TestOpenClawIntegration:
             ocl.configure(ctx(port=8000, api_key="key", model="llama"))
 
         model_config = json.loads(config_path.read_text())["models"]["providers"][
-            "fusion_mlx"
+            "fusion-mlx"
         ]["models"][0]
         assert model_config["reasoning"] is False
         assert model_config["input"] == ["text"]
@@ -594,7 +594,7 @@ class TestOpenClawIntegration:
 
         config = json.loads(config_path.read_text())
         assert (
-            config["models"]["providers"]["fusion_mlx"]["baseUrl"]
+            config["models"]["providers"]["fusion-mlx"]["baseUrl"]
             == "http://192.168.1.100:9000/v1"
         )
 
@@ -614,10 +614,10 @@ class TestOpenClawIntegration:
         # Existing preserved
         assert "ollama" in config["models"]["providers"]
         assert config["channels"]["telegram"]["enabled"] is True
-        # fusion_mlx added
-        assert "fusion_mlx" in config["models"]["providers"]
+        # fusion-mlx added
+        assert "fusion-mlx" in config["models"]["providers"]
         assert (
-            config["models"]["providers"]["fusion_mlx"]["baseUrl"]
+            config["models"]["providers"]["fusion-mlx"]["baseUrl"]
             == "http://127.0.0.1:9000/v1"
         )
 
@@ -727,7 +727,7 @@ class TestHermesIntegration:
     def test_get_command(self):
         hermes = HermesIntegration()
         cmd = hermes.get_command(ctx(port=8000, api_key="key", model="qwen3.5"))
-        assert "fusion_mlx launch hermes" in cmd
+        assert "fusion-mlx launch hermes" in cmd
         assert "--model qwen3.5" in cmd
 
     def test_get_command_no_model(self):
@@ -752,13 +752,13 @@ class TestHermesIntegration:
 
         assert config_path.exists()
         config = yaml.safe_load(config_path.read_text())
-        provider = config["providers"]["fusion_mlx"]
-        assert provider["name"] == "oMLX"
+        provider = config["providers"]["fusion-mlx"]
+        assert provider["name"] == "Fusion-MLX"
         assert provider["base_url"] == "http://127.0.0.1:8000/v1"
         assert provider["api_key"] == "test-key"
         assert provider["api_mode"] == "chat_completions"
         assert provider["default_model"] == "qwen3.5"
-        assert config["model"]["provider"] == "fusion_mlx"
+        assert config["model"]["provider"] == "fusion-mlx"
         assert config["model"]["default"] == "qwen3.5"
         assert config["model"]["context_length"] == 131072
         assert config["model"]["max_tokens"] == 8192
@@ -770,9 +770,9 @@ class TestHermesIntegration:
         with patch.object(HermesIntegration, "CONFIG_PATH", config_path):
             hermes.configure(ctx(port=9000, api_key="", model="llama", host="10.0.0.5"))
 
-        provider = yaml.safe_load(config_path.read_text())["providers"]["fusion_mlx"]
+        provider = yaml.safe_load(config_path.read_text())["providers"]["fusion-mlx"]
         assert provider["base_url"] == "http://10.0.0.5:9000/v1"
-        assert provider["api_key"] == "fusion_mlx"
+        assert provider["api_key"] == "fusion-mlx"
 
     def test_configure_preserves_existing(self, tmp_path):
         config_path = tmp_path / "config.yaml"
@@ -782,7 +782,7 @@ class TestHermesIntegration:
                     "theme": "dark",
                     "providers": {
                         "anthropic": {"base_url": "https://api.anthropic.com"},
-                        "fusion_mlx": {"timeout": 120},
+                        "fusion-mlx": {"timeout": 120},
                     },
                     "model": {
                         "temperature": 0.2,
@@ -803,12 +803,12 @@ class TestHermesIntegration:
         assert (
             config["providers"]["anthropic"]["base_url"] == "https://api.anthropic.com"
         )
-        assert config["providers"]["fusion_mlx"]["timeout"] == 120
+        assert config["providers"]["fusion-mlx"]["timeout"] == 120
         assert (
-            config["providers"]["fusion_mlx"]["base_url"] == "http://127.0.0.1:8000/v1"
+            config["providers"]["fusion-mlx"]["base_url"] == "http://127.0.0.1:8000/v1"
         )
         assert config["model"]["temperature"] == 0.2
-        assert config["model"]["provider"] == "fusion_mlx"
+        assert config["model"]["provider"] == "fusion-mlx"
         assert config["model"]["default"] == "qwen3.5"
         assert "base_url" not in config["model"]
         assert "api_key" not in config["model"]
@@ -831,7 +831,7 @@ class TestHermesIntegration:
             yaml.safe_dump(
                 {
                     "model": {
-                        "provider": "fusion_mlx",
+                        "provider": "fusion-mlx",
                         "default": "old",
                         "context_length": 32768,
                         "max_tokens": 8192,
@@ -912,7 +912,7 @@ class TestHermesIntegration:
         assert "PYTHONDONTWRITEBYTECODE" not in captured["env"]
 
         config = yaml.safe_load(config_path.read_text())
-        assert config["providers"]["fusion_mlx"]["api_key"] == "secret"
+        assert config["providers"]["fusion-mlx"]["api_key"] == "secret"
         assert config["model"]["context_length"] == 131072
         assert config["model"]["max_tokens"] == 8192
 
@@ -964,7 +964,7 @@ class TestPiIntegration:
     def test_get_command(self):
         pi = PiIntegration()
         cmd = pi.get_command(ctx(port=8000, api_key="key", model="qwen3.5"))
-        assert "fusion_mlx launch pi" in cmd
+        assert "fusion-mlx launch pi" in cmd
         assert "--model qwen3.5" in cmd
 
     def test_get_command_no_model(self):
@@ -984,7 +984,7 @@ class TestPiIntegration:
             pi.configure(ctx(port=8000, api_key="test-key", model="qwen3.5"))
 
         models_config = json.loads(models_path.read_text())
-        provider = models_config["providers"]["fusion_mlx"]
+        provider = models_config["providers"]["fusion-mlx"]
         assert provider["baseUrl"] == "http://127.0.0.1:8000/v1"
         assert provider["api"] == "openai-completions"
         assert provider["apiKey"] == "test-key"
@@ -993,7 +993,7 @@ class TestPiIntegration:
         assert provider["models"][0]["input"] == ["text"]
 
         settings_config = json.loads(settings_path.read_text())
-        assert settings_config["defaultProvider"] == "fusion_mlx"
+        assert settings_config["defaultProvider"] == "fusion-mlx"
         assert settings_config["defaultModel"] == "qwen3.5"
 
     def test_configure_custom_host(self, tmp_path):
@@ -1009,7 +1009,7 @@ class TestPiIntegration:
                 ctx(port=9000, api_key="key", model="test", host="192.168.1.100")
             )
 
-        provider = json.loads(models_path.read_text())["providers"]["fusion_mlx"]
+        provider = json.loads(models_path.read_text())["providers"]["fusion-mlx"]
         assert provider["baseUrl"] == "http://192.168.1.100:9000/v1"
 
     def test_configure_creates_backup(self, tmp_path):
@@ -1052,7 +1052,7 @@ class TestPiIntegration:
                 )
             )
 
-        provider = json.loads(models_path.read_text())["providers"]["fusion_mlx"]
+        provider = json.loads(models_path.read_text())["providers"]["fusion-mlx"]
         model_config = provider["models"][0]
         assert model_config["input"] == ["text", "image"]
         assert model_config["contextWindow"] == 32768
@@ -1069,7 +1069,7 @@ class TestPiIntegration:
         ):
             pi.configure(ctx(port=8000, model="qwen3.6", reasoning=True))
 
-        model_config = json.loads(models_path.read_text())["providers"]["fusion_mlx"][
+        model_config = json.loads(models_path.read_text())["providers"]["fusion-mlx"][
             "models"
         ][0]
         assert model_config["reasoning"] is True
@@ -1085,7 +1085,7 @@ class TestPiIntegration:
         ):
             pi.configure(ctx(port=8000, model="some-thinking-model", reasoning=False))
 
-        model_config = json.loads(models_path.read_text())["providers"]["fusion_mlx"][
+        model_config = json.loads(models_path.read_text())["providers"]["fusion-mlx"][
             "models"
         ][0]
         assert model_config["reasoning"] is False
@@ -1101,7 +1101,7 @@ class TestPiIntegration:
         ):
             pi.configure(ctx(port=8000, model="qwen3-thinking"))
 
-        model_config = json.loads(models_path.read_text())["providers"]["fusion_mlx"][
+        model_config = json.loads(models_path.read_text())["providers"]["fusion-mlx"][
             "models"
         ][0]
         assert model_config["reasoning"] is True
@@ -1125,11 +1125,11 @@ class TestPiIntegration:
 
         models_config = json.loads(models_path.read_text())
         assert "anthropic" in models_config["providers"]
-        assert models_config["providers"]["fusion_mlx"]["apiKey"] == "fusion_mlx"
+        assert models_config["providers"]["fusion-mlx"]["apiKey"] == "fusion-mlx"
 
         settings_config = json.loads(settings_path.read_text())
         assert settings_config["theme"] == "dark"
-        assert settings_config["defaultProvider"] == "fusion_mlx"
+        assert settings_config["defaultProvider"] == "fusion-mlx"
         assert settings_config["defaultModel"] == "llama"
 
     def test_launch_scrubs_python_env(self, tmp_path):
@@ -1156,7 +1156,7 @@ class TestPiIntegration:
         ):
             pi.launch(ctx(port=8000, api_key="key", model="qwen3.5"))
 
-        assert captured["argv"] == ["pi", "--model", "fusion_mlx/qwen3.5"]
+        assert captured["argv"] == ["pi", "--model", "fusion-mlx/qwen3.5"]
         assert "PYTHONHOME" not in captured["env"]
         assert "PYTHONPATH" not in captured["env"]
         assert "PYTHONDONTWRITEBYTECODE" not in captured["env"]
@@ -1171,7 +1171,7 @@ class TestClaudeCodeIntegration:
     def test_get_command(self):
         cc = ClaudeCodeIntegration()
         cmd = cc.get_command(ctx(port=8000, api_key="key", model="qwen3.5"))
-        assert "fusion_mlx launch claude" in cmd
+        assert "fusion-mlx launch claude" in cmd
 
     def test_get_command_ignores_model(self):
         # Claude integration uses TUI selection so the rendered command
@@ -1296,7 +1296,7 @@ class TestClaudeCodeIntegration:
         assert env["ANTHROPIC_DEFAULT_HAIKU_MODEL"] == "haiku-local"
         assert env["CLAUDE_CODE_SUBAGENT_MODEL"] == "haiku-local"
 
-    def test_launch_open_server_uses_omlx_token(self):
+    def test_launch_open_server_uses_fusion_token(self):
         cc = ClaudeCodeIntegration()
         captured = {}
 
@@ -1316,7 +1316,7 @@ class TestClaudeCodeIntegration:
 
         # Empty api_key means an open server, claude code still needs
         # *some* token so we ship a placeholder.
-        assert captured["env"]["ANTHROPIC_AUTH_TOKEN"] == "fusion_mlx"
+        assert captured["env"]["ANTHROPIC_AUTH_TOKEN"] == "fusion-mlx"
 
     def test_launch_without_model(self):
         cc = ClaudeCodeIntegration()
@@ -1419,7 +1419,7 @@ class TestCopilotIntegration:
     def test_get_command(self):
         copilot = CopilotIntegration()
         cmd = copilot.get_command(ctx(port=8000, api_key="key", model="qwen3.5"))
-        assert "fusion_mlx launch copilot" in cmd
+        assert "fusion-mlx launch copilot" in cmd
         assert "--model qwen3.5" in cmd
 
     def test_get_command_no_model(self):
@@ -1480,7 +1480,7 @@ class TestCopilotIntegration:
         assert "PYTHONPATH" not in env
         assert "PYTHONDONTWRITEBYTECODE" not in env
 
-    def test_launch_open_server_uses_omlx_token(self):
+    def test_launch_open_server_uses_fusion_token(self):
         copilot = CopilotIntegration()
         captured = {}
 
@@ -1495,7 +1495,7 @@ class TestCopilotIntegration:
         ):
             copilot.launch(ctx(port=8000, api_key="", model="qwen3.5"))
 
-        assert captured["env"]["COPILOT_PROVIDER_BEARER_TOKEN"] == "fusion_mlx"
+        assert captured["env"]["COPILOT_PROVIDER_BEARER_TOKEN"] == "fusion-mlx"
 
     def test_launch_without_model_or_limits(self):
         copilot = CopilotIntegration()

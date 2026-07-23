@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 
 DRAFT_MODEL_PATH = __import__("os").environ.get(
     "FUSION_DRAFT_MODEL_PATH",
-    "/Users/dahai/.omlx/models/mlx-community/Qwen3-0.6B-4bit",
+    "/Users/dahai/.fusion-mlx/models/mlx-community/Qwen3-0.6B-4bit",
 )
 DRAFT_NUM_TOKENS = int(__import__("os").environ.get("FUSION_SPEC_DRAFT_TOKENS", "3"))
 DRAFT_TEMPERATURE = float(__import__("os").environ.get("FUSION_SPEC_DRAFT_TEMP", "0.0"))

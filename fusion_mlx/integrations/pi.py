@@ -58,7 +58,7 @@ class PiIntegration(Integration):
             provider_config: dict = {
                 "baseUrl": f"http://{host}:{port}/v1",
                 "api": "openai-completions",
-                "apiKey": api_key or "omlx",
+                "apiKey": api_key or "fusion-mlx",
                 "authHeader": True,
             }
             if model:
@@ -79,10 +79,10 @@ class PiIntegration(Integration):
                 if max_tokens:
                     model_entry["maxTokens"] = max_tokens
                 provider_config["models"] = [model_entry]
-            config["providers"]["omlx"] = provider_config
+            config["providers"]["fusion-mlx"] = provider_config
 
         def update_settings(config: dict) -> None:
-            config["defaultProvider"] = "omlx"
+            config["defaultProvider"] = "fusion-mlx"
             if model:
                 config["defaultModel"] = model
 
@@ -108,6 +108,6 @@ class PiIntegration(Integration):
         env = self._scrubbed_env()
         args = ["pi"]
         if model:
-            args.extend(["--model", f"omlx/{model}"])
+            args.extend(["--model", f"fusion-mlx/{model}"])
 
         os.execvpe("pi", args, env)

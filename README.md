@@ -343,7 +343,7 @@ Single-stream decode, Qwen3.6-27B-mxfp8 (100 tokens, 5 warmup steps):
 | Engine | TG mean (tok/s) | median | std | CV | step (ms) |
 |---|---|---|---|---|---|
 | fusion-mlx | 18.46 | 18.52 | 0.18 | 1.0% | 54.17 |
-| omlx | 18.49 | 18.53 | 0.18 | 1.0% | 54.09 |
+| fusion-mlx | 18.49 | 18.53 | 0.18 | 1.0% | 54.09 |
 
 Ratio 0.998 - full parity. Speculative decoding is auto-gated off for GatedDeltaNet hybrid models to preserve coherence.
 
@@ -589,7 +589,7 @@ fusion-mlx/
 ├── docs/                 # API reference, architecture, CLI guide, configuration
 ├── examples/             # 12 working code examples
 ├── tests/                # 1200+ tests (unit, GUI, integration, performance)
-└── downstream/           # Sync scripts for omlx and Rapid-MLX forks
+└── downstream/           # Sync scripts for fusion-mlx and Rapid-MLX forks
 ```
 
 ## DSpark Speculative Decoding (vendored from dspark-metal, 2026-07-22)
@@ -773,7 +773,7 @@ Apache-2.0
 - [MLX](https://github.com/ml-explore/mlx) and [mlx-lm](https://github.com/ml-explore/mlx-lm) by Apple
 - [mlx-vlm](https://github.com/Blaizzy/mlx-vlm) - Vision-language model inference on Apple Silicon
 - [vllm-mlx](https://github.com/waybarrios/vllm-mlx) - oMLX started from vllm-mlx v0.1.0
-- [omlx](https://github.com/jundot/omlx) - Continuous batching and tiered KV caching
+- [fusion-mlx](https://github.com/dahai80/fusion-mlx) - Continuous batching and tiered KV caching
 - [Rapid-MLX](https://github.com/raullenchai/Rapid-MLX) - Speculative decoding, multi-modal, cloud routing
 - [dflash-mlx](https://github.com/bstnxbt/dflash-mlx) - Block diffusion speculative decoding
 - [DeepSpec (DSpark)](https://github.com/deepseek-ai/DeepSpec) - Lossless block speculative decoding

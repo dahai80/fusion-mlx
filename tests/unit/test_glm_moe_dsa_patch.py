@@ -161,7 +161,7 @@ def test_glm_patch_keeps_vendored_helpers_private():
 
     from fusion_mlx.patches.glm_moe_dsa import deepseek_v32 as vendored_deepseek_v32
 
-    assert getattr(glm_moe_dsa, "_OMLX_GLM_DSA_OPTIMIZED", False)
+    assert getattr(glm_moe_dsa, "_FUSION_GLM_DSA_OPTIMIZED", False)
     assert sys.modules["mlx_lm.models.glm_moe_dsa"] is glm_moe_dsa
     assert glm_moe_dsa.DeepseekV32Model is vendored_deepseek_v32.DeepseekV32Model
     assert upstream_deepseek_v32 is not vendored_deepseek_v32

@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Tests for EngineCore module (migrated from omlx to fusion-mlx).
+"""Tests for EngineCore module (migrated from legacy omlx to fusion-mlx).
 
 Adaptations:
 - _output_collectors/_stream_states/_finished_events -> _active_contexts (RequestContext)

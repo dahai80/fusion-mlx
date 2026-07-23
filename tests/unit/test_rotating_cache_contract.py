@@ -2,9 +2,9 @@
 """Regression tests for the RotatingKVCache contract with mlx-lm 0.31.3.
 
 Issues #934 (infinite loop), #903 (empty content), and #900 (preserve_thinking
-flakiness) all traced back to omlx feeding mlx-lm a RotatingKVCache whose
+flakiness) all traced back to fusion-mlx feeding mlx-lm a RotatingKVCache whose
 shape and meta_state did not match the new BatchRotatingKVCache.merge()
-semantics introduced by mlx-lm PR #1072. After the fix, omlx's restore path
+semantics introduced by mlx-lm PR #1072. After the fix, fusion-mlx's restore path
 must satisfy:
 
 1. ``size()`` reports a length the merge slice can actually fill — clamping

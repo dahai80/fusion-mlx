@@ -48,9 +48,9 @@ class ClaudeCodeIntegration(Integration):
     ) -> None:
         env = self._scrubbed_env()
         env["ANTHROPIC_BASE_URL"] = f"http://{host}:{port}"
-        # Use the actual omlx API key so Claude Code authenticates correctly.
-        # Fallback to "omlx" only when no API key is configured (open server).
-        env["ANTHROPIC_AUTH_TOKEN"] = api_key or "omlx"
+        # Use the actual fusion-mlx API key so Claude Code authenticates correctly.
+        # Fallback to "fusion-mlx" only when no API key is configured (open server).
+        env["ANTHROPIC_AUTH_TOKEN"] = api_key or "fusion-mlx"
         env["ANTHROPIC_API_KEY"] = ""
         env["CLAUDE_CODE_ATTRIBUTION_HEADER"] = "0"
         # Large timeout for local model inference (model loading + generation).

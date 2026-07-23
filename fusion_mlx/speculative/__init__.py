@@ -1,7 +1,7 @@
 """mlx-spec-decode — Speculative decoding drafters.
 
 Provides SuffixDecoding, DFlash, DSpark, MTP, PLD, and VLM-MTP drafters.
-Merged from omlx/speculative + Rapid-MLX speculative implementations.
+Merged from fusion-mlx/speculative + Rapid-MLX speculative implementations.
 """
 
 from . import dflash, mtp

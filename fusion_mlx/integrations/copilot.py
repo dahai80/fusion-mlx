@@ -41,7 +41,7 @@ class CopilotIntegration(Integration):
 
         # Copilot CLI appears to have issues with the completions endpoint, responses appears to work as expected.
         env["COPILOT_PROVIDER_WIRE_API"] = "responses"
-        env["COPILOT_PROVIDER_BEARER_TOKEN"] = api_key or "omlx"
+        env["COPILOT_PROVIDER_BEARER_TOKEN"] = api_key or "fusion-mlx"
 
         if model:
             env["COPILOT_MODEL"] = model

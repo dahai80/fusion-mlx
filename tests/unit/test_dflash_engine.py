@@ -512,7 +512,7 @@ class TestDFlashEngineInit:
         assert DFlashEngine._build_quant_spec(None, 32, None) == "w4a32:gs64"
         assert DFlashEngine._build_quant_spec(None, None, 128) == "w4a16:gs128"
 
-    def test_resolve_dflash_l2_dir_disabled_when_no_omlx_ssd(self, tmp_path):
+    def test_resolve_dflash_l2_dir_disabled_when_no_fusion_ssd(self, tmp_path):
         try:
             from fusion_mlx.engine.dflash import DFlashEngine
         except ImportError:
@@ -522,7 +522,7 @@ class TestDFlashEngineInit:
             model_name="test-model",
             draft_model_path="test-draft",
             model_settings=ModelSettings(dflash_ssd_cache=True),
-            omlx_ssd_cache_dir=None,
+            fusion_ssd_cache_dir=None,
         )
         assert engine._resolve_dflash_l2_dir() is None
 
@@ -539,7 +539,7 @@ class TestDFlashEngineInit:
                 dflash_ssd_cache=True,
                 dflash_in_memory_cache=True,
             ),
-            omlx_ssd_cache_dir=tmp_path,
+            fusion_ssd_cache_dir=tmp_path,
         )
         resolved = engine._resolve_dflash_l2_dir()
         assert resolved == tmp_path / "dflash_l2"
@@ -557,7 +557,7 @@ class TestDFlashEngineInit:
                 dflash_ssd_cache=True,
                 dflash_in_memory_cache=False,
             ),
-            omlx_ssd_cache_dir=tmp_path,
+            fusion_ssd_cache_dir=tmp_path,
         )
         assert engine._resolve_dflash_l2_dir() is None
 
@@ -651,7 +651,7 @@ class TestDFlashEngineInit:
                 dflash_in_memory_cache=True,
                 dflash_ssd_cache_max_bytes=5 * 1024**3,
             ),
-            omlx_ssd_cache_dir=tmp_path,
+            fusion_ssd_cache_dir=tmp_path,
         )
         ctx = engine._build_runtime_context()
         runtime = ctx.runtime
@@ -671,7 +671,7 @@ class TestDFlashEngineInit:
                 dflash_ssd_cache=True,
                 dflash_in_memory_cache=True,
             ),
-            omlx_ssd_cache_dir=tmp_path,
+            fusion_ssd_cache_dir=tmp_path,
         )
         ctx = engine._build_runtime_context()
         runtime = ctx.runtime

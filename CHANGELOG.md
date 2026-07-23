@@ -156,7 +156,7 @@
   throughput; 0.4.1 additionally fixes the corruption 0.4.0 shipped silently.
 
 ### Integrated (from v0.4.1-wip migration commits)
-- Rapid-MLX tool parsers, omlx model patches, oQ quantizer, telemetry, MCP, middleware.
+- Rapid-MLX tool parsers, fusion-mlx model patches, oQ quantizer, telemetry, MCP, middleware.
 
 ### Tests
 - New `tests/unit/test_spec_recurrent_gate.py` (7 cases) covering the recurrent-cache

@@ -5,7 +5,7 @@ Factory for creating cache instances from configuration.
 This module provides a unified way to instantiate cache components
 based on configuration settings.
 
-Note: oMLX supports both pure-memory paged caching and SSD-backed caching.
+Note: FusionMLX supports both pure-memory paged caching and SSD-backed caching.
 Memory KV cache is managed by mlx-lm's BatchGenerator. When paged_ssd_cache_dir
 is None, a pure-memory PagedCacheManager is created with LRU eviction.
 """
@@ -26,7 +26,7 @@ class CacheConfig:
     """
     Configuration for cache system (paged SSD-only).
 
-    Note: oMLX only supports paged SSD-based caching via BlockAwarePrefixCache.
+    Note: FusionMLX only supports paged SSD-based caching via BlockAwarePrefixCache.
     Memory KV cache is managed entirely by mlx-lm's BatchGenerator.
 
     Attributes:
@@ -53,7 +53,7 @@ class CacheFactory:
     Factory for creating cache instances (paged SSD-only).
 
     This class provides static methods to create cache components
-    based on a unified CacheConfig. oMLX only supports paged SSD-based caching
+    based on a unified CacheConfig. FusionMLX only supports paged SSD-based caching
     via BlockAwarePrefixCache.
 
     Example:
@@ -134,7 +134,7 @@ class CacheFactory:
         """
         Create a BlockAwarePrefixCache instance.
 
-        Note: oMLX only supports paged SSD-based caching via BlockAwarePrefixCache.
+        Note: FusionMLX only supports paged SSD-based caching via BlockAwarePrefixCache.
         Returns None if paged SSD cache is disabled.
 
         Args:
@@ -197,7 +197,7 @@ class CacheFactory:
 
         This is a convenience method that creates all cache components
         and wires them together. Returns all None values if paged SSD cache
-        is disabled (oMLX only supports paged SSD-based caching).
+        is disabled (FusionMLX only supports paged SSD-based caching).
 
         Args:
             config: Cache configuration.

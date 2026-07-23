@@ -1,6 +1,6 @@
 """Test configuration for fusion-mlx unit tests.
 
-Provides stubs for missing modules from omlx/Rapid-MLX migration.
+Provides stubs for missing modules from fusion-mlx/Rapid-MLX migration.
 """
 
 import sys

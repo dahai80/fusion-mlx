@@ -18,7 +18,7 @@ def _mock_request(headers=None):
 
 
 class TestVerifyApiKeyServerState:
-    """omlx.server._server_state based tests — skipped for fusion-mlx."""
+    """fusion-mlx.server._server_state based tests — skipped for fusion-mlx."""
 
     @pytest.mark.skip(
         reason="fusion-mlx uses admin.auth for server auth, not _server_state"

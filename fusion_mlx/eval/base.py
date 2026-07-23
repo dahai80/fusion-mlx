@@ -226,7 +226,7 @@ class BaseBenchmark(ABC):
         """Run the benchmark on all items.
 
         Args:
-            engine: oMLX engine instance with chat() method.
+            engine: FusionMLX engine instance with chat() method.
             items: Dataset items to evaluate.
             on_progress: Callback(current, total) for progress reporting.
             batch_size: Number of concurrent requests (1 = sequential).

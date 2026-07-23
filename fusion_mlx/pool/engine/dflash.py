@@ -16,7 +16,7 @@ class DFlashEngine(BatchedEngine):
         model_settings: Any = None,
         fallback_engine_type: Any = BatchedEngine,
         scheduler_config: Any = None,
-        omlx_ssd_cache_dir: str | None = None,
+        fusion_ssd_cache_dir: str | None = None,
         draft_quant_enabled: bool = False,
         draft_quant_weight_bits: int = 4,
         draft_quant_activation_bits: int = 16,

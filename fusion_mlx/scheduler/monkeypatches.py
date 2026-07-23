@@ -103,7 +103,7 @@ def _realigned_rows(model, uids, cur_samplers, cur_lps):
     return samplers, lps, drift
 
 
-def _omlx_realign_generation_batch_rows(self) -> None:
+def _realign_generation_batch_rows(self) -> None:
     if self.logits_processors is None:
         self.logits_processors = []
     else:
@@ -213,7 +213,7 @@ def _optimized_generation_batch_step(self):
         deltas = [model._uid_rope_deltas.get(uid, 0.0) for uid in self.uids]
         model.set_batch_rope_deltas(mx.array(deltas))
 
-    _omlx_realign_generation_batch_rows(self)
+    _realign_generation_batch_rows(self)
 
     # Forward pass
     logits = model(inputs[:, None], cache=self.prompt_cache)
@@ -339,7 +339,7 @@ def _patched_generation_batch_step(self):
     return _optimized_generation_batch_step(self)
 
 
-GenerationBatch._omlx_realign_rows = _omlx_realign_generation_batch_rows
+GenerationBatch._realign_rows = _realign_generation_batch_rows
 GenerationBatch._step = _patched_generation_batch_step
 
 

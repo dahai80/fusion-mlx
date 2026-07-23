@@ -19,7 +19,7 @@ platforms = [
     "macosx_arm64",
 ]
 # cv2 is pulled transitively; its bundled dylibs duplicate PIL's. Exclude
-# cv2's copies so venvstacks picks a single provider (matches omlx layer).
+# cv2's copies so venvstacks picks a single provider (matches fusion-mlx layer).
 dynlib_exclude = [
     "cv2/.dylibs/libavif*",
     "cv2/.dylibs/liblcms2*",

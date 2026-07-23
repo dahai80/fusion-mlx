@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 """
-Audio API routes for oMLX.
+Audio API routes for FusionMLX.
 
 This module provides OpenAI-compatible audio endpoints:
 - POST /v1/audio/transcriptions  - Speech-to-Text
@@ -423,12 +423,12 @@ async def create_transcription(
     Note: ``response_format`` and ``temperature`` are accepted for OpenAI API
     compatibility but are not yet implemented — they are silently ignored.
 
-    ``max_tokens`` is an oMLX extension that raises the underlying model's
+    ``max_tokens`` is an FusionMLX extension that raises the underlying model's
     output cap. Useful for long audio with models like VibeVoice-ASR whose
     mlx-audio default (8192) truncates ~24 min files. When omitted, the
     model's own default applies.
 
-    ``word_timestamps`` is an oMLX extension that exposes mlx-audio's native
+    ``word_timestamps`` is an FusionMLX extension that exposes mlx-audio's native
     word-level alignment for Whisper models. When True, each segment in the
     response includes a ``words`` array of
     ``{word, start, end, probability}`` objects. Default False preserves the

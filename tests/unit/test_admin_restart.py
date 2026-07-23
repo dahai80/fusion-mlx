@@ -25,7 +25,7 @@ def client(monkeypatch):
 
 class TestRestartServerRoute:
     def test_returns_503_when_unsupervised(self, client, monkeypatch):
-        monkeypatch.delenv("OMLX_SUPERVISED", raising=False)
+        monkeypatch.delenv("FUSION_SUPERVISED", raising=False)
 
         r = client.post("/api/server/restart")
         assert r.status_code == 503
@@ -34,7 +34,7 @@ class TestRestartServerRoute:
         assert "supervisor" in body["detail"].lower()
 
     def test_returns_202_when_supervised(self, client, monkeypatch):
-        monkeypatch.setenv("OMLX_SUPERVISED", "menubar")
+        monkeypatch.setenv("FUSION_SUPERVISED", "menubar")
 
         with patch("fusion_mlx.admin.settings._schedule_self_terminate") as spy:
             r = client.post("/api/server/restart")
@@ -49,7 +49,7 @@ class TestRestartServerRoute:
         assert delay > 0
 
     def test_supervisor_label_round_trips(self, client, monkeypatch):
-        monkeypatch.setenv("OMLX_SUPERVISED", "launchd")
+        monkeypatch.setenv("FUSION_SUPERVISED", "launchd")
 
         with patch("fusion_mlx.admin.settings._schedule_self_terminate"):
             r = client.post("/api/server/restart")
@@ -58,7 +58,7 @@ class TestRestartServerRoute:
         assert r.json()["supervisor"] == "launchd"
 
     def test_unsupervised_does_not_schedule_termination(self, client, monkeypatch):
-        monkeypatch.delenv("OMLX_SUPERVISED", raising=False)
+        monkeypatch.delenv("FUSION_SUPERVISED", raising=False)
 
         with patch("fusion_mlx.admin.settings._schedule_self_terminate") as spy:
             r = client.post("/api/server/restart")

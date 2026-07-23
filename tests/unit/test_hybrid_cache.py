@@ -1014,7 +1014,7 @@ class TestReconstructCachePartialRestore:
         """Undersized RotatingKVCache from BatchRotatingKVCache.extract()
         keeps its actual buffer length on reconstruct.
 
-        Pre-fix omlx zero-padded the buffer to max_size. That broke the
+        Pre-fix fusion-mlx zero-padded the buffer to max_size. That broke the
         merge contract by leaking zero positions into attention (#934,
         #903). Post-fix, the buffer length is preserved and
         PrefillReadyRotatingKVCache.size() clamps the merge slice so

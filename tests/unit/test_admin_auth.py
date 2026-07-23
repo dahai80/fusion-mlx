@@ -400,7 +400,7 @@ class TestCheckUpdate:
             [
                 {
                     "tag_name": "v99.0.0.dev1",
-                    "html_url": "https://github.com/jundot/omlx/releases/tag/v99.0.0.dev1",
+                    "html_url": "https://github.com/dahai80/fusion-mlx/releases/tag/v99.0.0.dev1",
                 }
             ],
         )
@@ -424,13 +424,13 @@ class TestCheckUpdate:
             [
                 {
                     "tag_name": "v99.0.0",
-                    "html_url": "https://github.com/jundot/omlx/releases/tag/v99.0.0",
+                    "html_url": "https://github.com/dahai80/fusion-mlx/releases/tag/v99.0.0",
                 }
             ],
         )
         stable_data = {
             "tag_name": "v99.0.0",
-            "html_url": "https://github.com/jundot/omlx/releases/tag/v99.0.0",
+            "html_url": "https://github.com/dahai80/fusion-mlx/releases/tag/v99.0.0",
         }
         with (
             patch("fusion_mlx.admin.update_check.asyncio") as mock_asyncio,
@@ -439,7 +439,7 @@ class TestCheckUpdate:
                 return_value=stable_data,
             ),
             patch(
-                "fusion_mlx.admin.update_check._omlx_version",
+                "fusion_mlx.admin.update_check._fusionmlx_version",
                 "0.1.0",
                 create=True,
             ),
@@ -457,7 +457,7 @@ class TestCheckUpdate:
             [
                 {
                     "tag_name": "v99.0.0rc1",
-                    "html_url": "https://github.com/jundot/omlx/releases/tag/v99.0.0rc1",
+                    "html_url": "https://github.com/dahai80/fusion-mlx/releases/tag/v99.0.0rc1",
                 }
             ],
         )

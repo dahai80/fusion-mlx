@@ -190,12 +190,12 @@ class CacheTypeHandler(ABC):
     # The legacy interface (extract_state/reconstruct_cache with a dict
     # of "keys"/"values") only models 2-tuple state. mlx-lm caches like
     # BatchKVCache (4-tuple) and DeepSeek V4's PoolingCache (3-tuple)
-    # carry more elements that omlx core needs to preserve through the
+    # carry more elements that fusion-mlx core needs to preserve through the
     # prefix-cache, boundary-snapshot, and SSD round-trip without
     # silently dropping elements past index 1.
     #
     # The methods below give handlers a way to describe their state
-    # tuple element-by-element so omlx core can dispatch generically
+    # tuple element-by-element so fusion-mlx core can dispatch generically
     # without hard-coded ``state[0], state[1]`` unpacking. Default
     # implementations match the legacy 2-tuple ``(keys, values)``
     # contract so existing handlers keep working with no change.
@@ -216,7 +216,7 @@ class CacheTypeHandler(ABC):
     def serialize_state(self, cache_obj: Any) -> tuple[Any, ...]:
         """Return the raw state tuple from ``cache_obj.state``.
 
-        omlx core uses this to serialize state element-by-element instead
+        fusion-mlx core uses this to serialize state element-by-element instead
         of going through the legacy ``extract_state`` dict (which is still
         supported via the default ``deserialize_state`` below).
 
@@ -435,7 +435,7 @@ class RotatingKVCacheHandler(CacheTypeHandler):
     def get_state_axis_info(self) -> tuple[CacheStateAxisInfo, ...]:
         # State is (keys, values) with sequence_axis=2 but the rotation
         # index makes per-block slicing unsafe. Mark non-sliceable so
-        # omlx core uses the last-block-only / boundary-snapshot path.
+        # fusion-mlx core uses the last-block-only / boundary-snapshot path.
         return (
             CacheStateAxisInfo(name="keys", sequence_axis=2, sliceable=False),
             CacheStateAxisInfo(name="values", sequence_axis=2, sliceable=False),
@@ -736,7 +736,7 @@ class ArraysCacheHandler(CacheTypeHandler):
         return True  # state is a list of arrays of variable count
 
     def get_state_axis_info(self) -> tuple[CacheStateAxisInfo, ...]:
-        # ArraysCache state length is dynamic. omlx core treats this as
+        # ArraysCache state length is dynamic. fusion-mlx core treats this as
         # variable-length (count prefix); axis info is not consulted but
         # we return an empty tuple to signal "no fixed schema".
         return ()
@@ -843,7 +843,7 @@ class CacheListHandler(CacheTypeHandler):
 
     def get_state_axis_info(self) -> tuple[CacheStateAxisInfo, ...]:
         # CacheList wraps sub-caches; per-element axis info is not
-        # meaningful at this level. omlx core dispatches per sub-cache.
+        # meaningful at this level. fusion-mlx core dispatches per sub-cache.
         return ()
 
     @property

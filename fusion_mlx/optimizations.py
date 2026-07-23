@@ -2,7 +2,7 @@
 """
 Hardware detection and optimization status for fusion-mlx.
 
-Re-exports from utils.hardware for backward compatibility with omlx API.
+Re-exports from utils.hardware for backward compatibility with fusion-mlx API.
 """
 
 import logging

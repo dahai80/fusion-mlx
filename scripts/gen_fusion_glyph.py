@@ -12,7 +12,7 @@ log = logging.getLogger("gen_fusion_glyph")
 
 REPO = Path(__file__).resolve().parent.parent
 SRC = REPO / "apps/fusion-mac/Resources/AppIcon.icon/Assets/fusion_glyph_1024.png"
-REF = REPO / "apps/fusion-mac/Resources/AppIcon.icon/Assets/omlx_glyph_1024.png"
+REF = REPO / "apps/fusion-mac/Resources/AppIcon.icon/Assets/fusion-mlx_glyph_1024.png"
 WHITE_THRESH = 230
 
 
@@ -69,7 +69,7 @@ def main():
         int(xs.mean()), int(ys.mean()),
     )
 
-    # icon-composer fill=automatic recolors via alpha; RGB=black matches omlx ref
+    # icon-composer fill=automatic recolors via alpha; RGB=black matches fusion-mlx ref
     rgba = np.zeros((alpha.shape[0], alpha.shape[1], 4), dtype=np.uint8)
     rgba[:, :, 3] = alpha
     out = Image.fromarray(rgba, "RGBA")

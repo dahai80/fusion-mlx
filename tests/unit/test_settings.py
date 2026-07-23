@@ -162,26 +162,26 @@ class TestServerSettings:
 
 
 class TestBurstDecodeEnv:
-    """Tests for the Burst Decode mode -> OMLX_DECODE_BURST_* env mapping."""
+    """Tests for the Burst Decode mode -> FUSION_DECODE_BURST_* env mapping."""
 
     def test_off_disables_bursting(self):
         """'off' caps max_steps at 1, which disables bursting in _step_burst."""
-        assert burst_decode_env("off")["OMLX_DECODE_BURST_MAX_STEPS"] == "1"
+        assert burst_decode_env("off")["FUSION_DECODE_BURST_MAX_STEPS"] == "1"
 
     def test_levels_set_single_request_budget(self):
         """light / balanced / aggressive map to the documented budgets."""
-        assert burst_decode_env("light")["OMLX_DECODE_BURST_BUDGET_SINGLE_S"] == "0.05"
+        assert burst_decode_env("light")["FUSION_DECODE_BURST_BUDGET_SINGLE_S"] == "0.05"
         assert (
-            burst_decode_env("balanced")["OMLX_DECODE_BURST_BUDGET_SINGLE_S"] == "0.1"
+            burst_decode_env("balanced")["FUSION_DECODE_BURST_BUDGET_SINGLE_S"] == "0.1"
         )
         assert (
-            burst_decode_env("aggressive")["OMLX_DECODE_BURST_BUDGET_SINGLE_S"] == "0.2"
+            burst_decode_env("aggressive")["FUSION_DECODE_BURST_BUDGET_SINGLE_S"] == "0.2"
         )
 
     def test_on_levels_keep_burst_enabled(self):
         """The on-levels keep max_steps above the disable threshold."""
         for mode in ("light", "balanced", "aggressive"):
-            assert int(burst_decode_env(mode)["OMLX_DECODE_BURST_MAX_STEPS"]) > 1
+            assert int(burst_decode_env(mode)["FUSION_DECODE_BURST_MAX_STEPS"]) > 1
 
     def test_unknown_mode_falls_back_to_default(self):
         """An unknown mode never disables bursting; it uses the default."""
@@ -190,8 +190,8 @@ class TestBurstDecodeEnv:
     def test_keys_match_engine_config_env_vars(self):
         """The mapping only sets the env vars EngineConfig actually reads."""
         assert set(burst_decode_env("balanced")) == {
-            "OMLX_DECODE_BURST_MAX_STEPS",
-            "OMLX_DECODE_BURST_BUDGET_SINGLE_S",
+            "FUSION_DECODE_BURST_MAX_STEPS",
+            "FUSION_DECODE_BURST_BUDGET_SINGLE_S",
         }
 
 
@@ -207,20 +207,20 @@ class TestModelSettings:
     def test_get_model_dirs_default(self):
         """Test default model directories."""
         settings = ModelSettings()
-        base_path = Path("/tmp/omlx")
-        assert settings.get_model_dirs(base_path) == [Path("/tmp/omlx/models")]
-        assert settings.get_model_dir(base_path) == Path("/tmp/omlx/models")
+        base_path = Path("/tmp/fusion-mlx")
+        assert settings.get_model_dirs(base_path) == [Path("/tmp/fusion-mlx/models")]
+        assert settings.get_model_dir(base_path) == Path("/tmp/fusion-mlx/models")
 
     def test_get_model_dirs_custom(self):
         """Test custom model directories."""
         settings = ModelSettings(model_dirs=["/custom/models"])
-        base_path = Path("/tmp/omlx")
+        base_path = Path("/tmp/fusion-mlx")
         assert settings.get_model_dirs(base_path) == [Path("/custom/models")]
 
     def test_get_model_dirs_multiple(self):
         """Test multiple model directories."""
         settings = ModelSettings(model_dirs=["/path/a", "/path/b"])
-        base_path = Path("/tmp/omlx")
+        base_path = Path("/tmp/fusion-mlx")
         result = settings.get_model_dirs(base_path)
         assert len(result) == 2
         assert result[0] == Path("/path/a")
@@ -231,14 +231,14 @@ class TestModelSettings:
     def test_get_model_dirs_with_tilde(self):
         """Test model directory with tilde expansion."""
         settings = ModelSettings(model_dirs=["~/models"])
-        base_path = Path("/tmp/omlx")
+        base_path = Path("/tmp/fusion-mlx")
         result = settings.get_model_dirs(base_path)
         assert "~" not in str(result[0])  # Should be expanded
 
     def test_get_model_dirs_backward_compat(self):
         """Test backward compatibility: model_dir fallback when model_dirs is empty."""
         settings = ModelSettings(model_dir="/legacy/models")
-        base_path = Path("/tmp/omlx")
+        base_path = Path("/tmp/fusion-mlx")
         assert settings.get_model_dirs(base_path) == [Path("/legacy/models")]
 
     def test_to_dict(self):
@@ -360,19 +360,19 @@ class TestCacheSettings:
     def test_get_ssd_cache_dir_default(self):
         """Test default SSD cache directory."""
         settings = CacheSettings(ssd_cache_dir=None)
-        base_path = Path("/tmp/omlx")
-        assert settings.get_ssd_cache_dir(base_path) == Path("/tmp/omlx/cache")
+        base_path = Path("/tmp/fusion-mlx")
+        assert settings.get_ssd_cache_dir(base_path) == Path("/tmp/fusion-mlx/cache")
 
     def test_get_ssd_cache_dir_custom(self):
         """Test custom SSD cache directory."""
         settings = CacheSettings(ssd_cache_dir="/custom/cache")
-        base_path = Path("/tmp/omlx")
+        base_path = Path("/tmp/fusion-mlx")
         assert settings.get_ssd_cache_dir(base_path) == Path("/custom/cache")
 
     def test_get_ssd_cache_max_size_bytes_auto(self):
         """Test auto SSD cache size calculation."""
         settings = CacheSettings(ssd_cache_max_size="auto")
-        base_path = Path("/tmp/omlx")
+        base_path = Path("/tmp/fusion-mlx")
         cache_dir = settings.get_ssd_cache_dir(base_path)
         expected = int(get_ssd_capacity(cache_dir) * 0.1)
         assert settings.get_ssd_cache_max_size_bytes(base_path) == expected
@@ -380,7 +380,7 @@ class TestCacheSettings:
     def test_get_ssd_cache_max_size_bytes_explicit(self):
         """Test explicit SSD cache size."""
         settings = CacheSettings(ssd_cache_max_size="100GB")
-        base_path = Path("/tmp/omlx")
+        base_path = Path("/tmp/fusion-mlx")
         assert settings.get_ssd_cache_max_size_bytes(base_path) == 100 * 1024**3
 
     def test_to_dict(self):
@@ -652,19 +652,19 @@ class TestLoggingSettings:
     def test_get_log_dir_default(self):
         """Test default log directory."""
         settings = LoggingSettings(log_dir=None)
-        base_path = Path("/tmp/omlx")
-        assert settings.get_log_dir(base_path) == Path("/tmp/omlx/logs")
+        base_path = Path("/tmp/fusion-mlx")
+        assert settings.get_log_dir(base_path) == Path("/tmp/fusion-mlx/logs")
 
     def test_get_log_dir_custom(self):
         """Test custom log directory."""
         settings = LoggingSettings(log_dir="/custom/logs")
-        base_path = Path("/tmp/omlx")
+        base_path = Path("/tmp/fusion-mlx")
         assert settings.get_log_dir(base_path) == Path("/custom/logs")
 
     def test_get_log_dir_with_tilde(self):
         """Test log directory with tilde expansion."""
         settings = LoggingSettings(log_dir="~/logs")
-        base_path = Path("/tmp/omlx")
+        base_path = Path("/tmp/fusion-mlx")
         result = settings.get_log_dir(base_path)
         assert "~" not in str(result)  # Should be expanded
 
@@ -1214,9 +1214,9 @@ class TestGlobalSettings:
             patch.dict(
                 os.environ,
                 {
-                    "OMLX_HOST": "0.0.0.0",
-                    "OMLX_PORT": "9999",
-                    "OMLX_LOG_LEVEL": "debug",
+                    "FUSION_HOST": "0.0.0.0",
+                    "FUSION_PORT": "9999",
+                    "FUSION_LOG_LEVEL": "debug",
                 },
                 clear=False,
             ),
@@ -1233,7 +1233,7 @@ class TestGlobalSettings:
             patch.dict(
                 os.environ,
                 {
-                    "OMLX_MODEL_DIR": "/env/models",
+                    "FUSION_MODEL_DIR": "/env/models",
                 },
                 clear=False,
             ),
@@ -1247,7 +1247,7 @@ class TestGlobalSettings:
             tempfile.TemporaryDirectory() as tmpdir,
             patch.dict(
                 os.environ,
-                {"OMLX_MAX_CONCURRENT_REQUESTS": "512"},
+                {"FUSION_MAX_CONCURRENT_REQUESTS": "512"},
                 clear=False,
             ),
         ):
@@ -1260,7 +1260,7 @@ class TestGlobalSettings:
             tempfile.TemporaryDirectory() as tmpdir,
             patch.dict(
                 os.environ,
-                {"OMLX_EMBEDDING_BATCH_SIZE": "24"},
+                {"FUSION_EMBEDDING_BATCH_SIZE": "24"},
                 clear=False,
             ),
         ):
@@ -1268,12 +1268,12 @@ class TestGlobalSettings:
             assert settings.scheduler.embedding_batch_size == 24
 
     def test_env_override_scheduler_legacy_fallback(self):
-        """Test legacy OMLX_MAX_NUM_SEQS env var is accepted as fallback."""
+        """Test legacy FUSION_MAX_NUM_SEQS env var is accepted as fallback."""
         with (
             tempfile.TemporaryDirectory() as tmpdir,
             patch.dict(
                 os.environ,
-                {"OMLX_MAX_NUM_SEQS": "256"},
+                {"FUSION_MAX_NUM_SEQS": "256"},
                 clear=False,
             ),
         ):
@@ -1287,9 +1287,9 @@ class TestGlobalSettings:
             patch.dict(
                 os.environ,
                 {
-                    "OMLX_CACHE_ENABLED": "false",
-                    "OMLX_SSD_CACHE_DIR": "/env/cache",
-                    "OMLX_SSD_CACHE_MAX_SIZE": "200GB",
+                    "FUSION_CACHE_ENABLED": "false",
+                    "FUSION_SSD_CACHE_DIR": "/env/cache",
+                    "FUSION_SSD_CACHE_MAX_SIZE": "200GB",
                 },
                 clear=False,
             ),
@@ -1305,7 +1305,7 @@ class TestGlobalSettings:
             tempfile.TemporaryDirectory() as tmpdir,
             patch.dict(
                 os.environ,
-                {"OMLX_INITIAL_CACHE_BLOCKS": "16384"},
+                {"FUSION_INITIAL_CACHE_BLOCKS": "16384"},
                 clear=False,
             ),
         ):
@@ -1313,22 +1313,22 @@ class TestGlobalSettings:
             assert settings.cache.initial_cache_blocks == 16384
 
     def test_env_override_cache_enabled_values(self):
-        """Test various values for OMLX_CACHE_ENABLED."""
+        """Test various values for FUSION_CACHE_ENABLED."""
         with tempfile.TemporaryDirectory() as tmpdir:
             for value in ["true", "1", "yes"]:
-                with patch.dict(os.environ, {"OMLX_CACHE_ENABLED": value}, clear=False):
+                with patch.dict(os.environ, {"FUSION_CACHE_ENABLED": value}, clear=False):
                     settings = GlobalSettings.load(base_path=tmpdir)
                     assert settings.cache.enabled is True
 
             for value in ["false", "0", "no"]:
-                with patch.dict(os.environ, {"OMLX_CACHE_ENABLED": value}, clear=False):
+                with patch.dict(os.environ, {"FUSION_CACHE_ENABLED": value}, clear=False):
                     settings = GlobalSettings.load(base_path=tmpdir)
                     assert settings.cache.enabled is False
 
     def test_env_override_auth(self):
         """Test environment variable override for auth settings."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            with patch.dict(os.environ, {"OMLX_API_KEY": "env-key"}, clear=False):
+            with patch.dict(os.environ, {"FUSION_API_KEY": "env-key"}, clear=False):
                 settings = GlobalSettings.load(base_path=tmpdir)
                 assert settings.auth.api_key == "env-key"
 
@@ -1336,7 +1336,7 @@ class TestGlobalSettings:
         """Test environment variable override for MCP settings."""
         with (
             tempfile.TemporaryDirectory() as tmpdir,
-            patch.dict(os.environ, {"OMLX_MCP_CONFIG": "/env/mcp.json"}, clear=False),
+            patch.dict(os.environ, {"FUSION_MCP_CONFIG": "/env/mcp.json"}, clear=False),
         ):
             settings = GlobalSettings.load(base_path=tmpdir)
             assert settings.mcp.config_path == "/env/mcp.json"
@@ -1347,7 +1347,7 @@ class TestGlobalSettings:
             tempfile.TemporaryDirectory() as tmpdir,
             patch.dict(
                 os.environ,
-                {"OMLX_HF_ENDPOINT": "https://hf-mirror.com"},
+                {"FUSION_HF_ENDPOINT": "https://hf-mirror.com"},
                 clear=False,
             ),
         ):
@@ -1361,10 +1361,10 @@ class TestGlobalSettings:
             patch.dict(
                 os.environ,
                 {
-                    "OMLX_HTTP_PROXY": "http://proxy.company.com:8080",
-                    "OMLX_HTTPS_PROXY": "http://proxy.company.com:8443",
-                    "OMLX_NO_PROXY": "localhost,127.0.0.1",
-                    "OMLX_CA_BUNDLE": "/tmp/corp-ca.pem",
+                    "FUSION_HTTP_PROXY": "http://proxy.company.com:8080",
+                    "FUSION_HTTPS_PROXY": "http://proxy.company.com:8443",
+                    "FUSION_NO_PROXY": "localhost,127.0.0.1",
+                    "FUSION_CA_BUNDLE": "/tmp/corp-ca.pem",
                 },
                 clear=False,
             ),
@@ -1376,9 +1376,9 @@ class TestGlobalSettings:
             assert settings.network.ca_bundle == "/tmp/corp-ca.pem"
 
     def test_env_override_invalid_port_logs_warning(self):
-        """Test invalid OMLX_PORT logs warning and keeps default."""
+        """Test invalid FUSION_PORT logs warning and keeps default."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            with patch.dict(os.environ, {"OMLX_PORT": "not-a-number"}, clear=False):
+            with patch.dict(os.environ, {"FUSION_PORT": "not-a-number"}, clear=False):
                 settings = GlobalSettings.load(base_path=tmpdir)
                 # Should keep default due to parse error
                 assert settings.server.port == 8000
@@ -1392,7 +1392,7 @@ class TestGlobalSettings:
                 json.dumps({"version": "1.0", "server": {"port": 9000}})
             )
 
-            with patch.dict(os.environ, {"OMLX_PORT": "8888"}, clear=False):
+            with patch.dict(os.environ, {"FUSION_PORT": "8888"}, clear=False):
                 settings = GlobalSettings.load(base_path=tmpdir)
                 # Env should override file
                 assert settings.server.port == 8888
@@ -1506,7 +1506,7 @@ class TestGlobalSettings:
             )
 
             # Set env to port 8888
-            with patch.dict(os.environ, {"OMLX_PORT": "8888"}, clear=False):
+            with patch.dict(os.environ, {"FUSION_PORT": "8888"}, clear=False):
                 # CLI sets port to 7777
                 args = Namespace(port=7777)
                 settings = GlobalSettings.load(base_path=tmpdir, cli_args=args)
@@ -1696,15 +1696,15 @@ class TestResolveDefaultBasePath:
     """Tests for resolve_default_base_path()."""
 
     def test_falls_back_to_default_when_nothing_configured(self, monkeypatch):
-        monkeypatch.delenv("OMLX_BASE_PATH", raising=False)
+        monkeypatch.delenv("FUSION_BASE_PATH", raising=False)
         monkeypatch.setattr(
             "fusion_mlx.settings.BASE_PATH_BOOTSTRAP_FILE",
-            Path("/nonexistent/oMLX/base-path"),
+            Path("/nonexistent/Fusion-MLX/base-path"),
         )
         assert resolve_default_base_path() == Path.home() / ".fusion_mlx"
 
     def test_uses_bootstrap_file_when_present(self, monkeypatch, tmp_path):
-        monkeypatch.delenv("OMLX_BASE_PATH", raising=False)
+        monkeypatch.delenv("FUSION_BASE_PATH", raising=False)
         custom_base = tmp_path / "external-ssd" / "fusion_mlx-data"
         bootstrap_file = tmp_path / "base-path"
         bootstrap_file.write_text(f"{custom_base}\n", encoding="utf-8")
@@ -1722,12 +1722,12 @@ class TestResolveDefaultBasePath:
         monkeypatch.setattr(
             "fusion_mlx.settings.BASE_PATH_BOOTSTRAP_FILE", bootstrap_file
         )
-        monkeypatch.setenv("OMLX_BASE_PATH", str(env_base))
+        monkeypatch.setenv("FUSION_BASE_PATH", str(env_base))
 
         assert resolve_default_base_path() == env_base.resolve()
 
     def test_empty_bootstrap_file_falls_back_to_default(self, monkeypatch, tmp_path):
-        monkeypatch.delenv("OMLX_BASE_PATH", raising=False)
+        monkeypatch.delenv("FUSION_BASE_PATH", raising=False)
         bootstrap_file = tmp_path / "base-path"
         bootstrap_file.write_text("   \n", encoding="utf-8")
         monkeypatch.setattr(

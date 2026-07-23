@@ -1,18 +1,18 @@
 # SPDX-License-Identifier: Apache-2.0
 """UnifiedMemoryPool — single accounting layer for cross-engine Metal buffers.
 
-Solves the "two ledgers" problem when omlx and Rapid-MLX each maintain
+Solves the "two ledgers" problem when fusion-mlx and Rapid-MLX each maintain
 their own KV cache pre-allocations. All Metal buffer allocations flow
 through this pool so:
 
-1. omlx freed memory is visible to Rapid-MLX (and vice versa)
+1. fusion-mlx freed memory is visible to Rapid-MLX (and vice versa)
 2. KV cache handoff between engines is zero-copy (shared Metal buffers)
 3. Memory fragmentation is bounded per engine via per-backend ceilings
 
 Architecture:
   UnifiedMemoryPool
   ├── MetalBufferRegistry   — track every mx.array buffer by id
-  ├── BackendQuota          — max pre-allocation per backend (omlx / rapid)
+  ├── BackendQuota          — max pre-allocation per backend (fusion-mlx / rapid)
   ├── KVCacheBridge         — zero-copy KV state transfer between engines
   └── FragmentationMonitor  — detect/compact when fragmentation > threshold
 """
@@ -39,7 +39,7 @@ class BufferEntry:
     """Track one Metal buffer allocation."""
 
     buffer_id: str
-    backend: str  # "omlx", "rapid", "shared"
+    backend: str  # "fusion-mlx", "rapid", "shared"
     size_bytes: int
     dtype: str
     shape: tuple
@@ -266,7 +266,7 @@ class KVCacheState:
 
 
 class KVCacheBridge:
-    """Zero-copy KV cache transfer between omlx and Rapid-MLX engines.
+    """Zero-copy KV cache transfer between fusion-mlx and Rapid-MLX engines.
 
     Handoff flow:
      1. Source engine finishes prefill -> KV cache in Metal buffers
@@ -451,7 +451,7 @@ class FragmentationReport:
 class FragmentationMonitor:
     """Monitor Metal buffer fragmentation across backends.
 
-    High fragmentation happens when omlx and Rapid-MLX each allocate
+    High fragmentation happens when fusion-mlx and Rapid-MLX each allocate
     and release buffers independently, creating gaps the other can't use.
     """
 
@@ -518,11 +518,11 @@ class UnifiedMemoryPool:
     Usage:
         pool = UnifiedMemoryPool(total_bytes=..., quotas={...})
 
-        # Register a buffer from omlx
-        buf_id = pool.register(arr, "omlx", is_kv_cache=True)
+        # Register a buffer from fusion-mlx
+        buf_id = pool.register(arr, "fusion-mlx", is_kv_cache=True)
 
-        # Handoff KV cache from omlx -> rapid
-        state = pool.capture_kv("model-x", "omlx", kv_arrays, block_table, meta_states, n)
+        # Handoff KV cache from fusion-mlx -> rapid
+        state = pool.capture_kv("model-x", "fusion-mlx", kv_arrays, block_table, meta_states, n)
         pool.prepare_handoff(state, "rapid")
         claimed = pool.claim_kv(state)
 

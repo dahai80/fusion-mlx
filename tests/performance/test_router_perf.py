@@ -40,7 +40,7 @@ class TestRouterDecisionLatency:
         router.store_benchmark(
             BenchmarkResult(
                 model_id="perf-test",
-                backend=EngineBackend.OMLX,
+                backend=EngineBackend.MLX,
                 quant_format="4bit",
                 tps=100.0,
                 latency_p50=50.0,

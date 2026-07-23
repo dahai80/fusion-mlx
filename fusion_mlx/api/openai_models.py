@@ -363,12 +363,12 @@ class PromptTokensDetails(BaseModel):
 class Usage(BaseUsage):
     """Token usage statistics for OpenAI API.
 
-    Extends BaseUsage with optional timing metrics (oMLX extension).
+    Extends BaseUsage with optional timing metrics (FusionMLX extension).
     When present, timing values are in seconds.
     """
 
     prompt_tokens_details: PromptTokensDetails | None = None
-    # Timing metrics (oMLX extension, seconds)
+    # Timing metrics (FusionMLX extension, seconds)
     model_load_duration: float | None = None
     time_to_first_token: float | None = None
     total_time: float | None = None
@@ -457,7 +457,7 @@ class ModelInfo(BaseModel):
     id: str
     object: str = "model"
     created: int = Field(default_factory=get_unix_timestamp)
-    owned_by: str = "omlx"
+    owned_by: str = "fusion-mlx"
 
 
 class ModelsResponse(BaseModel):

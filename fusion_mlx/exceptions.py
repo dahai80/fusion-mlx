@@ -33,13 +33,13 @@ class FusionMLXError(Exception):
         return self.message
 
 
-class OMLXError(FusionMLXError):
-    """Base exception for all OMLX-derived errors."""
+class MLEngineError(FusionMLXError):
+    """Base exception for all fusion-mlx-derived errors."""
 
     pass
 
 
-class OMLXMemoryError(OMLXError):
+class MLEngineMemoryError(MLEngineError):
     """Base exception for memory-related errors."""
 
     pass
@@ -231,7 +231,7 @@ class PreemptionError(SchedulerError):
 # =============================================================================
 
 
-class ModelError(OMLXError):
+class ModelError(MLEngineError):
     """Base exception for model-related errors."""
 
     pass
@@ -272,7 +272,7 @@ class TokenizerError(ModelError):
 # =============================================================================
 
 
-class APIError(OMLXError):
+class APIError(MLEngineError):
     """Base exception for API-related errors."""
 
     pass
@@ -313,7 +313,7 @@ class AuthenticationError(APIError):
 # =============================================================================
 
 
-class ConfigurationError(OMLXError):
+class ConfigurationError(MLEngineError):
     """
     Configuration is invalid or inconsistent.
 
@@ -336,7 +336,7 @@ class ConfigurationError(OMLXError):
 # =============================================================================
 
 
-class OutOfMemoryError(OMLXMemoryError):
+class OutOfMemoryError(MLEngineMemoryError):
     """
     Out of memory error.
 
@@ -356,7 +356,7 @@ class OutOfMemoryError(OMLXMemoryError):
         self.available_bytes = available_bytes
 
 
-class PrefillMemoryExceededError(OMLXMemoryError):
+class PrefillMemoryExceededError(MLEngineMemoryError):
     """
     Prefill would exceed memory limits.
 
@@ -551,7 +551,7 @@ class CloudRoutingError(RouterError):
 # =============================================================================
 
 
-class MCPError(OMLXError):
+class MCPError(MLEngineError):
     """Base exception for MCP-related errors."""
 
     pass

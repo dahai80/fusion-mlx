@@ -1,9 +1,9 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Tests for omlx.utils.sampling.
+"""Tests for fusion_mlx.utils.sampling.
 
 The mlx-lm samplers wrap categorical_sampling and apply_* with
 @partial(mx.compile, inputs=mx.random.state, outputs=mx.random.state). In the
-omlx server environment that decorator stops advancing the global RNG state
+fusion-mlx server environment that decorator stops advancing the global RNG state
 after the first call, so identical prompts produce identical output. This
 module re-implements the samplers without the decorator. These tests guard
 against regression — RNG state must advance on every call and identical

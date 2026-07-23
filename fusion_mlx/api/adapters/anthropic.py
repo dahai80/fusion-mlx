@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 """
-Anthropic API adapter for oMLX.
+Anthropic API adapter for FusionMLX.
 
 This adapter handles conversion between Anthropic Messages API format and the
 internal request/response format used by the inference engine.

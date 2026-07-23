@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Tests for Harmony streaming parser (omlx.adapter.harmony)."""
+"""Tests for Harmony streaming parser (fusion-mlx.adapter.harmony)."""
 
 from unittest.mock import MagicMock
 

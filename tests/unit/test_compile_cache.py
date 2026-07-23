@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Tests for omlx.utils.compile_cache (thread-local MLX compile-cache clear)."""
+"""Tests for fusion_mlx.utils.compile_cache (thread-local MLX compile-cache clear)."""
 
 import concurrent.futures as cf
 

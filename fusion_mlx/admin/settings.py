@@ -566,7 +566,7 @@ async def restart_server(is_admin: bool = Depends(require_admin)):
     ``fusion-mlx serve`` (no supervisor) returns 503 rather than killing the
     server with no respawn path.
     """
-    supervisor = os.environ.get("OMLX_SUPERVISED")
+    supervisor = os.environ.get("FUSION_SUPERVISED")
     if not supervisor:
         raise HTTPException(
             status_code=503,

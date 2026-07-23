@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Tests for omlx/api/rerank_models.py — the Pydantic schemas served at
+"""Tests for fusion_mlx/api/rerank_models.py — the Pydantic schemas served at
 /v1/rerank. Pins down Cohere/Jina compatibility: required fields,
 multimodal query/document shapes, defaults, and the auto-generated
 ``id`` prefix that downstream clients filter on.

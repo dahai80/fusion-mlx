@@ -17,7 +17,7 @@ from fusion_mlx.api.openai_models import Message
 
 def _find_gemma4_26b_model() -> str | None:
     pattern = os.path.join(
-        os.path.expanduser("~"), ".omlx", "models", "gemma-4-26B-A4B-it*"
+        os.path.expanduser("~"), ".fusion-mlx", "models", "gemma-4-26B-A4B-it*"
     )
     matches = [p for p in glob.glob(pattern) if os.path.isdir(p)]
     return matches[0] if matches else None
@@ -26,7 +26,7 @@ def _find_gemma4_26b_model() -> str | None:
 MODEL_PATH = _find_gemma4_26b_model()
 
 pytestmark = pytest.mark.skipif(
-    MODEL_PATH is None, reason="No gemma-4-26B-A4B-it* model found in ~/.omlx/models/"
+    MODEL_PATH is None, reason="No gemma-4-26B-A4B-it* model found in ~/.fusion-mlx/models/"
 )
 
 _TOOLS = [

@@ -29,7 +29,7 @@ def _sync_and_clear_cache(stream=None):
     observe a half-reclaimed Metal buffer pool while it is in the middle of
     reading tensor bytes via the Python buffer protocol (#1106).
 
-    See: https://github.com/jundot/omlx/issues/300, #888, #1106
+    See: https://github.com/jundot/fusion-mlx/issues/300, #888, #1106
     """
     with _mx_buffer_access_lock:
         target = stream if stream is not None else _default_generation_stream

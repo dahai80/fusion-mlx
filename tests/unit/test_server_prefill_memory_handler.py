@@ -69,7 +69,7 @@ class TestPrefillMemoryHandler:
         assert "Memory Guard to aggressive" in msg
         assert "custom memory guard ceiling" in msg
         assert body["error"]["code"] == "prefill_memory_exceeded"
-        assert body["error"]["omlx_code"] == "prefill_memory_exceeded"
+        assert body["error"]["fusion_code"] == "prefill_memory_exceeded"
 
     def test_api_route_body_carries_estimated_and_limit_bytes(self):
         """Clients branch on the numeric ``estimated_bytes`` /
@@ -92,7 +92,7 @@ class TestPrefillMemoryHandler:
         body = resp.json()
         assert "detail" in body
         assert "Prefill would require" in body["detail"]
-        assert body["omlx_code"] == "prefill_memory_exceeded"
+        assert body["fusion_code"] == "prefill_memory_exceeded"
 
 
 class TestPostCommitPrefillMemorySurface:
@@ -122,7 +122,7 @@ class TestPostCommitPrefillMemorySurface:
         ]
         body = json.loads("".join(chunks))
         assert body["error"]["code"] == "prefill_memory_exceeded"
-        assert body["error"]["omlx_code"] == "prefill_memory_exceeded"
+        assert body["error"]["fusion_code"] == "prefill_memory_exceeded"
         assert body["error"]["estimated_bytes"] == 123
         assert body["error"]["limit_bytes"] == 100
 
@@ -149,7 +149,7 @@ class TestPostCommitPrefillMemorySurface:
         data = chunks[0].removeprefix("data: ").strip()
         body = json.loads(data)
         assert body["error"]["code"] == "prefill_memory_exceeded"
-        assert body["error"]["omlx_code"] == "prefill_memory_exceeded"
+        assert body["error"]["fusion_code"] == "prefill_memory_exceeded"
 
 
 class TestResponsesEndpointReaches400:

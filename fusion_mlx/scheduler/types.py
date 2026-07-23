@@ -50,7 +50,7 @@ class _VLMMTPResponse:
 # invalidate the underlying buffer pool. Closes a SIGABRT path where
 # _async_store_cache_worker reads tensor bytes via memoryview while the
 # inference thread concurrently issues a reclaim-triggering mx op.
-# See: https://github.com/jundot/omlx/issues/1106
+# See: https://github.com/jundot/fusion-mlx/issues/1106
 _mx_buffer_access_lock = threading.RLock()
 
 

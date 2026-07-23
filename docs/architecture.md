@@ -213,7 +213,7 @@ Three routing layers, applied in order:
     - Large uncached context → `CloudRouter`
 
 - **SmartRouter** — Phase-aware routing with cross-engine handoff:
-    - Prefill on omlx (strong matmul), decode on Rapid-MLX (lightweight KV)
+    - Prefill on fusion-mlx (strong matmul), decode on MLX lightweight KV (lightweight KV)
     - Benchmark-based backend selection with EMA smoothing (alpha=0.7)
     - REALTIME tasks skip benchmark routing to avoid high-latency backends
     - Phase split threshold: 8192 uncached tokens with <50% cache hit rate

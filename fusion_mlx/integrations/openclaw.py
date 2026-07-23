@@ -53,7 +53,7 @@ class OpenClawIntegration(Integration):
             config.setdefault("models", {}).setdefault("providers", {})
             provider_config = {
                 "baseUrl": f"http://{host}:{port}/v1",
-                "apiKey": api_key or "omlx",
+                "apiKey": api_key or "fusion-mlx",
                 "api": "openai-completions",
             }
             if model:
@@ -75,14 +75,14 @@ class OpenClawIntegration(Integration):
                         "maxTokens": 8192,
                     }
                 ]
-            config["models"]["providers"]["omlx"] = provider_config
+            config["models"]["providers"]["fusion-mlx"] = provider_config
 
             # Set as default model
             if model:
                 config.setdefault("agents", {}).setdefault("defaults", {}).setdefault(
                     "model", {}
                 )
-                config["agents"]["defaults"]["model"]["primary"] = f"omlx/{model}"
+                config["agents"]["defaults"]["model"]["primary"] = f"fusion-mlx/{model}"
 
             # Set tools profile
             config.setdefault("tools", {})
@@ -174,7 +174,7 @@ class OpenClawIntegration(Integration):
 
         # Run onboarding if not yet completed (like ollama does)
         if not self._is_onboarded():
-            print("Setting up OpenClaw with oMLX...")
+            print("Setting up OpenClaw with Fusion-MLX...")
             print(f"  Model: {model}")
             subprocess.run(
                 [
@@ -185,7 +185,7 @@ class OpenClawIntegration(Integration):
                     "--auth-choice",
                     "skip",
                     "--gateway-token",
-                    "omlx",
+                    "fusion-mlx",
                     "--install-daemon",
                     "--skip-channels",
                     "--skip-skills",

@@ -737,7 +737,7 @@ class PagedSSDCacheManager:
 
         tensors_raw: dict[str, tuple[bytes, str, list[int]]] = {}
         file_metadata: dict[str, str] = {
-            "omlx_cache_format_version": _CACHE_FORMAT_VERSION,
+            "fusion_cache_format_version": _CACHE_FORMAT_VERSION,
             "block_hash": block_hash.hex(),
             "token_count": str(token_count),
             "num_layers": str(len(cache_data)),
@@ -1140,7 +1140,7 @@ class PagedSSDCacheManager:
             return None
         try:
             loaded_arrays, loaded_meta = mx.load(path, return_metadata=True)
-            format_ver = loaded_meta.get("omlx_cache_format_version")
+            format_ver = loaded_meta.get("fusion_cache_format_version")
             if format_ver is None:
                 logger.debug("Rejecting unversioned block: %s", path)
                 return None
@@ -1648,7 +1648,7 @@ class PagedSSDCacheManager:
                     if result is None:
                         continue
                     tensors_raw, file_metadata = result
-                    fmt_ver = file_metadata.get("omlx_cache_format_version")
+                    fmt_ver = file_metadata.get("fusion_cache_format_version")
                     if fmt_ver is None:
                         self._add_to_incompatible_index(f, file_metadata)
                         skipped_incompatible += 1

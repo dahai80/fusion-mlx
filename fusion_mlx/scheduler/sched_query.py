@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 """
-Scheduler for oMLX continuous batching.
+Scheduler for FusionMLX continuous batching.
 
 This module provides a Scheduler class that manages request scheduling
 using mlx-lm's BatchGenerator for efficient continuous batching.

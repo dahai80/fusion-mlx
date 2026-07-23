@@ -2,7 +2,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 # The canonical SchedulerConfig + SchedulingPolicy live in fusion_mlx.config
-# (the merged omlx model_settings + Rapid-MLX runtime config). Re-exported here
+# (the merged fusion-mlx model_settings + Rapid-MLX runtime config). Re-exported here
 # so legacy ``from fusion_mlx.scheduler.config import SchedulerConfig`` keeps
 # resolving to the single merged class.
 #
@@ -35,5 +35,5 @@ class SchedulerOutput:
     outputs: list = field(default_factory=list)
     # Whether any work was done
     has_work: bool = False
-    # Prefill eviction request for memory management (omlx compat)
+    # Prefill eviction request for memory management (fusion-mlx compat)
     prefill_eviction_request: Any = None

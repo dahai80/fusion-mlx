@@ -2,7 +2,7 @@
 """Tests for the N-tuple state interface on CacheTypeHandler.
 
 The legacy interface in `extract_state` / `reconstruct_cache` modeled
-state as a 2-tuple `(keys, values)` dict. omlx core had hard-coded
+state as a 2-tuple `(keys, values)` dict. fusion-mlx core had hard-coded
 `state[0], state[1]` unpacking sprinkled across `prefix_cache.py`,
 `paged_ssd_cache.py`, and `boundary_snapshot_store.py`, which silently
 dropped the third+ element of N-tuple state caches like DeepSeek V4's

@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Tests for oQ (oMLX Universal Dynamic Quantization)."""
+"""Tests for oQ (Fusion-MLX Universal Dynamic Quantization)."""
 
 import json
 import logging

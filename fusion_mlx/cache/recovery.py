@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 """
-Cache Recovery Manager for oMLX.
+Cache Recovery Manager for FusionMLX.
 
 This module handles error recovery for cache corruption and other cache-related
 failures, enabling the scheduler to continue processing after encountering errors.

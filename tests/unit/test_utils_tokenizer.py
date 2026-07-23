@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Tests for fusion_mlx.utils.tokenizer — migrated from omlx."""
+"""Tests for fusion_mlx.utils.tokenizer — migrated from legacy omlx."""
 
 from fusion_mlx.utils.tokenizer import (
     apply_qwen3_fix,

@@ -9,7 +9,7 @@ Replaces the simple RequestRouter with a decision tree that considers:
 - quant_format:  model quantization format (for benchmark-based routing)
 
 Key innovation: prefill and decode can route to different engines.
-E.g., prefill goes to omlx (strong matmul), decode to Rapid-MLX (lightweight KV).
+E.g., prefill goes to fusion-mlx (strong matmul), decode to Rapid-MLX (lightweight KV).
 """
 
 from __future__ import annotations
@@ -36,7 +36,7 @@ class TaskPriority(enum.Enum):
 class EngineBackend(enum.Enum):
     """Available inference backends."""
 
-    OMLX = "omlx"  # omlx — strong matmul, heavy batching
+    MLX = "mlx"  # fusion-mlx — strong matmul, heavy batching
     RAPID = "rapid"  # Rapid-MLX — lightweight KV, low latency
     AUTO = "auto"  # Let SmartRouter decide
     CLOUD = "cloud"  # Cloud fallback
@@ -125,11 +125,11 @@ class SmartRouter:
     Routing decision tree:
     1. Explicit backend override (model config or request param) -> use it
     2. Prompt > phase_split_threshold AND low cache hit -> split phases
-        - Prefill -> omlx (matmul optimized)
+        - Prefill -> fusion-mlx (matmul optimized)
         - Decode  -> Rapid-MLX (KV lightweight)
     3. Prompt <= threshold OR high cache hit -> unified backend
         - REALTIME tasks -> Rapid-MLX (low latency)
-        - BATCH tasks    -> omlx (high throughput)
+        - BATCH tasks    -> fusion-mlx (high throughput)
     4. Uncached tokens > cloud_threshold -> CloudRouter
     5. Benchmark-based: if loaded, use actual TPS data to decide
     """
@@ -152,7 +152,7 @@ class SmartRouter:
         self.cloud_router = cloud_router
 
         # Engine registry — keep both old names (for compatibility) and new
-        self.llm_engine = llm_engine  # omlx BatchedEngine
+        self.llm_engine = llm_engine  # fusion-mlx BatchedEngine
         self.rapid_engine = rapid_engine  # Rapid-MLX engine
         self.vlm_engine = vlm_engine
         self.stt_engine = stt_engine
@@ -245,12 +245,12 @@ class SmartRouter:
             and self.llm_engine is not None
             and self.rapid_engine is not None
         ):
-            # Split: prefill on omlx (matmul), decode on Rapid (KV)
+            # Split: prefill on fusion-mlx (matmul), decode on Rapid (KV)
             with self._lock:
                 self._split_count += 1
             self._record_route("split", True)
             return RouteDecision(
-                prefill_backend=EngineBackend.OMLX,
+                prefill_backend=EngineBackend.MLX,
                 decode_backend=EngineBackend.RAPID,
                 reason=(
                     f"phase split: {new_tokens} new tokens > "
@@ -264,7 +264,7 @@ class SmartRouter:
             # Realtime tasks prefer Rapid-MLX (lower latency)
             backend = self._pick_low_latency_engine()
         else:
-            # Batch/background tasks prefer omlx (higher throughput)
+            # Batch/background tasks prefer fusion-mlx (higher throughput)
             backend = self._pick_high_throughput_engine()
 
         self._record_route(backend.value, False)
@@ -352,7 +352,7 @@ class SmartRouter:
         decision: RouteDecision,
         **kwargs,
     ) -> AsyncIterator[str]:
-        """Execute split-phase: prefill on omlx, handoff KV to Rapid-MLX for decode."""
+        """Execute split-phase: prefill on fusion-mlx, handoff KV to Rapid-MLX for decode."""
         decode_engine = self.rapid_engine or self.llm_engine
         request_id = request_data.get("request_id", "")
 
@@ -376,7 +376,7 @@ class SmartRouter:
             decision.decode_backend.value,
         )
 
-        # Step 1: Prefill on omlx — get KV state
+        # Step 1: Prefill on fusion-mlx — get KV state
         prefill_result = await prefill_engine.chat(
             messages, prefill_only=True, **kwargs
         )
@@ -429,7 +429,7 @@ class SmartRouter:
 
         # For LLM tasks, apply phase-aware backend selection
         if etype == "llm":
-            if decision.prefill_backend == EngineBackend.OMLX and self.llm_engine:
+            if decision.prefill_backend == EngineBackend.MLX and self.llm_engine:
                 engine, etype = self.llm_engine, "llm"
             elif decision.prefill_backend == EngineBackend.RAPID and self.rapid_engine:
                 engine, etype = self.rapid_engine, "llm"
@@ -551,13 +551,13 @@ class SmartRouter:
         if self.rapid_engine:
             return EngineBackend.RAPID
         if self.llm_engine:
-            return EngineBackend.OMLX
+            return EngineBackend.MLX
         raise RuntimeError("No LLM engine available")
 
     def _pick_high_throughput_engine(self):
-        """Pick the engine with highest throughput (prefer omlx for batching)."""
+        """Pick the engine with highest throughput (prefer fusion-mlx for batching)."""
         if self.llm_engine:
-            return EngineBackend.OMLX
+            return EngineBackend.MLX
         if self.rapid_engine:
             return EngineBackend.RAPID
         raise RuntimeError("No LLM engine available")
@@ -581,9 +581,9 @@ class SmartRouter:
             if self.llm_engine:
                 try:
                     self.llm_engine._warmup(model_name, prompt, batch_size=bs)
-                    logger.info(f"[Warmup] omlx: {model_name} bs={bs} done")
+                    logger.info(f"[Warmup] fusion-mlx: {model_name} bs={bs} done")
                 except Exception as e:
-                    logger.warning(f"[Warmup] omlx: {model_name} bs={bs} failed: {e}")
+                    logger.warning(f"[Warmup] fusion-mlx: {model_name} bs={bs} failed: {e}")
 
             if self.rapid_engine:
                 try:
@@ -640,13 +640,13 @@ class SmartRouter:
 
         # Backend peak FLOPS (conservative estimates for M4 Max)
         peak_gflops = {
-            EngineBackend.OMLX: 1400e9,
+            EngineBackend.MLX: 1400e9,
             EngineBackend.RAPID: 1000e9,
         }
         peak = peak_gflops.get(backend, 800e9)
 
         # Estimated TPS = peak / flops_per_token, with 30% efficiency factor
-        efficiency = 0.3 if backend == EngineBackend.OMLX else 0.35
+        efficiency = 0.3 if backend == EngineBackend.MLX else 0.35
         tps = (peak * efficiency) / flops_per_token
         tps = max(5.0, min(tps, 200.0))
 

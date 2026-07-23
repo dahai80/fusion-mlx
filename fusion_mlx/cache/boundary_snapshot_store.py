@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 """
-Boundary Snapshot SSD Store for oMLX.
+Boundary Snapshot SSD Store for FusionMLX.
 
 Stores non-sliceable cache layer snapshots (e.g. ArraysCache) to SSD during
 prefill, freeing GPU memory immediately.  At request completion the snapshots
@@ -315,7 +315,7 @@ class BoundarySnapshotSSDStore:
         Caller must guarantee no async store_cache worker is still reading
         snapshots for this request — concurrent ``rmtree`` here would race
         the worker's :meth:`load` calls and silently strip block storage.
-        :class:`omlx.scheduler.Scheduler` defers this call until the
+        :class:`fusion_mlx.scheduler.Scheduler` defers this call until the
         ``store_future`` for ``request_id`` is done.
 
         Acquires ``_writer_busy`` after marking the request cancelled so

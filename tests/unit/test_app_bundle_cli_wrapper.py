@@ -31,12 +31,12 @@ def _write_fake_python(path: Path) -> None:
 def test_app_bundle_cli_wrapper_resolves_symlinked_invocation(tmp_path):
     """The bundle wrapper must resolve paths from the app, not the symlink."""
     script = _extract_cli_wrapper_script()
-    cli = tmp_path / "Applications/oMLX.app/Contents/MacOS/fusion_mlx-cli"
+    cli = tmp_path / "Applications/FusionMLX.app/Contents/MacOS/fusion_mlx-cli"
     cli.parent.mkdir(parents=True)
     cli.write_text(script)
     cli.chmod(0o755)
 
-    app_root = tmp_path / "Applications/oMLX.app/Contents"
+    app_root = tmp_path / "Applications/FusionMLX.app/Contents"
     python = app_root / "Resources/Python/cpython-3.11/bin/python3"
     _write_fake_python(python)
 

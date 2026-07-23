@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 """
-Engine pool for oMLX multi-model serving.
+Engine pool for FusionMLX multi-model serving.
 
 This module manages multiple model engines with LRU-based eviction
 when memory limits are exceeded. It supports:
@@ -526,7 +526,7 @@ class EnginePool:
 
         Tries exact match in _entries first, then case-insensitive match,
         then scans model settings for alias match. If those fail and input
-        contains a provider prefix (e.g. "omlx/my-model"), strips the prefix
+        contains a provider prefix (e.g. "fusion-mlx/my-model"), strips the prefix
         and retries. Returns the original string if no match found.
         """
         if model_id_or_alias in self._entries:
@@ -544,7 +544,7 @@ class EnginePool:
                 if ms.model_alias and ms.model_alias == model_id_or_alias:
                     return mid
 
-        # Strip provider prefix (e.g. "omlx/qwen3.5-35b" -> "qwen3.5-35b")
+        # Strip provider prefix (e.g. "fusion-mlx/qwen3.5-35b" -> "qwen3.5-35b")
         if "/" in model_id_or_alias:
             stripped = model_id_or_alias.split("/", 1)[1]
             if stripped in self._entries:
@@ -1559,7 +1559,7 @@ class EnginePool:
             # exists on the language model path. mtp_enabled was already
             # validated as mutually exclusive with dflash / turboquant in
             # metal-knowledge: with the mlx-vlm runtime MTP patch (see
-            # omlx/patches/mlx_vlm_mtp/qwen35_moe_vlm_runtime.py) VLM models
+            # fusion_mlx/patches/mlx_vlm_mtp/qwen35_moe_vlm_runtime.py) VLM models
             # can run MTP natively while keeping vision intact. The old
             # force-LM-dispatch shortcut here is obsolete for patched
             # model families; let VLMBatchedEngine handle MTP-enabled VLMs.
@@ -1603,7 +1603,7 @@ class EnginePool:
                             model_settings=model_settings,
                             fallback_engine_type=effective_type,
                             scheduler_config=self._scheduler_config,
-                            omlx_ssd_cache_dir=getattr(
+                            fusion_ssd_cache_dir=getattr(
                                 self._scheduler_config, "paged_ssd_cache_dir", None
                             ),
                         )

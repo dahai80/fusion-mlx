@@ -2,7 +2,7 @@
 
 fusion-mlx ships **five speculative-decoding algorithms** — SuffixDecoding,
 DFlash, DSpark, MTP, and VLM MTP — selectable per serve. This is the single
-largest differentiator vs. omlx / Ollama / vLLM-mac, none of which ship a
+largest differentiator vs. Ollama / vLLM-mac, none of which ship a
 spec-decode path. This document is the authoritative reference: which method to
 pick, how to activate it, the architectural constraint that governs selection,
 and the auto-router that automates the choice.

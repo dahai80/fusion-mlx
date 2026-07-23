@@ -464,7 +464,7 @@ class TestBenchmarkEngineSelection:
             ),
         )
         pool = _FakeBenchEnginePool(settings)
-        with patch("fusion_mlx.admin.benchmark._upload_to_omlx_ai", AsyncMock()):
+        with patch("fusion_mlx.admin.benchmark._upload_to_bench_site", AsyncMock()):
             await run_benchmark(run, pool)
         return run, pool
 
@@ -520,7 +520,7 @@ class TestBenchmarkEngineSelection:
         )
         pool = _FakeBenchEnginePool(engine=_FakeBenchEngine())
 
-        with patch("fusion_mlx.admin.benchmark._upload_to_omlx_ai", AsyncMock()):
+        with patch("fusion_mlx.admin.benchmark._upload_to_bench_site", AsyncMock()):
             await run_benchmark(run, pool)
 
         assert run.status == "completed"
@@ -560,7 +560,7 @@ class TestBenchmarkEngineSelection:
         )
         pool = _FakeBenchEnginePool(engine=engine)
 
-        with patch("fusion_mlx.admin.benchmark._upload_to_omlx_ai", AsyncMock()):
+        with patch("fusion_mlx.admin.benchmark._upload_to_bench_site", AsyncMock()):
             await run_benchmark(run, pool)
 
         assert run.status == "completed"
@@ -753,11 +753,11 @@ class TestCleanModelName:
 # =============================================================================
 
 
-class TestUploadToOmlxAi:
+class TestUploadToBenchSite:
     @pytest.mark.asyncio
     async def test_upload_success(self):
         """Test successful upload sends correct SSE events."""
-        from fusion_mlx.admin.benchmark import _upload_to_omlx_ai
+        from fusion_mlx.admin.benchmark import _upload_to_bench_site
 
         run = BenchmarkRun(
             bench_id="test-bench",
@@ -788,13 +788,13 @@ class TestUploadToOmlxAi:
         mock_response.status_code = 201
         mock_response.json.return_value = {
             "id": "abc12345",
-            "url": "https://omlx.ai/benchmarks/abc12345",
+            "url": "https://fusion-mlx.ai/benchmarks/abc12345",
         }
 
         mock_to_thread = AsyncMock(return_value=mock_response)
 
         with patch("asyncio.to_thread", mock_to_thread):
-            await _upload_to_omlx_ai(run, mock_pool)
+            await _upload_to_bench_site(run, mock_pool)
 
         # Collect all events from the replay log.
         events = list(run.events)
@@ -816,7 +816,7 @@ class TestUploadToOmlxAi:
     @pytest.mark.asyncio
     async def test_upload_duplicate(self):
         """Test 409 duplicate response is handled as success."""
-        from fusion_mlx.admin.benchmark import _upload_to_omlx_ai
+        from fusion_mlx.admin.benchmark import _upload_to_bench_site
 
         run = BenchmarkRun(
             bench_id="test-bench",
@@ -848,13 +848,13 @@ class TestUploadToOmlxAi:
         mock_response.json.return_value = {
             "error": "Duplicate",
             "existing_id": "xyz789",
-            "existing_url": "https://omlx.ai/benchmarks/xyz789",
+            "existing_url": "https://fusion-mlx.ai/benchmarks/xyz789",
         }
 
         mock_to_thread = AsyncMock(return_value=mock_response)
 
         with patch("asyncio.to_thread", mock_to_thread):
-            await _upload_to_omlx_ai(run, mock_pool)
+            await _upload_to_bench_site(run, mock_pool)
 
         events = list(run.events)
 
@@ -868,7 +868,7 @@ class TestUploadToOmlxAi:
     @pytest.mark.asyncio
     async def test_upload_skips_unmeasurable_generation_results(self):
         """Rows without a measured decode rate are not uploaded."""
-        from fusion_mlx.admin.benchmark import _upload_to_omlx_ai
+        from fusion_mlx.admin.benchmark import _upload_to_bench_site
 
         run = BenchmarkRun(
             bench_id="test-bench",
@@ -908,12 +908,12 @@ class TestUploadToOmlxAi:
         mock_response.status_code = 201
         mock_response.json.return_value = {
             "id": "abc12345",
-            "url": "https://omlx.ai/benchmarks/abc12345",
+            "url": "https://fusion-mlx.ai/benchmarks/abc12345",
         }
         mock_to_thread = AsyncMock(return_value=mock_response)
 
         with patch("asyncio.to_thread", mock_to_thread):
-            await _upload_to_omlx_ai(run, mock_pool)
+            await _upload_to_bench_site(run, mock_pool)
 
         assert mock_to_thread.await_count == 1
 
@@ -929,7 +929,7 @@ class TestUploadToOmlxAi:
     @pytest.mark.asyncio
     async def test_upload_skipped_when_experimental_features_enabled(self):
         """Upload is skipped (no HTTP call) when experimental features were active."""
-        from fusion_mlx.admin.benchmark import _upload_to_omlx_ai
+        from fusion_mlx.admin.benchmark import _upload_to_bench_site
 
         run = BenchmarkRun(
             bench_id="test-bench",
@@ -956,7 +956,7 @@ class TestUploadToOmlxAi:
         mock_to_thread = AsyncMock()
 
         with patch("asyncio.to_thread", mock_to_thread):
-            await _upload_to_omlx_ai(run, mock_pool)
+            await _upload_to_bench_site(run, mock_pool)
 
         events = list(run.events)
 

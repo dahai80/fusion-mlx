@@ -29,9 +29,9 @@ class TestSmartRouterDecide:
 
     def test_explicit_override(self):
         router = self._make_router()
-        decision = router.decide(prompt_length=100, backend_override=EngineBackend.OMLX)
-        assert decision.prefill_backend == EngineBackend.OMLX
-        assert decision.decode_backend == EngineBackend.OMLX
+        decision = router.decide(prompt_length=100, backend_override=EngineBackend.MLX)
+        assert decision.prefill_backend == EngineBackend.MLX
+        assert decision.decode_backend == EngineBackend.MLX
         assert "explicit override" in decision.reason
 
     def test_cloud_fallback_for_massive_context(self):
@@ -46,7 +46,7 @@ class TestSmartRouterDecide:
         router = self._make_router(phase_split_threshold=1024)
         decision = router.decide(prompt_length=4096, cache_hit_rate=0.2)
         assert decision.split_phases is True
-        assert decision.prefill_backend == EngineBackend.OMLX
+        assert decision.prefill_backend == EngineBackend.MLX
         assert decision.decode_backend == EngineBackend.RAPID
 
     def test_no_split_for_high_cache_hit(self):
@@ -64,17 +64,17 @@ class TestSmartRouterDecide:
         decision = router.decide(prompt_length=512, task_tag="claude_code")
         assert decision.prefill_backend == EngineBackend.RAPID
 
-    def test_batch_priority_prefers_omlx(self):
+    def test_batch_priority_prefers_fusion_mlx(self):
         router = self._make_router()
         decision = router.decide(prompt_length=512, task_tag="openclaw")
-        assert decision.prefill_backend == EngineBackend.OMLX
+        assert decision.prefill_backend == EngineBackend.MLX
 
     def test_benchmark_based_routing(self):
         router = self._make_router()
         router.store_benchmark(
             BenchmarkResult(
                 model_id="test-3b",
-                backend=EngineBackend.OMLX,
+                backend=EngineBackend.MLX,
                 quant_format="4bit",
                 tps=100.0,
                 latency_p50=50.0,
@@ -95,13 +95,13 @@ class TestSmartRouterDecide:
         )
         # Set EMA counts past cold-start threshold so measured values dominate
         router._ema_state["test-3b"] = {
-            "fusion_mlx": {"tps": 100.0, "latency_p50": 50.0, "count": 25},
+            "mlx": {"tps": 100.0, "latency_p50": 50.0, "count": 25},
             "rapid": {"tps": 80.0, "latency_p50": 30.0, "count": 25},
         }
         decision = router.decide(
             prompt_length=512, model_id="test-3b", quant_format="4bit"
         )
-        assert decision.prefill_backend == EngineBackend.OMLX
+        assert decision.prefill_backend == EngineBackend.MLX
         assert decision.decode_backend == EngineBackend.RAPID
 
     def test_benchmark_filters_auto_and_cloud(self):
@@ -129,14 +129,14 @@ class TestSmartRouterDecide:
             )
         )
         decision = router.decide(prompt_length=512, model_id="m2", quant_format="4bit")
-        assert decision.prefill_backend in (EngineBackend.OMLX, EngineBackend.RAPID)
+        assert decision.prefill_backend in (EngineBackend.MLX, EngineBackend.RAPID)
 
     def test_ema_smoothing(self):
         router = self._make_router(ema_alpha=0.5)
         router.store_benchmark(
             BenchmarkResult(
                 model_id="m3",
-                backend=EngineBackend.OMLX,
+                backend=EngineBackend.MLX,
                 quant_format="4bit",
                 tps=100.0,
                 latency_p50=50.0,
@@ -159,7 +159,7 @@ class TestSmartRouterDecide:
         router.store_benchmark(
             BenchmarkResult(
                 model_id="m3",
-                backend=EngineBackend.OMLX,
+                backend=EngineBackend.MLX,
                 quant_format="4bit",
                 tps=200.0,
                 latency_p50=20.0,
@@ -271,7 +271,7 @@ class TestSmartRouterStats:
 
     def test_reset_stats_with_lock(self):
         router = SmartRouter(llm_engine=AsyncMock())
-        router._route_count["fusion_mlx"] = 10
+        router._route_count["mlx"] = 10
         router._split_count = 5
         router._cloud_count = 3
         router.reset_stats()
@@ -322,11 +322,11 @@ class TestPhaseHandoff:
             meta_states=[],
             model_name="test-model",
             num_tokens=100,
-            prefill_backend=EngineBackend.OMLX,
+            prefill_backend=EngineBackend.MLX,
             decode_backend=EngineBackend.RAPID,
         )
         assert h.request_id == "r1"
-        assert h.prefill_backend == EngineBackend.OMLX
+        assert h.prefill_backend == EngineBackend.MLX
         assert h.decode_backend == EngineBackend.RAPID
 
 
@@ -334,8 +334,8 @@ class TestRouteDecision:
 
     def test_unified_backend(self):
         d = RouteDecision(
-            prefill_backend=EngineBackend.OMLX,
-            decode_backend=EngineBackend.OMLX,
+            prefill_backend=EngineBackend.MLX,
+            decode_backend=EngineBackend.MLX,
             reason="test",
             split_phases=False,
         )
@@ -343,7 +343,7 @@ class TestRouteDecision:
 
     def test_split_phases(self):
         d = RouteDecision(
-            prefill_backend=EngineBackend.OMLX,
+            prefill_backend=EngineBackend.MLX,
             decode_backend=EngineBackend.RAPID,
             reason="split",
             split_phases=True,

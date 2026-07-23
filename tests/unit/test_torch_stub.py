@@ -435,7 +435,7 @@ def test_install_is_thread_safe(stub_module):
 )
 def test_xgrammar_imports_against_stub_only(stub_module, tmp_path):
     """Realistic regression: spawn a subprocess that blocks real torch and
-    asserts ``import xgrammar`` and the modules oMLX touches still load
+    asserts ``import xgrammar`` and the modules Fusion-MLX touches still load
     against the stub. This is the test that gates xgrammar / tvm-ffi
     version bumps — if a new release reaches for a torch attribute the
     stub doesn't cover, this fails loudly at the import step.

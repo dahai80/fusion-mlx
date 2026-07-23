@@ -140,7 +140,7 @@ class AnthropicTool(BaseModel):
         1. User-defined tool: requires ``input_schema``.
         2. Anthropic server-side tool (web_search, code_execution, bash,
         text_editor, computer): carries a versioned ``type`` like
-        ``web_search_20250305`` and no ``input_schema``. oMLX cannot execute
+        ``web_search_20250305`` and no ``input_schema``. FusionMLX cannot execute
         these locally; they are accepted for compatibility with clients such
         as Claude for Excel/PowerPoint/Word and dropped before inference.
     """

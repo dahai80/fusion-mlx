@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 """
-CLI tests for oMLX.
+CLI tests for Fusion-MLX.
 
 Tests CLI argument parsing, command setup, and help text.
 Note: Configuration validation tests are in test_config.py.
@@ -114,7 +114,7 @@ class TestLifecycleCommand:
         monkeypatch.setattr(cli, "_open_macos_app", MagicMock())
 
         assert cli.lifecycle_command(self._args("stop")) == 0
-        assert capsys.readouterr().out.strip() == "oMLX stopped"
+        assert capsys.readouterr().out.strip() == "fusion-mlx stopped"
         cli._open_macos_app.assert_not_called()
 
     def test_app_bundle_start_sends_command_and_waits(self, monkeypatch):

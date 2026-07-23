@@ -870,7 +870,7 @@ class TestConvertAnthropicToInternal:
         assert len(result) == 1
         content = result[0]["content"]
         assert "manual.pdf" in content
-        assert "oMLX does not provide PDF parsing" in content
+        assert "Fusion-MLX does not provide PDF parsing" in content
 
     def test_thinking_block_reconstructed_as_think_tag(self):
         request = MessagesRequest(

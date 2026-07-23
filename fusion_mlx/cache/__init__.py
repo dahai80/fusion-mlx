@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """mlx-kv-cache — KV cache management layer for fusion-mlx.
 
-Merged from omlx/cache + Rapid-MLX cache implementations.
+Merged from fusion-mlx/cache + Rapid-MLX cache implementations.
 """
 
 # Stats

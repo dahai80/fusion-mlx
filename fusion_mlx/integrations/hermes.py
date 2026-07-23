@@ -91,27 +91,27 @@ class HermesIntegration(Integration):
             providers = {}
             config["providers"] = providers
 
-        provider_config = providers.get("omlx", {})
+        provider_config = providers.get("fusion-mlx", {})
         if not isinstance(provider_config, dict):
             provider_config = {}
         provider_config.update(
             {
-                "name": "oMLX",
+                "name": "Fusion-MLX",
                 "base_url": f"http://{host}:{port}/v1",
-                "api_key": api_key or "omlx",
+                "api_key": api_key or "fusion-mlx",
                 "api_mode": "chat_completions",
             }
         )
         if model:
             provider_config["default_model"] = model
-        providers["omlx"] = provider_config
+        providers["fusion-mlx"] = provider_config
 
         model_config = config.get("model", {})
         if not isinstance(model_config, dict):
             model_config = {}
         for stale_key in ("base_url", "api_key", "api", "api_mode", "transport"):
             model_config.pop(stale_key, None)
-        model_config["provider"] = "omlx"
+        model_config["provider"] = "fusion-mlx"
         if model:
             model_config["default"] = model
         if context_window is not None:
@@ -119,8 +119,8 @@ class HermesIntegration(Integration):
                 print(
                     "Warning: Hermes Agent requires at least "
                     f"{HERMES_MIN_CONTEXT_LENGTH:,} context tokens; "
-                    f"oMLX reports {context_window:,}. Writing the Hermes "
-                    "minimum so the agent can start. Increase oMLX Sampling "
+                    f"Fusion-MLX reports {context_window:,}. Writing the Hermes "
+                    "minimum so the agent can start. Increase Fusion-MLX Sampling "
                     "max_context_window for long sessions."
                 )
             model_config["context_length"] = max(
@@ -167,7 +167,7 @@ class HermesIntegration(Integration):
         # Hermes Agent v0.12.0's classic prompt_toolkit REPL registers an
         # invalid Ctrl+Shift+C keybinding ("c-S-c") on startup. The modern TUI
         # path avoids that startup crash and is the supported interactive UX.
-        args = ["hermes", "--provider", "omlx", "--tui"]
+        args = ["hermes", "--provider", "fusion-mlx", "--tui"]
         if model:
             args.extend(["--model", model])
 

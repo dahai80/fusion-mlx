@@ -21,7 +21,7 @@ class TestClaudeCodeIntegration:
 
     def test_get_command(self):
         cli = ClaudeCodeIntegration()
-        with patch("fusion_mlx.utils.install.get_cli_prefix", return_value="omlx"):
+        with patch("fusion_mlx.utils.install.get_cli_prefix", return_value="fusion-mlx"):
             cmd = cli.get_command(8080, "key", "model")
             assert "claude" in cmd
 
@@ -71,14 +71,14 @@ class TestClaudeCodeIntegration:
                     assert env["ANTHROPIC_DEFAULT_OPUS_MODEL"] == "qwen"
                     assert env["CLAUDE_CODE_AUTO_COMPACT_WINDOW"] == "8000"
 
-    def test_launch_no_api_key_uses_omlx(self):
+    def test_launch_no_api_key_uses_fusion_mlx(self):
         cli = ClaudeCodeIntegration()
         with patch.object(cli, "_scrubbed_env", return_value={}):
             with patch.object(cli, "_find_claude_binary", return_value="claude"):
                 with patch("os.execvpe") as mock_exec:
                     cli.launch(8080, "", "qwen")
                     env = mock_exec.call_args[0][2]
-                    assert env["ANTHROPIC_AUTH_TOKEN"] == "omlx"
+                    assert env["ANTHROPIC_AUTH_TOKEN"] == "fusion-mlx"
 
     def test_launch_no_context_window_skips(self):
         cli = ClaudeCodeIntegration()
@@ -106,6 +106,6 @@ class TestCopilotIntegration:
 
     def test_get_command(self):
         cli = CopilotIntegration()
-        with patch("fusion_mlx.utils.install.get_cli_prefix", return_value="omlx"):
+        with patch("fusion_mlx.utils.install.get_cli_prefix", return_value="fusion-mlx"):
             cmd = cli.get_command(8080, "key", "model")
             assert "copilot" in cmd

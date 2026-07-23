@@ -3,7 +3,7 @@
 
 Provides standard + structured JSON logging, request-context tracking via a
 ContextVar, daily-rotated file logging, and suppression of repetitive admin
-polling access logs. Ported from omlx with fusion-mlx logger names.
+polling access logs. Ported from fusion-mlx with fusion-mlx logger names.
 """
 
 import json

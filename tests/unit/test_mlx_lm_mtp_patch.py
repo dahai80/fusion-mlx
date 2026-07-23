@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Tests for omlx.patches.mlx_lm_mtp.
+"""Tests for fusion_mlx.patches.mlx_lm_mtp.
 
 Phase 1 covers the model-side hooks (PR 990 for Qwen3.5/3.6 + PR 15
 skeleton for DeepSeek-V4) and the conditional dispatch in
@@ -63,7 +63,7 @@ class TestQwen35Model:
         try:
             from fusion_mlx.patches.mlx_lm_mtp import qwen35_model
         except ImportError:
-            pytest.skip("omlx.patches.mlx_lm_mtp not importable")
+            pytest.skip("fusion_mlx.patches.mlx_lm_mtp not importable")
         applied = qwen35_model.apply()
         if not applied:
             pytest.skip("qwen35_model patch refused to apply (likely mlx_lm absent)")
@@ -222,7 +222,7 @@ class TestQwen35MtpNormShift:
         try:
             from fusion_mlx.patches.mlx_lm_mtp import qwen35_model
         except ImportError:
-            pytest.skip("omlx.patches.mlx_lm_mtp not importable")
+            pytest.skip("fusion_mlx.patches.mlx_lm_mtp not importable")
         if not qwen35_model.apply():
             pytest.skip("qwen35_model patch refused to apply")
 
@@ -353,7 +353,7 @@ class TestQwen35MoeSanitize:
         try:
             from fusion_mlx.patches.mlx_lm_mtp import qwen35_model
         except ImportError:
-            pytest.skip("omlx.patches.mlx_lm_mtp not importable")
+            pytest.skip("fusion_mlx.patches.mlx_lm_mtp not importable")
         if not qwen35_model.apply():
             pytest.skip("qwen35_model patch refused to apply")
         from fusion_mlx.patches.mlx_lm_mtp.qwen35_model import _patch_qwen3_5_moe
@@ -486,7 +486,7 @@ class TestDeepseekV4Model:
         try:
             from fusion_mlx.patches.deepseek_v4 import apply_deepseek_v4_patch
         except ImportError:
-            pytest.skip("omlx.patches.deepseek_v4 not importable")
+            pytest.skip("fusion_mlx.patches.deepseek_v4 not importable")
         if not apply_deepseek_v4_patch():
             pytest.skip("DeepSeek-V4 base patch refused to apply in this env")
 

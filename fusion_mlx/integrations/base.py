@@ -46,7 +46,7 @@ class Integration:
     def _scrubbed_env(self) -> dict[str, str]:
         """Return an os.environ copy with bundled-Python vars removed.
 
-        oMLX.app sets PYTHONHOME/PYTHONPATH to its bundled cpython-3.11.
+        FusionMLX.app sets PYTHONHOME/PYTHONPATH to its bundled cpython-3.11.
         Launched tools spawn their own Python subprocesses; if they inherit
         these they crash with init_fs_encoding errors.
         """
@@ -190,7 +190,7 @@ def _select_model_curses(models_info: list[dict], tool_name: str) -> str:
             stdscr.erase()
             try:
                 stdscr.addstr(
-                    0, 1, f"oMLX > Launch {tool_name}"[: max_x - 2], curses.A_BOLD
+                    0, 1, f"FusionMLX > Launch {tool_name}"[: max_x - 2], curses.A_BOLD
                 )
                 for row_offset, i in enumerate(range(scroll, visible_end)):
                     m = ordered[i]

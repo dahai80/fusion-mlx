@@ -13,7 +13,7 @@ from fusion_mlx.utils.install import get_cli_prefix
 
 
 class CodexIntegration(Integration):
-    """Codex integration that configures ~/.codex/config.toml for oMLX."""
+    """Codex integration that configures ~/.codex/config.toml for Fusion-MLX."""
 
     CONFIG_PATH = Path.home() / ".codex" / "config.toml"
 
@@ -55,12 +55,12 @@ class CodexIntegration(Integration):
         lines = existing_content.splitlines()
         new_lines = []
         in_any_section = False
-        in_omlx_section = False
+        in_fusion_section = False
 
         # Keys to override at the top level
         top_level_overrides = {
             "model": f'"{model or "select-a-model"}"',
-            "model_provider": '"omlx"',
+            "model_provider": '"fusion-mlx"',
         }
 
         # If it is a reasoning model, add reasoning effort
@@ -70,7 +70,7 @@ class CodexIntegration(Integration):
         if is_reasoning:
             top_level_overrides["model_reasoning_effort"] = '"high"'
 
-        # Keys managed by oMLX that should be removed when not applicable
+        # Keys managed by Fusion-MLX that should be removed when not applicable
         managed_keys = {"model_reasoning_effort"} - set(top_level_overrides.keys())
 
         seen_keys = set()
@@ -79,7 +79,7 @@ class CodexIntegration(Integration):
             stripped = line.strip()
             if stripped.startswith("[") and stripped.endswith("]"):
                 in_any_section = True
-                in_omlx_section = stripped == "[model_providers.omlx]"
+                in_fusion_section = stripped == "[model_providers.fusion-mlx]"
 
             # Handle top-level keys
             if not in_any_section and "=" in stripped:
@@ -91,8 +91,8 @@ class CodexIntegration(Integration):
                 if key in managed_keys:
                     continue
 
-            # Skip old oMLX section
-            if in_omlx_section:
+            # Skip old Fusion-MLX section
+            if in_fusion_section:
                 continue
 
             new_lines.append(line)
@@ -102,11 +102,11 @@ class CodexIntegration(Integration):
             if key not in seen_keys:
                 new_lines.insert(0, f"{key} = {val}")
 
-        # Append new oMLX provider section
-        new_lines.append("\n[model_providers.omlx]")
-        new_lines.append('name = "oMLX"')
+        # Append new Fusion-MLX provider section
+        new_lines.append("\n[model_providers.fusion-mlx]")
+        new_lines.append('name = "Fusion-MLX"')
         new_lines.append(f'base_url = "http://{host}:{port}/v1"')
-        new_lines.append('env_key = "OMLX_API_KEY"')
+        new_lines.append('env_key = "FUSION_API_KEY"')
 
         config_path.write_text("\n".join(new_lines) + "\n", encoding="utf-8")
         print(f"Config updated: {config_path}")
@@ -123,7 +123,7 @@ class CodexIntegration(Integration):
         self.configure(port, api_key, model, host=host)
 
         env = self._scrubbed_env()
-        env["OMLX_API_KEY"] = api_key or "omlx"
+        env["FUSION_API_KEY"] = api_key or "fusion-mlx"
 
         args = ["codex"]
         if model:

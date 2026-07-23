@@ -1,4 +1,4 @@
-# omlx-mac → fusion-mac 迁移总结
+# fusion-mlx-mac → fusion-mac 迁移总结
 
 ## 迁移完成时间
 2026-06-29
@@ -6,7 +6,7 @@
 ## 迁移范围
 
 ### 1. 目录结构
-- **源**: `/Users/dahai/claude-home/omlx/apps/omlx-mac/`
+- **源**: `/Users/dahai/claude-home/fusion-mlx/apps/fusion-mlx-mac/`
 - **目标**: `/Users/dahai/claude-home/fusion-mlx/apps/fusion-mac/`
 
 ### 2. 文件迁移清单
@@ -16,14 +16,14 @@
 - `Sources/AppView/` — 主界面 (15 屏幕 + ViewModels + Utils)
 - `Sources/Config/` — 配置管理 (3 文件)
 - `Sources/Menubar/` — 系统托盘 (3 文件)
-- `Sources/Net/` — 网络层 (OMLXClient + 14 DTOs)
+- `Sources/Net/` — 网络层 (FUSIONClient + 14 DTOs)
 - `Sources/Server/` — Python 服务管理 (4 文件)
 - `Sources/Theme/` — UI 组件库 (11 组件)
 - `Sources/Updater/` — 自动更新 (3 文件)
 - `Sources/Welcome/` — 首次启动向导
 
 #### 测试代码 (22 个测试文件)
-- `Tests/FusionTests/` — 原 oMLXTests
+- `Tests/FusionTests/` — 原 FusionMLXTests
 - 包含 DTO 测试、配置测试、集成测试等
 
 #### 构建脚本
@@ -35,30 +35,30 @@
 - `Resources/Assets.xcassets/` — 图片资源
 
 #### Xcode 项目
-- `FusionMLX.xcodeproj/` — 原 oMLX.xcodeproj
+- `FusionMLX.xcodeproj/` — 原 FusionMLX.xcodeproj
 
 ### 3. 品牌重命名映射
 
 | 原名称 | 新名称 |
 |--------|--------|
-| oMLX | FusionMLX |
-| OMLX | Fusion |
-| omlx | fusion |
-| app.omlx | app.fusion-mlx |
-| oMLXTests | FusionTests |
+| FusionMLX | FusionMLX |
+| FUSION | Fusion |
+| fusion-mlx | fusion |
+| app.fusion-mlx | app.fusion-mlx |
+| FusionMLXTests | FusionTests |
 
 ### 4. 路径和环境变量更新
 
 #### 配置文件路径
-- `~/.omlx` → `~/.fusion-mlx`
-- `~/Library/Application Support/oMLX` → `~/Library/Application Support/Fusion-MLX`
+- `~/.fusion-mlx` → `~/.fusion-mlx`
+- `~/Library/Application Support/FusionMLX` → `~/Library/Application Support/Fusion-MLX`
 
 #### Python 模块
-- `omlx.cli` → `fusion_mlx.cli`
-- `omlx/` → `fusion_mlx/`
+- `fusion-mlx.cli` → `fusion_mlx.cli`
+- `fusion-mlx/` → `fusion_mlx/`
 
 #### 环境变量
-- `OMLX_*` → `FUSION_*` (全部大写)
+- `FUSION_*` → `FUSION_*` (全部大写)
 - 包括: `FUSION_BASE_PATH`, `FUSION_HOST`, `FUSION_PORT`, `FUSION_API_KEY` 等
 
 ### 5. Xcode 项目配置
@@ -69,7 +69,7 @@
 
 ### 6. 核心功能保留
 
-所有 omlx-mac 的功能模块已完整迁移:
+所有 fusion-mlx-mac 的功能模块已完整迁移:
 
 ✅ 15 个功能屏幕 (Models, Downloads, Settings, Performance, Benchmarks 等)
 ✅ 系统托盘集成 (MenubarController)
@@ -82,7 +82,7 @@
 
 ### 7. 后端兼容性
 
-fusion-mlx 的 Admin API 后端已完整实现，与 omlx-mac 的端点完全匹配:
+fusion-mlx 的 Admin API 后端已完整实现，与 fusion-mlx-mac 的端点完全匹配:
 
 - `/admin/api/models` — 模型管理
 - `/admin/api/hf/*` — HuggingFace 下载
@@ -111,7 +111,7 @@ fusion-mlx 的 Admin API 后端已完整实现，与 omlx-mac 的端点完全匹
 ## 技术债务
 
 1. **venvstacks 配置**: 需要确认 fusion-mlx 是否有 `packaging/venvstacks.toml`
-2. **自定义内核**: `fusion_mlx/custom_kernels/` 可能需要从 omlx 补充
+2. **自定义内核**: `fusion_mlx/custom_kernels/` 可能需要从 fusion-mlx 补充
 3. **版本号管理**: `fusion_mlx/_version.py` 需要与 Swift 版本同步
 
 ## 验证检查清单
@@ -127,7 +127,7 @@ fusion-mlx 的 Admin API 后端已完整实现，与 omlx-mac 的端点完全匹
 
 ## 架构优势
 
-迁移后的 fusion-mac 保留了 omlx-mac 的所有优势:
+迁移后的 fusion-mac 保留了 fusion-mlx-mac 的所有优势:
 
 1. **原生 Swift 体验**: SwiftUI + 系统托盘，性能优秀
 2. **完整的服务管理**: 自动重启、健康检查、端口冲突处理
@@ -170,4 +170,4 @@ fusion-mlx 后端支持 `ui.language` 字段（admin API 返回/接受），GUI 
 
 ## 结论
 
-omlx-mac 的 Swift 原生 GUI 已完整迁移到 fusion-mlx，保留了所有功能特性，并适配了 fusion-mlx 的后端架构和命名规范。应用可以立即进行编译测试和功能验证。
+fusion-mlx-mac 的 Swift 原生 GUI 已完整迁移到 fusion-mlx，保留了所有功能特性，并适配了 fusion-mlx 的后端架构和命名规范。应用可以立即进行编译测试和功能验证。

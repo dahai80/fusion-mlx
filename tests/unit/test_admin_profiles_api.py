@@ -819,6 +819,6 @@ class TestExposeAsModelAPI:
     def test_settings_only_put_preserves_exposure(self, client):
         pass
 
-    @pytest.mark.skip(reason="fusion-mlx admin UI static files differ from omlx")
+    @pytest.mark.skip(reason="fusion-mlx admin UI static files differ from fusion-mlx")
     def test_dashboard_profile_ui_round_trips_expose_as_model_flag(self):
         pass

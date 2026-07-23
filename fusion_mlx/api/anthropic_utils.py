@@ -2,7 +2,7 @@
 """
 Utility functions for Anthropic Messages API conversion.
 
-Handles conversion between Anthropic API format and internal oMLX format.
+Handles conversion between Anthropic API format and internal FusionMLX format.
 """
 
 import base64
@@ -33,7 +33,7 @@ def _decode_document_block(block_dict: dict[str, Any]) -> str:
 
     For text/plain documents, decodes base64 data and returns the text.
     For other media types (e.g. PDF), returns a placeholder message since
-    oMLX does not provide document parsing.
+    FusionMLX does not provide document parsing.
     """
     source = block_dict.get("source", {})
     media_type = source.get("media_type", "")
@@ -51,7 +51,7 @@ def _decode_document_block(block_dict: dict[str, Any]) -> str:
     label = title or "untitled"
     return (
         f"[Document: {label} ({media_type}) — "
-        f"oMLX does not provide PDF parsing. Send as text instead.]"
+        f"FusionMLX does not provide PDF parsing. Send as text instead.]"
     )
 
 
@@ -766,7 +766,7 @@ def _extract_tool_result_content(
 
 # Anthropic server-side tools (executed on Anthropic's infrastructure) carry a
 # versioned ``type`` like ``web_search_20250305`` and have no ``input_schema``.
-# oMLX cannot fulfill these locally, so we drop them before forwarding to the
+# FusionMLX cannot fulfill these locally, so we drop them before forwarding to the
 # model. See https://docs.anthropic.com for the canonical tool families.
 SERVER_SIDE_TOOL_TYPE_PREFIXES = (
     "web_search_",
@@ -795,7 +795,7 @@ def convert_anthropic_tools_to_internal(
     Internal:  {"type": "function", "function": {"name": "...", "description": "...", "parameters": {...}}}
 
     Anthropic server-side tools (web_search, code_execution, bash, text_editor,
-    computer) cannot be executed by oMLX and are dropped with an INFO log.
+    computer) cannot be executed by FusionMLX and are dropped with an INFO log.
 
     Args:
         tools: List of Anthropic tool definitions
@@ -835,7 +835,7 @@ def convert_anthropic_tools_to_internal(
 
     if dropped:
         logger.info(
-            "Dropped %d Anthropic server-side tool(s) not executable by oMLX: %s",
+            "Dropped %d Anthropic server-side tool(s) not executable by FusionMLX: %s",
             len(dropped),
             ", ".join(dropped),
         )
@@ -888,7 +888,7 @@ def convert_internal_to_anthropic_response(
     # Anthropic's spec requires a non-empty cryptographic signature on
     # thinking blocks; an empty string makes some SDK versions fall
     # back to a text-block parser path and emit "Content block is not
-    # a text block". omlx cannot mint a real Anthropic signature, so
+    # a text block". fusion-mlx cannot mint a real Anthropic signature, so
     # we use a stable placeholder string. Clients that strictly verify
     # the signature will still reject, but the common Claude Code SDK
     # only checks that the field is present and non-empty.
@@ -897,7 +897,7 @@ def convert_internal_to_anthropic_response(
             ContentBlockThinking(
                 type="thinking",
                 thinking=thinking,
-                signature="omlx-reasoning",
+                signature="fusion-mlx-reasoning",
             )
         )
 
@@ -1059,7 +1059,7 @@ def create_content_block_start_event(index: int, block_type: str, **kwargs) -> s
         content_block = {
             "type": "thinking",
             "thinking": "",
-            "signature": "omlx-reasoning",
+            "signature": "fusion-mlx-reasoning",
         }
     else:
         content_block = {"type": block_type}

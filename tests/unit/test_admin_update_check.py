@@ -25,7 +25,7 @@ def _reset_cache():
     """Reset module-level update cache between tests."""
     admin_routes._update_cache = {}
     admin_routes._update_cache_time = {}
-    admin_routes._UPDATE_PREFS_PATH = Path("/tmp/omlx-test-missing-update-prefs.json")
+    admin_routes._UPDATE_PREFS_PATH = Path("/tmp/fusion-mlx-test-missing-update-prefs.json")
 
 
 class TestCheckUpdate:
@@ -45,7 +45,7 @@ class TestCheckUpdate:
             [
                 {
                     "tag_name": "v99.0.0",
-                    "html_url": "https://github.com/jundot/omlx/releases/tag/v99.0.0",
+                    "html_url": "https://github.com/dahai80/fusion-mlx/releases/tag/v99.0.0",
                 }
             ],
         )
@@ -67,7 +67,7 @@ class TestCheckUpdate:
             [
                 {
                     "tag_name": "v0.0.1",
-                    "html_url": "https://github.com/jundot/omlx/releases/tag/v0.0.1",
+                    "html_url": "https://github.com/dahai80/fusion-mlx/releases/tag/v0.0.1",
                 }
             ],
         )
@@ -114,7 +114,7 @@ class TestCheckUpdate:
             [
                 {
                     "tag_name": "v99.0.0",
-                    "html_url": "https://github.com/jundot/omlx/releases/tag/v99.0.0",
+                    "html_url": "https://github.com/dahai80/fusion-mlx/releases/tag/v99.0.0",
                 }
             ],
         )
@@ -146,7 +146,7 @@ class TestCheckUpdate:
             [
                 {
                     "tag_name": "v99.0.0",
-                    "html_url": "https://github.com/jundot/omlx/releases/tag/v99.0.0",
+                    "html_url": "https://github.com/dahai80/fusion-mlx/releases/tag/v99.0.0",
                 }
             ],
         )
@@ -180,13 +180,13 @@ class TestCheckUpdate:
             [
                 {
                     "tag_name": "v0.4.0rc2",
-                    "html_url": "https://github.com/jundot/omlx/releases/tag/v0.4.0rc2",
+                    "html_url": "https://github.com/dahai80/fusion-mlx/releases/tag/v0.4.0rc2",
                 }
             ],
         )
 
         with (
-            patch("fusion_mlx.admin.routes._omlx_version", "0.4.0rc1"),
+            patch("fusion_mlx.admin.routes._fusionmlx_version", "0.4.0rc1"),
             patch(
                 "fusion_mlx.admin.routes._read_update_channel",
                 return_value="release_candidate",
@@ -209,13 +209,13 @@ class TestCheckUpdate:
             [
                 {
                     "tag_name": "v0.4.0rc2",
-                    "html_url": "https://github.com/jundot/omlx/releases/tag/v0.4.0rc2",
+                    "html_url": "https://github.com/dahai80/fusion-mlx/releases/tag/v0.4.0rc2",
                 }
             ],
         )
 
         with (
-            patch("fusion_mlx.admin.routes._omlx_version", "0.4.0rc1"),
+            patch("fusion_mlx.admin.routes._fusionmlx_version", "0.4.0rc1"),
             patch(
                 "fusion_mlx.admin.routes._read_update_channel", return_value="stable"
             ),
@@ -237,13 +237,13 @@ class TestCheckUpdate:
             [
                 {
                     "tag_name": "v0.4.0",
-                    "html_url": "https://github.com/jundot/omlx/releases/tag/v0.4.0",
+                    "html_url": "https://github.com/dahai80/fusion-mlx/releases/tag/v0.4.0",
                 }
             ],
         )
 
         with (
-            patch("fusion_mlx.admin.routes._omlx_version", "0.4.0rc2"),
+            patch("fusion_mlx.admin.routes._fusionmlx_version", "0.4.0rc2"),
             patch(
                 "fusion_mlx.admin.routes._read_update_channel",
                 return_value="release_candidate",
@@ -265,13 +265,13 @@ class TestCheckUpdate:
             [
                 {
                     "tag_name": "v0.4.1.dev1",
-                    "html_url": "https://github.com/jundot/omlx/releases/tag/v0.4.1.dev1",
+                    "html_url": "https://github.com/dahai80/fusion-mlx/releases/tag/v0.4.1.dev1",
                 }
             ],
         )
 
         with (
-            patch("fusion_mlx.admin.routes._omlx_version", "0.4.0"),
+            patch("fusion_mlx.admin.routes._fusionmlx_version", "0.4.0"),
             patch("fusion_mlx.admin.routes._read_update_channel", return_value="dev"),
             patch("fusion_mlx.admin.routes.asyncio") as mock_asyncio,
         ):
@@ -291,7 +291,7 @@ class TestCheckUpdate:
             [
                 {
                     "tag_name": "v0.4.0rc2",
-                    "html_url": "https://github.com/jundot/omlx/releases/tag/v0.4.0rc2",
+                    "html_url": "https://github.com/dahai80/fusion-mlx/releases/tag/v0.4.0rc2",
                 }
             ],
         )
@@ -305,7 +305,7 @@ class TestCheckUpdate:
             return fake_resp
 
         with (
-            patch("fusion_mlx.admin.routes._omlx_version", "0.4.0rc1"),
+            patch("fusion_mlx.admin.routes._fusionmlx_version", "0.4.0rc1"),
             patch(
                 "fusion_mlx.admin.routes._read_update_channel",
                 side_effect=lambda: next(channels),

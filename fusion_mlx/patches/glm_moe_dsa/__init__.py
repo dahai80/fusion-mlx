@@ -41,11 +41,11 @@ def _missing_fast_symbols() -> list[str]:
 def _register_module() -> None:
     qualname = "mlx_lm.models.glm_moe_dsa"
     existing = sys.modules.get(qualname)
-    if getattr(existing, "_OMLX_GLM_DSA_OPTIMIZED", False):
+    if getattr(existing, "_FUSION_GLM_DSA_OPTIMIZED", False):
         module = existing
     else:
         module = importlib.import_module(f"{__name__}.glm_moe_dsa_model")
-        module._OMLX_GLM_DSA_OPTIMIZED = True
+        module._FUSION_GLM_DSA_OPTIMIZED = True
 
     sys.modules[qualname] = module
 

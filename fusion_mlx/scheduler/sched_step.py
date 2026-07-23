@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 """
-Scheduler for oMLX continuous batching.
+Scheduler for FusionMLX continuous batching.
 
 This module provides a Scheduler class that manages request scheduling
 using mlx-lm's BatchGenerator for efficient continuous batching.
@@ -230,8 +230,8 @@ def step(self) -> SchedulerOutput:
                 # Periodic Metal allocator cleanup during long decodes.
                 # mx.random.categorical inside the sampler allocates a
                 # tiny scalar via gumbel → uniform on every call.
-                # omlx ships its own non-compiled sampler
-                # (omlx/utils/sampling.py) so that RNG state actually
+                # fusion-mlx ships its own non-compiled sampler
+                # (fusion_mlx/utils/sampling.py) so that RNG state actually
                 # advances in the server, but the trade-off is that
                 # those scalars accumulate in the IOGPU residency set
                 # — macOS aborts at ~4096 entries. Long contexts

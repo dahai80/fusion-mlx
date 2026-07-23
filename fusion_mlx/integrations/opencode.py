@@ -33,7 +33,7 @@ class OpenCodeIntegration(Integration):
 
     @staticmethod
     def _modalities_for_model(model_type: str | None) -> dict[str, list[str]]:
-        """Build OpenCode modality metadata for the selected oMLX model."""
+        """Build OpenCode modality metadata for the selected Fusion-MLX model."""
         input_modalities = ["text"]
         if model_type == "vlm":
             input_modalities.append("image")
@@ -56,7 +56,7 @@ class OpenCodeIntegration(Integration):
             config.setdefault("provider", {})
             provider_config = {
                 "npm": "@ai-sdk/openai-compatible",
-                "name": "oMLX",
+                "name": "Fusion-MLX",
                 "options": {
                     "baseURL": f"http://{host}:{port}/v1",
                 },
@@ -76,11 +76,11 @@ class OpenCodeIntegration(Integration):
                         "output": max_tokens or context_window,
                     }
                 provider_config["models"] = {model: model_entry}
-            config["provider"]["omlx"] = provider_config
+            config["provider"]["fusion-mlx"] = provider_config
 
             # Set as default model
             if model:
-                config["model"] = f"omlx/{model}"
+                config["model"] = f"fusion-mlx/{model}"
 
         self._write_json_config(self.CONFIG_PATH, updater)
 

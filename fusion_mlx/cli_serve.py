@@ -653,7 +653,7 @@ def _ensure_model_downloaded(model_name: str) -> None:
     """
     if os.path.exists(model_name):
         return
-    # Bare names (e.g. ``Qwen3.5-9B-4bit``) already cached in the omlx /
+    # Bare names (e.g. ``Qwen3.5-9B-4bit``) already cached in the fusion-mlx /
     # fusion-mlx / HF-snapshot model dirs need no HuggingFace fetch. Reuse
     # the same resolver the server's load_model uses so ``serve --model
     # <bare-name>`` does not attempt a doomed HF lookup for a model that
@@ -920,7 +920,7 @@ def serve_command(args):
             sys.exit(1)
         args.model = args.model_flag
 
-    # FusionMLX macOS app / omlx-style launch: `serve --base-path <dir>` serves
+    # FusionMLX macOS app / fusion-mlx-style launch: `serve --base-path <dir>` serves
     # <dir>/models via the multi-model engine-pool server (the app spawns this
     # with --base-path ~/.fusion-mlx). Mutually exclusive with model selection.
     base_path = getattr(args, "base_path", None)
@@ -948,7 +948,7 @@ def serve_command(args):
     if not getattr(args, "model", None):
         print("Error: serve requires a model or --model-dir/--base-path <dir>.")
         print("  fusion-mlx serve --model Qwen3-4B-Q4_K_M --port 8000")
-        print("  fusion-mlx serve --model-dir ~/.omlx/models --port 11435")
+        print("  fusion-mlx serve --model-dir ~/.fusion-mlx/models --port 11435")
         print("  fusion-mlx serve --base-path ~/.fusion-mlx --port 8000")
         sys.exit(1)
 

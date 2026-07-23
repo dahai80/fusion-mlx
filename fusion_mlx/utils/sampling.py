@@ -1,9 +1,9 @@
 # SPDX-License-Identifier: Apache-2.0
-"""omlx sampling utilities — mx.compile-free re-implementation of mlx-lm samplers.
+"""fusion-mlx sampling utilities — mx.compile-free re-implementation of mlx-lm samplers.
 
 mlx-lm 0.31.x decorates ``categorical_sampling`` and the apply_* helpers with
 ``@partial(mx.compile, inputs=mx.random.state, outputs=mx.random.state)``. In
-the omlx server environment the decorator stops advancing the RNG state after
+the fusion-mlx server environment the decorator stops advancing the RNG state after
 the first call: all subsequent samples reuse the same state, so identical
 prompts produce character-identical output even at temperature > 1. Direct
 calls to the underlying primitives advance the state correctly.

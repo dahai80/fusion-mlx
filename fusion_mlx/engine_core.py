@@ -174,16 +174,16 @@ class EngineConfig:
     # correctness is unchanged. Budget is a TIME ceiling so event-loop pause
     # is bounded consistently across hardware.
     decode_burst_max_steps: int = field(
-        default_factory=lambda: int(os.environ.get("OMLX_DECODE_BURST_MAX_STEPS", "16"))
+        default_factory=lambda: int(os.environ.get("FUSION_DECODE_BURST_MAX_STEPS", "16"))
     )
     decode_burst_budget_single_s: float = field(
         default_factory=lambda: float(
-            os.environ.get("OMLX_DECODE_BURST_BUDGET_SINGLE_S", "0.5")
+            os.environ.get("FUSION_DECODE_BURST_BUDGET_SINGLE_S", "0.5")
         )
     )
     decode_burst_budget_s: float = field(
         default_factory=lambda: float(
-            os.environ.get("OMLX_DECODE_BURST_BUDGET_S", "0.1")
+            os.environ.get("FUSION_DECODE_BURST_BUDGET_S", "0.1")
         )
     )
 
@@ -685,7 +685,6 @@ class EngineCore:
                 )
             )
         self._mark_request_finished(request_id)
-        self._cleanup_request(request_id)
         self._wake_engine_loop()
         return result
 

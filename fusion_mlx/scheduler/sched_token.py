@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 """
-Scheduler for oMLX continuous batching.
+Scheduler for FusionMLX continuous batching.
 
 This module provides a Scheduler class that manages request scheduling
 using mlx-lm's BatchGenerator for efficient continuous batching.
@@ -31,7 +31,7 @@ from mlx_lm.sample_utils import make_logits_processors
 
 from ..prefill_progress import get_prefill_tracker
 from ..request import SamplingParams
-from ..utils.sampling import make_sampler as omlx_make_sampler
+from ..utils.sampling import make_sampler as _make_sampler
 
 if TYPE_CHECKING:
     from ..parsers.output_parser import OutputParserSession
@@ -267,7 +267,7 @@ def _get_xtc_special_tokens(self) -> list[int]:
 
 def _create_batch_generator(self, sampling_params: SamplingParams) -> BatchGenerator:
     """Create a BatchGenerator with the given sampling parameters."""
-    sampler = omlx_make_sampler(
+    sampler = _make_sampler(
         temp=sampling_params.temperature,
         top_p=sampling_params.top_p,
         min_p=sampling_params.min_p,

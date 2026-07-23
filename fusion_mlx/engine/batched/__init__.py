@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """Batched engine for continuous batching with multiple concurrent users.
 
-Adapted from Rapid-MLX / omlx. ``BatchedEngine`` routes requests through
+Adapted from Rapid-MLX / fusion-mlx. ``BatchedEngine`` routes requests through
 ``AsyncEngineCore``. Multimodal (VLM) serving is handled by
 ``VLMBatchedEngine`` (engines/vlm.py); the legacy ``--mllm`` /
 ``MLLMScheduler`` path was removed as dead code (``is_mllm_model`` was a

@@ -45,8 +45,8 @@ class CacheTypeRegistry:
     _class_name_map: dict[str, CacheType] = {
         "KVCache": CacheType.KVCACHE,
         "RotatingKVCache": CacheType.ROTATING_KVCACHE,
-        # omlx subclass that overrides size() to clamp by actual buffer
-        # length (defined in omlx/cache/_rotating_subclass.py). Cache
+        # fusion-mlx subclass that overrides size() to clamp by actual buffer
+        # length (defined in fusion-mlx/cache/_rotating_subclass.py). Cache
         # restore serializes type(cache).__name__, so the registry must
         # recognize this name to route through RotatingKVCacheHandler;
         # otherwise the default handler reconstructs vanilla

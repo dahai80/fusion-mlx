@@ -17,7 +17,7 @@
 
 > **⚠️ This project has been discontinued.**
 >
-> We recommend **[omlx.ai](https://omlx.ai/)** as a better-maintained alternative with everything MLX-GUI offered and more.
+> See fusion-mlx for the actively maintained successor.
 
 <div align="center">
 <img src="media/video.gif" >

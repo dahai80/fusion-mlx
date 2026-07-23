@@ -18,22 +18,22 @@ pinned mlx-lm v0.31.3 (`ed1fca4`) without modifying the upstream package.
 | `cache_extras.py` | PR 1192 `mlx_lm/models/cache.py` lines 903-1447 | PoolingCache + BatchPoolingCache, 1:1 |
 | `utils_patch.py` | adapted from PR 1192 `mlx_lm/utils.py` | replacement `load_model` + `_load_safetensors` |
 | `generate_patch.py` | adapted from PR 1192 `mlx_lm/generate.py` | replacement `_make_cache` |
-| `cache_handlers.py` | omlx-side, new | PoolingCache / BatchPoolingCache handlers for omlx CacheTypeRegistry |
-| `__init__.py` | omlx-side, new | `apply_deepseek_v4_patch()` orchestration |
+| `cache_handlers.py` | fusion-mlx-side, new | PoolingCache / BatchPoolingCache handlers for fusion-mlx CacheTypeRegistry |
+| `__init__.py` | fusion-mlx-side, new | `apply_deepseek_v4_patch()` orchestration |
 
 ## Activation
 
 The patch is gated on `model_type.startswith("deepseek_v4")` in the model's
 `config.json`, dispatched from:
 
-- `omlx/utils/model_loading.py::load_text_model`
-- `omlx/engine/batched.py::BatchedEngine.start` (before `mlx_lm.load`)
+- `fusion_mlx/utils/model_loading.py::load_text_model`
+- `fusion_mlx/engine/batched.py::BatchedEngine.start` (before `mlx_lm.load`)
 
 Other models pay zero cost — the patch never runs.
 
 ## Why monkey-patched, not vendored
 
-omlx pins `mlx-lm` to a git commit; we never modify that package. Adding
+fusion-mlx pins `mlx-lm` to a git commit; we never modify that package. Adding
 DeepSeek V4 by editing `mlx_lm/models/` would diverge from upstream and
 break re-pinning. The patch instead injects the new modules into
 `sys.modules` and replaces a small number of `mlx_lm.utils` /
@@ -43,12 +43,12 @@ break re-pinning. The patch instead injects the new modules into
 
 When mlx-lm merges PR 1192 upstream, simply:
 
-1. `rm -rf omlx/omlx/patches/deepseek_v4/`
+1. `rm -rf fusion_mlx/patches/deepseek_v4/`
 2. Remove the `_maybe_apply_deepseek_v4_patch` calls from
-   `omlx/utils/model_loading.py` and `omlx/engine/batched.py`.
+   `fusion_mlx/utils/model_loading.py` and `fusion_mlx/engine/batched.py`.
 3. Remove the `PoolingCache` / `BatchPoolingCache` lines from
-   `omlx/cache/type_handlers.py::CacheType` and
-   `omlx/cache/type_registry.py::_class_name_map`.
+   `fusion_mlx/cache/type_handlers.py::CacheType` and
+   `fusion_mlx/cache/type_registry.py::_class_name_map`.
 4. Repin `mlx-lm` in `pyproject.toml` to the commit that includes PR 1192.
 
 ## Synchronizing with PR 1192 updates

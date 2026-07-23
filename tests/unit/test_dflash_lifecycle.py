@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Tests for omlx.patches.dflash_lifecycle (issue #1388)."""
+"""Tests for fusion_mlx.patches.dflash_lifecycle (issue #1388)."""
 
 from __future__ import annotations
 
@@ -254,7 +254,7 @@ class TestRealDflashIntegration:
             assert (
                 getattr(
                     target_qwen_gdn,
-                    "_omlx_wrapped__install_full_attention_gqa_hook",
+                    "_fusion_wrapped__install_full_attention_gqa_hook",
                     False,
                 )
                 is True

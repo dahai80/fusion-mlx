@@ -18,23 +18,23 @@ SYNC_LOG = FUSION_ROOT / "downstream" / ".sync_history.json"
 # ---------------------------------------------------------------------------
 
 FORKS = {
-    "omlx": {
-        "root": FUSION_ROOT.parent / "omlx",
-        "remote": "omlx-fork",
+    "fusion-mlx": {
+        "root": FUSION_ROOT.parent / "fusion-mlx",
+        "remote": "fusion-mlx-fork",
         "branch": "fusion-sync",
         "path_mapping": {
-            "fusion_mlx/cache/": "omlx/cache/",
-            "fusion_mlx/engines/": "omlx/engine/",
-            "fusion_mlx/scheduler.py": "omlx/scheduler.py",
-            "fusion_mlx/pool/engine_pool.py": "omlx/engine_pool.py",
-            "fusion_mlx/pool/memory_enforcer.py": "omlx/process_memory_enforcer.py",
-            "fusion_mlx/pool/model_discovery.py": "omlx/model_discovery.py",
-            "fusion_mlx/prefill_progress.py": "omlx/prefill_progress.py",
-            "fusion_mlx/prefill_transient_tracker.py": "omlx/prefill_transient_tracker.py",
-            "fusion_mlx/output_collector.py": "omlx/output_collector.py",
-            "fusion_mlx/request.py": "omlx/request.py",
-            "fusion_mlx/engine_core.py": "omlx/engine_core.py",
-            "fusion_mlx/utils/": "omlx/utils/",
+            "fusion_mlx/cache/": "fusion-mlx/cache/",
+            "fusion_mlx/engines/": "fusion-mlx/engine/",
+            "fusion_mlx/scheduler.py": "fusion-mlx/scheduler.py",
+            "fusion_mlx/pool/engine_pool.py": "fusion-mlx/engine_pool.py",
+            "fusion_mlx/pool/memory_enforcer.py": "fusion-mlx/process_memory_enforcer.py",
+            "fusion_mlx/pool/model_discovery.py": "fusion-mlx/model_discovery.py",
+            "fusion_mlx/prefill_progress.py": "fusion-mlx/prefill_progress.py",
+            "fusion_mlx/prefill_transient_tracker.py": "fusion-mlx/prefill_transient_tracker.py",
+            "fusion_mlx/output_collector.py": "fusion-mlx/output_collector.py",
+            "fusion_mlx/request.py": "fusion-mlx/request.py",
+            "fusion_mlx/engine_core.py": "fusion-mlx/engine_core.py",
+            "fusion_mlx/utils/": "fusion-mlx/utils/",
         },
     },
     "rapid": {

@@ -2,7 +2,7 @@
 """
 Phase split KV handoff — export KV state from prefill engine, import into decode engine.
 
-Enables split-phase requests: prefill on omlx (fast matmul), decode on Rapid-MLX (lightweight KV).
+Enables split-phase requests: prefill on fusion-mlx (fast matmul), decode on Rapid-MLX (lightweight KV).
 The KV cache (prompt_cache + block_table) is transferred between engines as MLX array references
 (Metal buffers), so this is a zero-copy handoff at the GPU level.
 """

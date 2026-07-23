@@ -820,7 +820,7 @@ def extract_tool_calls_with_thinking(
         #    of whether regular text was also produced.  The previous "regular
         #    text means just reasoning" heuristic was wrong for models
         #    (Qwen3-Coder) that genuinely place tool calls in thinking.
-        # See https://github.com/jundot/omlx/issues/1392
+        # See https://github.com/jundot/fusion-mlx/issues/1392
         if tool_calls:
             if tools is None:
                 if regular_content.strip():

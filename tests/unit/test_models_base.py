@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Tests for omlx/models/base_model.py — pure-math helpers used by
-omlx/models/xlm_roberta.py (the reranker model). Pin the masking and
+"""Tests for fusion_mlx/models/base_model.py — pure-math helpers used by
+fusion_mlx/models/xlm_roberta.py (the reranker model). Pin the masking and
 normalization semantics so a refactor doesn't silently change
 embedding output.
 """

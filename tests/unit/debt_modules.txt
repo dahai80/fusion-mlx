@@ -1,7 +1,7 @@
 # Rapid-MLX migration debt - test modules excluded from CI collection.
 #
 # These modules reference prod symbols/modules that were renamed or removed
-# during the omlx/Rapid-MLX migration (commit 0b22ab5, "migration as-is +
+# during the fusion-mlx/Rapid-MLX migration (commit 0b22ab5, "migration as-is +
 # document debt"). Per the migration rule (released guides are the source of
 # truth; rapid-mlx adapts), prod code is NOT modified to satisfy them.
 #
@@ -20,7 +20,6 @@
 # prod contract), not silent.
 
 ## uncollectable (9)
-test_config.py
 test_engine_pool.py
 test_integrations.py
 test_markitdown_integration.py

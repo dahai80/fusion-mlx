@@ -795,7 +795,7 @@ class TestPagedSSDCacheManagerWithMLX:
         assert file_path.exists(), "background writer never produced the file"
 
         _, file_metadata = mx.load(str(file_path), return_metadata=True)
-        assert file_metadata.get("omlx_cache_format_version") == _CACHE_FORMAT_VERSION
+        assert file_metadata.get("fusion_cache_format_version") == _CACHE_FORMAT_VERSION
 
     def test_unversioned_block_is_rejected_at_index_scan(
         self, tmp_path: Path, mock_mlx
@@ -828,7 +828,7 @@ class TestPagedSSDCacheManagerWithMLX:
                 "layer_0_values": mx.zeros((1, 8, 32, 64)),
             },
             metadata={
-                # Intentionally missing omlx_cache_format_version.
+                # Intentionally missing fusion_cache_format_version.
                 "block_hash": block_hash_hex,
                 "token_count": "32",
                 "num_layers": "1",
@@ -878,7 +878,7 @@ class TestPagedSSDCacheManagerWithMLX:
             str(file_path),
             tensors,
             metadata={
-                "omlx_cache_format_version": _CACHE_FORMAT_VERSION,
+                "fusion_cache_format_version": _CACHE_FORMAT_VERSION,
                 "block_hash": block_hash_hex,
                 "token_count": "32",
                 "num_layers": str(num_layers),

@@ -2,7 +2,7 @@
 """
 Tests for cache statistics classes and interface.
 
-This module tests the unified cache statistics for oMLX, including
+This module tests the unified cache statistics for Fusion-MLX, including
 base classes and implementation-specific metrics.
 """
 

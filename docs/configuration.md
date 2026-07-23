@@ -135,7 +135,7 @@ Phase-aware routing with benchmark-based backend selection. Configured via `Rout
 - `BACKGROUND` — Embedding, reranking, offline tasks. Lowest priority, preemptible.
 
 **Phase split example**: A 16K-token prompt with 20% cache hit rate:
-- Prefill runs on omlx (strong matmul for large batches)
+- Prefill runs on fusion-mlx (strong matmul for large batches)
 - Decode runs on Rapid-MLX (lightweight KV operations)
 - KV cache is zero-copy transferred via `PhaseHandoff`
 

@@ -10,7 +10,7 @@ path for Gemma 4 with an external assistant drafter (model_type
 out of ``mlx_vlm.generate`` and into ``mlx_vlm.speculative.utils``, where
 ``_mtp_rounds`` / ``_mtp_rounds_batch`` now live. The functions still
 operate on plain ``mx.array`` state plus an ``mlx_lm`` ``KVCache`` list,
-so omlx can reuse them without porting the algorithm.
+so fusion-mlx can reuse them without porting the algorithm.
 
 This module hides the mlx-vlm internal symbols behind a small, typed
 interface. Anything that needs to change when mlx-vlm rev's its MTP API
@@ -28,7 +28,7 @@ The caller has already run prefill on the target VLM (with
 - ``shared_kv_states``: dict of ``layer_type -> (K, V)`` snapshots.
 - ``first_bonus``: token sampled from the post-prefill logits.
 
-The wrapper itself does not touch omlx scheduler state — it only yields
+The wrapper itself does not touch fusion-mlx scheduler state — it only yields
 generated tokens.
 """
 
@@ -63,7 +63,7 @@ GEMMA4_ASSISTANT_MODEL_TYPES: tuple[str, ...] = ("gemma4_assistant",)
 
 
 class VLMMTPDrafter:
-    """Holds a loaded drafter together with the metadata omlx needs.
+    """Holds a loaded drafter together with the metadata fusion-mlx needs.
 
     ``model.reset(target)`` is intentionally NOT called here: mlx-vlm's
     ``_mtp_rounds`` / ``_mtp_rounds_batch`` call it themselves at the

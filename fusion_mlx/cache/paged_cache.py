@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # Adapted from vllm-mlx (https://github.com/vllm-project/vllm-mlx).
 """
-Paged KV Cache Manager for oMLX.
+Paged KV Cache Manager for FusionMLX.
 
 This module implements block-based paged KV cache management following vLLM's
 architecture (vllm/v1/core/block_pool.py), adapted for MLX on Apple Silicon.
@@ -107,7 +107,7 @@ def compute_block_hash(
         hasher.update(parent_hash)
     else:
         # Use fixed seed for reproducibility
-        hasher.update(b"omlx-root")
+        hasher.update(b"fusion-mlx-root")
 
     # Include token content
     hasher.update(bytes(str(tuple(token_ids)), "utf-8"))
@@ -509,7 +509,7 @@ class PagedCacheManager(CacheManager):
     - O(1) LRU eviction using doubly linked list
 
     Implements the CacheManager ABC interface for consistency with other
-    cache implementations in oMLX.
+    cache implementations in FusionMLX.
 
     Args:
         block_size: Number of tokens per block (default: 64)

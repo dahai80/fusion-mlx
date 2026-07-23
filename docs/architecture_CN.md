@@ -209,7 +209,7 @@ KV 状态的三级缓存：
     - 大量未缓存上下文 → `CloudRouter`
 
 - **SmartRouter** — 阶段感知路由，支持跨引擎交接：
-    - Prefill 在 omlx 上运行（强 matmul 性能），decode 在 Rapid-MLX 上运行（轻量 KV 操作）
+    - Prefill 在 fusion-mlx 上运行（强 matmul 性能），decode 在 MLX 轻量 KV 上运行
     - 基于基准测试的后端选择，EMA 平滑 (alpha=0.7)
     - REALTIME 任务跳过基准路由，避免高延迟后端
     - 阶段分流阈值：8192 未缓存 token 且缓存命中率 <50%

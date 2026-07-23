@@ -87,7 +87,7 @@ Set `"enable_thinking": true` to force thinking mode, or omit to let the model d
 - `tool_choice` (str|dict) — Tool selection strategy
 - `response_format` (dict) — JSON schema for structured output
 - `enable_thinking` (bool) — Enable reasoning/thinking mode
-- `backend_override` (str) — Force specific backend: "omlx", "rapid", "cloud"
+- `backend_override` (str) — Force specific backend: "mlx", "rapid", "cloud"
 - `task_tag` (str) — Priority tag: "claude_code" (REALTIME), "openclaw" (BATCH), "background"
 
 ### `POST /v1/completions`

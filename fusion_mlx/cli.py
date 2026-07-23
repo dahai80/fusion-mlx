@@ -106,7 +106,7 @@ Examples:
         help="Directory containing MLX models (multi-model server). "
         "Mutually exclusive with positional <model>.",
     )
-    # FusionMLX macOS app / omlx-style launch: the app spawns
+    # FusionMLX macOS app / fusion-mlx-style launch: the app spawns
     # `serve --base-path <dir> --port <port>` where <dir> is the app's data
     # home (default ~/.fusion-mlx). Models live at <base-path>/models, so this
     # is an alias for `--model-dir <base-path>/models` routed to the
@@ -116,7 +116,7 @@ Examples:
     serve_parser.add_argument(
         "--base-path",
         default=None,
-        help="Base data directory (FusionMLX app / omlx style); serves "
+        help="Base data directory (FusionMLX app / fusion-mlx style); serves "
         "<base-path>/models via the multi-model server. Mutually exclusive "
         "with <model>/--model/--model-dir.",
     )

@@ -517,10 +517,10 @@ class TestStatsSecurity:
 class TestRuntimeCacheObservability:
 
     def test_runtime_cache_uses_model_scoped_ssd_stats(self):
-        cache_dir = Path("/tmp/omlx-cache")
+        cache_dir = Path("/tmp/fusion-mlx-cache")
 
         mock_settings = MagicMock()
-        mock_settings.base_path = Path("/tmp/omlx-base")
+        mock_settings.base_path = Path("/tmp/fusion-mlx-base")
         mock_settings.cache.get_ssd_cache_dir.return_value = cache_dir
         mock_settings.cache.get_ssd_cache_max_size_bytes.return_value = 0
 
@@ -635,11 +635,11 @@ class TestRuntimeCacheObservability:
         manager_b.get_stats_for_model.assert_called_once_with("/models/model-b")
 
     def test_runtime_cache_uses_global_hot_cache_cap_not_sum(self):
-        cache_dir = Path("/tmp/omlx-cache")
+        cache_dir = Path("/tmp/fusion-mlx-cache")
         hot_cap = 10 * 1024**3
 
         mock_settings = MagicMock()
-        mock_settings.base_path = Path("/tmp/omlx-base")
+        mock_settings.base_path = Path("/tmp/fusion-mlx-base")
         mock_settings.cache.get_ssd_cache_dir.return_value = cache_dir
         mock_settings.cache.get_ssd_cache_max_size_bytes.return_value = 0
 
@@ -704,10 +704,10 @@ class TestRuntimeCacheObservability:
         assert payload["hot_cache_max_bytes"] == 2 * hot_cap
 
     def test_runtime_cache_ignores_single_model_stats_failure(self):
-        cache_dir = Path("/tmp/omlx-cache")
+        cache_dir = Path("/tmp/fusion-mlx-cache")
 
         mock_settings = MagicMock()
-        mock_settings.base_path = Path("/tmp/omlx-base")
+        mock_settings.base_path = Path("/tmp/fusion-mlx-base")
         mock_settings.cache.get_ssd_cache_dir.return_value = cache_dir
         mock_settings.cache.get_ssd_cache_max_size_bytes.return_value = 0
 
@@ -760,10 +760,10 @@ class TestRuntimeCacheObservability:
         assert payload["effective_block_sizes"] == [1024]
 
     def test_runtime_cache_marks_sub_block_cached_when_indexed_blocks_zero(self):
-        cache_dir = Path("/tmp/omlx-cache")
+        cache_dir = Path("/tmp/fusion-mlx-cache")
 
         mock_settings = MagicMock()
-        mock_settings.base_path = Path("/tmp/omlx-base")
+        mock_settings.base_path = Path("/tmp/fusion-mlx-base")
         mock_settings.cache.get_ssd_cache_dir.return_value = cache_dir
         mock_settings.cache.get_ssd_cache_max_size_bytes.return_value = 0
 

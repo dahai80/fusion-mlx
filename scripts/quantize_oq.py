@@ -17,7 +17,7 @@ logging.basicConfig(
 )
 log = logging.getLogger("quantize_oq")
 
-SOURCE = "/Users/dahai/.omlx/models/mlx-community/Qwen3.6-27B-mxfp8"
+SOURCE = "/Users/dahai/.fusion-mlx/models/mlx-community/Qwen3.6-27B-mxfp8"
 MODELS_DIR = Path("/Users/dahai/.fusion-mlx/models")
 
 

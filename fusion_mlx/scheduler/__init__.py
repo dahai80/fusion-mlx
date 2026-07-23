@@ -9,7 +9,7 @@ from . import monkeypatches  # noqa: F401
 from .config import SchedulerConfig, SchedulerOutput, SchedulingPolicy
 from .core import Scheduler
 
-# Backward-compat re-exports: the old monolithic omlx.scheduler exposed these
+# Backward-compat re-exports: the old monolithic fusion_mlx.scheduler exposed these
 # helpers/constants at package level. Tests (and any external callers) still
 # reference them via fusion_mlx.scheduler.X after the submodule split.
 from .helpers import (

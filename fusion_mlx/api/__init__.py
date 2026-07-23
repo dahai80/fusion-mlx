@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 """
-API models, utilities, and tool calling support for oMLX.
+API models, utilities, and tool calling support for FusionMLX.
 
 This module provides shared components used by the server:
 - Pydantic models for OpenAI-compatible API

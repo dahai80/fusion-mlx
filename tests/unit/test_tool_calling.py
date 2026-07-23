@@ -1730,7 +1730,7 @@ class TestThinkingFallbackGuardRegression:
     models it's a genuine invocation.  Guard 2 (name matching) is the
     correct discriminator.
 
-    See https://github.com/jundot/omlx/issues/1392
+    See https://github.com/dahai80/fusion-mlx/issues/1392
     """
 
     def test_known_tool_in_thinking_kept_with_preamble(self):
@@ -2523,7 +2523,7 @@ class TestParseToolCallsGemma4RealParser:
 
     def test_native_parser_rejects_namespaced_names(self):
         """Dispatch contract: mlx-lm's parser raises on colon names, which
-        is what routes #1830's emission into the oMLX fallback."""
+        is what routes #1830's emission into the Fusion-MLX fallback."""
         from mlx_lm.tool_parsers import gemma4 as mlx_gemma4
 
         with pytest.raises(ValueError):

@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "fusion-mlx"
 dynamic = ["version"]
-description = "fusion-mlx — unified local model management for Apple Silicon (omlx + Rapid-MLX)"
+description = "fusion-mlx — unified local model management for Apple Silicon (fusion-mlx (formerly OMLX + Rapid-MLX))"
 readme = "README.md"
 license = {text = "Apache-2.0"}
 requires-python = ">=3.11"

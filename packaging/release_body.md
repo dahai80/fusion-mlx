@@ -14,7 +14,7 @@
 
 ## Integrated (from v0.4.1-wip migration)
 
-Rapid-MLX tool parsers, omlx model patches, oQ quantizer, telemetry, MCP, middleware.
+Rapid-MLX tool parsers, fusion-mlx model patches, oQ quantizer, telemetry, MCP, middleware.
 
 ## Tests
 

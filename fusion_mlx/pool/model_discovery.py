@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 """
-Model discovery for oMLX multi-model serving.
+Model discovery for FusionMLX multi-model serving.
 
 This module scans a model directory and discovers available models,
 estimating memory usage for each.
@@ -88,7 +88,7 @@ VLM_MODEL_TYPES = {
 
 # Text-only model families that are implemented in mlx-vlm rather than
 # mlx-lm. They still use the VLM engine because that path loads mlx-vlm
-# models and adapts their language model to oMLX's scheduler.
+# models and adapts their language model to FusionMLX's scheduler.
 VLM_NATIVE_TEXT_MODEL_TYPES = {
     "cohere2_moe",
     "minimax_m3",
@@ -198,7 +198,7 @@ EMBEDDING_ARCHITECTURES = {
 # Supported reranker architectures
 SUPPORTED_RERANKER_ARCHITECTURES = {
     "ModernBertForSequenceClassification",  # via mlx-embeddings
-    "XLMRobertaForSequenceClassification",  # omlx native implementation
+    "XLMRobertaForSequenceClassification",  # fusion-mlx native implementation
     "JinaForRanking",  # Jina v3 listwise reranker
 }
 
@@ -259,7 +259,7 @@ UNSUPPORTED_ARCHITECTURES: set[str] = set()
 #
 # mlx-audio maintains MODEL_REMAPPING dicts (model_type → module directory)
 # and model directories under mlx_audio/{stt,tts,sts}/models/. We read these
-# at import time so oMLX automatically recognises new audio model families
+# at import time so FusionMLX automatically recognises new audio model families
 # when mlx-audio is updated.  Falls back to static sets when mlx-audio is
 # not installed.
 #
@@ -462,7 +462,7 @@ def _has_sentence_transformers_embedding_pipeline(model_path: Path) -> bool:
     """
     Detect sentence-transformers style embedding exports via modules.json.
 
-    This allows oMLX to recognize embedding exports whose base transformer
+    This allows FusionMLX to recognize embedding exports whose base transformer
     architecture is ambiguous (for example gemma3_text) but which include
     sentence-transformers pooling/normalization modules.
     """
@@ -498,7 +498,7 @@ def _looks_like_nemo_asr_config(config: dict) -> bool:
     NVIDIA Parakeet TDT/CTC MLX conversions keep the original NeMo ASR
     training config instead of a HuggingFace-style ``model_type`` or
     ``architectures`` field.  mlx-audio can load these models by name, but
-    oMLX must still classify them as STT during discovery or they fall through
+    FusionMLX must still classify them as STT during discovery or they fall through
     to the LLM engine and fail with a misleading ``'model_type'`` error.
 
     Only top-level NeMo ASR module targets are considered so multimodal models
@@ -1084,7 +1084,7 @@ def model_directory_write_error(path: Path, *, create: bool = False) -> str | No
 
     try:
         with tempfile.NamedTemporaryFile(
-            prefix=".omlx-write-test-",
+            prefix=".fusion-mlx-write-test-",
             dir=path,
             delete=True,
         ) as f:
@@ -1344,7 +1344,7 @@ def discover_models(model_dir: Path) -> dict[str, DiscoveredModel]:
         if _is_adapter_dir(subdir):
             logger.info(
                 f"Skipping LoRA adapter: {subdir.name} "
-                "(oMLX does not support LoRA/PEFT adapters)"
+                "(FusionMLX does not support LoRA/PEFT adapters)"
             )
         elif _is_model_dir(subdir):
             # Level 1: direct model folder
@@ -1376,7 +1376,7 @@ def discover_models(model_dir: Path) -> dict[str, DiscoveredModel]:
                 if _is_adapter_dir(child):
                     logger.info(
                         f"Skipping LoRA adapter: {child.name} "
-                        "(oMLX does not support LoRA/PEFT adapters)"
+                        "(FusionMLX does not support LoRA/PEFT adapters)"
                     )
                 elif _is_model_dir(child):
                     has_children = True

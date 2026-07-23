@@ -622,7 +622,7 @@ class TestModelInfo:
         info = ModelInfo(id="gpt-4")
         assert info.id == "gpt-4"
         assert info.object == "model"
-        assert info.owned_by == "omlx"
+        assert info.owned_by == "fusion-mlx"
 
     def test_models_response(self):
         resp = ModelsResponse(
