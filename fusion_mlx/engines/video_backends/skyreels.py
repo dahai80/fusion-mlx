@@ -163,12 +163,24 @@ class SkyReelsBackend(VideoBackend):
         def _gen_one() -> bytes:
             pipeline = self._pipeline
             ref_images = [params.image] if params.image else None
-            video = pipeline.generate(
-                prompt=params.prompt,
-                ref_images=ref_images,
-                duration=duration,
-                seed=base_seed,
-            )
+            gen_kwargs: dict = {
+                "prompt": params.prompt,
+                "ref_images": ref_images,
+                "duration": duration,
+                "seed": base_seed,
+            }
+            # IP-Adapter: subject-driven image-to-video
+            if params.ip_adapter_image is not None:
+                gen_kwargs["ip_adapter_image"] = params.ip_adapter_image
+                gen_kwargs["ip_adapter_scale"] = params.ip_adapter_scale
+            # ControlNet: structural guidance via control image
+            if params.controlnet_image is not None:
+                gen_kwargs["controlnet_image"] = params.controlnet_image
+                gen_kwargs["controlnet_strength"] = params.controlnet_strength
+                gen_kwargs["control_type"] = params.control_type
+            if getattr(params, "animatediff_scale", 0.0) > 0:
+                gen_kwargs["animatediff_scale"] = params.animatediff_scale
+            video = pipeline.generate(**gen_kwargs)
             with managed_tempfile_path(
                 prefix="fusion_skyreels_", suffix=".mp4"
             ) as handle:
@@ -203,12 +215,20 @@ class SkyReelsBackend(VideoBackend):
 
         def _gen_one() -> bytes:
             pipeline = self._pipeline
-            video = pipeline.generate(
-                prompt=params.prompt,
-                input_video=params.image,  # V2V 可接受视频路径作为 image
-                duration=duration,
-                seed=base_seed,
-            )
+            gen_kwargs: dict = {
+                "prompt": params.prompt,
+                "input_video": params.image,  # V2V 可接受视频路径作为 image
+                "duration": duration,
+                "seed": base_seed,
+            }
+            # ControlNet: structural guidance via control image
+            if params.controlnet_image is not None:
+                gen_kwargs["controlnet_image"] = params.controlnet_image
+                gen_kwargs["controlnet_strength"] = params.controlnet_strength
+                gen_kwargs["control_type"] = params.control_type
+            if getattr(params, "animatediff_scale", 0.0) > 0:
+                gen_kwargs["animatediff_scale"] = params.animatediff_scale
+            video = pipeline.generate(**gen_kwargs)
             with managed_tempfile_path(
                 prefix="fusion_skyreels_", suffix=".mp4"
             ) as handle:
@@ -244,13 +264,21 @@ class SkyReelsBackend(VideoBackend):
         def _gen_one() -> bytes:
             pipeline = self._pipeline
             # A2V pipeline 需要 audio 和 ref_image 参数
-            video = pipeline.generate(
-                prompt=params.prompt,
-                audio=params.extra.get("audio", ""),
-                ref_image=params.image,
-                duration=duration,
-                seed=base_seed,
-            )
+            gen_kwargs: dict = {
+                "prompt": params.prompt,
+                "audio": params.extra.get("audio", ""),
+                "ref_image": params.image,
+                "duration": duration,
+                "seed": base_seed,
+            }
+            # ControlNet: structural guidance via control image
+            if params.controlnet_image is not None:
+                gen_kwargs["controlnet_image"] = params.controlnet_image
+                gen_kwargs["controlnet_strength"] = params.controlnet_strength
+                gen_kwargs["control_type"] = params.control_type
+            if getattr(params, "animatediff_scale", 0.0) > 0:
+                gen_kwargs["animatediff_scale"] = params.animatediff_scale
+            video = pipeline.generate(**gen_kwargs)
             with managed_tempfile_path(
                 prefix="fusion_skyreels_", suffix=".mp4"
             ) as handle:

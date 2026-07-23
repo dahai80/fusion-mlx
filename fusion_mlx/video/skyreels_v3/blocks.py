@@ -394,6 +394,13 @@ class SkyReelsDiTBlock(nn.Module):
         )
         x = mul_add(x, y, e2)  # x + y*gate
 
+        # ---- 1b. AnimateDiff Motion Module (after self-attn, before temporal) ----
+        # Callers: AnimateDiff adapter inject() sets motion_module attr + animatediff_scale.
+        # No motion_module attr = no change (backward compatible). Scale applied per-block.
+        if hasattr(self, "motion_module") and temporal_len is not None:
+            ad_scale = getattr(self, "animatediff_scale", 1.0)
+            x = x + self.motion_module(x, temporal_len) * ad_scale
+
         # ---- 2. Optional Temporal Attention (时序分支) ----
         if self.has_temporal and temporal_len is not None:
             x_t = self.norm_temporal(x)

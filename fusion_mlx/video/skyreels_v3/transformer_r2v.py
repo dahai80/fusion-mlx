@@ -55,6 +55,7 @@ class SkyReelsR2VDiT(SkyReelsBaseDiT):
         context_lens: list | None = None,
         rope_cos_sin: tuple | None = None,
         attn_mask: mx.array | None = None,
+        controlnet_residuals: list[mx.array] | None = None,
     ) -> mx.array:
         """前向: 视频 latent + 时间步 + 文本 -> 去噪 latent.
 
@@ -67,6 +68,7 @@ class SkyReelsR2VDiT(SkyReelsBaseDiT):
             context_lens: context 长度
             rope_cos_sin: 预计算 rope
             attn_mask: 注意力掩码
+            controlnet_residuals: per-block residuals from ControlNet (optional)
 
         Returns:
             [B, C_out, T, H, W] 去噪 latent
@@ -75,7 +77,15 @@ class SkyReelsR2VDiT(SkyReelsBaseDiT):
         context = self.text_embedding(context)  # [B, L_ctx, dim]
         e = self._time_embed(t)  # [B, dim*6]
         x = self._run_blocks(
-            x, e, seq_lens, grid_sizes, context, context_lens, rope_cos_sin, attn_mask
+            x,
+            e,
+            seq_lens,
+            grid_sizes,
+            context,
+            context_lens,
+            rope_cos_sin,
+            attn_mask,
+            controlnet_residuals=controlnet_residuals,
         )
         out = self.head(x, e)  # [B, L, prod(patch_size)*out_dim]
         out = self._unpatchify(out, grid_sizes)  # [B, C_out, T, H, W]
@@ -92,9 +102,8 @@ class SkyReelsR2VDiT(SkyReelsBaseDiT):
         context_lens: list | None = None,
         rope_cos_sin: tuple | None = None,
         attn_mask: mx.array | None = None,
+        controlnet_residuals: list[mx.array] | None = None,
     ) -> mx.array:
-        # issue #177 Phase-2: layer-pruned draft 前向 (首 n_blocks + 共享 head/patch/time embed).
-        # 与 __call__ 完全一致, 仅 self.blocks[:n_blocks]; n_blocks==num_layers 时 bit-identical.
         x = self.patch_embedding(x)
         context = self.text_embedding(context)
         e = self._time_embed(t)
@@ -108,6 +117,7 @@ class SkyReelsR2VDiT(SkyReelsBaseDiT):
             rope_cos_sin,
             attn_mask,
             n_blocks=n_blocks,
+            controlnet_residuals=controlnet_residuals,
         )
         out = self.head(x, e)
         out = self._unpatchify(out, grid_sizes)

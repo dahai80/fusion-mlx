@@ -65,19 +65,9 @@ class SkyReelsV2VDiT(SkyReelsBaseDiT):
         rope_cos_sin: tuple | None = None,
         attn_mask: mx.array | None = None,
         temporal_len: int | None = None,
+        controlnet_residuals: list[mx.array] | None = None,
     ) -> mx.array:
-        """V2V 前向: 视频 latent + 时间步 + 文本 -> 去噪 latent.
-
-        Args:
-            x: [B, C_in, T, H, W] 视频 latent (含前置帧)
-            t: [B] 时间步
-            context: [B, L_ctx, text_dim] 文本 embedding
-            temporal_len: 时序长度 (帧数), V2V 必传
-
-        Returns:
-            [B, C_out, T, H, W] 去噪 latent (续写部分)
-        """
-        # lazy compile: 首步用原始路径, 触发后切 mx.compile 融合循环
+        """V2V 前向: 视频 latent + 时间步 + 文本 -> 去噪 latent."""
         return self._lazy_call(
             (
                 x,
@@ -89,6 +79,7 @@ class SkyReelsV2VDiT(SkyReelsBaseDiT):
                 rope_cos_sin,
                 attn_mask,
                 temporal_len,
+                controlnet_residuals,
             )
         )
 
@@ -103,6 +94,7 @@ class SkyReelsV2VDiT(SkyReelsBaseDiT):
         rope_cos_sin: tuple | None = None,
         attn_mask: mx.array | None = None,
         temporal_len: int | None = None,
+        controlnet_residuals: list[mx.array] | None = None,
     ) -> mx.array:
         """原始前向路径 (mx.compile 融合目标)."""
         x = self.patch_embedding(x)
@@ -118,6 +110,7 @@ class SkyReelsV2VDiT(SkyReelsBaseDiT):
             rope_cos_sin,
             attn_mask,
             temporal_len=temporal_len,
+            controlnet_residuals=controlnet_residuals,
         )
         out = self.head(x, e)
         out = self._unpatchify(out, grid_sizes)
@@ -135,10 +128,8 @@ class SkyReelsV2VDiT(SkyReelsBaseDiT):
         rope_cos_sin: tuple | None = None,
         attn_mask: mx.array | None = None,
         temporal_len: int | None = None,
+        controlnet_residuals: list[mx.array] | None = None,
     ) -> mx.array:
-        # issue #177 Phase-2: layer-pruned draft 前向 (首 n_blocks + 共享 head/patch/time embed).
-        # 与 __call__ 完全一致, 仅 self.blocks[:n_blocks]; n_blocks==num_layers 时 bit-identical.
-        # CP3: V2V 扩展 forward_partial (不经 lazy compile, draft 路径直跑原始).
         x = self.patch_embedding(x)
         context = self.text_embedding(context)
         e = self._time_embed(t)
@@ -153,6 +144,7 @@ class SkyReelsV2VDiT(SkyReelsBaseDiT):
             attn_mask,
             n_blocks=n_blocks,
             temporal_len=temporal_len,
+            controlnet_residuals=controlnet_residuals,
         )
         out = self.head(x, e)
         out = self._unpatchify(out, grid_sizes)

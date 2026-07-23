@@ -1,14 +1,12 @@
 # SPDX-License-Identifier: Apache-2.0
 # Unit tests for Phase-2 session tail cache (latent_cache.py extensions).
 
-import os
-import pytest
 
 from fusion_mlx.cache.latent_cache import (
-    session_tail_key,
-    session_tail_cache_enabled,
-    put_session_tail,
     get_session_tail,
+    put_session_tail,
+    session_tail_cache_enabled,
+    session_tail_key,
 )
 
 

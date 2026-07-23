@@ -239,9 +239,7 @@ class TestFromPretrained:
             "encoder.block.0.layer.0.SelfAttention.relative_attention_bias.weight"
         ]
         np.testing.assert_allclose(
-            np.array(
-                model.blocks[0].layer0.attn.relative_attention_bias.weight
-            ),
+            np.array(model.blocks[0].layer0.attn.relative_attention_bias.weight),
             hf_bias.T,
             rtol=1e-6,
         )

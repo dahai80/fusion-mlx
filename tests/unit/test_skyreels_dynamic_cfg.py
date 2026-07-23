@@ -107,7 +107,7 @@ def test_denoise_routes_dynamic_cfg(monkeypatch):
 
     seen = []
 
-    def fake_dit(lat, t, ctx, sl, gs):
+    def fake_dit(lat, t, ctx, sl, gs, **kwargs):
         seen.append(int(lat.shape[0]))
         return mx.zeros_like(lat)
 
@@ -133,7 +133,7 @@ def test_denoise_routes_disabled_all_b2(monkeypatch):
 
     seen = []
 
-    def fake_dit(lat, t, ctx, sl, gs):
+    def fake_dit(lat, t, ctx, sl, gs, **kwargs):
         seen.append(int(lat.shape[0]))
         return mx.zeros_like(lat)
 
@@ -160,7 +160,7 @@ def test_denoise_routes_full_keep(monkeypatch):
 
     seen = []
 
-    def fake_dit(lat, t, ctx, sl, gs):
+    def fake_dit(lat, t, ctx, sl, gs, **kwargs):
         seen.append(int(lat.shape[0]))
         return mx.zeros_like(lat)
 

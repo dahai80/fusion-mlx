@@ -165,10 +165,11 @@ class SkyReelsBaseDiT(nn.Module):
         rope_cos_sin: tuple | None,
         attn_mask: mx.array | None,
         n_blocks: int | None = None,
+        controlnet_residuals: list[mx.array] | None = None,
         **block_extra,
     ) -> mx.array:
         blocks = self.blocks if n_blocks is None else self.blocks[:n_blocks]
-        for block in blocks:
+        for idx, block in enumerate(blocks):
             x = block(
                 x,
                 e,
@@ -181,6 +182,8 @@ class SkyReelsBaseDiT(nn.Module):
                 attn_mask=attn_mask,
                 **block_extra,
             )
+            if controlnet_residuals is not None and idx < len(controlnet_residuals):
+                x = x + controlnet_residuals[idx]
         return x
 
     def _unpatchify(self, x: mx.array, grid_sizes: list) -> mx.array:

@@ -165,21 +165,33 @@ class TestImageGenKnobFlow:
                 return "flux2_klein_9b_cfg"
 
         fake_cfg_mod.ModelConfig = ModelConfig
-        fake_flux_mod = types.ModuleType("mflux.models.flux2.variants.txt2img.flux2_klein")
+        fake_flux_mod = types.ModuleType(
+            "mflux.models.flux2.variants.txt2img.flux2_klein"
+        )
         fake_flux_mod.Flux2Klein = FakeFlux
         fake_mflux = types.ModuleType("mflux")
         fake_mflux_pkg_models = types.ModuleType("mflux.models")
         fake_mflux_pkg_common = types.ModuleType("mflux.models.common")
         fake_mflux_pkg_flux2 = types.ModuleType("mflux.models.flux2")
         fake_mflux_pkg_flux2_variants = types.ModuleType("mflux.models.flux2.variants")
-        fake_mflux_pkg_flux2_variants_txt2img = types.ModuleType("mflux.models.flux2.variants.txt2img")
+        fake_mflux_pkg_flux2_variants_txt2img = types.ModuleType(
+            "mflux.models.flux2.variants.txt2img"
+        )
         monkeypatch.setitem(sys.modules, "mflux", fake_mflux)
         monkeypatch.setitem(sys.modules, "mflux.models", fake_mflux_pkg_models)
         monkeypatch.setitem(sys.modules, "mflux.models.common", fake_mflux_pkg_common)
-        monkeypatch.setitem(sys.modules, "mflux.models.common.config.model_config", fake_cfg_mod)
+        monkeypatch.setitem(
+            sys.modules, "mflux.models.common.config.model_config", fake_cfg_mod
+        )
         monkeypatch.setitem(sys.modules, "mflux.models.flux2", fake_mflux_pkg_flux2)
-        monkeypatch.setitem(sys.modules, "mflux.models.flux2.variants", fake_mflux_pkg_flux2_variants)
-        monkeypatch.setitem(sys.modules, "mflux.models.flux2.variants.txt2img", fake_mflux_pkg_flux2_variants_txt2img)
+        monkeypatch.setitem(
+            sys.modules, "mflux.models.flux2.variants", fake_mflux_pkg_flux2_variants
+        )
+        monkeypatch.setitem(
+            sys.modules,
+            "mflux.models.flux2.variants.txt2img",
+            fake_mflux_pkg_flux2_variants_txt2img,
+        )
         monkeypatch.setitem(
             sys.modules,
             "mflux.models.flux2.variants.txt2img.flux2_klein",

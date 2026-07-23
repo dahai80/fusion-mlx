@@ -407,8 +407,9 @@ def load_text_encoder_weights(
     weights = {k: v.astype(mx.bfloat16) for k, v in weights.items()}
 
     # 仅保留 UMT5 相关 key (过滤 DiT blocks.* 等无关权重)
-    umt5_keys = {k: v for k, v in weights.items()
-                 if k.startswith(("encoder.", "shared."))}
+    umt5_keys = {
+        k: v for k, v in weights.items() if k.startswith(("encoder.", "shared."))
+    }
     if not umt5_keys:
         logger.warning("UMT5 权重中无 encoder.*/shared.* key, 跳过映射")
         return encoder
@@ -418,6 +419,7 @@ def load_text_encoder_weights(
     # HuggingFace 格式: encoder.block.N.layer.M.SelfAttention.k.weight
     # MLX 模型格式:     encoder.block_N.layer0.attn.k.weight
     import re
+
     remapped = {}
     for k, v in weights.items():
         nk = k
@@ -445,26 +447,30 @@ def load_text_encoder_weights(
                             # block 1+ 无 relative_attention_bias, 仅 pos_embedding
                             remapped[f"{new_prefix}.pos_embedding.embedding.weight"] = v
                             nk = None
-                    elif rest in ("SelfAttention.q.weight",
-                                  "SelfAttention.k.weight",
-                                  "SelfAttention.v.weight",
-                                  "SelfAttention.o.weight"):
+                    elif rest in (
+                        "SelfAttention.q.weight",
+                        "SelfAttention.k.weight",
+                        "SelfAttention.v.weight",
+                        "SelfAttention.o.weight",
+                    ):
                         # HF T5 线性层 (d_model, inner), MLX nn.Linear 期望 (inner, d_model)
                         v = mx.transpose(v)
-                        attr = rest[len("SelfAttention."):]
+                        attr = rest[len("SelfAttention.") :]
                         nk = f"{new_prefix}.attn.{attr}"
                     elif rest.startswith("SelfAttention."):
-                        attr = rest[len("SelfAttention."):]
+                        attr = rest[len("SelfAttention.") :]
                         nk = f"{new_prefix}.attn.{attr}"
                     elif rest.startswith("layer_norm."):
-                        attr = rest[len("layer_norm."):]
+                        attr = rest[len("layer_norm.") :]
                         nk = f"{new_prefix}.norm1.{attr}"
                     else:
                         nk = f"{new_prefix}.{rest}"
                 elif layer_n == "1":
-                    if rest in ("DenseReluDense.wi_0.weight",
-                                "DenseReluDense.wi_1.weight",
-                                "DenseReluDense.wo.weight"):
+                    if rest in (
+                        "DenseReluDense.wi_0.weight",
+                        "DenseReluDense.wi_1.weight",
+                        "DenseReluDense.wo.weight",
+                    ):
                         # HF T5 FFN 线性层也需转置: (in, out) → (out, in)
                         v = mx.transpose(v)
                         if rest == "DenseReluDense.wi_0.weight":
@@ -474,7 +480,7 @@ def load_text_encoder_weights(
                         else:
                             nk = f"{new_prefix}.ffn.fc2.weight"
                     elif rest.startswith("layer_norm."):
-                        attr = rest[len("layer_norm."):]
+                        attr = rest[len("layer_norm.") :]
                         nk = f"{new_prefix}.norm2.{attr}"
                     else:
                         nk = f"{new_prefix}.{rest}"
@@ -503,7 +509,9 @@ def load_text_encoder_weights(
             try:
                 encoder.load_weights(list(weights.items()), strict=False)
                 _eval_params_batched(encoder, batch_mb=512)
-                logger.info("UMT5 权重加载成功 (strict=False 降级): %d tensors", len(weights))
+                logger.info(
+                    "UMT5 权重加载成功 (strict=False 降级): %d tensors", len(weights)
+                )
             except Exception as exc2:
                 logger.error("UMT5 权重加载彻底失败: %s", exc2)
 

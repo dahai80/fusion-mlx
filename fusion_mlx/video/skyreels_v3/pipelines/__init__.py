@@ -24,6 +24,7 @@ from typing import Any
 import mlx.core as mx
 import mlx.nn as nn
 
+from ...adapters import create_adapter
 from .. import _device
 from ..m5_optimizer import M5Optimizer
 from ..scheduler.fm_solvers_unipc import (
@@ -88,6 +89,14 @@ class SkyReelsPipelineConfig:
     # text_len: 文本 token 上限 (context 中 txt 段长度)
     text_dim: int = 4096
     text_len: int = 512
+
+    # ControlNet 参数
+    controlnet_image: str | None = None
+    controlnet_strength: float = 1.0
+    control_type: str = "canny"  # canny / depth / pose / raw
+
+    # AnimateDiff 参数
+    animatediff_scale: float = 0.0  # 0=off, >0=on (1.0=normal, 0.5=subtle, 2.0=strong)
 
     # 优化开关
     use_m5_optimizer: bool = True
@@ -392,17 +401,72 @@ class SkyReelsBasePipeline:
         self,
         prompt: str,
         ref_images: list[Any] | None = None,
+        ip_adapter_image: str | None = None,
+        ip_adapter_scale: float = 1.0,
     ) -> mx.array:
-        """编码完整 context (prompt + 参考图).
+        """编码完整 context (prompt + 参考图 + IP-Adapter).
 
         AtomCode fix #139 (2026-07-20): context 维度 = text_dim (4096), 非 dim (5120).
         DiT text_embedding = Linear(text_dim=4096 -> dim=5120) 在 __call__ 内做投影,
         喂入 DiT 的 context 必须是 text_dim. 原返回 5120-dim 致 text_embedding.0 输入维度
         错配 (5120 vs 期望 4096), 连锁触发 #137 自动检测误判 / #138 bias 截断 / #139 matmul 错配.
+
+        IP-Adapter: 当 ip_adapter_image 提供时, CLIP-Vision 编码图像 -> projection MLP ->
+        [B, 257, text_dim] image tokens 前置于 text context, 实现 subject-driven generation.
         """
-        b = 1
-        l = 257 + 512  # img + text
-        return mx.zeros((b, l, self.config.text_dim))
+        # 1. 编码文本 prompt (真实 UMT5)
+        text_embed = self._encode_text(prompt)
+
+        # 2. 构建基础 context: CLIP 图像占位 (257 tokens) + 文本 (512 tokens)
+        # CLIP 图像占位: 与 UMT5 text_dim 对齐的零张量
+        b = text_embed.shape[0] if text_embed.ndim == 3 else 1
+        clip_placeholder = mx.zeros((b, 257, self.config.text_dim))
+
+        # text_embed: [1, L_valid, d_model] -> pad to text_len (512)
+        if text_embed.ndim == 3:
+            l_valid = text_embed.shape[1]
+            if l_valid < self.config.text_len:
+                padding = mx.zeros(
+                    (b, self.config.text_len - l_valid, self.config.text_dim)
+                )
+                text_padded = mx.concatenate([text_embed, padding], axis=1)
+            else:
+                text_padded = text_embed[:, : self.config.text_len, :]
+        else:
+            text_padded = mx.zeros((b, self.config.text_len, self.config.text_dim))
+
+        context = mx.concatenate([clip_placeholder, text_padded], axis=1)
+
+        # 3. IP-Adapter: 替换 CLIP 占位为真实图像特征
+        if ip_adapter_image is not None:
+            try:
+                adapter = create_adapter(
+                    "ip_adapter",
+                    scale=ip_adapter_scale,
+                    image=ip_adapter_image,
+                    config={"text_dim": self.config.text_dim},
+                )
+                if adapter is not None:
+                    # load from same model path as pipeline
+                    adapter.load(str(self.model_path))
+                    context = adapter.modify_context(
+                        text_padded,
+                        image=ip_adapter_image,
+                    )
+                    # context now: [B, 257+L_text, text_dim] with real image tokens
+                    logger.info(
+                        "IP-Adapter: context shape=%s (image=%s scale=%.2f)",
+                        list(context.shape),
+                        ip_adapter_image,
+                        ip_adapter_scale,
+                    )
+                    adapter.unload()
+                else:
+                    logger.warning("IP-Adapter: create_adapter returned None")
+            except Exception as exc:
+                logger.warning("IP-Adapter: failed, using text-only context: %s", exc)
+
+        return context
 
     def _denoise_sample(
         self,
@@ -432,7 +496,6 @@ class SkyReelsBasePipeline:
             return self._denoise_sample_async(
                 latents, context, seq_lens=seq_lens, grid_sizes=grid_sizes
             )
-
 
         if self.dit is None or self.step_strategy is None:
             raise RuntimeError("DiT or step strategy not loaded")
@@ -473,6 +536,61 @@ class SkyReelsBasePipeline:
         # b=1 步 DiT 前向算力减半; mx.compile 按 input shape 缓存, b=1/b=2 各编译一次.
         cfg_keep_steps = self._cfg_keep_steps(n_steps)
 
+        # ControlNet: 加载适配器 (如果有 control_image 参数)
+        cn_adapter = None
+        cn_control_image = getattr(self.config, "controlnet_image", None)
+        cn_control_type = getattr(self.config, "control_type", "canny")
+        cn_strength = getattr(self.config, "controlnet_strength", 1.0)
+        if cn_control_image is not None:
+            try:
+                from ..adapters import create_adapter
+
+                cn_adapter = create_adapter(
+                    "controlnet",
+                    scale=cn_strength,
+                    image=cn_control_image,
+                    config={
+                        "dim": self.dit.dim,
+                        "text_dim": self.dit.text_dim,
+                        "control_type": cn_control_type,
+                    },
+                )
+                if cn_adapter is not None:
+                    cn_adapter.load(str(self.model_path))
+                    logger.info(
+                        "ControlNet: active type=%s strength=%.2f image=%s",
+                        cn_control_type,
+                        cn_strength,
+                        cn_control_image,
+                    )
+            except Exception as exc:
+                logger.warning("ControlNet: load failed, skipping: %s", exc)
+                cn_adapter = None
+
+        # AnimateDiff: 加载适配器 (如果 animatediff_scale > 0)
+        ad_adapter = None
+        ad_scale = getattr(self.config, "animatediff_scale", 0.0)
+        if ad_scale > 0:
+            try:
+                from ..adapters import create_adapter
+
+                ad_adapter = create_adapter(
+                    "animatediff",
+                    scale=ad_scale,
+                    config={
+                        "dim": self.dit.dim,
+                        "num_heads": getattr(self.dit, "num_heads", 40),
+                        "num_layers": self.dit._num_blocks,
+                    },
+                )
+                if ad_adapter is not None:
+                    ad_adapter.load(str(self.model_path))
+                    ad_adapter.inject(self.dit)
+                    logger.info("AnimateDiff: active scale=%.2f", ad_scale)
+            except Exception as exc:
+                logger.warning("AnimateDiff: load failed, skipping: %s", exc)
+                ad_adapter = None
+
         for step_idx, t in enumerate(timesteps):
             # 设置当前步 (xfuser 步级策略)
             self.step_strategy.set_current_step(step_idx)
@@ -501,6 +619,27 @@ class SkyReelsBasePipeline:
                 "on" if run_cfg else "off(cond-only)",
             )
 
+            # ControlNet: 计算每步残差 (control image + t + context -> per-block residuals)
+            cn_residuals = None
+            if cn_adapter is not None:
+                try:
+                    cn_adapter.modify_denoise_step(
+                        self.dit,
+                        latents,
+                        t_mx,
+                        context,
+                        control_image=cn_control_image,
+                        control_type=cn_control_type,
+                    )
+                    cn_residuals = cn_adapter.get_residuals()
+                    if cn_residuals is not None and run_cfg:
+                        cn_residuals = [mx.concatenate([r] * 2) for r in cn_residuals]
+                except Exception as exc:
+                    logger.warning(
+                        "ControlNet: step %d residual failed: %s", step_idx, exc
+                    )
+                    cn_residuals = None
+
             # 模型前向
             noise_pred = self.dit(
                 latent_input,
@@ -508,6 +647,7 @@ class SkyReelsBasePipeline:
                 context_input,
                 cfg_seq_lens,
                 cfg_grid_sizes,
+                controlnet_residuals=cn_residuals,
             )
 
             # CFG 合并 (仅 b=2 步; b=1 步 noise_pred 已是 cond, guidance=1.0)
@@ -542,6 +682,24 @@ class SkyReelsBasePipeline:
             logger.info("denoise: step=%d/%d t=%.4f", step_idx + 1, n_steps, float(t))
 
         logger.info("denoise: done steps=%d", n_steps)
+
+        # ControlNet: cleanup
+        if cn_adapter is not None:
+            try:
+                cn_adapter.unload()
+            except Exception:
+                pass
+            cn_adapter = None
+
+        # AnimateDiff: cleanup (remove motion modules from DiT blocks)
+        if ad_adapter is not None:
+            try:
+                ad_adapter.remove(self.dit)
+                ad_adapter.unload()
+            except Exception:
+                pass
+            ad_adapter = None
+
         return latents
 
     def _denoise_sample_async(
@@ -659,7 +817,6 @@ class SkyReelsBasePipeline:
         mx.synchronize()
         logger.info("denoise(async): done steps=%d synced", n_steps)
         return latents
-
 
     def _denoise_sample_speculative(
         self,
@@ -781,6 +938,12 @@ class SkyReelsR2VPipeline(SkyReelsBasePipeline):
         duration: int = 5,
         *,
         seed: int | None = None,
+        ip_adapter_image: str | None = None,
+        ip_adapter_scale: float = 1.0,
+        controlnet_image: str | None = None,
+        controlnet_strength: float = 1.0,
+        control_type: str = "canny",
+        animatediff_scale: float = 0.0,
     ) -> mx.array:
         """生成视频.
 
@@ -789,6 +952,8 @@ class SkyReelsR2VPipeline(SkyReelsBasePipeline):
             ref_images: 1~4 张参考图 (PIL Image)
             duration: 视频时长 (秒)
             seed: 随机种子
+            ip_adapter_image: IP-Adapter 参考图路径 (subject-driven generation)
+            ip_adapter_scale: IP-Adapter 缩放因子 (默认 1.0)
 
         Returns:
             [B, 3, T, H, W] 视频帧 (像素 [0, 1])
@@ -802,8 +967,21 @@ class SkyReelsR2VPipeline(SkyReelsBasePipeline):
             mx.random.seed(seed)
             cfg.seed = seed
 
-        # 1. 编码 context (prompt + 参考图)
-        context = self._encode_context(prompt, ref_images)
+        # ControlNet: 写入 config 供 _denoise_sample 读取
+        cfg.controlnet_image = controlnet_image
+        cfg.controlnet_strength = controlnet_strength
+        cfg.control_type = control_type
+
+        # AnimateDiff: 写入 config 供 _denoise_sample 读取
+        cfg.animatediff_scale = animatediff_scale
+
+        # 1. 编码 context (prompt + 参考图 + IP-Adapter)
+        context = self._encode_context(
+            prompt,
+            ref_images,
+            ip_adapter_image=ip_adapter_image,
+            ip_adapter_scale=ip_adapter_scale,
+        )
 
         # 2. 初始化 latent 噪声
         # VAE 下采样 8x (vae.py patch_size=(1,8,8)): 720P latent [B,16,T,90,160]
@@ -886,6 +1064,10 @@ class SkyReelsV2VPipeline(SkyReelsBasePipeline):
         duration: int = 30,
         *,
         seed: int | None = None,
+        controlnet_image: str | None = None,
+        controlnet_strength: float = 1.0,
+        control_type: str = "canny",
+        animatediff_scale: float = 0.0,
     ) -> mx.array:
         """续写视频.
 
@@ -904,10 +1086,16 @@ class SkyReelsV2VPipeline(SkyReelsBasePipeline):
         if seed is not None:
             mx.random.seed(seed)
 
+        # ControlNet: 写入 config 供 _denoise_sample 读取
+        cfg.controlnet_image = controlnet_image
+        cfg.controlnet_strength = controlnet_strength
+        cfg.control_type = control_type
+
+        # AnimateDiff: 写入 config 供 _denoise_sample 读取
+        cfg.animatediff_scale = animatediff_scale
+
         # 1. 编码 context
         context = self._encode_context(prompt)
-
-        # 2. 初始化 latent (含前置帧)
         b = 1
         latent_h = cfg.height // 8
         latent_w = cfg.width // 8
@@ -980,6 +1168,10 @@ class SkyReelsA2VPipeline(SkyReelsBasePipeline):
         duration: int = 10,
         *,
         seed: int | None = None,
+        controlnet_image: str | None = None,
+        controlnet_strength: float = 1.0,
+        control_type: str = "canny",
+        animatediff_scale: float = 0.0,
     ) -> mx.array:
         """生成数字人说话视频.
 
@@ -998,6 +1190,14 @@ class SkyReelsA2VPipeline(SkyReelsBasePipeline):
 
         if seed is not None:
             mx.random.seed(seed)
+
+        # ControlNet: 写入 config 供 _denoise_sample 读取
+        cfg.controlnet_image = controlnet_image
+        cfg.controlnet_strength = controlnet_strength
+        cfg.control_type = control_type
+
+        # AnimateDiff: 写入 config 供 _denoise_sample 读取
+        cfg.animatediff_scale = animatediff_scale
 
         # 1. 编码音频 (wav2vec2) + 文本 (xlm_roberta)
         # 简化: 用零张量作为 stub

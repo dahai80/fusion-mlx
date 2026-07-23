@@ -72,6 +72,20 @@ class VideoGenerateRequest(BaseModel):
     # Session ID for multi-shot latent reuse (Phase-2 UMA Radix Latent cache).
     # Same session_id across sequential requests enables tail→first-frame reuse.
     session_id: str | None = None
+    # IP-Adapter: subject-driven image-to-video generation.
+    # ip_adapter_image: reference image path/URL/data-URI for IP-Adapter.
+    # ip_adapter_scale: strength of image conditioning (0.0-2.0, default 1.0).
+    ip_adapter_image: str | None = None
+    ip_adapter_scale: float = Field(default=1.0, ge=0.0, le=2.0)
+    # ControlNet: structural guidance via control image (Canny/depth/pose).
+    # controlnet_image: path/URL/data-URI for the control image.
+    # controlnet_strength: strength of structural conditioning (0.0-2.0, default 1.0).
+    # control_type: type of control image preprocessing ("canny", "depth", "pose", "raw").
+    controlnet_image: str | None = None
+    controlnet_strength: float = Field(default=1.0, ge=0.0, le=2.0)
+    control_type: str = Field(default="canny", pattern="^(canny|depth|pose|raw)$")
+    # AnimateDiff: temporal motion module strength (0=off, >0=on, 1.0=normal).
+    animatediff_scale: float = Field(default=0.0, ge=0.0, le=2.0)
 
 
 class VideoOutput(BaseModel):
@@ -139,6 +153,10 @@ async def generate_video(request: VideoGenerateRequest) -> VideoGenerateResponse
         # Resolve I2V image to a local path (400 on resolve failure).
         image_path: str | None = None
         image_is_temp = False
+        ip_path: str | None = None
+        ip_is_temp = False
+        cn_path: str | None = None
+        cn_is_temp = False
         if request.image:
             try:
                 image_path, image_is_temp = _resolve_image_to_path(request.image)
@@ -190,6 +208,20 @@ async def generate_video(request: VideoGenerateRequest) -> VideoGenerateResponse
                 gen_kwargs["enhance_prompt"] = request.enhance_prompt
             if request.session_id is not None:
                 gen_kwargs["session_id"] = request.session_id
+            if request.ip_adapter_image is not None:
+                ip_path, ip_is_temp = _resolve_image_to_path(request.ip_adapter_image)
+                gen_kwargs["ip_adapter_image"] = ip_path
+            if request.ip_adapter_scale != 1.0:
+                gen_kwargs["ip_adapter_scale"] = request.ip_adapter_scale
+            if request.controlnet_image is not None:
+                cn_path, cn_is_temp = _resolve_image_to_path(request.controlnet_image)
+                gen_kwargs["controlnet_image"] = cn_path
+            if request.controlnet_strength != 1.0:
+                gen_kwargs["controlnet_strength"] = request.controlnet_strength
+            if request.control_type != "canny":
+                gen_kwargs["control_type"] = request.control_type
+            if request.animatediff_scale > 0:
+                gen_kwargs["animatediff_scale"] = request.animatediff_scale
 
             video_bytes_list = await engine.generate(**gen_kwargs)
             outputs = [
@@ -203,6 +235,20 @@ async def generate_video(request: VideoGenerateRequest) -> VideoGenerateResponse
                     os.unlink(image_path)
                 except OSError:
                     logger.warning("failed to unlink temp image: %s", image_path)
+            if ip_is_temp and ip_path:
+                try:
+                    os.unlink(ip_path)
+                except OSError:
+                    logger.warning(
+                        "failed to unlink temp ip_adapter image: %s", ip_path
+                    )
+            if cn_is_temp and cn_path:
+                try:
+                    os.unlink(cn_path)
+                except OSError:
+                    logger.warning(
+                        "failed to unlink temp controlnet image: %s", cn_path
+                    )
 
     except HTTPException:
         raise

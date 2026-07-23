@@ -1,5 +1,6 @@
 import argparse
 import gc
+import logging
 import math
 import random
 import time
@@ -9,6 +10,8 @@ from pathlib import Path
 import mlx.core as mx
 import numpy as np
 from tqdm import tqdm
+
+logger = logging.getLogger(__name__)
 
 from fusion_mlx.cache.latent_cache import (
     get_image_latent_cache,

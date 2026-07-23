@@ -447,6 +447,46 @@ FUSION_DIFFUSION_TEXT_CACHE=0 fusion-mlx serve --model SkyReels-V3-R2V-14B-MLX  
 > sequence), so prefix-hidden-state reuse corrupts output, unlike causal decoder
 > LLMs; full-key caching is the correct approach.
 
+<!-- Video Adapters section: documents IP-Adapter, ControlNet, AnimateDiff adapters.
+  Importers: fusion_mlx.video.adapters.{ip_adapter,controlnet,animatediff}
+  Callers: SkyReelsPipelineConfig, VideoGenParams, VideoGenerateRequest
+  API: POST /v1/videos/generate {ip_adapter_image, ip_adapter_scale, controlnet_image,
+       controlnet_strength, control_type, animatediff_scale}
+  User instruction: "Continue the conversation from where it left off" (README update was pending task) -->
+
+### Video Adapters (IP-Adapter / ControlNet / AnimateDiff)
+
+Three pluggable video adapters modify the denoising process for conditioned generation:
+
+| Adapter | Mechanism | API parameter | Default |
+|---|---|---|---|
+| **IP-Adapter** | CLIP-Vision image encoder + projection MLP → prepend image tokens to text context | `ip_adapter_image`, `ip_adapter_scale` | off |
+| **ControlNet** | Parallel smaller DiT → per-block residuals injected into main DiT | `controlnet_image`, `controlnet_strength`, `control_type` | off |
+| **AnimateDiff** | Temporal motion modules injected into DiT blocks (after self-attention) | `animatediff_scale` | 0 (off) |
+
+**Usage (API):**
+
+```bash
+# IP-Adapter: subject-driven image-to-video
+curl -X POST /v1/videos/generate -d '{
+  "prompt": "a cat walking", "ip_adapter_image": "/path/to/cat.jpg", "ip_adapter_scale": 1.0
+}'
+
+# ControlNet: structural guidance (Canny/depth/pose)
+curl -X POST /v1/videos/generate -d '{
+  "prompt": "a person dancing", "controlnet_image": "/path/to/pose.png",
+  "control_type": "pose", "controlnet_strength": 1.0
+}'
+
+# AnimateDiff: enhanced temporal coherence
+curl -X POST /v1/videos/generate -d '{
+  "prompt": "ocean waves", "animatediff_scale": 1.0
+}'
+```
+
+All adapters use zero-initialized output projections (identity at start), are backward-compatible
+(adapter not present = no behavior change), and can be combined simultaneously.
+
 ### Speculative Denoise (#177)
 
 A diffusion analog of LLM speculative decoding: a layer-pruned draft DiT (first M

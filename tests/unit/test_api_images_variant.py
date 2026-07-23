@@ -1,4 +1,3 @@
-
 from fusion_mlx.api.images import ImageGenerateRequest
 
 

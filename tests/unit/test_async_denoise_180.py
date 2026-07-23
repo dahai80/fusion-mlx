@@ -41,7 +41,7 @@ class _MockDiT:
     def __init__(self, scale: float = 0.05):
         self.scale = scale
 
-    def __call__(self, latent_input, t_mx, context_input, cfg_seq_lens, cfg_grid_sizes):
+    def __call__(self, latent_input, t_mx, context_input, cfg_seq_lens, cfg_grid_sizes, **kwargs):
         return -latent_input * self.scale
 
 

@@ -54,6 +54,19 @@ class VideoGenParams:
     # Session ID for multi-shot latent reuse (Phase-2 UMA Radix Latent cache).
     # Same session_id across sequential requests enables tail→first-frame reuse.
     session_id: str | None = None
+    # IP-Adapter: image path + scale for subject-driven generation.
+    # IP-Adapter prepends projected CLIP-vision image tokens to text context,
+    # enabling subject-preserving image-to-video without DiT architecture change.
+    ip_adapter_image: str | None = None
+    ip_adapter_scale: float = 1.0
+    # ControlNet: structural guidance via control image (Canny/depth/pose).
+    # Control image is processed by a parallel DiT producing per-block residuals
+    # injected into the main DiT's forward pass for structure-preserving generation.
+    controlnet_image: str | None = None
+    controlnet_strength: float = 1.0
+    control_type: str = "canny"
+    # AnimateDiff: temporal motion module scale (0=off, >0=on).
+    animatediff_scale: float = 0.0
     extra: dict[str, Any] = field(default_factory=dict)
 
 

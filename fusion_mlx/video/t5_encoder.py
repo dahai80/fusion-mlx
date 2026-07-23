@@ -330,9 +330,7 @@ def _map_t5_weights(raw: dict) -> dict:
         elif k == "encoder.final_layer_norm.weight":
             out["norm.weight"] = v
         elif k.startswith("encoder.block."):
-            m = re.match(
-                r"encoder\.block\.(\d+)\.layer\.(\d+)\.(.+)", k
-            )
+            m = re.match(r"encoder\.block\.(\d+)\.layer\.(\d+)\.(.+)", k)
             if m:
                 block_n, layer_n, rest = m.group(1), m.group(2), m.group(3)
                 new_prefix = f"block_{block_n}.layer{layer_n}"
@@ -344,26 +342,30 @@ def _map_t5_weights(raw: dict) -> dict:
                         # T5Encoder 只给 block_0 设 has_bias=True
                         if block_n == "0":
                             out[f"{new_prefix}.attn.relative_attention_bias.weight"] = v
-                    elif rest in ("SelfAttention.q.weight",
-                                  "SelfAttention.k.weight",
-                                  "SelfAttention.v.weight",
-                                  "SelfAttention.o.weight"):
+                    elif rest in (
+                        "SelfAttention.q.weight",
+                        "SelfAttention.k.weight",
+                        "SelfAttention.v.weight",
+                        "SelfAttention.o.weight",
+                    ):
                         # HF T5 线性层 (d_model, inner), MLX nn.Linear 期望 (inner, d_model)
                         v = v.T if hasattr(v, "T") else v
-                        attr = rest[len("SelfAttention."):]
+                        attr = rest[len("SelfAttention.") :]
                         out[f"{new_prefix}.attn.{attr}"] = v
                     elif rest.startswith("SelfAttention."):
-                        attr = rest[len("SelfAttention."):]
+                        attr = rest[len("SelfAttention.") :]
                         out[f"{new_prefix}.attn.{attr}"] = v
                     elif rest.startswith("layer_norm."):
-                        attr = rest[len("layer_norm."):]
+                        attr = rest[len("layer_norm.") :]
                         out[f"{new_prefix}.norm1.{attr}"] = v
                     else:
                         out[f"{new_prefix}.{rest}"] = v
                 elif layer_n == "1":
-                    if rest in ("DenseReluDense.wi_0.weight",
-                                "DenseReluDense.wi_1.weight",
-                                "DenseReluDense.wo.weight"):
+                    if rest in (
+                        "DenseReluDense.wi_0.weight",
+                        "DenseReluDense.wi_1.weight",
+                        "DenseReluDense.wo.weight",
+                    ):
                         # HF T5 FFN 线性层也需转置: (in, out) → (out, in)
                         v = v.T if hasattr(v, "T") else v
                         if rest == "DenseReluDense.wi_0.weight":
@@ -373,7 +375,7 @@ def _map_t5_weights(raw: dict) -> dict:
                         else:
                             out[f"{new_prefix}.ffn.fc2.weight"] = v
                     elif rest.startswith("layer_norm."):
-                        attr = rest[len("layer_norm."):]
+                        attr = rest[len("layer_norm.") :]
                         out[f"{new_prefix}.norm2.{attr}"] = v
                     else:
                         out[f"{new_prefix}.{rest}"] = v

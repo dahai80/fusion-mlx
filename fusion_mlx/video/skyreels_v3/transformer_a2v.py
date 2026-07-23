@@ -82,26 +82,9 @@ class SkyReelsA2VDiT(SkyReelsBaseDiT):
         attn_mask: mx.array | None = None,
         temporal_len: int | None = None,
         cross_kv_cache: tuple | None = None,
+        controlnet_residuals: list[mx.array] | None = None,
     ) -> mx.array:
-        """A2V 前向: 视频 latent + 时间步 + 音频 + 文本 -> 去噪 latent.
-
-        Args:
-            x: [B, C_in, T, H, W] 视频 latent
-            t: [B] 时间步
-            audio_embeds: [B, L_audio, audio_dim] 音频 embedding (wav2vec2)
-            text_embeds: [B, L_text, text_dim] 文本 embedding (xlm_roberta)
-            temporal_len: 时序长度 (帧数), A2V 必传 (保嘴型连贯)
-            cross_kv_cache: AtomCode 跨步复用 cross-attn KV 缓存 (None=每步重算)
-
-        Returns:
-            [B, C_out, T, H, W] 去噪 latent
-        """
-        # AtomCode 专题优化实测 (2026-07-18):
-        # - 未编译路径: 3132ms/step + 129GB Metal (11.7× 暴涨, 不可用)
-        # - 60-block 整体 mx.compile: 36817ms/step + 129GB Metal (137× 暴涨, 不可用)
-        # - 每 block maybe_compile (当前 __init__ 已做): 267ms/step + 24.8GB Metal (基线最优)
-        # 结论: 整体 mx.compile 劣化, 未编译更糟, 当前 maybe_compile 每 block 单独编译是最优路径
-        # lazy compile 首步触发后切 mx.compile 融合循环 (实测劣化但比未编译好, 暂保留)
+        """A2V 前向: 视频 latent + 时间步 + 音频 + 文本 -> 去噪 latent."""
         return self._lazy_call(
             (
                 x,
@@ -115,6 +98,7 @@ class SkyReelsA2VDiT(SkyReelsBaseDiT):
                 attn_mask,
                 temporal_len,
                 cross_kv_cache,
+                controlnet_residuals,
             )
         )
 
@@ -131,16 +115,13 @@ class SkyReelsA2VDiT(SkyReelsBaseDiT):
         attn_mask: mx.array | None = None,
         temporal_len: int | None = None,
         cross_kv_cache: tuple | None = None,
+        controlnet_residuals: list[mx.array] | None = None,
     ) -> mx.array:
         """原始前向路径 (mx.compile 融合目标)."""
         x = self.patch_embedding(x)
-        # Audio + Text 融合 context (数字人专用)
         context = self.audio_embedding(audio_embeds, text_embeds)
-        # 纯音频 context (audio_cross_attn 用): 取 audio_embeds 原始 768 维, 不经融合投影
-        audio_ctx = audio_embeds  # [B, L_audio, 768]
+        audio_ctx = audio_embeds
         e = self._time_embed(t)
-        # AtomCode: cross_kv_cache 跨步复用透传到每 block (每 block 内 cross_attn 复用同 KV)
-        # issue #186: 统一 block __call__ 签名, context_lens 位置参数 7, audio_ctx 关键字末尾
         x = self._run_blocks(
             x,
             e,
@@ -153,6 +134,7 @@ class SkyReelsA2VDiT(SkyReelsBaseDiT):
             temporal_len=temporal_len,
             cross_kv_cache=cross_kv_cache,
             audio_ctx=audio_ctx,
+            controlnet_residuals=controlnet_residuals,
         )
         out = self.head(x, e)
         out = self._unpatchify(out, grid_sizes)
@@ -172,10 +154,8 @@ class SkyReelsA2VDiT(SkyReelsBaseDiT):
         attn_mask: mx.array | None = None,
         temporal_len: int | None = None,
         cross_kv_cache: tuple | None = None,
+        controlnet_residuals: list[mx.array] | None = None,
     ) -> mx.array:
-        # issue #177 Phase-2: layer-pruned draft 前向 (首 n_blocks + 共享 head/patch/time embed).
-        # 与 __call__ 完全一致, 仅 self.blocks[:n_blocks]; n_blocks==num_layers 时 bit-identical.
-        # CP3: A2V 扩展 forward_partial (不经 lazy compile, draft 路径直跑原始).
         x = self.patch_embedding(x)
         context = self.audio_embedding(audio_embeds, text_embeds)
         audio_ctx = audio_embeds
@@ -193,6 +173,7 @@ class SkyReelsA2VDiT(SkyReelsBaseDiT):
             temporal_len=temporal_len,
             cross_kv_cache=cross_kv_cache,
             audio_ctx=audio_ctx,
+            controlnet_residuals=controlnet_residuals,
         )
         out = self.head(x, e)
         out = self._unpatchify(out, grid_sizes)
