@@ -31,7 +31,7 @@ async def get_hardware():
         hw = detect_hardware()
     except Exception as e:
         logger.error("Hardware detection failed: %s", e)
-        raise HTTPException(status_code=500, detail=f"Hardware detection failed: {e}")
+        raise HTTPException(status_code=500, detail="Hardware detection failed")
 
     gpu_info = None
     if hw.gpus:
@@ -72,7 +72,7 @@ async def recommend_model(req: HardwareRequest):
         hw = detect_hardware()
     except Exception as e:
         logger.error("Hardware detection failed: %s", e)
-        raise HTTPException(status_code=500, detail=f"Hardware detection failed: {e}")
+        raise HTTPException(status_code=500, detail="Hardware detection failed")
 
     compat = check_compatibility(
         model_id=req.model_id,
