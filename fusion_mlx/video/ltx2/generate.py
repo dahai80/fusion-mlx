@@ -11,7 +11,9 @@ from PIL import Image
 
 from fusion_mlx.cache.latent_cache import (
     get_image_latent_cache,
+    get_session_tail,
     image_latent_key,
+    put_session_tail,
 )
 
 from .audio import (
@@ -418,7 +420,6 @@ def generate_video(
             # Phase-2: session tail→first-frame reuse (skip VAE encode on hit)
             session_tail_hit = False
             if session_id is not None:
-                from fusion_mlx.cache.latent_cache import get_session_tail
 
                 tail = get_session_tail(session_id, model_repo)
                 if tail is not None:
@@ -638,7 +639,6 @@ def generate_video(
 
         # Phase-2: capture tail-frame latent for multi-shot session reuse
         if session_id is not None:
-            from fusion_mlx.cache.latent_cache import put_session_tail
 
             tail = latents[:, :, -1:, :, :]
             put_session_tail(session_id, model_repo, tail)
@@ -649,7 +649,6 @@ def generate_video(
         if is_i2v:
             # Phase-2: check session tail cache first (reuse previous shot's
             # denoised tail-frame latent as this shot's first-frame conditioning).
-            from fusion_mlx.cache.latent_cache import get_session_tail
 
             session_tail_reused = False
             if session_id is not None and image is not None:
@@ -809,7 +808,6 @@ def generate_video(
 
         # Phase-2: capture tail-frame latent for multi-shot session reuse
         if session_id is not None:
-            from fusion_mlx.cache.latent_cache import put_session_tail
 
             tail = latents[:, :, -1:, :, :]
             put_session_tail(session_id, model_repo, tail)
@@ -825,7 +823,6 @@ def generate_video(
             # Phase-2: session tail→first-frame reuse (skip VAE encode on hit)
             session_tail_hit = False
             if session_id is not None:
-                from fusion_mlx.cache.latent_cache import get_session_tail
 
                 tail = get_session_tail(session_id, model_repo)
                 if tail is not None:
@@ -1084,7 +1081,6 @@ def generate_video(
 
         # Phase-2: capture tail-frame latent for multi-shot session reuse
         if session_id is not None:
-            from fusion_mlx.cache.latent_cache import put_session_tail
 
             tail = latents[:, :, -1:, :, :]
             put_session_tail(session_id, model_repo, tail)
@@ -1108,7 +1104,6 @@ def generate_video(
             # Phase-2: session tail→first-frame reuse (skip VAE encode on hit)
             session_tail_hit = False
             if session_id is not None:
-                from fusion_mlx.cache.latent_cache import get_session_tail
 
                 tail = get_session_tail(session_id, model_repo)
                 if tail is not None:
@@ -1390,7 +1385,6 @@ def generate_video(
 
         # Phase-2: capture tail-frame latent for multi-shot session reuse
         if session_id is not None:
-            from fusion_mlx.cache.latent_cache import put_session_tail
 
             tail = latents[:, :, -1:, :, :]
             put_session_tail(session_id, model_repo, tail)
