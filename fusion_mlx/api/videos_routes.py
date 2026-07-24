@@ -171,7 +171,7 @@ async def generate_video(
             except HTTPException:
                 raise
             except Exception as exc:
-                raise HTTPException(400, f"failed to resolve image input: {exc}")
+                raise HTTPException(400, "failed to resolve image input")
 
         try:
             try:
