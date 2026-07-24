@@ -148,6 +148,9 @@ _OPT_DEP_SUITES: list[tuple[str, list[str]]] = [
             # hard-imports mlx.core (#2 UMA Radix Latent cache session tail);
             # skip on Linux CI (mlx absent/mocked), run on macOS.
             "test_latent_cache_session.py",
+            # hard-imports mlx.core + fusion_mlx pulid convert (#172);
+            # skip on Linux CI (mlx absent/mocked), run on macOS.
+            "test_pulid_convert_weights.py",
         ],
     ),
     (
