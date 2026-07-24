@@ -178,6 +178,15 @@ async def _run_chat(request: ChatCompletionRequest) -> ChatCompletionResponse:
         await _release()
         raise HTTPException(404, f"Model {model_name} not available")
 
+    # #205 Guard: reject engines without chat capability (e.g. ImageGenEngine)
+    if not hasattr(engine, "chat") or not callable(getattr(engine, "chat", None)):
+        await _release()
+        raise HTTPException(
+            400,
+            f"Model '{model_name}' does not support chat completions "
+            f"(engine_type={getattr(engine, 'engine_type', 'unknown')})",
+        )
+
     # Reject multimodal content on text-only models
     if not getattr(engine, "is_mllm", False):
         for msg in request.messages:
@@ -522,6 +531,17 @@ async def _stream_chat(request: ChatCompletionRequest) -> StreamingResponse:
     if engine is None:
         await _pool.release_engine(model_name, adapter_path=adapter_path)
         raise HTTPException(404, f"Model {model_name} not available")
+
+    # #205 Guard: reject engines without stream_chat capability
+    if not hasattr(engine, "stream_chat") or not callable(
+        getattr(engine, "stream_chat", None)
+    ):
+        await _pool.release_engine(model_name, adapter_path=adapter_path)
+        raise HTTPException(
+            400,
+            f"Model '{model_name}' does not support streaming chat completions "
+            f"(engine_type={getattr(engine, 'engine_type', 'unknown')})",
+        )
 
     # Reject multimodal content on text-only models
     if not getattr(engine, "is_mllm", False):

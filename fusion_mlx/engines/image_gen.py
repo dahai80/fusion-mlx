@@ -160,6 +160,8 @@ class _StepProgressInLoop:
 
 
 class ImageGenEngine(BaseNonStreamingEngine):
+    engine_type = "image_gen"
+
     def __init__(self, model_name: str, variant: str | None = None, **kwargs):
         super().__init__()
         self._model_name = model_name
