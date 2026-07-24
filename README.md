@@ -454,6 +454,41 @@ FUSION_DIFFUSION_TEXT_CACHE=0 fusion-mlx serve --model SkyReels-V3-R2V-14B-MLX  
        controlnet_strength, control_type, animatediff_scale}
   User instruction: "Continue the conversation from where it left off" (README update was pending task) -->
 
+### Short-Drama MLX Submodules (PuLID / LatentSync / MuseTalk)
+
+Three zero-PyTorch model ports for short-drama generation pipelines. All pure
+MLX + numpy/cv2/insightface(CPU ONNX). Fusion-mlx provides the model inference
+layer; [fusion-comfyui](https://github.com/dahai80/fusion-comfyui) handles
+full pipeline orchestration (PuLID→Flux→LatentSync/MuseTalk).
+
+| Submodule | Purpose | Key Models | Input → Output |
+|---|---|---|---|
+| **pulid_mlx** | Identity-preserving image generation | IDFormer + EVA02-CLIP-L-14-336 (24-layer ViT) + PerceiverAttentionCA | face image → 2048-d ID embedding → Flux DiT injection |
+| **latentsync_mlx** | Audio-driven lip sync | UNet3D (13-ch) + DDIM + SD1.5 VAE + Whisper | video + audio → lip-synced video |
+| **musetalk_mlx** | Realtime talking head | UNet2D (8-ch) + SD-VAE + WhisperEncoder | face + audio → animated face frames |
+
+**Import:**
+
+```python
+from fusion_mlx.video import PuLIDPipeline, LipsyncPipelineMLX, MuseTalkPipeline
+```
+
+**Architecture highlights:**
+
+- **PuLID-MLX**: IDFormer (Perceiver-resampler, dim=1024, depth=10) fuses ArcFace (1280-d) +
+  EVA-CLIP (5 × 1024-d hidden states) into 2048-d ID embedding. PerceiverAttentionCA
+  injects into Flux DiT via cross-attention hooks. IDAttnProcessor supports ORTHO/ORTHO_v2
+  regularization. EVA-CLIP uses VisionRotaryEmbeddingFast (2D RoPE), SwiGLU + subln.
+- **LatentSync-MLX**: UNet3DConditionModel (InflatedConv2d/GroupNorm for 5D video tensors)
+  with temporal motion modules. 13-channel input (noise4+mask1+masked4+ref4). Reuses
+  MuseTalk's Whisper subpackage for audio encoding — no duplicate Whisper code.
+- **MuseTalk-MLX**: Single-step inpainting at t=0 with 8-channel UNet2D. WhisperEncoder
+  (4-layer) produces per-frame audio features (B, seq, 5, 384) → chunked windows.
+
+**Weight conversion:** `latentsync_mlx/convert_weights.py` converts PyTorch checkpoints
+to MLX safetensors. EVA-CLIP/PuLID weights can be loaded via `from_pretrained()` with
+automatic `visual.` prefix stripping.
+
 ### Video Adapters (IP-Adapter / ControlNet / AnimateDiff)
 
 Three pluggable video adapters modify the denoising process for conditioned generation:
@@ -583,7 +618,7 @@ fusion-mlx/
 │    ├── router/          # RequestRouter, CloudRouter, SmartRouter
 │    ├── scheduler/       # 25-module scheduler (admission, batching, cache, step, etc.)
 │    ├── speculative/     # SuffixDecoding, DFlash, DSpark, MTP, VLM MTP
-│    ├── video/           # Pure-MLX video generation ports (LTX-2, Wan2, SkyReels-V3)
+│    ├── video/           # Pure-MLX video generation ports (LTX-2, Wan2, SkyReels-V3, PuLID, LatentSync, MuseTalk)
 │    └── admin/           # Web panel routes, benchmarking, downloads, settings
 ├── apps/fusion-mac/      # SwiftUI macOS app (~80 Swift files)
 ├── docs/                 # API reference, architecture, CLI guide, configuration

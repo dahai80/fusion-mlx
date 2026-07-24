@@ -460,6 +460,31 @@ FUSION_SKYREELS_DYNAMIC_CFG=0 fusion-mlx serve --model SkyReels-V3-R2V-14B-MLX
 
 修复后: 真实 14B R2V `FUSION_SKYREELS_STEPS=3` 生效 (`cfg.num_inference_steps=3`), xfuser 旁路告警 emit, `fa_calls=0` (no-op 确认), 生成 OK shape=(1,3,28,256,256), VERIFY_OK; 128 单元测试全绿.
 
+### 短剧 MLX 子模块 (PuLID / LatentSync / MuseTalk)
+
+三个零 PyTorch 模型移植, 用于短剧生成流水线. 全部纯 MLX + numpy/cv2/insightface(CPU ONNX).
+Fusion-mlx 负责模型推理层; [fusion-comfyui](https://github.com/dahai80/fusion-comfyui) 负责全链路编排 (PuLID→Flux→LatentSync/MuseTalk).
+
+| 子模块 | 用途 | 核心模型 | 输入 → 输出 |
+|---|---|---|---|
+| **pulid_mlx** | 身份保持图像生成 | IDFormer + EVA02-CLIP-L-14-336 (24层ViT) + PerceiverAttentionCA | 人脸图像 → 2048维ID嵌入 → Flux DiT注入 |
+| **latentsync_mlx** | 音频驱动唇形同步 | UNet3D (13通道) + DDIM + SD1.5 VAE + Whisper | 视频+音频 → 唇形同步视频 |
+| **musetalk_mlx** | 实时数字人说话 | UNet2D (8通道) + SD-VAE + WhisperEncoder | 人脸+音频 → 动态人脸帧 |
+
+**导入:**
+
+```python
+from fusion_mlx.video import PuLIDPipeline, LipsyncPipelineMLX, MuseTalkPipeline
+```
+
+**架构要点:**
+
+- **PuLID-MLX**: IDFormer (Perceiver-resampler, dim=1024, depth=10) 将 ArcFace (1280维) + EVA-CLIP (5×1024维隐层) 融合为 2048维ID嵌入. PerceiverAttentionCA 通过交叉注意力钩子注入 Flux DiT. IDAttnProcessor 支持 ORTHO/ORTHO_v2 正则化. EVA-CLIP 使用 VisionRotaryEmbeddingFast (2D RoPE)、SwiGLU + subln.
+- **LatentSync-MLX**: UNet3DConditionModel (InflatedConv2d/GroupNorm 支持5D视频张量), 含时序运动模块. 13通道输入 (noise4+mask1+masked4+ref4). 复用 MuseTalk 的 Whisper 子包做音频编码, 零重复代码.
+- **MuseTalk-MLX**: 8通道 UNet2D 在 t=0 单步修复. WhisperEncoder (4层) 产生逐帧音频特征 (B,seq,5,384) → 滑窗切分.
+
+**权重转换:** `latentsync_mlx/convert_weights.py` 将 PyTorch checkpoint 转为 MLX safetensors. EVA-CLIP/PuLID 权重通过 `from_pretrained()` 加载, 自动剥离 `visual.` 前缀.
+
 ### Radix 文本编码缓存 (#178)
 
 多镜头短剧流水线中, 同一 prompt 跨镜头重复编码 (UMT5-XXL 24 层 4096 维, 单次编码数百 ms~秒级). `UMT5Encoder.encode_text` 接入 `DiffusionRadixCache` (radix 树 + LRU 字节预算 + pin/unpin), 相同 `prompt+max_length` 二次命中走零拷贝指针复用 (返回同一 `mx.array` 引用), 文本编码延迟 -> ~0ms.
@@ -518,7 +543,7 @@ fusion-mlx/
 │    ├── router/          # RequestRouter、CloudRouter、SmartRouter
 │    ├── scheduler/       # 25 模块调度器 (admission、batching、cache、step 等)
 │    ├── speculative/     # SuffixDecoding、DFlash、DSpark、MTP、VLM MTP
-│    ├── video/           # 纯 MLX 视频生成移植 (LTX-2、Wan2、SkyReels-V3)
+│    ├── video/           # 纯 MLX 视频生成移植 (LTX-2、Wan2、SkyReels-V3、PuLID、LatentSync、MuseTalk)
 │    └── admin/           # 管理面板路由、基准测试、下载、设置
 ├── apps/fusion-mac/      # SwiftUI macOS 应用 (~80 个 Swift 文件)
 ├── docs/                 # API 参考、架构、CLI 指南、配置
