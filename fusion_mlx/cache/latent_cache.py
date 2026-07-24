@@ -115,3 +115,22 @@ def get_session_tail(session_id: str, model_id: str):
     else:
         logger.debug("session tail miss: %s", key)
     return result
+
+
+def remove_image_latent_cache(model_id: str) -> bool:
+    with _CACHE_LOCK:
+        cache = _IMAGE_LATENT_CACHES.pop(model_id, None)
+    if cache is not None:
+        logger.info("latent cache removed: model=%s", model_id)
+        return True
+    return False
+
+
+def clear_all_latent_caches() -> int:
+    with _CACHE_LOCK:
+        count = len(_IMAGE_LATENT_CACHES)
+        _IMAGE_LATENT_CACHES.clear()
+        global _SESSION_TAIL_CACHE
+        _SESSION_TAIL_CACHE = None
+    logger.info("all latent caches cleared: %d removed", count)
+    return count

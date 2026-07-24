@@ -1065,6 +1065,18 @@ class EnginePool:
         """Synchronously remove an engine from pool entries (non-blocking)."""
         entry = self._entries.get(model_id)
         if entry and entry.engine is not None:
+            # #209: free latent cache for this model so GPU arrays are reclaimed
+            try:
+                from ..cache.latent_cache import remove_image_latent_cache
+                remove_image_latent_cache(model_id)
+            except Exception:
+                logger.debug("latent cache cleanup skipped for %s", model_id)
+            # #209: stop engine + reclaim Metal memory (sync path previously
+            # relied solely on Python GC which is nondeterministic)
+            try:
+                entry.engine.stop()
+            except Exception:
+                logger.debug("engine.stop() failed for %s", model_id)
             entry.engine = None
             entry.last_access = 0.0
             # Mirror register_engine (+) / unload_engine_async (-): keep the pool's
@@ -1077,6 +1089,15 @@ class EnginePool:
                 self._process_memory_enforcer.update_loaded_model_bytes(
                     -int(entry.estimated_size)
                 )
+            # #209: force reclaim Metal memory (sync path previously skipped this)
+            try:
+                import gc
+                import mlx.core as mx
+                gc.collect()
+                mx.synchronize()
+                mx.clear_cache()
+            except Exception:
+                pass
             logger.info(f"Unregistered engine '{model_id}' from pool")
 
     def _find_lru_victim(self) -> str | None:
@@ -1191,6 +1212,12 @@ class EnginePool:
             await asyncio.sleep(0)
 
         # Clear engine reference before settle barrier
+        # #209: free latent cache for this model so GPU arrays are reclaimed
+        try:
+            from ..cache.latent_cache import remove_image_latent_cache
+            remove_image_latent_cache(model_id)
+        except Exception:
+            logger.debug("latent cache cleanup skipped for %s", model_id)
         entry.engine = None
         entry.last_access = 0.0
         entry.actual_size = None
