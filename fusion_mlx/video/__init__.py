@@ -6,5 +6,10 @@
 # mlx-video evolution.
 
 from .t5_encoder import T5Encoder, T5EncoderConfig, load_t5_encoder
+from .latentsync_mlx import LipsyncPipelineMLX
+from .musetalk_mlx import MuseTalkPipeline
 
-__all__ = ["T5Encoder", "T5EncoderConfig", "load_t5_encoder"]
+__all__ = [
+    "T5Encoder", "T5EncoderConfig", "load_t5_encoder",
+    "LipsyncPipelineMLX", "MuseTalkPipeline",
+]
