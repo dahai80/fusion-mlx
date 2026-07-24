@@ -50,7 +50,7 @@ async def refresh_presets(is_admin: bool = Depends(require_admin)):
             timeout=10,
         )
     except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Fetch failed: {e}")
+        raise HTTPException(status_code=502, detail="Fetch failed")
     if resp.status_code != 200:
         raise HTTPException(
             status_code=502,
@@ -59,7 +59,7 @@ async def refresh_presets(is_admin: bool = Depends(require_admin)):
     try:
         return resp.json()
     except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Invalid JSON: {e}")
+        raise HTTPException(status_code=502, detail="Invalid JSON")
 
 
 @_router.get("/api/models/{model_id}/generation_config")

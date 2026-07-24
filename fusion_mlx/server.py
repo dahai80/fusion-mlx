@@ -644,7 +644,7 @@ class Server:
                 raise HTTPException(status_code=503, detail=str(e)) from e
             except Exception as e:
                 logger.exception("Load model failed: %s(%s)", type(e).__name__, e)
-                raise HTTPException(status_code=500, detail=f"{type(e).__name__}: {e}")
+                raise HTTPException(status_code=500, detail="Internal server error")
             return {
                 "status": "ok",
                 "model_id": model_id,
