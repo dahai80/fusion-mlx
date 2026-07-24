@@ -278,7 +278,7 @@ async def _run_chat(request: ChatCompletionRequest) -> ChatCompletionResponse:
     except Exception as exc:
         err_msg = str(exc)
         if "Failed to process image" in err_msg or "Failed to process video" in err_msg:
-            raise HTTPException(status_code=400, detail=err_msg)
+            raise HTTPException(status_code=400, detail="Invalid media input")
         logger.exception(
             "Non-streaming chat failed for %s: %s(%s)",
             request_id,
@@ -488,7 +488,7 @@ async def _stream_chat_generator(
     except Exception as exc:
         err_msg = str(exc)
         if "Failed to process image" in err_msg or "Failed to process video" in err_msg:
-            yield f'data: {{"error": {{"message": {err_msg!r}, "status": 400}}}}\n\n'
+            yield 'data: {"error": {"message": "Invalid media input", "status": 400}}\n\n'
         else:
             logger.exception(
                 "Streaming chat failed for %s: %s(%s)",
@@ -496,7 +496,7 @@ async def _stream_chat_generator(
                 type(exc).__name__,
                 exc,
             )
-            yield f'data: {{"error": {{"message": {f"{type(exc).__name__}: {exc}"!r}}}}}\n\n'
+            yield 'data: {"error": {"message": "Internal server error"}}\n\n'
     finally:
         await _release()
 

@@ -208,7 +208,7 @@ final class AppControlServer: @unchecked Sendable {
                 pid: nil,
                 host: "127.0.0.1",
                 port: 11435,
-                message: "Invalid request: \(error)"
+                message: "Invalid request"
             )
         }
         writeResponse(response, fd: clientFD)

@@ -170,7 +170,8 @@ async def generate_image(request: ImageGenerateRequest) -> ImageGenerateResponse
     except HTTPException:
         raise
     except ValueError as exc:
-        raise HTTPException(422, str(exc))
+        logger.warning("Image generation validation error: %s", exc)
+        raise HTTPException(422, "Invalid request parameters")
     except Exception as exc:
         logger.exception("Image generation failed")
         raise HTTPException(500, "Internal server error")

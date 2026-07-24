@@ -116,7 +116,7 @@ def _render_engine_metrics() -> list[str]:
 def _render_pool_metrics() -> list[str]:
     lines: list[str] = []
     try:
-        from ..service.helpers import _server_state
+        from ..server import _server_state
 
         pool = _server_state.get("engine_pool")
         if pool is not None:

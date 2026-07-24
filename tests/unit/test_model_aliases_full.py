@@ -203,7 +203,8 @@ class TestResolveModel(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             p = os.path.join(td, "model")
             os.makedirs(p)
-            with patch.object(ma, "_ALIASES_FILE", Path("/nonexistent")):
+            with patch.object(ma, "_ALIASES_FILE", Path("/nonexistent")), \
+                 patch.object(ma, "_check_path_allowed"):
                 self.assertEqual(ma.resolve_model(p), p)
 
     def test_unknown_returns_input(self):

@@ -160,7 +160,7 @@ def _get_engine(cfg):
     if engine is not None:
         return engine
     try:
-        from ..service.helpers import _server_state
+        from ..server import _server_state
 
         pool = _server_state.get("engine_pool")
         if pool is not None:

@@ -360,18 +360,18 @@ final class AppUpdater {
         guard FileManager.default.fileExists(atPath: staged.path) else { return false }
 
         let pid = ProcessInfo.processInfo.processIdentifier
-        let appPath = app.path.replacingOccurrences(of: "\"", with: "\\\"")
-        let stagedPath = staged.path.replacingOccurrences(of: "\"", with: "\\\"")
+        let appPath = shellQuote(app.path)
+        let stagedPath = shellQuote(staged.path)
         let script = """
         #!/bin/bash
         while kill -0 \(pid) 2>/dev/null; do
             sleep 0.2
         done
         sleep 0.5
-        rm -rf "\(appPath)"
-        mv "\(stagedPath)" "\(appPath)"
-        xattr -rd com.apple.quarantine "\(appPath)" 2>/dev/null
-        open "\(appPath)"
+        rm -rf \(appPath)
+        mv \(stagedPath) \(appPath)
+        xattr -rd com.apple.quarantine \(appPath) 2>/dev/null
+        open \(appPath)
         """
 
         let process = Process()
@@ -396,6 +396,11 @@ private struct ProcessResult {
     let status: Int32
     let stdout: String
     let stderr: String
+}
+
+private func shellQuote(_ value: String) -> String {
+    if value.isEmpty { return "''" }
+    return "'" + value.replacingOccurrences(of: "'", with: "'\"'\"'") + "'"
 }
 
 private func runProcess(_ executable: String, args: [String]) throws -> ProcessResult {

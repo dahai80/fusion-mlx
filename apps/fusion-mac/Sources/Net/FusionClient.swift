@@ -19,7 +19,7 @@ enum FusionClientError: Error, CustomStringConvertible {
         case .invalidURL:           return "Invalid URL"
         case .invalidResponse:      return "Invalid response from server"
         case .unauthenticated:      return "Not authenticated (no API key configured)"
-        case .http(let s, let b):   return "HTTP \(s)" + (b.map { ": \($0)" } ?? "")
+        case .http(let s, _):       return "HTTP \(s)"
         }
     }
 }
