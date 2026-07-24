@@ -411,6 +411,9 @@ class TestRequestManagement:
                     await engine.abort_request(rid)
                     break
 
+            # Give the engine a tick to process the abort
+            await asyncio.sleep(0.1)
+
             # Request should be aborted
             stats = engine.get_stats()
             assert stats["active_requests"] == 0

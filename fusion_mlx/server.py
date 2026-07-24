@@ -54,7 +54,10 @@ from .middleware import (
 try:
     from fusion_mlx.gui_compat.database import close_database, get_database_manager
     from fusion_mlx.gui_compat.server import get_gui_compat_router
-except ImportError:
+except (ImportError, AttributeError):
+    # ImportError: gui_compat or its transitive deps missing
+    # AttributeError: mlx_whisper→tiktoken chain can raise this
+    #   (SwigPy interference in pytest). gui_compat is optional.
     get_gui_compat_router = None
     get_database_manager = None
     close_database = None

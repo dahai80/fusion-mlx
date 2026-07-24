@@ -19,7 +19,9 @@ try:
     import mlx_whisper
 
     HAS_MLX_WHISPER = True
-except ImportError:
+except (ImportError, AttributeError):
+    # AttributeError: mlx_whisper→tiktoken chain can raise this
+    #   (SwigPy interference in certain test environments)
     HAS_MLX_WHISPER = False
 
 try:

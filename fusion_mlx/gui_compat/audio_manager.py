@@ -5,8 +5,6 @@ import os
 from pathlib import Path
 from typing import Any
 
-import mlx_whisper
-
 logger = logging.getLogger(__name__)
 
 
@@ -55,6 +53,8 @@ class AudioManager:
             WhisperError: If transcription fails
         """
         try:
+            import mlx_whisper
+
             model = model or self.default_model
 
             logger.info(f"Transcribing audio with model {model}")
