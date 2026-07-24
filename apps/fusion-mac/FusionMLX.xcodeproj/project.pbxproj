@@ -116,7 +116,7 @@
 		DBB000000000000000000107 /* ModelsScreenSortingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = DCC000000000000000000107 /* ModelsScreenSortingTests.swift */; };
 		DBB000000000000000000108 /* ModelSettingsScreenVMTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = DCC000000000000000000108 /* ModelSettingsScreenVMTests.swift */; };
 		EBB000000000000000000001 /* MarkdownUI in Frameworks */ = {isa = PBXBuildFile; productRef = ECC000000000000000000001 /* MarkdownUI */; };
-/* End PBXBuildFile section */
+		/* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
 		DAA000000000000000000008 /* PBXContainerItemProxy */ = {

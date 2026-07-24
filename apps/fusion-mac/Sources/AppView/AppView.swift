@@ -111,7 +111,6 @@ struct AppView: View {
         case .quantization: QuantizationScreen()
         case .throughputBench: ThroughputBenchScreen(vm: services.throughputBench)
         case .accuracyBench:   AccuracyBenchScreen(vm: services.accuracyBench)
-        case .agentCanvas:   AgentCanvasScreen()
         case .security:     SecurityScreen()
         case .about:        AboutScreen()
         }
@@ -469,7 +468,6 @@ private struct SettingsSidebar: View {
             }
             Section {
                 SidebarRow(section: .security)
-                SidebarRow(section: .agentCanvas)
                 SidebarRow(section: .about)
             } header: {
                 Text(String(localized: "sidebar.group.general",

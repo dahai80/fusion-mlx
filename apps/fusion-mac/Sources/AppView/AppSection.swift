@@ -12,7 +12,7 @@ enum AppSection: String, Hashable, CaseIterable, Identifiable, Sendable {
     case server, status, network, performance, logs
     case models, downloads, integrations, quantization
     case throughputBench, accuracyBench
-    case security, about, agentCanvas
+    case security, about
 
     var id: String { rawValue }
 
@@ -70,10 +70,6 @@ enum AppSection: String, Hashable, CaseIterable, Identifiable, Sendable {
             return String(localized: "sidebar.about",
                           defaultValue: "About FusionMLX",
                           comment: "Sidebar row label / navigation title for the About section")
-        case .agentCanvas:
-            return String(localized: "sidebar.agentCanvas",
-                          defaultValue: "Agent Canvas",
-                          comment: "Sidebar row label / navigation title for the Agent Canvas section")
         }
     }
 
@@ -92,7 +88,6 @@ enum AppSection: String, Hashable, CaseIterable, Identifiable, Sendable {
         case .accuracyBench:   return "target"
         case .security:        return "lock"
         case .about:           return "info.circle"
-        case .agentCanvas:     return "square.grid.3x3.topleft.filled"
         }
     }
 
