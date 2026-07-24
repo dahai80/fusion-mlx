@@ -290,8 +290,8 @@ class ChatCompletionRequest(BaseModel):
     top_k: int | None = Field(None, ge=0)
     min_p: float | None = Field(None, ge=0.0, le=1.0)
     repetition_penalty: float | None = Field(None, ge=0.0)
-    presence_penalty: float | None = None
-    frequency_penalty: float | None = None
+    presence_penalty: float | None = Field(None, ge=-2.0, le=2.0)
+    frequency_penalty: float | None = Field(None, ge=-2.0, le=2.0)
     # Tool calling
     tools: list[ToolDefinition] | None = None
     tool_choice: str | dict | None = None  # "auto", "none", or specific tool
@@ -524,9 +524,9 @@ class CompletionRequest(BaseModel):
 
     model: str = "default"
     prompt: str | list[str]
-    temperature: float | None = None
-    top_p: float | None = None
-    max_tokens: int | None = None
+    temperature: float | None = Field(None, ge=0.0, le=2.0)
+    top_p: float | None = Field(None, ge=0.0, le=1.0)
+    max_tokens: int | None = Field(None, ge=1)
     stream: bool = False
     stop: list[str] | None = None
     # Extended OpenAI-compatible sampling parameters — see #355 + the
@@ -534,13 +534,13 @@ class CompletionRequest(BaseModel):
     top_k: int | None = Field(None, ge=0)
     min_p: float | None = Field(None, ge=0.0, le=1.0)
     repetition_penalty: float | None = Field(None, ge=0.0)
-    presence_penalty: float | None = None
-    frequency_penalty: float | None = None
+    presence_penalty: float | None = Field(None, ge=-2.0, le=2.0)
+    frequency_penalty: float | None = Field(None, ge=-2.0, le=2.0)
     # OpenAI ``n``/``best_of`` - declared so Pydantic stops silently
     # dropping them; rejected with 400 in routes/completions.py when >1
     # since we generate one completion per request (no server-side rerank).
-    n: int | None = None
-    best_of: int | None = None
+    n: int | None = Field(None, ge=1, le=128)
+    best_of: int | None = Field(None, ge=1, le=128)
     # OpenAI ``echo``/``response_format``/``stream_options`` - declared
     # so Pydantic stops silently dropping them; consumed in
     # routes/completions.py (echo gates the fence-strip + prompt logprobs,

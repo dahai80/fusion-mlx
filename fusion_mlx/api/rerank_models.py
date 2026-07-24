@@ -36,7 +36,7 @@ class RerankRequest(BaseModel):
         rerankers). Image values accept URL, base64 data URI, or local path.
     """
 
-    top_n: int | None = None
+    top_n: int | None = Field(None, ge=1)
     """
     Number of top results to return.
     If not specified, returns all documents.

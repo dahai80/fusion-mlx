@@ -8,7 +8,7 @@ These models define the request and response schemas for:
 
 from typing import Literal
 
-from pydantic import BaseModel, model_validator
+from pydantic import BaseModel, Field, model_validator
 
 
 class EmbeddingInputItem(BaseModel):
@@ -50,7 +50,7 @@ class EmbeddingRequest(BaseModel):
     - "base64": Returns a base64-encoded string of little-endian floats
     """
 
-    dimensions: int | None = None
+    dimensions: int | None = Field(None, ge=1)
     """
     The number of dimensions the output embeddings should have.
     Only supported by some models. If not supported, returns full dimensions.

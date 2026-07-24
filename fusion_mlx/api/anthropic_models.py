@@ -197,7 +197,7 @@ class MessagesRequest(BaseModel):
     # request is routed to a derived engine entry keyed by (model, adapter)
     # so each adapter gets its own loaded model instance.
     adapters: str | None = None
-    max_tokens: int
+    max_tokens: int = Field(ge=1)
     messages: list[AnthropicMessage]
     system: str | list[SystemContent] | None = None
     stop_sequences: list[str] | None = None

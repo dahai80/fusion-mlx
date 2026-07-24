@@ -7,7 +7,7 @@ These models define the request and response schemas for:
 - Audio speech synthesis (text-to-speech)
 """
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class AudioTranscriptionRequest(BaseModel):
@@ -17,7 +17,7 @@ class AudioTranscriptionRequest(BaseModel):
     language: str | None = None
     prompt: str | None = None
     response_format: str | None = "json"
-    temperature: float | None = 0.0
+    temperature: float | None = Field(0.0, ge=0.0, le=2.0)
 
 
 class AudioTranscriptionResponse(BaseModel):
@@ -32,17 +32,17 @@ class AudioSpeechRequest(BaseModel):
     input: str
     voice: str | None = None
     instructions: str | None = None
-    speed: float | None = 1.0
+    speed: float | None = Field(1.0, ge=0.25, le=4.0)
     response_format: str | None = "wav"
     ref_audio: str | None = None
     ref_text: str | None = None
-    temperature: float | None = None
-    top_k: int | None = None
-    top_p: float | None = None
-    repetition_penalty: float | None = None
-    max_tokens: int | None = None
+    temperature: float | None = Field(None, ge=0.0, le=2.0)
+    top_k: int | None = Field(None, ge=0)
+    top_p: float | None = Field(None, ge=0.0, le=1.0)
+    repetition_penalty: float | None = Field(None, ge=0.0)
+    max_tokens: int | None = Field(None, ge=1)
     stream: bool | None = False
-    streaming_interval: float | None = None
+    streaming_interval: float | None = Field(None, ge=0.1, le=10.0)
 
 
 class AudioProcessRequest(BaseModel):
