@@ -53,6 +53,7 @@ from ..exceptions import (
 from ..pool import EnginePool
 from ..request import SamplingParams
 from ..server_metrics import record_llm_metrics
+from ._guards import check_chat_capability, check_multimodal_content
 
 logger = logging.getLogger(__name__)
 
@@ -235,42 +236,18 @@ async def _run_anthropic_messages(
         raise HTTPException(404, f"Model {model_name} not available")
 
     # #205 Guard: reject engines without chat capability
-    if not hasattr(engine, "chat") or not callable(getattr(engine, "chat", None)):
+    try:
+        check_chat_capability(engine, "chat", model_name)
+    except HTTPException:
         await _release()
-        raise HTTPException(
-            400,
-            f"Model '{model_name}' does not support chat completions "
-            f"(engine_type={getattr(engine, 'engine_type', 'unknown')})",
-        )
+        raise
 
     # Reject multimodal content on text-only models
-    if not getattr(engine, "is_mllm", False):
-        for msg in req.messages:
-            content = getattr(msg, "content", "") if msg else None
-            if isinstance(content, list):
-                for part in content:
-                    pt = (
-                        part.get("type", "")
-                        if isinstance(part, dict)
-                        else getattr(part, "type", "")
-                    )
-                    if pt in (
-                        "image_url",
-                        "image",
-                        "video",
-                        "video_url",
-                        "audio_url",
-                        "audio",
-                        "input_audio",
-                    ):
-                        await _release()
-                        raise HTTPException(
-                            status_code=400,
-                            detail=(
-                                f"Model '{model_name}' does not support "
-                                "image, video, or audio inputs."
-                            ),
-                        )
+    try:
+        check_multimodal_content(engine, req.messages, model_name)
+    except HTTPException:
+        await _release()
+        raise
 
     tokenizer = getattr(engine, "_tokenizer", None) or getattr(
         engine, "tokenizer", None
@@ -600,46 +577,18 @@ async def anthropic_messages(
                 raise HTTPException(404, f"Model {model_name} not available")
 
             # #205 Guard: reject engines without stream_chat capability
-            if not hasattr(engine, "stream_chat") or not callable(
-                getattr(engine, "stream_chat", None)
-            ):
+            try:
+                check_chat_capability(engine, "stream_chat", model_name)
+            except HTTPException:
                 await _pool.release_engine(model_name, adapter_path=adapter_path)
-                raise HTTPException(
-                    400,
-                    f"Model '{model_name}' does not support streaming chat "
-                    f"(engine_type={getattr(engine, 'engine_type', 'unknown')})",
-                )
+                raise
 
             # Reject multimodal content on text-only models
-            if not getattr(engine, "is_mllm", False):
-                for msg in request.messages:
-                    content = getattr(msg, "content", "") if msg else None
-                    if isinstance(content, list):
-                        for part in content:
-                            pt = (
-                                part.get("type", "")
-                                if isinstance(part, dict)
-                                else getattr(part, "type", "")
-                            )
-                            if pt in (
-                                "image_url",
-                                "image",
-                                "video",
-                                "video_url",
-                                "audio_url",
-                                "audio",
-                                "input_audio",
-                            ):
-                                await _pool.release_engine(
-                                    model_name, adapter_path=adapter_path
-                                )
-                                raise HTTPException(
-                                    status_code=400,
-                                    detail=(
-                                        f"Model '{model_name}' does not support "
-                                        "image, video, or audio inputs."
-                                    ),
-                                )
+            try:
+                check_multimodal_content(engine, request.messages, model_name)
+            except HTTPException:
+                await _pool.release_engine(model_name, adapter_path=adapter_path)
+                raise
 
             return StreamingResponse(
                 _stream_anthropic_generator(request, engine, model_name, adapter_path),

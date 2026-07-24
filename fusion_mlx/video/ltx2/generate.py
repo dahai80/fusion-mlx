@@ -77,6 +77,30 @@ DEFAULT_NEGATIVE_PROMPT = (
 )
 
 
+def _encode_image_latent_shared(
+    src, h, w, model_repo, model_path, model_dtype, latent_cache, vae_encoder
+):
+    key = image_latent_key(model_repo, src, h, w, model_dtype)
+    if latent_cache is not None:
+        cached = latent_cache.get(key)
+        if cached is not None:
+            logger.info("latent cache hit: %dx%d (%s)", h, w, key)
+            return cached, vae_encoder
+    if vae_encoder is None:
+        vae_encoder = VideoEncoder.from_pretrained(
+            model_path / "vae" / "encoder"
+        )
+    loaded = load_image(src, height=h, width=w, dtype=model_dtype)
+    latent = vae_encoder(
+        prepare_image_for_encoding(loaded, h, w, dtype=model_dtype)
+    )
+    mx.eval(latent)
+    if latent_cache is not None:
+        latent_cache.put(key, latent)
+        logger.info("latent cache miss+insert: %dx%d (%s)", h, w, key)
+    return latent, vae_encoder
+
+
 def _build_i2v_conditionings(
     image_latent,
     image_frame_idx: int,
@@ -154,8 +178,10 @@ def generate_video(
         PipelineType.DEV_TWO_STAGE_HQ,
     )
     divisor = 64 if is_two_stage else 32
-    assert height % divisor == 0, f"Height must be divisible by {divisor}, got {height}"
-    assert width % divisor == 0, f"Width must be divisible by {divisor}, got {width}"
+    if height % divisor != 0:
+        raise ValueError(f"Height must be divisible by {divisor}, got {height}")
+    if width % divisor != 0:
+        raise ValueError(f"Width must be divisible by {divisor}, got {width}")
 
     if num_frames % 8 != 1:
         adjusted_num_frames = round((num_frames - 1) / 8) * 8 + 1
@@ -448,36 +474,22 @@ def generate_video(
             s1_h, s1_w = stage1_h * 32, stage1_w * 32
             s2_h, s2_w = stage2_h * 32, stage2_w * 32
 
-            def _encode_image_latent(src, h, w):
-                nonlocal vae_encoder
-                key = image_latent_key(model_repo, src, h, w, model_dtype)
-                if latent_cache is not None:
-                    cached = latent_cache.get(key)
-                    if cached is not None:
-                        logger.info("latent cache hit: %dx%d (%s)", h, w, key)
-                        return cached
-                if vae_encoder is None:
-                    vae_encoder = VideoEncoder.from_pretrained(
-                        model_path / "vae" / "encoder"
-                    )
-                loaded = load_image(src, height=h, width=w, dtype=model_dtype)
-                latent = vae_encoder(
-                    prepare_image_for_encoding(loaded, h, w, dtype=model_dtype)
-                )
-                mx.eval(latent)
-                if latent_cache is not None:
-                    latent_cache.put(key, latent)
-                    logger.info("latent cache miss+insert: %dx%d (%s)", h, w, key)
-                return latent
-
             if image is not None:
-                stage1_image_latent = _encode_image_latent(image, s1_h, s1_w)
+                stage1_image_latent, vae_encoder = _encode_image_latent_shared(
+                    image, s1_h, s1_w, model_repo, model_path, model_dtype, latent_cache, vae_encoder
+                )
                 if not session_tail_hit:
-                    stage2_image_latent = _encode_image_latent(image, s2_h, s2_w)
+                    stage2_image_latent, vae_encoder = _encode_image_latent_shared(
+                        image, s2_h, s2_w, model_repo, model_path, model_dtype, latent_cache, vae_encoder
+                    )
 
             if has_end_image:
-                stage1_end_image_latent = _encode_image_latent(end_image, s1_h, s1_w)
-                stage2_end_image_latent = _encode_image_latent(end_image, s2_h, s2_w)
+                stage1_end_image_latent, vae_encoder = _encode_image_latent_shared(
+                    end_image, s1_h, s1_w, model_repo, model_path, model_dtype, latent_cache, vae_encoder
+                )
+                stage2_end_image_latent, vae_encoder = _encode_image_latent_shared(
+                    end_image, s2_h, s2_w, model_repo, model_path, model_dtype, latent_cache, vae_encoder
+                )
 
             if vae_encoder is not None:
                 del vae_encoder
@@ -682,33 +694,15 @@ def generate_video(
                 latent_cache = get_image_latent_cache(model_repo)
                 vae_encoder = None
 
-                def _encode_image_latent(src, h, w):
-                    nonlocal vae_encoder
-                    key = image_latent_key(model_repo, src, h, w, model_dtype)
-                    if latent_cache is not None:
-                        cached = latent_cache.get(key)
-                        if cached is not None:
-                            logger.info("latent cache hit: %dx%d (%s)", h, w, key)
-                            return cached
-                    if vae_encoder is None:
-                        vae_encoder = VideoEncoder.from_pretrained(
-                            model_path / "vae" / "encoder"
-                        )
-                    loaded = load_image(src, height=h, width=w, dtype=model_dtype)
-                    latent = vae_encoder(
-                        prepare_image_for_encoding(loaded, h, w, dtype=model_dtype)
-                    )
-                    mx.eval(latent)
-                    if latent_cache is not None:
-                        latent_cache.put(key, latent)
-                        logger.info("latent cache miss+insert: %dx%d (%s)", h, w, key)
-                    return latent
-
                 if image is not None:
-                    image_latent = _encode_image_latent(image, height, width)
+                    image_latent, vae_encoder = _encode_image_latent_shared(
+                        image, height, width, model_repo, model_path, model_dtype, latent_cache, vae_encoder
+                    )
 
                 if has_end_image:
-                    end_image_latent = _encode_image_latent(end_image, height, width)
+                    end_image_latent, vae_encoder = _encode_image_latent_shared(
+                        end_image, height, width, model_repo, model_path, model_dtype, latent_cache, vae_encoder
+                    )
 
                 if vae_encoder is not None:
                     del vae_encoder
@@ -851,36 +845,22 @@ def generate_video(
             s1_h, s1_w = stage1_h * 32, stage1_w * 32
             s2_h, s2_w = stage2_h * 32, stage2_w * 32
 
-            def _encode_image_latent(src, h, w):
-                nonlocal vae_encoder
-                key = image_latent_key(model_repo, src, h, w, model_dtype)
-                if latent_cache is not None:
-                    cached = latent_cache.get(key)
-                    if cached is not None:
-                        logger.info("latent cache hit: %dx%d (%s)", h, w, key)
-                        return cached
-                if vae_encoder is None:
-                    vae_encoder = VideoEncoder.from_pretrained(
-                        model_path / "vae" / "encoder"
-                    )
-                loaded = load_image(src, height=h, width=w, dtype=model_dtype)
-                latent = vae_encoder(
-                    prepare_image_for_encoding(loaded, h, w, dtype=model_dtype)
-                )
-                mx.eval(latent)
-                if latent_cache is not None:
-                    latent_cache.put(key, latent)
-                    logger.info("latent cache miss+insert: %dx%d (%s)", h, w, key)
-                return latent
-
             if image is not None:
-                stage1_image_latent = _encode_image_latent(image, s1_h, s1_w)
+                stage1_image_latent, vae_encoder = _encode_image_latent_shared(
+                    image, s1_h, s1_w, model_repo, model_path, model_dtype, latent_cache, vae_encoder
+                )
                 if not session_tail_hit:
-                    stage2_image_latent = _encode_image_latent(image, s2_h, s2_w)
+                    stage2_image_latent, vae_encoder = _encode_image_latent_shared(
+                        image, s2_h, s2_w, model_repo, model_path, model_dtype, latent_cache, vae_encoder
+                    )
 
             if has_end_image:
-                stage1_end_image_latent = _encode_image_latent(end_image, s1_h, s1_w)
-                stage2_end_image_latent = _encode_image_latent(end_image, s2_h, s2_w)
+                stage1_end_image_latent, vae_encoder = _encode_image_latent_shared(
+                    end_image, s1_h, s1_w, model_repo, model_path, model_dtype, latent_cache, vae_encoder
+                )
+                stage2_end_image_latent, vae_encoder = _encode_image_latent_shared(
+                    end_image, s2_h, s2_w, model_repo, model_path, model_dtype, latent_cache, vae_encoder
+                )
 
             if vae_encoder is not None:
                 del vae_encoder
@@ -1132,36 +1112,22 @@ def generate_video(
             s1_h, s1_w = stage1_h * 32, stage1_w * 32
             s2_h, s2_w = stage2_h * 32, stage2_w * 32
 
-            def _encode_image_latent(src, h, w):
-                nonlocal vae_encoder
-                key = image_latent_key(model_repo, src, h, w, model_dtype)
-                if latent_cache is not None:
-                    cached = latent_cache.get(key)
-                    if cached is not None:
-                        logger.info("latent cache hit: %dx%d (%s)", h, w, key)
-                        return cached
-                if vae_encoder is None:
-                    vae_encoder = VideoEncoder.from_pretrained(
-                        model_path / "vae" / "encoder"
-                    )
-                loaded = load_image(src, height=h, width=w, dtype=model_dtype)
-                latent = vae_encoder(
-                    prepare_image_for_encoding(loaded, h, w, dtype=model_dtype)
-                )
-                mx.eval(latent)
-                if latent_cache is not None:
-                    latent_cache.put(key, latent)
-                    logger.info("latent cache miss+insert: %dx%d (%s)", h, w, key)
-                return latent
-
             if image is not None:
-                stage1_image_latent = _encode_image_latent(image, s1_h, s1_w)
+                stage1_image_latent, vae_encoder = _encode_image_latent_shared(
+                    image, s1_h, s1_w, model_repo, model_path, model_dtype, latent_cache, vae_encoder
+                )
                 if not session_tail_hit:
-                    stage2_image_latent = _encode_image_latent(image, s2_h, s2_w)
+                    stage2_image_latent, vae_encoder = _encode_image_latent_shared(
+                        image, s2_h, s2_w, model_repo, model_path, model_dtype, latent_cache, vae_encoder
+                    )
 
             if has_end_image:
-                stage1_end_image_latent = _encode_image_latent(end_image, s1_h, s1_w)
-                stage2_end_image_latent = _encode_image_latent(end_image, s2_h, s2_w)
+                stage1_end_image_latent, vae_encoder = _encode_image_latent_shared(
+                    end_image, s1_h, s1_w, model_repo, model_path, model_dtype, latent_cache, vae_encoder
+                )
+                stage2_end_image_latent, vae_encoder = _encode_image_latent_shared(
+                    end_image, s2_h, s2_w, model_repo, model_path, model_dtype, latent_cache, vae_encoder
+                )
 
             if vae_encoder is not None:
                 del vae_encoder
