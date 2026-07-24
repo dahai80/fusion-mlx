@@ -33,7 +33,7 @@ else:
     _IMPORT_ERROR = None
 
 
-NATIVE_SYMBOLS: tuple[str, ...] = ("w4a8_fused_matmul",)
+NATIVE_SYMBOLS: tuple[str, ...] = ("w4a8_fused_matmul", "moe_ffn_fused")
 
 
 def is_native_available() -> bool:
@@ -97,6 +97,8 @@ def w4a8_fused_matmul(
     )
 
 
+from .glm_moe_ffn import moe_ffn_fused, is_native_available as moe_ffn_is_native_available
+
 __all__ = [
     "NATIVE_SYMBOLS",
     "is_native_available",
@@ -105,4 +107,6 @@ __all__ = [
     "native_symbols",
     "missing_symbols",
     "w4a8_fused_matmul",
+    "moe_ffn_fused",
+    "moe_ffn_is_native_available",
 ]
