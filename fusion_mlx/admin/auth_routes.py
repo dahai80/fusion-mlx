@@ -148,7 +148,7 @@ async def setup_api_key(
     try:
         global_settings.save()
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to save settings: {e}")
+        raise HTTPException(status_code=500, detail="Failed to save settings")
 
     logger.info("API key configured via initial setup")
 

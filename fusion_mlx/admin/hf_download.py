@@ -382,7 +382,7 @@ async def delete_hf_model(
         logger.info(f"Deleted model directory: {model_path}")
     except Exception as e:
         logger.error(f"Failed to delete model directory {model_path}: {e}")
-        raise HTTPException(status_code=500, detail=f"Failed to delete model: {e}")
+        raise HTTPException(status_code=500, detail="Failed to delete model")
 
     # If the model was inside an org folder (organized layout) and that
     # folder is now empty, drop it so the listing stays tidy.

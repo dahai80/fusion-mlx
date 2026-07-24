@@ -964,7 +964,7 @@ def _save_model_settings_fallback(model_id: str, request: ModelSettingsRequest) 
     try:
         _write_settings_json(sj)
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to save settings: {e}")
+        raise HTTPException(status_code=500, detail="Failed to save settings")
 
     logger.info(
         f"Model settings saved (fallback mode): {model_id}, fields={list(sent)}"

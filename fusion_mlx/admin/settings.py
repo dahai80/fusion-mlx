@@ -351,7 +351,7 @@ def _save_global_settings_fallback(request: GlobalSettingsRequest) -> dict:
     try:
         _write_settings_json(sj)
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to save settings: {e}")
+        raise HTTPException(status_code=500, detail="Failed to save settings")
 
     logger.info(f"Global settings saved (fallback mode): {runtime_applied}")
     return {
@@ -1208,7 +1208,7 @@ async def update_global_settings(
             global_settings.scheduler.embedding_batch_size = (
                 previous_embedding_batch_size
             )
-        raise HTTPException(status_code=500, detail=f"Failed to save settings: {e}")
+        raise HTTPException(status_code=500, detail="Failed to save settings")
 
     if pending_embedding_batch_size is not None:
         from ..server import _server_state
