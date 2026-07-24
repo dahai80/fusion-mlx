@@ -114,6 +114,12 @@ def decode_base64_image(
 
 
 def download_image(url: str, timeout: int = 30, max_size: int = MAX_IMAGE_SIZE) -> str:
+    # SSRF guard: reject private/internal URLs before making outbound request
+    from ..api._url_safety import is_safe_url_with_dns
+
+    if not is_safe_url_with_dns(url):
+        raise ValueError(f"URL targets a private/internal address: {url}")
+
     import requests
 
     headers = {
@@ -186,6 +192,12 @@ def download_image(url: str, timeout: int = 30, max_size: int = MAX_IMAGE_SIZE) 
 
 
 def download_video(url: str, timeout: int = 120, max_size: int = MAX_VIDEO_SIZE) -> str:
+    # SSRF guard: reject private/internal URLs before making outbound request
+    from ..api._url_safety import is_safe_url_with_dns
+
+    if not is_safe_url_with_dns(url):
+        raise ValueError(f"URL targets a private/internal address: {url}")
+
     import requests
 
     headers = {

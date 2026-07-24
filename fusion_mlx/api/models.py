@@ -272,7 +272,7 @@ class ChatCompletionRequest(BaseModel):
     messages: list[Message]
     temperature: float | None = Field(None, ge=0.0, le=2.0)
     top_p: float | None = Field(None, ge=0.0, le=1.0)
-    max_tokens: int | None = Field(None, ge=1)
+    max_tokens: int | None = Field(None, ge=1, le=131072)
     # OpenAI-canonical token cap since Sept 2024 (preferred over max_tokens for
     # reasoning models; newer SDKs >=1.45 send only this field). Normalized to
     # max_tokens by a model_validator so all downstream code keeps reading the
@@ -526,7 +526,7 @@ class CompletionRequest(BaseModel):
     prompt: str | list[str]
     temperature: float | None = Field(None, ge=0.0, le=2.0)
     top_p: float | None = Field(None, ge=0.0, le=1.0)
-    max_tokens: int | None = Field(None, ge=1)
+    max_tokens: int | None = Field(None, ge=1, le=131072)
     stream: bool = False
     stop: list[str] | None = None
     # Extended OpenAI-compatible sampling parameters — see #355 + the

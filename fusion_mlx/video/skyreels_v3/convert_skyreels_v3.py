@@ -193,7 +193,7 @@ def _load_bin_files(files: list[Path]) -> dict[str, Any]:
     state_dict: dict[str, Any] = {}
     for f in files:
         logger.info("Loading %s ...", f.name)
-        raw = torch.load(str(f), map_location="cpu")
+        raw = torch.load(str(f), map_location="cpu", weights_only=True)
         if isinstance(raw, dict):
             # 处理嵌套 state_dict (e.g. {"state_dict": ...})
             if "state_dict" in raw:
@@ -211,7 +211,7 @@ def _load_torch_file(file: Path) -> dict[str, Any]:
             "torch is required to load .bin/.pt/.pth checkpoints."
         ) from exc
 
-    raw = torch.load(str(file), map_location="cpu")
+    raw = torch.load(str(file), map_location="cpu", weights_only=True)
     if isinstance(raw, dict) and "state_dict" in raw:
         raw = raw["state_dict"]
     return {k: v.detach().cpu().numpy() for k, v in raw.items()}

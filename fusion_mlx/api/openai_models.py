@@ -278,7 +278,7 @@ class ChatCompletionRequest(BaseModel):
     top_p: float | None = None
     top_k: int | None = None
     repetition_penalty: float | None = None
-    max_tokens: int | None = None
+    max_tokens: int | None = Field(None, ge=1, le=131072)
     stream: bool = False
     stream_options: StreamOptions | None = None
     stop: list[str] | None = None
@@ -406,7 +406,7 @@ class CompletionRequest(BaseModel):
     top_p: float | None = None
     top_k: int | None = None
     repetition_penalty: float | None = None
-    max_tokens: int | None = None
+    max_tokens: int | None = Field(None, ge=1, le=131072)
     stream: bool = False
     stream_options: StreamOptions | None = None
     stop: list[str] | None = None

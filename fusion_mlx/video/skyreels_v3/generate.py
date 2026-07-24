@@ -175,6 +175,12 @@ def _load_ref_imgs(paths: list[str]) -> list[Any]:
             import tempfile
             import urllib.request
 
+            # SSRF guard: reject private/internal URLs
+            from ...api._url_safety import is_safe_url_with_dns
+
+            if not is_safe_url_with_dns(p):
+                raise ValueError(f"URL targets a private/internal address: {p}")
+
             with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tf:
                 urllib.request.urlretrieve(p, tf.name)
                 images.append(Image.open(tf.name).convert("RGB"))
