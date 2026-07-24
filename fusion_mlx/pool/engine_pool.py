@@ -1100,6 +1100,36 @@ class EnginePool:
                 pass
             logger.info(f"Unregistered engine '{model_id}' from pool")
 
+    def unregister_engine(self, model_id: str) -> bool:
+        """Remove an externally-registered engine entry from the pool entirely.
+
+        Unlike unload_engine which keeps the EngineEntry shell, this deletes
+        the entry from _entries so it cannot accumulate stale metadata.
+        Returns True if an entry was removed, False if not found.
+        """
+        entry = self._entries.get(model_id)
+        if entry is None:
+            return False
+        # Stop + cleanup if still loaded
+        if entry.engine is not None:
+            try:
+                entry.engine.stop()
+            except Exception:
+                logger.debug("engine.stop() failed for %s", model_id)
+            try:
+                from ..cache.latent_cache import remove_image_latent_cache
+                remove_image_latent_cache(model_id)
+            except Exception:
+                pass
+            self._current_model_memory -= entry.estimated_size
+            if self._process_memory_enforcer is not None:
+                self._process_memory_enforcer.update_loaded_model_bytes(
+                    -int(entry.estimated_size)
+                )
+        del self._entries[model_id]
+        logger.info(f"Unregistered entry '{model_id}' from pool (full removal)")
+        return True
+
     def _find_lru_victim(self) -> str | None:
         """
         Find the least recently used non-pinned loaded model.
@@ -1224,6 +1254,12 @@ class EnginePool:
         entry.abort_requested = False
         entry.pending_unload_reason = None
         entry.runtime_settings_signature = None
+        # #209-M1: remove LoRA adapter entries whose base model was just unloaded
+        adapter_prefix = f"{model_id}::lora::"
+        stale_adapters = [k for k in self._entries if k.startswith(adapter_prefix)]
+        for ak in stale_adapters:
+            del self._entries[ak]
+            logger.info("removed stale adapter entry: %s", ak)
         return pre_unload_active
 
     async def unload_engine_async(
