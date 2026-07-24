@@ -321,6 +321,9 @@ def process_video_input(video: str | dict) -> str:
         raise ValueError("Empty video input")
 
     if Path(video).exists():
+        from fusion_mlx.api._url_safety import is_safe_local_path
+        if not is_safe_local_path(video):
+            raise ValueError(f"Path traversal blocked for video: {video[:50]}")
         return video
 
     if is_url(video):
@@ -409,6 +412,9 @@ def process_image_input(image: str | dict) -> str:
         return download_image(image)
 
     if len(image) < 4096 and Path(image).exists():
+        from fusion_mlx.api._url_safety import is_safe_local_path
+        if not is_safe_local_path(image):
+            raise ValueError(f"Path traversal blocked for image: {image[:50]}")
         return image
 
     raise ValueError(f"Cannot process image: {image[:50]}...")

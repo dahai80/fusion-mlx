@@ -87,13 +87,9 @@ def _encode_image_latent_shared(
             logger.info("latent cache hit: %dx%d (%s)", h, w, key)
             return cached, vae_encoder
     if vae_encoder is None:
-        vae_encoder = VideoEncoder.from_pretrained(
-            model_path / "vae" / "encoder"
-        )
+        vae_encoder = VideoEncoder.from_pretrained(model_path / "vae" / "encoder")
     loaded = load_image(src, height=h, width=w, dtype=model_dtype)
-    latent = vae_encoder(
-        prepare_image_for_encoding(loaded, h, w, dtype=model_dtype)
-    )
+    latent = vae_encoder(prepare_image_for_encoding(loaded, h, w, dtype=model_dtype))
     mx.eval(latent)
     if latent_cache is not None:
         latent_cache.put(key, latent)
@@ -227,7 +223,7 @@ def generate_video(
         height,
         num_frames,
     )
-    logger.info("Prompt: %s", prompt[:80] + ("..." if len(prompt) > 80 else ""))
+    logger.debug("Prompt: %s", prompt[:80] + ("..." if len(prompt) > 80 else ""))
 
     if pipeline in (
         PipelineType.DEV,
@@ -323,7 +319,9 @@ def generate_video(
             seed=seed,
             verbose=verbose,
         )
-        logger.info("Enhanced: %s", prompt[:150] + ("..." if len(prompt) > 150 else ""))
+        logger.debug(
+            "Enhanced: %s", prompt[:150] + ("..." if len(prompt) > 150 else "")
+        )
 
     if pipeline in (
         PipelineType.DEV,
@@ -455,12 +453,17 @@ def generate_video(
                         session_tail_hit = True
                         logger.info(
                             "session tail cache hit: %s stage2 %dx%d",
-                            session_id, t_h, t_w,
+                            session_id,
+                            t_h,
+                            t_w,
                         )
                     else:
                         logger.info(
                             "session tail cache skip: shape mismatch %dx%d vs %dx%d",
-                            t_h, t_w, stage2_h, stage2_w,
+                            t_h,
+                            t_w,
+                            stage2_h,
+                            stage2_w,
                         )
 
             if not session_tail_hit:
@@ -476,19 +479,47 @@ def generate_video(
 
             if image is not None:
                 stage1_image_latent, vae_encoder = _encode_image_latent_shared(
-                    image, s1_h, s1_w, model_repo, model_path, model_dtype, latent_cache, vae_encoder
+                    image,
+                    s1_h,
+                    s1_w,
+                    model_repo,
+                    model_path,
+                    model_dtype,
+                    latent_cache,
+                    vae_encoder,
                 )
                 if not session_tail_hit:
                     stage2_image_latent, vae_encoder = _encode_image_latent_shared(
-                        image, s2_h, s2_w, model_repo, model_path, model_dtype, latent_cache, vae_encoder
+                        image,
+                        s2_h,
+                        s2_w,
+                        model_repo,
+                        model_path,
+                        model_dtype,
+                        latent_cache,
+                        vae_encoder,
                     )
 
             if has_end_image:
                 stage1_end_image_latent, vae_encoder = _encode_image_latent_shared(
-                    end_image, s1_h, s1_w, model_repo, model_path, model_dtype, latent_cache, vae_encoder
+                    end_image,
+                    s1_h,
+                    s1_w,
+                    model_repo,
+                    model_path,
+                    model_dtype,
+                    latent_cache,
+                    vae_encoder,
                 )
                 stage2_end_image_latent, vae_encoder = _encode_image_latent_shared(
-                    end_image, s2_h, s2_w, model_repo, model_path, model_dtype, latent_cache, vae_encoder
+                    end_image,
+                    s2_h,
+                    s2_w,
+                    model_repo,
+                    model_path,
+                    model_dtype,
+                    latent_cache,
+                    vae_encoder,
                 )
 
             if vae_encoder is not None:
@@ -696,12 +727,26 @@ def generate_video(
 
                 if image is not None:
                     image_latent, vae_encoder = _encode_image_latent_shared(
-                        image, height, width, model_repo, model_path, model_dtype, latent_cache, vae_encoder
+                        image,
+                        height,
+                        width,
+                        model_repo,
+                        model_path,
+                        model_dtype,
+                        latent_cache,
+                        vae_encoder,
                     )
 
                 if has_end_image:
                     end_image_latent, vae_encoder = _encode_image_latent_shared(
-                        end_image, height, width, model_repo, model_path, model_dtype, latent_cache, vae_encoder
+                        end_image,
+                        height,
+                        width,
+                        model_repo,
+                        model_path,
+                        model_dtype,
+                        latent_cache,
+                        vae_encoder,
                     )
 
                 if vae_encoder is not None:
@@ -826,12 +871,17 @@ def generate_video(
                         session_tail_hit = True
                         logger.info(
                             "session tail cache hit: %s stage2 %dx%d",
-                            session_id, t_h, t_w,
+                            session_id,
+                            t_h,
+                            t_w,
                         )
                     else:
                         logger.info(
                             "session tail cache skip: shape mismatch %dx%d vs %dx%d",
-                            t_h, t_w, stage2_h, stage2_w,
+                            t_h,
+                            t_w,
+                            stage2_h,
+                            stage2_w,
                         )
 
             if not session_tail_hit:
@@ -847,19 +897,47 @@ def generate_video(
 
             if image is not None:
                 stage1_image_latent, vae_encoder = _encode_image_latent_shared(
-                    image, s1_h, s1_w, model_repo, model_path, model_dtype, latent_cache, vae_encoder
+                    image,
+                    s1_h,
+                    s1_w,
+                    model_repo,
+                    model_path,
+                    model_dtype,
+                    latent_cache,
+                    vae_encoder,
                 )
                 if not session_tail_hit:
                     stage2_image_latent, vae_encoder = _encode_image_latent_shared(
-                        image, s2_h, s2_w, model_repo, model_path, model_dtype, latent_cache, vae_encoder
+                        image,
+                        s2_h,
+                        s2_w,
+                        model_repo,
+                        model_path,
+                        model_dtype,
+                        latent_cache,
+                        vae_encoder,
                     )
 
             if has_end_image:
                 stage1_end_image_latent, vae_encoder = _encode_image_latent_shared(
-                    end_image, s1_h, s1_w, model_repo, model_path, model_dtype, latent_cache, vae_encoder
+                    end_image,
+                    s1_h,
+                    s1_w,
+                    model_repo,
+                    model_path,
+                    model_dtype,
+                    latent_cache,
+                    vae_encoder,
                 )
                 stage2_end_image_latent, vae_encoder = _encode_image_latent_shared(
-                    end_image, s2_h, s2_w, model_repo, model_path, model_dtype, latent_cache, vae_encoder
+                    end_image,
+                    s2_h,
+                    s2_w,
+                    model_repo,
+                    model_path,
+                    model_dtype,
+                    latent_cache,
+                    vae_encoder,
                 )
 
             if vae_encoder is not None:
@@ -1093,12 +1171,17 @@ def generate_video(
                         session_tail_hit = True
                         logger.info(
                             "session tail cache hit: %s stage2 %dx%d",
-                            session_id, t_h, t_w,
+                            session_id,
+                            t_h,
+                            t_w,
                         )
                     else:
                         logger.info(
                             "session tail cache skip: shape mismatch %dx%d vs %dx%d",
-                            t_h, t_w, stage2_h, stage2_w,
+                            t_h,
+                            t_w,
+                            stage2_h,
+                            stage2_w,
                         )
 
             if not session_tail_hit:
@@ -1114,19 +1197,47 @@ def generate_video(
 
             if image is not None:
                 stage1_image_latent, vae_encoder = _encode_image_latent_shared(
-                    image, s1_h, s1_w, model_repo, model_path, model_dtype, latent_cache, vae_encoder
+                    image,
+                    s1_h,
+                    s1_w,
+                    model_repo,
+                    model_path,
+                    model_dtype,
+                    latent_cache,
+                    vae_encoder,
                 )
                 if not session_tail_hit:
                     stage2_image_latent, vae_encoder = _encode_image_latent_shared(
-                        image, s2_h, s2_w, model_repo, model_path, model_dtype, latent_cache, vae_encoder
+                        image,
+                        s2_h,
+                        s2_w,
+                        model_repo,
+                        model_path,
+                        model_dtype,
+                        latent_cache,
+                        vae_encoder,
                     )
 
             if has_end_image:
                 stage1_end_image_latent, vae_encoder = _encode_image_latent_shared(
-                    end_image, s1_h, s1_w, model_repo, model_path, model_dtype, latent_cache, vae_encoder
+                    end_image,
+                    s1_h,
+                    s1_w,
+                    model_repo,
+                    model_path,
+                    model_dtype,
+                    latent_cache,
+                    vae_encoder,
                 )
                 stage2_end_image_latent, vae_encoder = _encode_image_latent_shared(
-                    end_image, s2_h, s2_w, model_repo, model_path, model_dtype, latent_cache, vae_encoder
+                    end_image,
+                    s2_h,
+                    s2_w,
+                    model_repo,
+                    model_path,
+                    model_dtype,
+                    latent_cache,
+                    vae_encoder,
                 )
 
             if vae_encoder is not None:

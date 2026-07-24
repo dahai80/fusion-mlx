@@ -998,7 +998,7 @@ class LTX2TextEncoder(nn.Module):
         )
 
         enhanced_prompt = self._clean_response(enhanced_prompt)
-        logger.info("Enhanced prompt: %s", enhanced_prompt)
+        logger.debug("Enhanced prompt: %s", enhanced_prompt)
 
         return enhanced_prompt
 

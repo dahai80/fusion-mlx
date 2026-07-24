@@ -28,6 +28,8 @@ classifiers = [
 
 dependencies = [
     "mlx>=0.31.2",
+    # Git-pinned deps: the commit SHA IS the supply-chain integrity check.
+    # Verify with: bash scripts/verify_git_pins.sh
     "mlx-lm @ git+https://github.com/ml-explore/mlx-lm@ed1fca4cef15a824c5f1702c80f70b4cffc8e4dd",
     "regex",
     "mlx-embeddings @ git+https://github.com/Blaizzy/mlx-embeddings@32981fa4e8064ed664b52071789dd18271fe4206",

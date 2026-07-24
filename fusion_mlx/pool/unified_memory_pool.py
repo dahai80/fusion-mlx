@@ -60,11 +60,38 @@ class MetalBufferRegistry:
     here. This gives us a single source of truth for memory usage.
     """
 
+    _BUFFER_TTL_SECONDS = 7200  # 2 hours idle -> auto-evict
+
     def __init__(self):
         self._buffers: dict[str, BufferEntry] = {}
         self._lock = threading.RLock()
         self._total_bytes = 0
         self._per_backend_bytes: dict[str, int] = {}
+
+    def evict_stale(self) -> int:
+        """Evict buffers idle beyond TTL. Only evicts ref_count==1 (sole owner)."""
+        now = time.time()
+        stale_ids = []
+        with self._lock:
+            for buf_id, entry in self._buffers.items():
+                if (
+                    entry.ref_count <= 1
+                    and (now - entry.last_accessed) > self._BUFFER_TTL_SECONDS
+                ):
+                    stale_ids.append(buf_id)
+            for buf_id in stale_ids:
+                entry = self._buffers.pop(buf_id)
+                self._total_bytes -= entry.size_bytes
+                self._per_backend_bytes[entry.backend] = max(
+                    0, self._per_backend_bytes.get(entry.backend, 0) - entry.size_bytes
+                )
+        if stale_ids:
+            logger.warning(
+                "[Registry] evicted %d stale buffers (idle > %ds)",
+                len(stale_ids),
+                self._BUFFER_TTL_SECONDS,
+            )
+        return len(stale_ids)
 
     def register(
         self,
@@ -185,6 +212,7 @@ class MetalBufferRegistry:
 
     def get_stats(self) -> dict[str, Any]:
         with self._lock:
+            self.evict_stale()
             kv_count = sum(1 for e in self._buffers.values() if e.is_kv_cache)
             return {
                 "total_bytes": self._total_bytes,
@@ -282,10 +310,32 @@ class KVCacheBridge:
      - This prevents source engine GC from freeing shared buffers
     """
 
+    _HANDOFF_TTL_SECONDS = 3600  # 1 hour
+
     def __init__(self, registry: MetalBufferRegistry):
         self._registry = registry
         self._active_handoffs: dict[str, KVCacheState] = {}
         self._lock = threading.Lock()
+
+    def _evict_stale_handoffs(self) -> int:
+        now = time.time()
+        stale_ids = [
+            hid
+            for hid, state in self._active_handoffs.items()
+            if (now - state.handed_off_at) > self._HANDOFF_TTL_SECONDS
+        ]
+        for hid in stale_ids:
+            state = self._active_handoffs.pop(hid, None)
+            if state:
+                for buf_id in state.buffer_ids:
+                    self._registry.decrement_ref(buf_id)
+                    self._registry.decrement_ref(buf_id)
+                logger.warning(
+                    "[Bridge] evicted stale handoff %s (age=%.0fs)",
+                    hid,
+                    now - state.handed_off_at,
+                )
+        return len(stale_ids)
 
     def capture(
         self,
@@ -332,6 +382,7 @@ class KVCacheBridge:
         handoff_id = uuid.uuid4().hex[:12]
         state.handoff_id = handoff_id
         with self._lock:
+            self._evict_stale_handoffs()
             self._active_handoffs[handoff_id] = state
         logger.info(
             f"[Bridge] captured KV state: {len(kv_arrays)} buffers, "
@@ -432,6 +483,7 @@ class KVCacheBridge:
 
     def get_active_handoffs(self) -> int:
         with self._lock:
+            self._evict_stale_handoffs()
             return len(self._active_handoffs)
 
     def evict_or_swap_active_kv(self, request_id: str) -> None:

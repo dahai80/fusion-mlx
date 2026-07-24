@@ -1,9 +1,11 @@
 # SPDX-License-Identifier: Apache-2.0
-"""URL safety helpers — block SSRF by rejecting private/internal IPs."""
+"""URL safety helpers — block SSRF and path traversal for image/video params."""
 
 import ipaddress
 import logging
+import os
 import socket
+from pathlib import Path
 from urllib.parse import urlparse
 
 logger = logging.getLogger(__name__)
@@ -19,11 +21,13 @@ _PRIVATE_NETWORKS = [
     ipaddress.ip_network("fe80::/10"),
 ]
 
-_BLOCKED_HOSTNAMES = frozenset({
-    "localhost",
-    "metadata.google.internal",
-    "metadata.google.internal.",
-})
+_BLOCKED_HOSTNAMES = frozenset(
+    {
+        "localhost",
+        "metadata.google.internal",
+        "metadata.google.internal.",
+    }
+)
 
 
 def _is_private_addr(addr: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
@@ -78,11 +82,55 @@ def is_safe_url_with_dns(url: str) -> bool:
             try:
                 addr = ipaddress.ip_address(ip_str)
                 if _is_private_addr(addr):
-                    logger.warning("is_safe_url_with_dns: resolved %s -> %s (private)", hostname, ip_str)
+                    logger.warning(
+                        "is_safe_url_with_dns: resolved %s -> %s (private)",
+                        hostname,
+                        ip_str,
+                    )
                     return False
             except ValueError:
                 continue
     except Exception:
-        logger.debug("is_safe_url_with_dns: DNS lookup failed for %s", hostname, exc_info=True)
+        logger.debug(
+            "is_safe_url_with_dns: DNS lookup failed for %s", hostname, exc_info=True
+        )
         return False
     return True
+
+
+_ALLOWED_READ_DIRS: list[str] = [
+    os.path.expanduser("~/.fusion-mlx/models"),
+    os.path.expanduser("~/.fusion-mlx/cache"),
+    "/tmp",
+    "/var/tmp",
+]
+
+
+def _resolve_and_check(path_str: str) -> Path:
+    resolved = Path(path_str).resolve()
+    for allowed in _ALLOWED_READ_DIRS:
+        allowed_resolved = Path(allowed).resolve()
+        try:
+            resolved.relative_to(allowed_resolved)
+            return resolved
+        except ValueError:
+            continue
+    raise ValueError(
+        f"Path traversal blocked: {path_str} is outside allowed directories"
+    )
+
+
+def is_safe_local_path(path_str: str) -> bool:
+    if not path_str or not isinstance(path_str, str):
+        return False
+    if path_str.startswith("file://"):
+        path_str = path_str[7:]
+    if "\0" in path_str:
+        logger.warning("is_safe_local_path: null byte in path %r", path_str[:100])
+        return False
+    try:
+        _resolve_and_check(path_str)
+        return True
+    except ValueError as e:
+        logger.warning("is_safe_local_path: %s", e)
+        return False

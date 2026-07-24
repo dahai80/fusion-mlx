@@ -129,6 +129,9 @@ def _resolve_image_to_path(image: str) -> tuple[str, bool]:
         os.close(fd)
         urllib.request.urlretrieve(image, path)
         return path, True
+    from ._url_safety import is_safe_local_path
+    if not is_safe_local_path(image):
+        raise HTTPException(400, "Image path targets a restricted directory")
     return image, False
 
 

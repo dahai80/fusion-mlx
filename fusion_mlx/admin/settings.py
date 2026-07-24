@@ -23,6 +23,15 @@ from .auth import (
 
 logger = logging.getLogger(__name__)
 
+
+def _mask_api_key(key: str | None) -> str:
+    if not key:
+        return ""
+    if len(key) <= 4:
+        return "****"
+    return "*" * (len(key) - 4) + key[-4:]
+
+
 PRESET_REMOTE_URL = "http://bench.dpdns.org/assets/fusionmlx_preset.json"
 
 
@@ -454,7 +463,7 @@ def _build_fallback_global_settings() -> dict:
         },
         "auth": {
             "api_key_set": bool(api_key),
-            "api_key": api_key or "",
+            "api_key": _mask_api_key(api_key),
             "skip_api_key_verification": False,
             "sub_keys": [],
         },
@@ -687,7 +696,7 @@ async def get_global_settings(is_admin: bool = Depends(require_admin)):
         },
         "auth": {
             "api_key_set": bool(global_settings.auth.api_key),
-            "api_key": global_settings.auth.api_key or "",
+            "api_key": _mask_api_key(global_settings.auth.api_key),
             "skip_api_key_verification": global_settings.auth.skip_api_key_verification,
             "sub_keys": [sk.to_dict() for sk in global_settings.auth.sub_keys],
         },
