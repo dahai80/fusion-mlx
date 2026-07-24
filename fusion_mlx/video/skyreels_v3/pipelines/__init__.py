@@ -569,6 +569,7 @@ class SkyReelsBasePipeline:
                 cn_adapter = None
 
         # AnimateDiff: 加载适配器 (如果 animatediff_scale > 0)
+        # LoRA-based: inject() merges LoRA deltas into DiT weights, remove() restores.
         ad_adapter = None
         ad_scale = getattr(self.config, "animatediff_scale", 0.0)
         if ad_scale > 0:
@@ -579,15 +580,13 @@ class SkyReelsBasePipeline:
                     "animatediff",
                     scale=ad_scale,
                     config={
-                        "dim": self.dit.dim,
-                        "num_heads": getattr(self.dit, "num_heads", 40),
                         "num_layers": self.dit._num_blocks,
                     },
                 )
                 if ad_adapter is not None:
                     ad_adapter.load(str(self.model_path))
                     ad_adapter.inject(self.dit)
-                    logger.info("AnimateDiff: active scale=%.2f", ad_scale)
+                    logger.info("AnimateDiff: active scale=%.2f (LoRA merged)", ad_scale)
             except Exception as exc:
                 logger.warning("AnimateDiff: load failed, skipping: %s", exc)
                 ad_adapter = None
@@ -631,6 +630,8 @@ class SkyReelsBasePipeline:
                         context,
                         control_image=cn_control_image,
                         control_type=cn_control_type,
+                        seq_lens=seq_lens,
+                        grid_sizes=grid_sizes,
                     )
                     cn_residuals = cn_adapter.get_residuals()
                     if cn_residuals is not None and run_cfg:
@@ -642,6 +643,7 @@ class SkyReelsBasePipeline:
                     cn_residuals = None
 
             # 模型前向
+            cn_stride = getattr(cn_adapter, "stride", 1) if cn_adapter is not None else 1
             noise_pred = self.dit(
                 latent_input,
                 t_mx,
@@ -649,6 +651,7 @@ class SkyReelsBasePipeline:
                 cfg_seq_lens,
                 cfg_grid_sizes,
                 controlnet_residuals=cn_residuals,
+                controlnet_stride=cn_stride,
             )
 
             # CFG 合并 (仅 b=2 步; b=1 步 noise_pred 已是 cond, guidance=1.0)

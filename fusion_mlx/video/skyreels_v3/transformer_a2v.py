@@ -83,6 +83,7 @@ class SkyReelsA2VDiT(SkyReelsBaseDiT):
         temporal_len: int | None = None,
         cross_kv_cache: tuple | None = None,
         controlnet_residuals: list[mx.array] | None = None,
+        controlnet_stride: int = 1,
     ) -> mx.array:
         """A2V 前向: 视频 latent + 时间步 + 音频 + 文本 -> 去噪 latent."""
         return self._lazy_call(
@@ -99,6 +100,7 @@ class SkyReelsA2VDiT(SkyReelsBaseDiT):
                 temporal_len,
                 cross_kv_cache,
                 controlnet_residuals,
+                controlnet_stride,
             )
         )
 
@@ -116,6 +118,7 @@ class SkyReelsA2VDiT(SkyReelsBaseDiT):
         temporal_len: int | None = None,
         cross_kv_cache: tuple | None = None,
         controlnet_residuals: list[mx.array] | None = None,
+        controlnet_stride: int = 1,
     ) -> mx.array:
         """原始前向路径 (mx.compile 融合目标)."""
         x = self.patch_embedding(x)
@@ -135,6 +138,7 @@ class SkyReelsA2VDiT(SkyReelsBaseDiT):
             cross_kv_cache=cross_kv_cache,
             audio_ctx=audio_ctx,
             controlnet_residuals=controlnet_residuals,
+            controlnet_stride=controlnet_stride,
         )
         out = self.head(x, e)
         out = self._unpatchify(out, grid_sizes)
@@ -155,6 +159,7 @@ class SkyReelsA2VDiT(SkyReelsBaseDiT):
         temporal_len: int | None = None,
         cross_kv_cache: tuple | None = None,
         controlnet_residuals: list[mx.array] | None = None,
+        controlnet_stride: int = 1,
     ) -> mx.array:
         x = self.patch_embedding(x)
         context = self.audio_embedding(audio_embeds, text_embeds)
@@ -174,6 +179,7 @@ class SkyReelsA2VDiT(SkyReelsBaseDiT):
             cross_kv_cache=cross_kv_cache,
             audio_ctx=audio_ctx,
             controlnet_residuals=controlnet_residuals,
+            controlnet_stride=controlnet_stride,
         )
         out = self.head(x, e)
         out = self._unpatchify(out, grid_sizes)

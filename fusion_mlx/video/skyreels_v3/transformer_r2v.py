@@ -56,6 +56,7 @@ class SkyReelsR2VDiT(SkyReelsBaseDiT):
         rope_cos_sin: tuple | None = None,
         attn_mask: mx.array | None = None,
         controlnet_residuals: list[mx.array] | None = None,
+        controlnet_stride: int = 1,
     ) -> mx.array:
         """前向: 视频 latent + 时间步 + 文本 -> 去噪 latent.
 
@@ -69,6 +70,7 @@ class SkyReelsR2VDiT(SkyReelsBaseDiT):
             rope_cos_sin: 预计算 rope
             attn_mask: 注意力掩码
             controlnet_residuals: per-block residuals from ControlNet (optional)
+            controlnet_stride: inject residuals every N blocks (default 1 = every block)
 
         Returns:
             [B, C_out, T, H, W] 去噪 latent
@@ -86,6 +88,7 @@ class SkyReelsR2VDiT(SkyReelsBaseDiT):
             rope_cos_sin,
             attn_mask,
             controlnet_residuals=controlnet_residuals,
+            controlnet_stride=controlnet_stride,
         )
         out = self.head(x, e)  # [B, L, prod(patch_size)*out_dim]
         out = self._unpatchify(out, grid_sizes)  # [B, C_out, T, H, W]
@@ -103,6 +106,7 @@ class SkyReelsR2VDiT(SkyReelsBaseDiT):
         rope_cos_sin: tuple | None = None,
         attn_mask: mx.array | None = None,
         controlnet_residuals: list[mx.array] | None = None,
+        controlnet_stride: int = 1,
     ) -> mx.array:
         x = self.patch_embedding(x)
         context = self.text_embedding(context)
@@ -118,6 +122,7 @@ class SkyReelsR2VDiT(SkyReelsBaseDiT):
             attn_mask,
             n_blocks=n_blocks,
             controlnet_residuals=controlnet_residuals,
+            controlnet_stride=controlnet_stride,
         )
         out = self.head(x, e)
         out = self._unpatchify(out, grid_sizes)

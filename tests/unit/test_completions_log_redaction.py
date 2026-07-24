@@ -6,10 +6,9 @@ import pytest
 logger = logging.getLogger(__name__)
 
 SKIP_REASON = (
-    "fusion-mlx does not have fusion_mlx.routes_internal.completions; "
-    "the /v1/completions route with prompt-redaction logging "
-    "has not been ported from Rapid-MLX. Re-enable when the "
-    "completions route lands in fusion-mlx."
+    "routes_internal/completions.py removed (dead code, #71 dedup); "
+    "the live /v1/completions route is in api/openai_routes.py. "
+    "Re-enable when prompt-redaction logging is ported to the live route."
 )
 
 

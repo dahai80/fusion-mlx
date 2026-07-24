@@ -22,6 +22,13 @@ from .base import VideoBackend, VideoConstraints, VideoGenParams
 logger = logging.getLogger(__name__)
 
 
+def _active_mem() -> int:
+    try:
+        return int(mx.metal.get_active_memory())
+    except Exception:
+        return -1
+
+
 class SkyReelsBackend(VideoBackend):
     name = "skyreels"
     supports_i2v = True
@@ -35,6 +42,13 @@ class SkyReelsBackend(VideoBackend):
         # stop() 时显式释放大模型引用 + gc.collect + mx.clear_cache.
         self._pipeline: Any = None
         self._pipeline_class: type | None = None
+        # Stage API (#170): track which components are "loaded" for ComfyUI sequential offload.
+        # Pipeline loads all 3 models in __init__, but unload_* sets them to None.
+        self._stage_flags: dict[str, bool] = {
+            "text_encoder": False,
+            "dit": False,
+            "vae": False,
+        }
 
     @classmethod
     def detect(cls, model_path: str) -> bool:
@@ -70,6 +84,7 @@ class SkyReelsBackend(VideoBackend):
             except Exception:
                 pass
         self._pipeline_class = None
+        self._stage_flags = {"text_encoder": False, "dit": False, "vae": False}
         gc.collect()
         loop = asyncio.get_running_loop()
         await asyncio.wait_for(
@@ -100,6 +115,218 @@ class SkyReelsBackend(VideoBackend):
                 "Unknown SkyReels branch, defaulting to R2V: %s", self._model_name
             )
             return await self._generate_r2v(params)
+
+    # ------------------------------------------------------------------
+    # Pipeline stage API (issue #170). Override VideoBackend NotImplementedError
+    # defaults to expose individual pipeline stages for Fusion-ComfyUI
+    # sequential offload. Video latents are 5D (batch, c, num_frames, h, w).
+    # ------------------------------------------------------------------
+    def _detect_pipeline_class(self) -> type:
+        model_lower = self._model_name.lower()
+        if "r2v" in model_lower or "r2v_14b" in model_lower:
+            from fusion_mlx.video.skyreels_v3.pipelines import SkyReelsR2VPipeline
+
+            return SkyReelsR2VPipeline
+        elif "v2v" in model_lower or "v2v_14b" in model_lower:
+            from fusion_mlx.video.skyreels_v3.pipelines import SkyReelsV2VPipeline
+
+            return SkyReelsV2VPipeline
+        elif "a2v" in model_lower or "a2v_19b" in model_lower:
+            from fusion_mlx.video.skyreels_v3.pipelines import SkyReelsA2VPipeline
+
+            return SkyReelsA2VPipeline
+        else:
+            from fusion_mlx.video.skyreels_v3.pipelines import SkyReelsR2VPipeline
+
+            return SkyReelsR2VPipeline
+
+    async def _ensure_pipeline(self) -> Any:
+        if self._pipeline is not None:
+            return self._pipeline
+        pipeline_class = self._detect_pipeline_class()
+        await self._get_or_create_pipeline(pipeline_class)
+        # Mark all components loaded (pipeline.__init__ loads all 3)
+        self._stage_flags["text_encoder"] = True
+        self._stage_flags["dit"] = True
+        self._stage_flags["vae"] = True
+        return self._pipeline
+
+    async def load_text_encoder(self) -> None:
+        pipeline = await self._ensure_pipeline()
+        if pipeline.text_encoder is None:
+            raise RuntimeError(
+                "text_encoder was unloaded; call _ensure_pipeline() to reload"
+            )
+        self._stage_flags["text_encoder"] = True
+        gc.collect()
+        logger.info("stage:text_encoder load active_mem=%s", _active_mem())
+
+    async def encode_text(self, prompt: str) -> dict:
+        pipeline = await self._ensure_pipeline()
+        if pipeline.text_encoder is None:
+            raise RuntimeError("text_encoder is unloaded; call load_text_encoder().")
+
+        def _enc():
+            context = pipeline._encode_context(prompt)
+            mx.eval(context)
+            return context
+
+        loop = asyncio.get_running_loop()
+        context = await loop.run_in_executor(get_executor("video"), _enc)
+        logger.info(
+            "stage:text_encoder encode prompt_len=%d context_shape=%s",
+            len(prompt),
+            tuple(context.shape),
+        )
+        return {"context": context}
+
+    async def unload_text_encoder(self) -> None:
+        pipeline = await self._ensure_pipeline()
+        pipeline.text_encoder = None
+        if hasattr(pipeline, "clip_encoder"):
+            pipeline.clip_encoder = None
+        self._stage_flags["text_encoder"] = False
+        gc.collect()
+        mx.synchronize()
+        mx.clear_cache()
+        logger.info("stage:text_encoder unload")
+
+    async def load_dit(self) -> None:
+        pipeline = await self._ensure_pipeline()
+        if pipeline.dit is None:
+            raise RuntimeError("dit was unloaded; call _ensure_pipeline() to reload")
+        self._stage_flags["dit"] = True
+        gc.collect()
+        logger.info("stage:dit load active_mem=%s", _active_mem())
+
+    async def denoise(
+        self,
+        latent: mx.array,
+        pos_embed: mx.array,
+        neg_embed: mx.array | None,
+        steps: int,
+        cfg: float,
+        seed: int,
+        num_frames: int,
+    ) -> mx.array:
+        pipeline = await self._ensure_pipeline()
+        if pipeline.dit is None:
+            raise RuntimeError("dit is unloaded; call load_dit().")
+
+        # Build context: pos_embed is the full context from encode_text.
+        # If neg_embed provided, concatenate for CFG; otherwise use pos_embed only.
+        if neg_embed is not None:
+            context = mx.concatenate([neg_embed, pos_embed])
+        else:
+            context = pos_embed
+
+        # Derive grid_sizes / seq_lens from latent shape + DiT patch_size
+        cfg_pipeline = pipeline.config
+        b, c, latent_t, latent_h, latent_w = latent.shape
+        pt, ph, pw = pipeline.dit.patch_size
+        grid_t = latent_t // pt
+        grid_h = latent_h // ph
+        grid_w = latent_w // pw
+        seq_lens = [grid_t * grid_h * grid_w]
+        grid_sizes = [(grid_t, grid_h, grid_w)]
+
+        # Override steps temporarily for this denoise call
+        saved_steps = cfg_pipeline.num_inference_steps
+        saved_cfg = cfg_pipeline.guidance_scale
+        cfg_pipeline.num_inference_steps = steps
+        cfg_pipeline.guidance_scale = cfg
+        try:
+
+            def _denoise():
+                result = pipeline._denoise_sample(
+                    latent, context, seq_lens=seq_lens, grid_sizes=grid_sizes
+                )
+                mx.eval(result)
+                return result
+
+            loop = asyncio.get_running_loop()
+            result = await loop.run_in_executor(get_executor("video"), _denoise)
+            logger.info(
+                "stage:dit denoise steps=%d cfg=%.2f latent_shape=%s result_shape=%s",
+                steps,
+                cfg,
+                tuple(latent.shape),
+                tuple(result.shape),
+            )
+            return result
+        finally:
+            cfg_pipeline.num_inference_steps = saved_steps
+            cfg_pipeline.guidance_scale = saved_cfg
+
+    async def unload_dit(self) -> None:
+        pipeline = await self._ensure_pipeline()
+        pipeline.dit = None
+        pipeline.step_strategy = None
+        self._stage_flags["dit"] = False
+        gc.collect()
+        mx.synchronize()
+        mx.clear_cache()
+        logger.info("stage:dit unload")
+
+    async def load_vae(self) -> None:
+        pipeline = await self._ensure_pipeline()
+        if pipeline.vae is None:
+            raise RuntimeError("vae was unloaded; call _ensure_pipeline() to reload")
+        self._stage_flags["vae"] = True
+        gc.collect()
+        logger.info("stage:vae load active_mem=%s", _active_mem())
+
+    async def decode(self, latent: mx.array) -> mx.array:
+        pipeline = await self._ensure_pipeline()
+        if pipeline.vae is None:
+            raise RuntimeError("vae is unloaded; call load_vae().")
+
+        def _decode():
+            result = pipeline.vae.decode(latent)
+            mx.eval(result)
+            return result
+
+        loop = asyncio.get_running_loop()
+        result = await loop.run_in_executor(get_executor("video"), _decode)
+        logger.info(
+            "stage:vae decode latent_shape=%s result_shape=%s",
+            tuple(latent.shape),
+            tuple(result.shape),
+        )
+        return result
+
+    async def decode_tiled(self, latent: mx.array, tile_size: int = 256) -> mx.array:
+        pipeline = await self._ensure_pipeline()
+        if pipeline.vae is None:
+            raise RuntimeError("vae is unloaded; call load_vae().")
+
+        def _decode_tiled():
+            # tile_size is in pixels; convert to latent-space tile tuple
+            latent_tile = max(1, tile_size // 8)
+            result = pipeline.vae.decode(
+                latent, tiling=True, tile_size=(1, latent_tile, latent_tile)
+            )
+            mx.eval(result)
+            return result
+
+        loop = asyncio.get_running_loop()
+        result = await loop.run_in_executor(get_executor("video"), _decode_tiled)
+        logger.info(
+            "stage:vae decode_tiled tile_size=%d latent_shape=%s result_shape=%s",
+            tile_size,
+            tuple(latent.shape),
+            tuple(result.shape),
+        )
+        return result
+
+    async def unload_vae(self) -> None:
+        pipeline = await self._ensure_pipeline()
+        pipeline.vae = None
+        self._stage_flags["vae"] = False
+        gc.collect()
+        mx.synchronize()
+        mx.clear_cache()
+        logger.info("stage:vae unload")
 
     async def _get_or_create_pipeline(self, pipeline_class: type) -> Any:
         """AtomCode fix #130: 获取或创建缓存 pipeline 实例.

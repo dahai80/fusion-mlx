@@ -2458,3 +2458,34 @@ class TestResetActivityTracking:
         # Teardown reset the leaked counter (getattr-guarded reset called).
         assert engine._active_count == 0
         assert engine.has_active_requests() is False
+
+
+class TestDiscoverModelsAsyncRace:
+    """Tests for discover_models_async race condition fix (#59)."""
+
+    @pytest.mark.asyncio
+    async def test_concurrent_discover_no_lost_entries(self, small_mock_model_dir):
+        """Two concurrent discover_models_async calls must not lose entries."""
+        pool = _make_pool(ceiling=10 * 1024**3)
+        await asyncio.gather(
+            pool.discover_models_async(str(small_mock_model_dir)),
+            pool.discover_models_async(str(small_mock_model_dir)),
+        )
+        assert pool.model_count == 2
+        assert "model-a" in pool.list_models()
+        assert "model-b" in pool.list_models()
+
+    @pytest.mark.asyncio
+    async def test_concurrent_discover_preserves_loaded(self, small_mock_model_dir):
+        """Concurrent rediscover must preserve loaded engines."""
+        pool = _make_pool(ceiling=10 * 1024**3)
+        pool.discover_models(str(small_mock_model_dir))
+        entry_a = pool.get_entry("model-a")
+        mock_engine = MagicMock()
+        entry_a.engine = mock_engine
+
+        await asyncio.gather(
+            pool.discover_models_async(str(small_mock_model_dir)),
+            pool.discover_models_async(str(small_mock_model_dir)),
+        )
+        assert pool.get_entry("model-a").engine is mock_engine

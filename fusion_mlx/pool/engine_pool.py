@@ -446,9 +446,12 @@ class EnginePool:
     ) -> None:
         # Non-blocking discover: run the filesystem scan in an executor so
         # the event loop stays responsive, then merge on the loop thread.
+        # Lock the merge to prevent concurrent discover_models_async calls
+        # from racing on self._entries mutation (#59).
         loop = asyncio.get_running_loop()
         discovered = await loop.run_in_executor(None, self._scan_models, model_dirs)
-        self._merge_discovered(discovered, pinned_models)
+        async with self._lock:
+            self._merge_discovered(discovered, pinned_models)
 
     _MODEL_TYPE_TO_ENGINE: dict[str, str] = {
         "llm": "batched",

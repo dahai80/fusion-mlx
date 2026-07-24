@@ -161,13 +161,13 @@ class TestIPAdapter:
 
 
 class TestControlNet:
-    def test_default_dim_and_type(self):
+    def test_default_config(self):
         from fusion_mlx.video.adapters.controlnet import ControlNet
 
         adapter = ControlNet()
-        assert adapter.dim == 5120
         assert adapter.control_type == "canny"
-        assert adapter.text_dim == 4096
+        assert adapter.stride == 4
+        assert adapter.model_variant == "wan2.1-t2v-14b"
 
     def test_unload_clears_state(self):
         from fusion_mlx.video.adapters.controlnet import ControlNet
@@ -202,30 +202,103 @@ class TestControlNet:
         adapter._residuals = fake_residuals
         assert adapter.get_residuals() is fake_residuals
 
-    def test_remap_controlnet_weights_hint_block(self):
-        from fusion_mlx.video.adapters.controlnet import remap_controlnet_weights
+    def test_remap_wan_controlnet_condition_embedder(self):
+        import mlx.core as mx
+
+        from fusion_mlx.video.adapters.controlnet import remap_wan_controlnet_weights
 
         weights = {
-            "controlnet.input_hint_block.0.weight": MagicMock(),
-            "controlnet.input_hint_block.2.weight": MagicMock(),
+            "condition_embedder.time_embedder.linear_1.weight": mx.zeros((1536, 256)),
+            "condition_embedder.time_embedder.linear_2.weight": mx.zeros((1536, 1536)),
+            "condition_embedder.text_embedder.linear_1.weight": mx.zeros((1536, 4096)),
+            "condition_embedder.time_proj.weight": mx.zeros((9216, 1536)),
         }
-        result = remap_controlnet_weights(weights)
-        assert "hint_block.conv1.weight" in result
-        assert "hint_block.conv2.weight" in result
+        result = remap_wan_controlnet_weights(weights)
+        assert "time_embedding.layers.0.weight" in result
+        assert "time_embedding.layers.2.weight" in result
+        assert "text_embedding.layers.0.weight" in result
+        assert "time_projection.layers.1.weight" in result
 
-    def test_remap_controlnet_weights_zero_convs(self):
-        from fusion_mlx.video.adapters.controlnet import remap_controlnet_weights
+    def test_remap_wan_controlnet_control_encoder(self):
+        import mlx.core as mx
 
-        weights = {"controlnet.zero_convs.3.weight": MagicMock()}
-        result = remap_controlnet_weights(weights)
-        assert "block_3.zero_conv.weight" in result
+        from fusion_mlx.video.adapters.controlnet import remap_wan_controlnet_weights
 
-    def test_remap_controlnet_weights_middle_block(self):
-        from fusion_mlx.video.adapters.controlnet import remap_controlnet_weights
+        weights = {
+            "control_encoder.0.0.weight": mx.zeros((192, 3, 3, 9, 9)),
+            "control_encoder.0.0.bias": mx.zeros((192,)),
+            "control_encoder.0.2.weight": mx.zeros((192,)),
+        }
+        result = remap_wan_controlnet_weights(weights)
+        assert "control_encoder.stage1.conv.weight" in result
+        assert result["control_encoder.stage1.conv.weight"].shape == (192, 9, 9, 3)
+        assert "control_encoder.stage1.conv.bias" in result
+        assert "control_encoder.stage1.gn.weight" in result
 
-        weights = {"controlnet.middle_block.weight": MagicMock()}
-        result = remap_controlnet_weights(weights)
-        assert "mid_zero_conv.weight" in result
+    def test_remap_wan_controlnet_blocks(self):
+        import mlx.core as mx
+
+        from fusion_mlx.video.adapters.controlnet import remap_wan_controlnet_weights
+
+        weights = {
+            "blocks.0.attn1.to_q.weight": mx.zeros((1536, 1536)),
+            "blocks.0.attn2.to_k.weight": mx.zeros((1536, 4096)),
+            "blocks.0.ffn.net.0.proj.weight": mx.zeros((8960, 1536)),
+            "blocks.0.scale_shift_table": mx.zeros((1, 6, 1536)),
+        }
+        result = remap_wan_controlnet_weights(weights)
+        assert "block_0.block.self_attn.q.weight" in result
+        assert "block_0.block.cross_attn.k.weight" in result
+        assert "block_0.block.ffn.fc1.weight" in result
+        assert "block_0.block.modulation" in result
+
+    def test_remap_wan_controlnet_controlnet_blocks(self):
+        import mlx.core as mx
+
+        from fusion_mlx.video.adapters.controlnet import remap_wan_controlnet_weights
+
+        weights = {
+            "controlnet_blocks.0.weight": mx.zeros((5120, 1536)),
+            "controlnet_blocks.5.bias": mx.zeros((5120,)),
+        }
+        result = remap_wan_controlnet_weights(weights)
+        assert "controlnet_block_0.weight" in result
+        assert "controlnet_block_5.bias" in result
+
+    def test_remap_wan_controlnet_patch_embedding_conv3d(self):
+        import mlx.core as mx
+
+        from fusion_mlx.video.adapters.controlnet import remap_wan_controlnet_weights
+
+        weights = {
+            "patch_embedding.weight": mx.zeros((1536, 64, 1, 2, 2)),
+            "patch_embedding.bias": mx.zeros((1536,)),
+        }
+        result = remap_wan_controlnet_weights(weights)
+        assert "patch_embedding.weight" in result
+        assert result["patch_embedding.weight"].shape == (1536, 2, 2, 64)
+        assert "patch_embedding.bias" in result
+
+    def test_wan_controlnet_forward_with_random_weights(self):
+        import mlx.core as mx
+
+        from fusion_mlx.video.adapters.controlnet import WanControlnet
+
+        model = WanControlnet()
+        B = 1
+        hidden_states = mx.random.normal((B, 16, 8, 8))
+        t = mx.array([0.5])
+        context = mx.random.normal((B, 5, 4096))
+        control_states = mx.random.normal((B, 3, 64, 64))
+        seq_lens = [8 * 8 // (2 * 2)]
+        grid_sizes = [(1, 4, 4)]
+        residuals = model.forward(
+            hidden_states, t, context, control_states,
+            seq_lens=seq_lens, grid_sizes=grid_sizes,
+        )
+        assert len(residuals) == 6
+        for r in residuals:
+            assert r.shape[-1] == 5120
 
 
 # ---------------------------------------------------------------------------
@@ -238,39 +311,9 @@ class TestAnimateDiff:
         from fusion_mlx.video.adapters.animatediff import AnimateDiff
 
         adapter = AnimateDiff()
-        assert adapter.dim == 5120
-        assert adapter.num_heads == 8
         assert adapter.num_layers == 40
         assert adapter.scale == 1.0
-
-    def test_inject_sets_motion_module_attr(self):
-        from fusion_mlx.video.adapters.animatediff import AnimateDiff
-
-        adapter = AnimateDiff(config={"dim": 64, "num_heads": 4, "num_layers": 3})
-        adapter.load()
-        dit = _FakeDiT(num_blocks=3)
-        adapter.inject(dit)
-        for i in range(3):
-            block = getattr(dit, f"block_{i}")
-            assert hasattr(block, "motion_module"), f"block_{i} missing motion_module"
-            assert hasattr(
-                block, "animatediff_scale"
-            ), f"block_{i} missing animatediff_scale"
-            assert block.animatediff_scale == 1.0
-
-    def test_remove_clears_motion_module_attr(self):
-        from fusion_mlx.video.adapters.animatediff import AnimateDiff
-
-        adapter = AnimateDiff(config={"dim": 64, "num_heads": 4, "num_layers": 3})
-        adapter.load()
-        dit = _FakeDiT(num_blocks=3)
-        adapter.inject(dit)
-        adapter.remove(dit)
-        for i in range(3):
-            block = getattr(dit, f"block_{i}")
-            assert not hasattr(
-                block, "motion_module"
-            ), f"block_{i} still has motion_module"
+        assert adapter.variant == "high_noise"
 
     def test_modify_denoise_step_returns_latents_unchanged(self):
         from fusion_mlx.video.adapters.animatediff import AnimateDiff
@@ -284,60 +327,232 @@ class TestAnimateDiff:
         )
         assert out is latents
 
-    def test_unload_clears_modules(self):
+    def test_unload_clears_state(self):
         from fusion_mlx.video.adapters.animatediff import AnimateDiff
 
-        adapter = AnimateDiff(config={"dim": 64, "num_heads": 4, "num_layers": 3})
-        adapter.load()
-        assert len(adapter._modules) == 3
+        adapter = AnimateDiff()
+        adapter._lora_map = {"test": {"lora_A": MagicMock(), "lora_B": MagicMock()}}
+        adapter._original_weights = {"test": MagicMock()}
+        adapter._loaded = True
+        adapter._injected = True
         adapter.unload()
-        assert adapter._modules == []
+        assert adapter._lora_map == {}
+        assert adapter._original_weights == {}
         assert adapter._loaded is False
         assert adapter._injected is False
 
-    def test_zero_init_output_proj(self):
+    def test_remap_animatediff_lora_weights_self_attn(self):
         import mlx.core as mx
 
-        from fusion_mlx.video.adapters.animatediff import MotionModule
+        from fusion_mlx.video.adapters.animatediff import remap_animatediff_lora_weights
 
-        mod = MotionModule(dim=64, num_heads=4)
-        weight_max = mx.abs(mod.output_proj.weight).max()
-        bias_max = mx.abs(mod.output_proj.bias).max()
-        assert (
-            float(weight_max) == 0.0
-        ), f"output_proj.weight not zero-init: max={weight_max}"
-        assert float(bias_max) == 0.0, f"output_proj.bias not zero-init: max={bias_max}"
+        weights = {
+            "diffusion_model.blocks.0.self_attn.q.lora_A.weight": mx.zeros((32, 5120)),
+            "diffusion_model.blocks.0.self_attn.q.lora_B.weight": mx.zeros((5120, 32)),
+            "diffusion_model.blocks.0.self_attn.k.lora_A.weight": mx.zeros((32, 5120)),
+            "diffusion_model.blocks.0.self_attn.k.lora_B.weight": mx.zeros((5120, 32)),
+        }
+        result = remap_animatediff_lora_weights(weights, num_layers=40)
+        assert "blocks.0.self_attn.q.weight" in result
+        assert "blocks.0.self_attn.k.weight" in result
+        assert "lora_A" in result["blocks.0.self_attn.q.weight"]
+        assert "lora_B" in result["blocks.0.self_attn.q.weight"]
 
-    def test_inject_fewer_modules_than_blocks(self):
+    def test_remap_animatediff_lora_weights_ffn(self):
+        import mlx.core as mx
+
+        from fusion_mlx.video.adapters.animatediff import remap_animatediff_lora_weights
+
+        weights = {
+            "diffusion_model.blocks.5.ffn.0.lora_A.weight": mx.zeros((32, 5120)),
+            "diffusion_model.blocks.5.ffn.0.lora_B.weight": mx.zeros((13824, 32)),
+            "diffusion_model.blocks.5.ffn.2.lora_A.weight": mx.zeros((32, 13824)),
+            "diffusion_model.blocks.5.ffn.2.lora_B.weight": mx.zeros((5120, 32)),
+        }
+        result = remap_animatediff_lora_weights(weights, num_layers=40)
+        assert "blocks.5.ffn.fc1.weight" in result
+        assert "blocks.5.ffn.fc2.weight" in result
+
+    def test_remap_animatediff_lora_weights_skips_over_num_layers(self):
+        import mlx.core as mx
+
+        from fusion_mlx.video.adapters.animatediff import remap_animatediff_lora_weights
+
+        weights = {
+            "diffusion_model.blocks.50.self_attn.q.lora_A.weight": mx.zeros((32, 5120)),
+        }
+        result = remap_animatediff_lora_weights(weights, num_layers=40)
+        assert len(result) == 0
+
+    def test_remap_animatediff_lora_weights_cross_attn(self):
+        import mlx.core as mx
+
+        from fusion_mlx.video.adapters.animatediff import remap_animatediff_lora_weights
+
+        weights = {
+            "diffusion_model.blocks.3.cross_attn.q.lora_A.weight": mx.zeros((32, 5120)),
+            "diffusion_model.blocks.3.cross_attn.q.lora_B.weight": mx.zeros((5120, 32)),
+            "diffusion_model.blocks.3.cross_attn.v.lora_A.weight": mx.zeros((32, 5120)),
+            "diffusion_model.blocks.3.cross_attn.v.lora_B.weight": mx.zeros((5120, 32)),
+        }
+        result = remap_animatediff_lora_weights(weights, num_layers=40)
+        assert "blocks.3.cross_attn.q.weight" in result
+        assert "blocks.3.cross_attn.v.weight" in result
+
+    def test_inject_merges_lora_into_dit(self):
+        import mlx.core as mx
+        import mlx.nn as nn
+
         from fusion_mlx.video.adapters.animatediff import AnimateDiff
 
-        adapter = AnimateDiff(config={"dim": 64, "num_heads": 4, "num_layers": 2})
-        adapter.load()
-        dit = _FakeDiT(num_blocks=5)
+        adapter = AnimateDiff(scale=1.0, config={"num_layers": 2})
+
+        class _TinyBlock(nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.self_attn = nn.Module()
+                self.self_attn.q = nn.Linear(64, 64)
+
+        class _TinyDiT(nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.blocks = [_TinyBlock(), _TinyBlock()]
+
+        dit = _TinyDiT()
+        orig_weight = mx.array(dit.blocks[0].self_attn.q.weight)
+
+        lora_a = mx.random.normal((8, 64)) * 0.01
+        lora_b = mx.random.normal((64, 8)) * 0.01
+        adapter._lora_map = {
+            "blocks.0.self_attn.q.weight": {"lora_A": lora_a, "lora_B": lora_b}
+        }
+        adapter._loaded = True
         adapter.inject(dit)
-        assert hasattr(dit.block_0, "motion_module")
-        assert hasattr(dit.block_1, "motion_module")
-        assert not hasattr(dit.block_2, "motion_module")
+
+        expected = orig_weight + lora_b.astype(orig_weight.dtype) @ lora_a.astype(orig_weight.dtype)
+        actual = dit.blocks[0].self_attn.q.weight
+        diff = mx.abs(actual - expected).max()
+        assert float(diff) < 1e-4, f"LoRA merge mismatch: diff={diff}"
+
         adapter.remove(dit)
+        restored_diff = mx.abs(dit.blocks[0].self_attn.q.weight - orig_weight).max()
+        assert float(restored_diff) < 1e-4, f"LoRA restore mismatch: diff={restored_diff}"
 
-    def test_remap_animatediff_weights(self):
-        from fusion_mlx.video.adapters.animatediff import remap_animatediff_weights
+    def test_inject_no_lora_is_noop(self):
+        from fusion_mlx.video.adapters.animatediff import AnimateDiff
+
+        adapter = AnimateDiff()
+        adapter._lora_map = {}
+        adapter._loaded = True
+        adapter.inject("fake_dit")
+        assert adapter._injected is True
+
+    def test_variant_config(self):
+        from fusion_mlx.video.adapters.animatediff import AnimateDiff
+
+        adapter = AnimateDiff(config={"animatediff_variant": "low_noise"})
+        assert adapter.variant == "low_noise"
+
+
+# ---------------------------------------------------------------------------
+# E2E tests: real DiT architecture + adapters (random weights, no GPU)
+# ---------------------------------------------------------------------------
+
+
+class TestAdapterE2E:
+    def test_controlnet_forward_produces_valid_residuals(self):
+        import mlx.core as mx
+
+        from fusion_mlx.video.adapters.controlnet import WanControlnet
+
+        model = WanControlnet()
+        B = 1
+        # Small spatial dims (8x8 latent, 64x64 control image)
+        hidden_states = mx.random.normal((B, 16, 8, 8))
+        t = mx.array([0.5])
+        context = mx.random.normal((B, 5, 4096))
+        control_states = mx.random.normal((B, 3, 64, 64))
+        seq_lens = [16]
+        grid_sizes = [(1, 4, 4)]
+        residuals = model.forward(
+            hidden_states, t, context, control_states,
+            seq_lens=seq_lens, grid_sizes=grid_sizes,
+        )
+        assert len(residuals) == 6, f"Expected 6 residuals, got {len(residuals)}"
+        for i, r in enumerate(residuals):
+            assert r.shape[0] == B, f"residual[{i}] batch={r.shape[0]}"
+            assert r.shape[-1] == 5120, f"residual[{i}] dim={r.shape[-1]}"
+
+    def test_animatediff_lora_inject_remove_roundtrip(self):
+        import mlx.core as mx
+        import mlx.nn as nn
+
+        from fusion_mlx.video.adapters.animatediff import AnimateDiff, remap_animatediff_lora_weights
+
+        adapter = AnimateDiff(scale=1.0, config={"num_layers": 2})
+
+        class _TinyBlock(nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.self_attn = nn.Module()
+                self.self_attn.q = nn.Linear(64, 64)
+                self.cross_attn = nn.Module()
+                self.cross_attn.q = nn.Linear(64, 64)
+                self.ffn = nn.Module()
+                self.ffn.fc1 = nn.Linear(64, 128)
+                self.ffn.fc2 = nn.Linear(128, 64)
+
+        class _TinyDiT(nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.blocks = [_TinyBlock(), _TinyBlock()]
+
+        dit = _TinyDiT()
+        orig_flat = {k: mx.array(v) for k, v in nn.utils.tree_flatten(dit.parameters())}
+
+        lora_a = mx.random.normal((8, 64)) * 0.01
+        lora_b = mx.random.normal((64, 8)) * 0.01
+        lora_a2 = mx.random.normal((8, 64)) * 0.01
+        lora_b2 = mx.random.normal((128, 8)) * 0.01
+
+        adapter._lora_map = {
+            "blocks.0.self_attn.q.weight": {"lora_A": lora_a, "lora_B": lora_b},
+            "blocks.0.ffn.fc1.weight": {"lora_A": lora_a2, "lora_B": lora_b2},
+        }
+        adapter._loaded = True
+
+        adapter.inject(dit)
+        merged_flat = {k: v for k, v in nn.utils.tree_flatten(dit.parameters())}
+
+        for key in ["blocks.0.self_attn.q.weight", "blocks.0.ffn.fc1.weight"]:
+            diff = float(mx.abs(merged_flat[key] - orig_flat[key]).max())
+            assert diff > 1e-6, f"{key} should differ after inject (diff={diff})"
+
+        for key in ["blocks.0.cross_attn.q.weight", "blocks.0.ffn.fc2.weight", "blocks.1.self_attn.q.weight"]:
+            diff = float(mx.abs(merged_flat[key] - orig_flat[key]).max())
+            assert diff < 1e-6, f"{key} should be unchanged (diff={diff})"
+
+        adapter.remove(dit)
+        restored_flat = {k: v for k, v in nn.utils.tree_flatten(dit.parameters())}
+        for key in orig_flat:
+            diff = float(mx.abs(restored_flat[key] - orig_flat[key]).max())
+            assert diff < 1e-6, f"{key} not restored (diff={diff})"
+
+    def test_remap_real_lora_weights_shape(self):
+        import mlx.core as mx
+
+        from fusion_mlx.video.adapters.animatediff import remap_animatediff_lora_weights
 
         weights = {
-            "motion_modules.0.temporal_attn.to_q.weight": MagicMock(),
-            "motion_modules.0.temporal_attn.to_k.weight": MagicMock(),
-            "motion_modules.1.norm.weight": MagicMock(),
+            "diffusion_model.blocks.0.self_attn.q.lora_A.weight": mx.zeros((32, 5120)),
+            "diffusion_model.blocks.0.self_attn.q.lora_B.weight": mx.zeros((5120, 32)),
+            "diffusion_model.blocks.39.ffn.2.lora_A.weight": mx.zeros((32, 13824)),
+            "diffusion_model.blocks.39.ffn.2.lora_B.weight": mx.zeros((5120, 32)),
         }
-        result = remap_animatediff_weights(weights, num_layers=3)
-        assert "block_0.q_proj.weight" in result
-        assert "block_0.k_proj.weight" in result
-        assert "block_1.norm.weight" in result
-
-    def test_remap_animatediff_weights_skips_over_num_layers(self):
-        from fusion_mlx.video.adapters.animatediff import remap_animatediff_weights
-
-        weights = {
-            "motion_modules.5.norm.weight": MagicMock(),
-        }
-        result = remap_animatediff_weights(weights, num_layers=3)
-        assert len(result) == 0
+        result = remap_animatediff_lora_weights(weights, num_layers=40)
+        assert "blocks.0.self_attn.q.weight" in result
+        assert "blocks.39.ffn.fc2.weight" in result
+        assert result["blocks.0.self_attn.q.weight"]["lora_A"].shape == (32, 5120)
+        assert result["blocks.0.self_attn.q.weight"]["lora_B"].shape == (5120, 32)
+        assert result["blocks.39.ffn.fc2.weight"]["lora_A"].shape == (32, 13824)
+        assert result["blocks.39.ffn.fc2.weight"]["lora_B"].shape == (5120, 32)

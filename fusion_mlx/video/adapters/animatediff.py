@@ -1,10 +1,8 @@
 # SPDX-License-Identifier: Apache-2.0
-# AnimateDiff: temporal motion modules injected into DiT blocks.
-# Importers: adapters/__init__.py eager import triggers @register_adapter("animatediff").
-# Callers: SkyReelsPipelineConfig._denoise_sample() via create_adapter("animatediff"),
-# videos_routes.py forwards animatediff_scale.
-# Schema: motion_module input/output [B, L, dim]; zero-init output_proj = identity at start.
-# User instruction: "Phase-3: AnimateDiff (temporal attention motion modules)"
+# AnimateDiff: LoRA-based temporal adaptation for Wan DiT.
+# cnforge/wan2_2_AnimateDiff_Lora: rank-32 LoRA applied to self_attn/cross_attn/ffn
+# of each DiT block. inject() merges LoRA deltas into DiT weights; remove() restores.
+# Two variants: high_noise (strong motion) and low_noise (subtle motion).
 
 from __future__ import annotations
 
@@ -20,135 +18,68 @@ from . import VideoAdapter, register_adapter
 
 logger = logging.getLogger(__name__)
 
+LORA_RANK = 32
+DEFAULT_REPO = "cnforge/wan2_2_AnimateDiff_Lora"
+DEFAULT_VARIANT = "high_noise"
 
-class MotionModule(nn.Module):
-    """Temporal motion module: self-attention across video frames.
+_VARIANT_FILES = {
+    "high_noise": "wan22_14B_AD_REDIFF_Lora_high_noise.safetensors",
+    "low_noise": "wan22_14B_AD_REDIFF_Lora_low_noise.safetensors",
+}
 
-    Reshapes [B, L, dim] -> [B*S, T, dim] where L = T * S,
-    runs temporal self-attention, then reshapes back.
-    Zero-initialized output projection ensures identity at init.
+
+def remap_animatediff_lora_weights(
+    raw_weights: dict, num_layers: int
+) -> dict[str, dict[str, mx.array]]:
+    """Remap HF AnimateDiff LoRA weights into per-target {lora_A, lora_B} dicts.
+
+    HF naming: diffusion_model.blocks.{N}.{sublayer}.lora_{A,B}.weight
+    MLX DiT:   blocks.{N}.{sublayer}.weight
+      ffn.0 -> ffn.fc1, ffn.2 -> ffn.fc2
+
+    Returns: {mlx_target_key: {"lora_A": array, "lora_B": array}}
     """
+    lora_map: dict[str, dict[str, mx.array]] = {}
 
-    def __init__(
-        self,
-        dim: int,
-        num_heads: int = 8,
-        eps: float = 1e-5,
-    ):
-        super().__init__()
-        self.dim = dim
-        self.num_heads = num_heads
-        self.head_dim = dim // num_heads
+    for hf_key, value in raw_weights.items():
+        clean = hf_key
+        if clean.startswith("diffusion_model."):
+            clean = clean[len("diffusion_model."):]
 
-        self.norm = nn.LayerNorm(dim, eps=eps)
-
-        self.q_proj = nn.Linear(dim, dim)
-        self.k_proj = nn.Linear(dim, dim)
-        self.v_proj = nn.Linear(dim, dim)
-        self.o_proj = nn.Linear(dim, dim)
-
-        self.output_proj = nn.Linear(dim, dim)
-        self.output_proj.weight = mx.zeros_like(self.output_proj.weight)
-        self.output_proj.bias = mx.zeros_like(self.output_proj.bias)
-
-    def __call__(self, x: mx.array, temporal_len: int) -> mx.array:
-        B, L, D = x.shape
-        if temporal_len is None or temporal_len <= 1:
-            return mx.zeros_like(x)
-
-        S = L // temporal_len
-        if S * temporal_len != L:
-            logger.warning(
-                "MotionModule: L=%d not divisible by temporal_len=%d, skipping",
-                L,
-                temporal_len,
-            )
-            return mx.zeros_like(x)
-
-        x_norm = self.norm(x)
-
-        # Reshape: [B, T*S, D] -> [B*S, T, D]
-        x_t = (
-            x_norm.reshape(B, temporal_len, S, D)
-            .transpose(0, 2, 1, 3)
-            .reshape(B * S, temporal_len, D)
-        )
-
-        # Temporal self-attention
-        q = self.q_proj(x_t)
-        k = self.k_proj(x_t)
-        v = self.v_proj(x_t)
-
-        n = self.num_heads
-        d = self.head_dim
-        q = q.reshape(B * S, temporal_len, n, d).transpose(0, 2, 1, 3)
-        k = k.reshape(B * S, temporal_len, n, d).transpose(0, 2, 1, 3)
-        v = v.reshape(B * S, temporal_len, n, d).transpose(0, 2, 1, 3)
-
-        attn = mx.fast.scaled_dot_product_attention(q, k, v, scale=d**-0.5)
-        attn = attn.transpose(0, 2, 1, 3).reshape(B * S, temporal_len, D)
-        attn = self.o_proj(attn)
-
-        # Reshape back: [B*S, T, D] -> [B, T*S, D]
-        attn = (
-            attn.reshape(B, S, temporal_len, D).transpose(0, 2, 1, 3).reshape(B, L, D)
-        )
-
-        out = self.output_proj(attn)
-        return out
-
-
-def remap_animatediff_weights(weights: dict, num_layers: int) -> dict:
-    """Remap AnimateDiff weights from HF naming to MLX naming.
-
-    HF naming patterns:
-      motion_modules.{N}.norm.weight -> block_{N}.norm.weight
-      motion_modules.{N}.temporal_attn.to_q.weight -> block_{N}.q_proj.weight
-    """
-    remapped = {}
-    for key, value in weights.items():
-        clean = key
-        for prefix in ("motion_modules.", "animatediff.", "model."):
-            if clean.startswith(prefix):
-                clean = clean[len(prefix) :]
-
-        m = re.match(r"(\d+)\.(.*)", clean)
-        if m:
-            idx, rest = m.group(1), m.group(2)
-            idx_int = int(idx)
-            if idx_int >= num_layers:
-                continue
-
-            name_map = {
-                "norm.weight": "norm.weight",
-                "norm.bias": "norm.bias",
-                "temporal_attn.to_q.weight": "q_proj.weight",
-                "temporal_attn.to_q.bias": "q_proj.bias",
-                "temporal_attn.to_k.weight": "k_proj.weight",
-                "temporal_attn.to_k.bias": "k_proj.bias",
-                "temporal_attn.to_v.weight": "v_proj.weight",
-                "temporal_attn.to_v.bias": "v_proj.bias",
-                "temporal_attn.to_out.0.weight": "o_proj.weight",
-                "temporal_attn.to_out.0.bias": "o_proj.bias",
-                "output_proj.weight": "output_proj.weight",
-                "output_proj.bias": "output_proj.bias",
-            }
-            if rest in name_map:
-                remapped[f"block_{idx}.{name_map[rest]}"] = value
-            else:
-                remapped[f"block_{idx}.{rest}"] = value
+        m = re.match(r"blocks\.(\d+)\.(.*)", clean)
+        if not m:
             continue
 
-    return remapped
+        block_idx = int(m.group(1))
+        if block_idx >= num_layers:
+            continue
+
+        rest = m.group(2)
+        lora_match = re.match(r"(.*)\.lora_([AB])\.weight", rest)
+        if not lora_match:
+            continue
+
+        sublayer = lora_match.group(1)
+        ab = lora_match.group(2)
+
+        sublayer = sublayer.replace("ffn.0", "ffn.fc1").replace("ffn.2", "ffn.fc2")
+
+        target_key = f"blocks.{block_idx}.{sublayer}.weight"
+
+        if target_key not in lora_map:
+            lora_map[target_key] = {}
+        lora_map[target_key][f"lora_{ab}"] = value
+
+    return lora_map
 
 
 @register_adapter("animatediff")
 class AnimateDiff(VideoAdapter):
-    """AnimateDiff: temporal motion modules injected into DiT blocks.
+    """AnimateDiff: LoRA-based temporal adaptation for Wan DiT.
 
-    inject(): adds motion_module attr to each DiT block
-    remove(): restores original DiT blocks
-    animatediff_scale controls motion contribution strength
+    inject() merges LoRA weight deltas into the DiT's Linear layers:
+        W_merged = W_base + scale * lora_B @ lora_A
+    remove() restores the original DiT weights.
     """
 
     name = "animatediff"
@@ -163,11 +94,10 @@ class AnimateDiff(VideoAdapter):
         self.scale = scale
         self.image = image
         self.config = config or {}
-        self.dim = self.config.get("dim", 5120)
-        self.num_heads = self.config.get("num_heads", 8)
         self.num_layers = self.config.get("num_layers", 40)
-        self.eps = self.config.get("eps", 1e-5)
-        self._modules: list[MotionModule] = []
+        self.variant = self.config.get("animatediff_variant", DEFAULT_VARIANT)
+        self._lora_map: dict[str, dict[str, mx.array]] = {}
+        self._original_weights: dict[str, mx.array] = {}
         self._loaded = False
         self._injected = False
 
@@ -176,26 +106,23 @@ class AnimateDiff(VideoAdapter):
             logger.debug("AnimateDiff: already loaded, skipping")
             return
 
-        for i in range(self.num_layers):
-            self._modules.append(MotionModule(self.dim, self.num_heads, self.eps))
-
         loaded = False
         if model_path is not None:
             loaded = self._load_weights(model_path)
         if not loaded:
-            loaded = self._load_from_hf_cache()
+            loaded = self._load_from_hf()
         if not loaded:
             logger.warning(
-                "AnimateDiff: weights not loaded, zero-init (identity at start)"
+                "AnimateDiff: LoRA weights not loaded, inject will be no-op"
             )
 
         self._loaded = True
         logger.info(
-            "AnimateDiff: loaded (weights=%s scale=%.2f layers=%d dim=%d)",
+            "AnimateDiff: loaded (weights=%s scale=%.2f variant=%s layers=%d)",
             loaded,
             self.scale,
+            self.variant,
             self.num_layers,
-            self.dim,
         )
 
     def _load_weights(self, model_path: str) -> bool:
@@ -203,7 +130,7 @@ class AnimateDiff(VideoAdapter):
 
         path = Path(model_path)
         search_dirs = [path]
-        for subdir in ("animatediff", "motion_modules", ""):
+        for subdir in ("animatediff", "lora", ""):
             candidate = path / subdir
             if candidate.is_dir():
                 search_dirs.append(candidate)
@@ -212,82 +139,90 @@ class AnimateDiff(VideoAdapter):
             safetensors = sorted(glob.glob(str(search_dir / "*.safetensors")))
             if not safetensors:
                 continue
-            try:
-                raw_weights = {}
-                for wf in safetensors:
-                    raw_weights.update(mx.load(wf))
-                ad_keys = {
-                    k: v
-                    for k, v in raw_weights.items()
-                    if "motion_module" in k or "animatediff" in k
-                }
-                if not ad_keys:
-                    ad_keys = raw_weights
-                remapped = remap_animatediff_weights(ad_keys, self.num_layers)
-                if remapped:
-                    for i, mod in enumerate(self._modules):
-                        block_weights = {
-                            k.replace(f"block_{i}.", ""): v
-                            for k, v in remapped.items()
-                            if k.startswith(f"block_{i}.")
-                        }
-                        if block_weights:
-                            mod.load_weights(list(block_weights.items()))
-                    logger.info(
-                        "AnimateDiff: weights loaded from %s (%d params)",
-                        search_dir,
-                        len(remapped),
+
+            for sf in safetensors:
+                fname = Path(sf).name.lower()
+                if "animatediff" not in fname and "ad_re" not in fname:
+                    continue
+                try:
+                    raw = mx.load(sf)
+                    lora_map = remap_animatediff_lora_weights(raw, self.num_layers)
+                    if lora_map:
+                        self._lora_map.update(lora_map)
+                        logger.info(
+                            "AnimateDiff: LoRA loaded from %s (%d targets)",
+                            sf,
+                            len(lora_map),
+                        )
+                        return True
+                except Exception as exc:
+                    logger.warning(
+                        "AnimateDiff: failed to load from %s: %s", sf, exc
                     )
-                    return True
-            except Exception as exc:
-                logger.warning(
-                    "AnimateDiff: failed to load from %s: %s", search_dir, exc
-                )
+
         return False
 
-    def _load_from_hf_cache(self) -> bool:
+    def _load_from_hf(self) -> bool:
         try:
+            import os
+
+            os.environ.setdefault("HF_ENDPOINT", "https://hf-mirror.com")
             from huggingface_hub import hf_hub_download
 
-            ad_repo = self.config.get(
-                "animatediff_repo",
-                "guoyww/AnimateDiff",
-            )
-            logger.info("AnimateDiff: trying HF cache: %s", ad_repo)
+            repo = self.config.get("animatediff_repo", DEFAULT_REPO)
+            variant = self.variant
+            target_file = _VARIANT_FILES.get(variant)
+            if target_file is None:
+                logger.warning(
+                    "AnimateDiff: unknown variant '%s', available: %s",
+                    variant,
+                    list(_VARIANT_FILES),
+                )
+                return False
 
-            sf = hf_hub_download(ad_repo, "model.safetensors")
-            raw = mx.load(sf)
-            ad_keys = {
-                k: v
-                for k, v in raw.items()
-                if "motion_module" in k or "animatediff" in k
-            }
-            if not ad_keys:
-                ad_keys = raw
-            remapped = remap_animatediff_weights(ad_keys, self.num_layers)
-            if remapped:
-                for i, mod in enumerate(self._modules):
-                    block_weights = {
-                        k.replace(f"block_{i}.", ""): v
-                        for k, v in remapped.items()
-                        if k.startswith(f"block_{i}.")
-                    }
-                    if block_weights:
-                        mod.load_weights(list(block_weights.items()))
+            logger.info("AnimateDiff: downloading %s/%s", repo, target_file)
+            sf = hf_hub_download(repo, target_file)
+
+            raw = {}
+            try:
+                raw = mx.load(sf)
+            except Exception:
+                from safetensors import safe_open
+
+                try:
+                    with safe_open(sf, framework="pt") as f:
+                        import numpy as np
+
+                        for k in f.keys():
+                            t = f.get_tensor(k)
+                            arr = t.detach().cpu().float().numpy()
+                            raw[k] = mx.array(arr)
+                except Exception as exc2:
+                    logger.warning("AnimateDiff: safetensors load failed: %s", exc2)
+                    return False
+
+            lora_map = remap_animatediff_lora_weights(raw, self.num_layers)
+            if lora_map:
+                self._lora_map = lora_map
                 logger.info(
-                    "AnimateDiff: weights loaded from HF (%d params)", len(remapped)
+                    "AnimateDiff: LoRA loaded from HF (%d targets from %s)",
+                    len(lora_map),
+                    target_file,
                 )
                 return True
+            else:
+                logger.warning("AnimateDiff: no compatible LoRA keys in %s", target_file)
         except ImportError:
-            logger.debug(
-                "AnimateDiff: huggingface_hub not installed, skipping HF download"
-            )
+            logger.debug("AnimateDiff: huggingface_hub not installed, skipping HF")
         except Exception as exc:
             logger.warning("AnimateDiff: HF load failed: %s", exc)
         return False
 
     def unload(self) -> None:
-        self._modules = []
+        if self._injected:
+            logger.warning("AnimateDiff: unload called while injected, removing first")
+        self._lora_map = {}
+        self._original_weights = {}
         self._loaded = False
         self._injected = False
         logger.info("AnimateDiff: unloaded")
@@ -300,52 +235,73 @@ class AnimateDiff(VideoAdapter):
         if not self._loaded:
             self.load()
 
-        num_blocks = self._get_num_blocks(dit)
-        inject_count = min(num_blocks, len(self._modules))
-        if inject_count < num_blocks:
-            logger.warning(
-                "AnimateDiff: %d motion modules for %d DiT blocks, injecting first %d",
-                len(self._modules),
-                num_blocks,
-                inject_count,
-            )
+        if not self._lora_map:
+            logger.warning("AnimateDiff: no LoRA weights loaded, inject is no-op")
+            self._injected = True
+            return
 
-        for i in range(inject_count):
-            block = self._get_block(dit, i)
-            if block is not None:
-                block.motion_module = self._modules[i]
-                block.animatediff_scale = self.scale
+        flat = nn.utils.tree_flatten(dit.parameters())
+        param_map = {k: v for k, v in flat}
+
+        merged_count = 0
+        for target_key, lora_dict in self._lora_map.items():
+            if target_key not in param_map:
+                logger.debug("AnimateDiff: target %s not in DiT, skipping", target_key)
+                continue
+
+            lora_a = lora_dict.get("lora_A")
+            lora_b = lora_dict.get("lora_B")
+            if lora_a is None or lora_b is None:
+                logger.debug("AnimateDiff: incomplete LoRA for %s, skipping", target_key)
+                continue
+
+            base_weight = param_map[target_key]
+
+            delta = lora_b.astype(base_weight.dtype) @ lora_a.astype(base_weight.dtype)
+            merged = base_weight + self.scale * delta
+
+            self._original_weights[target_key] = base_weight
+            param_map[target_key] = merged
+            merged_count += 1
+
+        if merged_count > 0:
+            new_flat = [(k, param_map.get(k, v)) for k, v in flat]
+            dit.update(nn.utils.tree_unflatten(new_flat))
+            mx.eval(dit.parameters())
 
         self._injected = True
-        logger.info("AnimateDiff: injected %d motion modules", inject_count)
+        logger.info(
+            "AnimateDiff: injected %d/%d LoRA targets (scale=%.2f)",
+            merged_count,
+            len(self._lora_map),
+            self.scale,
+        )
 
     def remove(self, dit: Any) -> None:
         if not self._injected:
             return
 
-        num_blocks = self._get_num_blocks(dit)
-        for i in range(num_blocks):
-            block = self._get_block(dit, i)
-            if block is not None and hasattr(block, "motion_module"):
-                delattr(block, "motion_module")
-                if hasattr(block, "animatediff_scale"):
-                    delattr(block, "animatediff_scale")
+        if not self._original_weights:
+            self._injected = False
+            return
 
+        flat = nn.utils.tree_flatten(dit.parameters())
+        param_map = {k: v for k, v in flat}
+
+        restored_count = 0
+        for target_key, orig_weight in self._original_weights.items():
+            if target_key in param_map:
+                param_map[target_key] = orig_weight
+                restored_count += 1
+
+        if restored_count > 0:
+            new_flat = [(k, param_map.get(k, v)) for k, v in flat]
+            dit.update(nn.utils.tree_unflatten(new_flat))
+            mx.eval(dit.parameters())
+
+        self._original_weights = {}
         self._injected = False
-        logger.info("AnimateDiff: removed motion modules from %d blocks", num_blocks)
-
-    def _get_num_blocks(self, dit: Any) -> int:
-        if hasattr(dit, "_num_blocks"):
-            return dit._num_blocks
-        count = 0
-        while hasattr(dit, f"block_{count}"):
-            count += 1
-        return count
-
-    def _get_block(self, dit: Any, idx: int) -> Any | None:
-        if hasattr(dit, f"block_{idx}"):
-            return getattr(dit, f"block_{idx}")
-        return None
+        logger.info("AnimateDiff: removed %d LoRA deltas from DiT", restored_count)
 
     def modify_denoise_step(
         self,
@@ -360,6 +316,5 @@ class AnimateDiff(VideoAdapter):
 
 __all__ = [
     "AnimateDiff",
-    "MotionModule",
-    "remap_animatediff_weights",
+    "remap_animatediff_lora_weights",
 ]

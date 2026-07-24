@@ -230,7 +230,7 @@ class InferenceRequestManager:
             )
 
             if queue_item:
-                request_data = queue_item.get_request_data()
+                queue_item.get_request_data()
                 return {
                     "request_id": request_id,
                     "status": queue_item.status,

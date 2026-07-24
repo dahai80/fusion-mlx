@@ -174,46 +174,109 @@ def preprocess_clip_image(image_path: str) -> mx.array:
 
 
 def remap_clip_weights(weights: dict) -> dict:
-    """Remap CLIP .pth/safetensors checkpoint keys to IPAdapterClipVisionEncoder format."""
+    """Remap CLIP .pth/safetensors checkpoint keys to IPAdapterClipVisionEncoder format.
+
+    Handles two naming conventions:
+    1. OpenCLIP: visual.conv1.weight, visual.transformer.resblocks.N.*
+    2. HF Transformers: vision_model.embeddings.*, vision_model.encoder.layers.N.*
+    """
     remapped = {}
     for key, value in weights.items():
+        # --- HF Transformers naming: vision_model.* ---
+        if key.startswith("vision_model."):
+            if key == "vision_model.embeddings.patch_embedding.weight":
+                if value.ndim == 4:
+                    value = mx.transpose(value, (0, 2, 3, 1))
+                remapped["patch_embedding.weight"] = value
+                continue
+
+            if key == "vision_model.embeddings.class_embedding":
+                remapped["cls_embedding"] = value.reshape(1, 1, -1)
+                continue
+
+            if key == "vision_model.embeddings.position_embedding.weight":
+                if value.ndim == 2:
+                    value = value.reshape(1, value.shape[0], value.shape[1])
+                remapped["position_embedding"] = value
+                continue
+
+            if key.startswith("vision_model.pre_layrnorm.") or key.startswith(
+                "vision_model.pre_layernorm."
+            ):
+                param = key.split(".")[-1]
+                remapped[f"pre_norm.{param}"] = value
+                continue
+
+            if "post_layernorm" in key or "position_ids" in key:
+                continue
+
+            m = re.match(r"vision_model\.encoder\.layers\.(\d+)\.(.*)", key)
+            if m:
+                block_idx = m.group(1)
+                rest = m.group(2)
+
+                for attn_name, mlx_name in [
+                    ("self_attn.q_proj.", "self_attn.q_proj."),
+                    ("self_attn.k_proj.", "self_attn.k_proj."),
+                    ("self_attn.v_proj.", "self_attn.v_proj."),
+                    ("self_attn.out_proj.", "self_attn.out_proj."),
+                ]:
+                    if rest.startswith(attn_name):
+                        param = rest.split(".")[-1]
+                        remapped[f"block_{block_idx}.{mlx_name}{param}"] = value
+                        break
+                else:
+                    for old, new in [
+                        ("layer_norm1.", "norm1."),
+                        ("layer_norm2.", "norm2."),
+                    ]:
+                        if rest.startswith(old):
+                            param = rest.split(".")[-1]
+                            remapped[f"block_{block_idx}.{new}{param}"] = value
+                            break
+                    else:
+                        for old, new in [
+                            ("mlp.fc1.", "mlp.fc1."),
+                            ("mlp.fc2.", "mlp.fc2."),
+                        ]:
+                            if rest.startswith(old):
+                                param = rest.split(".")[-1]
+                                remapped[f"block_{block_idx}.{new}{param}"] = value
+                                break
+            continue
+
+        # --- OpenCLIP naming: visual.* ---
         if not key.startswith("visual."):
             continue
         if "post_norm" in key or "ln_post" in key or key == "visual.head":
             continue
 
-        # patch_embedding
         if key in ("visual.conv1.weight", "visual.patch_embedding.weight"):
             if value.ndim == 4:
                 value = mx.transpose(value, (0, 2, 3, 1))
             remapped["patch_embedding.weight"] = value
             continue
 
-        # CLS embedding
         if key in ("visual.class_embedding", "visual.cls_embedding"):
             remapped["cls_embedding"] = value.reshape(1, 1, -1)
             continue
 
-        # Position embedding
         if key in ("visual.positional_embedding", "visual.pos_embedding"):
             if value.ndim == 2:
                 value = value.reshape(1, value.shape[0], value.shape[1])
             remapped["position_embedding"] = value
             continue
 
-        # Pre-norm
         if key.startswith("visual.ln_pre.") or key.startswith("visual.pre_norm."):
             param = key.split(".")[-1]
             remapped[f"pre_norm.{param}"] = value
             continue
 
-        # Transformer blocks
         m = re.match(r"visual\.transformer\.(?:resblocks\.)?(\d+)\.(.*)", key)
         if m:
             block_idx = m.group(1)
             rest = m.group(2)
 
-            # Fused QKV weight
             if rest in ("attn.in_proj_weight", "attn.to_qkv.weight"):
                 dim = value.shape[0] // 3
                 q, k, v = value[:dim], value[dim : 2 * dim], value[2 * dim :]
@@ -222,7 +285,6 @@ def remap_clip_weights(weights: dict) -> dict:
                 remapped[f"block_{block_idx}.self_attn.v_proj.weight"] = v
                 continue
 
-            # Fused QKV bias
             if rest in ("attn.in_proj_bias", "attn.to_qkv.bias"):
                 dim = value.shape[0] // 3
                 q, k, v = value[:dim], value[dim : 2 * dim], value[2 * dim :]
@@ -231,14 +293,12 @@ def remap_clip_weights(weights: dict) -> dict:
                 remapped[f"block_{block_idx}.self_attn.v_proj.bias"] = v
                 continue
 
-            # Out projection
             for prefix in ("attn.out_proj.", "attn.proj."):
                 if rest.startswith(prefix):
                     param = rest.split(".")[-1]
                     remapped[f"block_{block_idx}.self_attn.out_proj.{param}"] = value
                     break
             else:
-                # Norms
                 for old, new in [
                     ("ln_1.", "norm1."),
                     ("norm1.", "norm1."),
@@ -250,7 +310,6 @@ def remap_clip_weights(weights: dict) -> dict:
                         remapped[f"block_{block_idx}.{new}{param}"] = value
                         break
                 else:
-                    # MLP
                     for old, new in [
                         ("mlp.c_fc.", "mlp.fc1."),
                         ("mlp.0.", "mlp.fc1."),
@@ -419,16 +478,20 @@ class IPAdapter(VideoAdapter):
             )
             logger.info("IP-Adapter: trying HF cache for CLIP: %s", clip_repo)
 
-            try:
-                sf = hf_hub_download(clip_repo, "open_clip_pytorch_model.safetensors")
-                raw = mx.load(sf)
-            except Exception:
+            for fname in (
+                "open_clip_pytorch_model.safetensors",
+                "open_clip_model.safetensors",
+                "model.safetensors",
+            ):
                 try:
-                    sf = hf_hub_download(clip_repo, "model.safetensors")
+                    sf = hf_hub_download(clip_repo, fname)
                     raw = mx.load(sf)
+                    break
                 except Exception:
-                    logger.warning("IP-Adapter: no safetensors found for %s", clip_repo)
-                    return False
+                    continue
+            else:
+                logger.warning("IP-Adapter: no safetensors found for %s", clip_repo)
+                return False
 
             remapped = remap_clip_weights(raw)
             if remapped:

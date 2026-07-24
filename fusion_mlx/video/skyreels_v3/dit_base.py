@@ -166,6 +166,7 @@ class SkyReelsBaseDiT(nn.Module):
         attn_mask: mx.array | None,
         n_blocks: int | None = None,
         controlnet_residuals: list[mx.array] | None = None,
+        controlnet_stride: int = 1,
         **block_extra,
     ) -> mx.array:
         blocks = self.blocks if n_blocks is None else self.blocks[:n_blocks]
@@ -182,8 +183,10 @@ class SkyReelsBaseDiT(nn.Module):
                 attn_mask=attn_mask,
                 **block_extra,
             )
-            if controlnet_residuals is not None and idx < len(controlnet_residuals):
-                x = x + controlnet_residuals[idx]
+            if controlnet_residuals is not None and controlnet_stride > 0:
+                cn_idx = idx // controlnet_stride
+                if idx % controlnet_stride == 0 and cn_idx < len(controlnet_residuals):
+                    x = x + controlnet_residuals[cn_idx]
         return x
 
     def _unpatchify(self, x: mx.array, grid_sizes: list) -> mx.array:

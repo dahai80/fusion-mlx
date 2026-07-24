@@ -68,7 +68,7 @@ async def generate_text_queued(
     queued_request.callback = completion_callback
 
     # Queue the request
-    request_id = await inference_manager.queue_request(queued_request)
+    await inference_manager.queue_request(queued_request)
 
     # Wait for completion with timeout
     try:
@@ -136,7 +136,7 @@ async def generate_text_stream_queued(
     )
 
     # Queue the request
-    request_id = await inference_manager.queue_request(queued_request)
+    await inference_manager.queue_request(queued_request)
 
     # Wait for streaming to be ready
     try:
@@ -249,7 +249,7 @@ async def queued_transcribe_audio(
     queued_request.callback = completion_callback
 
     # Queue the request
-    request_id = await inference_manager.queue_request(queued_request)
+    await inference_manager.queue_request(queued_request)
 
     # Wait for completion with timeout
     try:
@@ -337,7 +337,7 @@ async def queued_generate_speech(
     queued_request.callback = completion_callback
 
     # Queue the request
-    request_id = await inference_manager.queue_request(queued_request)
+    await inference_manager.queue_request(queued_request)
 
     # Wait for completion with timeout
     try:
@@ -461,7 +461,7 @@ async def queued_generate_embeddings(
     queued_request.callback = completion_callback
 
     # Queue the request
-    request_id = await inference_manager.queue_request(queued_request)
+    await inference_manager.queue_request(queued_request)
 
     # Wait for completion with timeout
     try:
@@ -552,7 +552,7 @@ async def queued_generate_vision(
     queued_request.callback = completion_callback
 
     # Queue the request
-    request_id = await inference_manager.queue_request(queued_request)
+    await inference_manager.queue_request(queued_request)
 
     # Wait for completion with timeout
     try:

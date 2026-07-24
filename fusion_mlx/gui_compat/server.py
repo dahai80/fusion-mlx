@@ -248,7 +248,7 @@ async def _apply_chat_template(tokenizer, messages: list[dict], model_name: str)
                 parts.append(f"<start_of_turn>model\n{c}<end_of_turn>")
         elif phi:
             parts.append(
-                f"{'System' if r=='system' else 'User' if r=='user' else 'Assistant'}: {c}"
+                f"{'System' if r == 'system' else 'User' if r == 'user' else 'Assistant'}: {c}"
             )
         else:
             parts.append(f"<{r}\n{c}")
@@ -290,7 +290,9 @@ async def _process_image_urls(urls: list[str]) -> list[str]:
                         else (
                             ".gif"
                             if "gif" in ct
-                            else ".webp" if "webp" in ct else ".jpg"
+                            else ".webp"
+                            if "webp" in ct
+                            else ".jpg"
                         )
                     )
                     if not any(x in ct for x in ["png", "gif", "webp", "jpeg"]):
@@ -311,7 +313,9 @@ async def _process_image_urls(urls: list[str]) -> list[str]:
                         else (
                             ".gif"
                             if bd.startswith(b"GIF")
-                            else ".webp" if bd.startswith(b"RIFF") else ".png"
+                            else ".webp"
+                            if bd.startswith(b"RIFF")
+                            else ".png"
                         )
                     )
                 )

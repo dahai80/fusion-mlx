@@ -393,7 +393,7 @@ class ModelManager:
                     )
 
             logger.info(f"Loading model from {model_path} via EnginePool")
-            mlx_wrapper = self._run_async(
+            self._run_async(
                 self._load_model_via_pool(model_name, model_path)
             )
 

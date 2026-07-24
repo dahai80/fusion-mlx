@@ -180,7 +180,7 @@ class DownloadProgressTracker:
                 time.sleep(300)  # Check every 5 minutes
 
                 with self._lock:
-                    current_time = time.time()
+                    time.time()
                     to_remove = []
 
                     for model_id, progress in self._downloads.items():
