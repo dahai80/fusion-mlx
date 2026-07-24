@@ -15,7 +15,8 @@ def test_known_alias_resolves():
 
 def test_full_path_passes_through():
     assert resolve_model("mlx-community/Foo-Bar") == "mlx-community/Foo-Bar"
-    assert resolve_model("/Users/me/local-model") == "/Users/me/local-model"
+    with pytest.raises(ValueError, match="Path not allowed"):
+        resolve_model("/Users/me/local-model")
 
 
 def test_unknown_name_passes_through():

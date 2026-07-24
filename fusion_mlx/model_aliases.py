@@ -137,6 +137,11 @@ def resolve_model(name: str) -> str:
             logger.warning("resolve_model: path-like name outside allowed dirs: %s", name)
             raise ValueError(f"Path not allowed: {name}. Must be within allowed model directories.")
         return name
+    if os.path.exists(name):
+        resolved = os.path.realpath(name)
+        allowed = _allowed_model_dirs()
+        if any(resolved.startswith(p) for p in allowed):
+            return name
     aliases = _load_aliases()
     if name in aliases:
         entry = aliases[name]
