@@ -122,6 +122,19 @@ class SkyReelsBasePipeline:
         self.m5_optimizer: M5Optimizer | None = None
         self.step_strategy: SkyReelsStepStrategy | None = None
 
+        # T2-3: 缓存 CFG decay 环境变量 (每次 denoise loop 只读一次, 不再每步 os.environ.get)
+        import os
+        raw_mode = os.environ.get("FUSION_SKYREELS_CFG_DECAY", "off").strip().lower()
+        mode_map = {"": "off", "0": "off", "none": "off", "1": "linear", "2": "cosine", "3": "step"}
+        self._cfg_decay_mode = mode_map.get(raw_mode, raw_mode if raw_mode in ("linear", "cosine", "step") else "off")
+        if self._cfg_decay_mode not in ("off", "linear", "cosine", "step"):
+            logger.warning("FUSION_SKYREELS_CFG_DECAY=%s unknown, using off", raw_mode)
+            self._cfg_decay_mode = "off"
+        try:
+            self._cfg_decay_ratio = max(0.0, min(1.0, float(os.environ.get("FUSION_SKYREELS_CFG_DECAY_RATIO", "0.3"))))
+        except ValueError:
+            self._cfg_decay_ratio = 0.3
+
         self._load_models()
         # T2-1: env 覆盖采样步数早于 _setup_optimizers, 使 xfuser step_methods
         # 长度与实际步数一致 (FUSION_SKYREELS_STEPS, 默认 30).
@@ -344,35 +357,28 @@ class SkyReelsBasePipeline:
         # 衰减区间: cfg_keep_steps 的最后 decay_ratio 比例步, scale 从 base_scale→1.0.
         # FUSION_SKYREELS_CFG_DECAY_RATIO 默认 0.3 (CFG 阶段最后 30% 步衰减).
         import math
-        import os
 
-        decay_mode = os.environ.get("FUSION_SKYREELS_CFG_DECAY", "off").strip().lower()
-        if decay_mode in ("", "0", "off", "none"):
+        if base_scale <= 0:
+            return 1.0
+        decay_mode = self._cfg_decay_mode
+        if decay_mode == "off":
             return base_scale
         if step_idx >= cfg_keep_steps:
             return 1.0
-        try:
-            decay_ratio = float(os.environ.get("FUSION_SKYREELS_CFG_DECAY_RATIO", "0.3"))
-        except ValueError:
-            decay_ratio = 0.3
-        decay_ratio = max(0.0, min(1.0, decay_ratio))
+        decay_ratio = self._cfg_decay_ratio
         decay_steps = max(1, int(cfg_keep_steps * decay_ratio))
         decay_start = cfg_keep_steps - decay_steps
         if step_idx < decay_start:
             return base_scale
         progress = (step_idx - decay_start) / decay_steps
-        if decay_mode in ("linear", "1"):
+        if decay_mode == "linear":
             scale = base_scale + (1.0 - base_scale) * progress
-        elif decay_mode in ("cosine", "2"):
+        elif decay_mode == "cosine":
             cosine_progress = 0.5 * (1.0 + math.cos(math.pi * (1.0 - progress)))
             scale = base_scale + (1.0 - base_scale) * cosine_progress
-        elif decay_mode in ("step", "3"):
+        elif decay_mode == "step":
             scale = 1.0 if progress >= 0.5 else base_scale
         else:
-            logger.warning(
-                "FUSION_SKYREELS_CFG_DECAY=%s unknown, use linear/cosine/step/off",
-                decay_mode,
-            )
             return base_scale
         return scale
 

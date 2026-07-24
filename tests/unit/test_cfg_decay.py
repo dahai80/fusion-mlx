@@ -9,6 +9,8 @@ import pytest
 
 def _cfg_decay_scale(step_idx, cfg_keep_steps, base_scale, decay_mode, decay_ratio):
     # Standalone copy of the pipeline method for unit testing without MLX import.
+    if base_scale <= 0:
+        return 1.0
     if decay_mode in ("", "0", "off", "none"):
         return base_scale
     if step_idx >= cfg_keep_steps:
@@ -68,10 +70,13 @@ class TestCfgDecayScale:
     def test_unknown_mode_returns_base(self):
         assert _cfg_decay_scale(5, 10, 5.0, "bogus", 0.3) == 5.0
 
-    def test_zero_base_scale_linear(self):
-        # base_scale=0 => all scales should be 0 during decay (0 + (1-0)*progress)
-        assert _cfg_decay_scale(0, 10, 0.0, "linear", 1.0) == pytest.approx(0.0)
-        assert _cfg_decay_scale(9, 10, 0.0, "linear", 1.0) == pytest.approx(0.9)
+    def test_zero_base_scale_returns_1(self):
+        # base_scale=0 → 1.0 (guard against nonsensical CFG scale)
+        assert _cfg_decay_scale(0, 10, 0.0, "linear", 1.0) == 1.0
+
+    def test_negative_base_scale_returns_1(self):
+        # base_scale<0 → 1.0 (guard)
+        assert _cfg_decay_scale(0, 10, -2.0, "linear", 1.0) == 1.0
 
     def test_before_decay_start_returns_base(self):
         # decay_ratio=0.2, keep=10 => decay_steps=2, decay_start=8
