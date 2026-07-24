@@ -14,7 +14,6 @@ build/
 .codegraph/
 PLAN.md
 nohup.out
-start.sh
 
 # packaging build artifacts (configs like venvstacks.toml/release_body.md kept)
 packaging/*.log
