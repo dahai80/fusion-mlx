@@ -5,8 +5,9 @@ import logging
 import time
 from typing import Any
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 
+from ..middleware.auth import check_rate_limit, verify_api_key
 from ..server_metrics import get_server_metrics
 from .rerank_models import (
     RerankRequest,
@@ -59,7 +60,7 @@ def normalize_documents(documents: list[str] | list[dict]) -> list[str]:
     return result
 
 
-@router.post("/rerank")
+@router.post("/rerank", dependencies=[Depends(verify_api_key), Depends(check_rate_limit)])
 async def create_rerank(request: RerankRequest) -> RerankResponse:
     """
     Rerank documents by relevance to a query.
