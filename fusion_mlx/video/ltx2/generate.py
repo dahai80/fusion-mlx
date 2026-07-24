@@ -415,7 +415,29 @@ def generate_video(
         stage1_end_image_latent = None
         stage2_end_image_latent = None
         if is_i2v:
-            logger.info("Loading VAE encoder and encoding image(s)...")
+            # Phase-2: session tail→first-frame reuse (skip VAE encode on hit)
+            session_tail_hit = False
+            if session_id is not None:
+                from fusion_mlx.cache.latent_cache import get_session_tail
+
+                tail = get_session_tail(session_id, model_repo)
+                if tail is not None:
+                    t_h, t_w = tail.shape[3], tail.shape[4]
+                    if t_h == stage2_h and t_w == stage2_w:
+                        stage2_image_latent = tail
+                        session_tail_hit = True
+                        logger.info(
+                            "session tail cache hit: %s stage2 %dx%d",
+                            session_id, t_h, t_w,
+                        )
+                    else:
+                        logger.info(
+                            "session tail cache skip: shape mismatch %dx%d vs %dx%d",
+                            t_h, t_w, stage2_h, stage2_w,
+                        )
+
+            if not session_tail_hit:
+                logger.info("Loading VAE encoder and encoding image(s)...")
             # UMA Radix Latent cache (#2 Phase-1): repeat I2V requests with
             # the same image+resolution reuse the cached VAE latent and skip
             # the VAE encoder load + forward entirely (zero-copy on UMA).
@@ -612,6 +634,13 @@ def generate_video(
             audio_frozen=is_a2v,
         )
 
+        # Phase-2: capture tail-frame latent for multi-shot session reuse
+        if session_id is not None:
+            from fusion_mlx.cache.latent_cache import put_session_tail
+
+            tail = latents[:, :, -1:, :, :]
+            put_session_tail(session_id, model_repo, tail)
+
     elif pipeline == PipelineType.DEV:
         image_latent = None
         end_image_latent = None
@@ -791,7 +820,29 @@ def generate_video(
         stage1_end_image_latent = None
         stage2_end_image_latent = None
         if is_i2v:
-            logger.info("Loading VAE encoder and encoding image(s)...")
+            # Phase-2: session tail→first-frame reuse (skip VAE encode on hit)
+            session_tail_hit = False
+            if session_id is not None:
+                from fusion_mlx.cache.latent_cache import get_session_tail
+
+                tail = get_session_tail(session_id, model_repo)
+                if tail is not None:
+                    t_h, t_w = tail.shape[3], tail.shape[4]
+                    if t_h == stage2_h and t_w == stage2_w:
+                        stage2_image_latent = tail
+                        session_tail_hit = True
+                        logger.info(
+                            "session tail cache hit: %s stage2 %dx%d",
+                            session_id, t_h, t_w,
+                        )
+                    else:
+                        logger.info(
+                            "session tail cache skip: shape mismatch %dx%d vs %dx%d",
+                            t_h, t_w, stage2_h, stage2_w,
+                        )
+
+            if not session_tail_hit:
+                logger.info("Loading VAE encoder and encoding image(s)...")
             # UMA Radix Latent cache (#2 Phase-1): repeat I2V requests with
             # the same image+resolution reuse the cached VAE latent and skip
             # the VAE encoder load + forward entirely (zero-copy on UMA).
@@ -1027,6 +1078,13 @@ def generate_video(
             audio_frozen=is_a2v,
         )
 
+        # Phase-2: capture tail-frame latent for multi-shot session reuse
+        if session_id is not None:
+            from fusion_mlx.cache.latent_cache import put_session_tail
+
+            tail = latents[:, :, -1:, :, :]
+            put_session_tail(session_id, model_repo, tail)
+
     elif pipeline == PipelineType.DEV_TWO_STAGE_HQ:
         hq_lora_strength_s1 = (
             lora_strength_stage_1 if lora_strength_stage_1 is not None else 0.25
@@ -1043,7 +1101,29 @@ def generate_video(
         stage1_end_image_latent = None
         stage2_end_image_latent = None
         if is_i2v:
-            logger.info("Loading VAE encoder and encoding image(s)...")
+            # Phase-2: session tail→first-frame reuse (skip VAE encode on hit)
+            session_tail_hit = False
+            if session_id is not None:
+                from fusion_mlx.cache.latent_cache import get_session_tail
+
+                tail = get_session_tail(session_id, model_repo)
+                if tail is not None:
+                    t_h, t_w = tail.shape[3], tail.shape[4]
+                    if t_h == stage2_h and t_w == stage2_w:
+                        stage2_image_latent = tail
+                        session_tail_hit = True
+                        logger.info(
+                            "session tail cache hit: %s stage2 %dx%d",
+                            session_id, t_h, t_w,
+                        )
+                    else:
+                        logger.info(
+                            "session tail cache skip: shape mismatch %dx%d vs %dx%d",
+                            t_h, t_w, stage2_h, stage2_w,
+                        )
+
+            if not session_tail_hit:
+                logger.info("Loading VAE encoder and encoding image(s)...")
             # UMA Radix Latent cache (#2 Phase-1): repeat I2V requests with
             # the same image+resolution reuse the cached VAE latent and skip
             # the VAE encoder load + forward entirely (zero-copy on UMA).
@@ -1302,6 +1382,13 @@ def generate_video(
             noise_seed=seed + 1,
             audio_frozen=is_a2v,
         )
+
+        # Phase-2: capture tail-frame latent for multi-shot session reuse
+        if session_id is not None:
+            from fusion_mlx.cache.latent_cache import put_session_tail
+
+            tail = latents[:, :, -1:, :, :]
+            put_session_tail(session_id, model_repo, tail)
 
     del transformer
     mx.clear_cache()

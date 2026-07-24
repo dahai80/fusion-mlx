@@ -78,6 +78,7 @@ class VideoGenEngine(BaseNonStreamingEngine):
             no_compile=kwargs.get("no_compile"),
             enhance_prompt=kwargs.get("enhance_prompt"),
             on_step=on_step,
+            session_id=kwargs.get("session_id"),
         )
 
         t0 = time.monotonic()

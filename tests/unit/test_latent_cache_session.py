@@ -90,3 +90,66 @@ class TestSessionTailPutGet:
         rb = get_session_tail("sess-b", "model-x")
         assert ra is not None
         assert rb is not None
+
+
+class TestVideoGenEngineSessionIdFlow:
+    def test_session_id_flows_to_params(self):
+        from fusion_mlx.engines.video_backends.base import VideoGenParams
+
+        params = VideoGenParams(
+            prompt="test",
+            n=1,
+            num_frames=25,
+            width=512,
+            height=512,
+            fps=24,
+            seed=42,
+            session_id="sess-integration",
+        )
+        assert params.session_id == "sess-integration"
+
+    def test_session_id_none_by_default(self):
+        from fusion_mlx.engines.video_backends.base import VideoGenParams
+
+        params = VideoGenParams(
+            prompt="test",
+            n=1,
+            num_frames=25,
+            width=512,
+            height=512,
+            fps=24,
+            seed=42,
+        )
+        assert params.session_id is None
+
+    def test_session_id_from_kwargs(self):
+        from fusion_mlx.engines.video_backends.base import VideoGenParams
+
+        kwargs = {"session_id": "sess-from-api"}
+        params = VideoGenParams(
+            prompt="test",
+            n=1,
+            num_frames=25,
+            width=512,
+            height=512,
+            fps=24,
+            seed=42,
+            session_id=kwargs.get("session_id"),
+        )
+        assert params.session_id == "sess-from-api"
+
+    def test_missing_session_id_yields_none(self):
+        from fusion_mlx.engines.video_backends.base import VideoGenParams
+
+        kwargs = {}
+        params = VideoGenParams(
+            prompt="test",
+            n=1,
+            num_frames=25,
+            width=512,
+            height=512,
+            fps=24,
+            seed=42,
+            session_id=kwargs.get("session_id"),
+        )
+        assert params.session_id is None

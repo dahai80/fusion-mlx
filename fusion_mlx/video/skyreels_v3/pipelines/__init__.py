@@ -338,6 +338,44 @@ class SkyReelsBasePipeline:
         )
         return keep
 
+    def _cfg_decay_scale(self, step_idx: int, cfg_keep_steps: int, base_scale: float) -> float:
+        # T2-3: 渐进 CFG 衰减, 替代硬切 b=2→b=1.
+        # FUSION_SKYREELS_CFG_DECAY=linear/cosine/step/off (默认 off=旧行为).
+        # 衰减区间: cfg_keep_steps 的最后 decay_ratio 比例步, scale 从 base_scale→1.0.
+        # FUSION_SKYREELS_CFG_DECAY_RATIO 默认 0.3 (CFG 阶段最后 30% 步衰减).
+        import math
+        import os
+
+        decay_mode = os.environ.get("FUSION_SKYREELS_CFG_DECAY", "off").strip().lower()
+        if decay_mode in ("", "0", "off", "none"):
+            return base_scale
+        if step_idx >= cfg_keep_steps:
+            return 1.0
+        try:
+            decay_ratio = float(os.environ.get("FUSION_SKYREELS_CFG_DECAY_RATIO", "0.3"))
+        except ValueError:
+            decay_ratio = 0.3
+        decay_ratio = max(0.0, min(1.0, decay_ratio))
+        decay_steps = max(1, int(cfg_keep_steps * decay_ratio))
+        decay_start = cfg_keep_steps - decay_steps
+        if step_idx < decay_start:
+            return base_scale
+        progress = (step_idx - decay_start) / decay_steps
+        if decay_mode in ("linear", "1"):
+            scale = base_scale + (1.0 - base_scale) * progress
+        elif decay_mode in ("cosine", "2"):
+            cosine_progress = 0.5 * (1.0 + math.cos(math.pi * (1.0 - progress)))
+            scale = base_scale + (1.0 - base_scale) * cosine_progress
+        elif decay_mode in ("step", "3"):
+            scale = 1.0 if progress >= 0.5 else base_scale
+        else:
+            logger.warning(
+                "FUSION_SKYREELS_CFG_DECAY=%s unknown, use linear/cosine/step/off",
+                decay_mode,
+            )
+            return base_scale
+        return scale
+
     def warmup(self) -> None:
         # T1-2: 触发权重 Metal residency + mx.compile 首次编译, 前移首请求成本.
         # 256x256/9帧/1步: 满足 (nf-1)%4==0 与 %16==0, 最小形状跑通 DiT+VAE 链路.
@@ -656,10 +694,10 @@ class SkyReelsBasePipeline:
 
             # CFG 合并 (仅 b=2 步; b=1 步 noise_pred 已是 cond, guidance=1.0)
             if run_cfg:
-                noise_pred = perform_guidance(
-                    noise_pred,
-                    self.config.guidance_scale,
+                cfg_scale = self._cfg_decay_scale(
+                    step_idx, cfg_keep_steps, self.config.guidance_scale,
                 )
+                noise_pred = perform_guidance(noise_pred, cfg_scale)
 
             # 时序闪烁修复: 采样步连贯滤波 (防步间预测跳变)
             noise_pred = flicker_fix.filter_step(noise_pred)
@@ -787,10 +825,10 @@ class SkyReelsBasePipeline:
             )
 
             if run_cfg:
-                noise_pred = perform_guidance(
-                    noise_pred,
-                    self.config.guidance_scale,
+                cfg_scale = self._cfg_decay_scale(
+                    step_idx, cfg_keep_steps, self.config.guidance_scale,
                 )
+                noise_pred = perform_guidance(noise_pred, cfg_scale)
 
             noise_pred = flicker_fix.filter_step(noise_pred)
 
@@ -1351,10 +1389,10 @@ class SkyReelsA2VPipeline(SkyReelsBasePipeline):
                 )
 
                 # CFG 合并
-                noise_pred = perform_guidance(
-                    noise_pred,
-                    cfg.guidance_scale,
+                cfg_scale = self._cfg_decay_scale(
+                    step_idx, cfg_keep_steps, cfg.guidance_scale,
                 )
+                noise_pred = perform_guidance(noise_pred, cfg_scale)
 
                 # 采样步
                 latents = scheduler.step(
