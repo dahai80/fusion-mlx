@@ -455,7 +455,7 @@ def get_gui_compat_router() -> APIRouter:
             raise
         except Exception as e:
             logger.error(f"Load error {model_name}: {e}")
-            raise HTTPException(status_code=500, detail=str(e))
+            raise HTTPException(status_code=500, detail="Internal server error")
 
     @router.post("/v1/models/{model_name}/unload")
     async def unload_model(model_name: str, db: Session = Depends(get_db_session)):
@@ -475,7 +475,7 @@ def get_gui_compat_router() -> APIRouter:
                 "status": "not_loaded",
             }
         except Exception as e:
-            raise HTTPException(status_code=500, detail=str(e))
+            raise HTTPException(status_code=500, detail="Internal server error")
 
     @router.delete("/v1/models/{model_name}")
     async def delete_model(
@@ -516,7 +516,7 @@ def get_gui_compat_router() -> APIRouter:
             }
         except Exception as e:
             db.rollback()
-            raise HTTPException(status_code=500, detail=str(e))
+            raise HTTPException(status_code=500, detail="Internal server error")
 
     @router.get("/v1/models/{model_name}/health")
     async def model_health(model_name: str, db: Session = Depends(get_db_session)):
@@ -577,7 +577,7 @@ def get_gui_compat_router() -> APIRouter:
         except HTTPException:
             raise
         except Exception as e:
-            raise HTTPException(status_code=500, detail=str(e))
+            raise HTTPException(status_code=500, detail="Internal server error")
 
     @router.get("/v1/system/status")
     async def sys_status():
@@ -636,7 +636,7 @@ def get_gui_compat_router() -> APIRouter:
             )
             return {"models": [_model_dict(m) for m in ms], "total": len(ms)}
         except Exception as e:
-            raise HTTPException(status_code=500, detail=str(e))
+            raise HTTPException(status_code=500, detail="Internal server error")
 
     @router.get("/v1/discover/popular")
     async def disc_popular(limit: int = 20):
@@ -644,7 +644,7 @@ def get_gui_compat_router() -> APIRouter:
             ms = get_huggingface_client().get_popular_mlx_models(limit=limit)
             return {"models": [_popular_model_dict(m) for m in ms], "total": len(ms)}
         except Exception as e:
-            raise HTTPException(status_code=500, detail=str(e))
+            raise HTTPException(status_code=500, detail="Internal server error")
 
     @router.get("/v1/discover/trending")
     async def disc_trending(limit: int = 20):
@@ -652,14 +652,14 @@ def get_gui_compat_router() -> APIRouter:
             ms = get_huggingface_client().search_trending_mlx_models(limit=limit)
             return {"models": [_model_dict(m) for m in ms], "total": len(ms)}
         except Exception as e:
-            raise HTTPException(status_code=500, detail=str(e))
+            raise HTTPException(status_code=500, detail="Internal server error")
 
     @router.get("/v1/discover/categories")
     async def disc_categories():
         try:
             return {"categories": get_huggingface_client().get_model_categories()}
         except Exception as e:
-            raise HTTPException(status_code=500, detail=str(e))
+            raise HTTPException(status_code=500, detail="Internal server error")
 
     @router.get("/v1/discover/vision")
     async def disc_vision(query: str = "", limit: int = 10):
@@ -667,7 +667,7 @@ def get_gui_compat_router() -> APIRouter:
             ms = get_huggingface_client().search_vision_models(query=query, limit=limit)
             return {"models": [_model_dict(m) for m in ms], "total": len(ms)}
         except Exception as e:
-            raise HTTPException(status_code=500, detail=str(e))
+            raise HTTPException(status_code=500, detail="Internal server error")
 
     @router.get("/v1/discover/stt")
     async def disc_stt(query: str = "", limit: int = 10):
@@ -675,7 +675,7 @@ def get_gui_compat_router() -> APIRouter:
             ms = get_huggingface_client().search_stt_models(query=query, limit=limit)
             return {"models": [_model_dict(m) for m in ms], "total": len(ms)}
         except Exception as e:
-            raise HTTPException(status_code=500, detail=str(e))
+            raise HTTPException(status_code=500, detail="Internal server error")
 
     @router.get("/v1/discover/embeddings")
     async def disc_emb(query: str = "", limit: int = 20):
@@ -685,7 +685,7 @@ def get_gui_compat_router() -> APIRouter:
             )
             return {"models": [_model_dict(m) for m in ms], "total": len(ms)}
         except Exception as e:
-            raise HTTPException(status_code=500, detail=str(e))
+            raise HTTPException(status_code=500, detail="Internal server error")
 
     @router.get("/v1/discover/compatible")
     async def disc_compat(query: str = "", max_memory_gb: float | None = None):
@@ -705,7 +705,7 @@ def get_gui_compat_router() -> APIRouter:
                 "total": len(ms),
             }
         except Exception as e:
-            raise HTTPException(status_code=500, detail=str(e))
+            raise HTTPException(status_code=500, detail="Internal server error")
 
     @router.get("/v1/discover/models/{model_id:path}")
     async def disc_model_detail(model_id: str):
@@ -729,7 +729,7 @@ def get_gui_compat_router() -> APIRouter:
         except HTTPException:
             raise
         except Exception as e:
-            raise HTTPException(status_code=500, detail=str(e))
+            raise HTTPException(status_code=500, detail="Internal server error")
 
     @router.post("/v1/models/install")
     async def install_model(
@@ -787,7 +787,7 @@ def get_gui_compat_router() -> APIRouter:
         except HTTPException:
             raise
         except Exception as e:
-            raise HTTPException(status_code=500, detail=str(e))
+            raise HTTPException(status_code=500, detail="Internal server error")
 
     @router.get("/v1/manager/status")
     async def mgr_status():
@@ -871,7 +871,7 @@ def get_gui_compat_router() -> APIRouter:
             dbg["quant_bits"] = bits
             return dbg
         except Exception as e:
-            raise HTTPException(status_code=500, detail=str(e))
+            raise HTTPException(status_code=500, detail="Internal server error")
 
     return router
 

@@ -455,7 +455,7 @@ async def create_transcription(
             detail=f"Model '{resolved_model}' not found. Available: {avail}",
         ) from exc
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
+        raise HTTPException(status_code=500, detail="Internal server error") from exc
 
     if not isinstance(engine, STTEngine):
         raise HTTPException(
@@ -501,7 +501,7 @@ async def create_transcription(
     except HTTPException:
         raise
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
+        raise HTTPException(status_code=500, detail="Internal server error") from exc
     finally:
         if tmp_path and os.path.exists(tmp_path):
             try:
@@ -556,7 +556,7 @@ async def create_speech(request: AudioSpeechRequest):
             detail=f"Model '{resolved_model}' not found. Available: {avail}",
         ) from exc
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
+        raise HTTPException(status_code=500, detail="Internal server error") from exc
 
     if not isinstance(engine, TTSEngine):
         raise HTTPException(
@@ -583,7 +583,7 @@ async def create_speech(request: AudioSpeechRequest):
         except HTTPException:
             raise
         except Exception as exc:
-            raise HTTPException(status_code=500, detail=str(exc)) from exc
+            raise HTTPException(status_code=500, detail="Internal server error") from exc
         return StreamingResponse(
             _stream_with_prefetched_chunk(first_chunk, stream),
             media_type="audio/wav",
@@ -606,7 +606,7 @@ async def create_speech(request: AudioSpeechRequest):
     except HTTPException:
         raise
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
+        raise HTTPException(status_code=500, detail="Internal server error") from exc
     finally:
         _cleanup_tempfile(ref_audio_path)
 
@@ -645,7 +645,7 @@ async def process_audio(
             detail=f"Model '{resolved_model}' not found. Available: {avail}",
         ) from exc
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
+        raise HTTPException(status_code=500, detail="Internal server error") from exc
 
     if not isinstance(engine, STSEngine):
         raise HTTPException(
@@ -670,7 +670,7 @@ async def process_audio(
     except HTTPException:
         raise
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
+        raise HTTPException(status_code=500, detail="Internal server error") from exc
     finally:
         if tmp_path and os.path.exists(tmp_path):
             try:

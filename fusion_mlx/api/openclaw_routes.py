@@ -255,7 +255,7 @@ async def _execute_single_turn(
         raise
     except Exception as exc:
         logger.exception("Agent turn failed for session %s", session_id)
-        raise HTTPException(500, str(exc))
+        raise HTTPException(500, "Internal server error")
 
 
 async def _execute_turn_auto(
@@ -276,7 +276,7 @@ async def _execute_turn_auto(
             logger.exception(
                 "Auto-turn %d failed for session %s", iteration + 1, session_id
             )
-            raise HTTPException(500, str(exc))
+            raise HTTPException(500, "Internal server error")
 
         # Accumulate usage
         for key in ("prompt_tokens", "completion_tokens"):

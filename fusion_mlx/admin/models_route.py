@@ -246,7 +246,7 @@ async def load_model(
     try:
         await engine_pool.get_engine(model_id)
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
     logger.info(f"Manually loaded model: {model_id}")
     return {"status": "ok", "model_id": model_id, "message": f"Loaded {model_id}"}

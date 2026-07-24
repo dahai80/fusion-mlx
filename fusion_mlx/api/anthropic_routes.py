@@ -371,7 +371,7 @@ async def _run_anthropic_messages(
             type(exc).__name__,
             exc,
         )
-        raise HTTPException(500, f"{type(exc).__name__}: {exc}")
+        raise HTTPException(500, "Internal server error")
     finally:
         await _release()
 
@@ -650,7 +650,7 @@ async def anthropic_messages(
         ) from exc
     except Exception as exc:
         logger.exception("Anthropic messages failed: %s(%s)", type(exc).__name__, exc)
-        raise HTTPException(500, f"{type(exc).__name__}: {exc}")
+        raise HTTPException(500, "Internal server error")
 
 
 @router.post("/count_tokens")

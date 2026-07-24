@@ -171,4 +171,4 @@ async def generate_image(request: ImageGenerateRequest) -> ImageGenerateResponse
         raise HTTPException(422, str(exc))
     except Exception as exc:
         logger.exception("Image generation failed")
-        raise HTTPException(500, str(exc))
+        raise HTTPException(500, "Internal server error")
