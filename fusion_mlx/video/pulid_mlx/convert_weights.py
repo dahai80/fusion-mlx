@@ -108,7 +108,7 @@ def _load_pytorch_weights(path: str) -> dict:
         import torch
     except ImportError:
         logger.error("PyTorch required for weight conversion: pip install torch")
-        sys.exit(1)
+        raise ImportError("PyTorch required for weight conversion: pip install torch")
 
     path = Path(path)
     if path.is_dir():

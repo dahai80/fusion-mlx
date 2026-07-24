@@ -1348,10 +1348,13 @@ class SkyReelsA2VPipeline(SkyReelsBasePipeline):
             # #146 fix: 每步 mx.eval 打断 MLX 惰性计算图跨步累积 (同 R2V/V2V)
             timesteps = scheduler.timesteps
             n_steps = timesteps.shape[0]
+            # B1: 动态 CFG — 前 cfg_keep_steps 步跑 b=2, 余下步 b=1 (同 T2V/R2V)
+            cfg_keep_steps = self._cfg_keep_steps(n_steps)
             logger.info(
-                "denoise: start branch=a2v steps=%d cfg=%.2f latent_shape=%s",
+                "denoise: start branch=a2v steps=%d cfg=%.2f cfg_keep=%d latent_shape=%s",
                 n_steps,
                 cfg.guidance_scale,
+                cfg_keep_steps,
                 latents.shape,
             )
 
@@ -1359,13 +1362,20 @@ class SkyReelsA2VPipeline(SkyReelsBasePipeline):
                 self.step_strategy.set_current_step(step_idx)
                 t_mx = mx.array([float(t)])
 
-                # A2V CFG: 拼接 cond + uncond (b=2)
-                latent_input = mx.concatenate([latents] * 2)
-                audio_input = mx.concatenate([audio_embeds] * 2)
-                text_input = mx.concatenate([text_embeds] * 2)
-                # grid_sizes/seq_lens 对齐 wan2 约定: 每个批次元素一条 (CFG b=2)
-                cfg_grid_sizes = list(grid_sizes) * 2
-                cfg_seq_lens = list(seq_lens) * 2
+                # B1: 动态 CFG — 早期步 b=2 (cond+uncond), 晚期步 b=1 (cond-only)
+                run_cfg = step_idx < cfg_keep_steps
+                if run_cfg:
+                    latent_input = mx.concatenate([latents] * 2)
+                    audio_input = mx.concatenate([audio_embeds] * 2)
+                    text_input = mx.concatenate([text_embeds] * 2)
+                    cfg_grid_sizes = list(grid_sizes) * 2
+                    cfg_seq_lens = list(seq_lens) * 2
+                else:
+                    latent_input = latents
+                    audio_input = audio_embeds
+                    text_input = text_embeds
+                    cfg_grid_sizes = list(grid_sizes)
+                    cfg_seq_lens = list(seq_lens)
 
                 # AtomCode 专题优化: cross_kv_cache 跨步复用 (2026-07-18)
                 # context (text_input) 跨采样步固定不变, 每步重算 cross-attn KV 是浪费
@@ -1377,10 +1387,11 @@ class SkyReelsA2VPipeline(SkyReelsBasePipeline):
 
                 # #149: 步级起始日志 - 当步前向开始即报进度
                 logger.info(
-                    "denoise: step=%d/%d starting t=%.4f",
+                    "denoise: step=%d/%d starting t=%.4f cfg=%s",
                     step_idx + 1,
                     n_steps,
                     float(t),
+                    "on" if run_cfg else "off(cond-only)",
                 )
 
                 # A2V DiT 前向
@@ -1394,11 +1405,12 @@ class SkyReelsA2VPipeline(SkyReelsBasePipeline):
                     cross_kv_cache=cross_kv_cache,
                 )
 
-                # CFG 合并
-                cfg_scale = self._cfg_decay_scale(
-                    step_idx, cfg_keep_steps, cfg.guidance_scale,
-                )
-                noise_pred = perform_guidance(noise_pred, cfg_scale)
+                # CFG 合并 (b=1 cond-only 步跳过)
+                if run_cfg:
+                    cfg_scale = self._cfg_decay_scale(
+                        step_idx, cfg_keep_steps, cfg.guidance_scale,
+                    )
+                    noise_pred = perform_guidance(noise_pred, cfg_scale)
 
                 # 采样步
                 latents = scheduler.step(
