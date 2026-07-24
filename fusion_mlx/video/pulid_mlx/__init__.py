@@ -11,6 +11,7 @@ Core components:
 
 from .encoders import IDFormer
 from .attention import PerceiverAttentionCA, IDAttnProcessor
+from .eva_clip import EVACLIPEncoder, EVAVisionTransformer
 from .pipeline import PuLIDPipeline
 
 __version__ = "0.1.0"
