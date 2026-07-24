@@ -102,8 +102,20 @@ def list_profiles() -> list[AliasProfile]:
     return profiles
 
 
+def _is_path_like(name: str) -> bool:
+    if os.path.isabs(name):
+        return True
+    if "/" in name or "\\" in name:
+        return True
+    if name.startswith("."):
+        return True
+    return False
+
+
 def resolve_model(name: str) -> str:
-    # Absolute local paths must be within allowed directories.
+    if ".." in name.split(os.sep) or ".." in name.split("/"):
+        logger.warning("resolve_model: path traversal component rejected: %s", name)
+        raise ValueError(f"Path not allowed: {name}. Path traversal (..) is forbidden.")
     if os.path.isabs(name):
         resolved = os.path.realpath(name)
         allowed = _allowed_model_dirs()
@@ -111,14 +123,19 @@ def resolve_model(name: str) -> str:
             logger.warning("resolve_model: absolute path outside allowed dirs: %s", name)
             raise ValueError(f"Path not allowed: {name}. Must be within allowed model directories.")
         return name
-    # Relative local path takes priority over alias.
-    if os.path.exists(name):
+    if _is_path_like(name) and os.path.exists(name):
         resolved = os.path.realpath(name)
         allowed = _allowed_model_dirs()
         if not any(resolved.startswith(p) for p in allowed):
             logger.warning("resolve_model: path outside allowed dirs: %s", name)
             raise ValueError(f"Path not allowed: {name}. Must be within allowed model directories.")
         return name
+    if _is_path_like(name):
+        resolved = os.path.realpath(name)
+        allowed = _allowed_model_dirs()
+        if not any(resolved.startswith(p) for p in allowed):
+            logger.warning("resolve_model: path-like name outside allowed dirs: %s", name)
+            raise ValueError(f"Path not allowed: {name}. Must be within allowed model directories.")
     aliases = _load_aliases()
     if name in aliases:
         entry = aliases[name]
