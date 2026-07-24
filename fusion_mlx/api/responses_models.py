@@ -106,9 +106,9 @@ class ResponsesRequest(BaseModel):
     model: str
     input: str | list[InputItem] | None = None
     instructions: str | None = None
-    temperature: float | None = None
-    top_p: float | None = None
-    max_output_tokens: int | None = None
+    temperature: float | None = Field(None, ge=0.0, le=2.0)
+    top_p: float | None = Field(None, ge=0.0, le=1.0)
+    max_output_tokens: int | None = Field(None, ge=1)
     stream: bool = False
     tools: list[ResponsesTool] | None = None
     tool_choice: str | dict[str, Any] | None = None
@@ -134,11 +134,11 @@ class ResponsesRequest(BaseModel):
     seed: int | None = None
     # Fields forwarded to ChatCompletionRequest
     reasoning_effort: str | None = None
-    reasoning_max_tokens: int | None = None
+    reasoning_max_tokens: int | None = Field(None, ge=1)
     enable_thinking: bool | None = None
     chat_template_kwargs: dict[str, Any] | None = None
     response_format: dict[str, Any] | None = None
-    top_k: int | None = None
+    top_k: int | None = Field(None, ge=0)
 
     model_config = {"extra": "allow"}
 
@@ -243,9 +243,9 @@ class ResponseObject(BaseModel):
     text: TextConfig | None = None
     tool_choice: str | dict[str, Any] | None = "auto"
     tools: list[ResponsesTool] = Field(default_factory=list)
-    temperature: float | None = None
-    top_p: float | None = None
-    max_output_tokens: int | None = None
+    temperature: float | None = Field(None, ge=0.0, le=2.0)
+    top_p: float | None = Field(None, ge=0.0, le=1.0)
+    max_output_tokens: int | None = Field(None, ge=1)
     previous_response_id: str | None = None
     metadata: dict[str, str] | None = Field(default_factory=dict)
     truncation: str | None = None
