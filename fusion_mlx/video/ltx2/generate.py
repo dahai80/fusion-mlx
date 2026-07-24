@@ -471,7 +471,8 @@ def generate_video(
 
             if image is not None:
                 stage1_image_latent = _encode_image_latent(image, s1_h, s1_w)
-                stage2_image_latent = _encode_image_latent(image, s2_h, s2_w)
+                if not session_tail_hit:
+                    stage2_image_latent = _encode_image_latent(image, s2_h, s2_w)
 
             if has_end_image:
                 stage1_end_image_latent = _encode_image_latent(end_image, s1_h, s1_w)
@@ -480,7 +481,8 @@ def generate_video(
             if vae_encoder is not None:
                 del vae_encoder
                 mx.clear_cache()
-            logger.info("VAE encoder loaded and image(s) encoded")
+            if not session_tail_hit:
+                logger.info("VAE encoder loaded and image(s) encoded")
 
         logger.info(
             "Stage 1: Generating at %dx%d (8 steps)", stage1_w * 32, stage1_h * 32
@@ -876,7 +878,8 @@ def generate_video(
 
             if image is not None:
                 stage1_image_latent = _encode_image_latent(image, s1_h, s1_w)
-                stage2_image_latent = _encode_image_latent(image, s2_h, s2_w)
+                if not session_tail_hit:
+                    stage2_image_latent = _encode_image_latent(image, s2_h, s2_w)
 
             if has_end_image:
                 stage1_end_image_latent = _encode_image_latent(end_image, s1_h, s1_w)
@@ -885,7 +888,8 @@ def generate_video(
             if vae_encoder is not None:
                 del vae_encoder
                 mx.clear_cache()
-            logger.info("VAE encoder loaded and image(s) encoded")
+            if not session_tail_hit:
+                logger.info("VAE encoder loaded and image(s) encoded")
 
         sigmas = ltx2_scheduler(steps=num_inference_steps)
         mx.eval(sigmas)
@@ -1157,7 +1161,8 @@ def generate_video(
 
             if image is not None:
                 stage1_image_latent = _encode_image_latent(image, s1_h, s1_w)
-                stage2_image_latent = _encode_image_latent(image, s2_h, s2_w)
+                if not session_tail_hit:
+                    stage2_image_latent = _encode_image_latent(image, s2_h, s2_w)
 
             if has_end_image:
                 stage1_end_image_latent = _encode_image_latent(end_image, s1_h, s1_w)
