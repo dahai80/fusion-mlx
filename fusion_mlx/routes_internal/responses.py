@@ -6,9 +6,10 @@ import time
 import uuid
 from collections.abc import AsyncIterator
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import Response, StreamingResponse
 
+from ..middleware.auth import verify_api_key
 from ..api.models import (
     ChatCompletionRequest,
     ChatCompletionResponse,
@@ -342,7 +343,7 @@ def _sse(event: str, data: dict) -> str:
     return f"event: {event}\ndata: {json.dumps(data)}\n\n"
 
 
-@router.post("/v1/responses")
+@router.post("/v1/responses", dependencies=[Depends(verify_api_key)])
 async def create_response(request: Request):
     body = await request.json()
     responses_request = ResponsesRequest(**body)

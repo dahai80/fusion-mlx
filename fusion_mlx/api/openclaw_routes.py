@@ -16,8 +16,9 @@ import uuid
 from collections import OrderedDict
 from typing import Any
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Depends
 from fastapi.responses import StreamingResponse
+from ..admin.auth import require_admin
 from pydantic import BaseModel, Field
 
 logger = logging.getLogger(__name__)
@@ -127,7 +128,10 @@ class ToolResultRequest(BaseModel):
 
 
 @router.post("/sessions", response_model=SessionInfo)
-async def create_session(req: SessionCreateRequest):
+async def create_session(
+    req: SessionCreateRequest,
+    _is_admin: bool = Depends(require_admin),
+):
     _cleanup_expired_sessions()
     session_id = uuid.uuid4().hex[:16]
     session = _init_session()
@@ -153,7 +157,10 @@ async def create_session(req: SessionCreateRequest):
 
 
 @router.get("/sessions/{session_id}", response_model=SessionInfo)
-async def get_session(session_id: str):
+async def get_session(
+    session_id: str,
+    _is_admin: bool = Depends(require_admin),
+):
     if session_id not in _sessions:
         raise HTTPException(404, f"Session {session_id} not found")
     s = _sessions[session_id]
@@ -169,14 +176,19 @@ async def get_session(session_id: str):
 
 
 @router.delete("/sessions/{session_id}")
-async def delete_session(session_id: str):
+async def delete_session(
+    session_id: str,
+    _is_admin: bool = Depends(require_admin),
+):
     if session_id in _sessions:
         del _sessions[session_id]
     return {"deleted": True}
 
 
 @router.get("/sessions")
-async def list_sessions() -> list[SessionInfo]:
+async def list_sessions(
+    _is_admin: bool = Depends(require_admin),
+) -> list[SessionInfo]:
     _cleanup_expired_sessions()
     result = []
     for sid, s in _sessions.items():
@@ -196,7 +208,11 @@ async def list_sessions() -> list[SessionInfo]:
 
 
 @router.post("/turns", response_model=TurnResponse)
-async def execute_turn(session_id: str, req: TurnRequest):
+async def execute_turn(
+    session_id: str,
+    req: TurnRequest,
+    _is_admin: bool = Depends(require_admin),
+):
     """Execute one agent turn with optional tool calling.
 
     When ``auto_execute=True``, the server automatically executes tool calls
@@ -396,7 +412,10 @@ async def _call_chat_completion(pool, body: dict) -> TurnResponse:
 
 
 @router.post("/tool-results")
-async def submit_tool_result(req: ToolResultRequest):
+async def submit_tool_result(
+    req: ToolResultRequest,
+    _is_admin: bool = Depends(require_admin),
+):
     """Submit tool execution results back to the agent."""
     if req.session_id not in _sessions:
         raise HTTPException(404, f"Session {req.session_id} not found")
@@ -421,7 +440,10 @@ async def submit_tool_result(req: ToolResultRequest):
 
 
 @router.post("/steer")
-async def steer_agent(req: SteerRequest):
+async def steer_agent(
+    req: SteerRequest,
+    _is_admin: bool = Depends(require_admin),
+):
     """Inject a steering message into an active agent session."""
     if req.session_id not in _sessions:
         raise HTTPException(404, f"Session {req.session_id} not found")
@@ -449,7 +471,10 @@ async def steer_agent(req: SteerRequest):
 
 
 @router.get("/stream/{session_id}")
-async def stream_events(session_id: str):
+async def stream_events(
+    session_id: str,
+    _is_admin: bool = Depends(require_admin),
+):
     """SSE stream of agent events for a session."""
     if session_id not in _sessions:
         raise HTTPException(404, f"Session {session_id} not found")

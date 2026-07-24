@@ -76,7 +76,8 @@ class TestRequireAdmin(unittest.IsolatedAsyncioTestCase):
         gs = SimpleNamespace(
             auth=SimpleNamespace(skip_api_key_verification=True, api_key="k")
         )
-        with patch.object(auth, "_is_skip_api_key_verification", return_value=True):
+        with patch.object(auth, "_is_skip_api_key_verification", return_value=True), \
+             patch.object(auth, "_is_loopback_request", return_value=True):
             result = await auth.require_admin(_make_request())
         self.assertTrue(result)
 

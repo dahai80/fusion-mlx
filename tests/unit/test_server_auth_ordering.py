@@ -10,7 +10,7 @@ On a multi-tenant box this is effectively free GPU inference.
 Why this is structurally not a window in our app:
 
 * Auth is wired via FastAPI route ``dependencies=[Depends(verify_api_key)]``
-  at app construction time (module load of ``vllm_mlx/server.py``).
+  at app construction time (module load of ``fusion_mlx/server.py``).
 * By the time ``uvicorn.run(app, ...)`` is invoked, every protected
   router has its dependency chain attached.
 * uvicorn binds inside ``Server.serve()`` — strictly AFTER the app is
@@ -42,7 +42,7 @@ from fastapi.testclient import TestClient
 def _make_models_app() -> FastAPI:
     """Construct the same auth-bearing app routers production serves.
 
-    Mirrors ``vllm_mlx/server.py`` router wiring for the surface most
+    Mirrors ``fusion_mlx/server.py`` router wiring for the surface most
     likely to be polled by a supervisor: ``/v1/models``.
     """
     from fusion_mlx.routes_internal.models import router as models_router
@@ -177,7 +177,7 @@ def test_no_api_key_keeps_dev_path_anonymous():
 # Static checks across every protected router
 # ---------------------------------------------------------------------------
 
-# Every router that ``vllm_mlx/server.py`` mounts with the OpenAI-shape
+# Every router that ``fusion_mlx/server.py`` mounts with the OpenAI-shape
 # contract (chat, embeddings, audio, etc.) AND must reject anonymous
 # requests when ``cfg.api_key`` is set. Health-probe endpoints
 # (``/healthz``, ``/readyz``) are deliberately NOT in this list — they
@@ -191,15 +191,14 @@ def test_no_api_key_keeps_dev_path_anonymous():
 # whenever a new protected router lands, remove one only if it's
 # moved to anonymous-by-design (and document why).
 PROTECTED_ROUTER_MODULES = (
-    "vllm_mlx.routes.anthropic",
-    "vllm_mlx.routes.audio",
-    "vllm_mlx.routes.cache",
-    "vllm_mlx.routes.chat",
-    "vllm_mlx.routes.completions",
-    "vllm_mlx.routes.embeddings",
-    "vllm_mlx.routes.mcp_routes",
-    "vllm_mlx.routes.models",
-    "vllm_mlx.routes.responses",
+    "fusion_mlx.api.anthropic_routes",
+    "fusion_mlx.api.audio_routes",
+    "fusion_mlx.api.openai_routes",
+    "fusion_mlx.api.embeddings_routes",
+    "fusion_mlx.api.mcp_routes",
+    "fusion_mlx.routes_internal.models",
+    "fusion_mlx.routes_internal.responses",
+    "fusion_mlx.routes_internal.cache",
 )
 
 
@@ -226,12 +225,15 @@ def _route_paths_with_auth(router):
     structurally equivalent for the bind→auth ordering invariant.
     """
     from fusion_mlx.middleware import auth as auth_mod
+    from fusion_mlx.admin import auth as admin_auth_mod
 
     auth_funcs = {
         getattr(auth_mod, name)
         for name in dir(auth_mod)
         if name.startswith("verify_api_key")
     }
+    auth_funcs.add(getattr(admin_auth_mod, "require_admin", None))
+    auth_funcs.discard(None)
     for r in router.routes:
         dep = getattr(r, "dependant", None)
         if dep is None:

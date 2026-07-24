@@ -5,8 +5,9 @@ import logging
 import time
 from typing import Any
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 
+from ..middleware.auth import check_rate_limit, verify_api_key
 from ..server_metrics import get_server_metrics
 from .embedding_models import (
     EmbeddingData,
@@ -58,7 +59,10 @@ def get_embedding_max_length(model_id: str, max_length: int | None) -> int:
     return 512
 
 
-@router.post("/embeddings")
+@router.post(
+    "/embeddings",
+    dependencies=[Depends(verify_api_key), Depends(check_rate_limit)],
+)
 async def create_embeddings(request: EmbeddingRequest):
     """Create embeddings for input text(s)."""
     oq_manager = getattr(_server_state, "oq_manager", None) if _server_state else None

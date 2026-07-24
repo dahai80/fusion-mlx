@@ -14,9 +14,10 @@ Lookup order (effective_parsers_for):
 
 import logging
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 
 from fusion_mlx.config import get_config
+from fusion_mlx.middleware.auth import verify_api_key
 from fusion_mlx.model_aliases import resolve_profile
 
 logger = logging.getLogger(__name__)
@@ -59,7 +60,7 @@ def _entry_payload(model_id, tool, reasoning):
 
 
 @router.get("/v1/models")
-async def list_models():
+async def list_models(_auth: bool = Depends(verify_api_key)):
     cfg = get_config()
     data = []
     if cfg.model_registry is not None:

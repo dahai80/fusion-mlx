@@ -16,10 +16,11 @@ import re
 import tempfile
 from collections.abc import AsyncIterator
 
-from fastapi import APIRouter, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from fastapi.responses import Response, StreamingResponse
 
 from ..engines.audio_utils import wav_bytes_to_pcm_frames, wav_header
+from ..middleware.auth import check_rate_limit, verify_api_key
 from ..pool import EnginePool
 from ..server_metrics import get_server_metrics
 from .audio_models import AudioSpeechRequest, AudioTranscriptionResponse
@@ -408,7 +409,11 @@ async def _stream_with_prefetched_chunk(
 # ---------------------------------------------------------------------------
 
 
-@router.post("/v1/audio/transcriptions", response_model=AudioTranscriptionResponse)
+@router.post(
+    "/v1/audio/transcriptions",
+    response_model=AudioTranscriptionResponse,
+    dependencies=[Depends(verify_api_key), Depends(check_rate_limit)],
+)
 async def create_transcription(
     file: UploadFile = File(...),
     model: str = Form(...),
@@ -517,7 +522,10 @@ async def create_transcription(
     )
 
 
-@router.post("/v1/audio/speech")
+@router.post(
+    "/v1/audio/speech",
+    dependencies=[Depends(verify_api_key), Depends(check_rate_limit)],
+)
 async def create_speech(request: AudioSpeechRequest):
     """OpenAI-compatible text-to-speech endpoint."""
     from fusion_mlx.engines.tts import TTSEngine
@@ -607,7 +615,10 @@ async def create_speech(request: AudioSpeechRequest):
     return Response(content=wav_bytes, media_type="audio/wav")
 
 
-@router.post("/v1/audio/process")
+@router.post(
+    "/v1/audio/process",
+    dependencies=[Depends(verify_api_key), Depends(check_rate_limit)],
+)
 async def process_audio(
     file: UploadFile = File(...),
     model: str = Form(...),

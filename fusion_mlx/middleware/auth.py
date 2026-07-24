@@ -17,8 +17,6 @@ logger = logging.getLogger(__name__)
 
 security = HTTPBearer(auto_error=False)
 
-_auth_warning_logged: bool = False
-
 _RATE_LIMIT_HMAC_KEY = secrets.token_bytes(32)
 
 
@@ -74,7 +72,7 @@ class RateLimiter:
             return True, 0
 
 
-rate_limiter = RateLimiter(requests_per_minute=60, enabled=False)
+rate_limiter = RateLimiter(requests_per_minute=60, enabled=True)
 
 
 def configure_rate_limiter(
@@ -179,26 +177,30 @@ def _get_configured_api_key() -> str | None:
         from ..admin.helpers import _get_global_settings
 
         settings = _get_global_settings()
-        if settings is None:
-            return None
-        auth = getattr(settings, "auth", None)
-        if auth is None:
-            return None
-        return getattr(auth, "api_key", None)
+        if settings is not None:
+            auth = getattr(settings, "auth", None)
+            if auth is not None:
+                key = getattr(auth, "api_key", None)
+                if key:
+                    return key
     except Exception:
-        logger.debug("Failed to read configured API key", exc_info=True)
-        return None
+        logger.debug("Failed to read configured API key from global settings", exc_info=True)
+    try:
+        from ..config import get_config
+
+        cfg = get_config()
+        key = getattr(cfg, "api_key", None)
+        if key:
+            return key
+    except Exception:
+        logger.debug("Failed to read configured API key from config", exc_info=True)
+    return None
 
 
 def _verify_api_key_values(*api_keys: str | None) -> bool:
-    global _auth_warning_logged
     configured_key = _get_configured_api_key()
     if configured_key is None:
-        if not _auth_warning_logged:
-            logger.debug(
-                "No API key configured. Use --api-key to enable authentication."
-            )
-            _auth_warning_logged = True
+        logger.debug("No API key configured — anonymous access allowed (dev mode)")
         return True
     provided_keys = [api_key for api_key in api_keys if api_key]
     if not provided_keys:

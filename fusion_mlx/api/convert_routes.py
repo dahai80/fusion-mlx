@@ -16,9 +16,10 @@ from concurrent.futures import ThreadPoolExecutor
 from types import SimpleNamespace
 from typing import Any
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Depends
 
 from .convert_models import ConvertRequest, QuantizeRequest
+from ..admin.auth import require_admin
 
 logger = logging.getLogger(__name__)
 
@@ -123,12 +124,18 @@ def _get_job(job_id: str, kind: str) -> dict[str, Any]:
 
 
 @router.post("/convert")
-async def start_convert(request: ConvertRequest) -> dict[str, Any]:
+async def start_convert(
+    request: ConvertRequest,
+    _is_admin: bool = Depends(require_admin),
+) -> dict[str, Any]:
     return _submit("convert", request)
 
 
 @router.post("/quantize")
-async def start_quantize(request: QuantizeRequest) -> dict[str, Any]:
+async def start_quantize(
+    request: QuantizeRequest,
+    _is_admin: bool = Depends(require_admin),
+) -> dict[str, Any]:
     if request.quant_bits is None and request.quant_mode not in _FP_QUANT_MODES:
         raise HTTPException(
             400,
@@ -139,20 +146,30 @@ async def start_quantize(request: QuantizeRequest) -> dict[str, Any]:
 
 
 @router.get("/convert/jobs")
-async def list_convert_jobs() -> list[dict[str, Any]]:
+async def list_convert_jobs(
+    _is_admin: bool = Depends(require_admin),
+) -> list[dict[str, Any]]:
     return _list_jobs("convert")
 
 
 @router.get("/convert/jobs/{job_id}")
-async def get_convert_job(job_id: str) -> dict[str, Any]:
+async def get_convert_job(
+    job_id: str,
+    _is_admin: bool = Depends(require_admin),
+) -> dict[str, Any]:
     return _get_job(job_id, "convert")
 
 
 @router.get("/quantize/jobs")
-async def list_quantize_jobs() -> list[dict[str, Any]]:
+async def list_quantize_jobs(
+    _is_admin: bool = Depends(require_admin),
+) -> list[dict[str, Any]]:
     return _list_jobs("quantize")
 
 
 @router.get("/quantize/jobs/{job_id}")
-async def get_quantize_job(job_id: str) -> dict[str, Any]:
+async def get_quantize_job(
+    job_id: str,
+    _is_admin: bool = Depends(require_admin),
+) -> dict[str, Any]:
     return _get_job(job_id, "quantize")

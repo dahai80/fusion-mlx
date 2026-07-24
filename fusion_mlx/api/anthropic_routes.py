@@ -12,8 +12,10 @@ import uuid
 from collections.abc import AsyncIterator
 from typing import Any
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Depends
 from fastapi.responses import StreamingResponse
+
+from ..middleware.auth import verify_api_key_or_x_api_key, check_rate_limit_or_x_api_key
 
 from ..api._anthropic_helpers import (
     _inject_tool_use_required_suffix,
@@ -544,7 +546,11 @@ async def _stream_anthropic_generator(
 
 
 @router.post("/messages")
-async def anthropic_messages(request: AnthropicMessagesRequest) -> Any:
+async def anthropic_messages(
+    request: AnthropicMessagesRequest,
+    _auth: bool = Depends(verify_api_key_or_x_api_key),
+    _rate: bool = Depends(check_rate_limit_or_x_api_key),
+) -> Any:
     """Handle Anthropic Messages API requests."""
     # Log request entry (Ollama-style)
     prompt_preview = ""
@@ -648,7 +654,10 @@ async def anthropic_messages(request: AnthropicMessagesRequest) -> Any:
 
 
 @router.post("/count_tokens")
-async def count_tokens(request: TokenCountRequest) -> TokenCountResponse:
+async def count_tokens(
+    request: TokenCountRequest,
+    _auth: bool = Depends(verify_api_key_or_x_api_key),
+) -> TokenCountResponse:
     """Count tokens for a given input."""
     # Simple token count estimate (~4 chars per token)
     text = ""

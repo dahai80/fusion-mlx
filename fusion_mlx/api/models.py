@@ -270,9 +270,9 @@ class ChatCompletionRequest(BaseModel):
 
     model: str = "default"
     messages: list[Message]
-    temperature: float | None = None
-    top_p: float | None = None
-    max_tokens: int | None = None
+    temperature: float | None = Field(None, ge=0.0, le=2.0)
+    top_p: float | None = Field(None, ge=0.0, le=1.0)
+    max_tokens: int | None = Field(None, ge=1)
     # OpenAI-canonical token cap since Sept 2024 (preferred over max_tokens for
     # reasoning models; newer SDKs >=1.45 send only this field). Normalized to
     # max_tokens by a model_validator so all downstream code keeps reading the
@@ -287,9 +287,9 @@ class ChatCompletionRequest(BaseModel):
     # Pydantic drops them on parse (#355). top_k / min_p flow through to the
     # mlx-lm sampler; repetition_penalty / presence_penalty / frequency_penalty
     # flow through to mlx-lm's make_logits_processors().
-    top_k: int | None = None
-    min_p: float | None = None
-    repetition_penalty: float | None = None
+    top_k: int | None = Field(None, ge=0)
+    min_p: float | None = Field(None, ge=0.0, le=1.0)
+    repetition_penalty: float | None = Field(None, ge=0.0)
     presence_penalty: float | None = None
     frequency_penalty: float | None = None
     # Tool calling
@@ -531,9 +531,9 @@ class CompletionRequest(BaseModel):
     stop: list[str] | None = None
     # Extended OpenAI-compatible sampling parameters — see #355 + the
     # matching block on ChatCompletionRequest for wiring + caveats.
-    top_k: int | None = None
-    min_p: float | None = None
-    repetition_penalty: float | None = None
+    top_k: int | None = Field(None, ge=0)
+    min_p: float | None = Field(None, ge=0.0, le=1.0)
+    repetition_penalty: float | None = Field(None, ge=0.0)
     presence_penalty: float | None = None
     frequency_penalty: float | None = None
     # OpenAI ``n``/``best_of`` - declared so Pydantic stops silently

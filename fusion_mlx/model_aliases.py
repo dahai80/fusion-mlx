@@ -12,6 +12,18 @@ logger = logging.getLogger(__name__)
 
 _ALIASES_FILE = Path(__file__).parent / "aliases.json"
 
+
+def _allowed_model_dirs() -> list[str]:
+    home = os.path.realpath(os.path.expanduser("~"))
+    dirs = [
+        os.path.join(home, ".fusion-mlx", "models"),
+        os.path.join(home, ".cache", "huggingface"),
+    ]
+    cwd = os.path.realpath(os.getcwd())
+    if cwd != "/" and len(Path(cwd).parts) >= 2:
+        dirs.append(cwd)
+    return dirs
+
 _POPULAR_ALIAS_NAMES = [
     "qwen3.5-4b-4bit",
     "qwen3.5-9b-4bit",
@@ -91,9 +103,21 @@ def list_profiles() -> list[AliasProfile]:
 
 
 def resolve_model(name: str) -> str:
-    # Local path takes priority over alias: a local dir matching an alias name
-    # wins (operator intent). Bare HF ids ("/" in name) skip the exists check.
-    if "/" not in name and os.path.exists(name):
+    # Absolute local paths must be within allowed directories.
+    if os.path.isabs(name):
+        resolved = os.path.realpath(name)
+        allowed = _allowed_model_dirs()
+        if not any(resolved.startswith(p) for p in allowed):
+            logger.warning("resolve_model: absolute path outside allowed dirs: %s", name)
+            raise ValueError(f"Path not allowed: {name}. Must be within allowed model directories.")
+        return name
+    # Relative local path takes priority over alias.
+    if os.path.exists(name):
+        resolved = os.path.realpath(name)
+        allowed = _allowed_model_dirs()
+        if not any(resolved.startswith(p) for p in allowed):
+            logger.warning("resolve_model: path outside allowed dirs: %s", name)
+            raise ValueError(f"Path not allowed: {name}. Must be within allowed model directories.")
         return name
     aliases = _load_aliases()
     if name in aliases:

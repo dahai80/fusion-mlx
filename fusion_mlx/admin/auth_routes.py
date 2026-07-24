@@ -166,16 +166,12 @@ async def setup_api_key(
 
 
 @_router.post("/api/logout")
-async def logout(response: Response):
-    """
-    Clear session cookie and logout.
-
-    Args:
-        response: FastAPI response object for clearing cookies.
-
-    Returns:
-        JSON response with success status.
-    """
+async def logout(request: Request, response: Response):
+    from .auth import _active_sessions, _sessions_lock, SESSION_COOKIE_NAME
+    token = request.cookies.get(SESSION_COOKIE_NAME)
+    if token:
+        with _sessions_lock:
+            _active_sessions.pop(token, None)
     response.delete_cookie(key="fusionmlx_admin_session")
     return {"success": True}
 
@@ -218,6 +214,7 @@ async def auto_login(fastapi_request: Request, redirect: str = "/admin/dashboard
         key="fusionmlx_admin_session",
         value=token,
         httponly=True,
+        secure=True,
         samesite="lax",
         max_age=86400,
     )
@@ -253,6 +250,7 @@ async def auto_login_get(
         key="fusionmlx_admin_session",
         value=token,
         httponly=True,
+        secure=True,
         samesite="lax",
         max_age=86400,
     )

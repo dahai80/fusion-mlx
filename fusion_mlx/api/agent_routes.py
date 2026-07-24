@@ -13,7 +13,9 @@ import time
 import uuid
 from typing import Any
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
+
+from ..admin.auth import require_admin
 
 logger = logging.getLogger(__name__)
 
@@ -68,7 +70,9 @@ def _validate_graph(data: dict) -> list[str]:
 
 
 @router.get("/graphs")
-async def list_graphs() -> list[dict[str, Any]]:
+async def list_graphs(
+    _is_admin: bool = Depends(require_admin),
+) -> list[dict[str, Any]]:
     """List all saved agent graphs with metadata."""
     result = []
     for gid, g in _graphs.items():
@@ -89,7 +93,10 @@ async def list_graphs() -> list[dict[str, Any]]:
 
 
 @router.post("/graphs")
-async def create_graph(data: dict[str, Any]) -> dict[str, Any]:
+async def create_graph(
+    data: dict[str, Any],
+    _is_admin: bool = Depends(require_admin),
+) -> dict[str, Any]:
     """Create a new agent graph."""
     errors = _validate_graph(data)
     if errors:
@@ -111,7 +118,10 @@ async def create_graph(data: dict[str, Any]) -> dict[str, Any]:
 
 
 @router.get("/graphs/{graph_id}")
-async def get_graph(graph_id: str) -> dict[str, Any]:
+async def get_graph(
+    graph_id: str,
+    _is_admin: bool = Depends(require_admin),
+) -> dict[str, Any]:
     """Get an agent graph by ID."""
     graph = _graphs.get(graph_id)
     if graph is None:
@@ -120,7 +130,11 @@ async def get_graph(graph_id: str) -> dict[str, Any]:
 
 
 @router.put("/graphs/{graph_id}")
-async def update_graph(graph_id: str, data: dict[str, Any]) -> dict[str, Any]:
+async def update_graph(
+    graph_id: str,
+    data: dict[str, Any],
+    _is_admin: bool = Depends(require_admin),
+) -> dict[str, Any]:
     """Update an existing agent graph."""
     if graph_id not in _graphs:
         raise HTTPException(404, detail=f"Graph '{graph_id}' not found")
@@ -141,7 +155,10 @@ async def update_graph(graph_id: str, data: dict[str, Any]) -> dict[str, Any]:
 
 
 @router.delete("/graphs/{graph_id}")
-async def delete_graph(graph_id: str) -> dict[str, str]:
+async def delete_graph(
+    graph_id: str,
+    _is_admin: bool = Depends(require_admin),
+) -> dict[str, str]:
     """Delete an agent graph."""
     if graph_id not in _graphs:
         raise HTTPException(404, detail=f"Graph '{graph_id}' not found")
@@ -154,7 +171,11 @@ async def delete_graph(graph_id: str) -> dict[str, str]:
 
 
 @router.post("/graphs/{graph_id}/export")
-async def export_graph(graph_id: str, fmt: str = "json") -> dict[str, Any]:
+async def export_graph(
+    graph_id: str,
+    fmt: str = "json",
+    _is_admin: bool = Depends(require_admin),
+) -> dict[str, Any]:
     """Export an agent graph in the specified format."""
     graph = _graphs.get(graph_id)
     if graph is None:
@@ -172,7 +193,10 @@ async def export_graph(graph_id: str, fmt: str = "json") -> dict[str, Any]:
 
 
 @router.post("/run")
-async def run_graph(body: dict[str, Any]) -> dict[str, Any]:
+async def run_graph(
+    body: dict[str, Any],
+    _is_admin: bool = Depends(require_admin),
+) -> dict[str, Any]:
     """Execute an agent graph against fusion-mlx's loaded model.
 
     This endpoint reads the graph's first LLM node configuration and

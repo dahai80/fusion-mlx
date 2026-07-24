@@ -15,10 +15,11 @@ import uuid
 from collections.abc import AsyncIterator
 from typing import Any
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Depends
 from fastapi.responses import StreamingResponse
 
 from ..api.adapters.base import InternalResponse, StreamChunk
+from ..middleware.auth import verify_api_key, check_rate_limit
 from ..api.adapters.openai import OpenAIAdapter
 from ..api.openai_models import (
     ChatCompletionRequest,
@@ -284,7 +285,7 @@ async def _run_chat(request: ChatCompletionRequest) -> ChatCompletionResponse:
             type(exc).__name__,
             exc,
         )
-        raise HTTPException(500, f"{type(exc).__name__}: {exc}")
+        raise HTTPException(500, "Internal server error")
     finally:
         await _release()
 
@@ -609,7 +610,7 @@ async def _create_markitdown_chat_completion(
         except MarkItDownRequestError as exc:
             raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
         except RuntimeError as exc:
-            raise HTTPException(status_code=500, detail=str(exc)) from exc
+            raise HTTPException(status_code=500, detail="Internal server error") from exc
 
         if not markdown:
             raise HTTPException(
@@ -701,7 +702,11 @@ def _get_settings() -> Any:
 
 
 @router.post("/chat/completions")
-async def chat_completions(request: ChatCompletionRequest) -> Any:
+async def chat_completions(
+    request: ChatCompletionRequest,
+    _auth: bool = Depends(verify_api_key),
+    _rate: bool = Depends(check_rate_limit),
+) -> Any:
     """Handle OpenAI-compatible chat completion requests."""
     from .markitdown import is_markitdown_model
 
@@ -750,11 +755,15 @@ async def chat_completions(request: ChatCompletionRequest) -> Any:
         ) from exc
     except Exception as exc:
         logger.exception("Chat completion failed: %s(%s)", type(exc).__name__, exc)
-        raise HTTPException(500, f"{type(exc).__name__}: {exc}")
+        raise HTTPException(500, "Internal server error")
 
 
 @router.post("/completions")
-async def completions(request: CompletionRequest) -> Any:
+async def completions(
+    request: CompletionRequest,
+    _auth: bool = Depends(verify_api_key),
+    _rate: bool = Depends(check_rate_limit),
+) -> Any:
     """Handle legacy text completion requests."""
     try:
         # Convert completion to chat format
@@ -794,11 +803,13 @@ async def completions(request: CompletionRequest) -> Any:
         ) from exc
     except Exception as exc:
         logger.exception("Completion failed: %s(%s)", type(exc).__name__, exc)
-        raise HTTPException(500, f"{type(exc).__name__}: {exc}")
+        raise HTTPException(500, "Internal server error")
 
 
 @router.get("/models")
-async def list_models() -> ModelsResponse:
+async def list_models(
+    _auth: bool = Depends(verify_api_key),
+) -> ModelsResponse:
     """List available models."""
     if _pool is None:
         return ModelsResponse(data=[])

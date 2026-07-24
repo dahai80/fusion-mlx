@@ -492,11 +492,15 @@ class Server:
         # ``configure_cors_from_env`` (called before Server init in the
         # serve flow) may pin this to specific origins via --cors-origins
         # or FUSION_MLX_CORS_ALLOW_ORIGINS; None falls back to ``*``.
+        # When origins are wildcard, do NOT set allow_credentials=True
+        # (browser spec forbids credentials + wildcard origins).
+        cors_origins = _cors_origins if _cors_origins else ["*"]
         app.add_middleware(
             CORSMiddleware,
-            allow_origins=_cors_origins if _cors_origins else ["*"],
+            allow_origins=cors_origins,
             allow_methods=["*"],
             allow_headers=["*"],
+            allow_credentials=bool(_cors_origins),
         )
 
         # Body-size and depth guards (ASGI-level, run before FastAPI routing)
@@ -540,7 +544,7 @@ class Server:
 
         # Stats endpoint (combined pool + metrics)
         @app.get("/stats")
-        async def stats():
+        async def stats(is_admin: bool = Depends(require_admin)):
             pool_status = self.pool.get_status() if self.pool else {}
             metrics = get_server_metrics().to_dict()
             return {**pool_status, **metrics}
@@ -549,11 +553,11 @@ class Server:
         # Fusion-Model-Hub. Separate from /stats so existing consumers are
         # unaffected; /stats stays the pool+metrics shape.
         @app.get("/v1/base")
-        async def base_info():
+        async def base_info(is_admin: bool = Depends(require_admin)):
             return _runtime_base_info(self.pool)
 
         @app.get("/api/status")
-        async def api_status():
+        async def api_status(is_admin: bool = Depends(require_admin)):
             from .pool.model_discovery import format_size
 
             metrics = get_server_metrics().to_dict()
@@ -602,7 +606,7 @@ class Server:
             }
 
         @app.get("/v1/models/status")
-        async def models_status():
+        async def models_status(is_admin: bool = Depends(require_admin)):
             if self.pool is None:
                 raise HTTPException(status_code=503, detail="Server not initialized")
             status = self.pool.get_status()

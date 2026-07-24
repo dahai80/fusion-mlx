@@ -634,13 +634,11 @@ def test_configure_rate_limiter_updates_shared_anthropic_dependency(
 
 
 def test_server_startup_configures_shared_rate_limiter():
-    server_source = Path("vllm_mlx/server.py").read_text()
-    cli_source = Path("vllm_mlx/cli.py").read_text()
+    cli_serve_source = Path("fusion_mlx/cli_serve.py").read_text()
 
-    assert "configure_rate_limiter(args.rate_limit" in server_source
-    assert "configure_rate_limiter(args.rate_limit" in cli_source
+    assert "configure_rate_limiter(args.rate_limit" in cli_serve_source
     assert "_rate_limiter = RateLimiter(requests_per_minute=args.rate_limit" not in (
-        server_source + cli_source
+        cli_serve_source
     )
 
 

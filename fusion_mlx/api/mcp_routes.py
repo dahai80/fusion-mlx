@@ -8,7 +8,9 @@ This module provides FastAPI routes for MCP tool management:
 - POST /v1/mcp/execute - Execute an MCP tool
 """
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Depends
+
+from ..admin.auth import require_admin
 
 from .openai_models import (
     MCPExecuteRequest,
@@ -45,7 +47,9 @@ def _get_manager():
 
 
 @router.get("/tools")
-async def list_mcp_tools() -> MCPToolsResponse:
+async def list_mcp_tools(
+    _auth: bool = Depends(require_admin),
+) -> MCPToolsResponse:
     """List all available MCP tools."""
     manager = _get_manager()
     if manager is None:
@@ -66,7 +70,9 @@ async def list_mcp_tools() -> MCPToolsResponse:
 
 
 @router.get("/servers")
-async def list_mcp_servers() -> MCPServersResponse:
+async def list_mcp_servers(
+    _auth: bool = Depends(require_admin),
+) -> MCPServersResponse:
     """Get status of all MCP servers."""
     manager = _get_manager()
     if manager is None:
@@ -88,7 +94,10 @@ async def list_mcp_servers() -> MCPServersResponse:
 
 
 @router.post("/execute")
-async def execute_mcp_tool(request: MCPExecuteRequest) -> MCPExecuteResponse:
+async def execute_mcp_tool(
+    request: MCPExecuteRequest,
+    _is_admin: bool = Depends(require_admin),
+) -> MCPExecuteResponse:
     """Execute an MCP tool."""
     manager = _get_manager()
     if manager is None:

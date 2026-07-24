@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
 from ..admin.auth import require_admin
+from ..middleware.auth import verify_api_key
 from ..cache.protocol import (
     PROTOCOL_VERSION,
     InvalidExportPathError,
@@ -41,7 +42,7 @@ _SANDBOX_ESCAPE_DETAIL = {
 router = APIRouter(
     prefix="/v1/cache",
     tags=["cache"],
-    dependencies=[Depends(require_admin)],
+    dependencies=[Depends(verify_api_key), Depends(require_admin)],
 )
 
 

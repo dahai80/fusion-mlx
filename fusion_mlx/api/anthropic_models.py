@@ -202,9 +202,9 @@ class MessagesRequest(BaseModel):
     system: str | list[SystemContent] | None = None
     stop_sequences: list[str] | None = None
     stream: bool = False
-    temperature: float | None = None
-    top_p: float | None = None
-    top_k: int | None = None
+    temperature: float | None = Field(None, ge=0.0, le=2.0)
+    top_p: float | None = Field(None, ge=0.0, le=1.0)
+    top_k: int | None = Field(None, ge=0)
     metadata: dict[str, Any] | None = None
     tools: list[AnthropicTool] | None = None
     tool_choice: ToolChoice | dict[str, Any] | None = None

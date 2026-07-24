@@ -5,6 +5,7 @@ import hashlib
 import ipaddress
 import logging
 import secrets
+import threading
 import time
 from typing import Any
 
@@ -17,6 +18,7 @@ SESSION_MAX_AGE = 3600  # 1 hour
 REMEMBER_ME_MAX_AGE = 86400  # 24 hours
 
 _active_sessions: dict = {}
+_sessions_lock = threading.Lock()
 _api_key: str = ""
 _global_settings_getter: Any = None
 _last_session_sweep = 0.0
@@ -27,9 +29,10 @@ def _cleanup_expired_sessions(now: float) -> None:
     # #73: reap expired admin sessions so _active_sessions doesn't grow
     # unbounded on long-lived servers. verify_session still reaps on
     # access; this is bounded background GC throttled by the caller.
-    expired = [tok for tok, s in _active_sessions.items() if now > s["expires"]]
-    for tok in expired:
-        del _active_sessions[tok]
+    with _sessions_lock:
+        expired = [tok for tok, s in _active_sessions.items() if now > s["expires"]]
+        for tok in expired:
+            del _active_sessions[tok]
     if expired:
         logger.debug(
             "_cleanup_expired_sessions: reaped %d expired session(s)", len(expired)
@@ -164,7 +167,9 @@ async def require_admin(request: Request) -> bool:
     gs = _helpers_get_gs() if _helpers_get_gs else None
 
     if _is_skip_api_key_verification(gs):
-        return True
+        if _is_loopback_request(request):
+            return True
+        logger.warning("skip_api_key_verification only applies to loopback requests")
 
     if verify_session_from_request(request):
         return True

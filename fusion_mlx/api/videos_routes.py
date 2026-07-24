@@ -13,10 +13,11 @@ import time
 import urllib.request
 from urllib.parse import urlparse
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel, Field
 
 from ..engines import VideoGenEngine
+from ..middleware.auth import verify_api_key, check_rate_limit
 from ..engines.video_backends import constraints_for, validate_params
 from ..exceptions import ModelNotFoundError
 from ..pool import EnginePool
@@ -120,6 +121,9 @@ def _resolve_image_to_path(image: str) -> tuple[str, bool]:
             f.write(data)
         return path, True
     if image.startswith(("http://", "https://")):
+        from ._url_safety import is_safe_url_with_dns
+        if not is_safe_url_with_dns(image):
+            raise HTTPException(400, "Image URL targets a private/internal address")
         ext = os.path.splitext(urlparse(image).path)[1] or ".png"
         fd, path = tempfile.mkstemp(prefix="fusion_i2v_", suffix=ext)
         os.close(fd)
@@ -129,7 +133,11 @@ def _resolve_image_to_path(image: str) -> tuple[str, bool]:
 
 
 @router.post("/generate")
-async def generate_video(request: VideoGenerateRequest) -> VideoGenerateResponse:
+async def generate_video(
+    request: VideoGenerateRequest,
+    _auth: bool = Depends(verify_api_key),
+    _rate: bool = Depends(check_rate_limit),
+) -> VideoGenerateResponse:
     # Generate videos from a text prompt (and optional image for I2V).
     try:
         if _pool is None:
@@ -254,7 +262,7 @@ async def generate_video(request: VideoGenerateRequest) -> VideoGenerateResponse
         raise
     except Exception as exc:
         logger.exception("Video generation failed")
-        raise HTTPException(500, str(exc))
+        raise HTTPException(500, "Internal server error")
 
 
 @router.get("/denoise-stats")
@@ -292,4 +300,4 @@ async def video_denoise_stats(model: str | None = None) -> dict:
         raise
     except Exception as exc:
         logger.exception("denoise-stats failed")
-        raise HTTPException(500, str(exc))
+        raise HTTPException(500, "Internal server error")

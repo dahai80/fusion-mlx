@@ -280,6 +280,9 @@ async def _process_image_urls(urls: list[str]) -> list[str]:
                     t.write(base64.b64decode(data))
                     result.append(t.name)
             elif u.startswith(("http://", "https://")):
+                from fusion_mlx.api._url_safety import is_safe_url_with_dns
+                if not is_safe_url_with_dns(u):
+                    raise HTTPException(400, "Image URL targets a private/internal address")
                 async with httpx.AsyncClient() as c:
                     r = await c.get(u)
                     r.raise_for_status()
@@ -891,10 +894,12 @@ async def _lifespan(app: FastAPI):
 
 def create_gui_router() -> FastAPI:
     app = FastAPI(title="fusion_gui API", version=__version__, lifespan=_lifespan)
+    # Wildcard origins + allow_credentials is forbidden by the CORS spec.
+    # When no explicit origins are configured, use wildcard without credentials.
     app.add_middleware(
         CORSMiddleware,
         allow_origins=["*"],
-        allow_credentials=True,
+        allow_credentials=False,
         allow_methods=["*"],
         allow_headers=["*"],
     )
