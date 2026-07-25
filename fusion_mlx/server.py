@@ -8,6 +8,7 @@ Wires together all API routes:
 - MCP: /v1/mcp/tools, /v1/mcp/servers, /v1/mcp/execute
 - OpenClaw Agent: /v1/openclaw/agent/*
 - Admin: /admin/*
+- GC: /api/v1/gc (post-compact KV cache release)
 - GUI compatibility: /v1/manager/*, /v1/discover/*, /v1/settings, /admin
 """
 
@@ -86,6 +87,7 @@ from .dispatch import CloudRouter, RequestRouter
 from .engine_core import AsyncEngineCore
 from .pool import EnginePool, ProcessMemoryEnforcer
 from .routes_internal.cache import router as cache_router
+from .routes_internal.gc import router as gc_router
 from .routes_internal.health import probe_router as health_probe_router
 from .routes_internal.health import router as health_router
 from .routes_internal.metrics import router as metrics_router
@@ -539,6 +541,7 @@ class Server:
         app.include_router(health_router)
         app.include_router(metrics_router)
         app.include_router(cache_router)
+        app.include_router(gc_router)
         app.include_router(admin_router)
 
         # Register GUI compatibility router (discovery, settings, manager, admin UI)
