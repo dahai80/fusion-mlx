@@ -7,7 +7,6 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
 from ..admin.auth import require_admin
-from ..middleware.auth import verify_api_key
 from ..cache.protocol import (
     PROTOCOL_VERSION,
     InvalidExportPathError,
@@ -17,6 +16,7 @@ from ..cache.protocol import (
     read_manifest,
     resolve_cache_dir,
 )
+from ..middleware.auth import verify_api_key
 
 logger = logging.getLogger(__name__)
 

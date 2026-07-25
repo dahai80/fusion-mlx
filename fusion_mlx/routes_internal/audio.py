@@ -33,7 +33,12 @@ def _resolve_stt_model(model_id: str) -> str:
     if not model_id:
         raise HTTPException(
             status_code=400,
-            detail={"error": {"code": "invalid_request_error", "message": "model is required"}},
+            detail={
+                "error": {
+                    "code": "invalid_request_error",
+                    "message": "model is required",
+                }
+            },
         )
     if model_id == "default":
         model_id = DEFAULT_STT_ALIAS
@@ -57,7 +62,12 @@ def _resolve_tts_model(model_id: str) -> str:
     if not model_id:
         raise HTTPException(
             status_code=400,
-            detail={"error": {"code": "invalid_request_error", "message": "model is required"}},
+            detail={
+                "error": {
+                    "code": "invalid_request_error",
+                    "message": "model is required",
+                }
+            },
         )
     if model_id in TTS_MODEL_ALIASES:
         return TTS_MODEL_ALIASES[model_id]
@@ -81,6 +91,7 @@ def _resolve_default_voice_literal() -> str | None:
 
 def _sanitize_decode_reason(text: str) -> str:
     import re
+
     text = re.sub(r"<\|[^|]*\|>", "", text)
     return text.strip()
 

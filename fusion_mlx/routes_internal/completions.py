@@ -2,7 +2,6 @@
 
 import inspect
 import logging
-import time
 
 from ..api.openai_routes import router  # noqa: F401
 from ..service.helpers import (

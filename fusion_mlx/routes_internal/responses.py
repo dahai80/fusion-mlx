@@ -9,7 +9,6 @@ from collections.abc import AsyncIterator
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import Response, StreamingResponse
 
-from ..middleware.auth import verify_api_key
 from ..api.models import (
     ChatCompletionRequest,
     ChatCompletionResponse,
@@ -53,6 +52,7 @@ from ..api.utils import (
     strip_special_tokens,
     strip_thinking_tags,
 )
+from ..middleware.auth import verify_api_key
 from ..service.helpers import (
     SSE_RESPONSE_HEADERS,
     _resolve_max_tokens,

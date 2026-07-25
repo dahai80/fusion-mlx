@@ -15,11 +15,10 @@ import uuid
 from collections.abc import AsyncIterator
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 
 from ..api.adapters.base import InternalResponse, StreamChunk
-from ..middleware.auth import verify_api_key, check_rate_limit
 from ..api.adapters.openai import OpenAIAdapter
 from ..api.openai_models import (
     ChatCompletionRequest,
@@ -39,6 +38,7 @@ from ..exceptions import (
     ModelNotFoundError,
     ModelTooLargeError,
 )
+from ..middleware.auth import check_rate_limit, verify_api_key
 from ..pool import EnginePool
 from ..request import SamplingParams
 from ..server_metrics import record_llm_metrics
@@ -73,6 +73,7 @@ async def _resolve_engine(model_name: str, adapter_path=None):
         )
         return engine
     from ..service.helpers import get_engine
+
     log.debug("_pool None, falling back to cfg.engine for %s", model_name)
     return get_engine(model_name)
 
@@ -177,7 +178,9 @@ def _gen_to_internal(
     )
 
 
-async def _run_chat(request: ChatCompletionRequest, *, _skip_cap_check: bool = False) -> ChatCompletionResponse:
+async def _run_chat(
+    request: ChatCompletionRequest, *, _skip_cap_check: bool = False
+) -> ChatCompletionResponse:
     """Execute a non-streaming chat completion."""
     from ..server import resolve_model_id
 
@@ -503,7 +506,9 @@ async def _stream_chat_generator(
         await _release()
 
 
-async def _stream_chat(request: ChatCompletionRequest, *, _skip_cap_check: bool = False) -> StreamingResponse:
+async def _stream_chat(
+    request: ChatCompletionRequest, *, _skip_cap_check: bool = False
+) -> StreamingResponse:
     """Execute a streaming chat completion.
 
     Resolves the engine BEFORE creating the StreamingResponse so that
@@ -594,7 +599,9 @@ async def _create_markitdown_chat_completion(
         except MarkItDownRequestError as exc:
             raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
         except RuntimeError as exc:
-            raise HTTPException(status_code=500, detail="Internal server error") from exc
+            raise HTTPException(
+                status_code=500, detail="Internal server error"
+            ) from exc
 
         if not markdown:
             raise HTTPException(
@@ -799,7 +806,11 @@ async def list_models(
         return ModelsResponse(data=[])
 
     try:
-        model_ids = _pool.list_models() if _pool is not None and hasattr(_pool, "list_models") else []
+        model_ids = (
+            _pool.list_models()
+            if _pool is not None and hasattr(_pool, "list_models")
+            else []
+        )
     except Exception:
         model_ids = []
 

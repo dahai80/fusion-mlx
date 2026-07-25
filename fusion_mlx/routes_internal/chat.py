@@ -9,9 +9,7 @@ helper functions that tests depend on.
 import json
 import logging
 import re
-import time
 import uuid
-from collections.abc import AsyncIterator
 
 from ..api.openai_routes import router  # noqa: F401
 from ..service.helpers import (
@@ -93,15 +91,24 @@ def _recover_partial_tool_args(
 
     def _open_wire_span_start(idx: int) -> int | None:
         _WIRE_SPAN_OPENERS = (
-            "\u001b", "<function=", "<function>",
-            "[TOOL_CALLS]", "<|python_tag|>",
-            "<|tool_calls_section_begin|>", "<minimax:tool_call>",
-            "<invoke", "\u001b",
+            "\u001b",
+            "<function=",
+            "<function>",
+            "[TOOL_CALLS]",
+            "<|python_tag|>",
+            "<|tool_calls_section_begin|>",
+            "<minimax:tool_call>",
+            "<invoke",
+            "\u001b",
         )
         _WIRE_SPAN_CLOSERS = (
-            "\u001b", "</function>",
-            "[/TOOL_CALLS]", "<|tool_calls_section_end|>",
-            "</minimax:tool_call>", "</invoke>", "\u001b",
+            "\u001b",
+            "</function>",
+            "[/TOOL_CALLS]",
+            "<|tool_calls_section_end|>",
+            "</minimax:tool_call>",
+            "</invoke>",
+            "\u001b",
         )
         prefix = text[:idx]
         op_pos = -1
@@ -119,6 +126,7 @@ def _recover_partial_tool_args(
         return op_pos if op_pos >= 0 and op_pos > cl_pos else None
 
     import re as _re
+
     pattern = _re.compile(r'"arguments"\s*:\s*\{')
     for m in pattern.finditer(text):
         idx = m.end() - 1
@@ -126,7 +134,10 @@ def _recover_partial_tool_args(
             span_start = _open_wire_span_start(idx)
             lookback = span_start if span_start is not None else max(0, idx - 512)
             window = text[lookback:idx]
-            if f'"name": "{expected_name}"' not in window and                f'"name":"{expected_name}"' not in window:
+            if (
+                f'"name": "{expected_name}"' not in window
+                and f'"name":"{expected_name}"' not in window
+            ):
                 continue
         depth = 0
         in_string = False
@@ -166,6 +177,7 @@ def _normalize_ui_tars_tcs_for_chat(tool_calls: list | None) -> list | None:
     from ..tool_parsers.ui_tars_tool_parser import (
         normalize_ui_tars_chat_tool_call_arguments,
     )
+
     out = []
     for tc in tool_calls:
         if not isinstance(tc, dict):

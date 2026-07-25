@@ -12,10 +12,8 @@ import uuid
 from collections.abc import AsyncIterator
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
-
-from ..middleware.auth import verify_api_key_or_x_api_key, check_rate_limit_or_x_api_key
 
 from ..api._anthropic_helpers import (
     _inject_tool_use_required_suffix,
@@ -50,6 +48,7 @@ from ..exceptions import (
     ModelNotFoundError,
     ModelTooLargeError,
 )
+from ..middleware.auth import check_rate_limit_or_x_api_key, verify_api_key_or_x_api_key
 from ..pool import EnginePool
 from ..request import SamplingParams
 from ..server_metrics import record_llm_metrics
@@ -76,6 +75,7 @@ async def _resolve_engine(model_name: str, adapter_path=None):
         )
         return engine
     from ..service.helpers import get_engine
+
     return get_engine(model_name)
 
 
@@ -587,9 +587,7 @@ async def anthropic_messages(
 
             model_name = resolve_model_id(request.model)
             adapter_path = getattr(request, "adapters", None)
-            engine = await _resolve_engine(
-                model_name, adapter_path=adapter_path
-            )
+            engine = await _resolve_engine(model_name, adapter_path=adapter_path)
             if engine is None:
                 await _release_engine(model_name, adapter_path=adapter_path)
                 raise HTTPException(404, f"Model {model_name} not available")

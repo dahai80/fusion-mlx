@@ -3,11 +3,11 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-from ..api.anthropic_routes import router  # noqa: F401
 from ..api._anthropic_helpers import (  # noqa: F401
     _enforce_named_tool_choice_present,
     _filter_tool_calls_by_tool_choice,
 )
+from ..api.anthropic_routes import router  # noqa: F401
 
 
 def _split_tool_input_json(tool_input: object) -> list[str]:
