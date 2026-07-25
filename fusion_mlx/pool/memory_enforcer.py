@@ -31,6 +31,7 @@ import asyncio
 import inspect
 import logging
 import subprocess
+import threading
 import time
 from contextlib import suppress
 from enum import Enum
@@ -317,10 +318,17 @@ class ProcessMemoryEnforcer:
         self._scheduler_resolve_warned: set[str] = set()
         self._eviction_marked: set[str] = set()
         self._loaded_model_bytes: int = 0
+        self._state_lock = threading.Lock()
 
     def update_loaded_model_bytes(self, delta: int) -> None:
         """Adjust tracked loaded model byte count."""
-        self._loaded_model_bytes = max(0, self._loaded_model_bytes + delta)
+        with self._state_lock:
+            self._loaded_model_bytes = max(0, self._loaded_model_bytes + delta)
+
+    def get_loaded_model_bytes(self) -> int:
+        """Return current loaded model byte count (thread-safe)."""
+        with self._state_lock:
+            return self._loaded_model_bytes
 
     @staticmethod
     def _normalize_tier(tier: str) -> str:
@@ -522,7 +530,7 @@ class ProcessMemoryEnforcer:
             candidates.append(metal_cap)
         hard = min(candidates)
         # Safety floor: never drop below loaded model size + 10 GB.
-        floor = self._loaded_model_bytes + 10 * 1024**3
+        floor = self.get_loaded_model_bytes() + 10 * 1024**3
         hard = max(hard, floor)
         return {
             "static": static_ceiling,
@@ -825,7 +833,8 @@ class ProcessMemoryEnforcer:
 
     def get_pressure_level(self) -> str:
         """Return cached pressure level: 'ok', 'soft', or 'hard'."""
-        return self._pressure_level if self._running else "ok"
+        with self._state_lock:
+            return self._pressure_level if self._running else "ok"
 
     @property
     def prefill_memory_guard(self) -> bool:
@@ -1402,7 +1411,7 @@ class ProcessMemoryEnforcer:
             "hard_formatted": _format_gb(hard),
             "current_bytes": current,
             "current_formatted": _format_gb(current),
-            "pressure_level": self._pressure_level if self._running else "ok",
+            "pressure_level": self.get_pressure_level(),
             "utilization": (current / ceiling if ceiling > 0 else 0.0),
             "poll_interval_seconds": (
                 self._current_poll_interval if self._running else 0.0

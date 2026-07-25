@@ -552,6 +552,8 @@ class ToolSandbox:
         for key, value in arguments.items():
             check_value(key, value)
 
+    _CALL_TIMES_MAX_KEYS = 512
+
     def _check_rate_limit(self, full_name: str) -> None:
         """Check and enforce rate limit for tool calls."""
         if self.max_calls_per_minute <= 0:
@@ -561,6 +563,13 @@ class ToolSandbox:
         window_start = now - 60  # 1 minute window
 
         with self._rate_limit_lock:
+            # Evict empty lists left by previous cleanups
+            if len(self._call_times) > self._CALL_TIMES_MAX_KEYS:
+                self._call_times = defaultdict(
+                    list,
+                    {k: v for k, v in self._call_times.items() if v},
+                )
+
             # Clean old entries
             self._call_times[full_name] = [
                 t for t in self._call_times[full_name] if t > window_start

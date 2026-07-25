@@ -2045,8 +2045,60 @@ class EnginePool:
             except Exception as e:
                 logger.error(f"Failed to preload pinned model {model_id}: {e}")
 
-    async def shutdown(self) -> None:
-        """Shutdown all engines gracefully."""
+    async def shutdown(self, drain_timeout: float = 10.0) -> None:
+        """Shutdown all engines gracefully.
+
+        Aborts in-flight requests, waits up to *drain_timeout* seconds
+        for SSE generators to finish, then unloads all engines.
+        Without this, active streaming generators are truncated when
+        the engine is stopped mid-response.
+        """
+        # Phase 1: abort in-flight requests so SSE generators can finish.
+        aborted = 0
+        for model_id, entry in self._entries.items():
+            engine = getattr(entry, "engine", None)
+            if engine is None:
+                continue
+            abort_fn = getattr(engine, "abort_all_requests", None)
+            if callable(abort_fn):
+                try:
+                    n = await abort_fn()
+                    aborted += n
+                except Exception as e:
+                    logger.warning(
+                        "abort_all_requests failed for %s during shutdown: %s",
+                        model_id, e,
+                    )
+        if aborted:
+            logger.info(
+                "Shutdown: aborted %d in-flight request(s), draining SSE generators...",
+                aborted,
+            )
+            # Give asyncio event loop time to finish streaming generators
+            # that were waiting on the aborted requests' Events.
+            drain_deadline = time.monotonic() + drain_timeout
+            while time.monotonic() < drain_deadline:
+                any_active = False
+                for entry in self._entries.values():
+                    if self._entry_has_active_requests(entry):
+                        any_active = True
+                        break
+                if not any_active:
+                    break
+                await asyncio.sleep(0.1)
+            else:
+                still_active = [
+                    mid for mid, e in self._entries.items()
+                    if self._entry_has_active_requests(e)
+                ]
+                if still_active:
+                    logger.warning(
+                        "Shutdown: %d model(s) still have active requests after "
+                        "%.1fs drain: %s",
+                        len(still_active), drain_timeout, still_active,
+                    )
+
+        # Phase 2: unload all engines under the pool lock.
         async with self._lock:
             for model_id in list(self._entries.keys()):
                 entry = self._entries.get(model_id)
