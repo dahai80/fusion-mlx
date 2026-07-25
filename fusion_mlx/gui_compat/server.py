@@ -24,15 +24,14 @@ from fastapi import (
     APIRouter,
     Depends,
     FastAPI,
-    Header,
     HTTPException,
 )
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse
-from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
+from fusion_mlx.admin.auth import require_admin
 from fusion_mlx.gui_compat import __version__
 from fusion_mlx.gui_compat.database import get_database_manager, get_db_session
 from fusion_mlx.gui_compat.huggingface_integration import get_huggingface_client
@@ -51,18 +50,6 @@ from fusion_mlx.gui_compat.queued_inference import (
 from fusion_mlx.gui_compat.system_monitor import get_system_monitor
 
 logger = logging.getLogger(__name__)
-security = HTTPBearer(auto_error=False)
-
-
-def validate_api_key(
-    authorization: HTTPAuthorizationCredentials | None = Depends(security),
-    x_api_key: str | None = Header(None, alias="x-api-key"),
-) -> str | None:
-    if authorization:
-        return authorization.credentials
-    if x_api_key:
-        return x_api_key
-    return None
 
 
 # ── Pydantic models ──
@@ -421,7 +408,10 @@ def get_gui_compat_router() -> APIRouter:
 
     @router.post("/v1/models/{model_name}/load")
     async def load_model(
-        model_name: str, priority: int = 0, db: Session = Depends(get_db_session)
+        model_name: str,
+        priority: int = 0,
+        db: Session = Depends(get_db_session),
+        is_admin: bool = Depends(require_admin),
     ):
         mr = db.query(Model).filter(Model.name == model_name).first()
         if not mr:
@@ -458,7 +448,11 @@ def get_gui_compat_router() -> APIRouter:
             raise HTTPException(status_code=500, detail="Internal server error")
 
     @router.post("/v1/models/{model_name}/unload")
-    async def unload_model(model_name: str, db: Session = Depends(get_db_session)):
+    async def unload_model(
+        model_name: str,
+        db: Session = Depends(get_db_session),
+        is_admin: bool = Depends(require_admin),
+    ):
         mr = db.query(Model).filter(Model.name == model_name).first()
         if not mr:
             raise HTTPException(
@@ -482,6 +476,7 @@ def get_gui_compat_router() -> APIRouter:
         model_name: str,
         remove_files: bool = True,
         db: Session = Depends(get_db_session),
+        is_admin: bool = Depends(require_admin),
     ):
         mr = db.query(Model).filter(Model.name == model_name).first()
         if not mr:
@@ -534,7 +529,10 @@ def get_gui_compat_router() -> APIRouter:
 
     @router.post("/v1/models/{model_name}/generate")
     async def gen_text(
-        model_name: str, rd: dict, db: Session = Depends(get_db_session)
+        model_name: str,
+        rd: dict,
+        db: Session = Depends(get_db_session),
+        is_admin: bool = Depends(require_admin),
     ):
         mr = db.query(Model).filter(Model.name == model_name).first()
         if not mr:
@@ -601,12 +599,12 @@ def get_gui_compat_router() -> APIRouter:
         }
 
     @router.post("/v1/system/shutdown")
-    async def sys_shutdown():
+    async def sys_shutdown(is_admin: bool = Depends(require_admin)):
         asyncio.get_event_loop().call_later(1.0, lambda: os._exit(0))
         return {"message": "Server shutting down"}
 
     @router.post("/v1/system/restart")
-    async def sys_restart():
+    async def sys_restart(is_admin: bool = Depends(require_admin)):
         asyncio.get_event_loop().call_later(
             1.0, lambda: (subprocess.Popen([sys.executable] + sys.argv), os._exit(0))
         )
@@ -617,7 +615,12 @@ def get_gui_compat_router() -> APIRouter:
         return {s.key: s.get_typed_value() for s in db.query(AppSettings).all()}
 
     @router.put("/v1/settings/{key}")
-    async def put_setting(key: str, value: dict, db: Session = Depends(get_db_session)):
+    async def put_setting(
+        key: str,
+        value: dict,
+        db: Session = Depends(get_db_session),
+        is_admin: bool = Depends(require_admin),
+    ):
         s = db.query(AppSettings).filter(AppSettings.key == key).first()
         if not s:
             raise HTTPException(status_code=404, detail=f"Setting '{key}' not found")
@@ -733,7 +736,9 @@ def get_gui_compat_router() -> APIRouter:
 
     @router.post("/v1/models/install")
     async def install_model(
-        req: ModelInstallRequest, db: Session = Depends(get_db_session)
+        req: ModelInstallRequest,
+        db: Session = Depends(get_db_session),
+        is_admin: bool = Depends(require_admin),
     ):
         try:
             mi = get_huggingface_client().get_model_details(req.model_id)
@@ -803,7 +808,9 @@ def get_gui_compat_router() -> APIRouter:
         return get_model_manager().get_model_status(model_name)
 
     @router.post("/v1/manager/models/{model_name}/priority")
-    async def mgr_model_priority(model_name: str, pd: dict):
+    async def mgr_model_priority(
+        model_name: str, pd: dict, is_admin: bool = Depends(require_admin)
+    ):
         return {
             "model": model_name,
             "priority": pd.get("priority", 0),

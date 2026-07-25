@@ -1070,13 +1070,13 @@ class EnginePool:
                 from ..cache.latent_cache import remove_image_latent_cache
                 remove_image_latent_cache(model_id)
             except Exception:
-                logger.debug("latent cache cleanup skipped for %s", model_id)
+                logger.warning("latent cache cleanup failed for %s during unload", model_id, exc_info=True)
             # #209: stop engine + reclaim Metal memory (sync path previously
             # relied solely on Python GC which is nondeterministic)
             try:
                 entry.engine.stop()
             except Exception:
-                logger.debug("engine.stop() failed for %s", model_id)
+                logger.warning("engine.stop() failed for %s", model_id, exc_info=True)
             entry.engine = None
             entry.last_access = 0.0
             # Mirror register_engine (+) / unload_engine_async (-): keep the pool's
@@ -1097,7 +1097,7 @@ class EnginePool:
                 mx.synchronize()
                 mx.clear_cache()
             except Exception:
-                pass
+                logger.error("Metal memory reclaim failed during unregister of %s", model_id, exc_info=True)
             logger.info(f"Unregistered engine '{model_id}' from pool")
 
     def unregister_engine(self, model_id: str) -> bool:
@@ -1115,12 +1115,12 @@ class EnginePool:
             try:
                 entry.engine.stop()
             except Exception:
-                logger.debug("engine.stop() failed for %s", model_id)
+                logger.warning("engine.stop() failed for %s during unregister", model_id, exc_info=True)
             try:
                 from ..cache.latent_cache import remove_image_latent_cache
                 remove_image_latent_cache(model_id)
             except Exception:
-                pass
+                logger.error("latent cache cleanup failed for %s during unregister", model_id, exc_info=True)
             self._current_model_memory -= entry.estimated_size
             if self._process_memory_enforcer is not None:
                 self._process_memory_enforcer.update_loaded_model_bytes(
@@ -1247,7 +1247,7 @@ class EnginePool:
             from ..cache.latent_cache import remove_image_latent_cache
             remove_image_latent_cache(model_id)
         except Exception:
-            logger.debug("latent cache cleanup skipped for %s", model_id)
+            logger.warning("latent cache cleanup failed for %s during async unload", model_id, exc_info=True)
         entry.engine = None
         entry.last_access = 0.0
         entry.actual_size = None
@@ -1775,11 +1775,7 @@ class EnginePool:
                     try:
                         await engine.stop()
                     except Exception:
-                        logger.debug(
-                            "swallowed exception at fusion_mlx/pool/engine_pool.py:693"
-                        )
-
-                        pass
+                        logger.warning("engine.stop() failed during DFlash fallback for %s", model_id, exc_info=True)
                     gc.collect()
                     loop = asyncio.get_running_loop()
                     await loop.run_in_executor(
@@ -1832,11 +1828,7 @@ class EnginePool:
                     try:
                         await engine.stop()
                     except Exception:
-                        logger.debug(
-                            "swallowed exception at fusion_mlx/pool/engine_pool.py:739"
-                        )
-
-                        pass
+                        logger.warning("engine.stop() failed during force_lm fallback for %s", model_id, exc_info=True)
                     gc.collect()
                     loop = asyncio.get_running_loop()
                     await loop.run_in_executor(
@@ -1874,11 +1866,7 @@ class EnginePool:
                     try:
                         await engine.stop()
                     except Exception:
-                        logger.debug(
-                            "swallowed exception at fusion_mlx/pool/engine_pool.py:775"
-                        )
-
-                        pass
+                        logger.warning("engine.stop() failed during VLM→LLM fallback for %s", model_id, exc_info=True)
                     gc.collect()
                     loop = asyncio.get_running_loop()
                     await loop.run_in_executor(

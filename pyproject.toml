@@ -84,7 +84,8 @@ audio = [
     "mlx-audio[tts,stt,sts] @ git+https://github.com/Blaizzy/mlx-audio@51753266e0a4f766fd5e6fbc46652224efc23981",
 ]
 image = [
-    "mflux-fusion @ file:///Users/dahai/claude-home/fusion-mlx/packaging/_wheels/mflux_fusion-0.18.0-py3-none-any.whl",
+    # Vendored wheel in packaging/_wheels/; install with --find-links packaging/_wheels
+    "mflux-fusion==0.18.0",
 ]
 video = [
     # Phase 5/6: vendored pure-MLX ports (fusion_mlx.video.ltx2 + wan2) replace
