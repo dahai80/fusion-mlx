@@ -54,6 +54,7 @@ VLM_MODEL_TYPES = {
     "qwen2_5_vl",
     "qwen3_vl",
     "qwen3_vl_moe",
+    "qwen3_5",
     "qwen3_5_moe",
     "gemma3",
     "gemma4",
