@@ -13,13 +13,13 @@ import time
 import urllib.request
 from urllib.parse import urlparse
 
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
 from ..engines import VideoGenEngine
-from ..middleware.auth import verify_api_key, check_rate_limit
 from ..engines.video_backends import constraints_for, validate_params
 from ..exceptions import ModelNotFoundError
+from ..middleware.auth import check_rate_limit, verify_api_key
 from ..pool import EnginePool
 
 logger = logging.getLogger(__name__)
@@ -122,6 +122,7 @@ def _resolve_image_to_path(image: str) -> tuple[str, bool]:
         return path, True
     if image.startswith(("http://", "https://")):
         from ._url_safety import is_safe_url_with_dns
+
         if not is_safe_url_with_dns(image):
             raise HTTPException(400, "Image URL targets a private/internal address")
         ext = os.path.splitext(urlparse(image).path)[1] or ".png"
@@ -130,6 +131,7 @@ def _resolve_image_to_path(image: str) -> tuple[str, bool]:
         urllib.request.urlretrieve(image, path)
         return path, True
     from ._url_safety import is_safe_local_path
+
     if not is_safe_local_path(image):
         raise HTTPException(400, "Image path targets a restricted directory")
     return image, False

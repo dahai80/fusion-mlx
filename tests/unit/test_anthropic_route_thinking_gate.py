@@ -471,7 +471,10 @@ def test_stream_route_wire_format_exactly_one_text_block_for_demoted_stream():
     )
 
 
-@pytest.mark.xfail(strict=False, reason="Streaming think_router not ported (strict=False: feature gap from routes_internal refactor) to api/anthropic_routes.py yet")
+@pytest.mark.xfail(
+    strict=False,
+    reason="Streaming think_router not ported (strict=False: feature gap from routes_internal refactor) to api/anthropic_routes.py yet",
+)
 def test_stream_route_drops_whitespace_only_reasoning_delta():
     """Codex r3 MAJOR (probe 1): a channel="reasoning" delta carrying
     pure whitespace must NOT open a thinking content_block_start, nor
@@ -631,7 +634,10 @@ class _StreamingEngineInterleavedThinking:
         )
 
 
-@pytest.mark.xfail(strict=False, reason="Streaming think_router not ported (strict=False: feature gap from routes_internal refactor) to api/anthropic_routes.py yet")
+@pytest.mark.xfail(
+    strict=False,
+    reason="Streaming think_router not ported (strict=False: feature gap from routes_internal refactor) to api/anthropic_routes.py yet",
+)
 def test_stream_route_preserves_intra_thinking_whitespace():
     """Codex r4 MAJOR: whitespace between two non-empty thinking
     chunks must NOT be dropped by the gate — it is an intra-thinking

@@ -32,9 +32,10 @@ from fusion_mlx.config import reset_config
 from fusion_mlx.engine.base import GenerationOutput
 from fusion_mlx.routes_internal.chat import router as chat_router
 
-import pytest
-pytestmark = pytest.mark.xfail(reason="strict=False: streaming guided decoding not ported to api/ routes yet", strict=False)
-
+pytestmark = pytest.mark.xfail(
+    reason="strict=False: streaming guided decoding not ported to api/ routes yet",
+    strict=False,
+)
 
 
 class _GuidedEngine:

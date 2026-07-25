@@ -41,7 +41,9 @@ logger = logging.getLogger(__name__)
 class ControlEncoderStage(nn.Module):
     def __init__(self, in_ch: int, out_ch: int, kernel: int, stride: int, padding: int):
         super().__init__()
-        self.conv = nn.Conv2d(in_ch, out_ch, kernel_size=kernel, stride=stride, padding=padding)
+        self.conv = nn.Conv2d(
+            in_ch, out_ch, kernel_size=kernel, stride=stride, padding=padding
+        )
         self.gn = nn.GroupNorm(2, out_ch)
 
     def __call__(self, x: mx.array) -> mx.array:
@@ -70,15 +72,25 @@ class ControlEncoder(nn.Module):
         end_ch = start_ch // 4
 
         self.stage1 = ControlEncoderStage(
-            in_channels, start_ch,
-            kernel=downscale_coef + 1, stride=downscale_coef,
+            in_channels,
+            start_ch,
+            kernel=downscale_coef + 1,
+            stride=downscale_coef,
             padding=downscale_coef // 2,
         )
         self.stage2 = ControlEncoderStage(
-            start_ch, mid_ch, kernel=3, stride=1, padding=1,
+            start_ch,
+            mid_ch,
+            kernel=3,
+            stride=1,
+            padding=1,
         )
         self.stage3 = ControlEncoderStage(
-            mid_ch, end_ch, kernel=3, stride=1, padding=1,
+            mid_ch,
+            end_ch,
+            kernel=3,
+            stride=1,
+            padding=1,
         )
 
     def __call__(self, x: mx.array) -> mx.array:
@@ -137,7 +149,12 @@ class WanControlnetBlock(nn.Module):
         context_lens: list | None = None,
     ) -> mx.array:
         return self.block(
-            x, e, seq_lens, grid_sizes, freqs, context,
+            x,
+            e,
+            seq_lens,
+            grid_sizes,
+            freqs,
+            context,
             context_lens=context_lens,
         )
 
@@ -193,8 +210,11 @@ class WanControlnet(nn.Module):
         self.control_encoder = ControlEncoder(in_channels, downscale_coef)
 
         self.patch_embedding = nn.Conv2d(
-            vae_channels + end_ch, inner_dim,
-            kernel_size=patch_size[1], stride=patch_size[1], padding=0,
+            vae_channels + end_ch,
+            inner_dim,
+            kernel_size=patch_size[1],
+            stride=patch_size[1],
+            padding=0,
         )
 
         self.text_embedding = nn.Sequential(
@@ -215,10 +235,15 @@ class WanControlnet(nn.Module):
 
         for i in range(num_layers):
             setattr(
-                self, f"block_{i}",
+                self,
+                f"block_{i}",
                 WanControlnetBlock(
-                    inner_dim, ffn_dim, num_attention_heads,
-                    qk_norm=qk_norm, cross_attn_norm=cross_attn_norm, eps=eps,
+                    inner_dim,
+                    ffn_dim,
+                    num_attention_heads,
+                    qk_norm=qk_norm,
+                    cross_attn_norm=cross_attn_norm,
+                    eps=eps,
                     text_dim=text_dim,
                 ),
             )
@@ -294,7 +319,9 @@ class WanControlnet(nn.Module):
         t_emb = self.time_embedding(t_emb)
         e = self.time_projection(t_emb)
 
-        freqs = _compute_rope_freqs(self.inner_dim, self.num_attention_heads, grid_sizes, seq_lens)
+        freqs = _compute_rope_freqs(
+            self.inner_dim, self.num_attention_heads, grid_sizes, seq_lens
+        )
 
         residuals = []
         for i in range(self.num_layers):
@@ -310,7 +337,7 @@ def _spatial_downsample(x: mx.array, target_h: int, target_w: int) -> mx.array:
     if x.ndim != 4:
         return x
     B, H, W, C = x.shape
-    if H == target_h and W == target_w:
+    if target_h == H and target_w == W:
         return x
     step_h = max(1, H // target_h)
     step_w = max(1, W // target_w)
@@ -415,7 +442,7 @@ def remap_wan_controlnet_weights(
         clean = key
         for prefix in ("controlnet.", "model."):
             if clean.startswith(prefix):
-                clean = clean[len(prefix):]
+                clean = clean[len(prefix) :]
 
         # control_encoder -> control_encoder (Conv3d -> Conv2d conversion)
         # HF: control_encoder.{stage_idx}.{sublayer_idx} where:
@@ -466,17 +493,21 @@ def remap_wan_controlnet_weights(
         #   time_embedding: Sequential(Linear, SiLU, Linear) -> layers.0, layers.2
         #   time_projection: Sequential(SiLU, Linear) -> layers.1
         if clean.startswith("condition_embedder."):
-            rest = clean[len("condition_embedder."):]
+            rest = clean[len("condition_embedder.") :]
             if rest.startswith("time_embedder."):
-                sub = rest[len("time_embedder."):]
-                sub = sub.replace("linear_1.", "layers.0.").replace("linear_2.", "layers.2.")
+                sub = rest[len("time_embedder.") :]
+                sub = sub.replace("linear_1.", "layers.0.").replace(
+                    "linear_2.", "layers.2."
+                )
                 remapped[f"time_embedding.{sub}"] = value
             elif rest.startswith("time_proj."):
-                sub = rest[len("time_proj."):]
+                sub = rest[len("time_proj.") :]
                 remapped[f"time_projection.layers.1.{sub}"] = value
             elif rest.startswith("text_embedder."):
-                sub = rest[len("text_embedder."):]
-                sub = sub.replace("linear_1.", "layers.0.").replace("linear_2.", "layers.2.")
+                sub = rest[len("text_embedder.") :]
+                sub = sub.replace("linear_1.", "layers.0.").replace(
+                    "linear_2.", "layers.2."
+                )
                 remapped[f"text_embedding.{sub}"] = value
             else:
                 pass  # skip unused (image proj etc.)
@@ -721,11 +752,14 @@ class ControlNet(VideoAdapter):
     def _load_from_hf_cache(self) -> bool:
         try:
             import os
+
             from huggingface_hub import hf_hub_download
 
             cn_repo = self.config.get(
                 "controlnet_repo",
-                self.DEFAULT_REPO_MAP.get(self.control_type, "TheDenk/wan2.1-t2v-14b-controlnet-canny-v1"),
+                self.DEFAULT_REPO_MAP.get(
+                    self.control_type, "TheDenk/wan2.1-t2v-14b-controlnet-canny-v1"
+                ),
             )
             logger.info("ControlNet: trying HF cache: %s", cn_repo)
 
@@ -757,7 +791,8 @@ class ControlNet(VideoAdapter):
                 self.dit.load_weights(list(remapped.items()), strict=False)
                 logger.info(
                     "ControlNet: weights loaded from HF %s (%d params)",
-                    cn_repo, len(remapped),
+                    cn_repo,
+                    len(remapped),
                 )
                 return True
         except ImportError:
@@ -822,8 +857,12 @@ class ControlNet(VideoAdapter):
 
         try:
             residuals = self.dit.forward(
-                hidden_states, t, context, control_states,
-                seq_lens=seq_lens, grid_sizes=grid_sizes,
+                hidden_states,
+                t,
+                context,
+                control_states,
+                seq_lens=seq_lens,
+                grid_sizes=grid_sizes,
             )
             if self.scale != 1.0:
                 residuals = [r * self.scale for r in residuals]
@@ -836,7 +875,9 @@ class ControlNet(VideoAdapter):
             )
             return residuals
         except Exception as exc:
-            logger.error("ControlNet: residual computation failed: %s", exc, exc_info=True)
+            logger.error(
+                "ControlNet: residual computation failed: %s", exc, exc_info=True
+            )
             return None
 
     def get_residuals(self) -> list[mx.array] | None:
@@ -867,7 +908,10 @@ class ControlNet(VideoAdapter):
             return latents
 
         residuals = self.compute_residuals(
-            latents, t, context, control_latent,
+            latents,
+            t,
+            context,
+            control_latent,
             seq_lens=kw.get("seq_lens"),
             grid_sizes=kw.get("grid_sizes"),
         )

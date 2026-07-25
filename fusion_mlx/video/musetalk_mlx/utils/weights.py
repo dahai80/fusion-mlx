@@ -4,12 +4,12 @@ Because the MLX modules mirror the diffusers state_dict names 1:1, the only
 transform needed is the conv weight layout: PT (O, I, kH, kW) -> MLX (O, kH, kW, I).
 A 4-D `.weight` is always a conv here (Linear weights are 2-D).
 """
+
 from __future__ import annotations
 
 from pathlib import Path
 
 import mlx.core as mx
-
 
 # the raw sd-vae-ft-mse checkpoint predates the diffusers attention rename
 # (from_pretrained remaps these on load; the safetensors file keeps the old names)
@@ -29,9 +29,9 @@ def _rename(key: str) -> str:
 
 
 def _convert(key: str, w: mx.array) -> mx.array:
-    if key.endswith(".weight") and w.ndim == 4:      # conv2d: (O,I,kH,kW) -> (O,kH,kW,I)
+    if key.endswith(".weight") and w.ndim == 4:  # conv2d: (O,I,kH,kW) -> (O,kH,kW,I)
         return w.transpose(0, 2, 3, 1)
-    if key.endswith(".weight") and w.ndim == 3:      # conv1d: (O,I,k) -> (O,k,I)
+    if key.endswith(".weight") and w.ndim == 3:  # conv1d: (O,I,k) -> (O,k,I)
         return w.transpose(0, 2, 1)
     return w
 
@@ -77,12 +77,12 @@ def load_whisper_encoder_weights(model, weights_dir: str | Path, strict: bool = 
     weights_dir = Path(weights_dir)
     st = weights_dir / "model.safetensors"
     raw = mx.load(str(st))
-    prefix = "model.encoder."                          # full WhisperForConditionalGeneration ckpt
+    prefix = "model.encoder."  # full WhisperForConditionalGeneration ckpt
     converted = []
     for k, v in raw.items():
         if not k.startswith(prefix):
             continue
-        rk = k[len(prefix):]
+        rk = k[len(prefix) :]
         converted.append((rk, _convert(rk, v)))
     model.load_weights(converted, strict=strict)
     mx.eval(model.parameters())

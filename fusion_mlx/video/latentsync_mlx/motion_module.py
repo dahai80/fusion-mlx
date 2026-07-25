@@ -33,7 +33,9 @@ class VersatileAttention(Attention):
         **kwargs,
     ):
         super().__init__(
-            query_dim=query_dim, heads=heads, dim_head=dim_head,
+            query_dim=query_dim,
+            heads=heads,
+            dim_head=dim_head,
         )
         self.pos_encoder = (
             PositionalEncoding(query_dim, max_len=temporal_position_encoding_max_len)

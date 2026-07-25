@@ -1,6 +1,9 @@
-
 import pytest
-pytestmark = pytest.mark.xfail(reason="strict=False: parallel tool calls not ported to api/ routes yet", strict=False)
+
+pytestmark = pytest.mark.xfail(
+    reason="strict=False: parallel tool calls not ported to api/ routes yet",
+    strict=False,
+)
 
 # SPDX-License-Identifier: Apache-2.0
 """Regression test for ``parallel_tool_calls`` being silently dropped.

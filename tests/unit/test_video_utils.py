@@ -122,7 +122,9 @@ class TestIsBase64Video:
 
 
 class TestProcessVideoInput:
-    @pytest.mark.xfail(reason='strict=False: path traversal guard blocks local temp file in video utils')
+    @pytest.mark.xfail(
+        reason="strict=False: path traversal guard blocks local temp file in video utils"
+    )
     def test_local_path_exists(self):
         with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as f:
             f.write(b"\x00" * 100)

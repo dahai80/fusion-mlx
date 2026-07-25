@@ -385,7 +385,6 @@ class TestModelsListingReflectsAudioGate:
         EITHER ``None`` (if the deep probe never ran) or a non-empty
         dict — but never a hidden None from the gate."""
         from fusion_mlx.routes_internal.audio import register_audio_routes
-
         from fusion_mlx.routes_internal.models import (
             _audio_lane_snapshot,
             _audio_routes_mounted,

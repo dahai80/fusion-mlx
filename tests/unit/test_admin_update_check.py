@@ -25,7 +25,9 @@ def _reset_cache():
     """Reset module-level update cache between tests."""
     admin_routes._update_cache = {}
     admin_routes._update_cache_time = {}
-    admin_routes._UPDATE_PREFS_PATH = Path("/tmp/fusion-mlx-test-missing-update-prefs.json")
+    admin_routes._UPDATE_PREFS_PATH = Path(
+        "/tmp/fusion-mlx-test-missing-update-prefs.json"
+    )
 
 
 class TestCheckUpdate:

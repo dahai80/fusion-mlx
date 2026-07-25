@@ -19,10 +19,9 @@ Key findings:
 import os
 import tempfile
 
-import pytest
-
 import mlx.core as mx
 import numpy as np
+import pytest
 
 pytestmark = pytest.mark.skipif(
     os.environ.get("FUSION_E2E_ADAPTERS") != "1",

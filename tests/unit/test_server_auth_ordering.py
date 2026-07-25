@@ -224,8 +224,8 @@ def _route_paths_with_auth(router):
     Both gates run BEFORE the route handler executes; either is
     structurally equivalent for the bind→auth ordering invariant.
     """
-    from fusion_mlx.middleware import auth as auth_mod
     from fusion_mlx.admin import auth as admin_auth_mod
+    from fusion_mlx.middleware import auth as auth_mod
 
     auth_funcs = {
         getattr(auth_mod, name)

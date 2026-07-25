@@ -24,6 +24,7 @@ def _allowed_model_dirs() -> list[str]:
         dirs.append(cwd)
     return dirs
 
+
 _POPULAR_ALIAS_NAMES = [
     "qwen3.5-4b-4bit",
     "qwen3.5-9b-4bit",
@@ -117,7 +118,9 @@ def _check_path_allowed(name: str) -> None:
     allowed = _allowed_model_dirs()
     if not any(resolved.startswith(p) for p in allowed):
         logger.warning("resolve_model: path outside allowed dirs: %s", name)
-        raise ValueError(f"Path not allowed: {name}. Must be within allowed model directories.")
+        raise ValueError(
+            f"Path not allowed: {name}. Must be within allowed model directories."
+        )
 
 
 def resolve_model(name: str) -> str:

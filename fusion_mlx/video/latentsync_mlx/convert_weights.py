@@ -8,10 +8,9 @@ Key transformations:
 """
 
 import argparse
-import torch
+
 import mlx.core as mx
-import numpy as np
-from pathlib import Path
+import torch
 
 
 def convert_conv_weight(w):
@@ -108,7 +107,9 @@ def convert_unet_weights(ckpt_path: str, output_path: str):
     return mlx_weights
 
 
-def convert_vae_weights(vae_repo: str = "stabilityai/sd-vae-ft-mse", output_path: str = None):
+def convert_vae_weights(
+    vae_repo: str = "stabilityai/sd-vae-ft-mse", output_path: str = None
+):
     """Convert SD 1.5 VAE weights to MLX format."""
     from diffusers import AutoencoderKL
 
@@ -153,8 +154,12 @@ def convert_vae_weights(vae_repo: str = "stabilityai/sd-vae-ft-mse", output_path
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Convert LatentSync weights to MLX")
     parser.add_argument("--unet-ckpt", type=str, help="Path to latentsync_unet.pt")
-    parser.add_argument("--unet-output", type=str, default="checkpoints/latentsync_unet_mlx.safetensors")
-    parser.add_argument("--vae-output", type=str, default="checkpoints/vae_mlx.safetensors")
+    parser.add_argument(
+        "--unet-output", type=str, default="checkpoints/latentsync_unet_mlx.safetensors"
+    )
+    parser.add_argument(
+        "--vae-output", type=str, default="checkpoints/vae_mlx.safetensors"
+    )
     parser.add_argument("--convert-vae", action="store_true")
     args = parser.parse_args()
 

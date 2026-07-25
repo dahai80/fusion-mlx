@@ -6,6 +6,7 @@ NCHW<->NHWC transposes only at the public encode/decode boundary.
 
 Reference: musetalk/models/vae.py (wraps diffusers.AutoencoderKL) @ commit 0a89dec.
 """
+
 from __future__ import annotations
 
 import mlx.core as mx
@@ -55,7 +56,9 @@ class Upsample2D(nn.Module):
 
     def __call__(self, x):
         b, h, w, c = x.shape
-        x = mx.broadcast_to(x[:, :, None, :, None, :], (b, h, 2, w, 2, c)).reshape(b, h * 2, w * 2, c)
+        x = mx.broadcast_to(x[:, :, None, :, None, :], (b, h, 2, w, 2, c)).reshape(
+            b, h * 2, w * 2, c
+        )
         return self.conv(x)
 
 
@@ -74,9 +77,9 @@ class Attention(nn.Module):
     def __call__(self, x):
         b, h, w, c = x.shape
         res = x
-        y = self.group_norm(x).reshape(b, h * w, c)          # (B, HW, C)
+        y = self.group_norm(x).reshape(b, h * w, c)  # (B, HW, C)
         q, k, v = self.to_q(y), self.to_k(y), self.to_v(y)
-        scale = 1.0 / (c ** 0.5)                              # dim_head = C (single head)
+        scale = 1.0 / (c**0.5)  # dim_head = C (single head)
         attn = mx.softmax((q @ k.transpose(0, 2, 1)) * scale, axis=-1)
         y = attn @ v
         y = self.to_out[0](y).reshape(b, h, w, c)
@@ -99,7 +102,9 @@ class MidBlock(nn.Module):
 class DownBlock(nn.Module):
     def __init__(self, in_ch, out_ch, n_res, add_downsample):
         super().__init__()
-        self.resnets = [ResnetBlock2D(in_ch if i == 0 else out_ch, out_ch) for i in range(n_res)]
+        self.resnets = [
+            ResnetBlock2D(in_ch if i == 0 else out_ch, out_ch) for i in range(n_res)
+        ]
         self.downsamplers = [Downsample2D(out_ch)] if add_downsample else None
 
     def __call__(self, x):
@@ -113,7 +118,9 @@ class DownBlock(nn.Module):
 class UpBlock(nn.Module):
     def __init__(self, in_ch, out_ch, n_res, add_upsample):
         super().__init__()
-        self.resnets = [ResnetBlock2D(in_ch if i == 0 else out_ch, out_ch) for i in range(n_res)]
+        self.resnets = [
+            ResnetBlock2D(in_ch if i == 0 else out_ch, out_ch) for i in range(n_res)
+        ]
         self.upsamplers = [Upsample2D(out_ch)] if add_upsample else None
 
     def __call__(self, x):
@@ -130,16 +137,20 @@ class UpBlock(nn.Module):
 class Encoder(nn.Module):
     def __init__(self, cfg):
         super().__init__()
-        boc = cfg["block_out_channels"]            # [128,256,512,512]
+        boc = cfg["block_out_channels"]  # [128,256,512,512]
         n_res = cfg["layers_per_block"]
         self.conv_in = nn.Conv2d(cfg["in_channels"], boc[0], 3, padding=1)
         self.down_blocks = []
         in_ch = boc[0]
         for i, out_ch in enumerate(boc):
-            self.down_blocks.append(DownBlock(in_ch, out_ch, n_res, add_downsample=(i != len(boc) - 1)))
+            self.down_blocks.append(
+                DownBlock(in_ch, out_ch, n_res, add_downsample=(i != len(boc) - 1))
+            )
             in_ch = out_ch
         self.mid_block = MidBlock(boc[-1])
-        self.conv_norm_out = nn.GroupNorm(cfg["norm_num_groups"], boc[-1], eps=GN_EPS, pytorch_compatible=True)
+        self.conv_norm_out = nn.GroupNorm(
+            cfg["norm_num_groups"], boc[-1], eps=GN_EPS, pytorch_compatible=True
+        )
         self.conv_out = nn.Conv2d(boc[-1], 2 * cfg["latent_channels"], 3, padding=1)
 
     def __call__(self, x):
@@ -155,16 +166,20 @@ class Decoder(nn.Module):
     def __init__(self, cfg):
         super().__init__()
         boc = cfg["block_out_channels"]
-        rev = list(reversed(boc))                  # [512,512,256,128]
+        rev = list(reversed(boc))  # [512,512,256,128]
         n_res = cfg["layers_per_block"] + 1
         self.conv_in = nn.Conv2d(cfg["latent_channels"], rev[0], 3, padding=1)
         self.mid_block = MidBlock(rev[0])
         self.up_blocks = []
         in_ch = rev[0]
         for i, out_ch in enumerate(rev):
-            self.up_blocks.append(UpBlock(in_ch, out_ch, n_res, add_upsample=(i != len(rev) - 1)))
+            self.up_blocks.append(
+                UpBlock(in_ch, out_ch, n_res, add_upsample=(i != len(rev) - 1))
+            )
             in_ch = out_ch
-        self.conv_norm_out = nn.GroupNorm(cfg["norm_num_groups"], rev[-1], eps=GN_EPS, pytorch_compatible=True)
+        self.conv_norm_out = nn.GroupNorm(
+            cfg["norm_num_groups"], rev[-1], eps=GN_EPS, pytorch_compatible=True
+        )
         self.conv_out = nn.Conv2d(rev[-1], cfg["out_channels"], 3, padding=1)
 
     def __call__(self, x):
@@ -177,7 +192,7 @@ class Decoder(nn.Module):
 
 
 class DiagonalGaussian:
-    def __init__(self, moments_nchw):              # moments: (B,8,H,W) NCHW
+    def __init__(self, moments_nchw):  # moments: (B,8,H,W) NCHW
         self.mean, self.logvar = mx.split(moments_nchw, 2, axis=1)
         self.logvar = mx.clip(self.logvar, -30.0, 20.0)
         self.std = mx.exp(0.5 * self.logvar)

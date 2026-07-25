@@ -12,13 +12,12 @@ Each hidden state shape: (B, seq_len, 1024).
 Pure MLX port of eva_clip/eva_vit_model.py + eva_clip/rope.py.
 Zero PyTorch dependency.
 """
-import math
+
 import logging
 from pathlib import Path
 
 import mlx.core as mx
 import mlx.nn as nn
-import numpy as np
 
 logger = logging.getLogger(__name__)
 
@@ -47,10 +46,13 @@ class VisionRotaryEmbeddingFast:
         freqs_t = mx.expand_dims(t, -1) * mx.expand_dims(freqs, 0)
         freqs_t = mx.repeat(freqs_t, 2, axis=-1)
 
-        freqs_2d = mx.concatenate([
-            mx.expand_dims(freqs_t, 1) * mx.ones((1, freqs_t.shape[0], 1)),
-            mx.ones((freqs_t.shape[0], 1, 1)) * mx.expand_dims(freqs_t, 0),
-        ], axis=-1)
+        freqs_2d = mx.concatenate(
+            [
+                mx.expand_dims(freqs_t, 1) * mx.ones((1, freqs_t.shape[0], 1)),
+                mx.ones((freqs_t.shape[0], 1, 1)) * mx.expand_dims(freqs_t, 0),
+            ],
+            axis=-1,
+        )
 
         freqs_flat = freqs_2d.reshape(-1, freqs_2d.shape[-1])
         self.freqs_cos = mx.cos(freqs_flat)
@@ -72,8 +74,11 @@ class PatchEmbed(nn.Module):
         self.grid_size = img_size // patch_size
         self.num_patches = self.grid_size * self.grid_size
         self.proj = nn.Conv2d(
-            in_chans, embed_dim,
-            kernel_size=patch_size, stride=patch_size, bias=True,
+            in_chans,
+            embed_dim,
+            kernel_size=patch_size,
+            stride=patch_size,
+            bias=True,
         )
 
     def __call__(self, x):
@@ -110,7 +115,7 @@ class Attention(nn.Module):
         super().__init__()
         self.num_heads = num_heads
         self.head_dim = dim // num_heads
-        self.scale = self.head_dim ** -0.5
+        self.scale = self.head_dim**-0.5
         self.subln = subln
         self.rope = rope
 
@@ -128,11 +133,27 @@ class Attention(nn.Module):
         b, n, _ = x.shape
 
         if self.subln:
-            q = self.q_proj(x).reshape(b, n, self.num_heads, self.head_dim).transpose(0, 2, 1, 3)
-            k = self.k_proj(x).reshape(b, n, self.num_heads, self.head_dim).transpose(0, 2, 1, 3)
-            v = self.v_proj(x).reshape(b, n, self.num_heads, self.head_dim).transpose(0, 2, 1, 3)
+            q = (
+                self.q_proj(x)
+                .reshape(b, n, self.num_heads, self.head_dim)
+                .transpose(0, 2, 1, 3)
+            )
+            k = (
+                self.k_proj(x)
+                .reshape(b, n, self.num_heads, self.head_dim)
+                .transpose(0, 2, 1, 3)
+            )
+            v = (
+                self.v_proj(x)
+                .reshape(b, n, self.num_heads, self.head_dim)
+                .transpose(0, 2, 1, 3)
+            )
         else:
-            qkv = self.qkv(x).reshape(b, n, 3, self.num_heads, self.head_dim).transpose(2, 0, 3, 1, 4)
+            qkv = (
+                self.qkv(x)
+                .reshape(b, n, 3, self.num_heads, self.head_dim)
+                .transpose(2, 0, 3, 1, 4)
+            )
             q, k, v = qkv[0], qkv[1], qkv[2]
 
         if self.rope is not None:
@@ -157,8 +178,9 @@ class Attention(nn.Module):
 class Block(nn.Module):
     """Transformer block: norm -> attn -> norm -> SwiGLU, with layer-scale."""
 
-    def __init__(self, dim, num_heads, mlp_ratio=2.6667, subln=True,
-                 rope=None, init_values=None):
+    def __init__(
+        self, dim, num_heads, mlp_ratio=2.6667, subln=True, rope=None, init_values=None
+    ):
         super().__init__()
         self.norm1 = nn.LayerNorm(dim)
         self.attn = Attention(dim, num_heads=num_heads, subln=subln, rope=rope)
@@ -237,25 +259,32 @@ class EVAVisionTransformer(nn.Module):
                 ft_seq_len=ft_seq,
             )
 
-        dpr = [min(drop_path_rate, drop_path_rate * i / max(depth - 1, 1)) for i in range(depth)]
+        dpr = [
+            min(drop_path_rate, drop_path_rate * i / max(depth - 1, 1))
+            for i in range(depth)
+        ]
 
         self.blocks = []
         for i in range(depth):
-            self.blocks.append(Block(
-                dim=embed_dim,
-                num_heads=num_heads,
-                mlp_ratio=mlp_ratio,
-                subln=subln,
-                rope=rope_module,
-                init_values=init_values,
-            ))
+            self.blocks.append(
+                Block(
+                    dim=embed_dim,
+                    num_heads=num_heads,
+                    mlp_ratio=mlp_ratio,
+                    subln=subln,
+                    rope=rope_module,
+                    init_values=init_values,
+                )
+            )
 
         self.norm = nn.LayerNorm(embed_dim)
         self.fc_norm = nn.LayerNorm(embed_dim)
 
         self.hidden_indices = [4, 8, 12, 16, 20]
-        logger.info(f"EVA ViT: depth={depth}, embed_dim={embed_dim}, "
-                     f"num_heads={num_heads}, rope={rope}")
+        logger.info(
+            f"EVA ViT: depth={depth}, embed_dim={embed_dim}, "
+            f"num_heads={num_heads}, rope={rope}"
+        )
 
     def __call__(self, x, return_hidden=True):
         """Forward pass.
@@ -332,11 +361,15 @@ class EVACLIPEncoder:
                 new_k = k
                 if k.startswith("visual."):
                     new_k = k[7:]
-                if any(skip in new_k for skip in ["text.", "logit_scale", "mask_token"]):
+                if any(
+                    skip in new_k for skip in ["text.", "logit_scale", "mask_token"]
+                ):
                     continue
                 filtered[new_k] = v
             model.load_weights(list(filtered.items()))
-            logger.info(f"Loaded {len(filtered)} weight tensors from {weight_file.name}")
+            logger.info(
+                f"Loaded {len(filtered)} weight tensors from {weight_file.name}"
+            )
         else:
             logger.warning(f"No weight file found in {model_dir}, using random init")
 

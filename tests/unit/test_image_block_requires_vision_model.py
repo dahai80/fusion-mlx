@@ -121,7 +121,10 @@ def _reset():
 # ----------------------------------------------------------------------
 
 
-@pytest.mark.xfail(reason="strict=False: vision model content gate not ported to api/anthropic_routes.py yet", strict=False)
+@pytest.mark.xfail(
+    reason="strict=False: vision model content gate not ported to api/anthropic_routes.py yet",
+    strict=False,
+)
 def test_anthropic_text_only_model_rejects_image_block():
     """The bug repro: text-only model + image block => HTTP 400, not 200."""
     client = _make_client(_TextOnlyEngine())
@@ -157,7 +160,10 @@ def test_anthropic_text_only_model_rejects_image_block():
     assert "image" in detail and "document" not in detail
 
 
-@pytest.mark.xfail(reason="strict=False: vision model content gate not ported to api/anthropic_routes.py yet", strict=False)
+@pytest.mark.xfail(
+    reason="strict=False: vision model content gate not ported to api/anthropic_routes.py yet",
+    strict=False,
+)
 def test_anthropic_text_only_model_rejects_document_block():
     """Anthropic ``document`` blocks (PDFs) are also dropped silently
     by the adapter; the guard must reject them too."""
@@ -192,7 +198,10 @@ def test_anthropic_text_only_model_rejects_document_block():
     assert "document" in detail and "image" not in detail
 
 
-@pytest.mark.xfail(reason="strict=False: vision model content gate not ported to api/anthropic_routes.py yet", strict=False)
+@pytest.mark.xfail(
+    reason="strict=False: vision model content gate not ported to api/anthropic_routes.py yet",
+    strict=False,
+)
 def test_anthropic_vision_model_accepts_image_block():
     """VLM-capable engine must NOT be 400'd by the new capability gate;
     the request must reach ``engine.chat`` so the multimodal pipeline
@@ -242,7 +251,10 @@ def test_anthropic_vision_model_accepts_image_block():
     assert resp.status_code == 200, resp.text
 
 
-@pytest.mark.xfail(reason="strict=False: vision model content gate not ported to api/anthropic_routes.py yet", strict=False)
+@pytest.mark.xfail(
+    reason="strict=False: vision model content gate not ported to api/anthropic_routes.py yet",
+    strict=False,
+)
 def test_anthropic_text_only_model_accepts_text_only_content():
     """Sanity check: text-only model + text-only content => 200."""
     client = _make_client(_TextOnlyEngine())
@@ -264,7 +276,10 @@ def test_anthropic_text_only_model_accepts_text_only_content():
     assert resp.status_code == 200, resp.text
 
 
-@pytest.mark.xfail(reason="strict=False: vision model content gate not ported to api/anthropic_routes.py yet", strict=False)
+@pytest.mark.xfail(
+    reason="strict=False: vision model content gate not ported to api/anthropic_routes.py yet",
+    strict=False,
+)
 def test_anthropic_text_only_model_accepts_string_content():
     """The simple-string shape (most common) keeps working unchanged."""
     client = _make_client(_TextOnlyEngine())
@@ -286,7 +301,10 @@ def test_anthropic_text_only_model_accepts_string_content():
 # ----------------------------------------------------------------------
 
 
-@pytest.mark.xfail(reason="strict=False: vision model content gate not ported to api/anthropic_routes.py yet", strict=False)
+@pytest.mark.xfail(
+    reason="strict=False: vision model content gate not ported to api/anthropic_routes.py yet",
+    strict=False,
+)
 def test_openai_text_only_model_rejects_image_url_block():
     """The pre-existing OpenAI-side guard must keep rejecting image_url
     on text-only models. Pinned here so a refactor that drops it lights
@@ -315,7 +333,10 @@ def test_openai_text_only_model_rejects_image_url_block():
     assert "does not support" in resp.json()["detail"]
 
 
-@pytest.mark.xfail(reason="strict=False: vision model content gate not ported to api/anthropic_routes.py yet", strict=False)
+@pytest.mark.xfail(
+    reason="strict=False: vision model content gate not ported to api/anthropic_routes.py yet",
+    strict=False,
+)
 def test_openai_text_only_model_accepts_text_only_content():
     client = _make_client(_TextOnlyEngine(), include_anthropic=False)
     resp = client.post(

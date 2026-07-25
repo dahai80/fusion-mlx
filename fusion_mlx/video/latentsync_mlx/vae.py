@@ -1,7 +1,6 @@
 """SD 1.5 VAE for LatentSync. Adapted from mlx-examples/stable_diffusion/vae.py"""
 
 import math
-from typing import List
 
 import mlx.core as mx
 import mlx.nn as nn
@@ -17,9 +16,13 @@ class ResnetBlock2D(nn.Module):
         self.out_channels = out_channels
 
         self.norm1 = nn.GroupNorm(groups, in_channels, pytorch_compatible=True)
-        self.conv1 = nn.Conv2d(in_channels, out_channels, kernel_size=3, stride=1, padding=1)
+        self.conv1 = nn.Conv2d(
+            in_channels, out_channels, kernel_size=3, stride=1, padding=1
+        )
         self.norm2 = nn.GroupNorm(groups, out_channels, pytorch_compatible=True)
-        self.conv2 = nn.Conv2d(out_channels, out_channels, kernel_size=3, stride=1, padding=1)
+        self.conv2 = nn.Conv2d(
+            out_channels, out_channels, kernel_size=3, stride=1, padding=1
+        )
 
         if in_channels != out_channels:
             self.conv_shortcut = nn.Linear(in_channels, out_channels)
@@ -59,17 +62,28 @@ class VAEAttention(nn.Module):
 
 
 class EncoderDecoderBlock2D(nn.Module):
-    def __init__(self, in_channels, out_channels, num_layers=2, groups=32,
-                 add_downsample=False, add_upsample=False):
+    def __init__(
+        self,
+        in_channels,
+        out_channels,
+        num_layers=2,
+        groups=32,
+        add_downsample=False,
+        add_upsample=False,
+    ):
         super().__init__()
         self.resnets = [
             ResnetBlock2D(in_channels if i == 0 else out_channels, out_channels, groups)
             for i in range(num_layers)
         ]
         if add_downsample:
-            self.downsample = nn.Conv2d(out_channels, out_channels, 3, stride=2, padding=0)
+            self.downsample = nn.Conv2d(
+                out_channels, out_channels, 3, stride=2, padding=0
+            )
         if add_upsample:
-            self.upsample = nn.Conv2d(out_channels, out_channels, 3, stride=1, padding=1)
+            self.upsample = nn.Conv2d(
+                out_channels, out_channels, 3, stride=1, padding=1
+            )
 
     def __call__(self, x):
         for r in self.resnets:
@@ -83,10 +97,18 @@ class EncoderDecoderBlock2D(nn.Module):
 
 
 class Decoder(nn.Module):
-    def __init__(self, in_channels=4, out_channels=3, block_out_channels=(128, 256, 512, 512),
-                 layers_per_block=3, groups=32):
+    def __init__(
+        self,
+        in_channels=4,
+        out_channels=3,
+        block_out_channels=(128, 256, 512, 512),
+        layers_per_block=3,
+        groups=32,
+    ):
         super().__init__()
-        self.conv_in = nn.Conv2d(in_channels, block_out_channels[-1], 3, stride=1, padding=1)
+        self.conv_in = nn.Conv2d(
+            in_channels, block_out_channels[-1], 3, stride=1, padding=1
+        )
 
         self.mid_blocks = [
             ResnetBlock2D(block_out_channels[-1], block_out_channels[-1], groups),
@@ -98,13 +120,18 @@ class Decoder(nn.Module):
         channels = [channels[0]] + channels
         self.up_blocks = [
             EncoderDecoderBlock2D(
-                ic, oc, num_layers=layers_per_block, groups=groups,
+                ic,
+                oc,
+                num_layers=layers_per_block,
+                groups=groups,
                 add_upsample=i < len(block_out_channels) - 1,
             )
             for i, (ic, oc) in enumerate(zip(channels, channels[1:]))
         ]
 
-        self.conv_norm_out = nn.GroupNorm(groups, block_out_channels[0], pytorch_compatible=True)
+        self.conv_norm_out = nn.GroupNorm(
+            groups, block_out_channels[0], pytorch_compatible=True
+        )
         self.conv_out = nn.Conv2d(block_out_channels[0], out_channels, 3, padding=1)
 
     def __call__(self, x):
@@ -118,15 +145,26 @@ class Decoder(nn.Module):
 
 
 class Encoder(nn.Module):
-    def __init__(self, in_channels=3, out_channels=8, block_out_channels=(128, 256, 512, 512),
-                 layers_per_block=2, groups=32):
+    def __init__(
+        self,
+        in_channels=3,
+        out_channels=8,
+        block_out_channels=(128, 256, 512, 512),
+        layers_per_block=2,
+        groups=32,
+    ):
         super().__init__()
-        self.conv_in = nn.Conv2d(in_channels, block_out_channels[0], 3, stride=1, padding=1)
+        self.conv_in = nn.Conv2d(
+            in_channels, block_out_channels[0], 3, stride=1, padding=1
+        )
 
         channels = [block_out_channels[0]] + list(block_out_channels)
         self.down_blocks = [
             EncoderDecoderBlock2D(
-                ic, oc, num_layers=layers_per_block, groups=groups,
+                ic,
+                oc,
+                num_layers=layers_per_block,
+                groups=groups,
                 add_downsample=i < len(block_out_channels) - 1,
             )
             for i, (ic, oc) in enumerate(zip(channels, channels[1:]))
@@ -138,7 +176,9 @@ class Encoder(nn.Module):
             ResnetBlock2D(block_out_channels[-1], block_out_channels[-1], groups),
         ]
 
-        self.conv_norm_out = nn.GroupNorm(groups, block_out_channels[-1], pytorch_compatible=True)
+        self.conv_norm_out = nn.GroupNorm(
+            groups, block_out_channels[-1], pytorch_compatible=True
+        )
         self.conv_out = nn.Conv2d(block_out_channels[-1], out_channels, 3, padding=1)
 
     def __call__(self, x):

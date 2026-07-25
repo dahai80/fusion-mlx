@@ -48,7 +48,10 @@ import json
 
 import pytest
 
-pytestmark = pytest.mark.xfail(reason="strict=False: strict json_schema constraint matrix not ported to api/ routes yet", strict=False)
+pytestmark = pytest.mark.xfail(
+    reason="strict=False: strict json_schema constraint matrix not ported to api/ routes yet",
+    strict=False,
+)
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 

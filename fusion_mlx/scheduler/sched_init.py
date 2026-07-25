@@ -359,7 +359,9 @@ def __init__(
         # and is shrunk by ProcessMemoryEnforcer under pressure (#1383).
         self._store_cache_gate = _StoreCacheGate(cap=self.config.max_num_seqs)
     else:
-        logger.info("FusionMLX cache disabled (mlx-lm BatchGenerator manages KV internally)")
+        logger.info(
+            "FusionMLX cache disabled (mlx-lm BatchGenerator manages KV internally)"
+        )
 
     # Streaming detokenizers for proper UTF-8 handling (one per active request)
     # NOTE: No pooling - each request gets a fresh instance to prevent state contamination

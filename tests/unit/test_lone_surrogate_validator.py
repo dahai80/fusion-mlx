@@ -1,6 +1,9 @@
-
 import pytest
-pytestmark = pytest.mark.xfail(reason="strict=False: surrogate validation not ported to api/ routes yet", strict=False)
+
+pytestmark = pytest.mark.xfail(
+    reason="strict=False: surrogate validation not ported to api/ routes yet",
+    strict=False,
+)
 
 # SPDX-License-Identifier: Apache-2.0
 """Regression tests for F-130 + F-131 (lone-surrogate input validator).

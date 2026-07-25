@@ -221,7 +221,6 @@ class TestTwoLevelDiscovery:
         models = discover_models_from_dirs([tmp_path])
         assert isinstance(models, dict)
 
-
     def test_qwen3_5_text_only_with_vision_config_stub(self, tmp_path):
         model_dir = tmp_path / "Qwen3.6-27B-mxfp8"
         model_dir.mkdir()

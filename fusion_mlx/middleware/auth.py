@@ -184,7 +184,9 @@ def _get_configured_api_key() -> str | None:
                 if key:
                     return key
     except Exception:
-        logger.debug("Failed to read configured API key from global settings", exc_info=True)
+        logger.debug(
+            "Failed to read configured API key from global settings", exc_info=True
+        )
     try:
         from ..config import get_config
 

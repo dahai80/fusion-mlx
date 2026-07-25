@@ -4,9 +4,8 @@ Compares the delayed-dequant + two-level scaling kernel against
 a reference fp32 matmul to verify numerical correctness.
 """
 
-import numpy as np
-
 import mlx.core as mx
+import numpy as np
 
 
 def quantize_fp8_e4m3(x_np: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
@@ -21,7 +20,8 @@ def quantize_fp8_e4m3(x_np: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     return fp8_bytes, scale.squeeze(-1).astype(np.float32)
 
 
-def quantize_fp4_e2m1(w_np: np.ndarray, group_size: int = 32
+def quantize_fp4_e2m1(
+    w_np: np.ndarray, group_size: int = 32
 ) -> tuple[np.ndarray, np.ndarray]:
     """Quantize float array to fp4_e2m1 with MX scale (fp8_e8m0)."""
     N, K = w_np.shape
@@ -142,14 +142,26 @@ def test_mlx_kernel_compile():
     """Test that the Metal kernel source compiles via mx.fast.metal_kernel."""
     try:
         from pathlib import Path
+
         kernel_dir = Path(__file__).parent.parent / "kernels"
         metal_source = (kernel_dir / "w4a8_fused_matmul.metal").read_text()
 
         kernel = mx.fast.metal_kernel(
             name="w4a8_fused_matmul_half_32_32_64_2_2_32",
             input_names=[
-                "x_fp8", "scales_a", "w_packed", "w_scales", "scales_b",
-                "out", "M", "K", "N", "lda", "ldw", "lds", "ldo",
+                "x_fp8",
+                "scales_a",
+                "w_packed",
+                "w_scales",
+                "scales_b",
+                "out",
+                "M",
+                "K",
+                "N",
+                "lda",
+                "ldw",
+                "lds",
+                "ldo",
             ],
             output_names=["out"],
             source=metal_source,
@@ -157,7 +169,7 @@ def test_mlx_kernel_compile():
         print("\nMetal kernel: INITIALIZED (lazy compile)")
         print("PASS: Kernel source accepted by mx.fast.metal_kernel")
     except Exception as e:
-        print(f"\nMetal kernel: EXPECTED (needs Metal GPU)")
+        print("\nMetal kernel: EXPECTED (needs Metal GPU)")
         print(f"Error: {e}")
         print("SKIP: Kernel compile test (no Metal GPU in CI)")
 

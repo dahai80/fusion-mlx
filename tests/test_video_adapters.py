@@ -293,8 +293,12 @@ class TestControlNet:
         seq_lens = [8 * 8 // (2 * 2)]
         grid_sizes = [(1, 4, 4)]
         residuals = model.forward(
-            hidden_states, t, context, control_states,
-            seq_lens=seq_lens, grid_sizes=grid_sizes,
+            hidden_states,
+            t,
+            context,
+            control_states,
+            seq_lens=seq_lens,
+            grid_sizes=grid_sizes,
         )
         assert len(residuals) == 6
         for r in residuals:
@@ -429,14 +433,18 @@ class TestAnimateDiff:
         adapter._loaded = True
         adapter.inject(dit)
 
-        expected = orig_weight + lora_b.astype(orig_weight.dtype) @ lora_a.astype(orig_weight.dtype)
+        expected = orig_weight + lora_b.astype(orig_weight.dtype) @ lora_a.astype(
+            orig_weight.dtype
+        )
         actual = dit.blocks[0].self_attn.q.weight
         diff = mx.abs(actual - expected).max()
         assert float(diff) < 1e-4, f"LoRA merge mismatch: diff={diff}"
 
         adapter.remove(dit)
         restored_diff = mx.abs(dit.blocks[0].self_attn.q.weight - orig_weight).max()
-        assert float(restored_diff) < 1e-4, f"LoRA restore mismatch: diff={restored_diff}"
+        assert (
+            float(restored_diff) < 1e-4
+        ), f"LoRA restore mismatch: diff={restored_diff}"
 
     def test_inject_no_lora_is_noop(self):
         from fusion_mlx.video.adapters.animatediff import AnimateDiff
@@ -475,8 +483,12 @@ class TestAdapterE2E:
         seq_lens = [16]
         grid_sizes = [(1, 4, 4)]
         residuals = model.forward(
-            hidden_states, t, context, control_states,
-            seq_lens=seq_lens, grid_sizes=grid_sizes,
+            hidden_states,
+            t,
+            context,
+            control_states,
+            seq_lens=seq_lens,
+            grid_sizes=grid_sizes,
         )
         assert len(residuals) == 6, f"Expected 6 residuals, got {len(residuals)}"
         for i, r in enumerate(residuals):
@@ -487,7 +499,9 @@ class TestAdapterE2E:
         import mlx.core as mx
         import mlx.nn as nn
 
-        from fusion_mlx.video.adapters.animatediff import AnimateDiff, remap_animatediff_lora_weights
+        from fusion_mlx.video.adapters.animatediff import (
+            AnimateDiff,
+        )
 
         adapter = AnimateDiff(scale=1.0, config={"num_layers": 2})
 
@@ -528,7 +542,11 @@ class TestAdapterE2E:
             diff = float(mx.abs(merged_flat[key] - orig_flat[key]).max())
             assert diff > 1e-6, f"{key} should differ after inject (diff={diff})"
 
-        for key in ["blocks.0.cross_attn.q.weight", "blocks.0.ffn.fc2.weight", "blocks.1.self_attn.q.weight"]:
+        for key in [
+            "blocks.0.cross_attn.q.weight",
+            "blocks.0.ffn.fc2.weight",
+            "blocks.1.self_attn.q.weight",
+        ]:
             diff = float(mx.abs(merged_flat[key] - orig_flat[key]).max())
             assert diff < 1e-6, f"{key} should be unchanged (diff={diff})"
 

@@ -19,7 +19,6 @@ Usage:
 import argparse
 import json
 import logging
-import sys
 from pathlib import Path
 
 import mlx.core as mx
@@ -89,7 +88,7 @@ def convert_idformer(pt_weights: dict, output_path: str):
         new_k = k
         for src, dst in _IDFORMER_KEY_MAP.items():
             if new_k.startswith(src):
-                new_k = dst + new_k[len(src):]
+                new_k = dst + new_k[len(src) :]
                 break
         if v.ndim == 4:
             np_val = _convert_conv_weight(v)
@@ -112,7 +111,11 @@ def _load_pytorch_weights(path: str) -> dict:
 
     path = Path(path)
     if path.is_dir():
-        candidates = sorted(path.glob("*.safetensors")) + sorted(path.glob("*.bin")) + sorted(path.glob("*.pt"))
+        candidates = (
+            sorted(path.glob("*.safetensors"))
+            + sorted(path.glob("*.bin"))
+            + sorted(path.glob("*.pt"))
+        )
         if not candidates:
             raise FileNotFoundError(f"No weight files in {path}")
         logger.info("Loading from directory: %d file(s)", len(candidates))
@@ -121,6 +124,7 @@ def _load_pytorch_weights(path: str) -> dict:
             logger.info("  loading %s", f.name)
             if f.suffix == ".safetensors":
                 from safetensors.torch import load_file
+
                 state_dict.update(load_file(str(f)))
             else:
                 ckpt = torch.load(str(f), map_location="cpu", weights_only=True)
@@ -133,6 +137,7 @@ def _load_pytorch_weights(path: str) -> dict:
         logger.info("Loading single file: %s", path)
         if path.suffix == ".safetensors":
             from safetensors.torch import load_file
+
             return load_file(str(path))
         ckpt = torch.load(str(path), map_location="cpu", weights_only=True)
         if "state_dict" in ckpt:
@@ -165,7 +170,11 @@ def convert_pulid(pulid_dir: str, output_dir: str):
         idformer_dir = pulid_dir
 
     idformer_weights = None
-    for subpath in [idformer_dir, pulid_dir / "pulid_v1.safetensors", pulid_dir / "pulid.safetensors"]:
+    for subpath in [
+        idformer_dir,
+        pulid_dir / "pulid_v1.safetensors",
+        pulid_dir / "pulid.safetensors",
+    ]:
         p = Path(subpath) if not isinstance(subpath, Path) else subpath
         if p.exists():
             logger.info("=== IDFormer ===")
@@ -175,7 +184,11 @@ def convert_pulid(pulid_dir: str, output_dir: str):
     if idformer_weights is not None:
         idformer_out = output_dir / "id_former" / "weights.safetensors"
         idformer_out.parent.mkdir(parents=True, exist_ok=True)
-        idformer_keys = {k: v for k, v in idformer_weights.items() if not k.startswith("visual.") and "text." not in k}
+        idformer_keys = {
+            k: v
+            for k, v in idformer_weights.items()
+            if not k.startswith("visual.") and "text." not in k
+        }
         convert_idformer(idformer_keys, str(idformer_out))
     else:
         logger.warning("IDFormer weights not found, skipping")
@@ -195,8 +208,14 @@ def convert_pulid(pulid_dir: str, output_dir: str):
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
-    parser = argparse.ArgumentParser(description="Convert PuLID/EVA-CLIP PyTorch weights to MLX safetensors")
-    parser.add_argument("--pulid-dir", required=True, help="Path to PuLID PyTorch weights directory")
-    parser.add_argument("--output-dir", required=True, help="Output directory for MLX safetensors")
+    parser = argparse.ArgumentParser(
+        description="Convert PuLID/EVA-CLIP PyTorch weights to MLX safetensors"
+    )
+    parser.add_argument(
+        "--pulid-dir", required=True, help="Path to PuLID PyTorch weights directory"
+    )
+    parser.add_argument(
+        "--output-dir", required=True, help="Output directory for MLX safetensors"
+    )
     args = parser.parse_args()
     convert_pulid(args.pulid_dir, args.output_dir)

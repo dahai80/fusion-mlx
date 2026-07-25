@@ -189,7 +189,10 @@ def test_anthropic_stream_route_reasoning_parser_with_no_thinking_answers_as_tex
     assert thinking_deltas == []
 
 
-@pytest.mark.xfail(strict=False, reason="Streaming think_router not ported (strict=False: feature gap from routes_internal refactor) to api/anthropic_routes.py yet")
+@pytest.mark.xfail(
+    strict=False,
+    reason="Streaming think_router not ported (strict=False: feature gap from routes_internal refactor) to api/anthropic_routes.py yet",
+)
 def test_anthropic_stream_route_reasoning_parser_with_thinking_default_still_works():
     """Inverse guard: when enable_thinking is NOT explicitly False (i.e.
     default thinking-on for a reasoning model), the reasoning parser

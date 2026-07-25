@@ -9,12 +9,11 @@ import base64
 import logging
 
 from fastapi import APIRouter, Depends, HTTPException
-
-from ..middleware.auth import check_rate_limit, verify_api_key
 from pydantic import BaseModel, Field
 
 from ..engines import ImageGenEngine
 from ..engines.image_gen import VARIANT_MAP
+from ..middleware.auth import check_rate_limit, verify_api_key
 from ..pool import EnginePool
 
 logger = logging.getLogger(__name__)
@@ -83,7 +82,9 @@ class ImageGenerateResponse(BaseModel):
     created: int = Field(default_factory=lambda: int(__import__("time").time()))
 
 
-@router.post("/generate", dependencies=[Depends(verify_api_key), Depends(check_rate_limit)])
+@router.post(
+    "/generate", dependencies=[Depends(verify_api_key), Depends(check_rate_limit)]
+)
 async def generate_image(request: ImageGenerateRequest) -> ImageGenerateResponse:
     """Generate images from a text prompt using Flux variants."""
     try:

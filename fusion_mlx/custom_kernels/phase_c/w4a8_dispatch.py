@@ -37,8 +37,14 @@ def w4a8_fused_matmul(
     if _NATIVE_AVAILABLE:
         raise NotImplementedError("Native W4A8 kernel requires C++ extension build")
 
-    logger.debug("w4a8_fused_matmul fallback: using mx.quantized_matmul (fp16 activations)")
+    logger.debug(
+        "w4a8_fused_matmul fallback: using mx.quantized_matmul (fp16 activations)"
+    )
     return mx.quantized_matmul(
-        x, w_quantized, w_scales, w_biases,
-        group_size=group_size, bits=bits,
+        x,
+        w_quantized,
+        w_scales,
+        w_biases,
+        group_size=group_size,
+        bits=bits,
     )

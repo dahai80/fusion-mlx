@@ -583,7 +583,9 @@ class SmartRouter:
                     self.llm_engine._warmup(model_name, prompt, batch_size=bs)
                     logger.info(f"[Warmup] fusion-mlx: {model_name} bs={bs} done")
                 except Exception as e:
-                    logger.warning(f"[Warmup] fusion-mlx: {model_name} bs={bs} failed: {e}")
+                    logger.warning(
+                        f"[Warmup] fusion-mlx: {model_name} bs={bs} failed: {e}"
+                    )
 
             if self.rapid_engine:
                 try:

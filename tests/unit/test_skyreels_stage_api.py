@@ -2,9 +2,7 @@
 # Tests for issue #170/#177 P3 SkyReelsBackend stage API (10 methods).
 # Monkeypatched / fake-pipeline only - no real MLX model load.
 
-import asyncio
 from types import SimpleNamespace
-from unittest.mock import MagicMock
 
 import mlx.core as mx
 import pytest

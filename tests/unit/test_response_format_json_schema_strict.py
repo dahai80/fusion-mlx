@@ -49,7 +49,9 @@ from fusion_mlx.middleware.exception_handlers import install_exception_handlers
 from fusion_mlx.routes_internal.chat import router as chat_router
 from fusion_mlx.routes_internal.metrics import router as metrics_router
 
-pytestmark = pytest.mark.xfail(reason='strict=False: JSON schema strict validation not ported to api/ routes yet')
+pytestmark = pytest.mark.xfail(
+    reason="strict=False: JSON schema strict validation not ported to api/ routes yet"
+)
 
 # ---------------------------------------------------------------------------
 # Test fixtures
@@ -292,7 +294,9 @@ def _payload(*, strict: bool, stream: bool = False) -> dict:
     }
 
 
-@pytest.mark.xfail(reason="strict json_schema enforcement not ported to api/ routes yet", strict=True)
+@pytest.mark.xfail(
+    reason="strict json_schema enforcement not ported to api/ routes yet", strict=True
+)
 def test_strict_true_guided_available_non_streaming_routes_to_constrained():
     """Non-stream strict=true + outlines available → guided path used."""
     engine = _Engine(supports_guided=True, guided_text=_VALID_PAYLOAD)
@@ -319,7 +323,9 @@ def test_strict_true_guided_available_non_streaming_routes_to_constrained():
     assert snap["strict_violations_total"] == 0
 
 
-@pytest.mark.xfail(reason="strict json_schema enforcement not ported to api/ routes yet", strict=True)
+@pytest.mark.xfail(
+    reason="strict json_schema enforcement not ported to api/ routes yet", strict=True
+)
 def test_strict_true_guided_available_streaming_routes_to_constrained():
     """Stream strict=true + outlines available → guided streaming path."""
     engine = _Engine(supports_guided=True, guided_text=_VALID_PAYLOAD)
@@ -367,7 +373,9 @@ def test_strict_true_responses_validate_for_10_distinct_valid_payloads(valid_pay
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(reason="strict json_schema enforcement not ported to api/ routes yet", strict=True)
+@pytest.mark.xfail(
+    reason="strict json_schema enforcement not ported to api/ routes yet", strict=True
+)
 def test_strict_true_guided_unavailable_returns_422_on_violation_non_streaming():
     """R12-4 — pre-R12-4 ``[guided]`` missing returned 400
     ``guided_extra_required`` and broke pydantic-ai. Post-R12-4 the
@@ -416,7 +424,9 @@ def test_strict_true_guided_unavailable_returns_422_on_violation_non_streaming()
     assert snap["strict_repairs_succeeded_total"] == 0
 
 
-@pytest.mark.xfail(reason="strict json_schema enforcement not ported to api/ routes yet", strict=True)
+@pytest.mark.xfail(
+    reason="strict json_schema enforcement not ported to api/ routes yet", strict=True
+)
 def test_strict_true_guided_unavailable_returns_200_when_initial_output_valid():
     """R12-4 happy-path — strict+no-guided + initial output valid →
     200 with the validated body (no repair retry needed)."""
@@ -433,7 +443,9 @@ def test_strict_true_guided_unavailable_returns_200_when_initial_output_valid():
     assert len(engine.chat_calls) == 1
 
 
-@pytest.mark.xfail(reason="strict json_schema enforcement not ported to api/ routes yet", strict=True)
+@pytest.mark.xfail(
+    reason="strict json_schema enforcement not ported to api/ routes yet", strict=True
+)
 def test_strict_true_guided_unavailable_repair_succeeds_returns_200():
     """R12-4 — first attempt invalid → repair attempt valid → 200 with
     repaired body. Pins the counter pair (attempts + successes both
@@ -498,7 +510,9 @@ def test_strict_true_guided_unavailable_repair_succeeds_returns_200():
     ), f"repair-success path must aggregate completion tokens (got {usage})"
 
 
-@pytest.mark.xfail(reason="strict json_schema enforcement not ported to api/ routes yet", strict=True)
+@pytest.mark.xfail(
+    reason="strict json_schema enforcement not ported to api/ routes yet", strict=True
+)
 def test_strict_true_guided_unavailable_disable_flag_skips_enforcement(monkeypatch):
     """R12-4 escape hatch — ``FUSION_MLX_STRICT_JSON_SCHEMA=off`` restores
     the pre-R12-4 silent-pass-through behavior. Schema-violating output
@@ -520,7 +534,9 @@ def test_strict_true_guided_unavailable_disable_flag_skips_enforcement(monkeypat
     assert snap["strict_repairs_attempted_total"] == 0
 
 
-@pytest.mark.xfail(reason="strict json_schema enforcement not ported to api/ routes yet", strict=True)
+@pytest.mark.xfail(
+    reason="strict json_schema enforcement not ported to api/ routes yet", strict=True
+)
 def test_strict_true_guided_unavailable_repair_engine_failure_returns_502():
     """Codex r1 #3 — a non-timeout exception from ``engine.chat``
     during the REPAIR turn is a server-side failure, NOT a client
@@ -560,7 +576,9 @@ def test_strict_true_guided_unavailable_repair_engine_failure_returns_502():
     assert body["error"]["details"]["repair_exception"] == "RuntimeError"
 
 
-@pytest.mark.xfail(reason="strict json_schema enforcement not ported to api/ routes yet", strict=True)
+@pytest.mark.xfail(
+    reason="strict json_schema enforcement not ported to api/ routes yet", strict=True
+)
 def test_strict_true_guided_unavailable_repair_disable_flag_skips_retry(monkeypatch):
     """R12-4 — ``FUSION_MLX_STRICT_JSON_SCHEMA_REPAIR=off`` disables ONLY
     the repair retry; the post-decode validation + 422 envelope still
@@ -627,7 +645,9 @@ def _parse_sse_events(body: str) -> list[dict]:
     return events
 
 
-@pytest.mark.xfail(reason="strict json_schema enforcement not ported to api/ routes yet", strict=True)
+@pytest.mark.xfail(
+    reason="strict json_schema enforcement not ported to api/ routes yet", strict=True
+)
 def test_strict_true_guided_unavailable_streaming_emits_violation_finish():
     """R12-4 streaming variant — the unconstrained stream is emitted
     as usual; on validation failure the wrapper REPLACES the upstream
@@ -747,7 +767,9 @@ def test_strict_true_guided_unavailable_streaming_emits_violation_finish():
     assert snap["strict_repairs_attempted_total"] == 0
 
 
-@pytest.mark.xfail(reason="strict json_schema enforcement not ported to api/ routes yet", strict=True)
+@pytest.mark.xfail(
+    reason="strict json_schema enforcement not ported to api/ routes yet", strict=True
+)
 def test_strict_true_guided_unavailable_streaming_happy_path_passes_through():
     """R12-4 streaming variant happy path — when validation passes,
     the wrapper releases the held upstream terminal chunk in order
@@ -833,7 +855,9 @@ def test_strict_true_streaming_violation_preserves_usage_chunk():
     ), f"usage chunk emitted but all-zero: {final_usage}"
 
 
-@pytest.mark.xfail(reason="strict json_schema enforcement not ported to api/ routes yet", strict=True)
+@pytest.mark.xfail(
+    reason="strict json_schema enforcement not ported to api/ routes yet", strict=True
+)
 def test_strict_true_streaming_emits_done_even_without_upstream_done():
     """Codex r6 #1 — the strict-streaming wrapper MUST emit the
     terminal ``[DONE]`` sentinel UNCONDITIONALLY, regardless of
@@ -939,7 +963,9 @@ def test_strict_true_streaming_emits_done_even_without_upstream_done():
     ), f"expected body to end with `data: [DONE]`, got tail: {stripped[-200:]!r}"
 
 
-@pytest.mark.xfail(reason="strict json_schema enforcement not ported to api/ routes yet", strict=True)
+@pytest.mark.xfail(
+    reason="strict json_schema enforcement not ported to api/ routes yet", strict=True
+)
 def test_strict_true_streaming_emits_done_on_upstream_raise():
     """Codex r7 #1 — when the upstream generator RAISES mid-stream
     (engine crash, runtime exception, etc.), the wrapper must
@@ -1061,7 +1087,9 @@ def test_strict_true_streaming_emits_done_on_upstream_raise():
     assert "response_id" in body
 
 
-@pytest.mark.xfail(reason="strict json_schema enforcement not ported to api/ routes yet", strict=True)
+@pytest.mark.xfail(
+    reason="strict json_schema enforcement not ported to api/ routes yet", strict=True
+)
 def test_strict_true_streaming_propagates_cancelled_error():
     """Codex r8 #1 — client-disconnect / cooperative cancellation
     arrives as ``asyncio.CancelledError``. The strict-streaming
@@ -1157,7 +1185,9 @@ def test_strict_true_streaming_propagates_cancelled_error():
     )
 
 
-@pytest.mark.xfail(reason="strict json_schema enforcement not ported to api/ routes yet", strict=True)
+@pytest.mark.xfail(
+    reason="strict json_schema enforcement not ported to api/ routes yet", strict=True
+)
 def test_strict_true_streaming_bounds_buffer_with_overflow_error(monkeypatch):
     """Codex r8 #2 — the wrapper MUST cap the validation buffer to
     bound server memory on a runaway / adversarial generation. When
@@ -1259,7 +1289,9 @@ def test_strict_true_streaming_bounds_buffer_with_overflow_error(monkeypatch):
     assert body.rstrip().endswith("data: [DONE]")
 
 
-@pytest.mark.xfail(reason="strict json_schema enforcement not ported to api/ routes yet", strict=True)
+@pytest.mark.xfail(
+    reason="strict json_schema enforcement not ported to api/ routes yet", strict=True
+)
 def test_strict_true_streaming_overflow_closes_upstream_generator(monkeypatch):
     """Codex r13 #1 — on buffer overflow the wrapper MUST
     explicitly ``aclose()`` the upstream async generator so the
@@ -1357,7 +1389,9 @@ def test_strict_true_streaming_overflow_closes_upstream_generator(monkeypatch):
     )
 
 
-@pytest.mark.xfail(reason="strict json_schema enforcement not ported to api/ routes yet", strict=True)
+@pytest.mark.xfail(
+    reason="strict json_schema enforcement not ported to api/ routes yet", strict=True
+)
 def test_strict_true_streaming_buffer_cap_counts_bytes_not_chars(monkeypatch):
     """Codex r9 #1 — the buffer cap MUST count UTF-8 BYTES, not
     Python code points. Pre-fix used ``len(c)`` which counts code
@@ -1470,7 +1504,9 @@ def test_strict_false_guided_unavailable_falls_through_to_prompt_injection():
     assert len(engine.chat_calls) == 1
 
 
-@pytest.mark.xfail(reason="strict json_schema enforcement not ported to api/ routes yet", strict=True)
+@pytest.mark.xfail(
+    reason="strict json_schema enforcement not ported to api/ routes yet", strict=True
+)
 def test_strict_false_guided_available_routes_to_guided():
     """``strict=false`` + outlines available preserves the existing
     guided-routing behavior — the route opportunistically constrains
@@ -1492,7 +1528,9 @@ def test_strict_false_guided_available_routes_to_guided():
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(reason="strict json_schema enforcement not ported to api/ routes yet", strict=True)
+@pytest.mark.xfail(
+    reason="strict json_schema enforcement not ported to api/ routes yet", strict=True
+)
 def test_post_decode_violation_returns_502_non_streaming():
     """Codex r2 BLOCKING #3: under strict mode, a post-decode
     validation failure MUST surface as 5xx — a 200 with knowingly
@@ -1515,7 +1553,9 @@ def test_post_decode_violation_returns_502_non_streaming():
     assert snap["strict_violations_total"] == 1
 
 
-@pytest.mark.xfail(reason="strict json_schema enforcement not ported to api/ routes yet", strict=True)
+@pytest.mark.xfail(
+    reason="strict json_schema enforcement not ported to api/ routes yet", strict=True
+)
 def test_post_decode_violation_emits_error_sse_envelope_streaming():
     """Codex r2 BLOCKING #3 streaming variant: SSE clients can't
     receive a 5xx mid-stream (status was already 200), but the
@@ -1544,7 +1584,9 @@ def test_post_decode_violation_emits_error_sse_envelope_streaming():
     assert snap["strict_violations_total"] == 1
 
 
-@pytest.mark.xfail(reason="strict json_schema enforcement not ported to api/ routes yet", strict=True)
+@pytest.mark.xfail(
+    reason="strict json_schema enforcement not ported to api/ routes yet", strict=True
+)
 def test_post_decode_schema_violation_returns_502():
     """Schema-violation (vs JSON-parse-failure) also surfaces as 502."""
     engine = _Engine(supports_guided=True, guided_text=_INVALID_PAYLOAD_WRONG_KEY)
@@ -1609,7 +1651,9 @@ def test_metrics_exposes_strict_counters_at_zero_on_clean_process():
     assert "rapid_mlx_response_format_strict_violations_total" in body
 
 
-@pytest.mark.xfail(reason="strict json_schema enforcement not ported to api/ routes yet", strict=True)
+@pytest.mark.xfail(
+    reason="strict json_schema enforcement not ported to api/ routes yet", strict=True
+)
 def test_metrics_reflects_strict_request_count_after_traffic():
     """After three strict requests, the counter must read 3 in /metrics."""
     engine = _Engine(supports_guided=True, guided_text=_VALID_PAYLOAD)
@@ -1839,7 +1883,9 @@ def test_responses_strict_true_guided_failure_returns_502(_rate_limiter_state):
     assert snap["strict_violations_total"] == 1
 
 
-@pytest.mark.xfail(reason="strict json_schema enforcement not ported to api/ routes yet", strict=True)
+@pytest.mark.xfail(
+    reason="strict json_schema enforcement not ported to api/ routes yet", strict=True
+)
 def test_strict_true_with_tools_returns_400_chat():
     """Codex r3 BLOCKING #2 hole — strict + tools: the existing
     ``if response_format and not request.tools`` guard around the
@@ -2069,7 +2115,9 @@ def test_check_schema_validity_rejects_invalid_type_keyword():
     assert err is not None and len(err) > 0
 
 
-@pytest.mark.xfail(reason="strict json_schema enforcement not ported to api/ routes yet", strict=True)
+@pytest.mark.xfail(
+    reason="strict json_schema enforcement not ported to api/ routes yet", strict=True
+)
 def test_strict_true_invalid_schema_returns_400_chat():
     """Codex r4 NIT #5: /v1/chat/completions + strict=true + an
     invalid JSON Schema (typo in ``type``) must surface as a
@@ -2141,7 +2189,9 @@ def test_responses_strict_true_invalid_schema_returns_400(_rate_limiter_state):
 
 
 @pytest.mark.asyncio
-@pytest.mark.xfail(reason="strict json_schema enforcement not ported to api/ routes yet", strict=True)
+@pytest.mark.xfail(
+    reason="strict json_schema enforcement not ported to api/ routes yet", strict=True
+)
 async def test_strict_true_stream_helper_strips_colliding_raise_on_failure():
     """Codex r5+r7 BLOCKING (real version): the streaming chat strict
     helper, ``stream_chat_completion_guided``, sanitizes ``kwargs``
@@ -2352,7 +2402,9 @@ def test_check_schema_validity_uses_declared_draft_via_schema_key():
 # --- Codex r6 BLOCKING: guided-failure must not silently fall back -------
 
 
-@pytest.mark.xfail(reason="strict json_schema enforcement not ported to api/ routes yet", strict=True)
+@pytest.mark.xfail(
+    reason="strict json_schema enforcement not ported to api/ routes yet", strict=True
+)
 def test_strict_true_streaming_guided_raises_emits_error_sse_no_fallback():
     """Codex r6 BLOCKING: when the strict streaming path's
     ``generate_with_schema`` raises (outlines API change, grammar
@@ -2386,7 +2438,9 @@ def test_strict_true_streaming_guided_raises_emits_error_sse_no_fallback():
     assert snap["strict_violations_total"] == 1
 
 
-@pytest.mark.xfail(reason="strict json_schema enforcement not ported to api/ routes yet", strict=True)
+@pytest.mark.xfail(
+    reason="strict json_schema enforcement not ported to api/ routes yet", strict=True
+)
 def test_strict_true_non_streaming_guided_raises_returns_502_no_fallback():
     """Codex r6 BLOCKING parity (non-streaming chat path): under
     strict=true, ``generate_with_schema`` raising must surface as

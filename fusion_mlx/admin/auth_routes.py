@@ -167,7 +167,8 @@ async def setup_api_key(
 
 @_router.post("/api/logout")
 async def logout(request: Request, response: Response):
-    from .auth import _active_sessions, _sessions_lock, SESSION_COOKIE_NAME
+    from .auth import SESSION_COOKIE_NAME, _active_sessions, _sessions_lock
+
     token = request.cookies.get(SESSION_COOKIE_NAME)
     if token:
         with _sessions_lock:

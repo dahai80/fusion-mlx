@@ -3,8 +3,6 @@
 # Standalone — avoids fusion_mlx.__init__ -> mlx_whisper import chain
 # by testing the guard logic directly.
 
-import pytest
-
 
 def _has_chat_capability(engine):
     return hasattr(engine, "chat") and callable(getattr(engine, "chat", None))
@@ -87,9 +85,7 @@ class TestChatCapabilityGuard:
             _FakeTTSEngine,
         ):
             engine = cls()
-            assert hasattr(engine, "engine_type"), (
-                f"{cls.__name__} missing engine_type"
-            )
+            assert hasattr(engine, "engine_type"), f"{cls.__name__} missing engine_type"
 
     def test_non_chat_engine_yields_400_detail(self):
         engine = _FakeImageGenEngine()

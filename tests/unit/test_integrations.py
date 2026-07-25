@@ -3,8 +3,8 @@
 import json
 from pathlib import Path
 from unittest.mock import patch
-import pytest
 
+import pytest
 import yaml
 
 from fusion_mlx.integrations import get_integration, list_integrations
@@ -64,7 +64,8 @@ class TestIntegrationCommands:
             cmd = ClaudeCodeIntegration().get_command(**ctx())
 
         assert (
-            cmd == "/Users/me/My Apps/FusionMLX.app/Contents/MacOS/fusion-cli launch claude"
+            cmd
+            == "/Users/me/My Apps/FusionMLX.app/Contents/MacOS/fusion-cli launch claude"
         )
 
 
@@ -97,7 +98,9 @@ class TestCodexIntegration:
         codex = CodexIntegration()
         config_path = tmp_path / "codex" / "config.toml"
         with patch.object(CodexIntegration, "CONFIG_PATH", config_path):
-            codex.configure(**ctx(port=9000, api_key="key", model="test", host="192.168.1.100"))
+            codex.configure(
+                **ctx(port=9000, api_key="key", model="test", host="192.168.1.100")
+            )
 
         content = config_path.read_text()
         assert 'base_url = "http://192.168.1.100:9000/v1"' in content
@@ -223,9 +226,9 @@ name = "old-fusion-mlx"
             patch("fusion_mlx.integrations.codex.os.environ", base_env),
             patch("fusion_mlx.integrations.codex.os.execvpe", side_effect=fake_execvpe),
         ):
-            codex.launch(**ctx(port=8000,
-                    api_key="key",
-                    model="qwen3.5"), extra_args=("--yolo",))
+            codex.launch(
+                **ctx(port=8000, api_key="key", model="qwen3.5"), extra_args=("--yolo",)
+            )
 
         assert captured["argv"] == ["codex", "-m", "qwen3.5", "--yolo"]
         assert captured["env"]["FUSION_API_KEY"] == "key"
@@ -343,13 +346,15 @@ class TestOpenCodeIntegration:
         config_path = tmp_path / "opencode" / "opencode.json"
 
         with patch.object(OpenCodeIntegration, "CONFIG_PATH", config_path):
-            oc.configure(**ctx(
+            oc.configure(
+                **ctx(
                     port=8000,
                     api_key="key",
                     model="qwen3.5",
                     context_window=32768,
                     max_tokens=8192,
-                ))
+                )
+            )
 
         config = json.loads(config_path.read_text())
         model_config = config["provider"]["fusion-mlx"]["models"]["qwen3.5"]
@@ -361,12 +366,14 @@ class TestOpenCodeIntegration:
         config_path = tmp_path / "opencode" / "opencode.json"
 
         with patch.object(OpenCodeIntegration, "CONFIG_PATH", config_path):
-            oc.configure(**ctx(
+            oc.configure(
+                **ctx(
                     port=8000,
                     api_key="key",
                     model="qwen2.5-vl",
                     model_type="vlm",
-                ))
+                )
+            )
 
         config = json.loads(config_path.read_text())
         model_config = config["provider"]["fusion-mlx"]["models"]["qwen2.5-vl"]
@@ -381,12 +388,14 @@ class TestOpenCodeIntegration:
         config_path = tmp_path / "opencode" / "opencode.json"
 
         with patch.object(OpenCodeIntegration, "CONFIG_PATH", config_path):
-            oc.configure(**ctx(
+            oc.configure(
+                **ctx(
                     port=8000,
                     api_key="key",
                     model="qwen3.5",
                     context_window=32768,
-                ))
+                )
+            )
 
         config = json.loads(config_path.read_text())
         model_config = config["provider"]["fusion-mlx"]["models"]["qwen3.5"]
@@ -470,11 +479,13 @@ class TestOpenClawIntegration:
         config_path = tmp_path / "openclaw" / "openclaw.json"
         ocl = OpenClawIntegration()
         with patch.object(OpenClawIntegration, "CONFIG_PATH", config_path):
-            ocl.configure(**ctx(
+            ocl.configure(
+                **ctx(
                     port=8000,
                     api_key="key",
                     model="qwen2.5-vl",
-                ))
+                )
+            )
 
         model_config = json.loads(config_path.read_text())["models"]["providers"][
             "fusion-mlx"
@@ -502,7 +513,9 @@ class TestOpenClawIntegration:
         config_path = tmp_path / "openclaw" / "openclaw.json"
         ocl = OpenClawIntegration()
         with patch.object(OpenClawIntegration, "CONFIG_PATH", config_path):
-            ocl.configure(**ctx(port=9000, api_key="key", model="test", host="192.168.1.100"))
+            ocl.configure(
+                **ctx(port=9000, api_key="key", model="test", host="192.168.1.100")
+            )
 
         config = json.loads(config_path.read_text())
         assert (
@@ -576,7 +589,9 @@ class TestOpenClawIntegration:
         config_path = tmp_path / "openclaw" / "openclaw.json"
         ocl = OpenClawIntegration()
         with patch.object(OpenClawIntegration, "CONFIG_PATH", config_path):
-            ocl.configure(**ctx(port=8000, api_key="key", model="test", tools_profile="full"))
+            ocl.configure(
+                **ctx(port=8000, api_key="key", model="test", tools_profile="full")
+            )
 
         config = json.loads(config_path.read_text())
         assert config["tools"]["profile"] == "full"
@@ -650,13 +665,15 @@ class TestHermesIntegration:
 
         hermes = HermesIntegration()
         with patch.object(HermesIntegration, "CONFIG_PATH", config_path):
-            hermes.configure(**ctx(
+            hermes.configure(
+                **ctx(
                     port=8000,
                     api_key="test-key",
                     model="qwen3.5",
                     context_window=131072,
                     max_tokens=8192,
-                ))
+                )
+            )
 
         assert config_path.exists()
         config = yaml.safe_load(config_path.read_text())
@@ -676,7 +693,9 @@ class TestHermesIntegration:
 
         hermes = HermesIntegration()
         with patch.object(HermesIntegration, "CONFIG_PATH", config_path):
-            hermes.configure(**ctx(port=9000, api_key="", model="llama", host="10.0.0.5"))
+            hermes.configure(
+                **ctx(port=9000, api_key="", model="llama", host="10.0.0.5")
+            )
 
         provider = yaml.safe_load(config_path.read_text())["providers"]["fusion-mlx"]
         assert provider["base_url"] == "http://10.0.0.5:9000/v1"
@@ -762,12 +781,14 @@ class TestHermesIntegration:
 
         hermes = HermesIntegration()
         with patch.object(HermesIntegration, "CONFIG_PATH", config_path):
-            hermes.configure(**ctx(
+            hermes.configure(
+                **ctx(
                     port=8000,
                     api_key="key",
                     model="qwen3.5",
                     context_window=32768,
-                ))
+                )
+            )
 
         model_config = yaml.safe_load(config_path.read_text())["model"]
         assert model_config["context_length"] == 64000
@@ -795,13 +816,15 @@ class TestHermesIntegration:
                 "fusion_mlx.integrations.hermes.os.execvpe", side_effect=fake_execvpe
             ),
         ):
-            hermes.launch(**ctx(
+            hermes.launch(
+                **ctx(
                     port=8000,
                     api_key="secret",
                     model="qwen3.5",
                     context_window=131072,
                     max_tokens=8192,
-                ))
+                )
+            )
 
         assert captured["binary"] == "hermes"
         assert captured["argv"] == [
@@ -910,7 +933,9 @@ class TestPiIntegration:
             patch.object(PiIntegration, "MODELS_PATH", models_path),
             patch.object(PiIntegration, "SETTINGS_PATH", settings_path),
         ):
-            pi.configure(**ctx(port=9000, api_key="key", model="test", host="192.168.1.100"))
+            pi.configure(
+                **ctx(port=9000, api_key="key", model="test", host="192.168.1.100")
+            )
 
         provider = json.loads(models_path.read_text())["providers"]["fusion-mlx"]
         assert provider["baseUrl"] == "http://192.168.1.100:9000/v1"
@@ -944,12 +969,14 @@ class TestPiIntegration:
             patch.object(PiIntegration, "MODELS_PATH", models_path),
             patch.object(PiIntegration, "SETTINGS_PATH", settings_path),
         ):
-            pi.configure(**ctx(
+            pi.configure(
+                **ctx(
                     port=8000,
                     api_key="key",
                     model="qwen2.5-vl",
                     model_type="vlm",
-                ))
+                )
+            )
 
         provider = json.loads(models_path.read_text())["providers"]["fusion-mlx"]
         model_config = provider["models"][0]
@@ -1076,7 +1103,9 @@ class TestClaudeCodeIntegration:
         # Claude integration uses TUI selection so the rendered command
         # is the same regardless of model arg.
         cc = ClaudeCodeIntegration()
-        assert cc.get_command(**ctx(port=8000, api_key="", model="")) == cc.get_command(**ctx(port=8000, api_key="key", model="qwen3.5"))
+        assert cc.get_command(**ctx(port=8000, api_key="", model="")) == cc.get_command(
+            **ctx(port=8000, api_key="key", model="qwen3.5")
+        )
 
     def test_type(self):
         cc = ClaudeCodeIntegration()
@@ -1136,12 +1165,14 @@ class TestClaudeCodeIntegration:
                 ClaudeCodeIntegration, "_find_claude_binary", return_value="claude"
             ),
         ):
-            cc.launch(**ctx(
+            cc.launch(
+                **ctx(
                     port=8000,
                     api_key="secret",
                     model="qwen3.5",
                     context_window=131072,
-                ))
+                )
+            )
 
         env = captured["env"]
         assert env["ANTHROPIC_BASE_URL"] == "http://127.0.0.1:8000"
@@ -1174,11 +1205,13 @@ class TestClaudeCodeIntegration:
                 ClaudeCodeIntegration, "_find_claude_binary", return_value="claude"
             ),
         ):
-            cc.launch(**ctx(
+            cc.launch(
+                **ctx(
                     port=8000,
                     api_key="key",
                     model="fallback",
-                ))
+                )
+            )
 
         env = captured["env"]
         assert env["ANTHROPIC_DEFAULT_OPUS_MODEL"] == "fallback"
@@ -1266,9 +1299,10 @@ class TestClaudeCodeIntegration:
                 ClaudeCodeIntegration, "_find_claude_binary", return_value="claude"
             ),
         ):
-            cc.launch(**ctx(port=8000,
-                    api_key="key",
-                    model="qwen3.5"), extra_args=("--resume", "abc123"))
+            cc.launch(
+                **ctx(port=8000, api_key="key", model="qwen3.5"),
+                extra_args=("--resume", "abc123"),
+            )
 
         assert captured["argv"] == ["claude", "--resume", "abc123"]
 
@@ -1288,9 +1322,10 @@ class TestClaudeCodeIntegration:
                 ClaudeCodeIntegration, "_find_claude_binary", return_value="claude"
             ),
         ):
-            cc.launch(**ctx(port=8000,
-                    api_key="key",
-                    model="qwen3.5"), extra_args=("-r", "xyz"))
+            cc.launch(
+                **ctx(port=8000, api_key="key", model="qwen3.5"),
+                extra_args=("-r", "xyz"),
+            )
 
         assert captured["argv"] == ["claude", "-r", "xyz"]
 
@@ -1334,13 +1369,15 @@ class TestCopilotIntegration:
                 "fusion_mlx.integrations.copilot.os.execvpe", side_effect=fake_execvpe
             ),
         ):
-            copilot.launch(**ctx(
+            copilot.launch(
+                **ctx(
                     port=8000,
                     api_key="secret",
                     model="qwen3.5",
                     context_window=131072,
                     max_tokens=8192,
-                ))
+                )
+            )
 
         env = captured["env"]
         assert captured["binary"] == "copilot"

@@ -20,14 +20,19 @@ class TestInstallDetection:
 
     def test_app_bundle_detected(self, tmp_path):
         """Simulate running inside .app bundle."""
-        fake = "/Applications/FusionMLX.app/Contents/Resources/fusion_mlx/utils/install.py"
+        fake = (
+            "/Applications/FusionMLX.app/Contents/Resources/fusion_mlx/utils/install.py"
+        )
         with (
             patch("fusion_mlx.utils.install.__file__", fake),
             patch("fusion_mlx.utils.install.Path.home", return_value=tmp_path),
             patch("fusion_mlx.utils.install.shutil.which", return_value=None),
         ):
             assert is_app_bundle()
-            assert get_cli_prefix() == "/Applications/FusionMLX.app/Contents/MacOS/fusion-cli"
+            assert (
+                get_cli_prefix()
+                == "/Applications/FusionMLX.app/Contents/MacOS/fusion-cli"
+            )
             assert (
                 str(get_app_bundle_cli_path())
                 == "/Applications/FusionMLX.app/Contents/MacOS/fusion-cli"
@@ -42,11 +47,16 @@ class TestInstallDetection:
             patch("fusion_mlx.utils.install.shutil.which", return_value=None),
         ):
             assert is_app_bundle()
-            assert get_cli_prefix() == "/Users/me/Apps/FusionMLX.app/Contents/MacOS/fusion-cli"
+            assert (
+                get_cli_prefix()
+                == "/Users/me/Apps/FusionMLX.app/Contents/MacOS/fusion-cli"
+            )
 
     def test_app_bundle_uses_full_path_when_user_shim_is_not_on_path(self, tmp_path):
         """Installed app should not render bare fusion_mlx unless PATH resolves it."""
-        fake = "/Applications/FusionMLX.app/Contents/Resources/fusion_mlx/utils/install.py"
+        fake = (
+            "/Applications/FusionMLX.app/Contents/Resources/fusion_mlx/utils/install.py"
+        )
         shim = tmp_path / ".fusion-mlx" / "bin" / "fusion"
         shim.parent.mkdir(parents=True)
         shim.write_text("#!/bin/sh\n")
@@ -56,11 +66,16 @@ class TestInstallDetection:
             patch("fusion_mlx.utils.install.Path.home", return_value=tmp_path),
             patch("fusion_mlx.utils.install.shutil.which", return_value=None),
         ):
-            assert get_cli_prefix() == "/Applications/FusionMLX.app/Contents/MacOS/fusion-cli"
+            assert (
+                get_cli_prefix()
+                == "/Applications/FusionMLX.app/Contents/MacOS/fusion-cli"
+            )
 
     def test_app_bundle_uses_bare_fusion_when_path_resolves_user_shim(self, tmp_path):
         """Installed app should render the short command when PATH points at its shim."""
-        fake = "/Applications/FusionMLX.app/Contents/Resources/fusion_mlx/utils/install.py"
+        fake = (
+            "/Applications/FusionMLX.app/Contents/Resources/fusion_mlx/utils/install.py"
+        )
         shim = tmp_path / ".fusion-mlx" / "bin" / "fusion"
         shim.parent.mkdir(parents=True)
         shim.write_text("#!/bin/sh\n")
@@ -76,7 +91,9 @@ class TestInstallDetection:
         self, tmp_path
     ):
         """Public symlink to the user shim is app-managed."""
-        fake = "/Applications/FusionMLX.app/Contents/Resources/fusion_mlx/utils/install.py"
+        fake = (
+            "/Applications/FusionMLX.app/Contents/Resources/fusion_mlx/utils/install.py"
+        )
         shim = tmp_path / ".fusion-mlx" / "bin" / "fusion"
         shim.parent.mkdir(parents=True)
         shim.write_text("#!/bin/sh\n")
@@ -131,7 +148,9 @@ class TestIsHomebrew:
 class TestGetInstallMethod:
     def test_dmg_takes_priority(self):
         """App bundle detection takes priority over Homebrew."""
-        fake = "/Applications/FusionMLX.app/Contents/Resources/fusion_mlx/utils/install.py"
+        fake = (
+            "/Applications/FusionMLX.app/Contents/Resources/fusion_mlx/utils/install.py"
+        )
         with patch("fusion_mlx.utils.install.__file__", fake):
             assert get_install_method() == "dmg"
 

@@ -216,7 +216,12 @@ async def unload_models_batch(
 
     unloaded = sum(1 for v in results.values() if v == "unloaded")
     logger.info("batch unload: %d/%d unloaded", unloaded, len(model_ids))
-    return {"status": "ok", "results": results, "unloaded": unloaded, "total": len(model_ids)}
+    return {
+        "status": "ok",
+        "results": results,
+        "unloaded": unloaded,
+        "total": len(model_ids),
+    }
 
 
 @_router.post("/api/models/{model_id}/load")

@@ -132,6 +132,7 @@ def _apply_body_receive_timeout_env(server_mod, *, logger=None) -> None:
         return
     try:
         from .config import get_config as _gc
+
         _gc().body_receive_timeout_seconds = max(0.0, float(_brt_env))
     except ValueError:
         # Interpolate the env-var name via ``%s`` instead of baking it
@@ -143,6 +144,7 @@ def _apply_body_receive_timeout_env(server_mod, *, logger=None) -> None:
             _brt_env,
         )
         from .config import get_config as _gc
+
         _gc().body_receive_timeout_seconds = 15.0
 
 

@@ -226,7 +226,9 @@ class TestGate2SyntheticHybrid:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.skip(reason="requires downloading Gemma4 tokenizer from HuggingFace — flaky in CI")
+@pytest.mark.skip(
+    reason="requires downloading Gemma4 tokenizer from HuggingFace — flaky in CI"
+)
 class TestGate2RealGemma4:
     """Pin the issue-#950 reproducer end-to-end on the real Gemma 4
     tokenizer. Tokenizer files only — no model weights, no MLX load."""

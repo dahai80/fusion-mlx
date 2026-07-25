@@ -97,7 +97,8 @@ def w4a8_fused_matmul(
     )
 
 
-from .glm_moe_ffn import moe_ffn_fused, is_native_available as moe_ffn_is_native_available
+from .glm_moe_ffn import is_native_available as moe_ffn_is_native_available
+from .glm_moe_ffn import moe_ffn_fused
 
 __all__ = [
     "NATIVE_SYMBOLS",

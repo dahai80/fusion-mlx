@@ -65,7 +65,9 @@ class TestCfgDecayScale:
         # keep=10, decay_ratio=0.3 => decay_steps=3, decay_start=7
         assert _cfg_decay_scale(6, 10, 5.0, "linear", 0.3) == 5.0
         assert _cfg_decay_scale(7, 10, 5.0, "linear", 0.3) == pytest.approx(5.0)
-        assert _cfg_decay_scale(9, 10, 5.0, "linear", 0.3) == pytest.approx(5.0 - 4.0 * 2 / 3)
+        assert _cfg_decay_scale(9, 10, 5.0, "linear", 0.3) == pytest.approx(
+            5.0 - 4.0 * 2 / 3
+        )
 
     def test_unknown_mode_returns_base(self):
         assert _cfg_decay_scale(5, 10, 5.0, "bogus", 0.3) == 5.0

@@ -22,7 +22,11 @@ def check_chat_capability(engine, method_name: str, model_name: str) -> None:
     if not hasattr(engine, method_name) or not callable(
         getattr(engine, method_name, None)
     ):
-        label = "chat completions" if method_name == "chat" else "streaming chat completions"
+        label = (
+            "chat completions"
+            if method_name == "chat"
+            else "streaming chat completions"
+        )
         raise HTTPException(
             400,
             f"Model '{model_name}' does not support {label} "

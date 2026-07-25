@@ -26,7 +26,8 @@ def _find_gemma4_26b_model() -> str | None:
 MODEL_PATH = _find_gemma4_26b_model()
 
 pytestmark = pytest.mark.skipif(
-    MODEL_PATH is None, reason="No gemma-4-26B-A4B-it* model found in ~/.fusion-mlx/models/"
+    MODEL_PATH is None,
+    reason="No gemma-4-26B-A4B-it* model found in ~/.fusion-mlx/models/",
 )
 
 _TOOLS = [

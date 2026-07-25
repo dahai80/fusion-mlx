@@ -12,7 +12,9 @@ class DDIMSampler:
         beta_schedule: str = "scaled_linear",
     ):
         if beta_schedule == "scaled_linear":
-            betas = mx.linspace(beta_start ** 0.5, beta_end ** 0.5, num_train_timesteps) ** 2
+            betas = (
+                mx.linspace(beta_start**0.5, beta_end**0.5, num_train_timesteps) ** 2
+            )
         elif beta_schedule == "linear":
             betas = mx.linspace(beta_start, beta_end, num_train_timesteps)
         else:
@@ -43,20 +45,34 @@ class DDIMSampler:
         prev_timestep = timestep - self.num_train_timesteps // len(self._timesteps)
 
         alpha_prod_t = self.alphas_cumprod[timestep]
-        alpha_prod_t_prev = self.alphas_cumprod[max(prev_timestep, 0)] if prev_timestep >= 0 else mx.array(1.0)
+        alpha_prod_t_prev = (
+            self.alphas_cumprod[max(prev_timestep, 0)]
+            if prev_timestep >= 0
+            else mx.array(1.0)
+        )
 
         beta_prod_t = 1 - alpha_prod_t
-        pred_original_sample = (sample - mx.sqrt(beta_prod_t) * noise_pred) / mx.sqrt(alpha_prod_t)
+        pred_original_sample = (sample - mx.sqrt(beta_prod_t) * noise_pred) / mx.sqrt(
+            alpha_prod_t
+        )
 
-        variance = (1 - alpha_prod_t_prev) / (1 - alpha_prod_t) * (1 - alpha_prod_t / alpha_prod_t_prev)
+        variance = (
+            (1 - alpha_prod_t_prev)
+            / (1 - alpha_prod_t)
+            * (1 - alpha_prod_t / alpha_prod_t_prev)
+        )
 
         if eta > 0:
             std_dev_t = eta * mx.sqrt(variance)
         else:
             std_dev_t = mx.array(0.0)
 
-        pred_sample_direction = mx.sqrt(1 - alpha_prod_t_prev - std_dev_t ** 2) * noise_pred
-        prev_sample = mx.sqrt(alpha_prod_t_prev) * pred_original_sample + pred_sample_direction
+        pred_sample_direction = (
+            mx.sqrt(1 - alpha_prod_t_prev - std_dev_t**2) * noise_pred
+        )
+        prev_sample = (
+            mx.sqrt(alpha_prod_t_prev) * pred_original_sample + pred_sample_direction
+        )
 
         if eta > 0:
             noise = mx.random.normal(prev_sample.shape)

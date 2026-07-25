@@ -35,9 +35,16 @@ def moe_ffn_fused(
 
     if _NATIVE_AVAILABLE:
         return _moe_ffn_fused_native(
-            x, w_gate, w_up, w_down,
-            scales_a, scales_b_gate, scales_b_up, scales_b_down,
-            expert_idx, group_size,
+            x,
+            w_gate,
+            w_up,
+            w_down,
+            scales_a,
+            scales_b_gate,
+            scales_b_up,
+            scales_b_down,
+            expert_idx,
+            group_size,
         )
 
     return _moe_ffn_fused_fallback(x, w_gate, w_up, w_down)

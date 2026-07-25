@@ -433,6 +433,7 @@ def test_audio_resolve_stt_model_rejects_bogus_name():
     """F-165: bogus aliases (no slash, not in the curated map) must
     raise a structured 404 BEFORE any STT engine load is attempted."""
     from fastapi import HTTPException
+
     from fusion_mlx.routes_internal.audio import _resolve_stt_model
 
     with pytest.raises(HTTPException) as exc_info:
@@ -506,6 +507,7 @@ def test_audio_route_form_field_overrides_query(monkeypatch):
 
 def test_audio_resolve_stt_model_rejects_empty_string():
     from fastapi import HTTPException
+
     from fusion_mlx.routes_internal.audio import _resolve_stt_model
 
     with pytest.raises(HTTPException) as exc_info:

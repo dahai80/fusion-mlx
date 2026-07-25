@@ -1222,6 +1222,7 @@ def _print_startup_banner(args, cors_origins, gc_control, logger):
     if args.mcp_config:
         print(f"MCP config: {args.mcp_config}")
         import os
+
         os.environ["FUSION_MLX_MCP_CONFIG"] = args.mcp_config
 
 
@@ -1345,7 +1346,6 @@ def serve_command(args):
 
     # Import unified server
     from . import server
-    from .middleware.auth import configure_rate_limiter
     from .scheduler import SchedulerConfig
     from .server import app, load_model
 

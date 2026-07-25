@@ -7,15 +7,15 @@ import importlib.util
 import json
 import tempfile
 from pathlib import Path
-from unittest.mock import MagicMock
 
-import mlx.core as mx
 import numpy as np
-import pytest
 
 _CONVERT_MOD_PATH = (
     Path(__file__).resolve().parent.parent.parent
-    / "fusion_mlx" / "video" / "pulid_mlx" / "convert_weights.py"
+    / "fusion_mlx"
+    / "video"
+    / "pulid_mlx"
+    / "convert_weights.py"
 )
 
 
@@ -38,8 +38,7 @@ class FakeTensor:
         self.shape = (
             self._data.shape
             if ndim == 2
-            else (1, 1, 1, 1) if ndim == 4
-            else self._data.shape
+            else (1, 1, 1, 1) if ndim == 4 else self._data.shape
         )
 
     def float(self):

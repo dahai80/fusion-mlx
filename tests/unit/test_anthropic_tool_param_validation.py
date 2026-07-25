@@ -114,7 +114,10 @@ def _enum_ok_payload() -> list[dict]:
     return [{"name": "paint", "arguments": json.dumps({"color": "red"})}]
 
 
-@pytest.mark.xfail(strict=False, reason="Tool enum validation not ported (strict=False: feature gap from routes_internal refactor) to api/anthropic_routes.py yet")
+@pytest.mark.xfail(
+    strict=False,
+    reason="Tool enum validation not ported (strict=False: feature gap from routes_internal refactor) to api/anthropic_routes.py yet",
+)
 def test_messages_tool_enum_violation_returns_400():
     """F-220: enum violation on /v1/messages is enforced as HTTP 400.
 
@@ -149,7 +152,10 @@ def test_messages_tool_enum_violation_returns_400():
     assert "['red', 'blue']" in message
 
 
-@pytest.mark.xfail(strict=False, reason="Tool enum validation not ported (strict=False: feature gap from routes_internal refactor) to api/anthropic_routes.py yet")
+@pytest.mark.xfail(
+    strict=False,
+    reason="Tool enum validation not ported (strict=False: feature gap from routes_internal refactor) to api/anthropic_routes.py yet",
+)
 def test_messages_tool_enum_ok_returns_200_with_tool_use():
     """Negative control: a valid enum value still emits ``tool_use`` 200."""
     engine = _ToolCallEngine(_enum_ok_payload())
@@ -175,7 +181,10 @@ def test_messages_tool_enum_ok_returns_200_with_tool_use():
     assert body["stop_reason"] == "tool_use"
 
 
-@pytest.mark.xfail(strict=False, reason="Tool enum validation not ported (strict=False: feature gap from routes_internal refactor) to api/anthropic_routes.py yet")
+@pytest.mark.xfail(
+    strict=False,
+    reason="Tool enum validation not ported (strict=False: feature gap from routes_internal refactor) to api/anthropic_routes.py yet",
+)
 def test_messages_stream_tool_enum_violation_emits_error_event():
     """Streaming: headers are already sent so we cannot return 400 inline.
 

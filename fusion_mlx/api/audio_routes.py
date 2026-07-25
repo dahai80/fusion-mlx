@@ -583,7 +583,9 @@ async def create_speech(request: AudioSpeechRequest):
         except HTTPException:
             raise
         except Exception as exc:
-            raise HTTPException(status_code=500, detail="Internal server error") from exc
+            raise HTTPException(
+                status_code=500, detail="Internal server error"
+            ) from exc
         return StreamingResponse(
             _stream_with_prefetched_chunk(first_chunk, stream),
             media_type="audio/wav",

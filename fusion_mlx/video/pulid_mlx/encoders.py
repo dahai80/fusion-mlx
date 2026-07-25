@@ -5,8 +5,9 @@ Fuses ArcFace (1280-d) + EVA-CLIP (5 x 1024-d hidden layers) into a
 
 Pure MLX port of pulid/encoders_transformer.py (IDFormer only).
 """
-import math
+
 import logging
+import math
 
 import mlx.core as mx
 import mlx.nn as nn
@@ -137,16 +138,18 @@ class IDFormer(nn.Module):
         assert depth % 5 == 0
         self.depth_per_scale = depth // 5
 
-        scale = dim ** -0.5
+        scale = dim**-0.5
         self.latents = mx.random.normal((1, num_queries, dim)) * scale
         self.proj_out = mx.random.normal((dim, output_dim)) * scale
 
         self.layers = []
         for _ in range(depth):
-            self.layers.append([
-                PerceiverAttention(dim=dim, dim_head=dim_head, heads=heads),
-                FeedForward(dim=dim, mult=ff_mult),
-            ])
+            self.layers.append(
+                [
+                    PerceiverAttention(dim=dim, dim_head=dim_head, heads=heads),
+                    FeedForward(dim=dim, mult=ff_mult),
+                ]
+            )
 
         self.mappings = []
         for i in range(5):
@@ -181,6 +184,6 @@ class IDFormer(nn.Module):
                 latents = attn(ctx_feature, latents) + latents
                 latents = ff(latents) + latents
 
-        latents = latents[:, :self.num_queries]
+        latents = latents[:, : self.num_queries]
         latents = latents @ self.proj_out
         return latents

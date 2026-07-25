@@ -8,10 +8,9 @@ This module provides FastAPI routes for MCP tool management:
 - POST /v1/mcp/execute - Execute an MCP tool
 """
 
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, Depends, HTTPException
 
 from ..admin.auth import require_admin
-
 from .openai_models import (
     MCPExecuteRequest,
     MCPExecuteResponse,

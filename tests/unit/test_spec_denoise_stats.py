@@ -20,7 +20,10 @@ from fusion_mlx.engines.video_backends.skyreels import SkyReelsBackend
 from fusion_mlx.exceptions import ModelNotFoundError
 from fusion_mlx.video.skyreels_v3.speculative_denoise import SpecStats
 
-pytestmark = pytest.mark.xfail(reason="strict=False: spec denoise stats route not ported to api/ routes yet", strict=False)
+pytestmark = pytest.mark.xfail(
+    reason="strict=False: spec denoise stats route not ported to api/ routes yet",
+    strict=False,
+)
 
 
 logger = logging.getLogger(__name__)

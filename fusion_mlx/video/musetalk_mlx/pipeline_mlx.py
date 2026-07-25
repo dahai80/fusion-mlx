@@ -8,6 +8,7 @@ face-parse) wired in by the caller; this module owns the neural generation.
 
 Mirrors musetalk/models/vae.py (VAE wrapper) + scripts/inference.py inference loop.
 """
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -19,13 +20,13 @@ import numpy as np
 from .config import RESIZED_IMG, UNET_TIMESTEP
 from .models.unet import UNet2DConditionModel
 from .models.vae import AutoencoderKL
-from .whisper.audio2feature import apply_pe, get_whisper_chunk
-from .whisper.whisper_encoder import WhisperEncoder
 from .utils.weights import (
     load_unet_weights,
     load_vae_weights,
     load_whisper_encoder_weights,
 )
+from .whisper.audio2feature import apply_pe, get_whisper_chunk
+from .whisper.whisper_encoder import WhisperEncoder
 
 _NORM_MEAN = 0.5
 _NORM_STD = 0.5
@@ -33,18 +34,18 @@ _NORM_STD = 0.5
 
 def get_mask_tensor(size=RESIZED_IMG):
     m = np.zeros((size, size), dtype=np.float32)
-    m[: size // 2, :] = 1.0           # keep upper half; lower (mouth) gets masked
+    m[: size // 2, :] = 1.0  # keep upper half; lower (mouth) gets masked
     return m
 
 
 def preprocess_img(img_bgr, half_mask=False, size=RESIZED_IMG):
     """BGR uint8 HxWx3 (already 256²) -> normalized NCHW float32 (1,3,256,256)."""
-    rgb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB).astype(np.float32) / 255.0   # HWC
-    x = np.transpose(rgb, (2, 0, 1))                                            # CHW
+    rgb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB).astype(np.float32) / 255.0  # HWC
+    x = np.transpose(rgb, (2, 0, 1))  # CHW
     if half_mask:
         x = x * (get_mask_tensor(size) > 0.5)
     x = (x - _NORM_MEAN) / _NORM_STD
-    return x[None]                                                              # (1,3,256,256)
+    return x[None]  # (1,3,256,256)
 
 
 class MuseTalkPipeline:
@@ -52,7 +53,9 @@ class MuseTalkPipeline:
         self.vae = vae
         self.unet = unet
         self.whisper_encoder = whisper_encoder
-        self.scaling_factor = scaling_factor if scaling_factor is not None else vae.scaling_factor
+        self.scaling_factor = (
+            scaling_factor if scaling_factor is not None else vae.scaling_factor
+        )
 
     def astype(self, dtype):
         """Cast all three nets to dtype (e.g. mx.float16 for realtime/inference)."""
@@ -93,7 +96,7 @@ class MuseTalkPipeline:
         vae.eval()
         unet = UNet2DConditionModel()
         q = meta.get("quantization")
-        if q:                                     # quantized UNet: apply nn.quantize before load
+        if q:  # quantized UNet: apply nn.quantize before load
             nn.quantize(unet, group_size=q["group_size"], bits=q["bits"])
         load_native(unet, dist_dir / "unet.safetensors")
         unet.eval()
@@ -112,15 +115,17 @@ class MuseTalkPipeline:
         mp, rp = self.vae.encode(masked), self.vae.encode(ref)
         ml = self.scaling_factor * (mp.mean if deterministic else mp.sample())
         rl = self.scaling_factor * (rp.mean if deterministic else rp.sample())
-        return mx.concatenate([ml, rl], axis=1)            # (1,8,32,32) NCHW
+        return mx.concatenate([ml, rl], axis=1)  # (1,8,32,32) NCHW
 
     def decode_latents(self, latents):
         """4-ch latent -> BGR uint8 (B,256,256,3), matching VAE.decode_latents."""
-        img = self.vae.decode(latents / self.scaling_factor)       # NCHW [-1..1]-ish
+        img = self.vae.decode(latents / self.scaling_factor)  # NCHW [-1..1]-ish
         img = mx.clip(img / 2 + 0.5, 0, 1)
-        img = np.array(img.transpose(0, 2, 3, 1).astype(mx.float32))   # NHWC RGB (fp32 for numpy)
+        img = np.array(
+            img.transpose(0, 2, 3, 1).astype(mx.float32)
+        )  # NHWC RGB (fp32 for numpy)
         img = (img * 255).round().astype(np.uint8)
-        return img[..., ::-1]                                       # RGB -> BGR
+        return img[..., ::-1]  # RGB -> BGR
 
     # ---- generation ----
     def generate_faces(self, latent_batch, audio_chunks):
@@ -145,9 +150,9 @@ class MuseTalkPipeline:
         from .whisper.log_mel import N_SAMPLES, log_mel_spectrogram
 
         wav, _ = librosa.load(str(wav_path), sr=16000)
-        segs = [wav[i:i + N_SAMPLES] for i in range(0, max(len(wav), 1), N_SAMPLES)]
+        segs = [wav[i : i + N_SAMPLES] for i in range(0, max(len(wav), 1), N_SAMPLES)]
         feats = [self.whisper_encoder(log_mel_spectrogram(mx.array(s))) for s in segs]
-        stacked = mx.concatenate(feats, axis=1)               # (1, total_seq, 5, 384)
+        stacked = mx.concatenate(feats, axis=1)  # (1, total_seq, 5, 384)
         return get_whisper_chunk(stacked, len(wav), fps=fps)
 
     def run_batched(self, latent_stack, chunk_stack, batch_size=8):
@@ -157,8 +162,8 @@ class MuseTalkPipeline:
         dtype = getattr(self, "_dtype", mx.float32)
         out = []
         for i in range(0, n, batch_size):
-            lb = latent_stack[i:i + batch_size].astype(dtype)
-            cb = chunk_stack[i:i + batch_size].astype(dtype)
+            lb = latent_stack[i : i + batch_size].astype(dtype)
+            cb = chunk_stack[i : i + batch_size].astype(dtype)
             out.append(self.generate_faces(lb, cb))
         return np.concatenate(out, axis=0)
 

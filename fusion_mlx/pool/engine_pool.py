@@ -1068,9 +1068,14 @@ class EnginePool:
             # #209: free latent cache for this model so GPU arrays are reclaimed
             try:
                 from ..cache.latent_cache import remove_image_latent_cache
+
                 remove_image_latent_cache(model_id)
             except Exception:
-                logger.warning("latent cache cleanup failed for %s during unload", model_id, exc_info=True)
+                logger.warning(
+                    "latent cache cleanup failed for %s during unload",
+                    model_id,
+                    exc_info=True,
+                )
             # #209: stop engine + reclaim Metal memory (sync path previously
             # relied solely on Python GC which is nondeterministic)
             try:
@@ -1092,12 +1097,18 @@ class EnginePool:
             # #209: force reclaim Metal memory (sync path previously skipped this)
             try:
                 import gc
+
                 import mlx.core as mx
+
                 gc.collect()
                 mx.synchronize()
                 mx.clear_cache()
             except Exception:
-                logger.error("Metal memory reclaim failed during unregister of %s", model_id, exc_info=True)
+                logger.error(
+                    "Metal memory reclaim failed during unregister of %s",
+                    model_id,
+                    exc_info=True,
+                )
             logger.info(f"Unregistered engine '{model_id}' from pool")
 
     def unregister_engine(self, model_id: str) -> bool:
@@ -1115,12 +1126,21 @@ class EnginePool:
             try:
                 entry.engine.stop()
             except Exception:
-                logger.warning("engine.stop() failed for %s during unregister", model_id, exc_info=True)
+                logger.warning(
+                    "engine.stop() failed for %s during unregister",
+                    model_id,
+                    exc_info=True,
+                )
             try:
                 from ..cache.latent_cache import remove_image_latent_cache
+
                 remove_image_latent_cache(model_id)
             except Exception:
-                logger.error("latent cache cleanup failed for %s during unregister", model_id, exc_info=True)
+                logger.error(
+                    "latent cache cleanup failed for %s during unregister",
+                    model_id,
+                    exc_info=True,
+                )
             self._current_model_memory -= entry.estimated_size
             if self._process_memory_enforcer is not None:
                 self._process_memory_enforcer.update_loaded_model_bytes(
@@ -1245,9 +1265,14 @@ class EnginePool:
         # #209: free latent cache for this model so GPU arrays are reclaimed
         try:
             from ..cache.latent_cache import remove_image_latent_cache
+
             remove_image_latent_cache(model_id)
         except Exception:
-            logger.warning("latent cache cleanup failed for %s during async unload", model_id, exc_info=True)
+            logger.warning(
+                "latent cache cleanup failed for %s during async unload",
+                model_id,
+                exc_info=True,
+            )
         entry.engine = None
         entry.last_access = 0.0
         entry.actual_size = None
@@ -1775,7 +1800,11 @@ class EnginePool:
                     try:
                         await engine.stop()
                     except Exception:
-                        logger.warning("engine.stop() failed during DFlash fallback for %s", model_id, exc_info=True)
+                        logger.warning(
+                            "engine.stop() failed during DFlash fallback for %s",
+                            model_id,
+                            exc_info=True,
+                        )
                     gc.collect()
                     loop = asyncio.get_running_loop()
                     await loop.run_in_executor(
@@ -1828,7 +1857,11 @@ class EnginePool:
                     try:
                         await engine.stop()
                     except Exception:
-                        logger.warning("engine.stop() failed during force_lm fallback for %s", model_id, exc_info=True)
+                        logger.warning(
+                            "engine.stop() failed during force_lm fallback for %s",
+                            model_id,
+                            exc_info=True,
+                        )
                     gc.collect()
                     loop = asyncio.get_running_loop()
                     await loop.run_in_executor(
@@ -1866,7 +1899,11 @@ class EnginePool:
                     try:
                         await engine.stop()
                     except Exception:
-                        logger.warning("engine.stop() failed during VLM→LLM fallback for %s", model_id, exc_info=True)
+                        logger.warning(
+                            "engine.stop() failed during VLM→LLM fallback for %s",
+                            model_id,
+                            exc_info=True,
+                        )
                     gc.collect()
                     loop = asyncio.get_running_loop()
                     await loop.run_in_executor(
@@ -2067,7 +2104,8 @@ class EnginePool:
                 except Exception as e:
                     logger.warning(
                         "abort_all_requests failed for %s during shutdown: %s",
-                        model_id, e,
+                        model_id,
+                        e,
                     )
         if aborted:
             logger.info(
@@ -2088,14 +2126,17 @@ class EnginePool:
                 await asyncio.sleep(0.1)
             else:
                 still_active = [
-                    mid for mid, e in self._entries.items()
+                    mid
+                    for mid, e in self._entries.items()
                     if self._entry_has_active_requests(e)
                 ]
                 if still_active:
                     logger.warning(
                         "Shutdown: %d model(s) still have active requests after "
                         "%.1fs drain: %s",
-                        len(still_active), drain_timeout, still_active,
+                        len(still_active),
+                        drain_timeout,
+                        still_active,
                     )
 
         # Phase 2: unload all engines under the pool lock.

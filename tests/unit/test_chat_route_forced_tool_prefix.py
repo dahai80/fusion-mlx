@@ -16,11 +16,14 @@ model is in the smoke section of the PR body.
 
 from __future__ import annotations
 
+import pytest
+
 from fusion_mlx.routes_internal.chat import _forced_tool_call_prefix
 
-import pytest
-pytestmark = pytest.mark.xfail(reason="strict=False: forced tool prefix not ported to api/ routes yet", strict=False)
-
+pytestmark = pytest.mark.xfail(
+    reason="strict=False: forced tool prefix not ported to api/ routes yet",
+    strict=False,
+)
 
 
 def test_prefix_hermes_named_function():

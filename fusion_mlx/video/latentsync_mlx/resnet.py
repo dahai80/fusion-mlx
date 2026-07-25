@@ -49,7 +49,9 @@ class InflatedGroupNorm(nn.GroupNorm):
 class Upsample3D(nn.Module):
     def __init__(self, channels: int):
         super().__init__()
-        self.conv = InflatedConv2d(channels, channels, kernel_size=3, stride=1, padding=1)
+        self.conv = InflatedConv2d(
+            channels, channels, kernel_size=3, stride=1, padding=1
+        )
 
     def __call__(self, x):
         if x.ndim == 5:
@@ -90,13 +92,17 @@ class ResnetBlock3D(nn.Module):
         self.time_embedding_norm = time_embedding_norm
 
         self.norm1 = InflatedGroupNorm(groups, in_channels, pytorch_compatible=True)
-        self.conv1 = InflatedConv2d(in_channels, out_channels, kernel_size=3, stride=1, padding=1)
+        self.conv1 = InflatedConv2d(
+            in_channels, out_channels, kernel_size=3, stride=1, padding=1
+        )
 
         if temb_channels is not None:
             self.time_emb_proj = nn.Linear(temb_channels, out_channels)
 
         self.norm2 = InflatedGroupNorm(groups, out_channels, pytorch_compatible=True)
-        self.conv2 = InflatedConv2d(out_channels, out_channels, kernel_size=3, stride=1, padding=1)
+        self.conv2 = InflatedConv2d(
+            out_channels, out_channels, kernel_size=3, stride=1, padding=1
+        )
 
         if in_channels != out_channels:
             self.conv_shortcut = nn.Linear(in_channels, out_channels)

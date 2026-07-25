@@ -9,8 +9,8 @@ Core components:
 - PuLIDPipeline: Full pipeline (face detect -> EVA-CLIP -> IDFormer -> Flux)
 """
 
+from .attention import IDAttnProcessor, PerceiverAttentionCA
 from .encoders import IDFormer
-from .attention import PerceiverAttentionCA, IDAttnProcessor
 from .eva_clip import EVACLIPEncoder, EVAVisionTransformer
 from .pipeline import PuLIDPipeline
 

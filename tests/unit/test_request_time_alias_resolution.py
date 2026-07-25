@@ -222,9 +222,9 @@ class TestEmbeddingsRouteAliasResolution:
 
         from fastapi import FastAPI
         from fastapi.testclient import TestClient
-        from fusion_mlx.routes_internal.embeddings import router
 
         from fusion_mlx.config import get_config
+        from fusion_mlx.routes_internal.embeddings import router
 
         mock_engine = MagicMock()
         mock_engine.model_name = self.EMBED_HF
@@ -347,9 +347,9 @@ class TestEmbeddingsRouteAliasResolution:
 
         from fastapi import FastAPI
         from fastapi.testclient import TestClient
-        from fusion_mlx.routes_internal.embeddings import router
 
         from fusion_mlx.config import get_config
+        from fusion_mlx.routes_internal.embeddings import router
 
         cfg = get_config()
         prev_engine = cfg.embedding_engine
@@ -434,6 +434,7 @@ class TestAudioRouteAliasResolution:
         F-167 / F-210 contract pinned by ``test_audio_path_shaped_model``.
         """
         from fastapi import HTTPException
+
         from fusion_mlx.routes_internal.audio import _resolve_stt_model
 
         with pytest.raises(HTTPException) as exc:
@@ -467,6 +468,7 @@ class TestAudioRouteAliasResolution:
         """Empty string still 400 — ``"default"`` is the only sentinel
         recognized; bare ``""`` is a client bug."""
         from fastapi import HTTPException
+
         from fusion_mlx.routes_internal.audio import _resolve_stt_model
 
         with pytest.raises(HTTPException) as exc:

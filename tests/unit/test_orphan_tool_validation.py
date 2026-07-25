@@ -39,7 +39,10 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-pytestmark = pytest.mark.xfail(reason="strict=False: orphan tool_call_id validation not ported to api/ routes yet", strict=False)
+pytestmark = pytest.mark.xfail(
+    reason="strict=False: orphan tool_call_id validation not ported to api/ routes yet",
+    strict=False,
+)
 
 from fusion_mlx.config import reset_config
 from fusion_mlx.engine.base import GenerationOutput

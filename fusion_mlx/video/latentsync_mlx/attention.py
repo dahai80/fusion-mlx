@@ -1,6 +1,3 @@
-import math
-from typing import Optional
-
 import mlx.core as mx
 import mlx.nn as nn
 
@@ -21,7 +18,7 @@ class Attention(nn.Module):
 
         self.heads = heads
         self.dim_head = dim_head
-        self.scale = dim_head ** -0.5
+        self.scale = dim_head**-0.5
 
         self.to_q = nn.Linear(query_dim, inner_dim, bias=False)
         self.to_k = nn.Linear(cross_attention_dim, inner_dim, bias=False)
@@ -30,7 +27,9 @@ class Attention(nn.Module):
 
     def __call__(self, x, encoder_hidden_states=None):
         B, S, _ = x.shape
-        encoder_hidden_states = encoder_hidden_states if encoder_hidden_states is not None else x
+        encoder_hidden_states = (
+            encoder_hidden_states if encoder_hidden_states is not None else x
+        )
 
         q = self.to_q(x)
         k = self.to_k(encoder_hidden_states)
@@ -76,7 +75,9 @@ class BasicTransformerBlock(nn.Module):
 
         self.norm1 = nn.LayerNorm(dim)
         self.attn1 = Attention(
-            query_dim=dim, heads=num_heads, dim_head=dim_head,
+            query_dim=dim,
+            heads=num_heads,
+            dim_head=dim_head,
         )
 
         if add_audio_layer:

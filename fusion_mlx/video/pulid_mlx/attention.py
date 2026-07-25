@@ -8,8 +8,9 @@ regularization to prevent identity collapse.
 
 Pure MLX port of pulid/attention_processor.py.
 """
-import math
+
 import logging
+import math
 
 import mlx.core as mx
 import mlx.nn as nn
@@ -155,9 +156,15 @@ class IDAttnProcessor(nn.Module):
 
         id_k = self._apply_ortho(id_k)
 
-        q = hidden_states.reshape(b, seq_len, self.heads, self.dim_head).transpose(0, 2, 1, 3)
-        id_k = id_k.reshape(b, id_k.shape[1], self.heads, self.dim_head).transpose(0, 2, 1, 3)
-        id_v = id_v.reshape(b, id_v.shape[1], self.heads, self.dim_head).transpose(0, 2, 1, 3)
+        q = hidden_states.reshape(b, seq_len, self.heads, self.dim_head).transpose(
+            0, 2, 1, 3
+        )
+        id_k = id_k.reshape(b, id_k.shape[1], self.heads, self.dim_head).transpose(
+            0, 2, 1, 3
+        )
+        id_v = id_v.reshape(b, id_v.shape[1], self.heads, self.dim_head).transpose(
+            0, 2, 1, 3
+        )
 
         scale = 1.0 / math.sqrt(math.sqrt(self.dim_head))
         weight = (q * scale) @ (id_k * scale).transpose(0, 1, 3, 2)

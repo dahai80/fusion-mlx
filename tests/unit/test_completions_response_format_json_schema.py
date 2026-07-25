@@ -31,6 +31,7 @@ The three tests below pin the contract:
 
 from __future__ import annotations
 
+import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
@@ -39,8 +40,10 @@ from fusion_mlx.engine.base import GenerationOutput
 from fusion_mlx.middleware.exception_handlers import install_exception_handlers
 from fusion_mlx.routes_internal.completions import router as completions_router
 
-import pytest
-pytestmark = pytest.mark.xfail(reason="strict=False: completions response format not ported to api/ routes yet", strict=False)
+pytestmark = pytest.mark.xfail(
+    reason="strict=False: completions response format not ported to api/ routes yet",
+    strict=False,
+)
 
 
 _FENCED_TEXT = 'Just the JSON.\n```json\n{"answer": 42}\n```'

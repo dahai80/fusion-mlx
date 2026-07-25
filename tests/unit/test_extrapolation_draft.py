@@ -8,10 +8,10 @@ import os
 
 os.environ.setdefault("FUSION_DISABLE_COMPILE", "1")
 
-import pytest
 
 import mlx.core as mx
 
+from fusion_mlx.video.skyreels_v3.scheduler.fm_solvers_unipc import perform_guidance
 from fusion_mlx.video.skyreels_v3.speculative_denoise import (
     ExtrapolationDraft,
     SpecStats,
@@ -20,7 +20,6 @@ from fusion_mlx.video.skyreels_v3.speculative_denoise import (
     create_extrap_draft,
     speculative_denoise,
 )
-from fusion_mlx.video.skyreels_v3.scheduler.fm_solvers_unipc import perform_guidance
 
 logger = logging.getLogger(__name__)
 

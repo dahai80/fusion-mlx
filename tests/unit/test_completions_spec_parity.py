@@ -1,6 +1,9 @@
-
 import pytest
-pytestmark = pytest.mark.xfail(reason="strict=False: completions spec parity not ported to api/openai_routes.py yet", strict=False)
+
+pytestmark = pytest.mark.xfail(
+    reason="strict=False: completions spec parity not ported to api/openai_routes.py yet",
+    strict=False,
+)
 
 # SPDX-License-Identifier: Apache-2.0
 """Spec parity for legacy ``/v1/completions`` (F-152 + F-153).

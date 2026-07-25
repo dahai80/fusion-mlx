@@ -16,10 +16,10 @@ from concurrent.futures import ThreadPoolExecutor
 from types import SimpleNamespace
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, Depends, HTTPException
 
-from .convert_models import ConvertRequest, QuantizeRequest
 from ..admin.auth import require_admin
+from .convert_models import ConvertRequest, QuantizeRequest
 
 logger = logging.getLogger(__name__)
 

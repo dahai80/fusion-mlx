@@ -393,9 +393,7 @@ class ModelManager:
                     )
 
             logger.info(f"Loading model from {model_path} via EnginePool")
-            self._run_async(
-                self._load_model_via_pool(model_name, model_path)
-            )
+            self._run_async(self._load_model_via_pool(model_name, model_path))
 
             actual_memory = self._calculate_actual_memory_usage(model_path)
             db_manager = get_database_manager()

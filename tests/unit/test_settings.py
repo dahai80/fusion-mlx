@@ -170,12 +170,15 @@ class TestBurstDecodeEnv:
 
     def test_levels_set_single_request_budget(self):
         """light / balanced / aggressive map to the documented budgets."""
-        assert burst_decode_env("light")["FUSION_DECODE_BURST_BUDGET_SINGLE_S"] == "0.05"
+        assert (
+            burst_decode_env("light")["FUSION_DECODE_BURST_BUDGET_SINGLE_S"] == "0.05"
+        )
         assert (
             burst_decode_env("balanced")["FUSION_DECODE_BURST_BUDGET_SINGLE_S"] == "0.1"
         )
         assert (
-            burst_decode_env("aggressive")["FUSION_DECODE_BURST_BUDGET_SINGLE_S"] == "0.2"
+            burst_decode_env("aggressive")["FUSION_DECODE_BURST_BUDGET_SINGLE_S"]
+            == "0.2"
         )
 
     def test_on_levels_keep_burst_enabled(self):
@@ -1316,12 +1319,16 @@ class TestGlobalSettings:
         """Test various values for FUSION_CACHE_ENABLED."""
         with tempfile.TemporaryDirectory() as tmpdir:
             for value in ["true", "1", "yes"]:
-                with patch.dict(os.environ, {"FUSION_CACHE_ENABLED": value}, clear=False):
+                with patch.dict(
+                    os.environ, {"FUSION_CACHE_ENABLED": value}, clear=False
+                ):
                     settings = GlobalSettings.load(base_path=tmpdir)
                     assert settings.cache.enabled is True
 
             for value in ["false", "0", "no"]:
-                with patch.dict(os.environ, {"FUSION_CACHE_ENABLED": value}, clear=False):
+                with patch.dict(
+                    os.environ, {"FUSION_CACHE_ENABLED": value}, clear=False
+                ):
                     settings = GlobalSettings.load(base_path=tmpdir)
                     assert settings.cache.enabled is False
 

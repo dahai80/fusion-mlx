@@ -1,7 +1,12 @@
 import logging
-import numpy as np
+
 import mlx.core as mx
-from fusion_mlx.custom_kernels.phase_c.glm_moe_ffn import moe_ffn_fused, is_native_available
+import numpy as np
+
+from fusion_mlx.custom_kernels.phase_c.glm_moe_ffn import (
+    is_native_available,
+    moe_ffn_fused,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -31,8 +36,10 @@ class TestMoeFfnFallback:
         expected = reference_moe_ffn(x_np, w_gate_np, w_up_np, w_down_np)
 
         result = moe_ffn_fused(
-            mx.array(x_np), mx.array(w_gate_np),
-            mx.array(w_up_np), mx.array(w_down_np),
+            mx.array(x_np),
+            mx.array(w_gate_np),
+            mx.array(w_up_np),
+            mx.array(w_down_np),
         )
         np.testing.assert_allclose(np.array(result), expected, atol=0.01, rtol=0.01)
         logger.info("test_small: PASSED")
@@ -48,8 +55,10 @@ class TestMoeFfnFallback:
         expected = reference_moe_ffn(x_np, w_gate_np, w_up_np, w_down_np)
 
         result = moe_ffn_fused(
-            mx.array(x_np), mx.array(w_gate_np),
-            mx.array(w_up_np), mx.array(w_down_np),
+            mx.array(x_np),
+            mx.array(w_gate_np),
+            mx.array(w_up_np),
+            mx.array(w_down_np),
         )
         np.testing.assert_allclose(np.array(result), expected, atol=0.01, rtol=0.01)
         logger.info("test_single_token: PASSED")
@@ -68,8 +77,10 @@ class TestMoeFfnFallback:
         expected = reference_moe_ffn(x_np, w_gate_np, w_up_np, w_down_np)
 
         result = moe_ffn_fused(
-            mx.array(x_np), mx.array(w_gate_np),
-            mx.array(w_up_np), mx.array(w_down_np),
+            mx.array(x_np),
+            mx.array(w_gate_np),
+            mx.array(w_up_np),
+            mx.array(w_down_np),
         )
         np.testing.assert_allclose(np.array(result), expected, atol=0.1, rtol=0.01)
         logger.info("test_llm_shape: PASSED")
@@ -80,16 +91,33 @@ class TestMoeFfnMetal:
         import subprocess
         from pathlib import Path
 
-        metal_src = Path(__file__).resolve().parents[3] / "fusion_mlx" / "custom_kernels" / "metal" / "moe_ffn_fused.metal"
+        metal_src = (
+            Path(__file__).resolve().parents[3]
+            / "fusion_mlx"
+            / "custom_kernels"
+            / "metal"
+            / "moe_ffn_fused.metal"
+        )
         if not metal_src.exists():
             logger.warning("moe_ffn_fused.metal not found, skip compile test")
             return
 
         try:
             result = subprocess.run(
-                ["xcrun", "-sdk", "macosx", "metal", "-std=metal3.1",
-                 "-c", str(metal_src), "-o", "/dev/null"],
-                capture_output=True, text=True, timeout=30,
+                [
+                    "xcrun",
+                    "-sdk",
+                    "macosx",
+                    "metal",
+                    "-std=metal3.1",
+                    "-c",
+                    str(metal_src),
+                    "-o",
+                    "/dev/null",
+                ],
+                capture_output=True,
+                text=True,
+                timeout=30,
             )
             if result.returncode == 0:
                 logger.info("test_metal_source_compiles: PASSED (xcrun metal3.1)")

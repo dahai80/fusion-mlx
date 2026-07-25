@@ -16,10 +16,11 @@ import uuid
 from collections import OrderedDict
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
-from ..admin.auth import require_admin
 from pydantic import BaseModel, Field
+
+from ..admin.auth import require_admin
 
 logger = logging.getLogger(__name__)
 

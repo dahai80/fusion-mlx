@@ -1,6 +1,9 @@
-
 import pytest
-pytestmark = pytest.mark.xfail(reason="strict=False: streaming usage format differs between old routes and api/openai_routes.py", strict=False)
+
+pytestmark = pytest.mark.xfail(
+    reason="strict=False: streaming usage format differs between old routes and api/openai_routes.py",
+    strict=False,
+)
 
 # SPDX-License-Identifier: Apache-2.0
 """Route-level integration tests for the prefix-cache reporting field.

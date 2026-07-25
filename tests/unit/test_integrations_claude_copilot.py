@@ -21,7 +21,9 @@ class TestClaudeCodeIntegration:
 
     def test_get_command(self):
         cli = ClaudeCodeIntegration()
-        with patch("fusion_mlx.utils.install.get_cli_prefix", return_value="fusion-mlx"):
+        with patch(
+            "fusion_mlx.utils.install.get_cli_prefix", return_value="fusion-mlx"
+        ):
             cmd = cli.get_command(8080, "key", "model")
             assert "claude" in cmd
 
@@ -106,6 +108,8 @@ class TestCopilotIntegration:
 
     def test_get_command(self):
         cli = CopilotIntegration()
-        with patch("fusion_mlx.utils.install.get_cli_prefix", return_value="fusion-mlx"):
+        with patch(
+            "fusion_mlx.utils.install.get_cli_prefix", return_value="fusion-mlx"
+        ):
             cmd = cli.get_command(8080, "key", "model")
             assert "copilot" in cmd

@@ -41,9 +41,13 @@ already supports.
 from __future__ import annotations
 
 import json
+
 import pytest
 
-pytestmark = pytest.mark.xfail(reason="strict=False: streaming spec format differs between old routes and api/openai_routes.py", strict=False)
+pytestmark = pytest.mark.xfail(
+    reason="strict=False: streaming spec format differs between old routes and api/openai_routes.py",
+    strict=False,
+)
 from collections.abc import Sequence
 from typing import Any
 
@@ -611,6 +615,7 @@ def test_synthetic_terminal_chunk_does_not_replay_accumulated_text(monkeypatch):
     """
     from fusion_mlx.domain.events import StreamEvent
     from fusion_mlx.service import postprocessor as pp_mod
+
     # Force the defensive branch:
     #   * process_chunk yields ONLY content events (no finish event) →
     #     buffered_finish stays None

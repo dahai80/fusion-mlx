@@ -8,6 +8,7 @@ PyTorch dependency entirely.
 
 Pure MLX port of pulid/pipeline_flux.py.
 """
+
 import logging
 from pathlib import Path
 
@@ -15,8 +16,8 @@ import cv2
 import mlx.core as mx
 import numpy as np
 
+from .attention import IDAttnProcessor
 from .encoders import IDFormer
-from .attention import PerceiverAttentionCA, IDAttnProcessor
 
 logger = logging.getLogger(__name__)
 
@@ -38,7 +39,11 @@ def _crop_face(image, face_box, scale=2.5):
     crop = image[y1:y2, x1:x2]
     crop = cv2.resize(crop, (336, 336))
     crop = crop.astype(np.float32) / 255.0
-    crop = (crop - [0.48145466, 0.4578275, 0.40821073]) / [0.26862954, 0.26130258, 0.27577711]
+    crop = (crop - [0.48145466, 0.4578275, 0.40821073]) / [
+        0.26862954,
+        0.26130258,
+        0.27577711,
+    ]
     return crop.transpose(2, 0, 1)
 
 
@@ -81,6 +86,7 @@ class PuLIDPipeline:
         if eva_dir.exists():
             try:
                 from .eva_clip import EVACLIPEncoder
+
                 eva_clip = EVACLIPEncoder.from_pretrained(str(eva_dir), dtype=dtype)
                 logger.info("EVA-CLIP loaded")
             except ImportError:
@@ -89,6 +95,7 @@ class PuLIDPipeline:
         face_app = None
         try:
             import insightface
+
             face_app = insightface.app.FaceAnalysis(
                 name="antelopev2",
                 root=str(model_dir / "insightface"),
@@ -99,7 +106,9 @@ class PuLIDPipeline:
         except Exception as e:
             logger.warning(f"insightface not available: {e}")
 
-        pipeline = cls(id_former=id_former, eva_clip=eva_clip, face_app=face_app, dtype=dtype)
+        pipeline = cls(
+            id_former=id_former, eva_clip=eva_clip, face_app=face_app, dtype=dtype
+        )
         return pipeline
 
     def extract_id_embedding(self, image):
@@ -134,7 +143,9 @@ class PuLIDPipeline:
                 for h in clip_out:
                     vit_hidden.append(h.astype(self.dtype))
                 clip_cls = clip_out[-1][:, 0]
-                id_cond = mx.concatenate([arcface_emb, clip_cls], axis=-1).astype(self.dtype)
+                id_cond = mx.concatenate([arcface_emb, clip_cls], axis=-1).astype(
+                    self.dtype
+                )
             else:
                 for _ in range(5):
                     vit_hidden.append(mx.zeros((1, 1, 1024), dtype=self.dtype))
@@ -163,8 +174,12 @@ class PuLIDPipeline:
             for idx, block in enumerate(dit_model.double_blocks):
                 if idx % double_interval == 0:
                     proc = IDAttnProcessor(
-                        dim=3072, dim_head=128, heads=16, kv_dim=2048,
-                        ortho_mode="ortho_v2", scale=1.0,
+                        dim=3072,
+                        dim_head=128,
+                        heads=16,
+                        kv_dim=2048,
+                        ortho_mode="ortho_v2",
+                        scale=1.0,
                     )
                     self.attn_processors[f"double_blocks.{idx}"] = proc
                     if hasattr(block, "processor"):
@@ -174,8 +189,12 @@ class PuLIDPipeline:
             for idx, block in enumerate(dit_model.single_blocks):
                 if idx % single_interval == 0:
                     proc = IDAttnProcessor(
-                        dim=3072, dim_head=128, heads=16, kv_dim=2048,
-                        ortho_mode="ortho_v2", scale=1.0,
+                        dim=3072,
+                        dim_head=128,
+                        heads=16,
+                        kv_dim=2048,
+                        ortho_mode="ortho_v2",
+                        scale=1.0,
                     )
                     self.attn_processors[f"single_blocks.{idx}"] = proc
                     if hasattr(block, "processor"):

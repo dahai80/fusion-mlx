@@ -124,14 +124,29 @@ class SkyReelsBasePipeline:
 
         # T2-3: 缓存 CFG decay 环境变量 (每次 denoise loop 只读一次, 不再每步 os.environ.get)
         import os
+
         raw_mode = os.environ.get("FUSION_SKYREELS_CFG_DECAY", "off").strip().lower()
-        mode_map = {"": "off", "0": "off", "none": "off", "1": "linear", "2": "cosine", "3": "step"}
-        self._cfg_decay_mode = mode_map.get(raw_mode, raw_mode if raw_mode in ("linear", "cosine", "step") else "off")
+        mode_map = {
+            "": "off",
+            "0": "off",
+            "none": "off",
+            "1": "linear",
+            "2": "cosine",
+            "3": "step",
+        }
+        self._cfg_decay_mode = mode_map.get(
+            raw_mode, raw_mode if raw_mode in ("linear", "cosine", "step") else "off"
+        )
         if self._cfg_decay_mode not in ("off", "linear", "cosine", "step"):
             logger.warning("FUSION_SKYREELS_CFG_DECAY=%s unknown, using off", raw_mode)
             self._cfg_decay_mode = "off"
         try:
-            self._cfg_decay_ratio = max(0.0, min(1.0, float(os.environ.get("FUSION_SKYREELS_CFG_DECAY_RATIO", "0.3"))))
+            self._cfg_decay_ratio = max(
+                0.0,
+                min(
+                    1.0, float(os.environ.get("FUSION_SKYREELS_CFG_DECAY_RATIO", "0.3"))
+                ),
+            )
         except ValueError:
             self._cfg_decay_ratio = 0.3
 
@@ -351,7 +366,9 @@ class SkyReelsBasePipeline:
         )
         return keep
 
-    def _cfg_decay_scale(self, step_idx: int, cfg_keep_steps: int, base_scale: float) -> float:
+    def _cfg_decay_scale(
+        self, step_idx: int, cfg_keep_steps: int, base_scale: float
+    ) -> float:
         # T2-3: 渐进 CFG 衰减, 替代硬切 b=2→b=1.
         # FUSION_SKYREELS_CFG_DECAY=linear/cosine/step/off (默认 off=旧行为).
         # 衰减区间: cfg_keep_steps 的最后 decay_ratio 比例步, scale 从 base_scale→1.0.
@@ -630,7 +647,9 @@ class SkyReelsBasePipeline:
                 if ad_adapter is not None:
                     ad_adapter.load(str(self.model_path))
                     ad_adapter.inject(self.dit)
-                    logger.info("AnimateDiff: active scale=%.2f (LoRA merged)", ad_scale)
+                    logger.info(
+                        "AnimateDiff: active scale=%.2f (LoRA merged)", ad_scale
+                    )
             except Exception as exc:
                 logger.warning("AnimateDiff: load failed, skipping: %s", exc)
                 ad_adapter = None
@@ -687,7 +706,9 @@ class SkyReelsBasePipeline:
                     cn_residuals = None
 
             # 模型前向
-            cn_stride = getattr(cn_adapter, "stride", 1) if cn_adapter is not None else 1
+            cn_stride = (
+                getattr(cn_adapter, "stride", 1) if cn_adapter is not None else 1
+            )
             noise_pred = self.dit(
                 latent_input,
                 t_mx,
@@ -701,7 +722,9 @@ class SkyReelsBasePipeline:
             # CFG 合并 (仅 b=2 步; b=1 步 noise_pred 已是 cond, guidance=1.0)
             if run_cfg:
                 cfg_scale = self._cfg_decay_scale(
-                    step_idx, cfg_keep_steps, self.config.guidance_scale,
+                    step_idx,
+                    cfg_keep_steps,
+                    self.config.guidance_scale,
                 )
                 noise_pred = perform_guidance(noise_pred, cfg_scale)
 
@@ -832,7 +855,9 @@ class SkyReelsBasePipeline:
 
             if run_cfg:
                 cfg_scale = self._cfg_decay_scale(
-                    step_idx, cfg_keep_steps, self.config.guidance_scale,
+                    step_idx,
+                    cfg_keep_steps,
+                    self.config.guidance_scale,
                 )
                 noise_pred = perform_guidance(noise_pred, cfg_scale)
 
@@ -1408,7 +1433,9 @@ class SkyReelsA2VPipeline(SkyReelsBasePipeline):
                 # CFG 合并 (b=1 cond-only 步跳过)
                 if run_cfg:
                     cfg_scale = self._cfg_decay_scale(
-                        step_idx, cfg_keep_steps, cfg.guidance_scale,
+                        step_idx,
+                        cfg_keep_steps,
+                        cfg.guidance_scale,
                     )
                     noise_pred = perform_guidance(noise_pred, cfg_scale)
 

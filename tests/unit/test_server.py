@@ -7,9 +7,9 @@ import pytest
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
-from fusion_mlx.pool.engine_pool import EngineEntry
 from fusion_mlx.exceptions import InvalidRequestError, ModelNotFoundError
 from fusion_mlx.model_settings import ModelSettings, ModelSettingsManager
+from fusion_mlx.pool.engine_pool import EngineEntry
 from fusion_mlx.server import (
     EngineType,
     SamplingDefaults,

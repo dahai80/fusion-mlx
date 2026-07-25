@@ -174,7 +174,9 @@ class EngineConfig:
     # correctness is unchanged. Budget is a TIME ceiling so event-loop pause
     # is bounded consistently across hardware.
     decode_burst_max_steps: int = field(
-        default_factory=lambda: int(os.environ.get("FUSION_DECODE_BURST_MAX_STEPS", "16"))
+        default_factory=lambda: int(
+            os.environ.get("FUSION_DECODE_BURST_MAX_STEPS", "16")
+        )
     )
     decode_burst_budget_single_s: float = field(
         default_factory=lambda: float(

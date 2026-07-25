@@ -8,6 +8,7 @@ Isomorphic to the diffusers state_dict names. NHWC internally (MLX conv), NCHW p
 
 Reference: musetalk/models/unet.py (wraps diffusers) + scripts/inference.py @ 0a89dec.
 """
+
 from __future__ import annotations
 
 import math
@@ -17,16 +18,17 @@ import mlx.nn as nn
 
 from ..config import UNET_CONFIG
 
-RESNET_EPS = 1e-5     # norm_eps (resnets + conv_norm_out)
-TF_GN_EPS = 1e-6      # Transformer2DModel group_norm
-N_HEADS = 8           # constant across the net (resolved empirically from the checkpoint)
+RESNET_EPS = 1e-5  # norm_eps (resnets + conv_norm_out)
+TF_GN_EPS = 1e-6  # Transformer2DModel group_norm
+N_HEADS = 8  # constant across the net (resolved empirically from the checkpoint)
 
 
 # --------------------------------------------------------------------------- #
 # timestep embedding
 # --------------------------------------------------------------------------- #
-def get_timestep_embedding(timesteps, dim, flip_sin_to_cos=True, downscale_freq_shift=1.0,
-                           max_period=10000):
+def get_timestep_embedding(
+    timesteps, dim, flip_sin_to_cos=True, downscale_freq_shift=1.0, max_period=10000
+):
     half = dim // 2
     exponent = -math.log(max_period) * mx.arange(half, dtype=mx.float32)
     exponent = exponent / (half - downscale_freq_shift)
@@ -54,16 +56,20 @@ class TimestepEmbedding(nn.Module):
 class ResnetBlock2D(nn.Module):
     def __init__(self, in_ch, out_ch, time_dim, groups=32):
         super().__init__()
-        self.norm1 = nn.GroupNorm(groups, in_ch, eps=RESNET_EPS, pytorch_compatible=True)
+        self.norm1 = nn.GroupNorm(
+            groups, in_ch, eps=RESNET_EPS, pytorch_compatible=True
+        )
         self.conv1 = nn.Conv2d(in_ch, out_ch, 3, padding=1)
         self.time_emb_proj = nn.Linear(time_dim, out_ch)
-        self.norm2 = nn.GroupNorm(groups, out_ch, eps=RESNET_EPS, pytorch_compatible=True)
+        self.norm2 = nn.GroupNorm(
+            groups, out_ch, eps=RESNET_EPS, pytorch_compatible=True
+        )
         self.conv2 = nn.Conv2d(out_ch, out_ch, 3, padding=1)
         self.conv_shortcut = nn.Conv2d(in_ch, out_ch, 1) if in_ch != out_ch else None
 
     def __call__(self, x, temb):
         h = self.conv1(nn.silu(self.norm1(x)))
-        h = h + self.time_emb_proj(nn.silu(temb))[:, None, None, :]   # NHWC broadcast
+        h = h + self.time_emb_proj(nn.silu(temb))[:, None, None, :]  # NHWC broadcast
         h = self.conv2(nn.silu(self.norm2(h)))
         if self.conv_shortcut is not None:
             x = self.conv_shortcut(x)
@@ -73,7 +79,9 @@ class ResnetBlock2D(nn.Module):
 class Downsample2D(nn.Module):
     def __init__(self, ch):
         super().__init__()
-        self.conv = nn.Conv2d(ch, ch, 3, stride=2, padding=1)   # symmetric pad (UNet, unlike VAE)
+        self.conv = nn.Conv2d(
+            ch, ch, 3, stride=2, padding=1
+        )  # symmetric pad (UNet, unlike VAE)
 
     def __call__(self, x):
         return self.conv(x)
@@ -86,7 +94,9 @@ class Upsample2D(nn.Module):
 
     def __call__(self, x):
         b, h, w, c = x.shape
-        x = mx.broadcast_to(x[:, :, None, :, None, :], (b, h, 2, w, 2, c)).reshape(b, h * 2, w * 2, c)
+        x = mx.broadcast_to(x[:, :, None, :, None, :], (b, h, 2, w, 2, c)).reshape(
+            b, h * 2, w * 2, c
+        )
         return self.conv(x)
 
 
@@ -99,11 +109,11 @@ class CrossAttention(nn.Module):
         cross_dim = cross_dim or query_dim
         self.heads = heads
         self.dim_head = query_dim // heads
-        self.scale = self.dim_head ** -0.5
+        self.scale = self.dim_head**-0.5
         self.to_q = nn.Linear(query_dim, query_dim, bias=False)
         self.to_k = nn.Linear(cross_dim, query_dim, bias=False)
         self.to_v = nn.Linear(cross_dim, query_dim, bias=False)
-        self.to_out = [nn.Linear(query_dim, query_dim)]   # to_out.0 (to_out.1 = dropout)
+        self.to_out = [nn.Linear(query_dim, query_dim)]  # to_out.0 (to_out.1 = dropout)
 
     def _split(self, x):
         b, n, _ = x.shape
@@ -133,7 +143,11 @@ class FeedForward(nn.Module):
     def __init__(self, dim, mult=4):
         super().__init__()
         inner = dim * mult
-        self.net = [GEGLU(dim, inner), nn.Dropout(0.0), nn.Linear(inner, dim)]  # net.0, (net.1), net.2
+        self.net = [
+            GEGLU(dim, inner),
+            nn.Dropout(0.0),
+            nn.Linear(inner, dim),
+        ]  # net.0, (net.1), net.2
 
     def __call__(self, x):
         return self.net[2](self.net[0](x))
@@ -143,9 +157,9 @@ class BasicTransformerBlock(nn.Module):
     def __init__(self, dim, cross_dim, heads=N_HEADS):
         super().__init__()
         self.norm1 = nn.LayerNorm(dim)
-        self.attn1 = CrossAttention(dim, None, heads)        # self-attn
+        self.attn1 = CrossAttention(dim, None, heads)  # self-attn
         self.norm2 = nn.LayerNorm(dim)
-        self.attn2 = CrossAttention(dim, cross_dim, heads)   # cross-attn (audio)
+        self.attn2 = CrossAttention(dim, cross_dim, heads)  # cross-attn (audio)
         self.norm3 = nn.LayerNorm(dim)
         self.ff = FeedForward(dim)
 
@@ -161,7 +175,9 @@ class Transformer2DModel(nn.Module):
         super().__init__()
         self.norm = nn.GroupNorm(groups, ch, eps=TF_GN_EPS, pytorch_compatible=True)
         self.proj_in = nn.Conv2d(ch, ch, 1)
-        self.transformer_blocks = [BasicTransformerBlock(ch, cross_dim) for _ in range(n_blocks)]
+        self.transformer_blocks = [
+            BasicTransformerBlock(ch, cross_dim) for _ in range(n_blocks)
+        ]
         self.proj_out = nn.Conv2d(ch, ch, 1)
 
     def __call__(self, x, context):
@@ -178,12 +194,19 @@ class Transformer2DModel(nn.Module):
 # down / up blocks
 # --------------------------------------------------------------------------- #
 class DownBlock2D(nn.Module):
-    def __init__(self, in_ch, out_ch, time_dim, n_layers, add_downsample, cross_dim=None):
+    def __init__(
+        self, in_ch, out_ch, time_dim, n_layers, add_downsample, cross_dim=None
+    ):
         super().__init__()
         self.has_cross = cross_dim is not None
-        self.resnets = [ResnetBlock2D(in_ch if i == 0 else out_ch, out_ch, time_dim) for i in range(n_layers)]
+        self.resnets = [
+            ResnetBlock2D(in_ch if i == 0 else out_ch, out_ch, time_dim)
+            for i in range(n_layers)
+        ]
         self.attentions = (
-            [Transformer2DModel(out_ch, cross_dim) for _ in range(n_layers)] if self.has_cross else None
+            [Transformer2DModel(out_ch, cross_dim) for _ in range(n_layers)]
+            if self.has_cross
+            else None
         )
         self.downsamplers = [Downsample2D(out_ch)] if add_downsample else None
 
@@ -201,7 +224,9 @@ class DownBlock2D(nn.Module):
 
 
 class UpBlock2D(nn.Module):
-    def __init__(self, in_ch, prev_ch, out_ch, time_dim, n_layers, add_upsample, cross_dim=None):
+    def __init__(
+        self, in_ch, prev_ch, out_ch, time_dim, n_layers, add_upsample, cross_dim=None
+    ):
         super().__init__()
         self.has_cross = cross_dim is not None
         self.resnets = []
@@ -210,13 +235,15 @@ class UpBlock2D(nn.Module):
             res_in = prev_ch if i == 0 else out_ch
             self.resnets.append(ResnetBlock2D(res_in + res_skip, out_ch, time_dim))
         self.attentions = (
-            [Transformer2DModel(out_ch, cross_dim) for _ in range(n_layers)] if self.has_cross else None
+            [Transformer2DModel(out_ch, cross_dim) for _ in range(n_layers)]
+            if self.has_cross
+            else None
         )
         self.upsamplers = [Upsample2D(out_ch)] if add_upsample else None
 
     def __call__(self, x, res_list, temb, context):
         for i, resnet in enumerate(self.resnets):
-            x = mx.concatenate([x, res_list[i]], axis=-1)   # NHWC: concat channels
+            x = mx.concatenate([x, res_list[i]], axis=-1)  # NHWC: concat channels
             x = resnet(x, temb)
             if self.attentions is not None:
                 x = self.attentions[i](x, context)
@@ -228,7 +255,10 @@ class UpBlock2D(nn.Module):
 class UNetMidBlock2DCrossAttn(nn.Module):
     def __init__(self, ch, time_dim, cross_dim):
         super().__init__()
-        self.resnets = [ResnetBlock2D(ch, ch, time_dim), ResnetBlock2D(ch, ch, time_dim)]
+        self.resnets = [
+            ResnetBlock2D(ch, ch, time_dim),
+            ResnetBlock2D(ch, ch, time_dim),
+        ]
         self.attentions = [Transformer2DModel(ch, cross_dim)]
 
     def __call__(self, x, temb, context):
@@ -244,10 +274,10 @@ class UNetMidBlock2DCrossAttn(nn.Module):
 class UNet2DConditionModel(nn.Module):
     def __init__(self, cfg=UNET_CONFIG):
         super().__init__()
-        boc = cfg["block_out_channels"]            # [320,640,1280,1280]
-        n_layers = cfg["layers_per_block"]         # 2
-        cross_dim = cfg["cross_attention_dim"]     # 384
-        time_dim = boc[0] * 4                       # 1280
+        boc = cfg["block_out_channels"]  # [320,640,1280,1280]
+        n_layers = cfg["layers_per_block"]  # 2
+        cross_dim = cfg["cross_attention_dim"]  # 384
+        time_dim = boc[0] * 4  # 1280
         self.in_dim = boc[0]
         self.flip_sin_to_cos = cfg["flip_sin_to_cos"]
         self.freq_shift = cfg["freq_shift"]
@@ -262,37 +292,54 @@ class UNet2DConditionModel(nn.Module):
             in_ch = out_ch
             out_ch = boc[i]
             is_final = i == len(boc) - 1
-            self.down_blocks.append(DownBlock2D(
-                in_ch, out_ch, time_dim, n_layers, add_downsample=not is_final,
-                cross_dim=cross_dim if "CrossAttn" in dbt else None,
-            ))
+            self.down_blocks.append(
+                DownBlock2D(
+                    in_ch,
+                    out_ch,
+                    time_dim,
+                    n_layers,
+                    add_downsample=not is_final,
+                    cross_dim=cross_dim if "CrossAttn" in dbt else None,
+                )
+            )
 
         self.mid_block = UNetMidBlock2DCrossAttn(boc[-1], time_dim, cross_dim)
 
         # up blocks
         self.up_blocks = []
-        rev = list(reversed(boc))                  # [1280,1280,640,320]
+        rev = list(reversed(boc))  # [1280,1280,640,320]
         out_ch = rev[0]
         for i, ubt in enumerate(cfg["up_block_types"]):
             prev_ch = out_ch
             out_ch = rev[i]
             in_ch = rev[min(i + 1, len(boc) - 1)]
             is_final = i == len(boc) - 1
-            self.up_blocks.append(UpBlock2D(
-                in_ch, prev_ch, out_ch, time_dim, n_layers + 1, add_upsample=not is_final,
-                cross_dim=cross_dim if "CrossAttn" in ubt else None,
-            ))
+            self.up_blocks.append(
+                UpBlock2D(
+                    in_ch,
+                    prev_ch,
+                    out_ch,
+                    time_dim,
+                    n_layers + 1,
+                    add_upsample=not is_final,
+                    cross_dim=cross_dim if "CrossAttn" in ubt else None,
+                )
+            )
 
-        self.conv_norm_out = nn.GroupNorm(cfg["norm_num_groups"], boc[0], eps=RESNET_EPS, pytorch_compatible=True)
+        self.conv_norm_out = nn.GroupNorm(
+            cfg["norm_num_groups"], boc[0], eps=RESNET_EPS, pytorch_compatible=True
+        )
         self.conv_out = nn.Conv2d(boc[0], cfg["out_channels"], 3, padding=1)
 
     def __call__(self, sample_nchw, timesteps, encoder_hidden_states):
         # timestep -> embedding (computed fp32, cast to model/sample dtype)
-        t_emb = get_timestep_embedding(timesteps, self.in_dim, self.flip_sin_to_cos, 1.0)
+        t_emb = get_timestep_embedding(
+            timesteps, self.in_dim, self.flip_sin_to_cos, 1.0
+        )
         t_emb = t_emb.astype(sample_nchw.dtype)
         temb = self.time_embedding(t_emb)
 
-        x = sample_nchw.transpose(0, 2, 3, 1)      # NCHW -> NHWC
+        x = sample_nchw.transpose(0, 2, 3, 1)  # NCHW -> NHWC
         x = self.conv_in(x)
         res_samples = (x,)
         for down in self.down_blocks:
@@ -303,9 +350,9 @@ class UNet2DConditionModel(nn.Module):
 
         for up in self.up_blocks:
             n = len(up.resnets)
-            res = list(res_samples[-n:])[::-1]      # pop n, reverse (deepest first)
+            res = list(res_samples[-n:])[::-1]  # pop n, reverse (deepest first)
             res_samples = res_samples[:-n]
             x = up(x, res, temb, encoder_hidden_states)
 
         x = self.conv_out(nn.silu(self.conv_norm_out(x)))
-        return x.transpose(0, 3, 1, 2)              # NHWC -> NCHW
+        return x.transpose(0, 3, 1, 2)  # NHWC -> NCHW

@@ -268,8 +268,11 @@ async def _process_image_urls(urls: list[str]) -> list[str]:
                     result.append(t.name)
             elif u.startswith(("http://", "https://")):
                 from fusion_mlx.api._url_safety import is_safe_url_with_dns
+
                 if not is_safe_url_with_dns(u):
-                    raise HTTPException(400, "Image URL targets a private/internal address")
+                    raise HTTPException(
+                        400, "Image URL targets a private/internal address"
+                    )
                 async with httpx.AsyncClient() as c:
                     r = await c.get(u)
                     r.raise_for_status()
@@ -280,9 +283,7 @@ async def _process_image_urls(urls: list[str]) -> list[str]:
                         else (
                             ".gif"
                             if "gif" in ct
-                            else ".webp"
-                            if "webp" in ct
-                            else ".jpg"
+                            else ".webp" if "webp" in ct else ".jpg"
                         )
                     )
                     if not any(x in ct for x in ["png", "gif", "webp", "jpeg"]):
@@ -303,9 +304,7 @@ async def _process_image_urls(urls: list[str]) -> list[str]:
                         else (
                             ".gif"
                             if bd.startswith(b"GIF")
-                            else ".webp"
-                            if bd.startswith(b"RIFF")
-                            else ".png"
+                            else ".webp" if bd.startswith(b"RIFF") else ".png"
                         )
                     )
                 )

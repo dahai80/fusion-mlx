@@ -60,7 +60,9 @@ def normalize_documents(documents: list[str] | list[dict]) -> list[str]:
     return result
 
 
-@router.post("/rerank", dependencies=[Depends(verify_api_key), Depends(check_rate_limit)])
+@router.post(
+    "/rerank", dependencies=[Depends(verify_api_key), Depends(check_rate_limit)]
+)
 async def create_rerank(request: RerankRequest) -> RerankResponse:
     """
     Rerank documents by relevance to a query.

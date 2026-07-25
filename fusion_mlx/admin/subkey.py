@@ -92,9 +92,7 @@ async def delete_sub_key(
                 global_settings.save()
             except Exception as e:
                 global_settings.auth.sub_keys.insert(i, removed)
-                raise HTTPException(
-                    status_code=500, detail="Failed to save settings"
-                )
+                raise HTTPException(status_code=500, detail="Failed to save settings")
             logger.info(f"Sub key deleted: {sk.name or '(unnamed)'}")
             return {"success": True}
 
