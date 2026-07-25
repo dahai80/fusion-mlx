@@ -12,6 +12,8 @@ from fusion_mlx.video.skyreels_v3.pipelines import (
 def _make_base() -> SkyReelsBasePipeline:
     p = SkyReelsBasePipeline.__new__(SkyReelsBasePipeline)
     p.config = SkyReelsPipelineConfig()
+    p._cfg_decay_mode = "off"
+    p._cfg_decay_ratio = 0.3
     return p
 
 

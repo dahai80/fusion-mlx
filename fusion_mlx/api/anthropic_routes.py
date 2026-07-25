@@ -69,6 +69,21 @@ def set_anthropic_context(pool: EnginePool) -> None:
     _pool = pool
 
 
+async def _resolve_engine(model_name: str, adapter_path=None):
+    if _pool is not None:
+        engine = await _pool.get_engine(
+            model_name, _lease=True, adapter_path=adapter_path
+        )
+        return engine
+    from ..service.helpers import get_engine
+    return get_engine(model_name)
+
+
+async def _release_engine(model_name: str, adapter_path=None):
+    if _pool is not None:
+        await _pool.release_engine(model_name, adapter_path=adapter_path)
+
+
 def _extract_anthropic_text(msg: Any) -> str:
     """Extract plain text from an Anthropic message content."""
     if isinstance(msg, dict):
@@ -216,9 +231,6 @@ async def _run_anthropic_messages(
     req: AnthropicMessagesRequest,
 ) -> AnthropicMessagesResponse:
     """Execute a non-streaming Anthropic messages request."""
-    if _pool is None:
-        raise HTTPException(450, "Engine pool not initialized")
-
     import time as _time
 
     from ..server import resolve_model_id
@@ -228,9 +240,9 @@ async def _run_anthropic_messages(
     adapter_path = getattr(req, "adapters", None)
 
     async def _release() -> None:
-        await _pool.release_engine(model_name, adapter_path=adapter_path)
+        await _release_engine(model_name, adapter_path=adapter_path)
 
-    engine = await _pool.get_engine(model_name, _lease=True, adapter_path=adapter_path)
+    engine = await _resolve_engine(model_name, adapter_path=adapter_path)
     if engine is None:
         await _release()
         raise HTTPException(404, f"Model {model_name} not available")
@@ -286,7 +298,7 @@ async def _run_anthropic_messages(
         # #71 Phase 2: enforce tool_choice post-generation. The live
         # /v1/messages route previously ignored tool_choice entirely.
         enforced_tool_calls, tc_err = enforce_tool_choice(
-            gen.tool_calls,
+            getattr(gen, "tool_calls", []),
             openai_tool_choice,
             getattr(req, "tools", None),
         )
@@ -299,27 +311,27 @@ async def _run_anthropic_messages(
             "Non-stream done: %s, finish=%s, prompt_tok=%d, "
             "completion_tok=%d, cached=%d",
             request_id,
-            gen.finish_reason,
-            gen.prompt_tokens,
-            gen.completion_tokens,
-            gen.cached_tokens,
+            getattr(gen, "finish_reason", None),
+            getattr(gen, "prompt_tokens", 0),
+            getattr(gen, "completion_tokens", 0),
+            getattr(gen, "cached_tokens", 0),
         )
 
         # Convert to InternalResponse, then through adapter
         internal = InternalResponse(
             text=gen.text,
-            finish_reason=gen.finish_reason,
-            prompt_tokens=gen.prompt_tokens,
-            completion_tokens=gen.completion_tokens,
-            cached_tokens=gen.cached_tokens,
+            finish_reason=getattr(gen, "finish_reason", None),
+            prompt_tokens=getattr(gen, "prompt_tokens", 0),
+            completion_tokens=getattr(gen, "completion_tokens", 0),
+            cached_tokens=getattr(gen, "cached_tokens", 0),
             tool_calls=gen_tool_calls,
             request_id=request_id,
             model=model_name,
         )
         record_llm_metrics(
-            prompt_tokens=gen.prompt_tokens or 0,
-            completion_tokens=gen.completion_tokens or 0,
-            cached_tokens=gen.cached_tokens or 0,
+            prompt_tokens=getattr(gen, "prompt_tokens", 0) or 0,
+            completion_tokens=getattr(gen, "completion_tokens", 0) or 0,
+            cached_tokens=getattr(gen, "cached_tokens", 0) or 0,
             generation_duration=_time.perf_counter() - _start,
             model_id=model_name,
         )
@@ -379,7 +391,7 @@ async def _stream_anthropic_generator(
     _start = _time.perf_counter()
 
     async def _release() -> None:
-        await _pool.release_engine(model_name, adapter_path=adapter_path)
+        await _release_engine(model_name, adapter_path=adapter_path)
 
     tokenizer = getattr(engine, "_tokenizer", None) or getattr(
         engine, "tokenizer", None
@@ -431,20 +443,23 @@ async def _stream_anthropic_generator(
                     text=gen.new_text,
                     prompt_tokens=gen.prompt_tokens,
                     completion_tokens=gen.completion_tokens,
-                    cached_tokens=gen.cached_tokens,
+                    cached_tokens=getattr(gen, "cached_tokens", 0),
                 )
                 yield _adapter.format_stream_chunk(chunk, req)
 
-            if gen.finished:
+            if getattr(gen, "finished", False):
+                # Close the text content block before emitting tool blocks or message_delta
+                yield create_content_block_stop_event(0)
+
                 # Log completion (Ollama-style)
                 logger.info(
                     "Stream done: %s, finish=%s, prompt_tok=%d, "
                     "completion_tok=%d, cached=%d",
                     request_id,
-                    gen.finish_reason,
-                    gen.prompt_tokens,
-                    gen.completion_tokens,
-                    gen.cached_tokens,
+                    getattr(gen, "finish_reason", None),
+                    getattr(gen, "prompt_tokens", 0),
+                    getattr(gen, "completion_tokens", 0),
+                    getattr(gen, "cached_tokens", 0),
                 )
 
                 # #71 Phase 2: enforce tool_choice post-generation on the
@@ -452,7 +467,7 @@ async def _stream_anthropic_generator(
                 # surface an SSE error event and stop (cannot raise a status
                 # code after the 200/SSE headers are already sent).
                 stream_tool_calls, stream_tc_err = enforce_tool_choice(
-                    gen.tool_calls,
+                    getattr(gen, "tool_calls", []),
                     openai_tool_choice,
                     getattr(req, "tools", None),
                 )
@@ -485,13 +500,16 @@ async def _stream_anthropic_generator(
 
                 # Send message_delta and message_stop
                 stop_reason = map_finish_reason_to_stop_reason(
-                    gen.finish_reason,
+                    getattr(gen, "finish_reason", None),
                     bool(stream_tool_calls),
                 )
+                _gen_cached = getattr(gen, "cached_tokens", 0) or 0
                 yield create_message_delta_event(
                     stop_reason=stop_reason,
-                    output_tokens=gen.completion_tokens,
-                    input_tokens=gen.prompt_tokens,
+                    output_tokens=getattr(gen, "completion_tokens", 0),
+                    input_tokens=getattr(gen, "prompt_tokens", 0),
+                    cached_tokens=_gen_cached,
+                    prefix_cache_enabled=bool(_gen_cached),
                 )
                 yield create_message_stop_event()
 
@@ -569,25 +587,25 @@ async def anthropic_messages(
 
             model_name = resolve_model_id(request.model)
             adapter_path = getattr(request, "adapters", None)
-            engine = await _pool.get_engine(
-                model_name, _lease=True, adapter_path=adapter_path
+            engine = await _resolve_engine(
+                model_name, adapter_path=adapter_path
             )
             if engine is None:
-                await _pool.release_engine(model_name, adapter_path=adapter_path)
+                await _release_engine(model_name, adapter_path=adapter_path)
                 raise HTTPException(404, f"Model {model_name} not available")
 
             # #205 Guard: reject engines without stream_chat capability
             try:
                 check_chat_capability(engine, "stream_chat", model_name)
             except HTTPException:
-                await _pool.release_engine(model_name, adapter_path=adapter_path)
+                await _release_engine(model_name, adapter_path=adapter_path)
                 raise
 
             # Reject multimodal content on text-only models
             try:
                 check_multimodal_content(engine, request.messages, model_name)
             except HTTPException:
-                await _pool.release_engine(model_name, adapter_path=adapter_path)
+                await _release_engine(model_name, adapter_path=adapter_path)
                 raise
 
             return StreamingResponse(

@@ -56,6 +56,7 @@ router = APIRouter(prefix="/v1", tags=["openai"])
 _pool: Any = None
 _request_router: Any = None
 _adapter = OpenAIAdapter()
+log = logging.getLogger(__name__)
 
 
 def set_openai_context(pool: EnginePool, req_router: RequestRouter) -> None:
@@ -63,6 +64,22 @@ def set_openai_context(pool: EnginePool, req_router: RequestRouter) -> None:
     global _pool, _request_router
     _pool = pool
     _request_router = req_router
+
+
+async def _resolve_engine(model_name: str, adapter_path=None):
+    if _pool is not None:
+        engine = await _pool.get_engine(
+            model_name, _lease=True, adapter_path=adapter_path
+        )
+        return engine
+    from ..service.helpers import get_engine
+    log.debug("_pool None, falling back to cfg.engine for %s", model_name)
+    return get_engine(model_name)
+
+
+async def _release_engine(model_name: str, adapter_path=None):
+    if _pool is not None:
+        await _pool.release_engine(model_name, adapter_path=adapter_path)
 
 
 def _extract_text(msg: Any) -> str:
@@ -160,11 +177,8 @@ def _gen_to_internal(
     )
 
 
-async def _run_chat(request: ChatCompletionRequest) -> ChatCompletionResponse:
+async def _run_chat(request: ChatCompletionRequest, *, _skip_cap_check: bool = False) -> ChatCompletionResponse:
     """Execute a non-streaming chat completion."""
-    if _pool is None:
-        raise HTTPException(450, "Engine pool not initialized")
-
     from ..server import resolve_model_id
 
     _start = time.perf_counter()
@@ -172,26 +186,28 @@ async def _run_chat(request: ChatCompletionRequest) -> ChatCompletionResponse:
     adapter_path = getattr(request, "adapters", None)
 
     async def _release() -> None:
-        await _pool.release_engine(model_name, adapter_path=adapter_path)
+        await _release_engine(model_name, adapter_path=adapter_path)
 
-    engine = await _pool.get_engine(model_name, _lease=True, adapter_path=adapter_path)
+    engine = await _resolve_engine(model_name, adapter_path=adapter_path)
     if engine is None:
         await _release()
         raise HTTPException(404, f"Model {model_name} not available")
 
     # #205 Guard: reject engines without chat capability (e.g. ImageGenEngine)
-    try:
-        check_chat_capability(engine, "chat", model_name)
-    except HTTPException:
-        await _release()
-        raise
+    if not _skip_cap_check:
+        try:
+            check_chat_capability(engine, "chat", model_name)
+        except HTTPException:
+            await _release()
+            raise
 
     # Reject multimodal content on text-only models
-    try:
-        check_multimodal_content(engine, request.messages, model_name)
-    except HTTPException:
-        await _release()
-        raise
+    if not _skip_cap_check:
+        try:
+            check_multimodal_content(engine, request.messages, model_name)
+        except HTTPException:
+            await _release()
+            raise
 
     messages = _messages_for_engine(request.messages, getattr(engine, "is_mllm", False))
     sampling = _build_sampling_params(request)
@@ -291,7 +307,7 @@ async def _stream_chat_generator(
     _start = time.perf_counter()
 
     async def _release() -> None:
-        await _pool.release_engine(model_name, adapter_path=adapter_path)
+        await _release_engine(model_name, adapter_path=adapter_path)
 
     messages = _messages_for_engine(request.messages, getattr(engine, "is_mllm", False))
     sampling = _build_sampling_params(request)
@@ -487,7 +503,7 @@ async def _stream_chat_generator(
         await _release()
 
 
-async def _stream_chat(request: ChatCompletionRequest) -> StreamingResponse:
+async def _stream_chat(request: ChatCompletionRequest, *, _skip_cap_check: bool = False) -> StreamingResponse:
     """Execute a streaming chat completion.
 
     Resolves the engine BEFORE creating the StreamingResponse so that
@@ -495,33 +511,32 @@ async def _stream_chat(request: ChatCompletionRequest) -> StreamingResponse:
     handler's exception handlers and become proper HTTP 404/503 responses
     instead of unhandled ASGI 500 errors after the stream has started.
     """
-    if _pool is None:
-        raise HTTPException(450, "Engine pool not initialized")
-
     from ..server import resolve_model_id
 
     model_name = resolve_model_id(request.model)
     adapter_path = getattr(request, "adapters", None)
 
     # Resolve engine first — exceptions propagate to route handler
-    engine = await _pool.get_engine(model_name, _lease=True, adapter_path=adapter_path)
+    engine = await _resolve_engine(model_name, adapter_path=adapter_path)
     if engine is None:
-        await _pool.release_engine(model_name, adapter_path=adapter_path)
+        await _release_engine(model_name, adapter_path=adapter_path)
         raise HTTPException(404, f"Model {model_name} not available")
 
     # #205 Guard: reject engines without stream_chat capability
-    try:
-        check_chat_capability(engine, "stream_chat", model_name)
-    except HTTPException:
-        await _pool.release_engine(model_name, adapter_path=adapter_path)
-        raise
+    if not _skip_cap_check:
+        try:
+            check_chat_capability(engine, "stream_chat", model_name)
+        except HTTPException:
+            await _release_engine(model_name, adapter_path=adapter_path)
+            raise
 
     # Reject multimodal content on text-only models
-    try:
-        check_multimodal_content(engine, request.messages, model_name)
-    except HTTPException:
-        await _pool.release_engine(model_name, adapter_path=adapter_path)
-        raise
+    if not _skip_cap_check:
+        try:
+            check_multimodal_content(engine, request.messages, model_name)
+        except HTTPException:
+            await _release_engine(model_name, adapter_path=adapter_path)
+            raise
 
     return StreamingResponse(
         _stream_chat_generator(request, engine, model_name, adapter_path),
@@ -747,8 +762,8 @@ async def completions(
             stop=request.stop,
         )
         if request.stream:
-            return await _stream_chat(chat_req)
-        return await _run_chat(chat_req)
+            return await _stream_chat(chat_req, _skip_cap_check=True)
+        return await _run_chat(chat_req, _skip_cap_check=True)
     except HTTPException:
         raise
     except ModelNotFoundError as exc:
@@ -784,7 +799,7 @@ async def list_models(
         return ModelsResponse(data=[])
 
     try:
-        model_ids = _pool.list_models() if hasattr(_pool, "list_models") else []
+        model_ids = _pool.list_models() if _pool is not None and hasattr(_pool, "list_models") else []
     except Exception:
         model_ids = []
 

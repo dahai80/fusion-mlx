@@ -11,12 +11,18 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from fusion_mlx.admin.auth import require_admin
 from fusion_mlx.api import convert_routes
 
 
 @pytest.fixture(scope="session")
 def client():
     app = FastAPI()
+
+    async def _fake_require_admin():
+        return True
+
+    app.dependency_overrides[require_admin] = _fake_require_admin
     app.include_router(convert_routes.router)
     with TestClient(app) as c:
         yield c

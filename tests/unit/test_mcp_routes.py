@@ -7,6 +7,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from fusion_mlx.admin.auth import require_admin
 from fusion_mlx.api import mcp_routes
 from fusion_mlx.mcp.types import (
     MCPServerState,
@@ -19,6 +20,11 @@ from fusion_mlx.mcp.types import (
 @pytest.fixture
 def app_client():
     app = FastAPI()
+
+    async def _fake_require_admin():
+        return True
+
+    app.dependency_overrides[require_admin] = _fake_require_admin
     app.include_router(mcp_routes.router)
     return TestClient(app)
 
