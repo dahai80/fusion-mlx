@@ -222,6 +222,24 @@ class TestTwoLevelDiscovery:
         assert isinstance(models, dict)
 
     def test_qwen3_5_text_only_with_vision_config_stub(self, tmp_path):
+        model_dir = tmp_path / "Qwen3.6-27B-text-only"
+        model_dir.mkdir()
+        config = {
+            "model_type": "qwen3_5",
+            "architectures": ["Qwen3_5ForConditionalGeneration"],
+            "vision_config": {
+                "deepstack_visual_indexes": [],
+            },
+        }
+        (model_dir / "config.json").write_text(json.dumps(config))
+        result = detect_model_type(model_dir)
+        assert result == "llm", (
+            "Qwen3.5/3.6 text-only quants with empty "
+            "deepstack_visual_indexes and no encoder params "
+            "must be detected as llm, not vlm"
+        )
+
+    def test_qwen3_5_vlm_with_empty_deepstack_but_encoder(self, tmp_path):
         model_dir = tmp_path / "Qwen3.6-27B-mxfp8"
         model_dir.mkdir()
         config = {
@@ -229,15 +247,17 @@ class TestTwoLevelDiscovery:
             "architectures": ["Qwen3_5ForConditionalGeneration"],
             "vision_config": {
                 "deepstack_visual_indexes": [],
-                "depth": 32,
-                "hidden_size": 1280,
+                "depth": 27,
+                "hidden_size": 1152,
+                "num_heads": 16,
             },
         }
         (model_dir / "config.json").write_text(json.dumps(config))
         result = detect_model_type(model_dir)
-        assert result == "llm", (
-            "Qwen3.5/3.6 text-only quants with empty "
-            "deepstack_visual_indexes must be detected as llm, not vlm"
+        assert result == "vlm", (
+            "Qwen3.5/3.6 with empty deepstack_visual_indexes but "
+            "full vision encoder (depth/hidden_size/num_heads) "
+            "must be detected as vlm"
         )
 
     def test_qwen3_5_vlm_with_active_vision(self, tmp_path):

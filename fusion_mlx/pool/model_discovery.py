@@ -556,12 +556,20 @@ def _has_vision_subconfig(config: dict) -> bool:
     """
     if "vision_config" in config:
         vcfg = config["vision_config"]
-        # Qwen3.5/3.6 text-only models have vision_config but empty
-        # deepstack_visual_indexes — this means no visual layers are active
         if isinstance(vcfg, dict):
             idx = vcfg.get("deepstack_visual_indexes")
             if isinstance(idx, list) and len(idx) == 0:
-                return False
+                # deepstack_visual_indexes=[] means deepstack doesn't use visual
+                # layers — but the model may still ship a full vision encoder
+                # (depth/hidden_size/num_heads present).  Only treat as text-only
+                # when the vision_config is truly a stub (no encoder layers).
+                has_encoder = (
+                    vcfg.get("depth", 0) > 0
+                    or vcfg.get("hidden_size", 0) > 0
+                    or vcfg.get("num_heads", 0) > 0
+                )
+                if not has_encoder:
+                    return False
         return True
     if "vit_config" in config:
         return True
