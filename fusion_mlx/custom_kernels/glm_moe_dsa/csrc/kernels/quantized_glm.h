@@ -718,6 +718,11 @@ METAL_FUNC void qmv_quad_impl(
   const int in_vec_size_g = in_vec_size / group_size;
   const int out_row = tid.y * quads_per_simd * results_per_quadgroup + quad_gid;
 
+  // Guard: skip if out_row exceeds output dimension
+  if (out_row >= out_vec_size) {
+    return;
+  }
+
   w += out_row * in_vec_size_w + quad_lid * packs_per_thread;
   scales += out_row * in_vec_size_g + quad_lid / scale_step_per_thread;
   biases += out_row * in_vec_size_g + quad_lid / scale_step_per_thread;
@@ -727,15 +732,17 @@ METAL_FUNC void qmv_quad_impl(
   U sum = load_vector<T, U, values_per_thread, bits>(x, x_thread);
 
   for (int row = 0; row < results_per_quadgroup; row++) {
+    // Guard: skip rows beyond output dimension
+    if (row * quads_per_simd + out_row >= out_vec_size) {
+      break;
+    }
     auto wl = (const device uint8_t*)(w + row * in_vec_size_w * quads_per_simd);
     const device T* sl = scales + row * in_vec_size_g * quads_per_simd;
     const device T* bl = biases + row * in_vec_size_g * quads_per_simd;
 
     U s = sl[0];
     U b = bl[0];
-    if (row * quads_per_simd + out_row < out_vec_size) {
-      result[row] += qdot<U, values_per_thread, bits>(wl, x_thread, s, b, sum);
-    }
+    result[row] += qdot<U, values_per_thread, bits>(wl, x_thread, s, b, sum);
   }
 
   for (int row = 0; row < results_per_quadgroup; row++) {
@@ -780,6 +787,11 @@ METAL_FUNC void qmv_fast_impl(
   const int out_row = tid.y * (num_simdgroups * results_per_simdgroup) +
       simd_gid * results_per_simdgroup;
 
+  // Guard: skip if out_row exceeds output dimension
+  if (out_row >= out_vec_size) {
+    return;
+  }
+
   ws += out_row * in_vec_size_w + simd_lid * packs_per_thread * bytes_per_pack;
   scales += out_row * in_vec_size_g + simd_lid / scale_step_per_thread;
   biases += out_row * in_vec_size_g + simd_lid / scale_step_per_thread;
@@ -807,7 +819,7 @@ METAL_FUNC void qmv_fast_impl(
 
   for (int row = 0; row < results_per_simdgroup; row++) {
     result[row] = simd_sum(result[row]);
-    if (simd_lid == 0) {
+    if (simd_lid == 0 && out_row + row < out_vec_size) {
       y[row] = static_cast<T>(result[row]);
     }
   }

@@ -19,7 +19,7 @@ jobs:
              - run: black --check fusion_mlx/ tests/
 
      test:
-         runs-on: ubuntu-latest
+         runs-on: macos-14
          steps:
              - uses: actions/checkout@v4
              - uses: actions/setup-python@v5

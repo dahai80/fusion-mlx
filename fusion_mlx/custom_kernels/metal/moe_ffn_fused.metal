@@ -282,8 +282,11 @@ void moe_ffn_fused(
     const int row_block = int(tid.y) * BM;
     const int col_block_inter = int(tid.x) * BN;
     const short valid_m = short(min(int(BM), M - row_block));
+    const short valid_n_inter = short(min(int(BN), inter_dim - col_block_inter));
 
     if (col_block_inter >= inter_dim) return;
+    // Guard against invalid expert index (would cause OOB on weight buffers)
+    if (expert_idx < 0) return;
 
     // Warp tiling constants
     constexpr short SM = BM / WM;
@@ -351,7 +354,11 @@ void moe_ffn_fused(
             gate_scales + k_it * BK / group_size, lds_gate_up / group_size,
             tgp.p1.Bs_packed, tgp.p1.Bs_scales,
             simd_group_id, simd_lane_id);
-        loader_gate.load_unsafe();
+        if (valid_n_inter == BN) {
+            loader_gate.load_unsafe();
+        } else {
+            loader_gate.load_safe(valid_n_inter, BK);
+        }
 
         threadgroup_barrier(mem_flags::mem_threadgroup);
 
@@ -402,7 +409,11 @@ void moe_ffn_fused(
             up_scales + k_it * BK / group_size, lds_gate_up / group_size,
             tgp.p1.Bs_packed, tgp.p1.Bs_scales,
             simd_group_id, simd_lane_id);
-        loader_up.load_unsafe();
+        if (valid_n_inter == BN) {
+            loader_up.load_unsafe();
+        } else {
+            loader_up.load_safe(valid_n_inter, BK);
+        }
 
         threadgroup_barrier(mem_flags::mem_threadgroup);
 
@@ -495,12 +506,17 @@ void moe_ffn_fused(
 
     // Load down weight tile
     threadgroup_barrier(mem_flags::mem_threadgroup);
+    const short valid_n_out = short(min(int(BM), K_out - col_block_out));
     FP4WeightLoader<BM, BN, BN_PAD, tgp_size, group_size> loader_down(
         down_packed, ldw_down / 2,
         down_scales, lds_down / group_size,
         tgp.p2.Bs2_packed, tgp.p2.Bs2_scales,
         simd_group_id, simd_lane_id);
-    loader_down.load_unsafe();
+    if (valid_n_out == BM) {
+        loader_down.load_unsafe();
+    } else {
+        loader_down.load_safe(valid_n_out, BN);
+    }
 
     threadgroup_barrier(mem_flags::mem_threadgroup);
 
@@ -561,7 +577,7 @@ void moe_ffn_fused(
             for (short j = 0; j < 2; j++) {
                 const short gr = row_base + r;
                 const short gc = col_base + c_base + j;
-                if (gr < BM && gc < BM) {
+                if (gr < BM && gc < valid_n_out) {
                     out_tile[gr * ldo + gc] = scale_b_dn * frag_C_down[m * kMmaTilesN + n].thread_elements()[j];
                 }
             }
