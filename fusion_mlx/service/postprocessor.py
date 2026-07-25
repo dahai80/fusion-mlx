@@ -176,6 +176,93 @@ def _json_fence_suffix_hold_len(text: str) -> int:
     return 0
 
 
+def _create_reasoning_parser(cfg: ServerConfig):
+    """Create a per-request reasoning parser instance."""
+    if not cfg.reasoning_parser_name:
+        return None
+    try:
+        from ..reasoning import get_parser
+
+        parser_cls = get_parser(cfg.reasoning_parser_name)
+        return parser_cls()
+    except Exception as e:
+        logger.warning(f"Failed to create reasoning parser: {e}")
+        return None
+
+
+def _create_tool_parser(cfg: ServerConfig, tools_requested: bool):
+    """Create a per-request tool parser instance."""
+    from ..tool_parsers import ToolParserManager
+
+    tokenizer = None
+    if cfg.engine is not None and hasattr(cfg.engine, "_tokenizer"):
+        tokenizer = cfg.engine._tokenizer
+
+    if cfg.enable_auto_tool_choice and cfg.tool_call_parser:
+        try:
+            parser_cls = ToolParserManager.get_tool_parser(cfg.tool_call_parser)
+            return parser_cls(tokenizer)
+        except Exception as e:
+            logger.warning(f"Failed to create tool parser for streaming: {e}")
+
+    if tools_requested and cfg.reasoning_parser_name:
+        _PARSER_MAP = {"minimax": "minimax"}
+        inferred = _PARSER_MAP.get(cfg.reasoning_parser_name)
+        if inferred:
+            try:
+                parser_cls = ToolParserManager.get_tool_parser(inferred)
+                return parser_cls(tokenizer)
+            except Exception as e:
+                logger.debug(f"Auto-infer tool parser for streaming failed: {e}")
+
+    return None
+
+
+def _clone_injected_tool_parser(parser):
+    if parser is None:
+        return None
+    if isinstance(parser, Mock) and os.environ.get("PYTEST_CURRENT_TEST"):
+        return parser
+    try:
+        return copy.deepcopy(parser)
+    except Exception:
+        try:
+            return copy.copy(parser)
+        except Exception:
+            raise RuntimeError(
+                "Injected tool parser instance could not be cloned safely "
+                "for a request-local stream"
+            )
+
+
+def _forced_tool_choice_arguments_violate_object_root(args_str: str | None) -> bool:
+    """Return True when a finalized anchor's arguments value
+    violates the OpenAI spec — not a JSON-object-encoded string."""
+    if not args_str or not args_str.strip():
+        return False
+    try:
+        parsed = json.loads(args_str)
+    except (ValueError, TypeError):
+        open_braces = args_str.count("{")
+        close_braces = args_str.count("}")
+        if open_braces > close_braces:
+            return False
+        return True
+    return not isinstance(parsed, dict)
+
+
+def _continuation_arguments_definitively_non_object(args_str: str | None) -> bool:
+    """Return True when a continuation fragment's accumulated arguments
+    are definitively not a JSON object."""
+    if not args_str or not args_str.strip():
+        return False
+    try:
+        parsed = json.loads(args_str)
+    except (ValueError, TypeError):
+        return False
+    return not isinstance(parsed, dict)
+
+
 class StreamingPostProcessor:
     """Processes streaming engine output into StreamEvents.
 
@@ -1341,65 +1428,17 @@ class StreamingPostProcessor:
         return tail
 
     @staticmethod
+    @staticmethod
     def _create_reasoning_parser(cfg: ServerConfig):
-        """Create a per-request reasoning parser instance."""
-        if not cfg.reasoning_parser_name:
-            return None
-        try:
-            from ..reasoning import get_parser
-
-            parser_cls = get_parser(cfg.reasoning_parser_name)
-            return parser_cls()
-        except Exception as e:
-            logger.warning(f"Failed to create reasoning parser: {e}")
-            return None
+        return _create_reasoning_parser(cfg)
 
     @staticmethod
     def _create_tool_parser(cfg: ServerConfig, tools_requested: bool):
-        """Create a per-request tool parser instance."""
-        from ..tool_parsers import ToolParserManager
-
-        tokenizer = None
-        if cfg.engine is not None and hasattr(cfg.engine, "_tokenizer"):
-            tokenizer = cfg.engine._tokenizer
-
-        # Primary: explicit tool parser configured
-        if cfg.enable_auto_tool_choice and cfg.tool_call_parser:
-            try:
-                parser_cls = ToolParserManager.get_tool_parser(cfg.tool_call_parser)
-                return parser_cls(tokenizer)
-            except Exception as e:
-                logger.warning(f"Failed to create tool parser for streaming: {e}")
-
-        # Fallback: auto-infer from reasoning parser
-        if tools_requested and cfg.reasoning_parser_name:
-            _PARSER_MAP = {"minimax": "minimax"}
-            inferred = _PARSER_MAP.get(cfg.reasoning_parser_name)
-            if inferred:
-                try:
-                    parser_cls = ToolParserManager.get_tool_parser(inferred)
-                    return parser_cls(tokenizer)
-                except Exception as e:
-                    logger.debug(f"Auto-infer tool parser for streaming failed: {e}")
-
-        return None
+        return _create_tool_parser(cfg, tools_requested)
 
     @staticmethod
     def _clone_injected_tool_parser(parser):
-        if parser is None:
-            return None
-        if isinstance(parser, Mock) and os.environ.get("PYTEST_CURRENT_TEST"):
-            return parser
-        try:
-            return copy.deepcopy(parser)
-        except Exception:
-            try:
-                return copy.copy(parser)
-            except Exception:
-                raise RuntimeError(
-                    "Injected tool parser instance could not be cloned safely "
-                    "for a request-local stream"
-                )
+        return _clone_injected_tool_parser(parser)
 
     def set_thinking_model(self, model_name: str):
         """Enable Nemotron-style thinking prefix injection."""
@@ -1733,124 +1772,12 @@ class StreamingPostProcessor:
         return tc == "required"
 
     @staticmethod
-    def _forced_tool_choice_arguments_violate_object_root(args_str: str | None) -> bool:
-        """Return True when a finalized anchor's ``arguments`` value
-        violates the OpenAI spec.
-
-        OpenAI spec: ``tool_calls[i].function.arguments`` is a string
-        encoding a JSON object — every declared tool schema is
-        ``{"type":"object","properties":{…}}``. A finalized anchor
-        whose ``arguments`` is not a JSON-object-encoded string can
-        never satisfy the contract, so it is always the model's
-        scratch:
-
-          * Bare integer (``"1234567890"``) — valid JSON, non-object.
-          * JSON-quoted string (``'"☉ Paris output"'``) — valid JSON,
-            non-object.
-          * Bare unquoted text (``"☉ Paris output"``) — NOT valid
-            JSON at all (codex r2 BLOCKING #1; observed when phi-4-
-            mini-reasoning panics inside ``<think>`` and emits prose
-            where a JSON body should be).
-          * Array root (``"[1,2]"``) — valid JSON, non-object.
-
-        Codex r3 BLOCKING #1: a hypothetical future parser could emit
-        a single delta carrying ``name`` PLUS the first PARTIAL JSON
-        fragment (``'{"city":"Pa'``). The current rapid-mlx parsers
-        don't do this (hermes / qwen3coder finalize args before
-        emitting them with ``name``, or emit ``name`` with empty args
-        and stream fragments WITHOUT ``name``), but defending against
-        it costs only one extra check: when ``json.loads`` raises AND
-        the braces are unbalanced (``{`` count > ``}`` count), treat
-        the body as a partial fragment in progress and pass it
-        through — the cap + tool-call merge will accumulate the rest
-        across subsequent deltas. Only when the JSON is well-formed
-        AND non-object, OR when it's syntactically broken with
-        balanced braces, do we drop the anchor.
-
-        Returns False when ``args_str`` is missing / empty /
-        whitespace — that's an anchor delta carrying just
-        ``name`` + ``id`` with the body deferred to subsequent
-        argument-fragment deltas.
-        """
-        if not args_str or not args_str.strip():
-            return False
-        try:
-            parsed = json.loads(args_str)
-        except (ValueError, TypeError):
-            # Non-JSON: distinguish "partial fragment in progress"
-            # (unclosed object → keep) from "finalized non-JSON
-            # scratch" (balanced or no braces → drop).
-            # ``{`` count > ``}`` count means the JSON object is mid-
-            # stream and hasn't finished closing — pass through so
-            # subsequent fragments can complete it. Otherwise it's
-            # genuine non-JSON (bare prose / mis-escaped) — drop.
-            open_braces = args_str.count("{")
-            close_braces = args_str.count("}")
-            if open_braces > close_braces:
-                return False
-            return True
-        return not isinstance(parsed, dict)
+    def _forced_tool_choice_arguments_violate_object_root(args_str):
+        return _forced_tool_choice_arguments_violate_object_root(args_str)
 
     @staticmethod
-    def _continuation_arguments_definitively_non_object(args_str: str | None) -> bool:
-        """Narrower twin of
-        ``_forced_tool_choice_arguments_violate_object_root`` for
-        argument-only continuation fragments.
-
-        Continuations carry partial bytes — the FULL ``arguments``
-        string is built across multiple deltas by the cap+merge layer.
-        A finalized-anchor predicate (which treats "close >= open"
-        as garbage to drop) is too strict here: a legitimate closing
-        fragment such as ``ris"}`` of the split ``{"city":"Pa`` /
-        ``ris"}`` pair has more ``}`` than ``{`` and the
-        finalized-anchor helper would WRONGLY drop it — truncating an
-        otherwise-valid forced/required tool call. Codex r10-J r5
-        HIGH #1 caught the regression.
-
-        Continuations get the conservative predicate: drop ONLY when
-        the fragment ALONE parses as valid JSON AND its root is
-        non-object. Every parse-failure case (partial, balanced-but-
-        broken, bare prose) passes through — the cap layer routes
-        the fragment into the admitted anchor, and the
-        finalized-anchor gate at the end of the stream catches any
-        genuine non-object root after the full string is assembled.
-
-        What this predicate DOES still drop at the continuation
-        layer (so the streaming wire stays clean and ``_no_index_
-        last_dropped`` propagates to the cap layer immediately):
-
-        * Bare integer ``"1234567890"`` — parses, root is int, drop.
-        * Bare JSON-quoted string ``'"20230805"'`` — parses, root
-          is str, drop.
-        * Array root ``"[1,2,3]"`` — parses, root is list, drop.
-
-        What it now passes through (the round-5 widening):
-
-        * Partial JSON ``'{"city":"Pa'`` — parse fails, pass.
-        * Closing fragment ``'ris"}'`` of a split — parse fails
-          (close > open in isolation), pass.
-        * Middle fragment ``'"PARI'`` of a three-way split —
-          parse fails, pass.
-        * Bare unquoted prose ``'Paris output output'`` — parse
-          fails (no quotes, not JSON at all), pass. The merge
-          layer assembles fragments back into the full arguments
-          string and the finalized-anchor gate (the strict twin)
-          re-validates it at finalize time, so bare-prose leaks
-          are caught one layer up rather than here.
-
-        Trade-off: the strict-twin already covers each finalized
-        case once the cap+merge layer has assembled the full args
-        string, so passing partial-looking continuations through
-        is safe; over-rotating split-JSON would silently truncate
-        legitimate forced/required tool calls.
-        """
-        if not args_str or not args_str.strip():
-            return False
-        try:
-            parsed = json.loads(args_str)
-        except (ValueError, TypeError):
-            return False
-        return not isinstance(parsed, dict)
+    def _continuation_arguments_definitively_non_object(args_str):
+        return _continuation_arguments_definitively_non_object(args_str)
 
     def _apply_forced_tool_choice_filter(self, tool_calls: list[dict]) -> list[dict]:
         """Suppress streaming tool_calls deltas that violate the

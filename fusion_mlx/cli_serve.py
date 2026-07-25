@@ -889,6 +889,342 @@ def _serve_from_model_dir(args):
     uvicorn.run(app, host=host, port=port, log_level=log_level.lower())
 
 
+def _boot_guard_checks(args, effective_max_tokens):
+    """Run early boot-guard checks (watchdog, extras, dspark fork).
+
+    Returns True if an early fork was taken and the caller should return.
+    Calls sys.exit on validation failures.
+    """
+    import sys
+
+    from ._parent_watchdog import install_parent_watchdog, resolve_expected_ppid
+
+    install_parent_watchdog(resolve_expected_ppid(getattr(args, "watchdog_ppid", None)))
+
+    # [embeddings] extra guard
+    if getattr(args, "embedding_model", None):
+        from .embedding import require_mlx_embeddings_or_exit
+
+        require_mlx_embeddings_or_exit()
+
+    # [audio] extra guard
+    from .audio.probe import is_audio_model_alias, require_audio_or_exit
+
+    if is_audio_model_alias(getattr(args, "model", None)):
+        require_audio_or_exit(args.model)
+
+    # [dflash] extra guard
+    _wants_dflash = getattr(args, "enable_dflash", False) or (
+        getattr(args, "spec_decode", "none") == "dflash"
+    )
+    if _wants_dflash:
+        from .speculative.dflash.eligibility import have_runtime
+
+        if not have_runtime():
+            print(
+                "\n  Error: --enable-dflash (and --spec-decode dflash) "
+                "requires mlx-vlm 0.5.0+ for the DFlash drafter hooks. "
+                "Install with: ``pip install 'fusion-mlx[dflash]'``.\n"
+            )
+            sys.exit(1)
+
+    # [dspark] early fork
+    _wants_dspark = getattr(args, "enable_dspark", False) or (
+        getattr(args, "spec_decode", "none") == "dspark"
+    )
+    if _wants_dspark:
+        from .speculative.dspark.eligibility import have_runtime as _dspark_have_runtime
+
+        if not _dspark_have_runtime():
+            print(
+                "\n  Error: --enable-dspark (and --spec-decode dspark) requires "
+                "dspark-metal (DeepSeek DeepSpec MLX port). Install with "
+                "`pip install -e /path/to/dspark-metal` or `uv add dspark-metal`.\n"
+            )
+            sys.exit(1)
+
+        _dspark_drafter = getattr(args, "dspark_drafter_path", "")
+        if not _dspark_drafter:
+            print(
+                "\n  Error: --enable-dspark requires --dspark-drafter-path "
+                "<path-to-converted-mlx-draft>. Convert one with:\n"
+                "    dspark-metal-convert deepseek-ai/dspark_qwen3_8b_block7 "
+                "--target mlx-community/Qwen3-8B-bf16\n"
+            )
+            sys.exit(1)
+
+        from .speculative.dspark.server import run_dspark_server
+
+        if not hasattr(args, "_original_alias") or args._original_alias is None:
+            args._original_alias = args.model
+        run_dspark_server(
+            target_model_repo=args.model,
+            drafter_path=_dspark_drafter,
+            draft_quant_bits=getattr(args, "dspark_draft_quant_bits", 8),
+            host=args.host,
+            port=args.port,
+            served_model_name=args._original_alias or args.model,
+            default_max_tokens=effective_max_tokens,
+            uvicorn_log_level=getattr(args, "log_level", "info"),
+            enable_thinking=False,
+            vlm_dev=getattr(args, "vlm_dev", False),
+        )
+        return True
+
+    return False
+
+
+def _autoconfig_parsers(args, logger):
+    """Auto-detect tool/reasoning parsers from model name.
+
+    Modifies args.tool_call_parser, args.reasoning_parser, and
+    args.enable_auto_tool_choice in place. Calls sys.exit on conflicts.
+    """
+    import sys
+
+    _opt_out_tool = getattr(args, "no_tool_call_parser", False)
+    _opt_out_reasoning = getattr(args, "no_reasoning_parser", False)
+    if args.tool_call_parser and _opt_out_tool:
+        print(
+            "error: --tool-call-parser and --no-tool-call-parser are "
+            "mutually exclusive — pick one to override auto-detection.",
+            file=sys.stderr,
+        )
+        sys.exit(2)
+    if args.reasoning_parser and _opt_out_reasoning:
+        print(
+            "error: --reasoning-parser and --no-reasoning-parser are "
+            "mutually exclusive — pick one to override auto-detection.",
+            file=sys.stderr,
+        )
+        sys.exit(2)
+
+    _user_explicit_tool_call_parser = bool(args.tool_call_parser)
+    if not args.tool_call_parser or not args.reasoning_parser:
+        try:
+            from .model_auto_config import detect_model_config
+
+            auto_config = detect_model_config(args.model)
+            if auto_config:
+                if (
+                    not args.tool_call_parser
+                    and not _opt_out_tool
+                    and auto_config.tool_call_parser
+                ):
+                    args.tool_call_parser = auto_config.tool_call_parser
+                    args.enable_auto_tool_choice = True
+                    logger.info(
+                        f"Auto-configured --tool-call-parser {auto_config.tool_call_parser}"
+                    )
+                if (
+                    not args.reasoning_parser
+                    and not _opt_out_reasoning
+                    and not args.no_thinking
+                    and auto_config.reasoning_parser
+                ):
+                    args.reasoning_parser = auto_config.reasoning_parser
+                    logger.info(
+                        f"Auto-configured --reasoning-parser {auto_config.reasoning_parser}"
+                    )
+        except Exception as e:
+            logger.debug(f"Auto-detection failed (non-fatal): {e}")
+    if _opt_out_tool:
+        logger.info(
+            "Tool-call parser auto-detection disabled via --no-tool-call-parser"
+        )
+    if _opt_out_reasoning:
+        logger.info(
+            "Reasoning parser auto-detection disabled via --no-reasoning-parser"
+        )
+
+    # Misbind check for deepseek_v3 parsers
+    try:
+        from .model_auto_config import warn_misbound_deepseek_v3_parser
+
+        misbind_warning = warn_misbound_deepseek_v3_parser(
+            args.model, args.tool_call_parser
+        )
+        if misbind_warning:
+            logger.warning(misbind_warning, stacklevel=2)
+            if not _user_explicit_tool_call_parser:
+                logger.warning(
+                    "  Auto-detect note: this binding came from "
+                    "AUTO-DETECT, not an explicit --tool-call-parser "
+                    "flag. The detect_model_config() regex was fooled "
+                    "by the path. Override with --tool-call-parser "
+                    "hermes (or whatever your checkpoint actually "
+                    "emits) to recover tool-call capability."
+                )
+    except Exception as e:
+        logger.debug(f"deepseek_v3 misbind check failed (non-fatal): {e}")
+
+
+def _stage_server_config(args, server, logger):
+    """Stage all server configuration from CLI args into singletons.
+
+    Returns (cors_origins, gc_control).
+    """
+    import os
+    import sys
+
+    from fusion_mlx.config import get_config as _get_config
+
+    # Alias info for /v1/models
+    _get_config().model_alias = getattr(args, "_original_alias", None)
+
+    # Audio lane flag
+    _get_config().enable_audio_lane = bool(getattr(args, "enable_audio", False))
+
+    # API key
+    server._api_key = server._resolve_api_key(args.api_key)
+    _get_config().default_timeout = args.timeout
+
+    # Body-size cap
+    _max_body_arg = getattr(args, "max_request_bytes", None)
+    if _max_body_arg is not None:
+        _get_config().max_request_bytes = max(0, int(_max_body_arg))
+    else:
+        _env_name = "FUSION_MLX_MAX_REQUEST_BYTES"
+        _env = os.environ.get(_env_name, "").strip()
+        if _env:
+            try:
+                _get_config().max_request_bytes = max(0, int(_env))
+            except ValueError:
+                _get_config().max_request_bytes = 8 * 1024 * 1024
+                logger.warning(
+                    "%s=%r is not an integer; falling back to the 8 MiB default",
+                    _env_name,
+                    _env,
+                )
+
+    # SSE keepalive
+    _sse_env_name = "FUSION_MLX_SSE_KEEPALIVE_SECONDS"
+    _sse_env = os.environ.get(_sse_env_name, "").strip()
+    if _sse_env:
+        try:
+            _get_config().sse_keepalive_seconds = max(0.0, float(_sse_env))
+        except ValueError:
+            logger.warning(
+                "%s=%r is not a number; falling back to the 20 s default",
+                _sse_env_name,
+                _sse_env,
+            )
+            _get_config().sse_keepalive_seconds = 20.0
+
+    # Body-receive idle timeout
+    _apply_body_receive_timeout_env(server, logger=logger)
+
+    # CORS
+    cors_origins = server.configure_cors_from_env(args.cors_origins)
+
+    # Rate limit
+    from .middleware.auth import configure_rate_limiter
+
+    if args.rate_limit > 0:
+        configure_rate_limiter(args.rate_limit, enabled=True)
+
+    # GC control
+    gc_control = args.gc_control and not args.no_gc_control
+    _get_config().gc_control = gc_control
+
+    # No-thinking flag
+    _get_config().no_thinking = args.no_thinking
+
+    # System prompt pinning
+    _get_config().pin_system_prompt = args.pin_system_prompt
+
+    # Tool calling
+    if args.enable_auto_tool_choice and args.tool_call_parser:
+        _get_config().enable_auto_tool_choice = True
+        _get_config().tool_call_parser = args.tool_call_parser
+        _get_config().enable_tool_logits_bias = getattr(
+            args, "enable_tool_logits_bias", False
+        )
+    else:
+        _get_config().enable_auto_tool_choice = False
+        _get_config().tool_call_parser = None
+        _get_config().enable_tool_logits_bias = False
+
+    # Generation defaults
+    if args.default_temperature is not None:
+        _get_config().default_temperature = args.default_temperature
+    if args.default_top_p is not None:
+        _get_config().default_top_p = args.default_top_p
+    if args.default_top_k is not None:
+        _get_config().default_top_k = args.default_top_k
+    if args.default_min_p is not None:
+        _get_config().default_min_p = args.default_min_p
+    if args.default_repetition_penalty is not None:
+        _get_config().default_repetition_penalty = args.default_repetition_penalty
+    if args.default_presence_penalty is not None:
+        _get_config().default_presence_penalty = args.default_presence_penalty
+    if args.default_frequency_penalty is not None:
+        _get_config().default_frequency_penalty = args.default_frequency_penalty
+
+    # Reasoning parser
+    if args.reasoning_parser:
+        try:
+            from .reasoning import get_parser
+
+            parser_cls = get_parser(args.reasoning_parser)
+            _get_config().reasoning_parser = parser_cls()
+            _get_config().reasoning_parser_name = args.reasoning_parser
+            logger.info(f"Reasoning parser enabled: {args.reasoning_parser}")
+        except KeyError as e:
+            print(f"Error: {e}")
+            sys.exit(1)
+        except ImportError as e:
+            print(f"Error: Failed to import reasoning module: {e}")
+            sys.exit(1)
+        except Exception as e:
+            print(
+                f"Error: Failed to initialize reasoning parser "
+                f"'{args.reasoning_parser}': {e}"
+            )
+            sys.exit(1)
+    else:
+        _get_config().reasoning_parser = None
+
+    return cors_origins, gc_control
+
+
+def _print_startup_banner(args, cors_origins, gc_control, logger):
+    """Print the startup banner with feature summary."""
+    features = []
+    if args.enable_auto_tool_choice:
+        bias_info = (
+            " + logits bias" if getattr(args, "enable_tool_logits_bias", False) else ""
+        )
+        features.append(f"tools: {args.tool_call_parser}{bias_info}")
+    if args.reasoning_parser:
+        features.append(f"reasoning: {args.reasoning_parser}")
+    auth_feature = _auth_feature_str(args.api_key)
+    if auth_feature:
+        features.append(auth_feature)
+    if args.rate_limit > 0:
+        features.append(f"rate-limit: {args.rate_limit}/min")
+    if args.cloud_model:
+        features.append(f"cloud: {args.cloud_model}")
+    if gc_control:
+        features.append("gc-control")
+    if args.pin_system_prompt:
+        features.append("pin-system-prompt")
+    if cors_origins:
+        features.append(f"cors: {', '.join(cors_origins)}")
+    if args.enable_dflash:
+        features.append("dflash: single-user")
+    print()
+    print("  🐆 Fusion-MLX")
+    print("  ─────────")
+    if features:
+        print(f"  Features: {', '.join(features)}")
+    print(f"  Model: {args.model}")
+    if args.mcp_config:
+        print(f"MCP config: {args.mcp_config}")
+        import os
+        os.environ["FUSION_MLX_MCP_CONFIG"] = args.mcp_config
+
+
 def serve_command(args):
     """Start the OpenAI-compatible server."""
     import logging
@@ -952,143 +1288,11 @@ def serve_command(args):
         print("  fusion-mlx serve --base-path ~/.fusion-mlx --port 8000")
         sys.exit(1)
 
-    # Parent-PID watchdog (rapid-desktop issue #449): if the supervisor
-    # passed its own PID via ``--watchdog-ppid`` or
-    # ``$FUSION_MLX_WATCHDOG_PPID``, spawn a daemon thread that polls
-    # ``os.getppid()`` every 2 s. When the parent dies (re-parented to
-    # launchd / init), the watchdog sends SIGTERM to ourselves so the
-    # FastAPI lifespan can flush + release the model — falling back to
-    # SIGKILL after a 5 s grace. Installed at the top of serve_command
-    # so it covers BOTH the text-LM path and the audio-mode fork below,
-    # AND so it arms before the (potentially multi-minute) model
-    # download — an operator who kills the desktop mid-download still
-    # gets a clean reap on the sidecar. No-op when no supervisor PID
-    # was passed (default).
-    from ._parent_watchdog import install_parent_watchdog, resolve_expected_ppid
-
-    install_parent_watchdog(resolve_expected_ppid(getattr(args, "watchdog_ppid", None)))
-
     _arg_max_tokens = getattr(args, "max_tokens", None)
     _max_tokens_is_explicit = _arg_max_tokens is not None
     effective_max_tokens = _arg_max_tokens if _arg_max_tokens is not None else 32768
 
-    # F-H08-INCOMPLETE: the ``[embeddings]`` extra-required guard MUST
-    # fire first thing in ``serve_command`` — before
-    # ``prompt_upgrade_if_available`` (which may exit 0 on user
-    # decline), before ``_ensure_model_downloaded`` (which can take
-    # minutes on a cold cache), and well before the startup banner
-    # gets printed. Pre-fix the check lived deeper in the function so
-    # the operator saw the alias-resolved log line, the startup banner,
-    # the feature list, AND the model id BEFORE the
-    # "requires the [embeddings] extra" error and ``sys.exit(2)``,
-    # which read as a successful boot followed by a mysterious failure
-    # — Diego logged this as a warning-and-fall-through bug because
-    # the banner masked the actual exit. Hoisting the probe to the
-    # very top of ``serve_command`` puts the error first, with no
-    # banner output before it. ``mlx_embeddings`` import stays lazy so
-    # the base install (no ``[embeddings]`` extra) keeps booting.
-    if getattr(args, "embedding_model", None):
-        from .embedding import require_mlx_embeddings_or_exit
-
-        require_mlx_embeddings_or_exit()
-
-    # R6-H4 (Eva 0.8.7 dogfood): same boot-guard shape for audio aliases.
-    # ``mlx-audio`` lives behind the ``[audio]`` extra; pre-fix
-    # ``fusion-mlx serve kokoro`` (or whisper/parakeet/chatterbox/...) on
-    # a base install printed the startup banner, opened the port, and
-    # only crashed on the first audio request (the in-route lane probe).
-    # That looked like "successful boot, broken inference" instead of
-    # the obvious "you need the [audio] extra". Probe at flag-parse
-    # time so the operator sees an actionable hint with rc=2 before
-    # any download / banner output, mirroring r5-C's UI-TARS guard.
-    #
-    # Recognition is alias-substring based (``whisper``, ``parakeet``,
-    # ``kokoro``, ``chatterbox``, ``vibevoice``, ``voxcpm``) so the
-    # quantised variants (``kokoro-4bit``) and HF-style ids
-    # (``mlx-community/Kokoro-82M-bf16``) trip it the same way bare
-    # aliases do. A model name that doesn't match an audio token falls
-    # through unchanged — text/vision/embedding models never see this
-    # probe.
-    from .audio.probe import is_audio_model_alias, require_audio_or_exit
-
-    if is_audio_model_alias(getattr(args, "model", None)):
-        require_audio_or_exit(args.model)
-
-    # 0.9.2 dogfood (parallels the [embeddings]/[vision]/[audio] guards
-    # immediately above): ``--enable-dflash`` and the equivalent
-    # ``--spec-decode dflash`` both depend on the optional ``mlx-vlm``
-    # bridge that ships in the ``[dflash]`` extra. Pre-0.9.3 the missing-
-    # runtime error only surfaced ~50 lines into serve_command, AFTER:
-    #   - alias profile resolved (logged twice via pflash)
-    #   - tool/reasoning parsers auto-configured
-    #   - CORS allow-origin warning printed
-    # so the operator saw five INFO lines and a banner before the
-    # actionable ``Install with: pip install 'fusion-mlx[dflash]'`` line,
-    # matching Diego's earlier ``[embeddings]`` regression shape exactly.
-    # Hoist the cheap ``have_runtime()`` probe to the same boot-guard tier
-    # as the other extras so the error lands FIRST. ``importlib.util.
-    # find_spec("mlx_vlm")`` doesn't trigger a load — safe to run on the
-    # hot CLI path.
-    _wants_dflash = getattr(args, "enable_dflash", False) or (
-        getattr(args, "spec_decode", "none") == "dflash"
-    )
-    if _wants_dflash:
-        from .speculative.dflash.eligibility import have_runtime
-
-        if not have_runtime():
-            print(
-                "\n  Error: --enable-dflash (and --spec-decode dflash) "
-                "requires mlx-vlm 0.5.0+ for the DFlash drafter hooks. "
-                "Install with: ``pip install 'fusion-mlx[dflash]'``.\n"
-            )
-            sys.exit(1)
-
-    # DSpark — DeepSeek DeepSpec lossless block spec-decode. The generator is
-    # self-contained (loads its own target + converted MLX draft, taps the
-    # target's own hidden states — no mlx-vlm hook, no BatchedEngine), so this
-    # is an EARLY fork that returns before _ensure_model_downloaded / pflash /
-    # parser detection, exactly like the audio-mode fork below. Single-user
-    # serial (1-worker pool) — same concurrency contract as DFlash.
-    _wants_dspark = getattr(args, "enable_dspark", False) or (
-        getattr(args, "spec_decode", "none") == "dspark"
-    )
-    if _wants_dspark:
-        from .speculative.dspark.eligibility import have_runtime as _dspark_have_runtime
-
-        if not _dspark_have_runtime():
-            print(
-                "\n  Error: --enable-dspark (and --spec-decode dspark) requires "
-                "dspark-metal (DeepSeek DeepSpec MLX port). Install with "
-                "`pip install -e /path/to/dspark-metal` or `uv add dspark-metal`.\n"
-            )
-            sys.exit(1)
-
-        _dspark_drafter = getattr(args, "dspark_drafter_path", "")
-        if not _dspark_drafter:
-            print(
-                "\n  Error: --enable-dspark requires --dspark-drafter-path "
-                "<path-to-converted-mlx-draft>. Convert one with:\n"
-                "    dspark-metal-convert deepseek-ai/dspark_qwen3_8b_block7 "
-                "--target mlx-community/Qwen3-8B-bf16\n"
-            )
-            sys.exit(1)
-
-        from .speculative.dspark.server import run_dspark_server
-
-        if not hasattr(args, "_original_alias") or args._original_alias is None:
-            args._original_alias = args.model
-        run_dspark_server(
-            target_model_repo=args.model,
-            drafter_path=_dspark_drafter,
-            draft_quant_bits=getattr(args, "dspark_draft_quant_bits", 8),
-            host=args.host,
-            port=args.port,
-            served_model_name=args._original_alias or args.model,
-            default_max_tokens=effective_max_tokens,
-            uvicorn_log_level=getattr(args, "log_level", "info"),
-            enable_thinking=False,
-            vlm_dev=getattr(args, "vlm_dev", False),
-        )
+    if _boot_guard_checks(args, effective_max_tokens):
         return
 
     # R10-C1: AUDIO-SERVE-MODE FORK. The boot guard above only checks
@@ -1230,450 +1434,10 @@ def serve_command(args):
     # (SOP §10): if the user opts out, do NOT let the AliasProfile auto-
     # populate args.tool_call_parser / args.reasoning_parser. Past
     # incidents: #393-class (auto-detect false positive with no opt-out).
-    _opt_out_tool = getattr(args, "no_tool_call_parser", False)
-    _opt_out_reasoning = getattr(args, "no_reasoning_parser", False)
-    if args.tool_call_parser and _opt_out_tool:
-        print(
-            "error: --tool-call-parser and --no-tool-call-parser are "
-            "mutually exclusive — pick one to override auto-detection.",
-            file=sys.stderr,
-        )
-        sys.exit(2)
-    if args.reasoning_parser and _opt_out_reasoning:
-        print(
-            "error: --reasoning-parser and --no-reasoning-parser are "
-            "mutually exclusive — pick one to override auto-detection.",
-            file=sys.stderr,
-        )
-        sys.exit(2)
-    # R12-S1: snapshot whether the user explicitly passed
-    # ``--tool-call-parser`` BEFORE auto-detect mutates ``args``. The
-    # misbind warning below only consults this snapshot — auto-detected
-    # bindings are guaranteed to match the model family by construction
-    # (the auto path picks the same parser the helper would suggest), so
-    # warning on them would be a contradictory "drop the flag" nudge
-    # against a flag the user never passed. (Codex r4 NIT — keeps the
-    # warning grounded in user intent even if a helper-side regression
-    # ever started flagging in-spec cases.)
-    _user_explicit_tool_call_parser = bool(args.tool_call_parser)
-    if not args.tool_call_parser or not args.reasoning_parser:
-        try:
-            from .model_auto_config import detect_model_config
+    _autoconfig_parsers(args, logger)
+    cors_origins, gc_control = _stage_server_config(args, server, logger)
 
-            auto_config = detect_model_config(args.model)
-            if auto_config:
-                if (
-                    not args.tool_call_parser
-                    and not _opt_out_tool
-                    and auto_config.tool_call_parser
-                ):
-                    args.tool_call_parser = auto_config.tool_call_parser
-                    args.enable_auto_tool_choice = True
-                    logger.info(
-                        f"Auto-configured --tool-call-parser {auto_config.tool_call_parser}"
-                    )
-                if (
-                    not args.reasoning_parser
-                    and not _opt_out_reasoning
-                    and not args.no_thinking
-                    and auto_config.reasoning_parser
-                ):
-                    args.reasoning_parser = auto_config.reasoning_parser
-                    logger.info(
-                        f"Auto-configured --reasoning-parser {auto_config.reasoning_parser}"
-                    )
-        except Exception as e:
-            logger.debug(f"Auto-detection failed (non-fatal): {e}")
-    if _opt_out_tool:
-        logger.info(
-            "Tool-call parser auto-detection disabled via --no-tool-call-parser"
-        )
-    if _opt_out_reasoning:
-        logger.info(
-            "Reasoning parser auto-detection disabled via --no-reasoning-parser"
-        )
-
-    # R12-S1: surface a startup warning when ``args.tool_call_parser``
-    # is a ``deepseek_v3`` / ``deepseek_v31`` / ``deepseek_r1_0528``
-    # binding but the model can't emit the matching V3 fenced-JSON wire
-    # shape. See Sven r12 dogfood HIGH-1: forcing ``--tool-call-parser
-    # deepseek_v3`` on ``DeepSeek-R1-Distill-Qwen-1.5B-4bit`` lands tool
-    # calls with ``arguments="{}"`` because the parser correctly refuses
-    # to parse the non-V3 prose the model emits.
-    #
-    # Runs on BOTH explicit overrides AND auto-detected bindings,
-    # because ``detect_model_config`` still scans the full path — a
-    # parent dir like ``/models/DeepSeek-V3/qwen-model`` can fool
-    # auto-detect into ``deepseek_v3`` even though the tail model name
-    # is out-of-lineage (pr-validate codex r7 BLOCKING). The helper's
-    # canonical model-name classification catches that mis-pick that
-    # auto-detect missed. Whether the user explicitly bound the flag is
-    # tracked in ``_user_explicit_tool_call_parser`` and threaded into
-    # the warning so the operator can tell who to blame: a misbound
-    # flag (user error) vs. a fooled auto-detect (regex needs
-    # tightening — tracked as follow-up so this PR stays scoped).
-    try:
-        from .model_auto_config import warn_misbound_deepseek_v3_parser
-
-        misbind_warning = warn_misbound_deepseek_v3_parser(
-            args.model, args.tool_call_parser
-        )
-        if misbind_warning:
-            # ``logger.warning`` so the message lands in any structured
-            # log sink AND surfaces in the terminal at the default
-            # ``WARNING`` level (no stderr-print needed).
-            # ``stacklevel=2`` so log frameworks attribute the call
-            # site to the CLI entry rather than the helper module.
-            logger.warning(misbind_warning, stacklevel=2)
-            if not _user_explicit_tool_call_parser:
-                # Auto-detect mis-pick. Emit a second WARNING line so
-                # the operator knows the user didn't bind anything —
-                # the ``detect_model_config`` regex was fooled by the
-                # path. Forces the user to add an explicit
-                # ``--tool-call-parser hermes`` (or similar) to recover
-                # tool-call capability, which is the actually-correct
-                # action for an out-of-lineage checkpoint.
-                logger.warning(
-                    "  Auto-detect note: this binding came from "
-                    "AUTO-DETECT, not an explicit --tool-call-parser "
-                    "flag. The detect_model_config() regex was fooled "
-                    "by the path. Override with --tool-call-parser "
-                    "hermes (or whatever your checkpoint actually "
-                    "emits) to recover tool-call capability."
-                )
-    except Exception as e:  # noqa: BLE001
-        logger.debug(f"deepseek_v3 misbind check failed (non-fatal): {e}")
-
-    # Pass alias info to server (for /v1/models). Written directly to
-    # ServerConfig (#50) so load_model + /v1/models read the locked alias.
-    from fusion_mlx.config import get_config as _get_config
-
-    _get_config().model_alias = getattr(args, "_original_alias", None)
-
-    # Task #292: forward the ``--enable-audio`` opt-in to the config singleton BEFORE ``load_model`` runs.
-    # The post-load hook in
-    # ``load_model`` calls ``register_audio_routes_if_enabled``, which
-    # reads ``cfg.enable_audio_lane`` to decide whether to mount
-    # the audio router on a text-only server. Setting it after
-    # ``load_model`` would leave the router unmounted on the very boot
-    # that asked for it.
-    #
-    # Codex r2 NIT #2: assign from the parsed value directly so a second
-    # in-process ``serve_command`` call (test harness, embedded usage)
-    # without ``--enable-audio`` clears any stale ``True`` from a prior
-    # run — the ``ServerConfig`` singleton persists across calls in
-    # the same process.
-    _get_config().enable_audio_lane = bool(getattr(args, "enable_audio", False))
-
-    # Configure server security settings. ``FUSION_MLX_API_KEY`` env var
-    # is the secret-friendly form ``fusion-mlx share`` uses to avoid
-    # exposing the key in argv; inline ``--api-key`` overrides it for
-    # backwards-compat with existing scripts. ``_resolve_api_key`` is
-    # the single SSOT — both this entrypoint and the ``fusion_mlx.server``
-    # ``python -m`` entry call into it, so a future policy tweak (e.g.
-    # a deprecation warning when argv is used) lands in one place.
-    server._api_key = server._resolve_api_key(args.api_key)
-    _get_config().default_timeout = args.timeout
-
-    # Per-request body-size cap. Resolution order:
-    #   1. ``--max-request-bytes`` (explicit CLI flag, including 0 to disable)
-    #   2. ``FUSION_MLX_MAX_REQUEST_BYTES`` env var
-    #   3. ``ServerConfig`` dataclass default (8 MiB)
-    # See fusion_mlx/middleware/body_size.py for the DoS rationale.
-    _max_body_arg = getattr(args, "max_request_bytes", None)
-    if _max_body_arg is not None:
-        get_config().max_request_bytes = max(0, int(_max_body_arg))
-    else:
-        _env_name = "FUSION_MLX_MAX_REQUEST_BYTES"
-        _env = os.environ.get(_env_name, "").strip()
-        if _env:
-            try:
-                get_config().max_request_bytes = max(0, int(_env))
-            except ValueError:
-                # Explicit reset (codex round-2 NIT): without this,
-                # an in-process callsite that mutated ``_max_request_bytes``
-                # before serve_command runs would silently leak a stale
-                # value past a malformed env var, which is the worst
-                # possible failure shape — bigger cap than the operator
-                # intended. Fall back to the documented 8 MiB default
-                # explicitly.
-                get_config().max_request_bytes = 8 * 1024 * 1024
-                logger.warning(
-                    "%s=%r is not an integer; falling back to the 8 MiB default",
-                    _env_name,
-                    _env,
-                )
-
-    # SSE keepalive interval (F-070). Env-only (no CLI flag yet — keep
-    # the surface small until operators ask for it). 0 disables. Written
-    # directly to the ``ServerConfig`` singleton (#50: no longer staged
-    # through a server global + ``_sync_config``, so a direct cfg write
-    # is not clobbered by a later sync).
-    _sse_env_name = "FUSION_MLX_SSE_KEEPALIVE_SECONDS"
-    _sse_env = os.environ.get(_sse_env_name, "").strip()
-    if _sse_env:
-        try:
-            _get_config().sse_keepalive_seconds = max(0.0, float(_sse_env))
-        except ValueError:
-            # NOTE: the env-var name is interpolated via ``%s`` (not baked
-            # into the format string) so the
-            # ``tests/test_no_out_of_band_routing.py`` constant scan
-            # doesn't see the literal ``FUSION_MLX_…=%r is not a number``
-            # as a stand-alone string and false-positive on a routing
-            # match. Same pattern the body-receive timeout block below
-            # uses.
-            logger.warning(
-                "%s=%r is not a number; falling back to the 20 s default",
-                _sse_env_name,
-                _sse_env,
-            )
-            _get_config().sse_keepalive_seconds = 20.0
-
-    # Body-receive idle timeout (F-072 / H-14 slow-DoS gate). Env-only.
-    # 0 disables. Same ``_sync_config``-then-route-handler ordering
-    # rationale as the SSE keepalive above. Extracted into
-    # :func:`_apply_body_receive_timeout_env` so tests can call the
-    # SAME resolver the production binary uses — codex round-2 BLOCKING
-    # on PR #786 flagged that an inline-only resolver couldn't be
-    # exercised by a unit test without duplicating its logic, which
-    # would mask a regression that deleted the wire-up entirely.
-    _apply_body_receive_timeout_env(server, logger=logger)
-
-    # Configure CORS (F-090 + F-091). Default: wildcard ``*`` for friendly
-    # single-machine UX — fusion-mlx is primarily run locally and a
-    # browser frontend at ``http://localhost:3000`` hitting the API at
-    # ``http://localhost:8000`` "just works". Operators on multi-tenant /
-    # production deployments lock down via
-    # ``FUSION_MLX_CORS_ALLOW_ORIGINS=https://your.app,https://other.app``.
-    # The full env-var family (METHODS / HEADERS / MAX_AGE /
-    # ALLOW_CREDENTIALS) still applies; see
-    # ``fusion_mlx/server.py::configure_cors_from_env``.
-    #
-    # Wildcard + credentials is spec-invalid (Fetch spec rejects the
-    # combination), so the resolver forces ``allow_credentials=False``
-    # when ``*`` is in the origin list. Operators who need cookie /
-    # ``Authorization`` auto-forwarding must pin to specific origins.
-    cors_origins = server.configure_cors_from_env(args.cors_origins)
-    if args.rate_limit > 0:
-        configure_rate_limiter(args.rate_limit, enabled=True)
-
-    # Staging globals now write directly to ServerConfig (#50 consolidation).
-    # get_config imported above near the locked-alias write.
-
-    # Configure GC control
-    gc_control = args.gc_control and not args.no_gc_control
-    _get_config().gc_control = gc_control
-
-    # Configure --no-thinking: suppress chain-of-thought in chat template
-    _get_config().no_thinking = args.no_thinking
-
-    # Configure system prompt pinning
-    _get_config().pin_system_prompt = args.pin_system_prompt
-
-    # Configure tool calling
-    if args.enable_auto_tool_choice and args.tool_call_parser:
-        _get_config().enable_auto_tool_choice = True
-        _get_config().tool_call_parser = args.tool_call_parser
-        _get_config().enable_tool_logits_bias = getattr(
-            args, "enable_tool_logits_bias", False
-        )
-    else:
-        _get_config().enable_auto_tool_choice = False
-        _get_config().tool_call_parser = None
-        _get_config().enable_tool_logits_bias = False
-
-    # Configure generation defaults -- written directly to ServerConfig
-    # (consolidated #50: service/helpers._resolve_* reads cfg, not globals).
-    if args.default_temperature is not None:
-        _get_config().default_temperature = args.default_temperature
-    if args.default_top_p is not None:
-        _get_config().default_top_p = args.default_top_p
-    if args.default_top_k is not None:
-        _get_config().default_top_k = args.default_top_k
-    if args.default_min_p is not None:
-        _get_config().default_min_p = args.default_min_p
-    if args.default_repetition_penalty is not None:
-        _get_config().default_repetition_penalty = args.default_repetition_penalty
-    if args.default_presence_penalty is not None:
-        _get_config().default_presence_penalty = args.default_presence_penalty
-    if args.default_frequency_penalty is not None:
-        _get_config().default_frequency_penalty = args.default_frequency_penalty
-
-    # Configure reasoning parser
-    if args.reasoning_parser:
-        try:
-            from .reasoning import get_parser
-
-            parser_cls = get_parser(args.reasoning_parser)
-            _get_config().reasoning_parser = parser_cls()
-            _get_config().reasoning_parser_name = args.reasoning_parser
-            logger.info(f"Reasoning parser enabled: {args.reasoning_parser}")
-        except KeyError as e:
-            print(f"Error: {e}")
-            sys.exit(1)
-        except ImportError as e:
-            print(f"Error: Failed to import reasoning module: {e}")
-            sys.exit(1)
-        except Exception as e:
-            print(
-                f"Error: Failed to initialize reasoning parser "
-                f"'{args.reasoning_parser}': {e}"
-            )
-            sys.exit(1)
-    else:
-        _get_config().reasoning_parser = None
-
-    # R15-P1 #313 follow-up (#318): ``--spec-decode dflash`` routes to
-    # the prod path. The originally vendored BatchedEngine adapter at
-    # ``fusion_mlx/speculative/dflash/drafter.py:275`` called
-    # ``drafter.draft_block(prefix_tokens, current_position)`` with 2 args,
-    # but mlx-vlm 0.5.0's ``DFlashDraftModel.draft_block`` requires 6 args:
-    # ``(last_bonus, hidden, cache, block_size, sampler, token_dtype)``.
-    # The BatchedEngine adapter never wired the verifier→drafter hidden-
-    # state + cache + sampler thread, so the new --spec-decode dflash
-    # flag was 100% broken at first request — never validated end-to-end.
-    # The OLD ``--enable-dflash`` flag (``fusion_mlx/speculative/dflash/`` +
-    # mlx-vlm's ``_dflash_rounds``) IS the prod-tested path. We unify the
-    # CLI surface by routing ``--spec-decode dflash`` to
-    # ``--enable-dflash`` so users hit the working bridge. The
-    # ``speculative/dflash/{generator,drafter,verifier}.py`` modules
-    # remain importable but inert; the ``accept_counter`` /
-    # ``drafter_registry`` siblings stay active for metric scaffolding.
-    if getattr(args, "spec_decode", "none") == "dflash":
-        args.enable_dflash = True
-        args.spec_decode = "none"
-        print(
-            "Spec-decode: --spec-decode dflash routed to --enable-dflash "
-            "(mlx-vlm bridge; BatchedEngine integration deferred to 0.10).",
-            file=sys.stderr,
-        )
-
-    # DFlash mutual-exclusion gate fires BEFORE the startup banner so
-    # the user sees a clean error instead of an optimistic "Features:
-    # dflash" line immediately followed by an exit. The deeper SchedulerConfig
-    # mutex (suffix vs. mtp) stays below since it doesn't involve DFlash.
-    if args.enable_dflash and (args.suffix_decoding or args.enable_mtp):
-        print(
-            "\n  Error: --enable-dflash cannot combine with --suffix-decoding "
-            "or --enable-mtp. DFlash runs a dedicated single-user server "
-            "that bypasses BatchedEngine; other spec-decode methods only "
-            "apply to the BatchedEngine path.\n"
-        )
-        sys.exit(1)
-
-    # DFlash eligibility gate fires here, BEFORE the startup banner —
-    # so the user sees a clean error rather than an optimistic "DFlash
-    # enabled" feature line followed by an exit. Cheap (just reads
-    # aliases.json + checks the module spec); no model load yet.
-    if args.enable_dflash:
-        from .model_aliases import resolve_profile
-        from .speculative.dflash import DFlashUnavailable, check
-
-        # ``have_runtime()`` validated at the top-of-function boot-guard
-        # tier — see the 0.9.2 dogfood comment near the audio probe.
-        _alias_name = getattr(args, "_original_alias", None) or args.model
-        _profile = resolve_profile(_alias_name)
-        if _profile is None:
-            print(
-                f"\n  Error: --enable-dflash requires a known alias, got "
-                f"{_alias_name!r}. DFlash eligibility is recorded per-alias "
-                f"in aliases.json; ad-hoc HuggingFace paths can't be "
-                f"validated. Try ``fusion-mlx info qwen3.5-27b-8bit``.\n"
-            )
-            sys.exit(1)
-        try:
-            check(_profile, alias=_alias_name)
-        except DFlashUnavailable as e:
-            print(f"\n  Error: {e}\n")
-            sys.exit(1)
-        # ``have_runtime()`` is already validated by the boot-guard tier
-        # at the top of ``serve_command`` — see the 0.9.2 dogfood comment
-        # there. We keep the import + the deeper DFlashUnavailable / alias
-        # check here because they need the resolved profile, but the
-        # extras-not-installed branch is unreachable by the time control
-        # reaches this point.
-
-        # Warn about flags that BatchedEngine honours but the DFlash
-        # server doesn't — better to surface this once at startup than
-        # to let users wonder why their tuning has no effect. Inspected
-        # against the actual argparse Namespace so we only mention flags
-        # the user explicitly set away from their default.
-        _GPU_MEM_DEFAULT = 0.90  # keep in sync with the serve_parser default
-        _dflash_ignored: list[str] = []
-        if getattr(args, "enable_prefix_cache", False):
-            _dflash_ignored.append("--enable-prefix-cache")
-        if getattr(args, "kv_cache_quantization", None):
-            _dflash_ignored.append("--kv-cache-quantization")
-        # gpu-memory-utilization defaults to 0.90 (not None) in the serve
-        # parser, so an ``is not None`` check would fire on every invocation.
-        # Compare to the real default — only warn when the user explicitly
-        # tuned it. Tolerate a tiny float-equality slack for safety.
-        _gpu_mem = getattr(args, "gpu_memory_utilization", _GPU_MEM_DEFAULT)
-        if _gpu_mem is not None and abs(_gpu_mem - _GPU_MEM_DEFAULT) > 1e-6:
-            _dflash_ignored.append("--gpu-memory-utilization")
-        if getattr(args, "enable_auto_tool_choice", False):
-            _dflash_ignored.append("--enable-auto-tool-choice")
-        if getattr(args, "tool_call_parser", None):
-            _dflash_ignored.append("--tool-call-parser")
-        if getattr(args, "reasoning_parser", None):
-            _dflash_ignored.append("--reasoning-parser")
-        if getattr(args, "embedding_model", None):
-            _dflash_ignored.append("--embedding-model")
-        if getattr(args, "mcp_config", None):
-            _dflash_ignored.append("--mcp-config")
-        if _dflash_ignored:
-            print(
-                "\n  ⚠ The following flags are ignored under --enable-dflash"
-                "\n    (DFlash uses a dedicated single-user server that bypasses"
-                "\n    BatchedEngine):"
-                f"\n      {', '.join(_dflash_ignored)}"
-                "\n    Drop them from your serve command, or run without"
-                "\n    --enable-dflash if you need them.\n"
-            )
-
-    # Startup summary
-    print()
-    print("  🐆 Fusion-MLX")
-    print("  ─────────")
-    features = []
-    if args.enable_auto_tool_choice:
-        bias_info = (
-            " + logits bias" if getattr(args, "enable_tool_logits_bias", False) else ""
-        )
-        features.append(f"tools: {args.tool_call_parser}{bias_info}")
-    if args.reasoning_parser:
-        features.append(f"reasoning: {args.reasoning_parser}")
-    # Banner mirrors the effective auth state via ``_auth_feature_str``
-    # so the test can call the same function. Pre-fix the gate said
-    # ``if args.api_key`` directly — a sidecar that set env-only saw
-    # ``auth: off`` printed even though ``verify_api_key`` was
-    # enforcing. ``_auth_feature_str`` keeps the banner and the actual
-    # enforcement aligned and is directly unit-testable.
-    auth_feature = _auth_feature_str(args.api_key)
-    if auth_feature:
-        features.append(auth_feature)
-    if args.rate_limit > 0:
-        features.append(f"rate-limit: {args.rate_limit}/min")
-    if args.cloud_model:
-        features.append(f"cloud: {args.cloud_model}")
-    if gc_control:
-        features.append("gc-control")
-    if args.pin_system_prompt:
-        features.append("pin-system-prompt")
-    # Show CORS in the startup banner when CLI flag or env-var-driven
-    # config produced an origin list (``configure_cors_from_env`` is what
-    # actually resolved it — see the call site earlier in this function).
-    if cors_origins:
-        features.append(f"cors: {', '.join(cors_origins)}")
-    if args.enable_dflash:
-        features.append("dflash: single-user")
-    if features:
-        print(f"  Features: {', '.join(features)}")
-    print(f"  Model: {args.model}")
-    # Store MCP config path for FastAPI startup
-    if args.mcp_config:
-        print(f"MCP config: {args.mcp_config}")
-        os.environ["FUSION_MLX_MCP_CONFIG"] = args.mcp_config
+    _print_startup_banner(args, cors_origins, gc_control, logger)
 
     # Pre-load embedding model if specified.
     #
