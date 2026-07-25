@@ -643,14 +643,117 @@ async def count_tokens(
     request: TokenCountRequest,
     _auth: bool = Depends(verify_api_key_or_x_api_key),
 ) -> TokenCountResponse:
-    """Count tokens for a given input."""
-    # Simple token count estimate (~4 chars per token)
-    text = ""
-    if hasattr(request, "messages"):
-        for msg in request.messages or []:
-            if hasattr(msg, "content"):
-                text += str(msg.content) or ""
-    elif hasattr(request, "input"):
-        text = str(request.input)
-    token_count = max(1, len(text) // 4)
+    try:
+        engine = await _resolve_engine(request.model)
+    except ModelNotFoundError:
+        raise HTTPException(
+            status_code=404,
+            detail={
+                "error": {
+                    "message": f"Model '{request.model}' not found",
+                    "type": "not_found_error",
+                }
+            },
+        )
+
+    tokenizer = getattr(engine, "tokenizer", None)
+    if tokenizer is None:
+        logger.warning(
+            "count_tokens: no tokenizer on engine for '%s', falling back to estimate",
+            request.model,
+        )
+        text = _extract_request_text(request)
+        await _release_engine(request.model)
+        return TokenCountResponse(input_tokens=max(1, len(text) // 4))
+
+    from .anthropic_utils import convert_anthropic_to_internal
+
+    enable_thinking = (
+        request.thinking is not None
+        and getattr(request.thinking, "type", "disabled") != "disabled"
+    )
+    tools_dicts = None
+    if request.tools:
+        tools_dicts = [
+            t.model_dump() if hasattr(t, "model_dump") else t for t in request.tools
+        ]
+
+    messages = convert_anthropic_to_internal(
+        request,
+        tokenizer=tokenizer,
+        preserve_images=False,
+        native_reasoning_content=True,
+    )
+
+    try:
+        prompt = engine.build_prompt(
+            messages,
+            tools=tools_dicts,
+            enable_thinking=enable_thinking,
+        )
+    except Exception:
+        logger.debug(
+            "count_tokens: build_prompt failed for '%s', encoding message text directly",
+            request.model,
+            exc_info=True,
+        )
+        text = _extract_request_text(request)
+        await _release_engine(request.model)
+        return TokenCountResponse(
+            input_tokens=max(1, _encode_token_count(tokenizer, text))
+        )
+
+    token_count = max(1, _encode_token_count(tokenizer, prompt))
+    logger.debug(
+        "count_tokens: model=%s prompt_len=%d token_count=%d",
+        request.model,
+        len(prompt),
+        token_count,
+    )
+    await _release_engine(request.model)
     return TokenCountResponse(input_tokens=token_count)
+
+
+def _extract_request_text(request: TokenCountRequest) -> str:
+    parts: list[str] = []
+    if request.system:
+        if isinstance(request.system, str):
+            parts.append(request.system)
+        elif isinstance(request.system, list):
+            for block in request.system:
+                txt = (
+                    getattr(block, "text", "")
+                    if hasattr(block, "text")
+                    else (block.get("text", "") if isinstance(block, dict) else "")
+                )
+                if txt:
+                    parts.append(txt)
+    if request.tools:
+        for tool in request.tools:
+            d = tool.model_dump() if hasattr(tool, "model_dump") else tool
+            parts.append(str(d))
+    for msg in request.messages or []:
+        content = getattr(msg, "content", "")
+        if isinstance(content, str):
+            parts.append(content)
+        elif isinstance(content, list):
+            for block in content:
+                if isinstance(block, dict):
+                    if block.get("type") == "text":
+                        parts.append(block.get("text", ""))
+                elif hasattr(block, "text"):
+                    parts.append(getattr(block, "text", ""))
+    return "\n".join(parts)
+
+
+def _encode_token_count(tokenizer: Any, text: str) -> int:
+    if hasattr(tokenizer, "encode"):
+        tokens = tokenizer.encode(text, add_special_tokens=True)
+        if isinstance(tokens, list):
+            return len(tokens)
+        if hasattr(tokens, "shape"):
+            return tokens.shape[-1] if tokens.ndim > 0 else 1
+        return len(tokens)
+    if hasattr(tokenizer, "tokenizer"):
+        return _encode_token_count(tokenizer.tokenizer, text)
+    return len(text) // 4
