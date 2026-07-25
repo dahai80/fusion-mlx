@@ -4,25 +4,25 @@ Face detection uses insightface (CPU), Whisper audio encoding uses the
 MuseTalk-MLX WhisperEncoder (pure MLX). UNet denoising + VAE encode/decode
 are pure MLX. Only numpy/cv2/soundfile/librosa for I/O.
 """
+
 import gc
-import os
+import logging
 import math
+import os
 import shutil
 import subprocess
-import logging
 
-import numpy as np
-import mlx.core as mx
-import mlx.nn as nn
 import cv2
+import mlx.core as mx
+import numpy as np
 import tqdm
 
+from ..musetalk_mlx.whisper.audio2feature import get_whisper_chunk
+from ..musetalk_mlx.whisper.log_mel import N_SAMPLES, log_mel_spectrogram
+from ..musetalk_mlx.whisper.whisper_encoder import WhisperEncoder
+from .sampler import DDIMSampler
 from .unet import UNet3DConditionModel
 from .vae import Autoencoder
-from .sampler import DDIMSampler
-from ..musetalk_mlx.whisper.whisper_encoder import WhisperEncoder
-from ..musetalk_mlx.whisper.log_mel import log_mel_spectrogram, N_SAMPLES
-from ..musetalk_mlx.whisper.audio2feature import apply_pe, get_whisper_chunk
 
 logger = logging.getLogger(__name__)
 
@@ -50,6 +50,7 @@ def read_video_cv2(video_path: str, fps: int = 25):
 
 def read_audio_librosa(audio_path: str, sr: int = 16000):
     import librosa
+
     wav, _ = librosa.load(audio_path, sr=sr)
     return wav
 
@@ -58,10 +59,12 @@ def _affine_transform_frame(frame, face_box, size=256):
     x1, y1, x2, y2 = face_box
     cx, cy = (x1 + x2) / 2, (y1 + y2) / 2
     scale = min(size / (x2 - x1), size / (y2 - y1)) * 0.9
-    M = np.array([
-        [scale, 0, size / 2 - cx * scale],
-        [0, scale, size / 2 - cy * scale],
-    ])
+    M = np.array(
+        [
+            [scale, 0, size / 2 - cx * scale],
+            [0, scale, size / 2 - cy * scale],
+        ]
+    )
     warped = cv2.warpAffine(frame, M, (size, size), flags=cv2.INTER_LINEAR)
     return warped, M
 
@@ -81,9 +84,9 @@ def _prepare_masks_and_images(faces_np, half="lower"):
 
         mask = np.zeros((h, w, 1), dtype=np.float32)
         if half == "lower":
-            mask[h // 2:, :, :] = 1.0
+            mask[h // 2 :, :, :] = 1.0
         else:
-            mask[:h // 2, :, :] = 1.0
+            mask[: h // 2, :, :] = 1.0
 
         masked = ref.copy()
         masked = masked * (1.0 - mask) + (-1.0) * mask
@@ -112,11 +115,13 @@ def _resize_mask_batch(masks, target_h, target_w):
     return np.stack(out)
 
 
-def _restore_face_to_frame(synced_face, original_frame, face_box, affine_matrix, size=256):
+def _restore_face_to_frame(
+    synced_face, original_frame, face_box, affine_matrix, size=256
+):
     """Inverse affine paste-back: place lip-synced face back into original frame."""
     x1, y1, x2, y2 = [int(v) for v in face_box]
 
-    face_rgb = ((synced_face + 1.0) / 2.0 * 255.0)
+    face_rgb = (synced_face + 1.0) / 2.0 * 255.0
     face_rgb = np.clip(face_rgb, 0, 255).astype(np.uint8)
 
     h, w = y2 - y1, x2 - x1
@@ -125,15 +130,16 @@ def _restore_face_to_frame(synced_face, original_frame, face_box, affine_matrix,
     face_resized = cv2.resize(face_rgb, (w, h), interpolation=cv2.INTER_LINEAR)
 
     mask = np.zeros((size, size), dtype=np.float32)
-    mask[size // 2:, :] = 1.0
+    mask[size // 2 :, :] = 1.0
     mask_resized = cv2.resize(mask, (w, h), interpolation=cv2.INTER_LINEAR)
 
     frame = original_frame.copy()
     if y2 > frame.shape[0] or x2 > frame.shape[1]:
         return frame
     roi = frame[y1:y2, x1:x2]
-    blended = (face_resized.astype(np.float32) * mask_resized[..., np.newaxis] +
-               roi.astype(np.float32) * (1.0 - mask_resized[..., np.newaxis]))
+    blended = face_resized.astype(np.float32) * mask_resized[
+        ..., np.newaxis
+    ] + roi.astype(np.float32) * (1.0 - mask_resized[..., np.newaxis])
     frame[y1:y2, x1:x2] = blended.astype(np.uint8)
     return frame
 
@@ -141,7 +147,7 @@ def _restore_face_to_frame(synced_face, original_frame, face_box, affine_matrix,
 def _detect_faces_insightface(frames, ctx_id=-1, det_size=(640, 640)):
     """Detect faces using insightface (CPU-only, no torch)."""
     try:
-        import insightface
+        import insightface  # noqa: F401
         from insightface.app import FaceAnalysis
     except ImportError:
         raise ImportError("insightface required: pip install insightface")
@@ -158,7 +164,9 @@ def _detect_faces_insightface(frames, ctx_id=-1, det_size=(640, 640)):
             M = np.array([[w / 256, 0, 0], [0, h / 256, 0]])
             crop = cv2.resize(frame, (256, 256))
         else:
-            face = max(faces, key=lambda f: (f.bbox[2] - f.bbox[0]) * (f.bbox[3] - f.bbox[1]))
+            face = max(
+                faces, key=lambda f: (f.bbox[2] - f.bbox[0]) * (f.bbox[3] - f.bbox[1])
+            )
             box = face.bbox.tolist()
             crop, M = _affine_transform_frame(frame, box, size=256)
 
@@ -236,7 +244,7 @@ class LipsyncPipelineMLX:
         import librosa
 
         wav, sr = librosa.load(audio_path, sr=16000)
-        segs = [wav[i:i + N_SAMPLES] for i in range(0, max(len(wav), 1), N_SAMPLES)]
+        segs = [wav[i : i + N_SAMPLES] for i in range(0, max(len(wav), 1), N_SAMPLES)]
         feats = [self.whisper_encoder(log_mel_spectrogram(mx.array(s))) for s in segs]
         stacked = mx.concatenate(feats, axis=1)
         chunks = get_whisper_chunk(stacked, len(wav), fps=fps)
@@ -280,7 +288,9 @@ class LipsyncPipelineMLX:
         )
 
         # --- Stage 3: MLX denoising ---
-        logger.info(f"Running MLX denoising ({num_inference_steps} steps, {len(whisper_chunks)} frames)...")
+        logger.info(
+            f"Running MLX denoising ({num_inference_steps} steps, {len(whisper_chunks)} frames)..."
+        )
 
         mx.random.seed(seed)
         self.sampler.set_timesteps(num_inference_steps)
@@ -290,9 +300,13 @@ class LipsyncPipelineMLX:
         latent_h = self.resolution // self.vae_scale_factor
         latent_w = self.resolution // self.vae_scale_factor
 
-        single_noise = mx.random.normal((1, 1, latent_h, latent_w, 4)).astype(self.dtype)
+        single_noise = mx.random.normal((1, 1, latent_h, latent_w, 4)).astype(
+            self.dtype
+        )
         noise_shape = (1, len(whisper_chunks), latent_h, latent_w, 4)
-        all_latents = mx.broadcast_to(single_noise, noise_shape) * self.sampler.init_noise_sigma
+        all_latents = (
+            mx.broadcast_to(single_noise, noise_shape) * self.sampler.init_noise_sigma
+        )
 
         synced_frames_list = []
 
@@ -334,13 +348,17 @@ class LipsyncPipelineMLX:
             audio_embeds_mlx = audio_embeds_mlx[None]
             if do_cfg:
                 null_audio = mx.zeros_like(audio_embeds_mlx)
-                audio_embeds_mlx = mx.concatenate([null_audio, audio_embeds_mlx], axis=0)
+                audio_embeds_mlx = mx.concatenate(
+                    [null_audio, audio_embeds_mlx], axis=0
+                )
 
             latents = all_latents[:, start:end]
 
             # Denoising loop
             for t in self.sampler.timesteps:
-                latent_input = mx.concatenate([latents] * 2, axis=0) if do_cfg else latents
+                latent_input = (
+                    mx.concatenate([latents] * 2, axis=0) if do_cfg else latents
+                )
                 latent_input = self.sampler.scale_model_input(latent_input, t)
 
                 unet_input = mx.concatenate(
@@ -354,7 +372,9 @@ class LipsyncPipelineMLX:
 
                 if do_cfg:
                     pred_uncond, pred_audio = mx.split(noise_pred, 2, axis=0)
-                    noise_pred = pred_uncond + guidance_scale * (pred_audio - pred_uncond)
+                    noise_pred = pred_uncond + guidance_scale * (
+                        pred_audio - pred_uncond
+                    )
 
                 latents = self.sampler.step(noise_pred, t, latents)
                 mx.eval(latents)
@@ -365,7 +385,10 @@ class LipsyncPipelineMLX:
             # Compositing
             inv_mask_mlx = mx.array(1.0 - masks_np).astype(self.dtype)
             masks_mlx_mlx = mx.array(masks_np).astype(self.dtype)
-            combined = decoded[:F_count] * inv_mask_mlx[:F_count] + ref_pv_mlx[:F_count] * masks_mlx_mlx[:F_count]
+            combined = (
+                decoded[:F_count] * inv_mask_mlx[:F_count]
+                + ref_pv_mlx[:F_count] * masks_mlx_mlx[:F_count]
+            )
             synced_frames_list.append(combined)
 
         del self.unet
@@ -385,7 +408,9 @@ class LipsyncPipelineMLX:
         mx.clear_cache()
         logger.info("Freed VAE and cleared MLX cache.")
 
-        restored = self._restore_video(all_synced_np, video_frames, boxes, affine_matrices)
+        restored = self._restore_video(
+            all_synced_np, video_frames, boxes, affine_matrices
+        )
 
         # --- Stage 5: Write output ---
         if os.path.exists(temp_dir):
@@ -401,13 +426,30 @@ class LipsyncPipelineMLX:
         audio_np = audio_samples[:audio_remain_len]
         sf.write(audio_temp, audio_np, audio_sample_rate)
 
-        subprocess.run([
-            "ffmpeg", "-y", "-loglevel", "error", "-nostdin",
-            "-i", video_temp, "-i", audio_temp,
-            "-c:v", "libx264", "-crf", "18",
-            "-c:a", "aac", "-q:v", "0", "-q:a", "0",
-            video_out_path,
-        ])
+        subprocess.run(
+            [
+                "ffmpeg",
+                "-y",
+                "-loglevel",
+                "error",
+                "-nostdin",
+                "-i",
+                video_temp,
+                "-i",
+                audio_temp,
+                "-c:v",
+                "libx264",
+                "-crf",
+                "18",
+                "-c:a",
+                "aac",
+                "-q:v",
+                "0",
+                "-q:a",
+                "0",
+                video_out_path,
+            ]
+        )
         logger.info(f"Output saved to: {video_out_path}")
 
     def _loop_video(self, whisper_chunks, video_frames, cropped_faces, boxes, affines):
@@ -425,21 +467,21 @@ class LipsyncPipelineMLX:
                     loop_faces.append(cropped_faces[::-1])
                     loop_boxes += boxes[::-1]
                     loop_aff += affines[::-1]
-            video_frames = np.concatenate(loop_vf)[:len(whisper_chunks)]
-            cropped_faces = np.concatenate(loop_faces)[:len(whisper_chunks)]
-            boxes = loop_boxes[:len(whisper_chunks)]
-            affines = loop_aff[:len(whisper_chunks)]
+            video_frames = np.concatenate(loop_vf)[: len(whisper_chunks)]
+            cropped_faces = np.concatenate(loop_faces)[: len(whisper_chunks)]
+            boxes = loop_boxes[: len(whisper_chunks)]
+            affines = loop_aff[: len(whisper_chunks)]
         else:
-            video_frames = video_frames[:len(whisper_chunks)]
-            cropped_faces = cropped_faces[:len(whisper_chunks)]
-            boxes = boxes[:len(whisper_chunks)]
-            affines = affines[:len(whisper_chunks)]
+            video_frames = video_frames[: len(whisper_chunks)]
+            cropped_faces = cropped_faces[: len(whisper_chunks)]
+            boxes = boxes[: len(whisper_chunks)]
+            affines = affines[: len(whisper_chunks)]
         return video_frames, cropped_faces, boxes, affines
 
     def _vae_encode(self, images, batch_size=1):
         latents = []
         for i in range(0, images.shape[0], batch_size):
-            batch = images[i:i + batch_size]
+            batch = images[i : i + batch_size]
             mean, _ = self.vae.encode(batch)
             latents.append((mean - self.vae.shift_factor) * self.vae.scaling_factor)
             mx.eval(latents[-1])
@@ -449,19 +491,23 @@ class LipsyncPipelineMLX:
         scaled = latents / self.vae.scaling_factor + self.vae.shift_factor
         decoded = []
         for i in range(0, scaled.shape[0], batch_size):
-            batch = scaled[i:i + batch_size]
+            batch = scaled[i : i + batch_size]
             decoded.append(self.vae.decode(batch))
             mx.eval(decoded[-1])
         return mx.concatenate(decoded, axis=0)
 
     def _restore_video(self, synced_faces_np, video_frames, boxes, affine_matrices):
         """Pure numpy/cv2 face restoration — no PyTorch."""
-        video_frames = video_frames[:len(synced_faces_np)]
+        video_frames = video_frames[: len(synced_faces_np)]
         out_frames = []
         logger.info(f"Restoring {len(synced_faces_np)} faces...")
         for idx, face in enumerate(tqdm.tqdm(synced_faces_np)):
             frame = _restore_face_to_frame(
-                face, video_frames[idx], boxes[idx], affine_matrices[idx], size=self.resolution
+                face,
+                video_frames[idx],
+                boxes[idx],
+                affine_matrices[idx],
+                size=self.resolution,
             )
             out_frames.append(frame)
         return np.stack(out_frames)

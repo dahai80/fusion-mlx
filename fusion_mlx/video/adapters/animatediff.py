@@ -44,7 +44,7 @@ def remap_animatediff_lora_weights(
     for hf_key, value in raw_weights.items():
         clean = hf_key
         if clean.startswith("diffusion_model."):
-            clean = clean[len("diffusion_model."):]
+            clean = clean[len("diffusion_model.") :]
 
         m = re.match(r"blocks\.(\d+)\.(.*)", clean)
         if not m:
@@ -112,9 +112,7 @@ class AnimateDiff(VideoAdapter):
         if not loaded:
             loaded = self._load_from_hf()
         if not loaded:
-            logger.warning(
-                "AnimateDiff: LoRA weights not loaded, inject will be no-op"
-            )
+            logger.warning("AnimateDiff: LoRA weights not loaded, inject will be no-op")
 
         self._loaded = True
         logger.info(
@@ -156,9 +154,7 @@ class AnimateDiff(VideoAdapter):
                         )
                         return True
                 except Exception as exc:
-                    logger.warning(
-                        "AnimateDiff: failed to load from %s: %s", sf, exc
-                    )
+                    logger.warning("AnimateDiff: failed to load from %s: %s", sf, exc)
 
         return False
 
@@ -191,9 +187,7 @@ class AnimateDiff(VideoAdapter):
 
                 try:
                     with safe_open(sf, framework="pt") as f:
-                        import numpy as np
-
-                        for k in f.keys():
+                        for k in f:
                             t = f.get_tensor(k)
                             arr = t.detach().cpu().float().numpy()
                             raw[k] = mx.array(arr)
@@ -211,7 +205,9 @@ class AnimateDiff(VideoAdapter):
                 )
                 return True
             else:
-                logger.warning("AnimateDiff: no compatible LoRA keys in %s", target_file)
+                logger.warning(
+                    "AnimateDiff: no compatible LoRA keys in %s", target_file
+                )
         except ImportError:
             logger.debug("AnimateDiff: huggingface_hub not installed, skipping HF")
         except Exception as exc:
@@ -252,7 +248,9 @@ class AnimateDiff(VideoAdapter):
             lora_a = lora_dict.get("lora_A")
             lora_b = lora_dict.get("lora_B")
             if lora_a is None or lora_b is None:
-                logger.debug("AnimateDiff: incomplete LoRA for %s, skipping", target_key)
+                logger.debug(
+                    "AnimateDiff: incomplete LoRA for %s, skipping", target_key
+                )
                 continue
 
             base_weight = param_map[target_key]

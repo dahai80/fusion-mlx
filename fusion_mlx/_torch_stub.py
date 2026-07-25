@@ -177,8 +177,10 @@ def _unsupported(qualname: str):
 
 def _stub_tensor_fn(qualname: str):
     """Return a function that returns a _StubTensor — for ops used at import/class-def time."""
+
     def _fn(*args, **kwargs):
         return _StubTensor()
+
     return _fn
 
 
@@ -273,29 +275,40 @@ def _make_top_level_torch_getattr() -> callable:
                 "(returning no-op stub)",
                 name,
             )
+
         # Return a no-op that can be called, used as base class, or accessed as module
         # Uses a metaclass so class-level attribute access (torch.autograd.Function) works
         class _AutoStubMeta(type):
-            def __getattr__(meta_cls, attr):
+            def __getattr__(meta_cls, attr):  # noqa: N804
                 return _auto_sub(f"{meta_cls.__name__}.{attr}")
-            def __repr__(meta_cls):
+
+            def __repr__(meta_cls):  # noqa: N804
                 return f"<metastub:{meta_cls.__name__}>"
 
         def _auto_sub(attr_name):
             class _AutoStub(metaclass=_AutoStubMeta):
-                def __init_subclass__(cls, **kw): pass
-                def __init__(self, *a, **kw): pass
+                def __init_subclass__(cls, **kw):
+                    pass
+
+                def __init__(self, *a, **kw):
+                    pass
+
                 def __call__(self, *a, **kw):
                     return _auto_sub(f"{attr_name}.__call__")
+
                 def __getattr__(self, attr):
                     return _auto_sub(f"{attr_name}.{attr}")
+
                 def __mro_entries__(self, bases):
                     return (object,)
+
                 def __repr__(self):
                     return f"<torch.{attr_name} stub>"
+
             _AutoStub.__name__ = attr_name
             _AutoStub.__qualname__ = attr_name
             return _AutoStub
+
         stub = _auto_sub(name)
         # Cache it so the same name always returns the same stub
         if _torch_ref[0] is not None:
@@ -344,11 +357,17 @@ def _build_modules() -> dict[str, types.ModuleType]:
 
     # No-op context managers / decorators — MLX doesn't use autograd
     class _NoOpContextManager:
-        def __enter__(self): return self
-        def __exit__(self, *a): return False
-        def __call__(self, fn=None):
-            if fn is not None: return fn
+        def __enter__(self):
             return self
+
+        def __exit__(self, *a):
+            return False
+
+        def __call__(self, fn=None):
+            if fn is not None:
+                return fn
+            return self
+
     torch.inference_mode = _NoOpContextManager()
     torch.no_grad = _NoOpContextManager()
     torch.enable_grad = _NoOpContextManager()
@@ -360,7 +379,10 @@ def _build_modules() -> dict[str, types.ModuleType]:
     cuda.is_available = _false
     cuda.current_device = lambda: 0
     cuda.device_count = lambda: 1
-    cuda.mem_get_info = lambda device=None: (16 * 1024 * 1024 * 1024, 64 * 1024 * 1024 * 1024)
+    cuda.mem_get_info = lambda device=None: (
+        16 * 1024 * 1024 * 1024,
+        64 * 1024 * 1024 * 1024,
+    )
     cuda.set_device = lambda device: None
     cuda.synchronize = lambda device=None: None
     cuda.empty_cache = lambda: None
@@ -372,13 +394,29 @@ def _build_modules() -> dict[str, types.ModuleType]:
         "reserved.all.current": 0,
     }
     cuda.get_device_name = lambda device=None: "Apple Metal (MLX)"
-    cuda.get_device_properties = lambda device=None: type("props", (), {"gcnArchName": "", "major": 0, "minor": 0, "total_memory": 64 * 1024 * 1024 * 1024})()
+    cuda.get_device_properties = lambda device=None: type(
+        "props",
+        (),
+        {
+            "gcnArchName": "",
+            "major": 0,
+            "minor": 0,
+            "total_memory": 64 * 1024 * 1024 * 1024,
+        },
+    )()
     cuda.get_allocator_backend = lambda: "MLX"
     cuda.current_stream = lambda device=None: _Stream()
     cuda.Stream = _Stream
     cuda.stream = _NoOpContextManager()
     cuda.OutOfMemoryError = MemoryError
-    cuda.cudart = lambda: type("cudart", (), {"cudaHostRegister": lambda *a, **kw: 0, "cudaHostUnregister": lambda *a, **kw: 0})()
+    cuda.cudart = lambda: type(
+        "cudart",
+        (),
+        {
+            "cudaHostRegister": lambda *a, **kw: 0,
+            "cudaHostUnregister": lambda *a, **kw: 0,
+        },
+    )()
 
     torch.cuda = cuda
 
@@ -387,14 +425,22 @@ def _build_modules() -> dict[str, types.ModuleType]:
         def __init__(self, type="mlu", index=0):
             self.type = type
             self.index = index
+
         def __repr__(self):
             if self.index is not None:
                 return f"{self.type}:{self.index}"
             return self.type
+
         def __hash__(self):
             return hash((self.type, self.index))
+
         def __eq__(self, other):
-            return isinstance(other, _StubDevice) and self.type == other.type and self.index == other.index
+            return (
+                isinstance(other, _StubDevice)
+                and self.type == other.type
+                and self.index == other.index
+            )
+
     torch.device = _StubDevice
 
     # Stub xpu / backends / corex — probe-only, return False/None
@@ -436,7 +482,9 @@ def _build_modules() -> dict[str, types.ModuleType]:
     nn_functional.batch_norm = _unsupported("nn.functional.batch_norm")
     nn_functional.layer_norm = _unsupported("nn.functional.layer_norm")
     nn_functional.rms_norm = _unsupported("nn.functional.rms_norm")
-    nn_functional.scaled_dot_product_attention = _unsupported("nn.functional.scaled_dot_product_attention")
+    nn_functional.scaled_dot_product_attention = _unsupported(
+        "nn.functional.scaled_dot_product_attention"
+    )
     nn_functional.silu = _unsupported("nn.functional.silu")
     nn_functional.gelu = _unsupported("nn.functional.gelu")
     nn_functional.relu = _unsupported("nn.functional.relu")
@@ -445,62 +493,103 @@ def _build_modules() -> dict[str, types.ModuleType]:
 
     # Proper base classes that can be subclassed
     class _StubModule:
-        def __init__(self, *a, **kw): pass
-        def __call__(self, *a, **kw): return _StubTensor()
-        def forward(self, *a, **kw): return _StubTensor()
-        def parameters(self): return []
-        def named_parameters(self): return []
-        def to(self, *a, **kw): return self
-        def cuda(self, *a, **kw): return self
-        def cpu(self): return self
-        def float(self): return self
-        def half(self): return self
-        def train(self, mode=True): return self
-        def eval(self): return self
-        def __repr__(self): return f"{self.__class__.__name__}()"
+        def __init__(self, *a, **kw):
+            pass
+
+        def __call__(self, *a, **kw):
+            return _StubTensor()
+
+        def forward(self, *a, **kw):
+            return _StubTensor()
+
+        def parameters(self):
+            return []
+
+        def named_parameters(self):
+            return []
+
+        def to(self, *a, **kw):
+            return self
+
+        def cuda(self, *a, **kw):
+            return self
+
+        def cpu(self):
+            return self
+
+        def float(self):
+            return self
+
+        def half(self):
+            return self
+
+        def train(self, mode=True):
+            return self
+
+        def eval(self):
+            return self
+
+        def __repr__(self):
+            return f"{self.__class__.__name__}()"
 
     class _StubParameter(_StubTensor):
-        def __new__(cls, data=None, *a, **kw): return object.__new__(cls)
-        def __init__(self, data=None, requires_grad=False): pass
+        def __new__(cls, data=None, *a, **kw):
+            return object.__new__(cls)
+
+        def __init__(self, data=None, requires_grad=False):
+            pass
 
     class _StubLinear(_StubModule):
-        def __init__(self, in_features=0, out_features=0, bias=True, **kw): pass
+        def __init__(self, in_features=0, out_features=0, bias=True, **kw):
+            pass
 
     class _StubConv1d(_StubModule):
-        def __init__(self, in_channels=0, out_channels=0, kernel_size=1, **kw): pass
+        def __init__(self, in_channels=0, out_channels=0, kernel_size=1, **kw):
+            pass
 
     class _StubConv2d(_StubModule):
-        def __init__(self, in_channels=0, out_channels=0, kernel_size=1, **kw): pass
+        def __init__(self, in_channels=0, out_channels=0, kernel_size=1, **kw):
+            pass
 
     class _StubConv3d(_StubModule):
-        def __init__(self, in_channels=0, out_channels=0, kernel_size=1, **kw): pass
+        def __init__(self, in_channels=0, out_channels=0, kernel_size=1, **kw):
+            pass
 
     class _StubGroupNorm(_StubModule):
-        def __init__(self, num_groups=1, num_channels=1, **kw): pass
+        def __init__(self, num_groups=1, num_channels=1, **kw):
+            pass
 
     class _StubBatchNorm2d(_StubModule):
-        def __init__(self, num_features=0, **kw): pass
+        def __init__(self, num_features=0, **kw):
+            pass
 
     class _StubLayerNorm(_StubModule):
-        def __init__(self, normalized_shape=None, **kw): pass
+        def __init__(self, normalized_shape=None, **kw):
+            pass
 
     class _StubRMSNorm(_StubModule):
-        def __init__(self, normalized_shape=None, **kw): pass
+        def __init__(self, normalized_shape=None, **kw):
+            pass
 
     class _StubEmbedding(_StubModule):
-        def __init__(self, num_embeddings=0, embedding_dim=0, **kw): pass
+        def __init__(self, num_embeddings=0, embedding_dim=0, **kw):
+            pass
 
     class _StubConvTranspose1d(_StubModule):
-        def __init__(self, in_channels=0, out_channels=0, kernel_size=1, **kw): pass
+        def __init__(self, in_channels=0, out_channels=0, kernel_size=1, **kw):
+            pass
 
     class _StubConvTranspose2d(_StubModule):
-        def __init__(self, in_channels=0, out_channels=0, kernel_size=1, **kw): pass
+        def __init__(self, in_channels=0, out_channels=0, kernel_size=1, **kw):
+            pass
 
     class _StubSequential(_StubModule):
-        def __init__(self, *args, **kw): pass
+        def __init__(self, *args, **kw):
+            pass
 
     class _StubModuleList(_StubModule):
-        def __init__(self, modules=None, **kw): pass
+        def __init__(self, modules=None, **kw):
+            pass
 
     nn = _LazyMockModule("nn")
     nn.Module = _StubModule
@@ -563,9 +652,13 @@ def _build_modules() -> dict[str, types.ModuleType]:
 
     # torch.autograd submodule — must be a real module for `from torch.autograd import Function`
     class _StubAutogradFunction:
-        def __init_subclass__(cls, **kw): pass
+        def __init_subclass__(cls, **kw):
+            pass
+
         @staticmethod
-        def apply(*a, **kw): return _StubTensor()
+        def apply(*a, **kw):
+            return _StubTensor()
+
     autograd = _LazyMockModule("autograd")
     autograd.Function = _StubAutogradFunction
     torch.autograd = autograd
@@ -587,8 +680,19 @@ def _build_modules() -> dict[str, types.ModuleType]:
 
     # torch.distributions
     distributions = _LazyMockModule("distributions")
-    distributions.Normal = type("Normal", (), {"__init__": lambda self, *a, **kw: None, "sample": lambda self, *a: _StubTensor(), "rsample": lambda self, *a: _StubTensor(), "log_prob": lambda self, *a: _StubTensor()})
-    distributions.Independent = type("Independent", (), {"__init__": lambda self, *a, **kw: None})
+    distributions.Normal = type(
+        "Normal",
+        (),
+        {
+            "__init__": lambda self, *a, **kw: None,
+            "sample": lambda self, *a: _StubTensor(),
+            "rsample": lambda self, *a: _StubTensor(),
+            "log_prob": lambda self, *a: _StubTensor(),
+        },
+    )
+    distributions.Independent = type(
+        "Independent", (), {"__init__": lambda self, *a, **kw: None}
+    )
     distributions.KL = _LazyMockModule("distributions.kl")
     torch.distributions = distributions
 
@@ -620,7 +724,9 @@ def _build_modules() -> dict[str, types.ModuleType]:
     jit = _LazyMockModule("jit")
     jit.script = lambda f: f
     jit.trace = lambda *a, **kw: (lambda f: f)
-    jit.Final = type("Final", (), {"__class_getitem__": classmethod(lambda cls, item: item)})
+    jit.Final = type(
+        "Final", (), {"__class_getitem__": classmethod(lambda cls, item: item)}
+    )
     jit.export = lambda f: f
     torch.jit = jit
 
@@ -650,7 +756,15 @@ def _build_modules() -> dict[str, types.ModuleType]:
     utils.dlpack = utils_dlpack
     utils.checkpoint = utils_checkpoint
     utils_data = _LazyMockModule("utils.data")
-    utils_data.DataLoader = type("DataLoader", (), {"__init__": lambda self, *a, **kw: None, "__iter__": lambda self: iter([]), "__len__": lambda self: 0})
+    utils_data.DataLoader = type(
+        "DataLoader",
+        (),
+        {
+            "__init__": lambda self, *a, **kw: None,
+            "__iter__": lambda self: iter([]),
+            "__len__": lambda self: 0,
+        },
+    )
     utils_data.Dataset = type("Dataset", (), {"__init__": lambda self, *a, **kw: None})
     utils.data = utils_data
     torch.utils = utils

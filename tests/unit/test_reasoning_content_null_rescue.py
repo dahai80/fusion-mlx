@@ -1248,7 +1248,9 @@ def _stream_post(
 
     from fusion_mlx.config import reset_config
     from fusion_mlx.reasoning.qwen3_parser import Qwen3ReasoningParser
-    pytest.skip("routes_internal/chat.py removed (#71 dedup)"); from fusion_mlx.api.openai_routes import router as chat_router  # noqa
+
+    pytest.skip("routes_internal/chat.py removed (#71 dedup)")
+    from fusion_mlx.api.openai_routes import router as chat_router  # noqa
 
     cfg = reset_config()
     cfg.engine = _StreamEngine(
@@ -1414,7 +1416,9 @@ def test_streaming_happy_path_no_sentinel_when_content_streamed(monkeypatch):
 
     from fusion_mlx.config import reset_config
     from fusion_mlx.engine.base import GenerationOutput
-    pytest.skip("routes_internal/chat.py removed (#71 dedup)"); from fusion_mlx.api.openai_routes import router as chat_router  # noqa
+
+    pytest.skip("routes_internal/chat.py removed (#71 dedup)")
+    from fusion_mlx.api.openai_routes import router as chat_router  # noqa
 
     class _ContentEngine:
         preserve_native_tool_format = False
@@ -1490,17 +1494,23 @@ def _route_source(module_name: str) -> str:
     return inspect.getsource(mod)
 
 
-@pytest.mark.skip(reason="routes_internal/anthropic.py removed (#71 dedup); live api/ routes don't call _apply_reasoning_cutoff_notice")
+@pytest.mark.skip(
+    reason="routes_internal/anthropic.py removed (#71 dedup); live api/ routes don't call _apply_reasoning_cutoff_notice"
+)
 def test_anthropic_route_helper_call_site_present():
     pass
 
 
-@pytest.mark.skip(reason="routes_internal call-site test; responses route still live but _apply_reasoning_cutoff_notice not in live code")
+@pytest.mark.skip(
+    reason="routes_internal call-site test; responses route still live but _apply_reasoning_cutoff_notice not in live code"
+)
 def test_responses_route_helper_call_site_present():
     pass
 
 
-@pytest.mark.skip(reason="routes_internal/chat.py removed (#71 dedup); live api/openai_routes.py doesn't call _apply_reasoning_cutoff_notice")
+@pytest.mark.skip(
+    reason="routes_internal/chat.py removed (#71 dedup); live api/openai_routes.py doesn't call _apply_reasoning_cutoff_notice"
+)
 def test_chat_route_helper_call_site_present():
     pass
 
@@ -1572,7 +1582,9 @@ def test_chat_route_opt_out_no_sentinel_on_length_cut(monkeypatch):
     from fastapi.testclient import TestClient
 
     from fusion_mlx.config import reset_config
-    pytest.skip("routes_internal/chat.py removed (#71 dedup)"); from fusion_mlx.api.openai_routes import router as chat_router  # noqa
+
+    pytest.skip("routes_internal/chat.py removed (#71 dedup)")
+    from fusion_mlx.api.openai_routes import router as chat_router  # noqa
 
     cfg = reset_config()
     _seed_length_cut_engine(cfg)
@@ -1622,7 +1634,9 @@ def test_chat_route_enabled_surfaces_sentinel_on_length_cut(monkeypatch):
     from fastapi.testclient import TestClient
 
     from fusion_mlx.config import reset_config
-    pytest.skip("routes_internal/chat.py removed (#71 dedup)"); from fusion_mlx.api.openai_routes import router as chat_router  # noqa
+
+    pytest.skip("routes_internal/chat.py removed (#71 dedup)")
+    from fusion_mlx.api.openai_routes import router as chat_router  # noqa
 
     cfg = reset_config()
     _seed_length_cut_engine(cfg)
@@ -1680,7 +1694,9 @@ def test_chat_route_default_env_surfaces_sentinel_regression_858(monkeypatch):
     from fastapi.testclient import TestClient
 
     from fusion_mlx.config import reset_config
-    pytest.skip("routes_internal/chat.py removed (#71 dedup)"); from fusion_mlx.api.openai_routes import router as chat_router  # noqa
+
+    pytest.skip("routes_internal/chat.py removed (#71 dedup)")
+    from fusion_mlx.api.openai_routes import router as chat_router  # noqa
 
     cfg = reset_config()
     _seed_length_cut_engine(cfg)
@@ -1726,7 +1742,9 @@ def test_anthropic_route_opt_out_no_sentinel_on_length_cut(monkeypatch):
     from fastapi.testclient import TestClient
 
     from fusion_mlx.config import reset_config
-    pytest.skip("routes_internal/anthropic.py removed (#71 dedup)"); from fusion_mlx.api.anthropic_routes import router as anthropic_router  # noqa
+
+    pytest.skip("routes_internal/anthropic.py removed (#71 dedup)")
+    from fusion_mlx.api.anthropic_routes import router as anthropic_router  # noqa
 
     cfg = reset_config()
     _seed_length_cut_engine(cfg)
@@ -1778,7 +1796,9 @@ def test_anthropic_route_enabled_surfaces_sentinel(monkeypatch):
     from fastapi.testclient import TestClient
 
     from fusion_mlx.config import reset_config
-    pytest.skip("routes_internal/anthropic.py removed (#71 dedup)"); from fusion_mlx.api.anthropic_routes import router as anthropic_router  # noqa
+
+    pytest.skip("routes_internal/anthropic.py removed (#71 dedup)")
+    from fusion_mlx.api.anthropic_routes import router as anthropic_router  # noqa
 
     cfg = reset_config()
     _seed_length_cut_engine(cfg)
@@ -1866,40 +1886,8 @@ def test_responses_route_opt_out_no_sentinel_on_length_cut(monkeypatch):
         reset_config()
 
 
-@pytest.mark.skip(reason="responses route doesn't call _apply_reasoning_cutoff_notice; sentinel not surfaced")
+@pytest.mark.skip(
+    reason="responses route doesn't call _apply_reasoning_cutoff_notice; sentinel not surfaced"
+)
 def test_responses_route_enabled_surfaces_sentinel(monkeypatch):
     pass
-
-    cfg = reset_config()
-    _seed_length_cut_engine(cfg)
-
-    try:
-        app = FastAPI()
-        app.include_router(responses_router)
-        client = TestClient(app)
-        resp = client.post(
-            "/v1/responses",
-            json={
-                "model": "test-model",
-                "max_output_tokens": 16,
-                "input": "compute 17*23",
-                "stream": False,
-            },
-        )
-        assert resp.status_code == 200, resp.text
-        payload = resp.json()
-        from fusion_mlx.service.helpers import _cutoff_notice_enabled
-
-        assert _cutoff_notice_enabled(), "cutoff notice should be enabled when env=1"
-        sentinel_texts: list[str] = []
-        for item in payload.get("output") or []:
-            for block in item.get("content") or []:
-                if block.get("type") == "output_text":
-                    sentinel_texts.append(block.get("text") or "")
-        assert any(REASONING_CUTOFF_SENTINEL in t for t in sentinel_texts), (
-            f"enabled e2e (env=1): /v1/responses must surface sentinel "
-            f"in an output_text block on length-cut mid-think; "
-            f"got payload={payload!r}"
-        )
-    finally:
-        reset_config()
