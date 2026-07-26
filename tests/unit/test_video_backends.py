@@ -422,7 +422,7 @@ class TestLegacyLTXBackend:
 
     def test_constraints(self):
         c = constraints_for("ltx-video")
-        assert c.supports_i2v is False
+        assert c.supports_i2v is True
         assert c.dim_divisibility == 32
         assert c.num_frames_validator(97) is True
         assert c.num_frames_validator(16) is False

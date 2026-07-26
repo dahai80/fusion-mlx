@@ -1,8 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # Legacy LTX-Video (0.9.x) pure-MLX video backend. Direct MLX port of the
 # LTX-Video 0.9.x pipeline (ltx_video/, MIT licensed) - no mlx-video dependency
-# for this family. T2V only (VAE encoder not ported). Upstream issue:
-# https://github.com/Blaizzy/mlx-video/issues/43
+# for this family. T2V and I2V supported (VAE encoder + image conditioning).
 
 import asyncio
 import gc
@@ -28,7 +27,7 @@ _MAX_T5_LEN = 256
 
 class LegacyLTXBackend(VideoBackend):
     name = "ltx_video_legacy"
-    supports_i2v = False
+    supports_i2v = True
 
     def __init__(self, model_name: str, *, dtype: Any = mx.bfloat16, **kwargs: Any):
         self._model_name = model_name
@@ -120,6 +119,8 @@ class LegacyLTXBackend(VideoBackend):
                     num_inference_steps=params.num_inference_steps,
                     cfg_scale=params.cfg_scale,
                     on_step_sync=sync_cb,
+                    image=getattr(params, "image", None),
+                    image_strength=getattr(params, "image_strength", None),
                 )
                 results.append(mp4_bytes)
             return results
@@ -132,7 +133,7 @@ class LegacyLTXBackend(VideoBackend):
 
     def constraints(self) -> VideoConstraints:
         return VideoConstraints(
-            supports_i2v=False,
+            supports_i2v=True,
             max_n=4,
             dim_divisibility=32,
             num_frames_validator=lambda nf: nf % 8 == 1,
@@ -244,6 +245,8 @@ def _generate_one(
     num_inference_steps: int | None,
     cfg_scale: float | None,
     on_step_sync: Callable[[int, int], None] | None = None,
+    image: str | None = None,
+    image_strength: float | None = None,
 ) -> bytes:
     from ...video.ltx_video_legacy.denoise import denoise
 
@@ -265,6 +268,56 @@ def _generate_one(
     )
     latents = mx.transpose(noise, (0, 2, 3, 4, 1)).reshape(1, n_tokens, latent_shape[1])
 
+    # I2V: encode image and build conditioning_latent + noise_mask
+    conditioning_latent = None
+    noise_mask = None
+    if image is not None:
+        from PIL import Image as PILImage
+
+        strength = float(image_strength) if image_strength is not None else 1.0
+        logger.info("legacy-ltx I2V: encoding image=%s strength=%.2f", image, strength)
+
+        pil_img = PILImage.open(image).convert("RGB")
+        pil_img = pil_img.resize((width, height), PILImage.LANCZOS)
+        img_np = np.asarray(pil_img, dtype=np.float32) / 255.0
+        # (H, W, 3) -> (1, 3, 1, H, W) — single frame for image
+        img_np = np.transpose(img_np, (2, 0, 1))[None, :, None, :, :]
+
+        img_mx = mx.array(img_np, dtype=dtype)
+        # VAE encode: (1, 3, 1, H, W) -> (1, c, 1, lh, lw)
+        img_latent = vae.encode(img_mx)
+        mx.eval(img_latent)
+
+        # Build conditioning latent: image in first frame(s), zeros elsewhere
+        # Matches native ComfyUI: latent[:, :, :t.shape[2]] = t
+        cond_5d = mx.zeros((1, img_latent.shape[1], lf, lh, lw), dtype=img_latent.dtype)
+        n_img_frames = img_latent.shape[2]
+        # Slice-assign: cond_5d[:, :, :n_img_frames] = img_latent
+        cond_5d = mx.concatenate(
+            [img_latent, cond_5d[:, :, n_img_frames:, :, :]], axis=2
+        )
+        # Patchify for denoise: (1, c, lf, lh, lw) -> (1, n, c)
+        conditioning_latent = mx.transpose(cond_5d, (0, 2, 3, 4, 1)).reshape(
+            1, n_tokens, img_latent.shape[1]
+        )
+
+        # noise_mask: matches native ComfyUI behavior:
+        # conditioning_latent_frames_mask[:, :, :t.shape[2]] = 1.0 - strength
+        # All other frames = 1.0 (denoise freely)
+        mask_5d = np.ones((1, 1, lf, lh, lw), dtype=np.float32)
+        mask_5d[0, 0, :n_img_frames, :, :] = 1.0 - strength
+        # Patchify mask: (1, 1, lf, lh, lw) -> (1, n, 1)
+        mask_mx = mx.array(mask_5d, dtype=mx.float32)
+        noise_mask = mx.transpose(mask_mx, (0, 2, 3, 4, 1)).reshape(1, n_tokens, 1)
+
+        logger.info(
+            "legacy-ltx I2V: img_latent shape=%s cond_5d shape=%s noise_mask range=[%.2f,%.2f]",
+            img_latent.shape,
+            cond_5d.shape,
+            float(np.nanmin(mask_5d)),
+            float(np.nanmax(mask_5d)),
+        )
+
     pixel_coords = _latent_pixel_coords(lf, lh, lw, scale_factors)
 
     prompt_embeds, prompt_mask = _encode_prompt(t5, tokenizer, prompt)
@@ -276,7 +329,7 @@ def _generate_one(
 
     logger.info(
         "legacy-ltx generate: prompt_len=%d frames=%d %dx%d@%dfps seed=%d "
-        "steps=%d cfg=%.2f latent=%s",
+        "steps=%d cfg=%.2f latent=%s i2v=%s",
         len(prompt),
         num_frames,
         width,
@@ -286,6 +339,7 @@ def _generate_one(
         steps,
         cfg,
         latent_shape,
+        image is not None,
     )
 
     latents = denoise(
@@ -303,6 +357,8 @@ def _generate_one(
         latent_shape,
         dtype=dtype,
         on_step_sync=on_step_sync,
+        conditioning_latent=conditioning_latent,
+        noise_mask=noise_mask,
     )
 
     # unpatchify (1, n, c) -> (1, c, lf, lh, lw) then VAE decode.
@@ -314,6 +370,17 @@ def _generate_one(
     # bf16 mlx arrays expose a PEP 3118 buffer whose item size mismatches
     # float32, so cast to float32 on the mlx side before handing to numpy.
     decoded = np.asarray(decoded.astype(mx.float32))
+
+    nan_count = int(np.isnan(decoded).sum())
+    inf_count = int(np.isinf(decoded).sum())
+    if nan_count or inf_count:
+        logger.warning(
+            "VAE decode: nan=%d inf=%d total=%d — replacing with 0",
+            nan_count,
+            inf_count,
+            decoded.size,
+        )
+        decoded = np.nan_to_num(decoded, nan=0.0, posinf=1.0, neginf=0.0)
 
     # NCDHW (1, 3, F, H, W) -> crop to requested dims -> list of HxWx3 uint8 frames.
     f_out = min(decoded.shape[2], num_frames)

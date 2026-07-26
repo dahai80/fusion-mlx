@@ -1,15 +1,21 @@
 # SPDX-License-Identifier: Apache-2.0
 # Pure-MLX denoise loop for LTX-Video 0.9.x, ported from
-# ltx_video/pipelines/pipeline_ltx_video.py (MIT). Simplified T2V path:
-# classifier-free guidance + Euler step only. Dropped APG/STG/cfg_star_rescale,
-# image conditioning, and the learned-sigma chunk (out_channels//2 != in_channels).
+# ltx_video/pipelines/pipeline_ltx_video.py (MIT). Simplified path:
+# classifier-free guidance + Euler step only. Dropped APG/STG/cfg_star_rescale
+# and the learned-sigma chunk (out_channels//2 != in_channels).
+# Image conditioning (I2V) supported via conditioning_latent + noise_mask.
 
 import logging
 from collections.abc import Callable
 
 import mlx.core as mx
+import numpy as np
 
 logger = logging.getLogger(__name__)
+
+
+def _to_np(arr):
+    return np.asarray(arr.astype(mx.float32))
 
 
 def denoise(
@@ -27,9 +33,9 @@ def denoise(
     latent_shape,
     dtype=mx.float32,
     on_step_sync: Callable[[int, int], None] | None = None,
+    conditioning_latent=None,
+    noise_mask=None,
 ):
-    # CFG batch order is [negative, prompt] (matches the reference cat); the
-    # 3rd STG copy is intentionally dropped.
     do_cfg = float(guidance_scale) > 1.0
     if do_cfg:
         embeds = mx.concatenate([negative_embeds, prompt_embeds], axis=0)
@@ -44,8 +50,6 @@ def denoise(
     timesteps = scheduler.timesteps
     n_steps = timesteps.shape[0]
 
-    # indices_grid: (num_conds, 3, n) float; temporal axis divided by frame_rate
-    # before being fed to the transformer (reference: fractional_coords[:,0] *= 1/fps).
     frac = mx.concatenate([pixel_coords] * num_conds, axis=0).astype(mx.float32)
     temporal_scale = mx.array([1.0 / float(frame_rate), 1.0, 1.0], dtype=mx.float32)
     frac = frac * temporal_scale[None, :, None]
@@ -56,6 +60,32 @@ def denoise(
         do_cfg,
         float(guidance_scale),
         pixel_coords.shape[2],
+    )
+
+    mx.eval(prompt_embeds, negative_embeds, latents)
+    pe_np = _to_np(prompt_embeds)
+    ne_np = _to_np(negative_embeds)
+    la_np = _to_np(latents)
+    logger.info(
+        "denoise: input check prompt_embeds range=[%.4f,%.4f] nan=%d/%d",
+        float(np.nanmin(pe_np)),
+        float(np.nanmax(pe_np)),
+        int(np.isnan(pe_np).sum()),
+        pe_np.size,
+    )
+    logger.info(
+        "denoise: input check neg_embeds range=[%.4f,%.4f] nan=%d/%d",
+        float(np.nanmin(ne_np)),
+        float(np.nanmax(ne_np)),
+        int(np.isnan(ne_np).sum()),
+        ne_np.size,
+    )
+    logger.info(
+        "denoise: input check latents range=[%.4f,%.4f] nan=%d/%d",
+        float(np.nanmin(la_np)),
+        float(np.nanmax(la_np)),
+        int(np.isnan(la_np).sum()),
+        la_np.size,
     )
 
     for i, t in enumerate(timesteps.tolist()):
@@ -73,12 +103,47 @@ def denoise(
             timestep=timestep,
         )
 
+        if i == 0:
+            mx.eval(noise_pred)
+            np_pred = _to_np(noise_pred)
+            logger.info(
+                "denoise: step=1 noise_pred range=[%.4f,%.4f] nan=%d/%d",
+                float(np.nanmin(np_pred)),
+                float(np.nanmax(np_pred)),
+                int(np.isnan(np_pred).sum()),
+                np_pred.size,
+            )
+
         if do_cfg:
             uncond, text = mx.split(noise_pred, 2, axis=0)
             noise_pred = uncond + float(guidance_scale) * (text - uncond)
 
         latents = scheduler.step(noise_pred, t, latents)
-        logger.info("denoise: step=%d/%d t=%.4f", i + 1, n_steps, t)
+
+        if conditioning_latent is not None and noise_mask is not None:
+            latents = conditioning_latent * (1.0 - noise_mask) + latents * noise_mask
+
+        mx.eval(latents)
+        latents_np = _to_np(latents)
+        nan_count = int(np.isnan(latents_np).sum())
+        if nan_count > 0:
+            logger.warning(
+                "denoise: step=%d/%d t=%.4f NaN detected: %d/%d values",
+                i + 1,
+                n_steps,
+                t,
+                nan_count,
+                latents_np.size,
+            )
+
+        logger.info(
+            "denoise: step=%d/%d t=%.4f range=[%.4f,%.4f]",
+            i + 1,
+            n_steps,
+            t,
+            float(np.nanmin(latents_np)),
+            float(np.nanmax(latents_np)),
+        )
         if on_step_sync is not None:
             on_step_sync(i + 1, n_steps)
 

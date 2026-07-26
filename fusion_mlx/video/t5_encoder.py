@@ -389,6 +389,7 @@ def load_t5_encoder(model_path, dtype=mx.float32) -> T5Encoder:
 
 
 def load_t5_tokenizer(model_path):
-    from transformers import AutoTokenizer
+    from transformers import T5Tokenizer
 
-    return AutoTokenizer.from_pretrained(str(model_path))
+    logger.info("Loading T5 tokenizer from %s", model_path)
+    return T5Tokenizer.from_pretrained(str(model_path), local_files_only=True)

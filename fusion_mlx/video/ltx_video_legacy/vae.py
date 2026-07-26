@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # Ported from LTX-Video 0.9.x (ltx_video/models/autoencoders/, MIT licensed).
-# Pure-MLX reimplementation of the 0.9.x CausalVideoAutoencoder *decoder* path.
-# Decoder-only: encode/quant path is not needed for diffusion sampling.
+# Pure-MLX reimplementation of the 0.9.x CausalVideoAutoencoder decoder + encoder.
+# Encoder added for I2V (image-to-video) support.
 import glob
 import json
 import logging
@@ -38,6 +38,7 @@ OURS_VAE_CONFIG = {
     "latent_log_var": "uniform",
     "use_quant_conv": False,
     "causal_decoder": False,
+    "base_channels": 128,
 }
 
 DIFFUSERS_VAE_CONFIG = {
@@ -102,7 +103,7 @@ def _flatten_keys(tree, prefix=""):
     return keys
 
 
-def _conv3d(x, weight, bias, kernel_size, causal):
+def _conv3d(x, weight, bias, kernel_size, causal, stride=(1, 1, 1)):
     # x: NCDHW (B,C,D,H,W). MLX conv3d wants NDHWC + weight (out,kD,kH,kW,in).
     kt = kernel_size
     if kt > 1:
@@ -118,7 +119,7 @@ def _conv3d(x, weight, bias, kernel_size, causal):
     y = mx.conv3d(
         x,
         weight,
-        stride=(1, 1, 1),
+        stride=stride,
         padding=(0, kernel_size // 2, kernel_size // 2),
         dilation=(1, 1, 1),
     )
@@ -164,18 +165,26 @@ class LayerNorm(nn.Module):
 
 
 class CausalConv3d(nn.Module):
-    # make_conv_nd(dims=3, causal=True) -> CausalConv3d with a nested .conv
-    # submodule. Causal/non-causal is a forward-time flag (constructor causal
-    # is ignored by the reference, which always passes causal=self.causal).
-    def __init__(self, in_channels, out_channels, kernel_size=3):
+    def __init__(self, in_channels, out_channels, kernel_size=3, stride=1):
         super().__init__()
         self.kernel_size = kernel_size
+        if isinstance(stride, int):
+            self.stride = (stride, stride, stride)
+        else:
+            self.stride = tuple(stride)
         self.conv = nn.Conv3d(
             in_channels, out_channels, kernel_size, stride=1, padding=0, dilation=1
         )
 
     def __call__(self, x, causal=True):
-        return _conv3d(x, self.conv.weight, self.conv.bias, self.kernel_size, causal)
+        return _conv3d(
+            x,
+            self.conv.weight,
+            self.conv.bias,
+            self.kernel_size,
+            causal,
+            stride=self.stride,
+        )
 
 
 class LinearND(nn.Module):
@@ -358,6 +367,141 @@ class VAEConfig:
         )
 
 
+class StridedConvDownsample(nn.Module):
+    def __init__(
+        self,
+        in_channels,
+        stride=(2, 2, 2),
+        residual=False,
+        out_channels_multiplier=1,
+        spatial_padding_mode="zeros",
+    ):
+        super().__init__()
+        self.stride = stride
+        self.residual = residual
+        out_ch = in_channels * out_channels_multiplier
+        self.conv = CausalConv3d(in_channels, out_ch, kernel_size=3, stride=stride)
+
+    def __call__(self, x, causal=True):
+        if self.residual:
+            # Residual via space_to_depth + mean (LTXVideoDownsampler3d style)
+            p1, p2, p3 = self.stride
+            # Pad temporal for causal
+            if p1 > 1:
+                x_pad = mx.concatenate([mx.zeros_like(x[:, :, : p1 - 1]), x], axis=2)
+            else:
+                x_pad = x
+            res = _space_to_depth_nd(x_pad, p1, p2, p3)
+            group_size = p1 * p2 * p3
+            n_groups = res.shape[1] // group_size
+            res = res.reshape(
+                res.shape[0],
+                n_groups,
+                group_size,
+                res.shape[2],
+                res.shape[3],
+                res.shape[4],
+            )
+            res = res.mean(axis=2)
+
+        x = self.conv(x, causal=causal)
+
+        if self.residual:
+            x = x + res
+        return x
+
+
+def _space_to_depth_nd(x, p1, p2, p3):
+    # NCDHW (B, C, D, H, W) -> (B, C*p1*p2*p3, D//p1, H//p2, W//p3)
+    B, C, D, H, W = x.shape
+    x = x.reshape(B, C, D // p1, p1, H // p2, p2, W // p3, p3)
+    x = x.transpose(0, 1, 3, 5, 7, 2, 4, 6)
+    x = x.reshape(B, C * p1 * p2 * p3, D // p1, H // p2, W // p3)
+    return x
+
+
+class Encoder(nn.Module):
+    def __init__(self, config: VAEConfig):
+        super().__init__()
+        self.patch_size = config.patch_size
+        self.causal = True  # encoder_causal is always True for LTX-Video
+        self.blocks_desc = config.blocks
+        in_channels = config.in_channels * config.patch_size**2
+        out_channels = config.latent_channels
+        # latent_log_var="uniform" adds 1 extra channel for log-variance
+        has_log_var = getattr(config, "latent_log_var", None) is not None
+        conv_out_channels = out_channels + (1 if has_log_var else 0)
+        self._out_channels = out_channels
+        base_channels = config.base_channels
+        norm_layer = config.norm_layer
+        blocks = config.blocks
+
+        # conv_in outputs base_channels (first block input)
+        self.conv_in = CausalConv3d(in_channels, base_channels, kernel_size=3)
+        self.down_blocks: list[nn.Module] = []
+        output_channel = base_channels
+
+        for block_name, block_params in blocks:
+            input_channel = output_channel
+            if isinstance(block_params, int):
+                block_params = {"num_layers": block_params}
+            if block_name == "res_x":
+                block = UNetMidBlock3D(
+                    in_channels=input_channel,
+                    num_layers=block_params.get("num_layers", 1),
+                    norm_layer=norm_layer,
+                )
+            elif block_name == "res_x_y":
+                output_channel = output_channel * block_params.get("multiplier", 2)
+                block = ResnetBlock3D(
+                    in_channels=input_channel,
+                    out_channels=output_channel,
+                    norm_layer=norm_layer,
+                )
+            elif block_name == "compress_all":
+                output_channel = output_channel * block_params.get("multiplier", 1)
+                block = StridedConvDownsample(
+                    in_channels=input_channel,
+                    stride=(2, 2, 2),
+                    residual=block_params.get("residual", False),
+                    out_channels_multiplier=block_params.get("multiplier", 1),
+                )
+            elif block_name == "compress_time":
+                block = StridedConvDownsample(
+                    in_channels=input_channel,
+                    stride=(2, 1, 1),
+                    residual=block_params.get("residual", False),
+                    out_channels_multiplier=block_params.get("multiplier", 1),
+                )
+            elif block_name == "compress_space":
+                block = StridedConvDownsample(
+                    in_channels=input_channel,
+                    stride=(1, 2, 2),
+                    residual=block_params.get("residual", False),
+                    out_channels_multiplier=block_params.get("multiplier", 1),
+                )
+            else:
+                raise ValueError(f"unknown encoder block: {block_name}")
+            self.down_blocks.append(block)
+
+        self.conv_norm_out = _make_norm(output_channel, norm_layer, eps=1e-6)
+        self.conv_act = nn.SiLU()
+        self.conv_out = CausalConv3d(output_channel, conv_out_channels, kernel_size=3)
+
+    def __call__(self, sample):
+        sample = _space_to_depth_nd(sample, 1, self.patch_size, self.patch_size)
+        sample = self.conv_in(sample, causal=self.causal)
+        for down_block in self.down_blocks:
+            sample = down_block(sample, causal=self.causal)
+        sample = self.conv_norm_out(sample)
+        sample = self.conv_act(sample)
+        sample = self.conv_out(sample, causal=self.causal)
+        # Strip log-var channel if present (latent_log_var="uniform")
+        if sample.shape[1] > self._out_channels:
+            sample = sample[:, : self._out_channels, :, :, :]
+        return sample
+
+
 class Decoder(nn.Module):
     def __init__(self, config: VAEConfig):
         super().__init__()
@@ -468,6 +612,43 @@ def _map_vae_decoder_weights(raw):
     return out
 
 
+def _is_diffusers_encoder_format(encoder_keys):
+    joined = "\n".join(encoder_keys)
+    return "encoder.mid_block" in joined or ".resnets." in joined
+
+
+def _map_vae_encoder_weights(raw):
+    encoder_raw = {k: v for k, v in raw.items() if k.startswith("encoder.")}
+    if not encoder_raw:
+        return {}
+    if _is_diffusers_encoder_format(list(encoder_raw.keys())):
+        renamed = {}
+        for k, v in encoder_raw.items():
+            nk = k
+            for src, dst in VAE_KEYS_RENAME_DICT.items():
+                if src in nk:
+                    nk = nk.replace(src, dst)
+            # StridedConvDownsample wraps CausalConv3d as self.conv,
+            # so downsamplers.0.conv -> down_blocks.N.conv (from rename dict)
+            # but model expects down_blocks.N.conv.conv (CausalConv3d.conv)
+            if ".conv.conv" not in nk and nk.endswith((".conv.weight", ".conv.bias")):
+                # Check if this is a StridedConvDownsample block (1, 4, 7)
+                for idx in (1, 4, 7):
+                    prefix = f"encoder.down_blocks.{idx}.conv."
+                    if nk.startswith(prefix):
+                        nk = nk.replace(prefix, f"encoder.down_blocks.{idx}.conv.conv.")
+                        break
+            renamed[nk] = v
+        encoder_raw = renamed
+    out = {}
+    for k, v in encoder_raw.items():
+        nk = k[len("encoder.") :] if k.startswith("encoder.") else k
+        if v.ndim == 5:
+            v = v.transpose(0, 2, 3, 4, 1)
+        out[nk] = v
+    return out
+
+
 def _audit_weights(model, mapped):
     model_keys = set(_flatten_keys(model.parameters()))
     mapped_keys = set(mapped.keys())
@@ -480,13 +661,14 @@ def _audit_weights(model, mapped):
 
 
 class LTVideoVAE(nn.Module):
-    # Decoder-only wrapper. use_quant_conv=False and normalize_latent_channels=
-    # False in the 0.9.x config collapse the decode path to decoder(z) directly.
+    # Decoder + Encoder wrapper for LTX-Video VAE.
+    # use_quant_conv=False and normalize_latent_channels=False in 0.9.x config.
     def __init__(self, config: VAEConfig):
         super().__init__()
         self.config = config
         self.scaling_factor = config.scaling_factor
         self.decoder = Decoder(config)
+        self.encoder = Encoder(config)
         self.mean_of_means: mx.array | None = None
         self.std_of_means: mx.array | None = None
 
@@ -494,6 +676,31 @@ class LTVideoVAE(nn.Module):
         if target_shape is None:
             target_shape = z.shape
         return self.decoder(z, target_shape=target_shape)
+
+    def encode(self, x):
+        # x: (B, C, D, H, W) — pad D to be divisible by temporal compression factor 8
+        B, C, D, H, W = x.shape
+        temporal_factor = 8
+        n_pad = (temporal_factor - D % temporal_factor) % temporal_factor
+        orig_D = D
+        if n_pad > 0:
+            x = mx.pad(x, [(0, 0), (0, 0), (0, n_pad), (0, 0), (0, 0)])
+            logger.info(
+                "vae encode: padded D=%d -> %d (factor=%d)",
+                orig_D,
+                D + n_pad,
+                temporal_factor,
+            )
+        z = self.encoder(x)
+        # Slice output to original temporal extent
+        out_D = orig_D // temporal_factor + (1 if orig_D % temporal_factor else 0)
+        if z.shape[2] > out_D:
+            z = z[:, :, :out_D, :, :]
+        if self.mean_of_means is not None and self.std_of_means is not None:
+            m = self.mean_of_means.reshape(1, -1, 1, 1, 1)
+            s = self.std_of_means.reshape(1, -1, 1, 1, 1)
+            z = (z - m) / s
+        return z
 
     def __call__(self, z, target_shape=None):
         return self.decode(z, target_shape=target_shape)
@@ -542,6 +749,9 @@ class LTVideoVAE(nn.Module):
                     raw[k] = f.get_tensor(k)
 
         mapped = _map_vae_decoder_weights({k: mx.array(v) for k, v in raw.items()})
+        encoder_mapped = _map_vae_encoder_weights(
+            {k: mx.array(v) for k, v in raw.items()}
+        )
         # per-channel statistics are top-level; stash for the future pipeline.
         for stat_key, attr in (
             ("per_channel_statistics.mean-of-means", "mean_of_means"),
@@ -553,19 +763,34 @@ class LTVideoVAE(nn.Module):
                 val = mx.array(raw[stat_key]).astype(dtype)
                 setattr(model, attr, val)
 
-        pairs = [(k, v.astype(dtype)) for k, v in mapped.items()]
-        n_params = sum(int(v.size) for _, v in pairs)
-        model.decoder.load_weights(pairs, strict=False)
+        dec_pairs = [(k, v.astype(dtype)) for k, v in mapped.items()]
+        n_params = sum(int(v.size) for _, v in dec_pairs)
+        model.decoder.load_weights(dec_pairs, strict=False)
         mx.eval(model.parameters())
         missing, unexpected = _audit_weights(model.decoder, mapped)
         logger.info(
-            "vae: ready params=%.2fM mapped=%d missing=%d unexpected=%d dt=%.2fs",
+            "vae decoder: params=%.2fM mapped=%d missing=%d unexpected=%d",
             n_params / 1e6,
             len(mapped),
             missing,
             unexpected,
-            time.time() - t0,
         )
-        if missing:
-            logger.warning("vae: missing %d weight tensors (init defaults)", missing)
+
+        if encoder_mapped:
+            enc_pairs = [(k, v.astype(dtype)) for k, v in encoder_mapped.items()]
+            n_enc_params = sum(int(v.size) for _, v in enc_pairs)
+            model.encoder.load_weights(enc_pairs, strict=False)
+            mx.eval(model.encoder.parameters())
+            enc_missing, enc_unexpected = _audit_weights(model.encoder, encoder_mapped)
+            logger.info(
+                "vae encoder: params=%.2fM mapped=%d missing=%d unexpected=%d",
+                n_enc_params / 1e6,
+                len(encoder_mapped),
+                enc_missing,
+                enc_unexpected,
+            )
+        else:
+            logger.warning("vae encoder: no encoder weights found in checkpoint")
+
+        logger.info("vae: ready dt=%.2fs", time.time() - t0)
         return model
