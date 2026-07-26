@@ -403,6 +403,26 @@ FUSION_SKYREELS_WARMUP=0 fusion-mlx serve --model SkyReels-V3-R2V-14B-MLX
 > #149 progress logs, #154 Tier-1 tuning) and the T5/VAE end-to-end fix details
 > are documented in [README_CN.md](README_CN.md).
 
+### Video Backend Registry
+
+The video generation API auto-detects the backend from the model name and routes
+to the correct pure-MLX implementation. Supported backends:
+
+| Backend | Key | Models | I2V | Status |
+|---|---|---|---|---|
+| LTX-2 | `ltx2` | LTX-2, LTX-2.3 | ✅ | ✅ shipped |
+| Wan2 | `wan2` | Wan2.1, Wan2.2 (TI2V) | ✅ | ✅ shipped |
+| SkyReels-V3 | `skyreels` | R2V/V2V/A2V 14B-19B | ✅ (R2V) | ✅ shipped |
+| Legacy LTX-Video | `ltx_video_legacy` | LTX-Video 0.9.x | ✅ | ✅ shipped |
+| SVD | `svd` | Stable Video Diffusion XT | ✅ | ✅ #212 |
+| Cosmos | `cosmos` | 7B T2V + Predict2 2B I2V | ✅ (Predict2) | ✅ #213 |
+| HunyuanVideo | `hunyuanvideo` | HunyuanVideo | ✅ | ✅ #214 |
+| CogVideo | `cogvideo` | CogVideoX | — | stub (no MLX port) |
+
+Aliases: `svd-xt`, `stable-video-diffusion`, `cosmos-1.0`, `predict2`,
+`video2world`, `hunyuan-video`, `hunyuan_video`, `cogvideox`, `ltx-video`, `wan`.
+
+
 ### Radix Text-Encoding Cache (#178)
 
 In multi-shot pipelines the same prompt is re-encoded across shots (UMT5-XXL:
