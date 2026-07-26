@@ -16,12 +16,14 @@ from .base import (
 )
 from .ltx2 import LTX2Backend
 from .ltx_video_legacy import LegacyLTXBackend
+from .svd import SVDBackend
 from .skyreels import SkyReelsBackend
 from .unimplemented import CogVideoBackend
 from .wan2 import Wan2Backend
 
 BACKENDS: dict[str, type[VideoBackend]] = {
     "ltx2": LTX2Backend,
+    "svd": SVDBackend,
     "wan2": Wan2Backend,
     "skyreels": SkyReelsBackend,
     "ltx_video_legacy": LegacyLTXBackend,
@@ -34,6 +36,10 @@ _ALIASES: dict[str, str] = {
     "ltx_2": "ltx2",
     "ltx-2.3": "ltx2",
     "ltx2.3": "ltx2",
+    "svd": "svd",
+    "stable-video-diffusion": "svd",
+    "svd-xt": "svd",
+    "img2vid-xt": "svd",
     "wan": "wan2",
     "wan2.1": "wan2",
     "wan2.2": "wan2",
@@ -92,6 +98,7 @@ __all__ = [
     "resolve_backend",
     "constraints_for",
     "LTX2Backend",
+    "SVDBackend",
     "Wan2Backend",
     "SkyReelsBackend",
     "LegacyLTXBackend",

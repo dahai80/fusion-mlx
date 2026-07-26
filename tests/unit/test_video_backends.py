@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 from fusion_mlx.engines.video_backends import (
+    SVDBackend,
     BACKENDS,
     CogVideoBackend,
     LegacyLTXBackend,
@@ -101,6 +102,7 @@ class TestResolveBackend:
             "wan2",
             "skyreels",
             "ltx_video_legacy",
+            "svd",
             "cogvideo",
         }
 
@@ -643,12 +645,15 @@ class TestVideoGenTimeout:
         # get_video_gen_timeout() rather than a hardcoded 600.0, so a long
         # 720p 30-step job is not killed mid-generation.
         from fusion_mlx.engines.video_backends import (
+            SVDBackend,
             ltx2 as ltx2_mod,
         )
         from fusion_mlx.engines.video_backends import (
+            SVDBackend,
             skyreels as skyreels_mod,
         )
         from fusion_mlx.engines.video_backends import (
+            SVDBackend,
             wan2 as wan2_mod,
         )
 
@@ -741,3 +746,113 @@ class TestSkyreelsProgressLogs:
         assert "Loading pipeline" in text
         assert "Created pipeline: FakePipeline" in text
         assert "video gen: done branch=r2v" in text
+
+
+class TestSVDBackend:
+    # SVD (Stable Video Diffusion) I2V-only backend. Pure-MLX port.
+    # Stub the model loading + generate function and exercise the orchestration.
+
+    @pytest.fixture
+    def stub(self, monkeypatch):
+        import mlx.core as mx
+
+        from fusion_mlx.engines.video_backends import svd as mod
+        from fusion_mlx.video.svd import generate as port_gen
+
+        calls = {"generate": []}
+
+        def generate_video(model_path, **kwargs):
+            calls["generate"].append({"model_path": model_path, **kwargs})
+            output_path = kwargs.get("output_path")
+            if output_path:
+                with open(output_path, "wb") as f:
+                    f.write(b"SVDMP4" + str(kwargs.get("seed", 0)).encode())
+            return []
+
+        monkeypatch.setattr(port_gen, "generate_video", generate_video)
+        return calls
+
+    def test_svd_autodetect(self):
+        from fusion_mlx.engines.video_backends import SVDBackend, resolve_backend
+
+        b = resolve_backend("svd")
+        assert isinstance(b, SVDBackend)
+        b2 = resolve_backend("stabilityai/stable-video-diffusion-img2vid-xt")
+        assert isinstance(b2, SVDBackend)
+
+    def test_svd_constraints(self):
+        from fusion_mlx.engines.video_backends import constraints_for
+
+        c = constraints_for("svd")
+        assert c.supports_i2v is True
+        assert c.dim_divisibility == 64
+        assert c.num_frames_validator(25) is True
+        assert c.num_frames_validator(14) is True
+        assert c.num_frames_validator(9) is True  # 9 % 8 == 1
+
+    def test_svd_aliases(self):
+        from fusion_mlx.engines.video_backends import SVDBackend, resolve_backend
+
+        assert isinstance(resolve_backend("x", explicit="svd"), SVDBackend)
+        assert isinstance(resolve_backend("x", explicit="svd-xt"), SVDBackend)
+        assert isinstance(
+            resolve_backend("x", explicit="stable-video-diffusion"), SVDBackend
+        )
+
+    async def test_start_idempotent(self, stub):
+        from fusion_mlx.engines.video_backends import SVDBackend
+
+        backend = SVDBackend("svd")
+        await backend.start("svd")
+        await backend.start("svd")
+        assert backend._loaded is True
+
+    async def test_generate_seed_increment(self, stub):
+        from fusion_mlx.engines.video_backends import SVDBackend, VideoGenParams
+
+        backend = SVDBackend("svd")
+        await backend.start("svd")
+        params = VideoGenParams(
+            prompt="a cat",
+            n=3,
+            num_frames=25,
+            width=576,
+            height=1024,
+            seed=42,
+            image="/tmp/test.png",
+        )
+        result = await backend.generate(params)
+        assert len(result) == 3
+        seeds = [stub["generate"][i]["seed"] for i in range(3)]
+        assert seeds == [42, 43, 44]
+
+    async def test_generate_forwards_knobs(self, stub):
+        from fusion_mlx.engines.video_backends import SVDBackend, VideoGenParams
+
+        backend = SVDBackend("svd")
+        await backend.start("svd")
+        params = VideoGenParams(
+            prompt="a cat",
+            num_frames=25,
+            width=576,
+            height=1024,
+            image="/tmp/test.png",
+            num_inference_steps=14,
+            cfg_scale=5.0,
+            negative_prompt="blurry",
+        )
+        await backend.generate(params)
+        call = stub["generate"][0]
+        assert call["num_inference_steps"] == 14
+        assert call["cfg_scale"] == 5.0
+        assert call["negative_prompt"] == "blurry"
+        assert call["image"] == "/tmp/test.png"
+
+    async def test_stop_clears_state(self, stub):
+        from fusion_mlx.engines.video_backends import SVDBackend
+
+        backend = SVDBackend("svd")
+        await backend.start("svd")
+        assert backend._loaded is True
+        await backend.stop()
+        assert backend._loaded is False
