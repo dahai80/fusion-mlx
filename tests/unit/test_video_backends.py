@@ -1090,3 +1090,93 @@ class TestHunyuanVideoBackend:
         assert backend._loaded is True
         await backend.stop()
         assert backend._loaded is False
+
+
+class TestGenerateReturnsBytes:
+    """Verify all video backends return list[bytes] from generate()."""
+
+    @pytest.fixture
+    def cosmos_stub(self, monkeypatch):
+        from fusion_mlx.video.cosmos import generate as port_gen
+
+        def generate_video(model_path, **kwargs):
+            output_path = kwargs.get("output_path")
+            if output_path:
+                with open(output_path, "wb") as f:
+                    f.write(b"COSMOS_BYTES")
+            return output_path
+
+        monkeypatch.setattr(port_gen, "generate_video", generate_video)
+
+    @pytest.fixture
+    def hunyuan_stub(self, monkeypatch):
+        from fusion_mlx.video.hunyuanvideo import generate as port_gen
+
+        def generate_video(model_path, **kwargs):
+            output_path = kwargs.get("output_path")
+            if output_path:
+                with open(output_path, "wb") as f:
+                    f.write(b"HV_BYTES")
+            return output_path
+
+        monkeypatch.setattr(port_gen, "generate_video", generate_video)
+
+    @pytest.fixture
+    def svd_stub(self, monkeypatch):
+        from fusion_mlx.video.svd import generate as port_gen
+
+        def generate_video(model_repo, **kwargs):
+            output_path = kwargs.get("output_path")
+            if output_path:
+                with open(output_path, "wb") as f:
+                    f.write(b"SVD_BYTES")
+            return output_path
+
+        monkeypatch.setattr(port_gen, "generate_video", generate_video)
+
+    async def test_cosmos_returns_bytes(self, cosmos_stub):
+        backend = CosmosBackend("cosmos")
+        await backend.start()
+        params = VideoGenParams(prompt="test", num_frames=121, width=848, height=480)
+        result = await backend.generate(params)
+        assert isinstance(result, list)
+        assert all(isinstance(b, bytes) for b in result)
+        assert result[0] == b"COSMOS_BYTES"
+
+    async def test_hunyuanvideo_returns_bytes(self, hunyuan_stub):
+        backend = HunyuanVideoBackend("hunyuanvideo")
+        await backend.start()
+        params = VideoGenParams(prompt="test", num_frames=33, width=720, height=480)
+        result = await backend.generate(params)
+        assert isinstance(result, list)
+        assert all(isinstance(b, bytes) for b in result)
+        assert result[0] == b"HV_BYTES"
+
+    async def test_svd_returns_bytes(self, svd_stub):
+        from fusion_mlx.engines.video_backends import SVDBackend
+
+        backend = SVDBackend("svd")
+        await backend.start("svd")
+        params = VideoGenParams(
+            prompt="test", num_frames=14, width=512, height=512, image="/tmp/test.png"
+        )
+        result = await backend.generate(params)
+        assert isinstance(result, list)
+        assert all(isinstance(b, bytes) for b in result)
+        assert result[0] == b"SVD_BYTES"
+
+    async def test_start_accepts_model_path(self):
+        """Verify start(model_path) doesn't crash - the real call path."""
+        for cls, name in [
+            (CosmosBackend, "cosmos"),
+            (HunyuanVideoBackend, "hunyuanvideo"),
+        ]:
+            backend = cls(name)
+            await backend.start("some/model/path")
+            assert backend._model_path == "some/model/path"
+        from fusion_mlx.engines.video_backends import SVDBackend
+
+        backend = SVDBackend("svd")
+        # SVD start() accepts model_path but doesn't update _model_name
+        await backend.start("some/model/path")
+        assert backend._loaded is True

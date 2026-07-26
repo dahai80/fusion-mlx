@@ -156,13 +156,13 @@ class UpBlock3D(nn.Module):
         for resnet in self.resnets:
             x = resnet(x)
         if self.upsample:
-            t, h, w = x.shape[2], x.shape[3], x.shape[4]
-            x = mx.broadcast_to(x, (x.shape[0], x.shape[1], t, h * 2, w * 2))
-            # Use simple nearest-neighbor upsampling then conv
-            x_up = mx.zeros(
-                (x.shape[0], x.shape[1], t * 2, h * 2, w * 2), dtype=x.dtype
+            B, C, t, h, w = x.shape
+            x = mx.broadcast_to(
+                x.reshape(B, C, t, 1, h, 1, w, 1),
+                (B, C, t, 2, h, 2, w, 2),
             )
-            x = self.conv_up(x_up)
+            x = x.reshape(B, C, t * 2, h * 2, w * 2)
+            x = self.conv_up(x)
         return x
 
 

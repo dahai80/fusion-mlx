@@ -8,7 +8,8 @@ import logging
 import mlx.core as mx
 
 from ..._tempfile_safe import managed_tempfile_path
-from ...engine_core import get_video_gen_timeout
+from ...engine_core import get_executor, get_video_gen_timeout
+from ...api._url_safety import is_safe_local_path
 from .base import VideoBackend, VideoConstraints, VideoGenParams, validate_params
 
 logger = logging.getLogger(__name__)
@@ -29,19 +30,28 @@ class HunyuanVideoBackend(VideoBackend):
             kw in lower for kw in ("hunyuanvideo", "hunyuan-video", "hunyuan_video")
         )
 
-    async def start(self) -> None:
+    async def start(self, model_path: str = "", **kwargs) -> None:
         if self._loaded:
             logger.info("hunyuanvideo backend: already loaded")
             return
+        if model_path:
+            self._model_path = model_path
         logger.info("hunyuanvideo backend: starting model=%s", self._model_path)
         self._loaded = True
 
     async def stop(self) -> None:
-        logger.info("hunyuanvideo backend: stopping")
+        if not self._loaded:
+            return
         self._loaded = False
         gc.collect()
-        mx.synchronize()
-        mx.clear_cache()
+        loop = asyncio.get_running_loop()
+        await asyncio.wait_for(
+            loop.run_in_executor(
+                get_executor("io"), lambda: (mx.synchronize(), mx.clear_cache())
+            ),
+            timeout=5.0,
+        )
+        logger.info("hunyuanvideo backend: stopped")
 
     def constraints(self) -> VideoConstraints:
         dim_div = 16
@@ -57,7 +67,7 @@ class HunyuanVideoBackend(VideoBackend):
             dim_hint=f"Width/height must be divisible by {dim_div}",
         )
 
-    async def generate(self, params: VideoGenParams) -> list[str]:
+    async def generate(self, params: VideoGenParams) -> list[bytes]:
         c = self.constraints()
         validate_params(
             c,
@@ -67,6 +77,11 @@ class HunyuanVideoBackend(VideoBackend):
             n=params.n,
             image=params.image,
         )
+        if self._model_path.startswith(("/", "~")) or ".." in self._model_path:
+            if not is_safe_local_path(self._model_path):
+                raise ValueError(
+                    f"model_path outside allowed directories: {self._model_path}"
+                )
         if not self._loaded:
             await self.start()
 
@@ -82,8 +97,8 @@ class HunyuanVideoBackend(VideoBackend):
                 try:
                     timeout = get_video_gen_timeout()
                     await asyncio.wait_for(
-                        asyncio.get_event_loop().run_in_executor(
-                            None,
+                        asyncio.get_running_loop().run_in_executor(
+                            get_executor("video"),
                             lambda s=seed, op=output_path: generate_video(
                                 model_path=self._model_path,
                                 prompt=params.prompt,
@@ -101,7 +116,9 @@ class HunyuanVideoBackend(VideoBackend):
                         ),
                         timeout=timeout,
                     )
-                    results.append(handle.release())
+                    handle.release()
+                    with open(output_path, "rb") as f:
+                        results.append(f.read())
                 except asyncio.TimeoutError:
                     logger.error(
                         "hunyuanvideo: generation timed out after %ds", timeout

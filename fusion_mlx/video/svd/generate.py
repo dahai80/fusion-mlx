@@ -40,7 +40,7 @@ def generate_video(
 
     logger.info(
         "svd generate: image=%s frames=%d %dx%d@%dfps seed=%d steps=%d cfg=%.2f",
-        image,
+        image is not None,
         num_frames,
         width,
         height,
@@ -58,6 +58,8 @@ def generate_video(
     unet = SVDTemporalUNet.from_pretrained(model_path, dtype=dtype)
     scheduler = SVDEulerScheduler()
 
+    if image is None:
+        raise ValueError("SVD requires an input image for I2V generation")
     # Encode image with CLIP vision
     clip_pooled, clip_seq = clip_encoder.encode_image(image)
     logger.info(
@@ -94,7 +96,6 @@ def generate_video(
         (1, latent_ch, lf, lh, lw),
     )
     # Concat image latent along channel axis for I2V conditioning
-    latent_input_ch = latent_ch * 2  # noisy latent + image conditioning
     noise = mx.random.normal(shape=(1, latent_ch, lf, lh, lw), dtype=mx.float32)
 
     # Prepare scheduler
@@ -151,10 +152,20 @@ def generate_video(
     frames = _to_frames(decoded, num_frames, height, width)
     logger.info("svd: generated %d frames", len(frames))
 
-    if output_path is not None:
+    if output_path is None:
+        import tempfile
+
+        tmpdir = tempfile.TemporaryDirectory()
+        output_path = os.path.join(tmpdir.name, "svd_output.mp4")
+        try:
+            _write_mp4(frames, max(1, fps), output_path)
+            logger.info("svd: wrote mp4 to %s", output_path)
+        finally:
+            tmpdir.cleanup()
+    else:
         _write_mp4(frames, max(1, fps), output_path)
         logger.info("svd: wrote mp4 to %s", output_path)
-    return frames
+    return output_path
 
 
 def _to_frames(decoded, num_frames, height, width):

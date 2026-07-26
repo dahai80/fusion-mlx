@@ -235,37 +235,12 @@ class CosmosDiT(nn.Module):
         return mx.concatenate([mx.cos(args), mx.sin(args)], axis=-1)
 
     def _compute_rope(self, ot, oh, ow, dtype=mx.float32):
-        # 3D positional frequencies for RoPE
-        t_coords = mx.arange(ot, dtype=dtype)
-        h_coords = mx.arange(oh, dtype=dtype)
-        w_coords = mx.arange(ow, dtype=dtype)
-        freqs_t = t_coords[:, None] * mx.exp(
-            -math.log(10000)
-            * mx.arange(0, self.rope_dim // 3, 2, dtype=dtype)
-            / (self.rope_dim // 3)
-        )
-        freqs_h = h_coords[:, None] * mx.exp(
-            -math.log(10000)
-            * mx.arange(0, self.rope_dim // 3, 2, dtype=dtype)
-            / (self.rope_dim // 3)
-        )
-        freqs_w = w_coords[:, None] * mx.exp(
-            -math.log(10000)
-            * mx.arange(0, self.rope_dim - 2 * (self.rope_dim // 3), 2, dtype=dtype)
-            / max(1, self.rope_dim - 2 * (self.rope_dim // 3))
-        )
-        # Build combined 3D rope for each spatial-temporal position
-        grid_t, grid_h, grid_w = mx.meshgrid(t_coords, h_coords, w_coords)
-        grid_t = grid_t.reshape(-1)
-        grid_h = grid_h.reshape(-1)
-        grid_w = grid_w.reshape(-1)
-        # Simple 1D rope on flattened index
         indices = mx.arange(ot * oh * ow, dtype=dtype)
         dim = self.rope_dim
         freqs = indices[:, None] * mx.exp(
             -math.log(10000) * mx.arange(0, dim, 2, dtype=dtype) / dim
         )
-        rope = mx.concatenate([freqs, freqs], axis=-1)  # (L, dim)
+        rope = mx.concatenate([freqs, freqs], axis=-1)
         return rope
 
     def __call__(self, x, timestep, text_emb, image_cond=None):

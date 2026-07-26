@@ -18,12 +18,14 @@ class CosmosFlowScheduler:
         num_train_timesteps=1000,
         prediction_type="flow_prediction",
         shift=3.0,
+        sigma_data=1.0,
     ):
         self.sigma_min = sigma_min
         self.sigma_max = sigma_max
         self.num_train_timesteps = num_train_timesteps
         self.prediction_type = prediction_type
         self.shift = shift
+        self.sigma_data = sigma_data
         self.init_noise_sigma = 1.0
         self.timesteps = None
         self.sigmas = None
@@ -105,5 +107,5 @@ class CosmosPredict2Scheduler(CosmosFlowScheduler):
         kwargs.setdefault("sigma_max", 40.0)
         kwargs.setdefault("prediction_type", "v_prediction")
         kwargs.setdefault("shift", 1.5)
+        kwargs.setdefault("sigma_data", 1.0)
         super().__init__(**kwargs)
-        self.sigma_data = kwargs.get("sigma_data", 1.0)

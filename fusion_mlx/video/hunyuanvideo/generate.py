@@ -133,7 +133,7 @@ def generate_video(
             img_latent, (1, latent_ch, t_latent, h_latent, w_latent)
         )
         noise = noise + img_cond * 0.1
-        image_cond = img_arr
+        image_cond = img_latent  # Latent-space for DiT patch_embed (C=16)
 
     # Scheduler
     scheduler.set_timesteps(num_inference_steps)
@@ -141,17 +141,16 @@ def generate_video(
     # Denoise
     latents = noise
     total_steps = len(scheduler.timesteps)
+    cfg = float(cfg_scale) if cfg_scale is not None else 6.0
     for i, t in enumerate(scheduler.timesteps):
         timestep = mx.array([float(t)] * 1, dtype=mx.float32)
         noise_pred_uncond = dit(latents, timestep, text_emb_null, image_cond=image_cond)
         noise_pred_cond = dit(latents, timestep, text_emb, image_cond=image_cond)
-        noise_pred = noise_pred_uncond + cfg_scale * (
-            noise_pred_cond - noise_pred_uncond
-        )
+        noise_pred = noise_pred_uncond + cfg * (noise_pred_cond - noise_pred_uncond)
         latents = scheduler.step(noise_pred, t, latents)
         mx.eval(latents)
         if on_step is not None:
-            on_step(i + 1, total_steps, latents)
+            on_step(i + 1, total_steps)
         logger.debug("hunyuan denoise step %d/%d", i + 1, total_steps)
 
     # VAE decode
@@ -166,7 +165,8 @@ def generate_video(
     if output_path is None:
         import tempfile
 
-        output_path = os.path.join(tempfile.mkdtemp(), "hunyuan_output.mp4")
+        tmpdir = tempfile.TemporaryDirectory()
+        output_path = os.path.join(tmpdir.name, "hunyuan_output.mp4")
     _write_mp4(frames_np, output_path, fps)
     logger.info("hunyuan: output saved to %s", output_path)
     return output_path
@@ -177,20 +177,23 @@ def _write_mp4(frames_np, output_path, fps):
         import av
 
         container = av.open(output_path, mode="w")
-        stream = container.add_stream("libx264", rate=fps)
-        stream.width = frames_np.shape[2]
-        stream.height = frames_np.shape[1]
-        stream.pix_fmt = "yuv420p"
-        for frame in frames_np:
-            img = av.VideoFrame.from_ndarray(frame, format="rgb24")
-            for packet in stream.encode(img):
+        try:
+            stream = container.add_stream("libx264", rate=fps)
+            stream.width = frames_np.shape[2]
+            stream.height = frames_np.shape[1]
+            stream.pix_fmt = "yuv420p"
+            for frame in frames_np:
+                img = av.VideoFrame.from_ndarray(frame, format="rgb24")
+                for packet in stream.encode(img):
+                    container.mux(packet)
+            for packet in stream.encode():
                 container.mux(packet)
-        for packet in stream.encode():
-            container.mux(packet)
-        container.close()
+        finally:
+            container.close()
     except ImportError:
-        logger.warning("av not available, saving as npy instead of mp4")
-        np.save(output_path.replace(".mp4", ".npy"), frames_np)
+        raise RuntimeError(
+            "av (PyAV) is required for MP4 output. Install with: pip install av"
+        )
     except Exception as e:
         logger.error("hunyuan: mp4 write failed: %s", e)
-        np.save(output_path.replace(".mp4", ".npy"), frames_np)
+        raise

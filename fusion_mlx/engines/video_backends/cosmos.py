@@ -4,18 +4,21 @@
 import asyncio
 import gc
 import logging
-import os
 
 import mlx.core as mx
 
 from .base import VideoBackend, VideoConstraints, VideoGenParams, validate_params
+
+from ..._tempfile_safe import managed_tempfile_path
+from ...engine_core import get_executor, get_video_gen_timeout
+from ...api._url_safety import is_safe_local_path
 
 logger = logging.getLogger(__name__)
 
 
 class CosmosBackend(VideoBackend):
     name = "cosmos"
-    supports_i2v = True  # Predict2 2B supports I2V
+    # supports_i2v is dynamic: see constraints().supports_i2v
 
     def __init__(self, model_path: str):
         self._model_path = model_path
@@ -32,10 +35,12 @@ class CosmosBackend(VideoBackend):
         lower = model_path.lower()
         return any(kw in lower for kw in ("cosmos", "predict2", "video2world"))
 
-    async def start(self) -> None:
+    async def start(self, model_path: str = "", **kwargs) -> None:
         if self._loaded:
             logger.info("cosmos backend: already loaded")
             return
+        if model_path:
+            self._model_path = model_path
         logger.info(
             "cosmos backend: starting model=%s predict2=%s",
             self._model_path,
@@ -44,11 +49,18 @@ class CosmosBackend(VideoBackend):
         self._loaded = True
 
     async def stop(self) -> None:
-        logger.info("cosmos backend: stopping")
+        if not self._loaded:
+            return
         self._loaded = False
         gc.collect()
-        mx.synchronize()
-        mx.clear_cache()
+        loop = asyncio.get_running_loop()
+        await asyncio.wait_for(
+            loop.run_in_executor(
+                get_executor("io"), lambda: (mx.synchronize(), mx.clear_cache())
+            ),
+            timeout=5.0,
+        )
+        logger.info("cosmos backend: stopped")
 
     def constraints(self) -> VideoConstraints:
         dim_div = 8
@@ -68,7 +80,7 @@ class CosmosBackend(VideoBackend):
             dim_hint=f"Width/height must be divisible by {dim_div}",
         )
 
-    async def generate(self, params: VideoGenParams) -> list[str]:
+    async def generate(self, params: VideoGenParams) -> list[bytes]:
         c = self.constraints()
         validate_params(
             c,
@@ -78,12 +90,15 @@ class CosmosBackend(VideoBackend):
             n=params.n,
             image=params.image,
         )
+        if self._model_path.startswith(("/", "~")) or ".." in self._model_path:
+            if not is_safe_local_path(self._model_path):
+                raise ValueError(
+                    f"model_path outside allowed directories: {self._model_path}"
+                )
         if not self._loaded:
             await self.start()
 
         from fusion_mlx.video.cosmos.generate import generate_video
-        from fusion_mlx._tempfile_safe import managed_tempfile_path
-        from fusion_mlx.engine_core import get_video_gen_timeout
 
         results = []
         for i in range(params.n):
@@ -96,9 +111,9 @@ class CosmosBackend(VideoBackend):
 
                 try:
                     timeout = get_video_gen_timeout()
-                    path = await asyncio.wait_for(
-                        asyncio.get_event_loop().run_in_executor(
-                            None,
+                    await asyncio.wait_for(
+                        asyncio.get_running_loop().run_in_executor(
+                            get_executor("video"),
                             lambda s=seed, op=output_path: generate_video(
                                 model_path=self._model_path,
                                 prompt=params.prompt,
@@ -117,7 +132,9 @@ class CosmosBackend(VideoBackend):
                         ),
                         timeout=timeout,
                     )
-                    results.append(handle.release())
+                    handle.release()
+                    with open(output_path, "rb") as f:
+                        results.append(f.read())
                 except asyncio.TimeoutError:
                     logger.error("cosmos: generation timed out after %ds", timeout)
                     raise

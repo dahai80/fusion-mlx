@@ -239,12 +239,6 @@ def _remap_vae_weights(params):
         nk = nk.replace("encoder.", "enc_")
         nk = nk.replace("mid_block.resnets.0.", "mid1.")
         nk = nk.replace("mid_block.resnets.1.", "mid2.")
-        nk = nk.replace("conv_shortcut.", "conv_shortcut.")
-        nk = nk.replace("norm1.", "norm1.")
-        nk = nk.replace("norm2.", "norm2.")
-        nk = nk.replace("conv1.", "conv1.")
-        nk = nk.replace("conv2.", "conv2.")
         nk = nk.replace("time_emb_proj.", "temb_proj.")
-        nk = nk.replace("conv_norm_out.", "conv_norm_out.")
         out[nk] = v
     return out

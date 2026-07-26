@@ -34,7 +34,8 @@ class CLIPVisionEmbeddings(nn.Module):
     def __call__(self, x):
         B = x.shape[0]
         patch_embs = self.patch_embedding(x)
-        patch_embs = patch_embs.reshape(B, patch_embs.shape[1], -1).transpose(0, 2, 1)
+        # MLX Conv2d outputs NHWC: (B, H', W', C_out) -> (B, num_patches, C_out)
+        patch_embs = patch_embs.reshape(B, -1, patch_embs.shape[-1])
         cls_emb = self.class_embedding.reshape(1, 1, -1).repeat(B, axis=0)
         embs = mx.concatenate([cls_emb, patch_embs], axis=1)
         return embs + self.position_embedding

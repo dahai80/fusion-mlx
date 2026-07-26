@@ -12,8 +12,9 @@ import mlx.core as mx
 
 from ..._tempfile_safe import managed_tempfile_path
 from ...engine_core import get_executor, get_video_gen_timeout
+from ...api._url_safety import is_safe_local_path
 from .._progress import make_sync_step_callback
-from .base import VideoBackend, VideoConstraints, VideoGenParams
+from .base import VideoBackend, VideoConstraints, VideoGenParams, validate_params
 
 logger = logging.getLogger(__name__)
 
@@ -64,6 +65,19 @@ class SVDBackend(VideoBackend):
                 "svd: on_step progress callback accepted but per-step "
                 "streaming not yet emitted for this backend (issue #171 follow-up)"
             )
+        validate_params(
+            self.constraints(),
+            num_frames=params.num_frames,
+            width=params.width,
+            height=params.height,
+            n=params.n,
+            image=params.image,
+        )
+        if self._model_name.startswith(("/", "~")) or ".." in self._model_name:
+            if not is_safe_local_path(self._model_name):
+                raise ValueError(
+                    f"model_path outside allowed directories: {self._model_name}"
+                )
         base_seed = (
             params.seed if params.seed is not None else random.randint(0, 2**31 - 1)
         )

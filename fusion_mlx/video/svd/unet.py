@@ -2,6 +2,12 @@
 # Pure-MLX port of the SVD Temporal UNet.
 # Based on stabilityai/svd UNet with temporal attention + spatial attention.
 # I2V: receives CLIP vision embeddings as cross-attention + VAE-encoded image concat.
+#
+# TODO: MLX nn.Conv3d uses NDHWC (N,D,H,W,C) but this UNet assumes NCDHW (B,C,T,H,W).
+# All 8 nn.Conv3d calls will crash or produce wrong shapes on forward pass.
+# Fix: either transpose before/after each Conv3d, or convert entire UNet to NDHWC,
+# or replace nn.Conv3d with the manual matmul _conv3d_core pattern (like cosmos/hunyuanvideo).
+# Deferred until real SVD weights are available for E2E validation.
 
 import logging
 import math
@@ -261,8 +267,12 @@ class UpBlock(nn.Module):
             x = block(x, context, temb)
         if self.upsample:
             B, C, T, H, W = x.shape
-            x_up = mx.zeros((B, C, T * 2, H * 2, W * 2), dtype=x.dtype)
-            x = self.conv_up(x_up)
+            x = mx.broadcast_to(
+                x.reshape(B, C, T, 1, H, 1, W, 1),
+                (B, C, T, 2, H, 2, W, 2),
+            )
+            x = x.reshape(B, C, T * 2, H * 2, W * 2)
+            x = self.conv_up(x)
         return x
 
 
@@ -279,7 +289,6 @@ class SVDTemporalUNet(nn.Module):
         self.in_channels = in_channels
         self.out_channels = out_channels
         self.context_dim = context_dim
-        self.cfg = type("Cfg", (), {"in_channels": in_channels})()
         # Time embedding
         self.time_proj = TimestepEmbedding(320, 1280)
         self.time_embed = nn.Sequential(
