@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 from fusion_mlx.engines.video_backends import (
+    CosmosBackend,
     SVDBackend,
     BACKENDS,
     CogVideoBackend,
@@ -99,6 +100,7 @@ class TestResolveBackend:
         # (SkyReels-V3 R2V/V2V/A2V, Phase 4).
         assert set(BACKENDS) == {
             "ltx2",
+            "cosmos",
             "wan2",
             "skyreels",
             "ltx_video_legacy",
@@ -853,6 +855,131 @@ class TestSVDBackend:
 
         backend = SVDBackend("svd")
         await backend.start("svd")
+        assert backend._loaded is True
+        await backend.stop()
+        assert backend._loaded is False
+
+
+class TestCosmosBackend:
+    # Cosmos: 7B T2V + Predict2 2B I2V dual-mode backend.
+    # Stub the generate function and exercise the orchestration.
+
+    @pytest.fixture
+    def stub(self, monkeypatch):
+        from fusion_mlx.engines.video_backends import cosmos as mod
+        from fusion_mlx.video.cosmos import generate as port_gen
+
+        calls = {"generate": []}
+
+        def generate_video(model_path, **kwargs):
+            calls["generate"].append({"model_path": model_path, **kwargs})
+            output_path = kwargs.get("output_path")
+            if output_path:
+                with open(output_path, "wb") as f:
+                    f.write(b"COSMOSMP4" + str(kwargs.get("seed", 0)).encode())
+            return output_path
+
+        monkeypatch.setattr(port_gen, "generate_video", generate_video)
+        return calls
+
+    def test_cosmos_autodetect(self):
+        b = resolve_backend("cosmos")
+        assert isinstance(b, CosmosBackend)
+        b2 = resolve_backend("nvidia/Cosmos-1.0-Diffusion-7B-Text2Video")
+        assert isinstance(b2, CosmosBackend)
+        b3 = resolve_backend("nvidia/Cosmos-Predict2-2B-Video2World")
+        assert isinstance(b3, CosmosBackend)
+
+    def test_cosmos_predict2_detected(self):
+        b = CosmosBackend("nvidia/Cosmos-Predict2-2B-Video2World")
+        assert b._is_predict2 is True
+        b2 = CosmosBackend("nvidia/Cosmos-1.0-Diffusion-7B-Text2Video")
+        assert b2._is_predict2 is False
+
+    def test_cosmos_7b_constraints(self):
+        c = constraints_for("cosmos")
+        # Default (7B T2V): supports_i2v depends on detect
+        assert c.dim_divisibility == 8
+        assert c.max_n == 1
+
+    def test_cosmos_predict2_i2v_constraints(self):
+        b = CosmosBackend("nvidia/Cosmos-Predict2-2B-Video2World")
+        c = b.constraints()
+        assert c.supports_i2v is True
+        assert c.num_frames_validator(41) is True
+        assert c.num_frames_validator(121) is True
+
+    def test_cosmos_7b_t2v_constraints(self):
+        b = CosmosBackend("nvidia/Cosmos-1.0-Diffusion-7B-Text2Video")
+        c = b.constraints()
+        # 7B T2V: I2V not supported
+        assert c.supports_i2v is False
+        # Frames must be 4k+1
+        assert c.num_frames_validator(121) is True
+        assert c.num_frames_validator(41) is True
+        assert c.num_frames_validator(40) is False
+
+    def test_cosmos_aliases(self):
+        assert isinstance(resolve_backend("x", explicit="cosmos"), CosmosBackend)
+        assert isinstance(resolve_backend("x", explicit="cosmos-1.0"), CosmosBackend)
+        assert isinstance(resolve_backend("x", explicit="predict2"), CosmosBackend)
+        assert isinstance(resolve_backend("x", explicit="video2world"), CosmosBackend)
+
+    async def test_start_idempotent(self, stub):
+        backend = CosmosBackend("cosmos")
+        await backend.start()
+        await backend.start()
+        assert backend._loaded is True
+
+    async def test_generate_seed_increment(self, stub):
+        backend = CosmosBackend("cosmos")
+        await backend.start()
+        params = VideoGenParams(
+            prompt="a cat",
+            n=1,
+            num_frames=121,
+            width=848,
+            height=480,
+            seed=42,
+        )
+        result = await backend.generate(params)
+        assert len(result) == 1
+        assert stub["generate"][0]["seed"] == 42
+
+    async def test_generate_forwards_knobs(self, stub):
+        backend = CosmosBackend("cosmos")
+        await backend.start()
+        params = VideoGenParams(
+            prompt="a cat",
+            num_frames=121,
+            width=848,
+            height=480,
+            num_inference_steps=30,
+            cfg_scale=7.0,
+        )
+        await backend.generate(params)
+        call = stub["generate"][0]
+        assert call["num_inference_steps"] == 30
+        assert call["cfg_scale"] == 7.0
+
+    async def test_generate_predict2_i2v(self, stub):
+        backend = CosmosBackend("nvidia/Cosmos-Predict2-2B-Video2World")
+        await backend.start()
+        params = VideoGenParams(
+            prompt="a cat walking",
+            num_frames=41,
+            width=848,
+            height=480,
+            image="/tmp/test.png",
+        )
+        await backend.generate(params)
+        call = stub["generate"][0]
+        assert call["is_predict2"] is True
+        assert call["image"] == "/tmp/test.png"
+
+    async def test_stop_clears_state(self, stub):
+        backend = CosmosBackend("cosmos")
+        await backend.start()
         assert backend._loaded is True
         await backend.stop()
         assert backend._loaded is False

@@ -16,6 +16,7 @@ from .base import (
 )
 from .ltx2 import LTX2Backend
 from .ltx_video_legacy import LegacyLTXBackend
+from .cosmos import CosmosBackend
 from .svd import SVDBackend
 from .skyreels import SkyReelsBackend
 from .unimplemented import CogVideoBackend
@@ -23,6 +24,7 @@ from .wan2 import Wan2Backend
 
 BACKENDS: dict[str, type[VideoBackend]] = {
     "ltx2": LTX2Backend,
+    "cosmos": CosmosBackend,
     "svd": SVDBackend,
     "wan2": Wan2Backend,
     "skyreels": SkyReelsBackend,
@@ -36,6 +38,11 @@ _ALIASES: dict[str, str] = {
     "ltx_2": "ltx2",
     "ltx-2.3": "ltx2",
     "ltx2.3": "ltx2",
+    "cosmos": "cosmos",
+    "cosmos-1.0": "cosmos",
+    "cosmos-predict2": "cosmos",
+    "predict2": "cosmos",
+    "video2world": "cosmos",
     "svd": "svd",
     "stable-video-diffusion": "svd",
     "svd-xt": "svd",
@@ -98,6 +105,7 @@ __all__ = [
     "resolve_backend",
     "constraints_for",
     "LTX2Backend",
+    "CosmosBackend",
     "SVDBackend",
     "Wan2Backend",
     "SkyReelsBackend",
