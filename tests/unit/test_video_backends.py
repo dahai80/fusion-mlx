@@ -8,6 +8,7 @@ import pytest
 
 from fusion_mlx.engines.video_backends import (
     CosmosBackend,
+    HunyuanVideoBackend,
     SVDBackend,
     BACKENDS,
     CogVideoBackend,
@@ -101,6 +102,7 @@ class TestResolveBackend:
         assert set(BACKENDS) == {
             "ltx2",
             "cosmos",
+            "hunyuanvideo",
             "wan2",
             "skyreels",
             "ltx_video_legacy",
@@ -979,6 +981,111 @@ class TestCosmosBackend:
 
     async def test_stop_clears_state(self, stub):
         backend = CosmosBackend("cosmos")
+        await backend.start()
+        assert backend._loaded is True
+        await backend.stop()
+        assert backend._loaded is False
+
+
+class TestHunyuanVideoBackend:
+    # HunyuanVideo: T2V + I2V backend. Pure-MLX port.
+    # Stub the generate function and exercise the orchestration.
+
+    @pytest.fixture
+    def stub(self, monkeypatch):
+        from fusion_mlx.engines.video_backends import hunyuanvideo as mod
+        from fusion_mlx.video.hunyuanvideo import generate as port_gen
+
+        calls = {"generate": []}
+
+        def generate_video(model_path, **kwargs):
+            calls["generate"].append({"model_path": model_path, **kwargs})
+            output_path = kwargs.get("output_path")
+            if output_path:
+                with open(output_path, "wb") as f:
+                    f.write(b"HVMP4" + str(kwargs.get("seed", 0)).encode())
+            return output_path
+
+        monkeypatch.setattr(port_gen, "generate_video", generate_video)
+        return calls
+
+    def test_hunyuan_autodetect(self):
+        b = resolve_backend("hunyuanvideo")
+        assert isinstance(b, HunyuanVideoBackend)
+        b2 = resolve_backend("tencent/HunyuanVideo")
+        assert isinstance(b2, HunyuanVideoBackend)
+
+    def test_hunyuan_constraints(self):
+        c = constraints_for("hunyuanvideo")
+        assert c.supports_i2v is True
+        assert c.dim_divisibility == 16
+        assert c.num_frames_validator(33) is True
+        assert c.num_frames_validator(65) is True
+        assert c.num_frames_validator(32) is False
+
+    def test_hunyuan_aliases(self):
+        assert isinstance(
+            resolve_backend("x", explicit="hunyuanvideo"), HunyuanVideoBackend
+        )
+        assert isinstance(
+            resolve_backend("x", explicit="hunyuan-video"), HunyuanVideoBackend
+        )
+        assert isinstance(
+            resolve_backend("x", explicit="hunyuan_video"), HunyuanVideoBackend
+        )
+
+    async def test_start_idempotent(self, stub):
+        backend = HunyuanVideoBackend("hunyuanvideo")
+        await backend.start()
+        await backend.start()
+        assert backend._loaded is True
+
+    async def test_generate_seed_increment(self, stub):
+        backend = HunyuanVideoBackend("hunyuanvideo")
+        await backend.start()
+        params = VideoGenParams(
+            prompt="a cat",
+            n=1,
+            num_frames=33,
+            width=720,
+            height=480,
+            seed=42,
+        )
+        result = await backend.generate(params)
+        assert len(result) == 1
+        assert stub["generate"][0]["seed"] == 42
+
+    async def test_generate_forwards_knobs(self, stub):
+        backend = HunyuanVideoBackend("hunyuanvideo")
+        await backend.start()
+        params = VideoGenParams(
+            prompt="a cat",
+            num_frames=33,
+            width=720,
+            height=480,
+            num_inference_steps=30,
+            cfg_scale=6.0,
+        )
+        await backend.generate(params)
+        call = stub["generate"][0]
+        assert call["num_inference_steps"] == 30
+        assert call["cfg_scale"] == 6.0
+
+    async def test_generate_i2v_image_passed(self, stub):
+        backend = HunyuanVideoBackend("hunyuanvideo")
+        await backend.start()
+        params = VideoGenParams(
+            prompt="a cat walking",
+            num_frames=33,
+            width=720,
+            height=480,
+            image="/tmp/test.png",
+        )
+        await backend.generate(params)
+        assert stub["generate"][0]["image"] == "/tmp/test.png"
+
+    async def test_stop_clears_state(self, stub):
+        backend = HunyuanVideoBackend("hunyuanvideo")
         await backend.start()
         assert backend._loaded is True
         await backend.stop()

@@ -17,6 +17,7 @@ from .base import (
 from .ltx2 import LTX2Backend
 from .ltx_video_legacy import LegacyLTXBackend
 from .cosmos import CosmosBackend
+from .hunyuanvideo import HunyuanVideoBackend
 from .svd import SVDBackend
 from .skyreels import SkyReelsBackend
 from .unimplemented import CogVideoBackend
@@ -30,6 +31,7 @@ BACKENDS: dict[str, type[VideoBackend]] = {
     "skyreels": SkyReelsBackend,
     "ltx_video_legacy": LegacyLTXBackend,
     "cogvideo": CogVideoBackend,
+    "hunyuanvideo": HunyuanVideoBackend,
 }
 
 # Stable name aliases -> canonical registry key.
@@ -43,6 +45,9 @@ _ALIASES: dict[str, str] = {
     "cosmos-predict2": "cosmos",
     "predict2": "cosmos",
     "video2world": "cosmos",
+    "hunyuanvideo": "hunyuanvideo",
+    "hunyuan-video": "hunyuanvideo",
+    "hunyuan_video": "hunyuanvideo",
     "svd": "svd",
     "stable-video-diffusion": "svd",
     "svd-xt": "svd",
@@ -106,6 +111,7 @@ __all__ = [
     "constraints_for",
     "LTX2Backend",
     "CosmosBackend",
+    "HunyuanVideoBackend",
     "SVDBackend",
     "Wan2Backend",
     "SkyReelsBackend",
