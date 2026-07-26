@@ -26,3 +26,12 @@ packaging/requirements/
 # macOS app runtime data dir
 apps/fusion-mac/.fusion-mlx/
 scripts/bench_extrapolation_draft_results.json
+
+# Local-only: plans, audit, integration, CI
+.claude/plans/
+.dspark-integration/
+AUDIT_FUSION_MLX.md
+AUDIT_SCORE.md
+CHANGELOG.md
+pytestdebug.log
+.github/
