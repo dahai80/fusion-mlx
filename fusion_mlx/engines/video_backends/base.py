@@ -68,6 +68,9 @@ class VideoGenParams:
     # AnimateDiff: temporal motion module scale (0=off, >0=on).
     animatediff_scale: float = 0.0
     extra: dict[str, Any] = field(default_factory=dict)
+    # Output format: "mp4" (default, returns bytes) or "raw" (returns numpy
+    # array of shape [T, H, W, 3] uint8 — skips MP4 encoding entirely).
+    output_format: str = "mp4"
 
 
 @dataclass
@@ -98,7 +101,7 @@ class VideoBackend(ABC):
         pass
 
     @abstractmethod
-    async def generate(self, params: VideoGenParams) -> list[bytes]:
+    async def generate(self, params: VideoGenParams) -> list[bytes] | list:
         pass
 
     @abstractmethod

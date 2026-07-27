@@ -86,9 +86,9 @@ class Wan2Backend(VideoBackend):
         no_compile = True if params.no_compile is None else params.no_compile
 
         def _generate():
-            results: list[bytes] = []
+            results = []
             for i in range(max(1, params.n)):
-                mp4_bytes = _generate_one(
+                result = _generate_one(
                     self._model_name,
                     prompt=params.prompt,
                     negative_prompt=params.negative_prompt,
@@ -105,8 +105,9 @@ class Wan2Backend(VideoBackend):
                     tiling=params.tiling,
                     on_step_sync=sync_cb,
                     session_id=params.session_id,
+                    output_format=params.output_format,
                 )
-                results.append(mp4_bytes)
+                results.append(result)
             return results
 
         loop = asyncio.get_running_loop()
@@ -148,8 +149,40 @@ def _generate_one(
     tiling: str | None = None,
     on_step_sync: Callable[[int, int], None] | None = None,
     session_id: str | None = None,
-) -> bytes:
+    output_format: str = "mp4",
+) -> bytes | Any:
     from fusion_mlx.video.wan2.generate import generate_video
+
+    raw_output = output_format == "raw"
+
+    if raw_output:
+        gen_kwargs: dict[str, Any] = dict(
+            negative_prompt=negative_prompt,
+            image=image,
+            width=width,
+            height=height,
+            num_frames=num_frames,
+            steps=steps,
+            guide_scale=guide_scale,
+            shift=shift,
+            seed=seed,
+            output_format="raw",
+            scheduler=scheduler,
+            no_compile=no_compile,
+        )
+        if tiling is not None:
+            gen_kwargs["tiling"] = tiling
+        if on_step_sync is not None:
+            gen_kwargs["on_step_sync"] = on_step_sync
+        if session_id is not None:
+            gen_kwargs["session_id"] = session_id
+        logger.info(
+            "Wan2 generate (raw): prompt_len=%d frames=%d %dx%d seed=%d i2v=%s "
+            "steps=%s compile=%s tiling=%s",
+            len(prompt), num_frames, width, height, seed, bool(image),
+            steps, not no_compile, tiling,
+        )
+        return generate_video(model_dir, prompt, **gen_kwargs)
 
     with managed_tempfile_path(prefix="fusion_video_", suffix=".mp4") as handle:
         temp_path = handle.path

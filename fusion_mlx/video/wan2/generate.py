@@ -86,6 +86,7 @@ def generate_video(
     shift: float = None,
     seed: int = -1,
     output_path: str = "output.mp4",
+    output_format: str = "mp4",
     scheduler: str = "unipc",
     loras: list | None = None,
     loras_high: list | None = None,
@@ -832,6 +833,11 @@ def generate_video(
         print(
             f"{Colors.DIM}  Trimmed first {trim_pixels} frames ({video.shape[0]} remaining){Colors.RESET}"
         )
+
+    if output_format == "raw":
+        print(f"{Colors.DIM}  Raw output: returning {video.shape} uint8 frames{Colors.RESET}")
+        print(f"{Colors.DIM}  Total time: {time.time() - t1:.1f}s{Colors.RESET}")
+        return video
 
     save_video(video, output_path, fps=config.sample_fps)
     print(f"\n{Colors.GREEN}✓ Video saved to {output_path}{Colors.RESET}")
