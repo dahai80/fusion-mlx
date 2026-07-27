@@ -296,3 +296,132 @@ class TestT5EmbedCache:
 
         assert captured.get("precomputed_context") is None
         assert captured.get("keep_t5") is None
+
+
+# ---------------------------------------------------------------------------
+# #221 Phase 3: T5 fp16 dtype tests
+# ---------------------------------------------------------------------------
+
+
+class TestT5Dtype:
+    def test_default_dtype_is_float16(self, monkeypatch):
+        import mlx.core as mx
+
+        from fusion_mlx.video.wan2.utils import load_t5_encoder
+
+        monkeypatch.delenv("FUSION_T5_DTYPE", raising=False)
+        captured_dtypes = {}
+
+        original_astype = mx.array.astype
+
+        def track_astype(self_arr, dtype, **kwargs):
+            captured_dtypes[dtype] = captured_dtypes.get(dtype, 0) + 1
+            return original_astype(self_arr, dtype, **kwargs)
+
+        monkeypatch.setattr(mx.array, "astype", track_astype)
+        fake_weights = {"layer.weight": mx.zeros((4, 4))}
+        monkeypatch.setattr(mx, "load", lambda p: fake_weights)
+        monkeypatch.setattr(mx, "eval", lambda *a, **kw: None)
+
+        config = MagicMock()
+        config.t5_vocab_size = 256
+        config.t5_dim = 4096
+        config.t5_dim_attn = 4096
+        config.t5_dim_ffn = 4096
+        config.t5_num_heads = 64
+        config.t5_num_layers = 2
+        config.t5_num_buckets = 32
+
+        try:
+            load_t5_encoder(Path("/fake/t5.safetensors"), config)
+        except Exception:
+            pass
+
+        assert (
+            mx.float16 in captured_dtypes
+        ), f"Expected float16 cast, got {captured_dtypes}"
+
+    def test_env_override_float32(self, monkeypatch):
+        import mlx.core as mx
+
+        from fusion_mlx.video.wan2.utils import load_t5_encoder
+
+        monkeypatch.setenv("FUSION_T5_DTYPE", "float32")
+        captured_dtypes = {}
+
+        original_astype = mx.array.astype
+
+        def track_astype(self_arr, dtype, **kwargs):
+            captured_dtypes[dtype] = captured_dtypes.get(dtype, 0) + 1
+            return original_astype(self_arr, dtype, **kwargs)
+
+        monkeypatch.setattr(mx.array, "astype", track_astype)
+        fake_weights = {"layer.weight": mx.zeros((4, 4))}
+        monkeypatch.setattr(mx, "load", lambda p: fake_weights)
+        monkeypatch.setattr(mx, "eval", lambda *a, **kw: None)
+
+        config = MagicMock()
+        config.t5_vocab_size = 256
+        config.t5_dim = 4096
+        config.t5_dim_attn = 4096
+        config.t5_dim_ffn = 4096
+        config.t5_num_heads = 64
+        config.t5_num_layers = 2
+        config.t5_num_buckets = 32
+
+        try:
+            load_t5_encoder(Path("/fake/t5.safetensors"), config)
+        except Exception:
+            pass
+
+        assert (
+            mx.float32 in captured_dtypes
+        ), f"Expected float32 cast, got {captured_dtypes}"
+
+    def test_explicit_dtype_overrides_env(self, monkeypatch):
+        import mlx.core as mx
+
+        from fusion_mlx.video.wan2.utils import load_t5_encoder
+
+        monkeypatch.setenv("FUSION_T5_DTYPE", "float32")
+        captured_dtypes = {}
+
+        original_astype = mx.array.astype
+
+        def track_astype(self_arr, dtype, **kwargs):
+            captured_dtypes[dtype] = captured_dtypes.get(dtype, 0) + 1
+            return original_astype(self_arr, dtype, **kwargs)
+
+        monkeypatch.setattr(mx.array, "astype", track_astype)
+        fake_weights = {"layer.weight": mx.zeros((4, 4))}
+        monkeypatch.setattr(mx, "load", lambda p: fake_weights)
+        monkeypatch.setattr(mx, "eval", lambda *a, **kw: None)
+
+        config = MagicMock()
+        config.t5_vocab_size = 256
+        config.t5_dim = 4096
+        config.t5_dim_attn = 4096
+        config.t5_dim_ffn = 4096
+        config.t5_num_heads = 64
+        config.t5_num_layers = 2
+        config.t5_num_buckets = 32
+
+        try:
+            load_t5_encoder(Path("/fake/t5.safetensors"), config, dtype="bf16")
+        except Exception:
+            pass
+
+        assert (
+            mx.bfloat16 in captured_dtypes
+        ), f"Expected bf16 cast, got {captured_dtypes}"
+
+    def test_backward_compat_no_dtype_arg(self, monkeypatch):
+        from fusion_mlx.video.wan2.utils import load_t5_encoder
+
+        monkeypatch.delenv("FUSION_T5_DTYPE", raising=False)
+
+        import inspect
+
+        sig = inspect.signature(load_t5_encoder)
+        assert "dtype" in sig.parameters
+        assert sig.parameters["dtype"].default is None

@@ -1,9 +1,12 @@
+import logging
 from pathlib import Path
 
 import mlx.core as mx
 import mlx.nn as nn
 
 from ..ltx2.utils import get_model_path as get_model_path
+
+logger = logging.getLogger(__name__)
 
 
 def load_wan_model(
@@ -53,7 +56,9 @@ def load_wan_model(
     return model
 
 
-def load_t5_encoder(model_path: Path, config):
+def load_t5_encoder(model_path: Path, config, dtype: str | None = None):
+    import os
+
     from .text_encoder import T5Encoder
 
     encoder = T5Encoder(
@@ -67,7 +72,20 @@ def load_t5_encoder(model_path: Path, config):
         shared_pos=False,
     )
     weights = mx.load(str(model_path))
-    weights = {k: v.astype(mx.float32) for k, v in weights.items()}
+    target_dtype = dtype or os.environ.get("FUSION_T5_DTYPE", "float16")
+    dtype_map = {
+        "float32": mx.float32,
+        "float16": mx.float16,
+        "bf16": mx.bfloat16,
+        "bfloat16": mx.bfloat16,
+    }
+    mx_dtype = dtype_map.get(target_dtype, mx.float16)
+    logger.info(
+        "Loading T5 encoder with dtype=%s (env FUSION_T5_DTYPE=%s)",
+        target_dtype,
+        os.environ.get("FUSION_T5_DTYPE"),
+    )
+    weights = {k: v.astype(mx_dtype) for k, v in weights.items()}
     encoder.load_weights(list(weights.items()))
     mx.eval(encoder.parameters())
     return encoder
