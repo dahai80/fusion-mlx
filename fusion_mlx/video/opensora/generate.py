@@ -212,6 +212,7 @@ def generate_video(
         )
 
         x_packed = x_packed + dt * model_out
+        mx.eval(x_packed)
 
         if step_idx % 5 == 0 or step_idx == len(schedule) - 1:
             logger.info(f"Step {step_idx + 1}/{num_steps}: t={t_cur:.4f}")

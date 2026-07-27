@@ -244,6 +244,99 @@ class TestMMDiTModel:
         assert emb.shape == (2, 256)
 
 
+class TestDualTextEncoder:
+    def test_import(self):
+        from fusion_mlx.video.opensora.text_encoder import DualTextEncoder
+
+    def test_no_torch_in_module_source(self):
+        # Verify opensora text_encoder.py itself has zero torch dependency
+        import inspect
+        from fusion_mlx.video.opensora.text_encoder import DualTextEncoder
+
+        src = inspect.getsource(DualTextEncoder)
+        assert "torch" not in src
+
+    def test_init_creates_encoders(self):
+        from fusion_mlx.video.opensora.text_encoder import DualTextEncoder
+        from fusion_mlx.video.skyreels_v3.text_encoder import (
+            CLIPTextEncoder,
+            UMT5Encoder,
+        )
+
+        enc = DualTextEncoder()
+        assert isinstance(enc.t5, UMT5Encoder)
+        assert isinstance(enc.clip, CLIPTextEncoder)
+
+    def test_encode_returns_correct_shapes(self):
+        # Mock the internal encoders to avoid loading real models
+        from fusion_mlx.video.opensora.text_encoder import DualTextEncoder
+
+        enc = DualTextEncoder()
+
+        # Override with stubs that return known shapes
+        class FakeT5:
+            def encode_text(self, prompt, *, max_length=512):
+                L = min(10, max_length)
+                return mx.zeros((1, L, 4096))
+
+        class FakeCLIP:
+            def encode_text(self, text, *, max_length=77):
+                B = len(text) if isinstance(text, list) else 1
+                return mx.zeros((B, 768))
+
+        enc.t5 = FakeT5()
+        enc.clip = FakeCLIP()
+
+        context, y_vec = enc.encode(["hello", "negative"])
+        assert context.shape == (2, 512, 4096)
+        assert y_vec.shape == (2, 768)
+
+    def test_encode_single_string(self):
+        from fusion_mlx.video.opensora.text_encoder import DualTextEncoder
+
+        enc = DualTextEncoder()
+
+        class FakeT5:
+            def encode_text(self, prompt, *, max_length=512):
+                L = min(5, max_length)
+                return mx.zeros((1, L, 4096))
+
+        class FakeCLIP:
+            def encode_text(self, text, *, max_length=77):
+                B = len(text) if isinstance(text, list) else 1
+                return mx.zeros((B, 768))
+
+        enc.t5 = FakeT5()
+        enc.clip = FakeCLIP()
+
+        context, y_vec = enc.encode("hello")
+        assert context.shape[0] == 1
+        assert y_vec.shape[0] == 1
+
+    def test_encode_handles_clip_stub(self):
+        # CLIP stub mode returns [B, L, dim] instead of [B, dim]
+        from fusion_mlx.video.opensora.text_encoder import DualTextEncoder
+
+        enc = DualTextEncoder()
+
+        class FakeT5:
+            def encode_text(self, prompt, *, max_length=512):
+                return mx.zeros((1, 8, 4096))
+
+        class FakeCLIP:
+            def encode_text(self, text, *, max_length=77):
+                B = len(text) if isinstance(text, list) else 1
+                return mx.zeros((B, max_length, 768))  # stub shape
+
+        enc.t5 = FakeT5()
+        enc.clip = FakeCLIP()
+
+        context, y_vec = enc.encode(["hello", "negative"])
+        assert context.ndim == 3
+        assert y_vec.ndim == 2  # should be pooled from [B, L, dim] -> [B, dim]
+        assert y_vec.shape[0] == 2
+
+
 class TestOpenSoraBackend:
     def test_detect(self):
         from fusion_mlx.engines.video_backends.opensora import OpenSoraBackend

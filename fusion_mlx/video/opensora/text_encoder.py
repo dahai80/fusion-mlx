@@ -1,101 +1,18 @@
 # SPDX-License-Identifier: Apache-2.0
-# Open-Sora V2 dual text encoder: T5-XXL + CLIP-ViT-Large-patch14.
+# Open-Sora V2 dual text encoder: pure-MLX UMT5 + CLIP-ViT-Large-patch14.
+# Reuses skyreels_v3 encoders — zero torch dependency for inference.
 
 import logging
 
 import mlx.core as mx
-import mlx.nn as nn
+
+from fusion_mlx.video.skyreels_v3.text_encoder import CLIPTextEncoder, UMT5Encoder
 
 logger = logging.getLogger(__name__)
 
 
-class T5TextEncoder(nn.Module):
-    # UMT5 or T5-XXL encoder for context embeddings (4096-dim).
-
-    def __init__(self, model_path: str | None = None, max_length: int = 512):
-        super().__init__()
-        self.model_path = model_path
-        self.max_length = max_length
-        self._model = None
-        self._tokenizer = None
-
-    def _ensure_loaded(self):
-        if self._model is not None:
-            return
-        from transformers import T5EncoderModel, T5Tokenizer
-
-        logger.info(f"Loading T5 encoder from {self.model_path}")
-        self._model = T5EncoderModel.from_pretrained(self.model_path)
-        self._tokenizer = T5Tokenizer.from_pretrained(self.model_path)
-        logger.info("T5 encoder loaded")
-
-    def encode(self, text: str | list[str], max_length: int | None = None):
-        self._ensure_loaded()
-        ml = max_length or self.max_length
-        if isinstance(text, str):
-            text = [text]
-        inputs = self._tokenizer(
-            text,
-            return_tensors="pt",
-            padding="max_length",
-            max_length=ml,
-            truncation=True,
-        )
-        import torch
-
-        with torch.no_grad():
-            outputs = self._model(
-                input_ids=inputs.input_ids, attention_mask=inputs.attention_mask
-            )
-        hidden_states = mx.array(outputs.last_hidden_state.numpy())
-        attention_mask = mx.array(inputs.attention_mask.numpy())
-        mask = attention_mask[:, :, None].astype(hidden_states.dtype)
-        hidden_states = hidden_states * mask
-        return hidden_states
-
-
-class CLIPTextEncoder(nn.Module):
-    # CLIP-ViT-Large-patch14 for vector embeddings (768-dim pooler_output).
-
-    def __init__(self, model_path: str | None = None, max_length: int = 77):
-        super().__init__()
-        self.model_path = model_path
-        self.max_length = max_length
-        self._model = None
-        self._tokenizer = None
-
-    def _ensure_loaded(self):
-        if self._model is not None:
-            return
-        from transformers import CLIPTextModel, CLIPTokenizer
-
-        logger.info(f"Loading CLIP encoder from {self.model_path}")
-        self._model = CLIPTextModel.from_pretrained(self.model_path)
-        self._tokenizer = CLIPTokenizer.from_pretrained(self.model_path)
-        logger.info("CLIP encoder loaded")
-
-    def encode(self, text: str | list[str], max_length: int | None = None):
-        self._ensure_loaded()
-        ml = max_length or self.max_length
-        if isinstance(text, str):
-            text = [text]
-        inputs = self._tokenizer(
-            text,
-            return_tensors="pt",
-            padding="max_length",
-            max_length=ml,
-            truncation=True,
-        )
-        import torch
-
-        with torch.no_grad():
-            outputs = self._model(input_ids=inputs.input_ids)
-        pooler = mx.array(outputs.pooler_output.numpy())
-        return pooler
-
-
-class DualTextEncoder(nn.Module):
-    # Combines T5 (context) + CLIP (vector) encoders.
+class DualTextEncoder:
+    # Combines UMT5 (context) + CLIP (vector) encoders, pure MLX.
 
     def __init__(
         self,
@@ -104,13 +21,43 @@ class DualTextEncoder(nn.Module):
         t5_max_length: int = 512,
         clip_max_length: int = 77,
     ):
-        super().__init__()
-        self.t5 = T5TextEncoder(t5_path, t5_max_length)
-        self.clip = CLIPTextEncoder(clip_path, clip_max_length)
+        self.t5 = UMT5Encoder()
+        self.clip = CLIPTextEncoder(clip_path)
+        self.t5_max_length = t5_max_length
+        self.clip_max_length = clip_max_length
 
     def encode(self, text: str | list[str]):
         if isinstance(text, str):
             text = [text]
-        context = self.t5.encode(text)
-        y_vec = self.clip.encode(text)
+
+        # UMT5: per-prompt encode_text -> pad to max_length -> stack
+        context_parts = []
+        for t in text:
+            emb = self.t5.encode_text(t, max_length=self.t5_max_length)
+            # emb: [1, L_valid, d_model], pad to [1, t5_max_length, d_model]
+            L_valid = emb.shape[1]
+            if L_valid < self.t5_max_length:
+                pad_len = self.t5_max_length - L_valid
+                pad = mx.zeros((1, pad_len, emb.shape[2]), dtype=emb.dtype)
+                emb = mx.concatenate([emb, pad], axis=1)
+            elif L_valid > self.t5_max_length:
+                emb = emb[:, : self.t5_max_length]
+            context_parts.append(emb[0])
+        context = mx.stack(context_parts, axis=0)
+        mx.eval(context)
+
+        # CLIP: batch encode_text
+        y_vec = self.clip.encode_text(text, max_length=self.clip_max_length)
+        # Normalize to [B, dim]: if stub returns [B, L, dim], take mean over L
+        if y_vec.ndim == 3:
+            logger.warning(
+                "CLIP stub mode: y_vec %s -> pooling to [B, dim]",
+                y_vec.shape,
+            )
+            y_vec = y_vec.mean(axis=1)
+        mx.eval(y_vec)
+
+        logger.info(
+            "DualTextEncoder: context=%s y_vec=%s", context.shape, y_vec.shape
+        )
         return context, y_vec
