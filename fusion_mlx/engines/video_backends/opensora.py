@@ -21,7 +21,7 @@ class OpenSoraBackend(VideoBackend):
     supports_i2v = True
 
     def __init__(self, model_name: str, **kwargs: Any):
-        super().__init__(model_name, **kwargs)
+        super().__init__()
         self.model_name = model_name
         self._model_dir: str | None = None
         self._text_encoder = None
@@ -85,6 +85,7 @@ class OpenSoraBackend(VideoBackend):
             text_encoder=self._text_encoder,
             vae=self._vae,
             output_format=params.output_format,
+            config=self._config,
         )
         if raw_output:
             return [video]

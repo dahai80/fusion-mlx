@@ -54,7 +54,9 @@ class VideoGenEngine(BaseNonStreamingEngine):
         on_step: StepCallback | None = None,
         output_format: str = "mp4",
         **kwargs,
-    ) -> list[bytes] | list:
+    ) -> list[bytes] | list[Any]:
+        # Return type: list[bytes] for MP4, list[Any] for raw numpy arrays.
+        # Callers: openai_routes.py video endpoint, ComfyUI stage callbacks.
         if not self._loaded:
             raise RuntimeError("VideoGen engine not started.")
 

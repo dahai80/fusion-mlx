@@ -119,21 +119,24 @@ def generate_video(
     shift_alpha: float = 1.0,
     text_encoder: object | None = None,
     vae: object | None = None,
+    output_format: str = "mp4",
+    config: OpenSoraConfig | None = None,
 ) -> mx.array:
     logger.info(
         f"Open-Sora V2 generate: {num_frames}f {height}x{width} {num_steps}steps"
     )
 
-    config_path = Path(model_dir) / "config.json"
-    if config_path.exists():
-        import json
+    if config is None:
+        config_path = Path(model_dir) / "config.json"
+        if config_path.exists():
+            import json
 
-        with open(config_path) as f:
-            cfg_dict = json.load(f)
-        config = OpenSoraConfig.from_dict(cfg_dict)
-    else:
-        config = OpenSoraConfig()
-        logger.info("Using default config (no config.json found)")
+            with open(config_path) as f:
+                cfg_dict = json.load(f)
+            config = OpenSoraConfig.from_dict(cfg_dict)
+        else:
+            config = OpenSoraConfig()
+            logger.info("Using default config (no config.json found)")
 
     model = MMDiTModel(config)
     weights_path = Path(model_dir) / "weights.npz"
@@ -225,5 +228,9 @@ def generate_video(
     else:
         video = x
         logger.warning("No VAE provided, returning latent")
+
+    if output_format == "raw":
+        logger.info("Raw output: returning decoded frames")
+        return video
 
     return video

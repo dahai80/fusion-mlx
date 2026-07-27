@@ -125,6 +125,8 @@ class Wan2Backend(VideoBackend):
     def _get_cached_embeds(self, prompt, neg_prompt, text_len):
         if self._t5_encoder is None:
             return None
+        if neg_prompt is None and self._t5_config is not None:
+            neg_prompt = self._t5_config.sample_neg_prompt
         cache_key = (prompt or "", neg_prompt or "", text_len)
         if cache_key in self._embed_cache:
             logger.info("Wan2: T5 embed cache hit for prompt_len=%d", len(prompt or ""))
@@ -138,15 +140,14 @@ class Wan2Backend(VideoBackend):
 
         logger.info("Wan2: computing T5 embeds for prompt_len=%d", len(prompt or ""))
         context = encode_text(self._t5_encoder, self._t5_tokenizer, prompt, text_len)
-        cfg_disabled = neg_prompt is None or neg_prompt.strip() == ""
-        if cfg_disabled:
-            context_null = None
-            mx.eval(context)
-        else:
+        if neg_prompt and neg_prompt.strip():
             context_null = encode_text(
                 self._t5_encoder, self._t5_tokenizer, neg_prompt, text_len
             )
             mx.eval(context, context_null)
+        else:
+            context_null = None
+            mx.eval(context)
 
         if len(self._embed_cache) >= _T5_EMBED_CACHE_MAX:
             oldest = next(iter(self._embed_cache))

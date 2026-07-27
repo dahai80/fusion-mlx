@@ -100,8 +100,11 @@ class VideoBackend(ABC):
     async def stop(self) -> None:
         pass
 
+    # Return type: list[bytes] for MP4, list[Any] for raw numpy arrays.
+    # Callers: VideoGenEngine.generate(), API routes in openai_routes.py.
+    # VideoGenParams.output_format determines which branch is taken.
     @abstractmethod
-    async def generate(self, params: VideoGenParams) -> list[bytes] | list:
+    async def generate(self, params: VideoGenParams) -> list[bytes] | list[Any]:
         pass
 
     @abstractmethod
