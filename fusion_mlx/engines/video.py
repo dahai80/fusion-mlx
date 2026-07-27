@@ -52,8 +52,11 @@ class VideoGenEngine(BaseNonStreamingEngine):
         seed: int | None = None,
         n: int = 1,
         on_step: StepCallback | None = None,
+        output_format: str = "mp4",
         **kwargs,
-    ) -> list[bytes]:
+    ) -> list[bytes] | list[Any]:
+        # Return type: list[bytes] for MP4, list[Any] for raw numpy arrays.
+        # Callers: openai_routes.py video endpoint, ComfyUI stage callbacks.
         if not self._loaded:
             raise RuntimeError("VideoGen engine not started.")
 
@@ -79,6 +82,7 @@ class VideoGenEngine(BaseNonStreamingEngine):
             enhance_prompt=kwargs.get("enhance_prompt"),
             on_step=on_step,
             session_id=kwargs.get("session_id"),
+            output_format=output_format,
         )
 
         t0 = time.monotonic()

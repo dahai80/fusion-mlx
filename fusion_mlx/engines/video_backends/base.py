@@ -12,7 +12,7 @@ import logging
 from abc import ABC, abstractmethod
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Literal
 
 import mlx.core as mx
 
@@ -68,6 +68,16 @@ class VideoGenParams:
     # AnimateDiff: temporal motion module scale (0=off, >0=on).
     animatediff_scale: float = 0.0
     extra: dict[str, Any] = field(default_factory=dict)
+    # Output format: "mp4" (default, returns bytes) or "raw" (returns numpy
+    # array of shape [T, H, W, 3] uint8 — skips MP4 encoding entirely).
+    output_format: Literal["mp4", "raw"] = "mp4"
+
+    def __post_init__(self):
+        valid = ("mp4", "raw")
+        if self.output_format not in valid:
+            raise ValueError(
+                f"output_format must be one of {valid}, got {self.output_format!r}"
+            )
 
 
 @dataclass
@@ -97,8 +107,11 @@ class VideoBackend(ABC):
     async def stop(self) -> None:
         pass
 
+    # Return type: list[bytes] for MP4, list[Any] for raw numpy arrays.
+    # Callers: VideoGenEngine.generate(), API routes in openai_routes.py.
+    # VideoGenParams.output_format determines which branch is taken.
     @abstractmethod
-    async def generate(self, params: VideoGenParams) -> list[bytes]:
+    async def generate(self, params: VideoGenParams) -> list[bytes] | list[Any]:
         pass
 
     @abstractmethod
