@@ -14,12 +14,12 @@ from .base import (
     VideoGenParams,
     validate_params,
 )
-from .ltx2 import LTX2Backend
-from .ltx_video_legacy import LegacyLTXBackend
 from .cosmos import CosmosBackend
 from .hunyuanvideo import HunyuanVideoBackend
-from .svd import SVDBackend
+from .ltx2 import LTX2Backend
+from .ltx_video_legacy import LegacyLTXBackend
 from .skyreels import SkyReelsBackend
+from .svd import SVDBackend
 from .unimplemented import CogVideoBackend
 from .wan2 import Wan2Backend
 

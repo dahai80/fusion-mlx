@@ -3,7 +3,6 @@
 # 7B T2V: rectified flow, 2B I2V (Predict2): EDM-style.
 
 import logging
-import math
 
 import mlx.core as mx
 

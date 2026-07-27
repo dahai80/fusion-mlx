@@ -140,14 +140,11 @@ class HunyuanDualTextEncoder(nn.Module):
             from safetensors import safe_open
 
             with safe_open(sf, framework="mlx") as f:
-                for key in f.keys():
+                for key in f.keys():  # noqa: SIM118
                     all_params[key] = f.get_tensor(key)
         flat = tree_flatten(enc.parameters())
         loaded = {}
         for k, v in flat:
-            if k in all_params:
-                loaded[k] = all_params[k]
-            else:
-                loaded[k] = v
+            loaded[k] = all_params.get(k, v)
         enc.update(tree_unflatten(loaded))
         return enc

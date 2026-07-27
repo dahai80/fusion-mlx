@@ -7,11 +7,10 @@ from pathlib import Path
 import pytest
 
 from fusion_mlx.engines.video_backends import (
-    CosmosBackend,
-    HunyuanVideoBackend,
-    SVDBackend,
     BACKENDS,
     CogVideoBackend,
+    CosmosBackend,
+    HunyuanVideoBackend,
     LegacyLTXBackend,
     LTX2Backend,
     VideoGenParams,
@@ -649,15 +648,12 @@ class TestVideoGenTimeout:
         # get_video_gen_timeout() rather than a hardcoded 600.0, so a long
         # 720p 30-step job is not killed mid-generation.
         from fusion_mlx.engines.video_backends import (
-            SVDBackend,
             ltx2 as ltx2_mod,
         )
         from fusion_mlx.engines.video_backends import (
-            SVDBackend,
             skyreels as skyreels_mod,
         )
         from fusion_mlx.engines.video_backends import (
-            SVDBackend,
             wan2 as wan2_mod,
         )
 
@@ -758,9 +754,7 @@ class TestSVDBackend:
 
     @pytest.fixture
     def stub(self, monkeypatch):
-        import mlx.core as mx
 
-        from fusion_mlx.engines.video_backends import svd as mod
         from fusion_mlx.video.svd import generate as port_gen
 
         calls = {"generate": []}
@@ -868,7 +862,6 @@ class TestCosmosBackend:
 
     @pytest.fixture
     def stub(self, monkeypatch):
-        from fusion_mlx.engines.video_backends import cosmos as mod
         from fusion_mlx.video.cosmos import generate as port_gen
 
         calls = {"generate": []}
@@ -993,7 +986,6 @@ class TestHunyuanVideoBackend:
 
     @pytest.fixture
     def stub(self, monkeypatch):
-        from fusion_mlx.engines.video_backends import hunyuanvideo as mod
         from fusion_mlx.video.hunyuanvideo import generate as port_gen
 
         calls = {"generate": []}

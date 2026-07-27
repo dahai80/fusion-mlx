@@ -276,8 +276,8 @@ class CosmosDiT(nn.Module):
 
     @classmethod
     def from_pretrained(cls, model_path, config=None, **kwargs):
-        import os
         import glob
+        import os
 
         dit = cls(config=config)
         safetensor_files = sorted(glob.glob(os.path.join(model_path, "*.safetensors")))
@@ -291,7 +291,7 @@ class CosmosDiT(nn.Module):
             from safetensors import safe_open
 
             with safe_open(sf, framework="mlx") as f:
-                for key in f.keys():
+                for key in f.keys():  # noqa: SIM118
                     all_params[key] = f.get_tensor(key)
         mapped = _remap_dit_weights(all_params)
         flat = tree_flatten(dit.parameters())

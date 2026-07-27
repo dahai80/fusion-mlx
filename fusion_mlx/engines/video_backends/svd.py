@@ -11,8 +11,8 @@ from typing import Any
 import mlx.core as mx
 
 from ..._tempfile_safe import managed_tempfile_path
-from ...engine_core import get_executor, get_video_gen_timeout
 from ...api._url_safety import is_safe_local_path
+from ...engine_core import get_executor, get_video_gen_timeout
 from .._progress import make_sync_step_callback
 from .base import VideoBackend, VideoConstraints, VideoGenParams, validate_params
 

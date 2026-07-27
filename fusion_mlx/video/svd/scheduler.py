@@ -3,7 +3,6 @@
 # and Karras sigmas. Based on diffusers EulerDiscreteScheduler.
 
 import logging
-import math
 
 import mlx.core as mx
 

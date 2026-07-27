@@ -7,7 +7,7 @@ import os
 import mlx.core as mx
 import numpy as np
 
-from .dit import CosmosDiT, COSMOS_7B_CONFIG, COSMOS_2B_CONFIG
+from .dit import COSMOS_2B_CONFIG, COSMOS_7B_CONFIG, CosmosDiT
 from .scheduler import CosmosFlowScheduler, CosmosPredict2Scheduler
 from .vae import CosmosVideoVAE
 

@@ -270,7 +270,7 @@ class HunyuanVideoDiT(nn.Module):
             from safetensors import safe_open
 
             with safe_open(sf, framework="mlx") as f:
-                for key in f.keys():
+                for key in f.keys():  # noqa: SIM118
                     all_params[key] = f.get_tensor(key)
         mapped = _remap_dit_weights(all_params)
         flat = tree_flatten(dit.parameters())

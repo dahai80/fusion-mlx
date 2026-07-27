@@ -7,11 +7,10 @@ import logging
 
 import mlx.core as mx
 
-from .base import VideoBackend, VideoConstraints, VideoGenParams, validate_params
-
 from ..._tempfile_safe import managed_tempfile_path
-from ...engine_core import get_executor, get_video_gen_timeout
 from ...api._url_safety import is_safe_local_path
+from ...engine_core import get_executor, get_video_gen_timeout
+from .base import VideoBackend, VideoConstraints, VideoGenParams, validate_params
 
 logger = logging.getLogger(__name__)
 
@@ -135,7 +134,7 @@ class CosmosBackend(VideoBackend):
                     handle.release()
                     with open(output_path, "rb") as f:
                         results.append(f.read())
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     logger.error("cosmos: generation timed out after %ds", timeout)
                     raise
                 except Exception as e:

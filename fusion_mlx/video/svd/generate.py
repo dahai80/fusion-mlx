@@ -3,7 +3,7 @@
 # Encodes input image via CLIP vision + VAE, then denoises with temporal UNet.
 
 import logging
-import math
+import os
 
 import mlx.core as mx
 import numpy as np
@@ -155,16 +155,10 @@ def generate_video(
     if output_path is None:
         import tempfile
 
-        tmpdir = tempfile.TemporaryDirectory()
-        output_path = os.path.join(tmpdir.name, "svd_output.mp4")
-        try:
-            _write_mp4(frames, max(1, fps), output_path)
-            logger.info("svd: wrote mp4 to %s", output_path)
-        finally:
-            tmpdir.cleanup()
-    else:
-        _write_mp4(frames, max(1, fps), output_path)
-        logger.info("svd: wrote mp4 to %s", output_path)
+        fd, output_path = tempfile.mkstemp(suffix=".mp4", prefix="svd_")
+        os.close(fd)
+    _write_mp4(frames, max(1, fps), output_path)
+    logger.info("svd: wrote mp4 to %s", output_path)
     return output_path
 
 

@@ -11,6 +11,14 @@ import mlx.nn as nn
 logger = logging.getLogger(__name__)
 
 
+def _group_norm(gn, x):
+    if x.ndim == 5:
+        return gn(x.transpose(0, 2, 3, 4, 1)).transpose(0, 4, 1, 2, 3)
+    if x.ndim == 4:
+        return gn(x.transpose(0, 2, 3, 1)).transpose(0, 3, 1, 2)
+    return gn(x)
+
+
 class CausalConv3d(nn.Module):
     def __init__(self, in_channels, out_channels, kernel_size=3, stride=1, padding=1):
         super().__init__()
@@ -87,9 +95,11 @@ def _conv3d_core(x, weight, stride):
                 )
     cols = mx.stack(cols, axis=-1)  # (N, C, OT, OH, OW, KT*KH*KW)
     cols = cols.reshape(N, C, OT * OH * OW, KT * KH * KW)
+    # Reshape to (N, OT*OH*OW, IC*KT*KH*KW) for batched matmul
+    cols = cols.transpose(0, 2, 1, 3).reshape(N, OT * OH * OW, IC * KT * KH * KW)
     w = weight.reshape(OC, IC * KT * KH * KW)
-    # Batched matmul: (N, OC, IC*KKK) @ (N, IC*KKK, OT*OH*OW)
-    out = mx.matmul(w, cols)  # (N, OC, OT*OH*OW)
+    out = mx.matmul(cols, w.T)  # (N, OT*OH*OW, OC)
+    out = out.transpose(0, 2, 1)  # (N, OC, OT*OH*OW)
     out = out.reshape(N, OC, OT, OH, OW)
     return out
 
@@ -107,10 +117,10 @@ class ResnetBlock3D(nn.Module):
             self.skip = CausalConv3d(in_channels, out_ch, kernel_size=1, padding=0)
 
     def __call__(self, x):
-        h = self.norm1(x)
+        h = _group_norm(self.norm1, x)
         h = nn.silu(h)
         h = self.conv1(h)
-        h = self.norm2(h)
+        h = _group_norm(self.norm2, h)
         h = nn.silu(h)
         h = self.conv2(h)
         if self.skip is not None:
@@ -206,7 +216,7 @@ class SVDVideoVAE(nn.Module):
             h = block(h)
         h = self.encoder_mid_block1(h)
         h = self.encoder_mid_block2(h)
-        h = self.encoder_norm_out(h)
+        h = _group_norm(self.encoder_norm_out, h)
         h = nn.silu(h)
         h = self.encoder_conv_out(h)
         mean, logvar = mx.split(h, 2, axis=1)
@@ -222,7 +232,7 @@ class SVDVideoVAE(nn.Module):
         h = self.decoder_mid_block2(h)
         for block in self.decoder_up:
             h = block(h)
-        h = self.decoder_norm_out(h)
+        h = _group_norm(self.decoder_norm_out, h)
         h = nn.silu(h)
         h = self.decoder_conv_out(h)
         return h

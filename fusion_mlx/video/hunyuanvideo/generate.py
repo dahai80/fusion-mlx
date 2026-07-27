@@ -7,7 +7,7 @@ import os
 import mlx.core as mx
 import numpy as np
 
-from .dit import HunyuanVideoDiT, HUNYUAN_VIDEO_CONFIG
+from .dit import HUNYUAN_VIDEO_CONFIG, HunyuanVideoDiT
 from .scheduler import HunyuanVideoScheduler
 from .text_encoder import HunyuanDualTextEncoder
 from .vae import HunyuanVideoVAE

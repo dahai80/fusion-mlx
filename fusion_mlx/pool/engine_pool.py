@@ -547,6 +547,13 @@ class EnginePool:
                 if ms.model_alias and ms.model_alias == model_id_or_alias:
                     return mid
 
+            # Exposed profile resolution (e.g. "model-b:thinking" -> "model-b")
+            source = settings_manager.get_exposed_profile_source_model_id(
+                model_id_or_alias
+            )
+            if source is not None:
+                return source
+
         # Strip provider prefix (e.g. "fusion-mlx/qwen3.5-35b" -> "qwen3.5-35b")
         if "/" in model_id_or_alias:
             stripped = model_id_or_alias.split("/", 1)[1]
@@ -2229,7 +2236,7 @@ class EnginePool:
                     continue
 
                 # Check if model has active requests
-                has_active = entry.engine.has_active_requests()
+                has_active = entry.engine.has_active_requests() or entry.in_use > 0
 
                 if has_active:
                     entry.last_access = now

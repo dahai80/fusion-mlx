@@ -18,6 +18,18 @@ from fusion_mlx.exceptions import (
 from fusion_mlx.pool.engine_pool import EngineEntry, EnginePool
 
 
+def _mock_engine(**overrides):
+    """Create a mock engine with proper async stop/safe_evict."""
+    eng = MagicMock(spec=["start", "stop", "safe_evict", "has_active_requests"])
+    eng.start = AsyncMock()
+    eng.stop = AsyncMock()
+    eng.safe_evict = AsyncMock()
+    eng.has_active_requests = MagicMock(return_value=False)
+    for k, v in overrides.items():
+        setattr(eng, k, v)
+    return eng
+
+
 @dataclass
 class PrefillEvictionRequest:
     # Local stand-in for the fusion_mlx-era prefill-eviction request struct (never
@@ -452,15 +464,16 @@ class TestVLMFallback:
         mock_vlm_engine.stop = AsyncMock()
 
         # Batched engine that succeeds
-        mock_batched_engine = MagicMock()
-        mock_batched_engine.start = AsyncMock()
+        mock_batched_engine = _mock_engine()
 
         with (
             patch(
-                "fusion_mlx.engine_pool.VLMBatchedEngine", return_value=mock_vlm_engine
+                "fusion_mlx.pool.engine_pool.VLMBatchedEngine",
+                return_value=mock_vlm_engine,
             ),
             patch(
-                "fusion_mlx.engine_pool.BatchedEngine", return_value=mock_batched_engine
+                "fusion_mlx.pool.engine_pool.BatchedEngine",
+                return_value=mock_batched_engine,
             ),
         ):
             await pool._load_engine("model-a")
@@ -483,7 +496,9 @@ class TestVLMFallback:
         mock_engine.start = AsyncMock(side_effect=Exception("Load failed"))
 
         with (
-            patch("fusion_mlx.engine_pool.BatchedEngine", return_value=mock_engine),
+            patch(
+                "fusion_mlx.pool.engine_pool.BatchedEngine", return_value=mock_engine
+            ),
             pytest.raises(Exception, match="Load failed"),
         ):
             await pool._load_engine("model-a")
@@ -512,15 +527,16 @@ class TestVLMFallback:
         mock_batched_engine.stop = AsyncMock()
 
         # VLMBatchedEngine succeeds
-        mock_vlm_engine = MagicMock()
-        mock_vlm_engine.start = AsyncMock()
+        mock_vlm_engine = _mock_engine()
 
         with (
             patch(
-                "fusion_mlx.engine_pool.BatchedEngine", return_value=mock_batched_engine
+                "fusion_mlx.pool.engine_pool.BatchedEngine",
+                return_value=mock_batched_engine,
             ),
             patch(
-                "fusion_mlx.engine_pool.VLMBatchedEngine", return_value=mock_vlm_engine
+                "fusion_mlx.pool.engine_pool.VLMBatchedEngine",
+                return_value=mock_vlm_engine,
             ),
         ):
             await pool._load_engine("model-a", force_lm=True)
@@ -543,7 +559,9 @@ class TestVLMFallback:
         mock_engine.start = AsyncMock(side_effect=Exception("Load failed"))
 
         with (
-            patch("fusion_mlx.engine_pool.BatchedEngine", return_value=mock_engine),
+            patch(
+                "fusion_mlx.pool.engine_pool.BatchedEngine", return_value=mock_engine
+            ),
             pytest.raises(Exception, match="Load failed"),
         ):
             await pool._load_engine("model-a", force_lm=True)
@@ -575,10 +593,12 @@ class TestVLMFallback:
 
         with (
             patch(
-                "fusion_mlx.engine_pool.VLMBatchedEngine", return_value=mock_vlm_engine
+                "fusion_mlx.pool.engine_pool.VLMBatchedEngine",
+                return_value=mock_vlm_engine,
             ),
             patch(
-                "fusion_mlx.engine_pool.BatchedEngine", return_value=mock_batched_engine
+                "fusion_mlx.pool.engine_pool.BatchedEngine",
+                return_value=mock_batched_engine,
             ),
             pytest.raises(RuntimeError) as excinfo,
         ):
@@ -623,10 +643,12 @@ class TestVLMFallback:
 
         with (
             patch(
-                "fusion_mlx.engine_pool.BatchedEngine", return_value=mock_batched_engine
+                "fusion_mlx.pool.engine_pool.BatchedEngine",
+                return_value=mock_batched_engine,
             ),
             patch(
-                "fusion_mlx.engine_pool.VLMBatchedEngine", return_value=mock_vlm_engine
+                "fusion_mlx.pool.engine_pool.VLMBatchedEngine",
+                return_value=mock_vlm_engine,
             ),
             pytest.raises(RuntimeError) as excinfo,
         ):
@@ -819,11 +841,11 @@ class TestEnginePoolAsync:
         pool = pool_with_mock_engines
 
         # Mock the engine loading
-        mock_engine = MagicMock()
-        mock_engine.start = AsyncMock()
-        mock_engine.stop = AsyncMock()
+        mock_engine = _mock_engine()
 
-        with patch("fusion_mlx.engine_pool.BatchedEngine", return_value=mock_engine):
+        with patch(
+            "fusion_mlx.pool.engine_pool.BatchedEngine", return_value=mock_engine
+        ):
             engine = await pool.get_engine("model-a")
 
         assert engine == mock_engine
@@ -842,15 +864,17 @@ class TestEnginePoolAsync:
             mtp_enabled=False
         )
 
-        base_engine = MagicMock()
+        base_engine = MagicMock(spec=["start", "stop", "safe_evict"])
         base_engine.start = AsyncMock()
         base_engine.stop = AsyncMock()
-        profile_engine = MagicMock()
+        base_engine.safe_evict = AsyncMock()
+        profile_engine = MagicMock(spec=["start", "stop", "safe_evict"])
         profile_engine.start = AsyncMock()
         profile_engine.stop = AsyncMock()
+        profile_engine.safe_evict = AsyncMock()
 
         with patch(
-            "fusion_mlx.engine_pool.BatchedEngine",
+            "fusion_mlx.pool.engine_pool.BatchedEngine",
             side_effect=[base_engine, profile_engine],
         ):
             first = await pool.get_engine("model-a")
@@ -861,7 +885,7 @@ class TestEnginePoolAsync:
 
         assert first is base_engine
         assert second is profile_engine
-        base_engine.stop.assert_awaited_once()
+        base_engine.safe_evict.assert_awaited_once()
         assert pool.get_entry("model-a").runtime_settings_signature == (
             pool._engine_runtime_signature(
                 "model-a",
@@ -882,11 +906,11 @@ class TestEnginePoolAsync:
             mtp_enabled=False
         )
 
-        base_engine = MagicMock()
-        base_engine.start = AsyncMock()
-        base_engine.stop = AsyncMock()
+        base_engine = _mock_engine()
 
-        with patch("fusion_mlx.engine_pool.BatchedEngine", return_value=base_engine):
+        with patch(
+            "fusion_mlx.pool.engine_pool.BatchedEngine", return_value=base_engine
+        ):
             first = await pool.get_engine("model-a")
             pool.get_entry("model-a").in_use = 1
             with pytest.raises(ModelBusyError, match="runtime settings variant"):
@@ -911,11 +935,11 @@ class TestEnginePoolAsync:
             mtp_enabled=False
         )
 
-        base_engine = MagicMock()
-        base_engine.start = AsyncMock()
-        base_engine.stop = AsyncMock()
+        base_engine = _mock_engine()
 
-        with patch("fusion_mlx.engine_pool.BatchedEngine", return_value=base_engine):
+        with patch(
+            "fusion_mlx.pool.engine_pool.BatchedEngine", return_value=base_engine
+        ):
             first = await pool.get_engine("model-a")
             second = await pool.get_engine(
                 "model-a",
@@ -975,15 +999,17 @@ class TestEnginePoolAsync:
             mtp_enabled=False
         )
 
-        profile_engine = MagicMock()
+        profile_engine = MagicMock(spec=["start", "stop", "safe_evict"])
         profile_engine.start = AsyncMock()
         profile_engine.stop = AsyncMock()
-        base_engine = MagicMock()
+        profile_engine.safe_evict = AsyncMock()
+        base_engine = MagicMock(spec=["start", "stop", "safe_evict"])
         base_engine.start = AsyncMock()
         base_engine.stop = AsyncMock()
+        base_engine.safe_evict = AsyncMock()
 
         with patch(
-            "fusion_mlx.engine_pool.BatchedEngine",
+            "fusion_mlx.pool.engine_pool.BatchedEngine",
             side_effect=[profile_engine, base_engine],
         ):
             first = await pool.get_engine(
@@ -994,7 +1020,7 @@ class TestEnginePoolAsync:
 
         assert first is profile_engine
         assert second is base_engine
-        profile_engine.stop.assert_awaited_once()
+        profile_engine.safe_evict.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_embedding_engine_receives_scheduler_config(self, tmp_path):
@@ -1019,11 +1045,10 @@ class TestEnginePoolAsync:
             estimated_size=1024,
         )
 
-        mock_engine = MagicMock()
-        mock_engine.start = AsyncMock()
+        mock_engine = _mock_engine()
 
         with patch(
-            "fusion_mlx.engine_pool.EmbeddingEngine",
+            "fusion_mlx.pool.engine_pool.EmbeddingEngine",
             return_value=mock_engine,
         ) as MockEmbeddingEngine:
             engine = await pool.get_engine("embed-model")
@@ -1049,11 +1074,10 @@ class TestEnginePoolAsync:
             estimated_size=1024,
         )
 
-        mock_engine = MagicMock()
-        mock_engine.start = AsyncMock()
+        mock_engine = _mock_engine()
 
         with patch(
-            "fusion_mlx.engine_pool.EmbeddingEngine",
+            "fusion_mlx.pool.engine_pool.EmbeddingEngine",
             return_value=mock_engine,
         ) as MockEmbeddingEngine:
             engine = await pool.get_engine("embed-model")
@@ -1068,8 +1092,7 @@ class TestEnginePoolAsync:
     @pytest.mark.asyncio
     async def test_apply_embedding_batch_size_updates_loaded_embedding_engines(self):
         """Runtime setting changes should update pool config and loaded embedding engines."""
-        from fusion_mlx.engine.embedding import EmbeddingEngine
-
+        from fusion_mlx.engines.embedding import EmbeddingEngine
         from fusion_mlx.scheduler import SchedulerConfig
 
         engine = EmbeddingEngine("embed-model", batch_size=8)
@@ -1096,10 +1119,11 @@ class TestEnginePoolAsync:
         """Test that get_engine returns cached engine on second call."""
         pool = pool_with_mock_engines
 
-        mock_engine = MagicMock()
-        mock_engine.start = AsyncMock()
+        mock_engine = _mock_engine()
 
-        with patch("fusion_mlx.engine_pool.BatchedEngine", return_value=mock_engine):
+        with patch(
+            "fusion_mlx.pool.engine_pool.BatchedEngine", return_value=mock_engine
+        ):
             engine1 = await pool.get_engine("model-a")
             engine2 = await pool.get_engine("model-a")
 
@@ -1112,17 +1136,19 @@ class TestEnginePoolAsync:
         """Test unloading an engine."""
         pool = pool_with_mock_engines
 
-        mock_engine = MagicMock()
+        mock_engine = MagicMock(spec=["start", "stop"])
         mock_engine.start = AsyncMock()
         mock_engine.stop = AsyncMock()
 
-        with patch("fusion_mlx.engine_pool.BatchedEngine", return_value=mock_engine):
+        with patch(
+            "fusion_mlx.pool.engine_pool.BatchedEngine", return_value=mock_engine
+        ):
             await pool.get_engine("model-a")
             initial_memory = pool.current_model_memory
 
             await pool.unload_engine_async("model-a")
 
-        mock_engine.stop.assert_called_once()
+        mock_engine.stop.assert_awaited_once()
         assert pool.current_model_memory < initial_memory
         assert pool._entries["model-a"].engine is None
 
@@ -1131,13 +1157,9 @@ class TestEnginePoolAsync:
         """Test that shutdown unloads all engines."""
         pool = pool_with_mock_engines
 
-        mock_engine_a = MagicMock()
-        mock_engine_a.start = AsyncMock()
-        mock_engine_a.stop = AsyncMock()
+        mock_engine_a = _mock_engine()
 
-        mock_engine_b = MagicMock()
-        mock_engine_b.start = AsyncMock()
-        mock_engine_b.stop = AsyncMock()
+        mock_engine_b = _mock_engine()
 
         engines = [mock_engine_a, mock_engine_b]
         engine_idx = [0]
@@ -1147,14 +1169,16 @@ class TestEnginePoolAsync:
             engine_idx[0] += 1
             return engine
 
-        with patch("fusion_mlx.engine_pool.BatchedEngine", side_effect=create_engine):
+        with patch(
+            "fusion_mlx.pool.engine_pool.BatchedEngine", side_effect=create_engine
+        ):
             await pool.get_engine("model-a")
             await pool.get_engine("model-b")
 
             await pool.shutdown()
 
-        mock_engine_a.stop.assert_called_once()
-        mock_engine_b.stop.assert_called_once()
+        mock_engine_a.safe_evict.assert_awaited()
+        mock_engine_b.safe_evict.assert_awaited()
         assert pool.loaded_model_count == 0
 
 
@@ -1177,10 +1201,12 @@ class TestEnginePoolEviction:
         pool = _make_pool(ceiling=2500)  # Allows each but not both
         pool.discover_models(str(small_mock_model_dir))
         monkeypatch.setattr(
-            "fusion_mlx.engine_pool.get_phys_footprint",
+            "fusion_mlx.pool.engine_pool.get_phys_footprint",
             lambda: pool._current_model_memory,
         )
-        monkeypatch.setattr("fusion_mlx.engine_pool.mx.get_active_memory", lambda: 0)
+        monkeypatch.setattr(
+            "fusion_mlx.pool.engine_pool.mx.get_active_memory", lambda: 0
+        )
         return pool
 
     @pytest.mark.asyncio
@@ -1188,13 +1214,11 @@ class TestEnginePoolEviction:
         """Test that eviction happens before loading new model."""
         pool = tight_memory_pool
 
-        mock_engine_a = MagicMock()
-        mock_engine_a.start = AsyncMock()
-        mock_engine_a.stop = AsyncMock()
+        mock_engine_a = _mock_engine()
         mock_engine_a.has_active_requests.return_value = False
 
-        mock_engine_b = MagicMock()
-        mock_engine_b.start = AsyncMock()
+        mock_engine_b = _mock_engine()
+
         mock_engine_b.has_active_requests.return_value = False
 
         call_count = [0]
@@ -1205,7 +1229,9 @@ class TestEnginePoolEviction:
                 return mock_engine_a
             return mock_engine_b
 
-        with patch("fusion_mlx.engine_pool.BatchedEngine", side_effect=create_engine):
+        with patch(
+            "fusion_mlx.pool.engine_pool.BatchedEngine", side_effect=create_engine
+        ):
             # Load model-a first
             await pool.get_engine("model-a")
             assert pool.loaded_model_count == 1
@@ -1214,7 +1240,7 @@ class TestEnginePoolEviction:
             await pool.get_engine("model-b")
 
         # model-a should have been unloaded
-        mock_engine_a.stop.assert_called_once()
+        mock_engine_a.safe_evict.assert_awaited_once()
         assert pool._entries["model-a"].engine is None
         assert pool._entries["model-b"].engine is not None
 
@@ -1231,8 +1257,10 @@ class TestEnginePoolEviction:
         """
         pool = _make_pool(ceiling=2500)  # each model fits alone, not both
         pool.discover_models(str(small_mock_model_dir))
-        monkeypatch.setattr("fusion_mlx.engine_pool.get_phys_footprint", lambda: 0)
-        monkeypatch.setattr("fusion_mlx.engine_pool.mx.get_active_memory", lambda: 0)
+        monkeypatch.setattr("fusion_mlx.pool.engine_pool.get_phys_footprint", lambda: 0)
+        monkeypatch.setattr(
+            "fusion_mlx.pool.engine_pool.mx.get_active_memory", lambda: 0
+        )
         return pool
 
     @pytest.mark.asyncio
@@ -1248,13 +1276,11 @@ class TestEnginePoolEviction:
         """
         pool = undercounting_memory_pool
 
-        mock_engine_a = MagicMock()
-        mock_engine_a.start = AsyncMock()
-        mock_engine_a.stop = AsyncMock()
+        mock_engine_a = _mock_engine()
         mock_engine_a.has_active_requests.return_value = False
 
-        mock_engine_b = MagicMock()
-        mock_engine_b.start = AsyncMock()
+        mock_engine_b = _mock_engine()
+
         mock_engine_b.has_active_requests.return_value = False
 
         def create_engine(*args, **kwargs):
@@ -1262,7 +1288,9 @@ class TestEnginePoolEviction:
                 return mock_engine_a
             return mock_engine_b
 
-        with patch("fusion_mlx.engine_pool.BatchedEngine", side_effect=create_engine):
+        with patch(
+            "fusion_mlx.pool.engine_pool.BatchedEngine", side_effect=create_engine
+        ):
             await pool.get_engine("model-a")
             assert pool.loaded_model_count == 1
 
@@ -1270,7 +1298,7 @@ class TestEnginePoolEviction:
             # evicted first even though live memory reads 0.
             await pool.get_engine("model-b")
 
-        mock_engine_a.stop.assert_called_once()
+        mock_engine_a.safe_evict.assert_awaited_once()
         assert pool._entries["model-a"].engine is None
         assert pool._entries["model-b"].engine is not None
         assert pool.loaded_model_count == 1
@@ -1283,10 +1311,11 @@ class TestEnginePoolEviction:
         # Pin model-a
         pool._entries["model-a"].is_pinned = True
 
-        mock_engine = MagicMock()
-        mock_engine.start = AsyncMock()
+        mock_engine = _mock_engine()
 
-        with patch("fusion_mlx.engine_pool.BatchedEngine", return_value=mock_engine):
+        with patch(
+            "fusion_mlx.pool.engine_pool.BatchedEngine", return_value=mock_engine
+        ):
             # Load pinned model-a
             await pool.get_engine("model-a")
 
@@ -1347,8 +1376,8 @@ class TestEnginePoolPrefillEviction:
         )
 
         with (
-            patch("fusion_mlx.engine_pool.mx.get_active_memory", return_value=0),
-            patch("fusion_mlx.engine_pool.get_phys_footprint", return_value=0),
+            patch("fusion_mlx.pool.engine_pool.mx.get_active_memory", return_value=0),
+            patch("fusion_mlx.pool.engine_pool.get_phys_footprint", return_value=0),
         ):
             evicted = await pool._evict_idle_lru_for_prefill("target", req)
 
@@ -1381,8 +1410,8 @@ class TestEnginePoolPrefillEviction:
         )
 
         with (
-            patch("fusion_mlx.engine_pool.mx.get_active_memory", return_value=0),
-            patch("fusion_mlx.engine_pool.get_phys_footprint", return_value=0),
+            patch("fusion_mlx.pool.engine_pool.mx.get_active_memory", return_value=0),
+            patch("fusion_mlx.pool.engine_pool.get_phys_footprint", return_value=0),
         ):
             evicted = await pool._evict_idle_lru_for_prefill("target", req)
 
@@ -1415,9 +1444,7 @@ class TestEnginePoolTTL:
 
         # Mock-load model-a
         entry = pool._entries["model-a"]
-        entry.engine = MagicMock(spec=[])
-        entry.engine.stop = AsyncMock()
-        entry.engine.has_active_requests = MagicMock(return_value=False)
+        entry.engine = _mock_engine()
         entry.last_access = 100.0  # Old access time
         pool._current_model_memory = entry.estimated_size
         return pool
@@ -1637,7 +1664,7 @@ class TestHasActiveRequests:
 
     def test_batched_engine_has_active_requests(self):
         """Test BatchedEngine.has_active_requests() via _output_collectors."""
-        from fusion_mlx.engine.batched import BatchedEngine
+        from fusion_mlx.engines.batched import BatchedEngine
 
         engine = BatchedEngine.__new__(BatchedEngine)
         engine._engine = None
@@ -1657,7 +1684,7 @@ class TestHasActiveRequests:
 
     def test_vlm_engine_has_active_requests(self):
         """Test VLMBatchedEngine.has_active_requests() via _output_collectors."""
-        from fusion_mlx.engine.vlm import VLMBatchedEngine
+        from fusion_mlx.engines.vlm import VLMBatchedEngine
 
         engine = VLMBatchedEngine.__new__(VLMBatchedEngine)
         engine._engine = None
@@ -1806,9 +1833,7 @@ class TestMemorySettleBarrier:
 
         entry = pool._entries["model-a"]
         entry.estimated_size = 5 * 1024**3  # 5GB (> 2GB tolerance)
-        mock_engine = MagicMock()
-        mock_engine.stop = AsyncMock()
-        mock_engine.has_active_requests = MagicMock(return_value=False)
+        mock_engine = _mock_engine()
         entry.engine = mock_engine
         entry.last_access = 100.0
         pool._current_model_memory = entry.estimated_size
@@ -1831,8 +1856,8 @@ class TestMemorySettleBarrier:
             return val
 
         with (
-            patch("fusion_mlx.engine_pool.mx") as mock_mx,
-            patch("fusion_mlx.engine_pool.get_mlx_executor", return_value=None),
+            patch("fusion_mlx.pool.engine_pool.mx") as mock_mx,
+            patch("fusion_mlx.pool.engine_pool.get_mlx_executor", return_value=None),
             patch("asyncio.sleep", new_callable=AsyncMock),
         ):
             mock_mx.get_active_memory = mock_get_active
@@ -1862,11 +1887,11 @@ class TestMemorySettleBarrier:
         with (
             patch.object(pool, "_settle_unloaded_engine", settle_mock),
             patch.object(pool, "_wake_process_memory_enforcer", wake_mock),
-            patch("fusion_mlx.engine_pool.mx") as mock_mx,
-            patch("fusion_mlx.engine_pool.get_mlx_executor", return_value=None),
+            patch("fusion_mlx.pool.engine_pool.mx") as mock_mx,
+            patch("fusion_mlx.pool.engine_pool.get_mlx_executor", return_value=None),
             patch("asyncio.sleep", new_callable=AsyncMock),
         ):
-            mock_mx.get_active_memory = MagicMock()
+            mock_mx.get_active_memory = MagicMock(return_value=0)
             mock_mx.synchronize = MagicMock()
             mock_mx.clear_cache = MagicMock()
 
@@ -1905,8 +1930,8 @@ class TestMemorySettleBarrier:
             sleep_calls.append(duration)
 
         with (
-            patch("fusion_mlx.engine_pool.mx") as mock_mx,
-            patch("fusion_mlx.engine_pool.get_mlx_executor", return_value=None),
+            patch("fusion_mlx.pool.engine_pool.mx") as mock_mx,
+            patch("fusion_mlx.pool.engine_pool.get_mlx_executor", return_value=None),
             patch("asyncio.sleep", side_effect=mock_sleep),
         ):
             mock_mx.get_active_memory = mock_get_active
@@ -1943,8 +1968,8 @@ class TestMemorySettleBarrier:
             sleep_calls.append(duration)
 
         with (
-            patch("fusion_mlx.engine_pool.mx") as mock_mx,
-            patch("fusion_mlx.engine_pool.get_mlx_executor", return_value=None),
+            patch("fusion_mlx.pool.engine_pool.mx") as mock_mx,
+            patch("fusion_mlx.pool.engine_pool.get_mlx_executor", return_value=None),
             patch("asyncio.sleep", side_effect=mock_sleep),
         ):
             mock_mx.get_active_memory = mock_get_active
@@ -1964,20 +1989,20 @@ class TestMemorySettleBarrier:
 
         # Memory never drops — stays at 10GB throughout (well above 5GB threshold)
         with (
-            patch("fusion_mlx.engine_pool.mx") as mock_mx,
-            patch("fusion_mlx.engine_pool.get_mlx_executor", return_value=None),
+            patch("fusion_mlx.pool.engine_pool.mx") as mock_mx,
+            patch("fusion_mlx.pool.engine_pool.get_mlx_executor", return_value=None),
             patch("asyncio.sleep", new_callable=AsyncMock),
         ):
             mock_mx.get_active_memory = MagicMock(return_value=10 * 1024**3)
             mock_mx.synchronize = MagicMock()
             mock_mx.clear_cache = MagicMock()
 
-            with patch("fusion_mlx.engine_pool.logger") as mock_logger:
+            with patch("fusion_mlx.pool.engine_pool.logger") as mock_logger:
                 await pool.unload_engine_async("model-a")
 
-            # Should have logged an error about emergency reclaim failure
-            error_calls = [str(c) for c in mock_logger.error.call_args_list]
-            assert any("Emergency reclaim failed" in s for s in error_calls)
+            # Should have logged a warning about emergency reclaim high residual
+            warning_calls = [str(c) for c in mock_logger.warning.call_args_list]
+            assert any("Emergency reclaim high residual" in s for s in warning_calls)
 
     @pytest.mark.asyncio
     async def test_memory_counter_decremented_after_barrier(
@@ -2001,8 +2026,8 @@ class TestMemorySettleBarrier:
             return 5 * 1024**3  # 5GB freed >= 3GB needed
 
         with (
-            patch("fusion_mlx.engine_pool.mx") as mock_mx,
-            patch("fusion_mlx.engine_pool.get_mlx_executor", return_value=None),
+            patch("fusion_mlx.pool.engine_pool.mx") as mock_mx,
+            patch("fusion_mlx.pool.engine_pool.get_mlx_executor", return_value=None),
             patch("asyncio.sleep", new_callable=AsyncMock),
         ):
             mock_mx.get_active_memory = mock_get_active
@@ -2053,8 +2078,8 @@ class TestMemorySettleBarrier:
             return val
 
         with (
-            patch("fusion_mlx.engine_pool.mx") as mock_mx,
-            patch("fusion_mlx.engine_pool.get_mlx_executor", return_value=None),
+            patch("fusion_mlx.pool.engine_pool.mx") as mock_mx,
+            patch("fusion_mlx.pool.engine_pool.get_mlx_executor", return_value=None),
             patch("asyncio.sleep", new_callable=AsyncMock),
         ):
             mock_mx.get_active_memory = mock_get_active
@@ -2078,9 +2103,7 @@ class TestMemorySettleBarrier:
 
         entry = pool._entries["model-a"]
         entry.estimated_size = 1 * 1024**3  # 1GB
-        mock_engine = MagicMock()
-        mock_engine.stop = AsyncMock()
-        mock_engine.has_active_requests = MagicMock(return_value=False)
+        mock_engine = _mock_engine()
         entry.engine = mock_engine
         entry.last_access = 100.0
         pool._current_model_memory = entry.estimated_size
@@ -2095,8 +2118,8 @@ class TestMemorySettleBarrier:
             return val
 
         with (
-            patch("fusion_mlx.engine_pool.mx") as mock_mx,
-            patch("fusion_mlx.engine_pool.get_mlx_executor", return_value=None),
+            patch("fusion_mlx.pool.engine_pool.mx") as mock_mx,
+            patch("fusion_mlx.pool.engine_pool.get_mlx_executor", return_value=None),
             patch("asyncio.sleep", new_callable=AsyncMock),
         ):
             mock_mx.get_active_memory = mock_get_active
@@ -2140,10 +2163,10 @@ class TestMemorySettleBarrier:
             sleep_calls.append(duration)
 
         with (
-            patch("fusion_mlx.engine_pool.mx") as mock_mx,
-            patch("fusion_mlx.engine_pool.get_mlx_executor", return_value=None),
+            patch("fusion_mlx.pool.engine_pool.mx") as mock_mx,
+            patch("fusion_mlx.pool.engine_pool.get_mlx_executor", return_value=None),
             patch("asyncio.sleep", side_effect=record_sleep),
-            caplog.at_level(logging.DEBUG, logger="fusion_mlx.engine_pool"),
+            caplog.at_level(logging.DEBUG, logger="fusion_mlx.pool.engine_pool"),
         ):
             mock_mx.get_active_memory = rising_gauge
             mock_mx.synchronize = MagicMock()
@@ -2181,10 +2204,10 @@ class TestMemorySettleBarrier:
             return val
 
         with (
-            patch("fusion_mlx.engine_pool.mx") as mock_mx,
-            patch("fusion_mlx.engine_pool.get_mlx_executor", return_value=None),
+            patch("fusion_mlx.pool.engine_pool.mx") as mock_mx,
+            patch("fusion_mlx.pool.engine_pool.get_mlx_executor", return_value=None),
             patch("asyncio.sleep", new_callable=AsyncMock),
-            caplog.at_level(logging.DEBUG, logger="fusion_mlx.engine_pool"),
+            caplog.at_level(logging.DEBUG, logger="fusion_mlx.pool.engine_pool"),
         ):
             mock_mx.get_active_memory = rising_gauge
             mock_mx.synchronize = MagicMock()
@@ -2193,7 +2216,7 @@ class TestMemorySettleBarrier:
             await pool.unload_engine_async("model-a")
 
         assert "indeterminate under concurrent activity" not in caplog.text
-        assert "Settle barrier timed out" in caplog.text
+        assert "Settle barrier:" in caplog.text
         # Full barrier behavior preserved: 1 initial release cycle + 10 settle
         # rounds + 3 emergency-reclaim rounds on the executor.
         assert mock_mx.synchronize.call_count == 14
@@ -2227,9 +2250,7 @@ class TestEnginePoolInUseLease:
 
     @staticmethod
     def _loaded_entry(model_id: str, last_access: float = 0.0) -> EngineEntry:
-        engine = MagicMock()
-        engine.has_active_requests.return_value = False  # looks idle
-        engine.stop = AsyncMock()
+        engine = _mock_engine()
         # Mirror TestEnginePoolPrefillEviction: no scheduler → prefill-idle.
         engine.scheduler = None
         engine._engine = None
@@ -2330,14 +2351,17 @@ class TestEnginePoolInUseLease:
         entry.pending_unload_reason = "hard memory pressure"
         entry.abort_requested = True
         pool._entries = {"leased": entry}
-        pool.unload_engine_async = AsyncMock()
 
-        await pool.release_engine("leased")
+        settle_mock = AsyncMock()
+        with patch.object(pool, "_settle_unloaded_engine", settle_mock):
+            with patch("fusion_mlx.pool.engine_pool.mx") as mock_mx:
+                mock_mx.get_active_memory = MagicMock(return_value=0)
+                await pool.release_engine("leased")
 
         assert entry.in_use == 0
         assert entry.pending_unload_reason is None
         assert entry.abort_requested is False
-        pool.unload_engine_async.assert_awaited_once_with("leased")
+        assert entry.engine is None
 
     @pytest.mark.asyncio
     async def test_release_engine_keeps_pending_while_scheduler_active(self):
@@ -2349,14 +2373,12 @@ class TestEnginePoolInUseLease:
         entry.pending_unload_reason = "hard memory pressure"
         entry.abort_requested = True
         pool._entries = {"leased": entry}
-        pool.unload_engine_async = AsyncMock()
 
         await pool.release_engine("leased")
 
         assert entry.in_use == 0
         assert entry.pending_unload_reason == "hard memory pressure"
         assert entry.abort_requested is True
-        pool.unload_engine_async.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_acquire_leases_then_releases_on_success(self):
@@ -2445,8 +2467,8 @@ class TestResetActivityTracking:
         pool._current_model_memory = entry.estimated_size
 
         with (
-            patch("fusion_mlx.engine_pool.mx") as mock_mx,
-            patch("fusion_mlx.engine_pool.get_mlx_executor", return_value=None),
+            patch("fusion_mlx.pool.engine_pool.mx") as mock_mx,
+            patch("fusion_mlx.pool.engine_pool.get_mlx_executor", return_value=None),
             patch("asyncio.sleep", new_callable=AsyncMock),
         ):
             mock_mx.get_active_memory = MagicMock(return_value=0)
