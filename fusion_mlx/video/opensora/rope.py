@@ -3,7 +3,6 @@
 # axes_dim=[16,56,56] for head_dim=128: T=16, H=56, W=56
 
 import logging
-import math
 
 import mlx.core as mx
 import mlx.nn as nn

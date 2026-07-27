@@ -7,8 +7,6 @@ import logging
 from pathlib import Path
 from typing import Any
 
-import mlx.core as mx
-
 from .base import VideoBackend, VideoConstraints, VideoGenParams
 
 logger = logging.getLogger(__name__)

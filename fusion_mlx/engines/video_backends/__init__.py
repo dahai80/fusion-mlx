@@ -14,14 +14,14 @@ from .base import (
     VideoGenParams,
     validate_params,
 )
+from .cogvideox import CogVideoBackend
 from .cosmos import CosmosBackend
 from .hunyuanvideo import HunyuanVideoBackend
 from .ltx2 import LTX2Backend
 from .ltx_video_legacy import LegacyLTXBackend
+from .opensora import OpenSoraBackend
 from .skyreels import SkyReelsBackend
 from .svd import SVDBackend
-from .cogvideox import CogVideoBackend
-from .opensora import OpenSoraBackend
 from .wan2 import Wan2Backend
 
 BACKENDS: dict[str, type[VideoBackend]] = {

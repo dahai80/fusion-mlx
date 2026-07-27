@@ -70,10 +70,11 @@ class Wan2Backend(VideoBackend):
 
         def _preload_t5():
             try:
+                import json
+                from pathlib import Path
+
                 from fusion_mlx.video.wan2.config import WanModelConfig
                 from fusion_mlx.video.wan2.utils import load_t5_encoder
-                from pathlib import Path
-                import json
 
                 md = Path(model_dir)
                 config_path = md / "config.json"
@@ -81,12 +82,20 @@ class Wan2Backend(VideoBackend):
                     with open(config_path) as f:
                         config_dict = json.load(f)
                     config_dict.pop("quantization", None)
-                    for key in ("patch_size", "vae_stride", "window_size", "sample_guide_scale"):
+                    for key in (
+                        "patch_size",
+                        "vae_stride",
+                        "window_size",
+                        "sample_guide_scale",
+                    ):
                         if key in config_dict and isinstance(config_dict[key], list):
                             config_dict[key] = tuple(config_dict[key])
                     config = WanModelConfig(
-                        **{k: v for k, v in config_dict.items()
-                           if k in WanModelConfig.__dataclass_fields__}
+                        **{
+                            k: v
+                            for k, v in config_dict.items()
+                            if k in WanModelConfig.__dataclass_fields__
+                        }
                     )
                 else:
                     config = WanModelConfig.wan21_t2v_1_3b()
@@ -97,12 +106,15 @@ class Wan2Backend(VideoBackend):
                     self._t5_config = config
                     logger.info("Wan2: T5 encoder preloaded")
                 else:
-                    logger.info("Wan2: no t5_encoder.safetensors found, will load per-call")
+                    logger.info(
+                        "Wan2: no t5_encoder.safetensors found, will load per-call"
+                    )
             except Exception as e:
                 logger.warning("Wan2: T5 preload failed, will load per-call: %s", e)
 
         await asyncio.wait_for(
-            loop.run_in_executor(get_executor("io"), _preload_t5), timeout=_T5_PRELOAD_TIMEOUT
+            loop.run_in_executor(get_executor("io"), _preload_t5),
+            timeout=_T5_PRELOAD_TIMEOUT,
         )
 
         self._loaded = True
@@ -134,13 +146,16 @@ class Wan2Backend(VideoBackend):
         cache_key = (prompt or "", neg_prompt or "", text_len)
         with self._embed_cache_lock:
             if cache_key in self._embed_cache:
-                logger.info("Wan2: T5 embed cache hit for prompt_len=%d", len(prompt or ""))
+                logger.info(
+                    "Wan2: T5 embed cache hit for prompt_len=%d", len(prompt or "")
+                )
                 result = self._embed_cache.pop(cache_key)
                 self._embed_cache[cache_key] = result
                 return result
 
-        from fusion_mlx.video.wan2.utils import encode_text
         from transformers import AutoTokenizer
+
+        from fusion_mlx.video.wan2.utils import encode_text
 
         if self._t5_tokenizer is None:
             self._t5_tokenizer = AutoTokenizer.from_pretrained("google/umt5-xxl")
@@ -276,8 +291,16 @@ def _generate_one(
         "Wan2 generate (%s): prompt_len=%d frames=%d %dx%d seed=%d i2v=%s "
         "steps=%s compile=%s tiling=%s cached=%s",
         "raw" if raw_output else "mp4",
-        len(prompt), num_frames, width, height, seed, bool(image),
-        steps, not no_compile, tiling, precomputed_context is not None,
+        len(prompt),
+        num_frames,
+        width,
+        height,
+        seed,
+        bool(image),
+        steps,
+        not no_compile,
+        tiling,
+        precomputed_context is not None,
     )
     if raw_output:
         return generate_video(model_dir, prompt, **gen_kwargs)

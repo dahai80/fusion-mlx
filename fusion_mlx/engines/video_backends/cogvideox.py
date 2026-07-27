@@ -1,12 +1,10 @@
 # SPDX-License-Identifier: Apache-2.0
 import logging
-import os
 from pathlib import Path
-from typing import Any
 
 import mlx.core as mx
 
-from .base import VideoBackend
+from .base import VideoBackend, VideoConstraints
 
 logger = logging.getLogger(__name__)
 
@@ -41,9 +39,7 @@ class CogVideoBackend(VideoBackend):
                 pass
         return False
 
-    def constraints(self) -> "VideoConstraints":
-        from .base import VideoConstraints
-
+    def constraints(self) -> VideoConstraints:
         return VideoConstraints(
             supports_i2v=True,
             max_n=1,

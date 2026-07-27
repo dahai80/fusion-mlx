@@ -314,7 +314,9 @@ def generate_video(
             context_null = None
         else:
             context_null = precomputed_context[1]
-        print(f"{Colors.DIM}  Using precomputed text embeddings (cfg_disabled={cfg_disabled}){Colors.RESET}")
+        print(
+            f"{Colors.DIM}  Using precomputed text embeddings (cfg_disabled={cfg_disabled}){Colors.RESET}"
+        )
     else:
         print(f"\n{Colors.BLUE}Loading T5 encoder...{Colors.RESET}")
         t5_path = model_dir / "t5_encoder.safetensors"
@@ -849,7 +851,9 @@ def generate_video(
         )
 
     if output_format == "raw":
-        print(f"{Colors.DIM}  Raw output: returning {video.shape} uint8 frames{Colors.RESET}")
+        print(
+            f"{Colors.DIM}  Raw output: returning {video.shape} uint8 frames{Colors.RESET}"
+        )
         print(f"{Colors.DIM}  Total time: {time.time() - t1:.1f}s{Colors.RESET}")
         return video
 

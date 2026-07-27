@@ -2,7 +2,6 @@
 # Open-Sora V2 rectified-flow scheduler with time_shift.
 
 import logging
-import math
 
 import mlx.core as mx
 

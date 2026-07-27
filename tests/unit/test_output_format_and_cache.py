@@ -4,12 +4,11 @@
 import asyncio
 import threading
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 
 from fusion_mlx.engines.video_backends.base import VideoGenParams
-
 
 # ---------------------------------------------------------------------------
 # F8: output_format='raw' tests
@@ -57,6 +56,7 @@ class TestWan2RawOutput:
             captured["model_dir"] = model_dir
             captured["prompt"] = prompt
             import numpy as np
+
             return np.zeros((10, 480, 854, 3), dtype=np.uint8)
 
         monkeypatch.setattr(
@@ -128,9 +128,7 @@ class TestT5EmbedCache:
             return fake_context
 
         monkeypatch.setattr(mx, "eval", lambda *a, **kw: None)
-        monkeypatch.setattr(
-            "fusion_mlx.video.wan2.utils.encode_text", fake_encode_text
-        )
+        monkeypatch.setattr("fusion_mlx.video.wan2.utils.encode_text", fake_encode_text)
         monkeypatch.setattr(
             "transformers.AutoTokenizer.from_pretrained",
             lambda x: MagicMock(),
@@ -173,6 +171,7 @@ class TestT5EmbedCache:
 
     def test_lru_eviction_via_get_cached_embeds(self, monkeypatch):
         import mlx.core as mx
+
         from fusion_mlx.engines.video_backends.wan2 import _T5_EMBED_CACHE_MAX
 
         backend = self._make_backend()

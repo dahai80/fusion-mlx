@@ -2,11 +2,9 @@
 # Open-Sora V2 generation pipeline: T2V and I2V with 3-branch CFG.
 
 import logging
-import os
 from pathlib import Path
 
 import mlx.core as mx
-import mlx.nn as nn
 
 from .config import OpenSoraConfig
 from .scheduler import (

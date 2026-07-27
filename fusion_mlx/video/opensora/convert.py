@@ -3,7 +3,6 @@
 
 import json
 import logging
-import os
 import struct
 from pathlib import Path
 

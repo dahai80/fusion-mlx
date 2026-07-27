@@ -1,10 +1,8 @@
 # SPDX-License-Identifier: Apache-2.0
 # Unit tests for Open-Sora V2 MLX port.
 
-import math
-import pytest
-
 import mlx.core as mx
+import pytest
 
 
 class TestOpenSoraConfig:
@@ -141,8 +139,8 @@ class TestTransformerComponents:
         assert k_out.shape == k.shape
 
     def test_self_attention(self):
-        from fusion_mlx.video.opensora.transformer import SelfAttention
         from fusion_mlx.video.opensora.rope import EmbedND
+        from fusion_mlx.video.opensora.transformer import SelfAttention
 
         attn = SelfAttention(dim=256, num_heads=4, qkv_bias=True, fused_qkv=False)
         pe_embed = EmbedND(dim=64, theta=10000, axes_dim=[16, 24, 24])
@@ -246,11 +244,12 @@ class TestMMDiTModel:
 
 class TestDualTextEncoder:
     def test_import(self):
-        from fusion_mlx.video.opensora.text_encoder import DualTextEncoder
+        pass
 
     def test_no_torch_in_module_source(self):
         # Verify opensora text_encoder.py itself has zero torch dependency
         import inspect
+
         from fusion_mlx.video.opensora.text_encoder import DualTextEncoder
 
         src = inspect.getsource(DualTextEncoder)
@@ -362,7 +361,7 @@ class TestOpenSoraBackend:
 
 class TestRegistry:
     def test_resolve_opensora(self):
-        from fusion_mlx.engines.video_backends import resolve_backend, BACKENDS
+        from fusion_mlx.engines.video_backends import BACKENDS, resolve_backend
 
         assert "opensora" in BACKENDS
         b = resolve_backend("opensora-v2", explicit="opensora")

@@ -28,9 +28,12 @@ CORE_BEHAVIORAL_PROMPT = (
 
 from collections.abc import AsyncIterator
 from typing import Any
+
+
 def _maybe_inject_core_prompt(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
     try:
         from ..config import get_config
+
         if not get_config().core_behavioral_prompt:
             return messages
     except Exception:
@@ -40,8 +43,11 @@ def _maybe_inject_core_prompt(messages: list[dict[str, Any]]) -> list[dict[str, 
         return messages
     messages = list(messages)
     messages.insert(0, {"role": "system", "content": CORE_BEHAVIORAL_PROMPT})
-    logger.debug("[core-prompt] injected core behavioral prompt (no system message found)")
+    logger.debug(
+        "[core-prompt] injected core behavioral prompt (no system message found)"
+    )
     return messages
+
 
 from ..engine_core import AsyncEngineCore, EngineConfig, get_executor
 from ..request import SamplingParams

@@ -57,7 +57,5 @@ class DualTextEncoder:
             y_vec = y_vec.mean(axis=1)
         mx.eval(y_vec)
 
-        logger.info(
-            "DualTextEncoder: context=%s y_vec=%s", context.shape, y_vec.shape
-        )
+        logger.info("DualTextEncoder: context=%s y_vec=%s", context.shape, y_vec.shape)
         return context, y_vec

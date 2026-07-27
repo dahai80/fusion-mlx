@@ -107,4 +107,5 @@ class TestResolveBackend:
             "ltx_video_legacy",
             "svd",
             "cogvideo",
+            "opensora",
         }
