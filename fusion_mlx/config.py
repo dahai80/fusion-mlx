@@ -275,6 +275,7 @@ class ServerConfig:
     gc_control: bool = True
     no_thinking: bool = False
     pin_system_prompt: bool = False
+    core_behavioral_prompt: bool = True
     pinned_system_prompt_hash: str | None = None
 
     # Audio lane
