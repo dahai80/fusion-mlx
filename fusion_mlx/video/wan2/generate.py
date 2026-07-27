@@ -93,6 +93,8 @@ def generate_video(
     loras_low: list | None = None,
     tiling: str = "auto",
     no_compile: bool = False,
+    precomputed_context: tuple | None = None,
+    keep_t5: bool = False,
     trim_first_frames: int = 0,
     debug_latents: bool = False,
     on_step_sync: Callable[[int, int], None] | None = None,
@@ -305,31 +307,39 @@ def generate_video(
 
     # Load T5 encoder
     t1 = time.time()
-    print(f"\n{Colors.BLUE}Loading T5 encoder...{Colors.RESET}")
-    t5_path = model_dir / "t5_encoder.safetensors"
-    t5_encoder = load_t5_encoder(t5_path, config)
 
-    # Load tokenizer
-    from transformers import AutoTokenizer
-
-    tokenizer = AutoTokenizer.from_pretrained("google/umt5-xxl")
-
-    # Encode prompts
-    print(f"{Colors.BLUE}Encoding text...{Colors.RESET}")
-    context = encode_text(t5_encoder, tokenizer, prompt, config.text_len)
-    if cfg_disabled:
-        context_null = None
-        mx.eval(context)
+    if precomputed_context is not None:
+        context, context_null = precomputed_context
+        print(f"{Colors.DIM}  Using precomputed text embeddings{Colors.RESET}")
     else:
-        context_null = encode_text(
-            t5_encoder, tokenizer, neg_prompt_resolved, config.text_len
-        )
-        mx.eval(context, context_null)
+        print(f"\n{Colors.BLUE}Loading T5 encoder...{Colors.RESET}")
+        t5_path = model_dir / "t5_encoder.safetensors"
+        t5_encoder = load_t5_encoder(t5_path, config)
 
-    # Free T5 from memory
-    del t5_encoder
-    gc.collect()
-    mx.clear_cache()
+        # Load tokenizer
+        from transformers import AutoTokenizer
+
+        tokenizer = AutoTokenizer.from_pretrained("google/umt5-xxl")
+
+        # Encode prompts
+        print(f"{Colors.BLUE}Encoding text...{Colors.RESET}")
+        context = encode_text(t5_encoder, tokenizer, prompt, config.text_len)
+        if cfg_disabled:
+            context_null = None
+            mx.eval(context)
+        else:
+            context_null = encode_text(
+                t5_encoder, tokenizer, neg_prompt_resolved, config.text_len
+            )
+            mx.eval(context, context_null)
+
+        # Free T5 from memory (unless caller wants to keep it)
+        if not keep_t5:
+            del t5_encoder
+            gc.collect()
+            mx.clear_cache()
+        else:
+            del t5_encoder
     print(f"{Colors.DIM}  T5 encoding: {time.time() - t1:.1f}s{Colors.RESET}")
 
     # I2V: encode image to latent space

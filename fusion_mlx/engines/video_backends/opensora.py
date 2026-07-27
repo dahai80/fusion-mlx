@@ -21,6 +21,7 @@ class OpenSoraBackend(VideoBackend):
     supports_i2v = True
 
     def __init__(self, model_name: str, **kwargs: Any):
+        super().__init__(model_name, **kwargs)
         self.model_name = model_name
         self._model_dir: str | None = None
         self._text_encoder = None
@@ -62,11 +63,13 @@ class OpenSoraBackend(VideoBackend):
         self._vae = None
         self._config = None
 
-    async def generate(self, params: VideoGenParams) -> list:
+    async def generate(self, params: VideoGenParams) -> list[bytes] | list:
         from fusion_mlx.video.opensora.generate import generate_video
 
         if self._model_dir is None:
             raise RuntimeError("OpenSoraBackend not started — call start() first")
+
+        raw_output = params.output_format == "raw"
 
         video = generate_video(
             model_dir=self._model_dir,
@@ -81,5 +84,19 @@ class OpenSoraBackend(VideoBackend):
             seed=params.seed,
             text_encoder=self._text_encoder,
             vae=self._vae,
+            output_format=params.output_format,
         )
-        return [video]
+        if raw_output:
+            return [video]
+        # MP4 path: convert to uint8 frames and encode
+        import numpy as np
+        import tempfile
+
+        from fusion_mlx.video.wan2.postprocess import save_video
+
+        frames_np = (video * 255).clip(0, 255).astype(np.uint8)
+        with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as tmp:
+            save_video(frames_np, tmp.name, fps=params.fps or 24)
+            mp4_bytes = Path(tmp.name).read_bytes()
+            Path(tmp.name).unlink(missing_ok=True)
+        return [mp4_bytes]
