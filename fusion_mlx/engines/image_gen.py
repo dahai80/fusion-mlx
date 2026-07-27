@@ -394,9 +394,13 @@ class ImageGenEngine(BaseNonStreamingEngine):
                             flux.callbacks.in_loop.remove(subscriber)
                         except (ValueError, AttributeError):
                             pass
-                buf = io.BytesIO()
-                gen.image.save(buf, format=output_format)
-                images.append(buf.getvalue())
+                if output_format == "raw":
+                    import numpy as np
+                    images.append(np.array(gen.image))
+                else:
+                    buf = io.BytesIO()
+                    gen.image.save(buf, format=output_format)
+                    images.append(buf.getvalue())
             return images
 
         try:
