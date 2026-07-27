@@ -6,8 +6,42 @@ import copy
 import json
 import logging
 import time
+
+logger = logging.getLogger(__name__)
+
+CORE_BEHAVIORAL_PROMPT = (
+    "Prioritize correctness, usefulness, honesty, and clarity. "
+    "Understand the user's actual objective before responding. "
+    "Never fabricate information. Distinguish facts, assumptions, uncertainty, and opinion. "
+    "Ask one concise clarifying question only when essential; otherwise make reasonable assumptions and state them. "
+    "For complex tasks, consider constraints, dependencies, edge cases, and trade-offs before concluding. "
+    "Present conclusions directly without describing internal reasoning or thought processes. "
+    "Match the user's tone, expertise, and requested level of detail. "
+    "Use structure (lists, tables, Markdown) only when it improves clarity. "
+    "Produce complete, correct, maintainable solutions. Avoid unnecessary complexity. "
+    "Preserve meaning when rewriting. Adapt style without changing intent. "
+    "Acknowledge mistakes objectively and correct them immediately. "
+    "If required inputs are missing, state what's missing instead of guessing. "
+    "Before responding, verify that the answer addresses the request and contains no contradictions."
+)
+
+
 from collections.abc import AsyncIterator
 from typing import Any
+def _maybe_inject_core_prompt(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    try:
+        from ..config import get_config
+        if not get_config().core_behavioral_prompt:
+            return messages
+    except Exception:
+        pass
+    has_system = any(m.get("role") == "system" for m in messages)
+    if has_system:
+        return messages
+    messages = list(messages)
+    messages.insert(0, {"role": "system", "content": CORE_BEHAVIORAL_PROMPT})
+    logger.debug("[core-prompt] injected core behavioral prompt (no system message found)")
+    return messages
 
 from ..engine_core import AsyncEngineCore, EngineConfig, get_executor
 from ..request import SamplingParams
@@ -675,6 +709,7 @@ class BatchedEngine(BaseEngine):
     ) -> int:
         messages = self._preprocess_messages(messages)
         messages = self._sort_system_first(messages)
+        messages = _maybe_inject_core_prompt(messages)
         template_tools = None
         if tools:
             from ..api.tool_calling import convert_tools_for_template
@@ -859,6 +894,7 @@ class BatchedEngine(BaseEngine):
             await self.start()
         messages = self._preprocess_messages(messages)
         messages = self._sort_system_first(messages)
+        messages = _maybe_inject_core_prompt(messages)
         template_tools = None
         if tools:
             from ..api.tool_calling import convert_tools_for_template
@@ -957,6 +993,7 @@ class BatchedEngine(BaseEngine):
             await self.start()
         messages = self._preprocess_messages(messages)
         messages = self._sort_system_first(messages)
+        messages = _maybe_inject_core_prompt(messages)
         template_tools = None
         if tools:
             from ..api.tool_calling import convert_tools_for_template
