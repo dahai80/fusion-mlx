@@ -657,7 +657,7 @@ class EnginePool:
             model_id,
             reason,
         )
-        await self.unload_engine_async(model_id)
+        await self.unload_engine_async(model_id, with_settle=False)
         return True
 
     def is_abort_requested(self, model_id: str | None) -> bool:
@@ -1138,6 +1138,15 @@ class EnginePool:
                     model_id,
                     exc_info=True,
                 )
+                # M2: fallback cleanup for _vision_cache if stop() failed
+                vc = getattr(entry.engine, "_vision_cache", None)
+                if vc is not None:
+                    try:
+                        vc.close()
+                    except Exception:
+                        logger.debug(
+                            "_vision_cache fallback close failed", exc_info=True
+                        )
             try:
                 from ..cache.latent_cache import remove_image_latent_cache
 
@@ -1231,6 +1240,15 @@ class EnginePool:
                 await entry.engine.stop()
         except Exception as e:
             logger.warning(f"Error stopping engine for {model_id}: {e}")
+            # M2: fallback cleanup for _vision_cache if stop() failed mid-way.
+            # VLMBatchedEngine.stop() closes _vision_cache, but if stop() raised,
+            # the cache leaks ~1-2GB mx.arrays + background writer thread.
+            vc = getattr(entry.engine, "_vision_cache", None)
+            if vc is not None:
+                try:
+                    vc.close()
+                except Exception:
+                    logger.debug("_vision_cache fallback close failed", exc_info=True)
 
         # #1595: the immediate-abort stop() above tears the engine down without the normal
         # per-request completion callbacks, so a non-streaming engine's active_requests
@@ -1280,6 +1298,15 @@ class EnginePool:
                 model_id,
                 exc_info=True,
             )
+        # M6: purge stale weak-ref owners from model registry
+        try:
+            from ..model_registry import get_registry
+
+            cleaned = get_registry().cleanup()
+            if cleaned:
+                logger.debug("model_registry cleanup: %d stale entries", cleaned)
+        except Exception:
+            logger.debug("model_registry cleanup failed", exc_info=True)
         entry.engine = None
         entry.last_access = 0.0
         entry.actual_size = None
@@ -1364,7 +1391,7 @@ class EnginePool:
         min_expected_freed = max(0, entry.estimated_size - settle_tolerance)
         settled = False
         settle_indeterminate = False
-        for _settle_round in range(10):
+        for _settle_round in range(5):
             active_now = mx.get_active_memory()
             actual_freed = pre_unload_active - active_now
             if actual_freed >= min_expected_freed:

@@ -422,6 +422,9 @@ class SharedHotCacheBudget:
         )
         self._total_bytes = 0
         self._lock = threading.RLock()
+        # M5: owners being torn down — prevent concurrent save_block() from
+        # re-inserting entries for an owner after forget_owner() removed them.
+        self._shutting_down_owners: set[int] = set()
 
     @staticmethod
     def _key(owner: Any, block_hash: bytes) -> tuple[int, bytes]:
@@ -453,10 +456,14 @@ class SharedHotCacheBudget:
     def forget_owner(self, owner: Any) -> None:
         owner_id = id(owner)
         with self._lock:
+            # M5: mark owner as shutting down so concurrent put() skips it
+            self._shutting_down_owners.add(owner_id)
             keys = [key for key in self._entries if key[0] == owner_id]
             for key in keys:
                 entry = self._entries.pop(key)
                 self._total_bytes = max(0, self._total_bytes - entry.size_bytes)
+            # Clean up the marker after removal completes
+            self._shutting_down_owners.discard(owner_id)
 
     def clear_all_owners(self) -> int:
         with self._lock:
@@ -512,6 +519,9 @@ class SharedHotCacheBudget:
         victims: list[tuple[Any, bytes]] = []
         size_bytes = max(0, int(size_bytes))
         with self._lock:
+            # M5: skip insert if owner is being torn down by forget_owner()
+            if id(owner) in self._shutting_down_owners:
+                return victims
             key = self._key(owner, block_hash)
             old = self._entries.pop(key, None)
             if old is not None:
@@ -1353,7 +1363,17 @@ class PagedSSDCacheManager:
                 pass
             if self._writer_thread.is_alive():
                 self._writer_thread.join(timeout=10.0)
-        logger.info("PagedSSDCacheManager closed")
+        # M3: drain any _pending_writes that the writer didn't process
+        # (e.g. items queued after the sentinel but before _shutting_down
+        # was checked, or items whose inline-write fallback also failed).
+        with self._pending_write_hashes_lock:
+            leaked = len(self._pending_writes)
+            self._pending_writes.clear()
+            self._pending_write_hashes.clear()
+        if leaked:
+            logger.info("PagedSSDCacheManager closed (drained %d pending writes)", leaked)
+        else:
+            logger.info("PagedSSDCacheManager closed")
 
     def get_stats(self) -> _SSDCacheStats:
         effective = self._get_effective_max_size()

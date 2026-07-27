@@ -448,8 +448,10 @@ class EngineCore:
         while self._running:
             try:
                 # Sweep collectors orphaned by client disconnects (throttled).
+                # M4: reduced throttle from 1s to 0.2s; hard cap for burst.
                 now = time.monotonic()
-                if now - self._last_reap >= 1.0:
+                force_reap = len(self._finished_at) > 100
+                if force_reap or now - self._last_reap >= 0.2:
                     self._last_reap = now
                     self._reap_orphaned_collectors(now)
 

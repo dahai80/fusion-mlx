@@ -10,6 +10,7 @@ short-drama pipelines where only the action description changes).
 Closes #178
 """
 
+import heapq
 import logging
 import time
 import weakref
@@ -59,7 +60,14 @@ class RadixCacheStats:
 
 
 class _RadixNode:
-    __slots__ = ("children", "value", "size_bytes", "last_access", "ref_count")
+    __slots__ = (
+        "children",
+        "value",
+        "size_bytes",
+        "last_access",
+        "ref_count",
+        "_heap_seq",
+    )
 
     def __init__(self):
         self.children: dict[str, _RadixNode] = {}
@@ -67,6 +75,7 @@ class _RadixNode:
         self.size_bytes: int = 0
         self.last_access: float = 0.0
         self.ref_count: int = 0
+        self._heap_seq: int = 0
 
 
 class DiffusionRadixCache:
@@ -96,6 +105,8 @@ class DiffusionRadixCache:
         self._clock = 0.0
         # #178 Phase-2: human-readable label surfaced by all_cache_stats()
         self.name = name
+        self._lru_heap: list[tuple[float, int, _RadixNode]] = []
+        self._heap_seq = 0
         _REGISTRY.add(self)
         logger.debug("radix cache created: name=%s max_mb=%d", name, max_mb)
 
@@ -109,6 +120,7 @@ class DiffusionRadixCache:
         node = self._walk(key)
         if node is not None and node.value is not None:
             node.last_access = self._clock
+            self._touch(node)
             self._stats.hits += 1
             logger.debug("radix cache hit: %s (%d bytes)", key[:32], node.size_bytes)
             return node.value
@@ -138,6 +150,7 @@ class DiffusionRadixCache:
         node.value = value
         node.size_bytes = size_bytes
         node.last_access = self._clock
+        self._touch(node)
         self._stats.total_bytes += size_bytes
 
         self._evict_if_needed()
@@ -174,6 +187,19 @@ class DiffusionRadixCache:
     def clear(self) -> None:
         self._root = _RadixNode()
         self._stats = RadixCacheStats()
+        self._lru_heap.clear()
+        self._heap_seq = 0
+
+    # M1: explicit deregister from _REGISTRY on teardown
+    @classmethod
+    def unregister(cls, cache: "DiffusionRadixCache") -> None:
+        _REGISTRY.discard(cache)
+
+    def __del__(self) -> None:
+        try:
+            _REGISTRY.discard(self)
+        except Exception:
+            pass
 
     def _walk(self, key: str) -> _RadixNode | None:
         """Walk the radix tree for key lookup. Returns None if not found."""
@@ -234,7 +260,7 @@ class DiffusionRadixCache:
 
     def _evict_if_needed(self) -> None:
         while self._stats.total_bytes > self.max_bytes and self._stats.leaf_count > 1:
-            victim = self._find_lru_leaf(self._root, None, "")
+            victim = self._pop_lru_leaf()
             if victim is None:
                 break
             parent, edge_key, lru_node = victim
@@ -251,6 +277,32 @@ class DiffusionRadixCache:
                 self._stats.leaf_count,
                 self._stats.evictions,
             )
+
+    def _touch(self, node: _RadixNode) -> None:
+        self._heap_seq += 1
+        node._heap_seq = self._heap_seq
+        heapq.heappush(self._lru_heap, (node.last_access, self._heap_seq, node))
+
+    def _pop_lru_leaf(self):
+        while self._lru_heap:
+            ts, seq, node = heapq.heappop(self._lru_heap)
+            if node.value is None:
+                continue
+            if node._heap_seq != seq:
+                continue
+            parent, edge_key = self._find_parent(self._root, node, None, "")
+            if parent is not None:
+                return (parent, edge_key, node)
+        return self._find_lru_leaf(self._root, None, "")
+
+    def _find_parent(self, current, target, parent, edge_key):
+        for prefix, child in current.children.items():
+            if child is target:
+                return (current, prefix)
+            result = self._find_parent(child, target, current, prefix)
+            if result is not None:
+                return result
+        return None
 
     def _find_lru_leaf(self, node, parent, edge_key):
         if not node.children and node.value is not None:

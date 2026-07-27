@@ -2217,10 +2217,10 @@ class TestMemorySettleBarrier:
 
         assert "indeterminate under concurrent activity" not in caplog.text
         assert "Settle barrier:" in caplog.text
-        # Full barrier behavior preserved: 1 initial release cycle + 10 settle
+        # Full barrier behavior preserved: 1 initial release cycle + 5 settle
         # rounds + 3 emergency-reclaim rounds on the executor.
-        assert mock_mx.synchronize.call_count == 14
-        assert mock_mx.clear_cache.call_count == 14
+        assert mock_mx.synchronize.call_count == 9
+        assert mock_mx.clear_cache.call_count == 9
 
     def test_other_entries_serving_in_use_lease_counts(self, pool_with_loaded_model):
         """The in-use lease (acquired but not yet active) also marks the pool

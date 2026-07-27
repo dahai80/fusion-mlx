@@ -121,6 +121,8 @@ class SkyReelsBasePipeline:
         self.clip_encoder: CLIPTextEncoder | None = None
         self.m5_optimizer: M5Optimizer | None = None
         self.step_strategy: SkyReelsStepStrategy | None = None
+        # P3: cached CLIP placeholder to avoid 4.2MB allocation per _encode_context call
+        self._clip_placeholder: mx.array | None = None
 
         # T2-3: 缓存 CFG decay 环境变量 (每次 denoise loop 只读一次, 不再每步 os.environ.get)
         import os
@@ -480,9 +482,11 @@ class SkyReelsBasePipeline:
         text_embed = self._encode_text(prompt)
 
         # 2. 构建基础 context: CLIP 图像占位 (257 tokens) + 文本 (512 tokens)
-        # CLIP 图像占位: 与 UMT5 text_dim 对齐的零张量
+        # P3: reuse cached CLIP placeholder instead of allocating every call
         b = text_embed.shape[0] if text_embed.ndim == 3 else 1
-        clip_placeholder = mx.zeros((b, 257, self.config.text_dim))
+        if self._clip_placeholder is None or self._clip_placeholder.shape[0] != b:
+            self._clip_placeholder = mx.zeros((b, 257, self.config.text_dim))
+        clip_placeholder = self._clip_placeholder
 
         # text_embed: [1, L_valid, d_model] -> pad to text_len (512)
         if text_embed.ndim == 3:
@@ -1136,6 +1140,10 @@ class SkyReelsR2VPipeline(SkyReelsBasePipeline):
             put_session_tail(session_id, str(self.model_path), tail)
             logger.debug("R2V session tail cached for session_id=%s", session_id)
 
+        # M7: free denoised latents after VAE decode + tail capture
+        del latents
+        mx.clear_cache()
+
         logger.info(
             "R2V generated: %dx%dx%d (%.1fs) tail_reused=%s",
             cfg.width,
@@ -1257,6 +1265,10 @@ class SkyReelsV2VPipeline(SkyReelsBasePipeline):
             tail = latents[:, :, -1:, :, :]
             put_session_tail(session_id, str(self.model_path), tail)
             logger.debug("V2V session tail cached for session_id=%s", session_id)
+
+        # M7: free denoised latents after VAE decode + tail capture
+        del latents
+        mx.clear_cache()
 
         logger.info(
             "V2V generated: %dx%dx%d (%.1fs)",
@@ -1472,6 +1484,10 @@ class SkyReelsA2VPipeline(SkyReelsBasePipeline):
             tail = latents[:, :, -1:, :, :]
             put_session_tail(session_id, str(self.model_path), tail)
             logger.debug("A2V session tail cached for session_id=%s", session_id)
+
+        # M7: free denoised latents after VAE decode + tail capture
+        del latents
+        mx.clear_cache()
 
         logger.info(
             "A2V generated: %dx%dx%d (%.1fs)",
