@@ -20,7 +20,7 @@ from .ltx2 import LTX2Backend
 from .ltx_video_legacy import LegacyLTXBackend
 from .skyreels import SkyReelsBackend
 from .svd import SVDBackend
-from .unimplemented import CogVideoBackend
+from .cogvideox import CogVideoBackend
 from .wan2 import Wan2Backend
 
 BACKENDS: dict[str, type[VideoBackend]] = {
