@@ -209,17 +209,14 @@ class HunyuanVideoVAE(nn.Module):
 
         all_params = {}
         for sf in safetensor_files:
-            from safetensors import safe_open
-
-            with safe_open(sf, framework="mlx") as f:
-                for key in f.keys():  # noqa: SIM118
-                    all_params[key] = f.get_tensor(key)
+            weights = mx.load(sf)
+            all_params.update(weights)
         mapped = _remap_vae_weights(all_params)
         flat = tree_flatten(vae.parameters())
         loaded = {}
         for k, v in flat:
             if k in mapped:
-                loaded[k] = mapped[k]
+                loaded[k] = mapped[k].astype(mx.float16) if mapped[k].dtype != mx.float16 else mapped[k]
             else:
                 loaded[k] = v
                 logger.debug("vae: unmatched param %s", k)

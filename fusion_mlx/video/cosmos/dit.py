@@ -158,12 +158,12 @@ class CosmosDiTBlock(nn.Module):
     def __call__(self, x, text_emb, adaln_emb, rope=None):
         x_norm, gate_msa, shift_mlp, scale_mlp, gate_mlp = self.adaln(x, adaln_emb)
         attn_out = self.self_attn(x_norm, rope=rope)
-        x = x + gate_msa.unsqueeze(1) * attn_out
+        x = x + mx.expand_dims(gate_msa, 1) * attn_out
         x_norm2 = self.adaln.norm(x) * (1 + scale_mlp) + shift_mlp
         cross_out = self.cross_attn(x_norm2, context=text_emb)
         x = x + cross_out
         mlp_out = self.mlp(self.adaln.norm(x) * (1 + scale_mlp) + shift_mlp)
-        x = x + gate_mlp.unsqueeze(1) * mlp_out
+        x = x + mx.expand_dims(gate_mlp, 1) * mlp_out
         return x
 
 
@@ -288,17 +288,14 @@ class CosmosDiT(nn.Module):
 
         all_params = {}
         for sf in safetensor_files:
-            from safetensors import safe_open
-
-            with safe_open(sf, framework="mlx") as f:
-                for key in f.keys():  # noqa: SIM118
-                    all_params[key] = f.get_tensor(key)
+            weights = mx.load(sf)
+            all_params.update(weights)
         mapped = _remap_dit_weights(all_params)
         flat = tree_flatten(dit.parameters())
         loaded = {}
         for k, v in flat:
             if k in mapped:
-                loaded[k] = mapped[k]
+                loaded[k] = mapped[k].astype(mx.float16) if mapped[k].dtype != mx.float16 else mapped[k]
             else:
                 loaded[k] = v
                 logger.debug("dit: unmatched param %s", k)

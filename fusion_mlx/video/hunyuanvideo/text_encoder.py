@@ -137,14 +137,12 @@ class HunyuanDualTextEncoder(nn.Module):
 
         all_params = {}
         for sf in safetensor_files:
-            from safetensors import safe_open
-
-            with safe_open(sf, framework="mlx") as f:
-                for key in f.keys():  # noqa: SIM118
-                    all_params[key] = f.get_tensor(key)
+            weights = mx.load(sf)
+            all_params.update(weights)
         flat = tree_flatten(enc.parameters())
         loaded = {}
         for k, v in flat:
-            loaded[k] = all_params.get(k, v)
+            w = all_params.get(k, v)
+            loaded[k] = w.astype(mx.float16) if hasattr(w, "dtype") and w.dtype != mx.float16 else w
         enc.update(tree_unflatten(loaded))
         return enc
