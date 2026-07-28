@@ -966,6 +966,14 @@ def generate_video(
         # Release temporaries before eval to free memory for graph execution
         del noise_pred
         mx.eval(latents)
+
+        # Early NaN detection: break if latents go bad
+        if i <= 2 or i == steps - 1:
+            _lat_np = np.array(latents)
+            _nan_c = int(np.isnan(_lat_np).sum())
+            if _nan_c > 0:
+                logger.warning("Denoise step %d/%d: %d NaN in latents — aborting", i+1, steps, _nan_c)
+                break
         if debug_latents:
             lat_np = np.array(latents)
             _nan_count = int(np.isnan(lat_np).sum())
@@ -1094,6 +1102,10 @@ def generate_video(
 
         video = np.array(video[0])  # [T', H', W', 3]
         video = (video + 1.0) / 2.0
+        nan_count = np.isnan(video).sum()
+        if nan_count > 0:
+            logger.warning("Wan2 VAE decode (wan22): %d NaN in video, replacing with 0", int(nan_count))
+            video = np.nan_to_num(video, nan=0.0)
         video = np.clip(video * 255.0, 0, 255).astype(np.uint8)
     else:
         if tiling_config is not None:
@@ -1105,6 +1117,10 @@ def generate_video(
 
         video = np.array(video[0])  # [3, T', H, W]
         video = (video + 1.0) / 2.0
+        nan_count = np.isnan(video).sum()
+        if nan_count > 0:
+            logger.warning("Wan2 VAE decode (wan21): %d NaN in video, replacing with 0", int(nan_count))
+            video = np.nan_to_num(video, nan=0.0)
         video = np.clip(video * 255.0, 0, 255).astype(np.uint8)
         video = video.transpose(1, 2, 3, 0)  # [T, H, W, 3]
 

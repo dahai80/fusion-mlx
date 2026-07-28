@@ -154,9 +154,10 @@ def load_t5_encoder(model_path: Path, config, dtype: str | None = None):
     weights = {k: v for k, v in weights.items() if k not in ("spiece_model", "scaled_fp8")}
     # Remap HuggingFace T5 keys to wan2 T5Encoder attribute names
     weights = _remap_t5_weights(weights)
-    # fp8 weights need bf16 — fp16 overflows in attention (q/k/v ~4000 → dot-product >65504)
+    # fp16 overflows in T5 attention for long sequences (q/k/v dot-product >65504)
+    # Use bfloat16 by default — same memory as fp16 but with fp32 dynamic range
     has_fp8 = any(v.dtype in (mx.uint8, mx.int8) for v in weights.values())
-    default_dtype = "bfloat16" if has_fp8 else "float16"
+    default_dtype = "bfloat16"
     target_dtype = dtype or os.environ.get("FUSION_T5_DTYPE", default_dtype)
     dtype_map = {
         "float32": mx.float32,
@@ -194,7 +195,7 @@ def load_vae_decoder(model_path: Path, config=None):
     is_wan22 = config is not None and config.vae_z_dim == 48
 
     if is_wan22:
-        from .vae22 import Wan22VAEDecoder
+        from .vae22 import Wan22VAEDecoder, sanitize_wan22_vae_weights
 
         vae = Wan22VAEDecoder(z_dim=48)
     else:
@@ -203,7 +204,10 @@ def load_vae_decoder(model_path: Path, config=None):
         vae = WanVAE(z_dim=16)
 
     weights = mx.load(str(model_path))
-    weights = _transpose_conv2d_weights(weights)
+    if is_wan22:
+        weights = sanitize_wan22_vae_weights(weights)
+    else:
+        weights = _transpose_conv2d_weights(weights)
     weights = {k: v.astype(mx.float32) for k, v in weights.items()}
     vae.load_weights(list(weights.items()), strict=False)
     mx.eval(vae.parameters())
@@ -211,17 +215,21 @@ def load_vae_decoder(model_path: Path, config=None):
 
 
 def load_vae_encoder(model_path: Path, config=None):
+    is_wan22 = config is not None and config.vae_z_dim != 16
     if config is not None and config.vae_z_dim == 16:
         from .vae import WanVAE
 
         vae = WanVAE(z_dim=16, encoder=True)
     else:
-        from .vae22 import Wan22VAEEncoder
+        from .vae22 import Wan22VAEEncoder, sanitize_wan22_vae_weights
 
         vae = Wan22VAEEncoder(z_dim=config.vae_z_dim if config else 48)
 
     weights = mx.load(str(model_path))
-    weights = _transpose_conv2d_weights(weights)
+    if is_wan22:
+        weights = sanitize_wan22_vae_weights(weights)
+    else:
+        weights = _transpose_conv2d_weights(weights)
     weights = {k: v.astype(mx.float32) for k, v in weights.items()}
     vae.load_weights(list(weights.items()), strict=False)
     mx.eval(vae.parameters())

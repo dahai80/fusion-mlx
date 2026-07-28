@@ -13,6 +13,7 @@ import gc
 import logging
 import random
 import threading
+import numpy as np
 from collections.abc import Callable
 from typing import Any
 
@@ -189,6 +190,8 @@ class Wan2Backend(VideoBackend):
             context = encode_text(
                 self._t5_encoder, self._t5_tokenizer, prompt, text_len
             )
+            mx.eval(context)
+
             if neg_prompt and neg_prompt.strip():
                 context_null = encode_text(
                     self._t5_encoder, self._t5_tokenizer, neg_prompt, text_len
