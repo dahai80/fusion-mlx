@@ -140,6 +140,15 @@ def _anthropic_rate_limit_client_id(request: Request) -> str:
     return "unknown"
 
 
+def request_principal(request: Request) -> str:
+    # #226 IDOR scope: stable per-caller principal id for session tracking.
+    # Reuses the rate-limit bucket (HMAC of bearer token, else client subnet)
+    # so sessions are isolated per caller even in no-key dev mode. Single-key
+    # production deployments collapse to one principal; multi-key deployments
+    # (if ever extended to /v1) get isolation for free.
+    return _rate_limit_client_id(request)
+
+
 async def check_rate_limit(request: Request):
     client_id = _rate_limit_client_id(request)
     allowed, retry_after = rate_limiter.is_allowed(client_id)

@@ -15,7 +15,7 @@ import uuid
 from collections.abc import AsyncIterator
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
 
 from ..api.adapters.base import InternalResponse, StreamChunk
@@ -38,10 +38,11 @@ from ..exceptions import (
     ModelNotFoundError,
     ModelTooLargeError,
 )
-from ..middleware.auth import check_rate_limit, verify_api_key
+from ..middleware.auth import check_rate_limit, request_principal, verify_api_key
 from ..pool import EnginePool
 from ..request import SamplingParams
 from ..server_metrics import record_llm_metrics
+from ..sessions import record_chat_session
 from ._guards import check_chat_capability, check_multimodal_content
 
 logger = logging.getLogger(__name__)
@@ -179,7 +180,10 @@ def _gen_to_internal(
 
 
 async def _run_chat(
-    request: ChatCompletionRequest, *, _skip_cap_check: bool = False
+    request: ChatCompletionRequest,
+    *,
+    _skip_cap_check: bool = False,
+    principal: str | None = None,
 ) -> ChatCompletionResponse:
     """Execute a non-streaming chat completion."""
     from ..server import resolve_model_id
@@ -254,6 +258,13 @@ async def _run_chat(
             generation_duration=time.perf_counter() - _start,
             model_id=model_name,
         )
+        record_chat_session(
+            getattr(request, "session_id", None),
+            prompt_tokens=getattr(gen, "prompt_tokens", 0) or 0,
+            completion_tokens=getattr(gen, "completion_tokens", 0) or 0,
+            cached_tokens=getattr(gen, "cached_tokens", 0) or 0,
+            principal=principal,
+        )
         return _adapter.format_response(internal, request)
     except HTTPException:
         raise
@@ -300,6 +311,8 @@ async def _stream_chat_generator(
     engine: Any,
     model_name: str,
     adapter_path: str | None,
+    *,
+    principal: str | None = None,
 ) -> AsyncIterator[str]:
     """Generate SSE events for a streaming chat completion.
 
@@ -456,6 +469,13 @@ async def _stream_chat_generator(
             generation_duration=time.perf_counter() - _start,
             model_id=model_name,
         )
+        record_chat_session(
+            getattr(request, "session_id", None),
+            prompt_tokens=prompt_tokens or 0,
+            completion_tokens=completion_tokens or 0,
+            cached_tokens=cached_tokens or 0,
+            principal=principal,
+        )
 
     except asyncio.CancelledError:
         logger.info("Client disconnected during streaming: %s", request_id)
@@ -507,7 +527,10 @@ async def _stream_chat_generator(
 
 
 async def _stream_chat(
-    request: ChatCompletionRequest, *, _skip_cap_check: bool = False
+    request: ChatCompletionRequest,
+    *,
+    _skip_cap_check: bool = False,
+    principal: str | None = None,
 ) -> StreamingResponse:
     """Execute a streaming chat completion.
 
@@ -544,7 +567,9 @@ async def _stream_chat(
             raise
 
     return StreamingResponse(
-        _stream_chat_generator(request, engine, model_name, adapter_path),
+        _stream_chat_generator(
+            request, engine, model_name, adapter_path, principal=principal
+        ),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
@@ -695,6 +720,7 @@ def _get_settings() -> Any:
 @router.post("/chat/completions")
 async def chat_completions(
     request: ChatCompletionRequest,
+    http_request: Request,
     _auth: bool = Depends(verify_api_key),
     _rate: bool = Depends(check_rate_limit),
 ) -> Any:
@@ -704,6 +730,8 @@ async def chat_completions(
     if is_markitdown_model(request.model):
         return await _create_markitdown_chat_completion(request)
 
+    # #226 IDOR scope: bind recorded session stats to the authenticated caller.
+    principal = request_principal(http_request)
     # Log request entry (Ollama-style)
     prompt_preview = ""
     if request.messages:
@@ -720,9 +748,9 @@ async def chat_completions(
     )
     try:
         if request.stream:
-            return await _stream_chat(request)
+            return await _stream_chat(request, principal=principal)
         else:
-            return await _run_chat(request)
+            return await _run_chat(request, principal=principal)
     except HTTPException:
         raise
     except ModelNotFoundError as exc:
@@ -752,10 +780,13 @@ async def chat_completions(
 @router.post("/completions")
 async def completions(
     request: CompletionRequest,
+    http_request: Request,
     _auth: bool = Depends(verify_api_key),
     _rate: bool = Depends(check_rate_limit),
 ) -> Any:
     """Handle legacy text completion requests."""
+    # #226 IDOR scope: bind recorded session stats to the authenticated caller.
+    principal = request_principal(http_request)
     try:
         # Convert completion to chat format
         chat_req = ChatCompletionRequest(
@@ -769,8 +800,10 @@ async def completions(
             stop=request.stop,
         )
         if request.stream:
-            return await _stream_chat(chat_req, _skip_cap_check=True)
-        return await _run_chat(chat_req, _skip_cap_check=True)
+            return await _stream_chat(
+                chat_req, _skip_cap_check=True, principal=principal
+            )
+        return await _run_chat(chat_req, _skip_cap_check=True, principal=principal)
     except HTTPException:
         raise
     except ModelNotFoundError as exc:

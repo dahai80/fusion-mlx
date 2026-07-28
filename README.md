@@ -228,6 +228,7 @@ This is **weight** quantization saved to disk, distinct from TurboQuant KV-cache
 | Images | `/v1/images/generate` | ✅ Supported (Flux 2) |
 | Videos | `/v1/videos/generate` | ✅ Supported (LTX-2, Wan2, SkyReels-V3; pure-MLX ports) |
 | Embeddings | `/v1/embeddings` | ✅ Supported |
+| Sessions | `/v1/sessions/{id}/stats`, `/v1/sessions/{id}/context` | ✅ Per-session token usage + context cap (#226) |
 | MCP | `/v1/mcp/tools`, `/v1/mcp/servers`, `/v1/mcp/execute` | ✅ Supported |
 | OpenClaw Agent | `/v1/openclaw/agent/*` | ✅ Sessions, turns, tool calling, SSE streaming |
 | Agent Graph | `/v1/agents/graphs`, `/v1/agents/run` | ✅ CRUD + export + run (in-memory) |
