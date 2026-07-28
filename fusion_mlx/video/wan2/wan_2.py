@@ -226,9 +226,11 @@ class WanModel(nn.Module):
         return rope_precompute_cos_sin(grid_sizes, self.freqs, dtype=w_dtype)
 
     def sanitize(self, weights: dict[str, mx.array]) -> dict[str, mx.array]:
-        # Remap PyTorch Conv3d weights to MLX Linear for patch embeddings.
-        # Conv3d weight shape: [out_ch, in_ch, kt, kh, kw]
-        # Linear weight shape: [out_dim, in_dim] where in_dim = in_ch*kt*kh*kw
+        # Remap PyTorch weight keys to MLX model keys.
+        # 1) Conv3d -> Linear reshape for patch embeddings
+        # 2) nn.Sequential numeric indices -> named attributes
+        #    PyTorch nn.Sequential uses .0,.1,.2 indexing;
+        #    our MLX model uses named attributes (fc1/fc2, _0/_1, etc.)
         remapped = {}
         for k, v in weights.items():
             nk = k
@@ -255,6 +257,27 @@ class WanModel(nn.Module):
                     v = v.reshape(out_ch, in_ch * kt * kh * kw)
                 elif suffix == "bias" and v.ndim > 1:
                     v = v.reshape(-1)
+            # FFN: .ffn.0 -> .ffn.fc1, .ffn.2 -> .ffn.fc2 (blocks + vace_blocks)
+            elif ".ffn.0." in nk:
+                nk = nk.replace(".ffn.0.", ".ffn.fc1.")
+            elif ".ffn.2." in nk:
+                nk = nk.replace(".ffn.2.", ".ffn.fc2.")
+            # text_embedding: .0 -> _0, .2 -> _1
+            elif nk.startswith("text_embedding.0."):
+                nk = f"text_embedding_0.{nk[len('text_embedding.0.'):]}"
+            elif nk.startswith("text_embedding.2."):
+                nk = f"text_embedding_1.{nk[len('text_embedding.2.'):]}"
+            # time_embedding: .0 -> _0, .2 -> _1
+            elif nk.startswith("time_embedding.0."):
+                nk = f"time_embedding_0.{nk[len('time_embedding.0.'):]}"
+            elif nk.startswith("time_embedding.2."):
+                nk = f"time_embedding_1.{nk[len('time_embedding.2.'):]}"
+            # time_projection: .1 -> direct (skip act layer at index 0)
+            elif nk.startswith("time_projection.1."):
+                nk = f"time_projection.{nk[len('time_projection.1.'):]}"
+            # Skip activation layers that have no parameters
+            if nk != k:
+                logger.debug("sanitize remap: %s -> %s", k, nk)
             remapped[nk] = v
         return remapped
 
@@ -411,7 +434,13 @@ class WanModel(nn.Module):
                 axis=0,
             )
 
-            # Run VACE blocks to produce conditioning hints (reversed order for pop)
+            # Duplicate control to match main batch (CFG: batch_size=2)
+            if ctrl_x.shape[0] < batch_size:
+                ctrl_x = mx.concatenate([ctrl_x] * batch_size, axis=0)
+                ctrl_grid_sizes = ctrl_grid_sizes * batch_size
+                ctrl_seq_lens = ctrl_seq_lens * batch_size
+
+            # Run VACE blocks to produce conditioning hints
             ctrl_state = ctrl_x
             for vi, vace_block in enumerate(self.vace_blocks):
                 conditioning, ctrl_state = vace_block(

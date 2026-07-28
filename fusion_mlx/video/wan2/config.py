@@ -28,7 +28,7 @@ class WanModelConfig(BaseModelConfig):
     vae_z_dim: int = 16
 
     # Inference
-    dual_model: bool = True
+    dual_model: bool = False
     boundary: float = 0.875
     sample_shift: float = 12.0
     sample_steps: int = 40

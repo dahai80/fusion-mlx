@@ -4,17 +4,6 @@ import mlx.nn as nn
 from .rope import rope_apply
 
 try:
-    from fusion_mlx.custom_kernels.mfa_bridge import (
-        flash_attention as _mfa_flash_attention,
-    )
-    from fusion_mlx.custom_kernels.mfa_bridge import (
-        is_available as _mfa_available,
-    )
-except Exception:  # pragma: no cover - optional Metal Flash Attention extension
-    _mfa_flash_attention = None
-    _mfa_available = None
-
-try:
     from fusion_mlx.custom_kernels.xfuser_attention import (
         current_step as _fa_step,
     )
@@ -29,8 +18,10 @@ except Exception:  # pragma: no cover - xfuser strategy optional
 def _sdpa(q, k, v, scale, mask=None, *, fast_attn=None, step=0, batch_size=None):
     if fast_attn is not None:
         return fast_attn(q, k, v, step, scale=scale, mask=mask, batch_size=batch_size)
-    if _mfa_available is not None and _mfa_available():
-        return _mfa_flash_attention(q, k, v, scale=scale, mask=mask)
+    # NOTE: skip mfa_bridge for wan2 attention. Wan2 uses num_heads=40 which
+    # exceeds the _normalize_qkv_layout heuristic range (1-32), causing it to
+    # mis-transpose q/k/v when seq_len <= 32. Since wan2 already emits (B,H,N,D)
+    # layout, call mx.fast.scaled_dot_product_attention directly.
     if mask is not None:
         return mx.fast.scaled_dot_product_attention(q, k, v, scale=scale, mask=mask)
     return mx.fast.scaled_dot_product_attention(q, k, v, scale=scale)

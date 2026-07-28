@@ -9,6 +9,34 @@ from ..ltx2.utils import get_model_path as get_model_path
 logger = logging.getLogger(__name__)
 
 
+def _load_safetensors(path: Path) -> dict[str, mx.array]:
+    if path.is_dir():
+        weights = {}
+        for f in sorted(path.glob("*.safetensors")):
+            weights.update(mx.load(str(f)))
+        if weights:
+            logger.info("loaded %d keys from sharded dir %s", len(weights), path)
+            return weights
+    if not path.exists():
+        parent = path.parent
+        index = parent / (path.stem + ".safetensors.index.json")
+        if index.exists():
+            import json
+
+            with open(index) as f:
+                meta = json.load(f)
+            files = sorted(set(meta.get("weight_map", {}).values()))
+            weights = {}
+            for fn in files:
+                fp = parent / fn
+                if fp.exists():
+                    weights.update(mx.load(str(fp)))
+            if weights:
+                logger.info("loaded %d keys via index %s", len(weights), index)
+                return weights
+    return mx.load(str(path))
+
+
 def load_wan_model(
     model_path: Path,
     config,
@@ -29,7 +57,7 @@ def load_wan_model(
             class_predicate=lambda path, m: _quantize_predicate(path, m),
         )
 
-    weights = mx.load(str(model_path))
+    weights = _load_safetensors(model_path)
     weights = model.sanitize(weights)
 
     # Apply LoRAs: dequantize+merge for quantized models, weight merge for bf16
@@ -57,6 +85,55 @@ def load_wan_model(
     return model
 
 
+def _remap_t5_weights(weights: dict) -> dict:
+    import re
+
+    remapped = {}
+    for k, v in weights.items():
+        nk = k
+        if k == "shared.weight" or k == "encoder.embed_tokens.weight":
+            nk = "token_embedding.weight"
+        elif k == "encoder.final_layer_norm.weight":
+            nk = "norm.weight"
+        elif k.startswith("encoder.block."):
+            m = re.match(r"encoder\.block\.(\d+)\.layer\.(\d+)\.(.+)", k)
+            if m:
+                block_n, layer_n, rest = m.group(1), m.group(2), m.group(3)
+                prefix = f"blocks.{block_n}"
+                if layer_n == "0":
+                    if rest == "layer_norm.weight":
+                        nk = f"{prefix}.norm1.weight"
+                    elif rest.startswith("SelfAttention."):
+                        sa_rest = rest[len("SelfAttention."):]
+                        sa_map = {
+                            "q.weight": "attn.q.weight",
+                            "q.scale_weight": "attn.q.scale_weight",
+                            "k.weight": "attn.k.weight",
+                            "k.scale_weight": "attn.k.scale_weight",
+                            "v.weight": "attn.v.weight",
+                            "v.scale_weight": "attn.v.scale_weight",
+                            "o.weight": "attn.o.weight",
+                            "o.scale_weight": "attn.o.scale_weight",
+                            "relative_attention_bias.weight": "pos_embedding.embedding.weight",
+                        }
+                        if sa_rest in sa_map:
+                            nk = f"{prefix}.{sa_map[sa_rest]}"
+                elif layer_n == "1":
+                    ffn_map = {
+                        "DenseReluDense.wi_0.weight": "ffn.gate_proj.weight",
+                        "DenseReluDense.wi_0.scale_weight": "ffn.gate_proj.scale_weight",
+                        "DenseReluDense.wi_1.weight": "ffn.fc1.weight",
+                        "DenseReluDense.wi_1.scale_weight": "ffn.fc1.scale_weight",
+                        "DenseReluDense.wo.weight": "ffn.fc2.weight",
+                        "DenseReluDense.wo.scale_weight": "ffn.fc2.scale_weight",
+                        "layer_norm.weight": "norm2.weight",
+                    }
+                    if rest in ffn_map:
+                        nk = f"{prefix}.{ffn_map[rest]}"
+        remapped[nk] = v
+    return remapped
+
+
 def load_t5_encoder(model_path: Path, config, dtype: str | None = None):
     import os
 
@@ -73,7 +150,14 @@ def load_t5_encoder(model_path: Path, config, dtype: str | None = None):
         shared_pos=False,
     )
     weights = mx.load(str(model_path))
-    target_dtype = dtype or os.environ.get("FUSION_T5_DTYPE", "float16")
+    # Drop non-weight entries (tokenizer, metadata) that load_weights can't handle
+    weights = {k: v for k, v in weights.items() if k not in ("spiece_model", "scaled_fp8")}
+    # Remap HuggingFace T5 keys to wan2 T5Encoder attribute names
+    weights = _remap_t5_weights(weights)
+    # fp8 weights need bf16 — fp16 overflows in attention (q/k/v ~4000 → dot-product >65504)
+    has_fp8 = any(v.dtype in (mx.uint8, mx.int8) for v in weights.values())
+    default_dtype = "bfloat16" if has_fp8 else "float16"
+    target_dtype = dtype or os.environ.get("FUSION_T5_DTYPE", default_dtype)
     dtype_map = {
         "float32": mx.float32,
         "float16": mx.float16,
@@ -86,10 +170,24 @@ def load_t5_encoder(model_path: Path, config, dtype: str | None = None):
         target_dtype,
         os.environ.get("FUSION_T5_DTYPE"),
     )
-    weights = {k: v.astype(mx_dtype) for k, v in weights.items()}
-    encoder.load_weights(list(weights.items()))
+    # FP8 (uint8 + scale_weight) weights: skip astype, load_weights handles dequantization
+    weights = {
+        k: v.astype(mx_dtype) if v.dtype not in (mx.uint8, mx.int8) else v
+        for k, v in weights.items()
+    }
+    encoder.load_weights(list(weights.items()), strict=False)
     mx.eval(encoder.parameters())
     return encoder
+
+
+def _transpose_conv2d_weights(weights: dict) -> dict:
+    out = {}
+    for k, v in weights.items():
+        if v.ndim == 4 and k.endswith(".weight") and "gamma" not in k:
+            out[k] = v.transpose(0, 2, 3, 1)
+        else:
+            out[k] = v
+    return out
 
 
 def load_vae_decoder(model_path: Path, config=None):
@@ -105,7 +203,7 @@ def load_vae_decoder(model_path: Path, config=None):
         vae = WanVAE(z_dim=16)
 
     weights = mx.load(str(model_path))
-    # Upcast VAE weights to float32 for quality — official Wan2.2 runs VAE in float32
+    weights = _transpose_conv2d_weights(weights)
     weights = {k: v.astype(mx.float32) for k, v in weights.items()}
     vae.load_weights(list(weights.items()), strict=False)
     mx.eval(vae.parameters())
@@ -123,6 +221,7 @@ def load_vae_encoder(model_path: Path, config=None):
         vae = Wan22VAEEncoder(z_dim=config.vae_z_dim if config else 48)
 
     weights = mx.load(str(model_path))
+    weights = _transpose_conv2d_weights(weights)
     weights = {k: v.astype(mx.float32) for k, v in weights.items()}
     vae.load_weights(list(weights.items()), strict=False)
     mx.eval(vae.parameters())

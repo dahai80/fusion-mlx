@@ -14,6 +14,35 @@ def _silu(x):
     return x * mx.sigmoid(x)
 
 
+def _group_norm_5d(norm, x):
+    # MLX GroupNorm.__call__ does (self.weight * x + self.bias) but
+    # weight shape (C,) cannot broadcast to (N, C, H, W) when N > 1.
+    # We bypass by calling the internal normalize step and applying
+    # weight/bias manually with correct reshape.
+    orig_5d = x.ndim == 5
+    if orig_5d:
+        B, C, T, H, W = x.shape
+        x = x.reshape(B * T, C, H, W)
+
+    group_fn = (
+        norm._pytorch_compatible_group_norm
+        if norm.pytorch_compatible
+        else norm._group_norm
+    )
+    x = group_fn(x)
+
+    if "weight" in norm:
+        w = norm.weight.reshape(1, -1, *([1] * (x.ndim - 2)))
+        x = w * x
+    if "bias" in norm:
+        b = norm.bias.reshape(1, -1, *([1] * (x.ndim - 2)))
+        x = x + b
+
+    if orig_5d:
+        x = x.reshape(B, C, T, H, W)
+    return x
+
+
 class CosmosVAEConv3d(nn.Module):
     def __init__(self, in_channels, out_channels, kernel_size=3, stride=1, padding=1):
         super().__init__()
@@ -83,12 +112,15 @@ class CosmosVAEResBlock(nn.Module):
             self.temb_proj = None
 
     def __call__(self, x, temb=None):
-        h = self.norm1(x)
+        h = _group_norm_5d(self.norm1, x)
         h = _silu(h)
         h = self.conv1(h)
         if temb is not None and self.temb_proj is not None:
-            h = h + self.temb_proj(_silu(temb))[:, :, None, None, None]
-        h = self.norm2(h)
+            t = self.temb_proj(_silu(temb))
+            if t.ndim == 1:
+                t = t[None, :]
+            h = h + t[:, :, None, None, None]
+        h = _group_norm_5d(self.norm2, h)
         h = _silu(h)
         h = self.conv2(h)
         return x + h

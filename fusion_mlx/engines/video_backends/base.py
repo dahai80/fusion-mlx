@@ -67,6 +67,13 @@ class VideoGenParams:
     control_type: str = "canny"
     # AnimateDiff: temporal motion module scale (0=off, >0=on).
     animatediff_scale: float = 0.0
+    # VACE: Video-Conditioned Auxiliary Control Encoding.
+    # control_video: path to input video for VACE control branch.
+    # control_mask: path to mask video (black=conditioning, white=generation).
+    # reference_images: list of reference image paths for VACE.
+    control_video: str | None = None
+    control_mask: str | None = None
+    reference_images: list[str] | None = None
     extra: dict[str, Any] = field(default_factory=dict)
     # Output format: "mp4" (default, returns bytes) or "raw" (returns numpy
     # array of shape [T, H, W, 3] uint8 — skips MP4 encoding entirely).

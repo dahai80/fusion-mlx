@@ -251,10 +251,19 @@ class T5Encoder(nn.Module):
     def from_pretrained(cls, model_path, dtype=mx.float32) -> "T5Encoder":
         t0 = time.time()
         model_path = Path(model_path)
-        cfg = json.loads((model_path / "config.json").read_text())
-        config = T5EncoderConfig.from_hf_config(cfg)
+        config_json = model_path / "config.json"
+        if config_json.exists():
+            cfg = json.loads(config_json.read_text())
+            config = T5EncoderConfig.from_hf_config(cfg)
+        else:
+            logger.info("t5: no config.json in %s, using UMT5-XXL defaults", model_path)
+            config = T5EncoderConfig()
         model = cls(config)
-        shards = sorted(model_path.glob("*.safetensors"))
+        # Support both directory (with safetensors inside) and single file path
+        if model_path.is_file() and str(model_path).endswith(".safetensors"):
+            shards = [model_path]
+        else:
+            shards = sorted(model_path.glob("*.safetensors"))
         if not shards:
             raise FileNotFoundError(f"t5_encoder: no safetensors in {model_path}")
         logger.info(
@@ -265,12 +274,13 @@ class T5Encoder(nn.Module):
             len(shards),
         )
         raw = {}
+        # Use mx.load for FP8/fp8-scaled safetensors (numpy safe_open can't read float8 types)
         for shard in shards:
-            with safe_open(str(shard), framework="numpy") as f:
-                for k in list(f.keys()):
-                    raw[k] = f.get_tensor(k)
+            shard_data = mx.load(str(shard))
+            raw.update(shard_data)
         mapped = _map_t5_weights(raw)
-        pairs = [(k, mx.array(v).astype(dtype)) for k, v in mapped.items()]
+        # mx.load already returns mx.array; skip numpy conversion, just cast dtype
+        pairs = [(k, v.astype(dtype) if v.dtype != mx.uint8 else v) for k, v in mapped.items()]
         n_params = sum(int(p[1].size) for p in pairs)
         model.load_weights(pairs, strict=False)
         mx.eval(model.parameters())

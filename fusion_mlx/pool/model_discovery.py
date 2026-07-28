@@ -149,6 +149,9 @@ VIDEO_CONFIG_MODEL_TYPES = {
     "r2v_14b",
     "a2v_19b",
     "v2v_14b",
+    # VACE (Video-Conditioned Auxiliary Control Encoding): Wan2.1-VACE-14B uses
+    # model_type="vace" in config.json with dit/ subdirectory.
+    "vace",
 }
 
 # Diffusers ``model_index.json`` ``_class_name`` -> task. Raw diffusers
@@ -1028,7 +1031,7 @@ def _is_video_model(path: Path) -> bool:
         return p.is_dir() or p.is_symlink()
 
     has_diffusers_subdirs = any(
-        _has_diffusers_subdir(sub) for sub in ("vae", "transformer", "audio_vae")
+        _has_diffusers_subdir(sub) for sub in ("vae", "transformer", "audio_vae", "dit")
     )
     if _is_task_model(path, "text-to-video"):
         return has_diffusers_subdirs

@@ -117,10 +117,10 @@ def generate_video(
     t_latent = num_frames // 4
     h_latent = height // 8
     w_latent = width // 8
-    # Ensure divisibility
-    t_latent = max(1, t_latent)
-    h_latent = (h_latent // ph) * ph
-    w_latent = (w_latent // pw) * pw
+    # Ensure divisibility by patch_size
+    t_latent = max(pt, (t_latent // pt) * pt)
+    h_latent = max(ph, (h_latent // ph) * ph)
+    w_latent = max(pw, (w_latent // pw) * pw)
 
     logger.info(
         "cosmos: latent shape=(1,%d,%d,%d,%d)", latent_ch, t_latent, h_latent, w_latent

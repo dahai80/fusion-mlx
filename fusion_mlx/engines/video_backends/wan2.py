@@ -38,11 +38,7 @@ def _infer_config_from_path(model_dir: str) -> "WanModelConfig":
 
     p = model_dir.lower()
     if "vace" in p:
-        return WanModelConfig(
-            model_type="vace",
-            in_dim=16,
-            out_dim=16,
-        )
+        return WanModelConfig.wan_vace_14b()
     if "14b" in p:
         if "i2v" in p:
             return WanModelConfig.wan22_i2v_14b()
@@ -58,6 +54,7 @@ def _infer_config_from_path(model_dir: str) -> "WanModelConfig":
 class Wan2Backend(VideoBackend):
     name = "wan2"
     supports_i2v = True
+    supports_vace = True
 
     def __init__(self, model_name: str, **kwargs: Any) -> None:
         self._model_name = model_name
@@ -250,6 +247,9 @@ class Wan2Backend(VideoBackend):
                     session_id=params.session_id,
                     output_format=params.output_format,
                     precomputed_context=precomputed,
+                    control_video=params.control_video,
+                    control_mask=params.control_mask,
+                    reference_images=params.reference_images,
                 )
                 results.append(result)
             return results
@@ -293,6 +293,9 @@ def _generate_one(
     session_id: str | None = None,
     output_format: str = "mp4",
     precomputed_context: tuple | None = None,
+    control_video: str | None = None,
+    control_mask: str | None = None,
+    reference_images: list[str] | None = None,
 ) -> bytes | Any:
     from fusion_mlx.video.wan2.generate import generate_video
 
@@ -322,10 +325,16 @@ def _generate_one(
     if precomputed_context is not None:
         gen_kwargs["precomputed_context"] = precomputed_context
         gen_kwargs["keep_t5"] = True
+    if control_video is not None:
+        gen_kwargs["control_video"] = control_video
+    if control_mask is not None:
+        gen_kwargs["control_mask"] = control_mask
+    if reference_images is not None:
+        gen_kwargs["reference_images"] = reference_images
 
     logger.info(
         "Wan2 generate (%s): prompt_len=%d frames=%d %dx%d seed=%d i2v=%s "
-        "steps=%s compile=%s tiling=%s cached=%s",
+        "steps=%s compile=%s tiling=%s cached=%s vace=%s",
         "raw" if raw_output else "mp4",
         len(prompt),
         num_frames,
@@ -337,6 +346,7 @@ def _generate_one(
         not no_compile,
         tiling,
         precomputed_context is not None,
+        bool(control_video),
     )
 
     if raw_output:

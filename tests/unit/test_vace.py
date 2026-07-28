@@ -149,3 +149,120 @@ class TestWanModelVACE:
         assert model._vace_block_map == {
             0: 0, 5: 1, 10: 2, 15: 3, 20: 4, 25: 5, 30: 6, 35: 7,
         }
+
+
+class TestVACEGeneratePipeline:
+    def test_prepare_vace_control_latents_shape(self):
+        from fusion_mlx.video.wan2.generate import _prepare_vace_control_latents
+
+        z_dim = 16
+        S = 8
+        t_latent = 3
+        h_latent = 4
+        w_latent = 4
+        vae_stride = (4, S, S)
+        num_frames = 1 + (t_latent - 1) * vae_stride[0]
+
+        class FakeVAEEncoder:
+            def encode(self, x):
+                B, C, T, H, W = x.shape
+                T_lat = (T - 1) // vae_stride[0] + 1
+                return mx.zeros((B, z_dim, T_lat, H // S, W // S))
+
+        video = mx.zeros((3, num_frames, h_latent * S, w_latent * S))
+        mask = mx.ones((num_frames, h_latent * S, w_latent * S))
+
+        control = _prepare_vace_control_latents(
+            vae_encoder=FakeVAEEncoder(),
+            control_video=video,
+            control_mask=mask,
+            reference_images=None,
+            vae_stride=vae_stride,
+            h_latent=h_latent,
+            w_latent=w_latent,
+            t_latent=t_latent,
+            z_dim=z_dim,
+        )
+
+        assert control.shape[0] == 2 * z_dim + S * S  # 32 + 64 = 96
+        assert control.shape[1] == t_latent
+
+    def test_prepare_vace_control_with_reference_images(self):
+        from fusion_mlx.video.wan2.generate import _prepare_vace_control_latents
+
+        z_dim = 16
+        S = 8
+        t_latent = 3
+        h_latent = 4
+        w_latent = 4
+        vae_stride = (4, S, S)
+        num_frames = 1 + (t_latent - 1) * vae_stride[0]
+        num_refs = 2
+
+        class FakeVAEEncoder:
+            def encode(self, x):
+                B, C, T, H, W = x.shape
+                T_lat = (T - 1) // vae_stride[0] + 1
+                return mx.zeros((B, z_dim, T_lat, H // S, W // S))
+
+        video = mx.zeros((3, num_frames, h_latent * S, w_latent * S))
+        mask = mx.ones((num_frames, h_latent * S, w_latent * S))
+        refs = [mx.zeros((3, h_latent * S, w_latent * S)) for _ in range(num_refs)]
+
+        control = _prepare_vace_control_latents(
+            vae_encoder=FakeVAEEncoder(),
+            control_video=video,
+            control_mask=mask,
+            reference_images=refs,
+            vae_stride=vae_stride,
+            h_latent=h_latent,
+            w_latent=w_latent,
+            t_latent=t_latent,
+            z_dim=z_dim,
+        )
+
+        assert control.shape[0] == 2 * z_dim + S * S  # 96
+        assert control.shape[1] == t_latent + num_refs
+
+    def test_prepare_vace_control_channel_composition(self):
+        from fusion_mlx.video.wan2.generate import _prepare_vace_control_latents
+
+        z_dim = 16
+        S = 8
+        t_latent = 2
+        h_latent = 2
+        w_latent = 2
+        vae_stride = (4, S, S)
+        num_frames = 1 + (t_latent - 1) * vae_stride[0]
+
+        class FakeVAEEncoder:
+            def encode(self, x):
+                B, C, T, H, W = x.shape
+                T_lat = (T - 1) // vae_stride[0] + 1
+                return mx.zeros((B, z_dim, T_lat, H // S, W // S))
+
+        video = mx.zeros((3, num_frames, h_latent * S, w_latent * S))
+        mask = mx.zeros((num_frames, h_latent * S, w_latent * S))
+
+        control = _prepare_vace_control_latents(
+            vae_encoder=FakeVAEEncoder(),
+            control_video=video,
+            control_mask=mask,
+            reference_images=None,
+            vae_stride=vae_stride,
+            h_latent=h_latent,
+            w_latent=w_latent,
+            t_latent=t_latent,
+            z_dim=z_dim,
+        )
+
+        assert control.shape[0] == 96
+
+    def test_generate_video_accepts_vace_params(self):
+        import inspect
+        from fusion_mlx.video.wan2.generate import generate_video
+
+        sig = inspect.signature(generate_video)
+        assert "control_video" in sig.parameters
+        assert "control_mask" in sig.parameters
+        assert "reference_images" in sig.parameters

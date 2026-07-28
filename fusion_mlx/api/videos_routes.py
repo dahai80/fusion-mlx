@@ -87,6 +87,13 @@ class VideoGenerateRequest(BaseModel):
     control_type: str = Field(default="canny", pattern="^(canny|depth|pose|raw)$")
     # AnimateDiff: temporal motion module strength (0=off, >0=on, 1.0=normal).
     animatediff_scale: float = Field(default=0.0, ge=0.0, le=2.0)
+    # VACE: Video-Conditioned Auxiliary Control Encoding (Wan2.1-VACE-14B).
+    # control_video: path/URL/data-URI for the input video to be controlled.
+    # control_mask: path/URL/data-URI for the mask video (black=conditioning, white=generation).
+    # reference_images: list of reference image paths/URLs/data-URIs for VACE.
+    control_video: str | None = None
+    control_mask: str | None = None
+    reference_images: list[str] | None = None
 
 
 class VideoOutput(BaseModel):
@@ -235,6 +242,12 @@ async def generate_video(
                 gen_kwargs["control_type"] = request.control_type
             if request.animatediff_scale > 0:
                 gen_kwargs["animatediff_scale"] = request.animatediff_scale
+            if request.control_video is not None:
+                gen_kwargs["control_video"] = request.control_video
+            if request.control_mask is not None:
+                gen_kwargs["control_mask"] = request.control_mask
+            if request.reference_images is not None:
+                gen_kwargs["reference_images"] = request.reference_images
 
             video_bytes_list = await engine.generate(**gen_kwargs)
             outputs = [

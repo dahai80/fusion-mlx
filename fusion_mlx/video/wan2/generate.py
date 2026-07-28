@@ -53,6 +53,185 @@ class Colors:
 _build_i2v_mask = build_i2v_mask
 
 
+def _load_video_frames(video_path: str, width: int, height: int, num_frames: int) -> mx.array:
+    import cv2
+
+    cap = cv2.VideoCapture(video_path)
+    frames = []
+    total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    indices = np.linspace(0, max(total - 1, 0), num_frames, dtype=int)
+    for idx in indices:
+        cap.set(cv2.CAP_PROP_POS_FRAMES, idx)
+        ret, frame = cap.read()
+        if not ret:
+            break
+        frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        frame = cv2.resize(frame, (width, height), interpolation=cv2.INTER_AREA)
+        frames.append(frame)
+    cap.release()
+    while len(frames) < num_frames:
+        frames.append(frames[-1] if frames else np.zeros((height, width, 3), dtype=np.uint8))
+    arr = np.stack(frames[:num_frames], axis=0)  # [T, H, W, 3]
+    arr = arr.astype(np.float32) / 255.0 * 2.0 - 1.0
+    return mx.array(arr.transpose(3, 0, 1, 2))  # [3, T, H, W]
+
+
+def _load_mask_frames(mask_path: str, width: int, height: int, num_frames: int) -> mx.array:
+    import cv2
+
+    cap = cv2.VideoCapture(mask_path)
+    frames = []
+    total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    if total > 1:
+        indices = np.linspace(0, max(total - 1, 0), num_frames, dtype=int)
+        for idx in indices:
+            cap.set(cv2.CAP_PROP_POS_FRAMES, idx)
+            ret, frame = cap.read()
+            if not ret:
+                break
+            frame = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+            frame = cv2.resize(frame, (width, height), interpolation=cv2.INTER_NEAREST)
+            frames.append(frame)
+    else:
+        ret, frame = cap.read()
+        if ret:
+            frame = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+            frame = cv2.resize(frame, (width, height), interpolation=cv2.INTER_NEAREST)
+            frames = [frame] * num_frames
+        else:
+            frames = [np.zeros((height, width), dtype=np.uint8)] * num_frames
+    cap.release()
+    while len(frames) < num_frames:
+        frames.append(frames[-1] if frames else np.zeros((height, width), dtype=np.uint8))
+    arr = np.stack(frames[:num_frames], axis=0)  # [T, H, W]
+    arr = arr.astype(np.float32) / 255.0  # 0=black=conditioning, 1=white=generation
+    return mx.array(arr)  # [T, H, W]
+
+
+def _load_ref_image(image_path: str, width: int, height: int) -> mx.array:
+    from PIL import Image
+
+    img = Image.open(image_path).convert("RGB")
+    scale = max(width / img.width, height / img.height)
+    img = img.resize((round(img.width * scale), round(img.height * scale)), Image.LANCZOS)
+    x1, y1 = (img.width - width) // 2, (img.height - height) // 2
+    img = img.crop((x1, y1, x1 + width, y1 + height))
+    arr = np.array(img, dtype=np.float32) / 255.0 * 2.0 - 1.0
+    return mx.array(arr.transpose(2, 0, 1))  # [3, H, W]
+
+
+def _prepare_vace_control_latents(
+    vae_encoder,
+    control_video: mx.array,
+    control_mask: mx.array,
+    reference_images: list[mx.array] | None,
+    vae_stride: tuple,
+    h_latent: int,
+    w_latent: int,
+    t_latent: int,
+    z_dim: int,
+) -> mx.array:
+    logger.info(
+        "VACE control: video=%s mask=%s refs=%d",
+        control_video.shape, control_mask.shape, len(reference_images or []),
+    )
+    S = vae_stride[1]  # spatial scale, e.g. 8
+    num_frames = control_video.shape[1]
+
+    # mask: [T, H, W] -> [1, T, H, W] for broadcasting with [3, T, H, W]
+    mask_exp = control_mask[None, :, :, :]  # [1, T, H, W]
+    mask_exp = mx.broadcast_to(mask_exp, control_video.shape)  # [3, T, H, W]
+
+    # inactive = video * (1 - mask)  — conditioning region
+    # reactive = video * mask       — generation region (will be replaced by denoising)
+    inactive_video = control_video * (1.0 - mask_exp)
+    reactive_video = control_video * mask_exp
+
+    # Encode each through VAE encoder -> [1, z_dim, T_lat, H_lat, W_lat]
+    inactive_lat = vae_encoder.encode(inactive_video[None])[0]  # [z_dim, T_lat, H_lat, W_lat]
+    mx.eval(inactive_lat)
+    reactive_lat = vae_encoder.encode(reactive_video[None])[0]
+    mx.eval(reactive_lat)
+
+    # Video conditioning latents: cat along channel dim -> [32, T_lat, H_lat, W_lat]
+    cond_latents = mx.concatenate([inactive_lat, reactive_lat], axis=0)
+
+    # Reference images: each encoded, added as extra TIME frames with zeros padding
+    if reference_images:
+        ref_frames = []
+        for ref_img in reference_images:
+            # ref_img: [3, H, W] -> [3, 1, H, W]
+            ref_video = ref_img[:, None, :, :]
+            ref_lat = vae_encoder.encode(ref_video[None])[0]  # [z_dim, 1, H_lat, W_lat]
+            mx.eval(ref_lat)
+            ref_zeros = mx.zeros_like(ref_lat)  # [z_dim, 1, H_lat, W_lat]
+            ref_frame = mx.concatenate([ref_lat, ref_zeros], axis=0)  # [32, 1, H_lat, W_lat]
+            ref_frames.append(ref_frame)
+        # Prepend reference frames along TIME dimension
+        ref_all = mx.concatenate(ref_frames, axis=1)  # [32, num_refs, H_lat, W_lat]
+        cond_latents = mx.concatenate([ref_all, cond_latents], axis=1)
+
+    # Prepare patch-level mask: [T, H, W] -> [S*S, T_lat, H_lat, W_lat]
+    # Downsample mask to latent resolution
+    mask_lat_h = h_latent
+    mask_lat_w = w_latent
+
+    # Reshape mask into patches: each SxS patch -> 1 token with S*S channels
+    # mask: [T, H, W] -> [T, H_lat, S, W_lat, S] -> [T, H_lat, W_lat, S, S]
+    mask_reshaped = control_mask.reshape(
+        num_frames, mask_lat_h, S, mask_lat_w, S
+    )
+    mask_reshaped = mask_reshaped.transpose(0, 1, 3, 2, 4)  # [T, H_lat, W_lat, S, S]
+
+    # Pad time to match t_latent (temporal compression)
+    # VAE temporal stride = vae_stride[0], e.g. 4
+    t_stride = vae_stride[0]
+    if mask_reshaped.shape[0] < t_latent:
+        pad_t = t_latent - mask_reshaped.shape[0]
+        mask_reshaped = mx.concatenate(
+            [mask_reshaped, mx.broadcast_to(mask_reshaped[-1:], (pad_t, mask_lat_h, mask_lat_w, S, S))],
+            axis=0,
+        )
+    # Also need to handle temporal compression: replicate first frame t_stride times
+    # like diffusers: mask with 1 at first position, repeat 4x, then reshape
+    # Simplified: average over temporal patches -> [t_latent, H_lat, W_lat, S, S]
+    mask_patches = []
+    for t_idx in range(t_latent):
+        start = t_idx * t_stride if t_idx > 0 else 0
+        end = start + t_stride if t_idx > 0 else 1
+        chunk = mask_reshaped[start:end]  # [t_stride, H_lat, W_lat, S, S] or [1, ...]
+        # Take first frame of chunk (matches causal conv temporal behavior)
+        mask_patches.append(chunk[0])  # [H_lat, W_lat, S, S]
+    mask_patches = mx.stack(mask_patches, axis=0)  # [t_latent, H_lat, W_lat, S, S]
+
+    # Flatten S*S into channels: [t_latent, H_lat, W_lat, S, S] -> [S*S, t_latent, H_lat, W_lat]
+    mask_channels = mask_patches.reshape(t_latent, mask_lat_h, mask_lat_w, S * S)
+    mask_channels = mask_channels.transpose(3, 0, 1, 2)  # [S*S, t_latent, H_lat, W_lat]
+
+    # Adjust cond_latents time dimension if we added reference frames
+    # cond_latents already has correct t_latent (with refs prepended)
+    # mask_channels needs same T as cond_latents channel-0
+    cond_t = cond_latents.shape[1]
+    if mask_channels.shape[0] != S * S:
+        logger.warning("VACE mask channels mismatch: expected %d got %d", S * S, mask_channels.shape[0])
+    if mask_channels.shape[1] < cond_t:
+        # Pad mask time dim to match conditioning latents
+        pad_len = cond_t - mask_channels.shape[1]
+        mask_channels = mx.concatenate(
+            [mask_channels, mx.broadcast_to(mask_channels[:, -1:], (S * S, pad_len, mask_lat_h, mask_lat_w))],
+            axis=1,
+        )
+    elif mask_channels.shape[1] > cond_t:
+        mask_channels = mask_channels[:, :cond_t]
+
+    # Final: cat([video_latents(32), mask(S*S=64)], dim=0) -> [96, T_lat, H_lat, W_lat]
+    control = mx.concatenate([cond_latents, mask_channels], axis=0)
+    mx.eval(control)
+
+    logger.info("VACE control_hidden_states shape: %s", control.shape)
+    return control
+
+
 def _best_output_size(w, h, dw, dh, max_area):
     ratio = w / h
     ow = (max_area * ratio) ** 0.5
@@ -71,6 +250,26 @@ def _best_output_size(w, h, dw, dh, max_area):
     if max(ratio / ratio1, ratio1 / ratio) < max(ratio / ratio2, ratio2 / ratio):
         return ow1, oh1
     return ow2, oh2
+
+
+def _resolve_model_file(model_dir: Path, flat_name: str, sub_dir: str) -> Path:
+    flat = model_dir / flat_name
+    if flat.exists():
+        return flat
+    sub = model_dir / sub_dir
+    if sub.is_dir() or sub.is_symlink():
+        safetensors = sorted(sub.glob("*.safetensors"))
+        if safetensors:
+            # Subdir with config.json (e.g. text_encoder/): return directory
+            # for from_pretrained-style loading that reads config.json + safetensors.
+            if (sub / "config.json").exists():
+                return sub
+            # Single-file subdir without config: return the file for mx.load compat.
+            # Multi-file subdir: return directory for _load_safetensors.
+            if len(safetensors) == 1:
+                return safetensors[0]
+            return sub
+    return flat
 
 
 def generate_video(
@@ -101,6 +300,9 @@ def generate_video(
     session_id: str | None = None,
     control_hidden_states: list | None = None,
     control_scales: list[float] | None = None,
+    control_video: str | None = None,
+    control_mask: str | None = None,
+    reference_images: list[str] | None = None,
 ):
     import json
 
@@ -139,8 +341,11 @@ def generate_video(
         else:
             # Detect 1.3B vs 14B from weight shapes
             model_path = model_dir / "model.safetensors"
+            if not model_path.exists() and (model_dir / "dit").is_dir():
+                model_path = model_dir / "dit"
             if model_path.exists():
-                probe = mx.load(str(model_path), return_metadata=False)
+                from .utils import _load_safetensors
+                probe = _load_safetensors(model_path)
                 for k, v in probe.items():
                     if "patch_embedding_proj.weight" in k:
                         dim = v.shape[0]
@@ -162,8 +367,11 @@ def generate_video(
     # Validate config against actual weights (handles mismatched config.json)
     if not is_dual:
         model_path = model_dir / "model.safetensors"
+        if not model_path.exists() and (model_dir / "dit").is_dir():
+            model_path = model_dir / "dit"
         if model_path.exists():
-            probe = mx.load(str(model_path), return_metadata=False)
+            from .utils import _load_safetensors
+            probe = _load_safetensors(model_path)
             for k, v in probe.items():
                 if "patch_embedding_proj.weight" in k:
                     actual_dim = v.shape[0]
@@ -324,7 +532,7 @@ def generate_video(
         )
     else:
         print(f"\n{Colors.BLUE}Loading T5 encoder...{Colors.RESET}")
-        t5_path = model_dir / "t5_encoder.safetensors"
+        t5_path = _resolve_model_file(model_dir, "t5_encoder.safetensors", "text_encoder")
         t5_encoder = load_t5_encoder(t5_path, config)
 
         # Load tokenizer
@@ -361,7 +569,7 @@ def generate_video(
         print(f"\n{Colors.BLUE}Encoding input image...{Colors.RESET}")
         t_img = time.time()
 
-        vae_path = model_dir / "vae.safetensors"
+        vae_path = _resolve_model_file(model_dir, "vae.safetensors", "vae")
 
         # Phase-2: check session tail cache first (reuse previous shot's
         # denoised tail-frame latent as this shot's first-frame conditioning).
@@ -475,6 +683,46 @@ def generate_video(
         mx.clear_cache()
         print(f"{Colors.DIM}  Image encoding: {time.time() - t_img:.1f}s{Colors.RESET}")
 
+    # VACE: encode control video + mask -> control_hidden_states
+    if is_vace and control_hidden_states is None:
+        if control_video is not None and control_mask is not None:
+            print(f"\n{Colors.BLUE}Encoding VACE control video+mask...{Colors.RESET}")
+            t_vace = time.time()
+
+            vae_path = _resolve_model_file(model_dir, "vae.safetensors", "vae")
+            vae_enc = load_vae_encoder(vae_path, config)
+
+            video_frames = _load_video_frames(control_video, width, height, gen_frames)
+            mx.eval(video_frames)
+            mask_frames = _load_mask_frames(control_mask, width, height, gen_frames)
+            mx.eval(mask_frames)
+
+            ref_imgs = None
+            if reference_images:
+                ref_imgs = [_load_ref_image(p, width, height) for p in reference_images]
+                mx.eval(*ref_imgs)
+
+            control_hidden_states = [
+                _prepare_vace_control_latents(
+                    vae_encoder=vae_enc,
+                    control_video=video_frames,
+                    control_mask=mask_frames,
+                    reference_images=ref_imgs,
+                    vae_stride=config.vae_stride,
+                    h_latent=h_latent,
+                    w_latent=w_latent,
+                    t_latent=t_latent,
+                    z_dim=config.vae_z_dim,
+                )
+            ]
+
+            del vae_enc, video_frames, mask_frames, ref_imgs
+            gc.collect()
+            mx.clear_cache()
+            print(f"{Colors.DIM}  VACE control encoding: {time.time() - t_vace:.1f}s{Colors.RESET}")
+        else:
+            logger.warning("VACE model but no control_video/control_mask provided — running without control")
+
     # Load transformer models
     print(f"\n{Colors.BLUE}Loading transformer model(s)...{Colors.RESET}")
     if quantization:
@@ -498,8 +746,12 @@ def generate_video(
             high_noise_path, config, quantization, loras=_loras_high
         )
     else:
+        # Support both flat (model.safetensors) and diffusers (dit/ subdir) layouts
+        dit_path = model_dir / "model.safetensors"
+        if not dit_path.exists() and (model_dir / "dit").is_dir():
+            dit_path = model_dir / "dit"
         single_model = load_wan_model(
-            model_dir / "model.safetensors", config, quantization, loras=_loras_single
+            dit_path, config, quantization, loras=_loras_single
         )
     print(f"{Colors.DIM}  Models loaded: {time.time() - t2:.1f}s{Colors.RESET}")
 
@@ -714,6 +966,14 @@ def generate_video(
         # Release temporaries before eval to free memory for graph execution
         del noise_pred
         mx.eval(latents)
+        if debug_latents:
+            lat_np = np.array(latents)
+            _nan_count = int(np.isnan(lat_np).sum())
+            print(f"  Step {i}: mean={lat_np.mean():.4f} std={lat_np.std():.4f} "
+                  f"nan={_nan_count} zero_pct={100*(lat_np==0).sum()/lat_np.size:.1f}%")
+            if _nan_count > 0:
+                print(f"  *** NaN DETECTED at step {i}! Aborting. ***")
+                break
         if on_step_sync is not None:
             on_step_sync(i + 1, steps)
 
@@ -773,7 +1033,7 @@ def generate_video(
     # Load VAE and decode
     print(f"\n{Colors.BLUE}Decoding with VAE...{Colors.RESET}")
     t4 = time.time()
-    vae_path = model_dir / "vae.safetensors"
+    vae_path = _resolve_model_file(model_dir, "vae.safetensors", "vae")
     vae = load_vae_decoder(vae_path, config)
 
     is_wan22_vae = config.vae_z_dim == 48
