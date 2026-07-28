@@ -110,6 +110,52 @@ def _extract_text(msg: Any) -> str:
     return str(content) if content else ""
 
 
+def _detect_prefix_cache_boundary(messages: Any) -> int | None:
+    """Auto-detect prefix cache boundary from cache_control hints in messages.
+
+    Scans system messages for cache_control markers (Anthropic-compatible).
+    Returns the estimated token boundary for KV prefix cache reuse, or None.
+
+    The boundary is set at the end of the last system message that carries
+    a cache_control block, enabling the engine to reuse cached KV states
+    for shared system prompt prefixes across requests.
+    """
+    char_boundary = 0
+    found = False
+    for m in messages:
+        role = getattr(m, "role", "")
+        if role != "system":
+            break
+        content = getattr(m, "content", "")
+        has_cache_control = False
+        if isinstance(content, str):
+            has_cache_control = bool(getattr(m, "cache_control", None))
+            if has_cache_control:
+                char_boundary += len(content)
+                found = True
+        elif isinstance(content, list):
+            for part in content:
+                if isinstance(part, dict):
+                    has_cc = bool(part.get("cache_control"))
+                else:
+                    has_cc = bool(getattr(part, "cache_control", None))
+                if has_cc:
+                    found = True
+                text = ""
+                if isinstance(part, dict):
+                    text = part.get("text", "")
+                elif hasattr(part, "text"):
+                    text = part.text or ""
+                char_boundary += len(text)
+        else:
+            break
+        if not has_cache_control and found:
+            break
+    if not found:
+        return None
+    return max(1, char_boundary // 4)
+
+
 def _messages_for_engine(request_msgs: Any, is_mllm: bool) -> list[dict]:
     """Convert request messages to the dict list engines expect.
 
@@ -238,7 +284,10 @@ async def _run_chat(
             tools=request.tools,
             stop=sampling.stop,
             chat_template_kwargs=ct_kwargs if ct_kwargs else None,
-            prefix_cache_boundary=getattr(request, "prefix_cache_boundary", None),
+            prefix_cache_boundary=(
+                getattr(request, "prefix_cache_boundary", None)
+                or _detect_prefix_cache_boundary(request.messages)
+            ),
         )
         # Honor parallel_tool_calls=false by capping to 1 call
         tool_calls = gen.tool_calls
@@ -375,7 +424,10 @@ async def _stream_chat_generator(
             tools=request.tools,
             stop=sampling.stop,
             chat_template_kwargs=ct_kwargs_stream if ct_kwargs_stream else None,
-            prefix_cache_boundary=getattr(request, "prefix_cache_boundary", None),
+            prefix_cache_boundary=(
+                getattr(request, "prefix_cache_boundary", None)
+                or _detect_prefix_cache_boundary(request.messages)
+            ),
         ):
             if gen.new_text:
                 accumulated += gen.new_text

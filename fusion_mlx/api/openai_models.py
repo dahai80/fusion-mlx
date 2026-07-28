@@ -68,6 +68,10 @@ class ContentPart(BaseModel):
     video_url: VideoURL | dict | str | None = None
     audio_url: AudioURL | dict | str | None = None
     file: dict | None = None
+    # Anthropic-compatible cache_control hint (extension for OpenAI endpoint).
+    # When set on a system message content part, marks the prefix boundary
+    # for KV cache reuse across requests sharing the same system prompt.
+    cache_control: dict[str, str] | None = None
 
 
 # =============================================================================
@@ -98,6 +102,8 @@ class Message(BaseModel):
     name: str | None = None
     # Continue from this message instead of starting a new turn (prefill / partial mode)
     partial: bool = False
+    # Anthropic-compatible cache_control on the message itself (for string content)
+    cache_control: dict[str, str] | None = None
 
     @field_validator("tool_calls", mode="before")
     @classmethod
