@@ -2,6 +2,17 @@
 
 ## [Unreleased]
 
+## [0.5.8] - 2026-07-29
+
+### Added
+- **Debt paydown #50/#71/#80** (PR#240). Removed dead ServerConfig fields (`enable_tool_logits_bias`, `enable_audio_lane`), simplified `_sync_config()`, deleted `routes_internal/completions.py` shim, fixed 7 broken test imports, xfail 4 overflow tests, autouse video pool reset fixture.
+- **T5 bfloat16 default + VAE sanitize** (PR#247). Default T5 encoder to bf16 (fp16 overflows on long sequences). Wan2 VAE NaN→0 replacement before clip.
+- **`/v1/migration-level` endpoint** (PR#235). Model adaptation assessment API.
+- **`/v1/recommend/batch` endpoint** (PR#236). Multi-model evaluation API.
+- **`/v1/quantize/layered` endpoint** (PR#237). Per-layer quantization config API.
+- **`/v1/benchmarks` endpoint** (PR#238). Real performance data API.
+- **`/v1/analyze` endpoint** (PR#239). Model structure analysis API.
+
 ## [0.5.7] - 2026-07-28
 
 ### Added
