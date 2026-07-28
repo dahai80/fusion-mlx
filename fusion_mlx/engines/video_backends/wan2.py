@@ -31,6 +31,28 @@ _T5_EMBED_CACHE_MAX = 16
 _T5_PRELOAD_TIMEOUT = 300.0
 
 
+def _infer_config_from_path(model_dir: str) -> "WanModelConfig":
+    from fusion_mlx.video.wan2.config import WanModelConfig
+
+    p = model_dir.lower()
+    if "vace" in p:
+        return WanModelConfig(
+            model_type="vace",
+            in_dim=16,
+            out_dim=16,
+        )
+    if "14b" in p:
+        if "i2v" in p:
+            return WanModelConfig.wan22_i2v_14b()
+        return WanModelConfig.wan22_t2v_14b()
+    if "5b" in p or "ti2v" in p:
+        return WanModelConfig.wan22_ti2v_5b()
+    logger.warning(
+        "Wan2: cannot infer variant from path '%s', defaulting to 1.3B", model_dir
+    )
+    return WanModelConfig.wan21_t2v_1_3b()
+
+
 class Wan2Backend(VideoBackend):
     name = "wan2"
     supports_i2v = True
@@ -46,7 +68,7 @@ class Wan2Backend(VideoBackend):
 
     @classmethod
     def detect(cls, model_path: str) -> bool:
-        return "wan" in model_path.lower()
+        return "wan" in model_path.lower() or "vace" in model_path.lower()
 
     async def start(self, model_path: str, **kwargs: Any) -> None:
         if self._loaded:
@@ -87,6 +109,7 @@ class Wan2Backend(VideoBackend):
                         "vae_stride",
                         "window_size",
                         "sample_guide_scale",
+                        "vace_layers",
                     ):
                         if key in config_dict and isinstance(config_dict[key], list):
                             config_dict[key] = tuple(config_dict[key])
@@ -98,7 +121,7 @@ class Wan2Backend(VideoBackend):
                         }
                     )
                 else:
-                    config = WanModelConfig.wan21_t2v_1_3b()
+                    config = _infer_config_from_path(model_dir)
 
                 t5_path = md / "t5_encoder.safetensors"
                 if t5_path.exists():

@@ -53,6 +53,10 @@ class WanModelConfig(BaseModelConfig):
     t5_num_layers: int = 24
     t5_num_buckets: int = 32
 
+    # VACE-specific fields (no-op for non-VACE models)
+    vace_in_dim: int = 0
+    vace_layers: tuple[int, ...] = ()
+
     @property
     def head_dim(self) -> int:
         return self.dim // self.num_heads

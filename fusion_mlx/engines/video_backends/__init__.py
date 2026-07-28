@@ -73,6 +73,9 @@ _ALIASES: dict[str, str] = {
     "open-sora": "opensora",
     "open_sora": "opensora",
     "opensora-v2": "opensora",
+    "vace": "wan2",
+    "wan-vace": "wan2",
+    "wan2.1-vace": "wan2",
 }
 
 

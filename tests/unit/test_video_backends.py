@@ -109,3 +109,50 @@ class TestResolveBackend:
             "cogvideo",
             "opensora",
         }
+
+    def test_vace_alias_resolves_to_wan2(self):
+        assert isinstance(resolve_backend("x", explicit="vace"), Wan2Backend)
+        assert isinstance(resolve_backend("x", explicit="wan-vace"), Wan2Backend)
+        assert isinstance(resolve_backend("x", explicit="wan2.1-vace"), Wan2Backend)
+
+    def test_vace_autodetect_by_name(self):
+        assert isinstance(resolve_backend("Wan2.1-VACE-14B"), Wan2Backend)
+
+
+class TestInferConfigFromPath:
+    def test_14b_i2v(self):
+        from fusion_mlx.engines.video_backends.wan2 import _infer_config_from_path
+
+        cfg = _infer_config_from_path("/models/Wan2.2-14B")
+        assert cfg.dim == 5120
+        assert cfg.num_layers == 40
+        assert cfg.model_type == "t2v"
+
+    def test_14b_i2v_path(self):
+        from fusion_mlx.engines.video_backends.wan2 import _infer_config_from_path
+
+        cfg = _infer_config_from_path("/models/Wan2.2-i2v-14B")
+        assert cfg.model_type == "i2v"
+        assert cfg.dim == 5120
+
+    def test_5b_ti2v(self):
+        from fusion_mlx.engines.video_backends.wan2 import _infer_config_from_path
+
+        cfg = _infer_config_from_path("/models/Wan2.2-TI2V-5B")
+        assert cfg.dim == 3072
+        assert cfg.num_heads == 24
+        assert cfg.model_type == "ti2v"
+
+    def test_vace(self):
+        from fusion_mlx.engines.video_backends.wan2 import _infer_config_from_path
+
+        cfg = _infer_config_from_path("/models/Wan2.1-VACE-14B")
+        assert cfg.model_type == "vace"
+        assert cfg.dim == 5120
+
+    def test_unknown_defaults_to_1_3b(self):
+        from fusion_mlx.engines.video_backends.wan2 import _infer_config_from_path
+
+        cfg = _infer_config_from_path("/models/some-wan-model")
+        assert cfg.dim == 1536
+        assert cfg.num_layers == 30
