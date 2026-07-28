@@ -386,6 +386,7 @@ async def _stream_chat_generator(
                         prompt_tokens=gen.prompt_tokens,
                         completion_tokens=gen.completion_tokens,
                         cached_tokens=gen.cached_tokens,
+                        logprobs=getattr(gen, "logprobs", None),
                     )
                     yield _adapter.format_stream_chunk(chunk, request, encoder=encoder)
                 if thinking_delta:
@@ -395,6 +396,7 @@ async def _stream_chat_generator(
                         prompt_tokens=gen.prompt_tokens,
                         completion_tokens=gen.completion_tokens,
                         cached_tokens=gen.cached_tokens,
+                        logprobs=getattr(gen, "logprobs", None),
                     )
                     yield _adapter.format_stream_chunk(rchunk, request, encoder=encoder)
                 prompt_tokens = gen.prompt_tokens or prompt_tokens

@@ -83,3 +83,20 @@ class TestCollectorMergesLogprobArrays:
         new = RequestOutput(request_id="t", new_token_ids=[2], new_text="b")
         result = collector._merge_outputs(existing, new)
         assert result.logprobs is None
+
+
+class TestStreamChunkLogprobsWiring:
+    def test_stream_chunk_carries_logprobs(self):
+        from fusion_mlx.api.adapters.base import StreamChunk
+
+        chunk = StreamChunk(
+            text="hello",
+            logprobs="some_logprobs_data",
+        )
+        assert chunk.logprobs == "some_logprobs_data"
+
+    def test_stream_chunk_logprobs_default_none(self):
+        from fusion_mlx.api.adapters.base import StreamChunk
+
+        chunk = StreamChunk(text="hello")
+        assert chunk.logprobs is None
