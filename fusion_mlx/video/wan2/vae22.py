@@ -879,7 +879,10 @@ class Wan22VAEDecoder(nn.Module):
         # Replace NaN before clip — MLX clip passes NaN through
         nan_count = mx.sum(mx.isnan(out)).item()
         if nan_count > 0:
-            logger.warning("Wan22VAEDecoder: %d NaN values in output, replacing with 0", int(nan_count))
+            logger.warning(
+                "Wan22VAEDecoder: %d NaN values in output, replacing with 0",
+                int(nan_count),
+            )
             out = mx.where(mx.isnan(out), mx.zeros_like(out), out)
 
         return mx.clip(out, -1.0, 1.0)

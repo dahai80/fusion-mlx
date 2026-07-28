@@ -104,7 +104,8 @@ def insert_img_to_vlm(
     if tokens_per_image == 0:
         logger.warning(
             "Not enough SigLIP tokens (%d) for %d images",
-            total_siglip_tokens, num_images,
+            total_siglip_tokens,
+            num_images,
         )
         return vlm_hidden_states
 
@@ -119,7 +120,9 @@ def insert_img_to_vlm(
         end_offset = start_offset + tokens_per_image
         siglip_chunk = siglip_projected[0, start_offset:end_offset, :]
         chunk_len = min(siglip_chunk.shape[0], end_pos)
-        result = _replace_range(result, 0, end_pos - chunk_len, end_pos, siglip_chunk[:chunk_len])
+        result = _replace_range(
+            result, 0, end_pos - chunk_len, end_pos, siglip_chunk[:chunk_len]
+        )
 
     return result
 
@@ -190,6 +193,7 @@ def _project_dim(x: mx.array, target_dim: int) -> mx.array:
     if x.shape[-1] == target_dim:
         return x
     import mlx.nn as nn
+
     proj = nn.Linear(x.shape[-1], target_dim)
     mx.eval(proj.parameters())
     return proj(x)

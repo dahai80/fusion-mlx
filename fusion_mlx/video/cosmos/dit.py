@@ -295,7 +295,11 @@ class CosmosDiT(nn.Module):
         loaded = {}
         for k, v in flat:
             if k in mapped:
-                loaded[k] = mapped[k].astype(mx.float16) if mapped[k].dtype != mx.float16 else mapped[k]
+                loaded[k] = (
+                    mapped[k].astype(mx.float16)
+                    if mapped[k].dtype != mx.float16
+                    else mapped[k]
+                )
             else:
                 loaded[k] = v
                 logger.debug("dit: unmatched param %s", k)

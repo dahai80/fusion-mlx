@@ -17,9 +17,7 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query
-from pydantic import BaseModel, Field
-
-from ..hardware.detector import detect_hardware
+from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
 

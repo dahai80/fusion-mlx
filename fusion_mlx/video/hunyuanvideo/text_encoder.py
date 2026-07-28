@@ -143,6 +143,10 @@ class HunyuanDualTextEncoder(nn.Module):
         loaded = {}
         for k, v in flat:
             w = all_params.get(k, v)
-            loaded[k] = w.astype(mx.float16) if hasattr(w, "dtype") and w.dtype != mx.float16 else w
+            loaded[k] = (
+                w.astype(mx.float16)
+                if hasattr(w, "dtype") and w.dtype != mx.float16
+                else w
+            )
         enc.update(tree_unflatten(loaded))
         return enc

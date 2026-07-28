@@ -4,7 +4,7 @@
 import asyncio
 import gc
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any
 
 from .base import BaseNonStreamingEngine
@@ -19,10 +19,12 @@ class NEROutput:
 
 
 class MLXNERModel:
-    _NER_ARCHITECTURES = frozenset({
-        "SpaModel",
-        "GLiNERModel",
-    })
+    _NER_ARCHITECTURES = frozenset(
+        {
+            "SpaModel",
+            "GLiNERModel",
+        }
+    )
 
     def __init__(self, model_name: str, trust_remote_code: bool = False):
         self._model_name = model_name
@@ -197,9 +199,7 @@ class NEREngine(BaseNonStreamingEngine):
                 loop.run_in_executor(get_executor("llm"), _ner_sync),
                 timeout=60.0,
             )
-            total_tokens = sum(
-                len(text.split()) + len(labels) for text in texts
-            )
+            total_tokens = sum(len(text.split()) + len(labels) for text in texts)
             return NEROutput(entities=entities, total_tokens=total_tokens)
         finally:
             self._end_activity(activity_id)

@@ -1,5 +1,4 @@
 # SPDX-License-Identifier: Apache-2.0
-import math
 import mlx.core as mx
 import numpy as np
 

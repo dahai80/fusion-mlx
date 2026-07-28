@@ -15,8 +15,9 @@ logger = logging.getLogger(__name__)
 
 
 class DenoiseProjector(nn.Module):
-    def __init__(self, input_dim: int = 3584, hidden_dim: int = 9216,
-                 output_dim: int = 3072):
+    def __init__(
+        self, input_dim: int = 3584, hidden_dim: int = 9216, output_dim: int = 3072
+    ):
         super().__init__()
         self.fc1 = nn.Linear(input_dim, hidden_dim)
         self.fc2 = nn.Linear(hidden_dim, output_dim)
@@ -29,8 +30,9 @@ class DenoiseProjector(nn.Module):
 
 
 class VAEProjector(nn.Module):
-    def __init__(self, input_dim: int = 64, hidden_dim: int = 3072,
-                 output_dim: int = 4096):
+    def __init__(
+        self, input_dim: int = 64, hidden_dim: int = 3072, output_dim: int = 4096
+    ):
         super().__init__()
         self.fc1 = nn.Linear(input_dim, hidden_dim)
         self.fc2 = nn.Linear(hidden_dim, output_dim)
@@ -43,8 +45,9 @@ class VAEProjector(nn.Module):
 
 
 class SigLIPProjector(nn.Module):
-    def __init__(self, input_dim: int = 1152, hidden_dim: int = 12288,
-                 output_dim: int = 4096):
+    def __init__(
+        self, input_dim: int = 1152, hidden_dim: int = 12288, output_dim: int = 4096
+    ):
         super().__init__()
         self.fc1 = nn.Linear(input_dim, hidden_dim)
         self.fc2 = nn.Linear(hidden_dim, output_dim)
@@ -57,8 +60,13 @@ class SigLIPProjector(nn.Module):
 
 
 class TaskHead(nn.Module):
-    def __init__(self, input_dim: int = 3584, hidden_dim: int = 10240,
-                 output_dim: int = 2, dropout: float = 0.3):
+    def __init__(
+        self,
+        input_dim: int = 3584,
+        hidden_dim: int = 10240,
+        output_dim: int = 2,
+        dropout: float = 0.3,
+    ):
         super().__init__()
         self.fc1 = nn.Linear(input_dim, hidden_dim)
         self.fc2 = nn.Linear(hidden_dim, output_dim)
@@ -74,13 +82,22 @@ class TaskHead(nn.Module):
 
 
 class UniWorldProjectors(nn.Module):
-    def __init__(self, denoise_in: int = 3584, denoise_hidden: int = 9216,
-                 denoise_out: int = 3072, vae_in: int = 64,
-                 vae_hidden: int = 3072, vae_out: int = 4096,
-                 siglip_in: int = 1152, siglip_hidden: int = 12288,
-                 siglip_out: int = 4096):
+    def __init__(
+        self,
+        denoise_in: int = 3584,
+        denoise_hidden: int = 9216,
+        denoise_out: int = 3072,
+        vae_in: int = 64,
+        vae_hidden: int = 3072,
+        vae_out: int = 4096,
+        siglip_in: int = 1152,
+        siglip_hidden: int = 12288,
+        siglip_out: int = 4096,
+    ):
         super().__init__()
-        self.denoise_projector = DenoiseProjector(denoise_in, denoise_hidden, denoise_out)
+        self.denoise_projector = DenoiseProjector(
+            denoise_in, denoise_hidden, denoise_out
+        )
         self.vae_projector = VAEProjector(vae_in, vae_hidden, vae_out)
         self.siglip_projector = SigLIPProjector(siglip_in, siglip_hidden, siglip_out)
 
@@ -99,13 +116,16 @@ class UniWorldProjectors(nn.Module):
             filtered = _remap_projector_weights(weights)
             proj.load_weights(list(filtered.items()))
             mx.eval(proj.parameters())
-            logger.info("Projectors loaded %d weights from %s", len(filtered), weight_file.name)
+            logger.info(
+                "Projectors loaded %d weights from %s", len(filtered), weight_file.name
+            )
         else:
             logger.warning("No projector weights found in %s", model_dir)
         return proj
 
-    def __call__(self, vlm_hidden: mx.array, vae_latent: mx.array,
-                 siglip_hidden: mx.array) -> tuple[mx.array, mx.array, mx.array]:
+    def __call__(
+        self, vlm_hidden: mx.array, vae_latent: mx.array, siglip_hidden: mx.array
+    ) -> tuple[mx.array, mx.array, mx.array]:
         denoise_embeds = self.denoise_projector(vlm_hidden)
         vae_embeds = self.vae_projector(vae_latent)
         siglip_embeds = self.siglip_projector(siglip_hidden)
@@ -117,7 +137,9 @@ def _remap_projector_weights(weights: dict[str, mx.array]) -> dict[str, mx.array
     for k, v in weights.items():
         new_k = k
         if k.startswith("model.denoise_tower.denoise_projector."):
-            new_k = k.replace("model.denoise_tower.denoise_projector.", "denoise_projector.")
+            new_k = k.replace(
+                "model.denoise_tower.denoise_projector.", "denoise_projector."
+            )
         elif k.startswith("denoise_projector."):
             pass
         if k.startswith("model.denoise_tower.vae_projector."):
@@ -125,7 +147,9 @@ def _remap_projector_weights(weights: dict[str, mx.array]) -> dict[str, mx.array
         elif k.startswith("vae_projector."):
             pass
         if k.startswith("model.denoise_tower.siglip_projector."):
-            new_k = k.replace("model.denoise_tower.siglip_projector.", "siglip_projector.")
+            new_k = k.replace(
+                "model.denoise_tower.siglip_projector.", "siglip_projector."
+            )
         elif k.startswith("siglip_projector."):
             pass
         new_k = new_k.replace(".0.weight", ".fc1.weight")

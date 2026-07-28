@@ -1,5 +1,5 @@
-import math
 import logging
+import math
 
 import mlx.core as mx
 import mlx.nn as nn
@@ -121,7 +121,9 @@ class WanModel(nn.Module):
 
         # VACE: Video-Conditioned Auxiliary Control Encoding
         # Only instantiated when vace_layers is non-empty (VACE-14B model).
-        self._vace_layers = tuple(sorted(config.vace_layers)) if config.vace_layers else ()
+        self._vace_layers = (
+            tuple(sorted(config.vace_layers)) if config.vace_layers else ()
+        )
         if config.vace_layers:
             vace_patch_dim = config.vace_in_dim * math.prod(config.patch_size)
             self.vace_patch_embedding_proj = nn.Linear(vace_patch_dim, dim)
@@ -236,7 +238,7 @@ class WanModel(nn.Module):
             nk = k
             # Remap vace_patch_embedding (Conv3d) -> vace_patch_embedding_proj (Linear)
             if k.startswith("vace_patch_embedding."):
-                suffix = k[len("vace_patch_embedding."):]
+                suffix = k[len("vace_patch_embedding.") :]
                 nk = f"vace_patch_embedding_proj.{suffix}"
                 if suffix == "weight" and v.ndim == 5:
                     out_ch, in_ch, kt, kh, kw = v.shape
@@ -250,7 +252,7 @@ class WanModel(nn.Module):
                     v = v.reshape(-1)
             # Remap patch_embedding (Conv3d) -> patch_embedding_proj (Linear)
             elif k.startswith("patch_embedding."):
-                suffix = k[len("patch_embedding."):]
+                suffix = k[len("patch_embedding.") :]
                 nk = f"patch_embedding_proj.{suffix}"
                 if suffix == "weight" and v.ndim == 5:
                     out_ch, in_ch, kt, kh, kw = v.shape
@@ -423,7 +425,13 @@ class WanModel(nn.Module):
                 [
                     (
                         mx.concatenate(
-                            [p, mx.zeros((1, max_ctrl_len - p.shape[1], self.dim), dtype=p.dtype)],
+                            [
+                                p,
+                                mx.zeros(
+                                    (1, max_ctrl_len - p.shape[1], self.dim),
+                                    dtype=p.dtype,
+                                ),
+                            ],
                             axis=1,
                         )
                         if p.shape[1] < max_ctrl_len
@@ -444,10 +452,16 @@ class WanModel(nn.Module):
             ctrl_state = ctrl_x
             for vi, vace_block in enumerate(self.vace_blocks):
                 conditioning, ctrl_state = vace_block(
-                    x, ctrl_state, e=e0, seq_lens=ctrl_seq_lens,
-                    grid_sizes=ctrl_grid_sizes, freqs=self.freqs,
-                    context=context_batch, context_lens=None,
-                    rope_cos_sin=rope_cos_sin, attn_mask=attn_mask,
+                    x,
+                    ctrl_state,
+                    e=e0,
+                    seq_lens=ctrl_seq_lens,
+                    grid_sizes=ctrl_grid_sizes,
+                    freqs=self.freqs,
+                    context=context_batch,
+                    context_lens=None,
+                    rope_cos_sin=rope_cos_sin,
+                    attn_mask=attn_mask,
                 )
                 # Map vace_block index to main block layer index
                 layer_idx = self._vace_layers[vi]
@@ -464,7 +478,13 @@ class WanModel(nn.Module):
                 # Pad hint to match x seq_len if needed
                 if hint.shape[1] < x.shape[1]:
                     hint = mx.concatenate(
-                        [hint, mx.zeros((hint.shape[0], x.shape[1] - hint.shape[1], self.dim), dtype=hint.dtype)],
+                        [
+                            hint,
+                            mx.zeros(
+                                (hint.shape[0], x.shape[1] - hint.shape[1], self.dim),
+                                dtype=hint.dtype,
+                            ),
+                        ],
                         axis=1,
                     )
                 x = x + hint * scale

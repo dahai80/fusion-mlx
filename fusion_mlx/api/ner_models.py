@@ -1,8 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 """Pydantic models for NER API endpoint."""
 
-from typing import Any
-
 from pydantic import BaseModel, Field
 
 

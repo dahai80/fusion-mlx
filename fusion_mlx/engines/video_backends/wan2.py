@@ -13,7 +13,6 @@ import gc
 import logging
 import random
 import threading
-import numpy as np
 from collections.abc import Callable
 from typing import Any
 
@@ -34,7 +33,7 @@ _T5_EMBED_CACHE_MAX = 16
 _T5_PRELOAD_TIMEOUT = 300.0
 
 
-def _infer_config_from_path(model_dir: str) -> "WanModelConfig":
+def _infer_config_from_path(model_dir: str) -> "WanModelConfig":  # noqa: F821
     from fusion_mlx.video.wan2.config import WanModelConfig
 
     p = model_dir.lower()
@@ -178,8 +177,9 @@ class Wan2Backend(VideoBackend):
                 return result
 
         def _encode_sync():
-            from fusion_mlx.video.wan2.utils import encode_text
             from transformers import AutoTokenizer
+
+            from fusion_mlx.video.wan2.utils import encode_text
 
             if self._t5_tokenizer is None:
                 self._t5_tokenizer = AutoTokenizer.from_pretrained("google/umt5-xxl")

@@ -89,16 +89,18 @@ async def create_ner(request: NERRequest) -> NERResponse:
 
     data = []
     for entity_list in output.entities:
-        data.append([
-            NEREntity(
-                start=e["start"],
-                end=e["end"],
-                text=e["text"],
-                label=e["label"],
-                score=e["score"],
-            )
-            for e in entity_list
-        ])
+        data.append(
+            [
+                NEREntity(
+                    start=e["start"],
+                    end=e["end"],
+                    text=e["text"],
+                    label=e["label"],
+                    score=e["score"],
+                )
+                for e in entity_list
+            ]
+        )
 
     return NERResponse(
         data=data,

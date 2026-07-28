@@ -7,7 +7,7 @@
 import mlx.core as mx
 import mlx.nn as nn
 
-from .attention import WanCrossAttention, WanLayerNorm, WanSelfAttention, _linear_dtype
+from .attention import WanCrossAttention, WanLayerNorm, WanSelfAttention
 from .transformer import WanFFN
 
 

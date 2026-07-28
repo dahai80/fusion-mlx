@@ -104,7 +104,7 @@ def _remap_t5_weights(weights: dict) -> dict:
                     if rest == "layer_norm.weight":
                         nk = f"{prefix}.norm1.weight"
                     elif rest.startswith("SelfAttention."):
-                        sa_rest = rest[len("SelfAttention."):]
+                        sa_rest = rest[len("SelfAttention.") :]
                         sa_map = {
                             "q.weight": "attn.q.weight",
                             "q.scale_weight": "attn.q.scale_weight",
@@ -151,7 +151,9 @@ def load_t5_encoder(model_path: Path, config, dtype: str | None = None):
     )
     weights = mx.load(str(model_path))
     # Drop non-weight entries (tokenizer, metadata) that load_weights can't handle
-    weights = {k: v for k, v in weights.items() if k not in ("spiece_model", "scaled_fp8")}
+    weights = {
+        k: v for k, v in weights.items() if k not in ("spiece_model", "scaled_fp8")
+    }
     # Remap HuggingFace T5 keys to wan2 T5Encoder attribute names
     weights = _remap_t5_weights(weights)
     # fp16 overflows in T5 attention for long sequences (q/k/v dot-product >65504)

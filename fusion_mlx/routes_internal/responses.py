@@ -39,6 +39,7 @@ from ..api.strict_json_schema import (
     strict_enforcement_enabled,
     validate_and_envelope,
 )
+from ..api.thinking import extract_thinking
 from ..api.tool_calling import (
     check_schema_validity,
     convert_tools_for_template,
@@ -46,12 +47,10 @@ from ..api.tool_calling import (
     is_strict_json_schema,
     validate_output_against_schema,
 )
-from ..api.thinking import extract_thinking
 from ..api.utils import (
     StreamingToolCallFilter,
     clean_output_text,
     strip_special_tokens,
-    strip_thinking_tags,
 )
 from ..middleware.auth import verify_api_key
 from ..service.helpers import (
@@ -550,7 +549,9 @@ async def _non_stream(
 
     # Extract thinking BEFORE stripping tags so reasoning_content survives
     engine_finish = getattr(output, "finish_reason", None)
-    reasoning_content, content_text = extract_thinking(raw_text, finish_reason=engine_finish)
+    reasoning_content, content_text = extract_thinking(
+        raw_text, finish_reason=engine_finish
+    )
     content_text = clean_output_text(content_text)
 
     tool_calls = None

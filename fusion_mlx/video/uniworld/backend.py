@@ -16,21 +16,19 @@ from typing import Any
 
 import mlx.core as mx
 
+from fusion_mlx.engine_core import get_executor
 from fusion_mlx.engines.video_backends.base import (
     VideoBackend,
     VideoConstraints,
     VideoGenParams,
 )
-from fusion_mlx.engine_core import get_executor
 
 from .config import UniWorldConfig
-from .siglip2 import SigLIP2VisionEncoder
-from .projectors import TaskHead, UniWorldProjectors
 from .feature_merge import (
     insert_img_to_vlm,
-    apply_shortcut_blend,
-    apply_residual_image_factor,
 )
+from .projectors import TaskHead, UniWorldProjectors
+from .siglip2 import SigLIP2VisionEncoder
 
 logger = logging.getLogger(__name__)
 
@@ -85,6 +83,7 @@ class UniWorldBackend(VideoBackend):
     def _load_vlm(self, cfg: UniWorldConfig) -> None:
         try:
             from mlx_vlm import load as vlm_load
+
             vlm_dir = str(cfg.vlm_dir) if cfg.vlm_dir.exists() else cfg.vlm_model
             logger.info("Loading VLM from %s", vlm_dir)
             self._vlm, self._vlm_processor = vlm_load(vlm_dir)
@@ -180,6 +179,7 @@ class UniWorldBackend(VideoBackend):
         logger.info("Loading Flux from %s", flux_dir)
         try:
             from mflux.models.common.config.model_config import ModelConfig
+
             self._flux = _Flux1(
                 model_config=ModelConfig.from_alias(str(flux_dir)),
                 model_path=str(flux_dir),
@@ -242,15 +242,11 @@ class UniWorldBackend(VideoBackend):
 
         siglip_hidden = self._encode_siglip_images(params.image)
 
-        lvlm_embeds = self._encode_vlm_denoise(
-            prompt, params.image, siglip_hidden
-        )
+        lvlm_embeds = self._encode_vlm_denoise(prompt, params.image, siglip_hidden)
 
         text_embeds = self._encode_text(prompt)
 
-        encoder_hidden_states = self._merge_embeddings(
-            text_embeds, lvlm_embeds, cfg
-        )
+        encoder_hidden_states = self._merge_embeddings(text_embeds, lvlm_embeds, cfg)
 
         images = self._denoise_flux(
             encoder_hidden_states=encoder_hidden_states,
@@ -273,33 +269,44 @@ class UniWorldBackend(VideoBackend):
             if hidden_states is None:
                 return mx.array([0.0, 1.0])
 
-            last_hidden = hidden_states[-1] if isinstance(hidden_states, list) else hidden_states
+            last_hidden = (
+                hidden_states[-1] if isinstance(hidden_states, list) else hidden_states
+            )
 
             input_ids = self._get_input_ids(prompt)
-            assistant_mask = (input_ids == ASSISTANT_TOKEN_ID)
+            assistant_mask = input_ids == ASSISTANT_TOKEN_ID
             if not mx.any(assistant_mask):
                 logger.debug("No assistant token found, defaulting to generation")
                 return mx.array([0.0, 1.0])
 
             positions = []
             for i in range(assistant_mask.shape[-1]):
-                if bool(assistant_mask[0, i]) if assistant_mask.ndim == 2 else bool(assistant_mask[i]):
+                if (
+                    bool(assistant_mask[0, i])
+                    if assistant_mask.ndim == 2
+                    else bool(assistant_mask[i])
+                ):
                     positions.append(i)
             if not positions:
                 return mx.array([0.0, 1.0])
 
             last_assistant_pos = positions[-1]
             if last_hidden.ndim == 3:
-                assistant_vector = last_hidden[0, last_assistant_pos:last_assistant_pos + 1, :]
+                assistant_vector = last_hidden[
+                    0, last_assistant_pos : last_assistant_pos + 1, :
+                ]
             else:
-                assistant_vector = last_hidden[last_assistant_pos:last_assistant_pos + 1, :]
+                assistant_vector = last_hidden[
+                    last_assistant_pos : last_assistant_pos + 1, :
+                ]
 
             task_result = self._task_head(assistant_vector)
             mx.eval(task_result)
             task_result = task_result.reshape(-1)
             logger.info(
                 "Task classification: understanding=%.4f, generation=%.4f",
-                float(task_result[0]), float(task_result[1]),
+                float(task_result[0]),
+                float(task_result[1]),
             )
             return task_result
         except Exception as e:
@@ -352,8 +359,8 @@ class UniWorldBackend(VideoBackend):
             return None
 
     def _preprocess_siglip_image(self, image_path: str) -> mx.array:
-        from PIL import Image
         import numpy as np
+        from PIL import Image
 
         img = Image.open(image_path).convert("RGB")
         cfg = self._config
@@ -367,8 +374,7 @@ class UniWorldBackend(VideoBackend):
         return pixel_values
 
     def _encode_vlm_denoise(
-        self, prompt: str, image_path: str | None,
-        siglip_hidden: mx.array | None
+        self, prompt: str, image_path: str | None, siglip_hidden: mx.array | None
     ) -> mx.array:
         if self._vlm is None or self._projectors is None:
             return mx.zeros((1, 1, self._config.denoise_projector_output))
@@ -378,7 +384,9 @@ class UniWorldBackend(VideoBackend):
             if hidden_states is None:
                 return mx.zeros((1, 1, self._config.denoise_projector_output))
 
-            last_hidden = hidden_states[-1] if isinstance(hidden_states, list) else hidden_states
+            last_hidden = (
+                hidden_states[-1] if isinstance(hidden_states, list) else hidden_states
+            )
 
             if siglip_hidden is not None:
                 input_ids = self._get_input_ids(prompt)
@@ -400,7 +408,7 @@ class UniWorldBackend(VideoBackend):
 
         if self._t5_encoder is not None:
             try:
-                from fusion_mlx.video.t5_encoder import T5Encoder
+
                 t5_embeds = self._t5_encoder.encode(prompt)
                 result["sequence"] = t5_embeds
                 logger.info("T5 encoded: shape=%s", tuple(t5_embeds.shape))
@@ -434,13 +442,16 @@ class UniWorldBackend(VideoBackend):
             if t5_embeds.shape[-1] != lvlm_embeds.shape[-1]:
                 logger.warning(
                     "T5 dim %d != lvlm dim %d, using lvlm only",
-                    t5_embeds.shape[-1], lvlm_embeds.shape[-1],
+                    t5_embeds.shape[-1],
+                    lvlm_embeds.shape[-1],
                 )
                 return lvlm_embeds
             merged = mx.concatenate([t5_embeds, lvlm_embeds], axis=1)
             logger.info(
                 "Merged embeddings: t5=%s + lvlm=%s -> %s",
-                tuple(t5_embeds.shape), tuple(lvlm_embeds.shape), tuple(merged.shape),
+                tuple(t5_embeds.shape),
+                tuple(lvlm_embeds.shape),
+                tuple(merged.shape),
             )
             return merged
         return lvlm_embeds

@@ -73,6 +73,8 @@ from .admin.helpers import (
 )
 from .api.embeddings_routes import router as embeddings_router
 from .api.embeddings_routes import set_embeddings_context
+from .api.ner_routes import router as ner_router
+from .api.ner_routes import set_ner_context
 from .api.openai_routes import router as openai_router
 from .api.openai_routes import set_openai_context
 from .api.openclaw_routes import router as openclaw_router
@@ -80,8 +82,6 @@ from .api.openclaw_routes import set_openclaw_agent_pool
 from .api.recommend_routes import router as recommend_router
 from .api.rerank_routes import router as rerank_router
 from .api.rerank_routes import set_rerank_context
-from .api.ner_routes import router as ner_router
-from .api.ner_routes import set_ner_context
 from .api.session_routes import router as sessions_router
 from .api.session_routes import set_sessions_context
 from .api.videos_routes import router as videos_router

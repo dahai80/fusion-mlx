@@ -1,11 +1,9 @@
 # SPDX-License-Identifier: Apache-2.0
 import logging
 import math
-from typing import Any
 
 import mlx.core as mx
 import mlx.nn as nn
-import numpy as np
 
 from .config import CogVideoXConfig
 from .rope import apply_rope, compute_3d_rope

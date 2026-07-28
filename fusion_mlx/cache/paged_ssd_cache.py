@@ -1371,7 +1371,9 @@ class PagedSSDCacheManager:
             self._pending_writes.clear()
             self._pending_write_hashes.clear()
         if leaked:
-            logger.info("PagedSSDCacheManager closed (drained %d pending writes)", leaked)
+            logger.info(
+                "PagedSSDCacheManager closed (drained %d pending writes)", leaked
+            )
         else:
             logger.info("PagedSSDCacheManager closed")
 

@@ -16,7 +16,6 @@ from pathlib import Path
 import mlx.core as mx
 import mlx.nn as nn
 import numpy as np
-from safetensors import safe_open
 
 logger = logging.getLogger(__name__)
 
@@ -280,7 +279,10 @@ class T5Encoder(nn.Module):
             raw.update(shard_data)
         mapped = _map_t5_weights(raw)
         # mx.load already returns mx.array; skip numpy conversion, just cast dtype
-        pairs = [(k, v.astype(dtype) if v.dtype != mx.uint8 else v) for k, v in mapped.items()]
+        pairs = [
+            (k, v.astype(dtype) if v.dtype != mx.uint8 else v)
+            for k, v in mapped.items()
+        ]
         n_params = sum(int(p[1].size) for p in pairs)
         model.load_weights(pairs, strict=False)
         mx.eval(model.parameters())

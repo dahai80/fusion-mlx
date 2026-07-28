@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -89,6 +89,7 @@ class UniWorldConfig:
     @property
     def mx_dtype(self) -> Any:
         import mlx.core as mx
+
         return mx.float16 if self.dtype == "float16" else mx.bfloat16
 
     @classmethod
@@ -96,13 +97,18 @@ class UniWorldConfig:
         config_path = Path(model_path) / "config.json"
         if config_path.exists():
             import json
+
             with open(config_path) as f:
                 data = json.load(f)
             merged = {**data, **kwargs, "model_path": model_path}
             known = {k: v for k, v in merged.items() if k in cls.__dataclass_fields__}
-            unknown = {k: v for k, v in merged.items() if k not in cls.__dataclass_fields__}
+            unknown = {
+                k: v for k, v in merged.items() if k not in cls.__dataclass_fields__
+            }
             if unknown:
-                logger.warning("UniWorldConfig: ignoring unknown keys: %s", list(unknown.keys()))
+                logger.warning(
+                    "UniWorldConfig: ignoring unknown keys: %s", list(unknown.keys())
+                )
             return cls(**known)
         logger.info("No config.json found at %s, using defaults", model_path)
         return cls(model_path=model_path, **kwargs)

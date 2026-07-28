@@ -396,6 +396,7 @@ class ImageGenEngine(BaseNonStreamingEngine):
                             pass
                 if output_format == "raw":
                     import numpy as np
+
                     images.append(np.array(gen.image))
                 else:
                     buf = io.BytesIO()

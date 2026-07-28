@@ -20,7 +20,6 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
 from ..model_auto_config import detect_model_config
-from ..model_aliases import resolve_model
 
 logger = logging.getLogger(__name__)
 
@@ -30,7 +29,12 @@ _ARCH_PATTERNS = [
     (re.compile(r"(dit|diT|DiT)", re.I), "DiT"),
     (re.compile(r"(unet|u_net|up_block|down_block)", re.I), "UNet"),
     (re.compile(r"(vae|variational_autoenc)", re.I), "VAE"),
-    (re.compile(r"(llama|qwen|mistral|gemma|phi|deepseek|yi|chatglm|solar|internlm)", re.I), "Transformer"),
+    (
+        re.compile(
+            r"(llama|qwen|mistral|gemma|phi|deepseek|yi|chatglm|solar|internlm)", re.I
+        ),
+        "Transformer",
+    ),
 ]
 
 _LAYER_PATTERNS = {
@@ -48,16 +52,23 @@ _LAYER_PATTERNS = {
 
 _SPECIAL_OPS_PATTERNS = [
     (re.compile(r"(mamba|ssm|gated_delta|rwkv)", re.I), "hybrid-attention (Mamba/SSM)"),
-    (re.compile(r"(moe|expert|gate_proj.*shared_expert)", re.I), "MoE (Mixture of Experts)"),
-    (re.compile(r"(cross_attention|encoder_attn)", re.I), "cross-attention (encoder-decoder)"),
-    (re.compile(r"(visual|vision_tower|image_encoder|patch_embedding)", re.I), "vision encoder (multimodal)"),
+    (
+        re.compile(r"(moe|expert|gate_proj.*shared_expert)", re.I),
+        "MoE (Mixture of Experts)",
+    ),
+    (
+        re.compile(r"(cross_attention|encoder_attn)", re.I),
+        "cross-attention (encoder-decoder)",
+    ),
+    (
+        re.compile(r"(visual|vision_tower|image_encoder|patch_embedding)", re.I),
+        "vision encoder (multimodal)",
+    ),
 ]
 
 
 class AnalyzeRequest(BaseModel):
-    model_path: str | None = Field(
-        None, description="Local model path on disk"
-    )
+    model_path: str | None = Field(None, description="Local model path on disk")
     hf_repo: str | None = Field(
         None, description="HuggingFace repo (org/name) for online models"
     )
@@ -119,7 +130,9 @@ def _detect_special_ops(tensor_keys: list[str], config: dict) -> list[str]:
     return sorted(found)
 
 
-def _count_params_by_layer(tensor_keys: list[str], shapes: dict[str, list[int]]) -> dict[str, int]:
+def _count_params_by_layer(
+    tensor_keys: list[str], shapes: dict[str, list[int]]
+) -> dict[str, int]:
     result: dict[str, str] = {}
     total_by_type = {
         "attention": 0,
@@ -192,6 +205,7 @@ async def analyze_model(req: AnalyzeRequest) -> Any:
             safetensors_files.append(sf.name)
             try:
                 from mlx.core import load_metadata
+
                 meta = load_metadata(str(sf))
                 for key, val in meta.items():
                     tensor_keys.append(key)
@@ -216,9 +230,17 @@ async def analyze_model(req: AnalyzeRequest) -> Any:
     hidden_size = config.get("hidden_size", config.get("n_embd", 0))
     num_heads = config.get("num_attention_heads", config.get("n_head", 0))
 
-    params_by_layer = _count_params_by_layer(tensor_keys, shapes) if tensor_keys else {
-        "attention": 0, "ffn": 0, "embedding": 0, "norm": 0, "other": 0,
-    }
+    params_by_layer = (
+        _count_params_by_layer(tensor_keys, shapes)
+        if tensor_keys
+        else {
+            "attention": 0,
+            "ffn": 0,
+            "embedding": 0,
+            "norm": 0,
+            "other": 0,
+        }
+    )
     params_total = sum(params_by_layer.values())
 
     return AnalyzeResponse(

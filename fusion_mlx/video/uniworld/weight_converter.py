@@ -77,15 +77,24 @@ def convert_uniworld_weights(
         _save_component(vlm_weights, output_dir / "vlm", mx_dtype, "VLM", stats)
 
     if siglip_weights:
-        _save_component(siglip_weights, output_dir / "siglip", mx_dtype, "SigLIP", stats)
+        _save_component(
+            siglip_weights, output_dir / "siglip", mx_dtype, "SigLIP", stats
+        )
 
     if projector_weights:
-        _save_component(projector_weights, output_dir / "projectors", mx_dtype,
-                        "Projectors", stats)
+        _save_component(
+            projector_weights, output_dir / "projectors", mx_dtype, "Projectors", stats
+        )
 
     if task_head_weights:
-        _save_component(task_head_weights, output_dir / "task_head.safetensors",
-                        mx_dtype, "TaskHead", stats, single_file=True)
+        _save_component(
+            task_head_weights,
+            output_dir / "task_head.safetensors",
+            mx_dtype,
+            "TaskHead",
+            stats,
+            single_file=True,
+        )
 
     # Copy config
     config_src = source_dir / "config.json"
@@ -97,7 +106,9 @@ def convert_uniworld_weights(
 
     logger.info(
         "Conversion complete: %d converted, %d skipped, %d errors",
-        stats["converted"], stats["skipped"], len(stats["errors"]),
+        stats["converted"],
+        stats["skipped"],
+        len(stats["errors"]),
     )
     return stats
 
@@ -113,7 +124,9 @@ def _save_meta(output_dir, source_dir, dtype, stats):
 
     logger.info(
         "Conversion complete: %d converted, %d skipped, %d errors",
-        stats["converted"], stats["skipped"], len(stats["errors"]),
+        stats["converted"],
+        stats["skipped"],
+        len(stats["errors"]),
     )
     return stats
 

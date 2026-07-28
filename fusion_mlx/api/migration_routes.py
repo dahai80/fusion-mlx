@@ -15,11 +15,11 @@ import re
 from enum import Enum
 from typing import Any
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter
 from pydantic import BaseModel, Field
 
-from ..model_auto_config import detect_model_config
 from ..model_aliases import list_aliases, resolve_model
+from ..model_auto_config import detect_model_config
 
 logger = logging.getLogger(__name__)
 
@@ -108,7 +108,9 @@ def _assess_level(
     try:
         resolved = resolve_model(model_id)
         if resolved and resolved != model_id:
-            logger.info("model %s resolved to %s, checking alias list", model_id, resolved)
+            logger.info(
+                "model %s resolved to %s, checking alias list", model_id, resolved
+            )
             if resolved in aliases:
                 return MigrationLevel.L0, list(_STANDARD_COMPONENTS.keys()), [], []
     except Exception:
@@ -150,9 +152,12 @@ def _assess_level(
         else:
             return MigrationLevel.L3, matched, missing, warnings
 
-    return MigrationLevel.L4, [], ["unrecognized architecture"], [
-        "Cannot analyze model structure; manual assessment required"
-    ]
+    return (
+        MigrationLevel.L4,
+        [],
+        ["unrecognized architecture"],
+        ["Cannot analyze model structure; manual assessment required"],
+    )
 
 
 def _compile_strategy(level: MigrationLevel) -> CompileStrategy:

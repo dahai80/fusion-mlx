@@ -97,7 +97,7 @@ class OpenSoraBackend(VideoBackend):
         return [mp4_bytes]
 
 
-def _save_mp4(frames: "np.ndarray", output_path: str, fps: int = 16):
+def _save_mp4(frames: np.ndarray, output_path: str, fps: int = 16):  # noqa: F821
     try:
         import imageio
 

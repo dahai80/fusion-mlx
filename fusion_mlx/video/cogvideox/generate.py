@@ -2,33 +2,28 @@
 import argparse
 import gc
 import logging
-import math
 import random
 import time
 from collections.abc import Callable
-from pathlib import Path
 
 import mlx.core as mx
 import numpy as np
 
 logger = logging.getLogger(__name__)
 
-from .config import CogVideoXConfig
 from .scheduler import FlowMatchScheduler
 from .utils import (
+    get_model_path,
     load_config,
     load_transformer,
     load_vae_decoder,
     load_vae_encoder,
-    get_model_path,
 )
 
 try:
     from fusion_mlx.custom_kernels.xfuser_attention import fast_attn_step as _fa_step
 except Exception:
     from contextlib import nullcontext as _fa_step
-
-from fusion_mlx.cache.latent_cache import get_image_latent_cache, image_latent_key
 
 
 class Colors:
@@ -108,7 +103,7 @@ def generate_video(
     # Load T5 encoder
     t1 = time.time()
     print(f"\n{Colors.BLUE}Loading T5 encoder...{Colors.RESET}")
-    from .text_encoder import load_t5_encoder, encode_text
+    from .text_encoder import encode_text, load_t5_encoder
 
     t5_path = model_dir / "t5_encoder.safetensors"
     t5_encoder = load_t5_encoder(t5_path, config)

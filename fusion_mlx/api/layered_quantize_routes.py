@@ -36,9 +36,7 @@ _layered_executor = ThreadPoolExecutor(
 
 
 class LayerRule(BaseModel):
-    pattern: str = Field(
-        ..., description="Regex pattern to match weight key names"
-    )
+    pattern: str = Field(..., description="Regex pattern to match weight key names")
     bits: int = Field(
         ..., ge=2, le=8, description="Quantization bits for matched layers"
     )
@@ -64,14 +62,14 @@ class LayeredQuantizeRequest(BaseModel):
         4, ge=2, le=8, description="Default quantization bits for unmatched layers"
     )
     layer_rules: list[LayerRule] = Field(
-        ..., min_length=1, description="Per-layer quantization rules (regex pattern + bits)"
+        ...,
+        min_length=1,
+        description="Per-layer quantization rules (regex pattern + bits)",
     )
     quant_group_size: int = Field(
         64, ge=1, description="Group size for affine quantization"
     )
-    quant_mode: str = Field(
-        "affine", description="Quantization mode: affine"
-    )
+    quant_mode: str = Field("affine", description="Quantization mode: affine")
     trust_remote_code: bool = Field(
         False, description="Allow custom modeling code from the source repo"
     )
@@ -108,9 +106,7 @@ def _set_layered(job: dict[str, Any], **fields: Any) -> None:
         job["updated_at"] = _now()
 
 
-def _run_layered_quantize(
-    job: dict[str, Any], req: LayeredQuantizeRequest
-) -> None:
+def _run_layered_quantize(job: dict[str, Any], req: LayeredQuantizeRequest) -> None:
     try:
         from fusion_mlx.cli_convert import _build_convert_kwargs, _run_convert
         from fusion_mlx.model_aliases import resolve_model
@@ -146,14 +142,15 @@ def _run_layered_quantize(
         if "q_bits" in kwargs and isinstance(kwargs["q_bits"], int):
             original_bits = kwargs["q_bits"]
             try:
-                import mlx.core as mx
                 from pathlib import Path
+
+                import mlx.core as mx
 
                 model_path = kwargs.get("mlx_path", req.output_path)
                 if model_path and Path(model_path).exists():
                     weights = mx.load(str(Path(model_path) / "weights.npz"))
                     per_layer_bits = {}
-                    for key in weights.keys():
+                    for key in weights:
                         matched = False
                         for pat, bits in compiled_rules:
                             if pat.search(key):

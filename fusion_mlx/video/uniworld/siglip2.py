@@ -6,7 +6,6 @@
 
 import logging
 from pathlib import Path
-from typing import Any
 
 import mlx.core as mx
 import mlx.nn as nn
@@ -15,14 +14,20 @@ logger = logging.getLogger(__name__)
 
 
 class SigLIP2PatchEmbed(nn.Module):
-    def __init__(self, image_size: int = 512, patch_size: int = 16,
-                 in_chans: int = 3, embed_dim: int = 1152):
+    def __init__(
+        self,
+        image_size: int = 512,
+        patch_size: int = 16,
+        in_chans: int = 3,
+        embed_dim: int = 1152,
+    ):
         super().__init__()
         self.image_size = image_size
         self.patch_size = patch_size
         self.num_patches = (image_size // patch_size) ** 2
         self.proj = nn.Conv2d(
-            in_chans, embed_dim,
+            in_chans,
+            embed_dim,
             kernel_size=(patch_size, patch_size),
             stride=(patch_size, patch_size),
         )
@@ -41,7 +46,7 @@ class SigLIP2Attention(nn.Module):
         super().__init__()
         self.num_heads = num_heads
         self.head_dim = dim // num_heads
-        self.scale = self.head_dim ** -0.5
+        self.scale = self.head_dim**-0.5
         self.qkv = nn.Linear(dim, dim * 3)
         self.proj = nn.Linear(dim, dim)
 
@@ -72,8 +77,7 @@ class SigLIP2MLP(nn.Module):
 
 
 class SigLIP2EncoderLayer(nn.Module):
-    def __init__(self, dim: int = 1152, num_heads: int = 16,
-                 mlp_hidden: int = 4304):
+    def __init__(self, dim: int = 1152, num_heads: int = 16, mlp_hidden: int = 4304):
         super().__init__()
         self.norm1 = nn.LayerNorm(dim, eps=1e-6)
         self.attn = SigLIP2Attention(dim, num_heads)
@@ -100,18 +104,28 @@ class SigLIP2VisionTransformer(nn.Module):
         super().__init__()
         self.embed_dim = embed_dim
         self.num_layers = num_layers
-        self.patch_embed = SigLIP2PatchEmbed(image_size, patch_size, in_chans, embed_dim)
+        self.patch_embed = SigLIP2PatchEmbed(
+            image_size, patch_size, in_chans, embed_dim
+        )
         num_patches = self.patch_embed.num_patches
         self.pos_embed = mx.zeros((1, num_patches, embed_dim))
         self.layers = []
         for _ in range(num_layers):
-            self.layers.append(SigLIP2EncoderLayer(dim=embed_dim, num_heads=num_heads,
-                                                    mlp_hidden=mlp_hidden))
+            self.layers.append(
+                SigLIP2EncoderLayer(
+                    dim=embed_dim, num_heads=num_heads, mlp_hidden=mlp_hidden
+                )
+            )
         self.norm = nn.LayerNorm(embed_dim, eps=1e-6)
         logger.info(
             "SigLIP2 ViT: layers=%d, embed_dim=%d, num_heads=%d, "
             "image_size=%d, patch_size=%d, num_patches=%d",
-            num_layers, embed_dim, num_heads, image_size, patch_size, num_patches,
+            num_layers,
+            embed_dim,
+            num_heads,
+            image_size,
+            patch_size,
+            num_patches,
         )
 
     def __call__(self, x: mx.array) -> mx.array:
@@ -120,7 +134,8 @@ class SigLIP2VisionTransformer(nn.Module):
         if self.pos_embed.shape[1] != x.shape[1]:
             logger.warning(
                 "SigLIP2 pos_embed mismatch: %d vs %d patches, interpolating",
-                self.pos_embed.shape[1], x.shape[1],
+                self.pos_embed.shape[1],
+                x.shape[1],
             )
             x = x + _interpolate_pos_embed(self.pos_embed, x.shape[1])
         else:
@@ -137,7 +152,9 @@ class SigLIP2VisionEncoder:
         self.dtype = dtype
 
     @classmethod
-    def from_pretrained(cls, model_dir: str | Path, dtype=mx.float16) -> "SigLIP2VisionEncoder":
+    def from_pretrained(
+        cls, model_dir: str | Path, dtype=mx.float16
+    ) -> "SigLIP2VisionEncoder":
         model_dir = Path(model_dir)
         logger.info("Loading SigLIP2 from %s", model_dir)
         model = SigLIP2VisionTransformer()
@@ -151,7 +168,9 @@ class SigLIP2VisionEncoder:
             filtered = _remap_siglip_weights(weights)
             model.load_weights(list(filtered.items()))
             mx.eval(model.parameters())
-            logger.info("SigLIP2 loaded %d weights from %s", len(filtered), weight_file.name)
+            logger.info(
+                "SigLIP2 loaded %d weights from %s", len(filtered), weight_file.name
+            )
         else:
             logger.warning("No weight file found for SigLIP2 in %s", model_dir)
         return cls(model, dtype)
@@ -169,11 +188,12 @@ class SigLIP2VisionEncoder:
 
 def _interpolate_pos_embed(pos_embed: mx.array, target_len: int) -> mx.array:
     import numpy as np
+
     src_len = pos_embed.shape[1]
     if src_len == target_len:
         return pos_embed
-    src_h = int(src_len ** 0.5)
-    tgt_h = int(target_len ** 0.5)
+    src_h = int(src_len**0.5)
+    tgt_h = int(target_len**0.5)
     dim = pos_embed.shape[-1]
     pe_np = np.array(pos_embed).reshape(1, src_h, src_h, dim)
     pe_np = np.resize(pe_np, (1, tgt_h, tgt_h, dim))
@@ -185,12 +205,12 @@ def _remap_siglip_weights(weights: dict[str, mx.array]) -> dict[str, mx.array]:
     for k, v in weights.items():
         new_k = k
         if k.startswith("vision_model."):
-            new_k = k[len("vision_model."):]
+            new_k = k[len("vision_model.") :]
         if k.startswith("model.vision_model."):
-            new_k = k[len("model.vision_model."):]
+            new_k = k[len("model.vision_model.") :]
         for prefix in ["embeddings.", "encoder."]:
             if new_k.startswith(prefix):
-                new_k = new_k[len(prefix):]
+                new_k = new_k[len(prefix) :]
         new_k = new_k.replace("patch_embedding.", "patch_embed.proj.")
         new_k = new_k.replace("position_embedding.", "pos_embed.")
         new_k = new_k.replace("layers.", "layers.")

@@ -130,7 +130,9 @@ def convert_weights(
         json.dump(meta, f, indent=2)
 
     logger.info(
-        "Conversion complete: %d shards, %d dropped", len(safetensor_files), len(all_dropped)
+        "Conversion complete: %d shards, %d dropped",
+        len(safetensor_files),
+        len(all_dropped),
     )
 
 

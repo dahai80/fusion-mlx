@@ -53,7 +53,9 @@ class Colors:
 _build_i2v_mask = build_i2v_mask
 
 
-def _load_video_frames(video_path: str, width: int, height: int, num_frames: int) -> mx.array:
+def _load_video_frames(
+    video_path: str, width: int, height: int, num_frames: int
+) -> mx.array:
     import cv2
 
     cap = cv2.VideoCapture(video_path)
@@ -70,13 +72,17 @@ def _load_video_frames(video_path: str, width: int, height: int, num_frames: int
         frames.append(frame)
     cap.release()
     while len(frames) < num_frames:
-        frames.append(frames[-1] if frames else np.zeros((height, width, 3), dtype=np.uint8))
+        frames.append(
+            frames[-1] if frames else np.zeros((height, width, 3), dtype=np.uint8)
+        )
     arr = np.stack(frames[:num_frames], axis=0)  # [T, H, W, 3]
     arr = arr.astype(np.float32) / 255.0 * 2.0 - 1.0
     return mx.array(arr.transpose(3, 0, 1, 2))  # [3, T, H, W]
 
 
-def _load_mask_frames(mask_path: str, width: int, height: int, num_frames: int) -> mx.array:
+def _load_mask_frames(
+    mask_path: str, width: int, height: int, num_frames: int
+) -> mx.array:
     import cv2
 
     cap = cv2.VideoCapture(mask_path)
@@ -102,7 +108,9 @@ def _load_mask_frames(mask_path: str, width: int, height: int, num_frames: int) 
             frames = [np.zeros((height, width), dtype=np.uint8)] * num_frames
     cap.release()
     while len(frames) < num_frames:
-        frames.append(frames[-1] if frames else np.zeros((height, width), dtype=np.uint8))
+        frames.append(
+            frames[-1] if frames else np.zeros((height, width), dtype=np.uint8)
+        )
     arr = np.stack(frames[:num_frames], axis=0)  # [T, H, W]
     arr = arr.astype(np.float32) / 255.0  # 0=black=conditioning, 1=white=generation
     return mx.array(arr)  # [T, H, W]
@@ -113,7 +121,9 @@ def _load_ref_image(image_path: str, width: int, height: int) -> mx.array:
 
     img = Image.open(image_path).convert("RGB")
     scale = max(width / img.width, height / img.height)
-    img = img.resize((round(img.width * scale), round(img.height * scale)), Image.LANCZOS)
+    img = img.resize(
+        (round(img.width * scale), round(img.height * scale)), Image.LANCZOS
+    )
     x1, y1 = (img.width - width) // 2, (img.height - height) // 2
     img = img.crop((x1, y1, x1 + width, y1 + height))
     arr = np.array(img, dtype=np.float32) / 255.0 * 2.0 - 1.0
@@ -133,7 +143,9 @@ def _prepare_vace_control_latents(
 ) -> mx.array:
     logger.info(
         "VACE control: video=%s mask=%s refs=%d",
-        control_video.shape, control_mask.shape, len(reference_images or []),
+        control_video.shape,
+        control_mask.shape,
+        len(reference_images or []),
     )
     S = vae_stride[1]  # spatial scale, e.g. 8
     num_frames = control_video.shape[1]
@@ -148,7 +160,9 @@ def _prepare_vace_control_latents(
     reactive_video = control_video * mask_exp
 
     # Encode each through VAE encoder -> [1, z_dim, T_lat, H_lat, W_lat]
-    inactive_lat = vae_encoder.encode(inactive_video[None])[0]  # [z_dim, T_lat, H_lat, W_lat]
+    inactive_lat = vae_encoder.encode(inactive_video[None])[
+        0
+    ]  # [z_dim, T_lat, H_lat, W_lat]
     mx.eval(inactive_lat)
     reactive_lat = vae_encoder.encode(reactive_video[None])[0]
     mx.eval(reactive_lat)
@@ -165,7 +179,9 @@ def _prepare_vace_control_latents(
             ref_lat = vae_encoder.encode(ref_video[None])[0]  # [z_dim, 1, H_lat, W_lat]
             mx.eval(ref_lat)
             ref_zeros = mx.zeros_like(ref_lat)  # [z_dim, 1, H_lat, W_lat]
-            ref_frame = mx.concatenate([ref_lat, ref_zeros], axis=0)  # [32, 1, H_lat, W_lat]
+            ref_frame = mx.concatenate(
+                [ref_lat, ref_zeros], axis=0
+            )  # [32, 1, H_lat, W_lat]
             ref_frames.append(ref_frame)
         # Prepend reference frames along TIME dimension
         ref_all = mx.concatenate(ref_frames, axis=1)  # [32, num_refs, H_lat, W_lat]
@@ -178,9 +194,7 @@ def _prepare_vace_control_latents(
 
     # Reshape mask into patches: each SxS patch -> 1 token with S*S channels
     # mask: [T, H, W] -> [T, H_lat, S, W_lat, S] -> [T, H_lat, W_lat, S, S]
-    mask_reshaped = control_mask.reshape(
-        num_frames, mask_lat_h, S, mask_lat_w, S
-    )
+    mask_reshaped = control_mask.reshape(num_frames, mask_lat_h, S, mask_lat_w, S)
     mask_reshaped = mask_reshaped.transpose(0, 1, 3, 2, 4)  # [T, H_lat, W_lat, S, S]
 
     # Pad time to match t_latent (temporal compression)
@@ -189,7 +203,12 @@ def _prepare_vace_control_latents(
     if mask_reshaped.shape[0] < t_latent:
         pad_t = t_latent - mask_reshaped.shape[0]
         mask_reshaped = mx.concatenate(
-            [mask_reshaped, mx.broadcast_to(mask_reshaped[-1:], (pad_t, mask_lat_h, mask_lat_w, S, S))],
+            [
+                mask_reshaped,
+                mx.broadcast_to(
+                    mask_reshaped[-1:], (pad_t, mask_lat_h, mask_lat_w, S, S)
+                ),
+            ],
             axis=0,
         )
     # Also need to handle temporal compression: replicate first frame t_stride times
@@ -213,12 +232,21 @@ def _prepare_vace_control_latents(
     # mask_channels needs same T as cond_latents channel-0
     cond_t = cond_latents.shape[1]
     if mask_channels.shape[0] != S * S:
-        logger.warning("VACE mask channels mismatch: expected %d got %d", S * S, mask_channels.shape[0])
+        logger.warning(
+            "VACE mask channels mismatch: expected %d got %d",
+            S * S,
+            mask_channels.shape[0],
+        )
     if mask_channels.shape[1] < cond_t:
         # Pad mask time dim to match conditioning latents
         pad_len = cond_t - mask_channels.shape[1]
         mask_channels = mx.concatenate(
-            [mask_channels, mx.broadcast_to(mask_channels[:, -1:], (S * S, pad_len, mask_lat_h, mask_lat_w))],
+            [
+                mask_channels,
+                mx.broadcast_to(
+                    mask_channels[:, -1:], (S * S, pad_len, mask_lat_h, mask_lat_w)
+                ),
+            ],
             axis=1,
         )
     elif mask_channels.shape[1] > cond_t:
@@ -345,6 +373,7 @@ def generate_video(
                 model_path = model_dir / "dit"
             if model_path.exists():
                 from .utils import _load_safetensors
+
                 probe = _load_safetensors(model_path)
                 for k, v in probe.items():
                     if "patch_embedding_proj.weight" in k:
@@ -371,6 +400,7 @@ def generate_video(
             model_path = model_dir / "dit"
         if model_path.exists():
             from .utils import _load_safetensors
+
             probe = _load_safetensors(model_path)
             for k, v in probe.items():
                 if "patch_embedding_proj.weight" in k:
@@ -532,7 +562,9 @@ def generate_video(
         )
     else:
         print(f"\n{Colors.BLUE}Loading T5 encoder...{Colors.RESET}")
-        t5_path = _resolve_model_file(model_dir, "t5_encoder.safetensors", "text_encoder")
+        t5_path = _resolve_model_file(
+            model_dir, "t5_encoder.safetensors", "text_encoder"
+        )
         t5_encoder = load_t5_encoder(t5_path, config)
 
         # Load tokenizer
@@ -719,9 +751,13 @@ def generate_video(
             del vae_enc, video_frames, mask_frames, ref_imgs
             gc.collect()
             mx.clear_cache()
-            print(f"{Colors.DIM}  VACE control encoding: {time.time() - t_vace:.1f}s{Colors.RESET}")
+            print(
+                f"{Colors.DIM}  VACE control encoding: {time.time() - t_vace:.1f}s{Colors.RESET}"
+            )
         else:
-            logger.warning("VACE model but no control_video/control_mask provided — running without control")
+            logger.warning(
+                "VACE model but no control_video/control_mask provided — running without control"
+            )
 
     # Load transformer models
     print(f"\n{Colors.BLUE}Loading transformer model(s)...{Colors.RESET}")
@@ -972,13 +1008,20 @@ def generate_video(
             _lat_np = np.array(latents)
             _nan_c = int(np.isnan(_lat_np).sum())
             if _nan_c > 0:
-                logger.warning("Denoise step %d/%d: %d NaN in latents — aborting", i+1, steps, _nan_c)
+                logger.warning(
+                    "Denoise step %d/%d: %d NaN in latents — aborting",
+                    i + 1,
+                    steps,
+                    _nan_c,
+                )
                 break
         if debug_latents:
             lat_np = np.array(latents)
             _nan_count = int(np.isnan(lat_np).sum())
-            print(f"  Step {i}: mean={lat_np.mean():.4f} std={lat_np.std():.4f} "
-                  f"nan={_nan_count} zero_pct={100*(lat_np==0).sum()/lat_np.size:.1f}%")
+            print(
+                f"  Step {i}: mean={lat_np.mean():.4f} std={lat_np.std():.4f} "
+                f"nan={_nan_count} zero_pct={100*(lat_np==0).sum()/lat_np.size:.1f}%"
+            )
             if _nan_count > 0:
                 print(f"  *** NaN DETECTED at step {i}! Aborting. ***")
                 break
@@ -1104,7 +1147,10 @@ def generate_video(
         video = (video + 1.0) / 2.0
         nan_count = np.isnan(video).sum()
         if nan_count > 0:
-            logger.warning("Wan2 VAE decode (wan22): %d NaN in video, replacing with 0", int(nan_count))
+            logger.warning(
+                "Wan2 VAE decode (wan22): %d NaN in video, replacing with 0",
+                int(nan_count),
+            )
             video = np.nan_to_num(video, nan=0.0)
         video = np.clip(video * 255.0, 0, 255).astype(np.uint8)
     else:
@@ -1119,7 +1165,10 @@ def generate_video(
         video = (video + 1.0) / 2.0
         nan_count = np.isnan(video).sum()
         if nan_count > 0:
-            logger.warning("Wan2 VAE decode (wan21): %d NaN in video, replacing with 0", int(nan_count))
+            logger.warning(
+                "Wan2 VAE decode (wan21): %d NaN in video, replacing with 0",
+                int(nan_count),
+            )
             video = np.nan_to_num(video, nan=0.0)
         video = np.clip(video * 255.0, 0, 255).astype(np.uint8)
         video = video.transpose(1, 2, 3, 0)  # [T, H, W, 3]
