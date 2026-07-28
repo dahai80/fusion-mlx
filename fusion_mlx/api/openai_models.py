@@ -309,6 +309,8 @@ class ChatCompletionRequest(BaseModel):
     # Logprobs: return log probabilities of output tokens (OpenAI-compatible).
     logprobs: bool | None = None
     top_logprobs: int | None = None
+    # Issue #226: optional client-supplied session id for per-session usage stats.
+    session_id: str | None = None
 
     @field_validator("top_logprobs")
     @classmethod

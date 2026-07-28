@@ -42,6 +42,7 @@ from ..middleware.auth import check_rate_limit, verify_api_key
 from ..pool import EnginePool
 from ..request import SamplingParams
 from ..server_metrics import record_llm_metrics
+from ..sessions import record_chat_session
 from ._guards import check_chat_capability, check_multimodal_content
 
 logger = logging.getLogger(__name__)
@@ -254,6 +255,12 @@ async def _run_chat(
             generation_duration=time.perf_counter() - _start,
             model_id=model_name,
         )
+        record_chat_session(
+            getattr(request, "session_id", None),
+            prompt_tokens=getattr(gen, "prompt_tokens", 0) or 0,
+            completion_tokens=getattr(gen, "completion_tokens", 0) or 0,
+            cached_tokens=getattr(gen, "cached_tokens", 0) or 0,
+        )
         return _adapter.format_response(internal, request)
     except HTTPException:
         raise
@@ -455,6 +462,12 @@ async def _stream_chat_generator(
             cached_tokens=cached_tokens or 0,
             generation_duration=time.perf_counter() - _start,
             model_id=model_name,
+        )
+        record_chat_session(
+            getattr(request, "session_id", None),
+            prompt_tokens=prompt_tokens or 0,
+            completion_tokens=completion_tokens or 0,
+            cached_tokens=cached_tokens or 0,
         )
 
     except asyncio.CancelledError:
