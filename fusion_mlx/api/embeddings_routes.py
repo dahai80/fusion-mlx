@@ -24,6 +24,9 @@ from .embedding_utils import (
 
 logger = logging.getLogger(__name__)
 
+_EMBEDDING_BATCH_SIZE = 64
+_EMBEDDING_DEDUP_ENABLED = True
+
 router = APIRouter(prefix="/v1", tags=["embeddings"])
 
 _pool: Any = None
@@ -62,6 +65,19 @@ def get_embedding_max_length(model_id: str, max_length: int | None) -> int | Non
     return ctx if ctx is not None else 512
 
 
+def _dedup_inputs(embedding_inputs: list[str]) -> tuple[list[str], list[int]]:
+    """Deduplicate text inputs, returning unique texts and original->unique index map."""
+    seen: dict[str, int] = {}
+    unique: list[str] = []
+    mapping: list[int] = []
+    for text in embedding_inputs:
+        if text not in seen:
+            seen[text] = len(unique)
+            unique.append(text)
+        mapping.append(seen[text])
+    return unique, mapping
+
+
 @router.post(
     "/embeddings",
     dependencies=[Depends(verify_api_key), Depends(check_rate_limit)],
@@ -87,19 +103,57 @@ async def create_embeddings(request: EmbeddingRequest):
     if not embedding_inputs:
         raise HTTPException(status_code=400, detail="Input cannot be empty")
 
+    is_text_only = all(isinstance(item, str) for item in embedding_inputs)
+    text_inputs: list[str] = embedding_inputs if is_text_only else []
+
     max_length = get_embedding_max_length(
         request.model, getattr(request, "max_length", None)
     )
     truncation = getattr(request, "truncation", True)
 
+    dedup_mapping: list[int] | None = None
+    unique_texts: list[str] | None = None
+    if is_text_only and _EMBEDDING_DEDUP_ENABLED and len(text_inputs) > 1:
+        unique_texts, dedup_mapping = _dedup_inputs(text_inputs)
+        if len(unique_texts) < len(text_inputs):
+            logger.info(
+                "Embedding dedup: %d inputs -> %d unique (%d duplicates skipped)",
+                len(text_inputs),
+                len(unique_texts),
+                len(text_inputs) - len(unique_texts),
+            )
+            text_inputs = unique_texts
+        else:
+            dedup_mapping = None
+
     start_time = time.perf_counter()
     try:
         engine = await get_embedding_engine(request.model)
-        output = await engine.embed(
-            embedding_inputs,
-            max_length=max_length,
-            truncation=truncation,
-        )
+        if is_text_only and len(text_inputs) > _EMBEDDING_BATCH_SIZE:
+            all_embeddings: list[list[float]] = []
+            total_tokens = 0
+            for batch_start in range(0, len(text_inputs), _EMBEDDING_BATCH_SIZE):
+                batch = text_inputs[batch_start : batch_start + _EMBEDDING_BATCH_SIZE]
+                output = await engine.embed(
+                    batch,
+                    max_length=max_length,
+                    truncation=truncation,
+                )
+                all_embeddings.extend(output.embeddings)
+                total_tokens += output.total_tokens
+            embeddings_list = all_embeddings
+            dimensions = output.dimensions
+            tokens = total_tokens
+        else:
+            inputs_to_embed = text_inputs if is_text_only else embedding_inputs
+            output = await engine.embed(
+                inputs_to_embed,
+                max_length=max_length,
+                truncation=truncation,
+            )
+            embeddings_list = output.embeddings
+            dimensions = output.dimensions
+            tokens = output.total_tokens
     except (ValueError, TypeError) as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -107,21 +161,25 @@ async def create_embeddings(request: EmbeddingRequest):
     logger.info(
         "Embedding: %d inputs, %d dims, %d tokens, max_length=%d in %.3fs",
         len(embedding_inputs),
-        output.dimensions,
-        output.total_tokens,
+        dimensions,
+        tokens,
         max_length,
         elapsed,
     )
     get_server_metrics().record_request_complete(
-        prompt_tokens=output.total_tokens,
+        prompt_tokens=tokens,
         completion_tokens=0,
         cached_tokens=0,
         prefill_duration=elapsed,
         model_id=request.model,
     )
 
+    if dedup_mapping is not None:
+        deduped_embeddings = [embeddings_list[idx] for idx in dedup_mapping]
+        embeddings_list = deduped_embeddings
+
     data = []
-    for i, embedding in enumerate(output.embeddings):
+    for i, embedding in enumerate(embeddings_list):
         if request.dimensions and request.dimensions < len(embedding):
             embedding = truncate_embedding(embedding, request.dimensions)
 
@@ -136,7 +194,7 @@ async def create_embeddings(request: EmbeddingRequest):
         data=data,
         model=request.model,
         usage=EmbeddingUsage(
-            prompt_tokens=output.total_tokens,
-            total_tokens=output.total_tokens,
+            prompt_tokens=tokens,
+            total_tokens=tokens,
         ),
     )
