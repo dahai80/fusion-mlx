@@ -187,7 +187,7 @@ class BaseEngine(ABC):
         # Structural fallback for /v1/completions logprobs: an engine
         # exposing a tokenizer + a streaming generator can emit per-token
         # distributions. Subclasses may override with a precise flag;
-        # routes/completions.py::_engine_supports_completion_logprobs
+        # (legacy: routes_internal/completions.py::_engine_supports_completion_logprobs, removed)
         # honors an explicit attribute first. A tokenizer that raises
         # AttributeError (uninitialized) collapses to False.
         try:

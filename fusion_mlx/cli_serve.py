@@ -1072,9 +1072,6 @@ def _stage_server_config(args, server, logger):
     # Alias info for /v1/models
     _get_config().model_alias = getattr(args, "_original_alias", None)
 
-    # Audio lane flag
-    _get_config().enable_audio_lane = bool(getattr(args, "enable_audio", False))
-
     # API key
     server._api_key = server._resolve_api_key(args.api_key)
     _get_config().default_timeout = args.timeout
@@ -1137,13 +1134,9 @@ def _stage_server_config(args, server, logger):
     if args.enable_auto_tool_choice and args.tool_call_parser:
         _get_config().enable_auto_tool_choice = True
         _get_config().tool_call_parser = args.tool_call_parser
-        _get_config().enable_tool_logits_bias = getattr(
-            args, "enable_tool_logits_bias", False
-        )
     else:
         _get_config().enable_auto_tool_choice = False
         _get_config().tool_call_parser = None
-        _get_config().enable_tool_logits_bias = False
 
     # Generation defaults
     if args.default_temperature is not None:
@@ -1192,10 +1185,7 @@ def _print_startup_banner(args, cors_origins, gc_control, logger):
     """Print the startup banner with feature summary."""
     features = []
     if args.enable_auto_tool_choice:
-        bias_info = (
-            " + logits bias" if getattr(args, "enable_tool_logits_bias", False) else ""
-        )
-        features.append(f"tools: {args.tool_call_parser}{bias_info}")
+        features.append(f"tools: {args.tool_call_parser}")
     if args.reasoning_parser:
         features.append(f"reasoning: {args.reasoning_parser}")
     auth_feature = _auth_feature_str(args.api_key)

@@ -242,7 +242,6 @@ class ServerConfig:
     enable_auto_tool_choice: bool = False
     tool_call_parser: str | None = None
     tool_parser_instance: Any = None
-    enable_tool_logits_bias: bool = False
 
     # Reasoning
     reasoning_parser: Any = None
@@ -277,9 +276,6 @@ class ServerConfig:
     pin_system_prompt: bool = False
     core_behavioral_prompt: bool = True
     pinned_system_prompt_hash: str | None = None
-
-    # Audio lane
-    enable_audio_lane: bool = False
 
     # Multi-model
     model_registry: Any = None

@@ -19,6 +19,7 @@ Usage:
 """
 
 import argparse
+import pytest
 import asyncio
 import sys
 import time
@@ -60,6 +61,7 @@ async def stream_completions(session, prompt, max_tokens=128, timeout=120):
 # ── Event Loop Tests ──────────────────────────────────────────────
 
 
+@pytest.mark.integration
 async def test_event_loop_responsiveness():
     """Test 1: GET /v1/models responds <2s during active decode."""
     print("\n=== Test 1: Event Loop Responsiveness ===")
@@ -94,6 +96,7 @@ async def test_event_loop_responsiveness():
         )
 
 
+@pytest.mark.integration
 async def test_disconnect_recovery():
     """Test 2: After client disconnect, next request starts promptly."""
     print("\n=== Test 2: Disconnect Recovery (ESC) ===")
@@ -132,6 +135,7 @@ async def test_disconnect_recovery():
             print(f"  FAIL: Recovery took {elapsed:.1f}s")
 
 
+@pytest.mark.integration
 async def test_request_queuing():
     """Test 3: Second request waits for first, no preemption."""
     print("\n=== Test 3: Request Queuing ===")

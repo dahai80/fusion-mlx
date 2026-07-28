@@ -14,6 +14,14 @@ pytestmark = pytest.mark.xfail(
     reason="strict=False: video routes cross-module state leak when batched with other test suites"
 )
 
+
+@pytest.fixture(autouse=True)
+def _reset_videos_pool():
+    yield
+    import fusion_mlx.api.videos_routes as vr
+    vr._pool = None
+
+
 from fusion_mlx.api.videos_routes import (
     router as videos_router,
 )

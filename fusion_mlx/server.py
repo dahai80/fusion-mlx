@@ -138,45 +138,16 @@ _pending_single_model: dict | None = None
 
 
 def _sync_config() -> None:
-    # Copy staged server globals into the config singleton + auth. Bridges the
-    # global-variable staging pattern (cli_serve sets ``server._api_key`` etc.
-    # before uvicorn starts) with the config object middleware reads. Idempotent
-    # — every assignment is a straight overwrite. Best-effort: ServerConfig
-    # only carries a subset of these fields, so guard each with hasattr.
-    # NOTE: model_name / model_alias / model_path are NOT staged here - they
-    # are written directly to ServerConfig by cli_serve + load_model (#50).
+    # Propagate CLI-staged api_key to ServerConfig + admin.auth.
+    # Other fields (sampling, gc_control, etc.) are written directly
+    # to ServerConfig by cli_serve — no longer staged through globals (#50).
     try:
         from .config import get_config
 
         cfg = get_config()
+        cfg.api_key = _api_key
     except Exception:
-        cfg = None
-    if cfg is not None:
-        for _attr, _val in (
-            ("api_key", _api_key),
-            # Sampling defaults + gc_control/no_thinking/pin_system_prompt/
-            # reasoning_parser(_name) are read directly from ServerConfig by
-            # service/helpers + chat.py -- no longer staged through server
-            # globals (#50 consolidation).
-            # rate_limiter is intentionally excluded: it is a module-level
-            # singleton in middleware/auth.py (configure_rate_limiter mutates
-            # it in place and returns it), NOT a ServerConfig field.
-        ):
-            if hasattr(cfg, _attr):
-                try:
-                    setattr(cfg, _attr, _val)
-                except Exception:
-                    # #69: setattr failures mean config silently drifts out of
-                    # sync (frozen dataclass / property setter). Warn so the
-                    # drift is visible, not buried at debug.
-                    logger.warning(
-                        "_sync_config: setattr %s failed (config may drift)",
-                        _attr,
-                        exc_info=True,
-                    )
-    # Auth: propagate ``--api-key`` to the admin.auth module global the
-    # middleware checks. Settings.json api_key is wired in Server.__init__;
-    # this covers the CLI override for the single-model ``serve --model`` path.
+        logger.warning("_sync_config: failed to set api_key on config", exc_info=True)
     if _api_key:
         try:
             from .admin.auth import set_api_key
