@@ -1,4 +1,5 @@
 import math
+import logging
 
 import mlx.core as mx
 import mlx.nn as nn
@@ -8,6 +9,9 @@ from .attention import WanLayerNorm, _linear_dtype
 from .config import WanModelConfig
 from .rope import rope_params, rope_precompute_cos_sin
 from .transformer import WanAttentionBlock
+from .vace import VACEBlock
+
+logger = logging.getLogger(__name__)
 
 
 def sinusoidal_embedding_1d(dim: int, position: mx.array) -> mx.array:
@@ -115,6 +119,30 @@ class WanModel(nn.Module):
             )
         )
 
+        # VACE: Video-Conditioned Auxiliary Control Encoding
+        # Only instantiated when vace_layers is non-empty (VACE-14B model).
+        self._vace_layers = tuple(sorted(config.vace_layers)) if config.vace_layers else ()
+        if config.vace_layers:
+            vace_patch_dim = config.vace_in_dim * math.prod(config.patch_size)
+            self.vace_patch_embedding_proj = nn.Linear(vace_patch_dim, dim)
+            self.vace_blocks = [
+                VACEBlock(
+                    dim=dim,
+                    ffn_dim=config.ffn_dim,
+                    num_heads=config.num_heads,
+                    qk_norm=config.qk_norm,
+                    cross_attn_norm=config.cross_attn_norm,
+                    eps=config.eps,
+                    has_before_proj=(i == 0),
+                )
+                for i in range(len(config.vace_layers))
+            ]
+            # Map from block index -> vace_block index for O(1) lookup
+            self._vace_block_map = {
+                layer_idx: vace_idx
+                for vace_idx, layer_idx in enumerate(config.vace_layers)
+            }
+
     def _patchify(self, x: mx.array) -> tuple:
         c, f, h, w = x.shape
         pt, ph, pw = self._patch_size
@@ -133,6 +161,26 @@ class WanModel(nn.Module):
         patches = self.patch_embedding_proj(x)  # [L, dim]
         patches = patches.astype(_linear_dtype(self.patch_embedding_proj))
         patches = patches[None, :, :]  # [1, L, dim]
+
+        return patches, (f_out, h_out, w_out)
+
+    def _patchify_vace(self, x: mx.array) -> tuple:
+        # Patchify control hidden states using vace_patch_embedding_proj.
+        # x shape: [C_vace, F, H, W] where C_vace = vace_in_dim
+        c, f, h, w = x.shape
+        pt, ph, pw = self._patch_size
+
+        f_out = f // pt
+        h_out = h // ph
+        w_out = w // pw
+
+        x = x.reshape(c, f_out, pt, h_out, ph, w_out, pw)
+        x = x.transpose(1, 3, 5, 0, 2, 4, 6)
+        x = x.reshape(f_out * h_out * w_out, -1)
+
+        patches = self.vace_patch_embedding_proj(x)
+        patches = patches.astype(_linear_dtype(self.vace_patch_embedding_proj))
+        patches = patches[None, :, :]
 
         return patches, (f_out, h_out, w_out)
 
@@ -177,6 +225,39 @@ class WanModel(nn.Module):
         w_dtype = _linear_dtype(self.patch_embedding_proj)
         return rope_precompute_cos_sin(grid_sizes, self.freqs, dtype=w_dtype)
 
+    def sanitize(self, weights: dict[str, mx.array]) -> dict[str, mx.array]:
+        # Remap PyTorch Conv3d weights to MLX Linear for patch embeddings.
+        # Conv3d weight shape: [out_ch, in_ch, kt, kh, kw]
+        # Linear weight shape: [out_dim, in_dim] where in_dim = in_ch*kt*kh*kw
+        remapped = {}
+        for k, v in weights.items():
+            nk = k
+            # Remap vace_patch_embedding (Conv3d) -> vace_patch_embedding_proj (Linear)
+            if k.startswith("vace_patch_embedding."):
+                suffix = k[len("vace_patch_embedding."):]
+                nk = f"vace_patch_embedding_proj.{suffix}"
+                if suffix == "weight" and v.ndim == 5:
+                    out_ch, in_ch, kt, kh, kw = v.shape
+                    v = v.reshape(out_ch, in_ch * kt * kh * kw)
+                    logger.info(
+                        "VACE: reshaped vace_patch_embedding.weight %s -> %s",
+                        (out_ch, in_ch, kt, kh, kw),
+                        v.shape,
+                    )
+                elif suffix == "bias" and v.ndim > 1:
+                    v = v.reshape(-1)
+            # Remap patch_embedding (Conv3d) -> patch_embedding_proj (Linear)
+            elif k.startswith("patch_embedding."):
+                suffix = k[len("patch_embedding."):]
+                nk = f"patch_embedding_proj.{suffix}"
+                if suffix == "weight" and v.ndim == 5:
+                    out_ch, in_ch, kt, kh, kw = v.shape
+                    v = v.reshape(out_ch, in_ch * kt * kh * kw)
+                elif suffix == "bias" and v.ndim > 1:
+                    v = v.reshape(-1)
+            remapped[nk] = v
+        return remapped
+
     def __call__(
         self,
         x_list: list,
@@ -186,6 +267,8 @@ class WanModel(nn.Module):
         cross_kv_caches: list | None = None,
         y: list | None = None,
         rope_cos_sin: tuple | None = None,
+        control_hidden_states: list | None = None,
+        control_scales: list[float] | None = None,
     ) -> list:
         # Detect identical inputs (CFG B=2) to avoid duplicate patchify work.
         # Check BEFORE I2V concat since concat creates new array objects.
@@ -295,10 +378,67 @@ class WanModel(nn.Module):
             attn_mask=attn_mask,
         )
 
-        # Run transformer blocks
+        # VACE: prepare control hints if control states are provided
+        vace_hints = {}
+        if self._vace_layers and control_hidden_states is not None:
+            if control_scales is None:
+                control_scales = [1.0] * len(self._vace_layers)
+
+            # Patchify control hidden states
+            ctrl_patches = []
+            ctrl_grid_sizes = []
+            ctrl_seq_lens = []
+            for ctrl in control_hidden_states:
+                cp, cgs = self._patchify_vace(ctrl)
+                ctrl_patches.append(cp)
+                ctrl_grid_sizes.append(cgs)
+                ctrl_seq_lens.append(cp.shape[1])
+
+            # Pad and concatenate control patches
+            max_ctrl_len = max(ctrl_seq_lens)
+            ctrl_x = mx.concatenate(
+                [
+                    (
+                        mx.concatenate(
+                            [p, mx.zeros((1, max_ctrl_len - p.shape[1], self.dim), dtype=p.dtype)],
+                            axis=1,
+                        )
+                        if p.shape[1] < max_ctrl_len
+                        else p
+                    )
+                    for p in ctrl_patches
+                ],
+                axis=0,
+            )
+
+            # Run VACE blocks to produce conditioning hints (reversed order for pop)
+            ctrl_state = ctrl_x
+            for vi, vace_block in enumerate(self.vace_blocks):
+                conditioning, ctrl_state = vace_block(
+                    x, ctrl_state, e=e0, seq_lens=ctrl_seq_lens,
+                    grid_sizes=ctrl_grid_sizes, freqs=self.freqs,
+                    context=context_batch, context_lens=None,
+                    rope_cos_sin=rope_cos_sin, attn_mask=attn_mask,
+                )
+                # Map vace_block index to main block layer index
+                layer_idx = self._vace_layers[vi]
+                vace_hints[layer_idx] = (conditioning, control_scales[vi])
+
+        # Run transformer blocks with optional VACE injection
         for i, block in enumerate(self.blocks):
             kv = cross_kv_caches[i] if cross_kv_caches is not None else None
             x = block(x, cross_kv_cache=kv, **kwargs)
+
+            # VACE injection at specified layers
+            if i in vace_hints:
+                hint, scale = vace_hints[i]
+                # Pad hint to match x seq_len if needed
+                if hint.shape[1] < x.shape[1]:
+                    hint = mx.concatenate(
+                        [hint, mx.zeros((hint.shape[0], x.shape[1] - hint.shape[1], self.dim), dtype=hint.dtype)],
+                        axis=1,
+                    )
+                x = x + hint * scale
 
         # Output head
         x = self.head(x, e)

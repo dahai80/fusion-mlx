@@ -124,3 +124,11 @@ class WanModelConfig(BaseModelConfig):
             sample_fps=24,
             max_area=704 * 1280,
         )
+
+    @classmethod
+    def wan_vace_14b(cls) -> "WanModelConfig":
+        return cls(
+            model_type="vace",
+            vace_in_dim=96,
+            vace_layers=(0, 5, 10, 15, 20, 25, 30, 35),
+        )

@@ -30,6 +30,7 @@ def load_wan_model(
         )
 
     weights = mx.load(str(model_path))
+    weights = model.sanitize(weights)
 
     # Apply LoRAs: dequantize+merge for quantized models, weight merge for bf16
     if loras:

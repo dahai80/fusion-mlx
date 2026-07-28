@@ -99,6 +99,8 @@ def generate_video(
     debug_latents: bool = False,
     on_step_sync: Callable[[int, int], None] | None = None,
     session_id: str | None = None,
+    control_hidden_states: list | None = None,
+    control_scales: list[float] | None = None,
 ):
     import json
 
@@ -155,6 +157,7 @@ def generate_video(
 
     is_dual = config.dual_model
     is_i2v = image is not None
+    is_vace = config.model_type == "vace"
 
     # Validate config against actual weights (handles mismatched config.json)
     if not is_dual:
@@ -226,6 +229,8 @@ def generate_video(
     version_str = f"Wan{config.model_version}"
     mode_str = "dual-model" if is_dual else "single-model"
     pipeline_str = "Image-to-Video" if is_i2v else "Text-to-Video"
+    if is_vace:
+        pipeline_str += " + VACE"
     # Resolve negative prompt: explicit user value > config default
     # The official Wan2.2 uses a Chinese negative prompt (config.sample_neg_prompt)
     # that prevents oversaturation, artifacts, and comic look. We use it by default.
@@ -650,6 +655,8 @@ def generate_video(
                     cross_kv_caches=kv,
                     y=y_arg,
                     rope_cos_sin=rcs,
+                    control_hidden_states=control_hidden_states,
+                    control_scales=control_scales,
                 )
             noise_pred = preds[0]
             del preds
@@ -691,6 +698,8 @@ def generate_video(
                     cross_kv_caches=kv,
                     y=y_arg,
                     rope_cos_sin=rcs,
+                    control_hidden_states=control_hidden_states,
+                    control_scales=control_scales,
                 )
             noise_pred_cond, noise_pred_uncond = preds[0], preds[1]
             noise_pred = noise_pred_uncond + gs * (noise_pred_cond - noise_pred_uncond)
