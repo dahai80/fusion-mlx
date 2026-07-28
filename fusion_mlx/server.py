@@ -80,6 +80,8 @@ from .api.openclaw_routes import set_openclaw_agent_pool
 from .api.recommend_routes import router as recommend_router
 from .api.rerank_routes import router as rerank_router
 from .api.rerank_routes import set_rerank_context
+from .api.ner_routes import router as ner_router
+from .api.ner_routes import set_ner_context
 from .api.session_routes import router as sessions_router
 from .api.session_routes import set_sessions_context
 from .api.videos_routes import router as videos_router
@@ -527,6 +529,7 @@ class Server:
         app.include_router(recommend_router)
         app.include_router(embeddings_router)
         app.include_router(rerank_router)
+        app.include_router(ner_router)
         app.include_router(sessions_router)
         app.include_router(responses_router)
         app.include_router(health_probe_router)
@@ -800,6 +803,7 @@ class Server:
         set_mcp_manager_getter(lambda: None)  # TODO: wire MCP manager
         set_embeddings_context(self.pool, _server_state)
         set_rerank_context(self.pool, _server_state)
+        set_ner_context(self.pool, _server_state)
         set_sessions_context(self.pool, _server_state)
 
         # Wire admin getters so require_admin can access global settings/auth

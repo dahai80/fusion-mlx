@@ -30,6 +30,7 @@ ModelType = Literal[
     "vlm",
     "embedding",
     "reranker",
+    "ner",
     "audio_stt",
     "audio_tts",
     "audio_sts",
@@ -41,6 +42,7 @@ EngineType = Literal[
     "vlm",
     "embedding",
     "reranker",
+    "ner",
     "audio_stt",
     "audio_tts",
     "audio_sts",
@@ -204,6 +206,12 @@ SUPPORTED_RERANKER_ARCHITECTURES = {
     "ModernBertForSequenceClassification",  # via mlx-embeddings
     "XLMRobertaForSequenceClassification",  # fusion-mlx native implementation
     "JinaForRanking",  # Jina v3 listwise reranker
+}
+
+# Supported NER (Named Entity Recognition) architectures
+NER_ARCHITECTURES = {
+    "SpaModel",
+    "GLiNERModel",
 }
 
 # CausalLM-based reranker architectures.
@@ -632,6 +640,11 @@ def detect_model_type(model_path: Path) -> ModelType:
     for arch in architectures:
         if arch in RERANKER_ARCHITECTURES:
             return "reranker"
+
+    # Check architectures field for NER models
+    for arch in architectures:
+        if arch in NER_ARCHITECTURES:
+            return "ner"
 
     # Check for CausalLM-based rerankers (e.g., Qwen3-Reranker).
     # These use a standard CausalLM architecture but are fine-tuned for reranking

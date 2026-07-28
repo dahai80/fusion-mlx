@@ -33,6 +33,7 @@ from ..engines.base import BaseEngine
 from ..engines.batched import BatchedEngine
 from ..engines.embedding import EmbeddingEngine
 from ..engines.image_gen import ImageGenEngine
+from ..engines.ner import NEREngine
 from ..engines.reranker import RerankerEngine
 from ..engines.sts import STSEngine
 from ..engines.stt import STTEngine
@@ -65,6 +66,7 @@ class EngineEntry:
         "vlm",
         "embedding",
         "reranker",
+        "ner",
         "audio_stt",
         "audio_tts",
         "audio_sts",
@@ -76,6 +78,7 @@ class EngineEntry:
         "simple",
         "embedding",
         "reranker",
+        "ner",
         "vlm",
         "audio_stt",
         "audio_tts",
@@ -103,6 +106,7 @@ class EngineEntry:
         BaseEngine
         | EmbeddingEngine
         | RerankerEngine
+        | NEREngine
         | STTEngine
         | STSEngine
         | TTSEngine
@@ -458,6 +462,7 @@ class EnginePool:
         "vlm": "vlm",
         "embedding": "embedding",
         "reranker": "reranker",
+        "ner": "ner",
         "audio_stt": "audio_stt",
         "audio_tts": "audio_tts",
         "audio_sts": "audio_sts",
@@ -773,6 +778,7 @@ class EnginePool:
         BaseEngine
         | EmbeddingEngine
         | RerankerEngine
+        | NEREngine
         | STTEngine
         | STSEngine
         | TTSEngine
@@ -1776,6 +1782,11 @@ class EnginePool:
                     )
                 elif effective_type == "reranker":
                     engine = RerankerEngine(
+                        model_name=entry.model_path,
+                        trust_remote_code=trc,
+                    )
+                elif effective_type == "ner":
+                    engine = NEREngine(
                         model_name=entry.model_path,
                         trust_remote_code=trc,
                     )
