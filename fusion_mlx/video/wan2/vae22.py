@@ -876,6 +876,12 @@ class Wan22VAEDecoder(nn.Module):
         # Unpatchify: 12 channels → 3 RGB (spatial 2×2)
         out = _unpatchify(out, patch_size=2)
 
+        # Replace NaN before clip — MLX clip passes NaN through
+        nan_count = mx.sum(mx.isnan(out)).item()
+        if nan_count > 0:
+            logger.warning("Wan22VAEDecoder: %d NaN values in output, replacing with 0", int(nan_count))
+            out = mx.where(mx.isnan(out), mx.zeros_like(out), out)
+
         return mx.clip(out, -1.0, 1.0)
 
     def decode_tiled(self, z, tiling_config=None):
@@ -972,9 +978,33 @@ def _patchify(x, patch_size=2):
     return x
 
 
+def _weights_already_mlx_format(weights: dict) -> bool:
+    """Detect if conv weights are already in MLX channels-last format.
+
+    PyTorch Conv3d: [O, I, D, H, W]  — e.g. conv2 = [48, 48, 1, 1, 1]
+    MLX Conv3d:     [O, D, H, W, I]  — e.g. conv2 = [48, 1, 1, 1, 48]
+
+    Heuristic: check conv2.weight — if dim[1] < dim[4], it's MLX format.
+    """
+    for key in ("conv2.weight", "decoder.conv1.weight"):
+        if key in weights:
+            w = weights[key]
+            if w.ndim == 5 and w.shape[1] < w.shape[4]:
+                return True
+            elif w.ndim == 5 and w.shape[1] > w.shape[4]:
+                return False
+    return False
+
+
 def sanitize_wan22_vae_weights(weights: dict, include_encoder: bool = False) -> dict:
     sanitized = {}
     consumed = set()
+
+    already_mlx = _weights_already_mlx_format(weights)
+    if already_mlx:
+        logger.info("VAE weights already in MLX format — skipping transpose")
+    else:
+        logger.info("VAE weights in PyTorch format — will transpose to MLX")
 
     for key, value in weights.items():
         # Skip encoder and conv1 unless requested
@@ -1017,9 +1047,9 @@ def sanitize_wan22_vae_weights(weights: dict, include_encoder: bool = False) -> 
         elif ".proj.bias" in new_key and "time_projection" not in new_key:
             new_key = new_key.replace(".proj.bias", ".proj_bias")
 
-        # Transpose conv weights to channels-last
+        # Transpose conv weights to channels-last (only if PyTorch format)
         is_weight = new_key.endswith(".weight") or new_key.endswith("_weight")
-        if is_weight:
+        if is_weight and not already_mlx:
             if value.ndim == 5:
                 # Conv3d: [O, I, D, H, W] → [O, D, H, W, I]
                 value = np.transpose(np.array(value), (0, 2, 3, 4, 1))
