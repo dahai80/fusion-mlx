@@ -538,16 +538,16 @@ def test_no_truncated_literal_in_route_module_call_sites():
 
     pattern = re.compile(r"\[truncated.*reasoning incomplete")
     for module_name in (
-        "vllm_mlx.routes.chat",
-        "vllm_mlx.routes.responses",
-        "vllm_mlx.routes.anthropic",
+        "fusion_mlx.routes_internal.chat",
+        "fusion_mlx.routes_internal.responses",
+        "fusion_mlx.routes_internal.anthropic",
     ):
         mod = importlib.import_module(module_name)
         src = inspect.getsource(mod)
         assert not pattern.search(src), (
             f"R-01 single-source-of-truth: the truncated sentinel literal "
             f"must NOT appear inline in {module_name}; it is defined once "
-            f"in vllm_mlx.service.helpers.REASONING_CUTOFF_SENTINEL and "
+            f"in fusion_mlx.service.helpers.REASONING_CUTOFF_SENTINEL and "
             f"applied via _apply_reasoning_cutoff_notice. A literal here "
             f"indicates a regex band-aid that bypasses the helper."
         )

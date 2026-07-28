@@ -117,6 +117,7 @@ def test_to_dict_has_all_fields():
     tracker.record("s1", prompt_tokens=10, completion_tokens=5, cached_tokens=2)
     d = tracker.get("s1").to_dict()
     assert set(d.keys()) == {
+        "principal",
         "session_id",
         "prompt_tokens",
         "completion_tokens",
@@ -127,6 +128,7 @@ def test_to_dict_has_all_fields():
         "last_active",
     }
     assert d["session_id"] == "s1"
+    assert d["principal"] == "default"
 
 
 def _make_client() -> TestClient:
@@ -145,7 +147,11 @@ def test_route_get_stats_not_found():
 
 def test_route_get_stats_ok():
     record_chat_session(
-        "route-1", prompt_tokens=12, completion_tokens=8, cached_tokens=3
+        "route-1",
+        prompt_tokens=12,
+        completion_tokens=8,
+        cached_tokens=3,
+        principal="testclient",
     )
     client = _make_client()
     resp = client.get("/v1/sessions/route-1/stats")
@@ -161,7 +167,9 @@ def test_route_get_stats_ok():
 
 
 def test_route_put_context_then_stats_reflects_cap():
-    record_chat_session("route-2", prompt_tokens=5, completion_tokens=5)
+    record_chat_session(
+        "route-2", prompt_tokens=5, completion_tokens=5, principal="testclient"
+    )
     client = _make_client()
     resp = client.put(
         "/v1/sessions/route-2/context", json={"max_context_tokens": 16384}
@@ -179,10 +187,71 @@ def test_route_put_context_rejects_negative():
 
 
 def test_route_put_context_clears_with_null():
-    record_chat_session("route-4", prompt_tokens=1, completion_tokens=1)
+    record_chat_session(
+        "route-4", prompt_tokens=1, completion_tokens=1, principal="testclient"
+    )
     client = _make_client()
     client.put("/v1/sessions/route-4/context", json={"max_context_tokens": 4096})
     resp = client.put("/v1/sessions/route-4/context", json={"max_context_tokens": None})
     assert resp.status_code == 200
     stats = client.get("/v1/sessions/route-4/stats").json()
     assert stats["max_context_tokens"] is None
+
+
+# --- IDOR / principal-scoping tests (#226 fix) ---
+
+
+def test_tracker_isolates_same_session_id_across_principals():
+    tracker = SessionTracker()
+    tracker.record("shared", prompt_tokens=10, principal="alice")
+    tracker.record("shared", prompt_tokens=99, principal="bob")
+    alice = tracker.get("shared", principal="alice")
+    bob = tracker.get("shared", principal="bob")
+    assert alice.prompt_tokens == 10
+    assert bob.prompt_tokens == 99
+    assert alice.principal == "alice"
+    assert bob.principal == "bob"
+    # Default-principal lookup must NOT see either alice or bob.
+    assert tracker.get("shared") is None
+
+
+def test_tracker_set_max_context_is_per_principal():
+    tracker = SessionTracker()
+    assert tracker.set_max_context("shared", 8192, principal="alice")
+    # Bob setting the same session_id must not read or alter alice's cap.
+    assert tracker.set_max_context("shared", 1024, principal="bob")
+    assert tracker.get("shared", principal="alice").max_context_tokens == 8192
+    assert tracker.get("shared", principal="bob").max_context_tokens == 1024
+
+
+def _client_with_key(api_key: str) -> TestClient:
+    # Distinct bearer tokens -> distinct request_principal buckets. We pass the
+    # key via Authorization header so request_principal derives a real HMAC id.
+    app = FastAPI()
+    app.include_router(sessions_router)
+    app.dependency_overrides[verify_api_key] = lambda: True
+    app.dependency_overrides[check_rate_limit] = lambda: None
+    return TestClient(app, headers={"Authorization": f"Bearer {api_key}"})
+
+
+def test_route_cross_principal_cannot_read_foreign_session():
+    # Alice records a session and reads it fine.
+    alice = _client_with_key("key-alice-xyz")
+    bob = _client_with_key("key-bob-xyz")
+    # Record directly under alice's principal by reading it from her own
+    # PUT (which creates the entry under her principal) + a follow-up stats.
+    alice.put("/v1/sessions/sid-1/context", json={"max_context_tokens": 4096})
+    assert alice.get("/v1/sessions/sid-1/stats").status_code == 200
+    # Bob probing the SAME session_id must get 404 (no existence leak).
+    assert bob.get("/v1/sessions/sid-1/stats").status_code == 404
+
+
+def test_route_cross_principal_put_does_not_mutate_foreign_cap():
+    alice = _client_with_key("key-alice-xyz")
+    bob = _client_with_key("key-bob-xyz")
+    alice.put("/v1/sessions/sid-2/context", json={"max_context_tokens": 8192})
+    # Bob writing the same session_id creates/updates only his OWN entry.
+    bob.put("/v1/sessions/sid-2/context", json={"max_context_tokens": 256})
+    # Alice's cap must be untouched by Bob's write.
+    stats = alice.get("/v1/sessions/sid-2/stats").json()
+    assert stats["max_context_tokens"] == 8192
