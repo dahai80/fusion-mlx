@@ -56,6 +56,18 @@ class EmbeddingRequest(BaseModel):
     Only supported by some models. If not supported, returns full dimensions.
     """
 
+    max_length: int | None = Field(None, gt=0)
+    """
+    Maximum token length for embedding inputs. Must be > 0 if provided.
+    Defaults to the model's context window if not set.
+    """
+
+    truncation: bool = True
+    """Whether to truncate inputs exceeding max_length. Default True."""
+
+    user: str | None = None
+    """OpenAI abuse-tracking field. Accepted but not validated."""
+
     @model_validator(mode="after")
     def validate_input_source(self) -> "EmbeddingRequest":
         """Require exactly one input source."""

@@ -1313,7 +1313,7 @@ class TestNativeEmbeddingLoading:
                 return_value=tokenizer,
             ) as mock_from_pretrained,
             patch(
-                "fusion_mlx.models.embedding.MLXEmbeddingModel._validate_native_weights",
+                "fusion_mlx.engines.embedding.MLXEmbeddingModel._validate_native_weights",
                 return_value=None,
             ) as mock_validate_weights,
             patch(
@@ -1368,7 +1368,7 @@ class TestNativeEmbeddingLoading:
                 return_value=tokenizer,
             ) as mock_from_pretrained,
             patch(
-                "fusion_mlx.models.embedding.MLXEmbeddingModel._validate_native_weights",
+                "fusion_mlx.engines.embedding.MLXEmbeddingModel._validate_native_weights",
                 return_value=None,
             ) as mock_validate_weights,
             patch(
@@ -1418,7 +1418,7 @@ class TestNativeEmbeddingLoading:
                 return_value=tokenizer,
             ),
             patch(
-                "fusion_mlx.models.embedding.MLXEmbeddingModel._validate_native_weights",
+                "fusion_mlx.engines.embedding.MLXEmbeddingModel._validate_native_weights",
                 return_value=None,
             ) as mock_validate_weights,
             patch(
@@ -1499,7 +1499,7 @@ class TestNativeEmbeddingLoading:
 
         weights = {}
         with safe_open(tmp_path / "model.safetensors", framework="mlx") as f:
-            for key in f:
+            for key in f.keys():
                 weights[key] = np.array(f.get_tensor(key))
 
         weights["embeddings.word_embeddings.weight"] = np.random.randn(

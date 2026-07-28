@@ -85,7 +85,7 @@ class MLXEmbeddingModel:
         try:
             from importlib import import_module
 
-            native_module = import_module(f"{__package__}.{module_name}")
+            native_module = import_module(f"fusion_mlx.models.{module_name}")
             Model = native_module.Model
             ModelArgs = native_module.ModelArgs
 
@@ -620,6 +620,18 @@ class MLXEmbeddingModel:
     def processor(self):
         return self._processor
 
+    @processor.setter
+    def processor(self, value):
+        self._processor = value
+
+    @property
+    def model(self):
+        return self._model
+
+    @model.setter
+    def model(self, value):
+        self._model = value
+
     @property
     def hidden_size(self) -> int | None:
         return self._hidden_size
@@ -754,6 +766,8 @@ class EmbeddingEngine(BaseNonStreamingEngine):
                     loop.run_in_executor(get_executor("llm"), _embed_sync), timeout=30.0
                 )
                 embeddings.extend(output.embeddings)
+                mx.synchronize()
+                mx.clear_cache()
                 total_tokens += output.total_tokens
                 if output.dimensions:
                     dimensions = output.dimensions
@@ -770,6 +784,9 @@ class EmbeddingEngine(BaseNonStreamingEngine):
             "hidden_size": self.hidden_size,
             "batch_size": self._batch_size,
         }
+
+    def get_model_info(self) -> dict[str, Any]:
+        return self.get_stats()
 
     def __repr__(self) -> str:
         status = "running" if self._model is not None else "stopped"

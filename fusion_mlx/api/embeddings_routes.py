@@ -53,10 +53,13 @@ async def get_embedding_engine(model_id: str) -> Any:
     return engine
 
 
-def get_embedding_max_length(model_id: str, max_length: int | None) -> int:
+def get_embedding_max_length(model_id: str, max_length: int | None) -> int | None:
     if max_length is not None:
         return max_length
-    return 512
+    from ..server import get_max_context_window
+
+    ctx = get_max_context_window(model_id)
+    return ctx if ctx is not None else 512
 
 
 @router.post(

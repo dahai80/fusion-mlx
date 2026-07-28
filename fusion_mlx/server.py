@@ -291,6 +291,24 @@ def load_embedding_model(*args, **kwargs):
     raise NotImplementedError("Embedding models not available in this build")
 
 
+def get_max_context_window(model_id: str) -> int | None:
+    """Return the configured max context window for a model, or None if unset."""
+    srv = get_server()
+    if srv is None:
+        return None
+    return getattr(srv.config, "max_context_window", None)
+
+
+def get_embedding_max_length(model_id: str, max_length: int | None) -> int | None:
+    """Resolve per-request embedding token cap.
+
+    Priority: request override > configured context window > None (model resolves).
+    """
+    if max_length is not None:
+        return max_length
+    return get_max_context_window(model_id)
+
+
 def get_app():
     global _server_instance, app
     if _server_instance is None:
