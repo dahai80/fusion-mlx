@@ -22,6 +22,7 @@ from .ltx_video_legacy import LegacyLTXBackend
 from .opensora import OpenSoraBackend
 from .skyreels import SkyReelsBackend
 from .svd import SVDBackend
+from .uniworld import UniWorldBackend
 from .wan2 import Wan2Backend
 
 BACKENDS: dict[str, type[VideoBackend]] = {
@@ -34,6 +35,7 @@ BACKENDS: dict[str, type[VideoBackend]] = {
     "cogvideo": CogVideoBackend,
     "hunyuanvideo": HunyuanVideoBackend,
     "opensora": OpenSoraBackend,
+    "uniworld": UniWorldBackend,
 }
 
 # Stable name aliases -> canonical registry key.
@@ -76,6 +78,9 @@ _ALIASES: dict[str, str] = {
     "vace": "wan2",
     "wan-vace": "wan2",
     "wan2.1-vace": "wan2",
+    "uniworld": "uniworld",
+    "uniworld-v1": "uniworld",
+    "univa": "uniworld",
 }
 
 
@@ -127,4 +132,5 @@ __all__ = [
     "LegacyLTXBackend",
     "CogVideoBackend",
     "OpenSoraBackend",
+    "UniWorldBackend",
 ]

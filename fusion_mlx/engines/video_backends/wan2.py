@@ -27,7 +27,9 @@ logger = logging.getLogger(__name__)
 
 _DEFAULT_SCHEDULER = "unipc"
 
+# Max T5 text-embedding cache entries (LRU eviction when exceeded).
 _T5_EMBED_CACHE_MAX = 16
+# Timeout for T5 encoder preload during start() — large model may take minutes.
 _T5_PRELOAD_TIMEOUT = 300.0
 
 
@@ -60,6 +62,7 @@ class Wan2Backend(VideoBackend):
     def __init__(self, model_name: str, **kwargs: Any) -> None:
         self._model_name = model_name
         self._loaded = False
+        self._model_dir = None
         self._t5_encoder = None
         self._t5_tokenizer = None
         self._t5_config = None
@@ -161,7 +164,7 @@ class Wan2Backend(VideoBackend):
             timeout=5.0,
         )
 
-    def _get_cached_embeds(self, prompt, neg_prompt, text_len):
+    async def _get_cached_embeds(self, prompt, neg_prompt, text_len):
         if self._t5_encoder is None:
             return None
         if neg_prompt is None and self._t5_config is not None:
@@ -176,32 +179,42 @@ class Wan2Backend(VideoBackend):
                 self._embed_cache[cache_key] = result
                 return result
 
-        from transformers import AutoTokenizer
+        def _encode_sync():
+            from fusion_mlx.video.wan2.utils import encode_text
+            from transformers import AutoTokenizer
 
-        from fusion_mlx.video.wan2.utils import encode_text
+            if self._t5_tokenizer is None:
+                self._t5_tokenizer = AutoTokenizer.from_pretrained("google/umt5-xxl")
 
-        if self._t5_tokenizer is None:
-            self._t5_tokenizer = AutoTokenizer.from_pretrained("google/umt5-xxl")
-
-        logger.info("Wan2: computing T5 embeds for prompt_len=%d", len(prompt or ""))
-        context = encode_text(self._t5_encoder, self._t5_tokenizer, prompt, text_len)
-        if neg_prompt and neg_prompt.strip():
-            context_null = encode_text(
-                self._t5_encoder, self._t5_tokenizer, neg_prompt, text_len
+            logger.info(
+                "Wan2: computing T5 embeds for prompt_len=%d", len(prompt or "")
             )
-            mx.eval(context, context_null)
-        else:
-            context_null = None
-            mx.eval(context)
+            context = encode_text(
+                self._t5_encoder, self._t5_tokenizer, prompt, text_len
+            )
+            if neg_prompt and neg_prompt.strip():
+                context_null = encode_text(
+                    self._t5_encoder, self._t5_tokenizer, neg_prompt, text_len
+                )
+                mx.eval(context, context_null)
+            else:
+                context_null = None
+                mx.eval(context)
 
-        with self._embed_cache_lock:
-            if len(self._embed_cache) >= _T5_EMBED_CACHE_MAX:
-                oldest = next(iter(self._embed_cache))
-                del self._embed_cache[oldest]
-            self._embed_cache[cache_key] = (context, context_null)
-        return (context, context_null)
+            with self._embed_cache_lock:
+                if len(self._embed_cache) >= _T5_EMBED_CACHE_MAX:
+                    oldest = next(iter(self._embed_cache))
+                    del self._embed_cache[oldest]
+                self._embed_cache[cache_key] = (context, context_null)
+            return (context, context_null)
 
-    async def generate(self, params: VideoGenParams) -> list[bytes]:
+        loop = asyncio.get_running_loop()
+        return await asyncio.wait_for(
+            loop.run_in_executor(get_executor("io"), _encode_sync),
+            timeout=120.0,
+        )
+
+    async def generate(self, params: VideoGenParams) -> list[bytes] | list[Any]:
         base_seed = (
             params.seed if params.seed is not None else random.randint(0, 2**31 - 1)
         )
@@ -211,7 +224,7 @@ class Wan2Backend(VideoBackend):
         precomputed = None
         if self._t5_encoder is not None and self._t5_config is not None:
             text_len = self._t5_config.text_len
-            precomputed = self._get_cached_embeds(
+            precomputed = await self._get_cached_embeds(
                 params.prompt, params.negative_prompt, text_len
             )
 
@@ -249,8 +262,6 @@ class Wan2Backend(VideoBackend):
         )
 
     def constraints(self) -> VideoConstraints:
-        # Wan2.2 5B: num_frames = 4k+1 (VAE temporal compression), spatial dims
-        # divisible by 16. Supports I2V.
         return VideoConstraints(
             supports_i2v=True,
             max_n=4,
@@ -286,6 +297,7 @@ def _generate_one(
     from fusion_mlx.video.wan2.generate import generate_video
 
     raw_output = output_format == "raw"
+
     gen_kwargs: dict[str, Any] = dict(
         negative_prompt=negative_prompt,
         image=image,
@@ -310,6 +322,7 @@ def _generate_one(
     if precomputed_context is not None:
         gen_kwargs["precomputed_context"] = precomputed_context
         gen_kwargs["keep_t5"] = True
+
     logger.info(
         "Wan2 generate (%s): prompt_len=%d frames=%d %dx%d seed=%d i2v=%s "
         "steps=%s compile=%s tiling=%s cached=%s",
@@ -325,6 +338,7 @@ def _generate_one(
         tiling,
         precomputed_context is not None,
     )
+
     if raw_output:
         return generate_video(model_dir, prompt, **gen_kwargs)
 

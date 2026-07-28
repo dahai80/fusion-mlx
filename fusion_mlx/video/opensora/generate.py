@@ -224,5 +224,4 @@ def generate_video(
     else:
         video = x
         logger.warning("No VAE provided, returning latent")
-
     return video

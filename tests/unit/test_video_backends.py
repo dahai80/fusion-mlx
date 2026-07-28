@@ -108,6 +108,7 @@ class TestResolveBackend:
             "svd",
             "cogvideo",
             "opensora",
+            "uniworld",
         }
 
     def test_vace_alias_resolves_to_wan2(self):

@@ -339,13 +339,10 @@ def generate_video(
             )
             mx.eval(context, context_null)
 
-        # Free T5 from memory (unless caller wants to keep it)
         if not keep_t5:
             del t5_encoder
             gc.collect()
             mx.clear_cache()
-        else:
-            del t5_encoder
     print(f"{Colors.DIM}  T5 encoding: {time.time() - t1:.1f}s{Colors.RESET}")
 
     # I2V: encode image to latent space
