@@ -44,7 +44,7 @@ from fastapi.testclient import TestClient
 from fusion_mlx.config import reset_config
 from fusion_mlx.engine.base import GenerationOutput
 from fusion_mlx.routes_internal.chat import router as chat_router
-from fusion_mlx.routes_internal.completions import router as completions_router
+from fusion_mlx.api.openai_routes import router as completions_router
 
 # ---------------------------------------------------------------------------
 # Mock engines
@@ -97,6 +97,9 @@ class _PlainCompletionsEngine:
     def __init__(self, deltas: list[str] | None = None) -> None:
         self._deltas = deltas or ["foo", "bar", "baz"]
 
+    def build_prompt(self, messages, tools=None, enable_thinking=None):
+        return "PROMPT"
+
     async def stream_generate(self, prompt, **kwargs):
         accumulated = ""
         for i, delta in enumerate(self._deltas):
@@ -111,6 +114,10 @@ class _PlainCompletionsEngine:
                 finish_reason="stop" if is_last else None,
                 channel=None,
             )
+
+    async def stream_chat(self, messages, **kwargs):
+        async for chunk in self.stream_generate("PROMPT", **kwargs):
+            yield chunk
 
 
 # ---------------------------------------------------------------------------
