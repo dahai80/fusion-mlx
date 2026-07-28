@@ -46,6 +46,7 @@ from ..api.tool_calling import (
     is_strict_json_schema,
     validate_output_against_schema,
 )
+from ..api.thinking import extract_thinking
 from ..api.utils import (
     StreamingToolCallFilter,
     clean_output_text,
@@ -544,29 +545,35 @@ async def _non_stream(
         output.num_completion_tokens if hasattr(output, "num_completion_tokens") else 0,
     )
 
-    text = output.text if hasattr(output, "text") else str(output)
-    text = strip_special_tokens(text)
-    text = strip_thinking_tags(text)
-    text = clean_output_text(text)
+    raw_text = output.text if hasattr(output, "text") else str(output)
+    raw_text = strip_special_tokens(raw_text)
+
+    # Extract thinking BEFORE stripping tags so reasoning_content survives
+    engine_finish = getattr(output, "finish_reason", None)
+    reasoning_content, content_text = extract_thinking(raw_text, finish_reason=engine_finish)
+    content_text = clean_output_text(content_text)
 
     tool_calls = None
     if hasattr(output, "tool_calls") and output.tool_calls:
         tool_calls = output.tool_calls
 
-    finish_reason = "stop"
-    if tool_calls:
+    # Use engine finish_reason when available; fall back to heuristic
+    if engine_finish:
+        finish_reason = engine_finish
+    elif tool_calls:
         finish_reason = "tool_calls"
-    max_tokens = chat_kwargs.get("max_tokens", 0)
-    if max_tokens and hasattr(output, "num_completion_tokens"):
-        if output.num_completion_tokens >= max_tokens:
-            finish_reason = "length"
+    else:
+        finish_reason = "stop"
 
     from ..api.models import AssistantMessage, ChatCompletionChoice, Usage
 
     assistant_msg = AssistantMessage(
-        content=text,
+        content=content_text,
         tool_calls=tool_calls,
     )
+    if reasoning_content:
+        assistant_msg.reasoning_content = reasoning_content
+    # Also propagate from GenerationOutput if present
     if hasattr(output, "reasoning_content") and output.reasoning_content:
         assistant_msg.reasoning_content = output.reasoning_content
 

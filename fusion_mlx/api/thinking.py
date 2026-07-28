@@ -24,7 +24,7 @@ _THINKING_PATTERN = re.compile(r"<think>(.*?)</think>", re.DOTALL)
 _THINKING_TAIL_PATTERN = re.compile(r"^(.*?)</think>", re.DOTALL)
 
 
-def extract_thinking(text: str) -> tuple[str, str]:
+def extract_thinking(text: str, finish_reason: str | None = None) -> tuple[str, str]:
     """Extract thinking and content from complete text.
 
     Handles:
@@ -76,12 +76,18 @@ def extract_thinking(text: str) -> tuple[str, str]:
             remaining = text[match.end() :].strip()
             return (thinking, remaining)
 
-    # Malformed: <think> opened but never closed. Drop the open tag and
-    # treat the remainder as content so the answer body is not empty.
+    # Malformed: open thinking tag opened but never closed.
+    # When finish_reason="length" (truncation mid-think), route the
+    # unclosed thinking body to reasoning_content — the model was
+    # cut off before emitting </think>. Otherwise (V4-style models that
+    # occasionally skip </think>), surface as content so the answer body
+    # is not empty.
     if "<think>" in text and "</think>" not in text:
-        idx = text.index("<think>")
+        idx = text.index(_OPEN_TAG)
         before = text[:idx]
         after = text[idx + _OPEN_LEN :]
+        if finish_reason == "length":
+            return (after.strip(), before.strip() if before.strip() else "")
         return ("", (before + after).strip())
 
     return ("", text)

@@ -116,7 +116,7 @@ class OpenAIAdapter(BaseAdapter):
         """
         # Separate thinking from content
         raw_text = clean_special_tokens(response.text) if response.text else ""
-        thinking_content, regular_content = extract_thinking(raw_text)
+        thinking_content, regular_content = extract_thinking(raw_text, finish_reason=response.finish_reason)
         content = regular_content.strip() if regular_content else None
 
         # AtomCode 专题优化: tool_calls 场景清空 content 避双份数据冲突 (2026-07-19)
