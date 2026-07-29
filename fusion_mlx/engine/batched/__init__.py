@@ -13,6 +13,16 @@ from collections.abc import AsyncIterator
 from typing import Any
 
 from ..base import BaseEngine, GenerationOutput
+from ._mtp_dispatch import (
+    _DISPATCH_ATTACHED,
+    _DISPATCH_NO_INJECT,
+    _DISPATCH_REJECTED,
+    _DISPATCH_UNRESOLVED,
+    _get_mtp_dispatch_timeout_sec,
+    _log_mtp_dispatch_timeout,
+    _resolve_hf_model_type,
+    _run_dispatch_mtp_inject,
+)
 
 logger = logging.getLogger(__name__)
 

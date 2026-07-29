@@ -103,39 +103,38 @@ def test_cli_serve_help_advertises_mtp_sidecar():
 
 
 def test_scheduler_config_mtp_sidecar_default_none():
-    # SchedulerConfig in fusion_mlx.config does not have mtp_sidecar field.
-    pytest.skip(
-        "feature not migrated: fusion_mlx.config.SchedulerConfig does not "
-        "have mtp_sidecar field"
-    )
+    from fusion_mlx.config import SchedulerConfig
+
+    cfg = SchedulerConfig()
+    assert cfg.mtp_sidecar is None
 
 
 def test_scheduler_config_mtp_sidecar_round_trip():
-    pytest.skip(
-        "feature not migrated: fusion_mlx.config.SchedulerConfig does not "
-        "have mtp_sidecar field"
-    )
+    from fusion_mlx.config import SchedulerConfig
+
+    cfg = SchedulerConfig(mtp_sidecar="Qwen/Qwen3.5-MTP")
+    assert cfg.mtp_sidecar == "Qwen/Qwen3.5-MTP"
 
 
 def test_scheduler_config_mtp_sidecar_local_path_round_trip():
-    pytest.skip(
-        "feature not migrated: fusion_mlx.config.SchedulerConfig does not "
-        "have mtp_sidecar field"
-    )
+    from fusion_mlx.config import SchedulerConfig
+
+    cfg = SchedulerConfig(mtp_sidecar="/models/qwen3.5-mtp")
+    assert cfg.mtp_sidecar == "/models/qwen3.5-mtp"
 
 
 def test_scheduler_config_mtp_model_type_default_none():
-    pytest.skip(
-        "feature not migrated: fusion_mlx.config.SchedulerConfig does not "
-        "have mtp_model_type field"
-    )
+    from fusion_mlx.config import SchedulerConfig
+
+    cfg = SchedulerConfig()
+    assert cfg.mtp_model_type is None
 
 
 def test_scheduler_config_mtp_model_type_round_trip():
-    pytest.skip(
-        "feature not migrated: fusion_mlx.config.SchedulerConfig does not "
-        "have mtp_model_type field"
-    )
+    from fusion_mlx.config import SchedulerConfig
+
+    cfg = SchedulerConfig(mtp_model_type="gemma4_unified")
+    assert cfg.mtp_model_type == "gemma4_unified"
 
 
 # ---------------------------------------------------------------------------
@@ -143,59 +142,99 @@ def test_scheduler_config_mtp_model_type_round_trip():
 # ---------------------------------------------------------------------------
 
 
+def _patch_dispatch_mtp_inject(monkeypatch, return_value=True, recorder=None):
+    import fusion_mlx.speculative.mtp.dispatch as disp
+
+    def _fake(model, model_type, mtp_sidecar=None, allow_random_init=False):
+        if recorder is not None:
+            recorder["model_type"] = model_type
+            recorder["mtp_sidecar"] = mtp_sidecar
+            recorder["allow_random_init"] = allow_random_init
+        return return_value
+
+    monkeypatch.setattr(disp, "dispatch_mtp_inject", _fake)
+    return _fake
+
+
 def test_run_dispatch_mtp_inject_forwards_sidecar_path(monkeypatch):
-    pytest.skip(
-        "feature not migrated: fusion_mlx.engine.batched does not export "
-        "_run_dispatch_mtp_inject, _resolve_hf_model_type, _DISPATCH_ATTACHED, "
-        "or dispatch_mtp_inject"
-    )
+    from fusion_mlx.engine.batched import _DISPATCH_ATTACHED, _run_dispatch_mtp_inject
+
+    rec = {}
+    _patch_dispatch_mtp_inject(monkeypatch, return_value=True, recorder=rec)
+    result = _run_dispatch_mtp_inject(object(), "gemma4_unified", "/path/sidecar")
+    assert result == _DISPATCH_ATTACHED
+    assert rec["mtp_sidecar"] == "/path/sidecar"
+    assert rec["model_type"] == "gemma4_unified"
 
 
 def test_run_dispatch_mtp_inject_returns_unresolved_when_model_type_missing(
     monkeypatch,
 ):
-    pytest.skip(
-        "feature not migrated: fusion_mlx.engine.batched does not export "
-        "_run_dispatch_mtp_inject, _DISPATCH_UNRESOLVED, _DISPATCH_REJECTED, "
-        "_resolve_hf_model_type"
+    from fusion_mlx.engine.batched import (
+        _DISPATCH_UNRESOLVED,
+        _run_dispatch_mtp_inject,
     )
+
+    rec = {}
+    _patch_dispatch_mtp_inject(monkeypatch, return_value=True, recorder=rec)
+    # object() has no resolvable model_type and model_type arg is None
+    result = _run_dispatch_mtp_inject(object(), None, "/path/sidecar")
+    assert result == _DISPATCH_UNRESOLVED
+    assert rec == {}
 
 
 def test_run_dispatch_mtp_inject_returns_rejected_when_injector_refuses(monkeypatch):
-    pytest.skip(
-        "feature not migrated: fusion_mlx.engine.batched does not export "
-        "_run_dispatch_mtp_inject, _DISPATCH_REJECTED, _resolve_hf_model_type"
-    )
+    from fusion_mlx.engine.batched import _DISPATCH_REJECTED, _run_dispatch_mtp_inject
+
+    _patch_dispatch_mtp_inject(monkeypatch, return_value=False)
+    result = _run_dispatch_mtp_inject(object(), "gemma4_unified", "/path/sidecar")
+    assert result == _DISPATCH_REJECTED
 
 
 def test_run_dispatch_mtp_inject_returns_no_inject_for_unregistered_model_type(
     monkeypatch,
 ):
-    pytest.skip(
-        "feature not migrated: fusion_mlx.engine.batched does not export "
-        "_run_dispatch_mtp_inject, _DISPATCH_NO_INJECT, _resolve_hf_model_type"
-    )
+    from fusion_mlx.engine.batched import _DISPATCH_NO_INJECT, _run_dispatch_mtp_inject
+
+    rec = {}
+    _patch_dispatch_mtp_inject(monkeypatch, return_value=True, recorder=rec)
+    result = _run_dispatch_mtp_inject(object(), "totally_unknown_type", "/path/sidecar")
+    assert result == _DISPATCH_NO_INJECT
+    assert rec == {}
 
 
 def test_run_dispatch_mtp_inject_prefers_cli_provided_model_type(monkeypatch):
-    pytest.skip(
-        "feature not migrated: fusion_mlx.engine.batched does not export "
-        "_run_dispatch_mtp_inject, _DISPATCH_ATTACHED, _resolve_hf_model_type"
+    from fusion_mlx.engine.batched import _DISPATCH_ATTACHED, _run_dispatch_mtp_inject
+
+    rec = {}
+    _patch_dispatch_mtp_inject(monkeypatch, return_value=True, recorder=rec)
+    # cli_vetted_model_type wins over the model_type positional arg
+    result = _run_dispatch_mtp_inject(
+        object(), "qwen3_5", "/path/sidecar", cli_vetted_model_type="gemma4_unified"
     )
+    assert result == _DISPATCH_ATTACHED
+    assert rec["model_type"] == "gemma4_unified"
 
 
 def test_run_dispatch_mtp_inject_falls_back_when_no_preferred_model_type(monkeypatch):
-    pytest.skip(
-        "feature not migrated: fusion_mlx.engine.batched does not export "
-        "_run_dispatch_mtp_inject, _DISPATCH_ATTACHED, _resolve_hf_model_type"
-    )
+    from fusion_mlx.engine.batched import _DISPATCH_ATTACHED, _run_dispatch_mtp_inject
+
+    rec = {}
+    _patch_dispatch_mtp_inject(monkeypatch, return_value=True, recorder=rec)
+    # no cli_vetted -> fall back to the model_type positional arg
+    result = _run_dispatch_mtp_inject(object(), "gemma4_unified", "/path/sidecar")
+    assert result == _DISPATCH_ATTACHED
+    assert rec["model_type"] == "gemma4_unified"
 
 
 def test_run_dispatch_mtp_inject_propagates_none_sidecar(monkeypatch):
-    pytest.skip(
-        "feature not migrated: fusion_mlx.engine.batched does not export "
-        "_run_dispatch_mtp_inject, _DISPATCH_ATTACHED, _resolve_hf_model_type"
-    )
+    from fusion_mlx.engine.batched import _DISPATCH_ATTACHED, _run_dispatch_mtp_inject
+
+    rec = {}
+    _patch_dispatch_mtp_inject(monkeypatch, return_value=True, recorder=rec)
+    result = _run_dispatch_mtp_inject(object(), "gemma4_unified", None)
+    assert result == _DISPATCH_ATTACHED
+    assert rec["mtp_sidecar"] is None
 
 
 # ---------------------------------------------------------------------------
@@ -337,10 +376,14 @@ def test_apply_mtp_dispatch_timeout_logs_critical_and_does_not_call_os_exit(
 
 
 def test_log_mtp_dispatch_timeout_does_not_call_os_exit(monkeypatch):
-    pytest.skip(
-        "feature not migrated: fusion_mlx.engine.batched does not export "
-        "_log_mtp_dispatch_timeout"
-    )
+    from fusion_mlx.engine.batched import _log_mtp_dispatch_timeout
+
+    def _boom(code=0):
+        raise AssertionError("_log_mtp_dispatch_timeout must not call os._exit")
+
+    monkeypatch.setattr("os._exit", _boom)
+    result = _log_mtp_dispatch_timeout("gemma4_unified", "/path/sidecar", 30.0)
+    assert result is None
 
 
 def test_apply_mtp_dispatch_timeout_does_not_shut_down_shared_executor(monkeypatch):
@@ -351,25 +394,24 @@ def test_apply_mtp_dispatch_timeout_does_not_shut_down_shared_executor(monkeypat
 
 
 def test_get_mtp_dispatch_timeout_sec_default(monkeypatch):
-    pytest.skip(
-        "feature not migrated: fusion_mlx.engine.batched does not export "
-        "_get_mtp_dispatch_timeout_sec; FUSION_MLX_MTP_DISPATCH_TIMEOUT_SEC "
-        "env var not wired"
-    )
+    from fusion_mlx.engine.batched import _get_mtp_dispatch_timeout_sec
+
+    monkeypatch.delenv("FUSION_MLX_MTP_DISPATCH_TIMEOUT_SEC", raising=False)
+    assert _get_mtp_dispatch_timeout_sec() == 30.0
 
 
 def test_get_mtp_dispatch_timeout_sec_zero_disables(monkeypatch):
-    pytest.skip(
-        "feature not migrated: fusion_mlx.engine.batched does not export "
-        "_get_mtp_dispatch_timeout_sec"
-    )
+    from fusion_mlx.engine.batched import _get_mtp_dispatch_timeout_sec
+
+    monkeypatch.setenv("FUSION_MLX_MTP_DISPATCH_TIMEOUT_SEC", "0")
+    assert _get_mtp_dispatch_timeout_sec() == 0.0
 
 
 def test_get_mtp_dispatch_timeout_sec_malformed_falls_back_to_default(monkeypatch):
-    pytest.skip(
-        "feature not migrated: fusion_mlx.engine.batched does not export "
-        "_get_mtp_dispatch_timeout_sec"
-    )
+    from fusion_mlx.engine.batched import _get_mtp_dispatch_timeout_sec
+
+    monkeypatch.setenv("FUSION_MLX_MTP_DISPATCH_TIMEOUT_SEC", "not-a-number")
+    assert _get_mtp_dispatch_timeout_sec() == 30.0
 
 
 def test_start_llm_calls_apply_mtp_dispatch():

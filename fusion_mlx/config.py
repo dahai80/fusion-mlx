@@ -84,6 +84,10 @@ class SchedulerConfig:
     enable_mtp: bool = False
     mtp_num_draft_tokens: int = 1
     mtp_optimistic: bool = False
+    # MTP sidecar path (CLI --mtp-sidecar) and vetted target model_type driving
+    # the BatchedEngine dispatch gate. None = unconfigured (no dispatch attempt).
+    mtp_sidecar: str | None = None
+    mtp_model_type: str | None = None
 
     # SuffixDecoding
     enable_suffix_decoding: bool = False
