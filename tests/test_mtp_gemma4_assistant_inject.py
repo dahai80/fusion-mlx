@@ -210,11 +210,60 @@ def test_inject_attaches_four_surfaces_under_random_init():
 
 
 def test_inject_loads_synthetic_google_shaped_sidecar(tmp_path):
-    pytest.skip("fusion_mlx.speculative.mtp.gemma4_inject not migrated yet")
+    import json
+
+    import mlx.core as mx
+    from mlx.utils import tree_flatten
+
+    from fusion_mlx.speculative.mtp.gemma4_inject import (
+        _build_assistant_model,
+        _build_assistant_model_args,
+        inject_mtp_support,
+    )
+
+    cfg = _google_shaped_assistant_config(hidden=64, backbone=128, n_layers=4)
+    (tmp_path / "config.json").write_text(json.dumps(cfg))
+    args = _build_assistant_model_args(cfg, target_backbone_hidden=128)
+    assert args is not None
+    backbone_hidden = int(getattr(args, "backbone_hidden_size", 128))
+    assistant = _build_assistant_model(args, backbone_hidden)
+    sd = {k: v for k, v in tree_flatten(assistant.parameters())}
+    mx.save_safetensors(str(tmp_path / "assistant.safetensors"), sd)
+
+    model = _build_tiny_gemma4_target_model()
+    assert inject_mtp_support(model, str(tmp_path)) is True
+    assert getattr(model, "mtp", None) is not None
+    assert callable(getattr(model, "mtp_forward", None))
+    assert callable(getattr(model, "make_mtp_cache", None))
+    assert getattr(model, "mtp_max_batch_size", None) == 1
 
 
 def test_inject_refuses_sidecar_missing_tensor(tmp_path):
-    pytest.skip("fusion_mlx.speculative.mtp.gemma4_inject not migrated yet")
+    import json
+
+    import mlx.core as mx
+    from mlx.utils import tree_flatten
+
+    from fusion_mlx.speculative.mtp.gemma4_inject import (
+        _build_assistant_model,
+        _build_assistant_model_args,
+        inject_mtp_support,
+    )
+
+    cfg = _google_shaped_assistant_config(hidden=64, backbone=128, n_layers=4)
+    (tmp_path / "config.json").write_text(json.dumps(cfg))
+    args = _build_assistant_model_args(cfg, target_backbone_hidden=128)
+    assert args is not None
+    backbone_hidden = int(getattr(args, "backbone_hidden_size", 128))
+    assistant = _build_assistant_model(args, backbone_hidden)
+    sd = {k: v for k, v in tree_flatten(assistant.parameters())}
+    dropped = next(iter(sd))
+    del sd[dropped]
+    mx.save_safetensors(str(tmp_path / "assistant.safetensors"), sd)
+
+    model = _build_tiny_gemma4_target_model()
+    assert inject_mtp_support(model, str(tmp_path)) is False
+    assert not hasattr(model, "mtp")
 
 
 # ---------------------------------------------------------------------------
@@ -404,7 +453,23 @@ def test_dispatcher_routes_gemma4_unified_to_gemma4_inject(monkeypatch):
 
 
 def test_inject_delegates_surfaces_to_outer_wrapper():
-    pytest.skip("fusion_mlx.speculative.mtp.gemma4_inject not migrated yet")
+    from types import SimpleNamespace
+
+    from fusion_mlx.speculative.mtp.gemma4_inject import inject_mtp_support
+
+    inner = _build_tiny_gemma4_target_model()
+    outer = SimpleNamespace(language_model=inner)
+    assert inject_mtp_support(outer, allow_random_init=True) is True
+
+    assert getattr(outer, "mtp", None) is not None
+    assert callable(getattr(outer, "mtp_forward", None))
+    assert callable(getattr(outer, "make_mtp_cache", None))
+    assert getattr(outer, "mtp_max_batch_size", None) == 1
+
+    assert getattr(inner, "mtp", None) is outer.mtp
+    delegated_cache = outer.make_mtp_cache()
+    assert isinstance(delegated_cache, list)
+    assert len(delegated_cache) == len(inner.mtp.model.layers)
 
 
 # ---------------------------------------------------------------------------
@@ -413,11 +478,53 @@ def test_inject_delegates_surfaces_to_outer_wrapper():
 
 
 def test_inject_refuses_sidecar_with_shape_mismatched_tensor(tmp_path):
-    pytest.skip("fusion_mlx.speculative.mtp.gemma4_inject not migrated yet")
+    import json
+
+    import mlx.core as mx
+    from mlx.utils import tree_flatten
+
+    from fusion_mlx.speculative.mtp.gemma4_inject import (
+        _build_assistant_model,
+        _build_assistant_model_args,
+        inject_mtp_support,
+    )
+
+    cfg = _google_shaped_assistant_config(hidden=64, backbone=128, n_layers=4)
+    (tmp_path / "config.json").write_text(json.dumps(cfg))
+    args = _build_assistant_model_args(cfg, target_backbone_hidden=128)
+    assert args is not None
+    backbone_hidden = int(getattr(args, "backbone_hidden_size", 128))
+    assistant = _build_assistant_model(args, backbone_hidden)
+    sd = {k: v for k, v in tree_flatten(assistant.parameters())}
+    mismatch_key = next(iter(sd))
+    original = tuple(sd[mismatch_key].shape)
+    wrong = (original[0] + 1,) + original[1:] if original else (2,)
+    sd[mismatch_key] = mx.zeros(wrong, dtype=sd[mismatch_key].dtype)
+    mx.save_safetensors(str(tmp_path / "assistant.safetensors"), sd)
+
+    model = _build_tiny_gemma4_target_model()
+    assert inject_mtp_support(model, str(tmp_path)) is False
+    assert not hasattr(model, "mtp")
 
 
 def test_validate_refuses_when_outer_wrapper_missing_delegated_surface():
-    pytest.skip("fusion_mlx.speculative.mtp.gemma4_inject not migrated yet")
+    from types import SimpleNamespace
+
+    from fusion_mlx.speculative.mtp.gemma4_inject import (
+        inject_mtp_support,
+        validate_mtp_support,
+    )
+
+    inner = _build_tiny_gemma4_target_model()
+    assert inject_mtp_support(inner, allow_random_init=True) is True
+
+    outer = SimpleNamespace(
+        language_model=inner,
+        mtp=inner.mtp,
+        make_mtp_cache=inner.make_mtp_cache,
+        mtp_max_batch_size=1,
+    )
+    assert validate_mtp_support(outer) is False
 
 
 # ---------------------------------------------------------------------------
@@ -439,7 +546,19 @@ def test_inject_refuses_sidecar_with_vocab_size_mismatch(tmp_path):
 
 
 def test_mtp_forward_rejects_batch_greater_than_one():
-    pytest.skip("fusion_mlx.speculative.mtp.gemma4_inject not migrated yet")
+    import mlx.core as mx
+
+    from fusion_mlx.speculative.mtp.gemma4_inject import inject_mtp_support
+
+    model = _build_tiny_gemma4_target_model()
+    assert inject_mtp_support(model, allow_random_init=True) is True
+
+    target_cache = [object() for _ in range(len(model.model.layers))]
+    model._mtp_target_cache = target_cache
+    hidden_states = mx.zeros((2, 4, 128))
+    next_token_ids = mx.zeros((1, 4), dtype=mx.int32)
+    with pytest.raises(ValueError):
+        model.mtp_forward(hidden_states, next_token_ids, None)
 
 
 # ---------------------------------------------------------------------------
@@ -490,11 +609,42 @@ def test_inject_refuses_when_target_tail_layer_types_mismatch(tmp_path):
 
 
 def test_mtp_forward_rejects_populated_mtp_cache():
-    pytest.skip("fusion_mlx.speculative.mtp.gemma4_inject not migrated yet")
+    import mlx.core as mx
+    from types import SimpleNamespace
+
+    from fusion_mlx.speculative.mtp.gemma4_inject import inject_mtp_support
+
+    model = _build_tiny_gemma4_target_model()
+    assert inject_mtp_support(model, allow_random_init=True) is True
+
+    target_cache = [object() for _ in range(len(model.model.layers))]
+    model._mtp_target_cache = target_cache
+    hidden_states = mx.zeros((1, 4, 128))
+    next_token_ids = mx.zeros((1, 4), dtype=mx.int32)
+    mtp_cache = [SimpleNamespace(offset=5)]
+    with pytest.raises(ValueError):
+        model.mtp_forward(hidden_states, next_token_ids, mtp_cache)
 
 
 def test_mtp_forward_rejects_negative_row_offset():
-    pytest.skip("fusion_mlx.speculative.mtp.gemma4_inject not migrated yet")
+    import mlx.core as mx
+    from types import SimpleNamespace
+
+    from fusion_mlx.speculative.mtp.gemma4_inject import inject_mtp_support
+
+    model = _build_tiny_gemma4_target_model()
+    assert inject_mtp_support(model, allow_random_init=True) is True
+
+    fake_slot = SimpleNamespace(
+        state=(mx.zeros((1, 1, 1, 16)), mx.zeros((1, 1, 1, 16))),
+        offset=1,
+    )
+    target_cache = [fake_slot for _ in range(len(model.model.layers))]
+    model._mtp_target_cache = target_cache
+    hidden_states = mx.zeros((1, 4, 128))
+    next_token_ids = mx.zeros((1, 4), dtype=mx.int32)
+    with pytest.raises(ValueError):
+        model.mtp_forward(hidden_states, next_token_ids, None)
 
 
 def test_inject_refuses_when_target_layer_types_shorter_than_assistant(tmp_path):
@@ -523,15 +673,64 @@ def test_find_safetensors_refuses_multi_file_even_with_model_safetensors(tmp_pat
 
 
 def test_validate_refuses_when_outer_mtp_is_none():
-    pytest.skip("fusion_mlx.speculative.mtp.gemma4_inject not migrated yet")
+    from types import SimpleNamespace
+
+    from fusion_mlx.speculative.mtp.gemma4_inject import (
+        inject_mtp_support,
+        validate_mtp_support,
+    )
+
+    inner = _build_tiny_gemma4_target_model()
+    assert inject_mtp_support(inner, allow_random_init=True) is True
+
+    outer = SimpleNamespace(
+        language_model=inner,
+        mtp=None,
+        mtp_forward=inner.mtp_forward,
+        make_mtp_cache=inner.make_mtp_cache,
+        mtp_max_batch_size=1,
+    )
+    assert validate_mtp_support(outer) is False
 
 
 def test_validate_refuses_when_outer_mtp_max_batch_size_wrong_value():
-    pytest.skip("fusion_mlx.speculative.mtp.gemma4_inject not migrated yet")
+    from types import SimpleNamespace
+
+    from fusion_mlx.speculative.mtp.gemma4_inject import (
+        inject_mtp_support,
+        validate_mtp_support,
+    )
+
+    inner = _build_tiny_gemma4_target_model()
+    assert inject_mtp_support(inner, allow_random_init=True) is True
+
+    outer = SimpleNamespace(
+        language_model=inner,
+        mtp=inner.mtp,
+        mtp_forward=inner.mtp_forward,
+        make_mtp_cache=inner.make_mtp_cache,
+        mtp_max_batch_size=2,
+    )
+    assert validate_mtp_support(outer) is False
 
 
 def test_mtp_forward_returns_per_position_shape():
-    pytest.skip("fusion_mlx.speculative.mtp.gemma4_inject not migrated yet")
+    import mlx.core as mx
+    from mlx_lm.models.cache import KVCache
+
+    from fusion_mlx.speculative.mtp.gemma4_inject import inject_mtp_support
+
+    model = _build_tiny_gemma4_target_model()
+    assert inject_mtp_support(model, allow_random_init=True) is True
+
+    target_cache = [KVCache() for _ in range(len(model.model.layers))]
+    input_ids = mx.array([[1, 2, 3, 4]])
+    _out, hidden = model(input_ids, cache=target_cache, return_hidden=True)
+    next_token_ids = mx.array([[5, 6, 7, 8]])
+    logits = model.mtp_forward(hidden, next_token_ids, None)
+
+    n_positions = hidden.shape[1]
+    assert logits.shape == (1, n_positions, 128)
 
 
 def test_inject_refuses_sidecar_with_nonpositive_vocab_size(tmp_path):
