@@ -21,7 +21,8 @@ def preprocess_image(image_path: str, width: int, height: int) -> mx.array:
     # To tensor: [H, W, 3] float32 in [-1, 1]
     arr = np.array(img, dtype=np.float32) / 255.0
     arr = arr * 2.0 - 1.0  # [0,1] → [-1,1]
-    return mx.array(arr[None, None])  # [1, 1, H, W, 3]
+    # VAE encode expects channels-first [B, C, T, H, W]; arr is [H, W, 3]
+    return mx.array(arr.transpose(2, 0, 1)[None, :, None])  # [1, 3, 1, H, W]
 
 
 def build_i2v_mask(z_shape, patch_size):
