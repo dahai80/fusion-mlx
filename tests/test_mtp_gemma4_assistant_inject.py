@@ -211,23 +211,58 @@ def test_make_mtp_cache_slots_are_generator_safe():
 
 
 def test_dispatcher_routes_gemma4_families_to_this_module():
-    pytest.skip("fusion_mlx.speculative.mtp.dispatch not migrated yet")
+    from fusion_mlx.speculative.mtp.dispatch import _MTP_INJECT_DISPATCH
+
+    gemma_keys = [k for k in _MTP_INJECT_DISPATCH if k.startswith("gemma4")]
+    assert gemma_keys, "no gemma4 family keys registered in inject dispatch"
+    for k in gemma_keys:
+        mod_path, func_name = _MTP_INJECT_DISPATCH[k]
+        assert mod_path == "fusion_mlx.speculative.mtp.gemma4_inject", k
+        assert func_name == "inject_mtp_support", k
 
 
 def test_dispatcher_still_routes_qwen3_5():
-    pytest.skip("fusion_mlx.speculative.mtp.dispatch not migrated yet")
+    from fusion_mlx.speculative.mtp.dispatch import _MTP_INJECT_DISPATCH
+
+    for k in ("qwen3_5", "qwen3_5_moe"):
+        assert k in _MTP_INJECT_DISPATCH, k
+        mod_path, func_name = _MTP_INJECT_DISPATCH[k]
+        assert mod_path == "fusion_mlx.speculative.mtp.qwen3_5_inject", k
+        assert func_name == "inject_mtp_support", k
 
 
 def test_dispatcher_returns_false_for_unknown_model_type():
-    pytest.skip("fusion_mlx.speculative.mtp.dispatch not migrated yet")
+    from fusion_mlx.speculative.mtp.dispatch import (
+        dispatch_mtp_inject,
+        dispatch_mtp_validate,
+    )
+
+    assert dispatch_mtp_inject(object(), "definitely_unknown_type_xyz") is False
+    assert dispatch_mtp_validate(object(), "definitely_unknown_type_xyz") is False
 
 
 def test_dispatcher_swallows_family_exceptions(monkeypatch):
-    pytest.skip("fusion_mlx.speculative.mtp.dispatch not migrated yet")
+    import fusion_mlx.speculative.mtp.gemma4_inject as gi
+
+    def _boom(model, mtp_sidecar=None, allow_random_init=False):
+        raise RuntimeError("synthetic inject failure")
+
+    monkeypatch.setattr(gi, "inject_mtp_support", _boom)
+    from fusion_mlx.speculative.mtp.dispatch import dispatch_mtp_inject
+
+    assert dispatch_mtp_inject(object(), "gemma4_unified") is False
 
 
 def test_dispatcher_validate_swallows_family_exceptions(monkeypatch):
-    pytest.skip("fusion_mlx.speculative.mtp.dispatch not migrated yet")
+    import fusion_mlx.speculative.mtp.qwen3_5_inject as qi
+
+    def _boom(model):
+        raise RuntimeError("synthetic validate failure")
+
+    monkeypatch.setattr(qi, "validate_mtp_support", _boom)
+    from fusion_mlx.speculative.mtp.dispatch import dispatch_mtp_validate
+
+    assert dispatch_mtp_validate(object(), "qwen3_5") is False
 
 
 def test_gemma4_text_modelargs_carries_fields_this_module_reads():
@@ -267,7 +302,26 @@ def test_gemma4_text_modelargs_carries_fields_this_module_reads():
 
 
 def test_dispatcher_routes_gemma4_unified_to_gemma4_inject(monkeypatch):
-    pytest.skip("fusion_mlx.speculative.mtp.dispatch not migrated yet")
+    import fusion_mlx.speculative.mtp.gemma4_inject as gi
+    import fusion_mlx.speculative.mtp.qwen3_5_inject as qi
+
+    called = {}
+
+    def _gemma(model, mtp_sidecar=None, allow_random_init=False):
+        called["gemma4"] = True
+        return True
+
+    def _qwen(model, mtp_sidecar=None, allow_random_init=False):
+        called["qwen3_5"] = True
+        return True
+
+    monkeypatch.setattr(gi, "inject_mtp_support", _gemma)
+    monkeypatch.setattr(qi, "inject_mtp_support", _qwen)
+    from fusion_mlx.speculative.mtp.dispatch import dispatch_mtp_inject
+
+    assert dispatch_mtp_inject(object(), "gemma4_unified") is True
+    assert called.get("gemma4") is True
+    assert "qwen3_5" not in called
 
 
 # ---------------------------------------------------------------------------
@@ -359,4 +413,14 @@ def test_inject_refuses_sidecar_with_nonpositive_vocab_size(tmp_path):
 
 
 def test_dispatcher_swallows_family_import_exception(monkeypatch):
-    pytest.skip("fusion_mlx.speculative.mtp.dispatch not migrated yet")
+    import fusion_mlx.speculative.mtp.dispatch as disp
+
+    real_import = disp.importlib.import_module
+
+    def _fail(module_path):
+        if "gemma4_inject" in module_path:
+            raise ImportError("synthetic import failure")
+        return real_import(module_path)
+
+    monkeypatch.setattr(disp.importlib, "import_module", _fail)
+    assert disp.dispatch_mtp_inject(object(), "gemma4_unified") is False

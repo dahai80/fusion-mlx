@@ -506,9 +506,8 @@ def _try_inject_mtp(model, model_path, config):
         except ImportError:
             logger.debug("MTP inject module not available")
             return
-        if config.get("num_nextn_predict_layers", 0) == 0:
-            config = {**config, "num_nextn_predict_layers": num}
-        inject_mtp_support(model, model_path, config)
+        inject_mtp_support(model, mtp_sidecar=model_path)
+        logger.debug("[MTP] qwen3.5 inject_mtp_support dispatched (sidecar=%s)", model_path)
 
 
 def _try_inject_mtp_post_load(model, model_name):
