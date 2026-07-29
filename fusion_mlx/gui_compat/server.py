@@ -48,6 +48,7 @@ from fusion_mlx.gui_compat.queued_inference import (
     queued_generate_text,
 )
 from fusion_mlx.gui_compat.system_monitor import get_system_monitor
+from fusion_mlx.middleware.auth import verify_api_key
 
 logger = logging.getLogger(__name__)
 
@@ -354,7 +355,7 @@ def _popular_model_dict(m):
 
 
 def get_gui_compat_router() -> APIRouter:
-    router = APIRouter()
+    router = APIRouter(dependencies=[Depends(verify_api_key)])
 
     @router.get("/v1/manager/models")
     async def list_models_int(db: Session = Depends(get_db_session)):
