@@ -50,7 +50,51 @@ def _build_convert_kwargs(args, hf_path: str) -> dict:
     }
 
 
+def _convert_pytorch_to_safetensors(model_path: Path) -> Path:
+    import shutil
+    import tempfile
+
+    import mlx.core as mx
+    import torch
+
+    pytorch_files = sorted(
+        list(model_path.glob("pytorch_model.bin"))
+        + list(model_path.glob("pytorch_model*.bin"))
+    )
+    if not pytorch_files:
+        raise FileNotFoundError(f"No pytorch_model.bin found in {model_path}")
+
+    logger.info(
+        "Pre-converting %d pytorch weight file(s) to safetensors",
+        len(pytorch_files),
+    )
+    weights: dict[str, mx.array] = {}
+    for pf in pytorch_files:
+        state_dict = torch.load(str(pf), map_location="cpu", weights_only=True)
+        for k, v in state_dict.items():
+            v = v.detach().cpu().float().numpy()
+            weights[k] = mx.array(v)
+
+    tmp_dir = Path(tempfile.mkdtemp(prefix="fusion_mlx_convert_"))
+    out_file = tmp_dir / "model.safetensors"
+    mx.save_safetensors(str(out_file), weights)
+    logger.info("Safetensors cache written to %s", out_file)
+
+    for f in model_path.iterdir():
+        if f.suffix in (".bin",) or f.name == "model.safetensors":
+            continue
+        target = tmp_dir / f.name
+        if not target.exists():
+            if f.is_file():
+                shutil.copy2(str(f), str(target))
+            elif f.is_dir():
+                shutil.copytree(str(f), str(target))
+    return tmp_dir
+
+
 def _run_convert(hf_path: str, **kwargs) -> str:
+    import shutil
+
     from mlx_lm import convert as mlx_convert
 
     logger.info(
@@ -61,10 +105,29 @@ def _run_convert(hf_path: str, **kwargs) -> str:
         kwargs["q_bits"],
         kwargs["q_mode"],
     )
-    # mlx-lm's convert() return type is unstable across versions (ModelHolder
-    # / None / path); we report the mlx_path we requested, not the return
-    # value, so behavior is robust to upstream churn.
-    mlx_convert(hf_path, **kwargs)
+    converted_dir: Path | None = None
+    try:
+        mlx_convert(hf_path, **kwargs)
+    except FileNotFoundError as exc:
+        if "safetensors" not in str(exc).lower():
+            raise
+        model_path = Path(hf_path)
+        if not model_path.is_dir():
+            from huggingface_hub import snapshot_download
+
+            model_path = Path(snapshot_download(hf_path))
+        pytorch_files = list(model_path.glob("pytorch_model*.bin"))
+        if not pytorch_files:
+            raise
+        logger.info("No safetensors found, attempting pytorch_model.bin conversion")
+        converted_dir = _convert_pytorch_to_safetensors(model_path)
+        mlx_convert(str(converted_dir), **kwargs)
+    finally:
+        if converted_dir is not None:
+            try:
+                shutil.rmtree(str(converted_dir), ignore_errors=True)
+            except Exception:
+                pass
     return kwargs["mlx_path"]
 
 

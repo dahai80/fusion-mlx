@@ -98,12 +98,24 @@ class MLXEmbeddingModel:
 
             weights = {}
             weight_files = list(model_path.glob("*.safetensors"))
-            if not weight_files:
-                logger.debug("No safetensors files found in %s", model_path)
-                return False
-
-            for wf in weight_files:
-                weights.update(mx.load(str(wf)))
+            if weight_files:
+                for wf in weight_files:
+                    weights.update(mx.load(str(wf)))
+            else:
+                pytorch_files = list(model_path.glob("pytorch_model.bin")) + list(
+                    model_path.glob("pytorch_model*.bin")
+                )
+                if pytorch_files:
+                    logger.info(
+                        "No safetensors found, loading pytorch weights from %s",
+                        model_path,
+                    )
+                    weights = self._load_pytorch_weights(pytorch_files)
+                else:
+                    logger.debug(
+                        "No safetensors or pytorch_model.bin in %s", model_path
+                    )
+                    return False
 
             weights = model_instance.sanitize(weights)
             self._validate_native_weights(model_instance, weights)
@@ -189,10 +201,8 @@ class MLXEmbeddingModel:
             )
         except FileNotFoundError:
             raise FileNotFoundError(
-                f"No safetensors weight files found for '{self._model_name}'. "
-                f"Embedding models require weights in safetensors format. "
-                f"If this is a PyTorch model, use an MLX-converted version "
-                f"(e.g., from mlx-community on HuggingFace)."
+                f"No weight files found for '{self._model_name}'. "
+                f"Embedding models require safetensors or pytorch_model.bin format."
             )
         except Exception as e:
             logger.error("Failed to load embedding model: %s", e)
@@ -256,6 +266,19 @@ class MLXEmbeddingModel:
                 "Native embedding checkpoint has incompatible weight shapes: "
                 f"{preview}{suffix}"
             )
+
+    @staticmethod
+    def _load_pytorch_weights(pytorch_files: list[Path]) -> dict[str, Any]:
+        import torch
+
+        weights: dict[str, Any] = {}
+        for pf in pytorch_files:
+            logger.debug("Loading pytorch weights from %s", pf)
+            state_dict = torch.load(str(pf), map_location="cpu", weights_only=True)
+            for k, v in state_dict.items():
+                v = v.detach().cpu().float().numpy()
+                weights[k] = mx.array(v)
+        return weights
 
     def _uses_custom_embedding_inputs(self, processor) -> bool:
         for attr_name in ("prepare_embedding_inputs", "prepare_model_inputs"):
