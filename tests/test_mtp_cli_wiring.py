@@ -27,47 +27,144 @@ logger = logging.getLogger(__name__)
 
 
 def test_detect_sidecar_promotes_gemma4_unified_with_missing_mtp_layers():
-    # fusion_mlx.speculative.mtp is a stub — MTPEligibility and
-    # detect_mtp_eligibility are not yet implemented.
-    pytest.skip(
-        "feature not migrated: fusion_mlx.speculative.mtp does not export "
-        "MTPEligibility or detect_mtp_eligibility"
+    """Base Gemma 4 unified checkpoint (no MTP head) + sidecar -> TREE.
+
+    The stock ``mlx-community/gemma-4-12B-it-4bit/config.json`` reports
+    ``model_type: gemma4_unified`` with no ``mtp_num_hidden_layers``
+    key. Without ``--mtp-sidecar``, detection collapses to NONE. With
+    ``--mtp-sidecar``, fusion-mlx's detector returns TREE
+    unconditionally - the external assistant drafter overrides
+    eligibility. Model-type scoping (gemma4_unified backbone only)
+    lives in the CLI reconciliation layer, not in detect (see the
+    Section 3 reconciliation tests).
+    """
+    from fusion_mlx.speculative.mtp import (
+        MTPEligibility,
+        detect_mtp_eligibility,
+    )
+
+    config = {"model_type": "gemma4_unified"}  # no mtp_num_hidden_layers
+    assert detect_mtp_eligibility(config) is MTPEligibility.NONE
+    assert (
+        detect_mtp_eligibility(config, has_external_sidecar=True)
+        is MTPEligibility.TREE
     )
 
 
 def test_detect_sidecar_promotes_gemma4_unified_with_zero_mtp_layers():
-    pytest.skip(
-        "feature not migrated: fusion_mlx.speculative.mtp does not export "
-        "MTPEligibility or detect_mtp_eligibility"
+    """Explicit ``mtp_num_hidden_layers: 0`` + sidecar -> TREE too.
+
+    Same shape as the base 12B checkpoint after someone hand-edited
+    the config to stamp a zero on it. Sidecar-mode still returns TREE
+    - the assistant weights come from the external path.
+    """
+    from fusion_mlx.speculative.mtp import (
+        MTPEligibility,
+        detect_mtp_eligibility,
+    )
+
+    config = {"model_type": "gemma4_unified", "mtp_num_hidden_layers": 0}
+    assert detect_mtp_eligibility(config) is MTPEligibility.NONE
+    assert (
+        detect_mtp_eligibility(config, has_external_sidecar=True)
+        is MTPEligibility.TREE
     )
 
 
-def test_detect_sidecar_no_effect_on_qwen3_5_missing_mtp():
-    pytest.skip(
-        "feature not migrated: fusion_mlx.speculative.mtp does not export "
-        "MTPEligibility or detect_mtp_eligibility"
+def test_detect_sidecar_unconditional_for_qwen3_5_family():
+    """Sidecar -> TREE regardless of model_type in fusion-mlx.
+
+    Diverges from Rapid-MLX, which scoped the sidecar promotion to
+    ``gemma4_unified`` only (qwen3.5 stayed NONE). fusion-mlx moved
+    the model-type gate OUT of detect and into the CLI reconciliation
+    layer (``_apply_mtp_cli_model_type_reconciliation`` exits 2 for a
+    non-gemma4_unified sidecar backbone). detect itself stays
+    unconditional so the eligibility signal is a pure "external
+    drafter present" flag. This pins that contract.
+    """
+    from fusion_mlx.speculative.mtp import (
+        MTPEligibility,
+        detect_mtp_eligibility,
+    )
+
+    config = {"model_type": "qwen3_5", "mtp_num_hidden_layers": 0}
+    assert (
+        detect_mtp_eligibility(config, has_external_sidecar=True)
+        is MTPEligibility.TREE
+    )
+    config_moe = {"model_type": "qwen3_5_moe", "mtp_num_hidden_layers": 0}
+    assert (
+        detect_mtp_eligibility(config_moe, has_external_sidecar=True)
+        is MTPEligibility.TREE
     )
 
 
-def test_detect_sidecar_no_effect_on_gemma4_multimodal():
-    pytest.skip(
-        "feature not migrated: fusion_mlx.speculative.mtp does not export "
-        "MTPEligibility or detect_mtp_eligibility"
+def test_detect_sidecar_unconditional_for_gemma4_multimodal():
+    """Multimodal ``gemma4`` + sidecar -> TREE in fusion-mlx detect.
+
+    Same divergence as the qwen3.5 case: Rapid-MLX kept multimodal
+    ``gemma4`` at NONE because only ``gemma4_unified`` had a verified
+    external drafter. fusion-mlx's detect returns TREE unconditionally;
+    the backbone allowlist is enforced downstream in reconciliation.
+    """
+    from fusion_mlx.speculative.mtp import (
+        MTPEligibility,
+        detect_mtp_eligibility,
+    )
+
+    config = {"model_type": "gemma4", "mtp_num_hidden_layers": 0}
+    assert (
+        detect_mtp_eligibility(config, has_external_sidecar=True)
+        is MTPEligibility.TREE
     )
 
 
-def test_detect_sidecar_leaves_qwen3_5_with_mtp_layers_untouched():
-    pytest.skip(
-        "feature not migrated: fusion_mlx.speculative.mtp does not export "
-        "MTPEligibility or detect_mtp_eligibility"
+def test_detect_sidecar_overrides_baked_in_mtp_to_tree():
+    """Qwen3.5 with baked-in MTP layers + sidecar -> TREE (overrides CHAIN).
+
+    Without sidecar, ``qwen3_5`` with ``mtp_num_hidden_layers >= 1``
+    returns CHAIN (baked-in MTP). With ``has_external_sidecar=True``
+    the external drafter takes over and detect returns TREE. This is
+    NOT additive (it can change CHAIN -> TREE); the sidecar flag
+    signals "use the external drafter, not the baked-in one".
+    """
+    from fusion_mlx.speculative.mtp import (
+        MTPEligibility,
+        detect_mtp_eligibility,
+    )
+
+    config = {"model_type": "qwen3_5", "mtp_num_hidden_layers": 1}
+    assert (
+        detect_mtp_eligibility(config, has_external_sidecar=False)
+        is MTPEligibility.CHAIN
+    )
+    assert (
+        detect_mtp_eligibility(config, has_external_sidecar=True)
+        is MTPEligibility.TREE
     )
 
 
 def test_detect_sidecar_default_argument_matches_pre_0913_behaviour():
-    pytest.skip(
-        "feature not migrated: fusion_mlx.speculative.mtp does not export "
-        "MTPEligibility or detect_mtp_eligibility"
+    """``has_external_sidecar`` defaults to False, preserving the
+    pre-0.9.13 rejection contract for every non-CLI caller.
+
+    Regression guard against a future refactor that flips the default
+    to True - bench scripts, unit tests, and the CLI eligibility gate
+    all rely on the no-argument case being identical to the old NONE
+    shape when MTP layers are missing.
+    """
+    from fusion_mlx.speculative.mtp import (
+        MTPEligibility,
+        detect_mtp_eligibility,
     )
+
+    config = {"model_type": "gemma4_unified", "mtp_num_hidden_layers": 0}
+    assert detect_mtp_eligibility(config) is MTPEligibility.NONE
+    assert (
+        detect_mtp_eligibility(config, has_external_sidecar=False)
+        is MTPEligibility.NONE
+    )
+
 
 
 # ---------------------------------------------------------------------------
