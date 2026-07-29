@@ -108,9 +108,9 @@ class CosmosAttention(nn.Module):
             q = _apply_rope(q, rope, self.rope_dim)
             if context is None:
                 k = _apply_rope(k, rope, self.rope_dim)
-        attn = (q * self.scale) @ k.transpose(0, 1, 3, 2)
-        attn = mx.softmax(attn, axis=-1)
-        out = attn @ v
+        # Use fused SDPA to avoid materializing O(L^2) attention matrix
+        out = mx.fast.scaled_dot_product_attention(q, k, v, scale=self.scale)
+
         out = out.transpose(0, 2, 1, 3).reshape(B, L, -1)
         return self.out_proj(out)
 

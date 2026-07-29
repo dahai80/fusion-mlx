@@ -63,7 +63,7 @@ class CosmosVAEConv3d(nn.Module):
         self.bias = mx.zeros((out_channels,), dtype=mx.float32)
 
     def __call__(self, x):
-        # x: (B, C, T, H, W) -> manual conv3d via slice matmul
+        # x: (B, C, T, H, W) -> manual conv3d via chunked slice matmul
         B, C, T, H, W = x.shape
         kt, kh, kw = self.kernel_size
         st, sh, sw = self.stride
@@ -74,25 +74,31 @@ class CosmosVAEConv3d(nn.Module):
         ot = (Tp - kt) // st + 1
         oh = (Hp - kh) // sh + 1
         ow = (Wp - kw) // sw + 1
-        # Unfold patches
-        patches = []
-        for ti in range(ot):
-            for hi in range(oh):
-                for wi in range(ow):
-                    patch = x[
-                        :,
-                        :,
-                        ti * st : ti * st + kt,
-                        hi * sh : hi * sh + kh,
-                        wi * sw : wi * sw + kw,
-                    ]
-                    patches.append(patch.reshape(B, -1))
-        if len(patches) == 0:
+        total_patches = ot * oh * ow
+        if total_patches == 0:
             return mx.zeros((B, self.out_channels, ot, oh, ow), dtype=x.dtype)
-        patches = mx.stack(patches, axis=0)  # (ot*oh*ow, B, C*kt*kh*kw)
-        patches = patches.reshape(-1, B, C * kt * kh * kw)  # (L, B, D)
         w = self.weight.reshape(self.out_channels, -1)  # (out, C*kt*kh*kw)
-        out = patches @ w.T  # (L, B, out)
+        # Chunk output positions to limit peak memory
+        CHUNK_SIZE = 512
+        out_chunks = []
+        positions = [(ti, hi, wi) for ti in range(ot) for hi in range(oh) for wi in range(ow)]
+        for chunk_start in range(0, total_patches, CHUNK_SIZE):
+            chunk_end = min(chunk_start + CHUNK_SIZE, total_patches)
+            patches = []
+            for ti, hi, wi in positions[chunk_start:chunk_end]:
+                patch = x[
+                    :,
+                    :,
+                    ti * st : ti * st + kt,
+                    hi * sh : hi * sh + kh,
+                    wi * sw : wi * sw + kw,
+                ]
+                patches.append(patch.reshape(B, -1))
+            chunk = mx.stack(patches, axis=0)  # (chunk_len, B, C*kt*kh*kw)
+            chunk = chunk.reshape(-1, B, C * kt * kh * kw)
+            out_chunk = chunk @ w.T  # (chunk_len, B, out)
+            out_chunks.append(out_chunk)
+        out = mx.concatenate(out_chunks, axis=0)  # (total, B, out)
         out = out.reshape(ot, oh, ow, B, self.out_channels)
         out = out.transpose(3, 4, 0, 1, 2)  # (B, out, ot, oh, ow)
         out = out + self.bias.reshape(1, -1, 1, 1, 1)
