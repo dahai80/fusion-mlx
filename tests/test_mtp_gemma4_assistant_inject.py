@@ -141,15 +141,50 @@ def _build_tiny_gemma4_target_model():
 
 
 def test_build_assistant_model_args_parses_google_shape():
-    pytest.skip("fusion_mlx.speculative.mtp.gemma4_inject not migrated yet")
+    from fusion_mlx.speculative.mtp.gemma4_inject import _build_assistant_model_args
+
+    cfg = _google_shaped_assistant_config(hidden=64, backbone=128, n_layers=4)
+    args = _build_assistant_model_args(cfg, target_backbone_hidden=128)
+    assert args is not None
+    assert args.hidden_size == 64
+    assert args.num_hidden_layers == 4
+    assert args.vocab_size == 128
+    assert list(args.layer_types) == [
+        "sliding_attention",
+        "sliding_attention",
+        "sliding_attention",
+        "full_attention",
+    ]
+    assert getattr(args, "backbone_hidden_size", None) == 128
 
 
 def test_build_assistant_model_args_rejects_mismatched_backbone_hidden():
-    pytest.skip("fusion_mlx.speculative.mtp.gemma4_inject not migrated yet")
+    from fusion_mlx.speculative.mtp.gemma4_inject import _build_assistant_model_args
+
+    cfg = _google_shaped_assistant_config(hidden=64, backbone=256, n_layers=4)
+    args = _build_assistant_model_args(cfg, target_backbone_hidden=128)
+    assert args is None
 
 
 def test_build_assistant_model_matches_google_weight_tree():
-    pytest.skip("fusion_mlx.speculative.mtp.gemma4_inject not migrated yet")
+    from mlx.utils import tree_flatten
+
+    from fusion_mlx.speculative.mtp.gemma4_inject import (
+        _build_assistant_model,
+        _build_assistant_model_args,
+    )
+
+    cfg = _google_shaped_assistant_config(hidden=64, backbone=128, n_layers=4)
+    args = _build_assistant_model_args(cfg, target_backbone_hidden=128)
+    assert args is not None
+    backbone_hidden = int(getattr(args, "backbone_hidden_size", 128))
+    assistant = _build_assistant_model(args, backbone_hidden)
+    keys = {k for k, _ in tree_flatten(assistant.parameters())}
+    assert "model.embed_tokens.weight" in keys
+    assert "model.norm.weight" in keys
+    assert "pre_projection.weight" in keys
+    assert "post_projection.weight" in keys
+    assert any(k.startswith("model.layers.0.") for k in keys)
 
 
 # ---------------------------------------------------------------------------
@@ -158,7 +193,15 @@ def test_build_assistant_model_matches_google_weight_tree():
 
 
 def test_inject_attaches_four_surfaces_under_random_init():
-    pytest.skip("fusion_mlx.speculative.mtp.gemma4_inject not migrated yet")
+    from fusion_mlx.speculative.mtp.gemma4_inject import inject_mtp_support
+
+    model = _build_tiny_gemma4_target_model()
+    assert inject_mtp_support(model, allow_random_init=True) is True
+    assert getattr(model, "mtp", None) is not None
+    assert callable(getattr(model, "mtp_forward", None))
+    assert callable(getattr(model, "make_mtp_cache", None))
+    assert getattr(model, "mtp_max_batch_size", None) == 1
+    assert type(model).__name__ == "_Gemma4WithMTP"
 
 
 # ---------------------------------------------------------------------------
@@ -180,7 +223,11 @@ def test_inject_refuses_sidecar_missing_tensor(tmp_path):
 
 
 def test_inject_refuses_no_sidecar_by_default():
-    pytest.skip("fusion_mlx.speculative.mtp.gemma4_inject not migrated yet")
+    from fusion_mlx.speculative.mtp.gemma4_inject import inject_mtp_support
+
+    model = _build_tiny_gemma4_target_model()
+    assert inject_mtp_support(model) is False
+    assert not hasattr(model, "mtp")
 
 
 # ---------------------------------------------------------------------------
@@ -189,11 +236,28 @@ def test_inject_refuses_no_sidecar_by_default():
 
 
 def test_inject_refuses_non_assistant_model_type(tmp_path):
-    pytest.skip("fusion_mlx.speculative.mtp.gemma4_inject not migrated yet")
+    import json
+
+    from fusion_mlx.speculative.mtp.gemma4_inject import inject_mtp_support
+
+    cfg = _google_shaped_assistant_config()
+    cfg["model_type"] = "gemma4_text"
+    (tmp_path / "config.json").write_text(json.dumps(cfg))
+    model = _build_tiny_gemma4_target_model()
+    assert inject_mtp_support(model, str(tmp_path)) is False
 
 
 def test_build_assistant_model_args_rejects_layer_types_length_mismatch():
-    pytest.skip("fusion_mlx.speculative.mtp.gemma4_inject not migrated yet")
+    from fusion_mlx.speculative.mtp.gemma4_inject import _build_assistant_model_args
+
+    cfg = _google_shaped_assistant_config(hidden=64, backbone=128, n_layers=4)
+    cfg["text_config"]["layer_types"] = [
+        "sliding_attention",
+        "sliding_attention",
+        "full_attention",
+    ]
+    args = _build_assistant_model_args(cfg, target_backbone_hidden=128)
+    assert args is None
 
 
 # ---------------------------------------------------------------------------
@@ -202,7 +266,17 @@ def test_build_assistant_model_args_rejects_layer_types_length_mismatch():
 
 
 def test_make_mtp_cache_slots_are_generator_safe():
-    pytest.skip("fusion_mlx.speculative.mtp.gemma4_inject not migrated yet")
+    from mlx_lm.models.cache import KVCache
+
+    from fusion_mlx.speculative.mtp.gemma4_inject import inject_mtp_support
+
+    model = _build_tiny_gemma4_target_model()
+    assert inject_mtp_support(model, allow_random_init=True) is True
+    cache = model.make_mtp_cache()
+    assert isinstance(cache, list)
+    assert len(cache) == len(model.mtp.model.layers)
+    assert all(isinstance(slot, KVCache) for slot in cache)
+    assert all(int(getattr(slot, "offset", 0)) == 0 for slot in cache)
 
 
 # ---------------------------------------------------------------------------
@@ -352,7 +426,16 @@ def test_validate_refuses_when_outer_wrapper_missing_delegated_surface():
 
 
 def test_inject_refuses_sidecar_with_vocab_size_mismatch(tmp_path):
-    pytest.skip("fusion_mlx.speculative.mtp.gemma4_inject not migrated yet")
+    import json
+
+    from fusion_mlx.speculative.mtp.gemma4_inject import inject_mtp_support
+
+    cfg = _google_shaped_assistant_config()
+    cfg["text_config"]["vocab_size"] = 256
+    (tmp_path / "config.json").write_text(json.dumps(cfg))
+    (tmp_path / "assistant.safetensors").write_bytes(b"")
+    model = _build_tiny_gemma4_target_model()
+    assert inject_mtp_support(model, str(tmp_path)) is False
 
 
 def test_mtp_forward_rejects_batch_greater_than_one():
@@ -365,19 +448,45 @@ def test_mtp_forward_rejects_batch_greater_than_one():
 
 
 def test_injected_class_exposes_mtp_max_batch_size_static_gate():
-    pytest.skip("fusion_mlx.speculative.mtp.gemma4_inject not migrated yet")
+    from fusion_mlx.speculative.mtp.gemma4_inject import inject_mtp_support
+
+    model = _build_tiny_gemma4_target_model()
+    assert inject_mtp_support(model, allow_random_init=True) is True
+    cls = type(model)
+    assert cls.__dict__.get("mtp_max_batch_size") == 1
+    assert model.mtp_max_batch_size == 1
 
 
 def test_resolve_sidecar_refuses_non_hf_shape_local_typo(tmp_path):
-    pytest.skip("fusion_mlx.speculative.mtp.gemma4_inject not migrated yet")
+    from fusion_mlx.speculative.mtp.gemma4_inject import _resolve_sidecar_dir
+
+    assert _resolve_sidecar_dir("nonexistent-local-typo-no-slash") is None
 
 
 def test_inject_random_init_refuses_when_target_has_no_vocab_size():
-    pytest.skip("fusion_mlx.speculative.mtp.gemma4_inject not migrated yet")
+    from fusion_mlx.speculative.mtp.gemma4_inject import inject_mtp_support
+
+    model = _build_tiny_gemma4_target_model()
+    object.__setattr__(model.args, "vocab_size", 0)
+    assert inject_mtp_support(model, allow_random_init=True) is False
 
 
 def test_inject_refuses_when_target_tail_layer_types_mismatch(tmp_path):
-    pytest.skip("fusion_mlx.speculative.mtp.gemma4_inject not migrated yet")
+    import json
+
+    from fusion_mlx.speculative.mtp.gemma4_inject import inject_mtp_support
+
+    cfg = _google_shaped_assistant_config(hidden=64, backbone=128, n_layers=4)
+    cfg["text_config"]["layer_types"] = [
+        "full_attention",
+        "sliding_attention",
+        "sliding_attention",
+        "full_attention",
+    ]
+    (tmp_path / "config.json").write_text(json.dumps(cfg))
+    (tmp_path / "assistant.safetensors").write_bytes(b"")
+    model = _build_tiny_gemma4_target_model()
+    assert inject_mtp_support(model, str(tmp_path)) is False
 
 
 def test_mtp_forward_rejects_populated_mtp_cache():
@@ -389,11 +498,28 @@ def test_mtp_forward_rejects_negative_row_offset():
 
 
 def test_inject_refuses_when_target_layer_types_shorter_than_assistant(tmp_path):
-    pytest.skip("fusion_mlx.speculative.mtp.gemma4_inject not migrated yet")
+    import json
+
+    from fusion_mlx.speculative.mtp.gemma4_inject import inject_mtp_support
+
+    cfg = _google_shaped_assistant_config(hidden=64, backbone=128, n_layers=4)
+    (tmp_path / "config.json").write_text(json.dumps(cfg))
+    (tmp_path / "assistant.safetensors").write_bytes(b"")
+    model = _build_tiny_gemma4_target_model()
+    object.__setattr__(
+        model.args,
+        "layer_types",
+        ["sliding_attention", "full_attention"],
+    )
+    assert inject_mtp_support(model, str(tmp_path)) is False
 
 
 def test_find_safetensors_refuses_multi_file_even_with_model_safetensors(tmp_path):
-    pytest.skip("fusion_mlx.speculative.mtp.gemma4_inject not migrated yet")
+    from fusion_mlx.speculative.mtp.gemma4_inject import _find_safetensors
+
+    (tmp_path / "model.safetensors").write_bytes(b"")
+    (tmp_path / "model-00001-of-00002.safetensors").write_bytes(b"")
+    assert _find_safetensors(tmp_path) is None
 
 
 def test_validate_refuses_when_outer_mtp_is_none():
@@ -409,7 +535,16 @@ def test_mtp_forward_returns_per_position_shape():
 
 
 def test_inject_refuses_sidecar_with_nonpositive_vocab_size(tmp_path):
-    pytest.skip("fusion_mlx.speculative.mtp.gemma4_inject not migrated yet")
+    import json
+
+    from fusion_mlx.speculative.mtp.gemma4_inject import inject_mtp_support
+
+    cfg = _google_shaped_assistant_config(hidden=64, backbone=128, n_layers=4)
+    cfg["text_config"]["vocab_size"] = 0
+    (tmp_path / "config.json").write_text(json.dumps(cfg))
+    (tmp_path / "assistant.safetensors").write_bytes(b"")
+    model = _build_tiny_gemma4_target_model()
+    assert inject_mtp_support(model, str(tmp_path)) is False
 
 
 def test_dispatcher_swallows_family_import_exception(monkeypatch):
