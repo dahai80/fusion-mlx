@@ -183,13 +183,42 @@ def load_t5_encoder(model_path: Path, config, dtype: str | None = None):
     return encoder
 
 
+# Conv2d kernel spatial dims never exceed this; used to tell PyTorch
+# [out, in, kH, kW] layout from already-MLX [out, kH, kW, in] layout.
+_MAX_CONV_KERNEL = 8
+
+
 def _transpose_conv2d_weights(weights: dict) -> dict:
+    # PyTorch Conv2d weight is [out, in, kH, kW]; MLX wants [out, kH, kW, in] ->
+    # transpose(0, 2, 3, 1). But some shipped VAE checkpoints (e.g.
+    # Wan2.1-1.3B/vae.safetensors) are ALREADY in MLX layout; transposing them
+    # again corrupts 1x1 convs like to_qkv (1152,1,1,384) -> (1152,1,384,1) and
+    # crashes mx.conv2d with an input/weight channel mismatch. So only transpose
+    # weights whose axes (2, 3) are kernel-sized (the PyTorch signature); an
+    # already-MLX weight carries in_channels at axis 3 and is left alone.
     out = {}
+    transposed = 0
+    skipped = 0
     for k, v in weights.items():
-        if v.ndim == 4 and k.endswith(".weight") and "gamma" not in k:
+        is_pytorch_layout = (
+            v.ndim == 4
+            and k.endswith(".weight")
+            and "gamma" not in k
+            and v.shape[2] <= _MAX_CONV_KERNEL
+            and v.shape[3] <= _MAX_CONV_KERNEL
+        )
+        if is_pytorch_layout:
             out[k] = v.transpose(0, 2, 3, 1)
+            transposed += 1
         else:
             out[k] = v
+            if v.ndim == 4 and k.endswith(".weight") and "gamma" not in k:
+                skipped += 1
+    logger.info(
+        "conv2d weight layout: transposed %d PyTorch-layout, skipped %d already-MLX",
+        transposed,
+        skipped,
+    )
     return out
 
 
