@@ -6,7 +6,6 @@ import pytest
 pytest.importorskip("mlx", reason="MLX not available")
 
 import mlx.core as mx
-import mlx.nn as nn
 
 from fusion_mlx.video.wan2.config import WanModelConfig
 from fusion_mlx.video.wan2.vace import VACEBlock
@@ -31,12 +30,14 @@ class TestWanModelConfigVACE:
 
     def test_infer_config_vace_path(self):
         from fusion_mlx.engines.video_backends.wan2 import _infer_config_from_path
+
         cfg = _infer_config_from_path("/models/Wan2.1-VACE-14B")
         assert cfg.model_type == "vace"
         assert cfg.vace_layers == (0, 5, 10, 15, 20, 25, 30, 35)
 
     def test_infer_config_vace_case_insensitive(self):
         from fusion_mlx.engines.video_backends.wan2 import _infer_config_from_path
+
         cfg = _infer_config_from_path("/models/wan2.1-vace-14b")
         assert cfg.model_type == "vace"
 
@@ -147,7 +148,14 @@ class TestWanModelVACE:
 
         model = WanModel(cfg)
         assert model._vace_block_map == {
-            0: 0, 5: 1, 10: 2, 15: 3, 20: 4, 25: 5, 30: 6, 35: 7,
+            0: 0,
+            5: 1,
+            10: 2,
+            15: 3,
+            20: 4,
+            25: 5,
+            30: 6,
+            35: 7,
         }
 
 
@@ -260,6 +268,7 @@ class TestVACEGeneratePipeline:
 
     def test_generate_video_accepts_vace_params(self):
         import inspect
+
         from fusion_mlx.video.wan2.generate import generate_video
 
         sig = inspect.signature(generate_video)

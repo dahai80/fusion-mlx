@@ -81,7 +81,9 @@ class CosmosVAEConv3d(nn.Module):
         # Chunk output positions to limit peak memory
         CHUNK_SIZE = 512
         out_chunks = []
-        positions = [(ti, hi, wi) for ti in range(ot) for hi in range(oh) for wi in range(ow)]
+        positions = [
+            (ti, hi, wi) for ti in range(ot) for hi in range(oh) for wi in range(ow)
+        ]
         for chunk_start in range(0, total_patches, CHUNK_SIZE):
             chunk_end = min(chunk_start + CHUNK_SIZE, total_patches)
             patches = []

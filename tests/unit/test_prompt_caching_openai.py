@@ -1,13 +1,12 @@
 # SPDX-License-Identifier: Apache-2.0
 """Tests for #241: prompt caching support on /v1/chat/completions."""
 
-import pytest
 from unittest.mock import MagicMock
 
-from fusion_mlx.api.openai_routes import _detect_prefix_cache_boundary
-from fusion_mlx.api.adapters.openai import OpenAIAdapter
 from fusion_mlx.api.adapters.base import InternalResponse
+from fusion_mlx.api.adapters.openai import OpenAIAdapter
 from fusion_mlx.api.openai_models import ChatCompletionRequest, Message
+from fusion_mlx.api.openai_routes import _detect_prefix_cache_boundary
 
 
 class TestDetectPrefixCacheBoundary:
@@ -32,7 +31,9 @@ class TestDetectPrefixCacheBoundary:
 
     def test_system_list_with_cache_control_on_part(self):
         part_no_cc = MagicMock(type="text", text="Hello ", cache_control=None)
-        part_cc = MagicMock(type="text", text="world!", cache_control={"type": "ephemeral"})
+        part_cc = MagicMock(
+            type="text", text="world!", cache_control={"type": "ephemeral"}
+        )
         msgs = [
             MagicMock(role="system", content=[part_no_cc, part_cc], cache_control=None),
             MagicMock(role="user", content="Hi", cache_control=None),
@@ -45,7 +46,11 @@ class TestDetectPrefixCacheBoundary:
             MagicMock(
                 role="system",
                 content=[
-                    {"type": "text", "text": "System prompt", "cache_control": {"type": "ephemeral"}},
+                    {
+                        "type": "text",
+                        "text": "System prompt",
+                        "cache_control": {"type": "ephemeral"},
+                    },
                 ],
                 cache_control=None,
             ),
@@ -134,11 +139,15 @@ class TestCacheControlField:
     def test_content_part_accepts_cache_control(self):
         from fusion_mlx.api.openai_models import ContentPart
 
-        part = ContentPart(type="text", text="system prompt", cache_control={"type": "ephemeral"})
+        part = ContentPart(
+            type="text", text="system prompt", cache_control={"type": "ephemeral"}
+        )
         assert part.cache_control == {"type": "ephemeral"}
 
     def test_message_accepts_cache_control(self):
-        msg = Message(role="system", content="prompt", cache_control={"type": "ephemeral"})
+        msg = Message(
+            role="system", content="prompt", cache_control={"type": "ephemeral"}
+        )
         assert msg.cache_control == {"type": "ephemeral"}
 
     def test_content_part_default_none(self):

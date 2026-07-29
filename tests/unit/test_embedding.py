@@ -1499,7 +1499,7 @@ class TestNativeEmbeddingLoading:
 
         weights = {}
         with safe_open(tmp_path / "model.safetensors", framework="mlx") as f:
-            for key in f.keys():
+            for key in f.keys():  # noqa: SIM118 - safe_open is not iterable
                 weights[key] = np.array(f.get_tensor(key))
 
         weights["embeddings.word_embeddings.weight"] = np.random.randn(

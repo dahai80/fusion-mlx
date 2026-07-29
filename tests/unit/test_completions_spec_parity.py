@@ -492,7 +492,6 @@ class TestLogprobsEngineCapability:
     sends ``logprobs:N`` — return a controlled 501 instead."""
 
     def test_structural_fallback_supports_non_base_engine(self):
-        from fusion_mlx.engine.base import BaseEngine
 
         def _engine_supports_completion_logprobs(engine):
             return engine.supports_completion_logprobs
@@ -507,7 +506,6 @@ class TestLogprobsEngineCapability:
         assert _engine_supports_completion_logprobs(_Engine()) is True
 
     def test_sync_callable_capability_is_evaluated(self):
-        from fusion_mlx.engine.base import BaseEngine
 
         def _engine_supports_completion_logprobs(engine):
             return engine.supports_completion_logprobs
@@ -529,7 +527,6 @@ class TestLogprobsEngineCapability:
         assert engine.called is True
 
     def test_sync_callable_false_capability_is_evaluated(self):
-        from fusion_mlx.engine.base import BaseEngine
 
         def _engine_supports_completion_logprobs(engine):
             return engine.supports_completion_logprobs
@@ -547,7 +544,6 @@ class TestLogprobsEngineCapability:
         assert _engine_supports_completion_logprobs(_Engine()) is False
 
     def test_non_bool_capability_attribute_is_unsupported(self):
-        from fusion_mlx.engine.base import BaseEngine
 
         def _engine_supports_completion_logprobs(engine):
             return engine.supports_completion_logprobs
@@ -563,7 +559,6 @@ class TestLogprobsEngineCapability:
         assert _engine_supports_completion_logprobs(_Engine()) is False
 
     def test_async_callable_capability_is_not_invoked(self):
-        from fusion_mlx.engine.base import BaseEngine
 
         def _engine_supports_completion_logprobs(engine):
             return engine.supports_completion_logprobs

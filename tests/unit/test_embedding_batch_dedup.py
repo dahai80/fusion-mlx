@@ -1,8 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 """Tests for #245: embedding batch dedup + chunking optimization."""
 
-import pytest
-
 from fusion_mlx.api.embeddings_routes import _dedup_inputs
 
 

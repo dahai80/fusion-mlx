@@ -19,12 +19,12 @@ Usage:
 """
 
 import argparse
-import pytest
 import asyncio
 import sys
 import time
 
 import aiohttp
+import pytest
 
 BASE = "http://127.0.0.1:8000"
 

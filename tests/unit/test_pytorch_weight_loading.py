@@ -179,9 +179,12 @@ class TestRunConvertPytorchFallback:
             torch.save(state_dict, str(pt_path))
             (model_path / "config.json").write_text("{}")
 
-            with patch("mlx_lm.convert") as mock_convert, patch(
-                "fusion_mlx.cli_convert._convert_pytorch_to_safetensors"
-            ) as mock_pt:
+            with (
+                patch("mlx_lm.convert") as mock_convert,
+                patch(
+                    "fusion_mlx.cli_convert._convert_pytorch_to_safetensors"
+                ) as mock_pt,
+            ):
                 mock_convert.side_effect = fake_mlx_convert
                 mock_pt.return_value = Path(tmpdir)
 

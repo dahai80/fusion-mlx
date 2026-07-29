@@ -21,9 +21,9 @@ boundary without flaky BPE drift.
 
 from __future__ import annotations
 
-import pytest
 from typing import Any
 
+import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
@@ -153,7 +153,10 @@ def _extract_error(body: dict) -> dict:
 # ─── /v1/chat/completions ───────────────────────────────────────────
 
 
-@pytest.mark.xfail(reason="context-length enforcement not wired into openai_routes/chat route", strict=False)
+@pytest.mark.xfail(
+    reason="context-length enforcement not wired into openai_routes/chat route",
+    strict=False,
+)
 def test_chat_completions_rejects_over_context_window():
     """``/v1/chat/completions`` must surface the structured 400
     envelope when ``prompt + max_tokens > context_window``."""
@@ -178,7 +181,10 @@ def test_chat_completions_rejects_over_context_window():
 # ─── /v1/completions ────────────────────────────────────────────────
 
 
-@pytest.mark.xfail(reason="context-length enforcement not wired into openai_routes completions", strict=False)
+@pytest.mark.xfail(
+    reason="context-length enforcement not wired into openai_routes completions",
+    strict=False,
+)
 def test_completions_rejects_over_context_window():
     """``/v1/completions`` (raw-prompt API) must enforce the same
     cap. The helper here is ``enforce_context_length_for_prompt``
@@ -202,7 +208,10 @@ def test_completions_rejects_over_context_window():
 # ─── /v1/messages (Anthropic) ───────────────────────────────────────
 
 
-@pytest.mark.xfail(reason="context-length enforcement not wired into anthropic/responses routes", strict=False)
+@pytest.mark.xfail(
+    reason="context-length enforcement not wired into anthropic/responses routes",
+    strict=False,
+)
 def test_anthropic_messages_rejects_over_context_window():
     """``/v1/messages`` (Anthropic shape) must enforce the same cap.
     Anthropic SDKs branch on ``error.type`` so we pin the envelope
@@ -226,7 +235,9 @@ def test_anthropic_messages_rejects_over_context_window():
 # ─── /v1/responses ──────────────────────────────────────────────────
 
 
-@pytest.mark.xfail(reason="context-length enforcement not wired into responses route", strict=False)
+@pytest.mark.xfail(
+    reason="context-length enforcement not wired into responses route", strict=False
+)
 def test_responses_rejects_over_context_window():
     """``/v1/responses`` (OpenAI Responses API) must enforce the
     same cap. The route re-extracts multimodal content before the
