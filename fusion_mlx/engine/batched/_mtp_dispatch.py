@@ -91,6 +91,29 @@ def _run_dispatch_mtp_inject(
     return _DISPATCH_REJECTED
 
 
+def _decide_mtp_dispatch_action(
+    dispatch_result: str,
+    cli_vetted_model_type: str | None = None,
+) -> None:
+    if dispatch_result == _DISPATCH_ATTACHED:
+        return
+    if dispatch_result == _DISPATCH_REJECTED:
+        suffix = (
+            f" (cli_vetted_model_type={cli_vetted_model_type})"
+            if cli_vetted_model_type
+            else ""
+        )
+        raise RuntimeError(f"[MTP] dispatch rejected by injector{suffix}")
+    if cli_vetted_model_type:
+        raise RuntimeError(
+            f"[MTP] dispatch {dispatch_result} for cli-vetted "
+            f"model_type={cli_vetted_model_type}; MTP requested but not attachable"
+        )
+    logger.debug(
+        "[MTP-dispatch] %s without cli vetting -> soft skip", dispatch_result
+    )
+
+
 def _get_mtp_dispatch_timeout_sec() -> float:
     raw = os.environ.get(_TIMEOUT_ENV)
     if raw is None or raw == "":
@@ -120,3 +143,31 @@ def _log_mtp_dispatch_timeout(
         model_type,
         mtp_sidecar,
     )
+
+
+def _apply_mtp_dispatch(
+    model: Any,
+    scheduler_config: Any,
+    executor: Any,
+    *,
+    cli_vetted_model_type: str | None = None,
+) -> str | None:
+    model_type = getattr(scheduler_config, "mtp_model_type", None)
+    sidecar = getattr(scheduler_config, "mtp_sidecar", None)
+    if not model_type and not sidecar and not cli_vetted_model_type:
+        logger.debug(
+            "[MTP-dispatch] no MTP requested (sidecar/model_type/cli_vetted all "
+            "None) -> skip dispatch gate"
+        )
+        return None
+    timeout = _get_mtp_dispatch_timeout_sec()
+    fut = executor.submit(_run_dispatch_mtp_inject, model, model_type, sidecar)
+    try:
+        result = fut.result(timeout=timeout if timeout > 0 else None)
+    except TimeoutError as e:
+        _log_mtp_dispatch_timeout(
+            cli_vetted_model_type or model_type, sidecar, timeout
+        )
+        raise RuntimeError(f"[MTP] dispatch timeout after {timeout}s") from e
+    _decide_mtp_dispatch_action(result, cli_vetted_model_type)
+    return result

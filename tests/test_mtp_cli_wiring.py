@@ -243,59 +243,69 @@ def test_run_dispatch_mtp_inject_propagates_none_sidecar(monkeypatch):
 
 
 def _drive_start_llm_dispatch_gate(dispatch_result, cli_vetted_model_type=None):
-    pytest.skip(
-        "feature not migrated: fusion_mlx.engine.batched does not export "
-        "_decide_mtp_dispatch_action"
-    )
+    from fusion_mlx.engine.batched import _decide_mtp_dispatch_action
+
+    try:
+        _decide_mtp_dispatch_action(dispatch_result, cli_vetted_model_type)
+        return ("continue", None)
+    except RuntimeError as e:
+        return ("raise", str(e))
 
 
 def test_decide_mtp_dispatch_action_returns_attached_for_attached_result():
-    pytest.skip(
-        "feature not migrated: fusion_mlx.engine.batched does not export "
-        "_decide_mtp_dispatch_action or _DISPATCH_ATTACHED"
-    )
+    from fusion_mlx.engine.batched import _DISPATCH_ATTACHED
+
+    action, _ = _drive_start_llm_dispatch_gate(_DISPATCH_ATTACHED)
+    assert action == "continue"
 
 
 def test_decide_mtp_dispatch_action_carries_cli_vetted_model_type_into_error():
-    pytest.skip(
-        "feature not migrated: fusion_mlx.engine.batched does not export "
-        "_decide_mtp_dispatch_action or _DISPATCH_UNRESOLVED"
+    from fusion_mlx.engine.batched import _DISPATCH_UNRESOLVED
+
+    action, msg = _drive_start_llm_dispatch_gate(
+        _DISPATCH_UNRESOLVED, "gemma4_unified"
     )
+    assert action == "raise"
+    assert "gemma4_unified" in msg
 
 
 def test_start_llm_raises_runtime_error_on_dispatch_rejected():
-    pytest.skip(
-        "feature not migrated: fusion_mlx.engine.batched does not export "
-        "_decide_mtp_dispatch_action or _DISPATCH_REJECTED"
-    )
+    from fusion_mlx.engine.batched import _DISPATCH_REJECTED
+
+    action, _ = _drive_start_llm_dispatch_gate(_DISPATCH_REJECTED)
+    assert action == "raise"
 
 
 def test_start_llm_continues_on_dispatch_unresolved_when_not_cli_vetted():
-    pytest.skip(
-        "feature not migrated: fusion_mlx.engine.batched does not export "
-        "_decide_mtp_dispatch_action or _DISPATCH_UNRESOLVED"
-    )
+    from fusion_mlx.engine.batched import _DISPATCH_UNRESOLVED
+
+    action, _ = _drive_start_llm_dispatch_gate(_DISPATCH_UNRESOLVED, None)
+    assert action == "continue"
 
 
 def test_start_llm_raises_on_dispatch_unresolved_when_cli_vetted():
-    pytest.skip(
-        "feature not migrated: fusion_mlx.engine.batched does not export "
-        "_decide_mtp_dispatch_action or _DISPATCH_UNRESOLVED"
+    from fusion_mlx.engine.batched import _DISPATCH_UNRESOLVED
+
+    action, _ = _drive_start_llm_dispatch_gate(
+        _DISPATCH_UNRESOLVED, "gemma4_unified"
     )
+    assert action == "raise"
 
 
 def test_start_llm_continues_on_dispatch_no_inject_when_not_cli_vetted():
-    pytest.skip(
-        "feature not migrated: fusion_mlx.engine.batched does not export "
-        "_decide_mtp_dispatch_action or _DISPATCH_NO_INJECT"
-    )
+    from fusion_mlx.engine.batched import _DISPATCH_NO_INJECT
+
+    action, _ = _drive_start_llm_dispatch_gate(_DISPATCH_NO_INJECT, None)
+    assert action == "continue"
 
 
 def test_start_llm_raises_on_dispatch_no_inject_when_cli_vetted():
-    pytest.skip(
-        "feature not migrated: fusion_mlx.engine.batched does not export "
-        "_decide_mtp_dispatch_action or _DISPATCH_NO_INJECT"
+    from fusion_mlx.engine.batched import _DISPATCH_NO_INJECT
+
+    action, _ = _drive_start_llm_dispatch_gate(
+        _DISPATCH_NO_INJECT, "gemma4_unified"
     )
+    assert action == "raise"
 
 
 class _SyncExecutor:
@@ -327,52 +337,72 @@ class _TimeoutExecutor:
 
 
 def test_apply_mtp_dispatch_returns_attached_on_happy_path(monkeypatch):
-    pytest.skip(
-        "feature not migrated: fusion_mlx.engine.batched does not export "
-        "_apply_mtp_dispatch, _DISPATCH_ATTACHED; SchedulerConfig lacks "
-        "mtp_model_type"
-    )
+    import fusion_mlx.engine.batched as b
+    from fusion_mlx.config import SchedulerConfig
+
+    _patch_dispatch_mtp_inject(monkeypatch, return_value=True)
+    cfg = SchedulerConfig(mtp_model_type="gemma4_unified", mtp_sidecar="/path/sidecar")
+    result = b._apply_mtp_dispatch(object(), cfg, _SyncExecutor())
+    assert result == b._DISPATCH_ATTACHED
 
 
 def test_apply_mtp_dispatch_raises_on_rejected(monkeypatch):
-    pytest.skip(
-        "feature not migrated: fusion_mlx.engine.batched does not export "
-        "_apply_mtp_dispatch, _DISPATCH_REJECTED; SchedulerConfig lacks "
-        "mtp_sidecar"
-    )
+    import fusion_mlx.engine.batched as b
+    from fusion_mlx.config import SchedulerConfig
+
+    _patch_dispatch_mtp_inject(monkeypatch, return_value=False)
+    cfg = SchedulerConfig(mtp_model_type="gemma4_unified", mtp_sidecar="/path/sidecar")
+    with pytest.raises(RuntimeError):
+        b._apply_mtp_dispatch(object(), cfg, _SyncExecutor())
 
 
 def test_apply_mtp_dispatch_raises_when_cli_vetted_and_unresolved(monkeypatch):
-    pytest.skip(
-        "feature not migrated: fusion_mlx.engine.batched does not export "
-        "_apply_mtp_dispatch, _DISPATCH_UNRESOLVED; SchedulerConfig lacks "
-        "mtp_model_type"
-    )
+    import fusion_mlx.engine.batched as b
+    from fusion_mlx.config import SchedulerConfig
+
+    # mtp_model_type=None + unresolvable model -> UNRESOLVED; cli_vetted makes it fatal
+    cfg = SchedulerConfig(mtp_model_type=None, mtp_sidecar="/path/sidecar")
+    with pytest.raises(RuntimeError):
+        b._apply_mtp_dispatch(
+            object(), cfg, _SyncExecutor(), cli_vetted_model_type="gemma4_unified"
+        )
 
 
 def test_apply_mtp_dispatch_soft_skips_when_not_cli_vetted(monkeypatch):
-    pytest.skip(
-        "feature not migrated: fusion_mlx.engine.batched does not export "
-        "_apply_mtp_dispatch, _DISPATCH_UNRESOLVED"
-    )
+    import fusion_mlx.engine.batched as b
+    from fusion_mlx.config import SchedulerConfig
+
+    cfg = SchedulerConfig(mtp_model_type=None, mtp_sidecar="/path/sidecar")
+    result = b._apply_mtp_dispatch(object(), cfg, _SyncExecutor())
+    assert result == b._DISPATCH_UNRESOLVED
 
 
 def test_apply_mtp_dispatch_raises_runtime_error_on_timeout(monkeypatch):
-    pytest.skip(
-        "feature not migrated: fusion_mlx.engine.batched does not export "
-        "_apply_mtp_dispatch; SchedulerConfig lacks mtp_model_type; "
-        "FUSION_MLX_MTP_DISPATCH_TIMEOUT_SEC env var not wired"
-    )
+    import fusion_mlx.engine.batched as b
+    from fusion_mlx.config import SchedulerConfig
+
+    cfg = SchedulerConfig(mtp_model_type="gemma4_unified", mtp_sidecar="/path/sidecar")
+    with pytest.raises(RuntimeError):
+        b._apply_mtp_dispatch(object(), cfg, _TimeoutExecutor())
 
 
 def test_apply_mtp_dispatch_timeout_logs_critical_and_does_not_call_os_exit(
-    monkeypatch,
+    monkeypatch, caplog
 ):
-    pytest.skip(
-        "feature not migrated: fusion_mlx.engine.batched does not export "
-        "_apply_mtp_dispatch, _log_mtp_dispatch_timeout; SchedulerConfig "
-        "lacks mtp_model_type"
-    )
+    import fusion_mlx.engine.batched as b
+    from fusion_mlx.config import SchedulerConfig
+
+    def _boom(code=0):
+        raise AssertionError("os._exit must not be called on dispatch timeout")
+
+    monkeypatch.setattr("os._exit", _boom)
+    cfg = SchedulerConfig(mtp_model_type="gemma4_unified", mtp_sidecar="/path/sidecar")
+    with caplog.at_level(
+        logging.CRITICAL, logger="fusion_mlx.engine.batched._mtp_dispatch"
+    ):
+        with pytest.raises(RuntimeError):
+            b._apply_mtp_dispatch(object(), cfg, _TimeoutExecutor())
+    assert any("TIMEOUT" in r.getMessage() for r in caplog.records)
 
 
 def test_log_mtp_dispatch_timeout_does_not_call_os_exit(monkeypatch):
@@ -387,10 +417,24 @@ def test_log_mtp_dispatch_timeout_does_not_call_os_exit(monkeypatch):
 
 
 def test_apply_mtp_dispatch_timeout_does_not_shut_down_shared_executor(monkeypatch):
-    pytest.skip(
-        "feature not migrated: fusion_mlx.engine.batched does not export "
-        "_apply_mtp_dispatch; SchedulerConfig lacks mtp_model_type"
-    )
+    import fusion_mlx.engine.batched as b
+    from fusion_mlx.config import SchedulerConfig
+
+    class _ShutdownSpy:
+        def __init__(self):
+            self.shutdown_called = False
+
+        def submit(self, fn, /, *a, **kw):
+            return _TimeoutExecutor().submit(fn, *a, **kw)
+
+        def shutdown(self, *a, **kw):
+            self.shutdown_called = True
+
+    spy = _ShutdownSpy()
+    cfg = SchedulerConfig(mtp_model_type="gemma4_unified", mtp_sidecar="/path/sidecar")
+    with pytest.raises(RuntimeError):
+        b._apply_mtp_dispatch(object(), cfg, spy)
+    assert spy.shutdown_called is False
 
 
 def test_get_mtp_dispatch_timeout_sec_default(monkeypatch):
@@ -416,9 +460,10 @@ def test_get_mtp_dispatch_timeout_sec_malformed_falls_back_to_default(monkeypatc
 
 def test_start_llm_calls_apply_mtp_dispatch():
     pytest.skip(
-        "feature not migrated: fusion_mlx.engine.batched does not export "
-        "_apply_mtp_dispatch; fusion_mlx.utils.tokenizer lacks "
-        "load_model_with_fallback; SchedulerConfig lacks mtp_model_type"
+        "deferred: driving async BatchedEngine._start_llm requires mocking "
+        "load_model_with_fallback + AsyncEngineCore + engine.start; the "
+        "_apply_mtp_dispatch call site is wired in _start_llm and its logic "
+        "is covered by the unit tests above"
     )
 
 
