@@ -90,11 +90,8 @@ def _serve_help_stdout() -> str:
 
 
 def test_cli_serve_help_advertises_mtp_sidecar():
-    # fusion_mlx CLI does not yet have --mtp-sidecar flag.
-    pytest.skip(
-        "feature not migrated: fusion_mlx.cli_serve does not expose "
-        "--mtp-sidecar argparse flag"
-    )
+    stdout = _serve_help_stdout()
+    assert "--mtp-sidecar" in stdout
 
 
 # ---------------------------------------------------------------------------
@@ -668,29 +665,41 @@ def test_install_mtp_vendored_next_tokens_shape_survives_stop_iteration(monkeypa
 
 
 def test_apply_mtp_cli_model_type_reconciliation_promotes_eligibility_read():
-    pytest.skip(
-        "feature not migrated: fusion_mlx.cli_serve does not export "
-        "_apply_mtp_cli_model_type_reconciliation; SchedulerConfig lacks "
-        "mtp_sidecar and mtp_model_type"
-    )
+    from fusion_mlx.cli_serve import _apply_mtp_cli_model_type_reconciliation
+    from fusion_mlx.config import SchedulerConfig
+
+    cfg = SchedulerConfig()
+    assert cfg.mtp_model_type is None
+    hf_cfg = {"model_type": "qwen3_5", "mtp_num_hidden_layers": 1}
+    _apply_mtp_cli_model_type_reconciliation(cfg, hf_cfg)
+    assert cfg.mtp_model_type == "qwen3_5"
 
 
 def test_apply_mtp_cli_model_type_reconciliation_hard_fails_when_model_type_missing(
     capsys,
 ):
-    pytest.skip(
-        "feature not migrated: fusion_mlx.cli_serve does not export "
-        "_apply_mtp_cli_model_type_reconciliation; SchedulerConfig lacks "
-        "mtp_model_type"
-    )
+    from fusion_mlx.cli_serve import _apply_mtp_cli_model_type_reconciliation
+    from fusion_mlx.config import SchedulerConfig
+
+    cfg = SchedulerConfig()
+    # MTP layers present but no model_type -> detection returns NONE.
+    hf_cfg = {"mtp_num_hidden_layers": 1}
+    with pytest.raises(SystemExit):
+        _apply_mtp_cli_model_type_reconciliation(cfg, hf_cfg)
+    err = capsys.readouterr().err
+    assert "not MTP-eligible" in err
 
 
 def test_apply_mtp_cli_model_type_reconciliation_prefers_eligibility_on_disagreement():
-    pytest.skip(
-        "feature not migrated: fusion_mlx.cli_serve does not export "
-        "_apply_mtp_cli_model_type_reconciliation; SchedulerConfig lacks "
-        "mtp_model_type"
-    )
+    from fusion_mlx.cli_serve import _apply_mtp_cli_model_type_reconciliation
+    from fusion_mlx.config import SchedulerConfig
+
+    cfg = SchedulerConfig()
+    cfg.mtp_model_type = "qwen3_5_moe"  # stale operator-set value
+    hf_cfg = {"model_type": "qwen3_5", "mtp_num_hidden_layers": 2}
+    _apply_mtp_cli_model_type_reconciliation(cfg, hf_cfg)
+    # Eligibility read wins over the stale operator value.
+    assert cfg.mtp_model_type == "qwen3_5"
 
 
 def test_install_mtp_vendored_uid_reuse_clears_stale_state(monkeypatch):

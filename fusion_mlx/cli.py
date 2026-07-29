@@ -557,6 +557,15 @@ Examples:
         help="Skip MTP acceptance check for maximum speed. "
         "~5-10%% wrong tokens. Best for chat, not for code.",
     )
+    serve_parser.add_argument(
+        "--mtp-sidecar",
+        dest="mtp_sidecar",
+        default=None,
+        help="Path to an MTP assistant-drafter sidecar directory (gemma4 "
+        "unified MTP). When set, MTP dispatch keys on the gemma4_unified "
+        "backbone and the sidecar supplies the draft heads. Mutually "
+        "exclusive with native Qwen3.5/3.6 MTP (--spec-decode mtp).",
+    )
     # R15-P1 #302: native Qwen3.5/3.6 MTP via vendored mlx-lm PR #990.
     # Lives next to the existing ``--enable-mtp`` (Qwen3-Next runtime
     # injection) rather than replacing it because the two paths target
