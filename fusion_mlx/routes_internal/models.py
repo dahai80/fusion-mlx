@@ -24,6 +24,26 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
+_pool: object | None = None
+
+_MODEL_TYPE_TO_MODALITY: dict[str, str] = {
+    "llm": "text",
+    "vlm": "text",
+    "embedding": "text",
+    "reranker": "text",
+    "ner": "text",
+    "audio_stt": "audio",
+    "audio_tts": "audio",
+    "audio_sts": "audio",
+    "image": "image",
+    "video": "video",
+}
+
+
+def set_models_context(pool: object | None) -> None:
+    global _pool
+    _pool = pool
+
 
 def _is_served_model(model_id: str) -> bool:
     cfg = get_config()
@@ -50,12 +70,26 @@ def effective_parsers_for(model_id, profile_tool, profile_reasoning):
     return (profile_tool, profile_reasoning)
 
 
-def _entry_payload(model_id, tool, reasoning):
+def _resolve_modality(model_id: str) -> str:
+    profile = resolve_profile(model_id)
+    if profile is not None and profile.modality:
+        return profile.modality
+    if _pool is not None:
+        entry = _pool.get_entry(model_id)
+        if entry is not None:
+            mt = getattr(entry, "model_type", None)
+            if mt and mt in _MODEL_TYPE_TO_MODALITY:
+                return _MODEL_TYPE_TO_MODALITY[mt]
+    return "text"
+
+
+def _entry_payload(model_id, tool, reasoning, modality="text"):
     return {
         "id": model_id,
         "object": "model",
         "tool_call_parser": tool,
         "reasoning_parser": reasoning,
+        "modality": modality,
     }
 
 
@@ -66,7 +100,8 @@ async def list_models(_auth: bool = Depends(verify_api_key)):
     if cfg.model_registry is not None:
         for entry in cfg.model_registry:
             tool, reasoning = effective_parsers_for(entry.model_name, None, None)
-            data.append(_entry_payload(entry.model_name, tool, reasoning))
+            modality = _resolve_modality(entry.model_name)
+            data.append(_entry_payload(entry.model_name, tool, reasoning, modality))
     elif cfg.model_name:
         profile = resolve_profile(cfg.model_alias) if cfg.model_alias else None
         profile_tool = profile.tool_call_parser if profile else None
@@ -74,11 +109,15 @@ async def list_models(_auth: bool = Depends(verify_api_key)):
         tool, reasoning = effective_parsers_for(
             cfg.model_name, profile_tool, profile_reasoning
         )
-        data.append(_entry_payload(cfg.model_name, tool, reasoning))
+        modality = _resolve_modality(cfg.model_name)
+        data.append(_entry_payload(cfg.model_name, tool, reasoning, modality))
         if cfg.model_alias:
             tool, reasoning = effective_parsers_for(
                 cfg.model_alias, profile_tool, profile_reasoning
             )
-            data.append(_entry_payload(cfg.model_alias, tool, reasoning))
+            alias_modality = _resolve_modality(cfg.model_alias)
+            data.append(
+                _entry_payload(cfg.model_alias, tool, reasoning, alias_modality)
+            )
     logger.info("routes_internal.models: /v1/models listed %d entries", len(data))
     return {"object": "list", "data": data}

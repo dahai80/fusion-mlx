@@ -59,6 +59,34 @@ _request_router: Any = None
 _adapter = OpenAIAdapter()
 log = logging.getLogger(__name__)
 
+_MODEL_TYPE_TO_MODALITY: dict[str, str] = {
+    "llm": "text",
+    "vlm": "text",
+    "embedding": "text",
+    "reranker": "text",
+    "ner": "text",
+    "audio_stt": "audio",
+    "audio_tts": "audio",
+    "audio_sts": "audio",
+    "image": "image",
+    "video": "video",
+}
+
+
+def _resolve_modality(model_id: str) -> str:
+    from ..model_aliases import resolve_profile
+
+    profile = resolve_profile(model_id)
+    if profile is not None and profile.modality:
+        return profile.modality
+    if _pool is not None:
+        entry = _pool.get_entry(model_id)
+        if entry is not None:
+            mt = getattr(entry, "model_type", None)
+            if mt and mt in _MODEL_TYPE_TO_MODALITY:
+                return _MODEL_TYPE_TO_MODALITY[mt]
+    return "text"
+
 
 def set_openai_context(pool: EnginePool, req_router: RequestRouter) -> None:
     """Inject engine pool and request router into this module."""
@@ -907,6 +935,7 @@ async def list_models(
             object="model",
             created=int(time.time()),
             owned_by="local",
+            modality=_resolve_modality(mid),
         )
         for mid in model_ids
     ]

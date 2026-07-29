@@ -95,6 +95,7 @@ from .routes_internal.gc import router as gc_router
 from .routes_internal.health import probe_router as health_probe_router
 from .routes_internal.health import router as health_router
 from .routes_internal.metrics import router as metrics_router
+from .routes_internal.models import set_models_context
 from .routes_internal.responses import router as responses_router
 from .server_metrics import get_server_metrics
 from .settings import Settings
@@ -805,6 +806,7 @@ class Server:
         set_rerank_context(self.pool, _server_state)
         set_ner_context(self.pool, _server_state)
         set_sessions_context(self.pool, _server_state)
+        set_models_context(self.pool)
 
         # Wire admin getters so require_admin can access global settings/auth
         set_admin_getters(

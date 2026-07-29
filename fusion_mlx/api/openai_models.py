@@ -466,6 +466,7 @@ class ModelInfo(BaseModel):
     object: str = "model"
     created: int = Field(default_factory=get_unix_timestamp)
     owned_by: str = "fusion-mlx"
+    modality: str = "text"
 
 
 class ModelsResponse(BaseModel):
