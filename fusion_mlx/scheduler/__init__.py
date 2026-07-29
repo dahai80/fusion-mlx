@@ -6,6 +6,7 @@ import mlx.core as mx  # noqa: F401  (backward-compat: tests patch scheduler.mx)
 from ..cache.paged_ssd_cache import PagedSSDCacheManager  # noqa: F401
 from ..speculative.vlm_mtp import run_vlm_mtp_decode  # noqa: F401
 from . import monkeypatches  # noqa: F401
+from ._mtp_vendored import _install_mtp_vendored  # noqa: F401
 from .config import SchedulerConfig, SchedulerOutput, SchedulingPolicy
 from .core import Scheduler
 
