@@ -655,7 +655,10 @@ def _prepare_prefix_cache_for_request(self, request: Request) -> None:
                     "released shared blocks"
                 )
         else:
-            request.remaining_tokens = request.prompt_token_ids
+            # Cross-restart prefix persistence (#257): try to warm-start from
+            # a persisted prefix snapshot before falling back to a full prefill.
+            if not self._try_prefix_snapshot_warm_start(request):
+                request.remaining_tokens = request.prompt_token_ids
     else:
         request.remaining_tokens = request.prompt_token_ids
 

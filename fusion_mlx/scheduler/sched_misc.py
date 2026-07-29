@@ -293,7 +293,9 @@ def _init_tiered_cache(self) -> None:
         if BoundarySnapshotSSDStore is not None and not self.config.hot_cache_only:
             try:
                 self._boundary_snapshot_store = BoundarySnapshotSSDStore(
-                    base_dir=Path(self.config.paged_ssd_cache_dir)
+                    base_dir=Path(self.config.paged_ssd_cache_dir),
+                    prefix_persist=self.config.boundary_prefix_persist,
+                    prefix_max_bytes=self.config.boundary_prefix_max_bytes or None,
                 )
             except Exception as e:
                 logger.debug("Failed to initialize boundary snapshot SSD store: %s", e)

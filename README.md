@@ -468,6 +468,44 @@ FUSION_DIFFUSION_TEXT_CACHE=0 fusion-mlx serve --model SkyReels-V3-R2V-14B-MLX  
 > sequence), so prefix-hidden-state reuse corrupts output, unlike causal decoder
 > LLMs; full-key caching is the correct approach.
 
+### Cross-Restart Prefix Cache Persistence (#257)
+
+The paged SSD cache (`BoundarySnapshotSSDStore`) is extended to persist LLM
+prefix KV across server restarts, so a prompt prefix encoded in a previous
+process can be reused without re-prefill. This is the LLM KV/prefix-cache
+counterpart to the diffusion text-encoding cache above (which is full-key only;
+token-level prefix reuse is valid for causal decoder LLMs, unlike bidirectional
+T5/UMT5).
+
+- **Write-hook**: on prefill completion, a prefix-keyed snapshot is captured
+  (chain hash `hash_k = sha256(hash_{k-1} || block_k_tokens || model_name)` over
+  `paged_cache_block_size`-token blocks of `prompt_token_ids`) and persisted to
+  `_prefix_snapshots/` - a sibling of the ephemeral `_boundary_snapshots/` dir
+  that survives restart. Writes run off the inference thread, LRU-bounded by
+  byte budget.
+- **Read-hook**: on a paged-cache miss, the prompt prefix is looked up; on a hit
+  the cached blocks are materialized via `store_cache` + `reconstruct_cache` so
+  prefill skips the cached prefix and resumes from `remaining_tokens`.
+- **Safety**: only sliceable KV caches fully materialize (middle blocks sliced
+  per-block, last block via snapshot); non-sliceable or hybrid caches fail fast
+  and fall back to a clean full prefill - a partial block table is never
+  promoted. VLM image requests are skipped (vision tokens live outside
+  `prompt_token_ids`).
+- Opt-in, default **off** - does not affect the existing paged-cache path when
+  disabled.
+
+```bash
+# Enable cross-restart prefix persistence (default off)
+FUSION_MLX_BOUNDARY_PREFIX_PERSIST=1 fusion-mlx serve --model <model>
+# Cap the on-disk prefix snapshot budget (default 20 GiB)
+FUSION_MLX_BOUNDARY_PREFIX_MAX_BYTES=53687091200 fusion-mlx serve --model <model>
+```
+
+> On restart, persisted prefix snapshots are scanned from `_prefix_snapshots/`
+> and warm-start eligible requests log `Prefix snapshot warm-start for <id>:
+> recovered N tokens in M blocks`. Config fields `boundary_prefix_persist` /
+> `boundary_prefix_max_bytes` live on `SchedulerConfig`.
+
 <!-- Video Adapters section: documents IP-Adapter, ControlNet, AnimateDiff adapters.
   Importers: fusion_mlx.video.adapters.{ip_adapter,controlnet,animatediff}
   Callers: SkyReelsPipelineConfig, VideoGenParams, VideoGenerateRequest
