@@ -39,10 +39,10 @@ _POPULAR_ALIAS_NAMES = [
 POPULAR_ALIASES = _POPULAR_ALIAS_NAMES
 
 
-@dataclass
+@dataclass(frozen=True)
 class AliasProfile:
-    name: str
-    hf_path: str
+    name: str = ""
+    hf_path: str = ""
     supports_dflash: bool = False
     is_moe: bool = False
     drafter_hf_path: str | None = None
@@ -54,7 +54,8 @@ class AliasProfile:
     supports_mllm: bool = False
     is_audio: bool = False
     supports_dspark: bool = False
-    modality: str = ""
+    modality: str = "text"
+    recommended_sampling: tuple[tuple[str, float], ...] | None = None
 
 
 def _load_aliases() -> dict[str, str]:
@@ -76,30 +77,115 @@ def list_aliases() -> list[str]:
     return sorted(_load_aliases().keys())
 
 
+_VALID_MODALITIES = frozenset({"text", "text-diffusion"})
+_RESERVED_MODALITIES = frozenset({"vision", "image-gen"})
+
+_SUPPORTED_SAMPLING_KEYS = frozenset({
+    "temperature",
+    "top_p",
+    "top_k",
+    "min_p",
+    "repetition_penalty",
+    "presence_penalty",
+    "frequency_penalty",
+})
+
+
+def _coerce_recommended_sampling(
+    raw,
+) -> tuple[tuple[str, float], ...] | None:
+    if raw is None:
+        return None
+    if not isinstance(raw, dict):
+        raise ValueError("recommended_sampling must be an object")
+    if not raw:
+        return None
+    for key in raw:
+        if key not in _SUPPORTED_SAMPLING_KEYS:
+            raise ValueError(f"unsupported key {key!r} in recommended_sampling")
+    coerced = []
+    for key in sorted(raw):
+        value = raw[key]
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            raise ValueError(f"recommended_sampling {key!r} must be a number")
+        coerced.append((key, float(value)))
+    logger.debug("_coerce_recommended_sampling: %d keys", len(coerced))
+    return tuple(coerced)
+
+
+def _coerce(name: str, raw: str | dict) -> AliasProfile:
+    if isinstance(raw, str):
+        return AliasProfile(name=name, hf_path=raw, modality="text")
+    if not isinstance(raw, dict):
+        raise ValueError(
+            f"alias {name!r} must be a string or dict, got {type(raw).__name__}"
+        )
+    modality = raw.get("modality", "text")
+    _allowed = sorted(_VALID_MODALITIES | _RESERVED_MODALITIES)
+    if not isinstance(modality, str):
+        raise ValueError(
+            f"modality must be one of {_allowed} (alias {name!r}, "
+            f"got {type(modality).__name__})"
+        )
+    if modality in _RESERVED_MODALITIES:
+        raise ValueError(
+            f"modality {modality!r} is reserved but not yet implemented "
+            f"(alias {name!r})"
+        )
+    if modality not in _VALID_MODALITIES:
+        raise ValueError(
+            f"modality must be one of {_allowed} (alias {name!r}, got {modality!r})"
+        )
+    supports_spec_decode = raw.get("supports_spec_decode", True)
+    supports_dflash = raw.get("supports_dflash", False)
+    if modality != "text":
+        if supports_spec_decode:
+            raise ValueError(
+                f"supports_spec_decode must be false for non-text modality "
+                f"{modality!r} (alias {name!r})"
+            )
+        if supports_dflash:
+            raise ValueError(
+                f"supports_dflash must be false for non-text modality "
+                f"{modality!r} (alias {name!r})"
+            )
+    recommended_sampling = _coerce_recommended_sampling(
+        raw.get("recommended_sampling")
+    )
+    return AliasProfile(
+        name=name,
+        hf_path=raw.get("hf_path", raw.get("path", "")),
+        supports_dflash=supports_dflash,
+        is_moe=raw.get("is_moe", False),
+        drafter_hf_path=raw.get("drafter_hf_path"),
+        description=raw.get("description", ""),
+        tool_call_parser=raw.get("tool_call_parser"),
+        reasoning_parser=raw.get("reasoning_parser"),
+        is_hybrid=raw.get("is_hybrid", False),
+        supports_spec_decode=supports_spec_decode,
+        supports_mllm=raw.get("supports_mllm", False),
+        supports_dspark=raw.get("supports_dspark", False),
+        modality=modality,
+        recommended_sampling=recommended_sampling,
+    )
+
+
 def list_profiles() -> list[AliasProfile]:
     aliases = _load_aliases()
     profiles = []
-    for name, hf_path in aliases.items():
-        if isinstance(hf_path, str):
-            profiles.append(AliasProfile(name=name, hf_path=hf_path))
-        elif isinstance(hf_path, dict):
-            profiles.append(
-                AliasProfile(
-                    name=name,
-                    hf_path=hf_path.get("hf_path", hf_path.get("path", "")),
-                    supports_dflash=hf_path.get("supports_dflash", False),
-                    is_moe=hf_path.get("is_moe", False),
-                    drafter_hf_path=hf_path.get("drafter_hf_path"),
-                    description=hf_path.get("description", ""),
-                    tool_call_parser=hf_path.get("tool_call_parser"),
-                    reasoning_parser=hf_path.get("reasoning_parser"),
-                    is_hybrid=hf_path.get("is_hybrid", False),
-                    supports_spec_decode=hf_path.get("supports_spec_decode", True),
-                    supports_mllm=hf_path.get("supports_mllm", False),
-                    supports_dspark=hf_path.get("supports_dspark", False),
-                    modality=hf_path.get("modality", ""),
-                )
-            )
+    skipped = 0
+    for name, raw in aliases.items():
+        try:
+            profiles.append(_coerce(name, raw))
+        except ValueError as e:
+            logger.warning("list_profiles: skipping alias %r: %s", name, e)
+            skipped += 1
+    if skipped:
+        logger.warning(
+            "list_profiles: %d/%d aliases skipped (invalid)", skipped, len(aliases)
+        )
+    else:
+        logger.debug("list_profiles: %d aliases loaded", len(aliases))
     return profiles
 
 
