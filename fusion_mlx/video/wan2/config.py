@@ -89,7 +89,7 @@ class WanModelConfig(BaseModelConfig):
 
     @classmethod
     def wan22_t2v_14b(cls) -> "WanModelConfig":
-        return cls()
+        return cls(dual_model=True)
 
     @classmethod
     def wan22_i2v_14b(cls) -> "WanModelConfig":
