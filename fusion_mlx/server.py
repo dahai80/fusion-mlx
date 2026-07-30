@@ -1092,25 +1092,51 @@ class Server:
 
     async def _load_single_model(self, pending: dict) -> None:
         # Load the staged single model (``serve --model <X>``) into the pool.
-        # Runs in _startup after the pool exists. Uses BatchedEngine — the
-        # same wrapper the multi-model serve path uses — so the engine
-        # exposes .chat()/.stream_chat() (which /v1/* routes call) and
-        # inherits the rich scheduler config, TurboQuant KV, and spec-decode
-        # wiring. Then registers it under the served name + original name so
-        # routes resolve it via the pool exactly like a discovered model.
-        from .engines.batched import BatchedEngine
-
+        # Runs in _startup after the pool exists. Dispatches to the correct
+        # engine type: DiffusionEngine for diffusion_gemma models,
+        # BatchedEngine for everything else. Then registers it under the
+        # served name + original name so routes resolve it via the pool
+        # exactly like a discovered model.
         model_path = pending["model_path"]
         served = pending.get("served_model_name") or model_path
         scheduler_config = pending.get("scheduler_config")
         stream_interval = pending.get("stream_interval", 1)
-        logger.info("Loading single model: %s", model_path)
-        engine = BatchedEngine(
-            model_name=model_path,
-            scheduler_config=scheduler_config,
-            stream_interval=stream_interval,
-            lora_path=pending.get("lora_path"),
-        )
+
+        # Issue #256: detect diffusion_gemma from config and route to
+        # DiffusionEngine instead of BatchedEngine.
+        _is_diffusion = False
+        try:
+            import json
+            from pathlib import Path
+
+            cfg_path = Path(model_path) / "config.json"
+            if cfg_path.exists():
+                with open(cfg_path) as f:
+                    cfg = json.load(f)
+                _is_diffusion = (
+                    cfg.get("model_type", "").lower().replace("-", "_")
+                    == "diffusion_gemma"
+                )
+        except Exception:
+            pass
+
+        logger.info("Loading single model: %s (diffusion=%s)", model_path, _is_diffusion)
+        if _is_diffusion:
+            from .runtime.diffusion_lane import DiffusionEngine
+
+            engine = DiffusionEngine(
+                model_name=model_path,
+                scheduler_config=scheduler_config,
+            )
+        else:
+            from .engines.batched import BatchedEngine
+
+            engine = BatchedEngine(
+                model_name=model_path,
+                scheduler_config=scheduler_config,
+                stream_interval=stream_interval,
+                lora_path=pending.get("lora_path"),
+            )
         await engine.start()
         self.pool.register_engine(served, engine)
         orig = pending.get("original_name")

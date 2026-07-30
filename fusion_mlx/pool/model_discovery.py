@@ -1296,6 +1296,13 @@ def _register_model(
         except Exception:
             pass
 
+        # Issue #256: diffusion_gemma models are discovered as VLM but must
+        # route to the DiffusionEngine, not VLMBatchedEngine. Override the
+        # engine_type based on config_model_type so the engine pool dispatches
+        # correctly.
+        if config_model_type.lower().replace("-", "_") == "diffusion_gemma":
+            engine_type = "diffusion"
+
         thinking_default = detect_thinking_default(model_dir)
         preserve_thinking_default = detect_preserve_thinking(model_dir)
         model_context_length = _read_model_context_length(model_dir)
