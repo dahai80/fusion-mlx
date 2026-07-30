@@ -473,6 +473,8 @@ class EnginePool:
         "r2v_14b": "video_gen",
         "a2v_19b": "video_gen",
         "v2v_14b": "video_gen",
+        # DiffusionGemma block-canvas text model (issue #256)
+        "diffusion_gemma": "diffusion",
     }
 
     def apply_settings_overrides(self, settings_manager: ModelSettingsManager) -> None:
@@ -782,6 +784,7 @@ class EnginePool:
         | STTEngine
         | STSEngine
         | TTSEngine
+        | "DiffusionEngine"
     ):
         """
         Get or load engine for the specified model.
@@ -1709,7 +1712,7 @@ class EnginePool:
                 ):
                     logger.warning(
                         "DFlash is not supported for diffusion models; "
-                        "loading %s with its native VLM engine",
+                        "loading %s with its native DiffusionEngine",
                         model_id,
                     )
                 elif dflash_enabled and dflash_draft:
@@ -1813,6 +1816,13 @@ class EnginePool:
                     engine = ImageGenEngine(model_name=entry.model_path)
                 elif entry.engine_type == "video_gen":
                     engine = VideoGenEngine(model_name=entry.model_path)
+                elif entry.engine_type == "diffusion":
+                    from ..runtime.diffusion_lane import DiffusionEngine
+
+                    engine = DiffusionEngine(
+                        model_name=entry.model_path,
+                        scheduler_config=self._scheduler_config,
+                    )
                 else:
                     engine = BatchedEngine(
                         model_name=entry.model_path,
