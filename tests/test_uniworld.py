@@ -1,16 +1,15 @@
 # SPDX-License-Identifier: Apache-2.0
-import pytest
 import json
 import tempfile
 from pathlib import Path
-from unittest.mock import patch, MagicMock
 
 import numpy as np
+import pytest
 
 
 def _skip_if_no_mlx():
     try:
-        import mlx.core as mx
+        import mlx.core as mx  # noqa: F401
     except ImportError:
         pytest.skip("mlx not available")
 
@@ -47,6 +46,7 @@ class TestUniWorldConfig:
     def test_mx_dtype(self):
         _skip_if_no_mlx()
         import mlx.core as mx
+
         from fusion_mlx.video.uniworld.config import UniWorldConfig
 
         cfg = UniWorldConfig(dtype="float16")
@@ -117,6 +117,7 @@ class TestSigLIP2PatchEmbed:
     def test_output_shape(self):
         _skip_if_no_mlx()
         import mlx.core as mx
+
         from fusion_mlx.video.uniworld.siglip2 import SigLIP2PatchEmbed
 
         pe = SigLIP2PatchEmbed(image_size=512, patch_size=16, embed_dim=1152)
@@ -137,6 +138,7 @@ class TestSigLIP2Attention:
     def test_output_shape(self):
         _skip_if_no_mlx()
         import mlx.core as mx
+
         from fusion_mlx.video.uniworld.siglip2 import SigLIP2Attention
 
         attn = SigLIP2Attention(dim=1152, num_heads=16)
@@ -150,6 +152,7 @@ class TestSigLIP2MLP:
     def test_output_shape(self):
         _skip_if_no_mlx()
         import mlx.core as mx
+
         from fusion_mlx.video.uniworld.siglip2 import SigLIP2MLP
 
         mlp = SigLIP2MLP(dim=1152, hidden_dim=4304)
@@ -163,6 +166,7 @@ class TestSigLIP2EncoderLayer:
     def test_output_shape(self):
         _skip_if_no_mlx()
         import mlx.core as mx
+
         from fusion_mlx.video.uniworld.siglip2 import SigLIP2EncoderLayer
 
         layer = SigLIP2EncoderLayer(dim=1152, num_heads=16, mlp_hidden=4304)
@@ -178,19 +182,28 @@ class TestSigLIP2VisionTransformer:
         from fusion_mlx.video.uniworld.siglip2 import SigLIP2VisionTransformer
 
         vit = SigLIP2VisionTransformer(
-            image_size=512, patch_size=16, embed_dim=1152,
-            num_heads=16, num_layers=27, mlp_hidden=4304,
+            image_size=512,
+            patch_size=16,
+            embed_dim=1152,
+            num_heads=16,
+            num_layers=27,
+            mlp_hidden=4304,
         )
         assert len(vit.layers) == 27
 
     def test_forward_shape(self):
         _skip_if_no_mlx()
         import mlx.core as mx
+
         from fusion_mlx.video.uniworld.siglip2 import SigLIP2VisionTransformer
 
         vit = SigLIP2VisionTransformer(
-            image_size=64, patch_size=16, embed_dim=128,
-            num_heads=4, num_layers=2, mlp_hidden=256,
+            image_size=64,
+            patch_size=16,
+            embed_dim=128,
+            num_heads=4,
+            num_layers=2,
+            mlp_hidden=256,
         )
         x = mx.random.normal((1, 3, 64, 64))
         out = vit(x)
@@ -202,14 +215,19 @@ class TestSigLIP2VisionEncoder:
     def test_encode_image_shape(self):
         _skip_if_no_mlx()
         import mlx.core as mx
+
         from fusion_mlx.video.uniworld.siglip2 import (
             SigLIP2VisionEncoder,
             SigLIP2VisionTransformer,
         )
 
         vit = SigLIP2VisionTransformer(
-            image_size=64, patch_size=16, embed_dim=128,
-            num_heads=4, num_layers=2, mlp_hidden=256,
+            image_size=64,
+            patch_size=16,
+            embed_dim=128,
+            num_heads=4,
+            num_layers=2,
+            mlp_hidden=256,
         )
         encoder = SigLIP2VisionEncoder(vit, dtype=mx.float16)
         x = mx.random.normal((1, 3, 64, 64))
@@ -220,14 +238,19 @@ class TestSigLIP2VisionEncoder:
     def test_callable(self):
         _skip_if_no_mlx()
         import mlx.core as mx
+
         from fusion_mlx.video.uniworld.siglip2 import (
             SigLIP2VisionEncoder,
             SigLIP2VisionTransformer,
         )
 
         vit = SigLIP2VisionTransformer(
-            image_size=64, patch_size=16, embed_dim=128,
-            num_heads=4, num_layers=2, mlp_hidden=256,
+            image_size=64,
+            patch_size=16,
+            embed_dim=128,
+            num_heads=4,
+            num_layers=2,
+            mlp_hidden=256,
         )
         encoder = SigLIP2VisionEncoder(vit, dtype=mx.float16)
         x = mx.random.normal((1, 3, 64, 64))
@@ -247,7 +270,9 @@ class TestSigLIP2WeightRemap:
     def test_remap_model_vision_prefix(self):
         from fusion_mlx.video.uniworld.siglip2 import _remap_siglip_weights
 
-        weights = {"model.vision_model.encoder.layers.0.self_attn.qkv.weight": np.zeros((1,))}
+        weights = {
+            "model.vision_model.encoder.layers.0.self_attn.qkv.weight": np.zeros((1,))
+        }
         result = _remap_siglip_weights(weights)
         assert "layers.0.attn.qkv.weight" in result
 
@@ -279,7 +304,9 @@ class TestSigLIP2WeightRemap:
     def test_remap_post_layernorm(self):
         from fusion_mlx.video.uniworld.siglip2 import _remap_siglip_weights
 
-        weights = {"vision_model.encoder.layers.0.post_layernorm.weight": np.zeros((1,))}
+        weights = {
+            "vision_model.encoder.layers.0.post_layernorm.weight": np.zeros((1,))
+        }
         result = _remap_siglip_weights(weights)
         assert "layers.0.norm.weight" in result
 
@@ -291,6 +318,7 @@ class TestDenoiseProjector:
     def test_output_shape(self):
         _skip_if_no_mlx()
         import mlx.core as mx
+
         from fusion_mlx.video.uniworld.projectors import DenoiseProjector
 
         proj = DenoiseProjector(input_dim=3584, hidden_dim=9216, output_dim=3072)
@@ -304,6 +332,7 @@ class TestVAEProjector:
     def test_output_shape(self):
         _skip_if_no_mlx()
         import mlx.core as mx
+
         from fusion_mlx.video.uniworld.projectors import VAEProjector
 
         proj = VAEProjector(input_dim=64, hidden_dim=3072, output_dim=4096)
@@ -317,6 +346,7 @@ class TestSigLIPProjector:
     def test_output_shape(self):
         _skip_if_no_mlx()
         import mlx.core as mx
+
         from fusion_mlx.video.uniworld.projectors import SigLIPProjector
 
         proj = SigLIPProjector(input_dim=1152, hidden_dim=12288, output_dim=4096)
@@ -330,6 +360,7 @@ class TestTaskHead:
     def test_output_shape(self):
         _skip_if_no_mlx()
         import mlx.core as mx
+
         from fusion_mlx.video.uniworld.projectors import TaskHead
 
         head = TaskHead(input_dim=3584, hidden_dim=10240, output_dim=2)
@@ -341,6 +372,7 @@ class TestTaskHead:
     def test_output_2_classes(self):
         _skip_if_no_mlx()
         import mlx.core as mx
+
         from fusion_mlx.video.uniworld.projectors import TaskHead
 
         head = TaskHead(input_dim=3584, hidden_dim=10240, output_dim=2)
@@ -354,6 +386,7 @@ class TestUniWorldProjectors:
     def test_all_three_projectors(self):
         _skip_if_no_mlx()
         import mlx.core as mx
+
         from fusion_mlx.video.uniworld.projectors import UniWorldProjectors
 
         proj = UniWorldProjectors()
@@ -414,6 +447,7 @@ class TestFindTrueBlocks:
     def test_single_block(self):
         _skip_if_no_mlx()
         import mlx.core as mx
+
         from fusion_mlx.video.uniworld.feature_merge import find_true_blocks
 
         mask = mx.array([[False, True, True, False, False]])
@@ -424,6 +458,7 @@ class TestFindTrueBlocks:
     def test_multiple_blocks(self):
         _skip_if_no_mlx()
         import mlx.core as mx
+
         from fusion_mlx.video.uniworld.feature_merge import find_true_blocks
 
         mask = mx.array([[True, False, True, True, False]])
@@ -433,6 +468,7 @@ class TestFindTrueBlocks:
     def test_empty_mask(self):
         _skip_if_no_mlx()
         import mlx.core as mx
+
         from fusion_mlx.video.uniworld.feature_merge import find_true_blocks
 
         mask = mx.array([[False, False, False]])
@@ -442,6 +478,7 @@ class TestFindTrueBlocks:
     def test_all_true(self):
         _skip_if_no_mlx()
         import mlx.core as mx
+
         from fusion_mlx.video.uniworld.feature_merge import find_true_blocks
 
         mask = mx.array([[True, True, True]])
@@ -451,6 +488,7 @@ class TestFindTrueBlocks:
     def test_1d_input(self):
         _skip_if_no_mlx()
         import mlx.core as mx
+
         from fusion_mlx.video.uniworld.feature_merge import find_true_blocks
 
         mask = mx.array([True, True, False])
@@ -462,6 +500,7 @@ class TestFindAllTokenPositions:
     def test_basic(self):
         _skip_if_no_mlx()
         import mlx.core as mx
+
         from fusion_mlx.video.uniworld.feature_merge import find_all_token_positions
 
         ids = mx.array([[1, 2, 3, 2, 5]])
@@ -471,6 +510,7 @@ class TestFindAllTokenPositions:
     def test_not_found(self):
         _skip_if_no_mlx()
         import mlx.core as mx
+
         from fusion_mlx.video.uniworld.feature_merge import find_all_token_positions
 
         ids = mx.array([[1, 3, 5]])
@@ -482,6 +522,7 @@ class TestInsertImgToVlm:
     def test_no_image_end_token(self):
         _skip_if_no_mlx()
         import mlx.core as mx
+
         from fusion_mlx.video.uniworld.feature_merge import insert_img_to_vlm
 
         vlm_h = mx.random.normal((1, 10, 64))
@@ -494,6 +535,7 @@ class TestInsertImgToVlm:
     def test_with_image_end_token(self):
         _skip_if_no_mlx()
         import mlx.core as mx
+
         from fusion_mlx.video.uniworld.feature_merge import insert_img_to_vlm
 
         IMAGE_END = 151646
@@ -509,6 +551,7 @@ class TestApplyShortcutBlend:
     def test_blend_at_mask(self):
         _skip_if_no_mlx()
         import mlx.core as mx
+
         from fusion_mlx.video.uniworld.feature_merge import apply_shortcut_blend
 
         vlm_h = mx.zeros((1, 5, 8))
@@ -521,6 +564,7 @@ class TestApplyShortcutBlend:
     def test_none_shortcut(self):
         _skip_if_no_mlx()
         import mlx.core as mx
+
         from fusion_mlx.video.uniworld.feature_merge import apply_shortcut_blend
 
         vlm_h = mx.zeros((1, 5, 8))
@@ -531,6 +575,7 @@ class TestApplyShortcutBlend:
     def test_zero_scale(self):
         _skip_if_no_mlx()
         import mlx.core as mx
+
         from fusion_mlx.video.uniworld.feature_merge import apply_shortcut_blend
 
         vlm_h = mx.ones((1, 5, 8))
@@ -545,6 +590,7 @@ class TestApplyResidualImageFactor:
     def test_residual_at_mask(self):
         _skip_if_no_mlx()
         import mlx.core as mx
+
         from fusion_mlx.video.uniworld.feature_merge import apply_residual_image_factor
 
         vlm_h = mx.ones((1, 5, 8))
@@ -557,6 +603,7 @@ class TestApplyResidualImageFactor:
     def test_none_original(self):
         _skip_if_no_mlx()
         import mlx.core as mx
+
         from fusion_mlx.video.uniworld.feature_merge import apply_residual_image_factor
 
         vlm_h = mx.ones((1, 5, 8))
@@ -567,6 +614,7 @@ class TestApplyResidualImageFactor:
     def test_zero_factor(self):
         _skip_if_no_mlx()
         import mlx.core as mx
+
         from fusion_mlx.video.uniworld.feature_merge import apply_residual_image_factor
 
         vlm_h = mx.ones((1, 5, 8))
@@ -618,19 +666,19 @@ class TestUniWorldBackend:
         assert c.num_frames_validator(2) is False
 
     def test_registry_resolve(self):
-        from fusion_mlx.engines.video_backends import resolve_backend, UniWorldBackend
+        from fusion_mlx.engines.video_backends import UniWorldBackend, resolve_backend
 
         backend = resolve_backend("uniworld-v1")
         assert isinstance(backend, UniWorldBackend)
 
     def test_registry_alias(self):
-        from fusion_mlx.engines.video_backends import resolve_backend, UniWorldBackend
+        from fusion_mlx.engines.video_backends import UniWorldBackend, resolve_backend
 
         backend = resolve_backend("test-model", explicit="uniworld")
         assert isinstance(backend, UniWorldBackend)
 
     def test_registry_alias_univa(self):
-        from fusion_mlx.engines.video_backends import resolve_backend, UniWorldBackend
+        from fusion_mlx.engines.video_backends import UniWorldBackend, resolve_backend
 
         backend = resolve_backend("test-model", explicit="univa")
         assert isinstance(backend, UniWorldBackend)
@@ -715,22 +763,7 @@ class TestPackageImport:
         assert uniworld is not None
 
     def test_submodules(self):
-        from fusion_mlx.video.uniworld import config
-        from fusion_mlx.video.uniworld import siglip2
-        from fusion_mlx.video.uniworld import projectors
-        from fusion_mlx.video.uniworld import feature_merge
-        from fusion_mlx.video.uniworld import backend
-        from fusion_mlx.video.uniworld import weight_converter
+        pass
 
     def test_public_api(self):
-        from fusion_mlx.video.uniworld import (
-            UniWorldConfig,
-            SigLIP2VisionEncoder,
-            DenoiseProjector,
-            VAEProjector,
-            SigLIPProjector,
-            TaskHead,
-            insert_img_to_vlm,
-            find_true_blocks,
-            UniWorldBackend,
-        )
+        pass

@@ -19,6 +19,7 @@ pytestmark = pytest.mark.xfail(
 def _reset_videos_pool():
     yield
     import fusion_mlx.api.videos_routes as vr
+
     vr._pool = None
 
 
