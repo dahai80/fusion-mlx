@@ -12,6 +12,8 @@ logger = logging.getLogger(__name__)
 
 _ALIASES_FILE = Path(__file__).parent / "aliases.json"
 
+_hf_to_alias: dict[str, str] | None = None
+
 
 def _allowed_model_dirs() -> list[str]:
     home = os.path.realpath(os.path.expanduser("~"))
@@ -50,12 +52,21 @@ class AliasProfile:
     tool_call_parser: str | None = None
     reasoning_parser: str | None = None
     is_hybrid: bool = False
+    is_hybrid_explicit: bool = False
     supports_spec_decode: bool = True
     supports_mllm: bool = False
     is_audio: bool = False
     supports_dspark: bool = False
     modality: str = "text"
     recommended_sampling: tuple[tuple[str, float], ...] | None = None
+    suffix_decoding_tier: str = "unknown"
+    pflash_tier: str = "unknown"
+    turboquant_tier: str = "unknown"
+    default_max_tokens: int | None = None
+    suffix_bench_speedup: tuple[tuple[str, float], ...] | None = None
+
+
+_aliases: dict[str, AliasProfile] | None = None
 
 
 def _load_aliases() -> dict[str, str]:
@@ -73,8 +84,15 @@ def _load_aliases() -> dict[str, str]:
     return {}
 
 
-def list_aliases() -> list[str]:
-    return sorted(_load_aliases().keys())
+def list_aliases() -> dict[str, str]:
+    raw = _load_aliases()
+    out = {}
+    for name, value in raw.items():
+        if isinstance(value, str):
+            out[name] = value
+        elif isinstance(value, dict):
+            out[name] = value.get("hf_path", value.get("path", ""))
+    return out
 
 
 _VALID_MODALITIES = frozenset({"text", "text-diffusion"})
@@ -115,10 +133,19 @@ def _coerce_recommended_sampling(
 
 def _coerce(name: str, raw: str | dict) -> AliasProfile:
     if isinstance(raw, str):
+        if not raw:
+            raise ValueError(
+                f"alias {name!r} has empty hf_path (string form)"
+            )
         return AliasProfile(name=name, hf_path=raw, modality="text")
     if not isinstance(raw, dict):
         raise ValueError(
             f"alias {name!r} must be a string or dict, got {type(raw).__name__}"
+        )
+    hf_path = raw.get("hf_path", raw.get("path", ""))
+    if not hf_path or not isinstance(hf_path, str) or not hf_path.strip():
+        raise ValueError(
+            f"alias {name!r} must have a non-empty string hf_path"
         )
     modality = raw.get("modality", "text")
     _allowed = sorted(_VALID_MODALITIES | _RESERVED_MODALITIES)
@@ -152,40 +179,67 @@ def _coerce(name: str, raw: str | dict) -> AliasProfile:
     recommended_sampling = _coerce_recommended_sampling(
         raw.get("recommended_sampling")
     )
+    is_hybrid = raw.get("is_hybrid", False)
+    is_hybrid_explicit = raw.get("is_hybrid_explicit", is_hybrid)
+    suffix_bench_speedup = None
+    raw_speedup = raw.get("suffix_bench_speedup")
+    if raw_speedup and isinstance(raw_speedup, dict):
+        suffix_bench_speedup = tuple(
+            sorted(raw_speedup.items(), key=lambda kv: kv[0])
+        )
     return AliasProfile(
         name=name,
-        hf_path=raw.get("hf_path", raw.get("path", "")),
+        hf_path=hf_path,
         supports_dflash=supports_dflash,
         is_moe=raw.get("is_moe", False),
         drafter_hf_path=raw.get("drafter_hf_path"),
         description=raw.get("description", ""),
         tool_call_parser=raw.get("tool_call_parser"),
         reasoning_parser=raw.get("reasoning_parser"),
-        is_hybrid=raw.get("is_hybrid", False),
+        is_hybrid=is_hybrid,
+        is_hybrid_explicit=is_hybrid_explicit,
         supports_spec_decode=supports_spec_decode,
         supports_mllm=raw.get("supports_mllm", False),
         supports_dspark=raw.get("supports_dspark", False),
         modality=modality,
         recommended_sampling=recommended_sampling,
+        suffix_decoding_tier=raw.get("suffix_decoding_tier", "unknown"),
+        pflash_tier=raw.get("pflash_tier", "unknown"),
+        turboquant_tier=raw.get("turboquant_tier", "unknown"),
+        default_max_tokens=raw.get("default_max_tokens"),
+        suffix_bench_speedup=suffix_bench_speedup,
     )
 
 
-def list_profiles() -> list[AliasProfile]:
+def list_profiles() -> dict[str, AliasProfile]:
+    global _aliases, _hf_to_alias
+    if _aliases is not None:
+        return _aliases
     aliases = _load_aliases()
-    profiles = []
+    profiles = {}
     skipped = 0
+    skipped_errors: list[str] = []
     for name, raw in aliases.items():
         try:
-            profiles.append(_coerce(name, raw))
+            profiles[name] = _coerce(name, raw)
         except ValueError as e:
             logger.warning("list_profiles: skipping alias %r: %s", name, e)
             skipped += 1
+            skipped_errors.append(str(e))
     if skipped:
-        logger.warning(
-            "list_profiles: %d/%d aliases skipped (invalid)", skipped, len(aliases)
+        raise ValueError(
+            f"list_profiles: {skipped}/{len(aliases)} aliases invalid: "
+            f"{'; '.join(skipped_errors)}"
         )
     else:
         logger.debug("list_profiles: %d aliases loaded", len(aliases))
+    _aliases = profiles
+    # Build reverse index on first load
+    if _hf_to_alias is None:
+        _hf_to_alias = {}
+        for alias_name, profile in profiles.items():
+            if profile.hf_path:
+                _hf_to_alias[profile.hf_path] = alias_name
     return profiles
 
 
@@ -235,15 +289,15 @@ def resolve_model(name: str) -> str:
 
 
 def resolve_profile(name: str) -> AliasProfile | None:
-    for profile in list_profiles():
-        if profile.name == name:
-            return profile
+    profiles = list_profiles()
+    if name in profiles:
+        return profiles[name]
     # Issue #256: reverse-lookup by hf_path so that raw HF paths like
     # "mlx-community/diffusiongemma-26B-A4B-it-4bit" resolve to the
     # same profile as the alias name "diffusion-gemma-26b-4bit".
     # This is critical for engine dispatch: the server receives an HF
     # path and needs to know the modality to route to DiffusionEngine.
-    for profile in list_profiles():
+    for profile in profiles.values():
         if profile.hf_path and profile.hf_path == name:
             return profile
     return None

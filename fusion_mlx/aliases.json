@@ -1,102 +1,673 @@
 {
   "claude-4.6-sonnet": {
     "hf_path": "BeastCode/Qwen3.5-27B-Claude-4.6-Opus-Distilled-MLX-6bit",
-    "modality": "text"
+    "modality": "text",
+    "is_hybrid": true,
+    "is_moe": true,
+    "is_hybrid_explicit": true,
+    "supports_spec_decode": false,
+    "tool_call_parser": "hermes",
+    "reasoning_parser": "qwen3",
+    "description": "Novelty alias: Qwen3.5-27B MoE distilled with Claude Opus reasoning traces."
   },
   "claude-4.5-sonnet": {
     "hf_path": "Qwen/Qwen3-32B-A3B-Think-2512-MLX",
-    "modality": "text"
+    "modality": "text",
+    "is_hybrid": true,
+    "is_moe": true,
+    "is_hybrid_explicit": true,
+    "supports_spec_decode": false,
+    "tool_call_parser": "hermes",
+    "reasoning_parser": "qwen3",
+    "description": "Novelty alias: Qwen3-32B-A3B Think."
   },
   "gpt-4o": {
     "hf_path": "Qwen/Qwen3-32B-A3B-Think-2512-MLX",
-    "modality": "text"
+    "modality": "text",
+    "is_hybrid": true,
+    "is_moe": true,
+    "is_hybrid_explicit": true,
+    "supports_spec_decode": false,
+    "tool_call_parser": "hermes",
+    "reasoning_parser": "qwen3",
+    "description": "Novelty alias: Qwen3-32B-A3B Think."
   },
   "gpt-4.5": {
     "hf_path": "BeastCode/Qwen3.5-27B-Claude-4.6-Opus-Distilled-MLX-6bit",
-    "modality": "text"
+    "modality": "text",
+    "is_hybrid": true,
+    "is_moe": true,
+    "is_hybrid_explicit": true,
+    "supports_spec_decode": false,
+    "tool_call_parser": "hermes",
+    "reasoning_parser": "qwen3",
+    "description": "Novelty alias: Qwen3.5-27B MoE distilled."
   },
   "qwen3.5-4b-4bit": {
-    "hf_path": "mlx-community/Qwen3.5-4B-4bit",
-    "modality": "text"
+    "hf_path": "mlx-community/Qwen3.5-4B-MLX-4bit",
+    "modality": "text",
+    "tool_call_parser": "hermes",
+    "reasoning_parser": "qwen3",
+    "is_hybrid": false,
+    "is_hybrid_explicit": true,
+    "is_moe": false,
+    "supports_spec_decode": false
+  },
+  "qwen3.5-4b-8bit": {
+    "hf_path": "mlx-community/Qwen3.5-4B-MLX-8bit",
+    "modality": "text",
+    "tool_call_parser": "hermes",
+    "reasoning_parser": "qwen3",
+    "is_hybrid": false,
+    "is_hybrid_explicit": true,
+    "is_moe": false,
+    "supports_spec_decode": false
   },
   "qwen3.5-9b-4bit": {
     "hf_path": "mlx-community/Qwen3.5-9B-4bit",
-    "modality": "text"
+    "modality": "text",
+    "tool_call_parser": "hermes",
+    "reasoning_parser": "qwen3",
+    "is_hybrid": false,
+    "is_hybrid_explicit": true,
+    "is_moe": false,
+    "supports_spec_decode": false
   },
   "qwen3.5-9b-8bit": {
     "hf_path": "mlx-community/Qwen3.5-9B-8bit",
-    "modality": "text"
+    "modality": "text",
+    "tool_call_parser": "hermes",
+    "reasoning_parser": "qwen3",
+    "is_hybrid": false,
+    "is_hybrid_explicit": true,
+    "is_moe": false,
+    "supports_spec_decode": false
   },
   "qwen3.5-27b-4bit": {
     "hf_path": "mlx-community/Qwen3.5-27B-4bit",
-    "modality": "text"
+    "modality": "text",
+    "tool_call_parser": "hermes",
+    "reasoning_parser": "qwen3",
+    "is_hybrid": false,
+    "is_hybrid_explicit": true,
+    "is_moe": false,
+    "supports_spec_decode": false
   },
   "qwen3.5-27b-8bit": {
     "hf_path": "mlx-community/Qwen3.5-27B-8bit",
-    "modality": "text"
+    "modality": "text",
+    "tool_call_parser": "hermes",
+    "reasoning_parser": "qwen3",
+    "is_hybrid": false,
+    "is_hybrid_explicit": true,
+    "is_moe": false,
+    "supports_spec_decode": false
+  },
+  "qwen3.5-35b-a3b-4bit": {
+    "hf_path": "mlx-community/Qwen3.5-35B-A3B-4bit",
+    "modality": "text",
+    "tool_call_parser": "hermes",
+    "reasoning_parser": "qwen3",
+    "is_hybrid": true,
+    "is_moe": true,
+    "is_hybrid_explicit": true,
+    "supports_spec_decode": false
+  },
+  "qwen3.5-35b-a3b-8bit": {
+    "hf_path": "mlx-community/Qwen3.5-35B-A3B-8bit",
+    "modality": "text",
+    "tool_call_parser": "hermes",
+    "reasoning_parser": "qwen3",
+    "is_hybrid": true,
+    "is_moe": true,
+    "is_hybrid_explicit": true,
+    "supports_spec_decode": false
+  },
+  "qwen3.5-122b-a10b-4bit": {
+    "hf_path": "mlx-community/Qwen3.5-122B-A10B-4bit",
+    "modality": "text",
+    "tool_call_parser": "hermes",
+    "reasoning_parser": "qwen3",
+    "is_hybrid": true,
+    "is_moe": true,
+    "is_hybrid_explicit": true,
+    "supports_spec_decode": false
+  },
+  "qwen3.5-122b-a10b-8bit": {
+    "hf_path": "mlx-community/Qwen3.5-122B-A10B-8bit",
+    "modality": "text",
+    "tool_call_parser": "hermes",
+    "reasoning_parser": "qwen3",
+    "is_hybrid": true,
+    "is_moe": true,
+    "is_hybrid_explicit": true,
+    "supports_spec_decode": false
   },
   "qwen3.5-35b-8bit": {
     "hf_path": "mlx-community/Qwen3.5-35B-8bit",
-    "modality": "text"
+    "modality": "text",
+    "tool_call_parser": "hermes",
+    "reasoning_parser": "qwen3",
+    "is_hybrid": true,
+    "is_moe": true,
+    "is_hybrid_explicit": true,
+    "supports_spec_decode": false
+  },
+  "qwen3.5-4b-bf16": {
+    "hf_path": "mlx-community/Qwen3.5-4B-bf16",
+    "modality": "text",
+    "tool_call_parser": "hermes",
+    "reasoning_parser": "qwen3",
+    "is_hybrid": false,
+    "is_hybrid_explicit": true,
+    "is_moe": false,
+    "supports_spec_decode": false
+  },
+  "qwen3.5-9b-bf16": {
+    "hf_path": "mlx-community/Qwen3.5-9B-bf16",
+    "modality": "text",
+    "tool_call_parser": "hermes",
+    "reasoning_parser": "qwen3",
+    "is_hybrid": false,
+    "is_hybrid_explicit": true,
+    "is_moe": false,
+    "supports_spec_decode": false
+  },
+  "qwen3.5-27b-bf16": {
+    "hf_path": "mlx-community/Qwen3.5-27B-bf16",
+    "modality": "text",
+    "tool_call_parser": "hermes",
+    "reasoning_parser": "qwen3",
+    "is_hybrid": false,
+    "is_hybrid_explicit": true,
+    "is_moe": false,
+    "supports_spec_decode": false
+  },
+  "qwen3.5-35b-a3b-bf16": {
+    "hf_path": "mlx-community/Qwen3.5-35B-A3B-bf16",
+    "modality": "text",
+    "tool_call_parser": "hermes",
+    "reasoning_parser": "qwen3",
+    "is_hybrid": true,
+    "is_moe": true,
+    "is_hybrid_explicit": true,
+    "supports_spec_decode": false
   },
   "qwen3-0.6b-4bit": {
     "hf_path": "mlx-community/Qwen3-0.6B-4bit",
     "tool_call_parser": "hermes",
-    "reasoning_parser": "qwen",
-    "description": "Qwen3 0.6B 4bit sentinel alias carrying native hermes tool-call + qwen reasoning parsers for /v1/models effective-parser surfacing tests.",
-    "modality": "text"
+    "reasoning_parser": "qwen3",
+    "modality": "text",
+    "is_hybrid": false,
+    "is_moe": false,
+    "is_hybrid_explicit": false,
+    "supports_spec_decode": true,
+    "description": "Qwen3 0.6B 4bit sentinel alias."
+  },
+  "qwen3-0.6b-8bit": {
+    "hf_path": "mlx-community/Qwen3-0.6B-8bit",
+    "tool_call_parser": "hermes",
+    "reasoning_parser": "qwen3",
+    "modality": "text",
+    "is_hybrid": false,
+    "is_moe": false,
+    "is_hybrid_explicit": false,
+    "supports_spec_decode": true,
+    "description": "Qwen3 0.6B 8bit canonical smoke-test alias."
+  },
+  "qwen3-4b-4bit": {
+    "hf_path": "mlx-community/Qwen3-4B-4bit",
+    "modality": "text",
+    "tool_call_parser": "hermes",
+    "reasoning_parser": "qwen3",
+    "is_hybrid": false,
+    "is_moe": false,
+    "is_hybrid_explicit": false,
+    "supports_spec_decode": true
+  },
+  "qwen3-8b-4bit": {
+    "hf_path": "mlx-community/Qwen3-8B-4bit",
+    "modality": "text",
+    "tool_call_parser": "hermes",
+    "reasoning_parser": "qwen3",
+    "is_hybrid": false,
+    "is_moe": false,
+    "is_hybrid_explicit": false,
+    "supports_spec_decode": true
+  },
+  "qwen3-14b-4bit": {
+    "hf_path": "mlx-community/Qwen3-14B-4bit",
+    "modality": "text",
+    "tool_call_parser": "hermes",
+    "reasoning_parser": "qwen3",
+    "is_hybrid": false,
+    "is_moe": false,
+    "is_hybrid_explicit": false,
+    "supports_spec_decode": true
+  },
+  "qwen3-32b-4bit": {
+    "hf_path": "mlx-community/Qwen3-32B-4bit",
+    "modality": "text",
+    "tool_call_parser": "hermes",
+    "reasoning_parser": "qwen3",
+    "is_hybrid": false,
+    "is_moe": false,
+    "is_hybrid_explicit": false,
+    "supports_spec_decode": true
   },
   "qwen3-coder-4bit": {
     "hf_path": "mlx-community/Qwen3-Coder-4bit",
-    "modality": "text"
+    "modality": "text",
+    "tool_call_parser": "hermes",
+    "reasoning_parser": null,
+    "is_hybrid": false,
+    "is_moe": false,
+    "is_hybrid_explicit": false,
+    "supports_spec_decode": true
+  },
+  "qwen3-coder-30b-a3b-4bit": {
+    "hf_path": "mlx-community/Qwen3-Coder-30B-A3B-4bit",
+    "modality": "text",
+    "tool_call_parser": "hermes",
+    "reasoning_parser": null,
+    "is_hybrid": true,
+    "is_moe": true,
+    "is_hybrid_explicit": true,
+    "supports_spec_decode": false
+  },
+  "qwen3.6-27b-4bit": {
+    "hf_path": "mlx-community/Qwen3.6-27B-4bit",
+    "modality": "text",
+    "tool_call_parser": "qwen3_coder_xml",
+    "reasoning_parser": "qwen3",
+    "is_hybrid": false,
+    "is_moe": false,
+    "is_hybrid_explicit": true,
+    "supports_spec_decode": false
+  },
+  "qwen3.6-35b-a3b-4bit": {
+    "hf_path": "mlx-community/Qwen3.6-35B-A3B-4bit",
+    "modality": "text",
+    "tool_call_parser": "qwen3_coder_xml",
+    "reasoning_parser": "qwen3",
+    "is_hybrid": true,
+    "is_moe": true,
+    "is_hybrid_explicit": true,
+    "supports_spec_decode": false
+  },
+  "qwopus-27b-4bit": {
+    "hf_path": "mlx-community/Qwopus-27B-4bit",
+    "modality": "text",
+    "tool_call_parser": "hermes",
+    "reasoning_parser": "qwen3",
+    "is_hybrid": true,
+    "is_moe": true,
+    "is_hybrid_explicit": true,
+    "supports_spec_decode": false
   },
   "gemma-4-4b-4bit": {
     "hf_path": "mlx-community/Gemma-4-4B-4bit",
-    "modality": "text"
+    "modality": "text",
+    "tool_call_parser": "gemma4",
+    "reasoning_parser": "gemma4",
+    "is_hybrid": false,
+    "is_moe": false,
+    "is_hybrid_explicit": false,
+    "supports_spec_decode": true
   },
   "gemma-4-12b-4bit": {
     "hf_path": "mlx-community/Gemma-4-12B-4bit",
-    "modality": "text"
+    "modality": "text",
+    "tool_call_parser": "gemma4",
+    "reasoning_parser": "gemma4",
+    "is_hybrid": false,
+    "is_moe": false,
+    "is_hybrid_explicit": false,
+    "supports_spec_decode": true
   },
   "gemma-4-26b-4bit": {
     "hf_path": "mlx-community/Gemma-4-26B-4bit",
-    "modality": "text"
+    "modality": "text",
+    "tool_call_parser": "gemma4",
+    "reasoning_parser": "gemma4",
+    "is_hybrid": false,
+    "is_moe": false,
+    "is_hybrid_explicit": false,
+    "supports_spec_decode": true
   },
   "gemma3-27b-4bit": {
     "hf_path": "mlx-community/Gemma-3-27B-4bit",
-    "modality": "text"
+    "modality": "text",
+    "tool_call_parser": "hermes",
+    "reasoning_parser": null,
+    "is_hybrid": false,
+    "is_moe": false,
+    "is_hybrid_explicit": false,
+    "supports_spec_decode": true
+  },
+  "gemma-3n-4b-4bit": {
+    "hf_path": "mlx-community/Gemma-3n-4B-4bit",
+    "modality": "text",
+    "tool_call_parser": null,
+    "reasoning_parser": null,
+    "is_hybrid": false,
+    "is_moe": false,
+    "is_hybrid_explicit": false,
+    "supports_spec_decode": false
   },
   "llama3-3b-4bit": {
     "hf_path": "mlx-community/Llama-3.2-3B-Instruct-4bit",
-    "modality": "text"
+    "modality": "text",
+    "tool_call_parser": "llama",
+    "reasoning_parser": null,
+    "is_hybrid": false,
+    "is_moe": false,
+    "is_hybrid_explicit": false,
+    "supports_spec_decode": true
+  },
+  "llama3-8b-4bit": {
+    "hf_path": "mlx-community/Llama-3.1-8B-Instruct-4bit",
+    "modality": "text",
+    "tool_call_parser": "llama",
+    "reasoning_parser": null,
+    "is_hybrid": false,
+    "is_moe": false,
+    "is_hybrid_explicit": false,
+    "supports_spec_decode": true
   },
   "llama4-8b-4bit": {
     "hf_path": "mlx-community/Llama-4-8B-4bit",
-    "modality": "text"
+    "modality": "text",
+    "tool_call_parser": "llama",
+    "reasoning_parser": null,
+    "is_hybrid": false,
+    "is_moe": false,
+    "is_hybrid_explicit": false,
+    "supports_spec_decode": true
   },
   "hermes3-8b-4bit": {
     "hf_path": "mlx-community/Hermes-3-8B-4bit",
-    "modality": "text"
+    "modality": "text",
+    "tool_call_parser": "hermes",
+    "reasoning_parser": null,
+    "is_hybrid": false,
+    "is_moe": false,
+    "is_hybrid_explicit": false,
+    "supports_spec_decode": true
   },
   "mistral-24b-4bit": {
     "hf_path": "mlx-community/Mistral-24B-4bit",
-    "modality": "text"
+    "modality": "text",
+    "tool_call_parser": "hermes",
+    "reasoning_parser": null,
+    "is_hybrid": false,
+    "is_moe": false,
+    "is_hybrid_explicit": false,
+    "supports_spec_decode": true
+  },
+  "magistral-24b-4bit": {
+    "hf_path": "mlx-community/Magistral-24B-4bit",
+    "modality": "text",
+    "tool_call_parser": "hermes",
+    "reasoning_parser": "qwen3",
+    "is_hybrid": false,
+    "is_moe": false,
+    "is_hybrid_explicit": false,
+    "supports_spec_decode": true
+  },
+  "ministral-3b-4bit": {
+    "hf_path": "mlx-community/Ministral-3B-Instruct-4bit",
+    "modality": "text",
+    "tool_call_parser": "hermes",
+    "reasoning_parser": null,
+    "is_hybrid": false,
+    "is_moe": false,
+    "is_hybrid_explicit": false,
+    "supports_spec_decode": true
+  },
+  "devstral-24b-4bit": {
+    "hf_path": "mlx-community/Devstral-24B-4bit",
+    "modality": "text",
+    "tool_call_parser": "hermes",
+    "reasoning_parser": null,
+    "is_hybrid": false,
+    "is_moe": false,
+    "is_hybrid_explicit": false,
+    "supports_spec_decode": true
   },
   "deepseek-v4-27b": {
     "hf_path": "mlx-community/DeepSeek-V4-27B-4bit",
-    "modality": "text"
+    "modality": "text",
+    "tool_call_parser": "deepseek",
+    "reasoning_parser": null,
+    "is_hybrid": false,
+    "is_moe": false,
+    "is_hybrid_explicit": false,
+    "supports_spec_decode": true
   },
   "deepseek-v4-35b": {
     "hf_path": "mlx-community/DeepSeek-V4-35B-4bit",
-    "modality": "text"
+    "modality": "text",
+    "tool_call_parser": "deepseek",
+    "reasoning_parser": null,
+    "is_hybrid": false,
+    "is_moe": false,
+    "is_hybrid_explicit": false,
+    "supports_spec_decode": true
+  },
+  "deepseek-v3-4bit": {
+    "hf_path": "mlx-community/DeepSeek-V3-0324-4bit",
+    "modality": "text",
+    "tool_call_parser": "deepseek_v3",
+    "reasoning_parser": null,
+    "is_hybrid": false,
+    "is_moe": false,
+    "is_hybrid_explicit": false,
+    "supports_spec_decode": true
   },
   "deepseek-r1-7b-4bit": {
     "hf_path": "mlx-community/DeepSeek-R1-Distill-Qwen-7B-4bit",
-    "modality": "text"
+    "modality": "text",
+    "tool_call_parser": "deepseek",
+    "reasoning_parser": "deepseek_r1",
+    "is_hybrid": false,
+    "is_moe": false,
+    "is_hybrid_explicit": false,
+    "supports_spec_decode": true
+  },
+  "deepseek-r1-14b-4bit": {
+    "hf_path": "mlx-community/DeepSeek-R1-Distill-Qwen-14B-4bit",
+    "modality": "text",
+    "tool_call_parser": "deepseek",
+    "reasoning_parser": "deepseek_r1",
+    "is_hybrid": false,
+    "is_moe": false,
+    "is_hybrid_explicit": false,
+    "supports_spec_decode": true
+  },
+  "deepseek-r1-32b-4bit": {
+    "hf_path": "mlx-community/DeepSeek-R1-Distill-Qwen-32B-4bit",
+    "modality": "text",
+    "tool_call_parser": "deepseek",
+    "reasoning_parser": "deepseek_r1",
+    "is_hybrid": false,
+    "is_moe": false,
+    "is_hybrid_explicit": false,
+    "supports_spec_decode": true
+  },
+  "phi-4-4bit": {
+    "hf_path": "mlx-community/Phi-4-4bit",
+    "modality": "text",
+    "tool_call_parser": "hermes",
+    "reasoning_parser": null,
+    "is_hybrid": false,
+    "is_moe": false,
+    "is_hybrid_explicit": false,
+    "supports_spec_decode": true
+  },
+  "phi-4-mini-4bit": {
+    "hf_path": "mlx-community/Phi-4-mini-4bit",
+    "modality": "text",
+    "tool_call_parser": "hermes",
+    "reasoning_parser": null,
+    "is_hybrid": false,
+    "is_moe": false,
+    "is_hybrid_explicit": false,
+    "supports_spec_decode": true
+  },
+  "phi-4-mini-reasoning-4bit": {
+    "hf_path": "mlx-community/Phi-4-mini-reasoning-4bit",
+    "modality": "text",
+    "tool_call_parser": "hermes",
+    "reasoning_parser": "deepseek_r1",
+    "is_hybrid": false,
+    "is_moe": false,
+    "is_hybrid_explicit": false,
+    "supports_spec_decode": true
+  },
+  "phi-3.5-mini-4bit": {
+    "hf_path": "mlx-community/Phi-3.5-mini-instruct-4bit",
+    "modality": "text",
+    "tool_call_parser": null,
+    "reasoning_parser": null,
+    "is_hybrid": false,
+    "is_moe": false,
+    "is_hybrid_explicit": false,
+    "supports_spec_decode": true
   },
   "gpt-oss-20b-mxfp4-q8": {
     "hf_path": "mlx-community/gpt-oss-20b-mxfp4-q8",
-    "modality": "text"
+    "modality": "text",
+    "tool_call_parser": "harmony",
+    "reasoning_parser": "harmony",
+    "is_hybrid": false,
+    "is_moe": false,
+    "is_hybrid_explicit": false,
+    "supports_spec_decode": true
+  },
+  "glm-4-9b-4bit": {
+    "hf_path": "mlx-community/GLM-4-9B-4bit",
+    "modality": "text",
+    "tool_call_parser": "glm47",
+    "reasoning_parser": null,
+    "is_hybrid": false,
+    "is_moe": false,
+    "is_hybrid_explicit": false,
+    "supports_spec_decode": true
+  },
+  "minimax-m2.5-4bit": {
+    "hf_path": "mlx-community/MiniMax-M2.5-4bit",
+    "modality": "text",
+    "tool_call_parser": "minimax",
+    "reasoning_parser": "minimax",
+    "is_hybrid": false,
+    "is_moe": false,
+    "is_hybrid_explicit": false,
+    "supports_spec_decode": true
+  },
+  "kimi-k2-4bit": {
+    "hf_path": "mlx-community/Kimi-K2-4bit",
+    "modality": "text",
+    "tool_call_parser": "kimi",
+    "reasoning_parser": null,
+    "is_hybrid": false,
+    "is_moe": false,
+    "is_hybrid_explicit": false,
+    "supports_spec_decode": true
+  },
+  "nanbeige4.1-3b-4bit": {
+    "hf_path": "mlx-community/Nanbeige4.1-3B-4bit",
+    "modality": "text",
+    "tool_call_parser": "hermes",
+    "reasoning_parser": "deepseek_r1",
+    "is_hybrid": false,
+    "is_moe": false,
+    "is_hybrid_explicit": false,
+    "supports_spec_decode": true
+  },
+  "granite-4-4bit": {
+    "hf_path": "mlx-community/Granite-4-4bit",
+    "modality": "text",
+    "tool_call_parser": "hermes",
+    "reasoning_parser": null,
+    "is_hybrid": true,
+    "is_moe": true,
+    "is_hybrid_explicit": true,
+    "supports_spec_decode": false
+  },
+  "smollm3-3b-4bit": {
+    "hf_path": "mlx-community/SmolLM3-3B-4bit",
+    "modality": "text",
+    "tool_call_parser": "hermes",
+    "reasoning_parser": "qwen3",
+    "is_hybrid": false,
+    "is_moe": false,
+    "is_hybrid_explicit": false,
+    "supports_spec_decode": true
+  },
+  "vibethinker-3b-8bit": {
+    "hf_path": "mlx-community/VibeThinker-3B-8bit",
+    "modality": "text",
+    "tool_call_parser": "hermes",
+    "reasoning_parser": "vibethinker",
+    "is_hybrid": false,
+    "is_moe": false,
+    "is_hybrid_explicit": false,
+    "supports_spec_decode": true
+  },
+  "ui-tars-7b-4bit": {
+    "hf_path": "mlx-community/UI-TARS-7B-DPO-4bit",
+    "modality": "text",
+    "tool_call_parser": "ui_tars",
+    "reasoning_parser": "ui_tars",
+    "is_hybrid": false,
+    "is_moe": false,
+    "is_hybrid_explicit": false,
+    "supports_spec_decode": false
+  },
+  "bonsai-1.7b-unpacked": {
+    "hf_path": "mlx-community/Bonsai-1.7B-unpacked",
+    "modality": "text",
+    "tool_call_parser": "hermes",
+    "reasoning_parser": null,
+    "is_hybrid": false,
+    "is_moe": false,
+    "is_hybrid_explicit": false,
+    "supports_spec_decode": true,
+    "description": "Bonsai 1.7B unpacked weights."
+  },
+  "bonsai-4b-unpacked": {
+    "hf_path": "mlx-community/Bonsai-4B-unpacked",
+    "modality": "text",
+    "tool_call_parser": "hermes",
+    "reasoning_parser": null,
+    "is_hybrid": false,
+    "is_moe": false,
+    "is_hybrid_explicit": false,
+    "supports_spec_decode": true,
+    "description": "Bonsai 4B unpacked weights."
+  },
+  "bonsai-8b-unpacked": {
+    "hf_path": "mlx-community/Bonsai-8B-unpacked",
+    "modality": "text",
+    "tool_call_parser": "hermes",
+    "reasoning_parser": null,
+    "is_hybrid": false,
+    "is_moe": false,
+    "is_hybrid_explicit": false,
+    "supports_spec_decode": true,
+    "description": "Bonsai 8B unpacked weights."
+  },
+  "nemotron-30b-4bit": {
+    "hf_path": "mlx-community/Nemotron-30B-4bit",
+    "modality": "text",
+    "tool_call_parser": "hermes",
+    "reasoning_parser": null,
+    "is_hybrid": false,
+    "is_moe": false,
+    "is_hybrid_explicit": false,
+    "supports_spec_decode": true,
+    "description": "NVIDIA Nemotron 30B 4bit."
   },
   "diffusion-gemma-26b-4bit": {
     "hf_path": "mlx-community/diffusiongemma-26B-A4B-it-4bit",
@@ -107,6 +678,9 @@
     "supports_dflash": false,
     "supports_mllm": false,
     "is_audio": false,
+    "is_hybrid": false,
+    "is_moe": false,
+    "is_hybrid_explicit": false,
     "description": "Block-diffusion text model (DiffusionGemma 26B A4B 4bit). Native gemma4 tool-call + reasoning wire format; batch-1 only."
   },
   "diffusion-gemma-26b-8bit": {
@@ -118,6 +692,9 @@
     "supports_dflash": false,
     "supports_mllm": false,
     "is_audio": false,
+    "is_hybrid": false,
+    "is_moe": false,
+    "is_hybrid_explicit": false,
     "description": "Block-diffusion text model (DiffusionGemma 26B A4B 8bit). Native gemma4 tool-call + reasoning wire format; batch-1 only."
   }
 }

@@ -35,7 +35,7 @@ from fusion_mlx.model_aliases import (
 )
 from fusion_mlx.model_auto_config import detect_model_config
 
-ALIASES_PATH = Path(__file__).parent.parent / "vllm_mlx" / "aliases.json"
+ALIASES_PATH = Path(__file__).parent.parent.parent / "fusion_mlx" / "aliases.json"
 
 
 # ---- Schema sanity --------------------------------------------------------
@@ -256,7 +256,7 @@ def test_legacy_string_value_still_loads(tmp_path) -> None:
     with (
         patch.object(ma, "_aliases", None),
         patch.object(ma, "_hf_to_alias", None),
-        patch("vllm_mlx.model_aliases.os.path.join", return_value=str(legacy)),
+        patch.object(ma, "_ALIASES_FILE", legacy),
     ):
         profiles = ma.list_profiles()
 
@@ -279,7 +279,7 @@ def test_empty_hf_path_string_form_raises(tmp_path) -> None:
     with (
         patch.object(ma, "_aliases", None),
         patch.object(ma, "_hf_to_alias", None),
-        patch("vllm_mlx.model_aliases.os.path.join", return_value=str(bad)),
+        patch.object(ma, "_ALIASES_FILE", bad),
         pytest.raises(ValueError, match="empty"),
     ):
         ma.list_profiles()
@@ -295,7 +295,7 @@ def test_empty_hf_path_dict_form_raises(tmp_path) -> None:
     with (
         patch.object(ma, "_aliases", None),
         patch.object(ma, "_hf_to_alias", None),
-        patch("vllm_mlx.model_aliases.os.path.join", return_value=str(bad)),
+        patch.object(ma, "_ALIASES_FILE", bad),
         pytest.raises(ValueError, match="non-empty string"),
     ):
         ma.list_profiles()
@@ -312,7 +312,7 @@ def test_invalid_value_raises_with_alias_name(tmp_path) -> None:
     with (
         patch.object(ma, "_aliases", None),
         patch.object(ma, "_hf_to_alias", None),
-        patch("vllm_mlx.model_aliases.os.path.join", return_value=str(bad)),
+        patch.object(ma, "_ALIASES_FILE", bad),
         pytest.raises(ValueError, match="foo"),
     ):
         ma.list_profiles()
