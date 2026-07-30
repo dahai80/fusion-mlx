@@ -238,6 +238,14 @@ def resolve_profile(name: str) -> AliasProfile | None:
     for profile in list_profiles():
         if profile.name == name:
             return profile
+    # Issue #256: reverse-lookup by hf_path so that raw HF paths like
+    # "mlx-community/diffusiongemma-26B-A4B-it-4bit" resolve to the
+    # same profile as the alias name "diffusion-gemma-26b-4bit".
+    # This is critical for engine dispatch: the server receives an HF
+    # path and needs to know the modality to route to DiffusionEngine.
+    for profile in list_profiles():
+        if profile.hf_path and profile.hf_path == name:
+            return profile
     return None
 
 
