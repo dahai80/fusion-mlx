@@ -14,12 +14,15 @@ background writer thread via ``_write_safetensors_no_mx``.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import os
 import queue
 import shutil
+import struct
 import threading
+import time
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -44,6 +47,25 @@ _MIN_PENDING_WRITES = 16
 _MAX_PENDING_WRITES_CAP = 512
 
 _SOFT_LIMIT_PCT = 0.80
+
+_PREFIX_DEFAULT_MAX_BYTES = 20 * 1024 * 1024 * 1024
+
+
+class _PrefixEntry:
+    __slots__ = (
+        "prefix_hash",
+        "token_count",
+        "file_path",
+        "size_bytes",
+        "last_access",
+    )
+
+    def __init__(self, prefix_hash, token_count, file_path, size_bytes, last_access):
+        self.prefix_hash = prefix_hash
+        self.token_count = token_count
+        self.file_path = file_path
+        self.size_bytes = size_bytes
+        self.last_access = last_access
 
 
 class BoundarySnapshotSSDStore:
@@ -71,7 +93,12 @@ class BoundarySnapshotSSDStore:
     _CLEANUP_ALL_TIMEOUT_S = 5.0
     _CLEANUP_REQUEST_TIMEOUT_S = 2.0
 
-    def __init__(self, base_dir: Path) -> None:
+    def __init__(
+        self,
+        base_dir: Path,
+        prefix_persist: bool = False,
+        prefix_max_bytes: int | None = None,
+    ) -> None:
         self._snapshot_dir = base_dir / "_boundary_snapshots"
         # Clean up orphaned files from previous crashes.
         if self._snapshot_dir.exists():
@@ -116,6 +143,50 @@ class BoundarySnapshotSSDStore:
             daemon=True,
         )
         self._writer_thread.start()
+
+        # Cross-restart prefix-keyed persistence namespace. Unlike
+        # _snapshot_dir (rmtree'd at startup + per-request, ephemeral),
+        # _prefix_dir SURVIVES restart so prefix cache states can be reused
+        # across server restarts. Opt-in via prefix_persist (default OFF).
+        self._prefix_persist = prefix_persist
+        self._prefix_dir = base_dir / "_prefix_snapshots"
+        self._prefix_max_bytes = (
+            prefix_max_bytes
+            if prefix_max_bytes and prefix_max_bytes > 0
+            else _PREFIX_DEFAULT_MAX_BYTES
+        )
+        self._prefix_index: dict[bytes, _PrefixEntry] = {}
+        self._prefix_lock = threading.Lock()
+        self._prefix_total_bytes = 0
+        self._prefix_stats = {
+            "writes": 0,
+            "hits": 0,
+            "misses": 0,
+            "evictions": 0,
+            "load_failures": 0,
+        }
+        self._prefix_write_queue: queue.Queue | None = None
+        self._prefix_shutdown = threading.Event()
+        self._prefix_writer_thread = None
+        self._prefix_writer_busy = threading.Lock()
+        if prefix_persist:
+            # NO rmtree here - prefix snapshots persist across restarts.
+            self._prefix_dir.mkdir(parents=True, exist_ok=True)
+            self._scan_prefix_dir()
+            self._prefix_write_queue = queue.Queue(
+                maxsize=_DEFAULT_MAX_PENDING_WRITES
+            )
+            self._prefix_writer_thread = threading.Thread(
+                target=self._prefix_writer_loop,
+                name="prefix-snapshot-writer",
+                daemon=True,
+            )
+            self._prefix_writer_thread.start()
+            logger.info(
+                "Boundary prefix persistence enabled (dir=%s, max_bytes=%d)",
+                self._prefix_dir,
+                self._prefix_max_bytes,
+            )
 
     # ------------------------------------------------------------------
     # Public API
@@ -503,6 +574,347 @@ class BoundarySnapshotSSDStore:
         except queue.Full:
             pass
         self._writer_thread.join(timeout=5.0)
+        if self._prefix_persist and self._prefix_writer_thread is not None:
+            self._prefix_shutdown.set()
+            if self._prefix_write_queue is not None:
+                try:
+                    self._prefix_write_queue.put_nowait(None)  # Sentinel
+                except queue.Full:
+                    pass
+            self._prefix_writer_thread.join(timeout=5.0)
+
+    # ------------------------------------------------------------------
+    # Cross-restart prefix persistence
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def compute_prefix_chain_hashes(
+        token_ids,
+        block_size: int,
+        model_name: str,
+    ) -> list[bytes]:
+        """Chain-hash each full-block boundary of token_ids.
+
+        hash_k = sha256(hash_{k-1} || block_k_tokens || model_name).
+        Incremental -> O(N) for all boundaries. Stable across restart
+        so a re-hashed prompt prefix matches a previously persisted one.
+        """
+        hashes: list[bytes] = []
+        if block_size <= 0 or not token_ids:
+            return hashes
+        parent = b""
+        model_bytes = model_name.encode("utf-8")
+        n_full = len(token_ids) // block_size
+        for k in range(n_full):
+            start = k * block_size
+            block = token_ids[start : start + block_size]
+            h = hashlib.sha256()
+            h.update(parent)
+            h.update(struct.pack(f"<{len(block)}i", *block))
+            h.update(model_bytes)
+            parent = h.digest()
+            hashes.append(parent)
+        return hashes
+
+    def _prefix_file_path(self, prefix_hash: bytes, token_count: int) -> Path:
+        hex_hash = prefix_hash.hex()
+        return self._prefix_dir / hex_hash[:2] / f"{hex_hash}_{token_count}.safetensors"
+
+    def save_prefix(
+        self,
+        prefix_hash: bytes,
+        token_count: int,
+        snapshot_cache: list[Any],
+        extract_cache_states_fn: Callable,
+        model_name: str,
+    ) -> bool:
+        """Persist a prefix-keyed snapshot to SSD (non-blocking, survives restart).
+
+        Called from the inference thread (Metal-safe for mx.eval). Reuses the
+        same safetensors format as the in-session save(). Returns False when
+        persistence is disabled, inputs are invalid, or the write queue is full.
+        """
+        if not HAS_MLX or not self._prefix_persist:
+            return False
+        if not prefix_hash or token_count <= 0:
+            return False
+        try:
+            extracted, _model_cache_config = extract_cache_states_fn(snapshot_cache)
+            if not extracted:
+                return False
+            tensors_raw, metadata = self._serialize_extracted(
+                extracted, f"prefix:{prefix_hash.hex()[:8]}", token_count
+            )
+            metadata["prefix_model_name"] = model_name
+            file_path = self._prefix_file_path(prefix_hash, token_count)
+            qsize = self._prefix_write_queue.qsize()
+            soft_limit = int(_DEFAULT_MAX_PENDING_WRITES * _SOFT_LIMIT_PCT)
+            if qsize >= soft_limit:
+                logger.warning(
+                    "Prefix snapshot write queue at %d/%d - backpressure active",
+                    qsize,
+                    _DEFAULT_MAX_PENDING_WRITES,
+                )
+            if qsize >= _DEFAULT_MAX_PENDING_WRITES:
+                logger.warning(
+                    "Prefix snapshot queue full, dropping %s/%d",
+                    prefix_hash.hex()[:8],
+                    token_count,
+                )
+                return False
+            try:
+                self._prefix_write_queue.put_nowait(
+                    (prefix_hash, token_count, tensors_raw, metadata, file_path)
+                )
+            except queue.Full:
+                logger.warning(
+                    "Prefix snapshot queue full (race), dropping %s/%d",
+                    prefix_hash.hex()[:8],
+                    token_count,
+                )
+                return False
+            return True
+        except Exception as e:
+            logger.debug("Failed to save prefix snapshot: %s", e)
+            return False
+
+    def has_prefix(self, prefix_hash: bytes, token_count: int) -> bool:
+        if not self._prefix_persist or not prefix_hash:
+            return False
+        with self._prefix_lock:
+            entry = self._prefix_index.get(prefix_hash)
+            return entry is not None and entry.token_count == token_count
+
+    def find_prefix_snapshot(
+        self,
+        prefix_hashes: list[bytes],
+    ) -> tuple[bytes, int] | None:
+        """Return (prefix_hash, token_count) of the longest cached boundary.
+
+        prefix_hashes must be ordered by increasing boundary (output of
+        compute_prefix_chain_hashes). Returns None when none are present.
+        """
+        if not self._prefix_persist or not prefix_hashes:
+            return None
+        best: tuple[bytes, int] | None = None
+        with self._prefix_lock:
+            for prefix_hash in prefix_hashes:
+                entry = self._prefix_index.get(prefix_hash)
+                if entry is not None:
+                    best = (entry.prefix_hash, entry.token_count)
+        return best
+
+    def load_prefix(
+        self,
+        prefix_hash: bytes,
+        token_count: int,
+    ) -> list[dict[str, Any]] | None:
+        """Load a prefix snapshot, returning extracted cache state dicts.
+
+        Returns None when persistence is disabled or the snapshot is absent /
+        unreadable. Bumps last_access (LRU) on a hit.
+        """
+        if not self._prefix_persist or not prefix_hash:
+            return None
+        file_path = self._prefix_file_path(prefix_hash, token_count)
+        with self._prefix_lock:
+            entry = self._prefix_index.get(prefix_hash)
+            if entry is not None and entry.token_count == token_count:
+                entry.last_access = time.time()
+        if not file_path.exists():
+            logger.debug(
+                "Prefix snapshot missing on disk: %s/%d",
+                prefix_hash.hex()[:8],
+                token_count,
+            )
+            return None
+        try:
+            data = mx.load(str(file_path), return_metadata=True)
+            if isinstance(data, tuple) and len(data) == 2:
+                arrays, metadata = data
+            else:
+                return None
+            return self._reconstruct_from_safetensors(arrays, metadata)
+        except Exception as e:
+            logger.debug(
+                "Failed to load prefix snapshot %s/%d: %s",
+                prefix_hash.hex()[:8],
+                token_count,
+                e,
+            )
+            return None
+
+    def get_prefix_stats(self) -> dict:
+        if not self._prefix_persist:
+            return {}
+        with self._prefix_lock:
+            return {
+                **self._prefix_stats,
+                "entries": len(self._prefix_index),
+                "total_bytes": self._prefix_total_bytes,
+                "max_bytes": self._prefix_max_bytes,
+            }
+
+    def cleanup_prefix_all(self) -> None:
+        """Clear all prefix snapshots (manual reset / tests).
+
+        Does NOT affect the in-session _snapshot_dir. Drains the prefix write
+        queue and acquires _prefix_writer_busy so the writer is not mid-write.
+        """
+        if not self._prefix_persist:
+            return
+        if self._prefix_write_queue is not None:
+            while True:
+                try:
+                    item = self._prefix_write_queue.get_nowait()
+                except queue.Empty:
+                    break
+                if item is None:
+                    try:
+                        self._prefix_write_queue.put_nowait(None)
+                    except queue.Full:
+                        pass
+                    break
+        acquired = self._prefix_writer_busy.acquire(timeout=self._CLEANUP_ALL_TIMEOUT_S)
+        try:
+            with self._prefix_lock:
+                self._prefix_index.clear()
+                self._prefix_total_bytes = 0
+            if self._prefix_dir.exists():
+                try:
+                    shutil.rmtree(self._prefix_dir)
+                except Exception as e:
+                    logger.debug("Failed to clean up prefix snapshots: %s", e)
+            self._prefix_dir.mkdir(parents=True, exist_ok=True)
+        finally:
+            if acquired:
+                self._prefix_writer_busy.release()
+
+    def _scan_prefix_dir(self) -> None:
+        """Rebuild _prefix_index from on-disk prefix snapshots at startup.
+
+        Cheap: parses filename (hex_hash, token_count) + stat() for size/mtime.
+        Does NOT load tensor data. num_layers / model_name validated lazily at
+        load_prefix time against the safetensors metadata.
+        """
+        if not self._prefix_dir.exists():
+            return
+        scanned = 0
+        total = 0
+        for path in self._prefix_dir.rglob("*.safetensors"):
+            name = path.stem
+            if "_" not in name:
+                continue
+            hex_hash, tc_str = name.rsplit("_", 1)
+            try:
+                token_count = int(tc_str)
+                prefix_hash = bytes.fromhex(hex_hash)
+            except ValueError:
+                continue
+            if len(prefix_hash) != 32:
+                continue
+            try:
+                size_bytes = path.stat().st_size
+                mtime = path.stat().st_mtime
+            except OSError:
+                continue
+            entry = _PrefixEntry(
+                prefix_hash=prefix_hash,
+                token_count=token_count,
+                file_path=path,
+                size_bytes=size_bytes,
+                last_access=mtime,
+            )
+            with self._prefix_lock:
+                self._prefix_index[prefix_hash] = entry
+                self._prefix_total_bytes += size_bytes
+            scanned += 1
+            total += size_bytes
+        if scanned:
+            logger.info(
+                "Recovered %d prefix snapshots (%.2f MiB) from %s",
+                scanned,
+                total / (1024 * 1024),
+                self._prefix_dir,
+            )
+
+    def _prefix_writer_loop(self) -> None:
+        while not self._prefix_shutdown.is_set():
+            try:
+                item = self._prefix_write_queue.get(timeout=1.0)
+            except queue.Empty:
+                continue
+            if item is None:
+                break
+            with self._prefix_writer_busy:
+                self._process_prefix_write_item(item)
+
+    def _process_prefix_write_item(self, item) -> None:
+        prefix_hash, token_count, tensors_raw, metadata, file_path = item
+        temp_path = None
+        try:
+            file_path.parent.mkdir(parents=True, exist_ok=True)
+            temp_path = file_path.with_name(file_path.stem + "_tmp.safetensors")
+            _write_safetensors_no_mx(str(temp_path), tensors_raw, metadata)
+            os.rename(str(temp_path), str(file_path))
+            try:
+                size_bytes = file_path.stat().st_size
+            except OSError:
+                size_bytes = 0
+            now = time.time()
+            with self._prefix_lock:
+                existing = self._prefix_index.get(prefix_hash)
+                if existing is not None and existing.token_count == token_count:
+                    self._prefix_total_bytes -= existing.size_bytes
+                entry = _PrefixEntry(
+                    prefix_hash=prefix_hash,
+                    token_count=token_count,
+                    file_path=file_path,
+                    size_bytes=size_bytes,
+                    last_access=now,
+                )
+                self._prefix_index[prefix_hash] = entry
+                self._prefix_total_bytes += size_bytes
+                self._prefix_stats["writes"] += 1
+            self._enforce_prefix_cap()
+        except Exception as e:
+            logger.debug("Prefix snapshot background write failed: %s", e)
+            for p in (temp_path, file_path):
+                try:
+                    if p is not None and p.exists():
+                        p.unlink()
+                except Exception:
+                    pass
+
+    def _enforce_prefix_cap(self) -> None:
+        """LRU-evict prefix snapshots until under the disk cap.
+
+        O(N) scan per eviction (rare - only when over cap). Files unlinked
+        outside the lock to avoid holding it during I/O.
+        """
+        if self._prefix_max_bytes <= 0:
+            return
+        victims: list[_PrefixEntry] = []
+        with self._prefix_lock:
+            while self._prefix_total_bytes > self._prefix_max_bytes and self._prefix_index:
+                lru_hash = None
+                lru_entry = None
+                for h, e in self._prefix_index.items():
+                    if lru_entry is None or e.last_access < lru_entry.last_access:
+                        lru_hash = h
+                        lru_entry = e
+                if lru_entry is None:
+                    break
+                self._prefix_index.pop(lru_hash, None)
+                self._prefix_total_bytes -= lru_entry.size_bytes
+                self._prefix_stats["evictions"] += 1
+                victims.append(lru_entry)
+        for victim in victims:
+            try:
+                if victim.file_path.exists():
+                    victim.file_path.unlink()
+            except Exception as e:
+                logger.debug("Failed to unlink evicted prefix snapshot: %s", e)
 
     # ------------------------------------------------------------------
     # Internal

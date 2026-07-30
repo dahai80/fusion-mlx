@@ -6,6 +6,7 @@ Merged from fusion-mlx model_settings + Rapid-MLX SchedulerConfig.
 import asyncio
 import json
 import logging
+import os
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
@@ -126,6 +127,11 @@ class SchedulerConfig:
     hot_cache_only: bool = False
     paged_ssd_cache_max_size: int = 100 * 1024 * 1024 * 1024  # 100 GiB
     hot_cache_max_size: int = 0  # bytes; 0 = disabled
+    # Cross-restart prefix snapshot persistence (issue #257). Opt-in; when
+    # True the BoundarySnapshotSSDStore also persists prefix-keyed snapshots
+    # keyed by a model-scoped token chain hash, recovered on restart.
+    boundary_prefix_persist: bool = False
+    boundary_prefix_max_bytes: int = 0  # bytes; 0 = store default (20 GiB)
     # GC / cache-clear cadence (steps between calls).
     gc_cleanup_interval: int = 0  # 0 = disabled
     mlx_cache_cleanup_interval: int = 8192
@@ -157,6 +163,25 @@ class SchedulerConfig:
         # sets ``chunked_prefill_tokens`` (int). Respect an explicit True
         # (the multi-model converter passes one).
         self.chunked_prefill = self.chunked_prefill or (self.chunked_prefill_tokens > 0)
+        # Cross-restart prefix persistence env fallback (issue #257). An
+        # explicit True / positive value set by the constructor wins; the
+        # FUSION_MLX_* env vars only apply when the field stayed at its
+        # default, so programmatic callers and tests are not overridden.
+        if not self.boundary_prefix_persist:
+            _env = os.environ.get("FUSION_MLX_BOUNDARY_PREFIX_PERSIST", "")
+            if _env.strip().lower() in ("1", "true", "yes", "on"):
+                self.boundary_prefix_persist = True
+        if self.boundary_prefix_max_bytes <= 0:
+            _env_mb = os.environ.get("FUSION_MLX_BOUNDARY_PREFIX_MAX_BYTES", "")
+            if _env_mb.strip():
+                try:
+                    self.boundary_prefix_max_bytes = max(0, int(_env_mb.strip()))
+                except ValueError:
+                    logger.warning(
+                        "FUSION_MLX_BOUNDARY_PREFIX_MAX_BYTES=%r is not an integer; "
+                        "using the store default",
+                        _env_mb,
+                    )
 
 
 @dataclass

@@ -227,6 +227,28 @@ def _maybe_capture_boundary_snapshot(self, request: Request, uid: int) -> None:
             self._boundary_cache_snapshots[request.request_id][
                 total_tokens
             ] = snapshot_cache
+        # Cross-restart prefix persistence (issue #257): persist a prefix-keyed
+        # snapshot so a future request or a restart with the same prompt prefix
+        # can warm-start without re-prefilling. VLM image requests are skipped
+        # (vision tokens are absent from prompt_token_ids) and the feature is
+        # gated behind config.boundary_prefix_persist to avoid needless hashing.
+        if (
+            self.config.boundary_prefix_persist
+            and request.prompt_token_ids
+            and not request.vlm_extra_keys_for_cache
+        ):
+            _prefix_tokens = request.prompt_token_ids[:total_tokens]
+            _prefix_hashes = self._boundary_snapshot_store.compute_prefix_chain_hashes(
+                _prefix_tokens, block_size, self.config.model_name
+            )
+            if _prefix_hashes:
+                self._boundary_snapshot_store.save_prefix(
+                    _prefix_hashes[-1],
+                    total_tokens,
+                    snapshot_cache,
+                    self._extract_cache_states,
+                    self.config.model_name,
+                )
     else:
         self._boundary_cache_snapshots[request.request_id][
             total_tokens
@@ -236,6 +258,104 @@ def _maybe_capture_boundary_snapshot(self, request: Request, uid: int) -> None:
         f"Captured boundary cache snapshot for {request.request_id} at "
         f"{total_tokens} tokens"
     )
+
+
+def _try_prefix_snapshot_warm_start(self, request: Request) -> bool:
+    # Cross-restart read-hook for issue #257: on a paged-cache miss, look up
+    # the prompt prefix in the prefix-snapshot store and, on a hit,
+    # materialize the cached blocks via store_cache + reconstruct_cache so
+    # prefill can skip the cached prefix. Returns True when the request was
+    # warm-started (request.prompt_cache populated), False when no snapshot
+    # matched or materialization was incomplete - the caller then falls back
+    # to a full prefill. VLM image requests are skipped (vision tokens live
+    # outside prompt_token_ids) and the path is gated on
+    # config.boundary_prefix_persist to avoid needless hashing.
+    if (
+        not self.config.boundary_prefix_persist
+        or self._boundary_snapshot_store is None
+        or self.block_aware_cache is None
+        or not request.prompt_token_ids
+        or request.vlm_extra_keys_for_cache
+    ):
+        return False
+
+    block_size = self.config.paged_cache_block_size
+    if block_size <= 0:
+        return False
+
+    prefix_hashes = self._boundary_snapshot_store.compute_prefix_chain_hashes(
+        request.prompt_token_ids, block_size, self.config.model_name
+    )
+    if not prefix_hashes:
+        return False
+
+    found = self._boundary_snapshot_store.find_prefix_snapshot(prefix_hashes)
+    if found is None:
+        return False
+
+    prefix_hash, matched_tc = found
+    loaded = self._boundary_snapshot_store.load_prefix(prefix_hash, matched_tc)
+    if not loaded:
+        logger.warning(
+            "Prefix snapshot hit for %s at %d tokens but load failed; "
+            "falling back to full prefill",
+            request.request_id,
+            matched_tc,
+        )
+        return False
+
+    prefix_tokens = request.prompt_token_ids[:matched_tc]
+    block_table = self.block_aware_cache.store_cache(
+        request.request_id,
+        prefix_tokens,
+        loaded,
+        model_cache_config=None,
+        boundary_snapshots={matched_tc: loaded},
+    )
+
+    # Require FULL materialization. A partial block_table (non-sliceable or
+    # hybrid cache types whose middle blocks cannot be sliced per-block)
+    # would reconstruct a cache claiming more tokens than it actually holds
+    # and corrupt generation, so release it and fall back to a clean prefill.
+    if block_table is None or block_table.num_tokens < matched_tc:
+        if block_table is not None and self.paged_cache_manager is not None:
+            self.paged_cache_manager.delete_block_table(request.request_id)
+        logger.debug(
+            "Prefix snapshot for %s materialized %s/%d tokens "
+            "(non-sliceable or hybrid cache); falling back to full prefill",
+            request.request_id,
+            block_table.num_tokens if block_table else 0,
+            matched_tc,
+        )
+        return False
+
+    reconstructed = self.block_aware_cache.reconstruct_cache(
+        block_table, promote_to_hot_cache=False
+    )
+    if not reconstructed:
+        if self.paged_cache_manager is not None:
+            self.paged_cache_manager.delete_block_table(request.request_id)
+        logger.debug(
+            "Prefix snapshot for %s reconstructed to None; "
+            "falling back to full prefill",
+            request.request_id,
+        )
+        return False
+
+    request.prompt_cache = reconstructed
+    request.block_table = block_table
+    request.cached_tokens = block_table.num_tokens
+    request.shared_prefix_blocks = len(block_table.block_ids)
+    request.remaining_tokens = request.prompt_token_ids[block_table.num_tokens :]
+    logger.info(
+        "Prefix snapshot warm-start for %s: recovered %d tokens in %d blocks, "
+        "%d tokens remaining",
+        request.request_id,
+        block_table.num_tokens,
+        len(block_table.block_ids),
+        len(request.remaining_tokens),
+    )
+    return True
 
 
 def _get_boundary_store_override(
