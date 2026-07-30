@@ -679,7 +679,19 @@ def generate_video(
             # UMA Radix Latent cache (#2 Phase-1): repeat I2V requests with
             # the same image+resolution reuse the cached VAE latent and skip
             # the VAE encoder load + forward entirely (zero-copy on UMA).
-            img_tensor = preprocess_image(image, width, height)
+            img_tensor = preprocess_image(image, width, height)  # [1,3,1,H,W] channels-first
+            is_wan22_vae = config.vae_z_dim == 48
+            if is_wan22_vae:
+                # Wan2.2 VAE _patchify expects channels-last [B,T,H,W,C];
+                # preprocess_image returns channels-first [B,C,T,H,W] (Wan2.1 format).
+                # Without this the encode crashes: "Cannot reshape array of size N
+                # into shape (1,3,0,2,...)" (Hfull//patch=0). Mirrors the decode
+                # path which transposes latents to channels-last before vae22.decode.
+                img_tensor = img_tensor.transpose(0, 2, 3, 4, 1)  # [1,1,H,W,3]
+                print(
+                    f"{Colors.DIM}  wan2.2 VAE: img_tensor -> channels-last "
+                    f"{tuple(img_tensor.shape)} for encode{Colors.RESET}"
+                )
             mx.eval(img_tensor)
 
             latent_cache = get_image_latent_cache(str(model_dir))
@@ -697,7 +709,14 @@ def generate_video(
                     )
             if z_img is None:
                 vae_enc = load_vae_encoder(vae_path, config)
-                z_img = vae_enc.encode(img_tensor)  # [1, 1, H_lat, W_lat, z_dim]
+                z_img = vae_enc.encode(img_tensor)
+                # Wan2.1 VAE returns channels-first [B,C,T,H,W]; Wan2.2 VAE returns
+                # channels-last [B,T,H,W,C] -> transpose to channels-first so the
+                # mask_blend broadcast ([C,T,H,W]) and noise add work. (For Wan2.1
+                # do NOT transpose: the old transpose(3,0,1,2) assumed channels-last
+                # output and produced [H,C,T,W]=(64,16,1,64), breaking broadcast.)
+                if is_wan22_vae:
+                    z_img = z_img.transpose(0, 4, 1, 2, 3)  # [1,z_dim,1,H,W]
                 mx.eval(z_img)
                 if latent_cache is not None:
                     latent_cache.put(cache_key, z_img)
@@ -706,10 +725,8 @@ def generate_video(
                         f"{height}x{width} ({cache_key}){Colors.RESET}"
                     )
                 del vae_enc
-            # encode() returns channels-first [B, C, T, H, W]; squeeze batch ->
-            # [C, T, H, W] = [z_dim, 1, H_lat, W_lat]. Do NOT transpose: the
-            # old transpose(3,0,1,2) assumed channels-last output and produced
-            # [H, C, T, W] = (64,16,1,64), breaking broadcast with noise/mask.
+            # encode() returns channels-first [B, C, T, H, W] (Wan2.2 transposed
+            # above); squeeze batch -> [C, T, H, W] = [z_dim, 1, H_lat, W_lat].
             z_img = z_img[0]  # [z_dim, 1, H_lat, W_lat]
             i2v_mask, i2v_mask_tokens = build_i2v_mask(target_shape, config.patch_size)
 
