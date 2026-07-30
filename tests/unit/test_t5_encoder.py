@@ -172,38 +172,38 @@ class TestFromPretrained:
         inner = n_heads * cfg["d_kv"]
         vocab = cfg["vocab_size"]
         w = {}
-        # HF 格式: (d_model, vocab_size), 加载时转置为 MLX (vocab_size, d_model)
-        w["shared.weight"] = np.random.randn(d_model, vocab).astype(np.float32)
+        # HF shared.weight is (vocab_size, d_model) = MLX nn.Embedding shape; loaded 1:1 (no transpose).
+        w["shared.weight"] = np.random.randn(vocab, d_model).astype(np.float32)
         for i in range(cfg["num_layers"]):
             p0 = f"encoder.block.{i}.layer.0."
-            # HF T5 格式: 线性层 (d_model, inner), 加载时转置为 MLX (inner, d_model)
-            w[p0 + "SelfAttention.q.weight"] = np.random.randn(d_model, inner).astype(
+            # HF T5 Linear weights are (out_features, in_features) = same as MLX nn.Linear; loaded 1:1.
+            w[p0 + "SelfAttention.q.weight"] = np.random.randn(inner, d_model).astype(
                 np.float32
             )
-            w[p0 + "SelfAttention.k.weight"] = np.random.randn(d_model, inner).astype(
+            w[p0 + "SelfAttention.k.weight"] = np.random.randn(inner, d_model).astype(
                 np.float32
             )
-            w[p0 + "SelfAttention.v.weight"] = np.random.randn(d_model, inner).astype(
+            w[p0 + "SelfAttention.v.weight"] = np.random.randn(inner, d_model).astype(
                 np.float32
             )
             w[p0 + "SelfAttention.o.weight"] = np.random.randn(d_model, inner).astype(
                 np.float32
             )
             if i == 0:
-                # HF 格式: (num_heads, num_buckets), 加载时转置为 MLX (num_buckets, num_heads)
+                # HF T5 relative_attention_bias: nn.Embedding(num_buckets, num_heads), weight (num_buckets, num_heads).
                 w[p0 + "SelfAttention.relative_attention_bias.weight"] = (
-                    np.random.randn(n_heads, 32).astype(np.float32)
+                    np.random.randn(32, n_heads).astype(np.float32)
                 )
             w[p0 + "layer_norm.weight"] = np.random.randn(d_model).astype(np.float32)
             p1 = f"encoder.block.{i}.layer.1."
-            # HF T5 格式: wi/wi_1 (d_model, d_ff), wo (d_ff, d_model)
+            # HF T5 FFN: wi_0/wi_1 (d_ff, d_model), wo (d_model, d_ff); loaded 1:1.
             w[p1 + "DenseReluDense.wi_0.weight"] = np.random.randn(
-                d_model, d_ff
+                d_ff, d_model
             ).astype(np.float32)
             w[p1 + "DenseReluDense.wi_1.weight"] = np.random.randn(
-                d_model, d_ff
+                d_ff, d_model
             ).astype(np.float32)
-            w[p1 + "DenseReluDense.wo.weight"] = np.random.randn(d_ff, d_model).astype(
+            w[p1 + "DenseReluDense.wo.weight"] = np.random.randn(d_model, d_ff).astype(
                 np.float32
             )
             w[p1 + "layer_norm.weight"] = np.random.randn(d_model).astype(np.float32)
@@ -230,17 +230,17 @@ class TestFromPretrained:
         )
         w = self._write_mock(tmp_path, cfg)
         model = T5Encoder.from_pretrained(tmp_path, dtype=mx.float32)
-        # token_embedding must come from shared.weight (HF transposed → MLX).
+        # token_embedding comes from shared.weight, loaded 1:1 (HF shape = MLX shape, no transpose).
         np.testing.assert_allclose(
-            np.array(model.token_embedding.weight), w["shared.weight"].T, rtol=1e-6
+            np.array(model.token_embedding.weight), w["shared.weight"], rtol=1e-6
         )
-        # relative_attention_bias must load on block 0 only (HF transposed → MLX).
+        # relative_attention_bias loads on block 0 only, 1:1 (no transpose).
         hf_bias = w[
             "encoder.block.0.layer.0.SelfAttention.relative_attention_bias.weight"
         ]
         np.testing.assert_allclose(
             np.array(model.blocks[0].layer0.attn.relative_attention_bias.weight),
-            hf_bias.T,
+            hf_bias,
             rtol=1e-6,
         )
         assert model.blocks[1].layer0.attn.relative_attention_bias is None

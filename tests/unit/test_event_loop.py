@@ -29,6 +29,22 @@ import pytest
 BASE = "http://127.0.0.1:8000"
 
 
+def _server_alive(host="127.0.0.1", port=8000, timeout=0.25):
+    import socket
+
+    try:
+        with socket.create_connection((host, port), timeout=timeout):
+            return True
+    except OSError:
+        return False
+
+
+pytestmark = pytest.mark.skipif(
+    not _server_alive(),
+    reason="requires a running fusion-mlx server on 127.0.0.1:8000 (integration)",
+)
+
+
 async def stream_completions(session, prompt, max_tokens=128, timeout=120):
     """Send a streaming completion request, return (tokens, elapsed, ttft)."""
     payload = {

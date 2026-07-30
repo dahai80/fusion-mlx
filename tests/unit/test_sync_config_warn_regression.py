@@ -34,7 +34,7 @@ def test_sync_config_warns_on_setattr_failure(monkeypatch, caplog):
         server_mod._sync_config()
 
     msgs = [r.getMessage() for r in caplog.records if r.levelno >= logging.WARNING]
-    assert any("setattr api_key failed" in m for m in msgs), msgs
+    assert any("failed to set api_key" in m for m in msgs), msgs
 
 
 def test_sync_config_no_warn_when_all_attrs_settable(monkeypatch, caplog):
