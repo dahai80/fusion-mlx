@@ -712,3 +712,50 @@ def _load_with_tokenizer_fallback(model_name: str):
         return model, tokenizer
     else:
         raise ValueError(f"No tokenizer.json found in {model_path}")
+
+
+def unwrap_tokenizer(tokenizer):
+    """Unwrap mlx-lm / HF tokenizer to the underlying HF tokenizer.
+
+    mlx-lm wraps tokenizers in a ``Tokenizer`` object that has a
+    ``_tokenizer`` attribute holding the real HF tokenizer.  If the
+    passed object already looks like an HF tokenizer (has ``get_vocab``),
+    return it as-is.
+
+    Importers: fusion_mlx.api.grammar, fusion_mlx.api.openai_routes,
+    fusion_mlx.scheduler.sched_thinking.
+    """
+    if hasattr(tokenizer, "get_vocab"):
+        return tokenizer
+    inner = getattr(tokenizer, "_tokenizer", None)
+    if inner is not None:
+        return inner
+    return tokenizer
+
+
+def resolve_vocab_size(model) -> int | None:
+    """Return vocab_size from model config, or None if unavailable.
+
+    Importers: fusion_mlx.api.grammar, fusion_mlx.api.openai_routes,
+    fusion_mlx.scheduler.sched_thinking.
+    """
+    if model is None:
+        return None
+    config = getattr(model, "config", None)
+    if config is not None:
+        for attr in ("vocab_size", "text_config"):
+            vs = getattr(config, attr, None)
+            if isinstance(vs, int):
+                return vs
+            if isinstance(vs, dict) and "vocab_size" in vs:
+                return vs["vocab_size"]
+            text_cfg = getattr(config, "text_config", None)
+            if text_cfg is not None:
+                vs2 = getattr(text_cfg, "vocab_size", None)
+                if isinstance(vs2, int):
+                    return vs2
+    for attr in ("vocab_size",):
+        vs = getattr(model, attr, None)
+        if isinstance(vs, int):
+            return vs
+    return None

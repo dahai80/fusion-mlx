@@ -534,7 +534,7 @@ class TestStreamingPostProcessorToolCalls:
         from unittest.mock import patch
 
         with patch(
-            "fusion_mlx.service.postprocessor.parse_tool_calls",
+            "fusion_mlx.service.postprocessor.core.parse_tool_calls",
             side_effect=RuntimeError("boom"),
         ):
             events = pp.finalize()
@@ -2372,7 +2372,7 @@ class TestCoverageGaps:
         pp.reset()
 
         # sanitize_output returns empty → content becomes None
-        with patch("fusion_mlx.service.postprocessor.sanitize_output", return_value=""):
+        with patch("fusion_mlx.service.postprocessor.core.sanitize_output", return_value=""):
             out = _make_output("some text", channel="content")
             events = pp.process_chunk(out)
             content_events = [e for e in events if e.type == "content"]
@@ -2430,7 +2430,7 @@ class TestCoverageGaps:
         pp = StreamingPostProcessor(cfg)
         pp.reset()
 
-        with patch("fusion_mlx.service.postprocessor.sanitize_output", return_value=""):
+        with patch("fusion_mlx.service.postprocessor.core.sanitize_output", return_value=""):
             events = pp.process_chunk(_make_output("text"))
             content_events = [e for e in events if e.type == "content"]
             assert len(content_events) == 0
@@ -2443,7 +2443,7 @@ class TestCoverageGaps:
         pp = StreamingPostProcessor(cfg)
         pp.reset()
 
-        with patch("fusion_mlx.service.postprocessor.sanitize_output", return_value=""):
+        with patch("fusion_mlx.service.postprocessor.core.sanitize_output", return_value=""):
             events = pp.process_chunk(_make_output("text"))
             content_events = [e for e in events if e.type == "content"]
             assert len(content_events) == 0
@@ -2493,7 +2493,7 @@ class TestCoverageGaps:
 
         # strip_special_tokens returns empty string → content=None, no finish → []
         with patch(
-            "fusion_mlx.service.postprocessor.strip_special_tokens", return_value=""
+            "fusion_mlx.service.postprocessor.core.strip_special_tokens", return_value=""
         ):
             events = pp.process_chunk(_make_output("some_special_token"))
             assert len(events) == 0
@@ -2507,7 +2507,7 @@ class TestCoverageGaps:
         # Text that sanitizes to nothing
         from unittest.mock import patch
 
-        with patch("fusion_mlx.service.postprocessor.sanitize_output", return_value=""):
+        with patch("fusion_mlx.service.postprocessor.core.sanitize_output", return_value=""):
             events = pp.process_chunk(_make_output("some text"))
             # sanitize returned empty, no finish → empty list
             content_events = [e for e in events if e.type == "content"]

@@ -76,6 +76,10 @@ from .api.embeddings_routes import router as embeddings_router
 from .api.embeddings_routes import set_embeddings_context
 from .api.ner_routes import router as ner_router
 from .api.ner_routes import set_ner_context
+from .api.ocr_routes import router as ocr_router
+from .api.ocr_routes import set_ocr_context
+from .api.reasoning_routes import router as reasoning_router
+from .api.reasoning_routes import set_reasoning_context
 from .api.openai_routes import router as openai_router
 from .api.openai_routes import set_openai_context
 from .api.openclaw_routes import router as openclaw_router
@@ -620,6 +624,8 @@ class Server:
         app.include_router(embeddings_router)
         app.include_router(rerank_router)
         app.include_router(ner_router)
+        app.include_router(ocr_router)
+        app.include_router(reasoning_router)
         app.include_router(sessions_router)
         app.include_router(responses_router)
         app.include_router(health_probe_router)
@@ -880,10 +886,36 @@ class Server:
 
     async def _lifespan(self):
         """Startup/shutdown lifecycle."""
+        from ._parent_watchdog import (
+            clear_crash_counter,
+            install_signal_handlers,
+            is_shutting_down,
+            record_crash,
+            remove_pid_file,
+            write_exit_status,
+            write_pid_file,
+            write_status,
+        )
+
+        install_signal_handlers()
+        write_pid_file()
+        write_status("starting")
         logger.info("fusion-mlx starting up...")
-        await self._startup()
-        yield
+        try:
+            await self._startup()
+            write_status("running")
+            clear_crash_counter()
+            yield
+        except Exception:
+            record_crash()
+            write_status("crashed")
+            write_exit_status("crash")
+            raise
+        finally:
+            remove_pid_file()
         await self._shutdown()
+        write_exit_status("clean")
+        write_status("stopped")
 
     async def _startup(self):
         """Initialize engine pool, routers, and load models."""
@@ -985,6 +1017,8 @@ class Server:
         set_embeddings_context(self.pool, _server_state)
         set_rerank_context(self.pool, _server_state)
         set_ner_context(self.pool, _server_state)
+        set_ocr_context(self.pool)
+        set_reasoning_context(self.pool)
         set_sessions_context(self.pool, _server_state)
         set_models_context(self.pool)
 

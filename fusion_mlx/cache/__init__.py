@@ -68,6 +68,15 @@ from .prefix_cache import (
 # Radix diffusion cache (text-encoder output reuse across shots, #178)
 from .radix_diffusion_cache import DiffusionRadixCache, RadixCacheStats
 
+# Response-level cache (complete LLM response caching, #8)
+from .response_cache import (
+    CachePolicy,
+    ResponseCache,
+    ResponseCacheStats,
+    get_response_cache,
+    reset_response_cache,
+)
+
 # Managers
 from .recovery import CacheRecoveryManager
 from .stats import (
@@ -174,4 +183,10 @@ __all__ = [
     # Radix diffusion cache
     "DiffusionRadixCache",
     "RadixCacheStats",
+    # Response cache
+    "CachePolicy",
+    "ResponseCache",
+    "ResponseCacheStats",
+    "get_response_cache",
+    "reset_response_cache",
 ]

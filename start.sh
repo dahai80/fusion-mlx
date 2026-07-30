@@ -80,6 +80,7 @@ preflight() {
 
 # ── start ───────────────────────────────────────────────────────────
 do_start() {
+    local watchdog="${1:-}"
     preflight
 
     if is_running; then
@@ -98,15 +99,19 @@ do_start() {
         model_dir="${md}"
     fi
 
-    fusion-mlx serve \
-        --model-dir "${model_dir}" \
-        --host 127.0.0.1 \
-        --port "${PORT}" \
-        --log-level INFO \
-        --enable-prefix-cache \
-        --continuous-batching \
-        --chunked-prefill-tokens 4096 \
-        &
+    if [[ "${watchdog}" == "--watchdog" ]]; then
+        _run_with_watchdog "${model_dir}"
+    else
+        fusion-mlx serve \
+            --model-dir "${model_dir}" \
+            --host 127.0.0.1 \
+            --port "${PORT}" \
+            --log-level INFO \
+            --enable-prefix-cache \
+            --continuous-batching \
+            --chunked-prefill-tokens 4096 \
+            &
+    fi
 
     local serve_pid=$!
     log_info "Server PID: ${serve_pid}"
@@ -321,6 +326,140 @@ do_clean() {
     log_info "Clean done"
 }
 
+# ── watchdog supervisor ─────────────────────────────────────────────
+_run_with_watchdog() {
+    local model_dir="$1"
+    local backoff=1
+    local max_backoff=30
+    local crash_count=0
+    local max_crashes=5
+    local window=300
+    local crash_timestamps=()
+
+    log_info "Starting in watchdog mode (auto-restart on crash)"
+
+    while true; do
+        local now
+        now=$(date +%s)
+
+        # Prune old crash timestamps outside the window
+        local fresh=()
+        for ts in "${crash_timestamps[@]}"; do
+            if (( now - ts < window )); then
+                fresh+=("$ts")
+            fi
+        done
+        crash_timestamps=("${fresh[@]}")
+        crash_count=${#crash_timestamps[@]}
+
+        if (( crash_count >= max_crashes )); then
+            log_error "Too many crashes (${crash_count} in ${window}s), stopping watchdog"
+            log_error "Check logs: ${LOG_DIR}/server.log"
+            exit 1
+        fi
+
+        log_info "Launching fusion-mlx (attempt $((crash_count + 1)))..."
+        fusion-mlx serve \
+            --model-dir "${model_dir}" \
+            --host 127.0.0.1 \
+            --port "${PORT}" \
+            --log-level INFO \
+            --enable-prefix-cache \
+            --continuous-batching \
+            --chunked-prefill-tokens 4096
+
+        local exit_code=$?
+
+        if wait_healthy 10 2>/dev/null; then
+            # Clean exit (SIGTERM) — don't record as crash
+            if (( exit_code == 0 || exit_code == 143 )); then
+                log_info "Server exited cleanly (code=${exit_code})"
+                break
+            fi
+        fi
+
+        # Unexpected exit — record crash and backoff
+        crash_timestamps+=("$(date +%s)")
+        log_warn "Server exited unexpectedly (code=${exit_code}), restarting in ${backoff}s..."
+        sleep "${backoff}"
+        backoff=$(( backoff * 2 ))
+        if (( backoff > max_backoff )); then
+            backoff=${max_backoff}
+        fi
+    done
+}
+
+# ── launchd install/uninstall ──────────────────────────────────────
+_LAUNCHD_PLIST="${HOME}/Library/LaunchAgents/com.fusion-mlx.server.plist"
+_LAUNCHD_LABEL="com.fusion-mlx.server"
+
+do_install_launchd() {
+    if [[ -f "${_LAUNCHD_PLIST}" ]]; then
+        log_warn "LaunchAgent already installed at ${_LAUNCHD_PLIST}"
+        log_info "Use 'start.sh uninstall-launchd' to remove first"
+        return 0
+    fi
+
+    local model_dir="${HOME}/.fusion-mlx/models"
+    if [[ -f "${SETTINGS}" ]]; then
+        local md
+        md=$(python3 -c "import json; d=json.load(open('${SETTINGS}')); print(d.get('model',{}).get('model_dir','${model_dir}'))" 2>/dev/null || echo "${model_dir}")
+        model_dir="${md}"
+    fi
+
+    mkdir -p "$(dirname "${_LAUNCHD_PLIST}")"
+    mkdir -p "${LOG_DIR}"
+
+    cat > "${_LAUNCHD_PLIST}" <<PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>${_LAUNCHD_LABEL}</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>${PROJ_DIR}/start.sh</string>
+        <string>start</string>
+        <string>--watchdog</string>
+    </array>
+    <key>WorkingDirectory</key>
+    <string>${PROJ_DIR}</string>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>StandardOutPath</key>
+    <string>${LOG_DIR}/launchd.out.log</string>
+    <key>StandardErrorPath</key>
+    <string>${LOG_DIR}/launchd.err.log</string>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>HF_ENDPOINT</key>
+        <string>${HF_MIRROR}</string>
+        <key>HUGGINGFACE_HUB_CACHE</key>
+        <string>${HOME}/.fusion-mlx/models</string>
+    </dict>
+</dict>
+</plist>
+PLIST
+
+    launchctl load "${_LAUNCHD_PLIST}" 2>/dev/null || true
+    log_info "LaunchAgent installed and loaded: ${_LAUNCHD_PLIST}"
+    log_info "Server will auto-start on login and restart on crash"
+}
+
+do_uninstall_launchd() {
+    if [[ ! -f "${_LAUNCHD_PLIST}" ]]; then
+        log_warn "No LaunchAgent found at ${_LAUNCHD_PLIST}"
+        return 0
+    fi
+
+    launchctl unload "${_LAUNCHD_PLIST}" 2>/dev/null || true
+    rm -f "${_LAUNCHD_PLIST}"
+    log_info "LaunchAgent uninstalled"
+}
+
 # ── doctor ──────────────────────────────────────────────────────────
 do_doctor() {
     ensure_venv
@@ -330,21 +469,23 @@ do_doctor() {
 # ── Usage ───────────────────────────────────────────────────────────
 usage() {
     cat <<'EOF'
-star.sh — fusion-mlx lifecycle manager
+start.sh — fusion-mlx lifecycle manager
 
-Usage: star.sh <command> [args]
+Usage: start.sh <command> [args]
 
 Commands:
-  start       Start fusion-mlx with optimal settings
-  stop        Graceful stop (SIGTERM → SIGKILL fallback)
-  restart     Stop + start
-  status      Show PID, port, memory, models, health
-  log [N]     Tail server log (default 50 lines, -f to follow)
-  errors      Show recent ERROR/CRITICAL from logs
-  tune        Auto-tune settings.json for current hardware
-  clean       Rotate old logs, clear __pycache__, trim error logs
-  doctor      Run fusion-mlx doctor
-  help        Show this help
+  start [--watchdog]  Start fusion-mlx (--watchdog for auto-restart)
+  stop                Graceful stop (SIGTERM → SIGKILL fallback)
+  restart             Stop + start
+  status              Show PID, port, memory, models, health
+  log [N]             Tail server log (default 50 lines, -f to follow)
+  errors              Show recent ERROR/CRITICAL from logs
+  tune                Auto-tune settings.json for current hardware
+  clean               Rotate old logs, clear __pycache__, trim error logs
+  doctor              Run fusion-mlx doctor
+  install-launchd     Install launchd LaunchAgent (auto-start + crash restart)
+  uninstall-launchd   Remove launchd LaunchAgent
+  help                Show this help
 
 Environment:
   PORT        Server port (default: 11434)
@@ -357,16 +498,18 @@ cmd="${1:-help}"
 shift || true
 
 case "${cmd}" in
-    start)   do_start   ;;
-    stop)    do_stop    ;;
-    restart) do_restart ;;
-    status)  show_status ;;
-    log)     show_log "${1:-}" ;;
-    errors)  show_errors ;;
-    tune)    do_tune    ;;
-    clean)   do_clean   ;;
-    doctor)  do_doctor  ;;
-    help|-h|--help) usage ;;
+    start)             do_start "$@" ;;
+    stop)              do_stop    ;;
+    restart)           do_restart ;;
+    status)            show_status ;;
+    log)               show_log "${1:-}" ;;
+    errors)            show_errors ;;
+    tune)              do_tune    ;;
+    clean)             do_clean   ;;
+    doctor)            do_doctor  ;;
+    install-launchd)   do_install_launchd ;;
+    uninstall-launchd) do_uninstall_launchd ;;
+    help|-h|--help)    usage ;;
     *)
         log_error "Unknown command: ${cmd}"
         usage

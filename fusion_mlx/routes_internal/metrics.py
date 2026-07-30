@@ -208,6 +208,65 @@ def _render_response_format_metrics() -> list[str]:
     return lines
 
 
+def _render_response_cache_metrics() -> list[str]:
+    lines: list[str] = []
+    try:
+        from ..cache.response_cache import get_response_cache
+
+        stats = get_response_cache().stats.to_dict()
+        lines.extend(
+            _fmt_metric(
+                "fusion_mlx_response_cache_hits_total",
+                "counter",
+                "Response cache hit count.",
+                int(stats.get("hits", 0)),
+            )
+        )
+        lines.extend(
+            _fmt_metric(
+                "fusion_mlx_response_cache_misses_total",
+                "counter",
+                "Response cache miss count.",
+                int(stats.get("misses", 0)),
+            )
+        )
+        lines.extend(
+            _fmt_metric(
+                "fusion_mlx_response_cache_evictions_total",
+                "counter",
+                "Response cache eviction count.",
+                int(stats.get("evictions", 0)),
+            )
+        )
+        lines.extend(
+            _fmt_metric(
+                "fusion_mlx_response_cache_hit_rate",
+                "gauge",
+                "Response cache hit rate (0-1).",
+                float(stats.get("hit_rate", 0)),
+            )
+        )
+        lines.extend(
+            _fmt_metric(
+                "fusion_mlx_response_cache_entries",
+                "gauge",
+                "Current number of cached responses.",
+                int(stats.get("entry_count", 0)),
+            )
+        )
+        lines.extend(
+            _fmt_metric(
+                "fusion_mlx_response_cache_size_bytes",
+                "gauge",
+                "Total size of cached responses in bytes.",
+                int(stats.get("size_bytes", 0)),
+            )
+        )
+    except Exception as e:
+        logger.debug("response cache metrics render error: %s", e)
+    return lines
+
+
 def render_prometheus_metrics() -> str:
     lines: list[str] = []
     lines.extend(_render_build_info())
@@ -215,6 +274,7 @@ def render_prometheus_metrics() -> str:
     lines.extend(_render_pool_metrics())
     lines.extend(_render_kv_cache_dtype_gauge())
     lines.extend(_render_response_format_metrics())
+    lines.extend(_render_response_cache_metrics())
     return "\n".join(lines) + "\n"
 
 

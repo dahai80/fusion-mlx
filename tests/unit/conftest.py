@@ -444,7 +444,6 @@ def _add_missing_symbols():
         import fusion_mlx
 
         for name in (
-            "_parent_watchdog",
             "_mxfp4_moe_guardrail",
             "_log_namespace",
             "_download_gate",

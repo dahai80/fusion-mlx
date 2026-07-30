@@ -228,12 +228,54 @@ This is **weight** quantization saved to disk, distinct from TurboQuant KV-cache
 | Images | `/v1/images/generate` | ✅ Supported (Flux 2) |
 | Videos | `/v1/videos/generate` | ✅ Supported (LTX-2, Wan2, SkyReels-V3; pure-MLX ports) |
 | Embeddings | `/v1/embeddings` | ✅ Supported |
+| Reasoning | `/v1/reasoning` | ✅ Explicit thinking step API (DeepSeek-R1, QwQ, etc.) |
+| OCR | `/v1/ocr` | ✅ Vision model OCR with context |
 | Sessions | `/v1/sessions/{id}/stats`, `/v1/sessions/{id}/context` | ✅ Per-session token usage + context cap (#226) |
 | MCP | `/v1/mcp/tools`, `/v1/mcp/servers`, `/v1/mcp/execute` | ✅ Supported |
 | OpenClaw Agent | `/v1/openclaw/agent/*` | ✅ Sessions, turns, tool calling, SSE streaming |
 | Agent Graph | `/v1/agents/graphs`, `/v1/agents/run` | ✅ CRUD + export + run (in-memory) |
 | Base Info | `/v1/base` | ✅ MLX runtime capability detection |
 | Convert / Quantize | `/v1/convert`, `/v1/quantize` (+ `.../jobs/{id}`) | ✅ Async HF->MLX conversion + weight quantization |
+
+## Structured Output / Grammar-Constrained Decoding
+
+fusion-mlx supports grammar-constrained decoding via two backends:
+
+| Backend | Install | Priority |
+|---------|---------|----------|
+| **llguidance** | `pip install fusion-mlx[llguidance]` | Default (AUTO) |
+| **xgrammar** | `pip install fusion-mlx[grammar]` | Fallback |
+
+### Usage
+
+```bash
+# JSON schema enforcement (OpenAI-compatible)
+curl -X POST /v1/chat/completions -d '{
+  "model": "my-model",
+  "messages": [...],
+  "response_format": {"type": "json_schema", "json_schema": {"schema": {"type": "object", "properties": {"name": {"type": "string"}}}}},
+  "grammar_backend": "auto"
+}'
+
+# vLLM-compatible structured_outputs
+curl -X POST /v1/chat/completions -d '{
+  "model": "my-model",
+  "messages": [...],
+  "structured_outputs": {"json_schema": "{\"type\":\"object\",\"properties\":{\"answer\":{\"type\":\"string\"}}}"},
+  "grammar_backend": "llguidance"
+}'
+
+# Regex, choice, grammar
+"structured_outputs": {"regex": "[A-Z][a-z]+"}
+"structured_outputs": {"choice": ["yes", "no", "maybe"]}
+"structured_outputs": {"grammar": "root ::= [a-z]+", "format": "lark"}
+```
+
+### Backend Selection
+
+- `"auto"` (default): prefers llguidance → xgrammar → no constraint
+- `"llguidance"`: uses llguidance exclusively
+- `"xgrammar"`: uses xgrammar exclusively
 
 ## Model Aliases
 
@@ -857,6 +899,35 @@ bench.dpdns.org uploads: id 27 (1.97), id 30 (1.96), id 31 (1.88), id 32 (1.88 m
 3. mlx-mfa prebuilt path: local source + scikit-build-core + nanobind +
    `pip install -e --no-build-isolation` triggers the CMake build producing `_ext.so`,
    avoiding uncontrollable PyPI wheel build times.
+
+## FlashKDA — Kimi Delta Attention for Apple Silicon
+
+FlashKDA ports the gated linear attention mechanism (KDA) from CUDA SM90+ to
+Apple Silicon via MLX. Core recurrence: `h_t = g_t * h_{t-1} + beta_t * (k_t ⊗ v_t)`,
+`o_t = q_t^T * h_t`. Constraint: K = V = 128.
+
+- **Python reference** — always available, correct, used for validation
+- **Metal kernel** — auto-selected when compiled; uses `simdgroup_matrix` for
+  bf16 outer product and query-state multiply (CHUNK=16, matching CUDA K1/K2)
+
+```python
+from fusion_mlx.custom_kernels.flash_kda import fwd
+
+out, state = fwd(q, k, v, g, beta, scale=1.0, A_log=a_log, dt_bias=dt_bias)
+```
+
+See [custom_kernels/flash_kda/](fusion_mlx/custom_kernels/flash_kda/) for details.
+
+## Docker
+
+Multi-stage Dockerfile for deployment on Linux (CPU) or as a base image:
+
+```bash
+docker compose up
+# or
+docker build -t fusion-mlx .
+docker run -p 8000:8000 -v ~/.fusion-mlx/models:/home/fusion/.fusion-mlx/models:ro fusion-mlx
+```
 
 ## License
 

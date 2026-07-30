@@ -300,6 +300,8 @@ class ChatCompletionRequest(BaseModel):
     response_format: ResponseFormat | dict | None = None
     # vLLM-compatible structured output (grammar, regex, choice, json)
     structured_outputs: StructuredOutputOptions | dict | None = None
+    # Grammar backend selection: "auto" | "llguidance" | "xgrammar"
+    grammar_backend: str | None = None
     # Chat template kwargs (e.g. enable_thinking, reasoning_effort)
     chat_template_kwargs: dict[str, Any] | None = None
     # Thinking budget (max thinking tokens, None = unlimited)

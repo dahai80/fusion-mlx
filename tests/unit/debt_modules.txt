@@ -177,7 +177,6 @@ test_paged_cache_benefits.py
 test_paged_cache_real_inference.py
 test_paged_cache_real_model.py
 test_paired_compat.py
-test_parent_watchdog.py
 test_payload_builder_v2_full.py
 test_payload_builder_v2_kwargs.py
 test_pflash.py

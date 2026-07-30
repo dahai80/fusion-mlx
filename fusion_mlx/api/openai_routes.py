@@ -41,6 +41,7 @@ from ..exceptions import (
 from ..middleware.auth import check_rate_limit, request_principal, verify_api_key
 from ..pool import EnginePool
 from ..request import SamplingParams
+from .grammar import GrammarBackend, resolve_grammar_backend
 from ..server_metrics import record_llm_metrics
 from ..sessions import record_chat_session
 from ._guards import check_chat_capability, check_multimodal_content
@@ -236,6 +237,107 @@ def _build_sampling_params(req: ChatCompletionRequest) -> SamplingParams:
     )
 
 
+def _compile_grammar_for_request(engine, req: ChatCompletionRequest):
+    """Compile grammar from request's structured_outputs / response_format.
+
+    Returns a backend-specific compiled grammar object (xgrammar CompiledGrammar
+    or llguidance LLMatcher), or None if no grammar constraint is requested.
+    """
+    so = getattr(req, "structured_outputs", None)
+    grammar_backend_str = getattr(req, "grammar_backend", None)
+    if so is None and getattr(req, "response_format", None) is None:
+        return None
+
+    backend = resolve_grammar_backend(grammar_backend_str)
+    grammar_spec = None
+
+    if so is not None:
+        if isinstance(so, dict):
+            grammar_spec = so
+        else:
+            grammar_spec = {}
+            if so.json_schema is not None:
+                grammar_spec["json_schema"] = so.json_schema
+            if so.regex is not None:
+                grammar_spec["regex"] = so.regex
+            if so.choice is not None:
+                grammar_spec["choice"] = so.choice
+            if so.grammar is not None:
+                grammar_spec["grammar"] = so.grammar
+
+    rf = getattr(req, "response_format", None)
+    if rf is not None and grammar_spec is None:
+        if isinstance(rf, dict):
+            if rf.get("type") == "json_schema":
+                schema = rf.get("json_schema", {})
+                if isinstance(schema, dict) and "schema" in schema:
+                    grammar_spec = {"json_schema": schema["schema"]}
+                else:
+                    grammar_spec = {"json_schema": schema}
+            elif rf.get("type") == "json_object":
+                grammar_spec = {"json_schema": "{}"}
+        elif hasattr(rf, "type"):
+            if rf.type == "json_schema":
+                inner = getattr(rf, "json_schema", None)
+                if inner and hasattr(inner, "schema_"):
+                    grammar_spec = {"json_schema": inner.schema_}
+                elif inner and hasattr(inner, "schema"):
+                    grammar_spec = {"json_schema": inner.schema}
+            elif rf.type == "json_object":
+                grammar_spec = {"json_schema": "{}"}
+
+    if grammar_spec is None:
+        return None
+
+    if backend == GrammarBackend.LLGUIDANCE:
+        from .grammar import create_llguidance_matcher
+
+        vocab_size = None
+        if hasattr(engine, "_model"):
+            from ..utils.tokenizer import resolve_vocab_size
+
+            vocab_size = resolve_vocab_size(engine._model)
+        matcher = create_llguidance_matcher(
+            engine._tokenizer, grammar_spec, vocab_size=vocab_size
+        )
+        if matcher is not None:
+            logger.info("compiled grammar via llguidance for request")
+            return matcher
+        logger.warning("llguidance compilation failed, trying xgrammar fallback")
+
+    if backend in (GrammarBackend.XGRAMMAR, GrammarBackend.LLGUIDANCE):
+        compiler = getattr(engine, "grammar_compiler", None)
+        if compiler is None:
+            logger.debug("no grammar_compiler on engine, skipping grammar compilation")
+            return None
+        try:
+            if "json_schema" in grammar_spec:
+                import json
+
+                schema = grammar_spec["json_schema"]
+                if isinstance(schema, dict):
+                    schema = json.dumps(schema)
+                return compiler.compile_json_schema(schema)
+            if "regex" in grammar_spec:
+                return compiler.compile_regex(grammar_spec["regex"])
+            if "choice" in grammar_spec:
+                import json
+
+                return compiler.compile_json_schema(
+                    json.dumps(
+                        {
+                            "type": "string",
+                            "enum": grammar_spec["choice"],
+                        }
+                    )
+                )
+            if "grammar" in grammar_spec:
+                return compiler.compile_grammar(grammar_spec["grammar"])
+        except Exception as exc:
+            logger.warning("xgrammar compilation failed: %s", exc)
+    return None
+
+
 def _gen_to_internal(
     gen: GenerationOutput, model: str, request_id: str
 ) -> InternalResponse:
@@ -300,6 +402,7 @@ async def _run_chat(
         from .utils import resolve_enable_thinking_default
 
         resolve_enable_thinking_default(ct_kwargs)
+        compiled_grammar = _compile_grammar_for_request(engine, request)
         gen = await engine.chat(
             messages=messages,
             max_tokens=sampling.max_tokens,
@@ -316,6 +419,7 @@ async def _run_chat(
                 getattr(request, "prefix_cache_boundary", None)
                 or _detect_prefix_cache_boundary(request.messages)
             ),
+            compiled_grammar=compiled_grammar,
         )
         # Honor parallel_tool_calls=false by capping to 1 call
         tool_calls = gen.tool_calls
@@ -440,6 +544,7 @@ async def _stream_chat_generator(
         from .utils import resolve_enable_thinking_default
 
         resolve_enable_thinking_default(ct_kwargs_stream)
+        compiled_grammar = _compile_grammar_for_request(engine, request)
         async for gen in engine.stream_chat(
             messages=messages,
             max_tokens=sampling.max_tokens,
@@ -456,6 +561,7 @@ async def _stream_chat_generator(
                 getattr(request, "prefix_cache_boundary", None)
                 or _detect_prefix_cache_boundary(request.messages)
             ),
+            compiled_grammar=compiled_grammar,
         ):
             if gen.new_text:
                 accumulated += gen.new_text
@@ -828,11 +934,73 @@ async def chat_completions(
         getattr(request, "temperature", 0.7) or 0.7,
         getattr(request, "temperature", None),
     )
+
+    # Response cache — check before engine dispatch (non-streaming only)
+    _cache_status = "MISS"
+    _cache_key = None
+    _cache_policy = None
+    if not request.stream:
+        from ..cache.response_cache import CachePolicy, get_response_cache
+
+        cache = get_response_cache()
+        http_headers = dict(http_request.headers)
+        _cache_policy = cache.resolve_policy(request.temperature, http_headers)
+        if _cache_policy != CachePolicy.BYPASS:
+            _cache_key = cache.fingerprint(
+                model=request.model,
+                messages=[m.model_dump() for m in request.messages],
+                temperature=request.temperature,
+                top_p=request.top_p,
+                max_tokens=request.max_tokens,
+                stop=request.stop,
+                tools=request.tools,
+                response_format=getattr(request, "response_format", None),
+                seed=request.seed,
+                adapters=getattr(request, "adapters", None),
+            )
+            cached = cache.get(_cache_key)
+            if cached is not None and _cache_policy != CachePolicy.WRITE_ONLY:
+                _cache_status = "HIT"
+                logger.info("Response cache HIT key=%s", _cache_key[:12])
+                from starlette.responses import JSONResponse
+
+                return JSONResponse(
+                    content=cached,
+                    headers={"X-Cache": "HIT"},
+                )
+            if _cache_policy == CachePolicy.ONLY_IF_CACHED:
+                from starlette.responses import JSONResponse
+
+                return JSONResponse(
+                    content={
+                        "error": {
+                            "message": "Cache MISS and only-if-cached policy active",
+                            "type": "cache_miss",
+                        }
+                    },
+                    status_code=504,
+                    headers={"X-Cache": "MISS"},
+                )
+
     try:
         if request.stream:
             return await _stream_chat(request, principal=principal)
         else:
-            return await _run_chat(request, principal=principal)
+            result = await _run_chat(request, principal=principal)
+
+            # Store in response cache on MISS
+            if _cache_key and _cache_policy not in (
+                None,
+                CachePolicy.NO_STORE,
+                CachePolicy.BYPASS,
+            ):
+                from ..cache.response_cache import CachePolicy, get_response_cache
+
+                cache = get_response_cache()
+                resp_dict = result.model_dump() if hasattr(result, "model_dump") else result
+                cache.put(_cache_key, resp_dict)
+
+            return result
     except HTTPException:
         raise
     except ModelNotFoundError as exc:

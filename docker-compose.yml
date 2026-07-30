@@ -1,0 +1,22 @@
+# SPDX-License-Identifier: Apache-2.0
+version: "3.9"
+
+services:
+  fusion-mlx:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "${PORT:-8000}:8000"
+    volumes:
+      - ${MODEL_DIR:-~/.fusion-mlx/models}:/home/fusion/.fusion-mlx/models:ro
+    environment:
+      - HOST=0.0.0.0
+      - PORT=8000
+      - LOG_LEVEL=${LOG_LEVEL:-info}
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3

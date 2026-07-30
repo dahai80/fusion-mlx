@@ -1,0 +1,16 @@
+.git
+.github
+.venv
+__pycache__
+*.pyc
+*.pyo
+*.egg-info
+dist
+build
+.DS_Store
+*.swp
+models/
+*.md
+!README.md
+docs/
+tests/

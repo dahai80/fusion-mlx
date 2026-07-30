@@ -75,6 +75,9 @@ dependencies = [
 grammar = [
     "xgrammar>=0.1.32",
 ]
+llguidance = [
+    "llguidance>=0.5",
+]
 mcp = [
     "mcp>=1.0.0",
 ]
