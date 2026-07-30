@@ -706,7 +706,11 @@ def generate_video(
                         f"{height}x{width} ({cache_key}){Colors.RESET}"
                     )
                 del vae_enc
-            z_img = z_img[0].transpose(3, 0, 1, 2)  # [z_dim, 1, H_lat, W_lat]
+            # encode() returns channels-first [B, C, T, H, W]; squeeze batch ->
+            # [C, T, H, W] = [z_dim, 1, H_lat, W_lat]. Do NOT transpose: the
+            # old transpose(3,0,1,2) assumed channels-last output and produced
+            # [H, C, T, W] = (64,16,1,64), breaking broadcast with noise/mask.
+            z_img = z_img[0]  # [z_dim, 1, H_lat, W_lat]
             i2v_mask, i2v_mask_tokens = build_i2v_mask(target_shape, config.patch_size)
 
             del img_tensor
