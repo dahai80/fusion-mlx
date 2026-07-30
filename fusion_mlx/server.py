@@ -7,6 +7,7 @@ Wires together all API routes:
 - Images: /v1/images/generate
 - MCP: /v1/mcp/tools, /v1/mcp/servers, /v1/mcp/execute
 - OpenClaw Agent: /v1/openclaw/agent/*
+- JSON-RPC: /rpc (mlx.set_model, mlx.status)
 - Admin: /admin/*
 - GC: /api/v1/gc (post-compact KV cache release)
 - GUI compatibility: /v1/manager/*, /v1/discover/*, /v1/settings, /admin
@@ -758,6 +759,91 @@ class Server:
                 )
             await self.pool.unload_engine_async(resolved)
             return {"status": "ok", "model_id": model_id}
+
+        @app.post("/v1/set_default_model")
+        async def set_default_model(
+            request: dict, is_admin: bool = Depends(require_admin)
+        ):
+            # Issue #277: JSON-RPC-compatible mlx.set_model endpoint.
+            # Accepts {"model": "<model_id>"} and sets the default model.
+            model_id = request.get("model")
+            if not model_id:
+                raise HTTPException(
+                    status_code=400, detail="Missing 'model' field"
+                )
+            resolved = resolve_model_id(model_id)
+            entry = self.pool.get_entry(resolved) if self.pool else None
+            if entry is None:
+                raise HTTPException(
+                    status_code=404, detail=f"Model not found: {model_id}"
+                )
+            _server_state["default_model"] = resolved
+            logger.info("Default model set to: %s (requested: %s)", resolved, model_id)
+            return {"status": "ok", "model": resolved}
+
+        @app.post("/rpc")
+        async def json_rpc_dispatch(
+            request: dict, is_admin: bool = Depends(require_admin)
+        ):
+            # Issue #277: JSON-RPC 2.0 dispatch endpoint.
+            # Supports: mlx.set_model, mlx.start, mlx.stop, mlx.status
+            method = request.get("method", "")
+            params = request.get("params", {})
+            req_id = request.get("id")
+
+            def rpc_result(result):
+                resp = {"jsonrpc": "2.0", "result": result}
+                if req_id is not None:
+                    resp["id"] = req_id
+                return resp
+
+            def rpc_error(code, message):
+                resp = {
+                    "jsonrpc": "2.0",
+                    "error": {"code": code, "message": message},
+                }
+                if req_id is not None:
+                    resp["id"] = req_id
+                return resp
+
+            if method == "mlx.set_model":
+                model_id = params.get("model") if isinstance(params, dict) else None
+                if not model_id:
+                    return rpc_error(-32602, "Missing 'model' parameter")
+                resolved = resolve_model_id(model_id)
+                entry = (
+                    self.pool.get_entry(resolved) if self.pool else None
+                )
+                if entry is None:
+                    return rpc_error(-32602, f"Model not found: {model_id}")
+                _server_state["default_model"] = resolved
+                logger.info(
+                    "JSON-RPC mlx.set_model: %s (requested: %s)",
+                    resolved,
+                    model_id,
+                )
+                return rpc_result({"status": "ok", "model": resolved})
+
+            elif method == "mlx.status":
+                if self.pool is None:
+                    return rpc_error(-32000, "Server not initialized")
+                metrics = self.pool.get_metrics()
+                return rpc_result({
+                    "status": "ok",
+                    "default_model": _server_state.get("default_model"),
+                    "models_loaded": self.pool.loaded_model_count,
+                    "models_discovered": self.pool.model_count,
+                    "uptime_seconds": metrics.get("total_requests", 0),
+                })
+
+            elif method == "mlx.start":
+                return rpc_error(-32601, "mlx.start not supported via JSON-RPC; use HTTP /v1/models/{id}/load")
+
+            elif method == "mlx.stop":
+                return rpc_error(-32601, "mlx.stop not supported via JSON-RPC; use HTTP /v1/models/{id}/unload")
+
+            else:
+                return rpc_error(-32601, f"Method not found: {method}")
 
         @app.get("/v1/node/load")
         async def node_load(is_admin: bool = Depends(require_admin)):
