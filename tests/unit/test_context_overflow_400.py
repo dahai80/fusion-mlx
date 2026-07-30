@@ -154,7 +154,7 @@ def _extract_error(body: dict) -> dict:
 
 
 @pytest.mark.xfail(
-    reason="context-length enforcement not wired into openai_routes/chat route",
+    reason="context-length enforcement not wired into openai_routes/chat route (strict=False: known gap, not a regression)",
     strict=False,
 )
 def test_chat_completions_rejects_over_context_window():
@@ -182,7 +182,7 @@ def test_chat_completions_rejects_over_context_window():
 
 
 @pytest.mark.xfail(
-    reason="context-length enforcement not wired into openai_routes completions",
+    reason="context-length enforcement not wired into openai_routes completions (strict=False: known gap, not a regression)",
     strict=False,
 )
 def test_completions_rejects_over_context_window():
@@ -209,7 +209,7 @@ def test_completions_rejects_over_context_window():
 
 
 @pytest.mark.xfail(
-    reason="context-length enforcement not wired into anthropic/responses routes",
+    reason="context-length enforcement not wired into anthropic/responses routes (strict=False: known gap, not a regression)",
     strict=False,
 )
 def test_anthropic_messages_rejects_over_context_window():
@@ -236,7 +236,8 @@ def test_anthropic_messages_rejects_over_context_window():
 
 
 @pytest.mark.xfail(
-    reason="context-length enforcement not wired into responses route", strict=False
+    reason="context-length enforcement not wired into responses route (strict=False: known gap, not a regression)",
+    strict=False,
 )
 def test_responses_rejects_over_context_window():
     """``/v1/responses`` (OpenAI Responses API) must enforce the

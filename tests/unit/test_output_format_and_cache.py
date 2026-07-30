@@ -114,7 +114,7 @@ class TestT5EmbedCache:
         backend._model_dir = "/tmp/fake-wan2"
         return backend
 
-    def test_cache_miss_calls_encode(self, monkeypatch):
+    async def test_cache_miss_calls_encode(self, monkeypatch):
         backend = self._make_backend()
 
         import mlx.core as mx
@@ -139,7 +139,7 @@ class TestT5EmbedCache:
         backend._t5_config.text_len = 512
         backend._t5_config.sample_neg_prompt = ""
 
-        result = backend._get_cached_embeds("hello", None, 512)
+        result = await backend._get_cached_embeds("hello", None, 512)
 
         assert result is not None
         context, context_null = result
@@ -147,7 +147,7 @@ class TestT5EmbedCache:
         assert context_null is None
         assert encode_calls["count"] == 1
 
-    def test_cache_hit_returns_cached(self):
+    async def test_cache_hit_returns_cached(self):
         backend = self._make_backend()
 
         import mlx.core as mx
@@ -163,13 +163,13 @@ class TestT5EmbedCache:
         with backend._embed_cache_lock:
             backend._embed_cache[("hello", "", 512)] = (cached_context, cached_null)
 
-        result = backend._get_cached_embeds("hello", "", 512)
+        result = await backend._get_cached_embeds("hello", "", 512)
 
         assert result is not None
         context, null = result
         assert mx.allclose(context, cached_context)
 
-    def test_lru_eviction_via_get_cached_embeds(self, monkeypatch):
+    async def test_lru_eviction_via_get_cached_embeds(self, monkeypatch):
         import mlx.core as mx
 
         from fusion_mlx.engines.video_backends.wan2 import _T5_EMBED_CACHE_MAX
@@ -193,7 +193,7 @@ class TestT5EmbedCache:
         )
 
         for i in range(_T5_EMBED_CACHE_MAX + 2):
-            backend._get_cached_embeds(f"prompt_{i}", "", 512)
+            await backend._get_cached_embeds(f"prompt_{i}", "", 512)
 
         assert len(backend._embed_cache) <= _T5_EMBED_CACHE_MAX
 
@@ -304,7 +304,7 @@ class TestT5EmbedCache:
 
 
 class TestT5Dtype:
-    def test_default_dtype_is_float16(self, monkeypatch):
+    def test_default_dtype_is_bfloat16(self, monkeypatch):
         import mlx.core as mx
 
         from fusion_mlx.video.wan2.utils import load_t5_encoder
@@ -338,8 +338,8 @@ class TestT5Dtype:
             pass
 
         assert (
-            mx.float16 in captured_dtypes
-        ), f"Expected float16 cast, got {captured_dtypes}"
+            mx.bfloat16 in captured_dtypes
+        ), f"Expected bfloat16 cast, got {captured_dtypes}"
 
     def test_env_override_float32(self, monkeypatch):
         import mlx.core as mx
