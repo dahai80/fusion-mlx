@@ -15,40 +15,32 @@ the ``feat/diffusion-gemma`` skeleton PR. These tests guarantee:
      intentionally not wired into any active code path yet — but it
      must not break ``vllm_mlx`` import.
 
-PARTIAL RESCUE (2026-07-13): the modality-routing system was backed
-out of ``model_aliases`` - ``_VALID_MODALITIES`` / ``_RESERVED_MODALITIES``
-/ ``_coerce`` were deleted and ``AliasProfile`` dropped its ``modality``
-field, and the ``diffusion-gemma-26b-{4,8}bit`` aliases were unregistered
-from ``aliases.json``. Points 1-3 + the reverse-lookup class below pin a
-contract that no longer exists in prod; they are ``@pytest.mark.skip``-ed
-with the descope reason. Point 4 (``TestDiffusionLaneWired``) stays live -
-the ``diffusion_lane`` skeleton (``DIFFUSION_LANE_VERSION == "0.1-wired"``)
-is kept, so its import + BaseEngine + unloaded-guard pins still hold.
-Re-enable the skipped classes if the diffusion-gemma modality lane revives.
+VALIDATION LAYER RESTORED (PR #256, 2026-07-29): ``_VALID_MODALITIES``
+/ ``_RESERVED_MODALITIES`` / ``_coerce`` were re-added to
+``model_aliases`` and ``AliasProfile.modality`` is back (default
+``"text"``); ``list_profiles`` now validates every alias via ``_coerce``
+(skip+warn on a bad entry). Points 1-3 (default, validation, AR-gate)
++ the dataclass-shape class are live again. ``diffusion-gemma-26b-4bit``
+is registered; ``-8bit`` + the ``resolve_profile`` HF-path reverse index
++ server dispatch (``engine_pool.get_engine`` / ``server._load_single_model``)
+remain deferred to the server-wiring phase (blocked by mystery-WIP
+``server.py``) - ``TestHfPathReverseLookupRoutesDiffusionLane`` stays
+skipped until then. Point 4 (``TestDiffusionLaneWired``) stays live as
+before.
 """
 
 from __future__ import annotations
 
 import pytest
 
-from fusion_mlx.model_aliases import AliasProfile
-
-# Modality-routing symbols backed out of model_aliases (system removed
-# in the diffusion-gemma skeleton descope). Defined as placeholders so
-# the @pytest.mark.skip classes below stay statically valid for ruff;
-# they never execute. Replace with real imports if the modality lane
-# is revived.
-_coerce = None
-_VALID_MODALITIES = frozenset()
-_RESERVED_MODALITIES = frozenset()
-
-
-@pytest.mark.skip(
-    reason="modality-routing system backed out of model_aliases: "
-    "_VALID_MODALITIES/_RESERVED_MODALITIES/_coerce deleted and "
-    "AliasProfile.modality field removed. Re-enable if the "
-    "diffusion-gemma modality lane is revived."
+from fusion_mlx.model_aliases import (
+    AliasProfile,
+    _RESERVED_MODALITIES,
+    _VALID_MODALITIES,
+    _coerce,
 )
+
+
 class TestModalityDefault:
     def test_legacy_string_form_defaults_to_text(self) -> None:
         profile = _coerce("legacy-string", "mlx-community/Qwen3.5-4B-MLX-4bit")
@@ -84,12 +76,6 @@ class TestModalityDefault:
         assert profile.supports_spec_decode is False
 
 
-@pytest.mark.skip(
-    reason="modality-routing system backed out of model_aliases: "
-    "_VALID_MODALITIES/_RESERVED_MODALITIES/_coerce deleted and "
-    "AliasProfile.modality field removed. Re-enable if the "
-    "diffusion-gemma modality lane is revived."
-)
 class TestModalityValidation:
     def test_unknown_modality_rejected(self) -> None:
         with pytest.raises(ValueError, match="modality must be one of"):
@@ -138,12 +124,6 @@ class TestModalityValidation:
                 )
 
 
-@pytest.mark.skip(
-    reason="modality-routing system backed out of model_aliases: "
-    "_VALID_MODALITIES/_RESERVED_MODALITIES/_coerce deleted and "
-    "AliasProfile.modality field removed. Re-enable if the "
-    "diffusion-gemma modality lane is revived."
-)
 class TestNonTextLaneRejectsARGates:
     def test_text_diffusion_with_spec_decode_rejected(self) -> None:
         with pytest.raises(ValueError, match="supports_spec_decode must be false"):
@@ -214,28 +194,25 @@ class TestDiffusionLaneWired:
         assert DiffusionRunner is DiffusionEngine
 
 
-@pytest.mark.skip(
-    reason="modality-routing system backed out of model_aliases: "
-    "_VALID_MODALITIES/_RESERVED_MODALITIES/_coerce deleted and "
-    "AliasProfile.modality field removed. Re-enable if the "
-    "diffusion-gemma modality lane is revived."
-)
 class TestAliasProfileDataclassShape:
     def test_default_modality_when_constructed_directly(self) -> None:
         # Catches the case where a future refactor flips the default
         # in the dataclass but forgets to update the loader. The
-        # contract is: AliasProfile(hf_path="x") is a text-lane LLM.
-        profile = AliasProfile(hf_path="x/y")
+        # contract is: AliasProfile(name="x", hf_path="x") is a
+        # text-lane LLM (name is required; modality defaults to "text").
+        profile = AliasProfile(name="x", hf_path="x/y")
         assert profile.modality == "text"
 
 
 @pytest.mark.skip(
-    reason="diffusion-gemma-26b-{4,8}bit aliases unregistered from "
-    "aliases.json + AliasProfile.modality removed; resolve_profile "
-    "returns None and .modality would AttributeError. The bare-alias "
-    "+ unregistered-path sub-tests would pass for the wrong reason "
-    "(None because aliases are gone, not the documented reverse-index "
-    "safety net). Re-enable if diffusion aliases are re-registered."
+    reason="Validation layer restored (PR #256): _coerce + "
+    "_VALID_MODALITIES/_RESERVED_MODALITIES landed in model_aliases "
+    "and AliasProfile.modality is back (default 'text'). The "
+    "diffusion-gemma-26b-4bit alias is registered; -8bit + the "
+    "resolve_profile HF-path reverse index + server dispatch "
+    "(engine_pool.get_engine / server._load_single_model) are STILL "
+    "deferred to the server-wiring phase (blocked by mystery-WIP "
+    "server.py). Re-enable once reverse-lookup + 8bit alias land."
 )
 class TestHfPathReverseLookupRoutesDiffusionLane:
     """pr_validate r5 codex BLOCKING #1 claimed that ``python -m
