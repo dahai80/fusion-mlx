@@ -12,8 +12,10 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
+
+from ..middleware.auth import verify_api_key
 
 from ..compatibility import check_compatibility
 from ..hardware.detector import detect_hardware
@@ -110,7 +112,7 @@ def _score_quant(quant_type: str) -> float:
 
 
 @router.post("/batch", response_model=BatchRecommendResponse)
-async def recommend_batch(req: BatchRecommendRequest) -> Any:
+async def recommend_batch(req: BatchRecommendRequest, _auth: bool = Depends(verify_api_key)) -> Any:
     if req.preference not in _WEIGHT_PROFILES:
         raise HTTPException(
             400,

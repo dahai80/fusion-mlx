@@ -15,8 +15,10 @@ import re
 from enum import Enum
 from typing import Any
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field
+
+from ..middleware.auth import verify_api_key
 
 from ..model_aliases import list_aliases, resolve_model
 from ..model_auto_config import detect_model_config
@@ -167,7 +169,7 @@ def _compile_strategy(level: MigrationLevel) -> CompileStrategy:
 
 
 @router.post("/migration-level", response_model=MigrationLevelResponse)
-async def assess_migration_level(req: MigrationLevelRequest) -> Any:
+async def assess_migration_level(req: MigrationLevelRequest, _auth: bool = Depends(verify_api_key)) -> Any:
     level, matched, missing, warnings = _assess_level(req.model_id, req.hf_repo)
     strategy = _compile_strategy(level)
 

@@ -1,5 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
+import pytest
 from unittest.mock import MagicMock
+from fastapi import HTTPException
 
 from fastapi import Request as FastAPIRequest
 
@@ -118,3 +120,55 @@ class TestRequireAdmin:
             assert False, "Should have raised"
         except HTTPException as e:
             assert e.status_code == 401
+
+
+class TestMiddlewareAuth:
+    def test_no_configured_key_allows_anonymous(self):
+        from unittest.mock import patch
+
+        from fusion_mlx.middleware.auth import _verify_api_key_values
+
+        with patch(
+            "fusion_mlx.middleware.auth._get_configured_api_key",
+            return_value=None,
+        ):
+            assert _verify_api_key_values() is True
+
+    def test_configured_key_requires_matching_key(self):
+        import secrets
+        from unittest.mock import patch
+
+        from fusion_mlx.middleware.auth import _verify_api_key_values
+
+        key = secrets.token_hex(16)
+        with patch(
+            "fusion_mlx.middleware.auth._get_configured_api_key",
+            return_value=key,
+        ):
+            assert _verify_api_key_values(key) is True
+
+    def test_configured_key_rejects_wrong_key(self):
+        from unittest.mock import patch
+
+        from fusion_mlx.middleware.auth import _verify_api_key_values
+
+        with patch(
+            "fusion_mlx.middleware.auth._get_configured_api_key",
+            return_value="correct",
+        ):
+            with pytest.raises(HTTPException) as exc_info:
+                _verify_api_key_values("wrong")
+            assert exc_info.value.status_code == 401
+
+    def test_configured_key_rejects_no_key(self):
+        from unittest.mock import patch
+
+        from fusion_mlx.middleware.auth import _verify_api_key_values
+
+        with patch(
+            "fusion_mlx.middleware.auth._get_configured_api_key",
+            return_value="secret",
+        ):
+            with pytest.raises(HTTPException) as exc_info:
+                _verify_api_key_values()
+            assert exc_info.value.status_code == 401

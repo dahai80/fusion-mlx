@@ -875,6 +875,7 @@ class Server:
             host=self.config.host,
             port=self.config.port,
             log_level="info",
+            timeout_graceful_shutdown=15,
         )
 
     async def _lifespan(self):
@@ -1099,6 +1100,19 @@ class Server:
                 logger.warning(f"GUI database init failed (non-fatal): {e}")
 
         logger.info("fusion-mlx startup complete")
+
+        # Security: warn if running without API key authentication
+        try:
+            from .middleware.auth import _get_configured_api_key
+
+            if _get_configured_api_key() is None:
+                logger.warning(
+                    "SECURITY: No API key configured — all endpoints allow "
+                    "anonymous access. Set FUSION_MLX_API_KEY env var or "
+                    "api_key in config for production deployments."
+                )
+        except Exception:
+            pass
 
         # mDNS/Bonjour cluster advertising (#264 part 2)
         if getattr(self.config, "cluster_advertise", False):

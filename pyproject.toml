@@ -205,3 +205,17 @@ ignore_missing_imports = true
 testpaths = ["tests"]
 python_files = ["test_*.py"]
 asyncio_mode = "auto"
+
+[tool.coverage.run]
+source = ["fusion_mlx"]
+omit = ["fusion_mlx/oq.py", "fusion_mlx/service/postprocessor.py", "tests/*"]
+
+[tool.coverage.report]
+fail_under = 40
+show_missing = true
+exclude_lines = [
+    "pragma: no cover",
+    "if __name__ == .__main__.:",
+    "if TYPE_CHECKING:",
+    "pass",
+]

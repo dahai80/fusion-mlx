@@ -16,8 +16,10 @@ import logging
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
+
+from ..middleware.auth import verify_api_key
 
 logger = logging.getLogger(__name__)
 
@@ -71,6 +73,7 @@ async def list_benchmarks(
     chip: str | None = Query(None, description="Filter by chip name"),
     model_id: str | None = Query(None, description="Filter by model ID"),
     quant: str | None = Query(None, description="Filter by quant type"),
+    _auth: bool = Depends(verify_api_key),
 ) -> Any:
     entries = _load_benchmark_files()
 
@@ -97,6 +100,7 @@ async def get_benchmark(
     model_id: str,
     chip: str | None = Query(None, description="Chip name (e.g. M4_Max)"),
     quant: str | None = Query(None, description="Quant type (e.g. Q4_K_M)"),
+    _auth: bool = Depends(verify_api_key),
 ) -> Any:
     entries = _load_benchmark_files()
 

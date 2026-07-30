@@ -2,6 +2,27 @@
 
 ## [Unreleased]
 
+### Security
+- **Path traversal fix.** `control_video`, `control_mask`, `reference_images`, `camera_conditions` in video routes now validated with `is_safe_local_path()` / `is_safe_url_with_dns()` via new `_validate_path_param()` helper.
+- **Auth on all API routes.** 5 previously unauthenticated route files now require `verify_api_key`: `bench_routes`, `analyze_routes`, `migration_routes`, `recommend_routes`, `recommend_batch_routes`.
+- **Anonymous access warning.** Server startup logs a WARNING when no API key is configured, guiding operators to set `FUSION_MLX_API_KEY` for production.
+
+### CI/CD
+- **Security scanning.** New `security` CI job: `pip-audit` (dependency vulnerabilities) + `bandit` (SAST).
+- **Coverage reporting.** `pytest-cov` integrated: `--cov=fusion_mlx --cov-report=xml --cov-fail-under=40`. Coverage config in `pyproject.toml`.
+- **Pre-commit hooks.** `.pre-commit-config.yaml` with ruff, ruff-format, trailing-whitespace, end-of-file-fixer, check-yaml, check-added-large-files.
+
+### Reliability
+- **Graceful shutdown timeout.** uvicorn `timeout_graceful_shutdown=15` seconds for in-flight request drain.
+
+### Documentation
+- **Security Architecture** section in `docs/architecture.md`: auth flow, path safety policy, SSRF protection.
+- **Video Generation Pipeline** section: Wan2 backend dispatch, adapter injection, NHWC layout GOTCHA.
+
+### Tests
+- **test_url_safety.py**: 11 tests for SSRF, path traversal, null byte, file URI handling.
+- **test_auth.py**: 4 new middleware auth tests (anonymous, valid key, wrong key, missing key).
+
 ## [0.5.11] - 2026-07-30
 
 ### Added

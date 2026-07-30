@@ -307,3 +307,67 @@ The `ProcessMemoryEnforcer` monitors process memory in real-time. When memory ex
 **GC strategy**: Double `gc.collect()` pattern around every `mx.clear_cache()`:
 - First `gc.collect()` BEFORE `clear_cache()` — frees C++ Metal buffer wrappers
 - Second `gc.collect()` AFTER `clear_cache()` — collects Python-side wrapper objects
+
+## Security Architecture
+
+### Authentication Flow
+
+```
+Request → verify_api_key (Depends) → Route handler
+                │
+                ├── No API key configured → anonymous access (dev mode)
+                │   └── Startup WARNING logged: "No API key configured"
+                ├── API key configured, no credentials → 401
+                └── API key configured, credentials provided → secrets.compare_digest()
+```
+
+- **API key**: Set via `FUSION_MLX_API_KEY` env var or `api_key` in config. Uses constant-time comparison (`secrets.compare_digest`).
+- **Admin auth**: `require_admin` dependency validates session cookie or Bearer token for admin endpoints.
+- **Rate limiting**: `check_rate_limit` dependency applies per-IP rate limits.
+
+### Path Safety
+
+All file-path and URL parameters in API routes are validated:
+
+- **Local paths**: `is_safe_local_path()` resolves the path and checks it's within `_ALLOWED_READ_DIRS` (`~/.fusion-mlx/models`, `~/.fusion-mlx/cache`, `/tmp`, `/var/tmp`).
+- **URLs**: `is_safe_url_with_dns()` blocks SSRF by rejecting private/internal IPs (10.0.0.0/8, 192.168.0.0/16, 127.0.0.0/8, etc.) and DNS-rebinding attacks.
+- **Applied to**: `image`, `ip_adapter_image`, `controlnet_image`, `control_video`, `control_mask`, `reference_images`, `camera_conditions` parameters.
+
+## Video Generation Pipeline
+
+```
+API Request → VideoGenEngine → VideoBackend (dispatch by model name)
+                                    │
+                    ┌───────────────┼───────────────┐
+                    │               │               │
+               Wan2Backend     LTX2Backend    CosmosBackend
+                    │
+                    ├── T2V (text → video)
+                    ├── I2V (image → video)
+                    ├── R2V (reference → video, IP-Adapter)
+                    ├── V2V (ControlNet structural guidance)
+                    ├── VACE (video-conditioned auxiliary control)
+                    └── Camera (Wan2.1-Fun-Camera pose control)
+                              │
+                    ┌─────────┤
+                    │         │
+              SimpleCameraAdapter   WanControlnet
+              (PixelUnshuffle +     (6-block DiT +
+               Conv2d + Residual)    zero-init output projection)
+```
+
+### Camera Control Adapter
+
+`SimpleCameraAdapter` in `fusion_mlx/video/wan2/camera_adapter.py`:
+1. PixelUnshuffle (downscale_factor=8) on input camera pose video
+2. Conv2d projection to inner_dim
+3. ResidualBlocks for feature refinement
+4. Injected after patchification: `x_list = [u + v for u, v in zip(x_list, camera_feat)]`
+
+**GOTCHA**: MLX Conv2d uses NHWC layout (not NCHW like PyTorch). All Conv2d inputs must be transposed from NCHW→NHWC before convolution and back after.
+
+### Adapter Weight Dimensions
+
+- **IP-Adapter**: `text_dim=4096` (not 5120 — Wan2.1 uses 4096-dim T5 context)
+- **ControlNet**: `out_proj_dim=5120` (14B) or `3072` (5B)
+- **Camera**: output dim matches DiT `inner_dim` (1536 for 14B)

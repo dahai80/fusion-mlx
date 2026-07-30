@@ -146,6 +146,26 @@ def _resolve_image_to_path(image: str) -> tuple[str, bool]:
     return image, False
 
 
+def _validate_path_param(value: str, label: str) -> str:
+    # Validate a file-path parameter (control_video, control_mask,
+    # camera_conditions, etc.) against SSRF and path-traversal policies.
+    # URLs and data-URIs are allowed through; local paths must pass
+    # is_safe_local_path().
+    if value.startswith("data:"):
+        return value
+    if value.startswith(("http://", "https://")):
+        from ._url_safety import is_safe_url_with_dns
+
+        if not is_safe_url_with_dns(value):
+            raise HTTPException(400, f"{label} URL targets a private/internal address")
+        return value
+    from ._url_safety import is_safe_local_path
+
+    if not is_safe_local_path(value):
+        raise HTTPException(400, f"{label} path targets a restricted directory")
+    return value
+
+
 @router.post("/generate")
 async def generate_video(
     request: VideoGenerateRequest,
@@ -245,13 +265,22 @@ async def generate_video(
             if request.animatediff_scale > 0:
                 gen_kwargs["animatediff_scale"] = request.animatediff_scale
             if request.control_video is not None:
-                gen_kwargs["control_video"] = request.control_video
+                gen_kwargs["control_video"] = _validate_path_param(
+                    request.control_video, "control_video"
+                )
             if request.control_mask is not None:
-                gen_kwargs["control_mask"] = request.control_mask
+                gen_kwargs["control_mask"] = _validate_path_param(
+                    request.control_mask, "control_mask"
+                )
             if request.reference_images is not None:
-                gen_kwargs["reference_images"] = request.reference_images
+                gen_kwargs["reference_images"] = [
+                    _validate_path_param(p, "reference_image")
+                    for p in request.reference_images
+                ]
             if request.camera_conditions is not None:
-                gen_kwargs["camera_conditions"] = request.camera_conditions
+                gen_kwargs["camera_conditions"] = _validate_path_param(
+                    request.camera_conditions, "camera_conditions"
+                )
 
             video_bytes_list = await engine.generate(**gen_kwargs)
             outputs = [

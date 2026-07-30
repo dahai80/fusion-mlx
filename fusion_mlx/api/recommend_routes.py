@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import logging
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
+
+from ..middleware.auth import verify_api_key
 
 from ..compatibility import check_compatibility
 from ..hardware.detector import detect_hardware
@@ -25,7 +27,7 @@ class HardwareRequest(BaseModel):
 
 
 @router.get("/v1/hardware")
-async def get_hardware():
+async def get_hardware(_auth: bool = Depends(verify_api_key)):
     """Detect and return local hardware info."""
     try:
         hw = detect_hardware()
@@ -63,7 +65,7 @@ async def get_hardware():
 
 
 @router.post("/v1/recommend")
-async def recommend_model(req: HardwareRequest):
+async def recommend_model(req: HardwareRequest, _auth: bool = Depends(verify_api_key)):
     """Check if a model can run on this hardware and estimate speed."""
     if req.params <= 0:
         raise HTTPException(status_code=400, detail="params must be a positive integer")
