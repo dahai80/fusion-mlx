@@ -261,6 +261,93 @@ def _runtime_base_info(pool) -> dict[str, Any]:
     }
 
 
+def _node_load_snapshot(pool, config) -> dict[str, Any]:
+    # Issue #264: node-level load snapshot for Multi-Node cluster routing.
+    # Reuses pool.get_status() + ServerMetrics + psutil; adds system memory
+    # and node identity so a Cluster Manager can do load-aware routing in
+    # one call. Apple Silicon unified memory => memory.* is the model budget.
+    import socket
+
+    metrics = get_server_metrics().to_dict()
+    host = getattr(config, "bind_host", None) or getattr(config, "host", "0.0.0.0")
+    port = getattr(config, "bind_port", None) or getattr(config, "port", 0)
+    try:
+        hostname = socket.gethostname()
+    except Exception:
+        logger.debug("node load: gethostname failed", exc_info=True)
+        hostname = host
+    node_id = f"{hostname}:{port}"
+
+    mem_total = mem_avail = mem_used = 0
+    available_percent = 0.0
+    try:
+        import psutil
+
+        vm = psutil.virtual_memory()
+        mem_total = vm.total
+        mem_avail = vm.available
+        mem_used = vm.used
+        available_percent = (
+            round(mem_avail / mem_total * 100, 1) if mem_total else 0.0
+        )
+    except Exception:
+        logger.debug("node load: psutil virtual_memory failed", exc_info=True)
+
+    models: list[dict[str, Any]] = []
+    current_model_memory = 0
+    final_ceiling = None
+    if pool is not None:
+        try:
+            status = pool.get_status()
+            current_model_memory = status.get("current_model_memory", 0)
+            final_ceiling = status.get("final_ceiling")
+            for m in status.get("models", []):
+                models.append(
+                    {
+                        "id": m.get("id"),
+                        "loaded": bool(m.get("loaded")),
+                        "is_loading": bool(m.get("is_loading")),
+                        "resident_bytes": m.get("estimated_size", 0),
+                    }
+                )
+        except Exception:
+            logger.debug("node load: pool.get_status failed", exc_info=True)
+
+    can_load = mem_avail
+    if final_ceiling:
+        can_load = max(0, final_ceiling - current_model_memory)
+
+    logger.debug(
+        "node load snapshot: active=%d models_loaded=%d mem_avail=%d can_load=%d",
+        metrics.get("active_requests", 0),
+        sum(1 for m in models if m["loaded"]),
+        mem_avail,
+        can_load,
+    )
+    return {
+        "node_id": node_id,
+        "host": host,
+        "port": port,
+        "uptime_seconds": round(metrics.get("uptime_seconds", 0.0), 3),
+        "active_requests": metrics.get("active_requests", 0),
+        "memory": {
+            "total_bytes": mem_total,
+            "available_bytes": mem_avail,
+            "used_bytes": mem_used,
+            "available_percent": available_percent,
+        },
+        "models": models,
+        "capacity": {
+            "free_memory_bytes": mem_avail,
+            "can_load_estimate_bytes": can_load,
+        },
+        "throughput": {
+            "avg_prefill_tps": round(metrics.get("avg_prefill_tps", 0.0), 3),
+            "avg_generation_tps": round(metrics.get("avg_generation_tps", 0.0), 3),
+        },
+    }
+
+
 def load_embedding_model(*args, **kwargs):
     raise NotImplementedError("Embedding models not available in this build")
 
@@ -671,6 +758,11 @@ class Server:
                 )
             await self.pool.unload_engine_async(resolved)
             return {"status": "ok", "model_id": model_id}
+
+        @app.get("/v1/node/load")
+        async def node_load(is_admin: bool = Depends(require_admin)):
+            # Issue #264: node-level load snapshot for Multi-Node cluster routing.
+            return _node_load_snapshot(self.pool, self.config)
 
         return app
 
