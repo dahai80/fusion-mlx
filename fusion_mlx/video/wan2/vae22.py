@@ -1055,16 +1055,16 @@ def sanitize_wan22_vae_weights(weights: dict, include_encoder: bool = False) -> 
         if is_weight and not already_mlx:
             if value.ndim == 5:
                 # Conv3d: [O, I, D, H, W] → [O, D, H, W, I]
-                value = np.transpose(np.array(value), (0, 2, 3, 4, 1))
-                value = mx.array(value)
+                # Stay in mlx: np.array() on a bf16 mlx array trips
+                # PEP 3118 (buffer fmt 'B' item size 2 != dtype 'B' 1).
+                value = mx.transpose(value, (0, 2, 3, 4, 1))
             elif value.ndim == 4:
                 # Conv2d: [O, I, H, W] → [O, H, W, I]
-                value = np.transpose(np.array(value), (0, 2, 3, 1))
-                value = mx.array(value)
+                value = mx.transpose(value, (0, 2, 3, 1))
 
         # Squeeze RMS_norm gamma: (dim, 1, 1, 1) or (dim, 1, 1) → (dim,)
         if "gamma" in new_key:
-            value = mx.array(np.array(value).squeeze())
+            value = mx.squeeze(value)
 
         sanitized[new_key] = value
         consumed.add(key)
