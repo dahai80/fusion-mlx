@@ -94,6 +94,8 @@ class VideoGenerateRequest(BaseModel):
     control_video: str | None = None
     control_mask: str | None = None
     reference_images: list[str] | None = None
+    # Camera control: camera pose video path for Wan2.1-Fun-Camera models.
+    camera_conditions: str | None = None
 
 
 class VideoOutput(BaseModel):
@@ -248,6 +250,8 @@ async def generate_video(
                 gen_kwargs["control_mask"] = request.control_mask
             if request.reference_images is not None:
                 gen_kwargs["reference_images"] = request.reference_images
+            if request.camera_conditions is not None:
+                gen_kwargs["camera_conditions"] = request.camera_conditions
 
             video_bytes_list = await engine.generate(**gen_kwargs)
             outputs = [

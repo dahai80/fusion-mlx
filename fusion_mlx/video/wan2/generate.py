@@ -331,6 +331,7 @@ def generate_video(
     control_video: str | None = None,
     control_mask: str | None = None,
     reference_images: list[str] | None = None,
+    camera_conditions: str | mx.array | None = None,
 ):
     import json
 
@@ -392,6 +393,7 @@ def generate_video(
     is_dual = config.dual_model
     is_i2v = image is not None
     is_vace = config.model_type == "vace"
+    has_camera = config.add_control_adapter
 
     # Validate config against actual weights (handles mismatched config.json)
     if not is_dual:
@@ -469,6 +471,8 @@ def generate_video(
     pipeline_str = "Image-to-Video" if is_i2v else "Text-to-Video"
     if is_vace:
         pipeline_str += " + VACE"
+    if has_camera:
+        pipeline_str += " + Camera"
     # Resolve negative prompt: explicit user value > config default
     # The official Wan2.2 uses a Chinese negative prompt (config.sample_neg_prompt)
     # that prevents oversaturation, artifacts, and comic look. We use it by default.
@@ -780,6 +784,29 @@ def generate_video(
                 "VACE model but no control_video/control_mask provided — running without control"
             )
 
+    # Camera: prepare y_camera for Fun-Camera models
+    y_camera_arg = None
+    if has_camera and camera_conditions is not None:
+        # If camera_conditions is a file path, load it as video frames
+        if isinstance(camera_conditions, str):
+            print(f"\n{Colors.BLUE}Loading camera conditions video...{Colors.RESET}")
+            cam_frames = _load_video_frames(
+                camera_conditions, width, height, gen_frames
+            )
+            mx.eval(cam_frames)
+            camera_conditions = cam_frames  # [3, T, H, W]
+            logger.info("Camera conditions loaded from file, shape: %s", camera_conditions.shape)
+        # camera_conditions: [C_cam, F, H, W] -> expand to [1, C_cam, F, H, W] for batch
+        if camera_conditions.ndim == 4:
+            y_camera_arg = [camera_conditions[None]]
+        else:
+            y_camera_arg = [camera_conditions]
+        logger.info("Camera conditions shape: %s", camera_conditions.shape)
+    elif has_camera and camera_conditions is None:
+        logger.warning(
+            "Camera model but no camera_conditions provided — running without camera control"
+        )
+
     # Load transformer models
     print(f"\n{Colors.BLUE}Loading transformer model(s)...{Colors.RESET}")
     if quantization:
@@ -966,6 +993,7 @@ def generate_video(
                     rope_cos_sin=rcs,
                     control_hidden_states=control_hidden_states,
                     control_scales=control_scales,
+                    y_camera=y_camera_arg,
                 )
             noise_pred = preds[0]
             del preds
@@ -1009,6 +1037,7 @@ def generate_video(
                     rope_cos_sin=rcs,
                     control_hidden_states=control_hidden_states,
                     control_scales=control_scales,
+                    y_camera=y_camera_arg,
                 )
             noise_pred_cond, noise_pred_uncond = preds[0], preds[1]
             noise_pred = noise_pred_uncond + gs * (noise_pred_cond - noise_pred_uncond)

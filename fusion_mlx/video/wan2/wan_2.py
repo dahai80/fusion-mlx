@@ -6,6 +6,7 @@ import mlx.nn as nn
 import numpy as np
 
 from .attention import WanLayerNorm, _linear_dtype
+from .camera_adapter import SimpleCameraAdapter
 from .config import WanModelConfig
 from .rope import rope_params, rope_precompute_cos_sin
 from .transformer import WanAttentionBlock
@@ -145,6 +146,24 @@ class WanModel(nn.Module):
                 for vace_idx, layer_idx in enumerate(config.vace_layers)
             }
 
+        # Camera control adapter (Wan2.1-Fun-Camera)
+        self.control_adapter = None
+        if config.add_control_adapter:
+            ph, pw = config.patch_size[1], config.patch_size[2]
+            self.control_adapter = SimpleCameraAdapter(
+                in_dim=config.in_dim_control_adapter,
+                out_dim=dim,
+                kernel_size=(ph, pw),
+                stride=(ph, pw),
+                downscale_factor=config.downscale_factor_control_adapter,
+            )
+            logger.info(
+                "CameraAdapter enabled: in_dim=%d, out_dim=%d, downscale=%d",
+                config.in_dim_control_adapter,
+                dim,
+                config.downscale_factor_control_adapter,
+            )
+
     def _patchify(self, x: mx.array) -> tuple:
         c, f, h, w = x.shape
         pt, ph, pw = self._patch_size
@@ -250,6 +269,10 @@ class WanModel(nn.Module):
                     )
                 elif suffix == "bias" and v.ndim > 1:
                     v = v.reshape(-1)
+            # Remap control_adapter conv keys: Conv2d weight/bias pass through
+            # SimpleCameraAdapter uses nn.Conv2d with same key format
+            elif k.startswith("control_adapter."):
+                nk = k  # keys already match MLX nn.Conv2d layout
             # Remap patch_embedding (Conv3d) -> patch_embedding_proj (Linear)
             elif k.startswith("patch_embedding."):
                 suffix = k[len("patch_embedding.") :]
@@ -294,6 +317,7 @@ class WanModel(nn.Module):
         rope_cos_sin: tuple | None = None,
         control_hidden_states: list | None = None,
         control_scales: list[float] | None = None,
+        y_camera: list | None = None,
     ) -> list:
         # Detect identical inputs (CFG B=2) to avoid duplicate patchify work.
         # Check BEFORE I2V concat since concat creates new array objects.
@@ -307,6 +331,12 @@ class WanModel(nn.Module):
         # I2V: channel-concatenate conditioning y with noise x
         if y is not None:
             x_list = [mx.concatenate([u, v], axis=0) for u, v in zip(x_list, y)]
+
+        # Camera adapter: add camera control features to latent x
+        if self.control_adapter is not None and y_camera is not None:
+            camera_feat = self.control_adapter(y_camera)
+            x_list = [u + v for u, v in zip(x_list, camera_feat)]
+            logger.debug("Camera adapter features injected into x_list")
 
         if all_same:
             # Patchify once and broadcast — saves a Linear projection per step

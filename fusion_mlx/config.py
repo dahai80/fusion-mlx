@@ -299,6 +299,9 @@ class ServerConfig:
     # Cloud router instance
     cloud_router: Any = None
 
+    # mDNS/Bonjour cluster advertising
+    cluster_advertise: bool = False
+
     # Behavior flags
     gc_control: bool = True
     no_thinking: bool = False

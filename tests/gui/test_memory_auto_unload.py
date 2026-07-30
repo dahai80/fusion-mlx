@@ -1,28 +1,43 @@
 #!/usr/bin/env python3
 """
-🧠 fusion_gui Memory Auto-Unload Test
+fusion_gui Memory Auto-Unload Test
 Specifically tests the automatic LRU unloading when hitting concurrent model limits
 """
 
 import asyncio
+import socket
 
 import httpx
+import pytest
 
 BASE_URL = "http://localhost:8000"
 TIMEOUT = 60.0
 
 
+def _gui_server_available() -> bool:
+    try:
+        with socket.create_connection(("localhost", 8000), timeout=2):
+            return True
+    except (ConnectionRefusedError, OSError):
+        return False
+
+
+gui_required = pytest.mark.skipif(
+    not _gui_server_available(),
+    reason="fusion_gui server not running on localhost:8000",
+)
+
+
+@gui_required
 async def test_auto_unload_behavior():
     """Test that models are automatically unloaded when hitting concurrent limits."""
-    print("🧠 Testing Automatic LRU Unloading Behavior")
+    print("Testing Automatic LRU Unloading Behavior")
     print("=" * 60)
 
     async with httpx.AsyncClient(timeout=TIMEOUT) as client:
-        # Get system status first
         response = await client.get(f"{BASE_URL}/v1/system/status")
         if response.status_code != 200:
-            print("❌ Server not responding")
-            return False
+            pytest.skip("Server not responding to /v1/system/status")
 
         status = response.json()
         max_concurrent = status.get("model_manager", {}).get("max_concurrent_models", 3)

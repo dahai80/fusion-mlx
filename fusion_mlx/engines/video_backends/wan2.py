@@ -39,6 +39,10 @@ def _infer_config_from_path(model_dir: str) -> "WanModelConfig":  # noqa: F821
     p = model_dir.lower()
     if "vace" in p:
         return WanModelConfig.wan_vace_14b()
+    if "camera" in p:
+        if "14b" in p:
+            return WanModelConfig.wan21_fun_camera_14b()
+        return WanModelConfig.wan21_fun_camera_1_3b()
     if "14b" in p:
         if "i2v" in p:
             return WanModelConfig.wan22_i2v_14b()
@@ -55,6 +59,7 @@ class Wan2Backend(VideoBackend):
     name = "wan2"
     supports_i2v = True
     supports_vace = True
+    supports_camera = True
 
     def __init__(self, model_name: str, **kwargs: Any) -> None:
         self._model_name = model_name
@@ -253,6 +258,7 @@ class Wan2Backend(VideoBackend):
                     control_video=params.control_video,
                     control_mask=params.control_mask,
                     reference_images=params.reference_images,
+                    camera_conditions=params.camera_conditions,
                 )
                 results.append(result)
             return results
@@ -299,6 +305,7 @@ def _generate_one(
     control_video: str | None = None,
     control_mask: str | None = None,
     reference_images: list[str] | None = None,
+    camera_conditions: str | None = None,
 ) -> bytes | Any:
     from fusion_mlx.video.wan2.generate import generate_video
 
@@ -334,10 +341,12 @@ def _generate_one(
         gen_kwargs["control_mask"] = control_mask
     if reference_images is not None:
         gen_kwargs["reference_images"] = reference_images
+    if camera_conditions is not None:
+        gen_kwargs["camera_conditions"] = camera_conditions
 
     logger.info(
         "Wan2 generate (%s): prompt_len=%d frames=%d %dx%d seed=%d i2v=%s "
-        "steps=%s compile=%s tiling=%s cached=%s vace=%s",
+        "steps=%s compile=%s tiling=%s cached=%s vace=%s camera=%s",
         "raw" if raw_output else "mp4",
         len(prompt),
         num_frames,
@@ -350,6 +359,7 @@ def _generate_one(
         tiling,
         precomputed_context is not None,
         bool(control_video),
+        bool(camera_conditions),
     )
 
     if raw_output:

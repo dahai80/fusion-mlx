@@ -57,6 +57,11 @@ class WanModelConfig(BaseModelConfig):
     vace_in_dim: int = 0
     vace_layers: tuple[int, ...] = ()
 
+    # Camera control adapter (Wan2.1-Fun-Camera)
+    add_control_adapter: bool = False
+    in_dim_control_adapter: int = 24
+    downscale_factor_control_adapter: int = 8
+
     @property
     def head_dim(self) -> int:
         return self.dim // self.num_heads
@@ -131,4 +136,40 @@ class WanModelConfig(BaseModelConfig):
             model_type="vace",
             vace_in_dim=96,
             vace_layers=(0, 5, 10, 15, 20, 25, 30, 35),
+        )
+
+    @classmethod
+    def wan21_fun_camera_1_3b(cls) -> "WanModelConfig":
+        return cls(
+            model_type="i2v",
+            model_version="2.1",
+            in_dim=32,
+            dim=1536,
+            ffn_dim=8960,
+            num_heads=12,
+            num_layers=30,
+            dual_model=False,
+            boundary=0.0,
+            sample_shift=5.0,
+            sample_steps=50,
+            sample_guide_scale=5.0,
+            add_control_adapter=True,
+            in_dim_control_adapter=24,
+            downscale_factor_control_adapter=8,
+        )
+
+    @classmethod
+    def wan21_fun_camera_14b(cls) -> "WanModelConfig":
+        return cls(
+            model_type="i2v",
+            model_version="2.1",
+            in_dim=32,
+            dual_model=False,
+            boundary=0.0,
+            sample_shift=5.0,
+            sample_steps=50,
+            sample_guide_scale=5.0,
+            add_control_adapter=True,
+            in_dim_control_adapter=24,
+            downscale_factor_control_adapter=8,
         )

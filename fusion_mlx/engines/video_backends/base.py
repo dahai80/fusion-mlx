@@ -74,6 +74,8 @@ class VideoGenParams:
     control_video: str | None = None
     control_mask: str | None = None
     reference_images: list[str] | None = None
+    # Camera control: camera pose video path for Wan2.1-Fun-Camera models.
+    camera_conditions: str | None = None
     extra: dict[str, Any] = field(default_factory=dict)
     # Output format: "mp4" (default, returns bytes) or "raw" (returns numpy
     # array of shape [T, H, W, 3] uint8 — skips MP4 encoding entirely).

@@ -2,6 +2,18 @@
 
 ## [Unreleased]
 
+## [0.5.11] - 2026-07-30
+
+### Added
+- **Wan2.1-Fun-Camera support (#254).** SimpleCameraAdapter (PixelUnshuffle + Conv2d + ResidualBlocks) for camera pose control. Auto-detection from config.json `add_control_adapter` field. `camera_conditions` parameter through API → backend → generate pipeline.
+- **`/v1/node/load` endpoint (#264).** Node-level load snapshot API.
+
+### Fixed
+- **Flaky GUI integration test.** `test_memory_auto_unload` now skips when GUI server not running (socket probe + `@gui_required` decorator).
+
+### Changed
+- **Branch cleanup.** All 13 merged feature/fix/wire branches deleted (local + remote). Only `main` remains.
+
 ## [0.5.8] - 2026-07-29
 
 ### Added

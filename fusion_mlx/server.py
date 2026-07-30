@@ -519,6 +519,7 @@ class Server:
         self.cloud_router: CloudRouter | None = None
         self.engine_cores: dict[str, AsyncEngineCore] = {}
         self._load_lock = asyncio.Lock()
+        self._mdns = None
 
         warnings.filterwarnings(
             "ignore",
@@ -1099,9 +1100,37 @@ class Server:
 
         logger.info("fusion-mlx startup complete")
 
+        # mDNS/Bonjour cluster advertising (#264 part 2)
+        if getattr(self.config, "cluster_advertise", False):
+            try:
+                from .cluster.mdns import MdnsAdvertiser, build_txt_records
+
+                snapshot = _node_load_snapshot(self.pool, self.config)
+                txt = build_txt_records(snapshot)
+                self._mdns = MdnsAdvertiser(
+                    node_id=snapshot["node_id"],
+                    host=snapshot["host"],
+                    port=snapshot["port"],
+                    txt_records=txt,
+                )
+                await self._mdns.start(
+                    refresh_fn=lambda: _node_load_snapshot(self.pool, self.config)
+                )
+            except Exception:
+                logger.warning("mDNS: advertising failed to start (non-fatal)", exc_info=True)
+
     async def _shutdown(self):
         """Graceful shutdown."""
         logger.info("fusion-mlx shutting down...")
+
+        # mDNS: unregister service before teardown
+        if self._mdns is not None:
+            try:
+                await self._mdns.stop()
+                logger.info("mDNS: advertising stopped")
+            except Exception:
+                logger.debug("mDNS: stop failed (non-fatal)", exc_info=True)
+            self._mdns = None
 
         # Save prefix cache to disk (best-effort, budget-aware)
         try:

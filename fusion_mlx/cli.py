@@ -204,6 +204,16 @@ Examples:
         help="Log level for Python logging and uvicorn (case-insensitive)",
     )
     serve_parser.add_argument(
+        "--cluster-advertise",
+        action="store_true",
+        default=False,
+        help=(
+            "Advertise this node via mDNS/Bonjour for LAN auto-discovery "
+            "(also: FUSION_MLX_CLUSTER_ADVERTISE=1). Off by default to "
+            "avoid network broadcast on single-node setups."
+        ),
+    )
+    serve_parser.add_argument(
         "--max-num-seqs", type=int, default=256, help="Max concurrent sequences"
     )
     serve_parser.add_argument(

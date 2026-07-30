@@ -1124,6 +1124,13 @@ def _stage_server_config(args, server, logger):
     gc_control = args.gc_control and not args.no_gc_control
     _get_config().gc_control = gc_control
 
+    # mDNS/Bonjour cluster advertising
+    _cluster_adv = getattr(args, "cluster_advertise", False)
+    _cluster_env = os.environ.get("FUSION_MLX_CLUSTER_ADVERTISE", "").strip()
+    if _cluster_env.lower() in ("1", "true", "yes"):
+        _cluster_adv = True
+    _get_config().cluster_advertise = _cluster_adv
+
     # No-thinking flag
     _get_config().no_thinking = args.no_thinking
 
