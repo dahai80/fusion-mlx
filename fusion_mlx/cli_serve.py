@@ -1216,6 +1216,60 @@ def _print_startup_banner(args, cors_origins, gc_control, logger):
         os.environ["FUSION_MLX_MCP_CONFIG"] = args.mcp_config
 
 
+def _apply_mtp_cli_model_type_reconciliation(
+    scheduler_config,
+    hf_config,
+    *,
+    has_external_sidecar: bool = False,
+):
+    # Promote the MTP-eligibility read into scheduler_config.mtp_model_type
+    # so the BatchedEngine dispatch gate (dispatch_mtp_inject) sees the vetted
+    # target type. Native Qwen3.5/3.6 -> CHAIN promotes model_type; the gemma4
+    # sidecar path keys dispatch on the gemma4_unified backbone. Hard-fail when
+    # MTP is active but no supported model_type can be resolved - silent
+    # fallback would dispatch on an unknown type and crash mid-generation.
+    import logging
+    logger = logging.getLogger(__name__)
+    from fusion_mlx.speculative.mtp.detect import (
+        MTPEligibility,
+        _detect_mtp_eligibility_verbose,
+    )
+
+    # Probe the backbone with has_external_sidecar=False so the real model_type
+    # is recovered even when a sidecar overrides eligibility to TREE.
+    backbone = _detect_mtp_eligibility_verbose(hf_config, has_external_sidecar=False)
+    if has_external_sidecar:
+        if backbone.model_type == "gemma4_unified":
+            scheduler_config.mtp_model_type = backbone.model_type
+            logger.info(
+                "MTP sidecar reconciled -> backbone %s (%s)",
+                backbone.model_type,
+                backbone.reason,
+            )
+            return
+        print(
+            "error: --mtp-sidecar requires a gemma4_unified backbone, "
+            f"got model_type={backbone.model_type!r} ({backbone.reason}).",
+            file=sys.stderr,
+        )
+        sys.exit(2)
+    if backbone.eligibility is MTPEligibility.CHAIN:
+        scheduler_config.mtp_model_type = backbone.model_type
+        logger.info(
+            "MTP model_type reconciled -> %s (%s)",
+            backbone.model_type,
+            backbone.reason,
+        )
+        return
+    print(
+        "error: MTP enabled but the model is not MTP-eligible "
+        "(need a Qwen3.5/3.6 checkpoint with mtp_num_hidden_layers >= 1, "
+        f"or --mtp-sidecar <dir>). {backbone.reason}",
+        file=sys.stderr,
+    )
+    sys.exit(2)
+
+
 def serve_command(args):
     """Start the OpenAI-compatible server."""
     import logging
@@ -1645,6 +1699,7 @@ def serve_command(args):
         enable_mtp=args.enable_mtp,
         mtp_num_draft_tokens=args.mtp_num_draft_tokens,
         mtp_optimistic=args.mtp_optimistic,
+        mtp_sidecar=getattr(args, "mtp_sidecar", None),
         # R15-P1 #302/#313: --spec-decode {none,mtp,dflash}. Plumb the
         # raw choice through; the boot-time eligibility check below
         # validates that ``mtp`` was only passed for a config.json with
@@ -1758,6 +1813,25 @@ def serve_command(args):
             )
             sys.exit(2)
         print(f"Spec-decode: mtp ({eligibility.value})")
+
+    # Reconcile scheduler_config.mtp_model_type against MTP eligibility so the
+    # BatchedEngine dispatch gate sees the vetted target type. Runs for both
+    # --spec-decode mtp (native Qwen3.5/3.6) and --mtp-sidecar (gemma4 unified
+    # assistant drafter). The --enable-mtp (Qwen3-Next BatchGenerator inject)
+    # path is intentionally excluded: its architecture is outside the MTP
+    # dispatch set and it does not route through dispatch_mtp_inject.
+    if getattr(args, "spec_decode", "none") == "mtp" or getattr(
+        args, "mtp_sidecar", None
+    ):
+        try:
+            _hf_cfg_reconcile, _ = _gather_kv_cache_dtype_inputs(args.model)
+        except Exception:
+            _hf_cfg_reconcile = None
+        _apply_mtp_cli_model_type_reconciliation(
+            scheduler_config,
+            _hf_cfg_reconcile,
+            has_external_sidecar=bool(getattr(args, "mtp_sidecar", None)),
+        )
 
     # ``--spec-decode dflash`` is normalized to ``--enable-dflash`` near
     # the top of serve_command (#318 redirect); by the time we reach
@@ -2713,3 +2787,12 @@ def bench_command(args):
         print(f"  Throughput: {total_tokens / total_time:.2f} tok/s")
 
     asyncio.run(run_benchmark())
+
+
+if __name__ == "__main__":
+    # Delegate to the canonical argparse dispatcher in fusion_mlx.cli so
+    # `python -m fusion_mlx.cli_serve <subcommand>` works - this module only
+    # hosts the serve/bench handlers, not the parser. One parser, not two.
+    from fusion_mlx.cli import main
+
+    main()

@@ -13,6 +13,18 @@ from collections.abc import AsyncIterator
 from typing import Any
 
 from ..base import BaseEngine, GenerationOutput
+from ._mtp_dispatch import (
+    _DISPATCH_ATTACHED,
+    _DISPATCH_NO_INJECT,
+    _DISPATCH_REJECTED,
+    _DISPATCH_UNRESOLVED,
+    _apply_mtp_dispatch,
+    _decide_mtp_dispatch_action,
+    _get_mtp_dispatch_timeout_sec,
+    _log_mtp_dispatch_timeout,
+    _resolve_hf_model_type,
+    _run_dispatch_mtp_inject,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -144,6 +156,12 @@ class BatchedEngine(BaseEngine):
         self._check_mxfp4_moe_guardrail()
 
         scheduler_config = self._scheduler_config or SchedulerConfig()
+        _apply_mtp_dispatch(
+            self._model,
+            scheduler_config,
+            self._model_load_executor,
+            cli_vetted_model_type=scheduler_config.mtp_model_type,
+        )
         engine_config = EngineConfig(
             model_name=self._model_name,
             scheduler_config=scheduler_config,
