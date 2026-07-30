@@ -204,16 +204,6 @@ class TestAliasProfileDataclassShape:
         assert profile.modality == "text"
 
 
-@pytest.mark.skip(
-    reason="Validation layer restored (PR #256): _coerce + "
-    "_VALID_MODALITIES/_RESERVED_MODALITIES landed in model_aliases "
-    "and AliasProfile.modality is back (default 'text'). The "
-    "diffusion-gemma-26b-4bit alias is registered; -8bit + the "
-    "resolve_profile HF-path reverse index + server dispatch "
-    "(engine_pool.get_engine / server._load_single_model) are STILL "
-    "deferred to the server-wiring phase (blocked by mystery-WIP "
-    "server.py). Re-enable once reverse-lookup + 8bit alias land."
-)
 class TestHfPathReverseLookupRoutesDiffusionLane:
     """pr_validate r5 codex BLOCKING #1 claimed that ``python -m
     vllm_mlx.server --model <hf-path>`` would route the diffusion
