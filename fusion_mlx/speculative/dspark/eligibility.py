@@ -73,13 +73,13 @@ def report(profile: AliasProfile, alias: str | None = None) -> EligibilityReport
 
 
 def eligible_aliases() -> list[str]:
-    # list_profiles() returns a list[AliasProfile] (not a dict); iterate
-    # directly. Tolerant: any registry error returns [] rather than raising
+    # list_profiles() returns dict[str, AliasProfile]; iterate values.
+    # Tolerant: any registry error returns [] rather than raising
     # since this only enriches error text.
     try:
         from fusion_mlx.model_aliases import list_profiles
 
-        return sorted(p.name for p in list_profiles() if not report(p).reasons)
+        return sorted(p.name for p in list_profiles().values() if not report(p).reasons)
     except Exception as e:  # noqa: BLE001 — diagnostic helper, never fatal
         logger.debug("eligible_aliases failed: %s", e)
         return []

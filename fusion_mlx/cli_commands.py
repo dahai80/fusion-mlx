@@ -124,11 +124,10 @@ def _print_cached_models() -> None:
 
     # Reverse-map HF repo path → alias name so the alias column matches the
     # user's mental model (``qwen3.5-4b-4bit`` not ``mlx-community/Qwen3.5-4B...``).
-    # list_profiles() returns list[AliasProfile] (released contract), not a
-    # dict — iterate the list directly to build the HF-path→alias reverse map.
+    # list_profiles() returns dict[str, AliasProfile] — iterate values.
     profiles = list_profiles()
     hf_to_alias: dict[str, str] = {}
-    for p in profiles:
+    for p in profiles.values():
         hf_to_alias.setdefault(p.hf_path, p.name)
 
     cols = (
