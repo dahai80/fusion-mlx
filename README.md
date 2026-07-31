@@ -6,7 +6,7 @@
 
 Drop-in replacement for Ollama / vLLM - runs natively on Metal via MLX
 
-[![Version](https://img.shields.io/badge/v0.6.2-blue.svg)](https://github.com/dahai80/fusion-mlx/releases)
+[![Version](https://img.shields.io/badge/v0.5.11-blue.svg)](https://github.com/dahai80/fusion-mlx/releases)
 [![Python](https://img.shields.io/badge/Python-3.11+-3776AB.svg)](https://www.python.org/)
 [![License](https://img.shields.io/badge/License-Apache--2.0-green.svg)](LICENSE)
 [![Tests](https://img.shields.io/badge/Tests-1200+-success.svg)](tests/)
@@ -31,12 +31,11 @@ x86+CUDA stack structurally cannot match. These are **landed and running today**
 - **DSpark speculative decode, vendored for MLX (#190)** - 1.47× validated
   end-to-end on real 14B (`serve --enable-dspark`); the speculative win the LLM
   side already has.
-- **Speculative denoise for DiT (#177)** - the diffusion analog of speculative
-  decoding: a draft DiT predicts K velocity steps, the full DiT batched-verifies
-  in one forward. Machinery landed (env-gated, default off); Phase-2 honestly
-  **falsified** the layer-pruned draft on real 14B (0% acceptance) - the
-  negative result + `GET /v1/videos/denoise-stats` surface are themselves a first
-  in open-source MLX.
+- **Speculative denoise (#177) — FALSIFIED, default off**: the diffusion analog of
+  speculative decoding was tested on real 14B DiT and honestly **falsified**
+  (0% acceptance, 0.42× slower, quality breaks). The machinery remains
+  env-gated off for future research; the negative result is documented in
+  `SPECULATIVE_DENOISE.md`.
 - **Fusion-ComfyUI Stage API + `on_step` (#170-172)** - 10 stage methods across
   text-encoder / DiT / VAE plus a thread->async `on_step` bridge; native ComfyUI
   integration no other MLX server offers.
@@ -92,8 +91,9 @@ Key optimizations: quant2/quant2_128/quant2_flat ultra-aggressive 2-bit quantiza
 - **4-tier memory enforcer** - safe / balanced / aggressive / custom hard limits with deadlock-free eviction
 - **Multi-model concurrency** - EnginePool with LRU eviction, pinning, and TTL
 - **MCP tool support** - list, discover, and execute MCP tools via API
+- **LoRA / DORA fine-tuning** - train adapters on Apple Silicon via mlx_lm; job queue, SSE progress, adapter management
 - **Admin web panel** - model management, live chat, HuggingFace downloads, online quantization
-- **macOS native app** - SwiftUI with menu bar, auto-update, benchmark, model management, **hardware-aware setup wizard**
+- **macOS native app** - SwiftUI with menu bar, auto-update, benchmark, fine-tune, model management, **hardware-aware setup wizard**
 - **SkyReels-V3 video generation** - Pure-MLX port of the strongest open-source video model; all three branches (R2V/V2V/A2V) run end-to-end on real weights, with M5 Max dFlash attention + NF4 quantization keeping a 19B model at 720P under 14 GB resident memory
 - **PyTorch -> MLX full-model converter** - `convert_skyreels_v3.py` one-shot converts SkyReels-V3's three branches (DiT + T5 + VAE + CLIP + audio) PyTorch weights to MLX safetensors, supporting bfloat16/float16/float32 + NF4 quantization with incremental per-shard writes to avoid unified-memory spikes
 - **UMA Radix Latent cache** - repeat I2V requests skip the VAE-encode (model load + forward) via zero-copy `mx.array` reuse on Apple Silicon unified memory; extends the #178 radix cache from text KV to video frame latents (Phase-1: input-image latents, LTX-2 + Wan2.2). The UMA advantage the discrete-GPU CUDA stack cannot replicate. See [cache/LATENT_CACHE.md](fusion_mlx/cache/LATENT_CACHE.md)
@@ -118,9 +118,8 @@ Recommendations are based on real-time hardware detection (CPU cores, unified me
 # Option 1: curl one-liner (auto-detects RAM, recommends model)
 curl -fsSL https://raw.githubusercontent.com/dahai80/fusion-mlx/main/scripts/install.sh | bash
 
-# Option 2: Homebrew
-brew tap dahai80/fusion-mlx https://github.com/dahai80/fusion-mlx
-brew install fusion-mlx
+# Option 2: Homebrew (one-line install)
+brew install dahai80/fusion-mlx/fusion-mlx
 
 # Option 3: uv (fastest)
 uv tool install fusion-mlx
@@ -439,13 +438,57 @@ The macOS app offers a mode toggle between:
 | Videos | `/v1/videos/generate` | ✅ Supported (LTX-2, Wan2, SkyReels-V3; pure-MLX ports) |
 | Embeddings | `/v1/embeddings` | ✅ Supported |
 | Reasoning | `/v1/reasoning` | ✅ Explicit thinking step API (DeepSeek-R1, QwQ, etc.) |
-| OCR | `/v1/ocr` | ✅ Vision model OCR with context |
+| OCR | `/v1/ocr` | ✅ 4 dedicated OCR engines (DeepSeek-OCR, DOTS-OCR, GLM-OCR) |
 | Sessions | `/v1/sessions/{id}/stats`, `/v1/sessions/{id}/context` | ✅ Per-session token usage + context cap (#226) |
 | MCP | `/v1/mcp/tools`, `/v1/mcp/servers`, `/v1/mcp/execute` | ✅ Supported |
 | OpenClaw Agent | `/v1/openclaw/agent/*` | ✅ Sessions, turns, tool calling, SSE streaming |
 | Agent Graph | `/v1/agents/graphs`, `/v1/agents/run` | ✅ CRUD + export + run (in-memory) |
 | Base Info | `/v1/base` | ✅ MLX runtime capability detection |
 | Convert / Quantize | `/v1/convert`, `/v1/quantize` (+ `.../jobs/{id}`) | ✅ Async HF->MLX conversion + weight quantization |
+
+## OCR — Dedicated Document Recognition
+
+fusion-mlx provides 4 purpose-built OCR engines via the `/v1/ocr` endpoint:
+
+| Engine | model_type | Best For | Default Prompt |
+|--------|-----------|----------|---------------|
+| DeepSeek-OCR | `deepseekocr` | General documents, tables | "Convert the document to markdown." |
+| DeepSeek-OCR v2 | `deepseekocr_2` | Improved accuracy, CJK | "Convert the document to markdown." |
+| DOTS-OCR | `dots_ocr` | Clean markdown output | "Convert this page to clean Markdown while preserving reading order." |
+| GLM-OCR | `glm_ocr` | Chinese text recognition | "Text Recognition:" |
+
+```bash
+# OCR via API
+curl http://localhost:8897/v1/ocr \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "deepseekocr",
+    "image": "data:image/png;base64,<BASE64>",
+    "output_format": "markdown"
+  }'
+
+# OCR with local file path
+curl http://localhost:8897/v1/ocr \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "dots_ocr",
+    "image": "/path/to/document.png",
+    "output_format": "text"
+  }'
+
+# OCR via Python
+import requests
+resp = requests.post("http://localhost:8897/v1/ocr", json={
+    "model": "glm_ocr",
+    "image": "https://example.com/invoice.jpg",
+    "output_format": "json"
+})
+print(resp.json()["results"][0]["text"])
+```
+
+Output formats: `text` (plain), `markdown` (default), `json` (`{"text": "..."}`).
+
+Each engine uses temperature=0 and optimized generation defaults (max_tokens, repetition_penalty) for deterministic OCR output.
 
 ## Tool Calling & Structured Output
 
@@ -548,16 +591,20 @@ fusion-mlx exposes **both** OpenAI and Anthropic APIs — something Ollama canno
 | OpenAI Chat API | ❌ (custom only) | ✅ `/v1/chat/completions` |
 | Anthropic Messages API | ❌ | ✅ `/v1/messages` |
 | Streaming (SSE) | ✅ | ✅ |
+| SSE keepalive | ❌ | ✅ (anti-timeout ping) |
+| Context scaling | ❌ | ✅ (auto-cap max_tokens) |
 | Tool calling | ✅ | ✅ (21 parsers) |
 | Structured output | ❌ | ✅ (llguidance + xgrammar) |
 | Embeddings | ✅ | ✅ |
 | Image generation | ❌ | ✅ (Flux 2) |
 | Video generation | ❌ | ✅ (LTX-2, Wan2, SkyReels-V3) |
 | STT / TTS | ❌ | ✅ |
+| OCR (dedicated engines) | ✅ | ✅ (4 OCR engines + `/v1/ocr` API) |
 | Model aliases | ✅ | ✅ (`serve --model gpt-4o`) |
 | Profile syntax | ✅ (`modelfile`) | ✅ (`model:profile` zero-mem) |
 | Continuous batching | ❌ | ✅ (vLLM-style scheduler) |
 | Prefix KV cache | ❌ | ✅ (block-aware + COW + SSD) |
+| Homebrew install | ✅ | ✅ (`brew install dahai80/fusion-mlx/fusion-mlx`) |
 
 ```bash
 # Point any OpenAI-compatible tool at fusion-mlx
@@ -565,6 +612,33 @@ export OPENAI_API_BASE=http://localhost:8897/v1
 
 # Or use Anthropic SDK directly
 export ANTHROPIC_BASE_URL=http://localhost:8897/v1
+
+# Or use Ollama SDK / Open WebUI directly
+export OLLAMA_HOST=http://localhost:8897
+```
+
+### Ollama-Compatible API
+
+fusion-mlx now exposes Ollama-compatible endpoints so tools like **Open WebUI**, **LibreChat**, and the `ollama` CLI work out of the box:
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/generate` | POST | Text generation (prompt-based) |
+| `/api/chat` | POST | Chat with message array |
+| `/api/tags` | GET | List local models |
+| `/api/version` | GET | Server version |
+
+```bash
+# Chat via Ollama API
+curl http://localhost:8897/api/chat \
+  -d '{"model": "qwen3", "messages": [{"role": "user", "content": "Hello!"}]}'
+
+# Generate text
+curl http://localhost:8897/api/generate \
+  -d '{"model": "qwen3", "prompt": "Write a haiku about code"}'
+
+# List models
+curl http://localhost:8897/api/tags
 ```
 
 ### Model Profiles (`model:profile` syntax)
@@ -588,6 +662,8 @@ Request-level parameters always take precedence over profile defaults.
 
 ```bash
 # Claude Code - use fusion-mlx as your local Anthropic API
+# Includes SSE keepalive (anti-timeout), context scaling (auto-cap max_tokens),
+# and auto-compact window (CLAUDE_CODE_AUTO_COMPACT_WINDOW)
 fusion-mlx launch claude
 
 # Codex CLI (OpenAI) - configures ~/.codex/config.toml
@@ -692,6 +768,7 @@ Access at `http://localhost:8000/admin`:
 - **Downloads** - HuggingFace / ModelScope model downloads with progress tracking
 - **Quantization** - online quantization (oQ) pipeline
 - **Benchmarks** - throughput and accuracy benchmarking
+- **Fine-Tune** - LoRA / DORA adapter training with live progress, job queue, adapter management
 - **Monitoring** - real-time memory, performance, and request metrics
 - **Settings** - global / per-model configuration, sub-API key management
 
@@ -701,12 +778,68 @@ Native SwiftUI app with menu bar integration:
 
 - One-click model launch and server control
 - Quantization mode toggle: **oQ Online** (sensitivity-based) / **MLX Recipe** (pre-tuned plans)
+- **Fine-Tune screen** - LoRA / DORA training with advanced config, live progress, adapter management
 - Throughput & accuracy benchmarking
 - Auto-update from GitHub Releases
 - Model management and downloads
 - Live server status in menu bar
 
 Download from [GitHub Releases](https://github.com/dahai80/fusion-mlx/releases).
+
+## Fine-Tuning (LoRA / DORA)
+
+Train LoRA or DORA adapters on any loaded model using `mlx_lm.tuner` under the hood.
+
+### API Endpoints
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| POST | `/admin/api/fine-tune/jobs` | Create a training job |
+| GET | `/admin/api/fine-tune/jobs` | List all jobs |
+| GET | `/admin/api/fine-tune/jobs/{id}` | Get job details |
+| GET | `/admin/api/fine-tune/jobs/{id}/stream` | SSE progress stream |
+| POST | `/admin/api/fine-tune/jobs/{id}/cancel` | Cancel a running job |
+| DELETE | `/admin/api/fine-tune/jobs/{id}` | Delete a job record |
+| GET | `/admin/api/fine-tune/adapters` | List saved adapters |
+| DELETE | `/admin/api/fine-tune/adapters` | Delete an adapter |
+| GET | `/admin/api/fine-tune/models` | List fine-tunable models |
+
+### Quick Example
+
+```bash
+# Create a LoRA training job
+curl -X POST http://localhost:8000/admin/api/fine-tune/jobs \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model_id": "qwen3.5-9b",
+    "dataset": " ~/data/my-dataset.jsonl",
+    "adapter_name": "my-lora",
+    "config": {
+      "fine_tune_type": "lora",
+      "lora_rank": 8,
+      "lora_alpha": 16.0,
+      "lora_layers": 16,
+      "learning_rate": 1e-5,
+      "batch_size": 4,
+      "iters": 100,
+      "max_seq_length": 2048
+    }
+  }'
+
+# Stream progress (SSE)
+curl -N http://localhost:8000/admin/api/fine-tune/jobs/{job_id}/stream
+
+# List saved adapters
+curl http://localhost:8000/admin/api/fine-tune/adapters
+```
+
+### Key Behaviors
+
+- **1 concurrent job** — Apple Silicon memory constraints; additional jobs queue automatically
+- **Model eviction** — training evicts the target model from the inference pool; it reloads after completion
+- **Adapter storage** — `~/.fusion-mlx/adapters/{model_id}/{adapter_name}/` with `adapters.safetensors` + `adapter_config.json`
+- **SSE progress** — real-time metrics: train/val loss, learning rate, tok/s, peak memory, ETA
+- **macOS App** — dedicated Fine-Tune screen with configuration form, live progress bar, job list, and adapter management
 
 ## Performance
 
@@ -953,7 +1086,10 @@ curl -X POST /v1/videos/generate -d '{
 All adapters use zero-initialized output projections (identity at start), are backward-compatible
 (adapter not present = no behavior change), and can be combined simultaneously.
 
-### Speculative Denoise (#177)
+### Speculative Denoise (#177) — FALSIFIED
+
+> ⚠️ **This approach does not work on real 14B DiT.** The hypothesis is falsified.
+> The machinery stays landed (env-gated, default off) for future research only.
 
 A diffusion analog of LLM speculative decoding: a layer-pruned draft DiT (first M
 of N transformer blocks + shared head, same weights) predicts K=3-5 future velocity

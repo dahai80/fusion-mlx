@@ -481,6 +481,46 @@ final class FusionClient: ObservableObject {
         try await postEmpty(AdminAPI.accuracyCancel)
     }
 
+    // MARK: - Fine-Tune  (callers: FineTuneScreenVM; API: /admin/api/fine-tune/*)
+    // User instruction: "开始做，注意设计方案需要有GUI的设计和落地方案，提交给macos app"
+
+    func createFineTuneJob(_ body: CreateFineTuneJobRequest) async throws -> FineTuneJobDTO {
+        try await post(AdminAPI.fineTuneJobs, body: body)
+    }
+
+    func listFineTuneJobs() async throws -> [FineTuneJobDTO] {
+        try await get(AdminAPI.fineTuneJobs)
+    }
+
+    func getFineTuneJob(id: String) async throws -> FineTuneJobDTO {
+        try await get(AdminAPI.fineTuneJob(id))
+    }
+
+    @discardableResult
+    func cancelFineTuneJob(id: String) async throws -> FineTuneJobDTO {
+        try await postEmpty(AdminAPI.fineTuneJobCancel(id))
+    }
+
+    @discardableResult
+    func deleteFineTuneJob(id: String) async throws -> SimpleStatusResponse {
+        try await delete(AdminAPI.fineTuneJob(id))
+    }
+
+    func listFineTuneAdapters(modelId: String? = nil) async throws -> [FineTuneAdapterDTO] {
+        var query: [URLQueryItem] = []
+        if let modelId { query.append(URLQueryItem(name: "model_id", value: modelId)) }
+        return try await get(AdminAPI.fineTuneAdapters, query: query)
+    }
+
+    @discardableResult
+    func deleteFineTuneAdapter(modelId: String, adapterName: String) async throws -> SimpleStatusResponse {
+        try await deleteWithBody(AdminAPI.fineTuneAdapters, body: DeleteAdapterRequest(model_id: modelId, adapter_name: adapterName))
+    }
+
+    func listFineTuneModels() async throws -> [FineTuneModelDTO] {
+        try await get(AdminAPI.fineTuneModels)
+    }
+
     // MARK: - Core request
 
     private func get<T: Decodable>(_ path: String, query: [URLQueryItem] = []) async throws -> T {

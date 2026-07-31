@@ -80,6 +80,8 @@ from .api.ocr_routes import router as ocr_router
 from .api.ocr_routes import set_ocr_context
 from .api.reasoning_routes import router as reasoning_router
 from .api.reasoning_routes import set_reasoning_context
+from .api.ollama_routes import router as ollama_router
+from .api.ollama_routes import set_ollama_context
 from .api.openai_routes import router as openai_router
 from .api.openai_routes import set_openai_context
 from .api.openclaw_routes import router as openclaw_router
@@ -649,6 +651,7 @@ class Server:
         install_exception_handlers(app)
 
         # Register all route modules
+        app.include_router(ollama_router)
         app.include_router(openai_router)
         app.include_router(anthropic_router)
         app.include_router(audio_router)
@@ -1046,6 +1049,7 @@ class Server:
         global _server_instance
         _server_instance = self
         set_openai_context(self.pool, self.request_router)
+        set_ollama_context(self.pool)
         set_anthropic_context(self.pool)
         set_images_context(self.pool)
         set_videos_context(self.pool)
@@ -1059,6 +1063,14 @@ class Server:
         set_reasoning_context(self.pool)
         set_sessions_context(self.pool, _server_state)
         set_models_context(self.pool)
+
+        # Wire fine-tune service
+        from .admin.fine_tune_route import set_fine_tune_context
+        from .training.service import FineTuneService
+        _fine_tune_svc = FineTuneService()
+        _fine_tune_svc.set_engine_pool(self.pool)
+        _fine_tune_svc.set_loop(asyncio.get_running_loop())
+        set_fine_tune_context(self.pool, _fine_tune_svc)
 
         # Wire admin getters so require_admin can access global settings/auth
         set_admin_getters(

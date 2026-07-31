@@ -99,4 +99,12 @@ enum AdminAPI {
     static let accuracyResults     = "\(prefix)/bench/accuracy/results"
     static let accuracyReset       = "\(prefix)/bench/accuracy/results/reset"
     static let accuracyCancel      = "\(prefix)/bench/accuracy/cancel"
+
+    // Fine-Tune (LoRA/DORA) — callers: FusionClient, FineTuneScreenVM; API: /admin/api/fine-tune/*
+    static let fineTuneJobs         = "\(prefix)/fine-tune/jobs"
+    static func fineTuneJob(_ id: String) -> String { "\(prefix)/fine-tune/jobs/\(id)" }
+    static func fineTuneJobCancel(_ id: String) -> String { "\(prefix)/fine-tune/jobs/\(id)/cancel" }
+    static func fineTuneJobStream(_ id: String) -> String { "\(prefix)/fine-tune/jobs/\(id)/stream" }
+    static let fineTuneAdapters     = "\(prefix)/fine-tune/adapters"
+    static let fineTuneModels       = "\(prefix)/fine-tune/models"
 }

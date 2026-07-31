@@ -47,6 +47,8 @@ final class AppServices: NSObject {
     /// app-scoped store; SwiftUI needs the lifetime promoted manually.
     let throughputBench = ThroughputBenchScreenVM()
     let accuracyBench   = AccuracyBenchScreenVM()
+    /// callers: AppView.swift screen(for:), FineTuneScreen; API: /admin/api/fine-tune/*
+    let fineTune        = FineTuneScreenVM()
 
     /// Long-lived download VM. Same lifetime promotion as the bench VMs:
     /// keeps the 1 Hz poll task alive across navigation so downloads started
