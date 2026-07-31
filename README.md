@@ -447,9 +447,37 @@ The macOS app offers a mode toggle between:
 | Base Info | `/v1/base` | ✅ MLX runtime capability detection |
 | Convert / Quantize | `/v1/convert`, `/v1/quantize` (+ `.../jobs/{id}`) | ✅ Async HF->MLX conversion + weight quantization |
 
-## Structured Output / Grammar-Constrained Decoding
+## Tool Calling & Structured Output
 
-fusion-mlx supports grammar-constrained decoding via two backends:
+### 21 Tool Parsers — Full Coverage for Every Major Model
+
+fusion-mlx ships 21 tool-call parsers, matching or exceeding every other MLX runtime:
+
+| Parser | Models | Streaming |
+|--------|--------|-----------|
+| hermes | Hermes-series | ✅ |
+| llama | Llama 3.x | ✅ |
+| qwen | Qwen 2.x/3.x | ✅ |
+| deepseek | DeepSeek-V2/V3 | ✅ |
+| deepseek_v3 | DeepSeek-V3 native | ✅ |
+| deepseekv31 | DeepSeek-V3.1 | ✅ |
+| harmony | OpenAI harmony | ✅ |
+| gemma4 | Gemma 4 | ✅ |
+| mistral | Mistral/Mixtral | ✅ |
+| granite | IBM Granite | ✅ |
+| minimax | MiniMax | ✅ |
+| kimi | Moonshot Kimi | ✅ |
+| glm47 | GLM-4.7 | ✅ |
+| nemotron | NVIDIA Nemotron | ✅ |
+| functionary | Functionary | ✅ |
+| seed_oss | Seed-OSS | ✅ |
+| ui_tars | UI-TARS | ✅ |
+| xlam | xLAM | ✅ |
+| qwen3coder | Qwen3-Coder | ✅ |
+| auto | Auto-detect from model config | ✅ |
+| 3gap_stream | 3-gap streaming | ✅ |
+
+### Grammar-Constrained Decoding — Dual Backend
 
 | Backend | Install | Priority |
 |---------|---------|----------|
@@ -492,6 +520,50 @@ curl -X POST /v1/chat/completions -d '{
 ```bash
 fusion-mlx serve --model claude-4.6-sonnet   # -> Qwen3.5-27B-Claude-4.6-Opus-Distilled-MLX-6bit
 fusion-mlx serve --model gpt-4o               # -> Qwen3-32B-A3B-Think-2512-MLX
+```
+
+## Low-Resource Mac (8–24 GB)
+
+fusion-mlx is the only MLX runtime that **runs 27B models on 8 GB Macs**:
+
+| RAM | Recommended Model | Quant | Resident Memory | Speed |
+|-----|-------------------|-------|-----------------|-------|
+| 8 GB | Qwen3-4B | 4-bit | ~3.5 GB | Full speed |
+| 16 GB | Qwen3.5-9B | 6-bit | ~8 GB | Full speed |
+| 16 GB | Qwen3.6-27B | **quant2-flat** | **~7.1 GB** | **1.67× faster** than mxfp8 |
+| 24 GB | Qwen3.6-27B | mxfp8 | ~18 GB | Full speed |
+| 32 GB | Qwen3.6-27B | 6-bit | ~22 GB | Full speed |
+| 64 GB+ | Qwen3-72B | 4-bit | ~42 GB | Full speed |
+
+`install.sh` auto-detects your RAM via `sysctl hw.memsize` and recommends the best model. The macOS app Welcome Wizard does the same with a 6-step guided setup.
+
+**quant2-flat** is unique to fusion-mlx — 2-bit weight quantization that keeps a 27B model under 8 GB while being **faster** than higher-precision formats.
+
+## Drop-in Ollama Replacement
+
+fusion-mlx exposes **both** OpenAI and Anthropic APIs — something Ollama cannot do:
+
+| Feature | Ollama | fusion-mlx |
+|---------|--------|------------|
+| OpenAI Chat API | ❌ (custom only) | ✅ `/v1/chat/completions` |
+| Anthropic Messages API | ❌ | ✅ `/v1/messages` |
+| Streaming (SSE) | ✅ | ✅ |
+| Tool calling | ✅ | ✅ (21 parsers) |
+| Structured output | ❌ | ✅ (llguidance + xgrammar) |
+| Embeddings | ✅ | ✅ |
+| Image generation | ❌ | ✅ (Flux 2) |
+| Video generation | ❌ | ✅ (LTX-2, Wan2, SkyReels-V3) |
+| STT / TTS | ❌ | ✅ |
+| Model aliases | ✅ | ✅ (`serve --model gpt-4o`) |
+| Continuous batching | ❌ | ✅ (vLLM-style scheduler) |
+| Prefix KV cache | ❌ | ✅ (block-aware + COW + SSD) |
+
+```bash
+# Point any OpenAI-compatible tool at fusion-mlx
+export OPENAI_API_BASE=http://localhost:8897/v1
+
+# Or use Anthropic SDK directly
+export ANTHROPIC_BASE_URL=http://localhost:8897/v1
 ```
 
 ## Integrations
