@@ -555,7 +555,6 @@ fusion-mlx exposes **both** OpenAI and Anthropic APIs — something Ollama canno
 | Video generation | ❌ | ✅ (LTX-2, Wan2, SkyReels-V3) |
 | STT / TTS | ❌ | ✅ |
 | Model aliases | ✅ | ✅ (`serve --model gpt-4o`) |
-| Profile syntax | ✅ (`modelfile`) | ✅ (`model:profile` zero-mem) |
 | Continuous batching | ❌ | ✅ (vLLM-style scheduler) |
 | Prefix KV cache | ❌ | ✅ (block-aware + COW + SSD) |
 
@@ -565,24 +564,13 @@ export OPENAI_API_BASE=http://localhost:8897/v1
 
 # Or use Anthropic SDK directly
 export ANTHROPIC_BASE_URL=http://localhost:8897/v1
+
+# Ollama-compatible API — existing tools targeting localhost:11434 just work
+curl http://localhost:8897/api/tags          # list models
+curl http://localhost:8897/api/generate      # text generation (NDJSON)
+curl http://localhost:8897/api/chat          # chat (NDJSON)
+curl http://localhost:8897/api/version       # server version
 ```
-
-### Model Profiles (`model:profile` syntax)
-
-Switch sampling presets without loading a separate model — zero extra memory:
-
-```bash
-# Use the "creative" profile for qwen3 — high temperature, more tokens
-curl http://localhost:8897/v1/chat/completions \
-  -d '{"model": "qwen3:creative", "messages": [...]}'
-
-# Same for Anthropic API
-curl http://localhost:8897/v1/messages \
-  -d '{"model": "qwen3:creative", "messages": [...]}'
-```
-
-Profiles are configured in the admin panel (**Model Settings → Profiles → Expose as model**).
-Request-level parameters always take precedence over profile defaults.
 
 ## Integrations
 

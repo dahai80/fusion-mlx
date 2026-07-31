@@ -185,6 +185,67 @@ def _detect_prefix_cache_boundary(messages: Any) -> int | None:
     return max(1, char_boundary // 4)
 
 
+async def _inject_web_search(request: ChatCompletionRequest) -> None:
+    """When request.web_search is True, search DuckDuckGo for the user's last
+    message and prepend the results as a system message into the context."""
+    if not request.web_search:
+        return
+
+    query = None
+    for msg in reversed(request.messages):
+        role = getattr(msg, "role", "")
+        content = getattr(msg, "content", "")
+        if role == "user" and content:
+            query = _extract_text(msg).strip()
+            break
+
+    if not query:
+        return
+
+    logger.info("web_search: querying '%s'", query[:80])
+    try:
+        import httpx as _httpx
+
+        snippets: list[str] = []
+        async with _httpx.AsyncClient(timeout=8.0, follow_redirects=True) as client:
+            resp = await client.get(
+                "https://html.duckduckgo.com/html/",
+                params={"q": query},
+                headers={
+                    "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                                  "AppleWebKit/537.36 (KHTML, like Gecko) "
+                                  "Chrome/120.0.0.0 Safari/537.36",
+                },
+            )
+            if resp.status_code == 200:
+                import re
+
+                text = resp.text
+                results = re.findall(
+                    r'<a[^>]+class="result__a"[^>]*>(.*?)</a>', text, re.DOTALL
+                )
+                for i, raw_title in enumerate(results[:6]):
+                    title = re.sub(r"<[^>]+>", "", raw_title).strip()
+                    if title:
+                        snippets.append(f"{i + 1}. {title}")
+
+        if snippets:
+            search_ctx = (
+                "[Web Search Results]\n"
+                + "\n".join(snippets)
+                + "\n\nUse the above results to inform your answer when relevant."
+            )
+            from .models import Message
+
+            search_msg = Message(role="system", content=search_ctx)
+            request.messages.insert(0, search_msg)
+            logger.info("web_search: injected %d results", len(snippets))
+        else:
+            logger.info("web_search: no results found for '%s'", query[:60])
+    except Exception as exc:
+        logger.warning("web_search failed: %s(%s)", type(exc).__name__, exc)
+
+
 def _messages_for_engine(request_msgs: Any, is_mllm: bool) -> list[dict]:
     """Convert request messages to the dict list engines expect.
 
@@ -406,6 +467,8 @@ async def _run_chat(
             await _release()
             raise
 
+    await _inject_web_search(request)
+
     messages = _messages_for_engine(request.messages, getattr(engine, "is_mllm", False))
     sampling = _build_sampling_params(request, profile_overrides=profile_overrides)
     from .utils import cap_max_tokens_to_context
@@ -523,6 +586,8 @@ async def _stream_chat_generator(
 
     async def _release() -> None:
         await _release_engine(model_name, adapter_path=adapter_path)
+
+    await _inject_web_search(request)
 
     messages = _messages_for_engine(request.messages, getattr(engine, "is_mllm", False))
     sampling = _build_sampling_params(request, profile_overrides=profile_overrides)

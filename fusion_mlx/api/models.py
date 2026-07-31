@@ -372,6 +372,10 @@ class ChatCompletionRequest(BaseModel):
     prefix_cache_boundary: int | None = None
     # Number of completions (only n=1 supported)
     n: int | None = None
+    # Web search augmentation — when True, the server performs a web search
+    # on the user's last message and injects results into the context before
+    # inference. Uses DuckDuckGo HTML (no API key required).
+    web_search: bool = False
 
     @model_validator(mode="after")
     def _normalize_max_completion_tokens(self) -> "ChatCompletionRequest":
