@@ -1184,9 +1184,15 @@ class VLMBatchedEngine(BaseEngine):
             kwargs["videos"] = _videos
 
         if images:
-            text_messages = (
-                self._apply_ocr_prompt(messages) if self.is_ocr_model else text_messages
-            )
+            if self.is_ocr_model:
+                text_messages = self._apply_ocr_prompt(messages)
+            else:
+                # Keep original messages (with image_url parts) so apply_chat_template
+                # inserts image_pad tokens. extract_images already pulled PIL images
+                # into `images`; using the stripped text_messages here drops the image
+                # placeholder and the chat template emits no image_pad tokens, so the
+                # vision features cannot align -> "tokens: 0" or model sees no image.
+                text_messages = messages
 
         # Video frame extraction: video frames become additional images
         videos = kwargs.get("videos") or []
