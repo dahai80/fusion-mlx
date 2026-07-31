@@ -53,23 +53,13 @@ jobs:
             - name: Guard against excessive skips
               if: always()
               run: |
-                  echo "=== Guard: checking test results ==="
-                  ls -la pytest-junit.xml 2>/dev/null || echo "pytest-junit.xml NOT FOUND"
-                  # Parse junitxml for accurate counts (immune to log truncation)
-                  if [ -f pytest-junit.xml ]; then
-                    echo "Parsing junitxml..."
-                    SKIPPED=$(python3 -c "from xml.etree.ElementTree import parse as _p; r=_p('pytest-junit.xml').getroot(); print(r.attrib.get('skipped','0'))")
-                    TESTS=$(python3 -c "from xml.etree.ElementTree import parse as _p; r=_p('pytest-junit.xml').getroot(); print(r.attrib.get('tests','0'))")
-                    echo "junitxml: tests=${TESTS}, skipped=${SKIPPED}"
-                    PASSED=$((TESTS - SKIPPED))
-                  else
-                    # Fallback: grep from pytest output
-                    echo "Falling back to grep..."
-                    SKIPPED=$(grep -oE '[0-9]+ skipped' pytest-output.txt | tail -1 | grep -oE '[0-9]+' || echo 0)
-                    PASSED=$(grep -oE '[0-9]+ passed' pytest-output.txt | tail -1 | grep -oE '[0-9]+' || echo 0)
-                    TESTS=$((PASSED + SKIPPED))
-                    echo "grep: passed=${PASSED}, skipped=${SKIPPED}, tests=${TESTS}"
-                  fi
+                  # Count PASSED and SKIPPED from per-test lines in pytest-output.txt.
+                  # The final summary line may be missing if GHA log display truncates,
+                  # but the file on disk is complete. Each test emits a line like:
+                  #   tests/unit/test_foo.py::test_bar PASSED [ 12%]
+                  PASSED=$(grep -cE ' PASSED \[' pytest-output.txt || echo 0)
+                  SKIPPED=$(grep -cE ' SKIPPED \[' pytest-output.txt || echo 0)
+                  TESTS=$((PASSED + SKIPPED))
                   if [ "$TESTS" -eq 0 ]; then echo "ERROR: no tests collected"; exit 1; fi
                   PCT=$((SKIPPED * 100 / TESTS))
                   echo "Passed: ${PASSED}, Skipped: ${SKIPPED}/${TESTS} (${PCT}%)"
