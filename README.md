@@ -564,6 +564,12 @@ export OPENAI_API_BASE=http://localhost:8897/v1
 
 # Or use Anthropic SDK directly
 export ANTHROPIC_BASE_URL=http://localhost:8897/v1
+
+# Ollama-compatible API — existing tools targeting localhost:11434 just work
+curl http://localhost:8897/api/tags          # list models
+curl http://localhost:8897/api/generate      # text generation (NDJSON)
+curl http://localhost:8897/api/chat          # chat (NDJSON)
+curl http://localhost:8897/api/version       # server version
 ```
 
 ## Integrations
