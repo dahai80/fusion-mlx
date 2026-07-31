@@ -1,0 +1,274 @@
+<!-- Fine-Tune (LoRA/DORA) Main Tab
+  callers: dashboard.html include, dashboard.js state+methods, _navbar.html tab button
+  API: /admin/api/fine-tune/* (jobs, adapters, models, serve, unload)
+  data: FineTuneJob, FineTuneConfig, FineTuneProgress, FineTuneAdapter
+  user instruction: "继续实现二期和三期"
+-->
+<div x-show="mainTab === 'fineTune'" x-cloak class="space-y-6">
+    <!-- Header -->
+    <div class="flex items-center justify-between">
+        <div>
+            <h2 class="text-2xl font-bold text-neutral-900">{{ t('fine_tune.title') }}</h2>
+            <p class="text-sm text-neutral-500 mt-1">{{ t('fine_tune.subtitle') }}</p>
+        </div>
+    </div>
+
+    <!-- Sub-tabs -->
+    <div class="flex items-center gap-2 border-b border-neutral-200 pb-3">
+        <button @click="setFineTuneTab('jobs')"
+                :class="fineTuneTab === 'jobs' ? 'border-blue-500 text-blue-600' : 'border-transparent text-neutral-500 hover:text-neutral-700'"
+                class="px-4 py-2 text-sm font-medium border-b-2 transition-all">
+            {{ t('fine_tune.tab.jobs') }}
+        </button>
+        <button @click="setFineTuneTab('adapters')"
+                :class="fineTuneTab === 'adapters' ? 'border-blue-500 text-blue-600' : 'border-transparent text-neutral-500 hover:text-neutral-700'"
+                class="px-4 py-2 text-sm font-medium border-b-2 transition-all">
+            {{ t('fine_tune.tab.adapters') }}
+        </button>
+        <button @click="setFineTuneTab('new')"
+                :class="fineTuneTab === 'new' ? 'border-blue-500 text-blue-600' : 'border-transparent text-neutral-500 hover:text-neutral-700'"
+                class="px-4 py-2 text-sm font-medium border-b-2 transition-all">
+            {{ t('fine_tune.tab.new_job') }}
+        </button>
+    </div>
+
+    <!-- Jobs Tab -->
+    <div x-show="fineTuneTab === 'jobs'" class="space-y-4">
+        <div x-show="ftJobs.length === 0" class="text-center py-12 text-neutral-400">
+            <i data-lucide="inbox" class="w-12 h-12 mx-auto mb-3 opacity-50"></i>
+            <p>{{ t('fine_tune.no_jobs') }}</p>
+        </div>
+        <template x-for="job in ftJobs" :key="job.job_id">
+            <div class="bg-white rounded-xl border border-neutral-200 p-5 space-y-3">
+                <div class="flex items-center justify-between">
+                    <div class="flex items-center gap-3">
+                        <span class="text-sm font-mono text-neutral-500" x-text="job.job_id"></span>
+                        <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium"
+                              :class="{
+                                  'bg-yellow-100 text-yellow-800': job.status === 'queued',
+                                  'bg-blue-100 text-blue-800': job.status === 'running',
+                                  'bg-green-100 text-green-800': job.status === 'completed',
+                                  'bg-red-100 text-red-800': job.status === 'failed',
+                                  'bg-neutral-100 text-neutral-800': job.status === 'cancelled',
+                              }"
+                              x-text="job.status"></span>
+                    </div>
+                    <div class="flex items-center gap-2">
+                        <button x-show="job.status === 'running' || job.status === 'queued'"
+                                @click="cancelFineTuneJob(job.job_id)"
+                                class="px-3 py-1 text-xs font-medium text-red-600 hover:bg-red-50 rounded-lg transition-all">
+                            {{ t('fine_tune.cancel') }}
+                        </button>
+                        <button x-show="job.status !== 'running'"
+                                @click="deleteFineTuneJob(job.job_id)"
+                                class="px-3 py-1 text-xs font-medium text-neutral-500 hover:bg-neutral-50 rounded-lg transition-all">
+                            {{ t('fine_tune.delete') }}
+                        </button>
+                    </div>
+                </div>
+                <div class="grid grid-cols-2 gap-2 text-sm">
+                    <div>
+                        <span class="text-neutral-500">{{ t('fine_tune.model') }}:</span>
+                        <span class="font-medium" x-text="job.model_id"></span>
+                    </div>
+                    <div>
+                        <span class="text-neutral-500">{{ t('fine_tune.adapter') }}:</span>
+                        <span class="font-medium" x-text="job.adapter_name"></span>
+                    </div>
+                    <div>
+                        <span class="text-neutral-500">{{ t('fine_tune.type') }}:</span>
+                        <span class="font-medium" x-text="job.config?.fine_tune_type || 'lora'"></span>
+                    </div>
+                    <div>
+                        <span class="text-neutral-500">{{ t('fine_tune.iters') }}:</span>
+                        <span class="font-medium" x-text="job.config?.iters || '-'"></span>
+                    </div>
+                </div>
+                <!-- Progress bar -->
+                <div x-show="job.status === 'running'" class="space-y-1">
+                    <div class="flex items-center justify-between text-xs text-neutral-500">
+                        <span x-text="`Step ${job.progress?.step || 0}/${job.progress?.total_steps || 0}`"></span>
+                        <span x-text="`loss: ${(job.progress?.train_loss || 0).toFixed(4)}`"></span>
+                    </div>
+                    <div class="w-full bg-neutral-200 rounded-full h-2">
+                        <div class="bg-blue-500 h-2 rounded-full transition-all"
+                             :style="`width: ${job.progress?.total_steps ? (job.progress.step / job.progress.total_steps * 100) : 0}%`"></div>
+                    </div>
+                </div>
+                <!-- Error message -->
+                <div x-show="job.status === 'failed' && job.error" class="text-sm text-red-600 bg-red-50 rounded-lg p-3">
+                    <span x-text="job.error"></span>
+                </div>
+            </div>
+        </template>
+    </div>
+
+    <!-- Adapters Tab -->
+    <div x-show="fineTuneTab === 'adapters'" class="space-y-4">
+        <div class="flex items-center gap-3 mb-2">
+            <label class="text-sm text-neutral-500">{{ t('fine_tune.filter_model') }}</label>
+            <select x-model="ftAdapterModelFilter" @change="loadFineTuneAdapters()"
+                    class="text-sm border border-neutral-300 rounded-lg px-3 py-1.5">
+                <option value="">{{ t('fine_tune.all_models') }}</option>
+                <template x-for="m in ftModels" :key="m.model_id">
+                    <option :value="m.model_id" x-text="m.model_id"></option>
+                </template>
+            </select>
+        </div>
+        <div x-show="ftAdapters.length === 0" class="text-center py-12 text-neutral-400">
+            <i data-lucide="folder-open" class="w-12 h-12 mx-auto mb-3 opacity-50"></i>
+            <p>{{ t('fine_tune.no_adapters') }}</p>
+        </div>
+        <template x-for="a in ftAdapters" :key="a.adapter_path">
+            <div class="bg-white rounded-xl border border-neutral-200 p-5 space-y-3">
+                <div class="flex items-center justify-between">
+                    <div>
+                        <span class="font-medium" x-text="a.adapter_name"></span>
+                        <span class="text-sm text-neutral-500 ml-2" x-text="a.model_id"></span>
+                    </div>
+                    <div class="flex items-center gap-2">
+                        <button x-show="a.has_weights"
+                                @click="serveFineTuneAdapter(a.model_id, a.adapter_name)"
+                                class="px-3 py-1 text-xs font-medium text-blue-600 hover:bg-blue-50 rounded-lg transition-all">
+                            {{ t('fine_tune.serve') }}
+                        </button>
+                        <button @click="unloadFineTuneAdapter(a.model_id, a.adapter_name)"
+                                class="px-3 py-1 text-xs font-medium text-orange-600 hover:bg-orange-50 rounded-lg transition-all">
+                            {{ t('fine_tune.unload') }}
+                        </button>
+                        <button @click="deleteFineTuneAdapter(a.model_id, a.adapter_name)"
+                                class="px-3 py-1 text-xs font-medium text-red-600 hover:bg-red-50 rounded-lg transition-all">
+                            {{ t('fine_tune.delete') }}
+                        </button>
+                    </div>
+                </div>
+                <div class="grid grid-cols-3 gap-2 text-sm">
+                    <div>
+                        <span class="text-neutral-500">{{ t('fine_tune.type') }}:</span>
+                        <span x-text="a.fine_tune_type || '-'"></span>
+                    </div>
+                    <div>
+                        <span class="text-neutral-500">{{ t('fine_tune.rank') }}:</span>
+                        <span x-text="a.lora_rank || '-'"></span>
+                    </div>
+                    <div>
+                        <span class="text-neutral-500">{{ t('fine_tune.layers') }}:</span>
+                        <span x-text="a.lora_layers || '-'"></span>
+                    </div>
+                </div>
+                <div class="flex items-center gap-2 text-xs">
+                    <span x-show="a.has_weights" class="text-green-600 flex items-center gap-1">
+                        <i data-lucide="check-circle" class="w-3 h-3"></i> weights
+                    </span>
+                    <span x-show="a.has_config" class="text-green-600 flex items-center gap-1">
+                        <i data-lucide="check-circle" class="w-3 h-3"></i> config
+                    </span>
+                </div>
+            </div>
+        </template>
+    </div>
+
+    <!-- New Job Tab -->
+    <div x-show="fineTuneTab === 'new'" class="space-y-5">
+        <div class="bg-white rounded-xl border border-neutral-200 p-6 space-y-5">
+            <!-- Model selection -->
+            <div>
+                <label class="block text-sm font-medium text-neutral-700 mb-1.5">{{ t('fine_tune.model') }}</label>
+                <select x-model="ftForm.model_id"
+                        class="w-full border border-neutral-300 rounded-lg px-3 py-2 text-sm">
+                    <option value="" disabled>{{ t('fine_tune.select_model') }}</option>
+                    <template x-for="m in ftModels" :key="m.model_id">
+                        <option :value="m.model_id" x-text="m.model_id"></option>
+                    </template>
+                </select>
+            </div>
+
+            <!-- Dataset path -->
+            <div>
+                <label class="block text-sm font-medium text-neutral-700 mb-1.5">{{ t('fine_tune.dataset') }}</label>
+                <input type="text" x-model="ftForm.dataset"
+                       :placeholder="t('fine_tune.dataset_placeholder')"
+                       class="w-full border border-neutral-300 rounded-lg px-3 py-2 text-sm">
+            </div>
+
+            <!-- Adapter name -->
+            <div>
+                <label class="block text-sm font-medium text-neutral-700 mb-1.5">{{ t('fine_tune.adapter_name') }}</label>
+                <input type="text" x-model="ftForm.adapter_name"
+                       :placeholder="t('fine_tune.adapter_name_placeholder')"
+                       class="w-full border border-neutral-300 rounded-lg px-3 py-2 text-sm">
+            </div>
+
+            <!-- Config grid -->
+            <div class="grid grid-cols-2 md:grid-cols-3 gap-4">
+                <div>
+                    <label class="block text-xs font-medium text-neutral-500 mb-1">{{ t('fine_tune.type') }}</label>
+                    <select x-model="ftForm.config.fine_tune_type"
+                            class="w-full border border-neutral-300 rounded-lg px-2 py-1.5 text-sm">
+                        <option value="lora">LoRA</option>
+                        <option value="dora">DoRA</option>
+                    </select>
+                </div>
+                <div>
+                    <label class="block text-xs font-medium text-neutral-500 mb-1">{{ t('fine_tune.rank') }}</label>
+                    <input type="number" x-model.number="ftForm.config.lora_rank" min="1" max="128"
+                           class="w-full border border-neutral-300 rounded-lg px-2 py-1.5 text-sm">
+                </div>
+                <div>
+                    <label class="block text-xs font-medium text-neutral-500 mb-1">{{ t('fine_tune.layers') }}</label>
+                    <input type="number" x-model.number="ftForm.config.lora_layers" min="1" max="64"
+                           class="w-full border border-neutral-300 rounded-lg px-2 py-1.5 text-sm">
+                </div>
+                <div>
+                    <label class="block text-xs font-medium text-neutral-500 mb-1">{{ t('fine_tune.alpha') }}</label>
+                    <input type="number" x-model.number="ftForm.config.lora_alpha" step="1"
+                           class="w-full border border-neutral-300 rounded-lg px-2 py-1.5 text-sm">
+                </div>
+                <div>
+                    <label class="block text-xs font-medium text-neutral-500 mb-1">{{ t('fine_tune.learning_rate') }}</label>
+                    <input type="text" x-model="ftForm.config.learning_rate"
+                           class="w-full border border-neutral-300 rounded-lg px-2 py-1.5 text-sm">
+                </div>
+                <div>
+                    <label class="block text-xs font-medium text-neutral-500 mb-1">{{ t('fine_tune.batch_size') }}</label>
+                    <input type="number" x-model.number="ftForm.config.batch_size" min="1" max="32"
+                           class="w-full border border-neutral-300 rounded-lg px-2 py-1.5 text-sm">
+                </div>
+                <div>
+                    <label class="block text-xs font-medium text-neutral-500 mb-1">{{ t('fine_tune.iters') }}</label>
+                    <input type="number" x-model.number="ftForm.config.iters" min="1"
+                           class="w-full border border-neutral-300 rounded-lg px-2 py-1.5 text-sm">
+                </div>
+                <div>
+                    <label class="block text-xs font-medium text-neutral-500 mb-1">{{ t('fine_tune.max_seq_length') }}</label>
+                    <input type="number" x-model.number="ftForm.config.max_seq_length" min="128"
+                           class="w-full border border-neutral-300 rounded-lg px-2 py-1.5 text-sm">
+                </div>
+                <div>
+                    <label class="block text-xs font-medium text-neutral-500 mb-1">{{ t('fine_tune.optimizer') }}</label>
+                    <select x-model="ftForm.config.optimizer"
+                            class="w-full border border-neutral-300 rounded-lg px-2 py-1.5 text-sm">
+                        <option value="adamw">AdamW</option>
+                        <option value="adam">Adam</option>
+                        <option value="sgd">SGD</option>
+                        <option value="adafactor">Adafactor</option>
+                    </select>
+                </div>
+            </div>
+
+            <!-- Submit -->
+            <div class="flex justify-end">
+                <button @click="submitFineTuneJob()"
+                        :disabled="!ftForm.model_id || !ftForm.dataset || ftSubmitting"
+                        class="px-6 py-2.5 bg-blue-600 text-white text-sm font-medium rounded-lg
+                               hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-all">
+                    <span x-show="!ftSubmitting">{{ t('fine_tune.start_training') }}</span>
+                    <span x-show="ftSubmitting" class="flex items-center gap-2">
+                        <svg class="animate-spin w-4 h-4" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" fill="none"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
+                        {{ t('fine_tune.submitting') }}
+                    </span>
+                </button>
+            </div>
+        </div>
+    </div>
+</div>

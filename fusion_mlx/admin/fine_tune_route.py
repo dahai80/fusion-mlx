@@ -14,6 +14,8 @@ Affected API:
   GET    /admin/api/fine-tune/jobs/{id}/stream   — SSE progress stream
   GET    /admin/api/fine-tune/adapters           — list saved adapters
   DELETE /admin/api/fine-tune/adapters           — delete adapter
+  POST   /admin/api/fine-tune/adapters/{model_id}/{adapter_name}/serve  — serve adapter via EnginePool
+  POST   /admin/api/fine-tune/adapters/{model_id}/{adapter_name}/unload — unload adapter engine
   GET    /admin/api/fine-tune/models             — list fine-tunable models
 
 Data schemas: FineTuneConfig, FineTuneProgress, FineTuneJob (from fusion_mlx.training.service)
@@ -43,9 +45,12 @@ def set_fine_tune_context(pool, service=None):
     global _engine_pool_ref, _fine_tune_service
     _engine_pool_ref = pool
     _fine_tune_service = service
+    if service is not None and pool is not None:
+        service.set_engine_pool(pool)
 
 
 def _get_service():
+    global _fine_tune_service
     if _fine_tune_service is None:
         from fusion_mlx.training.service import FineTuneService
         _fine_tune_service = FineTuneService()
@@ -228,6 +233,43 @@ async def delete_adapter(
     if not svc.delete_adapter(model_id, adapter_name):
         raise HTTPException(status_code=404, detail="Adapter not found")
     return {"status": "deleted"}
+
+
+# =============================================================================
+# Adapter Serving (hot-swap via EnginePool)
+# =============================================================================
+
+
+@_router.post("/api/fine-tune/adapters/{model_id}/{adapter_name}/serve")
+async def serve_adapter(
+    model_id: str,
+    adapter_name: str,
+    is_admin: bool = Depends(require_admin),
+):
+    svc = _get_service()
+    try:
+        result = await svc.serve_adapter(model_id, adapter_name)
+        return result
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except RuntimeError as e:
+        raise HTTPException(status_code=503, detail=str(e))
+
+
+@_router.post("/api/fine-tune/adapters/{model_id}/{adapter_name}/unload")
+async def unload_adapter(
+    model_id: str,
+    adapter_name: str,
+    is_admin: bool = Depends(require_admin),
+):
+    svc = _get_service()
+    ok = await svc.unload_adapter_engine(model_id, adapter_name)
+    if not ok:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Adapter engine not found or not loaded: {model_id}/{adapter_name}",
+        )
+    return {"status": "unloaded"}
 
 
 # =============================================================================

@@ -61,10 +61,11 @@
         'gemma4_unified_assistant',
         'qwen3_5_mtp',
     ]);
-    const DASHBOARD_MAIN_TABS = new Set(['status', 'settings', 'models', 'logs', 'bench']);
+    const DASHBOARD_MAIN_TABS = new Set(['status', 'settings', 'models', 'logs', 'bench', 'fineTune']);
     const DASHBOARD_SETTINGS_TABS = new Set(['global', 'integrations', 'models']);
     const DASHBOARD_MODELS_TABS = new Set(['manager', 'downloader', 'quantizer', 'uploader']);
     const DASHBOARD_BENCH_TABS = new Set(['throughput', 'accuracy']);
+    const DASHBOARD_FINETUNE_TABS = new Set(['jobs', 'adapters', 'new']);
 
     function dashboard() {
         return {
@@ -461,6 +462,29 @@
             benchTab: 'throughput',
             benchDropdown: false,
 
+            // Fine-tune state
+            fineTuneTab: 'jobs',
+            ftJobs: [],
+            ftAdapters: [],
+            ftModels: [],
+            ftAdapterModelFilter: '',
+            ftSubmitting: false,
+            ftForm: {
+                model_id: '',
+                dataset: '',
+                adapter_name: '',
+                config: {
+                    fine_tune_type: 'lora', lora_rank: 8, lora_layers: 16,
+                    lora_alpha: 16.0, lora_dropout: 0.0, optimizer: 'adamw',
+                    learning_rate: '1e-5', batch_size: 4, iters: 100,
+                    val_batches: 25, steps_per_report: 10, steps_per_eval: 200,
+                    steps_per_save: 100, max_seq_length: 2048,
+                    gradient_checkpointing: false, grad_accumulation_steps: 1,
+                    seed: 0, mask_prompt: false,
+                },
+            },
+            ftRefreshTimer: null,
+
             // Accuracy benchmark state
             accModelId: '',
             accBenchmarks: { mmlu: true, mmlu_pro: false, kmmlu: false, cmmlu: false, jmmlu: false, hellaswag: false, truthfulqa: true, arc_challenge: false, winogrande: false, gsm8k: false, mathqa: false, humaneval: true, mbpp: false, livecodebench: false, bbq: false, safetybench: false },
@@ -636,6 +660,11 @@
                     await this.loadBenchState();
                     await this.loadAccState();
                 }
+                if (value === 'fineTune') {
+                    await Promise.all([this.loadFineTuneJobs(), this.loadFineTuneAdapters(), this.loadFineTuneModels()]);
+                } else {
+                    this.stopFineTuneRefresh();
+                }
             },
 
             applyTabStateFromUrl() {
@@ -645,11 +674,13 @@
                 const modelsTab = params.get('modelsTab');
 
                 const benchTab = params.get('benchTab');
+                const fineTuneTab = params.get('fineTuneTab');
 
                 this.mainTab = DASHBOARD_MAIN_TABS.has(mainTab) ? mainTab : 'status';
                 this.activeTab = DASHBOARD_SETTINGS_TABS.has(settingsTab) ? settingsTab : 'global';
                 this.modelsTab = DASHBOARD_MODELS_TABS.has(modelsTab) ? modelsTab : 'manager';
                 this.benchTab = DASHBOARD_BENCH_TABS.has(benchTab) ? benchTab : 'throughput';
+                this.fineTuneTab = DASHBOARD_FINETUNE_TABS.has(fineTuneTab) ? fineTuneTab : 'jobs';
             },
 
             syncTabStateToUrl() {
@@ -672,6 +703,12 @@
                     url.searchParams.set('benchTab', this.benchTab);
                 } else {
                     url.searchParams.delete('benchTab');
+                }
+
+                if (this.mainTab === 'fineTune') {
+                    url.searchParams.set('fineTuneTab', this.fineTuneTab);
+                } else {
+                    url.searchParams.delete('fineTuneTab');
                 }
 
                 window.history.replaceState({}, '', url);
@@ -3170,6 +3207,13 @@
                 }
             },
 
+            setFineTuneTab(tab) {
+                if (!DASHBOARD_FINETUNE_TABS.has(tab)) return;
+                this.fineTuneTab = tab;
+                this.mainTab = 'fineTune';
+                this.syncTabStateToUrl();
+            },
+
             // Accuracy benchmark functions
 
             async loadAccState() {
@@ -5210,6 +5254,109 @@
                     clearTimeout(timeoutId);
                     this.msModelDetailLoading = false;
                 }
+            },
+
+            // =================================================================
+            // Fine-Tune (LoRA/DORA)
+            // =================================================================
+
+            async loadFineTuneJobs() {
+                try {
+                    const resp = await fetch('/admin/api/fine-tune/jobs');
+                    if (resp.ok) this.ftJobs = await resp.json();
+                } catch (e) { console.error('loadFineTuneJobs:', e); }
+            },
+
+            async loadFineTuneAdapters() {
+                try {
+                    const url = this.ftAdapterModelFilter
+                        ? `/admin/api/fine-tune/adapters?model_id=${encodeURIComponent(this.ftAdapterModelFilter)}`
+                        : '/admin/api/fine-tune/adapters';
+                    const resp = await fetch(url);
+                    if (resp.ok) this.ftAdapters = await resp.json();
+                } catch (e) { console.error('loadFineTuneAdapters:', e); }
+            },
+
+            async loadFineTuneModels() {
+                try {
+                    const resp = await fetch('/admin/api/fine-tune/models');
+                    if (resp.ok) this.ftModels = await resp.json();
+                } catch (e) { console.error('loadFineTuneModels:', e); }
+            },
+
+            async submitFineTuneJob() {
+                if (this.ftSubmitting) return;
+                this.ftSubmitting = true;
+                try {
+                    const body = {
+                        model_id: this.ftForm.model_id,
+                        dataset: this.ftForm.dataset,
+                        adapter_name: this.ftForm.adapter_name || undefined,
+                        config: { ...this.ftForm.config, learning_rate: parseFloat(this.ftForm.config.learning_rate) || 1e-5 },
+                    };
+                    const resp = await fetch('/admin/api/fine-tune/jobs', {
+                        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+                    });
+                    if (!resp.ok) {
+                        const err = await resp.json().catch(() => ({}));
+                        alert(err.detail || 'Failed to create job');
+                        return;
+                    }
+                    this.ftForm.model_id = ''; this.ftForm.dataset = ''; this.ftForm.adapter_name = '';
+                    this.fineTuneTab = 'jobs';
+                    this.syncTabStateToUrl();
+                    await this.loadFineTuneJobs();
+                    this.startFineTuneRefresh();
+                } catch (e) { console.error('submitFineTuneJob:', e); alert('Failed to submit job'); }
+                finally { this.ftSubmitting = false; }
+            },
+
+            async cancelFineTuneJob(jobId) {
+                try {
+                    await fetch(`/admin/api/fine-tune/jobs/${jobId}/cancel`, { method: 'POST' });
+                    await this.loadFineTuneJobs();
+                } catch (e) { console.error('cancelFineTuneJob:', e); }
+            },
+
+            async deleteFineTuneJob(jobId) {
+                try {
+                    await fetch(`/admin/api/fine-tune/jobs/${jobId}`, { method: 'DELETE' });
+                    await this.loadFineTuneJobs();
+                } catch (e) { console.error('deleteFineTuneJob:', e); }
+            },
+
+            async serveFineTuneAdapter(modelId, adapterName) {
+                try {
+                    const resp = await fetch(`/admin/api/fine-tune/adapters/${encodeURIComponent(modelId)}/${encodeURIComponent(adapterName)}/serve`, { method: 'POST' });
+                    if (!resp.ok) { const e = await resp.json().catch(() => ({})); alert(e.detail || 'Serve failed'); return; }
+                    alert(`Adapter ${adapterName} is now served`);
+                } catch (e) { console.error('serveFineTuneAdapter:', e); alert('Serve failed'); }
+            },
+
+            async unloadFineTuneAdapter(modelId, adapterName) {
+                try {
+                    await fetch(`/admin/api/fine-tune/adapters/${encodeURIComponent(modelId)}/${encodeURIComponent(adapterName)}/unload`, { method: 'POST' });
+                } catch (e) { console.error('unloadFineTuneAdapter:', e); }
+            },
+
+            async deleteFineTuneAdapter(modelId, adapterName) {
+                if (!confirm(`Delete adapter ${adapterName}?`)) return;
+                try {
+                    await fetch('/admin/api/fine-tune/adapters', {
+                        method: 'DELETE', headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ model_id: modelId, adapter_name: adapterName }),
+                    });
+                    await this.loadFineTuneAdapters();
+                } catch (e) { console.error('deleteFineTuneAdapter:', e); }
+            },
+
+            startFineTuneRefresh() {
+                this.stopFineTuneRefresh();
+                this.ftRefreshTimer = setInterval(() => this.loadFineTuneJobs(), 5000);
+            },
+
+            stopFineTuneRefresh() {
+                if (this.ftRefreshTimer) { clearInterval(this.ftRefreshTimer); this.ftRefreshTimer = null; }
             },
         }
     }

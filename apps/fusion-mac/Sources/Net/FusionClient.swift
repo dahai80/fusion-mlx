@@ -521,6 +521,74 @@ final class FusionClient: ObservableObject {
         try await get(AdminAPI.fineTuneModels)
     }
 
+    func serveFineTuneAdapter(modelId: String, adapterName: String) async throws -> [String: String] {
+        try await postEmpty(AdminAPI.fineTuneAdapterServe(modelId, adapterName))
+    }
+
+    func unloadFineTuneAdapter(modelId: String, adapterName: String) async throws -> SimpleStatusResponse {
+        try await postEmpty(AdminAPI.fineTuneAdapterUnload(modelId, adapterName))
+    }
+
+    /// SSE stream for a fine-tune job. Yields parsed `FineTuneProgressDTO` dicts
+    /// as the server emits `data: {...}` events. Terminates when the server
+    /// closes the stream (job completed/failed/cancelled) or on network error.
+    /// Callers run this in a Task and cancel it to disconnect.
+    func streamFineTuneJob(jobId: String) -> AsyncThrowingStream<[String: Any], Error> {
+        AsyncThrowingStream { continuation in
+            Task {
+                var components = URLComponents()
+                components.scheme = "http"
+                components.host = host
+                components.port = port
+                components.path = AdminAPI.fineTuneJobStream(jobId)
+                guard let url = components.url else {
+                    continuation.finish(throwing: FusionClientError.invalidURL)
+                    return
+                }
+
+                var req = URLRequest(url: url)
+                req.httpMethod = "GET"
+                req.setValue("text/event-stream", forHTTPHeaderField: "Accept")
+                req.setValue("no-cache", forHTTPHeaderField: "Cache-Control")
+                req.timeoutInterval = 0
+
+                do {
+                    let (bytes, resp) = try await session.bytes(for: req)
+                    guard let http = resp as? HTTPURLResponse else {
+                        continuation.finish(throwing: FusionClientError.invalidResponse)
+                        return
+                    }
+                    guard 200..<300 ~= http.statusCode else {
+                        continuation.finish(throwing: FusionClientError.http(
+                            status: http.statusCode,
+                            body: "SSE stream error"
+                        ))
+                        return
+                    }
+
+                    var buffer = ""
+                    for try await line in bytes.lines {
+                        if Task.isCancelled { break }
+                        if line.hasPrefix("data: ") {
+                            let jsonStr = String(line.dropFirst(6))
+                            if let data = jsonStr.data(using: .utf8),
+                               let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+                                continuation.yield(obj)
+                            }
+                        } else if line.hasPrefix(": ") {
+                            continue
+                        } else if line.isEmpty {
+                            buffer.removeAll()
+                        }
+                    }
+                    continuation.finish()
+                } catch {
+                    continuation.finish(throwing: error)
+                }
+            }
+        }
+    }
+
     // MARK: - Core request
 
     private func get<T: Decodable>(_ path: String, query: [URLQueryItem] = []) async throws -> T {

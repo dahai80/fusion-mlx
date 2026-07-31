@@ -43,7 +43,9 @@ struct FineTuneScreen: View {
             if !vm.adapters.isEmpty {
                 AdaptersSection(
                     adapters: vm.adapters,
-                    onDelete: { mid, aname in vm.deleteAdapter(client: services.client, modelId: mid, adapterName: aname) }
+                    onDelete: { mid, aname in vm.deleteAdapter(client: services.client, modelId: mid, adapterName: aname) },
+                    onServe: { mid, aname in vm.serveAdapter(client: services.client, modelId: mid, adapterName: aname) },
+                    onUnload: { mid, aname in vm.unloadAdapter(client: services.client, modelId: mid, adapterName: aname) }
                 )
             }
         }
@@ -57,6 +59,7 @@ private struct ConfigSection: View {
     @Bindable var vm: FineTuneScreenVM
     let client: FusionClient
     @State private var advancedOpen = false
+    @State private var showDatasetPicker = false
     @Environment(\.fusionTheme) private var theme
 
     var body: some View {
@@ -95,9 +98,33 @@ private struct ConfigSection: View {
                                  defaultValue: "Local path or HuggingFace repo ID",
                                  comment: "Sublabel for dataset path")
             ) {
-                TextField("", text: $vm.datasetPath)
-                    .textFieldStyle(.roundedBorder)
-                    .frame(width: 320)
+                HStack(spacing: 6) {
+                    TextField("", text: $vm.datasetPath)
+                        .textFieldStyle(.roundedBorder)
+                        .frame(width: 290)
+                    Button {
+                        showDatasetPicker = true
+                    } label: {
+                        Image(systemName: "folder")
+                            .font(.system(size: 11))
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    .fileImporter(
+                        isPresented: $showDatasetPicker,
+                        allowedContentTypes: [.jsonl, .json, .directory],
+                        allowsMultipleSelection: false
+                    ) { result in
+                        switch result {
+                        case .success(let urls):
+                            if let url = urls.first {
+                                vm.datasetPath = url.path
+                            }
+                        case .failure:
+                            break
+                        }
+                    }
+                }
             }
 
             Row(
@@ -467,6 +494,8 @@ private struct JobRow: View {
 private struct AdaptersSection: View {
     let adapters: [FineTuneAdapterDTO]
     let onDelete: (String, String) -> Void
+    let onServe: (String, String) -> Void
+    let onUnload: (String, String) -> Void
     @Environment(\.fusionTheme) private var theme
 
     var body: some View {
@@ -481,7 +510,7 @@ private struct AdaptersSection: View {
 
         ListGroup {
             ForEach(adapters) { adapter in
-                AdapterRow(adapter: adapter, onDelete: onDelete)
+                AdapterRow(adapter: adapter, onDelete: onDelete, onServe: onServe, onUnload: onUnload)
             }
         }
     }
@@ -490,6 +519,8 @@ private struct AdaptersSection: View {
 private struct AdapterRow: View {
     let adapter: FineTuneAdapterDTO
     let onDelete: (String, String) -> Void
+    let onServe: (String, String) -> Void
+    let onUnload: (String, String) -> Void
     @Environment(\.fusionTheme) private var theme
 
     var body: some View {
@@ -537,6 +568,20 @@ private struct AdapterRow: View {
 
             Spacer(minLength: 0)
 
+            if adapter.has_weights {
+                Button { onServe(adapter.model_id, adapter.adapter_name) } label: {
+                    Image(systemName: "bolt.circle")
+                        .font(.system(size: 10))
+                        .foregroundStyle(.blue)
+                }
+                .buttonStyle(.plain)
+            }
+            Button { onUnload(adapter.model_id, adapter.adapter_name) } label: {
+                Image(systemName: "eject.circle")
+                    .font(.system(size: 10))
+                    .foregroundStyle(.orange)
+            }
+            .buttonStyle(.plain)
             Button {
                 onDelete(adapter.model_id, adapter.adapter_name)
             } label: {

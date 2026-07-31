@@ -242,6 +242,7 @@ class FineTuneService:
         self._loop: asyncio.AbstractEventLoop | None = None
         self._engine_pool = None
         self._running = False
+        self._load_jobs()
 
     def set_engine_pool(self, pool):
         self._engine_pool = pool
@@ -273,6 +274,7 @@ class FineTuneService:
         )
         self._jobs[job.job_id] = job
         self._queue.append(job.job_id)
+        self._persist_jobs()
         logger.info(
             f"Fine-tune job created: {job.job_id} model={model_id} "
             f"adapter={adapter_name} queued={len(self._queue)}"
@@ -295,6 +297,7 @@ class FineTuneService:
             if job_id in self._queue:
                 self._queue.remove(job_id)
             self._notify_job(job)
+            self._persist_jobs()
             logger.info(f"Fine-tune job cancelled (queued): {job_id}")
             return True
         if job.status == JobStatus.RUNNING:
@@ -303,6 +306,7 @@ class FineTuneService:
             job.finished_at = time.time()
             self._current_job_id = None
             self._notify_job(job)
+            self._persist_jobs()
             self._process_queue()
             logger.info(f"Fine-tune job cancelled (running): {job_id}")
             return True
@@ -317,6 +321,7 @@ class FineTuneService:
         self._jobs.pop(job_id, None)
         if job_id in self._queue:
             self._queue.remove(job_id)
+        self._persist_jobs()
         logger.info(f"Fine-tune job deleted: {job_id}")
         return True
 
@@ -352,6 +357,7 @@ class FineTuneService:
         self._current_job_id = job_id
         job.status = JobStatus.RUNNING
         job.started_at = time.time()
+        self._persist_jobs()
         self._notify_job(job)
 
         if self._loop is None:
@@ -373,6 +379,7 @@ class FineTuneService:
             job.error = str(exc)
             job.terminal = True
             job.finished_at = time.time()
+            self._persist_jobs()
             self._notify_job(job)
         finally:
             self._current_job_id = None
@@ -513,6 +520,7 @@ class FineTuneService:
             "adapter_path": str(adapter_path),
             "adapter_file": str(adapter_file),
         })
+        self._persist_jobs()
         self._notify_job(job)
 
         # Cleanup: free GPU memory
@@ -578,6 +586,43 @@ class FineTuneService:
             return str(adapter_dir)
         return None
 
+    async def serve_adapter(self, model_id: str, adapter_name: str) -> dict:
+        adapter_path = self.get_adapter_path(model_id, adapter_name)
+        if adapter_path is None:
+            raise ValueError(f"Adapter not found: {model_id}/{adapter_name}")
+        weights = Path(adapter_path) / "adapters.safetensors"
+        if not weights.exists():
+            raise ValueError(f"Adapter weights missing: {weights}")
+        if self._engine_pool is None:
+            raise RuntimeError("Engine pool not initialized")
+        engine = await self._engine_pool.get_engine(
+            model_id, adapter_path=adapter_path
+        )
+        derived_key = f"{model_id}::lora::{adapter_path}"
+        logger.info(f"Serving adapter {model_id}/{adapter_name} as {derived_key}")
+        return {
+            "served_model_id": derived_key,
+            "base_model_id": model_id,
+            "adapter_name": adapter_name,
+            "adapter_path": adapter_path,
+        }
+
+    async def unload_adapter_engine(
+        self, model_id: str, adapter_name: str
+    ) -> bool:
+        adapter_path = self.get_adapter_path(model_id, adapter_name)
+        if adapter_path is None:
+            return False
+        if self._engine_pool is None:
+            return False
+        derived_key = f"{model_id}::lora::{adapter_path}"
+        entry = self._engine_pool.get_entry(derived_key)
+        if entry is None or entry.engine is None:
+            return False
+        await self._engine_pool.unload_engine_async(derived_key)
+        logger.info(f"Unloaded adapter engine: {derived_key}")
+        return True
+
     # =========================================================================
     # Helpers
     # =========================================================================
@@ -615,3 +660,62 @@ class FineTuneService:
                 job.cond.notify_all()
         if self._loop and self._loop.is_running():
             asyncio.ensure_future(_do(), loop=self._loop)
+
+    # =========================================================================
+    # Job persistence
+    # =========================================================================
+
+    @property
+    def _jobs_file(self) -> Path:
+        return ADAPTER_BASE_DIR / "jobs.json"
+
+    def _persist_jobs(self):
+        ADAPTER_BASE_DIR.mkdir(parents=True, exist_ok=True)
+        data = []
+        for job in self._jobs.values():
+            data.append(job.to_dict())
+        try:
+            with open(self._jobs_file, "w") as f:
+                json.dump(data, f, indent=2)
+            logger.debug(f"Persisted {len(data)} jobs to {self._jobs_file}")
+        except Exception as exc:
+            logger.warning(f"Failed to persist jobs: {exc}")
+
+    def _load_jobs(self):
+        if not self._jobs_file.exists():
+            return
+        try:
+            with open(self._jobs_file) as f:
+                data = json.load(f)
+        except Exception as exc:
+            logger.warning(f"Failed to load jobs: {exc}")
+            return
+        for item in data:
+            try:
+                config_data = item.get("config", {})
+                config = FineTuneConfig(**config_data)
+                progress_data = item.get("progress", {})
+                progress = FineTuneProgress(**progress_data)
+                status_str = item.get("status", "queued")
+                status = JobStatus(status_str)
+                if status in (JobStatus.RUNNING, JobStatus.QUEUED):
+                    status = JobStatus.CANCELLED
+                job = FineTuneJob(
+                    job_id=item.get("job_id", uuid.uuid4().hex[:12]),
+                    model_id=item.get("model_id", ""),
+                    dataset=item.get("dataset", ""),
+                    config=config,
+                    status=status,
+                    progress=progress,
+                    created_at=item.get("created_at", 0.0),
+                    started_at=item.get("started_at"),
+                    finished_at=item.get("finished_at"),
+                    adapter_path=item.get("adapter_path", ""),
+                    adapter_name=item.get("adapter_name", ""),
+                    error=item.get("error", ""),
+                    terminal=status in (JobStatus.COMPLETED, JobStatus.FAILED, JobStatus.CANCELLED),
+                )
+                self._jobs[job.job_id] = job
+            except Exception as exc:
+                logger.warning(f"Failed to load job entry: {exc}")
+        logger.info(f"Loaded {len(self._jobs)} persisted jobs")

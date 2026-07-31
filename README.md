@@ -802,6 +802,8 @@ Train LoRA or DORA adapters on any loaded model using `mlx_lm.tuner` under the h
 | DELETE | `/admin/api/fine-tune/jobs/{id}` | Delete a job record |
 | GET | `/admin/api/fine-tune/adapters` | List saved adapters |
 | DELETE | `/admin/api/fine-tune/adapters` | Delete an adapter |
+| POST | `/admin/api/fine-tune/adapters/{model_id}/{adapter_name}/serve` | Serve adapter via EnginePool |
+| POST | `/admin/api/fine-tune/adapters/{model_id}/{adapter_name}/unload` | Unload adapter engine |
 | GET | `/admin/api/fine-tune/models` | List fine-tunable models |
 
 ### Quick Example
@@ -831,6 +833,12 @@ curl -N http://localhost:8000/admin/api/fine-tune/jobs/{job_id}/stream
 
 # List saved adapters
 curl http://localhost:8000/admin/api/fine-tune/adapters
+
+# Serve a trained adapter for inference
+curl -X POST http://localhost:8000/admin/api/fine-tune/adapters/qwen3.5-9b/my-lora/serve
+
+# Unload adapter when done
+curl -X POST http://localhost:8000/admin/api/fine-tune/adapters/qwen3.5-9b/my-lora/unload
 ```
 
 ### Key Behaviors
@@ -838,8 +846,10 @@ curl http://localhost:8000/admin/api/fine-tune/adapters
 - **1 concurrent job** — Apple Silicon memory constraints; additional jobs queue automatically
 - **Model eviction** — training evicts the target model from the inference pool; it reloads after completion
 - **Adapter storage** — `~/.fusion-mlx/adapters/{model_id}/{adapter_name}/` with `adapters.safetensors` + `adapter_config.json`
+- **Adapter serving** — hot-swap trained adapters into the EnginePool for inference without restart; `serve` loads, `unload` frees
 - **SSE progress** — real-time metrics: train/val loss, learning rate, tok/s, peak memory, ETA
-- **macOS App** — dedicated Fine-Tune screen with configuration form, live progress bar, job list, and adapter management
+- **Job persistence** — jobs survive server restarts (stored in `~/.fusion-mlx/fine_tune_jobs.json`); stale RUNNING/QUEUED jobs auto-cancelled on reload
+- **macOS App** — dedicated Fine-Tune screen with configuration form, dataset file picker, SSE live progress bar, job list, and adapter management
 
 ## Performance
 

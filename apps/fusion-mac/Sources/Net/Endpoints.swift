@@ -106,5 +106,7 @@ enum AdminAPI {
     static func fineTuneJobCancel(_ id: String) -> String { "\(prefix)/fine-tune/jobs/\(id)/cancel" }
     static func fineTuneJobStream(_ id: String) -> String { "\(prefix)/fine-tune/jobs/\(id)/stream" }
     static let fineTuneAdapters     = "\(prefix)/fine-tune/adapters"
+    static func fineTuneAdapterServe(_ modelId: String, _ name: String) -> String { "\(prefix)/fine-tune/adapters/\(modelId)/\(name)/serve" }
+    static func fineTuneAdapterUnload(_ modelId: String, _ name: String) -> String { "\(prefix)/fine-tune/adapters/\(modelId)/\(name)/unload" }
     static let fineTuneModels       = "\(prefix)/fine-tune/models"
 }

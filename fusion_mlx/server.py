@@ -1072,6 +1072,21 @@ class Server:
         _fine_tune_svc.set_loop(asyncio.get_running_loop())
         set_fine_tune_context(self.pool, _fine_tune_svc)
 
+        # Auto-add adapters dir to FUSION_LORA_ALLOWED_DIRS so trained
+        # adapters can be served via EnginePool hot-swap without manual env config
+        import os
+        from pathlib import Path as _P
+        _adapters_dir = str(_P.home() / ".fusion-mlx" / "adapters")
+        _allowed = os.environ.get("FUSION_LORA_ALLOWED_DIRS", "")
+        if _allowed:
+            _dirs = [d.strip() for d in _allowed.split(":") if d.strip()]
+        else:
+            _dirs = []
+        if _adapters_dir not in _dirs:
+            _dirs.append(_adapters_dir)
+            os.environ["FUSION_LORA_ALLOWED_DIRS"] = ":".join(_dirs)
+            logger.info("Added %s to FUSION_LORA_ALLOWED_DIRS", _adapters_dir)
+
         # Wire admin getters so require_admin can access global settings/auth
         set_admin_getters(
             state_getter=lambda: _server_state,
