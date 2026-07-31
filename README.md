@@ -6,7 +6,7 @@
 
 Drop-in replacement for Ollama / vLLM - runs natively on Metal via MLX
 
-[![Version](https://img.shields.io/badge/v0.5.7-blue.svg)](https://github.com/dahai80/fusion-mlx/releases)
+[![Version](https://img.shields.io/badge/v0.6.2-blue.svg)](https://github.com/dahai80/fusion-mlx/releases)
 [![Python](https://img.shields.io/badge/Python-3.11+-3776AB.svg)](https://www.python.org/)
 [![License](https://img.shields.io/badge/License-Apache--2.0-green.svg)](LICENSE)
 [![Tests](https://img.shields.io/badge/Tests-1200+-success.svg)](tests/)
@@ -129,23 +129,23 @@ uv tool install fusion-mlx
 pip install fusion-mlx
 ```
 
-### Usage
+### First Run
 
 ```bash
-# Interactive chat REPL (auto-selects model by RAM)
-fusion-mlx chat
-
-# Start OpenAI-compatible server
-fusion-mlx serve --model-dir ~/.cache/huggingface
-
-# Or serve a specific model
-fusion-mlx serve qwen3.5-9b-4bit
-
-# Check environment health
+# 1. Check your environment (no model load, <5s)
 fusion-mlx doctor
 
-# List available models
+# 2. Chat right away — spawns a server, picks a model by RAM
+fusion-mlx chat
+
+# 3. Or serve a specific model on port 8000
+fusion-mlx serve qwen3.5-9b-4bit
+
+# 4. List all available model aliases
 fusion-mlx models
+
+# 5. Upgrade to the latest version
+fusion-mlx upgrade
 ```
 
 ### Chat API
@@ -185,6 +185,196 @@ resp = client.messages.create(
 )
 print(resp.content[0].text)
 ```
+
+## CLI Reference
+
+All subcommands support `--help` for full flag documentation. Shell tab completion is available (see [Tab Completion](#tab-completion)).
+
+### Core Commands
+
+| Command | Description |
+|---------|-------------|
+| `fusion-mlx serve <model>` | Start OpenAI/Anthropic-compatible server |
+| `fusion-mlx chat [model]` | Interactive chat REPL (alias: `run`) |
+| `fusion-mlx models` | List available model aliases |
+| `fusion-mlx models --cached` | List only locally-downloaded models (alias: `ls`) |
+| `fusion-mlx info <model>` | Show per-model profile (parsers, capability gates) |
+| `fusion-mlx bench <model>` | Run benchmark |
+| `fusion-mlx convert <model>` | Convert HuggingFace model to MLX format |
+| `fusion-mlx doctor` | Check environment health (Python, packages, HF cache, network) |
+
+### Model Management
+
+| Command | Description |
+|---------|-------------|
+| `fusion-mlx pull <model>` | Download a model to HuggingFace cache (no server needed) |
+| `fusion-mlx rm <model>` | Remove a cached model (`-y` skips confirmation) |
+| `fusion-mlx ps` | List running fusion-mlx servers |
+
+### Server Lifecycle
+
+Managed background server control (macOS app / Homebrew):
+
+| Command | Description |
+|---------|-------------|
+| `fusion-mlx start` | Start as a managed background server |
+| `fusion-mlx stop` | Stop the managed background server |
+| `fusion-mlx restart` | Restart the managed background server |
+
+All accept `--timeout <seconds>` (default 60). `start`/`restart` also accept `--no-wait`.
+
+### Chat REPL
+
+```bash
+# Default model (qwen3.5-4b-4bit)
+fusion-mlx chat
+
+# Specific model with reasoning mode
+fusion-mlx chat qwen3.5-9b-4bit --think
+
+# Custom system prompt and temperature
+fusion-mlx chat qwen3.5-9b-4bit --system "You are a poet." --temperature 0.9
+
+# Connect to an existing server instead of spawning one
+fusion-mlx chat qwen3.5-9b-4bit --port 8000
+fusion-mlx chat qwen3.5-9b-4bit --base-url http://192.168.1.100:8000
+```
+
+| Flag | Description |
+|------|-------------|
+| `--think` | Enable thinking/reasoning mode (default: off) |
+| `--system <prompt>` | System prompt prepended to conversation |
+| `--max-tokens <N>` | Max tokens per response (default: 2048; 4096 with --think) |
+| `--temperature <T>` | Sampling temperature (default: 0.7) |
+| `--port <PORT>` | Connect to existing server on 127.0.0.1:PORT |
+| `--base-url <URL>` | Connect to existing server at URL |
+| `--ready-timeout <S>` | Seconds to wait for spawned server (default: 600) |
+| `--response-timeout <S>` | Seconds to wait per response (default: 600) |
+
+### Serve
+
+```bash
+# Single model
+fusion-mlx serve qwen3.5-9b-4bit --port 8000
+
+# Multi-model server (auto-discovers all models in directory)
+fusion-mlx serve --model-dir ~/.cache/huggingface
+
+# macOS app style
+fusion-mlx serve --base-path ~/.fusion-mlx
+
+# With speculative decoding
+fusion-mlx serve qwen3.5-9b-4bit --enable-dspark
+
+# With KV cache quantization (4-bit, 4× less memory traffic)
+fusion-mlx serve qwen3.5-9b-4bit --kv-cache-turboquant
+```
+
+### Bench
+
+```bash
+# Freeform benchmark
+fusion-mlx bench qwen3.5-9b-4bit --num-prompts 10 --max-tokens 100
+
+# Standardized community benchmark (submit to bench.dpdns.org)
+fusion-mlx bench qwen3.5-9b-4bit --submit
+
+# Validation tiers: smoke / speed / harness / all
+fusion-mlx bench qwen3.5-9b-4bit --tier smoke
+fusion-mlx bench qwen3.5-9b-4bit --tier speed
+fusion-mlx bench qwen3.5-9b-4bit --tier all
+```
+
+| Flag | Description |
+|------|-------------|
+| `--submit` | Run standardized B=1 benchmark and submit to community leaderboard |
+| `--tier <tier>` | Validation tier: smoke / speed / harness / all |
+| `--base-url <URL>` | Attach to already-running server (for --tier) |
+| `--num-prompts <N>` | Number of prompts (default: 10) |
+| `--max-tokens <N>` | Max tokens per prompt (default: 100) |
+| `--kv-cache-quantization` | Quantize KV cache to reduce memory (8-bit default) |
+| `--kv-cache-quantization-bits` | 4 or 8 (default: 8) |
+| `--use-paged-cache` | Use paged KV cache (experimental) |
+| `--enable-prefix-cache` | Enable prefix caching (default: on) |
+| `--disable-prefix-cache` | Disable prefix caching |
+
+### Convert
+
+```bash
+# Convert with 4-bit quantization
+fusion-mlx convert qwen3.5-9b --quant-bits 4 -o ./qwen3.5-9b-4bit
+
+# Convert and upload to HuggingFace
+fusion-mlx convert mlx-community/Qwen3.5-9B --quant-bits 8 --upload-repo me/my-repo
+```
+
+This is **weight** quantization saved to disk, distinct from TurboQuant KV-cache compression (`--kv-cache-turboquant`), which is a runtime knob.
+
+### Upgrade
+
+Auto-detects your install method (brew / pip / install.sh) and runs the correct upgrade command:
+
+```bash
+fusion-mlx upgrade          # interactive confirmation
+fusion-mlx upgrade -y       # skip confirmation
+fusion-mlx upgrade --dry-run  # show what would run, then exit
+```
+
+### Agent Integrations
+
+```bash
+# List all available agent integrations
+fusion-mlx agents
+
+# Auto-configure an agent to use fusion-mlx
+fusion-mlx agents hermes --setup
+fusion-mlx agents codex --setup --model Qwen3-4B
+
+# Test an agent integration
+fusion-mlx agents hermes --test
+```
+
+### Share (SSH Tunnel)
+
+Expose your local server behind a public URL:
+
+```bash
+fusion-mlx share
+```
+
+Creates an SSH tunnel to `fusionmlx.com`, giving you a shareable public URL for your local server. Useful for testing webhooks, sharing demos, or remote access.
+
+### Telemetry
+
+Anonymous usage telemetry is **opt-in** — nothing is sent unless you explicitly enable it.
+
+```bash
+fusion-mlx telemetry status    # check current state
+fusion-mlx telemetry enable    # opt in
+fusion-mlx telemetry disable   # opt out
+fusion-mlx telemetry preview   # see exactly what would be sent
+fusion-mlx telemetry reset     # delete consent + client-id (re-prompts next run)
+```
+
+Per-run override: `fusion-mlx --no-telemetry serve ...` disables telemetry for that invocation.
+
+### Tab Completion
+
+Shell tab completion is powered by [argcomplete](https://github.com/kislyuk/argcomplete). After installing fusion-mlx:
+
+```bash
+# Bash
+eval "$(register-python-argcomplete fusion-mlx)"
+
+# Zsh
+autoload -U bashcompinit && bashcompinit
+eval "$(register-python-argcomplete fusion-mlx)"
+
+# Fish
+register-python-argcomplete fusion-mlx > ~/.config/fish/completions/fusion-mlx.fish
+```
+
+Then `fusion-mlx chat gemma-4-<TAB>` completes model aliases instantly.
 
 ## Supported Models
 
@@ -236,17 +426,6 @@ The macOS app offers a mode toggle between:
 | mxfp8 | MLX FP8 | 8.0 | baseline | conservative |
 
 **Recommended**: `mixed_3_4` or `quant2_all` for best quality/speed tradeoff. **Conservative**: `mixed_4_6` or `mxfp4` when quality is priority. **Aggressive**: `mixed_2_4` or `quant2` when maximizing speed on constrained memory.
-
-### Converting models
-
-Convert any HuggingFace model to MLX (optionally quantized) with the `convert` command - accepts a model alias or full HF repo:
-
-```bash
-fusion-mlx convert qwen3.5-9b --quant-bits 4 -o ./qwen3.5-9b-4bit
-fusion-mlx convert mlx-community/Qwen3.5-9B --quant-bits 8 --upload-repo me/my-repo
-```
-
-This is **weight** quantization saved to disk, distinct from TurboQuant KV-cache compression (`--kv-cache-turboquant`), which is a runtime knob. See [CLI Reference](docs/cli-reference.md).
 
 ## API Compatibility
 
@@ -749,42 +928,28 @@ FUSION_ASYNC_DENOISE=1 fusion-mlx serve --model SkyReels-V3-R2V-14B-MLX
 
 ## Project Structure
 
-### Speculative Denoise (#177)
-
-扩散模型版的 speculative decoding: 草稿 DiT (层剪枝, 跑前 M/N 个 transformer block + 共享 head) 顺序预测 K=3-5 步未来速度场, 完整 DiT 单次 batched forward 验证 K 步 (per-element timestep, Wan2/SkyReels DiT 原生支持 `t.ndim==1`), 接受最长一致前缀, 分歧处用完整速度场补一步 (bonus step, 永不卡住). 目标 14B 上 2-3x 加速.
-
-- 草稿协同加载: `LayerPrunedDraft(dit, n_blocks=M)` 复用同一份权重, 无需独立 draft checkpoint (MLX 量化非速度路径, 见 #166; 暂无 1B/3B SkyReels draft).
-- 验证: K 个 latent 在 K 个不同 timestep 上单次前向 (批 per-element timestep embedding), 接受 `||v_draft - v_full|| / ||v_full|| < epsilon` 的最长前缀.
-- 1 阶 Euler 推测环 (UniPC 2 阶 corrector 需上一步 full 输出, 推测模式旁路).
-- env: `FUSION_SPECULATIVE_DENOISE` (默认 `"0"` 关), `FUSION_SPEC_K` (默认 4), `FUSION_SPEC_EPSILON` (默认 0.1), `FUSION_SPEC_DRAFT_BLOCKS` (phase-2 已接线, 默认 `num_layers//4`).
-
-```bash
-# phase-1: 模块 + API + 合成 DiT 单元测试 (env-gated, 不改生产 denoise 环)
-# phase-2: R2V DiT forward_partial 接线 + 真 14B 接受率 sweep (负向结论, 见下)
-# 默认关, 不影响现有 SkyReels-V3 生成路径
-fusion-mlx serve --model SkyReels-V3-R2V-14B-MLX
-```
-
-> **范围 (phase-1 + phase-2)**: phase-1 落地推测去噪算法 + 草稿协同加载 API (`DraftDiTMixin.forward_partial` / `LayerPrunedDraft`) + 合成 DiT 单元测试, env-gated, **零生产风险**. phase-2 落地 R2V DiT `forward_partial` 接线 + 真 14B 接受率 sweep. **phase-2 实测结论 (负向)**: 层剪枝 draft 在安全 epsilon(0.1) 下接受率 0% (保留 25%-75% blocks), 仅保留 95% blocks 时出现接受但 draft 成本≈full 无加速且质量劣化(maxdiff 0.097); 放宽 epsilon 到 0.5 无效 (draft 速度场误差远超 0.5). #177 假设在 MLX SkyReels-V3 14B 上证伪: DiT 速度场需完整深度, 不可由子网络预测 (异于 LLM token 预测). 机制正确 (全拒绝时 spec==baseline Euler, 误差 7e-4), 保持落地 (env-gated 默认关, 零生产风险) 作为未来蒸馏小 draft 的基础设施. phase-3: fusion-comfyUI Stage API 接入. 详见 `fusion_mlx/video/skyreels_v3/SPECULATIVE_DENOISE.md`.
-
 ```
 fusion-mlx/
 ├── fusion_mlx/
 │    ├── api/             # OpenAI, Anthropic, Audio, Images, Videos, MCP, OpenClaw routes
 │    ├── cache/           # PagedCache, PagedSSDCache, PrefixCache
-│    ├── custom_kernels/  # MFA, TurboQuant, KV cache, xfuser attention
-│    ├── engines/         # 8 engine types (LLM, VLM, Embedding, etc.)
+│    ├── custom_kernels/  # MFA, TurboQuant, KV cache, xfuser attention, FlashKDA
+│    ├── engines/         # 9 engine types (LLM, VLM, Embedding, Reranker, STT, TTS, STS, ImageGen, VideoGen)
 │    ├── integrations/    # 15 integrations: Claude Code, Codex, Hermes, OpenCode, OpenClaw, OpenHands, Kilo Code, Factory Droid, Kimi Code, PydanticAI, smolagents, Copilot, ComfyUI, Pi, Qwen Code
 │    ├── parsers/         # Tool call parsers (Gemma, Harmony, Hermes, etc.)
 │    ├── pool/            # EnginePool, MemoryEnforcer, ModelDiscovery, PriorityScheduler
 │    ├── router/          # RequestRouter, CloudRouter, SmartRouter
 │    ├── scheduler/       # 25-module scheduler (admission, batching, cache, step, etc.)
 │    ├── speculative/     # SuffixDecoding, DFlash, DSpark, MTP, VLM MTP
+│    ├── telemetry/       # Opt-in anonymous usage telemetry (consent, emit, queue, redact, transport)
 │    ├── video/           # Pure-MLX video generation ports (LTX-2, Wan2, SkyReels-V3, PuLID, LatentSync, MuseTalk)
+│    ├── share/           # SSH tunnel public sharing (fusionmlx.com)
+│    ├── launch/          # One-shot IDE/agent config bootstrapper (15 adapters)
 │    └── admin/           # Web panel routes, benchmarking, downloads, settings
 ├── apps/fusion-mac/      # SwiftUI macOS app (~80 Swift files)
 ├── docs/                 # API reference, architecture, CLI guide, configuration
 ├── examples/             # 12 working code examples
+├── scripts/              # install.sh, benchmarks, weight conversion
 ├── tests/                # 1200+ tests (unit, GUI, integration, performance)
 └── downstream/           # Sync scripts for fusion-mlx and Rapid-MLX forks
 ```
