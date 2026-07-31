@@ -49,15 +49,24 @@ jobs:
             - run: pip install pytest-cov
             - name: Run unit tests with coverage
               run: |
-                  pytest tests/unit -v --tb=short --cov=fusion_mlx --cov-report=term-missing --cov-report=xml --cov-fail-under=40 2>&1 | tee pytest-output.txt
+                  pytest tests/unit -v --tb=short --cov=fusion_mlx --cov-report=term-missing --cov-report=xml --cov-fail-under=40 --junitxml=pytest-junit.xml 2>&1 | tee pytest-output.txt
             - name: Guard against excessive skips
+              if: always()
               run: |
-                  SKIPPED=$(grep -oE '[0-9]+ skipped' pytest-output.txt | tail -1 | grep -oE '[0-9]+' || echo 0)
-                  PASSED=$(grep -oE '[0-9]+ passed' pytest-output.txt | tail -1 | grep -oE '[0-9]+' || echo 0)
-                  TOTAL=$((PASSED + SKIPPED))
-                  if [ "$TOTAL" -eq 0 ]; then echo "ERROR: no tests collected"; exit 1; fi
-                  PCT=$((SKIPPED * 100 / TOTAL))
-                  echo "Skipped: ${SKIPPED}/${TOTAL} (${PCT}%)"
+                  # Parse junitxml for accurate counts (immune to log truncation)
+                  if [ -f pytest-junit.xml ]; then
+                    SKIPPED=$(python3 -c "from xml.etree.ElementTree import parse as _p; r=_p('pytest-junit.xml').getroot(); print(r.attrib.get('skipped','0'))" 2>/dev/null || echo 0)
+                    TESTS=$(python3 -c "from xml.etree.ElementTree import parse as _p; r=_p('pytest-junit.xml').getroot(); print(r.attrib.get('tests','0'))" 2>/dev/null || echo 0)
+                    PASSED=$((TESTS - SKIPPED))
+                  else
+                    # Fallback: grep from pytest output
+                    SKIPPED=$(grep -oE '[0-9]+ skipped' pytest-output.txt | tail -1 | grep -oE '[0-9]+' || echo 0)
+                    PASSED=$(grep -oE '[0-9]+ passed' pytest-output.txt | tail -1 | grep -oE '[0-9]+' || echo 0)
+                    TESTS=$((PASSED + SKIPPED))
+                  fi
+                  if [ "$TESTS" -eq 0 ]; then echo "ERROR: no tests collected"; exit 1; fi
+                  PCT=$((SKIPPED * 100 / TESTS))
+                  echo "Passed: ${PASSED}, Skipped: ${SKIPPED}/${TESTS} (${PCT}%)"
                   if [ "$PCT" -gt 10 ]; then
                     echo "FAIL: >10% tests skipped (${PCT}%) — CI provides false confidence"
                     exit 1
