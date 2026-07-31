@@ -517,9 +517,7 @@ def resolve_model_with_profile(model_id: str) -> tuple[str, dict[str, Any]]:
 
     sm = _server_state.get("settings_manager")
     if sm is None:
-        logger.debug(
-            "resolve_model_with_profile: no settings_manager, stripping profile"
-        )
+        logger.debug("resolve_model_with_profile: no settings_manager, stripping profile")
         base = model_id.split(":", 1)[0]
         return resolve_model_id(base), {}
 
@@ -527,23 +525,14 @@ def resolve_model_with_profile(model_id: str) -> tuple[str, dict[str, Any]]:
     if result is not None:
         base_model_id, profile_settings = result
         overrides = {}
-        for fname in (
-            "temperature",
-            "top_p",
-            "top_k",
-            "min_p",
-            "max_tokens",
-            "repetition_penalty",
-            "presence_penalty",
-        ):
+        for fname in ("temperature", "top_p", "top_k", "min_p",
+                       "max_tokens", "repetition_penalty", "presence_penalty"):
             val = getattr(profile_settings, fname, None)
             if val is not None:
                 overrides[fname] = val
         logger.info(
             "resolve_model_with_profile: %s -> base=%s, overrides=%s",
-            model_id,
-            base_model_id,
-            overrides,
+            model_id, base_model_id, overrides,
         )
         return resolve_model_id(base_model_id), overrides
 
@@ -1064,6 +1053,7 @@ class Server:
         _server_instance = self
         set_ollama_context(self.pool)
         set_openai_context(self.pool, self.request_router)
+        set_ollama_context(self.pool)
         set_anthropic_context(self.pool)
         set_images_context(self.pool)
         set_videos_context(self.pool)
@@ -1077,6 +1067,29 @@ class Server:
         set_reasoning_context(self.pool)
         set_sessions_context(self.pool, _server_state)
         set_models_context(self.pool)
+
+        # Wire fine-tune service
+        from .admin.fine_tune_route import set_fine_tune_context
+        from .training.service import FineTuneService
+        _fine_tune_svc = FineTuneService()
+        _fine_tune_svc.set_engine_pool(self.pool)
+        _fine_tune_svc.set_loop(asyncio.get_running_loop())
+        set_fine_tune_context(self.pool, _fine_tune_svc)
+
+        # Auto-add adapters dir to FUSION_LORA_ALLOWED_DIRS so trained
+        # adapters can be served via EnginePool hot-swap without manual env config
+        import os
+        from pathlib import Path as _P
+        _adapters_dir = str(_P.home() / ".fusion-mlx" / "adapters")
+        _allowed = os.environ.get("FUSION_LORA_ALLOWED_DIRS", "")
+        if _allowed:
+            _dirs = [d.strip() for d in _allowed.split(":") if d.strip()]
+        else:
+            _dirs = []
+        if _adapters_dir not in _dirs:
+            _dirs.append(_adapters_dir)
+            os.environ["FUSION_LORA_ALLOWED_DIRS"] = ":".join(_dirs)
+            logger.info("Added %s to FUSION_LORA_ALLOWED_DIRS", _adapters_dir)
 
         # Wire admin getters so require_admin can access global settings/auth
         set_admin_getters(

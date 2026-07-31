@@ -286,16 +286,17 @@ def _build_sampling_params(
     return SamplingParams(
         max_tokens=req.max_tokens or po.get("max_tokens") or 2048,
         temperature=(
-            req.temperature
-            if req.temperature is not None
+            req.temperature if req.temperature is not None
             else po.get("temperature", 0.7)
         ),
-        top_p=(req.top_p if req.top_p is not None else po.get("top_p", 0.9)),
+        top_p=(
+            req.top_p if req.top_p is not None
+            else po.get("top_p", 0.9)
+        ),
         top_k=getattr(req, "top_k", 0) or po.get("top_k") or 0,
         min_p=getattr(req, "min_p", 0.0) or po.get("min_p") or 0.0,
         presence_penalty=(
-            req.presence_penalty
-            if req.presence_penalty is not None
+            req.presence_penalty if req.presence_penalty is not None
             else po.get("presence_penalty", 0.0)
         ),
         frequency_penalty=(
@@ -471,9 +472,6 @@ async def _run_chat(
 
     messages = _messages_for_engine(request.messages, getattr(engine, "is_mllm", False))
     sampling = _build_sampling_params(request, profile_overrides=profile_overrides)
-    from .utils import cap_max_tokens_to_context
-
-    sampling.max_tokens = cap_max_tokens_to_context(sampling.max_tokens, model_name)
     request_id = f"chatcmpl-{uuid.uuid4().hex[:12]}"
 
     try:
@@ -591,10 +589,6 @@ async def _stream_chat_generator(
 
     messages = _messages_for_engine(request.messages, getattr(engine, "is_mllm", False))
     sampling = _build_sampling_params(request, profile_overrides=profile_overrides)
-    # Context scaling: cap max_tokens to model context window
-    from .utils import cap_max_tokens_to_context
-
-    sampling.max_tokens = cap_max_tokens_to_context(sampling.max_tokens, model_name)
     request_id = f"chatcmpl-{uuid.uuid4().hex[:12]}"
 
     # SSE keepalive: prevent client/proxy timeout during long inference
@@ -861,12 +855,8 @@ async def _stream_chat(
 
     return StreamingResponse(
         _stream_chat_generator(
-            request,
-            engine,
-            model_name,
-            adapter_path,
-            principal=principal,
-            profile_overrides=profile_overrides,
+            request, engine, model_name, adapter_path,
+            principal=principal, profile_overrides=profile_overrides,
         ),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},

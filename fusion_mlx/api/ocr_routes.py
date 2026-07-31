@@ -120,6 +120,24 @@ def _resolve_image_url(image_input: str) -> str:
     return f"data:{mime};base64,{b64}"
 
 
+@router.get(
+    "/ocr/models",
+    dependencies=[Depends(verify_api_key)],
+)
+async def list_ocr_models() -> dict[str, Any]:
+    if _pool is None:
+        raise HTTPException(status_code=503, detail="Server not initialized")
+    models = []
+    for engine in _pool.engines.values():
+        if isinstance(engine, VLMBatchedEngine) and engine.is_ocr_model:
+            models.append({
+                "id": engine.model_id,
+                "model_type": engine.model_type or "vlm_ocr",
+                "capabilities": ["chat", "vision", "ocr"],
+            })
+    return {"models": models}
+
+
 @router.post(
     "/ocr",
     dependencies=[Depends(verify_api_key), Depends(check_rate_limit)],

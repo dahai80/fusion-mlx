@@ -1,6 +1,8 @@
 # SPDX-License-Identifier: Apache-2.0
 """Tests for model:profile API syntax resolution."""
 
+import pytest
+
 
 def test_resolve_model_with_profile_no_colon():
     from fusion_mlx.server import resolve_model_with_profile
@@ -11,7 +13,7 @@ def test_resolve_model_with_profile_no_colon():
 
 
 def test_resolve_model_with_profile_no_settings_manager():
-    from fusion_mlx.server import _server_state, resolve_model_with_profile
+    from fusion_mlx.server import resolve_model_with_profile, _server_state
 
     saved = _server_state.pop("settings_manager", None)
     try:
@@ -33,7 +35,6 @@ def test_resolve_model_with_profile_alias():
 
 def test_build_sampling_params_openai_with_profile():
     from unittest.mock import MagicMock
-
     from fusion_mlx.api.openai_routes import _build_sampling_params
 
     req = MagicMock()
@@ -58,7 +59,6 @@ def test_build_sampling_params_openai_with_profile():
 
 def test_build_sampling_params_openai_request_takes_precedence():
     from unittest.mock import MagicMock
-
     from fusion_mlx.api.openai_routes import _build_sampling_params
 
     req = MagicMock()
@@ -83,7 +83,6 @@ def test_build_sampling_params_openai_request_takes_precedence():
 
 def test_build_sampling_params_anthropic_with_profile():
     from unittest.mock import MagicMock
-
     from fusion_mlx.api.anthropic_routes import _build_sampling_params
 
     req = MagicMock(spec=["max_tokens", "temperature", "top_p", "stop_sequences"])
@@ -101,7 +100,6 @@ def test_build_sampling_params_anthropic_with_profile():
 
 def test_build_sampling_params_anthropic_request_takes_precedence():
     from unittest.mock import MagicMock
-
     from fusion_mlx.api.anthropic_routes import _build_sampling_params
 
     req = MagicMock(spec=["max_tokens", "temperature", "top_p", "stop_sequences"])

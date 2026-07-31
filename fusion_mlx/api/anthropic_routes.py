@@ -290,9 +290,6 @@ async def _run_anthropic_messages(
         tools=getattr(req, "tools", None),
     )
     sampling = _build_sampling_params(req, profile_overrides=profile_overrides)
-    from .utils import cap_max_tokens_to_context
-
-    sampling.max_tokens = cap_max_tokens_to_context(sampling.max_tokens, model_name)
     request_id = f"msg-{uuid.uuid4().hex[:12]}"
 
     try:
@@ -427,9 +424,6 @@ async def _stream_anthropic_generator(
         tools=getattr(req, "tools", None),
     )
     sampling = _build_sampling_params(req, profile_overrides=profile_overrides)
-    from .utils import cap_max_tokens_to_context
-
-    sampling.max_tokens = cap_max_tokens_to_context(sampling.max_tokens, model_name)
     request_id = f"msg-{uuid.uuid4().hex[:12]}"
 
     # SSE keepalive: prevent client/proxy timeout during long inference
@@ -649,10 +643,7 @@ async def anthropic_messages(
 
             return StreamingResponse(
                 _stream_anthropic_generator(
-                    request,
-                    engine,
-                    model_name,
-                    adapter_path,
+                    request, engine, model_name, adapter_path,
                     profile_overrides=profile_overrides,
                 ),
                 media_type="text/event-stream",

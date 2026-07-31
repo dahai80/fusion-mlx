@@ -110,6 +110,7 @@ from .settings import router as settings_router
 from .stats import router as stats_router
 from .subkey import router as subkey_router
 from .update_check import router as update_check_router
+from .fine_tune_route import router as fine_tune_router  # callers: server.py set_fine_tune_context; routes: /admin/api/fine-tune/*
 
 # Register all sub-routers
 router.include_router(html_router)
@@ -130,6 +131,7 @@ router.include_router(update_check_router)
 router.include_router(oq_router)
 router.include_router(hf_upload_router)
 router.include_router(canvas_router)
+router.include_router(fine_tune_router)
 
 # Initialize canvas with templates
 init_canvas(templates)

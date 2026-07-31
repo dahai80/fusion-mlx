@@ -11,7 +11,7 @@ import SwiftUI
 enum AppSection: String, Hashable, CaseIterable, Identifiable, Sendable {
     case server, status, network, performance, logs
     case models, downloads, integrations, quantization
-    case throughputBench, accuracyBench
+    case throughputBench, accuracyBench, fineTune  // callers: AppView.swift screen(for:), SettingsSidebar; API: /admin/api/fine-tune/*
     case security, about
 
     var id: String { rawValue }
@@ -62,6 +62,10 @@ enum AppSection: String, Hashable, CaseIterable, Identifiable, Sendable {
             return String(localized: "sidebar.accuracyBench",
                           defaultValue: "Accuracy",
                           comment: "Sidebar row label / navigation title for the Accuracy benchmark section")
+        case .fineTune:
+            return String(localized: "sidebar.fineTune",
+                          defaultValue: "Fine-Tune",
+                          comment: "Sidebar row label / navigation title for the Fine-Tune section")
         case .security:
             return String(localized: "sidebar.security",
                           defaultValue: "Security",
@@ -86,6 +90,7 @@ enum AppSection: String, Hashable, CaseIterable, Identifiable, Sendable {
         case .quantization:    return "sparkles"
         case .throughputBench: return "speedometer"
         case .accuracyBench:   return "target"
+        case .fineTune:        return "brain.head.profile"
         case .security:        return "lock"
         case .about:           return "info.circle"
         }
