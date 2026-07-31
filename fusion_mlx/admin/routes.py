@@ -96,6 +96,9 @@ from .auth_routes import router as auth_routes_router
 from .bench import router as bench_router
 from .canvas_routes import init_canvas
 from .canvas_routes import router as canvas_router
+from .fine_tune_route import (
+    router as fine_tune_router,  # callers: server.py set_fine_tune_context; routes: /admin/api/fine-tune/*
+)
 from .grammar_route import router as grammar_router
 from .hf_download import router as hf_download_router
 from .hf_upload import router as hf_upload_router
@@ -110,7 +113,6 @@ from .settings import router as settings_router
 from .stats import router as stats_router
 from .subkey import router as subkey_router
 from .update_check import router as update_check_router
-from .fine_tune_route import router as fine_tune_router  # callers: server.py set_fine_tune_context; routes: /admin/api/fine-tune/*
 
 # Register all sub-routers
 router.include_router(html_router)

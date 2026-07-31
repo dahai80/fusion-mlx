@@ -643,7 +643,10 @@ async def anthropic_messages(
 
             return StreamingResponse(
                 _stream_anthropic_generator(
-                    request, engine, model_name, adapter_path,
+                    request,
+                    engine,
+                    model_name,
+                    adapter_path,
                     profile_overrides=profile_overrides,
                 ),
                 media_type="text/event-stream",

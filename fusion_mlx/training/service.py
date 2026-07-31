@@ -29,7 +29,6 @@ import uuid
 from dataclasses import asdict, dataclass, field
 from enum import Enum
 from pathlib import Path
-from typing import Any
 
 import mlx.core as mx
 
@@ -111,6 +110,7 @@ class FineTuneConfig:
             },
         }
         import types
+
         return types.SimpleNamespace(**args_dict)
 
 
@@ -192,36 +192,42 @@ class _ProgressCallback:
             elapsed_seconds=round(elapsed, 1),
             eta_seconds=round(remaining, 1),
         )
-        self._push({
-            "type": "train_loss",
-            "step": step,
-            "total_steps": total,
-            "train_loss": self._job.progress.train_loss,
-            "val_loss": self._job.progress.val_loss,
-            "learning_rate": self._job.progress.learning_rate,
-            "tokens_per_second": self._job.progress.tokens_per_second,
-            "it_sec": it_sec,
-            "trained_tokens": self._job.progress.trained_tokens,
-            "peak_memory_gb": self._job.progress.peak_memory_gb,
-            "elapsed_seconds": self._job.progress.elapsed_seconds,
-            "eta_seconds": self._job.progress.eta_seconds,
-        })
+        self._push(
+            {
+                "type": "train_loss",
+                "step": step,
+                "total_steps": total,
+                "train_loss": self._job.progress.train_loss,
+                "val_loss": self._job.progress.val_loss,
+                "learning_rate": self._job.progress.learning_rate,
+                "tokens_per_second": self._job.progress.tokens_per_second,
+                "it_sec": it_sec,
+                "trained_tokens": self._job.progress.trained_tokens,
+                "peak_memory_gb": self._job.progress.peak_memory_gb,
+                "elapsed_seconds": self._job.progress.elapsed_seconds,
+                "eta_seconds": self._job.progress.eta_seconds,
+            }
+        )
 
     def on_val_loss_report(self, val_info: dict):
         val_loss = val_info.get("val_loss", 0.0)
         self._job.progress.val_loss = val_loss
-        self._push({
-            "type": "val_loss",
-            "step": val_info.get("iteration", 0),
-            "val_loss": val_loss,
-            "val_time": val_info.get("val_time", 0.0),
-        })
+        self._push(
+            {
+                "type": "val_loss",
+                "step": val_info.get("iteration", 0),
+                "val_loss": val_loss,
+                "val_time": val_info.get("val_time", 0.0),
+            }
+        )
 
     def _push(self, event: dict):
         self._job.events.append(event)
+
         async def _notify():
             async with self._job.cond:
                 self._job.cond.notify_all()
+
         try:
             self._loop.call_soon_threadsafe(lambda: asyncio.ensure_future(_notify()))
         except RuntimeError:
@@ -387,12 +393,9 @@ class FineTuneService:
 
     def _execute_training(self, job: FineTuneJob):
         """Run training in a background thread (blocking)."""
-        import types
 
-        import mlx.nn as nn
         import mlx.optimizers as optim
         from mlx.utils import tree_flatten
-
         from mlx_lm.tuner.datasets import CacheDataset, load_dataset
         from mlx_lm.tuner.trainer import TrainingArgs, train
         from mlx_lm.tuner.utils import (
@@ -427,7 +430,9 @@ class FineTuneService:
 
         # Load model + tokenizer
         logger.info(f"Loading model for training: {model_path}")
-        model, tokenizer = load(model_path, tokenizer_config={"trust_remote_code": True})
+        model, tokenizer = load(
+            model_path, tokenizer_config={"trust_remote_code": True}
+        )
 
         # Load dataset
         logger.info(f"Loading dataset: {dataset_path}")
@@ -440,7 +445,7 @@ class FineTuneService:
         model.freeze()
 
         if cfg.fine_tune_type == "full":
-            for layer in model.layers[-max(cfg.lora_layers, 0):]:
+            for layer in model.layers[-max(cfg.lora_layers, 0) :]:
                 layer.unfreeze()
         elif cfg.fine_tune_type in ("lora", "dora"):
             lora_params = {
@@ -515,11 +520,13 @@ class FineTuneService:
         job.status = JobStatus.COMPLETED
         job.terminal = True
         job.finished_at = time.time()
-        job.events.append({
-            "type": "completed",
-            "adapter_path": str(adapter_path),
-            "adapter_file": str(adapter_file),
-        })
+        job.events.append(
+            {
+                "type": "completed",
+                "adapter_path": str(adapter_path),
+                "adapter_file": str(adapter_file),
+            }
+        )
         self._persist_jobs()
         self._notify_job(job)
 
@@ -561,7 +568,9 @@ class FineTuneService:
                         with open(config_path) as f:
                             config = json.load(f)
                         info["lora_layers"] = config.get("num_layers", 0)
-                        info["lora_rank"] = config.get("lora_parameters", {}).get("rank", 0)
+                        info["lora_rank"] = config.get("lora_parameters", {}).get(
+                            "rank", 0
+                        )
                         info["fine_tune_type"] = config.get("fine_tune_type", "lora")
                     except Exception:
                         pass
@@ -573,6 +582,7 @@ class FineTuneService:
         if not adapter_dir.exists():
             return False
         import shutil
+
         shutil.rmtree(adapter_dir)
         parent = adapter_dir.parent
         if parent.exists() and not any(parent.iterdir()):
@@ -595,9 +605,7 @@ class FineTuneService:
             raise ValueError(f"Adapter weights missing: {weights}")
         if self._engine_pool is None:
             raise RuntimeError("Engine pool not initialized")
-        engine = await self._engine_pool.get_engine(
-            model_id, adapter_path=adapter_path
-        )
+        engine = await self._engine_pool.get_engine(model_id, adapter_path=adapter_path)
         derived_key = f"{model_id}::lora::{adapter_path}"
         logger.info(f"Serving adapter {model_id}/{adapter_name} as {derived_key}")
         return {
@@ -607,9 +615,7 @@ class FineTuneService:
             "adapter_path": adapter_path,
         }
 
-    async def unload_adapter_engine(
-        self, model_id: str, adapter_name: str
-    ) -> bool:
+    async def unload_adapter_engine(self, model_id: str, adapter_name: str) -> bool:
         adapter_path = self.get_adapter_path(model_id, adapter_name)
         if adapter_path is None:
             return False
@@ -658,6 +664,7 @@ class FineTuneService:
         async def _do():
             async with job.cond:
                 job.cond.notify_all()
+
         if self._loop and self._loop.is_running():
             asyncio.ensure_future(_do(), loop=self._loop)
 
@@ -713,7 +720,8 @@ class FineTuneService:
                     adapter_path=item.get("adapter_path", ""),
                     adapter_name=item.get("adapter_name", ""),
                     error=item.get("error", ""),
-                    terminal=status in (JobStatus.COMPLETED, JobStatus.FAILED, JobStatus.CANCELLED),
+                    terminal=status
+                    in (JobStatus.COMPLETED, JobStatus.FAILED, JobStatus.CANCELLED),
                 )
                 self._jobs[job.job_id] = job
             except Exception as exc:

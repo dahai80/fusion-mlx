@@ -8,18 +8,13 @@ instruction: "继续实现二期和三期"
 """
 
 import json
-import os
-import tempfile
-from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from fusion_mlx.training.service import (
-    ADAPTER_BASE_DIR,
     FineTuneConfig,
     FineTuneJob,
-    FineTuneProgress,
     FineTuneService,
     JobStatus,
     _ProgressCallback,
@@ -267,7 +262,13 @@ class TestAdapterManagement:
         adapter_dir.mkdir(parents=True)
         (adapter_dir / "adapters.safetensors").write_bytes(b"\x00")
         (adapter_dir / "adapter_config.json").write_text(
-            json.dumps({"num_layers": 16, "lora_parameters": {"rank": 8}, "fine_tune_type": "lora"})
+            json.dumps(
+                {
+                    "num_layers": 16,
+                    "lora_parameters": {"rank": 8},
+                    "fine_tune_type": "lora",
+                }
+            )
         )
 
         adapters = svc.list_adapters()
@@ -379,15 +380,17 @@ class TestProgressCallback:
         job = FineTuneJob(config=FineTuneConfig(iters=100))
         cb = _ProgressCallback(job, loop)
 
-        cb.on_train_loss_report({
-            "iteration": 10,
-            "train_loss": 2.5,
-            "learning_rate": 1e-5,
-            "tokens_per_second": 1000.0,
-            "iterations_per_second": 5.0,
-            "trained_tokens": 5000,
-            "peak_memory": 12.5,
-        })
+        cb.on_train_loss_report(
+            {
+                "iteration": 10,
+                "train_loss": 2.5,
+                "learning_rate": 1e-5,
+                "tokens_per_second": 1000.0,
+                "iterations_per_second": 5.0,
+                "trained_tokens": 5000,
+                "peak_memory": 12.5,
+            }
+        )
 
         assert job.progress.step == 10
         assert job.progress.total_steps == 100
@@ -401,11 +404,13 @@ class TestProgressCallback:
         job = FineTuneJob(config=FineTuneConfig(iters=100))
         cb = _ProgressCallback(job, loop)
 
-        cb.on_val_loss_report({
-            "iteration": 20,
-            "val_loss": 3.0,
-            "val_time": 1.5,
-        })
+        cb.on_val_loss_report(
+            {
+                "iteration": 20,
+                "val_loss": 3.0,
+                "val_time": 1.5,
+            }
+        )
 
         assert job.progress.val_loss == 3.0
         assert len(job.events) == 1

@@ -142,7 +142,9 @@ def _now_iso() -> str:
 
 @router.post("/generate")
 async def ollama_generate(request: OllamaGenerateRequest, http_request: Request):
-    logger.info("Ollama /api/generate: model=%s stream=%s", request.model, request.stream)
+    logger.info(
+        "Ollama /api/generate: model=%s stream=%s", request.model, request.stream
+    )
 
     messages = []
     if request.system:
@@ -172,6 +174,7 @@ async def ollama_generate(request: OllamaGenerateRequest, http_request: Request)
 
     try:
         if request.stream:
+
             async def _stream_ollama():
                 try:
                     async for chunk in engine.stream_chat(
@@ -182,31 +185,37 @@ async def ollama_generate(request: OllamaGenerateRequest, http_request: Request)
                         stop=stop,
                         **extra_params,
                     ):
-                        yield _ndjson_line({
+                        yield _ndjson_line(
+                            {
+                                "model": request.model,
+                                "created_at": _now_iso(),
+                                "response": chunk.text or "",
+                                "done": False,
+                            }
+                        )
+                    yield _ndjson_line(
+                        {
                             "model": request.model,
                             "created_at": _now_iso(),
-                            "response": chunk.text or "",
-                            "done": False,
-                        })
-                    yield _ndjson_line({
-                        "model": request.model,
-                        "created_at": _now_iso(),
-                        "response": "",
-                        "done": True,
-                        "done_reason": "stop",
-                        "context": [],
-                        "total_duration": 0,
-                        "load_duration": 0,
-                        "prompt_eval_count": 0,
-                        "eval_count": 0,
-                    })
+                            "response": "",
+                            "done": True,
+                            "done_reason": "stop",
+                            "context": [],
+                            "total_duration": 0,
+                            "load_duration": 0,
+                            "prompt_eval_count": 0,
+                            "eval_count": 0,
+                        }
+                    )
                 except Exception as e:
                     logger.error("Ollama generate stream error: %s", e)
-                    yield _ndjson_line({
-                        "model": request.model,
-                        "error": str(e),
-                        "done": True,
-                    })
+                    yield _ndjson_line(
+                        {
+                            "model": request.model,
+                            "error": str(e),
+                            "done": True,
+                        }
+                    )
                 finally:
                     await _release_engine(resolved_model)
 
@@ -224,18 +233,20 @@ async def ollama_generate(request: OllamaGenerateRequest, http_request: Request)
                 **extra_params,
             )
             await _release_engine(resolved_model)
-            return JSONResponse({
-                "model": request.model,
-                "created_at": _now_iso(),
-                "response": result.text or "",
-                "done": True,
-                "done_reason": "stop",
-                "context": [],
-                "total_duration": 0,
-                "load_duration": 0,
-                "prompt_eval_count": result.prompt_tokens or 0,
-                "eval_count": result.completion_tokens or 0,
-            })
+            return JSONResponse(
+                {
+                    "model": request.model,
+                    "created_at": _now_iso(),
+                    "response": result.text or "",
+                    "done": True,
+                    "done_reason": "stop",
+                    "context": [],
+                    "total_duration": 0,
+                    "load_duration": 0,
+                    "prompt_eval_count": result.prompt_tokens or 0,
+                    "eval_count": result.completion_tokens or 0,
+                }
+            )
     except HTTPException:
         raise
     except Exception as e:
@@ -278,6 +289,7 @@ async def ollama_chat(request: OllamaChatRequest, http_request: Request):
 
     try:
         if request.stream:
+
             async def _stream_ollama_chat():
                 try:
                     async for chunk in engine.stream_chat(
@@ -289,30 +301,36 @@ async def ollama_chat(request: OllamaChatRequest, http_request: Request):
                         **extra_params,
                     ):
                         content = chunk.text or ""
-                        yield _ndjson_line({
+                        yield _ndjson_line(
+                            {
+                                "model": request.model,
+                                "created_at": _now_iso(),
+                                "message": {"role": "assistant", "content": content},
+                                "done": False,
+                            }
+                        )
+                    yield _ndjson_line(
+                        {
                             "model": request.model,
                             "created_at": _now_iso(),
-                            "message": {"role": "assistant", "content": content},
-                            "done": False,
-                        })
-                    yield _ndjson_line({
-                        "model": request.model,
-                        "created_at": _now_iso(),
-                        "message": {"role": "assistant", "content": ""},
-                        "done": True,
-                        "done_reason": "stop",
-                        "total_duration": 0,
-                        "load_duration": 0,
-                        "prompt_eval_count": 0,
-                        "eval_count": 0,
-                    })
+                            "message": {"role": "assistant", "content": ""},
+                            "done": True,
+                            "done_reason": "stop",
+                            "total_duration": 0,
+                            "load_duration": 0,
+                            "prompt_eval_count": 0,
+                            "eval_count": 0,
+                        }
+                    )
                 except Exception as e:
                     logger.error("Ollama chat stream error: %s", e)
-                    yield _ndjson_line({
-                        "model": request.model,
-                        "error": str(e),
-                        "done": True,
-                    })
+                    yield _ndjson_line(
+                        {
+                            "model": request.model,
+                            "error": str(e),
+                            "done": True,
+                        }
+                    )
                 finally:
                     await _release_engine(resolved_model)
 
@@ -330,20 +348,25 @@ async def ollama_chat(request: OllamaChatRequest, http_request: Request):
                 **extra_params,
             )
             await _release_engine(resolved_model)
-            message: dict[str, Any] = {"role": "assistant", "content": result.text or ""}
+            message: dict[str, Any] = {
+                "role": "assistant",
+                "content": result.text or "",
+            }
             if result.tool_calls:
                 message["tool_calls"] = result.tool_calls
-            return JSONResponse({
-                "model": request.model,
-                "created_at": _now_iso(),
-                "message": message,
-                "done": True,
-                "done_reason": "stop",
-                "total_duration": 0,
-                "load_duration": 0,
-                "prompt_eval_count": result.prompt_tokens or 0,
-                "eval_count": result.completion_tokens or 0,
-            })
+            return JSONResponse(
+                {
+                    "model": request.model,
+                    "created_at": _now_iso(),
+                    "message": message,
+                    "done": True,
+                    "done_reason": "stop",
+                    "total_duration": 0,
+                    "load_duration": 0,
+                    "prompt_eval_count": result.prompt_tokens or 0,
+                    "eval_count": result.completion_tokens or 0,
+                }
+            )
     except HTTPException:
         raise
     except Exception as e:

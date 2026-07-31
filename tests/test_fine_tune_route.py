@@ -8,7 +8,6 @@ instruction: "继续实现二期和三期"
 """
 
 import json
-from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -17,10 +16,7 @@ from fastapi.testclient import TestClient
 from fusion_mlx.admin.fine_tune_route import _router, set_fine_tune_context
 from fusion_mlx.admin.helpers import _admin_getters
 from fusion_mlx.training.service import (
-    FineTuneConfig,
-    FineTuneJob,
     FineTuneService,
-    JobStatus,
 )
 
 
@@ -70,34 +66,46 @@ class TestJobEndpoints:
         mock_pool.get_entry.return_value = MagicMock(
             model_type="llm", model_path="/tmp/model"
         )
-        resp = client.post("/api/fine-tune/jobs", json={
-            "model_id": "qwen3",
-            "dataset": "/tmp/data",
-            "config": {"lora_rank": 16},
-        })
+        resp = client.post(
+            "/api/fine-tune/jobs",
+            json={
+                "model_id": "qwen3",
+                "dataset": "/tmp/data",
+                "config": {"lora_rank": 16},
+            },
+        )
         assert resp.status_code == 200
         data = resp.json()
         assert data["model_id"] == "qwen3"
         assert data["status"] == "running"
 
     def test_create_job_missing_model_id(self, client):
-        resp = client.post("/api/fine-tune/jobs", json={
-            "dataset": "/tmp/data",
-        })
+        resp = client.post(
+            "/api/fine-tune/jobs",
+            json={
+                "dataset": "/tmp/data",
+            },
+        )
         assert resp.status_code == 400
 
     def test_create_job_missing_dataset(self, client):
-        resp = client.post("/api/fine-tune/jobs", json={
-            "model_id": "qwen3",
-        })
+        resp = client.post(
+            "/api/fine-tune/jobs",
+            json={
+                "model_id": "qwen3",
+            },
+        )
         assert resp.status_code == 400
 
     def test_create_job_model_not_found(self, client, mock_pool):
         mock_pool.get_entry.return_value = None
-        resp = client.post("/api/fine-tune/jobs", json={
-            "model_id": "nonexistent",
-            "dataset": "/tmp/data",
-        })
+        resp = client.post(
+            "/api/fine-tune/jobs",
+            json={
+                "model_id": "nonexistent",
+                "dataset": "/tmp/data",
+            },
+        )
         assert resp.status_code == 404
 
     def test_list_jobs(self, client, mock_service):
@@ -157,7 +165,8 @@ class TestAdapterEndpoints:
         adapter_dir = tmp_adapter_dir / "qwen3" / "my-lora"
         adapter_dir.mkdir(parents=True)
         resp = client.request(
-            "DELETE", "/api/fine-tune/adapters",
+            "DELETE",
+            "/api/fine-tune/adapters",
             content=json.dumps({"model_id": "qwen3", "adapter_name": "my-lora"}),
             headers={"Content-Type": "application/json"},
         )
@@ -165,7 +174,8 @@ class TestAdapterEndpoints:
 
     def test_delete_adapter_missing_fields(self, client):
         resp = client.request(
-            "DELETE", "/api/fine-tune/adapters",
+            "DELETE",
+            "/api/fine-tune/adapters",
             content=json.dumps({"model_id": "qwen3"}),
             headers={"Content-Type": "application/json"},
         )
@@ -196,7 +206,9 @@ class TestAdapterServeEndpoints:
         resp = client.post("/api/fine-tune/adapters/qwen3/my-lora/unload")
         assert resp.status_code == 200
 
-    def test_unload_adapter_not_loaded(self, client, mock_service, mock_pool, tmp_adapter_dir):
+    def test_unload_adapter_not_loaded(
+        self, client, mock_service, mock_pool, tmp_adapter_dir
+    ):
         adapter_dir = tmp_adapter_dir / "qwen3" / "my-lora"
         adapter_dir.mkdir(parents=True)
         mock_entry = MagicMock()

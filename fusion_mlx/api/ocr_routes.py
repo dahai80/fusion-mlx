@@ -14,6 +14,7 @@ No existing file serves this purpose (no /v1/ocr endpoint exists).
 import base64
 import logging
 import time
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
@@ -130,11 +131,13 @@ async def list_ocr_models() -> dict[str, Any]:
     models = []
     for engine in _pool.engines.values():
         if isinstance(engine, VLMBatchedEngine) and engine.is_ocr_model:
-            models.append({
-                "id": engine.model_id,
-                "model_type": engine.model_type or "vlm_ocr",
-                "capabilities": ["chat", "vision", "ocr"],
-            })
+            models.append(
+                {
+                    "id": engine.model_id,
+                    "model_type": engine.model_type or "vlm_ocr",
+                    "capabilities": ["chat", "vision", "ocr"],
+                }
+            )
     return {"models": models}
 
 

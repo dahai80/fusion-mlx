@@ -53,6 +53,7 @@ def _get_service():
     global _fine_tune_service
     if _fine_tune_service is None:
         from fusion_mlx.training.service import FineTuneService
+
         _fine_tune_service = FineTuneService()
         if _engine_pool_ref is not None:
             _fine_tune_service.set_engine_pool(_engine_pool_ref)
@@ -139,7 +140,9 @@ async def cancel_fine_tune_job(
 ):
     svc = _get_service()
     if not svc.cancel_job(job_id):
-        raise HTTPException(status_code=404, detail=f"Job not found or not cancellable: {job_id}")
+        raise HTTPException(
+            status_code=404, detail=f"Job not found or not cancellable: {job_id}"
+        )
     job = svc.get_job(job_id)
     return job.to_dict() if job else {"status": "cancelled"}
 
@@ -151,7 +154,9 @@ async def delete_fine_tune_job(
 ):
     svc = _get_service()
     if not svc.delete_job(job_id):
-        raise HTTPException(status_code=404, detail=f"Job not found or currently running: {job_id}")
+        raise HTTPException(
+            status_code=404, detail=f"Job not found or currently running: {job_id}"
+        )
     return {"status": "deleted"}
 
 
@@ -227,7 +232,9 @@ async def delete_adapter(
     model_id = body.get("model_id", "")
     adapter_name = body.get("adapter_name", "")
     if not model_id or not adapter_name:
-        raise HTTPException(status_code=400, detail="model_id and adapter_name required")
+        raise HTTPException(
+            status_code=400, detail="model_id and adapter_name required"
+        )
 
     svc = _get_service()
     if not svc.delete_adapter(model_id, adapter_name):
@@ -288,12 +295,14 @@ async def list_finetunable_models(
     models = []
     for model_id, entry in pool._entries.items():
         if entry.model_type in ("llm", "vlm", None):
-            models.append({
-                "model_id": model_id,
-                "model_type": entry.model_type,
-                "model_path": getattr(entry, "model_path", ""),
-                "loaded": entry.engine is not None,
-            })
+            models.append(
+                {
+                    "model_id": model_id,
+                    "model_type": entry.model_type,
+                    "model_path": getattr(entry, "model_path", ""),
+                    "loaded": entry.engine is not None,
+                }
+            )
     return models
 
 
