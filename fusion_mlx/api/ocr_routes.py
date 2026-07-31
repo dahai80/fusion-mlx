@@ -14,7 +14,6 @@ No existing file serves this purpose (no /v1/ocr endpoint exists).
 import base64
 import logging
 import time
-from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field

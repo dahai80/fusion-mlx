@@ -1228,11 +1228,39 @@ def _safetensors_has_mlx_metadata(path: Path) -> bool:
 _MLX_NAME_RE = re.compile(r"(^|[-_/])mlx($|[-_/])", re.IGNORECASE)
 
 
+_KNOWN_EMBEDDING_ARCHITECTURES = frozenset({
+    "XLMRobertaModel",
+    "BertModel",
+    "BertForMaskedLM",
+})
+
+
+def _is_embedding_model_dir(model_dir: Path) -> bool:
+    """Check if a model directory is a known embedding architecture."""
+    config_path = model_dir / "config.json"
+    if not config_path.is_file():
+        return False
+    try:
+        import json
+        with open(config_path) as f:
+            cfg = json.load(f)
+        architectures = cfg.get("architectures", [])
+        return any(a in _KNOWN_EMBEDDING_ARCHITECTURES for a in architectures)
+    except Exception:
+        return False
+
+
 def _is_hf_cache_mlx_compatible(model_dir: Path, source_repo_id: str) -> bool:
     """Heuristic for HF cache entries that can be loaded without conversion."""
     if not _is_model_dir(model_dir):
         return False
     if not list(model_dir.glob("model*.safetensors")):
+        has_pytorch = bool(list(model_dir.glob("pytorch_model*.bin")))
+        if has_pytorch and _is_embedding_model_dir(model_dir):
+            logger.info(
+                f"Accepting HF cache embedding model with pytorch weights: {source_repo_id}"
+            )
+            return True
         logger.debug(
             f"Skipping HF cache model without model*.safetensors: {source_repo_id}"
         )

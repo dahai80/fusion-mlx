@@ -471,6 +471,9 @@ async def _run_chat(
 
     messages = _messages_for_engine(request.messages, getattr(engine, "is_mllm", False))
     sampling = _build_sampling_params(request, profile_overrides=profile_overrides)
+    from .utils import cap_max_tokens_to_context
+
+    sampling.max_tokens = cap_max_tokens_to_context(sampling.max_tokens, model_name)
     request_id = f"chatcmpl-{uuid.uuid4().hex[:12]}"
 
     try:
@@ -588,6 +591,10 @@ async def _stream_chat_generator(
 
     messages = _messages_for_engine(request.messages, getattr(engine, "is_mllm", False))
     sampling = _build_sampling_params(request, profile_overrides=profile_overrides)
+    # Context scaling: cap max_tokens to model context window
+    from .utils import cap_max_tokens_to_context
+
+    sampling.max_tokens = cap_max_tokens_to_context(sampling.max_tokens, model_name)
     request_id = f"chatcmpl-{uuid.uuid4().hex[:12]}"
 
     # SSE keepalive: prevent client/proxy timeout during long inference
