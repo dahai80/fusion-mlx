@@ -46,8 +46,7 @@ def test_detect_sidecar_promotes_gemma4_unified_with_missing_mtp_layers():
     config = {"model_type": "gemma4_unified"}  # no mtp_num_hidden_layers
     assert detect_mtp_eligibility(config) is MTPEligibility.NONE
     assert (
-        detect_mtp_eligibility(config, has_external_sidecar=True)
-        is MTPEligibility.TREE
+        detect_mtp_eligibility(config, has_external_sidecar=True) is MTPEligibility.TREE
     )
 
 
@@ -66,8 +65,7 @@ def test_detect_sidecar_promotes_gemma4_unified_with_zero_mtp_layers():
     config = {"model_type": "gemma4_unified", "mtp_num_hidden_layers": 0}
     assert detect_mtp_eligibility(config) is MTPEligibility.NONE
     assert (
-        detect_mtp_eligibility(config, has_external_sidecar=True)
-        is MTPEligibility.TREE
+        detect_mtp_eligibility(config, has_external_sidecar=True) is MTPEligibility.TREE
     )
 
 
@@ -89,8 +87,7 @@ def test_detect_sidecar_unconditional_for_qwen3_5_family():
 
     config = {"model_type": "qwen3_5", "mtp_num_hidden_layers": 0}
     assert (
-        detect_mtp_eligibility(config, has_external_sidecar=True)
-        is MTPEligibility.TREE
+        detect_mtp_eligibility(config, has_external_sidecar=True) is MTPEligibility.TREE
     )
     config_moe = {"model_type": "qwen3_5_moe", "mtp_num_hidden_layers": 0}
     assert (
@@ -114,8 +111,7 @@ def test_detect_sidecar_unconditional_for_gemma4_multimodal():
 
     config = {"model_type": "gemma4", "mtp_num_hidden_layers": 0}
     assert (
-        detect_mtp_eligibility(config, has_external_sidecar=True)
-        is MTPEligibility.TREE
+        detect_mtp_eligibility(config, has_external_sidecar=True) is MTPEligibility.TREE
     )
 
 
@@ -139,8 +135,7 @@ def test_detect_sidecar_overrides_baked_in_mtp_to_tree():
         is MTPEligibility.CHAIN
     )
     assert (
-        detect_mtp_eligibility(config, has_external_sidecar=True)
-        is MTPEligibility.TREE
+        detect_mtp_eligibility(config, has_external_sidecar=True) is MTPEligibility.TREE
     )
 
 
@@ -164,7 +159,6 @@ def test_detect_sidecar_default_argument_matches_pre_0913_behaviour():
         detect_mtp_eligibility(config, has_external_sidecar=False)
         is MTPEligibility.NONE
     )
-
 
 
 # ---------------------------------------------------------------------------
@@ -356,9 +350,7 @@ def test_decide_mtp_dispatch_action_returns_attached_for_attached_result():
 def test_decide_mtp_dispatch_action_carries_cli_vetted_model_type_into_error():
     from fusion_mlx.engine.batched import _DISPATCH_UNRESOLVED
 
-    action, msg = _drive_start_llm_dispatch_gate(
-        _DISPATCH_UNRESOLVED, "gemma4_unified"
-    )
+    action, msg = _drive_start_llm_dispatch_gate(_DISPATCH_UNRESOLVED, "gemma4_unified")
     assert action == "raise"
     assert "gemma4_unified" in msg
 
@@ -380,9 +372,7 @@ def test_start_llm_continues_on_dispatch_unresolved_when_not_cli_vetted():
 def test_start_llm_raises_on_dispatch_unresolved_when_cli_vetted():
     from fusion_mlx.engine.batched import _DISPATCH_UNRESOLVED
 
-    action, _ = _drive_start_llm_dispatch_gate(
-        _DISPATCH_UNRESOLVED, "gemma4_unified"
-    )
+    action, _ = _drive_start_llm_dispatch_gate(_DISPATCH_UNRESOLVED, "gemma4_unified")
     assert action == "raise"
 
 
@@ -396,9 +386,7 @@ def test_start_llm_continues_on_dispatch_no_inject_when_not_cli_vetted():
 def test_start_llm_raises_on_dispatch_no_inject_when_cli_vetted():
     from fusion_mlx.engine.batched import _DISPATCH_NO_INJECT
 
-    action, _ = _drive_start_llm_dispatch_gate(
-        _DISPATCH_NO_INJECT, "gemma4_unified"
-    )
+    action, _ = _drive_start_llm_dispatch_gate(_DISPATCH_NO_INJECT, "gemma4_unified")
     assert action == "raise"
 
 
@@ -2022,9 +2010,9 @@ def test_install_mtp_vendored_uid_reuse_clears_stale_state(monkeypatch):
     # Step 1 for req-A — FIRST-call construction, generator #1
     # built. State populated with request_id=req-A.
     gb._step()
-    assert len(generators_built) == 1, (
-        f"expected exactly one generator built for req-A, got {generators_built!r}"
-    )
+    assert (
+        len(generators_built) == 1
+    ), f"expected exactly one generator built for req-A, got {generators_built!r}"
 
     # Simulate mlx-lm's request completion + uid reuse: same uid,
     # new request_id. No _cleanup_uid call — this exactly mirrors

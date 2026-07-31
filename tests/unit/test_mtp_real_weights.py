@@ -111,11 +111,12 @@ def loaded_model(baseline_tokens):
     completes (and releases its model) before this fixture mutates a
     fresh copy via ``inject_mtp_support``.
     """
+    from mlx_lm import load
+
     from fusion_mlx.speculative.mtp.qwen3_5_inject import (
         inject_mtp_support,
         validate_mtp_support,
     )
-    from mlx_lm import load
 
     model, tokenizer = load(_BASE_MODEL)
     injected = inject_mtp_support(model, mtp_sidecar=_MTP_SIDECAR)
@@ -267,6 +268,7 @@ def test_mtp_lossless_byte_equal_against_baseline(loaded_model, baseline_tokens)
     test is the canonical guard for it on a real checkpoint.
     """
     import mlx.core as _mx
+
     from fusion_mlx.speculative.mtp import MTPAcceptCounter
     from fusion_mlx.speculative.mtp.generator import mtp_generate_step
 

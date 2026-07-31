@@ -38,8 +38,6 @@ def write_or_patch_config(
         _common.backup_existing(path)
         existing_content = path.read_text(encoding="utf-8")
 
-    import re
-
     lines = existing_content.splitlines()
     new_lines = []
     in_any_section = False

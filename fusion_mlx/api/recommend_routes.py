@@ -7,10 +7,9 @@ import logging
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
-from ..middleware.auth import verify_api_key
-
 from ..compatibility import check_compatibility
 from ..hardware.detector import detect_hardware
+from ..middleware.auth import verify_api_key
 from ..performance import estimate_tok_per_sec
 
 logger = logging.getLogger(__name__)

@@ -74,7 +74,10 @@ class TestResolvePolicy:
 
     def test_header_only_if_cached(self):
         c = ResponseCache()
-        assert c.resolve_policy(0.7, {"X-Cache": "only-if-cached"}) == CachePolicy.ONLY_IF_CACHED
+        assert (
+            c.resolve_policy(0.7, {"X-Cache": "only-if-cached"})
+            == CachePolicy.ONLY_IF_CACHED
+        )
 
     def test_header_no_store(self):
         c = ResponseCache()

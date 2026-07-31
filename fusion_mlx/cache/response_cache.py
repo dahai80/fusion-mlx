@@ -137,7 +137,9 @@ class ResponseCache:
         headers: dict[str, str] | None = None,
     ) -> CachePolicy:
         headers = headers or {}
-        cache_header = headers.get("x-cache", headers.get("X-Cache", "")).lower().strip()
+        cache_header = (
+            headers.get("x-cache", headers.get("X-Cache", "")).lower().strip()
+        )
         if cache_header == "bypass":
             return CachePolicy.BYPASS
         if cache_header == "force":

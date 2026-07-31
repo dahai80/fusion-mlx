@@ -10,28 +10,24 @@ bits and add a mandatory boost for routed expert down_proj (Super Weights
 protection; see _LEVEL_EXPERT_DOWN_BOOST) plus a higher bpw budget.
 """
 
-import json
 import logging
 import re
-import shutil
-import tempfile
-import time as _time
-from collections.abc import Callable
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Any
 
 try:
-    import mlx.core as mx
+    import mlx.core as mx  # noqa: F401 - availability check (HAS_MLX is the signal)
     import mlx.nn as nn
     from mlx.utils import tree_flatten
-    from mlx_lm.models.base import create_attention_mask
+    from mlx_lm.models.base import (
+        create_attention_mask,  # noqa: F401 - availability check
+    )
 
     HAS_MLX = True
 except ImportError:
     HAS_MLX = False
 
-from fusion_mlx.pool.model_discovery import _has_vision_subconfig
+from .io import _gs_for_mode, _mode_for_bits
 
 logger = logging.getLogger(__name__)
 
@@ -90,7 +86,6 @@ _OQ_BPW_TARGETS: dict[float, tuple[float, float]] = {
 }
 
 
-from ._core import _TrackedTensor
 def _bpw_targets_for_level(oq_level: float) -> tuple[float, float] | None:
     """Return (target_bpw, hard_cap_bpw) for the given oQ level, or None."""
     return _OQ_BPW_TARGETS.get(oq_level)
@@ -844,5 +839,3 @@ def resolve_output_name(
 
 
 # ── Auto-discovery streaming sanitizer ──────────────────────────────────
-
-

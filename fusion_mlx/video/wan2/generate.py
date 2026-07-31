@@ -683,7 +683,9 @@ def generate_video(
             # UMA Radix Latent cache (#2 Phase-1): repeat I2V requests with
             # the same image+resolution reuse the cached VAE latent and skip
             # the VAE encoder load + forward entirely (zero-copy on UMA).
-            img_tensor = preprocess_image(image, width, height)  # [1,3,1,H,W] channels-first
+            img_tensor = preprocess_image(
+                image, width, height
+            )  # [1,3,1,H,W] channels-first
             is_wan22_vae = config.vae_z_dim == 48
             if is_wan22_vae:
                 # Wan2.2 VAE _patchify expects channels-last [B,T,H,W,C];
@@ -795,7 +797,9 @@ def generate_video(
             )
             mx.eval(cam_frames)
             camera_conditions = cam_frames  # [3, T, H, W]
-            logger.info("Camera conditions loaded from file, shape: %s", camera_conditions.shape)
+            logger.info(
+                "Camera conditions loaded from file, shape: %s", camera_conditions.shape
+            )
         # camera_conditions: [C_cam, F, H, W] -> expand to [1, C_cam, F, H, W] for batch
         if camera_conditions.ndim == 4:
             y_camera_arg = [camera_conditions[None]]

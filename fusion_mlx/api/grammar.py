@@ -321,7 +321,13 @@ class GrammarConstraintProcessor:
             type of ``compiled_grammar``.
     """
 
-    def __init__(self, compiled_grammar, vocab_size: int, *, backend: GrammarBackend | None = None):
+    def __init__(
+        self,
+        compiled_grammar,
+        vocab_size: int,
+        *,
+        backend: GrammarBackend | None = None,
+    ):
         self._vocab_size = vocab_size
         self._terminated = False
         self._first_call = True
@@ -354,7 +360,7 @@ class GrammarConstraintProcessor:
         except ImportError:
             pass
         try:
-            import xgrammar as xgr
+            import xgrammar as xgr  # noqa: F401 - availability probe
 
             if hasattr(compiled_grammar, "fill_next_token_bitmask"):
                 return GrammarBackend.XGRAMMAR
@@ -406,7 +412,9 @@ class GrammarConstraintProcessor:
             if bitmask is not None:
                 if isinstance(bitmask, bytes):
                     bitmask_width = len(bitmask) // 4
-                    mask_np = np.frombuffer(bitmask, dtype=np.int32).reshape(1, bitmask_width)
+                    mask_np = np.frombuffer(bitmask, dtype=np.int32).reshape(
+                        1, bitmask_width
+                    )
                     mx_bitmask = mx.array(mask_np)
                 elif isinstance(bitmask, np.ndarray):
                     mx_bitmask = mx.array(bitmask)

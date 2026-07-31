@@ -609,8 +609,9 @@ def test_inject_refuses_when_target_tail_layer_types_mismatch(tmp_path):
 
 
 def test_mtp_forward_rejects_populated_mtp_cache():
-    import mlx.core as mx
     from types import SimpleNamespace
+
+    import mlx.core as mx
 
     from fusion_mlx.speculative.mtp.gemma4_inject import inject_mtp_support
 
@@ -627,8 +628,9 @@ def test_mtp_forward_rejects_populated_mtp_cache():
 
 
 def test_mtp_forward_rejects_negative_row_offset():
-    import mlx.core as mx
     from types import SimpleNamespace
+
+    import mlx.core as mx
 
     from fusion_mlx.speculative.mtp.gemma4_inject import inject_mtp_support
 

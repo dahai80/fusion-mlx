@@ -578,7 +578,7 @@ def get_gui_compat_router() -> APIRouter:
             raise HTTPException(status_code=500, detail="Internal server error")
 
     @router.get("/v1/system/status")
-    async def sys_status():
+    async def sys_status(is_admin: bool = Depends(require_admin)):
         ss = get_system_monitor().get_system_summary()
         return {
             "status": "running",
@@ -611,7 +611,10 @@ def get_gui_compat_router() -> APIRouter:
         return {"message": "Server restarting"}
 
     @router.get("/v1/settings")
-    async def get_settings(db: Session = Depends(get_db_session)):
+    async def get_settings(
+        db: Session = Depends(get_db_session),
+        is_admin: bool = Depends(require_admin),
+    ):
         return {s.key: s.get_typed_value() for s in db.query(AppSettings).all()}
 
     @router.put("/v1/settings/{key}")

@@ -8,17 +8,9 @@ one cohesive orchestrator, because reasoning/tool/sanitize are tightly coupled.
 
 from __future__ import annotations
 
-import copy
-import json
 import logging
-import os
 import re
-import uuid
 from typing import TYPE_CHECKING
-from unittest.mock import Mock
-
-from ...api.tool_calling import parse_tool_calls
-from ...api.utils import sanitize_output, strip_special_tokens
 
 try:
     from ...domain.events import StreamEvent
@@ -26,10 +18,6 @@ except ImportError:
     StreamEvent = None
 
 if TYPE_CHECKING:
-    try:
-        from ...config.server_config import ServerConfig
-    except ImportError:
-        from ...config import ServerConfig  # type: ignore[no-redef]
     from ...engine.base import GenerationOutput
 
 logger = logging.getLogger(__name__)
@@ -60,6 +48,7 @@ def _find_json_start(text: str) -> int:
             return i
         i += 1
     return -1
+
 
 def _find_json_fence_opener(text: str) -> int:
     """Return the index of the OPENING JSON fence in ``text``, or -1.
@@ -118,6 +107,7 @@ def _find_json_fence_opener(text: str) -> int:
         closer = text.find("```", pos + 3)
         i = closer + 3 if closer >= 0 else pos + 3
     return best
+
 
 def _json_fence_suffix_hold_len(text: str) -> int:
     """Return how many trailing bytes of ``text`` MIGHT start a ``` fence.
@@ -236,6 +226,7 @@ class StreamingPostProcessorFormatterMixin:
     # rare opener variants like ``` ```json   \n ``` and is still
     # negligible vs. the dropped 4KB.
     _JSON_FENCE_SCAN_KEEP_SUFFIX = 32
+
     def _apply_json_fence_strip(self, content: str) -> str:
         """Strip ```json...``` markdown fence from streaming content.
 
@@ -352,6 +343,7 @@ class StreamingPostProcessorFormatterMixin:
         # state == "inside" — pass content through, guarding against the
         # closing fence.
         return self._guard_closing_fence(content)
+
     def _guard_closing_fence(self, content: str) -> str:
         """Hold back the last few bytes that might start a closing ``` fence.
 
@@ -614,6 +606,7 @@ class StreamingPostProcessorFormatterMixin:
         self._json_fence_string_escape = prior_escape
         self._json_fence_bracket_depth = prior_depth
         return emit
+
     def _filter_events_for_json_fence(
         self, events: list[StreamEvent], *, drain_tail: bool = False
     ) -> list[StreamEvent]:
@@ -691,6 +684,7 @@ class StreamingPostProcessorFormatterMixin:
                     filtered.append(StreamEvent(type="content", content=tail))
 
         return filtered
+
     def _flush_json_fence_tail(self) -> str:
         """Release any deferred tail bytes at stream end.
 
@@ -728,6 +722,7 @@ class StreamingPostProcessorFormatterMixin:
         tail = self._json_fence_tail
         self._json_fence_tail = ""
         return tail
+
     # R10-C8 (Mira r10-R1) — UI-TARS-style tool-prose-prefix scrubber.
     #
     # Mira's r10 dogfood evidence (E SSE) shows the chat lane streaming
@@ -775,6 +770,7 @@ class StreamingPostProcessorFormatterMixin:
     # for parser variants without holding back legitimate prose
     # indefinitely.
     _TOOL_PROSE_MAX_HOLD: int = 512
+
     def _matches_tool_prose_prefix(self, text: str) -> bool:
         """True iff ``text`` matches a tool-dispatch prose preamble.
 
@@ -790,6 +786,7 @@ class StreamingPostProcessorFormatterMixin:
             if pattern.match(text):
                 return True
         return False
+
     def _filter_events_for_tool_prose(
         self, events: list[StreamEvent]
     ) -> list[StreamEvent]:
@@ -864,6 +861,7 @@ class StreamingPostProcessorFormatterMixin:
                 continue
             out.append(ev)
         return out
+
     def _flush_tool_prose_buffer(self) -> str:
         """Drain the tool-prose buffer at stream end.
 
@@ -887,6 +885,7 @@ class StreamingPostProcessorFormatterMixin:
         self._tool_prose_buffer = ""
         self._tool_prose_active = False
         return tail
+
     def _build_tool_call_event(self, items) -> StreamEvent:
         """Build a tool_call StreamEvent from an iterable of {id, name, arguments} dicts.
 
@@ -919,6 +918,7 @@ class StreamingPostProcessorFormatterMixin:
             finish_reason="tool_calls",
             tool_calls_detected=True,
         )
+
     def _compute_finish_reason(self, output: GenerationOutput) -> str | None:
         if not output.finished:
             return None
@@ -939,6 +939,7 @@ class StreamingPostProcessorFormatterMixin:
         if self._tool_calls_emitted_to_wire > 0:
             return "tool_calls"
         return output.finish_reason
+
     def _make_finish_event(self, output: GenerationOutput) -> StreamEvent:
         return StreamEvent(
             type="finish",

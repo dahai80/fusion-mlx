@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import os
-from pathlib import Path
 
 from fusion_mlx.integrations.base import Integration
 from fusion_mlx.utils.install import get_cli_prefix

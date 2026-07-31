@@ -12,14 +12,11 @@ protection; see _LEVEL_EXPERT_DOWN_BOOST) plus a higher bpw budget.
 
 import json
 import logging
-import re
 import shutil
 import tempfile
 import time as _time
 from collections.abc import Callable
-from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
 
 try:
     import mlx.core as mx
@@ -90,8 +87,37 @@ _OQ_BPW_TARGETS: dict[float, tuple[float, float]] = {
 }
 
 
-from ._core import _TrackedTensor, _DiscoveredPlan, _discover_sanitize_plan
-from .io import _LazyTensorIndex, _LazyTensor
+from ._core import _discover_sanitize_plan, _DiscoveredPlan
+from .io import (
+    _MAX_SHARD_BYTES,
+    _QUANTIZE_CHUNK_BYTES,
+    _build_model_sanitizer,
+    _build_non_quantizable_set,
+    _cast_passthrough_tensor,
+    _copy_model_sidecars,
+    _get_predicate_bits,
+    _gs_for_mode,
+    _is_mtp_tensor,
+    _LazyTensor,
+    _LazyTensorIndex,
+    _mode_for_bits,
+    _normalize_mtp_in_config,
+    _should_quantize_tensor,
+)
+from .levels import _sensitivity_lm_config_override
+from .plan import (
+    _base_bits_for_level,
+    _bpw_targets_for_level,
+    _build_quant_plan,
+    _collect_named_weight_shapes_from_weights,
+    _is_audio_tensor,
+    _is_vision_tensor,
+    _normalize_quant_path,
+    _validate_oq_dtype_for_model,
+    universal_quant_predicate,
+)
+
+
 def _tensor_shape_nbytes(shape, bytes_per_element: int) -> int:
     n = 1
     for dim in shape:

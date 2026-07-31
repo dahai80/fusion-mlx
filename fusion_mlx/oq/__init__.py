@@ -1,9 +1,50 @@
 # SPDX-License-Identifier: Apache-2.0
 """oQ package — re-exports public API for backward compatibility."""
 
-from .plan import QuantPlan, universal_quant_predicate, resolve_output_name, _LEVEL_BITS
-from .levels import validate_quantizable, make_predicate, estimate_bpw_and_size, estimate_memory
-from .streaming import quantize_oq_streaming
+from ._core import _discover_sanitize_plan, _DiscoveredPlan, _TrackedTensor
+from .io import (
+    _format_size,
+    _get_predicate_bits,
+    _should_quantize_tensor,
+)
+from .levels import (
+    _sensitivity_lm_config_override,
+    estimate_bpw_and_size,
+    estimate_memory,
+    make_predicate,
+    validate_quantizable,
+)
+from .plan import (
+    _LEVEL_BITS,
+    _MAX_MODEL_RAM_FRACTION,
+    _OQ_BPW_TARGETS,
+    _PROXY_QUANT_BITS,
+    _PROXY_QUANT_GROUP_SIZE,
+    OQ_LEVELS,
+    QuantPlan,
+    _bpw_targets_for_level,
+    _build_quant_plan,
+    _extract_layer_index,
+    _is_audio_tensor,
+    _is_moe_router,
+    _normalize_quant_path,
+    _validate_oq_dtype_for_model,
+    resolve_output_name,
+    universal_quant_predicate,
+)
+from .streaming import (
+    _build_proxy_for_sensitivity,
+    _build_streaming_proxy_for_sensitivity,
+    _forward_layer,
+    _forward_layer_result,
+    _LazyTensorIndex,
+    _measure_sensitivity,
+    _measure_sensitivity_from_quantized_model,
+    _perturb_bits_for,
+    _progress_total_bytes,
+    _quantize_chunked,
+    quantize_oq_streaming,
+)
 
 __all__ = [
     "QuantPlan",
@@ -15,4 +56,33 @@ __all__ = [
     "estimate_memory",
     "quantize_oq_streaming",
     "_LEVEL_BITS",
+    "_MAX_MODEL_RAM_FRACTION",
+    "_OQ_BPW_TARGETS",
+    "_PROXY_QUANT_BITS",
+    "_PROXY_QUANT_GROUP_SIZE",
+    "OQ_LEVELS",
+    "_bpw_targets_for_level",
+    "_build_quant_plan",
+    "_extract_layer_index",
+    "_is_audio_tensor",
+    "_is_moe_router",
+    "_normalize_quant_path",
+    "_TrackedTensor",
+    "_validate_oq_dtype_for_model",
+    "_discover_sanitize_plan",
+    "_DiscoveredPlan",
+    "_sensitivity_lm_config_override",
+    "_build_proxy_for_sensitivity",
+    "_build_streaming_proxy_for_sensitivity",
+    "_forward_layer",
+    "_forward_layer_result",
+    "_LazyTensorIndex",
+    "_measure_sensitivity",
+    "_measure_sensitivity_from_quantized_model",
+    "_perturb_bits_for",
+    "_progress_total_bytes",
+    "_quantize_chunked",
+    "_format_size",
+    "_get_predicate_bits",
+    "_should_quantize_tensor",
 ]

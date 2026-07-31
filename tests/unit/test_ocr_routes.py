@@ -5,8 +5,7 @@ Standalone pytest, no importers. Tests fusion_mlx.api.ocr_routes.
 User instruction: "完成所有剩余工作，全部未完成，defer和遗留的工作"
 """
 
-import json
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 

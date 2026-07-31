@@ -7,6 +7,7 @@ Utility functions for text processing.
 import json
 import logging
 import re
+import time
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -1547,3 +1548,74 @@ def resolve_enable_thinking_default(ct_kwargs: dict) -> dict:
     """
     ct_kwargs.setdefault("enable_thinking", False)
     return ct_kwargs
+
+
+class SSEKeepalive:
+    """Emit SSE comment pings during idle periods to prevent client/proxy timeout.
+
+    Usage inside an async generator::
+
+        keepalive = SSEKeepalive(interval_seconds=20.0)
+        async for gen in engine.stream_chat(...):
+            if gen.new_text:
+                keepalive.reset()
+                yield format_chunk(gen)
+            else:
+                ping = keepalive.maybe_ping()
+                if ping:
+                    yield ping
+
+    The SSE comment ``: keepalive\\n\\n`` is invisible to EventSource parsers
+    but resets HTTP idle timers on proxies (nginx, cloud LBs) and clients
+    (Claude Code, OpenAI SDK) that would otherwise close the connection.
+    """
+
+    __slots__ = ("_interval", "_last_send")
+
+    def __init__(self, interval_seconds: float = 20.0):
+        self._interval = interval_seconds
+        self._last_send = 0.0
+
+    def reset(self) -> None:
+        self._last_send = time.monotonic()
+
+    def maybe_ping(self) -> str | None:
+        if self._interval <= 0:
+            return None
+        now = time.monotonic()
+        if now - self._last_send >= self._interval:
+            self._last_send = now
+            return ": keepalive\n\n"
+        return None
+
+
+def cap_max_tokens_to_context(
+    requested_max_tokens: int,
+    model_id: str,
+    prompt_token_estimate: int = 0,
+) -> int:
+    """Cap max_tokens so prompt + completion does not exceed the model context window.
+
+    oMLX-style context scaling: if the model has a known max_context_window,
+    and requested_max_tokens + prompt_estimate would overflow, shrink max_tokens
+    to fit.  Leaves a 64-token safety margin for special tokens.
+    """
+    from ..server import get_max_context_window
+
+    ctx = get_max_context_window(model_id)
+    if ctx is None or ctx <= 0:
+        return requested_max_tokens
+
+    available = ctx - prompt_token_estimate - 64
+    if available < 64:
+        available = 64
+    if requested_max_tokens > available:
+        logger.info(
+            "Context scaling: max_tokens %d → %d (ctx=%d, prompt_est=%d)",
+            requested_max_tokens,
+            available,
+            ctx,
+            prompt_token_estimate,
+        )
+        return available
+    return requested_max_tokens

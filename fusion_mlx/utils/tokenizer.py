@@ -507,7 +507,9 @@ def _try_inject_mtp(model, model_path, config):
             logger.debug("MTP inject module not available")
             return
         inject_mtp_support(model, mtp_sidecar=model_path)
-        logger.debug("[MTP] qwen3.5 inject_mtp_support dispatched (sidecar=%s)", model_path)
+        logger.debug(
+            "[MTP] qwen3.5 inject_mtp_support dispatched (sidecar=%s)", model_path
+        )
 
 
 def _try_inject_mtp_post_load(model, model_name):

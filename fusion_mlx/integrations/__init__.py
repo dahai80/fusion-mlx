@@ -10,8 +10,8 @@ from fusion_mlx.integrations.hermes import HermesIntegration
 from fusion_mlx.integrations.kilo_code import KiloCodeIntegration
 from fusion_mlx.integrations.kimi_code import KimiCodeIntegration
 from fusion_mlx.integrations.openclaw import OpenClawIntegration
-from fusion_mlx.integrations.openhands import OpenHandsIntegration
 from fusion_mlx.integrations.opencode import OpenCodeIntegration
+from fusion_mlx.integrations.openhands import OpenHandsIntegration
 from fusion_mlx.integrations.pi import PiIntegration
 from fusion_mlx.integrations.pydantic_ai import PydanticAIIntegration
 from fusion_mlx.integrations.qwen_code import QwenCodeIntegration

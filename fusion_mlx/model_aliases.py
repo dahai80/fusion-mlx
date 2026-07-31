@@ -98,15 +98,17 @@ def list_aliases() -> dict[str, str]:
 _VALID_MODALITIES = frozenset({"text", "text-diffusion"})
 _RESERVED_MODALITIES = frozenset({"vision", "image-gen"})
 
-_SUPPORTED_SAMPLING_KEYS = frozenset({
-    "temperature",
-    "top_p",
-    "top_k",
-    "min_p",
-    "repetition_penalty",
-    "presence_penalty",
-    "frequency_penalty",
-})
+_SUPPORTED_SAMPLING_KEYS = frozenset(
+    {
+        "temperature",
+        "top_p",
+        "top_k",
+        "min_p",
+        "repetition_penalty",
+        "presence_penalty",
+        "frequency_penalty",
+    }
+)
 
 
 def _coerce_recommended_sampling(
@@ -134,9 +136,7 @@ def _coerce_recommended_sampling(
 def _coerce(name: str, raw: str | dict) -> AliasProfile:
     if isinstance(raw, str):
         if not raw:
-            raise ValueError(
-                f"alias {name!r} has empty hf_path (string form)"
-            )
+            raise ValueError(f"alias {name!r} has empty hf_path (string form)")
         return AliasProfile(name=name, hf_path=raw, modality="text")
     if not isinstance(raw, dict):
         raise ValueError(
@@ -144,9 +144,7 @@ def _coerce(name: str, raw: str | dict) -> AliasProfile:
         )
     hf_path = raw.get("hf_path", raw.get("path", ""))
     if not hf_path or not isinstance(hf_path, str) or not hf_path.strip():
-        raise ValueError(
-            f"alias {name!r} must have a non-empty string hf_path"
-        )
+        raise ValueError(f"alias {name!r} must have a non-empty string hf_path")
     modality = raw.get("modality", "text")
     _allowed = sorted(_VALID_MODALITIES | _RESERVED_MODALITIES)
     if not isinstance(modality, str):
@@ -176,17 +174,13 @@ def _coerce(name: str, raw: str | dict) -> AliasProfile:
                 f"supports_dflash must be false for non-text modality "
                 f"{modality!r} (alias {name!r})"
             )
-    recommended_sampling = _coerce_recommended_sampling(
-        raw.get("recommended_sampling")
-    )
+    recommended_sampling = _coerce_recommended_sampling(raw.get("recommended_sampling"))
     is_hybrid = raw.get("is_hybrid", False)
     is_hybrid_explicit = raw.get("is_hybrid_explicit", is_hybrid)
     suffix_bench_speedup = None
     raw_speedup = raw.get("suffix_bench_speedup")
     if raw_speedup and isinstance(raw_speedup, dict):
-        suffix_bench_speedup = tuple(
-            sorted(raw_speedup.items(), key=lambda kv: kv[0])
-        )
+        suffix_bench_speedup = tuple(sorted(raw_speedup.items(), key=lambda kv: kv[0]))
     return AliasProfile(
         name=name,
         hf_path=hf_path,

@@ -62,7 +62,12 @@ class TestNodeLoadSnapshot:
             "throughput",
         ):
             assert key in snap, f"missing top-level key: {key}"
-        for key in ("total_bytes", "available_bytes", "used_bytes", "available_percent"):
+        for key in (
+            "total_bytes",
+            "available_bytes",
+            "used_bytes",
+            "available_percent",
+        ):
             assert key in snap["memory"], f"missing memory key: {key}"
         for key in ("free_memory_bytes", "can_load_estimate_bytes"):
             assert key in snap["capacity"], f"missing capacity key: {key}"
@@ -95,7 +100,10 @@ class TestNodeLoadSnapshot:
         snap = _node_load_snapshot(_FakePool(status), _fake_config())
         # No ceiling => can_load = available system memory (>=0, real machine)
         assert snap["capacity"]["can_load_estimate_bytes"] >= 0
-        assert snap["capacity"]["can_load_estimate_bytes"] == snap["memory"]["available_bytes"]
+        assert (
+            snap["capacity"]["can_load_estimate_bytes"]
+            == snap["memory"]["available_bytes"]
+        )
 
     def test_no_pool_is_safe(self):
         snap = _node_load_snapshot(None, _fake_config())

@@ -289,7 +289,9 @@ class TestInternalSpawnersStampWatchdog:
     def test_chat_spawn_stamps_watchdog_ppid(self):
         from pathlib import Path
 
-        cli_file = Path(__file__).resolve().parents[2] / "fusion_mlx" / "cli_commands.py"
+        cli_file = (
+            Path(__file__).resolve().parents[2] / "fusion_mlx" / "cli_commands.py"
+        )
         source = cli_file.read_text()
         # Locate _spawn_chat_server body. The function is small (~150
         # lines) so a single-window scan is enough; pin the marker on
@@ -321,9 +323,12 @@ class TestInternalSpawnersStampWatchdog:
         )
 
     @pytest.mark.skipif(
-        not __import__("pathlib").Path(__file__).resolve().parents[2].joinpath(
-            "fusion_mlx", "bench", "_server.py"
-        ).exists(),
+        not __import__("pathlib")
+        .Path(__file__)
+        .resolve()
+        .parents[2]
+        .joinpath("fusion_mlx", "bench", "_server.py")
+        .exists(),
         reason="bench/_server.py not yet created",
     )
     def test_bench_serve_spawn_stamps_watchdog_ppid(self):

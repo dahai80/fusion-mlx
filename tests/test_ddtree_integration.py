@@ -7,22 +7,19 @@ without requiring a GPU or mlx-vlm runtime.
 
 from __future__ import annotations
 
-import asyncio
-import json
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 
 from fusion_mlx.speculative.dflash.eligibility import (
     DFlashUnavailable,
-    EligibilityReport,
     _looks_like_4bit,
     check,
     eligible_aliases,
     have_runtime,
     report,
 )
-from fusion_mlx.speculative.registry import SpecDecoderPlugin, get_spec_decoder
+from fusion_mlx.speculative.registry import get_spec_decoder
 
 
 class TestDDTreeRegistry:

@@ -24,6 +24,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal
 
 if TYPE_CHECKING:
+    from ..runtime.diffusion_lane import DiffusionEngine
     from .model_settings import ModelSettingsManager
 
 import mlx.core as mx
@@ -784,7 +785,7 @@ class EnginePool:
         | STTEngine
         | STSEngine
         | TTSEngine
-        | "DiffusionEngine"
+        | DiffusionEngine
     ):
         """
         Get or load engine for the specified model.

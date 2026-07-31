@@ -3,16 +3,17 @@
 
 from __future__ import annotations
 
+from unittest.mock import MagicMock
+
 import pytest
-from unittest.mock import AsyncMock, MagicMock
 
 from fusion_mlx.api.reasoning_routes import (
     EFFORT_TOKEN_MAP,
     ReasoningRequest,
     ReasoningResponse,
     ReasoningUsage,
-    set_reasoning_context,
     _resolve_engine,
+    set_reasoning_context,
 )
 
 
@@ -49,6 +50,7 @@ class TestResolveEngine:
     def test_no_pool_raises_503(self):
         set_reasoning_context(None)
         from fastapi import HTTPException
+
         with pytest.raises(HTTPException) as exc_info:
             _resolve_engine("any")
         assert exc_info.value.status_code == 503
@@ -58,6 +60,7 @@ class TestResolveEngine:
         pool.get.return_value = None
         set_reasoning_context(pool)
         from fastapi import HTTPException
+
         with pytest.raises(HTTPException) as exc_info:
             _resolve_engine("missing")
         assert exc_info.value.status_code == 404
@@ -78,7 +81,12 @@ class TestReasoningResponse:
             model="test",
             reasoning_content="thinking...",
             content="answer",
-            usage=ReasoningUsage(prompt_tokens=10, completion_tokens=20, reasoning_tokens=5, total_tokens=30),
+            usage=ReasoningUsage(
+                prompt_tokens=10,
+                completion_tokens=20,
+                reasoning_tokens=5,
+                total_tokens=30,
+            ),
         )
         assert resp.object == "reasoning_result"
         assert resp.reasoning_content == "thinking..."

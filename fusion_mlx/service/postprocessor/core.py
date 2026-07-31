@@ -8,14 +8,9 @@ one cohesive orchestrator, because reasoning/tool/sanitize are tightly coupled.
 
 from __future__ import annotations
 
-import copy
-import json
 import logging
-import os
-import re
 import uuid
 from typing import TYPE_CHECKING
-from unittest.mock import Mock
 
 from ...api.tool_calling import parse_tool_calls
 from ...api.utils import sanitize_output, strip_special_tokens
@@ -35,16 +30,17 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-from .parsers import StreamingPostProcessorParserMixin
 from .formatters import (
     StreamingPostProcessorFormatterMixin,
-    _find_json_start,
     _find_json_fence_opener,
-    _json_fence_suffix_hold_len,
+    _find_json_start,
 )
+from .parsers import StreamingPostProcessorParserMixin
 
 
-class StreamingPostProcessor(StreamingPostProcessorParserMixin, StreamingPostProcessorFormatterMixin):
+class StreamingPostProcessor(
+    StreamingPostProcessorParserMixin, StreamingPostProcessorFormatterMixin
+):
     """Processes streaming engine output into StreamEvents.
 
     Handles:
@@ -63,6 +59,7 @@ class StreamingPostProcessor(StreamingPostProcessorParserMixin, StreamingPostPro
         for event in processor.finalize():
             yield format_for_my_api_spec(event)
     """
+
     def __init__(
         self,
         cfg: ServerConfig,
@@ -487,6 +484,7 @@ class StreamingPostProcessor(StreamingPostProcessorParserMixin, StreamingPostPro
         # that look at ``delta_text`` boundaries it leaks).
         self.tool_accumulated_text = prefix
         self._forced_prefix_pending = prefix
+
     def set_thinking_model(self, model_name: str):
         """Enable Nemotron-style thinking prefix injection."""
         self._is_thinking_model = (
@@ -581,6 +579,7 @@ class StreamingPostProcessor(StreamingPostProcessorParserMixin, StreamingPostPro
                     pass
         if self.tool_parser and self._tool_parser_request_local:
             self.tool_parser.reset()
+
     def process_chunk(self, output: GenerationOutput) -> list[StreamEvent]:
         """Process a single engine output chunk.
 
@@ -751,6 +750,7 @@ class StreamingPostProcessor(StreamingPostProcessorParserMixin, StreamingPostPro
         # No-op when ``tools_requested`` is False.
         events = self._filter_events_for_tool_prose(events)
         return events
+
     def _process_channel_routed(
         self, delta_text: str, output: GenerationOutput
     ) -> list[StreamEvent]:
@@ -1067,6 +1067,7 @@ class StreamingPostProcessor(StreamingPostProcessorParserMixin, StreamingPostPro
         if reasoning:
             events.append(StreamEvent(type="reasoning", reasoning=reasoning))
         return events
+
     def _process_with_reasoning(
         self, delta_text: str, output: GenerationOutput
     ) -> list[StreamEvent]:
@@ -1388,6 +1389,7 @@ class StreamingPostProcessor(StreamingPostProcessorParserMixin, StreamingPostPro
         if reasoning:
             events.append(StreamEvent(type="reasoning", reasoning=reasoning))
         return events
+
     def _process_standard(
         self, delta_text: str, output: GenerationOutput
     ) -> list[StreamEvent]:
@@ -1624,6 +1626,7 @@ class StreamingPostProcessor(StreamingPostProcessorParserMixin, StreamingPostPro
                 self._standard_content_observed = True
             return [StreamEvent(type="content", content=content)]
         return []
+
     def finalize(self) -> list[StreamEvent]:
         """Finalize stream — flush remaining tool calls, emit corrections.
 

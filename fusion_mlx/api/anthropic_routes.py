@@ -290,6 +290,9 @@ async def _run_anthropic_messages(
         tools=getattr(req, "tools", None),
     )
     sampling = _build_sampling_params(req, profile_overrides=profile_overrides)
+    from .utils import cap_max_tokens_to_context
+
+    sampling.max_tokens = cap_max_tokens_to_context(sampling.max_tokens, model_name)
     request_id = f"msg-{uuid.uuid4().hex[:12]}"
 
     try:
@@ -424,7 +427,21 @@ async def _stream_anthropic_generator(
         tools=getattr(req, "tools", None),
     )
     sampling = _build_sampling_params(req, profile_overrides=profile_overrides)
+    from .utils import cap_max_tokens_to_context
+
+    sampling.max_tokens = cap_max_tokens_to_context(sampling.max_tokens, model_name)
     request_id = f"msg-{uuid.uuid4().hex[:12]}"
+
+    # SSE keepalive: prevent client/proxy timeout during long inference
+    from ..server import get_settings
+
+    _keepalive_interval = getattr(get_settings(), "sse_keepalive_seconds", 20.0) or 0.0
+    keepalive = None
+    if _keepalive_interval > 0:
+        from .utils import SSEKeepalive
+
+        keepalive = SSEKeepalive(interval_seconds=_keepalive_interval)
+        keepalive.reset()
 
     logger.info(
         "Stream start: %s, max_tokens=%d, prompt=%r",
@@ -455,6 +472,8 @@ async def _stream_anthropic_generator(
             prefix_cache_boundary=prefix_cache_boundary,
         ):
             if gen.new_text:
+                if keepalive:
+                    keepalive.reset()
                 chunk = StreamChunk(
                     text=gen.new_text,
                     prompt_tokens=gen.prompt_tokens,
@@ -462,6 +481,12 @@ async def _stream_anthropic_generator(
                     cached_tokens=getattr(gen, "cached_tokens", 0),
                 )
                 yield _adapter.format_stream_chunk(chunk, req)
+            else:
+                # No new text — maybe emit SSE keepalive ping
+                if keepalive:
+                    ping = keepalive.maybe_ping()
+                    if ping:
+                        yield ping
 
             if getattr(gen, "finished", False):
                 # Close the text content block before emitting tool blocks or message_delta
@@ -624,7 +649,10 @@ async def anthropic_messages(
 
             return StreamingResponse(
                 _stream_anthropic_generator(
-                    request, engine, model_name, adapter_path,
+                    request,
+                    engine,
+                    model_name,
+                    adapter_path,
                     profile_overrides=profile_overrides,
                 ),
                 media_type="text/event-stream",

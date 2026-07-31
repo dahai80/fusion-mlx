@@ -159,7 +159,8 @@ def install_parent_watchdog(
     if current_ppid != ppid:
         logger.warning(
             "parent already gone at install time (expected=%d, actual=%d)",
-            ppid, current_ppid,
+            ppid,
+            current_ppid,
         )
         callback(ppid, current_ppid)
         return None
@@ -226,7 +227,8 @@ def should_auto_restart() -> bool:
     if count >= _MAX_CRASH_COUNT:
         logger.error(
             "too many crashes (%d in %ds), NOT auto-restarting",
-            count, _CRASH_WINDOW,
+            count,
+            _CRASH_WINDOW,
         )
         return False
     return True
