@@ -1,0 +1,84 @@
+# Publish to PyPI on release using trusted publishing (OIDC).
+#
+# No long-lived PyPI token is required. Configure a trusted publisher at
+# https://pypi.org/manage/project/dspark-metal/settings/publishing/ pointing
+# at this repo + workflow (`publish.yml`) + environment (`pypi`). For the
+# very first release, use a "pending" trusted publisher:
+# https://docs.pypi.org/trusted-publishers/creating-a-project-with-pending-publisher/
+name: publish
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  id-token: write   # required for PyPI trusted publishing (OIDC)
+  contents: write   # required for Homebrew tap push
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+      - name: Build distributions
+        run: uv build
+      - name: Generate SHA256 checksums
+        run: |
+          cd dist/
+          sha256sum *.whl *.tar.gz > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+      - name: Upload distributions
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    environment: pypi
+    steps:
+      - name: Download distributions
+        uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+      - name: Verify SHA256 checksums
+        run: sha256sum -c dist/SHA256SUMS.txt
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+
+  update-homebrew:
+    needs: build
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Extract version from tag
+        id: version
+        run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+      - name: Update Homebrew formula checksums
+        run: |
+          chmod +x homebrew-tap/update_checksums.sh
+          ./homebrew-tap/update_checksums.sh "${{ steps.version.outputs.version }}"
+      - name: Verify no placeholders remain
+        run: |
+          remaining=$(grep -c 'PLACEHOLDER' homebrew-tap/Formula/fusion-mlx.rb || true)
+          if [ "$remaining" -gt 0 ]; then
+            echo "ERROR: ${remaining} PLACEHOLDER(s) remain in formula"
+            grep PLACEHOLDER homebrew-tap/Formula/fusion-mlx.rb
+            exit 1
+          fi
+      - name: Commit and push updated formula
+        run: |
+          cd homebrew-tap
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add Formula/fusion-mlx.rb
+          git diff --cached --quiet && echo "No changes to commit" && exit 0
+          git commit -m "chore: update SHA256 for v${{ steps.version.outputs.version }}"
+          git push

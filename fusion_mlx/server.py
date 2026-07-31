@@ -500,6 +500,44 @@ def resolve_model_id(model_id: str) -> str:
     return model_id
 
 
+def resolve_model_with_profile(model_id: str) -> tuple[str, dict[str, Any]]:
+    """Resolve model:profile syntax into (resolved_model_id, profile_overrides).
+
+    If model_id contains ':' and the suffix matches an exposed profile,
+    returns the base model ID plus a dict of sampling overrides from the
+    profile.  Otherwise returns (resolve_model_id(model_id), {}).
+
+    This enables zero-extra-memory profile selection via API calls like:
+        POST /v1/chat/completions  {"model": "qwen3:creative", ...}
+    """
+    if ":" not in model_id:
+        return resolve_model_id(model_id), {}
+
+    sm = _server_state.get("settings_manager")
+    if sm is None:
+        logger.debug("resolve_model_with_profile: no settings_manager, stripping profile")
+        base = model_id.split(":", 1)[0]
+        return resolve_model_id(base), {}
+
+    result = sm.get_exposed_profile_runtime_settings_for_request(model_id)
+    if result is not None:
+        base_model_id, profile_settings = result
+        overrides = {}
+        for fname in ("temperature", "top_p", "top_k", "min_p",
+                       "max_tokens", "repetition_penalty", "presence_penalty"):
+            val = getattr(profile_settings, fname, None)
+            if val is not None:
+                overrides[fname] = val
+        logger.info(
+            "resolve_model_with_profile: %s -> base=%s, overrides=%s",
+            model_id, base_model_id, overrides,
+        )
+        return resolve_model_id(base_model_id), overrides
+
+    # No profile match — treat whole string as model name (colon may be in model ID)
+    return resolve_model_id(model_id), {}
+
+
 def get_settings() -> Any:
     from .settings import Settings
 

@@ -212,16 +212,31 @@ def _messages_for_engine(request_msgs: Any, is_mllm: bool) -> list[dict]:
     return out
 
 
-def _build_sampling_params(req: ChatCompletionRequest) -> SamplingParams:
-    """Convert ChatCompletionRequest to SamplingParams."""
+def _build_sampling_params(
+    req: ChatCompletionRequest,
+    profile_overrides: dict | None = None,
+) -> SamplingParams:
+    """Convert ChatCompletionRequest to SamplingParams.
+
+    profile_overrides: dict from model:profile resolution.
+    Request-level params take precedence; profile fills in unset defaults.
+    """
+    po = profile_overrides or {}
     return SamplingParams(
-        max_tokens=req.max_tokens or 2048,
-        temperature=req.temperature if req.temperature is not None else 0.7,
-        top_p=req.top_p if req.top_p is not None else 0.9,
-        top_k=getattr(req, "top_k", 0) or 0,
-        min_p=getattr(req, "min_p", 0.0) or 0.0,
+        max_tokens=req.max_tokens or po.get("max_tokens") or 2048,
+        temperature=(
+            req.temperature if req.temperature is not None
+            else po.get("temperature", 0.7)
+        ),
+        top_p=(
+            req.top_p if req.top_p is not None
+            else po.get("top_p", 0.9)
+        ),
+        top_k=getattr(req, "top_k", 0) or po.get("top_k") or 0,
+        min_p=getattr(req, "min_p", 0.0) or po.get("min_p") or 0.0,
         presence_penalty=(
-            req.presence_penalty if req.presence_penalty is not None else 0.0
+            req.presence_penalty if req.presence_penalty is not None
+            else po.get("presence_penalty", 0.0)
         ),
         frequency_penalty=(
             req.frequency_penalty if req.frequency_penalty is not None else 0.0
@@ -362,10 +377,10 @@ async def _run_chat(
     principal: str | None = None,
 ) -> ChatCompletionResponse:
     """Execute a non-streaming chat completion."""
-    from ..server import resolve_model_id
+    from ..server import resolve_model_with_profile
 
     _start = time.perf_counter()
-    model_name = resolve_model_id(request.model)
+    model_name, profile_overrides = resolve_model_with_profile(request.model)
     adapter_path = getattr(request, "adapters", None)
 
     async def _release() -> None:
@@ -393,7 +408,7 @@ async def _run_chat(
             raise
 
     messages = _messages_for_engine(request.messages, getattr(engine, "is_mllm", False))
-    sampling = _build_sampling_params(request)
+    sampling = _build_sampling_params(request, profile_overrides=profile_overrides)
     request_id = f"chatcmpl-{uuid.uuid4().hex[:12]}"
 
     try:
@@ -494,6 +509,7 @@ async def _stream_chat_generator(
     adapter_path: str | None,
     *,
     principal: str | None = None,
+    profile_overrides: dict | None = None,
 ) -> AsyncIterator[str]:
     """Generate SSE events for a streaming chat completion.
 
@@ -507,7 +523,7 @@ async def _stream_chat_generator(
         await _release_engine(model_name, adapter_path=adapter_path)
 
     messages = _messages_for_engine(request.messages, getattr(engine, "is_mllm", False))
-    sampling = _build_sampling_params(request)
+    sampling = _build_sampling_params(request, profile_overrides=profile_overrides)
     request_id = f"chatcmpl-{uuid.uuid4().hex[:12]}"
 
     from .streaming import StreamingJSONEncoder
@@ -727,9 +743,9 @@ async def _stream_chat(
     handler's exception handlers and become proper HTTP 404/503 responses
     instead of unhandled ASGI 500 errors after the stream has started.
     """
-    from ..server import resolve_model_id
+    from ..server import resolve_model_with_profile
 
-    model_name = resolve_model_id(request.model)
+    model_name, profile_overrides = resolve_model_with_profile(request.model)
     adapter_path = getattr(request, "adapters", None)
 
     # Resolve engine first — exceptions propagate to route handler
@@ -756,7 +772,8 @@ async def _stream_chat(
 
     return StreamingResponse(
         _stream_chat_generator(
-            request, engine, model_name, adapter_path, principal=principal
+            request, engine, model_name, adapter_path,
+            principal=principal, profile_overrides=profile_overrides,
         ),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},

@@ -209,20 +209,34 @@ def _extract_prefix_cache_boundary(req: AnthropicMessagesRequest) -> int | None:
     return None
 
 
-def _build_sampling_params(req: AnthropicMessagesRequest) -> SamplingParams:
-    """Convert Anthropic request to SamplingParams."""
-    max_tokens = getattr(req, "max_tokens", 2048) or 2048
+def _build_sampling_params(
+    req: AnthropicMessagesRequest,
+    profile_overrides: dict | None = None,
+) -> SamplingParams:
+    """Convert Anthropic request to SamplingParams.
+
+    profile_overrides: dict from model:profile resolution.
+    Request-level params take precedence; profile fills in unset defaults.
+    """
+    po = profile_overrides or {}
+    max_tokens = getattr(req, "max_tokens", None) or po.get("max_tokens") or 2048
     temperature = (
-        getattr(req, "temperature", 0.7) if hasattr(req, "temperature") else 0.7
+        getattr(req, "temperature", None) if hasattr(req, "temperature") else None
     )
+    if temperature is None:
+        temperature = po.get("temperature", 0.7)
     top_p = getattr(req, "top_p", None) if hasattr(req, "top_p") else None
     if top_p is None:
-        top_p = 0.9
+        top_p = po.get("top_p", 0.9)
     stop = getattr(req, "stop_sequences", None)
     return SamplingParams(
         max_tokens=max_tokens,
         temperature=temperature,
         top_p=top_p,
+        top_k=po.get("top_k") or 0,
+        min_p=po.get("min_p") or 0.0,
+        presence_penalty=po.get("presence_penalty", 0.0),
+        repetition_penalty=po.get("repetition_penalty", 1.0),
         stop=stop if isinstance(stop, list) else ([stop] if stop else None),
     )
 
@@ -233,10 +247,10 @@ async def _run_anthropic_messages(
     """Execute a non-streaming Anthropic messages request."""
     import time as _time
 
-    from ..server import resolve_model_id
+    from ..server import resolve_model_with_profile
 
     _start = _time.perf_counter()
-    model_name = resolve_model_id(req.model)
+    model_name, profile_overrides = resolve_model_with_profile(req.model)
     adapter_path = getattr(req, "adapters", None)
 
     async def _release() -> None:
@@ -275,7 +289,7 @@ async def _run_anthropic_messages(
         openai_tool_choice,
         tools=getattr(req, "tools", None),
     )
-    sampling = _build_sampling_params(req)
+    sampling = _build_sampling_params(req, profile_overrides=profile_overrides)
     request_id = f"msg-{uuid.uuid4().hex[:12]}"
 
     try:
@@ -379,6 +393,8 @@ async def _stream_anthropic_generator(
     engine: Any,
     model_name: str,
     adapter_path: str | None,
+    *,
+    profile_overrides: dict | None = None,
 ) -> AsyncIterator[str]:
     """Generate SSE events for a streaming Anthropic messages request.
 
@@ -407,7 +423,7 @@ async def _stream_anthropic_generator(
         openai_tool_choice,
         tools=getattr(req, "tools", None),
     )
-    sampling = _build_sampling_params(req)
+    sampling = _build_sampling_params(req, profile_overrides=profile_overrides)
     request_id = f"msg-{uuid.uuid4().hex[:12]}"
 
     logger.info(
@@ -583,9 +599,9 @@ async def anthropic_messages(
             # Resolve engine BEFORE creating StreamingResponse so that
             # ModelNotFoundError / ModelLoadingError become proper HTTP
             # 404/503 instead of unhandled ASGI 500 after stream starts.
-            from ..server import resolve_model_id
+            from ..server import resolve_model_with_profile
 
-            model_name = resolve_model_id(request.model)
+            model_name, profile_overrides = resolve_model_with_profile(request.model)
             adapter_path = getattr(request, "adapters", None)
             engine = await _resolve_engine(model_name, adapter_path=adapter_path)
             if engine is None:
@@ -607,7 +623,10 @@ async def anthropic_messages(
                 raise
 
             return StreamingResponse(
-                _stream_anthropic_generator(request, engine, model_name, adapter_path),
+                _stream_anthropic_generator(
+                    request, engine, model_name, adapter_path,
+                    profile_overrides=profile_overrides,
+                ),
                 media_type="text/event-stream",
                 headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
             )
