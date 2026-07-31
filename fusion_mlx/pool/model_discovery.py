@@ -1228,11 +1228,13 @@ def _safetensors_has_mlx_metadata(path: Path) -> bool:
 _MLX_NAME_RE = re.compile(r"(^|[-_/])mlx($|[-_/])", re.IGNORECASE)
 
 
-_KNOWN_EMBEDDING_ARCHITECTURES = frozenset({
-    "XLMRobertaModel",
-    "BertModel",
-    "BertForMaskedLM",
-})
+_KNOWN_EMBEDDING_ARCHITECTURES = frozenset(
+    {
+        "XLMRobertaModel",
+        "BertModel",
+        "BertForMaskedLM",
+    }
+)
 
 
 def _is_embedding_model_dir(model_dir: Path) -> bool:
@@ -1242,6 +1244,7 @@ def _is_embedding_model_dir(model_dir: Path) -> bool:
         return False
     try:
         import json
+
         with open(config_path) as f:
             cfg = json.load(f)
         architectures = cfg.get("architectures", [])
