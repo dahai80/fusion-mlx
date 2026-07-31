@@ -80,6 +80,8 @@ from .api.ocr_routes import router as ocr_router
 from .api.ocr_routes import set_ocr_context
 from .api.reasoning_routes import router as reasoning_router
 from .api.reasoning_routes import set_reasoning_context
+from .api.ollama_routes import router as ollama_router
+from .api.ollama_routes import set_ollama_context
 from .api.openai_routes import router as openai_router
 from .api.openai_routes import set_openai_context
 from .api.openclaw_routes import router as openclaw_router
@@ -611,6 +613,7 @@ class Server:
         install_exception_handlers(app)
 
         # Register all route modules
+        app.include_router(ollama_router)
         app.include_router(openai_router)
         app.include_router(anthropic_router)
         app.include_router(audio_router)
@@ -1007,6 +1010,7 @@ class Server:
         # Inject context into route modules
         global _server_instance
         _server_instance = self
+        set_ollama_context(self.pool)
         set_openai_context(self.pool, self.request_router)
         set_anthropic_context(self.pool)
         set_images_context(self.pool)
