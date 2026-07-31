@@ -112,14 +112,45 @@ Recommendations are based on real-time hardware detection (CPU cores, unified me
 
 ## Quick Start
 
-```bash
-# Install
-pip install fusion-mlx
+### Install
 
-# Start server
+```bash
+# Option 1: curl one-liner (auto-detects RAM, recommends model)
+curl -fsSL https://raw.githubusercontent.com/dahai80/fusion-mlx/main/scripts/install.sh | bash
+
+# Option 2: Homebrew
+brew tap dahai80/fusion-mlx https://github.com/dahai80/fusion-mlx
+brew install fusion-mlx
+
+# Option 3: uv (fastest)
+uv tool install fusion-mlx
+
+# Option 4: pip
+pip install fusion-mlx
+```
+
+### Usage
+
+```bash
+# Interactive chat REPL (auto-selects model by RAM)
+fusion-mlx chat
+
+# Start OpenAI-compatible server
 fusion-mlx serve --model-dir ~/.cache/huggingface
 
-# Chat
+# Or serve a specific model
+fusion-mlx serve qwen3.5-9b-4bit
+
+# Check environment health
+fusion-mlx doctor
+
+# List available models
+fusion-mlx models
+```
+
+### Chat API
+
+```bash
 curl http://localhost:8000/v1/chat/completions \
    -H "Content-Type: application/json" \
    -d '{
