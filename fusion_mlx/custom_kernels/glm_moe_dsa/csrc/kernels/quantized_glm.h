@@ -1360,7 +1360,7 @@ METAL_FUNC void qmm_n_impl(
 }
 
 template <typename T>
-METAL_FUNC void adjust_matrix_offsets(
+METAL_FUNC bool adjust_matrix_offsets(
     const device T*& x,
     const device uint32_t*& w,
     const device T*& scales,
@@ -1376,7 +1376,13 @@ METAL_FUNC void adjust_matrix_offsets(
     const constant int64_t* s_strides,
     const constant int64_t* b_strides,
     uint3 tid [[threadgroup_position_in_grid]]) {
-  // Set the input/output matrices
+  int batch_size = 1;
+  for (int i = 0; i < x_batch_ndims; i++) {
+    batch_size *= x_shape[i];
+  }
+  if (batch_size > 0 && tid.z >= static_cast<uint32_t>(batch_size)) {
+    return false;
+  }
   uint32_t x_idx = tid.z;
   uint32_t w_idx = tid.z;
   if (x_batch_ndims == 1) {
@@ -1396,10 +1402,11 @@ METAL_FUNC void adjust_matrix_offsets(
     biases += idx.z;
   }
   y += tid.z * output_stride;
+  return true;
 }
 
 template <typename T>
-METAL_FUNC void adjust_matrix_offsets(
+METAL_FUNC bool adjust_matrix_offsets(
     const device T*& x,
     const device uint32_t*& w,
     const device T*& scales,
@@ -1421,15 +1428,31 @@ METAL_FUNC void adjust_matrix_offsets(
     const constant int64_t* s_strides,
     const constant int64_t* b_strides,
     uint3 tid [[threadgroup_position_in_grid]]) {
-  // Set the input/output matrices
+  int batch_size = 1;
+  for (int i = 0; i < batch_ndims; i++) {
+    batch_size *= batch_shape[i];
+  }
+  if (batch_size > 0 && tid.z >= static_cast<uint32_t>(batch_size)) {
+    return false;
+  }
   uint32_t x_idx;
   uint32_t w_idx;
   if (batch_ndims == 1) {
-    x_idx = lhs_indices[tid.z * lhs_strides[0]];
-    w_idx = rhs_indices[tid.z * rhs_strides[0]];
+    uint64_t lhs_off = static_cast<uint64_t>(tid.z) * lhs_strides[0];
+    uint64_t rhs_off = static_cast<uint64_t>(tid.z) * rhs_strides[0];
+    if (lhs_off >= static_cast<uint64_t>(batch_size) ||
+        rhs_off >= static_cast<uint64_t>(batch_size)) {
+      return false;
+    }
+    x_idx = lhs_indices[lhs_off];
+    w_idx = rhs_indices[rhs_off];
   } else {
     ulong2 idx = elem_to_loc_broadcast(
         tid.z, batch_shape, lhs_strides, rhs_strides, batch_ndims);
+    if (idx.x >= static_cast<uint64_t>(batch_size) ||
+        idx.y >= static_cast<uint64_t>(batch_size)) {
+      return false;
+    }
     x_idx = lhs_indices[idx.x];
     w_idx = rhs_indices[idx.y];
   }
@@ -1450,6 +1473,7 @@ METAL_FUNC void adjust_matrix_offsets(
     biases += idx.z;
   }
   y += tid.z * output_stride;
+  return true;
 }
 
 template <typename T, int group_size, int bits, int D, bool batched>
@@ -1474,22 +1498,24 @@ template <typename T, int group_size, int bits, int D, bool batched>
     uint quad_lid [[thread_index_in_quadgroup]]) {
   if (batched) {
     int M = x_shape[x_batch_ndims];
-    adjust_matrix_offsets<T>(
-        x,
-        w,
-        scales,
-        biases,
-        y,
-        out_vec_size * M,
-        x_batch_ndims,
-        x_shape,
-        x_strides,
-        w_batch_ndims,
-        w_shape,
-        w_strides,
-        s_strides,
-        b_strides,
-        tid);
+    if (!adjust_matrix_offsets<T>(
+            x,
+            w,
+            scales,
+            biases,
+            y,
+            out_vec_size * M,
+            x_batch_ndims,
+            x_shape,
+            x_strides,
+            w_batch_ndims,
+            w_shape,
+            w_strides,
+            s_strides,
+            b_strides,
+            tid)) {
+      return;
+    }
   }
   qmv_quad_impl<T, group_size, bits, D>(
       w,
@@ -1526,7 +1552,7 @@ template <typename T, int group_size, int bits, bool batched>
     uint simd_lid [[thread_index_in_simdgroup]]) {
   if (batched) {
     int M = x_shape[x_batch_ndims];
-    adjust_matrix_offsets<T>(
+    if (!adjust_matrix_offsets<T>(
         x,
         w,
         scales,
@@ -1541,7 +1567,9 @@ template <typename T, int group_size, int bits, bool batched>
         w_strides,
         s_strides,
         b_strides,
-        tid);
+        tid)) {
+      return;
+    }
   }
   qmv_fast_impl<T, group_size, bits>(
       w,
@@ -1578,7 +1606,7 @@ template <typename T, const int group_size, const int bits, bool batched>
     uint simd_lid [[thread_index_in_simdgroup]]) {
   if (batched) {
     int M = x_shape[x_batch_ndims];
-    adjust_matrix_offsets<T>(
+    if (!adjust_matrix_offsets<T>(
         x,
         w,
         scales,
@@ -1593,7 +1621,9 @@ template <typename T, const int group_size, const int bits, bool batched>
         w_strides,
         s_strides,
         b_strides,
-        tid);
+        tid)) {
+      return;
+    }
   }
   qmv_impl<T, group_size, bits>(
       w,
@@ -1630,7 +1660,7 @@ template <typename T, const int group_size, const int bits, bool batched>
     uint simd_lid [[thread_index_in_simdgroup]]) {
   if (batched) {
     int M = x_shape[x_batch_ndims];
-    adjust_matrix_offsets<T>(
+    if (!adjust_matrix_offsets<T>(
         x,
         w,
         scales,
@@ -1645,7 +1675,9 @@ template <typename T, const int group_size, const int bits, bool batched>
         w_strides,
         s_strides,
         b_strides,
-        tid);
+        tid)) {
+      return;
+    }
   }
   qvm_impl<T, group_size, bits>(
       w,
@@ -1682,7 +1714,7 @@ template <typename T, const int group_size, const int bits, int split_k = 32>
     uint simd_gid [[simdgroup_index_in_threadgroup]],
     uint simd_lid [[thread_index_in_simdgroup]]) {
   int M = x_shape[x_batch_ndims];
-  adjust_matrix_offsets<T>(
+  if (!adjust_matrix_offsets<T>(
       x,
       w,
       scales,
@@ -1697,7 +1729,9 @@ template <typename T, const int group_size, const int bits, int split_k = 32>
       w_strides,
       s_strides,
       b_strides,
-      tid);
+      tid)) {
+    return;
+  }
 
   // When (in_vec_size % split_k != 0) the final block needs to be smaller
   int in_vec_size_adj =
@@ -1754,7 +1788,7 @@ template <
   threadgroup T Ws[BN * BK_padded];
 
   if (batched) {
-    adjust_matrix_offsets<T>(
+    if (!adjust_matrix_offsets<T>(
         x,
         w,
         scales,
@@ -1769,7 +1803,9 @@ template <
         w_strides,
         s_strides,
         b_strides,
-        tid);
+        tid)) {
+      return;
+    }
   }
   qmm_t_impl<T, group_size, bits, aligned_N, BM, BK, BN>(
       w,
@@ -2015,7 +2051,7 @@ template <
   threadgroup T Ws[BK * BN_padded];
 
   if (batched) {
-    adjust_matrix_offsets<T>(
+    if (!adjust_matrix_offsets<T>(
         x,
         w,
         scales,
@@ -2030,7 +2066,9 @@ template <
         w_strides,
         s_strides,
         b_strides,
-        tid);
+        tid)) {
+      return;
+    }
   }
 
   qmm_n_impl<T, group_size, bits, BM, BK, BN>(
@@ -2064,7 +2102,7 @@ template <typename T, int group_size, int bits>
     uint simd_gid [[simdgroup_index_in_threadgroup]],
     uint simd_lid [[thread_index_in_simdgroup]]) {
   int M = x_shape[x_batch_ndims];
-  adjust_matrix_offsets<T>(
+  if (!adjust_matrix_offsets<T>(
       x,
       w,
       scales,
@@ -2085,7 +2123,9 @@ template <typename T, int group_size, int bits>
       w_strides,
       s_strides,
       b_strides,
-      tid);
+      tid)) {
+    return;
+  }
   qmv_fast_impl<T, group_size, bits>(
       w,
       scales,
@@ -2126,7 +2166,7 @@ template <typename T, int group_size, int bits>
     uint simd_gid [[simdgroup_index_in_threadgroup]],
     uint simd_lid [[thread_index_in_simdgroup]]) {
   int M = x_shape[x_batch_ndims];
-  adjust_matrix_offsets<T>(
+  if (!adjust_matrix_offsets<T>(
       x,
       w,
       scales,
@@ -2147,7 +2187,9 @@ template <typename T, int group_size, int bits>
       w_strides,
       s_strides,
       b_strides,
-      tid);
+      tid)) {
+    return;
+  }
   qmv_impl<T, group_size, bits>(
       w,
       scales,
@@ -2188,7 +2230,7 @@ template <typename T, int group_size, int bits>
     uint simd_gid [[simdgroup_index_in_threadgroup]],
     uint simd_lid [[thread_index_in_simdgroup]]) {
   int M = x_shape[x_batch_ndims];
-  adjust_matrix_offsets<T>(
+  if (!adjust_matrix_offsets<T>(
       x,
       w,
       scales,
@@ -2209,7 +2251,9 @@ template <typename T, int group_size, int bits>
       w_strides,
       s_strides,
       b_strides,
-      tid);
+      tid)) {
+    return;
+  }
   qvm_impl<T, group_size, bits>(
       w,
       scales,
@@ -2265,7 +2309,7 @@ template <
   threadgroup T Xs[BM * BK_padded];
   threadgroup T Ws[BN * BK_padded];
 
-  adjust_matrix_offsets<T>(
+  if (!adjust_matrix_offsets<T>(
       x,
       w,
       scales,
@@ -2286,7 +2330,9 @@ template <
       w_strides,
       s_strides,
       b_strides,
-      tid);
+      tid)) {
+    return;
+  }
   qmm_t_impl<T, group_size, bits, aligned_N, BM, BK, BN>(
       w,
       scales,
@@ -2347,7 +2393,7 @@ template <
   threadgroup T Xs[BM * BK_padded];
   threadgroup T Ws[BK * BN_padded];
 
-  adjust_matrix_offsets<T>(
+  if (!adjust_matrix_offsets<T>(
       x,
       w,
       scales,
@@ -2368,7 +2414,9 @@ template <
       w_strides,
       s_strides,
       b_strides,
-      tid);
+      tid)) {
+    return;
+  }
   qmm_n_impl<T, group_size, bits, BM, BK, BN>(
       w, scales, biases, x, y, Xs, Ws, K, N, M, tid, lid, simd_gid, simd_lid);
 }
