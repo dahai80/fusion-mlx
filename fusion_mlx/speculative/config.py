@@ -45,6 +45,13 @@ _ALLOWED_KEYS: dict[str, set[str]] = {
     },
     "dspark": {"method", "model", "num_speculative_tokens"},
     "vlm-mtp": {"method", "model", "num_speculative_tokens", "draft_block_size"},
+    "eagle3": {
+        "method",
+        "model",
+        "num_speculative_tokens",
+        "draft_model_key",
+        "temperature",
+    },
 }
 
 

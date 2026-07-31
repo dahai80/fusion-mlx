@@ -484,11 +484,15 @@ class InsufficientMemoryError(EnginePoolError):
         required: int = 0,
         current: int = 0,
         message: str | None = None,
+        model_id: str | None = None,
+        loaded_models: list[dict] | None = None,
     ):
         self.required = required
         self.current = current
+        self.model_id = model_id
+        self.loaded_models = loaded_models or []
         if message is None:
-            message = f"Insufficient memory: required {required}, " f"current {current}"
+            message = f"Insufficient memory: required {required}, current {current}"
         super().__init__(message)
 
 

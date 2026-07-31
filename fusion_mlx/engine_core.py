@@ -290,16 +290,31 @@ class EngineCore:
         if spec_eligible and SPEC_DRAFT_MODEL_ENABLED:
 
             def _init_draft():
-                from .speculative.draft_model import DraftModelDecoder
+                import os as _os
 
-                draft = DraftModelDecoder()
+                spec_method = _os.environ.get(
+                    "FUSION_SPEC_METHOD", "draft_model"
+                ).lower()
+                draft = None
+                if spec_method == "eagle3":
+                    from .speculative.eagle3 import Eagle3Speculator
+
+                    draft = Eagle3Speculator()
+                    logger.info("Speculative decode: using EAGLE3 method")
+                else:
+                    from .speculative.draft_model import DraftModelDecoder
+
+                    draft = DraftModelDecoder()
+
                 loaded = draft.load()
                 if loaded:
                     self.scheduler._spec_decode_state = SpecDecodeState(
                         draft_model_decoder=draft
                     )
                     logger.info(
-                        "Speculative decode: draft model enabled (%s)", draft.model_path
+                        "Speculative decode: draft model enabled (%s, method=%s)",
+                        draft.model_path if hasattr(draft, "model_path") else "?",
+                        spec_method,
                     )
                 else:
                     logger.info(

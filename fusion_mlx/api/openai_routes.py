@@ -89,6 +89,34 @@ def _resolve_modality(model_id: str) -> str:
     return "text"
 
 
+def _resolve_capabilities(model_id: str) -> dict:
+    caps = {
+        "text_generation": False,
+        "tool_calling": False,
+        "structured_output": False,
+        "vision": False,
+        "embedding": False,
+    }
+    if _pool is not None:
+        entry = _pool.get_entry(model_id)
+        if entry is not None:
+            mt = getattr(entry, "model_type", None)
+            if mt == "llm":
+                caps["text_generation"] = True
+                caps["tool_calling"] = True
+                caps["structured_output"] = True
+            elif mt == "vlm":
+                caps["text_generation"] = True
+                caps["tool_calling"] = True
+                caps["structured_output"] = True
+                caps["vision"] = True
+            elif mt == "embedding":
+                caps["embedding"] = True
+    else:
+        caps["text_generation"] = True
+    return caps
+
+
 def set_openai_context(pool: EnginePool, req_router: RequestRouter) -> None:
     """Inject engine pool and request router into this module."""
     global _pool, _request_router
@@ -542,11 +570,24 @@ async def _run_chat(
         ) from exc
     except InsufficientMemoryError as exc:
         logger.warning("Insufficient memory: %s", exc)
-        raise HTTPException(
-            status_code=503,
-            detail={"error": {"message": str(exc), "type": "resource_exhausted"}},
-            headers={"Retry-After": "10"},
-        ) from exc
+        detail = {
+            "error": {
+                "type": "model_unavailable",
+                "message": f"Model {exc.model_id} not loaded and insufficient memory",
+                "required_memory_mb": exc.required // (1024 * 1024) if exc.required else 0,
+                "available_memory_mb": exc.current // (1024 * 1024) if exc.current else 0,
+                "loaded_models": exc.loaded_models,
+            }
+        }
+        if exc.loaded_models:
+            unloadable = [m for m in exc.loaded_models if not m.get("pinned", False)]
+            if unloadable:
+                victim = unloadable[0]
+                detail["error"]["suggestion"] = (
+                    f"Unload model {victim['model_id']} "
+                    f"(free ~{victim.get('memory_mb', '?')}MB) then retry"
+                )
+        raise HTTPException(status_code=503, detail=detail) from exc
     except ModelTooLargeError as exc:
         raise HTTPException(
             status_code=413,
@@ -800,7 +841,24 @@ async def _stream_chat_generator(
         yield f'data: {{"error": {{"message": {str(exc)!r}, "status": 503, "type": "server_busy"}}}}\n\n'
     except InsufficientMemoryError as exc:
         logger.warning("Stream: insufficient memory: %s", exc)
-        yield f'data: {{"error": {{"message": {str(exc)!r}, "status": 503, "type": "resource_exhausted"}}}}\n\n'
+        import json as _json
+        err_detail = {
+            "message": f"Model {exc.model_id} not loaded and insufficient memory",
+            "status": 503,
+            "type": "model_unavailable",
+            "required_memory_mb": exc.required // (1024 * 1024) if exc.required else 0,
+            "available_memory_mb": exc.current // (1024 * 1024) if exc.current else 0,
+            "loaded_models": exc.loaded_models,
+        }
+        if exc.loaded_models:
+            unloadable = [m for m in exc.loaded_models if not m.get("pinned", False)]
+            if unloadable:
+                victim = unloadable[0]
+                err_detail["suggestion"] = (
+                    f"Unload model {victim['model_id']} "
+                    f"(free ~{victim.get('memory_mb', '?')}MB) then retry"
+                )
+        yield f"data: {_json.dumps({'error': err_detail})}\n\n"
     except ModelTooLargeError as exc:
         yield f'data: {{"error": {{"message": {str(exc)!r}, "status": 413, "type": "model_too_large"}}}}\n\n'
     except Exception as exc:
@@ -1124,11 +1182,24 @@ async def chat_completions(
             headers={"Retry-After": "5"},
         ) from exc
     except InsufficientMemoryError as exc:
-        raise HTTPException(
-            status_code=503,
-            detail={"error": {"message": str(exc), "type": "resource_exhausted"}},
-            headers={"Retry-After": "10"},
-        ) from exc
+        detail = {
+            "error": {
+                "type": "model_unavailable",
+                "message": f"Model {exc.model_id} not loaded and insufficient memory",
+                "required_memory_mb": exc.required // (1024 * 1024) if exc.required else 0,
+                "available_memory_mb": exc.current // (1024 * 1024) if exc.current else 0,
+                "loaded_models": exc.loaded_models,
+            }
+        }
+        if exc.loaded_models:
+            unloadable = [m for m in exc.loaded_models if not m.get("pinned", False)]
+            if unloadable:
+                victim = unloadable[0]
+                detail["error"]["suggestion"] = (
+                    f"Unload model {victim['model_id']} "
+                    f"(free ~{victim.get('memory_mb', '?')}MB) then retry"
+                )
+        raise HTTPException(status_code=503, detail=detail) from exc
     except ModelTooLargeError as exc:
         raise HTTPException(
             status_code=413,
@@ -1177,11 +1248,24 @@ async def completions(
             headers={"Retry-After": "5"},
         ) from exc
     except InsufficientMemoryError as exc:
-        raise HTTPException(
-            status_code=503,
-            detail={"error": {"message": str(exc), "type": "resource_exhausted"}},
-            headers={"Retry-After": "10"},
-        ) from exc
+        detail = {
+            "error": {
+                "type": "model_unavailable",
+                "message": f"Model {exc.model_id} not loaded and insufficient memory",
+                "required_memory_mb": exc.required // (1024 * 1024) if exc.required else 0,
+                "available_memory_mb": exc.current // (1024 * 1024) if exc.current else 0,
+                "loaded_models": exc.loaded_models,
+            }
+        }
+        if exc.loaded_models:
+            unloadable = [m for m in exc.loaded_models if not m.get("pinned", False)]
+            if unloadable:
+                victim = unloadable[0]
+                detail["error"]["suggestion"] = (
+                    f"Unload model {victim['model_id']} "
+                    f"(free ~{victim.get('memory_mb', '?')}MB) then retry"
+                )
+        raise HTTPException(status_code=503, detail=detail) from exc
     except ModelTooLargeError as exc:
         raise HTTPException(
             status_code=413,
@@ -1216,6 +1300,7 @@ async def list_models(
             created=int(time.time()),
             owned_by="local",
             modality=_resolve_modality(mid),
+            capabilities=_resolve_capabilities(mid),
         )
         for mid in model_ids
     ]

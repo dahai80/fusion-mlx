@@ -102,3 +102,12 @@ register_spec_decoder(
         aliases=("gemma4-mtp",),
     )
 )
+
+register_spec_decoder(
+    SpecDecoderPlugin(
+        method="eagle3",
+        description="EAGLE3 speculative decoding (1-layer drafter, llama3/qwen3)",
+        config_enabled=True,
+        aliases=("eagle", "eagle3-llama", "eagle3-qwen"),
+    )
+)

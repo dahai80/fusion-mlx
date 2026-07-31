@@ -236,6 +236,54 @@ async def verify_api_key_or_x_api_key(
     return _verify_api_key_values(bearer_key, request.headers.get("x-api-key"))
 
 
+_SCOPED_KEY_PREFIXES = {
+    "fsb_": "model_manager",
+    "model_mgr_": "model_manager",
+}
+SCOPED_KEY_ROLES = {v for v in _SCOPED_KEY_PREFIXES.values()}
+
+
+def _extract_scoped_role(api_key: str | None) -> str | None:
+    if not api_key:
+        return None
+    for prefix, role in _SCOPED_KEY_PREFIXES.items():
+        if api_key.startswith(prefix):
+            return role
+    return None
+
+
+async def verify_scoped_api_key(
+    request: Request,
+    credentials: HTTPAuthorizationCredentials = Depends(security),
+    required_role: str = "model_manager",
+) -> str:
+    bearer_key = credentials.credentials if credentials is not None else None
+    api_key = bearer_key or request.headers.get("x-api-key")
+    if not api_key:
+        raise HTTPException(status_code=401, detail="API key required")
+    role = _extract_scoped_role(api_key)
+    if role is not None:
+        if role != required_role:
+            raise HTTPException(
+                status_code=403,
+                detail=f"Scoped key lacks required role '{required_role}'",
+            )
+        configured_key = _get_configured_api_key()
+        if configured_key is None:
+            logger.debug("No API key configured — scoped key accepted (dev mode)")
+            return role
+        key_body = api_key
+        for prefix in _SCOPED_KEY_PREFIXES:
+            if api_key.startswith(prefix):
+                key_body = api_key[len(prefix):]
+                break
+        if not key_body or not secrets.compare_digest(key_body, configured_key):
+            raise HTTPException(status_code=401, detail="Invalid scoped API key")
+        return role
+    _verify_api_key_values(bearer_key, request.headers.get("x-api-key"))
+    return "admin"
+
+
 _LOOPBACK_LITERALS = frozenset({"127.0.0.1", "::1", "localhost"})
 
 

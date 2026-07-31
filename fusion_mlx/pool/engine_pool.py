@@ -955,6 +955,15 @@ class EnginePool:
                     loading_event.set()
                 if entry.estimated_size > ceiling:
                     raise ModelTooLargeError(model_id, entry.estimated_size, ceiling)
+                loaded_models = []
+                for mid, ent in self._entries.items():
+                    if ent.is_loaded:
+                        loaded_models.append({
+                            "model_id": mid,
+                            "memory_mb": ent.estimated_size // (1024 * 1024),
+                            "active_requests": ent.active_count,
+                            "pinned": getattr(ent, "pinned", False),
+                        })
                 raise InsufficientMemoryError(
                     required=entry.estimated_size,
                     current=current,
@@ -966,6 +975,8 @@ class EnginePool:
                         f"model: {format_size(entry.estimated_size)}). "
                         "Free system memory or lower memory_guard_tier."
                     ),
+                    model_id=model_id,
+                    loaded_models=loaded_models,
                 )
 
         # Now load the model (slow, outside lock)

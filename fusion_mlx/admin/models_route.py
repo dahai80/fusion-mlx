@@ -15,6 +15,7 @@ from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException
 
+from ..middleware.auth import verify_scoped_api_key
 from ..model_profiles import EXCLUDED_FROM_PROFILES
 from .auth import (
     require_admin,
@@ -33,7 +34,6 @@ from .helpers import (
     _mtp_compat_for_model,
     _paroquant_compat_for_model,
     _reload_models,
-    _require_admin_or_bearer,
     format_size,
 )
 from .models import (
@@ -140,9 +140,9 @@ async def list_models(is_admin: bool = Depends(require_admin)):
 @_router.post("/api/models/{model_id}/unload")
 async def unload_model(
     model_id: str,
-    is_admin: bool = Depends(require_admin),
+    _auth: str = Depends(verify_scoped_api_key),
 ):
-    """Manually unload a model from memory."""
+    """Manually unload a model from memory (admin or scoped key)."""
     engine_pool = _get_engine_pool()
     if engine_pool is None:
         raise HTTPException(status_code=503, detail="Engine pool not initialized")
@@ -227,9 +227,9 @@ async def unload_models_batch(
 @_router.post("/api/models/{model_id}/load")
 async def load_model(
     model_id: str,
-    is_admin: bool = Depends(_require_admin_or_bearer),
+    _auth: str = Depends(verify_scoped_api_key),
 ):
-    """Manually load a model into memory."""
+    """Manually load a model into memory (admin or scoped key)."""
     engine_pool = _get_engine_pool()
     if engine_pool is None:
         raise HTTPException(status_code=503, detail="Engine pool not initialized")
