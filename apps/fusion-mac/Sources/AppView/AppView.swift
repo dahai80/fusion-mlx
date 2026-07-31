@@ -112,6 +112,7 @@ struct AppView: View {
         case .throughputBench: ThroughputBenchScreen(vm: services.throughputBench)
         case .accuracyBench:   AccuracyBenchScreen(vm: services.accuracyBench)
         case .fineTune:     FineTuneScreen(vm: services.fineTune)  // callers: AppSection.fineTune; API: /admin/api/fine-tune/*
+        case .migration:    MigrationWizardScreen(vm: services.migration)
         case .security:     SecurityScreen()
         case .about:        AboutScreen()
         }
@@ -454,6 +455,7 @@ private struct SettingsSidebar: View {
                 SidebarRow(section: .downloads)
                 SidebarRow(section: .integrations)
                 SidebarRow(section: .quantization)
+                SidebarRow(section: .migration)  // callers: AppSection.migration; API: /admin/api/migrate/*
             } header: {
                 Text(String(localized: "sidebar.group.models",
                             defaultValue: "Models",

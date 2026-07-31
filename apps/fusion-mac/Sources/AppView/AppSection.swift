@@ -12,6 +12,7 @@ enum AppSection: String, Hashable, CaseIterable, Identifiable, Sendable {
     case server, status, network, performance, logs
     case models, downloads, integrations, quantization
     case throughputBench, accuracyBench, fineTune  // callers: AppView.swift screen(for:), SettingsSidebar; API: /admin/api/fine-tune/*
+    case migration  // callers: AppView, SettingsSidebar; API: /admin/api/migrate/*
     case security, about
 
     var id: String { rawValue }
@@ -66,6 +67,10 @@ enum AppSection: String, Hashable, CaseIterable, Identifiable, Sendable {
             return String(localized: "sidebar.fineTune",
                           defaultValue: "Fine-Tune",
                           comment: "Sidebar row label / navigation title for the Fine-Tune section")
+        case .migration:
+            return String(localized: "sidebar.migration",
+                          defaultValue: "Migration",
+                          comment: "Sidebar row label / navigation title for the Migration wizard section")
         case .security:
             return String(localized: "sidebar.security",
                           defaultValue: "Security",
@@ -91,6 +96,7 @@ enum AppSection: String, Hashable, CaseIterable, Identifiable, Sendable {
         case .throughputBench: return "speedometer"
         case .accuracyBench:   return "target"
         case .fineTune:        return "brain.head.profile"
+        case .migration:       return "arrow.triangle.branch"
         case .security:        return "lock"
         case .about:           return "info.circle"
         }

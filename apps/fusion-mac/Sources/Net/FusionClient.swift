@@ -591,25 +591,26 @@ final class FusionClient: ObservableObject {
 
     // MARK: - Core request
 
-    private func get<T: Decodable>(_ path: String, query: [URLQueryItem] = []) async throws -> T {
+    // internal so MigrationClient extension can call them
+    func get<T: Decodable>(_ path: String, query: [URLQueryItem] = []) async throws -> T {
         try await request("GET", path: path, query: query, body: nil)
     }
 
-    private func post<U: Encodable, T: Decodable>(_ path: String, body: U) async throws -> T {
+    func post<U: Encodable, T: Decodable>(_ path: String, body: U) async throws -> T {
         let data = try encoder.encode(body)
         return try await request("POST", path: path, body: data)
     }
 
-    private func put<U: Encodable, T: Decodable>(_ path: String, body: U) async throws -> T {
+    func put<U: Encodable, T: Decodable>(_ path: String, body: U) async throws -> T {
         let data = try encoder.encode(body)
         return try await request("PUT", path: path, body: data)
     }
 
-    private func postEmpty<T: Decodable>(_ path: String) async throws -> T {
+    func postEmpty<T: Decodable>(_ path: String) async throws -> T {
         try await request("POST", path: path, body: nil)
     }
 
-    private func delete<T: Decodable>(_ path: String) async throws -> T {
+    func delete<T: Decodable>(_ path: String) async throws -> T {
         try await request("DELETE", path: path, body: nil)
     }
 

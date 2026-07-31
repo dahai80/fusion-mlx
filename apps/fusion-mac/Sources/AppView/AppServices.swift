@@ -49,6 +49,8 @@ final class AppServices: NSObject {
     let accuracyBench   = AccuracyBenchScreenVM()
     /// callers: AppView.swift screen(for:), FineTuneScreen; API: /admin/api/fine-tune/*
     let fineTune        = FineTuneScreenVM()
+    // callers: AppView screen(for:), MigrationWizardScreen; API: /admin/api/migrate/*
+    let migration       = MigrationWizardVM()
 
     /// Long-lived download VM. Same lifetime promotion as the bench VMs:
     /// keeps the 1 Hz poll task alive across navigation so downloads started

@@ -1,0 +1,124 @@
+# Model Migration Wizard — E2E Design Plan
+
+## Vision
+
+A step-by-step GUI wizard inside the existing FusionMLX macOS app that guides users through migrating a HuggingFace model to MLX format, with OpenPangu-Embedded-7B as the first use case. The wizard is NOT just a UI wrapper — it's a **teaching tool** that shows what's happening at each step, why each step matters, and validates before proceeding.
+
+## Architecture: 3-Layer Design
+
+```
+┌──────────────────────────────────────────────────┐
+│  macOS App (SwiftUI) — MigrationWizardScreen     │
+│  Step-by-step wizard UI with live progress        │
+├──────────────────────────────────────────────────┤
+│  Python Backend (FastAPI) — /admin/api/migrate/* │
+│  Orchestrates: download → analyze → convert →     │
+│  quantize → validate → register                   │
+├──────────────────────────────────────────────────┤
+│  Worker Scripts — Individual migration steps      │
+│  hf_download → arch_analyzer → weight_converter → │
+│  mlx_model_writer → quantizer → inference_tester  │
+└──────────────────────────────────────────────────┘
+```
+
+## Wizard Steps (7 Steps)
+
+### Step 1: Source Model Selection
+- **UI**: HF model ID input + mirror selector (hf-mirror.com toggle)
+- **Action**: Resolve model info from HF API (config.json, architecture, size)
+- **Validate**: Model exists, architecture is in supported list
+- **Teach**: "This step identifies the source model and its architecture. The architecture determines what conversion code we need."
+
+### Step 2: Architecture Analysis
+- **UI**: Display parsed config.json — layers, hidden_size, attention heads, vocab, etc.
+- **Action**: Parse config.json, map to known architecture family (LLaMA-like, GPT-like, custom)
+- **Validate**: Architecture is compatible with MLX; identify required adaptations (bias, RoPE theta, etc.)
+- **Teach**: "Here we analyze the model's architecture. OpenPangu uses LLaMA-like structure but with bias=True and RoPE theta=16M — these are the key differences we need to handle."
+
+### Step 3: Weight Download
+- **UI**: Progress bar with file-level detail, download speed, ETA
+- **Action**: Download safetensors from HF (reuses existing hf_downloader.py)
+- **Validate**: All shard files present, checksums match
+- **Teach**: "Downloading model weights. Large models come as multiple safetensors shards (~5GB each for 7B models)."
+
+### Step 4: Weight Conversion
+- **UI**: Live log of weight mapping, progress per shard, mismatch warnings
+- **Action**: Convert PyTorch/HF weights → MLX format (safetensors → safetensors with key remapping)
+- **Validate**: All weights mapped, shapes match, no orphan keys
+- **Teach**: "Weight conversion maps HuggingFace parameter names to MLX names. For example, `model.layers.0.self_attn.q_proj.weight` stays the same, but we must handle bias tensors that LLaMA doesn't have."
+
+### Step 5: Model Code Generation
+- **UI**: Code editor showing generated MLX model class, diff vs reference LLaMA
+- **Action**: Generate Python model class (e.g., `openpangu.py`) with correct architecture params
+- **Validate**: Model loads in MLX, forward pass produces valid output shape
+- **Teach**: "This is the MLX model implementation. It defines how the weights connect during inference. OpenPangu needs bias support added to every Linear layer."
+
+### Step 6: Quantization
+- **UI**: Reuses existing QuantizationScreen pattern — select bits/group_size, estimate, start
+- **Action**: Run MLX quantization (reuses existing oQ or mlx-lm convert)
+- **Validate**: Quantized model loads, generates coherent text
+- **Teach**: "Quantization reduces model size 4× (BF16→Q4) with minimal quality loss. oQ's sensitivity analysis allocates more bits to important layers."
+
+### Step 7: Validation & Registration
+- **UI**: Inference test — generate sample text, compare with reference, register in fusion-mlx
+- **Action**: Run inference test, compare output, register model in model-config.json
+- **Validate**: Model responds to prompts, loads via fusion-mlx server
+- **Teach**: "Final validation ensures the migrated model works correctly. We test with a sample prompt and verify the output matches expectations."
+
+## File Changes
+
+### Backend (Python) — `fusion_mlx/admin/migrate_route.py`
+New FastAPI router with endpoints:
+- `POST /admin/api/migrate/analyze` — Fetch & analyze HF model config
+- `POST /admin/api/migrate/download` — Start download (reuses hf_downloader)
+- `GET /admin/api/migrate/download/status` — Poll download progress
+- `POST /admin/api/migrate/convert` — Start weight conversion
+- `GET /admin/api/migrate/convert/status` — Poll conversion progress + log
+- `POST /admin/api/migrate/generate-code` — Generate MLX model class
+- `GET /admin/api/migrate/generate-code/status` — Code generation result
+- `POST /admin/api/migrate/validate` — Run inference validation
+- `GET /admin/api/migrate/validate/status` — Validation result
+- `GET /admin/api/migrate/task/{id}` — Get overall migration task status
+
+### Backend — `fusion_mlx/migrate/` (new package)
+- `__init__.py`
+- `analyzer.py` — HF config analysis, architecture detection
+- `converter.py` — Weight conversion orchestration
+- `codegen.py` — MLX model class generation from architecture params
+- `validator.py` — Inference validation runner
+- `architectures.py` — Known architecture templates (LLaMA-like, GPT-J-like, etc.)
+- `weight_mapper.py` — HF→MLX weight name mapping rules
+
+### macOS App — New screen files
+- `Sources/AppView/Screens/MigrationWizardScreen.swift` — Main wizard UI
+- `Sources/AppView/ViewModels/MigrationWizardVM.swift` — Wizard state machine + API calls
+- `Sources/Net/DTO/MigrationDTO.swift` — Data transfer objects
+
+### macOS App — Modified files
+- `Sources/AppView/AppSection.swift` — Add `.migration` case
+- `Sources/AppView/AppView.swift` — Wire `.migration` → `MigrationWizardScreen()`
+- `Sources/Net/Endpoints.swift` — Add migration API paths
+- `Sources/Net/FusionClient.swift` — Add migration API methods
+
+## Key Design Decisions
+
+1. **Step-by-step, not batch**: Each step must complete and validate before the next starts. This is the "teaching" aspect — users see what happens at each stage.
+
+2. **Live logs**: Weight conversion and code generation show real-time output, so users can see exactly what's being mapped/generated.
+
+3. **Architecture templates**: `architectures.py` defines known patterns. When a new model is analyzed, it's matched to the closest template and the diff is shown. OpenPangu matches "LLaMA-like with bias".
+
+4. **Code generation, not manual editing**: The wizard generates the MLX model class automatically. Users review the generated code but don't write it from scratch.
+
+5. **Reuse existing infrastructure**: Download reuses `hf_downloader.py`, quantization reuses `oq_manager.py`, server integration reuses model loading.
+
+6. **State machine**: The wizard is a state machine. Each step has: `idle → running → success/failed`. Can resume from any completed step.
+
+## Implementation Order
+
+1. **Phase 1**: Backend `migrate/` package — analyzer + converter + codegen + validator
+2. **Phase 2**: Backend `migrate_route.py` — API endpoints
+3. **Phase 3**: macOS app — DTO + Endpoints + FusionClient methods
+4. **Phase 4**: macOS app — MigrationWizardVM + MigrationWizardScreen
+5. **Phase 5**: Wire into AppSection + AppView sidebar
+6. **Phase 6**: Test with OpenPangu-Embedded-7B end-to-end

@@ -109,4 +109,14 @@ enum AdminAPI {
     static func fineTuneAdapterServe(_ modelId: String, _ name: String) -> String { "\(prefix)/fine-tune/adapters/\(modelId)/\(name)/serve" }
     static func fineTuneAdapterUnload(_ modelId: String, _ name: String) -> String { "\(prefix)/fine-tune/adapters/\(modelId)/\(name)/unload" }
     static let fineTuneModels       = "\(prefix)/fine-tune/models"
+
+    // Migration wizard — callers: MigrationWizardVM; API: /admin/api/migrate/*
+    static let migrateAnalyze       = "\(prefix)/migrate/analyze"
+    static let migrateDownload      = "\(prefix)/migrate/download"
+    static func migrateDownloadStatus(_ mid: String) -> String { "\(prefix)/migrate/download-status/\(mid)" }
+    static let migrateConvert       = "\(prefix)/migrate/convert"
+    static let migrateCodegen       = "\(prefix)/migrate/codegen"
+    static let migrateValidate      = "\(prefix)/migrate/validate"
+    static let migrateRegister      = "\(prefix)/migrate/register"
+    static let migrateList          = "\(prefix)/migrate/list"
 }
