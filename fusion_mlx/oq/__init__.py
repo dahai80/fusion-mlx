@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """oQ package — re-exports public API for backward compatibility."""
 
-from .plan import QuantPlan, universal_quant_predicate, resolve_output_name
+from .plan import QuantPlan, universal_quant_predicate, resolve_output_name, _LEVEL_BITS
 from .levels import validate_quantizable, make_predicate, estimate_bpw_and_size, estimate_memory
 from .streaming import quantize_oq_streaming
 
@@ -14,4 +14,5 @@ __all__ = [
     "estimate_bpw_and_size",
     "estimate_memory",
     "quantize_oq_streaming",
+    "_LEVEL_BITS",
 ]

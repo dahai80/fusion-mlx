@@ -25,8 +25,18 @@ from fusion_mlx.launch import (
     _common,
     claude_code,
     cline,
+    codex,
     continue_dev,
     cursor,
+    factory_droid,
+    hermes,
+    kilo_code,
+    kimi_code,
+    openhands,
+    opencode,
+    pydantic_ai,
+    qwen_code,
+    smolagents,
 )
 from fusion_mlx.launch import cli as launch_cli
 
@@ -72,6 +82,14 @@ def fake_home(tmp_path, monkeypatch) -> Path:
     # find the dev machine's real claude / cursor installs.
     monkeypatch.setattr(_common, "which", lambda _: None)
     monkeypatch.setattr(_common, "mac_app_installed", lambda _: False)
+
+    # New adapters: redirect _CONFIG_PATH for config-file-based ones
+    # so detect() doesn't find real home-dir configs.
+    monkeypatch.setattr(codex, "_CONFIG_PATH", tmp_path / ".codex" / "config.toml")
+    monkeypatch.setattr(hermes, "_CONFIG_PATH", tmp_path / ".hermes" / "config.yaml")
+    monkeypatch.setattr(opencode, "_CONFIG_PATH", tmp_path / ".config" / "opencode" / "opencode.json")
+    monkeypatch.setattr(pydantic_ai, "_CONFIG_PATH", tmp_path / ".pydantic-ai" / "config.json")
+    monkeypatch.setattr(smolagents, "_CONFIG_PATH", tmp_path / ".smolagents" / "config.json")
 
     # And the PID file the launch CLI writes when --start-server is on.
     monkeypatch.setattr(launch_cli, "PID_FILE", tmp_path / "launch.pid")

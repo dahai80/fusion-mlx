@@ -290,6 +290,15 @@ fusion-mlx serve --model gpt-4o               # -> Qwen3-32B-A3B-Think-2512-MLX
 # Claude Code - use fusion-mlx as your local Anthropic API
 fusion-mlx launch claude
 
+# Codex CLI (OpenAI) - configures ~/.codex/config.toml
+fusion-mlx launch codex --model Qwen3-4B
+
+# Hermes Agent - configures ~/.hermes/config.yaml
+fusion-mlx launch hermes --model Qwen3-4B
+
+# OpenCode - configures ~/.config/opencode/opencode.json
+fusion-mlx launch opencode --model Qwen3-4B
+
 # OpenClaw - batch agent processing
 fusion-mlx launch openclaw --model Qwen3-4B
 
@@ -298,6 +307,27 @@ fusion-mlx launch comfyui
 
 # GitHub Copilot
 fusion-mlx launch copilot
+
+# Qwen Code - env-var based
+fusion-mlx launch qwen-code --model Qwen3-4B
+
+# OpenHands - env-var based
+fusion-mlx launch openhands --model Qwen3-4B
+
+# Kilo Code - env-var based
+fusion-mlx launch kilo-code --model Qwen3-4B
+
+# Factory Droid - env-var based
+fusion-mlx launch factory-droid --model Qwen3-4B
+
+# Kimi Code (Moonshot) - env-var based
+fusion-mlx launch kimi-code --model Qwen3-4B
+
+# PydanticAI - configures ~/.pydantic-ai/config.json
+fusion-mlx launch pydantic-ai --model Qwen3-4B
+
+# smolagents (HuggingFace) - configures ~/.smolagents/config.json
+fusion-mlx launch smolagents --model Qwen3-4B
 ```
 
 ## Pipeline Stage API & Step Callbacks (Fusion-ComfyUI)
@@ -713,7 +743,7 @@ fusion-mlx/
 │    ├── cache/           # PagedCache, PagedSSDCache, PrefixCache
 │    ├── custom_kernels/  # MFA, TurboQuant, KV cache, xfuser attention
 │    ├── engines/         # 8 engine types (LLM, VLM, Embedding, etc.)
-│    ├── integrations/    # Claude Code, OpenClaw, ComfyUI, Copilot, Codex, etc.
+│    ├── integrations/    # 15 integrations: Claude Code, Codex, Hermes, OpenCode, OpenClaw, OpenHands, Kilo Code, Factory Droid, Kimi Code, PydanticAI, smolagents, Copilot, ComfyUI, Pi, Qwen Code
 │    ├── parsers/         # Tool call parsers (Gemma, Harmony, Hermes, etc.)
 │    ├── pool/            # EnginePool, MemoryEnforcer, ModelDiscovery, PriorityScheduler
 │    ├── router/          # RequestRouter, CloudRouter, SmartRouter

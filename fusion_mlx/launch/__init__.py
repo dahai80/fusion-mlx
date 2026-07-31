@@ -1,46 +1,44 @@
 # SPDX-License-Identifier: Apache-2.0
 """``fusion-mlx launch <client>`` — one-shot bootstrap.
 
-Detects whether the named client (Cline, Claude Code CLI, Continue,
-Cursor) is installed on this machine, then writes/patches the client's
-local config so it routes traffic at the local fusion-mlx OpenAI-
-compatible server (default ``http://127.0.0.1:8000/v1``). Optionally
-spawns ``fusion-mlx serve`` in the background so a user goes from a
-fresh install to "Cline talking to my Mac" in one command.
-
-The implementation lives in per-client modules so each adapter's
-config-shape knowledge stays narrow:
-
-* :mod:`fusion_mlx.launch.cline` — Cline VS Code extension
-* :mod:`fusion_mlx.launch.claude_code` — Claude Code CLI (Anthropic SDK)
-* :mod:`fusion_mlx.launch.continue_dev` — Continue.dev VS Code/JetBrains
-* :mod:`fusion_mlx.launch.cursor` — Cursor editor
-
-All adapters expose the same surface (:func:`detect`,
-:func:`current_config_path`, :func:`write_or_patch_config`) so the
-top-level ``launch`` dispatcher in :mod:`fusion_mlx.launch.cli` can route
-to them via a single registry. See ``cli.py`` in this package for the
-argparse wiring and the ``--start-server`` background-serve handling.
-
-See GitHub issue #566 for motivation (the Ollama ``ollama launch
-cline`` shape we're copying — same OpenAI-compatible plumbing, same
-one-verb UX).
+Detects whether the named client is installed on this machine, then
+writes/patches the client's local config so it routes traffic at the
+local fusion-mlx OpenAI-compatible server.
 """
 
-from . import claude_code, cline, continue_dev, cursor
+from . import (
+    claude_code,
+    cline,
+    codex,
+    continue_dev,
+    cursor,
+    factory_droid,
+    hermes,
+    kilo_code,
+    kimi_code,
+    openhands,
+    opencode,
+    pydantic_ai,
+    qwen_code,
+    smolagents,
+)
 
-# Registry consumed by ``fusion_mlx.launch.cli`` — order is the
-# display order in ``fusion-mlx launch list``. Keys are the
-# user-facing client names accepted on the CLI (kebab-case so
-# ``claude-code`` matches Cline's blog post / Cursor's settings panel
-# shape; ``continue`` would collide with the Python keyword so we use
-# ``continue-dev``).
 ADAPTERS: dict[str, object] = {
     "cline": cline,
     "claude": claude_code,
     "claude-code": claude_code,
+    "codex": codex,
     "continue-dev": continue_dev,
     "cursor": cursor,
+    "hermes": hermes,
+    "opencode": opencode,
+    "qwen-code": qwen_code,
+    "openhands": openhands,
+    "kilo-code": kilo_code,
+    "factory-droid": factory_droid,
+    "kimi-code": kimi_code,
+    "pydantic-ai": pydantic_ai,
+    "smolagents": smolagents,
 }
 
-__all__ = ["ADAPTERS", "claude_code", "cline", "continue_dev", "cursor"]
+__all__ = ["ADAPTERS"]

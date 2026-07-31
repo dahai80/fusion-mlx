@@ -10,6 +10,7 @@ from fusion_mlx.oq import (
     estimate_bpw_and_size,
     estimate_memory,
     quantize_oq_streaming,
+    _LEVEL_BITS,
 )
 
 __all__ = [
@@ -21,4 +22,5 @@ __all__ = [
     "estimate_bpw_and_size",
     "estimate_memory",
     "quantize_oq_streaming",
+    "_LEVEL_BITS",
 ]

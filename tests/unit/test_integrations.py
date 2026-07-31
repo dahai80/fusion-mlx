@@ -31,7 +31,7 @@ def ctx(**overrides):
 class TestIntegrationRegistry:
     def test_list_integrations(self):
         integrations = list_integrations()
-        assert len(integrations) == 8
+        assert len(integrations) == 15
         names = {i.name for i in integrations}
         assert names == {
             "claude",
@@ -42,6 +42,13 @@ class TestIntegrationRegistry:
             "openclaw",
             "hermes",
             "pi",
+            "qwen-code",
+            "openhands",
+            "kilo-code",
+            "factory-droid",
+            "kimi-code",
+            "pydantic-ai",
+            "smolagents",
         }
 
     def test_get_integration(self):
@@ -52,6 +59,13 @@ class TestIntegrationRegistry:
         assert get_integration("openclaw") is not None
         assert get_integration("hermes") is not None
         assert get_integration("pi") is not None
+        assert get_integration("qwen-code") is not None
+        assert get_integration("openhands") is not None
+        assert get_integration("kilo-code") is not None
+        assert get_integration("factory-droid") is not None
+        assert get_integration("kimi-code") is not None
+        assert get_integration("pydantic-ai") is not None
+        assert get_integration("smolagents") is not None
         assert get_integration("nonexistent") is None
 
 
