@@ -11,14 +11,13 @@ User instruction: "出了P2剩余工作，P3的工作也要全部落地"
 from __future__ import annotations
 
 import logging
-import time
 import uuid
 from typing import Any
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
-from .thinking import ThinkingParser, extract_thinking
+from .thinking import extract_thinking
 
 logger = logging.getLogger(__name__)
 
@@ -87,10 +86,7 @@ async def create_reasoning(request: ReasoningRequest) -> ReasoningResponse:
     )
 
     from .models import (
-        AssistantMessage,
-        ChatCompletionChoice,
         ChatCompletionRequest,
-        ChatCompletionResponse,
         UserMessage,
     )
 

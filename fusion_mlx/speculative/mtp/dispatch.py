@@ -8,13 +8,22 @@ logger = logging.getLogger(__name__)
 _MTP_INJECT_DISPATCH: dict[str, tuple[str, str]] = {
     "qwen3_5": ("fusion_mlx.speculative.mtp.qwen3_5_inject", "inject_mtp_support"),
     "qwen3_5_moe": ("fusion_mlx.speculative.mtp.qwen3_5_inject", "inject_mtp_support"),
-    "gemma4_unified": ("fusion_mlx.speculative.mtp.gemma4_inject", "inject_mtp_support"),
+    "gemma4_unified": (
+        "fusion_mlx.speculative.mtp.gemma4_inject",
+        "inject_mtp_support",
+    ),
 }
 
 _MTP_VALIDATE_DISPATCH: dict[str, tuple[str, str]] = {
     "qwen3_5": ("fusion_mlx.speculative.mtp.qwen3_5_inject", "validate_mtp_support"),
-    "qwen3_5_moe": ("fusion_mlx.speculative.mtp.qwen3_5_inject", "validate_mtp_support"),
-    "gemma4_unified": ("fusion_mlx.speculative.mtp.gemma4_inject", "validate_mtp_support"),
+    "qwen3_5_moe": (
+        "fusion_mlx.speculative.mtp.qwen3_5_inject",
+        "validate_mtp_support",
+    ),
+    "gemma4_unified": (
+        "fusion_mlx.speculative.mtp.gemma4_inject",
+        "validate_mtp_support",
+    ),
 }
 
 

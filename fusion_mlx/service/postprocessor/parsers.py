@@ -12,13 +12,8 @@ import copy
 import json
 import logging
 import os
-import re
-import uuid
 from typing import TYPE_CHECKING
 from unittest.mock import Mock
-
-from ...api.tool_calling import parse_tool_calls
-from ...api.utils import sanitize_output, strip_special_tokens
 
 try:
     from ...domain.events import StreamEvent
@@ -30,7 +25,6 @@ if TYPE_CHECKING:
         from ...config.server_config import ServerConfig
     except ImportError:
         from ...config import ServerConfig  # type: ignore[no-redef]
-    from ...engine.base import GenerationOutput
 
 logger = logging.getLogger(__name__)
 
@@ -47,6 +41,7 @@ def _create_reasoning_parser(cfg: ServerConfig):
     except Exception as e:
         logger.warning(f"Failed to create reasoning parser: {e}")
         return None
+
 
 def _create_tool_parser(cfg: ServerConfig, tools_requested: bool):
     """Create a per-request tool parser instance."""
@@ -75,6 +70,7 @@ def _create_tool_parser(cfg: ServerConfig, tools_requested: bool):
 
     return None
 
+
 def _clone_injected_tool_parser(parser):
     if parser is None:
         return None
@@ -91,6 +87,7 @@ def _clone_injected_tool_parser(parser):
                 "for a request-local stream"
             )
 
+
 def _forced_tool_choice_arguments_violate_object_root(args_str: str | None) -> bool:
     """Return True when a finalized anchor's arguments value
     violates the OpenAI spec — not a JSON-object-encoded string."""
@@ -105,6 +102,7 @@ def _forced_tool_choice_arguments_violate_object_root(args_str: str | None) -> b
             return False
         return True
     return not isinstance(parsed, dict)
+
 
 def _continuation_arguments_definitively_non_object(args_str: str | None) -> bool:
     """Return True when a continuation fragment's accumulated arguments
@@ -122,6 +120,7 @@ class StreamingPostProcessorParserMixin:
     """Parser methods for StreamingPostProcessor — tool call / reasoning / thinking block parsing."""
 
     _THINK_OPEN_TOKEN = "<think>"
+
     def _should_route_through_reasoning(self, delta_text: str = "") -> bool:
         """Decide whether the current chunk should go through the reasoning
         parser.
@@ -230,6 +229,7 @@ class StreamingPostProcessorParserMixin:
                 return False
             return True
         return False
+
     # Common ``<tool_call>``-style envelope openers shared across the
     # text-parser families (hermes / qwen3_xml / glm47 / minimax / nemotron).
     # Used by ``_tool_envelope_in_flight`` to detect that the tool parser
@@ -240,6 +240,7 @@ class StreamingPostProcessorParserMixin:
         ("<tool_call>", "</tool_call>"),
         ("<minimax:tool_call>", "</minimax:tool_call>"),
     )
+
     def _tool_envelope_in_flight(self) -> bool:
         """Return True iff the tool parser is mid-block on an unclosed
         ``<tool_call>``-style envelope.
@@ -265,6 +266,7 @@ class StreamingPostProcessorParserMixin:
             if buf.count(opener) > buf.count(closer):
                 return True
         return False
+
     def _consume_reasoning_budget(self, reasoning_text: str) -> tuple[str, str]:
         """Account for ``reasoning_text`` against the per-request cap.
 
@@ -326,6 +328,7 @@ class StreamingPostProcessorParserMixin:
         self._reasoning_tokens_emitted = max_chars
         self._reasoning_cap_hit = True
         return kept, overflow
+
     def _maybe_inject_reasoning_close(self, delta_text: str) -> str:
         """Inject ``</think>`` once into the next model-text chunk when
         the cap fires on a text-parser engine.
@@ -357,6 +360,7 @@ class StreamingPostProcessorParserMixin:
         # next body bytes. The caller flips ``_reasoning_close_injected``
         # only after the parser call succeeds.
         return "</think>" + delta_text
+
     def _forced_tool_choice_name(self) -> str | None:
         """Return the forced ``tool_choice`` function name, if any.
 
@@ -413,6 +417,7 @@ class StreamingPostProcessorParserMixin:
             return None
         name = _get(fn, "name")
         return name if isinstance(name, str) and name else None
+
     def _is_tool_choice_required(self) -> bool:
         """Return True iff the request set ``tool_choice="required"``.
 
@@ -438,6 +443,7 @@ class StreamingPostProcessorParserMixin:
         else:
             tc = getattr(req, "tool_choice", None)
         return tc == "required"
+
     def _apply_forced_tool_choice_filter(self, tool_calls: list[dict]) -> list[dict]:
         """Suppress streaming tool_calls deltas that violate the
         ``tool_choice`` contract (forced named, or ``"required"``).
@@ -627,6 +633,7 @@ class StreamingPostProcessorParserMixin:
                 self._forced_anchor_admitted_id = anchor_id
             filtered.append(tc)
         return filtered
+
     def _parallel_tool_calls_allowed(self) -> bool:
         """Return False iff the request explicitly opted out of
         parallel tool calls via ``parallel_tool_calls=false``.
@@ -645,6 +652,7 @@ class StreamingPostProcessorParserMixin:
         else:
             val = getattr(req, "parallel_tool_calls", None)
         return val is not False
+
     def _apply_parallel_cap(self, tool_calls: list[dict]) -> list[dict]:
         """Filter a streaming tool_calls delta list under the
         ``parallel_tool_calls=false`` cap, distinguishing NEW tool
@@ -855,6 +863,7 @@ class StreamingPostProcessorParserMixin:
             )
             allowed.append(tc)
         return allowed
+
     def _detect_tool_calls(self, content: str) -> dict | None:
         """Run incremental tool call detection.
 

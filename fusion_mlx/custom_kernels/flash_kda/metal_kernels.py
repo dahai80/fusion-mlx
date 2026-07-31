@@ -17,9 +17,7 @@ Metal-specific:
 from __future__ import annotations
 
 import logging
-import os
 from pathlib import Path
-from typing import Optional
 
 import mlx.core as mx
 
@@ -42,7 +40,9 @@ def _try_load_metal_kernels() -> bool:
 
     metal_file = _METAL_SRC_DIR / "flash_kda_kernels.metal"
     if not metal_file.exists():
-        logger.info("FlashKDA Metal kernel source not found at %s, using reference", metal_file)
+        logger.info(
+            "FlashKDA Metal kernel source not found at %s, using reference", metal_file
+        )
         return False
 
     try:
@@ -52,7 +52,9 @@ def _try_load_metal_kernels() -> bool:
             return False
         _KERNEL_LOADED = True
         _METAL_AVAILABLE = True
-        logger.info("FlashKDA Metal kernel source found, will be JIT-compiled on first use")
+        logger.info(
+            "FlashKDA Metal kernel source found, will be JIT-compiled on first use"
+        )
         return True
     except Exception as exc:
         logger.warning("FlashKDA Metal kernel load failed: %s, using reference", exc)
@@ -70,10 +72,10 @@ def fwd(
     g: mx.array,
     beta: mx.array,
     scale: float = 1.0,
-    A_log: Optional[mx.array] = None,
-    dt_bias: Optional[mx.array] = None,
+    A_log: mx.array | None = None,
+    dt_bias: mx.array | None = None,
     lower_bound: float = -5.0,
-    initial_state: Optional[mx.array] = None,
+    initial_state: mx.array | None = None,
 ) -> tuple[mx.array, mx.array]:
     """FlashKDA forward using Metal kernels.
 

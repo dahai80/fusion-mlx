@@ -173,9 +173,7 @@ class BoundarySnapshotSSDStore:
             # NO rmtree here - prefix snapshots persist across restarts.
             self._prefix_dir.mkdir(parents=True, exist_ok=True)
             self._scan_prefix_dir()
-            self._prefix_write_queue = queue.Queue(
-                maxsize=_DEFAULT_MAX_PENDING_WRITES
-            )
+            self._prefix_write_queue = queue.Queue(maxsize=_DEFAULT_MAX_PENDING_WRITES)
             self._prefix_writer_thread = threading.Thread(
                 target=self._prefix_writer_loop,
                 name="prefix-snapshot-writer",
@@ -896,7 +894,9 @@ class BoundarySnapshotSSDStore:
             return
         victims: list[_PrefixEntry] = []
         with self._prefix_lock:
-            while self._prefix_total_bytes > self._prefix_max_bytes and self._prefix_index:
+            while (
+                self._prefix_total_bytes > self._prefix_max_bytes and self._prefix_index
+            ):
                 lru_hash = None
                 lru_entry = None
                 for h, e in self._prefix_index.items():

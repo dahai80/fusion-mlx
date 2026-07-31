@@ -37,8 +37,8 @@ class MdnsAdvertiser:
         self._host = host
         self._port = port
         self._txt_records = txt_records
-        self._zc: "Zeroconf | None" = None
-        self._info: "ServiceInfo | None" = None
+        self._zc: Zeroconf | None = None
+        self._info: ServiceInfo | None = None
         self._refresh_task = None
 
     async def start(self, refresh_fn=None):
@@ -52,7 +52,10 @@ class MdnsAdvertiser:
                 _SERVICE_TYPE,
                 name=f"{service_name}.{_SERVICE_TYPE}",
                 port=self._port,
-                properties={k: v.encode("utf-8") if isinstance(v, str) else v for k, v in self._txt_records.items()},
+                properties={
+                    k: v.encode("utf-8") if isinstance(v, str) else v
+                    for k, v in self._txt_records.items()
+                },
                 server=f"{service_name}.local.",
             )
             await self._zc.async_register_service(self._info)
@@ -74,7 +77,10 @@ class MdnsAdvertiser:
             return
         try:
             self._txt_records = records
-            encoded = {k: v.encode("utf-8") if isinstance(v, str) else v for k, v in records.items()}
+            encoded = {
+                k: v.encode("utf-8") if isinstance(v, str) else v
+                for k, v in records.items()
+            }
             self._info.properties = encoded
             await self._zc.async_update_service(self._info)
             logger.debug("mDNS: updated TXT records")

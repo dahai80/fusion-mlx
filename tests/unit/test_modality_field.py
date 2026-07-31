@@ -34,9 +34,9 @@ from __future__ import annotations
 import pytest
 
 from fusion_mlx.model_aliases import (
-    AliasProfile,
     _RESERVED_MODALITIES,
     _VALID_MODALITIES,
+    AliasProfile,
     _coerce,
 )
 

@@ -7,18 +7,22 @@ Installs the vendored ``mtp_generate_step`` hot loop into
 assistant + Qwen3.5 baked-in MTP). Re-exports as
 ``fusion_mlx.scheduler._install_mtp_vendored``.
 """
+
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import mlx.core as mx
+
+if TYPE_CHECKING:
+    from mlx_lm.generate import BatchGenerator
 
 logger = logging.getLogger(__name__)
 
 
 def _install_mtp_vendored(
-    batch_gen: "BatchGenerator",
+    batch_gen: BatchGenerator,
     model: Any,
     requests: dict[str, Any] | None = None,
     uid_to_request_id: dict[int, str] | None = None,
@@ -825,5 +829,3 @@ def _install_mtp_vendored(
         "non-greedy / logits-processors)."
     )
     return True
-
-

@@ -3,8 +3,6 @@
 
 from unittest.mock import MagicMock, patch
 
-import pytest
-
 from fusion_mlx.pool.engine_pool import EngineEntry
 
 
@@ -20,6 +18,7 @@ class TestJsonRpcSetModelLogic:
 
     def test_set_model_updates_server_state(self):
         from fusion_mlx.server import _server_state
+
         with patch.dict(_server_state, {"default_model": None}, clear=False):
             with patch("fusion_mlx.server.resolve_model_id", return_value="qwen3-4b"):
                 entry = _make_entry("qwen3-4b")
@@ -37,6 +36,7 @@ class TestJsonRpcSetModelLogic:
 
     def test_set_model_not_found_returns_error(self):
         from fusion_mlx.server import _server_state
+
         with patch.dict(_server_state, {"default_model": None}, clear=False):
             with patch("fusion_mlx.server.resolve_model_id", return_value="nope"):
                 params = {"model": "nope"}
@@ -88,6 +88,7 @@ class TestJsonRpcMlxStatus:
 
     def test_status_response_shape(self):
         from fusion_mlx.server import _server_state
+
         with patch.dict(_server_state, {"default_model": "qwen3-4b"}, clear=False):
             result = {
                 "status": "ok",
@@ -102,6 +103,7 @@ class TestJsonRpcMlxStatus:
 
     def test_status_no_default_model(self):
         from fusion_mlx.server import _server_state
+
         with patch.dict(_server_state, {"default_model": None}, clear=False):
             result = {
                 "status": "ok",

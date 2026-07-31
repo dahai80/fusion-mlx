@@ -85,9 +85,7 @@ def _run_dispatch_mtp_inject(
             mtp_sidecar,
         )
         return _DISPATCH_ATTACHED
-    logger.debug(
-        "[MTP-dispatch] injector refused model_type=%s -> REJECTED", effective
-    )
+    logger.debug("[MTP-dispatch] injector refused model_type=%s -> REJECTED", effective)
     return _DISPATCH_REJECTED
 
 
@@ -109,9 +107,7 @@ def _decide_mtp_dispatch_action(
             f"[MTP] dispatch {dispatch_result} for cli-vetted "
             f"model_type={cli_vetted_model_type}; MTP requested but not attachable"
         )
-    logger.debug(
-        "[MTP-dispatch] %s without cli vetting -> soft skip", dispatch_result
-    )
+    logger.debug("[MTP-dispatch] %s without cli vetting -> soft skip", dispatch_result)
 
 
 def _get_mtp_dispatch_timeout_sec() -> float:
@@ -165,9 +161,7 @@ def _apply_mtp_dispatch(
     try:
         result = fut.result(timeout=timeout if timeout > 0 else None)
     except TimeoutError as e:
-        _log_mtp_dispatch_timeout(
-            cli_vetted_model_type or model_type, sidecar, timeout
-        )
+        _log_mtp_dispatch_timeout(cli_vetted_model_type or model_type, sidecar, timeout)
         raise RuntimeError(f"[MTP] dispatch timeout after {timeout}s") from e
     _decide_mtp_dispatch_action(result, cli_vetted_model_type)
     return result

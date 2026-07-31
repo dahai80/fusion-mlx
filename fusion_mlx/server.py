@@ -78,12 +78,12 @@ from .api.ner_routes import router as ner_router
 from .api.ner_routes import set_ner_context
 from .api.ocr_routes import router as ocr_router
 from .api.ocr_routes import set_ocr_context
-from .api.reasoning_routes import router as reasoning_router
-from .api.reasoning_routes import set_reasoning_context
 from .api.openai_routes import router as openai_router
 from .api.openai_routes import set_openai_context
 from .api.openclaw_routes import router as openclaw_router
 from .api.openclaw_routes import set_openclaw_agent_pool
+from .api.reasoning_routes import router as reasoning_router
+from .api.reasoning_routes import set_reasoning_context
 from .api.recommend_routes import router as recommend_router
 from .api.rerank_routes import router as rerank_router
 from .api.rerank_routes import set_rerank_context
@@ -292,9 +292,7 @@ def _node_load_snapshot(pool, config) -> dict[str, Any]:
         mem_total = vm.total
         mem_avail = vm.available
         mem_used = vm.used
-        available_percent = (
-            round(mem_avail / mem_total * 100, 1) if mem_total else 0.0
-        )
+        available_percent = round(mem_avail / mem_total * 100, 1) if mem_total else 0.0
     except Exception:
         logger.debug("node load: psutil virtual_memory failed", exc_info=True)
 
@@ -498,6 +496,55 @@ def resolve_model_id(model_id: str) -> str:
         if model_id.startswith(prefix):
             return model_id[len(prefix) :]
     return model_id
+
+
+def resolve_model_with_profile(model_id: str) -> tuple[str, dict[str, Any]]:
+    """Resolve model:profile syntax into (resolved_model_id, profile_overrides).
+
+    If model_id contains ':' and the suffix matches an exposed profile,
+    returns the base model ID plus a dict of sampling overrides from the
+    profile.  Otherwise returns (resolve_model_id(model_id), {}).
+
+    This enables zero-extra-memory profile selection via API calls like:
+        POST /v1/chat/completions  {"model": "qwen3:creative", ...}
+    """
+    if ":" not in model_id:
+        return resolve_model_id(model_id), {}
+
+    sm = _server_state.get("settings_manager")
+    if sm is None:
+        logger.debug(
+            "resolve_model_with_profile: no settings_manager, stripping profile"
+        )
+        base = model_id.split(":", 1)[0]
+        return resolve_model_id(base), {}
+
+    result = sm.get_exposed_profile_runtime_settings_for_request(model_id)
+    if result is not None:
+        base_model_id, profile_settings = result
+        overrides = {}
+        for fname in (
+            "temperature",
+            "top_p",
+            "top_k",
+            "min_p",
+            "max_tokens",
+            "repetition_penalty",
+            "presence_penalty",
+        ):
+            val = getattr(profile_settings, fname, None)
+            if val is not None:
+                overrides[fname] = val
+        logger.info(
+            "resolve_model_with_profile: %s -> base=%s, overrides=%s",
+            model_id,
+            base_model_id,
+            overrides,
+        )
+        return resolve_model_id(base_model_id), overrides
+
+    # No profile match — treat whole string as model name (colon may be in model ID)
+    return resolve_model_id(model_id), {}
 
 
 def get_settings() -> Any:
@@ -775,9 +822,7 @@ class Server:
             # Accepts {"model": "<model_id>"} and sets the default model.
             model_id = request.get("model")
             if not model_id:
-                raise HTTPException(
-                    status_code=400, detail="Missing 'model' field"
-                )
+                raise HTTPException(status_code=400, detail="Missing 'model' field")
             resolved = resolve_model_id(model_id)
             entry = self.pool.get_entry(resolved) if self.pool else None
             if entry is None:
@@ -818,9 +863,7 @@ class Server:
                 if not model_id:
                     return rpc_error(-32602, "Missing 'model' parameter")
                 resolved = resolve_model_id(model_id)
-                entry = (
-                    self.pool.get_entry(resolved) if self.pool else None
-                )
+                entry = self.pool.get_entry(resolved) if self.pool else None
                 if entry is None:
                     return rpc_error(-32602, f"Model not found: {model_id}")
                 _server_state["default_model"] = resolved
@@ -835,19 +878,27 @@ class Server:
                 if self.pool is None:
                     return rpc_error(-32000, "Server not initialized")
                 metrics = self.pool.get_metrics()
-                return rpc_result({
-                    "status": "ok",
-                    "default_model": _server_state.get("default_model"),
-                    "models_loaded": self.pool.loaded_model_count,
-                    "models_discovered": self.pool.model_count,
-                    "uptime_seconds": metrics.get("total_requests", 0),
-                })
+                return rpc_result(
+                    {
+                        "status": "ok",
+                        "default_model": _server_state.get("default_model"),
+                        "models_loaded": self.pool.loaded_model_count,
+                        "models_discovered": self.pool.model_count,
+                        "uptime_seconds": metrics.get("total_requests", 0),
+                    }
+                )
 
             elif method == "mlx.start":
-                return rpc_error(-32601, "mlx.start not supported via JSON-RPC; use HTTP /v1/models/{id}/load")
+                return rpc_error(
+                    -32601,
+                    "mlx.start not supported via JSON-RPC; use HTTP /v1/models/{id}/load",
+                )
 
             elif method == "mlx.stop":
-                return rpc_error(-32601, "mlx.stop not supported via JSON-RPC; use HTTP /v1/models/{id}/unload")
+                return rpc_error(
+                    -32601,
+                    "mlx.stop not supported via JSON-RPC; use HTTP /v1/models/{id}/unload",
+                )
 
             else:
                 return rpc_error(-32601, f"Method not found: {method}")
@@ -889,7 +940,6 @@ class Server:
         from ._parent_watchdog import (
             clear_crash_counter,
             install_signal_handlers,
-            is_shutting_down,
             record_crash,
             remove_pid_file,
             write_exit_status,
@@ -1165,7 +1215,9 @@ class Server:
                     refresh_fn=lambda: _node_load_snapshot(self.pool, self.config)
                 )
             except Exception:
-                logger.warning("mDNS: advertising failed to start (non-fatal)", exc_info=True)
+                logger.warning(
+                    "mDNS: advertising failed to start (non-fatal)", exc_info=True
+                )
 
     async def _shutdown(self):
         """Graceful shutdown."""
@@ -1283,7 +1335,9 @@ class Server:
         except Exception:
             pass
 
-        logger.info("Loading single model: %s (diffusion=%s)", model_path, _is_diffusion)
+        logger.info(
+            "Loading single model: %s (diffusion=%s)", model_path, _is_diffusion
+        )
         if _is_diffusion:
             from .runtime.diffusion_lane import DiffusionEngine
 

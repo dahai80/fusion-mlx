@@ -21,8 +21,9 @@ from typing import Optional
 import mlx.core as mx
 import mlx.nn as nn
 
+from .metal_kernels import fwd as fwd_metal
+from .metal_kernels import metal_available
 from .reference import fwd as fwd_reference
-from .metal_kernels import fwd as fwd_metal, metal_available
 
 logger = logging.getLogger(__name__)
 
@@ -38,10 +39,10 @@ def fwd(
     g: mx.array,
     beta: mx.array,
     scale: float = 1.0,
-    A_log: Optional[mx.array] = None,
-    dt_bias: Optional[mx.array] = None,
+    A_log: mx.array | None = None,
+    dt_bias: mx.array | None = None,
     lower_bound: float = -5.0,
-    initial_state: Optional[mx.array] = None,
+    initial_state: mx.array | None = None,
 ) -> tuple[mx.array, mx.array]:
     """FlashKDA forward pass.
 

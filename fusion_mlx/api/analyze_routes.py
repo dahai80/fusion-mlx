@@ -20,7 +20,6 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
 from ..middleware.auth import verify_api_key
-
 from ..model_auto_config import detect_model_config
 
 logger = logging.getLogger(__name__)
@@ -170,7 +169,9 @@ def _count_params_by_layer(
 
 
 @router.post("/analyze", response_model=AnalyzeResponse)
-async def analyze_model(req: AnalyzeRequest, _auth: bool = Depends(verify_api_key)) -> Any:
+async def analyze_model(
+    req: AnalyzeRequest, _auth: bool = Depends(verify_api_key)
+) -> Any:
     if not req.model_path and not req.hf_repo:
         raise HTTPException(400, detail="Either model_path or hf_repo is required")
 

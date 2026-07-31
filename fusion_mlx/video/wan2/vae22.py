@@ -2,7 +2,6 @@ import logging
 
 import mlx.core as mx
 import mlx.nn as nn
-import numpy as np
 
 logger = logging.getLogger(__name__)
 

@@ -17,25 +17,34 @@ from fusion_mlx.api.grammar import (
     resolve_grammar_backend,
 )
 
-
 # ─── resolve_grammar_backend ──────────────────────────────────────────────
 
 
 class TestResolveGrammarBackend:
     def test_auto_prefers_llguidance_when_available(self):
-        with patch("fusion_mlx.api.grammar._is_llguidance_available", return_value=True):
+        with patch(
+            "fusion_mlx.api.grammar._is_llguidance_available", return_value=True
+        ):
             result = resolve_grammar_backend(None)
             assert result == GrammarBackend.LLGUIDANCE
 
     def test_auto_falls_back_to_xgrammar(self):
-        with patch("fusion_mlx.api.grammar._is_llguidance_available", return_value=False), \
-             patch("fusion_mlx.api.grammar._is_xgrammar_available", return_value=True):
+        with (
+            patch(
+                "fusion_mlx.api.grammar._is_llguidance_available", return_value=False
+            ),
+            patch("fusion_mlx.api.grammar._is_xgrammar_available", return_value=True),
+        ):
             result = resolve_grammar_backend(None)
             assert result == GrammarBackend.XGRAMMAR
 
     def test_auto_neither_available(self):
-        with patch("fusion_mlx.api.grammar._is_llguidance_available", return_value=False), \
-             patch("fusion_mlx.api.grammar._is_xgrammar_available", return_value=False):
+        with (
+            patch(
+                "fusion_mlx.api.grammar._is_llguidance_available", return_value=False
+            ),
+            patch("fusion_mlx.api.grammar._is_xgrammar_available", return_value=False),
+        ):
             result = resolve_grammar_backend(None)
             assert result == GrammarBackend.AUTO
 
@@ -48,7 +57,9 @@ class TestResolveGrammarBackend:
         assert result == GrammarBackend.XGRAMMAR
 
     def test_unknown_falls_back_to_auto(self):
-        with patch("fusion_mlx.api.grammar._is_llguidance_available", return_value=True):
+        with patch(
+            "fusion_mlx.api.grammar._is_llguidance_available", return_value=True
+        ):
             result = resolve_grammar_backend("unknown_backend")
             assert result == GrammarBackend.LLGUIDANCE
 

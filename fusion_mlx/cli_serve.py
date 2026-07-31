@@ -1236,6 +1236,7 @@ def _apply_mtp_cli_model_type_reconciliation(
     # MTP is active but no supported model_type can be resolved - silent
     # fallback would dispatch on an unknown type and crash mid-generation.
     import logging
+
     logger = logging.getLogger(__name__)
     from fusion_mlx.speculative.mtp.detect import (
         MTPEligibility,

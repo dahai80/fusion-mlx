@@ -41,10 +41,10 @@ from ..exceptions import (
 from ..middleware.auth import check_rate_limit, request_principal, verify_api_key
 from ..pool import EnginePool
 from ..request import SamplingParams
-from .grammar import GrammarBackend, resolve_grammar_backend
 from ..server_metrics import record_llm_metrics
 from ..sessions import record_chat_session
 from ._guards import check_chat_capability, check_multimodal_content
+from .grammar import GrammarBackend, resolve_grammar_backend
 
 logger = logging.getLogger(__name__)
 
@@ -212,16 +212,30 @@ def _messages_for_engine(request_msgs: Any, is_mllm: bool) -> list[dict]:
     return out
 
 
-def _build_sampling_params(req: ChatCompletionRequest) -> SamplingParams:
-    """Convert ChatCompletionRequest to SamplingParams."""
+def _build_sampling_params(
+    req: ChatCompletionRequest,
+    profile_overrides: dict | None = None,
+) -> SamplingParams:
+    """Convert ChatCompletionRequest to SamplingParams.
+
+    profile_overrides: dict from model:profile resolution.
+    Request-level params take precedence; profile fills in unset defaults.
+    """
+    po = profile_overrides or {}
     return SamplingParams(
-        max_tokens=req.max_tokens or 2048,
-        temperature=req.temperature if req.temperature is not None else 0.7,
-        top_p=req.top_p if req.top_p is not None else 0.9,
-        top_k=getattr(req, "top_k", 0) or 0,
-        min_p=getattr(req, "min_p", 0.0) or 0.0,
+        max_tokens=req.max_tokens or po.get("max_tokens") or 2048,
+        temperature=(
+            req.temperature
+            if req.temperature is not None
+            else po.get("temperature", 0.7)
+        ),
+        top_p=(req.top_p if req.top_p is not None else po.get("top_p", 0.9)),
+        top_k=getattr(req, "top_k", 0) or po.get("top_k") or 0,
+        min_p=getattr(req, "min_p", 0.0) or po.get("min_p") or 0.0,
         presence_penalty=(
-            req.presence_penalty if req.presence_penalty is not None else 0.0
+            req.presence_penalty
+            if req.presence_penalty is not None
+            else po.get("presence_penalty", 0.0)
         ),
         frequency_penalty=(
             req.frequency_penalty if req.frequency_penalty is not None else 0.0
@@ -362,10 +376,10 @@ async def _run_chat(
     principal: str | None = None,
 ) -> ChatCompletionResponse:
     """Execute a non-streaming chat completion."""
-    from ..server import resolve_model_id
+    from ..server import resolve_model_with_profile
 
     _start = time.perf_counter()
-    model_name = resolve_model_id(request.model)
+    model_name, profile_overrides = resolve_model_with_profile(request.model)
     adapter_path = getattr(request, "adapters", None)
 
     async def _release() -> None:
@@ -393,7 +407,10 @@ async def _run_chat(
             raise
 
     messages = _messages_for_engine(request.messages, getattr(engine, "is_mllm", False))
-    sampling = _build_sampling_params(request)
+    sampling = _build_sampling_params(request, profile_overrides=profile_overrides)
+    from .utils import cap_max_tokens_to_context
+
+    sampling.max_tokens = cap_max_tokens_to_context(sampling.max_tokens, model_name)
     request_id = f"chatcmpl-{uuid.uuid4().hex[:12]}"
 
     try:
@@ -494,6 +511,7 @@ async def _stream_chat_generator(
     adapter_path: str | None,
     *,
     principal: str | None = None,
+    profile_overrides: dict | None = None,
 ) -> AsyncIterator[str]:
     """Generate SSE events for a streaming chat completion.
 
@@ -507,10 +525,24 @@ async def _stream_chat_generator(
         await _release_engine(model_name, adapter_path=adapter_path)
 
     messages = _messages_for_engine(request.messages, getattr(engine, "is_mllm", False))
-    sampling = _build_sampling_params(request)
+    sampling = _build_sampling_params(request, profile_overrides=profile_overrides)
+    # Context scaling: cap max_tokens to model context window
+    from .utils import cap_max_tokens_to_context
+
+    sampling.max_tokens = cap_max_tokens_to_context(sampling.max_tokens, model_name)
     request_id = f"chatcmpl-{uuid.uuid4().hex[:12]}"
 
+    # SSE keepalive: prevent client/proxy timeout during long inference
+    from ..server import get_settings
     from .streaming import StreamingJSONEncoder
+
+    _keepalive_interval = getattr(get_settings(), "sse_keepalive_seconds", 20.0) or 0.0
+    keepalive = None
+    if _keepalive_interval > 0:
+        from .utils import SSEKeepalive
+
+        keepalive = SSEKeepalive(interval_seconds=_keepalive_interval)
+        keepalive.reset()
 
     encoder = StreamingJSONEncoder(
         response_id=request_id,
@@ -564,6 +596,8 @@ async def _stream_chat_generator(
             compiled_grammar=compiled_grammar,
         ):
             if gen.new_text:
+                if keepalive:
+                    keepalive.reset()
                 accumulated += gen.new_text
                 thinking_delta, content_delta = parser.feed(gen.new_text)
                 if content_delta:
@@ -588,6 +622,12 @@ async def _stream_chat_generator(
                 prompt_tokens = gen.prompt_tokens or prompt_tokens
                 completion_tokens = gen.completion_tokens or completion_tokens
                 cached_tokens = gen.cached_tokens or cached_tokens
+            else:
+                # No new text — maybe emit SSE keepalive ping
+                if keepalive:
+                    ping = keepalive.maybe_ping()
+                    if ping:
+                        yield ping
 
             if gen.finished:
                 finish_reason = gen.finish_reason or "stop"
@@ -727,9 +767,9 @@ async def _stream_chat(
     handler's exception handlers and become proper HTTP 404/503 responses
     instead of unhandled ASGI 500 errors after the stream has started.
     """
-    from ..server import resolve_model_id
+    from ..server import resolve_model_with_profile
 
-    model_name = resolve_model_id(request.model)
+    model_name, profile_overrides = resolve_model_with_profile(request.model)
     adapter_path = getattr(request, "adapters", None)
 
     # Resolve engine first — exceptions propagate to route handler
@@ -756,7 +796,12 @@ async def _stream_chat(
 
     return StreamingResponse(
         _stream_chat_generator(
-            request, engine, model_name, adapter_path, principal=principal
+            request,
+            engine,
+            model_name,
+            adapter_path,
+            principal=principal,
+            profile_overrides=profile_overrides,
         ),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
@@ -997,7 +1042,9 @@ async def chat_completions(
                 from ..cache.response_cache import CachePolicy, get_response_cache
 
                 cache = get_response_cache()
-                resp_dict = result.model_dump() if hasattr(result, "model_dump") else result
+                resp_dict = (
+                    result.model_dump() if hasattr(result, "model_dump") else result
+                )
                 cache.put(_cache_key, resp_dict)
 
             return result

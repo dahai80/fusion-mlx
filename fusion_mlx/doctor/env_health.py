@@ -258,6 +258,14 @@ def section_system() -> Section:
     """
     s = Section("System")
 
+    _RAM_MODEL_MAP = [
+        (8, "Qwen3-4B (4-bit)"),
+        (16, "Qwen3.5-9B (6-bit) or Qwen3.6-27B (quant2-flat)"),
+        (24, "Qwen3.6-27B (mxfp8)"),
+        (32, "Qwen3.6-27B (6-bit)"),
+        (64, "Qwen3-72B (4-bit)"),
+    ]
+
     chip, ram_gb = _detect_apple_silicon()
     if chip:
         ram_str = f"{ram_gb} GB" if ram_gb else "unknown RAM"
@@ -266,6 +274,16 @@ def section_system() -> Section:
             CheckStatus.OK,
             detail=f"chip={chip} ram_gb={ram_gb}",
         )
+        if ram_gb:
+            rec = "no recommendation"
+            for threshold, name in _RAM_MODEL_MAP:
+                if ram_gb >= threshold:
+                    rec = name
+            s.add(
+                f"Recommended model: {rec}",
+                CheckStatus.OK,
+                detail=f"ram_gb={ram_gb} recommendation={rec}",
+            )
     elif platform.system() == "Darwin":
         s.add(
             "Non-Apple-Silicon Mac — MLX requires arm64",

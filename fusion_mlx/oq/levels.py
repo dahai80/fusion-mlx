@@ -12,26 +12,36 @@ protection; see _LEVEL_EXPERT_DOWN_BOOST) plus a higher bpw budget.
 
 import json
 import logging
-import re
-import shutil
-import tempfile
-import time as _time
 from collections.abc import Callable
-from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+
+from .io import (
+    _format_size,
+    _get_predicate_bits,
+    _LazyTensorIndex,
+    _should_quantize_tensor,
+    _should_skip_tensor,
+)
+from .plan import (
+    _bpw_targets_for_level,
+    _build_quant_plan,
+    _is_routed_expert,
+    _normalize_quant_path,
+    universal_quant_predicate,
+)
 
 try:
-    import mlx.core as mx
-    import mlx.nn as nn
-    from mlx.utils import tree_flatten
-    from mlx_lm.models.base import create_attention_mask
+    import mlx.core as mx  # noqa: F401 - availability check (HAS_MLX is the signal)
+    import mlx.nn as nn  # noqa: F401 - availability check
+    from mlx.utils import tree_flatten  # noqa: F401 - availability check
+    from mlx_lm.models.base import (
+        create_attention_mask,  # noqa: F401 - availability check
+    )
 
     HAS_MLX = True
 except ImportError:
     HAS_MLX = False
 
-from fusion_mlx.pool.model_discovery import _has_vision_subconfig
 
 logger = logging.getLogger(__name__)
 
@@ -90,7 +100,6 @@ _OQ_BPW_TARGETS: dict[float, tuple[float, float]] = {
 }
 
 
-from ._core import _TrackedTensor, _DiscoveredPlan, _discover_sanitize_plan
 def _is_qat_unquantized_config(qc) -> bool:
     """Return True if qc is a QAT training config with full-precision weights.
 
@@ -360,5 +369,3 @@ def estimate_memory(source_size_bytes: int) -> dict:
     """
     peak = source_size_bytes + 6 * 1024**3
     return {"peak_bytes": peak, "peak_formatted": _format_size(peak)}
-
-

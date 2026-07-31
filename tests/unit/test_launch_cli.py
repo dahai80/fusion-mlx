@@ -28,14 +28,9 @@ from fusion_mlx.launch import (
     codex,
     continue_dev,
     cursor,
-    factory_droid,
     hermes,
-    kilo_code,
-    kimi_code,
-    openhands,
     opencode,
     pydantic_ai,
-    qwen_code,
     smolagents,
 )
 from fusion_mlx.launch import cli as launch_cli
@@ -87,9 +82,15 @@ def fake_home(tmp_path, monkeypatch) -> Path:
     # so detect() doesn't find real home-dir configs.
     monkeypatch.setattr(codex, "_CONFIG_PATH", tmp_path / ".codex" / "config.toml")
     monkeypatch.setattr(hermes, "_CONFIG_PATH", tmp_path / ".hermes" / "config.yaml")
-    monkeypatch.setattr(opencode, "_CONFIG_PATH", tmp_path / ".config" / "opencode" / "opencode.json")
-    monkeypatch.setattr(pydantic_ai, "_CONFIG_PATH", tmp_path / ".pydantic-ai" / "config.json")
-    monkeypatch.setattr(smolagents, "_CONFIG_PATH", tmp_path / ".smolagents" / "config.json")
+    monkeypatch.setattr(
+        opencode, "_CONFIG_PATH", tmp_path / ".config" / "opencode" / "opencode.json"
+    )
+    monkeypatch.setattr(
+        pydantic_ai, "_CONFIG_PATH", tmp_path / ".pydantic-ai" / "config.json"
+    )
+    monkeypatch.setattr(
+        smolagents, "_CONFIG_PATH", tmp_path / ".smolagents" / "config.json"
+    )
 
     # And the PID file the launch CLI writes when --start-server is on.
     monkeypatch.setattr(launch_cli, "PID_FILE", tmp_path / "launch.pid")

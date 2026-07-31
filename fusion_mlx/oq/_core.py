@@ -10,28 +10,20 @@ bits and add a mandatory boost for routed expert down_proj (Super Weights
 protection; see _LEVEL_EXPERT_DOWN_BOOST) plus a higher bpw budget.
 """
 
-import json
 import logging
-import re
-import shutil
-import tempfile
-import time as _time
-from collections.abc import Callable
-from dataclasses import dataclass
-from pathlib import Path
-from typing import Any
 
 try:
     import mlx.core as mx
-    import mlx.nn as nn
-    from mlx.utils import tree_flatten
-    from mlx_lm.models.base import create_attention_mask
+    import mlx.nn as nn  # noqa: F401 - availability check (HAS_MLX is the signal)
+    from mlx.utils import tree_flatten  # noqa: F401 - availability check
+    from mlx_lm.models.base import (
+        create_attention_mask,  # noqa: F401 - availability check
+    )
 
     HAS_MLX = True
 except ImportError:
     HAS_MLX = False
 
-from fusion_mlx.pool.model_discovery import _has_vision_subconfig
 
 logger = logging.getLogger(__name__)
 
@@ -921,6 +913,8 @@ class _DiscoveredPlan:
 
     def _materialize_source(self, src_key):
         """Load a single source tensor from the lazy index."""
+        from .io import _LazyTensor  # lazy: io imports from _core at module load
+
         if hasattr(self._lazy, "_fp8_pairs") and src_key in self._lazy._fp8_pairs:
             return self._lazy._dequant_one(src_key)
         meta = self._lazy._index.get(src_key)
@@ -1140,5 +1134,3 @@ class _DiscoveredPlan:
         raise ValueError(
             f"cannot materialize {key!r}: transform={transform}, no sources"
         )
-
-

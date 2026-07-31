@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import sys
 import types
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -38,6 +39,10 @@ class _BoomPool:
 def _stub_resolve_model_id(monkeypatch: pytest.MonkeyPatch) -> None:
     fake = types.ModuleType("fusion_mlx.server")
     fake.resolve_model_id = lambda model_id: model_id  # type: ignore[attr-defined]
+    fake.resolve_model_with_profile = lambda model_id: (model_id, {})  # type: ignore[attr-defined]
+    fake.get_settings = MagicMock(return_value=MagicMock(sse_keepalive_seconds=0))
+    fake.get_max_context_window = lambda model_id: 32768  # type: ignore[attr-defined]
+    fake._server_state = {}  # type: ignore[attr-defined]
     monkeypatch.setitem(sys.modules, "fusion_mlx.server", fake)
 
 

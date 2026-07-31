@@ -12,7 +12,6 @@ exactly. CHUNK=16 chunking mirrors the CUDA original's K1/K2 split.
 from __future__ import annotations
 
 import logging
-from typing import Optional
 
 import mlx.core as mx
 
@@ -27,8 +26,8 @@ def _sigmoid(x: mx.array) -> mx.array:
 
 def _compute_gate(
     g: mx.array,
-    A_log: Optional[mx.array],
-    dt_bias: Optional[mx.array],
+    A_log: mx.array | None,
+    dt_bias: mx.array | None,
     lower_bound: float,
 ) -> mx.array:
     """Compute gate values from g logits, A_log, dt_bias.
@@ -63,10 +62,10 @@ def fwd(
     g: mx.array,
     beta: mx.array,
     scale: float = 1.0,
-    A_log: Optional[mx.array] = None,
-    dt_bias: Optional[mx.array] = None,
+    A_log: mx.array | None = None,
+    dt_bias: mx.array | None = None,
     lower_bound: float = -5.0,
-    initial_state: Optional[mx.array] = None,
+    initial_state: mx.array | None = None,
 ) -> tuple[mx.array, mx.array]:
     """FlashKDA forward — Python reference.
 

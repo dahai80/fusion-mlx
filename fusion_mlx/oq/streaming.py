@@ -12,14 +12,11 @@ protection; see _LEVEL_EXPERT_DOWN_BOOST) plus a higher bpw budget.
 
 import json
 import logging
-import re
 import shutil
 import tempfile
 import time as _time
 from collections.abc import Callable
-from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
 
 try:
     import mlx.core as mx
@@ -90,8 +87,35 @@ _OQ_BPW_TARGETS: dict[float, tuple[float, float]] = {
 }
 
 
-from ._core import _TrackedTensor, _DiscoveredPlan, _discover_sanitize_plan
-from .io import _LazyTensorIndex, _LazyTensor
+from ._core import _discover_sanitize_plan, _DiscoveredPlan
+from .io import (
+    _MAX_SHARD_BYTES,
+    _QUANTIZE_CHUNK_BYTES,
+    _build_non_quantizable_set,
+    _cast_passthrough_tensor,
+    _copy_model_sidecars,
+    _get_predicate_bits,
+    _gs_for_mode,
+    _is_mtp_tensor,
+    _LazyTensor,
+    _LazyTensorIndex,
+    _mode_for_bits,
+    _normalize_mtp_in_config,
+    _should_quantize_tensor,
+)
+from .levels import _sensitivity_lm_config_override
+from .plan import (
+    _base_bits_for_level,
+    _bpw_targets_for_level,
+    _collect_named_weight_shapes_from_weights,
+    _is_audio_tensor,
+    _is_vision_tensor,
+    _normalize_quant_path,
+    _validate_oq_dtype_for_model,
+    universal_quant_predicate,
+)
+
+
 def _tensor_shape_nbytes(shape, bytes_per_element: int) -> int:
     n = 1
     for dim in shape:
@@ -245,6 +269,10 @@ def quantize_oq_streaming(
         trust_remote_code: Forwarded to mlx-lm/mlx-vlm model loads when a
             checkpoint requires custom model code.
     """
+    # Route patchable sibling calls through the package namespace so tests that
+    # monkeypatch fusion_mlx.oq.<fn> intercept them (bound imports would bypass).
+    from fusion_mlx import oq as _oq
+
     if oq_level not in OQ_LEVELS:
         raise ValueError(
             f"Invalid oQ level {oq_level}. Must be one of {sorted(OQ_LEVELS)}"
@@ -317,7 +345,7 @@ def quantize_oq_streaming(
         # ensures vlm_load_model sees a pristine patch chain.
         if sensitivity_model_path:
             logger.info(f"oQ{oq_level:g}: measuring sensitivity via proxy model")
-            sensitivity_map = _measure_sensitivity_from_quantized_model(
+            sensitivity_map = _oq._measure_sensitivity_from_quantized_model(
                 sensitivity_model_path,
                 config,
                 oq_level,
@@ -340,7 +368,7 @@ def quantize_oq_streaming(
                 f"oQ{oq_level:g}: pre-quantized fp8 source, measuring "
                 "sensitivity on source"
             )
-            sensitivity_map = _measure_sensitivity_from_quantized_model(
+            sensitivity_map = _oq._measure_sensitivity_from_quantized_model(
                 model_path,
                 config,
                 oq_level,
@@ -358,7 +386,7 @@ def quantize_oq_streaming(
             )
             _proxy_dir: Path | None = None
             try:
-                _proxy_dir = _build_proxy_for_sensitivity(
+                _proxy_dir = _oq._build_proxy_for_sensitivity(
                     model_path,
                     config=config,
                     dtype=dtype,
@@ -368,7 +396,7 @@ def quantize_oq_streaming(
                 logger.info(
                     f"oQ{oq_level:g}: proxy ready at {_proxy_dir}, measuring sensitivity"
                 )
-                sensitivity_map = _measure_sensitivity_from_quantized_model(
+                sensitivity_map = _oq._measure_sensitivity_from_quantized_model(
                     str(_proxy_dir),
                     config,
                     oq_level,
@@ -399,7 +427,7 @@ def quantize_oq_streaming(
             logger.info(
                 f"oQ{oq_level:g}: measuring layer sensitivity for streaming path"
             )
-            sensitivity_map = _measure_sensitivity(
+            sensitivity_map = _oq._measure_sensitivity(
                 model_path,
                 config,
                 oq_level,
@@ -423,7 +451,7 @@ def quantize_oq_streaming(
     cb("loading", 15.0)
 
     # --- Sanitize-plan discovery ------------------------------------------
-    sanitize_fn = _build_model_sanitizer(config, text_only=text_only)
+    sanitize_fn = _oq._build_model_sanitizer(config, text_only=text_only)
     cast_predicate = getattr(sanitize_fn, "_fmlx_cast_predicate", None)
     # When preserve_mtp is True, the patched sanitize functions
     # (mlx_lm_mtp/qwen35_model.py and mlx_vlm_mtp/qwen35_vlm_model.py)
@@ -508,7 +536,7 @@ def quantize_oq_streaming(
     if _level_targets is not None:
         _t = target_bpw if target_bpw is not None else _level_targets[0]
         _c = hard_cap_bpw if hard_cap_bpw is not None else _level_targets[1]
-        plan = _build_quant_plan(
+        plan = _oq._build_quant_plan(
             named_shapes,
             config,
             oq_level,
@@ -1242,7 +1270,9 @@ def _measure_sensitivity_from_model(
     Returns:
         Dict of {layer_idx: relative_mse_score}.
     """
-    calib_data = _load_calibration_data(
+    from fusion_mlx import oq as _oq
+
+    calib_data = _oq._load_calibration_data(
         tokenizer,
         dataset=calib_dataset,
         num_samples=num_samples,
@@ -1316,6 +1346,7 @@ def _measure_sensitivity(
     trust_remote_code: bool = False,
 ):
     """Measure sensitivity by loading model temporarily. Used by streaming path."""
+    from fusion_mlx import oq as _oq
     from fusion_mlx.utils.model_loading import (
         _checkpoint_has_mtp_weights,
         _has_mtp_heads,
@@ -1406,7 +1437,7 @@ def _measure_sensitivity(
         if restore_mtp_active is not None:
             restore_mtp_active()
 
-    sensitivity = _measure_sensitivity_from_model(
+    sensitivity = _oq._measure_sensitivity_from_model(
         model,
         tokenizer,
         config,
@@ -1455,10 +1486,12 @@ def _build_proxy_for_sensitivity(
 
     The caller is responsible for deleting the returned directory.
     """
+    from fusion_mlx import oq as _oq
+
     # Reserve a unique temp name and let the streaming writer create it.
     proxy_dir = Path(tempfile.mkdtemp(prefix="fmlx_oq_proxy_", dir=working_dir))
     shutil.rmtree(proxy_dir)
-    _build_streaming_proxy_for_sensitivity(
+    _oq._build_streaming_proxy_for_sensitivity(
         model_path,
         proxy_dir,
         dtype=dtype,
@@ -1482,6 +1515,8 @@ def _build_streaming_proxy_for_sensitivity(
     sensitivity measurement and dynamic boost planning. The proxy is only used
     to rank layer sensitivity, so a compact uniform-ish 4-bit model is enough.
     """
+    from fusion_mlx import oq as _oq
+
     del trust_remote_code  # Kept for API symmetry; model code comes from config.
 
     source = Path(model_path)
@@ -1499,7 +1534,7 @@ def _build_streaming_proxy_for_sensitivity(
         raise ValueError(f"No .safetensors files found in {model_path}")
 
     all_weights = _LazyTensorIndex(weight_files)
-    sanitize_fn = _build_model_sanitizer(config, text_only=False)
+    sanitize_fn = _oq._build_model_sanitizer(config, text_only=False)
     cast_predicate = getattr(sanitize_fn, "_fmlx_cast_predicate", None)
     if sanitize_fn is not None:
         try:
@@ -1688,6 +1723,7 @@ def _measure_sensitivity_from_quantized_model(
     bits. The relative MSE ranking matches fp16 qdq-MSE with ~90% top-10
     overlap.
     """
+    from fusion_mlx import oq as _oq
     from fusion_mlx.utils.model_loading import (
         _checkpoint_has_mtp_weights,
         _has_mtp_heads,
@@ -1787,7 +1823,7 @@ def _measure_sensitivity_from_quantized_model(
         num_samples = capped_samples
         seq_length = capped_seq
 
-    calib_data = _load_calibration_data(
+    calib_data = _oq._load_calibration_data(
         tokenizer,
         dataset=calib_dataset,
         num_samples=num_samples,

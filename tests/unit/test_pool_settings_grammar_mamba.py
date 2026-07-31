@@ -153,6 +153,7 @@ class TestGrammarConstraintProcessor:
         p._bitmask = np.full((1, 1000), -1, dtype=np.int32)
         p._terminated = False
         p._first_call = True
+        p._backend = grammar.GrammarBackend.XGRAMMAR
         return p
 
     def test_init_sets_properties(self):

@@ -75,16 +75,22 @@ def test_chain_hashes_deterministic_and_model_scoped() -> None:
         ids, _BLOCK_SIZE, "other-model"
     )
     assert h1 != h_other
-    assert BoundarySnapshotSSDStore.compute_prefix_chain_hashes(
-        [], _BLOCK_SIZE, _MODEL_NAME
-    ) == []
+    assert (
+        BoundarySnapshotSSDStore.compute_prefix_chain_hashes(
+            [], _BLOCK_SIZE, _MODEL_NAME
+        )
+        == []
+    )
 
 
 def test_prefix_persist_disabled_is_noop(tmp_path) -> None:
     store = BoundarySnapshotSSDStore(base_dir=tmp_path, prefix_persist=False)
     try:
         h = _prefix_hash(64)
-        assert store.save_prefix(h, 64, _make_extracted(64), _extract_fn, _MODEL_NAME) is False
+        assert (
+            store.save_prefix(h, 64, _make_extracted(64), _extract_fn, _MODEL_NAME)
+            is False
+        )
         assert store.load_prefix(h, 64) is None
         assert store.has_prefix(h, 64) is False
         assert store.find_prefix_snapshot([h]) is None
@@ -123,7 +129,9 @@ def test_find_prefix_snapshot_returns_longest(tmp_path) -> None:
     try:
         for tc in (64, 128, 192):
             h = _prefix_hash(tc)
-            assert store.save_prefix(h, tc, _make_extracted(tc), _extract_fn, _MODEL_NAME)
+            assert store.save_prefix(
+                h, tc, _make_extracted(tc), _extract_fn, _MODEL_NAME
+            )
             assert _wait_for(store, h, tc)
         full_chain = BoundarySnapshotSSDStore.compute_prefix_chain_hashes(
             list(range(192)), _BLOCK_SIZE, _MODEL_NAME
@@ -158,9 +166,7 @@ def test_prefix_cross_restart_recovery(tmp_path) -> None:
         loaded = store_b.load_prefix(h, 64)
         assert loaded is not None
         assert len(loaded) == 2
-        assert mx.array_equal(
-            loaded[0]["state"][0], mx.array([64.0, 0.0, 1.0, 2.0])
-        )
+        assert mx.array_equal(loaded[0]["state"][0], mx.array([64.0, 0.0, 1.0, 2.0]))
         stats = store_b.get_prefix_stats()
         assert stats["entries"] == 1
         assert stats["writes"] == 0
@@ -188,7 +194,9 @@ def test_prefix_lru_eviction_drops_oldest(tmp_path) -> None:
     try:
         hashes = [_prefix_hash(tc) for tc in (64, 128, 192)]
         for tc, h in zip((64, 128, 192), hashes):
-            assert store.save_prefix(h, tc, _make_extracted(tc), _extract_fn, _MODEL_NAME)
+            assert store.save_prefix(
+                h, tc, _make_extracted(tc), _extract_fn, _MODEL_NAME
+            )
             assert _wait_for(store, h, tc)
             time.sleep(0.02)
         stats = store.get_prefix_stats()
@@ -237,8 +245,15 @@ class _FakeBlockAwareCache:
         self._reconstructed = reconstructed
         self.store_calls = []
 
-    def store_cache(self, request_id, tokens, cache_data, model_cache_config=None,
-                    boundary_snapshots=None, **kwargs):
+    def store_cache(
+        self,
+        request_id,
+        tokens,
+        cache_data,
+        model_cache_config=None,
+        boundary_snapshots=None,
+        **kwargs,
+    ):
         self.store_calls.append(
             (request_id, len(tokens), model_cache_config, boundary_snapshots)
         )
@@ -256,8 +271,14 @@ class _FakePagedCacheManager:
         self.deleted.append(request_id)
 
 
-def _fake_self(tmp_path, *, persist=True, block_size=_BLOCK_SIZE,
-               block_table=None, reconstructed="recon"):
+def _fake_self(
+    tmp_path,
+    *,
+    persist=True,
+    block_size=_BLOCK_SIZE,
+    block_table=None,
+    reconstructed="recon",
+):
     cfg = SimpleNamespace(
         boundary_prefix_persist=persist,
         paged_cache_block_size=block_size,
@@ -297,9 +318,7 @@ def test_warm_start_disabled_returns_false(tmp_path) -> None:
 
 
 def test_warm_start_vlm_request_skipped(tmp_path) -> None:
-    fake, store, bac, _ = _fake_self(
-        tmp_path, block_table=_FakeBlockTable(64, 2)
-    )
+    fake, store, bac, _ = _fake_self(tmp_path, block_table=_FakeBlockTable(64, 2))
     try:
         h = _prefix_hash(64)
         assert store.save_prefix(h, 64, _make_extracted(64), _extract_fn, _MODEL_NAME)
@@ -311,9 +330,7 @@ def test_warm_start_vlm_request_skipped(tmp_path) -> None:
 
 
 def test_warm_start_no_match_returns_false(tmp_path) -> None:
-    fake, store, bac, _ = _fake_self(
-        tmp_path, block_table=_FakeBlockTable(64, 2)
-    )
+    fake, store, bac, _ = _fake_self(tmp_path, block_table=_FakeBlockTable(64, 2))
     try:
         # Nothing persisted -> find_prefix_snapshot returns None.
         assert _try_prefix_snapshot_warm_start(fake, _request(128)) is False
@@ -325,9 +342,7 @@ def test_warm_start_no_match_returns_false(tmp_path) -> None:
 def test_warm_start_partial_materialization_falls_back(tmp_path) -> None:
     # store_cache returns a block_table covering fewer tokens than matched_tc:
     # the hook must release it and fall back to a full prefill (return False).
-    fake, store, bac, pcm = _fake_self(
-        tmp_path, block_table=_FakeBlockTable(32, 1)
-    )
+    fake, store, bac, pcm = _fake_self(tmp_path, block_table=_FakeBlockTable(32, 1))
     try:
         h = _prefix_hash(64)
         assert store.save_prefix(h, 64, _make_extracted(64), _extract_fn, _MODEL_NAME)
@@ -359,9 +374,7 @@ def test_warm_start_reconstruct_none_falls_back(tmp_path) -> None:
 def test_warm_start_success_sets_request_fields(tmp_path) -> None:
     bt = _FakeBlockTable(64, 2)
     recon = object()
-    fake, store, bac, pcm = _fake_self(
-        tmp_path, block_table=bt, reconstructed=recon
-    )
+    fake, store, bac, pcm = _fake_self(tmp_path, block_table=bt, reconstructed=recon)
     try:
         h = _prefix_hash(64)
         assert store.save_prefix(h, 64, _make_extracted(64), _extract_fn, _MODEL_NAME)

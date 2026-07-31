@@ -3254,7 +3254,7 @@ class TestBuildModelSanitizerTextOnly:
 
         from fusion_mlx.oq import _build_model_sanitizer
 
-        with patch("fusion_mlx.oq.logger") as mock_logger:
+        with patch("fusion_mlx.oq.io.logger") as mock_logger:
             _build_model_sanitizer(self.VLM_CONFIG, text_only=False)
 
         debug_messages = [str(c) for c in mock_logger.debug.call_args_list]
@@ -3268,7 +3268,7 @@ class TestBuildModelSanitizerTextOnly:
 
         from fusion_mlx.oq import _build_model_sanitizer
 
-        with patch("fusion_mlx.oq.logger") as mock_logger:
+        with patch("fusion_mlx.oq.io.logger") as mock_logger:
             _build_model_sanitizer(self.VLM_CONFIG, text_only=True)
 
         debug_messages = [str(c) for c in mock_logger.debug.call_args_list]
@@ -3284,7 +3284,7 @@ class TestBuildModelSanitizerTextOnly:
         from fusion_mlx.oq import _build_model_sanitizer
 
         for text_only in (True, False):
-            with patch("fusion_mlx.oq.logger") as mock_logger:
+            with patch("fusion_mlx.oq.io.logger") as mock_logger:
                 _build_model_sanitizer(self.LLM_CONFIG, text_only=text_only)
 
             debug_messages = [str(c) for c in mock_logger.debug.call_args_list]

@@ -1,6 +1,4 @@
-import pytest
-
-from fusion_mlx.api._url_safety import is_safe_local_path, is_safe_url, is_safe_url_with_dns
+from fusion_mlx.api._url_safety import is_safe_local_path, is_safe_url
 
 
 class TestIsSafeUrl:

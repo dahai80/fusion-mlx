@@ -1,8 +1,8 @@
 # SPDX-License-Identifier: Apache-2.0
-import pytest
 from unittest.mock import MagicMock
-from fastapi import HTTPException
 
+import pytest
+from fastapi import HTTPException
 from fastapi import Request as FastAPIRequest
 
 from fusion_mlx.admin.auth import (

@@ -12,26 +12,21 @@ protection; see _LEVEL_EXPERT_DOWN_BOOST) plus a higher bpw budget.
 
 import json
 import logging
-import re
 import shutil
-import tempfile
-import time as _time
-from collections.abc import Callable
-from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
 
 try:
     import mlx.core as mx
     import mlx.nn as nn
     from mlx.utils import tree_flatten
-    from mlx_lm.models.base import create_attention_mask
+    from mlx_lm.models.base import (
+        create_attention_mask,  # noqa: F401 - availability check
+    )
 
     HAS_MLX = True
 except ImportError:
     HAS_MLX = False
 
-from fusion_mlx.pool.model_discovery import _has_vision_subconfig
 
 logger = logging.getLogger(__name__)
 
@@ -90,7 +85,9 @@ _OQ_BPW_TARGETS: dict[float, tuple[float, float]] = {
 }
 
 
-from ._core import _TrackedTensor, _DiscoveredPlan, _discover_sanitize_plan, _block_dequant_fp8
+from ._core import _FP8_WEIGHT_DTYPES, _block_dequant_fp8
+
+
 def _format_size(size_bytes: int) -> str:
     """Format byte count as human-readable string."""
     if size_bytes < 1024:
@@ -172,6 +169,8 @@ def _should_quantize_tensor(name: str, shape: tuple) -> bool:
 
 def _cast_passthrough_tensor(tensor_name: str, w_mx, target_dtype):
     """Cast an unquantized output tensor to its storage dtype."""
+    from .plan import _is_audio_tensor, _is_vision_tensor
+
     if not mx.issubdtype(w_mx.dtype, mx.floating):
         return w_mx
 
@@ -434,6 +433,8 @@ def _build_non_quantizable_set(config: dict) -> set:
         model = model_class(args)
 
         result = set()
+        from .plan import _normalize_quant_path
+
         for path, module in tree_flatten(
             model.leaf_modules(), is_leaf=nn.Module.is_module
         ):
@@ -494,6 +495,9 @@ def _get_predicate_bits(
     Returns:
         (bits, group_size, mode) or (None, None, None) if not quantized.
     """
+    # Lazy import to avoid circular dependency with plan.py (plan imports _gs_for_mode from io).
+    from .plan import _base_bits_for_level, universal_quant_predicate
+
     # See _is_mtp_protected_tensor for why these tensors stay full precision.
     if _is_mtp_protected_tensor(tensor_name):
         return None, None, None
@@ -961,5 +965,3 @@ class _LazyTensor:
             stop = self.shape[0] if idx.stop is None else idx.stop
             return self._load_rows(start, stop)
         return self._load_rows(idx, idx + 1)
-
-
