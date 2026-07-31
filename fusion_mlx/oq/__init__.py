@@ -1,11 +1,17 @@
 # SPDX-License-Identifier: Apache-2.0
 """oQ package — re-exports public API for backward compatibility."""
 
+import logging
+
 from ._core import _discover_sanitize_plan, _DiscoveredPlan, _TrackedTensor
 from .io import (
+    _build_model_sanitizer,
+    _build_non_quantizable_set,
     _format_size,
     _get_predicate_bits,
+    _normalize_mtp_in_config,
     _should_quantize_tensor,
+    _should_skip_tensor,
 )
 from .levels import (
     _sensitivity_lm_config_override,
@@ -20,6 +26,7 @@ from .plan import (
     _OQ_BPW_TARGETS,
     _PROXY_QUANT_BITS,
     _PROXY_QUANT_GROUP_SIZE,
+    OQ_DTYPES,
     OQ_LEVELS,
     QuantPlan,
     _bpw_targets_for_level,
@@ -38,13 +45,17 @@ from .streaming import (
     _forward_layer,
     _forward_layer_result,
     _LazyTensorIndex,
+    _load_calibration_data,
     _measure_sensitivity,
+    _measure_sensitivity_from_model,
     _measure_sensitivity_from_quantized_model,
     _perturb_bits_for,
     _progress_total_bytes,
     _quantize_chunked,
     quantize_oq_streaming,
 )
+
+logger = logging.getLogger(__name__)
 
 __all__ = [
     "QuantPlan",
@@ -61,6 +72,7 @@ __all__ = [
     "_PROXY_QUANT_BITS",
     "_PROXY_QUANT_GROUP_SIZE",
     "OQ_LEVELS",
+    "OQ_DTYPES",
     "_bpw_targets_for_level",
     "_build_quant_plan",
     "_extract_layer_index",
@@ -77,7 +89,9 @@ __all__ = [
     "_forward_layer",
     "_forward_layer_result",
     "_LazyTensorIndex",
+    "_load_calibration_data",
     "_measure_sensitivity",
+    "_measure_sensitivity_from_model",
     "_measure_sensitivity_from_quantized_model",
     "_perturb_bits_for",
     "_progress_total_bytes",
@@ -85,4 +99,9 @@ __all__ = [
     "_format_size",
     "_get_predicate_bits",
     "_should_quantize_tensor",
+    "_should_skip_tensor",
+    "_build_model_sanitizer",
+    "_build_non_quantizable_set",
+    "_normalize_mtp_in_config",
+    "logger",
 ]
