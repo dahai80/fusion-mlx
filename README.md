@@ -441,6 +441,8 @@ The macOS app offers a mode toggle between:
 | OCR | `/v1/ocr` | ✅ 4 dedicated OCR engines (DeepSeek-OCR, DOTS-OCR, GLM-OCR) |
 | Sessions | `/v1/sessions/{id}/stats`, `/v1/sessions/{id}/context` | ✅ Per-session token usage + context cap (#226) |
 | MCP | `/v1/mcp/tools`, `/v1/mcp/servers`, `/v1/mcp/execute` | ✅ Supported |
+| Model Manager | `/admin/api/model-manager/models`, `.../load`, `.../unload`, `.../status` | ✅ Scoped-key model lifecycle (#302) |
+| Embedding Mgr | `/admin/api/model-manager/embedding/*` | ✅ Pin/unpin/status for embedding models (#302) |
 | OpenClaw Agent | `/v1/openclaw/agent/*` | ✅ Sessions, turns, tool calling, SSE streaming |
 | Agent Graph | `/v1/agents/graphs`, `/v1/agents/run` | ✅ CRUD + export + run (in-memory) |
 | Base Info | `/v1/base` | ✅ MLX runtime capability detection |
@@ -850,6 +852,51 @@ curl -X POST http://localhost:8000/admin/api/fine-tune/adapters/qwen3.5-9b/my-lo
 - **SSE progress** — real-time metrics: train/val loss, learning rate, tok/s, peak memory, ETA
 - **Job persistence** — jobs survive server restarts (stored in `~/.fusion-mlx/fine_tune_jobs.json`); stale RUNNING/QUEUED jobs auto-cancelled on reload
 - **macOS App** — dedicated Fine-Tune screen with configuration form, dataset file picker, SSE live progress bar, job list, and adapter management
+
+## Model Manager API (#302)
+
+Non-admin API for model lifecycle management. Authenticated via scoped API keys (`model_mgr_*` prefix).
+
+### Endpoints
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/admin/api/model-manager/models` | List all models with load status, size, pinned flag, type |
+| POST | `/admin/api/model-manager/models/{model_id}/load` | Load a model into the EnginePool |
+| POST | `/admin/api/model-manager/models/{model_id}/unload` | Unload a model (fails if not loaded) |
+| GET | `/admin/api/model-manager/models/{model_id}/status` | Single model status |
+| GET | `/admin/api/model-manager/embedding/status` | List all embedding models with status |
+| POST | `/admin/api/model-manager/embedding/{model_id}/pin` | Pin embedding model (prevent eviction) |
+| POST | `/admin/api/model-manager/embedding/{model_id}/unpin` | Unpin embedding model |
+
+### Scoped API Key
+
+```bash
+# Generate a model-manager key
+curl -X POST http://localhost:8000/admin/api/keys \
+  -H "Authorization: Bearer <admin-key>" \
+  -d '{"role": "model_manager"}'
+# Returns: {"key": "model_mgr_...", "role": "model_manager"}
+
+# Use it to list models
+curl http://localhost:8000/admin/api/model-manager/models \
+  -H "Authorization: Bearer model_mgr_..."
+```
+
+### Capabilities Field
+
+The `/v1/models` endpoint now includes a `capabilities` array derived from each model's alias profile:
+
+```json
+{
+  "id": "qwen3-72b",
+  "capabilities": ["dflash", "dspark", "spec_decode", "moe"]
+}
+```
+
+Derived from: `supports_dflash`, `supports_dspark`, `supports_spec_decode`, `tool_call_parser`, `reasoning_parser`, `supports_mllm` (→`vision`), `is_audio` (→`audio`), `is_moe` (→`moe`), `is_hybrid` (→`hybrid`).
+
+The CLI `models` command also displays a unified `Capabilities` column instead of the previous 4 separate columns.
 
 ## Performance
 
