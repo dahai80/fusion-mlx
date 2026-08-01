@@ -105,7 +105,7 @@ async def list_models(_auth: bool = Depends(verify_api_key)):
             tool, reasoning = effective_parsers_for(entry.model_name, None, None)
             modality = _resolve_modality(entry.model_name)
             profile = resolve_profile(entry.model_name)
-            caps = sorted(profile.capabilities) if profile else None
+            caps = sorted(profile.capabilities) if profile else []
             data.append(_entry_payload(entry.model_name, tool, reasoning, modality, caps))
     elif cfg.model_name:
         profile = resolve_profile(cfg.model_alias) if cfg.model_alias else None
@@ -115,7 +115,7 @@ async def list_models(_auth: bool = Depends(verify_api_key)):
             cfg.model_name, profile_tool, profile_reasoning
         )
         modality = _resolve_modality(cfg.model_name)
-        caps = sorted(profile.capabilities) if profile else None
+        caps = sorted(profile.capabilities) if profile else []
         data.append(_entry_payload(cfg.model_name, tool, reasoning, modality, caps))
         if cfg.model_alias:
             tool, reasoning = effective_parsers_for(
