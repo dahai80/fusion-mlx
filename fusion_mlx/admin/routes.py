@@ -107,6 +107,7 @@ from .hf_upload import router as hf_upload_router
 from .html_routes import router as html_router
 from .logs import router as logs_router
 from .models_route import router as models_router
+from .model_manager_route import router as model_manager_router
 from .ms_download import router as ms_download_router
 from .oq import router as oq_router
 from .preset import router as preset_router
@@ -122,6 +123,7 @@ router.include_router(auth_routes_router)
 router.include_router(subkey_router)
 router.include_router(grammar_router)
 router.include_router(models_router)
+router.include_router(model_manager_router)
 router.include_router(profile_router)
 router.include_router(preset_router)
 router.include_router(settings_router)
