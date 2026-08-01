@@ -386,8 +386,10 @@ class TestSchedulerInitialization:
         # SSD tier failed -> SSD manager nulled and never connected to the
         # in-memory cache.  In-memory paged cache + async store pipeline are
         # RETAINED (resilient degradation); only SSD-specific components drop.
+        # BoundarySnapshotSSDStore is independent of PagedSSDCacheManager
+        # and initializes from a default path even without paged_ssd_cache_dir.
         assert scheduler.paged_ssd_cache_manager is None
-        assert scheduler._boundary_snapshot_store is None
+        assert scheduler._boundary_snapshot_store is not None
         assert scheduler.paged_cache_manager is not None
         assert scheduler.block_aware_cache is not None
         assert scheduler._store_cache_executor is not None

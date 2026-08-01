@@ -102,20 +102,28 @@ class TestLoadAliases(unittest.TestCase):
 
 class TestListAliases(unittest.TestCase):
 
+    def setUp(self):
+        ma._aliases = None
+        ma._hf_to_alias = None
+
     def test_returns_sorted_keys(self):
         with tempfile.TemporaryDirectory() as td:
             af = Path(td) / "aliases.json"
             with open(af, "w") as f:
                 json.dump({"zeta": "z", "alpha": "a", "mid": "m"}, f)
             with patch.object(ma, "_ALIASES_FILE", af):
-                self.assertEqual(ma.list_aliases(), ["alpha", "mid", "zeta"])
+                self.assertEqual(ma.list_aliases(), {"alpha": "a", "mid": "m", "zeta": "z"})
 
     def test_empty_when_no_file(self):
         with patch.object(ma, "_ALIASES_FILE", Path("/nonexistent")):
-            self.assertEqual(ma.list_aliases(), [])
+            self.assertEqual(ma.list_aliases(), {})
 
 
 class TestListProfiles(unittest.TestCase):
+
+    def setUp(self):
+        ma._aliases = None
+        ma._hf_to_alias = None
 
     def test_string_entry(self):
         with tempfile.TemporaryDirectory() as td:
@@ -125,8 +133,8 @@ class TestListProfiles(unittest.TestCase):
             with patch.object(ma, "_ALIASES_FILE", af):
                 profiles = ma.list_profiles()
                 self.assertEqual(len(profiles), 1)
-                self.assertEqual(profiles[0].name, "gpt-4o")
-                self.assertEqual(profiles[0].hf_path, "Qwen/Qwen3-32B")
+                self.assertEqual(profiles["gpt-4o"].name, "gpt-4o")
+                self.assertEqual(profiles["gpt-4o"].hf_path, "Qwen/Qwen3-32B")
 
     def test_dict_entry_with_all_fields(self):
         with tempfile.TemporaryDirectory() as td:
@@ -150,7 +158,7 @@ class TestListProfiles(unittest.TestCase):
                     f,
                 )
             with patch.object(ma, "_ALIASES_FILE", af):
-                p = ma.list_profiles()[0]
+                p = ma.list_profiles()["qwen"]
                 self.assertTrue(p.supports_dflash)
                 self.assertTrue(p.is_moe)
                 self.assertEqual(p.drafter_hf_path, "Qwen/d")
@@ -163,21 +171,24 @@ class TestListProfiles(unittest.TestCase):
             with open(af, "w") as f:
                 json.dump({"x": {"path": "org/x"}}, f)
             with patch.object(ma, "_ALIASES_FILE", af):
-                p = ma.list_profiles()[0]
+                p = ma.list_profiles()["x"]
                 self.assertEqual(p.hf_path, "org/x")
 
-    def test_dict_entry_missing_hf_path_uses_empty_or_name(self):
+    def test_dict_entry_missing_hf_path_raises(self):
         with tempfile.TemporaryDirectory() as td:
             af = Path(td) / "aliases.json"
             with open(af, "w") as f:
                 json.dump({"x": {"description": "no path"}}, f)
             with patch.object(ma, "_ALIASES_FILE", af):
-                p = ma.list_profiles()[0]
-                # hf_path 缺失时回退到空字符串或 name（两种实现都接受）
-                self.assertTrue(p.hf_path in ("", "x"))
+                with self.assertRaises(ValueError):
+                    ma.list_profiles()
 
 
 class TestResolveModel(unittest.TestCase):
+
+    def setUp(self):
+        ma._aliases = None
+        ma._hf_to_alias = None
 
     def test_string_alias_resolves(self):
         with tempfile.TemporaryDirectory() as td:
@@ -216,6 +227,10 @@ class TestResolveModel(unittest.TestCase):
 
 class TestResolveProfile(unittest.TestCase):
 
+    def setUp(self):
+        ma._aliases = None
+        ma._hf_to_alias = None
+
     def test_known_profile(self):
         with tempfile.TemporaryDirectory() as td:
             af = Path(td) / "aliases.json"
@@ -232,6 +247,10 @@ class TestResolveProfile(unittest.TestCase):
 
 
 class TestSuggestSimilar(unittest.TestCase):
+
+    def setUp(self):
+        ma._aliases = None
+        ma._hf_to_alias = None
 
     def test_returns_close_matches(self):
         with tempfile.TemporaryDirectory() as td:

@@ -957,12 +957,12 @@ class EnginePool:
                     raise ModelTooLargeError(model_id, entry.estimated_size, ceiling)
                 loaded_models = []
                 for mid, ent in self._entries.items():
-                    if ent.is_loaded:
+                    if ent.engine is not None:
                         loaded_models.append({
                             "model_id": mid,
                             "memory_mb": ent.estimated_size // (1024 * 1024),
-                            "active_requests": ent.active_count,
-                            "pinned": getattr(ent, "pinned", False),
+                            "active_requests": ent.in_use,
+                            "pinned": ent.is_pinned,
                         })
                 raise InsufficientMemoryError(
                     required=entry.estimated_size,
