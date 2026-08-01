@@ -109,4 +109,63 @@ async def model_status(
     }
 
 
+@_router.get("/embedding/status")
+async def embedding_status(role: str = Depends(verify_scoped_api_key)):
+    engine_pool = _get_engine_pool()
+    if engine_pool is None:
+        raise HTTPException(status_code=503, detail="Engine pool not initialized")
+
+    embedding_models = []
+    for mid, entry in engine_pool._entries.items():
+        if entry.model_type == "embedding":
+            embedding_models.append({
+                "id": mid,
+                "loaded": entry.engine is not None,
+                "is_loading": entry.is_loading,
+                "pinned": entry.pinned,
+            })
+    logger.info("model-manager: embedding status %d models (role=%s)", len(embedding_models), role)
+    return {"embedding_models": embedding_models}
+
+
+@_router.post("/embedding/{model_id}/pin")
+async def pin_embedding_model(
+    model_id: str,
+    role: str = Depends(verify_scoped_api_key),
+):
+    engine_pool = _get_engine_pool()
+    if engine_pool is None:
+        raise HTTPException(status_code=503, detail="Engine pool not initialized")
+
+    entry = engine_pool.get_entry(model_id)
+    if entry is None:
+        raise HTTPException(status_code=404, detail=f"Model not found: {model_id}")
+    if entry.model_type != "embedding":
+        raise HTTPException(status_code=400, detail=f"Model {model_id} is not an embedding model")
+
+    engine_pool.set_pinned(model_id, True)
+    logger.info("model-manager: pinned embedding %s (role=%s)", model_id, role)
+    return {"status": "ok", "model_id": model_id, "pinned": True}
+
+
+@_router.post("/embedding/{model_id}/unpin")
+async def unpin_embedding_model(
+    model_id: str,
+    role: str = Depends(verify_scoped_api_key),
+):
+    engine_pool = _get_engine_pool()
+    if engine_pool is None:
+        raise HTTPException(status_code=503, detail="Engine pool not initialized")
+
+    entry = engine_pool.get_entry(model_id)
+    if entry is None:
+        raise HTTPException(status_code=404, detail=f"Model not found: {model_id}")
+    if entry.model_type != "embedding":
+        raise HTTPException(status_code=400, detail=f"Model {model_id} is not an embedding model")
+
+    engine_pool.set_pinned(model_id, False)
+    logger.info("model-manager: unpinned embedding %s (role=%s)", model_id, role)
+    return {"status": "ok", "model_id": model_id, "pinned": False}
+
+
 router = _router

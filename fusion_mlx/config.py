@@ -281,6 +281,7 @@ class ServerConfig:
     # Embeddings
     embedding_engine: Any = None
     embedding_model_locked: str | None = None
+    embedding_model: str | None = None
 
     # Auth
     api_key: str | None = None

@@ -1189,6 +1189,16 @@ class Server:
                 self.config.model_dir,
             )
 
+        # Auto-pin locked embedding model so memory enforcer never evicts it
+        locked_embed = self.config.embedding_model_locked
+        if locked_embed:
+            entry = self.pool.get_entry(locked_embed)
+            if entry is not None:
+                self.pool.set_pinned(locked_embed, True)
+                logger.info("Embedding model %s pinned (embedding_model_locked)", locked_embed)
+            else:
+                logger.warning("embedding_model_locked=%s not found in pool", locked_embed)
+
         # Single-model ``serve --model <X>`` path: load_model() staged the
         # resolved model on ``_pending_single_model`` before uvicorn started.
         # The pool now exists, so load + register the engine via the same
