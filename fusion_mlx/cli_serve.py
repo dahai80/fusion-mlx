@@ -1246,6 +1246,7 @@ def _apply_mtp_cli_model_type_reconciliation(
     # Probe the backbone with has_external_sidecar=False so the real model_type
     # is recovered even when a sidecar overrides eligibility to TREE.
     backbone = _detect_mtp_eligibility_verbose(hf_config, has_external_sidecar=False)
+    _CHAIN_SIDECAR_TYPES = {"qwen3_5", "qwen3_5_moe"}
     if has_external_sidecar:
         if backbone.model_type == "gemma4_unified":
             scheduler_config.mtp_model_type = backbone.model_type
@@ -1255,8 +1256,17 @@ def _apply_mtp_cli_model_type_reconciliation(
                 backbone.reason,
             )
             return
+        if backbone.model_type in _CHAIN_SIDECAR_TYPES:
+            scheduler_config.mtp_model_type = backbone.model_type
+            logger.info(
+                "MTP sidecar reconciled -> backbone %s (%s, chain+sidecar)",
+                backbone.model_type,
+                backbone.reason,
+            )
+            return
         print(
-            "error: --mtp-sidecar requires a gemma4_unified backbone, "
+            "error: --mtp-sidecar requires a gemma4_unified or "
+            f"qwen3_5/qwen3_5_moe backbone, "
             f"got model_type={backbone.model_type!r} ({backbone.reason}).",
             file=sys.stderr,
         )
@@ -1780,7 +1790,24 @@ def serve_command(args):
             _hf_cfg_auto, _ = _gather_kv_cache_dtype_inputs(args.model)
         except Exception:
             _hf_cfg_auto = None
-        _resolution = resolve_spec_auto(_hf_cfg_auto)
+        _auto_family = None
+        _auto_moe = False
+        _auto_qbits = None
+        try:
+            from .model_auto_config import detect_model_config
+            _ac = detect_model_config(args.model)
+            if _ac:
+                _auto_family = getattr(_ac, "model_family", None)
+                _auto_moe = getattr(_ac, "is_moe", False)
+                _auto_qbits = getattr(_ac, "quant_bits", None)
+        except Exception:
+            logger.debug("spec-auto: family detection failed (non-fatal)", exc_info=True)
+        _resolution = resolve_spec_auto(
+            _hf_cfg_auto,
+            model_family=_auto_family,
+            is_moe=_auto_moe,
+            quant_bits=_auto_qbits,
+        )
         # auto is authoritative — clear operator-set spec flags so the
         # resolved method doesn't collide with a stale enable_*.
         args.suffix_decoding = False

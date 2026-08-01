@@ -124,7 +124,8 @@ def inject_mtp_support(
     # --- Step 1: Build the MTP module ---
     from .head import build_mtp_module
 
-    mtp = build_mtp_module(args, num_mtp_layers)
+    _MTPDecoderLayer, MTPModule = build_mtp_module(args, num_mtp_layers)
+    mtp = MTPModule(args, num_mtp_layers)
     logger.info(
         "[mtp.inject] Built MTP module (%d layer(s), hidden_size=%d).",
         num_mtp_layers,
@@ -297,7 +298,62 @@ def inject_mtp_support(
         "(return_hidden, n_confirmed, mtp_forward, make_mtp_cache).",
         original_class.__name__,
     )
+
+    # --- Step 6: Patch outer Model with MTP pass-throughs ---
+    # When the top-level object is a wrapper (e.g. mlx_lm qwen3_5.Model
+    # that delegates to self.language_model), the engine_core / sched_step
+    # look for _fusion_mlx_mtp_decode_enabled, mtp, mtp_forward,
+    # make_mtp_cache, and return_hidden on the *outer* model.
+    if model is not inner:
+        _patch_outer_model(model, inner)
+
     return True
+
+
+def _patch_outer_model(outer: Any, inner: Any) -> None:
+    if getattr(outer, "_fusion_mlx_mtp_outer_patched", False):
+        return
+
+    outer._fusion_mlx_mtp_decode_enabled = True
+
+    original_call = outer.__call__
+
+    def patched_call(
+        inputs,
+        cache=None,
+        input_embeddings=None,
+        return_hidden: bool = False,
+        n_confirmed: int = 0,
+        **kwargs,
+    ):
+        return inner(
+            inputs,
+            cache=cache,
+            input_embeddings=input_embeddings,
+            return_hidden=return_hidden,
+            n_confirmed=n_confirmed,
+        )
+
+    @property
+    def mtp(self):
+        return getattr(inner, "mtp", None)
+
+    def mtp_forward(self, hidden_states, next_token_ids, mtp_cache):
+        return inner.mtp_forward(hidden_states, next_token_ids, mtp_cache)
+
+    def make_mtp_cache(self):
+        return inner.make_mtp_cache()
+
+    outer.__call__ = patched_call
+    # Use type() to set property on the instance's class, not the Module dict
+    type(outer).mtp = mtp
+    outer.mtp_forward = mtp_forward
+    outer.make_mtp_cache = make_mtp_cache
+    outer._fusion_mlx_mtp_outer_patched = True
+    logger.info(
+        "[mtp.inject] Patched outer %s with MTP pass-throughs.",
+        type(outer).__name__,
+    )
 
 
 def validate_mtp_support(model: Any) -> bool:

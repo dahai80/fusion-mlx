@@ -49,66 +49,23 @@ class ModelConfig:
     )
 
     # --- Architecture / capability gates ---
-    # ``is_hybrid`` = the model uses linear-attention or recurrent layers
-    # (GatedDeltaNet, Mamba, Jamba, ...). Hybrid models need request
-    # throttling and disable optimizations that rely on chunked-batched
-    # forward — verified on Qwen3.5-4B where spec decode produces
-    # corrupted output (see evals/results/SUFFIX_POC_REPORT.md).
     is_hybrid: bool = False
 
-    # r6-A R6-C1: when the alias profile (or an explicit caller) pins
-    # ``is_hybrid``, ``enrich_model_config``'s runtime ArraysCache probe
-    # MUST NOT one-way-flip the value to True. Without this gate, dense
-    # Qwen3.5 / Qwen3.6 aliases whose JSON declares ``is_hybrid=false``
-    # still got promoted to hybrid at boot because ``make_cache()``
-    # returns linear-attention layers — re-enabling the throttle +
-    # prefix-boundary snapshot path that wedges ``rapid-mlx serve
-    # qwen3.5-4b-4bit`` with ``metal::malloc`` Resource-limit (499000)
-    # errors. Default ``False`` preserves the legacy safety-net behaviour
-    # for aliases / serve targets that haven't opted into the explicit
-    # contract; the probe still promotes ``is_hybrid`` to True when the
-    # cache type indicates linear attention.
     is_hybrid_explicit: bool = False
 
-    # ``supports_spec_decode`` controls SuffixDecoding / draft-model
-    # speculative decoding. Disabled for hybrid models because the
-    # batched-verify path through GatedDeltaNet derails generation.
-    # Pure-attention models (llama, qwen3, mistral, gemma3, gpt-oss,
-    # phi, ...) are safe.
     supports_spec_decode: bool = True
 
-    # SuffixDecoding eligibility tier (#269). One of:
-    #   "unknown"    — not benched (silent default)
-    #   "agent"      — tool_loop ≥ 1.8x, no regression — recommend the flag
-    #   "structured" — peak workload ≥ 1.5x, no regression — may help
-    #   "neutral"    — no workload wins, no regression — silent
-    #   "avoid"      — at least one workload regresses — warn
     suffix_decoding_tier: str = "unknown"
-    # Per-workload speedup measured by ``scripts/bench_suffix_decoding_integrated.py``.
-    # ``field(default_factory=dict)`` so each ``ModelConfig`` instance gets
-    # its own fresh dict (a literal ``{}`` would silently share state).
     suffix_bench_speedup: dict[str, float] = field(default_factory=dict)
 
-    # PFlash long-prompt compression eligibility (#287). Mirrors
-    # ``AliasProfile.pflash_tier`` — the single source of truth lives in
-    # ``aliases.json`` and is copied here by ``detect_model_config`` so
-    # ``serve``/``bench`` can pick up the default without re-resolving
-    # the profile. Values: ``"unknown"`` (engine defaults PFlash off) or
-    # ``"verified"`` (engine defaults PFlash to ``always``). Explicit
-    # CLI ``--pflash`` still wins. See VALID_PFLASH_TIERS for the enum.
     pflash_tier: str = "unknown"
 
-    # Mirrors ``AliasProfile.turboquant_tier``; see VALID_TURBOQUANT_TIERS.
     turboquant_tier: str = "unknown"
 
-    # DFlash block-diffusion speculative decoding eligibility (#264, 0.9.0
-    # operator-shipped via ``--enable-dflash`` for ``qwen3.5-27b-8bit``).
-    # Mirrors ``AliasProfile.supports_dflash`` so ``rapid-mlx info`` can
-    # call out the DFlash opt-in path in the ``Spec decode`` row instead
-    # of mis-leading the user with ``(no MTP/drafter trained)`` when an
-    # alias has the DFlash drafter registered. 0.9.1 dogfood found the
-    # 27B-8bit alias hitting exactly that mismatch.
     supports_dflash: bool = False
+
+    # --- Phase 2: model family for intelligent spec-decode routing ---
+    model_family: str | None = None
 
 
 # TODO: fusion_mlx/reasoning/think_detector.py does not exist yet in fusion_mlx
@@ -624,24 +581,20 @@ def detect_model_config(model_path: str) -> ModelConfig | None:
             f"supports_spec_decode={profile.supports_spec_decode}, "
             f"suffix_tier={profile.suffix_decoding_tier}, "
             f"pflash_tier={profile.pflash_tier}, "
-            f"turboquant_tier={profile.turboquant_tier}",
+            f"turboquant_tier={profile.turboquant_tier}, "
+            f"model_family={getattr(profile, 'model_family', None)}",
         )
-        # AliasProfile stores the bench dict as a sorted tuple (frozen
-        # dataclasses must avoid mutable shared state). Materialize a
-        # fresh dict here so each ModelConfig instance owns its copy.
         speedup = (
             dict(profile.suffix_bench_speedup) if profile.suffix_bench_speedup else {}
         )
+        family = getattr(profile, "model_family", None)
+        if family is None:
+            family = _detect_family_from_path(model_path)
         return ModelConfig(
             tool_call_parser=profile.tool_call_parser,
             reasoning_parser=profile.reasoning_parser,
             default_max_tokens=profile.default_max_tokens,
             is_hybrid=profile.is_hybrid,
-            # r6-A R6-C1: thread the explicit-pin flag so
-            # ``enrich_model_config`` can honour aliases that have
-            # deliberately marked their model as non-hybrid even when
-            # the upstream ``make_cache()`` returns linear-attention
-            # layers (qwen3_5 dense weights).
             is_hybrid_explicit=profile.is_hybrid_explicit,
             supports_spec_decode=profile.supports_spec_decode,
             suffix_decoding_tier=profile.suffix_decoding_tier,
@@ -649,19 +602,40 @@ def detect_model_config(model_path: str) -> ModelConfig | None:
             pflash_tier=profile.pflash_tier,
             turboquant_tier=profile.turboquant_tier,
             supports_dflash=profile.supports_dflash,
+            model_family=family,
         )
 
     for pattern, config in _MODEL_PATTERNS:
         if pattern.search(model_path):
+            family = _detect_family_from_path(model_path)
+            if family is not None and config.model_family is None:
+                config = replace(config, model_family=family)
             _log_resolution_once(
                 model_path,
                 f"Auto-detected model family '{pattern.pattern}' → "
                 f"tool_call_parser={config.tool_call_parser}, "
                 f"reasoning_parser={config.reasoning_parser}, "
                 f"is_hybrid={config.is_hybrid}, "
-                f"supports_spec_decode={config.supports_spec_decode}",
+                f"supports_spec_decode={config.supports_spec_decode}, "
+                f"model_family={config.model_family}",
             )
             return config
+    return None
+
+
+_FAMILY_FROM_PATH: list[tuple[re.Pattern, str]] = [
+    (re.compile(r"hunyuan|hy3", re.IGNORECASE), "hunyuan"),
+    (re.compile(r"qwen3\.5|qwen3_5", re.IGNORECASE), "qwen3_5"),
+    (re.compile(r"qwen3(?![._]5|[._]6)", re.IGNORECASE), "qwen3"),
+    (re.compile(r"deepseek", re.IGNORECASE), "deepseek"),
+    (re.compile(r"llama", re.IGNORECASE), "llama3"),
+]
+
+
+def _detect_family_from_path(model_path: str) -> str | None:
+    for pattern, family in _FAMILY_FROM_PATH:
+        if pattern.search(model_path):
+            return family
     return None
 
 

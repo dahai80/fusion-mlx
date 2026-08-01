@@ -111,3 +111,12 @@ register_spec_decoder(
         aliases=("eagle", "eagle3-llama", "eagle3-qwen"),
     )
 )
+
+register_spec_decoder(
+    SpecDecoderPlugin(
+        method="dfly",
+        description="DFly block-parallel drafter (DFlash + hidden correction, Hy3-native)",
+        config_enabled=True,
+        aliases=("dfly-hy3", "hy3-dfly"),
+    )
+)

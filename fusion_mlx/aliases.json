@@ -696,5 +696,13 @@
     "is_moe": false,
     "is_hybrid_explicit": false,
     "description": "Block-diffusion text model (DiffusionGemma 26B A4B 8bit). Native gemma4 tool-call + reasoning wire format; batch-1 only."
+  },
+  "qwen3.6-27b-8bit-dflash": {
+    "hf_path": "froggeric/Qwen3.6-27B-MLX-8bit",
+    "supports_dflash": true,
+    "model_family": "qwen3_5",
+    "drafter_hf_path": "z-lab/Qwen3.5-27B-DFlash",
+    "description": "Qwen3.6-27B 8-bit with DFlash speculative decode",
+    "dflash_draft_model": "z-lab/Qwen3.5-27B-DFlash"
   }
 }

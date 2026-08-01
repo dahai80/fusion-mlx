@@ -123,10 +123,11 @@ def _build_app(
             content={"error": {"message": exc.detail, "type": "invalid_request_error"}},
         )
 
+    origins = cors_origins if cors_origins else ["*"]
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=cors_origins,
-        allow_credentials=True,
+        allow_origins=origins,
+        allow_credentials=bool(cors_origins),
         allow_methods=["*"],
         allow_headers=["*"],
     )

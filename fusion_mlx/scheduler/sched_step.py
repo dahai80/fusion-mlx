@@ -530,8 +530,14 @@ def _step_pure_decode(self, output: SchedulerOutput) -> SchedulerOutput:
 def _loaded_spec_methods(self) -> dict[str, bool]:
     from ..speculative.per_request_route import loaded_methods
 
+    eagle3_loaded = (
+        self._spec_decode_state is not None
+        and self._spec_decode_state.draft_model is not None
+        and type(self._spec_decode_state.draft_model).__name__ == "Eagle3Speculator"
+    )
     return loaded_methods(
         suffix=self._ngram_spec_state is not None,
+        eagle3=eagle3_loaded,
         dflash=self._dflash_runtime is not None,
         dspark=self._dspark_runtime is not None,
         mtp=bool(getattr(self.model, "_fusion_mlx_mtp_decode_enabled", False)),
@@ -540,12 +546,20 @@ def _loaded_spec_methods(self) -> dict[str, bool]:
 
 def _decide_spec_method(self, request) -> str:
     from ..speculative.per_request_route import select_active_method
+    from ..model_auto_config import _detect_family_from_path
 
     loaded = self._loaded_spec_methods()
+    model_name = getattr(self.config, "model_name", "") or ""
+    model_family = _detect_family_from_path(model_name)
+    is_recurrent = False
+    if self._spec_decode_state is not None and self._spec_decode_state.draft_model is not None:
+        pass
     method = select_active_method(
         request.num_prompt_tokens,
         loaded,
         has_mtp=loaded["mtp"],
+        model_family=model_family,
+        is_recurrent=is_recurrent,
     )
     return method or ""
 
@@ -603,6 +617,7 @@ def _try_spec_decode(
     from ..speculative.auto_router import (
         METHOD_DFLASH,
         METHOD_DSPARK,
+        METHOD_EAGLE3,
         METHOD_NGRAM,
     )
 
@@ -611,6 +626,12 @@ def _try_spec_decode(
         from .ngram_spec import ngram_spec_step
 
         result = ngram_spec_step(self, output, current_token, request_id)
+        if result:
+            return result
+    elif method == METHOD_EAGLE3 and self._spec_decode_state is not None:
+        from .spec_decode import spec_decode_step
+
+        result = spec_decode_step(self, output, current_token, request_id)
         if result:
             return result
     elif method == METHOD_DFLASH and self._dflash_runtime is not None:

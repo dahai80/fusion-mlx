@@ -17,6 +17,8 @@ _SUPPORTED_MODEL_TYPES: frozenset[str] = frozenset(
         "qwen3_5",
         "qwen3_5_moe",
         "gemma4_unified",
+        "hunyuan",
+        "hy3",
     }
 )
 
@@ -85,6 +87,14 @@ def _detect_mtp_eligibility_verbose(
         or config_dict.get("num_mtp_layers")
         or 0
     )
+    if not num_layers:
+        text_config = config_dict.get("text_config")
+        if isinstance(text_config, dict):
+            num_layers = (
+                text_config.get("mtp_num_hidden_layers")
+                or text_config.get("num_mtp_layers")
+                or 0
+            )
     if not isinstance(num_layers, int) or num_layers < 1:
         return _DetectionResult(
             eligibility=MTPEligibility.NONE,

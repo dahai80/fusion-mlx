@@ -308,6 +308,10 @@ class EngineCore:
 
                 loaded = draft.load()
                 if loaded:
+                    if spec_method == "eagle3" and hasattr(model, "model"):
+                        target_embed = getattr(model.model, "embed_tokens", None)
+                        if target_embed is not None:
+                            draft.bind_target_embed_from_model(target_embed)
                     self.scheduler._spec_decode_state = SpecDecodeState(
                         draft_model_decoder=draft
                     )

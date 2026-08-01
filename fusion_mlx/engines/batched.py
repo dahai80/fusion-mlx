@@ -346,6 +346,26 @@ class BatchedEngine(BaseEngine):
             else SchedulerConfig()
         )
         scheduler_config.model_name = self._model_name
+
+        # MTP dispatch: inject MTP support if scheduler_config has
+        # mtp_model_type set (from CLI --spec-decode mtp + --mtp-sidecar).
+        _mtp_type = getattr(scheduler_config, "mtp_model_type", None)
+        _mtp_side = getattr(scheduler_config, "mtp_sidecar", None)
+        if _mtp_type or _mtp_side:
+            from ..engine.batched._mtp_dispatch import _apply_mtp_dispatch
+
+            _apply_mtp_dispatch(
+                self._model,
+                scheduler_config,
+                self._model_load_executor,
+                cli_vetted_model_type=_mtp_type,
+            )
+            logger.info(
+                "MTP dispatch completed: model_type=%s sidecar=%s",
+                _mtp_type,
+                _mtp_side,
+            )
+
         engine_config = EngineConfig(
             model_name=self._model_name,
             scheduler_config=scheduler_config,

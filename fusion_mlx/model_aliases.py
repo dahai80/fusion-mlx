@@ -48,6 +48,7 @@ class AliasProfile:
     supports_dflash: bool = False
     is_moe: bool = False
     drafter_hf_path: str | None = None
+    dflash_draft_model: str | None = None
     description: str = ""
     tool_call_parser: str | None = None
     reasoning_parser: str | None = None
@@ -64,6 +65,11 @@ class AliasProfile:
     turboquant_tier: str = "unknown"
     default_max_tokens: int | None = None
     suffix_bench_speedup: tuple[tuple[str, float], ...] | None = None
+    # Phase 2: unified spec-decode routing fields
+    model_family: str | None = None
+    spec_methods: tuple[str, ...] = ()
+    spec_drafter_map: dict[str, str] | None = None
+    spec_constraints: tuple[str, ...] = ()
 
     @property
     def capabilities(self) -> frozenset[str]:
@@ -86,6 +92,9 @@ class AliasProfile:
             caps.append("moe")
         if self.is_hybrid:
             caps.append("hybrid")
+        for m in self.spec_methods:
+            if m not in caps:
+                caps.append(m)
         return frozenset(caps)
 
 
@@ -204,12 +213,23 @@ def _coerce(name: str, raw: str | dict) -> AliasProfile:
     raw_speedup = raw.get("suffix_bench_speedup")
     if raw_speedup and isinstance(raw_speedup, dict):
         suffix_bench_speedup = tuple(sorted(raw_speedup.items(), key=lambda kv: kv[0]))
-    return AliasProfile(
+
+    # Phase 2: unified spec-decode routing fields
+    model_family = raw.get("model_family")
+    raw_spec_methods = raw.get("spec_methods")
+    spec_methods = tuple(raw_spec_methods) if raw_spec_methods else ()
+    raw_drafter_map = raw.get("spec_drafter_map")
+    spec_drafter_map = dict(raw_drafter_map) if raw_drafter_map else None
+    raw_constraints = raw.get("spec_constraints")
+    spec_constraints = tuple(raw_constraints) if raw_constraints else ()
+
+    profile = AliasProfile(
         name=name,
         hf_path=hf_path,
         supports_dflash=supports_dflash,
         is_moe=raw.get("is_moe", False),
         drafter_hf_path=raw.get("drafter_hf_path"),
+        dflash_draft_model=raw.get("dflash_draft_model") or raw.get("drafter_hf_path"),
         description=raw.get("description", ""),
         tool_call_parser=raw.get("tool_call_parser"),
         reasoning_parser=raw.get("reasoning_parser"),
@@ -225,6 +245,38 @@ def _coerce(name: str, raw: str | dict) -> AliasProfile:
         turboquant_tier=raw.get("turboquant_tier", "unknown"),
         default_max_tokens=raw.get("default_max_tokens"),
         suffix_bench_speedup=suffix_bench_speedup,
+        model_family=model_family,
+        spec_methods=spec_methods,
+        spec_drafter_map=spec_drafter_map,
+        spec_constraints=spec_constraints,
+    )
+    return _migrate_legacy_spec_fields(profile)
+
+
+def _migrate_legacy_spec_fields(profile: AliasProfile) -> AliasProfile:
+    """Map old supports_dflash/supports_dspark to new spec_methods when
+    spec_methods is empty. Backward compat: existing aliases.json entries
+    that use the legacy flags still work without spec_methods.
+    """
+    if profile.spec_methods:
+        return profile
+    methods = []
+    if profile.supports_dflash:
+        methods.append("ddtree")
+    if profile.supports_dspark:
+        methods.append("dspark")
+    if not methods:
+        return profile
+    logger.debug(
+        "migrating legacy spec fields for %s: dflash=%s dspark=%s -> %s",
+        profile.name,
+        profile.supports_dflash,
+        profile.supports_dspark,
+        methods,
+    )
+    return AliasProfile(
+        **{k: v for k, v in profile.__dict__.items() if k != "spec_methods"},
+        spec_methods=tuple(methods),
     )
 
 
