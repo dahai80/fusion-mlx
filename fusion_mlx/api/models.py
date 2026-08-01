@@ -640,10 +640,14 @@ class CompletionResponse(BaseModel):
 class ModelInfo(BaseModel):
     """Information about an available model."""
 
+    model_config = ConfigDict(extra="ignore")
+
     id: str
     object: str = "model"
     created: int = Field(default_factory=lambda: int(time.time()))
     owned_by: str = "rapid-mlx"
+    modality: str | None = None
+    capabilities: dict | None = None
 
 
 class ModelsResponse(BaseModel):
