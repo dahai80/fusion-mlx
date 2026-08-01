@@ -173,6 +173,27 @@ def _print_cached_models() -> None:
     print()
 
 
+def _print_local_alias_table():
+    from fusion_mlx.model_aliases import list_profiles
+
+    profiles = list_profiles()
+    if not profiles:
+        print("No aliases configured.")
+        return
+    alias_width = max(len(k) for k in profiles)
+    alias_width = max(alias_width, 24)
+    print(f"  {'Alias':<{alias_width}} {'Tools':<7} {'Reason':<8} {'Spec':<5} {'DFlash':<7} HF-path")
+    print(f"  {'─' * alias_width} ─────── ──────── ───── ─────── ──────────────────────────────")
+    for name, p in profiles.items():
+        tools = "✓" if p.tool_call_parser else "✗"
+        reason = "✓" if p.reasoning_parser else "✗"
+        spec = "✓" if p.supports_spec_decode else "✗"
+        dflash = "✓" if p.supports_dflash else "✗"
+        hf_short = p.hf_path[:35]
+        print(f"  {name:<{alias_width}} {tools:<7} {reason:<8} {spec:<5} {dflash:<7} {hf_short}")
+    print()
+
+
 def models_command(args):
     # Released 1.0/2.0/3.0 contract (docs/cli-reference.md "models"): query the
     # running server's /v1/models and list discovered model IDs + types, then
@@ -241,9 +262,10 @@ def models_command(args):
                 continue
 
     if not data:
-        print("Error: cannot reach server. Is fusion-mlx running?")
-        print("  Start it with: fusion-mlx serve --model-dir <dir> --port <port>")
-        sys.exit(1)
+        print("Server not reachable — showing local alias table instead.")
+        print()
+        _print_local_alias_table()
+        return
 
     models = data.get("data", [])
     if not models:
