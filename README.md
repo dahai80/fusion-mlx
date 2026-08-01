@@ -974,7 +974,7 @@ to the correct pure-MLX implementation. Supported backends:
 | Backend | Key | Models | I2V | Status |
 |---|---|---|---|---|
 | LTX-2 | `ltx2` | LTX-2, LTX-2.3 | ✅ | ✅ shipped |
-| Wan2 | `wan2` | Wan2.1, Wan2.2 (TI2V) | ✅ | ✅ shipped |
+| Wan2 | `wan2` | Wan2.1, Wan2.2 (TI2V), VACE-14B | ✅ | ✅ shipped |
 | SkyReels-V3 | `skyreels` | R2V/V2V/A2V 14B-19B | ✅ (R2V) | ✅ shipped |
 | Legacy LTX-Video | `ltx_video_legacy` | LTX-Video 0.9.x | ✅ | ✅ shipped |
 | SVD | `svd` | Stable Video Diffusion XT | ✅ | ✅ #212 |
@@ -984,6 +984,41 @@ to the correct pure-MLX implementation. Supported backends:
 
 Aliases: `svd-xt`, `stable-video-diffusion`, `cosmos-1.0`, `predict2`,
 `video2world`, `hunyuan-video`, `hunyuan_video`, `cogvideox`, `ltx-video`, `wan`.
+
+### VACE: Video-Conditioned Auxiliary Control (Wan2.1-VACE-14B)
+
+VACE enables **Video-to-Video (V2V)** and **Audio-to-Video (A2V)** control on
+Wan2.1-VACE-14B via `control_video`, `control_mask`, and `reference_images`.
+
+| Parameter | Type | Description |
+|---|---|---|
+| `control_video` | `string` | Input video path/URL/data-URI to be controlled. Required for V2V. |
+| `control_mask` | `string` | Mask video path/URL/data-URI. Black=conditioning region, white=generation region. Optional — defaults to all-white (full generation). |
+| `reference_images` | `string[]` | Reference image paths/URLs/data-URIs for subject-driven conditioning. Optional. |
+
+```bash
+# V2V: control video + mask (partial edit)
+curl -X POST /v1/videos/generate \
+  -H "Authorization: Bearer $KEY" \
+  -d '{"model":"Wan2.1-VACE-14B","prompt":"A cat walking",
+       "control_video":"/path/to/input.mp4",
+       "control_mask":"/path/to/mask.mp4"}'
+
+# V2V: control video only (auto-generates all-white mask)
+curl -X POST /v1/videos/generate \
+  -d '{"model":"Wan2.1-VACE-14B","prompt":"A dog running",
+       "control_video":"/path/to/input.mp4"}'
+
+# V2V with reference images
+curl -X POST /v1/videos/generate \
+  -d '{"model":"Wan2.1-VACE-14B","prompt":"A landscape",
+       "control_video":"https://example.com/vid.mp4",
+       "control_mask":"data:video/mp4;base64,...",
+       "reference_images":["/path/to/ref.png"]}'
+```
+
+All media params accept **local paths**, **http(s) URLs**, and **data: URIs**.
+URLs and data-URIs are downloaded/decoded to temp files automatically.
 
 
 ### Radix Text-Encoding Cache (#178)

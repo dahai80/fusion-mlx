@@ -744,7 +744,7 @@ def generate_video(
 
     # VACE: encode control video + mask -> control_hidden_states
     if is_vace and control_hidden_states is None:
-        if control_video is not None and control_mask is not None:
+        if control_video is not None:
             print(f"\n{Colors.BLUE}Encoding VACE control video+mask...{Colors.RESET}")
             t_vace = time.time()
 
@@ -753,7 +753,14 @@ def generate_video(
 
             video_frames = _load_video_frames(control_video, width, height, gen_frames)
             mx.eval(video_frames)
-            mask_frames = _load_mask_frames(control_mask, width, height, gen_frames)
+
+            if control_mask is not None:
+                mask_frames = _load_mask_frames(control_mask, width, height, gen_frames)
+            else:
+                # Auto-generate all-white mask (full generation region)
+                # white=1.0 means "generate this region", black=0.0 means "condition on it"
+                logger.info("VACE: no control_mask provided, using all-white default (full generation)")
+                mask_frames = mx.ones((gen_frames, height, width), dtype=mx.float32)
             mx.eval(mask_frames)
 
             ref_imgs = None
@@ -783,7 +790,7 @@ def generate_video(
             )
         else:
             logger.warning(
-                "VACE model but no control_video/control_mask provided — running without control"
+                "VACE model but no control_video provided — running without control"
             )
 
     # Camera: prepare y_camera for Fun-Camera models

@@ -166,6 +166,38 @@ def _validate_path_param(value: str, label: str) -> str:
     return value
 
 
+def _resolve_media_to_path(value: str, label: str) -> tuple[str, bool]:
+    # Resolve a media URL/data-URI/path to a local filesystem path.
+    # Handles: data: URIs (video or image), http(s) URLs, local paths.
+    # Returns (local_path, is_temp). Caller unlinks temp paths after use.
+    if value.startswith("data:"):
+        header, _, payload = value.partition(",")
+        is_base64 = "base64" in header.lower()
+        mime = header.split(";")[0]
+        mime = mime.split(":", 1)[1] if ":" in mime else "video/mp4"
+        ext = mimetypes.guess_extension(mime) or ".mp4"
+        data = base64.b64decode(payload) if is_base64 else payload.encode()
+        fd, path = tempfile.mkstemp(prefix=f"fusion_{label}_", suffix=ext)
+        with os.fdopen(fd, "wb") as f:
+            f.write(data)
+        return path, True
+    if value.startswith(("http://", "https://")):
+        from ._url_safety import is_safe_url_with_dns
+
+        if not is_safe_url_with_dns(value):
+            raise HTTPException(400, f"{label} URL targets a private/internal address")
+        ext = os.path.splitext(urlparse(value).path)[1] or ".mp4"
+        fd, path = tempfile.mkstemp(prefix=f"fusion_{label}_", suffix=ext)
+        os.close(fd)
+        urllib.request.urlretrieve(value, path)
+        return path, True
+    from ._url_safety import is_safe_local_path
+
+    if not is_safe_local_path(value):
+        raise HTTPException(400, f"{label} path targets a restricted directory")
+    return value, False
+
+
 @router.post("/generate")
 async def generate_video(
     request: VideoGenerateRequest,
@@ -199,6 +231,14 @@ async def generate_video(
         ip_is_temp = False
         cn_path: str | None = None
         cn_is_temp = False
+        cv_path: str | None = None
+        cv_is_temp = False
+        cm_path: str | None = None
+        cm_is_temp = False
+        ri_paths: list[str] = []
+        ri_is_temps: list[bool] = []
+        cam_path: str | None = None
+        cam_is_temp = False
         if request.image:
             try:
                 image_path, image_is_temp = _resolve_image_to_path(request.image)
@@ -265,22 +305,28 @@ async def generate_video(
             if request.animatediff_scale > 0:
                 gen_kwargs["animatediff_scale"] = request.animatediff_scale
             if request.control_video is not None:
-                gen_kwargs["control_video"] = _validate_path_param(
-                    request.control_video, "control_video"
+                cv_path, cv_is_temp = _resolve_media_to_path(
+                    request.control_video, "ctrl_vid"
                 )
+                gen_kwargs["control_video"] = cv_path
             if request.control_mask is not None:
-                gen_kwargs["control_mask"] = _validate_path_param(
-                    request.control_mask, "control_mask"
+                cm_path, cm_is_temp = _resolve_media_to_path(
+                    request.control_mask, "ctrl_mask"
                 )
+                gen_kwargs["control_mask"] = cm_path
             if request.reference_images is not None:
-                gen_kwargs["reference_images"] = [
-                    _validate_path_param(p, "reference_image")
+                ri_resolved = [
+                    _resolve_media_to_path(p, "ref_img")
                     for p in request.reference_images
                 ]
+                ri_paths = [r[0] for r in ri_resolved]
+                ri_is_temps = [r[1] for r in ri_resolved]
+                gen_kwargs["reference_images"] = ri_paths
             if request.camera_conditions is not None:
-                gen_kwargs["camera_conditions"] = _validate_path_param(
-                    request.camera_conditions, "camera_conditions"
+                cam_path, cam_is_temp = _resolve_media_to_path(
+                    request.camera_conditions, "camera"
                 )
+                gen_kwargs["camera_conditions"] = cam_path
 
             video_bytes_list = await engine.generate(**gen_kwargs)
             outputs = [
@@ -307,6 +353,29 @@ async def generate_video(
                 except OSError:
                     logger.warning(
                         "failed to unlink temp controlnet image: %s", cn_path
+                    )
+            if cv_is_temp and cv_path:
+                try:
+                    os.unlink(cv_path)
+                except OSError:
+                    logger.warning("failed to unlink temp control_video: %s", cv_path)
+            if cm_is_temp and cm_path:
+                try:
+                    os.unlink(cm_path)
+                except OSError:
+                    logger.warning("failed to unlink temp control_mask: %s", cm_path)
+            for rp, rt in zip(ri_paths, ri_is_temps):
+                if rt and rp:
+                    try:
+                        os.unlink(rp)
+                    except OSError:
+                        logger.warning("failed to unlink temp ref image: %s", rp)
+            if cam_is_temp and cam_path:
+                try:
+                    os.unlink(cam_path)
+                except OSError:
+                    logger.warning(
+                        "failed to unlink temp camera_conditions: %s", cam_path
                     )
 
     except HTTPException:
