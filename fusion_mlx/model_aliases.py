@@ -65,6 +65,29 @@ class AliasProfile:
     default_max_tokens: int | None = None
     suffix_bench_speedup: tuple[tuple[str, float], ...] | None = None
 
+    @property
+    def capabilities(self) -> frozenset[str]:
+        caps = []
+        if self.supports_dflash:
+            caps.append("dflash")
+        if self.supports_dspark:
+            caps.append("dspark")
+        if self.supports_spec_decode:
+            caps.append("spec_decode")
+        if self.tool_call_parser:
+            caps.append("tool_call")
+        if self.reasoning_parser:
+            caps.append("reasoning")
+        if self.supports_mllm:
+            caps.append("vision")
+        if self.is_audio:
+            caps.append("audio")
+        if self.is_moe:
+            caps.append("moe")
+        if self.is_hybrid:
+            caps.append("hybrid")
+        return frozenset(caps)
+
 
 _aliases: dict[str, AliasProfile] | None = None
 

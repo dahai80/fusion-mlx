@@ -83,14 +83,17 @@ def _resolve_modality(model_id: str) -> str:
     return "text"
 
 
-def _entry_payload(model_id, tool, reasoning, modality="text"):
-    return {
+def _entry_payload(model_id, tool, reasoning, modality="text", capabilities=None):
+    payload = {
         "id": model_id,
         "object": "model",
         "tool_call_parser": tool,
         "reasoning_parser": reasoning,
         "modality": modality,
     }
+    if capabilities is not None:
+        payload["capabilities"] = capabilities
+    return payload
 
 
 @router.get("/v1/models")
@@ -101,7 +104,9 @@ async def list_models(_auth: bool = Depends(verify_api_key)):
         for entry in cfg.model_registry:
             tool, reasoning = effective_parsers_for(entry.model_name, None, None)
             modality = _resolve_modality(entry.model_name)
-            data.append(_entry_payload(entry.model_name, tool, reasoning, modality))
+            profile = resolve_profile(entry.model_name)
+            caps = sorted(profile.capabilities) if profile else None
+            data.append(_entry_payload(entry.model_name, tool, reasoning, modality, caps))
     elif cfg.model_name:
         profile = resolve_profile(cfg.model_alias) if cfg.model_alias else None
         profile_tool = profile.tool_call_parser if profile else None
@@ -110,14 +115,15 @@ async def list_models(_auth: bool = Depends(verify_api_key)):
             cfg.model_name, profile_tool, profile_reasoning
         )
         modality = _resolve_modality(cfg.model_name)
-        data.append(_entry_payload(cfg.model_name, tool, reasoning, modality))
+        caps = sorted(profile.capabilities) if profile else None
+        data.append(_entry_payload(cfg.model_name, tool, reasoning, modality, caps))
         if cfg.model_alias:
             tool, reasoning = effective_parsers_for(
                 cfg.model_alias, profile_tool, profile_reasoning
             )
             alias_modality = _resolve_modality(cfg.model_alias)
             data.append(
-                _entry_payload(cfg.model_alias, tool, reasoning, alias_modality)
+                _entry_payload(cfg.model_alias, tool, reasoning, alias_modality, caps)
             )
     logger.info("routes_internal.models: /v1/models listed %d entries", len(data))
     return {"object": "list", "data": data}

@@ -182,15 +182,12 @@ def _print_local_alias_table():
         return
     alias_width = max(len(k) for k in profiles)
     alias_width = max(alias_width, 24)
-    print(f"  {'Alias':<{alias_width}} {'Tools':<7} {'Reason':<8} {'Spec':<5} {'DFlash':<7} HF-path")
-    print(f"  {'─' * alias_width} ─────── ──────── ───── ─────── ──────────────────────────────")
+    print(f"  {'Alias':<{alias_width}} {'Capabilities':<32} HF-path")
+    print(f"  {'─' * alias_width} ──────────────────────────────── ──────────────────────────────")
     for name, p in profiles.items():
-        tools = "✓" if p.tool_call_parser else "✗"
-        reason = "✓" if p.reasoning_parser else "✗"
-        spec = "✓" if p.supports_spec_decode else "✗"
-        dflash = "✓" if p.supports_dflash else "✗"
+        caps = ",".join(sorted(p.capabilities)) if p.capabilities else "—"
         hf_short = p.hf_path[:35]
-        print(f"  {name:<{alias_width}} {tools:<7} {reason:<8} {spec:<5} {dflash:<7} {hf_short}")
+        print(f"  {name:<{alias_width}} {caps:<32} {hf_short}")
     print()
 
 

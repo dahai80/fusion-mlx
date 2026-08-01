@@ -34,11 +34,9 @@ def test_every_row_aligns_with_the_header_separator(capsys):
     header_idx = next(
         i
         for i, ln in enumerate(lines)
-        if ln.lstrip().startswith("Alias") and "DFlash" in ln and "HF id" not in ln
+        if ln.lstrip().startswith("Alias") and "Capabilities" in ln
     )
     header = lines[header_idx]
-    # The data rows start two lines after the header (separator, then rows)
-    # and continue until the next separator line of box-drawing dashes.
     data_rows: list[str] = []
     for ln in lines[header_idx + 2 :]:
         if set(ln.strip()) == {"─"}:
@@ -46,28 +44,18 @@ def test_every_row_aligns_with_the_header_separator(capsys):
         data_rows.append(ln)
     assert len(data_rows) >= 10, f"expected at least 10 aliases, got {len(data_rows)}"
 
-    # Column position of "Tools" in the header — every data row must
-    # have its second column starting at the same offset.
-    tools_col = header.index("Tools")
-    # The split-on-spaces second token starts at the first non-space
-    # character after the alias. With the dynamic width that position
-    # is exactly tools_col on every row.
+    caps_col = header.index("Capabilities")
     for row in data_rows:
-        # Find the position of the first non-space after the leading
-        # alias name. The alias may itself contain hyphens but not
-        # spaces; the first space-delimited gap separates alias and
-        # tools.
-        stripped = row[2:]  # drop the leading "  " indent
+        stripped = row[2:]
         first_gap = stripped.find(" ")
-        # Index of the second column (Tools) in absolute terms:
         second_col_abs = (
             2
             + len(stripped[:first_gap])
             + (len(stripped[first_gap:]) - len(stripped[first_gap:].lstrip()))
         )
-        assert second_col_abs == tools_col, (
-            f"Row mis-aligned: tools col at {second_col_abs}, header at "
-            f"{tools_col}. Row: {row!r}"
+        assert second_col_abs == caps_col, (
+            f"Row mis-aligned: caps col at {second_col_abs}, header at "
+            f"{caps_col}. Row: {row!r}"
         )
 
 
@@ -80,14 +68,14 @@ def test_alias_column_width_floor_is_24(capsys, monkeypatch):
     short_profile = AliasProfile(hf_path="x/y")
     monkeypatch.setattr(model_aliases, "list_profiles", lambda: {"qwen": short_profile})
     out = _capture(capsys)
-    # Header has "Alias" followed by at least 19 spaces before "Tools"
+    # Header has "Alias" followed by at least 19 spaces before "Capabilities"
     # → column starts at position 2 + 24 + 1 = 27.
     header_line = next(
-        ln for ln in out.splitlines() if "Alias" in ln and "DFlash" in ln
+        ln for ln in out.splitlines() if "Alias" in ln and "Capabilities" in ln
     )
-    assert header_line.index("Tools") - header_line.index("Alias") == 25, (
+    assert header_line.index("Capabilities") - header_line.index("Alias") == 25, (
         "Alias-column floor regression: short registry should still pad "
-        "to 24 chars (Tools header at offset 25 from Alias)."
+        "to 24 chars (Capabilities header at offset 25 from Alias)."
     )
 
 
@@ -100,9 +88,6 @@ def test_longest_real_alias_does_not_overflow(capsys):
         ln for ln in out.splitlines() if ln.lstrip().startswith(longest_alias)
     )
     after_alias = data_line[2 + len(longest_alias) :]
-    # The character immediately after the alias must be a space and
-    # what follows must be the Tools column (not another part of the
-    # alias name).
     assert after_alias.startswith(
         " "
-    ), f"No padding between alias and Tools column for {longest_alias!r}"
+    ), f"No padding between alias and Capabilities column for {longest_alias!r}"
