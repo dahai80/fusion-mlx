@@ -43,7 +43,7 @@ from ..pool import EnginePool
 from ..request import SamplingParams
 from ..server_metrics import record_llm_metrics
 from ..sessions import record_chat_session
-from ._guards import check_chat_capability, check_multimodal_content
+from ._guards import check_chat_capability, check_multimodal_content, check_tool_choice_support
 from .grammar import GrammarBackend, resolve_grammar_backend
 
 logger = logging.getLogger(__name__)
@@ -216,7 +216,7 @@ def _detect_prefix_cache_boundary(messages: Any) -> int | None:
 async def _inject_web_search(request: ChatCompletionRequest) -> None:
     """When request.web_search is True, search DuckDuckGo for the user's last
     message and prepend the results as a system message into the context."""
-    if not request.web_search:
+    if not getattr(request, "web_search", False):
         return
 
     query = None
@@ -491,6 +491,14 @@ async def _run_chat(
     if not _skip_cap_check:
         try:
             check_multimodal_content(engine, request.messages, model_name)
+        except HTTPException:
+            await _release()
+            raise
+
+    # Reject forced tool_choice on engines that opted out (e.g. DiffusionEngine)
+    if not _skip_cap_check:
+        try:
+            check_tool_choice_support(engine, request, model_name)
         except HTTPException:
             await _release()
             raise
@@ -913,6 +921,14 @@ async def _stream_chat(
     if not _skip_cap_check:
         try:
             check_multimodal_content(engine, request.messages, model_name)
+        except HTTPException:
+            await _release_engine(model_name, adapter_path=adapter_path)
+            raise
+
+    # Reject forced tool_choice on engines that opted out (e.g. DiffusionEngine)
+    if not _skip_cap_check:
+        try:
+            check_tool_choice_support(engine, request, model_name)
         except HTTPException:
             await _release_engine(model_name, adapter_path=adapter_path)
             raise

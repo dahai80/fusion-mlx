@@ -220,6 +220,23 @@ def _is_harmony_cut_short_stream(
     )
 
 
+def _engine_supports_channel_routed_tool_calls(engine) -> bool:
+    """Return True if the engine can produce tool calls via the channel
+    routing path (i.e. ``supports_tool_calls`` is True and it has a
+    usable tokenizer).
+
+    DiffusionEngine returns False when its chat template lacks tool-call
+    markers, causing the route-level guard to reject forced tool_choice
+    requests with 422 before generation starts.
+    """
+    if not getattr(engine, "supports_tool_calls", False):
+        return False
+    tok = getattr(engine, "tokenizer", None)
+    if tok is None:
+        return False
+    return True
+
+
 async def stream_chat_completion(*args, **kwargs):
     """Compatibility stub - tests monkeypatch this at runtime."""
     if False:

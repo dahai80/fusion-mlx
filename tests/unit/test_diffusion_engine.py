@@ -1609,7 +1609,7 @@ class TestConcurrentRequests:
         )
         assert resp.status_code == 422, resp.text
         body = resp.text.lower()
-        assert "tool_choice" in body and "forces" in body
+        assert "tool_choice" in body and "forced" in body
 
     def test_engine_opts_out_blocks_legacy_function_literal_tool_choice(
         self,
@@ -1679,7 +1679,7 @@ class TestConcurrentRequests:
         )
         assert resp.status_code == 422, resp.text
         body = resp.text.lower()
-        assert "tool_choice" in body and "forces" in body
+        assert "tool_choice" in body and "forced" in body
 
     def test_engine_opts_out_blocks_tool_choice_required_non_stream_too(
         self,
