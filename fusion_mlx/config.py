@@ -144,13 +144,11 @@ class SchedulerConfig:
     decode_clear_interval: int = 16384
 
     def __post_init__(self):
-        # Validate mutual exclusivity
-        if self.chunked_prefill_tokens > 0 and self.use_paged_cache:
-            logger.warning(
-                "chunked_prefill_tokens and use_paged_cache both enabled — "
-                "disabling paged cache to avoid conflicts"
-            )
-            self.use_paged_cache = False
+        # NOTE: chunked_prefill_tokens and use_paged_cache historically conflicted,
+        # but the scheduler only reads enable_prefix_cache / paged_ssd_cache_dir —
+        # not use_paged_cache.  Chunked prefill coexists with prefix cache (default
+        # ON) and boundary_prefix_persist (#257).  The old guard was a no-op since
+        # use_paged_cache had no runtime effect.  Removed the false conflict guard.
         # Validate ranges
         if self.max_num_seqs < 1:
             self.max_num_seqs = 1
