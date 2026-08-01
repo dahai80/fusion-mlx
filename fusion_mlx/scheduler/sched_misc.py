@@ -23,10 +23,14 @@ from ..cache.paged_ssd_cache import PagedSSDCacheManager
 
 try:
     from ..cache.boundary_snapshot_store import BoundarySnapshotSSDStore
+except ImportError:
+    BoundarySnapshotSSDStore = None
+
+try:
+    from ..cache.paged_ssd_cache import PagedSSDCacheManager  # noqa: N813
 
     HAS_TIERED_CACHE = True
 except ImportError:
-    BoundarySnapshotSSDStore = None
     HAS_TIERED_CACHE = False
 
 # Module-level alias so Scheduler.__init__ can fall back to mlx-lm's default
@@ -186,6 +190,25 @@ def _init_tiered_cache(self) -> None:
     - PagedCacheManager only stores block metadata (no GPU memory for cache data)
     - BatchGenerator handles GPU memory for active inference
     """
+    # Initialize boundary snapshot SSD store even without full tiered cache.
+    # The prefix persistence feature (#257) only needs BoundarySnapshotSSDStore,
+    # not the full PagedSSDCacheManager. Skip in hot_cache_only mode since
+    # snapshots would never be written.
+    if BoundarySnapshotSSDStore is not None and not self.config.hot_cache_only:
+        try:
+            _ssd_base = (
+                Path(self.config.paged_ssd_cache_dir)
+                if self.config.paged_ssd_cache_dir
+                else Path.home() / ".fusion-mlx" / "ssd_cache"
+            )
+            self._boundary_snapshot_store = BoundarySnapshotSSDStore(
+                base_dir=_ssd_base,
+                prefix_persist=self.config.boundary_prefix_persist,
+                prefix_max_bytes=self.config.boundary_prefix_max_bytes or None,
+            )
+        except Exception as e:
+            logger.warning("Failed to initialize boundary snapshot SSD store: %s", e)
+
     if not HAS_TIERED_CACHE:
         if self.config.paged_ssd_cache_dir:
             logger.warning(
@@ -286,19 +309,6 @@ def _init_tiered_cache(self) -> None:
             self.block_aware_cache.set_paged_ssd_cache_manager(
                 self.paged_ssd_cache_manager
             )
-
-        # Initialize boundary snapshot SSD store for offloading
-        # non-sliceable cache snapshots during prefill.
-        # Skip in hot_cache_only mode since snapshots would never be written.
-        if BoundarySnapshotSSDStore is not None and not self.config.hot_cache_only:
-            try:
-                self._boundary_snapshot_store = BoundarySnapshotSSDStore(
-                    base_dir=Path(self.config.paged_ssd_cache_dir),
-                    prefix_persist=self.config.boundary_prefix_persist,
-                    prefix_max_bytes=self.config.boundary_prefix_max_bytes or None,
-                )
-            except Exception as e:
-                logger.debug("Failed to initialize boundary snapshot SSD store: %s", e)
 
         logger.info(
             f"paged SSD cache enabled: "

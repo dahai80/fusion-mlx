@@ -9,8 +9,8 @@ import logging
 
 from fastapi import APIRouter, Depends, HTTPException
 
-from .helpers import _get_engine_pool, format_size
 from ..middleware.auth import verify_scoped_api_key
+from .helpers import _get_engine_pool, format_size
 
 logger = logging.getLogger(__name__)
 

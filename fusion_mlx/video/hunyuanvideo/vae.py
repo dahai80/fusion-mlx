@@ -14,6 +14,20 @@ def _silu(x):
     return x * mx.sigmoid(x)
 
 
+def _group_norm_5d(norm, x):
+    """Apply GroupNorm to 5D (B,C,T,H,W) tensor.
+
+    MLX GroupNorm expects channels-last (..., C) but our 5D tensors are
+    channels-first (B, C, T, H, W). Reshape to 4D channels-last, apply
+    norm, reshape back.
+    """
+    B, C, T, H, W = x.shape
+    x_cl = x.reshape(B * T, C, H, W).transpose(0, 2, 3, 1)  # (B*T, H, W, C)
+    y_cl = norm(x_cl)
+    y = y_cl.transpose(0, 3, 1, 2).reshape(B, C, T, H, W)
+    return y
+
+
 class CausalConv3d(nn.Module):
     def __init__(self, in_channels, out_channels, kernel_size=3, stride=1, padding=0):
         super().__init__()
@@ -40,36 +54,20 @@ class CausalConv3d(nn.Module):
         B, C, T, H, W = x.shape
         kt, kh, kw = self.kernel_size
         st, sh, sw = self.stride
-        # Causal: only pad spatial dims, temporal uses causal padding
-        pt, ph, pw = self.padding
-        # Causal temporal padding: only pad left (before)
-        if pt > 0 or ph > 0 or pw > 0:
-            x = mx.pad(x, [(0, 0), (0, 0), (pt, 0), (ph, ph), (pw, pw)])
-        Tp, Hp, Wp = x.shape[2], x.shape[3], x.shape[4]
-        ot = (Tp - kt) // st + 1
-        oh = (Hp - kh) // sh + 1
-        ow = (Wp - kw) // sw + 1
-        patches = []
-        for ti in range(ot):
-            for hi in range(oh):
-                for wi in range(ow):
-                    patch = x[
-                        :,
-                        :,
-                        ti * st : ti * st + kt,
-                        hi * sh : hi * sh + kh,
-                        wi * sw : wi * sw + kw,
-                    ]
-                    patches.append(patch.reshape(B, -1))
-        if len(patches) == 0:
-            return mx.zeros((B, self.out_channels, ot, oh, ow), dtype=x.dtype)
-        patches = mx.stack(patches, axis=0)
-        patches = patches.reshape(-1, B, C * kt * kh * kw)
-        w = self.weight.reshape(self.out_channels, -1)
-        out = patches @ w.T
-        out = out.reshape(ot, oh, ow, B, self.out_channels)
-        out = out.transpose(3, 4, 0, 1, 2)
+        _, ph, pw = self.padding
+        pt = kt - 1
+        logger.debug(
+            "CausalConv3d: input=(%s) k=(%d,%d,%d) s=(%d,%d,%d) pad=(%d,%d,%d)",
+            x.shape, kt, kh, kw, st, sh, sw, pt, ph, pw,
+        )
+        x_cl = x.transpose(0, 2, 3, 4, 1)
+        w_cl = self.weight.transpose(0, 2, 3, 4, 1)
+        padding = ([pt, ph, pw], [0, ph, pw])
+        stride = (st, sh, sw)
+        out = mx.conv_general(x_cl, w_cl, stride=stride, padding=padding)
+        out = out.transpose(0, 4, 1, 2, 3)
         out = out + self.bias.reshape(1, -1, 1, 1, 1)
+        logger.debug("CausalConv3d: output=(%s)", out.shape)
         return out
 
 
@@ -82,10 +80,10 @@ class HVResBlock(nn.Module):
         self.norm2 = nn.GroupNorm(32, channels)
 
     def __call__(self, x):
-        h = self.norm1(x)
+        h = _group_norm_5d(self.norm1, x)
         h = _silu(h)
         h = self.conv1(h)
-        h = self.norm2(h)
+        h = _group_norm_5d(self.norm2, h)
         h = _silu(h)
         h = self.conv2(h)
         return x + h
@@ -131,7 +129,8 @@ class HVUpBlock(nn.Module):
                 (B, C, T, 2, H, 2, W, 2),
             )
             h = h.reshape(B, C, T * 2, H * 2, W * 2)
-        return self.conv_up(h)
+            return self.conv_up(h)
+        return self.conv_resample(h)
 
 
 class HunyuanVideoVAE(nn.Module):

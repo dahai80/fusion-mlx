@@ -8,10 +8,8 @@ User instruction verbatim: "做一个端到端的功能，做模型迁移和量�
 """
 
 import logging
-import os
 import time
 from dataclasses import dataclass
-from typing import Optional
 
 logger = logging.getLogger(__name__)
 
@@ -22,7 +20,7 @@ class ValidationResult:
     output_text: str = ""
     tokens_per_sec: float = 0.0
     num_tokens: int = 0
-    error: Optional[str] = None
+    error: str | None = None
 
 
 def validate_model(
@@ -33,7 +31,7 @@ def validate_model(
     result = ValidationResult()
 
     try:
-        from mlx_lm import load, generate
+        from mlx_lm import generate, load
 
         logger.info("Loading model from %s", model_dir)
         model, tokenizer = load(model_dir)

@@ -99,15 +99,16 @@ from .canvas_routes import router as canvas_router
 from .fine_tune_route import (
     router as fine_tune_router,  # callers: server.py set_fine_tune_context; routes: /admin/api/fine-tune/*
 )
-# Migration wizard router — callers: macOS MigrationWizardScreen; API: /admin/api/migrate/*
-from .migrate_route import router as migrate_router
 from .grammar_route import router as grammar_router
 from .hf_download import router as hf_download_router
 from .hf_upload import router as hf_upload_router
 from .html_routes import router as html_router
 from .logs import router as logs_router
-from .models_route import router as models_router
+
+# Migration wizard router — callers: macOS MigrationWizardScreen; API: /admin/api/migrate/*
+from .migrate_route import router as migrate_router
 from .model_manager_route import router as model_manager_router
+from .models_route import router as models_router
 from .ms_download import router as ms_download_router
 from .oq import router as oq_router
 from .preset import router as preset_router

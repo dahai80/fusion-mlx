@@ -14,13 +14,12 @@ import shutil
 import uuid
 from dataclasses import asdict
 from pathlib import Path
-from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
 from .auth import require_admin
-from .helpers import _get_model_dirs, _get_hf_downloader
+from .helpers import _get_hf_downloader, _get_model_dirs
 
 logger = logging.getLogger(__name__)
 
@@ -199,7 +198,7 @@ async def codegen(
     is_admin: bool = Depends(require_admin),
 ):
     from ..migrate.analyzer import analyze_model
-    from ..migrate.architectures import match_template, KNOWN_TEMPLATES
+    from ..migrate.architectures import KNOWN_TEMPLATES, match_template
     from ..migrate.codegen import generate_model_code
 
     mdir = _migration_dir(request.migration_id)

@@ -11,7 +11,6 @@ User instruction: "做一个端到端的功能，做模型迁移和量化的功�
 
 import logging
 from dataclasses import dataclass
-from typing import Optional
 
 from .architectures import ArchTemplate
 
@@ -24,7 +23,7 @@ class WeightMapRule:
     mlx_prefix: str
     tensors: list[str]
 
-    def apply(self, hf_name: str) -> Optional[str]:
+    def apply(self, hf_name: str) -> str | None:
         if hf_name.startswith(self.hf_prefix):
             suffix = hf_name[len(self.hf_prefix):]
             if suffix in self.tensors:

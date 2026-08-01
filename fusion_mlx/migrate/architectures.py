@@ -9,7 +9,6 @@ User instruction: "做一个端到端的功能，做模型迁移和量化的功�
 
 import logging
 from dataclasses import dataclass, field
-from typing import Optional
 
 logger = logging.getLogger(__name__)
 
@@ -167,7 +166,7 @@ HF_ARCH_TO_TEMPLATE: dict[str, str] = {
 def match_template(
     model_type: str,
     config: dict,
-) -> tuple[Optional[ArchTemplate], list[str]]:
+) -> tuple[ArchTemplate | None, list[str]]:
     template_name = HF_ARCH_TO_TEMPLATE.get(model_type)
     if template_name and template_name in KNOWN_TEMPLATES:
         template = KNOWN_TEMPLATES[template_name]
@@ -191,7 +190,7 @@ def match_template(
     return None, []
 
 
-def _infer_from_config(config: dict) -> Optional[ArchTemplate]:
+def _infer_from_config(config: dict) -> ArchTemplate | None:
     model_type = config.get("model_type", "").lower()
     arch = config.get("architectures", [""])[0] if config.get("architectures") else ""
 

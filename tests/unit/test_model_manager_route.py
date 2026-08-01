@@ -2,9 +2,9 @@
 import unittest
 from unittest.mock import MagicMock, patch
 
-from fastapi import FastAPI, Depends
-from fastapi.testclient import TestClient
+from fastapi import FastAPI
 from fastapi.security import HTTPAuthorizationCredentials
+from fastapi.testclient import TestClient
 
 from fusion_mlx.admin.model_manager_route import router
 

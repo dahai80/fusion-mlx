@@ -43,7 +43,11 @@ from ..pool import EnginePool
 from ..request import SamplingParams
 from ..server_metrics import record_llm_metrics
 from ..sessions import record_chat_session
-from ._guards import check_chat_capability, check_multimodal_content, check_tool_choice_support
+from ._guards import (
+    check_chat_capability,
+    check_multimodal_content,
+    check_tool_choice_support,
+)
 from .grammar import GrammarBackend, resolve_grammar_backend
 
 logger = logging.getLogger(__name__)

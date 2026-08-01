@@ -203,7 +203,6 @@ def models_command(args):
     # _print_cached_models and is kept — it does not conflict with the released
     # `models` server query.
     import json as _json
-    import sys
     from pathlib import Path
 
     import requests

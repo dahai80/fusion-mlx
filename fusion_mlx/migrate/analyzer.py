@@ -9,12 +9,9 @@ User instruction: "做一个端到端的功能，做模型迁移和量化的功�
 
 import json
 import logging
-import os
 from dataclasses import dataclass, field
-from pathlib import Path
-from typing import Optional
-from urllib.request import urlopen, Request
 from urllib.error import HTTPError
+from urllib.request import Request, urlopen
 
 from .architectures import ArchTemplate, match_template
 
@@ -27,7 +24,7 @@ class ModelAnalysis:
     model_type: str = ""
     architectures: list[str] = field(default_factory=list)
     config: dict = field(default_factory=dict)
-    template: Optional[ArchTemplate] = None
+    template: ArchTemplate | None = None
     diff: list[str] = field(default_factory=list)
     estimated_size_gb: float = 0.0
     num_params_b: float = 0.0
@@ -46,7 +43,7 @@ def _hf_file_url(hf_id: str, filename: str, mirror: bool = False) -> str:
     return f"{base}/{hf_id}/resolve/main/{filename}"
 
 
-def _fetch_json(url: str, timeout: int = 30) -> Optional[dict]:
+def _fetch_json(url: str, timeout: int = 30) -> dict | None:
     try:
         req = Request(url, headers={"Accept": "application/json"})
         with urlopen(req, timeout=timeout) as resp:

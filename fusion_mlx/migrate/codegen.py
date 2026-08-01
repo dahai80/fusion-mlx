@@ -12,8 +12,6 @@ import json
 import logging
 import os
 from dataclasses import dataclass, field
-from pathlib import Path
-from typing import Optional
 
 from .architectures import ArchTemplate
 
@@ -24,7 +22,7 @@ logger = logging.getLogger(__name__)
 class CodegenResult:
     output_path: str
     files_generated: list[str] = field(default_factory=list)
-    error: Optional[str] = None
+    error: str | None = None
 
 
 def _build_imports(template: ArchTemplate) -> str:

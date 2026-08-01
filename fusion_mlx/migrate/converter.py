@@ -11,16 +11,16 @@ import json
 import logging
 import os
 import shutil
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Callable, Optional
 
 import mlx.core as mx
 import numpy as np
 from safetensors import safe_open
 
 from .architectures import ArchTemplate
-from .weight_mapper import build_weight_map, find_orphan_keys, find_missing_keys
+from .weight_mapper import build_weight_map, find_missing_keys, find_orphan_keys
 
 logger = logging.getLogger(__name__)
 
@@ -32,7 +32,7 @@ class ConvertResult:
     total_params_b: float = 0.0
     orphans: list[str] = field(default_factory=list)
     missing: list[str] = field(default_factory=list)
-    error: Optional[str] = None
+    error: str | None = None
 
 
 def _load_hf_weights(hf_dir: str) -> dict[str, mx.array]:
@@ -40,7 +40,7 @@ def _load_hf_weights(hf_dir: str) -> dict[str, mx.array]:
     for fname in sorted(Path(hf_dir).glob("*.safetensors")):
         logger.info("Loading %s", fname.name)
         with safe_open(str(fname), framework="numpy") as f:
-            for key in f.keys():
+            for key in f:
                 arr = f.get_tensor(key)
                 weights[key] = mx.array(arr)
     logger.info("Loaded %d tensors from %s", len(weights), hf_dir)
@@ -136,7 +136,7 @@ def convert_model(
     template: ArchTemplate,
     quant_bits: int = 0,
     quant_group_size: int = 64,
-    progress_cb: Optional[Callable[[float, str], None]] = None,
+    progress_cb: Callable[[float, str], None] | None = None,
 ) -> ConvertResult:
     result = ConvertResult(output_dir=output_dir)
 
