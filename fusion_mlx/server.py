@@ -86,6 +86,7 @@ from .api.openclaw_routes import router as openclaw_router
 from .api.openclaw_routes import set_openclaw_agent_pool
 from .api.reasoning_routes import router as reasoning_router
 from .api.reasoning_routes import set_reasoning_context
+from .api.spec_routes import router as spec_router
 from .api.recommend_routes import router as recommend_router
 from .api.rerank_routes import router as rerank_router
 from .api.rerank_routes import set_rerank_context
@@ -671,6 +672,7 @@ class Server:
         app.include_router(agent_router)
         app.include_router(convert_router)
         app.include_router(recommend_router)
+        app.include_router(spec_router)
         app.include_router(embeddings_router)
         app.include_router(rerank_router)
         app.include_router(ner_router)

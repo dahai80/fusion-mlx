@@ -52,6 +52,14 @@ _ALLOWED_KEYS: dict[str, set[str]] = {
         "draft_model_key",
         "temperature",
     },
+    "dfly": {
+        "method",
+        "model",
+        "num_speculative_tokens",
+        "block_size",
+        "target_layer_ids",
+        "enable_hidden_correction",
+    },
 }
 
 

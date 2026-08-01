@@ -20,6 +20,7 @@ import logging
 from .auto_router import (
     METHOD_DFLASH,
     METHOD_DSPARK,
+    METHOD_EAGLE3,
     METHOD_MTP,
     METHOD_NGRAM,
     RouteSignals,
@@ -34,12 +35,14 @@ _DEFAULT_ROUTER = SpecAutoRouter()
 def loaded_methods(
     *,
     suffix: bool = False,
+    eagle3: bool = False,
     dflash: bool = False,
     dspark: bool = False,
     mtp: bool = False,
 ) -> dict[str, bool]:
     return {
         METHOD_NGRAM: suffix,
+        METHOD_EAGLE3: eagle3,
         METHOD_DFLASH: dflash,
         METHOD_DSPARK: dspark,
         METHOD_MTP: mtp,
@@ -53,6 +56,8 @@ def select_active_method(
     recent_accept_rate: float | None = None,
     current_method: str | None = None,
     has_mtp: bool = False,
+    model_family: str | None = None,
+    is_recurrent: bool = False,
     router: SpecAutoRouter | None = None,
 ) -> str | None:
     active_router = _DEFAULT_ROUTER if router is None else router
@@ -68,6 +73,8 @@ def select_active_method(
         recent_accept_rate=recent_accept_rate,
         current_method=current_method if current_method in available else None,
         available=available,
+        model_family=model_family,
+        is_recurrent=is_recurrent,
     )
     method = active_router.decide(signals)
     # Degenerate fallback (e.g. the only loaded method was abandoned and
