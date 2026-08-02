@@ -620,6 +620,27 @@ def install_exception_handlers(app: FastAPI) -> None:
             )
             response = _recursion_error_response()
             return _wrap_for_anthropic(response) if anthropic else response
+        from ..exceptions import ModelNotFoundError
+
+        if isinstance(exc, ModelNotFoundError):
+            logger.info(
+                "ModelNotFoundError on %s %s: %s",
+                request.method,
+                request.url.path,
+                exc,
+            )
+            response = JSONResponse(
+                status_code=404,
+                content={
+                    "error": {
+                        "message": str(exc),
+                        "type": "invalid_request_error",
+                        "code": "model_not_found",
+                        "param": "model",
+                    }
+                },
+            )
+            return _wrap_for_anthropic(response) if anthropic else response
         logger.error(
             "Unhandled exception on %s %s: %s",
             request.method,

@@ -43,7 +43,12 @@ async def get_embedding_engine(model_id: str) -> Any:
     """Resolve, load, and type-check an embedding engine."""
     if _pool is None:
         raise HTTPException(status_code=503, detail="Server not initialized")
-    engine = await _pool.get_engine(model_id)
+    from ..model_aliases import resolve_model
+
+    resolved_id = resolve_model(model_id)
+    if resolved_id != model_id:
+        logger.info("Embedding alias: %s -> %s", model_id, resolved_id)
+    engine = await _pool.get_engine(resolved_id)
     if engine is None:
         raise HTTPException(status_code=404, detail=f"Model not found: {model_id}")
     from ..engines.embedding import EmbeddingEngine
