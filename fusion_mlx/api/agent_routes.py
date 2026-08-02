@@ -299,7 +299,7 @@ def _generate_python_script(graph: dict) -> str:
         "",
         "",
         "async def main():",
-        '    client = httpx.AsyncClient(base_url="http://localhost:8000/v1", timeout=120.0)',
+        '    client = httpx.AsyncClient(base_url="http://localhost:11434/v1", timeout=120.0)',
         "    try:",
         "        messages = []",
         '        if _CONFIG["system_prompt"]:',

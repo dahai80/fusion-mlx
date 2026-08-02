@@ -137,7 +137,7 @@ fusion-mlx doctor
 # 2. Chat right away — spawns a server, picks a model by RAM
 fusion-mlx chat
 
-# 3. Or serve a specific model on port 8000
+# 3. Or serve a specific model on port 11434
 fusion-mlx serve qwen3.5-9b-4bit
 
 # 4. List all available model aliases
@@ -150,7 +150,7 @@ fusion-mlx upgrade
 ### Chat API
 
 ```bash
-curl http://localhost:8000/v1/chat/completions \
+curl http://localhost:11434/v1/chat/completions \
    -H "Content-Type: application/json" \
    -d '{
      "model": "Qwen3-4B-Q4_K_M",
@@ -163,7 +163,7 @@ OpenAI Python client:
 
 ```python
 from openai import OpenAI
-client = OpenAI(base_url="http://localhost:8000/v1", api_key="local")
+client = OpenAI(base_url="http://localhost:11434/v1", api_key="local")
 resp = client.chat.completions.create(
     model="Qwen3-4B-Q4_K_M",
     messages=[{"role": "user", "content": "What is 2+2?"}],
@@ -176,7 +176,7 @@ Anthropic API:
 
 ```python
 import anthropic
-client = anthropic.Anthropic(base_url="http://localhost:8000/v1", api_key="local")
+client = anthropic.Anthropic(base_url="http://localhost:11434/v1", api_key="local")
 resp = client.messages.create(
     model="Qwen3-4B-Q4_K_M",
     max_tokens=64,
@@ -235,8 +235,8 @@ fusion-mlx chat qwen3.5-9b-4bit --think
 fusion-mlx chat qwen3.5-9b-4bit --system "You are a poet." --temperature 0.9
 
 # Connect to an existing server instead of spawning one
-fusion-mlx chat qwen3.5-9b-4bit --port 8000
-fusion-mlx chat qwen3.5-9b-4bit --base-url http://192.168.1.100:8000
+fusion-mlx chat qwen3.5-9b-4bit --port 11434
+fusion-mlx chat qwen3.5-9b-4bit --base-url http://192.168.1.100:11434
 ```
 
 | Flag | Description |
@@ -254,7 +254,7 @@ fusion-mlx chat qwen3.5-9b-4bit --base-url http://192.168.1.100:8000
 
 ```bash
 # Single model
-fusion-mlx serve qwen3.5-9b-4bit --port 8000
+fusion-mlx serve qwen3.5-9b-4bit --port 11434
 
 # Multi-model server (auto-discovers all models in directory)
 fusion-mlx serve --model-dir ~/.cache/huggingface
@@ -763,7 +763,7 @@ can enumerate models without a separate discovery call.
 
 ## Admin Panel
 
-Access at `http://localhost:8000/admin`:
+Access at `http://localhost:11434/admin`:
 
 - **Models** - load / unload / pin models dynamically, ParoQuant compat detection
 - **Chat** - live chat interface for testing any model
@@ -812,7 +812,7 @@ Train LoRA or DORA adapters on any loaded model using `mlx_lm.tuner` under the h
 
 ```bash
 # Create a LoRA training job
-curl -X POST http://localhost:8000/admin/api/fine-tune/jobs \
+curl -X POST http://localhost:11434/admin/api/fine-tune/jobs \
   -H "Content-Type: application/json" \
   -d '{
     "model_id": "qwen3.5-9b",
@@ -831,16 +831,16 @@ curl -X POST http://localhost:8000/admin/api/fine-tune/jobs \
   }'
 
 # Stream progress (SSE)
-curl -N http://localhost:8000/admin/api/fine-tune/jobs/{job_id}/stream
+curl -N http://localhost:11434/admin/api/fine-tune/jobs/{job_id}/stream
 
 # List saved adapters
-curl http://localhost:8000/admin/api/fine-tune/adapters
+curl http://localhost:11434/admin/api/fine-tune/adapters
 
 # Serve a trained adapter for inference
-curl -X POST http://localhost:8000/admin/api/fine-tune/adapters/qwen3.5-9b/my-lora/serve
+curl -X POST http://localhost:11434/admin/api/fine-tune/adapters/qwen3.5-9b/my-lora/serve
 
 # Unload adapter when done
-curl -X POST http://localhost:8000/admin/api/fine-tune/adapters/qwen3.5-9b/my-lora/unload
+curl -X POST http://localhost:11434/admin/api/fine-tune/adapters/qwen3.5-9b/my-lora/unload
 ```
 
 ### Key Behaviors
@@ -873,13 +873,13 @@ Non-admin API for model lifecycle management. Authenticated via scoped API keys 
 
 ```bash
 # Generate a model-manager key
-curl -X POST http://localhost:8000/admin/api/keys \
+curl -X POST http://localhost:11434/admin/api/keys \
   -H "Authorization: Bearer <admin-key>" \
   -d '{"role": "model_manager"}'
 # Returns: {"key": "model_mgr_...", "role": "model_manager"}
 
 # Use it to list models
-curl http://localhost:8000/admin/api/model-manager/models \
+curl http://localhost:11434/admin/api/model-manager/models \
   -H "Authorization: Bearer model_mgr_..."
 ```
 
@@ -1470,7 +1470,7 @@ Multi-stage Dockerfile for deployment on Linux (CPU) or as a base image:
 docker compose up
 # or
 docker build -t fusion-mlx .
-docker run -p 8000:8000 -v ~/.fusion-mlx/models:/home/fusion/.fusion-mlx/models:ro fusion-mlx
+docker run -p 11434:11434 -v ~/.fusion-mlx/models:/home/fusion/.fusion-mlx/models:ro fusion-mlx
 ```
 
 ## License

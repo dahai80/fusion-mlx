@@ -130,7 +130,7 @@ def write_or_patch_config(
     _common.backup_existing(path)
 
     # ``server_url`` may or may not include the ``/v1`` suffix — match
-    # what the user typed: if they said ``http://127.0.0.1:8000`` we
+    # what the user typed: if they said ``http://127.0.0.1:11434`` we
     # add ``/v1`` (Cline expects an OpenAI-compatible *base* URL that
     # ends in ``/v1``); if they already passed ``/v1`` we leave it
     # alone. Avoids accidentally producing ``/v1/v1``.

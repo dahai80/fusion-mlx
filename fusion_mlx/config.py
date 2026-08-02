@@ -225,7 +225,7 @@ class MemoryConfig:
 @dataclass
 class ServerConfig:
     host: str = "0.0.0.0"
-    port: int = 8000
+    port: int = 11434
     model_dir: str | None = None
     settings_dir: str | None = None
     memory: MemoryConfig = field(default_factory=MemoryConfig)

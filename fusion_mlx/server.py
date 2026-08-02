@@ -1432,7 +1432,7 @@ def main():
 
     parser = argparse.ArgumentParser(description="fusion-mlx server")
     parser.add_argument("--host", default="0.0.0.0", help="Bind address")
-    parser.add_argument("--port", type=int, default=8000, help="Port")
+    parser.add_argument("--port", type=int, default=11434, help="Port")
     parser.add_argument("--model-dir", default=None, help="Model directory")
     parser.add_argument(
         "--memory-tier",

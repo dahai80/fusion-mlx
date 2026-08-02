@@ -137,7 +137,7 @@ def main():
             )
 
         # Start with default settings
-        success = run_tray_app(port=8000, host="127.0.0.1")
+        success = run_tray_app(port=11434, host="127.0.0.1")
 
         if not success:
             print("Failed to start MLX-GUI tray app")

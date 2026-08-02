@@ -412,7 +412,7 @@ async def get_server_stats(
     rich = _get_rich_global_settings()
     flat = _get_global_settings()
     host = rich.server.host if rich else "127.0.0.1"
-    port = rich.server.port if rich else 8000
+    port = rich.server.port if rich else 11434
     api_key = flat.auth.api_key if flat else ""
 
     from ..utils.install import get_cli_prefix

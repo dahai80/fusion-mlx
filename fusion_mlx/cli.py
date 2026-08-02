@@ -4,12 +4,12 @@
 """CLI for fusion-mlx.
 
 Commands:
-    fusion-mlx serve <model> --port 8000    Start OpenAI-compatible server
+    fusion-mlx serve <model> --port 11434    Start OpenAI-compatible server
     fusion-mlx bench <model>                Run benchmark
     fusion-mlx chat <model>                 Interactive chat REPL
 
 Usage:
-    fusion-mlx serve qwen3.5-4b-4bit --port 8000
+    fusion-mlx serve qwen3.5-4b-4bit --port 11434
     fusion-mlx bench qwen3.5-4b-4bit --num-prompts 10
     fusion-mlx chat qwen3.5-4b-4bit
 """
@@ -59,7 +59,7 @@ def main():
 Examples:
   fusion-mlx chat                                      # interactive REPL (defaults to qwen3.5-4b-4bit)
   fusion-mlx chat qwen3.5-9b-4bit --think                   # larger model, surface reasoning
-  fusion-mlx serve qwen3.5-9b-4bit --port 8000              # OpenAI-compatible server
+  fusion-mlx serve qwen3.5-9b-4bit --port 11434              # OpenAI-compatible server
   fusion-mlx serve mlx-community/Qwen3.5-9B-4bit       # full HF repo also works
   fusion-mlx models                                    # list all aliases
   fusion-mlx info qwen3.5-9b-4bit                           # show per-alias profile
@@ -165,7 +165,7 @@ Examples:
             "alias to keep that bypass closed."
         ),
     )
-    serve_parser.add_argument("--port", type=int, default=8000, help="Port to bind")
+    serve_parser.add_argument("--port", type=int, default=11434, help="Port to bind")
     # Socket activation — let an external supervisor (launchd, systemd,
     # parent process) bind the listening socket and execve into
     # ``fusion-mlx`` with the pre-bound fd. This closes the bind→auth
@@ -1287,7 +1287,7 @@ Examples:
         default=None,
         help=(
             "For --tier: attach to an already-running server at this URL "
-            "(e.g. http://localhost:8000) instead of booting one. Used by "
+            "(e.g. http://localhost:11434) instead of booting one. Used by "
             "release_check_m3.sh G7b to reuse the gauntlet's server."
         ),
     )
@@ -1385,12 +1385,12 @@ Examples:
     # Released 1.0/2.0/3.0 `models` contract (docs/cli-reference.md): the
     # default view queries the running server's /v1/models, so --host/--port
     # target it. Restored after the Rapid-MLX migration dropped them; defaults
-    # match the released parser (localhost:8000).
+    # match the released parser (localhost:11434).
     models_parser.add_argument(
         "--host", default="localhost", help="Server host (default: localhost)"
     )
     models_parser.add_argument(
-        "--port", type=int, default=8000, help="Server port (default: 8000)"
+        "--port", type=int, default=11434, help="Server port (default: 11434)"
     )
     subparsers.add_parser(
         "ls",
@@ -1602,8 +1602,8 @@ Examples:
     agents_parser.add_argument(
         "--base-url",
         type=str,
-        default="http://localhost:8000/v1",
-        help="Fusion-MLX server URL (default: http://localhost:8000/v1)",
+        default="http://localhost:11434/v1",
+        help="Fusion-MLX server URL (default: http://localhost:11434/v1)",
     )
     agents_parser.add_argument(
         "--agent-version",

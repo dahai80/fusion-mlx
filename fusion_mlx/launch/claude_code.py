@@ -11,7 +11,7 @@ fusion-mlx already serves the Anthropic ``/v1/messages`` shape (see the
 README "Claude Code" section), so the launch step is simply:
 
 1. Write a ``settings.json`` that points Claude Code at our local
-   ``http://127.0.0.1:8000`` (NOT ``/v1`` — Anthropic SDK appends the
+   ``http://127.0.0.1:11434`` (NOT ``/v1`` — Anthropic SDK appends the
    ``/v1/messages`` path itself; double-slashing yields a 404).
 2. Carry the model id so a fresh Claude Code session uses our loaded
    model rather than the SDK default.
@@ -94,8 +94,8 @@ def write_or_patch_config(
     the settings file rather than the parent shell):
 
     * ``env.ANTHROPIC_BASE_URL`` → ``<server_url>`` (no ``/v1`` —
-      Anthropic SDK joins paths itself; ``http://127.0.0.1:8000`` is
-      correct, ``http://127.0.0.1:8000/v1`` produces 404 on
+      Anthropic SDK joins paths itself; ``http://127.0.0.1:11434`` is
+      correct, ``http://127.0.0.1:11434/v1`` produces 404 on
       ``/v1/v1/messages``).
     * ``env.ANTHROPIC_API_KEY`` → ``<api_key>``
     * ``env.ANTHROPIC_MODEL`` → ``<model>`` (Claude Code reads this as
