@@ -256,7 +256,10 @@ class MCPClient:
                     await self._sse_client.__aexit__(None, None, None)
                     self._sse_client = None
 
-                if hasattr(self, "_streamable_http_client") and self._streamable_http_client:
+                if (
+                    hasattr(self, "_streamable_http_client")
+                    and self._streamable_http_client
+                ):
                     await self._streamable_http_client.__aexit__(None, None, None)
                     self._streamable_http_client = None
 
@@ -381,7 +384,10 @@ class MCPClient:
             self._sse_client = None
 
         try:
-            if hasattr(self, "_streamable_http_client") and self._streamable_http_client:
+            if (
+                hasattr(self, "_streamable_http_client")
+                and self._streamable_http_client
+            ):
                 await self._streamable_http_client.__aexit__(None, None, None)
                 self._streamable_http_client = None
         except Exception:
