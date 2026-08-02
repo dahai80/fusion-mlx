@@ -375,6 +375,40 @@ register-python-argcomplete fusion-mlx > ~/.config/fish/completions/fusion-mlx.f
 
 Then `fusion-mlx chat gemma-4-<TAB>` completes model aliases instantly.
 
+## Mirror Configuration
+
+For users in regions where HuggingFace is slow or blocked (e.g. mainland China), fusion-mlx supports configuring a mirror source for model downloads. No manual environment variable export needed.
+
+### Via config file (recommended)
+
+Edit `~/.fusion-mlx/settings.json` and set the `huggingface.endpoint` field:
+
+```json
+{
+  "huggingface": {
+    "endpoint": "https://hf-mirror.com"
+  }
+}
+```
+
+`start.sh` automatically reads this config and sets `HF_ENDPOINT` for model downloads. Run `start.sh tune` to generate the config with the default mirror pre-filled.
+
+### Via environment variable
+
+```bash
+# One-time override
+HF_MIRROR=https://hf-mirror.com fusion-mlx pull Qwen3-4B
+
+# Persistent (add to ~/.zshrc or ~/.bashrc)
+export HF_MIRROR=https://hf-mirror.com
+```
+
+### Priority order
+
+1. `HF_MIRROR` environment variable (highest)
+2. `huggingface.endpoint` in `~/.fusion-mlx/settings.json`
+3. Built-in default: `https://hf-mirror.com`
+
 ## Supported Models
 
 | Type | Engine | Example Models |
