@@ -375,6 +375,18 @@ class TestModelDiscoveryEmbedding:
         """Test that missing config.json defaults to LLM."""
         assert detect_model_type(tmp_path) == "llm"
 
+    def test_detect_bge_m3_xlm_roberta_model(self, tmp_path):
+        """Test detection of BGE-M3 (XLMRobertaModel architecture)."""
+        config = {
+            "model_type": "xlm-roberta",
+            "architectures": ["XLMRobertaModel"],
+            "hidden_size": 1024,
+            "num_hidden_layers": 24,
+            "vocab_size": 250002,
+        }
+        (tmp_path / "config.json").write_text(json.dumps(config))
+        assert detect_model_type(tmp_path) == "embedding"
+
 
 class TestExtractEmbeddingsArray:
     """Tests for _extract_embeddings_array method."""

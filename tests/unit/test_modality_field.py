@@ -97,7 +97,7 @@ class TestModalityValidation:
         # update the Literal in model_aliases.py AND the dispatch
         # tables in cli.py / routes/models.py. Failing this assertion
         # is the trigger to do that work.
-        assert frozenset({"text", "text-diffusion"}) == _VALID_MODALITIES
+        assert frozenset({"text", "text-diffusion", "embedding"}) == _VALID_MODALITIES
 
     def test_reserved_modality_set_pinned(self) -> None:
         # Reserved lanes — declared in the type alias so routing
@@ -267,3 +267,56 @@ class TestHfPathReverseLookupRoutesDiffusionLane:
 
         profile = resolve_profile("nobody/this-model-does-not-exist-123")
         assert profile is None
+
+
+class TestEmbeddingModality:
+    def test_embedding_modality_accepted(self) -> None:
+        profile = _coerce(
+            "bge-m3",
+            {
+                "hf_path": "mlx-community/bge-m3-mlx-fp16",
+                "modality": "embedding",
+                "supports_spec_decode": False,
+            },
+        )
+        assert profile.modality == "embedding"
+        assert profile.supports_spec_decode is False
+
+    def test_embedding_with_spec_decode_rejected(self) -> None:
+        with pytest.raises(ValueError, match="supports_spec_decode must be false"):
+            _coerce(
+                "bad",
+                {"hf_path": "x/y", "modality": "embedding"},
+            )
+
+    def test_embedding_with_dflash_rejected(self) -> None:
+        with pytest.raises(ValueError, match="supports_dflash must be false"):
+            _coerce(
+                "bad",
+                {
+                    "hf_path": "x/y",
+                    "modality": "embedding",
+                    "supports_spec_decode": False,
+                    "supports_dflash": True,
+                },
+            )
+
+    def test_bge_m3_alias_resolves(self) -> None:
+        from fusion_mlx.model_aliases import resolve_model, resolve_profile
+
+        assert resolve_model("bge-m3") == "mlx-community/bge-m3-mlx-fp16"
+        assert resolve_model("bge-m3-4bit") == "mlx-community/bge-m3-mlx-4bit"
+        assert resolve_model("bge-m3-8bit") == "mlx-community/bge-m3-mlx-8bit"
+        profile = resolve_profile("bge-m3")
+        assert profile is not None
+        assert profile.modality == "embedding"
+        assert profile.supports_spec_decode is False
+
+    def test_bge_m3_hf_path_reverse_lookup(self) -> None:
+        from fusion_mlx.model_aliases import resolve_profile
+
+        alias_profile = resolve_profile("bge-m3")
+        assert alias_profile is not None
+        profile = resolve_profile(alias_profile.hf_path)
+        assert profile is not None
+        assert profile.modality == "embedding"
