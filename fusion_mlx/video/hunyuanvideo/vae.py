@@ -6,6 +6,7 @@ import logging
 
 import mlx.core as mx
 import mlx.nn as nn
+import numpy as np
 
 logger = logging.getLogger(__name__)
 
@@ -15,14 +16,8 @@ def _silu(x):
 
 
 def _group_norm_5d(norm, x):
-    """Apply GroupNorm to 5D (B,C,T,H,W) tensor.
-
-    MLX GroupNorm expects channels-last (..., C) but our 5D tensors are
-    channels-first (B, C, T, H, W). Reshape to 4D channels-last, apply
-    norm, reshape back.
-    """
     B, C, T, H, W = x.shape
-    x_cl = x.reshape(B * T, C, H, W).transpose(0, 2, 3, 1)  # (B*T, H, W, C)
+    x_cl = x.reshape(B * T, C, H, W).transpose(0, 2, 3, 1)
     y_cl = norm(x_cl)
     y = y_cl.transpose(0, 3, 1, 2).reshape(B, C, T, H, W)
     return y
@@ -90,13 +85,15 @@ class HVResBlock(nn.Module):
 
 
 class HVDownBlock(nn.Module):
-    def __init__(self, in_ch, out_ch, use_conv_down=True):
+    def __init__(self, in_ch, out_ch, use_conv_down=True, temporal_downsample=True):
         super().__init__()
         self.res1 = HVResBlock(in_ch)
         self.res2 = HVResBlock(in_ch)
         self.use_conv_down = use_conv_down
+        self.temporal_downsample = temporal_downsample
         if use_conv_down:
-            self.conv_down = CausalConv3d(in_ch, out_ch, 3, stride=(2, 2, 2), padding=1)
+            st = (2, 2, 2) if temporal_downsample else (1, 2, 2)
+            self.conv_down = CausalConv3d(in_ch, out_ch, 3, stride=st, padding=1)
         else:
             self.conv_resample = CausalConv3d(in_ch, out_ch, 3, 1, 1)
 
@@ -109,11 +106,12 @@ class HVDownBlock(nn.Module):
 
 
 class HVUpBlock(nn.Module):
-    def __init__(self, in_ch, out_ch, use_conv_up=True):
+    def __init__(self, in_ch, out_ch, use_conv_up=True, temporal_upsample=True):
         super().__init__()
         self.res1 = HVResBlock(in_ch)
         self.res2 = HVResBlock(in_ch)
         self.use_conv_up = use_conv_up
+        self.temporal_upsample = temporal_upsample
         if use_conv_up:
             self.conv_up = CausalConv3d(in_ch, out_ch, 3, 1, 1)
         else:
@@ -124,16 +122,48 @@ class HVUpBlock(nn.Module):
         h = self.res2(h)
         if self.use_conv_up:
             B, C, T, H, W = h.shape
-            h = mx.broadcast_to(
-                h.reshape(B, C, T, 1, H, 1, W, 1),
-                (B, C, T, 2, H, 2, W, 2),
-            )
-            h = h.reshape(B, C, T * 2, H * 2, W * 2)
+            if self.temporal_upsample and T > 1:
+                # Official UpsampleCausal3D behavior:
+                # first frame stays as 1 frame (spatial-only upsample)
+                # other frames double temporally -> 2*(T-1) frames
+                # total: 1 + 2*(T-1) = 2T-1 frames
+                first = h[:, :, 0:1, :, :]  # (B, C, 1, H, W)
+                other = h[:, :, 1:, :, :]  # (B, C, T-1, H, W)
+                # Spatial upsample for first frame
+                first = first.reshape(B, C, 1, H, 1, W, 1)
+                first = mx.broadcast_to(first, (B, C, 1, H, 2, W, 2))
+                first = first.reshape(B, C, 1, H * 2, W * 2)
+                # Temporal + spatial upsample for other frames
+                other = other.reshape(B, C, T - 1, 1, H, 1, W, 1)
+                other = mx.broadcast_to(other, (B, C, T - 1, 2, H, 2, W, 2))
+                other = other.reshape(B, C, (T - 1) * 2, H * 2, W * 2)
+                h = mx.concatenate([first, other], axis=2)
+            else:
+                # Spatial-only upsample (no temporal)
+                h = h.reshape(B, C, T, H, 1, W, 1)
+                h = mx.broadcast_to(h, (B, C, T, H, 2, W, 2))
+                h = h.reshape(B, C, T, H * 2, W * 2)
             return self.conv_up(h)
         return self.conv_resample(h)
 
 
 class HunyuanVideoVAE(nn.Module):
+    # Official decoder upsample pattern:
+    #   i=0: spatial_up=True,  temporal_up=False  -> (1,2,2) spatial only
+    #   i=1: spatial_up=True,  temporal_up=True   -> (2,2,2) temporal+spatial
+    #   i=2: spatial_up=True,  temporal_up=True   -> (2,2,2) temporal+spatial
+    #   i=3: spatial_up=False, temporal_up=False  -> no upsample
+    # Official encoder downsample pattern:
+    #   i=0: spatial_down=True,  temporal_down=False -> stride (1,2,2)
+    #   i=1: spatial_down=True,  temporal_down=True  -> stride (2,2,2)
+    #   i=2: spatial_down=True,  temporal_down=True  -> stride (2,2,2)
+    #   i=3: spatial_down=False, temporal_down=False -> no downsample
+
+    TEMPORAL_UP_BLOCKS = [False, True, True, False]
+    SPATIAL_UP_BLOCKS = [True, True, True, False]
+    TEMPORAL_DOWN_BLOCKS = [False, True, True, False]
+    SPATIAL_DOWN_BLOCKS = [True, True, True, False]
+
     def __init__(self, latent_channels=16, in_channels=3):
         super().__init__()
         self.latent_channels = latent_channels
@@ -146,8 +176,9 @@ class HunyuanVideoVAE(nn.Module):
         prev_ch = base_ch
         for i, mult in enumerate(ch_mult):
             cur_ch = base_ch * mult
-            down = i < len(ch_mult) - 1
-            enc_blocks.append(HVDownBlock(prev_ch, cur_ch, use_conv_down=down))
+            use_down = self.SPATIAL_DOWN_BLOCKS[i] or self.TEMPORAL_DOWN_BLOCKS[i]
+            temporal_down = self.TEMPORAL_DOWN_BLOCKS[i]
+            enc_blocks.append(HVDownBlock(prev_ch, cur_ch, use_conv_down=use_down, temporal_downsample=temporal_down))
             prev_ch = cur_ch
         self.enc_blocks = enc_blocks
         self.enc_mid1 = HVResBlock(prev_ch)
@@ -160,8 +191,9 @@ class HunyuanVideoVAE(nn.Module):
         dec_blocks = []
         for i, mult in reversed(list(enumerate(ch_mult))):
             cur_ch = base_ch * mult
-            up = i > 0
-            dec_blocks.append(HVUpBlock(prev_ch, cur_ch, use_conv_up=up))
+            use_up = self.SPATIAL_UP_BLOCKS[i] or self.TEMPORAL_UP_BLOCKS[i]
+            temporal_up = self.TEMPORAL_UP_BLOCKS[i]
+            dec_blocks.append(HVUpBlock(prev_ch, cur_ch, use_conv_up=use_up, temporal_upsample=temporal_up))
             prev_ch = cur_ch
         self.dec_blocks = dec_blocks
         self.dec_conv_out = CausalConv3d(prev_ch, in_channels, 3, 1, 1)
@@ -193,6 +225,134 @@ class HunyuanVideoVAE(nn.Module):
         h = mx.clip(h, 0.0, 1.0)
         logger.info("hunyuan vae decode: output shape=%s", h.shape)
         return h
+
+    def decode_tiled(self, z, tile_t=8, tile_h=32, tile_w=32,
+                     overlap_t=2, overlap_h=4, overlap_w=4):
+        logger.info(
+            "hunyuan vae decode_tiled: latent shape=%s tile=(%d,%d,%d) overlap=(%d,%d,%d)",
+            z.shape, tile_t, tile_h, tile_w, overlap_t, overlap_h, overlap_w,
+        )
+        B, C, T, H, W = z.shape
+        need_t = T > tile_t
+        need_h = H > tile_h
+        need_w = W > tile_w
+
+        if not need_t and not need_h and not need_w:
+            logger.info("hunyuan vae decode_tiled: no tiling needed, using decode()")
+            return self.decode(z)
+
+        out_t, out_h, out_w = self._compute_output_shape(T, H, W)
+        output = np.zeros((B, 3, out_t, out_h, out_w), dtype=np.float32)
+        weight_sum = np.zeros((B, 1, out_t, out_h, out_w), dtype=np.float32)
+
+        t_positions = self._tile_positions(T, tile_t, overlap_t) if need_t else [(0, T)]
+        h_positions = self._tile_positions(H, tile_h, overlap_h) if need_h else [(0, H)]
+        w_positions = self._tile_positions(W, tile_w, overlap_w) if need_w else [(0, W)]
+
+        total_tiles = len(t_positions) * len(h_positions) * len(w_positions)
+        tile_idx = 0
+        for t_start, t_end in t_positions:
+            for h_start, h_end in h_positions:
+                for w_start, w_end in w_positions:
+                    tile_idx += 1
+                    tile_z = z[:, :, t_start:t_end, h_start:h_end, w_start:w_end]
+                    logger.debug(
+                        "hunyuan vae decode_tiled: tile %d/%d slice=[%d:%d,%d:%d,%d:%d] shape=%s",
+                        tile_idx, total_tiles, t_start, t_end, h_start, h_end, w_start, w_end, tile_z.shape,
+                    )
+                    tile_out = self.decode(tile_z)
+                    mx.eval(tile_out)
+                    tile_np = np.array(tile_out, dtype=np.float32)
+                    del tile_out
+                    mx.clear_cache()
+
+                    # Compute output positions
+                    ot_start = self._latent_to_output_pos(t_start, is_temporal=True)
+                    ot_end = ot_start + tile_np.shape[2]
+                    oh_start = h_start * 8
+                    oh_end = oh_start + tile_np.shape[3]
+                    ow_start = w_start * 8
+                    ow_end = ow_start + tile_np.shape[4]
+
+                    # Clamp to output bounds
+                    ot_end = min(ot_end, out_t)
+                    oh_end = min(oh_end, out_h)
+                    ow_end = min(ow_end, out_w)
+
+                    tile_np = tile_np[:, :, :ot_end - ot_start, :oh_end - oh_start, :ow_end - ow_start]
+
+                    # Compute blending weights (feathered in overlap regions)
+                    w_t = self._blend_weights_1d(tile_np.shape[2], t_start, t_end, T, overlap_t)
+                    w_h = self._blend_weights_1d(tile_np.shape[3], h_start, h_end, H, overlap_h)
+                    w_w = self._blend_weights_1d(tile_np.shape[4], w_start, w_end, W, overlap_w)
+
+                    # Outer product -> (1, 1, t, h, w)
+                    w_3d = w_t.reshape(1, 1, -1, 1, 1) * w_h.reshape(1, 1, 1, -1, 1) * w_w.reshape(1, 1, 1, 1, -1)
+
+                    output[:, :, ot_start:ot_end, oh_start:oh_end, ow_start:ow_end] += tile_np * w_3d
+                    weight_sum[:, :, ot_start:ot_end, oh_start:oh_end, ow_start:ow_end] += w_3d
+
+                    del tile_np
+                    tile_idx_logged = tile_idx
+
+        # Normalize by weight sum
+        mask = weight_sum > 0
+        output[mask] /= weight_sum[mask]
+
+        logger.info("hunyuan vae decode_tiled: output shape=%s total_tiles=%d", output.shape, total_tiles)
+        return mx.array(output)
+
+    def _compute_output_shape(self, T, H, W):
+        t, h, w = T, H, W
+        for i in range(len(self.dec_blocks)):
+            if self.SPATIAL_UP_BLOCKS[i]:
+                h = h * 2
+                w = w * 2
+            if self.TEMPORAL_UP_BLOCKS[i] and t > 1:
+                # Official UpsampleCausal3D: first frame stays, others double
+                t = 1 + (t - 1) * 2
+        return t, h, w
+
+    def _latent_to_output_pos(self, latent_pos, is_temporal=False):
+        if is_temporal:
+            # First latent frame -> output frame 0
+            # Each subsequent latent frame -> 2 output frames (2T-1 pattern)
+            if latent_pos == 0:
+                return 0
+            return 1 + (latent_pos - 1) * 2
+        else:
+            return latent_pos * 8
+
+    @staticmethod
+    def _tile_positions(dim_size, tile_size, overlap):
+        positions = []
+        start = 0
+        while start < dim_size:
+            end = min(start + tile_size, dim_size)
+            positions.append((start, end))
+            if end >= dim_size:
+                break
+            start = end - overlap
+            if start >= dim_size - 1:
+                break
+        return positions
+
+    @staticmethod
+    def _blend_weights_1d(tile_out_size, tile_start, tile_end, dim_size, overlap):
+        weights = np.ones(tile_out_size, dtype=np.float32)
+        if overlap <= 0 or tile_out_size <= 0:
+            return weights
+        # Ramp up at start if not first tile
+        if tile_start > 0:
+            ramp_len = min(overlap, tile_out_size)
+            for i in range(ramp_len):
+                weights[i] = (i + 1) / (ramp_len + 1)
+        # Ramp down at end if not last tile
+        if tile_end < dim_size:
+            ramp_len = min(overlap, tile_out_size)
+            for i in range(ramp_len):
+                weights[tile_out_size - 1 - i] = min(weights[tile_out_size - 1 - i], (i + 1) / (ramp_len + 1))
+        return weights
 
     @classmethod
     def from_pretrained(cls, model_path, **kwargs):
