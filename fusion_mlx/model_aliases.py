@@ -127,7 +127,7 @@ def list_aliases() -> dict[str, str]:
     return out
 
 
-_VALID_MODALITIES = frozenset({"text", "text-diffusion"})
+_VALID_MODALITIES = frozenset({"text", "text-diffusion", "embedding"})
 _RESERVED_MODALITIES = frozenset({"vision", "image-gen"})
 
 _SUPPORTED_SAMPLING_KEYS = frozenset(
