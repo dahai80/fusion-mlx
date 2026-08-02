@@ -10,7 +10,7 @@ ACTIVATE="${VENV}/bin/activate"
 LOG_DIR="${HOME}/.fusion-mlx/logs"
 SETTINGS="${HOME}/.fusion-mlx/settings.json"
 PORT=11434
-HF_MIRROR="https://hf-mirror.com"
+HF_MIRROR_DEFAULT="https://hf-mirror.com"
 
 # ── Colors ──────────────────────────────────────────────────────────
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[0;33m'
@@ -20,6 +20,26 @@ log_info()  { printf "${GREEN}[INFO]${NC}  %s\n" "$*"; }
 log_warn()  { printf "${YELLOW}[WARN]${NC}  %s\n" "$*"; }
 log_error() { printf "${RED}[ERROR]${NC} %s\n" "$*"; }
 log_step()  { printf "${CYAN}[STEP]${NC}  %s\n" "$*"; }
+
+# ── Read mirror config from settings.json ────────────────────────────
+# Priority: HF_MIRROR env var > settings.json huggingface.endpoint > default
+resolve_hf_mirror() {
+    if [[ -n "${HF_MIRROR:-}" ]]; then
+        log_info "HF mirror from env: ${HF_MIRROR}"
+        return 0
+    fi
+    if [[ -f "${SETTINGS}" ]]; then
+        local endpoint
+        endpoint=$(python3 -c "import json; d=json.load(open('${SETTINGS}')); print(d.get('huggingface',{}).get('endpoint',''))" 2>/dev/null || echo "")
+        if [[ -n "${endpoint}" ]]; then
+            HF_MIRROR="${endpoint}"
+            log_info "HF mirror from config: ${HF_MIRROR}"
+            return 0
+        fi
+    fi
+    HF_MIRROR="${HF_MIRROR_DEFAULT}"
+    log_info "HF mirror from default: ${HF_MIRROR}"
+}
 
 # ── Activate venv ───────────────────────────────────────────────────
 ensure_venv() {
@@ -71,16 +91,45 @@ preflight() {
     # Ensure log directory
     mkdir -p "${LOG_DIR}"
 
-    # Set HF mirror for model downloads
+    # Resolve HF mirror from config, then set env
+    resolve_hf_mirror
     export HF_ENDPOINT="${HF_MIRROR}"
     export HUGGINGFACE_HUB_CACHE="${HOME}/.fusion-mlx/models"
 
     log_info "Preflight OK (port=${PORT}, HF mirror=${HF_MIRROR})"
 }
 
+# ── Parse start args ─────────────────────────────────────────────────
+_parse_start_args() {
+    local watchdog=""
+    local preload=""
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --watchdog)
+                watchdog="--watchdog"
+                shift
+                ;;
+            --preload)
+                if [[ -z "${2:-}" || "${2}" == --* ]]; then
+                    log_error "--preload requires a comma-separated model list"
+                    exit 1
+                fi
+                preload="$2"
+                shift 2
+                ;;
+            *)
+                log_error "Unknown start option: $1"
+                exit 1
+                ;;
+        esac
+    done
+    START_WATCHDOG="${watchdog}"
+    START_PRELOAD="${preload}"
+}
+
 # ── start ───────────────────────────────────────────────────────────
 do_start() {
-    local watchdog="${1:-}"
+    _parse_start_args "$@"
     preflight
 
     if is_running; then
@@ -99,7 +148,21 @@ do_start() {
         model_dir="${md}"
     fi
 
-    if [[ "${watchdog}" == "--watchdog" ]]; then
+    # Resolve preload models: CLI --preload > settings.json models.preload
+    local preload_models="${START_PRELOAD}"
+    if [[ -z "${preload_models}" && -f "${SETTINGS}" ]]; then
+        local sp
+        sp=$(python3 -c "import json; d=json.load(open('${SETTINGS}')); p=d.get('model',{}).get('preload',''); print(p if isinstance(p,str) else ','.join(p) if isinstance(p,list) else '')" 2>/dev/null || echo "")
+        preload_models="${sp}"
+    fi
+
+    # Export PRELOAD_MODELS env var for the Python server to read
+    if [[ -n "${preload_models}" ]]; then
+        export PRELOAD_MODELS="${preload_models}"
+        log_info "Preload models: ${preload_models}"
+    fi
+
+    if [[ -n "${START_WATCHDOG}" ]]; then
         _run_with_watchdog "${model_dir}"
     else
         fusion-mlx serve \
@@ -116,7 +179,16 @@ do_start() {
     local serve_pid=$!
     log_info "Server PID: ${serve_pid}"
 
-    if wait_healthy 120; then
+    # With preload, increase health timeout (models can take 10-30s each)
+    local health_timeout=120
+    if [[ -n "${preload_models}" ]]; then
+        local model_count
+        model_count=$(echo "${preload_models}" | tr ',' '\n' | wc -l | tr -d ' ')
+        health_timeout=$(( 120 + model_count * 60 ))
+        log_info "Extended health timeout to ${health_timeout}s for ${model_count} preload models"
+    fi
+
+    if wait_healthy "${health_timeout}"; then
         log_info "Fusion-MLX v$(fusion-mlx version 2>/dev/null | /usr/bin/grep -oP '[\d.]+' | head -1) started successfully"
         show_status
     else
@@ -162,7 +234,7 @@ do_restart() {
     log_step "Restarting fusion-mlx"
     do_stop
     sleep 2
-    do_start
+    do_start "$@"
 }
 
 # ── status ──────────────────────────────────────────────────────────
@@ -258,7 +330,7 @@ json.dump({
     'version': '1.0',
     'server': {'port': ${PORT}, 'host': '127.0.0.1', 'log_level': 'INFO', 'auto_start_on_launch': True},
     'model': {'model_dir': '${HOME}/.fusion-mlx/models', 'model_dirs': ['${HOME}/.fusion-mlx/models']},
-    'huggingface': {'endpoint': '${HF_MIRROR}'},
+    'huggingface': {'endpoint': '${HF_MIRROR_DEFAULT}'},
     'sampling': {'temperature': 0.25, 'repetition_penalty': 1.05, 'max_context_window': 131072, 'max_tokens': 8192},
     'cache': {'enabled': True, 'hot_cache_only': True, 'hot_cache_max_size': '20GB', 'initial_cache_blocks': 384},
     'idle_timeout': {'idle_timeout_seconds': 180},
@@ -288,7 +360,7 @@ sched.setdefault('max_concurrent_requests', 4)
 sched.setdefault('chunked_prefill', True)
 # HF mirror
 hf = s.setdefault('huggingface', {})
-hf['endpoint'] = '${HF_MIRROR}'
+hf['endpoint'] = '${HF_MIRROR_DEFAULT}'
 with open('${SETTINGS}', 'w') as f:
     json.dump(s, f, indent=4)
 print(f'Tuned: memory ceiling=${ceiling_gb}GB, cache enabled, chunked prefill, HF mirror')
@@ -329,6 +401,7 @@ do_clean() {
 # ── watchdog supervisor ─────────────────────────────────────────────
 _run_with_watchdog() {
     local model_dir="$1"
+    # PRELOAD_MODELS is already exported in the environment
     local backoff=1
     local max_backoff=30
     local crash_count=0
@@ -400,6 +473,8 @@ do_install_launchd() {
         return 0
     fi
 
+    resolve_hf_mirror
+
     local model_dir="${HOME}/.fusion-mlx/models"
     if [[ -f "${SETTINGS}" ]]; then
         local md
@@ -437,8 +512,12 @@ do_install_launchd() {
     <dict>
         <key>HF_ENDPOINT</key>
         <string>${HF_MIRROR}</string>
+        <key>HF_MIRROR</key>
+        <string>${HF_MIRROR}</string>
         <key>HUGGINGFACE_HUB_CACHE</key>
         <string>${HOME}/.fusion-mlx/models</string>
+        <key>PRELOAD_MODELS</key>
+        <string>${PRELOAD_MODELS:-}</string>
     </dict>
 </dict>
 </plist>
@@ -474,9 +553,12 @@ start.sh — fusion-mlx lifecycle manager
 Usage: start.sh <command> [args]
 
 Commands:
-  start [--watchdog]  Start fusion-mlx (--watchdog for auto-restart)
+  start [--watchdog] [--preload MODEL,MODEL,...]
+                      Start fusion-mlx
+                      --watchdog  Auto-restart on crash
+                      --preload   Comma-separated models to preload at startup
   stop                Graceful stop (SIGTERM → SIGKILL fallback)
-  restart             Stop + start
+  restart             Stop + start (passes --preload to start)
   status              Show PID, port, memory, models, health
   log [N]             Tail server log (default 50 lines, -f to follow)
   errors              Show recent ERROR/CRITICAL from logs
@@ -488,8 +570,17 @@ Commands:
   help                Show this help
 
 Environment:
-  PORT        Server port (default: 11434)
-  HF_MIRROR   HuggingFace mirror (default: https://hf-mirror.com)
+  PORT            Server port (default: 11434)
+  HF_MIRROR       HuggingFace mirror override (default: read from config)
+  PRELOAD_MODELS  Comma-separated models to preload (overrides --preload)
+
+Preload Config (~/.fusion-mlx/settings.json):
+  model.preload   Array or comma-string of models to preload at startup
+  Priority: --preload flag > PRELOAD_MODELS env > settings.json
+
+Mirror Config (~/.fusion-mlx/settings.json):
+  huggingface.endpoint  HF mirror URL (default: https://hf-mirror.com)
+  Priority: HF_MIRROR env var > settings.json > built-in default
 EOF
 }
 

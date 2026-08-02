@@ -261,3 +261,37 @@ ServerConfig(
     cloud_router_enabled=False,
 )
 ```
+
+## Mirror Configuration
+
+For users in regions where HuggingFace is slow or blocked, configure a mirror source for model downloads.
+
+### Via settings.json
+
+Edit `~/.fusion-mlx/settings.json`:
+
+```json
+{
+  "huggingface": {
+    "endpoint": "https://hf-mirror.com"
+  }
+}
+```
+
+`start.sh` reads this on startup and sets `HF_ENDPOINT` automatically. Run `start.sh tune` to generate defaults.
+
+### Via environment variable
+
+```bash
+# One-time override
+HF_MIRROR=https://hf-mirror.com fusion-mlx pull Qwen3-4B
+
+# Persistent
+export HF_MIRROR=https://hf-mirror.com
+```
+
+### Priority
+
+1. `HF_MIRROR` env var (highest)
+2. `huggingface.endpoint` in `~/.fusion-mlx/settings.json`
+3. Built-in default: `https://hf-mirror.com`
