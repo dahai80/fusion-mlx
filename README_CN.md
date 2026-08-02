@@ -593,6 +593,40 @@ DSpark = DeepSeek DeepSpec 块级投机解码, 针对纯文本 Qwen3 系列. 与
 - [架构详解](docs/architecture_CN.md) - 架构文档中文版
 - [配置指南](docs/configuration_CN.md) - 配置文档中文版
 
+## 镜像源配置
+
+对于 HuggingFace 访问缓慢或受限的地区（如中国大陆），fusion-mlx 支持通过配置文件设置镜像源，无需手动导出环境变量。
+
+### 通过配置文件（推荐）
+
+编辑 `~/.fusion-mlx/settings.json`，设置 `huggingface.endpoint` 字段：
+
+```json
+{
+  "huggingface": {
+    "endpoint": "https://hf-mirror.com"
+  }
+}
+```
+
+`start.sh` 启动时会自动读取此配置并设置 `HF_ENDPOINT` 环境变量用于模型下载。运行 `start.sh tune` 可自动生成含默认镜像的配置文件。
+
+### 通过环境变量
+
+```bash
+# 一次性覆盖
+HF_MIRROR=https://hf-mirror.com fusion-mlx pull Qwen3-4B
+
+# 持久化（添加到 ~/.zshrc 或 ~/.bashrc）
+export HF_MIRROR=https://hf-mirror.com
+```
+
+### 优先级
+
+1. `HF_MIRROR` 环境变量（最高优先级）
+2. `~/.fusion-mlx/settings.json` 中的 `huggingface.endpoint`
+3. 内置默认值：`https://hf-mirror.com`
+
 ## whichllm 集成
 
 macOS 应用的 **Welcome 向导**使用 [whichllm](https://github.com/Andyyyy64/whichllm) 进行硬件感知的模型推荐。whichllm 自动检测 Mac 的 GPU、CPU、RAM 和磁盘，然后从 HuggingFace 上排名最适合你系统的本地 LLM。
