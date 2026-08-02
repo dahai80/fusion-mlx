@@ -355,7 +355,11 @@ def _node_load_snapshot(pool, config) -> dict[str, Any]:
 
 
 def load_embedding_model(*args, **kwargs):
-    raise NotImplementedError("Embedding models not available in this build")
+    raise NotImplementedError(
+        "Use POST /v1/embeddings with a model already loaded in the pool. "
+        "Load an embedding model via POST /v1/chat/completions or the CLI "
+        "'fusion load <model>' first. See GET /v1/models for available models."
+    )
 
 
 def get_max_context_window(model_id: str) -> int | None:
