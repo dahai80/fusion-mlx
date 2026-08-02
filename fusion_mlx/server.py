@@ -1213,6 +1213,9 @@ class Server:
         if _pending_single_model:
             await self._load_single_model(_pending_single_model)
 
+        # Preload models from PRELOAD_MODELS env var or settings.json
+        await self._preload_models()
+
         # Load prefix cache from disk (best-effort)
         try:
             from .runtime.cache import load_prefix_cache_from_disk
@@ -1410,6 +1413,67 @@ class Server:
         logger.info(
             "Single model registered: %s (engine=%s)", served, type(engine).__name__
         )
+
+    async def _preload_models(self) -> None:
+        import json as _json
+
+        import os
+
+        # Resolve preload list: PRELOAD_MODELS env > settings.json model.preload
+        preload_str = os.environ.get("PRELOAD_MODELS", "").strip()
+        if not preload_str:
+            # Read model.preload from settings.json directly (same key layout
+            # start.sh uses for model.model_dir)
+            settings_path = Path(self.config.settings_dir) / "settings.json"
+            if settings_path.exists():
+                try:
+                    raw = _json.loads(settings_path.read_text())
+                    model_cfg = raw.get("model", {})
+                    if isinstance(model_cfg, dict):
+                        preload_val = model_cfg.get("preload")
+                        if isinstance(preload_val, list):
+                            preload_str = ",".join(preload_val)
+                        elif isinstance(preload_val, str):
+                            preload_str = preload_val
+                except Exception as e:
+                    logger.debug("Failed to read model.preload from settings: %s", e)
+        if not preload_str:
+            return
+
+        model_ids = [m.strip() for m in preload_str.split(",") if m.strip()]
+        if not model_ids:
+            return
+
+        _server_state["preloading"] = True
+        logger.info("Preloading %d model(s): %s", len(model_ids), model_ids)
+
+        loaded = []
+        failed = []
+        for model_id in model_ids:
+            try:
+                resolved = resolve_model_id(model_id)
+                engine = await self.pool.get_engine(resolved)
+                loaded.append(model_id)
+                logger.info(
+                    "Preloaded model %s (resolved=%s, engine=%s)",
+                    model_id,
+                    resolved,
+                    type(engine).__name__,
+                )
+            except Exception as e:
+                failed.append(model_id)
+                logger.error(
+                    "Failed to preload model %s: %s: %s",
+                    model_id,
+                    type(e).__name__,
+                    e,
+                )
+
+        _server_state["preloading"] = False
+        if loaded:
+            logger.info("Preload complete: %d loaded, %d failed", len(loaded), len(failed))
+        if failed:
+            logger.warning("Preload failures: %s", failed)
 
 
 def _available_ram_mb() -> int:

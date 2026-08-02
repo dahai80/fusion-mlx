@@ -22,13 +22,15 @@ async def health():
     from ..server import _server_state
 
     pool = _server_state.get("engine_pool")
+    preloading = _server_state.get("preloading", False)
     model_loaded = pool is not None and pool.loaded_model_count > 0
     loaded_models = []
     if pool:
         loaded_models = pool.get_loaded_model_ids()
+    ready = pool is not None and not preloading
     return {
-        "status": "healthy",
-        "ready": pool is not None,
+        "status": "preloading" if preloading else "healthy",
+        "ready": ready,
         "model_loaded": model_loaded,
         "loaded_models": loaded_models,
     }
@@ -39,8 +41,11 @@ async def health_ready():
     from ..server import _server_state
 
     pool = _server_state.get("engine_pool")
+    preloading = _server_state.get("preloading", False)
     if pool is None or pool.loaded_model_count == 0:
         raise HTTPException(status_code=503, detail="model loading")
+    if preloading:
+        raise HTTPException(status_code=503, detail="preloading models")
     return {"ready": True}
 
 
@@ -50,11 +55,21 @@ async def healthz():
 
     pool = _server_state.get("engine_pool")
     draining = _server_state.get("draining", False)
+    preloading = _server_state.get("preloading", False)
     if draining:
         return JSONResponse(
             status_code=503,
             content={
                 "status": "draining",
+                "ready": False,
+                "model_loaded": pool is not None and pool.loaded_model_count > 0,
+            },
+        )
+    if preloading:
+        return JSONResponse(
+            status_code=503,
+            content={
+                "status": "preloading",
                 "ready": False,
                 "model_loaded": pool is not None and pool.loaded_model_count > 0,
             },
