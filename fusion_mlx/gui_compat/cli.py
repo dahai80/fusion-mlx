@@ -78,7 +78,7 @@ def start(
 
     # Get port and host from database settings, allow CLI overrides
     actual_port = (
-        port if port is not None else db_manager.get_setting("server_port", 8000)
+        port if port is not None else db_manager.get_setting("server_port", 11434)
     )
 
     # Handle host setting - check bind_to_all_interfaces setting
@@ -361,7 +361,7 @@ def tray(
     # Get port and host from database settings, allow CLI overrides
     db_manager = get_database_manager()
     actual_port = (
-        port if port is not None else db_manager.get_setting("server_port", 8000)
+        port if port is not None else db_manager.get_setting("server_port", 11434)
     )
 
     # Handle host setting - check bind_to_all_interfaces setting

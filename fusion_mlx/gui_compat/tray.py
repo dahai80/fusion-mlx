@@ -79,7 +79,7 @@ def _release_tray_lock():
 class MLXTrayApp(rumps.App):
     """MLX-GUI system tray application for macOS."""
 
-    def __init__(self, port: int = 8000, host: str = "127.0.0.1"):
+    def __init__(self, port: int = 11434, host: str = "127.0.0.1"):
         # Use simple text instead of icon - much cleaner!
         super().__init__("MLX", title="MLX")
         self.default_port = port
@@ -541,7 +541,7 @@ class MLXTrayApp(rumps.App):
             _release_tray_lock()
 
 
-def run_tray_app(port: int = 8000, host: str = "127.0.0.1"):
+def run_tray_app(port: int = 11434, host: str = "127.0.0.1"):
     """Run the MLX-GUI tray application."""
     # Check for existing tray instance
     if not _acquire_tray_lock():
@@ -585,5 +585,5 @@ if __name__ == "__main__":
 
     logging.basicConfig(level=logging.INFO)
 
-    port = int(sys.argv[1]) if len(sys.argv) > 1 else 8000
+    port = int(sys.argv[1]) if len(sys.argv) > 1 else 11434
     run_tray_app(port=port)

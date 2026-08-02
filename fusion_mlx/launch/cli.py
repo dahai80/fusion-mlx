@@ -284,15 +284,15 @@ def register(subparsers) -> None:
     p.add_argument(
         "--server-url",
         type=str,
-        default="http://127.0.0.1:8000",
-        help="fusion-mlx server URL the client will route at (default: http://127.0.0.1:8000)",
+        default="http://127.0.0.1:11434",
+        help="fusion-mlx server URL the client will route at (default: http://127.0.0.1:11434)",
     )
     p.add_argument(
         "--port",
         type=_port_arg,
-        default=8000,
+        default=11434,
         help=(
-            "Port for --start-server (default: 8000). Must be in "
+            "Port for --start-server (default: 11434). Must be in "
             "[1, 65535]. Ignored when --start-server is not set."
         ),
     )

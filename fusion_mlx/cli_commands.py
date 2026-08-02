@@ -217,7 +217,7 @@ def models_command(args):
         return
 
     host = getattr(args, "host", None) or "localhost"
-    port = int(getattr(args, "port", None) or 8000)
+    port = int(getattr(args, "port", None) or 11434)
     base = f"http://{host}:{port}"
 
     data = None
@@ -244,7 +244,7 @@ def models_command(args):
                     candidates.append(f"http://{s_host}:{s_port}")
             except (ValueError, OSError):
                 pass
-        for p in (8000, 11434, 11435, 8001, 3000):
+        for p in (11434, 11435, 8000, 8001, 3000):
             if p != port:
                 candidates.append(f"http://localhost:{p}")
         for cand in candidates:
@@ -519,7 +519,7 @@ def ps_command(_args):
             "--gpu-memory-utilization",
         }
         model = "(unknown)"
-        port = "8000"  # serve's default
+        port = "11434"  # serve's default
         try:
             i = cmd.index("serve") + 1
             # Pre-PR this loop ``break``ed on the first positional, so a

@@ -864,11 +864,11 @@ def _serve_from_model_dir(args):
 
     host = getattr(args, "host", "0.0.0.0") or "0.0.0.0"
     # Honor an explicit --port 0 (OS-assigned ephemeral port, valid for
-    # uvicorn). `or 8000` would collapse 0 -> 8000 since 0 is falsy, so only
+    # uvicorn). `or 11434` would collapse 0 -> 11434 since 0 is falsy, so only
     # fall back to the default when the flag was not provided at all.
     # (code-review #75)
     port_raw = getattr(args, "port", None)
-    port = 8000 if port_raw is None else int(port_raw)
+    port = 11434 if port_raw is None else int(port_raw)
     config = ServerConfig(host=host, port=port, model_dir=args.model_dir)
 
     logger.info(
@@ -1346,9 +1346,9 @@ def serve_command(args):
         return _serve_from_model_dir(args)
     if not getattr(args, "model", None):
         print("Error: serve requires a model or --model-dir/--base-path <dir>.")
-        print("  fusion-mlx serve --model Qwen3-4B-Q4_K_M --port 8000")
+        print("  fusion-mlx serve --model Qwen3-4B-Q4_K_M --port 11434")
         print("  fusion-mlx serve --model-dir ~/.fusion-mlx/models --port 11435")
-        print("  fusion-mlx serve --base-path ~/.fusion-mlx --port 8000")
+        print("  fusion-mlx serve --base-path ~/.fusion-mlx --port 11434")
         sys.exit(1)
 
     _arg_max_tokens = getattr(args, "max_tokens", None)

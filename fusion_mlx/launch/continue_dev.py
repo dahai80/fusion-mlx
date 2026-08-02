@@ -5,7 +5,7 @@ Continue.dev (VS Code and JetBrains extension) reads its config from
 ``~/.continue/config.json``. The relevant shape is a list of model
 entries under the top-level ``models`` key, each one describing a
 provider + base URL + model id. Pointing one of those entries at
-``http://127.0.0.1:8000/v1`` is all that's required for Continue to
+``http://127.0.0.1:11434/v1`` is all that's required for Continue to
 route chat at the local fusion-mlx server.
 
 We append (rather than replace) the entry so a user with several

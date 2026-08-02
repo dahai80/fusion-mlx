@@ -54,7 +54,7 @@ class DatabaseManager:
 
     def _insert_default_settings(self):
         default_settings = [
-            ("server_port", 8000, "Default server port"),
+            ("server_port", 11434, "Default server port"),
             ("max_concurrent_requests", 5, "Maximum concurrent inference requests"),
             (
                 "max_concurrent_requests_per_model",

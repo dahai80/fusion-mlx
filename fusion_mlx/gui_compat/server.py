@@ -944,7 +944,7 @@ def main():
 
     pa = argparse.ArgumentParser()
     pa.add_argument("--host", default="0.0.0.0")
-    pa.add_argument("--port", type=int, default=8000)
+    pa.add_argument("--port", type=int, default=11434)
     args = pa.parse_args()
     fmt = "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
     LOGGING_CONFIG["formatters"]["default"]["format"] = fmt

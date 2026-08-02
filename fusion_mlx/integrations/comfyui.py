@@ -43,7 +43,7 @@ def _call_fusion_mlx(payload):
     import numpy as np
     from PIL import Image
 
-    mlx_url = os.environ.get("FUSION_MLX_URL", "http://127.0.0.1:8000")
+    mlx_url = os.environ.get("FUSION_MLX_URL", "http://127.0.0.1:11434")
     url = f"{mlx_url}/v1/images/generate"
 
     req = urllib.request.Request(
