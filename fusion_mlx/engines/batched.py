@@ -294,7 +294,7 @@ class BatchedEngine(BaseEngine):
 
         def _load_model_sync():
             start = time.monotonic()
-            logger.info("Loading model: %s", self._model_name)
+            logger.info("Loading model: %s (trust_remote_code=%s)", self._model_name, self._trust_remote_code)
             load_kwargs = {"tokenizer_config": tokenizer_config}
             if self._lora_path:
                 load_kwargs["adapter_path"] = self._lora_path

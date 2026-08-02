@@ -1040,6 +1040,7 @@ class Server:
             logger.warning("Failed to initialize ModelSettingsManager: %s", e)
 
         _server_state["settings_manager"] = settings_manager
+        self.pool._settings_manager = settings_manager
         _server_state["default_model"] = None  # set when a model is marked default
         # Simple namespace for sampling defaults (read by admin helpers)
         import types

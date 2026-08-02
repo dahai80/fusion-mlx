@@ -143,11 +143,14 @@ async def download_status(
     tasks = dl.get_tasks()
     task = next((t for t in tasks if t.get("task_id") == task_id), None)
     if task and task.get("status") == "completed":
-        hf_dir = task.get("output_path", "")
-        if hf_dir:
-            meta["hf_dir"] = hf_dir
-            with open(meta_path, "w") as f:
-                json.dump(meta, f, indent=2)
+        hf_id = meta.get("hf_id", "")
+        if hf_id and not meta.get("hf_dir"):
+            model_dir = os.path.expanduser("~/.fusion-mlx/models")
+            candidate = os.path.join(model_dir, hf_id)
+            if os.path.isdir(candidate):
+                meta["hf_dir"] = candidate
+                with open(meta_path, "w") as f:
+                    json.dump(meta, f, indent=2)
 
     return {"success": True, "migration_id": migration_id, "task": task}
 
@@ -157,8 +160,7 @@ async def convert_weights(
     request: MigrateConvertRequest,
     is_admin: bool = Depends(require_admin),
 ):
-    from ..migrate.analyzer import analyze_model
-    from ..migrate.architectures import match_template
+    from ..migrate.architectures import HF_ARCH_TO_TEMPLATE, KNOWN_TEMPLATES, match_template
     from ..migrate.converter import convert_model
 
     mdir = _migration_dir(request.migration_id)
@@ -171,21 +173,27 @@ async def convert_weights(
     with open(meta_path) as f:
         meta = json.load(f)
 
-    hf_id = meta.get("hf_id", "")
     hf_dir = meta.get("hf_dir", "")
     if not hf_dir or not os.path.isdir(hf_dir):
         raise HTTPException(status_code=400, detail="HF weights not downloaded yet")
 
     try:
-        analysis = await asyncio.to_thread(analyze_model, hf_id)
-        template, diff = match_template(analysis.model_type, analysis.config)
+        config_path = os.path.join(hf_dir, "config.json")
+        if not os.path.exists(config_path):
+            raise HTTPException(status_code=400, detail="config.json not found in HF dir")
+        with open(config_path) as f:
+            hf_config = json.load(f)
+
+        arch_list = hf_config.get("architectures", [])
+        arch_name = arch_list[0] if arch_list else hf_config.get("model_type", "")
+        template, diff = match_template(arch_name, hf_config)
 
         output_dir = os.path.join(mdir, "mlx_model")
         result = await asyncio.to_thread(
             convert_model,
             hf_dir,
             output_dir,
-            analysis.config,
+            hf_config,
             template,
             quant_bits=request.quant_bits,
             quant_group_size=request.quant_group_size,
@@ -198,6 +206,8 @@ async def convert_weights(
             json.dump(meta, f, indent=2)
 
         return {"success": True, "result": asdict(result)}
+    except HTTPException:
+        raise
     except Exception as e:
         logger.exception("Convert failed for migration %s", request.migration_id)
         raise HTTPException(status_code=400, detail=str(e))
@@ -208,7 +218,6 @@ async def codegen(
     request: MigrateCodegenRequest,
     is_admin: bool = Depends(require_admin),
 ):
-    from ..migrate.analyzer import analyze_model
     from ..migrate.architectures import KNOWN_TEMPLATES, match_template
     from ..migrate.codegen import generate_model_code
 
@@ -222,26 +231,47 @@ async def codegen(
     with open(meta_path) as f:
         meta = json.load(f)
 
-    hf_id = meta.get("hf_id", "")
     template_name = meta.get("template", "")
+    hf_dir = meta.get("hf_dir", "")
 
     try:
-        analysis = await asyncio.to_thread(analyze_model, hf_id)
         template = KNOWN_TEMPLATES.get(template_name)
         if template is None:
-            template, _ = match_template(analysis.model_type, analysis.config)
+            config_path = os.path.join(hf_dir, "config.json") if hf_dir else ""
+            if not config_path or not os.path.exists(config_path):
+                raise HTTPException(status_code=400, detail="Cannot resolve template: no config.json")
+            with open(config_path) as f:
+                hf_config = json.load(f)
+            arch_list = hf_config.get("architectures", [])
+            arch_name = arch_list[0] if arch_list else hf_config.get("model_type", "")
+            template, _ = match_template(arch_name, hf_config)
+
+        if hf_dir and os.path.exists(os.path.join(hf_dir, "config.json")):
+            with open(os.path.join(hf_dir, "config.json")) as f:
+                hf_config = json.load(f)
+        else:
+            hf_config = {}
 
         output_dir = os.path.join(mdir, "codegen")
         result = await asyncio.to_thread(
             generate_model_code,
             template,
-            analysis.config,
+            hf_config,
             output_dir,
         )
 
         meta["codegen_dir"] = output_dir
         with open(meta_path, "w") as f:
             json.dump(meta, f, indent=2)
+
+        # Copy generated model .py to mlx_model dir so mlx_lm can load it
+        mlx_dir = meta.get("mlx_dir", "")
+        if mlx_dir and os.path.isdir(mlx_dir):
+            for gen_file in result.files_generated:
+                if gen_file.endswith(".py"):
+                    dest = os.path.join(mlx_dir, os.path.basename(gen_file))
+                    shutil.copy2(gen_file, dest)
+                    logger.info("Copied %s → %s", gen_file, dest)
 
         return {"success": True, "result": asdict(result)}
     except Exception as e:

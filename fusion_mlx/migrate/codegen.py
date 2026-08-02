@@ -25,89 +25,108 @@ class CodegenResult:
     error: str | None = None
 
 
-def _build_imports(template: ArchTemplate) -> str:
+def _build_model_args(template: ArchTemplate, config: dict) -> str:
+    defaults = {
+        "num_hidden_layers": config.get("num_hidden_layers", 0),
+        "hidden_size": config.get("hidden_size", 0),
+        "intermediate_size": config.get("intermediate_size", 0),
+        "num_attention_heads": config.get("num_attention_heads", 0),
+        "num_key_value_heads": config.get(
+            "num_key_value_heads", config.get("num_attention_heads", 0)
+        ),
+        "rms_norm_eps": config.get("rms_norm_eps", 1e-6),
+        "vocab_size": config.get("vocab_size", 0),
+        "tie_word_embeddings": config.get("tie_word_embeddings", False),
+    }
+    rope_theta = config.get("rope_theta", 10000.0)
+    max_pos = config.get("max_position_embeddings", 32768)
+
     lines = [
-        "import math",
+        "from dataclasses import dataclass",
+        "from typing import Optional",
         "",
         "import mlx.core as mx",
         "import mlx.nn as nn",
+        "from mlx_lm.models.base import BaseModelArgs",
+        "from mlx_lm.models.llama import initialize_rope, scaled_dot_product_attention, create_attention_mask",
         "",
-        "from mlx.utils import checkpoint",
+        "",
+        "@dataclass",
+        "class ModelArgs(BaseModelArgs):",
+        f'    model_type: str = "{template.name}"',
     ]
-    if template.has_qkv_bias:
-        lines.append("")
-        lines.append("from typing import Optional")
+    for k, v in defaults.items():
+        if isinstance(v, bool):
+            lines.append(f"    {k}: bool = {v}")
+        elif isinstance(v, float):
+            lines.append(f"    {k}: float = {v}")
+        elif isinstance(v, int):
+            lines.append(f"    {k}: int = {v}")
+    lines.append(f"    rope_theta: float = {rope_theta}")
+    lines.append(f"    rope_traditional: bool = False")
+    lines.append(f"    rope_scaling: Optional[dict] = None")
+    lines.append(f"    max_position_embeddings: int = {max_pos}")
+    if template.has_bias:
+        lines.append(f"    bias: bool = True")
+    if template.has_mlp_bias:
+        lines.append(f"    mlp_bias: bool = True")
     return "\n".join(lines)
 
 
-def _build_attention_class(template: ArchTemplate, config: dict) -> str:
-    bias_lines = ""
-    if template.has_bias:
-        bias_lines = """
-        self.q_proj = nn.Linear(args.hidden_size, args.num_attention_heads * self.head_dim, bias=True)
-        self.k_proj = nn.Linear(args.hidden_size, args.num_key_value_heads * self.head_dim, bias=True)
-        self.v_proj = nn.Linear(args.hidden_size, args.num_key_value_heads * self.head_dim, bias=True)
-        self.o_proj = nn.Linear(args.num_attention_heads * self.head_dim, args.hidden_size, bias=True)"""
-    else:
-        bias_lines = """
-        self.q_proj = nn.Linear(args.hidden_size, args.num_attention_heads * self.head_dim, bias=False)
-        self.k_proj = nn.Linear(args.hidden_size, args.num_key_value_heads * self.head_dim, bias=False)
-        self.v_proj = nn.Linear(args.hidden_size, args.num_key_value_heads * self.head_dim, bias=False)
-        self.o_proj = nn.Linear(args.num_attention_heads * self.head_dim, args.hidden_size, bias=False)"""
-
+def _build_attention_class(template: ArchTemplate) -> str:
+    attn_bias = "True" if template.has_bias else "False"
     code = f"""
 
 class Attention(nn.Module):
-    def __init__(self, args):
+    def __init__(self, args: ModelArgs):
         super().__init__()
-        self.num_attention_heads = args.num_attention_heads
-        self.num_key_value_heads = args.num_key_value_heads
+        self.n_heads = args.num_attention_heads
+        self.n_kv_heads = args.num_key_value_heads
         self.head_dim = args.hidden_size // args.num_attention_heads
         self.scale = self.head_dim ** -0.5
-{bias_lines}
+        self.q_proj = nn.Linear(args.hidden_size, self.n_heads * self.head_dim, bias={attn_bias})
+        self.k_proj = nn.Linear(args.hidden_size, self.n_kv_heads * self.head_dim, bias={attn_bias})
+        self.v_proj = nn.Linear(args.hidden_size, self.n_kv_heads * self.head_dim, bias={attn_bias})
+        self.o_proj = nn.Linear(self.n_heads * self.head_dim, args.hidden_size, bias={attn_bias})
+        self.rope = initialize_rope(
+            self.head_dim,
+            args.rope_theta,
+            args.rope_traditional,
+            args.rope_scaling,
+            args.max_position_embeddings,
+        )
 
     def __call__(self, x, mask=None, cache=None):
-        B, L, _ = x.shape
-        q = self.q_proj(x)
-        k = self.k_proj(x)
-        v = self.v_proj(x)
-        q = q.reshape(B, L, self.num_attention_heads, self.head_dim).transpose(0, 2, 1, 3)
-        k = k.reshape(B, L, self.num_key_value_heads, self.head_dim).transpose(0, 2, 1, 3)
-        v = v.reshape(B, L, self.num_key_value_heads, self.head_dim).transpose(0, 2, 1, 3)
+        B, L, D = x.shape
+        queries = self.q_proj(x).reshape(B, L, self.n_heads, -1).transpose(0, 2, 1, 3)
+        keys = self.k_proj(x).reshape(B, L, self.n_kv_heads, -1).transpose(0, 2, 1, 3)
+        values = self.v_proj(x).reshape(B, L, self.n_kv_heads, -1).transpose(0, 2, 1, 3)
         if cache is not None:
-            k = mx.concatenate([cache[0], k], axis=2)
-            v = mx.concatenate([cache[1], v], axis=2)
-        new_cache = (k, v)
-        if self.num_key_value_heads < self.num_attention_heads:
-            reps = self.num_attention_heads // self.num_key_value_heads
-            k = mx.repeat(k, reps, axis=1)
-            v = mx.repeat(v, reps, axis=1)
-        attn = (q * self.scale) @ k.transpose(0, 1, 3, 2)
-        if mask is not None:
-            attn = attn + mask
-        attn = mx.softmax(attn, axis=-1)
-        out = (attn @ v).transpose(0, 2, 1, 3).reshape(B, L, -1)
-        return self.o_proj(out), new_cache"""
+            queries = self.rope(queries, offset=cache.offset)
+            keys = self.rope(keys, offset=cache.offset)
+            keys, values = cache.update_and_fetch(keys, values)
+        else:
+            queries = self.rope(queries)
+            keys = self.rope(keys)
+        output = scaled_dot_product_attention(queries, keys, values, cache=cache, scale=self.scale, mask=mask)
+        output = output.transpose(0, 2, 1, 3).reshape(B, L, -1)
+        return self.o_proj(output)"""
     return code
 
 
 def _build_mlp_class(template: ArchTemplate) -> str:
     bias = "True" if template.has_mlp_bias else "False"
-    activation = (
-        "nn.silu" if template.activation == "silu" else f"nn.{template.activation}"
-    )
-
     code = f"""
 
 class MLP(nn.Module):
-    def __init__(self, args):
+    def __init__(self, args: ModelArgs):
         super().__init__()
         self.gate_proj = nn.Linear(args.hidden_size, args.intermediate_size, bias={bias})
         self.up_proj = nn.Linear(args.hidden_size, args.intermediate_size, bias={bias})
         self.down_proj = nn.Linear(args.intermediate_size, args.hidden_size, bias={bias})
 
     def __call__(self, x):
-        return self.down_proj({activation}(self.gate_proj(x)) * self.up_proj(x))"""
+        return self.down_proj(nn.silu(self.gate_proj(x)) * self.up_proj(x))"""
     return code
 
 
@@ -115,7 +134,7 @@ def _build_transformer_block(template: ArchTemplate) -> str:
     code = """
 
 class TransformerBlock(nn.Module):
-    def __init__(self, args):
+    def __init__(self, args: ModelArgs):
         super().__init__()
         self.self_attn = Attention(args)
         self.mlp = MLP(args)
@@ -123,47 +142,45 @@ class TransformerBlock(nn.Module):
         self.post_attention_layernorm = nn.RMSNorm(args.hidden_size, eps=args.rms_norm_eps)
 
     def __call__(self, x, mask=None, cache=None):
-        h, new_cache = self.self_attn(self.input_layernorm(x), mask=mask, cache=cache)
+        h = self.self_attn(self.input_layernorm(x), mask=mask, cache=cache)
         x = x + h
         x = x + self.mlp(self.post_attention_layernorm(x))
-        return x, new_cache"""
+        return x"""
     return code
 
 
 def _build_model_class(template: ArchTemplate, config: dict) -> str:
     tie = config.get("tie_word_embeddings", False)
-    tie_comment = "  # tied with embed_tokens" if tie else ""
-
+    lm_head_bias = "True" if template.has_bias else "False"
     if tie:
-        lm_head_line = "        self.lm_head = self.embed_tokens"
-    elif template.has_bias:
-        lm_head_line = "        self.lm_head = nn.Linear(args.hidden_size, args.vocab_size, bias=True)"
+        lm_head_section = ""
+        call_section = """        if self.args.tie_word_embeddings:
+            return self.embed_tokens.as_linear(h)
+        return self.lm_head(h)"""
     else:
-        lm_head_line = "        self.lm_head = nn.Linear(args.hidden_size, args.vocab_size, bias=False)"
-    lm_head_line += tie_comment
+        lm_head_section = f"        self.lm_head = nn.Linear(args.hidden_size, args.vocab_size, bias={lm_head_bias})"
+        call_section = "        return self.lm_head(h)"
 
     code = f"""
 
 class Model(nn.Module):
-    def __init__(self, args):
+    def __init__(self, args: ModelArgs):
         super().__init__()
+        self.args = args
         self.embed_tokens = nn.Embedding(args.vocab_size, args.hidden_size)
         self.layers = [TransformerBlock(args) for _ in range(args.num_hidden_layers)]
         self.norm = nn.RMSNorm(args.hidden_size, eps=args.rms_norm_eps)
-{lm_head_line}
+{lm_head_section}
 
     def __call__(self, inputs, cache=None):
         h = self.embed_tokens(inputs)
-        mask = None
-        if h.shape[1] > 1:
-            mask = nn.MultiHeadAttention.create_additive_causal_mask(h.shape[1])
-            mask = mask.astype(h.dtype)
-        new_caches = []
+        if cache is None:
+            cache = [None] * len(self.layers)
+        mask = create_attention_mask(h, cache[0])
         for i, layer in enumerate(self.layers):
-            c = cache[i] if cache is not None else None
-            h, new_cache = layer(h, mask=mask, cache=c)
-            new_caches.append(new_cache)
-        return self.lm_head(self.norm(h)), new_caches"""
+            h = layer(h, mask, cache=cache[i])
+        h = self.norm(h)
+{call_section}"""
     return code
 
 
@@ -177,13 +194,13 @@ def generate_model_code(
     try:
         os.makedirs(output_dir, exist_ok=True)
 
-        imports = _build_imports(template)
-        attention = _build_attention_class(template, config)
+        model_args = _build_model_args(template, config)
+        attention = _build_attention_class(template)
         mlp = _build_mlp_class(template)
         block = _build_transformer_block(template)
         model = _build_model_class(template, config)
 
-        model_py = imports + attention + mlp + block + model + "\n"
+        model_py = model_args + attention + mlp + block + model + "\n"
         model_path = os.path.join(output_dir, f"{template.name}.py")
         with open(model_path, "w") as f:
             f.write(model_py)
@@ -192,6 +209,7 @@ def generate_model_code(
 
         mlx_config = {
             "model_type": template.name,
+            "model_file": f"{template.name}.py",
             "num_hidden_layers": config.get("num_hidden_layers", 0),
             "hidden_size": config.get("hidden_size", 0),
             "intermediate_size": config.get("intermediate_size", 0),
@@ -205,6 +223,8 @@ def generate_model_code(
         }
         if config.get("rope_theta"):
             mlx_config["rope_theta"] = config["rope_theta"]
+        if config.get("max_position_embeddings"):
+            mlx_config["max_position_embeddings"] = config["max_position_embeddings"]
         if template.has_bias:
             mlx_config["bias"] = True
         if template.has_mlp_bias:
@@ -227,7 +247,7 @@ def list_model_files(template: ArchTemplate, config: dict) -> list[str]:
     files = [
         f"{template.name}.py",
         "config.json",
-        "weights.npz",
+        "model.safetensors",
     ]
     for tok in ("tokenizer.json", "tokenizer.model", "tokenizer_config.json"):
         files.append(tok)

@@ -34,7 +34,7 @@ def validate_model(
         from mlx_lm import generate, load
 
         logger.info("Loading model from %s", model_dir)
-        model, tokenizer = load(model_dir)
+        model, tokenizer = load(model_dir, tokenizer_config={"trust_remote_code": True})
 
         logger.info("Generating with prompt: %s (max_tokens=%d)", prompt, max_tokens)
         t0 = time.time()

@@ -45,7 +45,13 @@ def _hf_file_url(hf_id: str, filename: str, mirror: bool = False) -> str:
 
 def _fetch_json(url: str, timeout: int = 30) -> dict | None:
     try:
-        req = Request(url, headers={"Accept": "application/json"})
+        req = Request(
+            url,
+            headers={
+                "Accept": "application/json",
+                "User-Agent": "fusion-mlx/migrate",
+            },
+        )
         with urlopen(req, timeout=timeout) as resp:
             return json.loads(resp.read().decode())
     except HTTPError as e:

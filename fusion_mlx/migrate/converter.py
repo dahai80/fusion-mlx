@@ -39,12 +39,35 @@ def _load_hf_weights(hf_dir: str) -> dict[str, mx.array]:
     weights = {}
     for fname in sorted(Path(hf_dir).glob("*.safetensors")):
         logger.info("Loading %s", fname.name)
-        with safe_open(str(fname), framework="numpy") as f:
-            for key in f:
-                arr = f.get_tensor(key)
-                weights[key] = mx.array(arr)
+        f = safe_open(str(fname), framework="pt")
+        import torch
+
+        for key in f.keys():
+            t = f.get_tensor(key)
+            if isinstance(t, torch.Tensor):
+                if t.dtype == torch.bfloat16:
+                    t = t.float()
+                arr = t.numpy()
+            else:
+                arr = np.asarray(t, dtype=np.float32)
+            weights[key] = mx.array(arr)
+            del t
+        del f
     logger.info("Loaded %d tensors from %s", len(weights), hf_dir)
     return weights
+
+
+def _save_weights_safetensors(weights: dict[str, mx.array], output_dir: str):
+    from safetensors.numpy import save_file
+
+    np_weights = {}
+    for name, tensor in weights.items():
+        arr = np.array(tensor)
+        if arr.dtype == np.float16:
+            arr = arr.astype(np.float32)
+        np_weights[name] = arr
+    save_file(np_weights, os.path.join(output_dir, "model.safetensors"))
+    del np_weights
 
 
 def _remap_weights(
@@ -68,8 +91,6 @@ def _quantize_weights(
     if quant_bits <= 0:
         return weights
 
-    from mlx.utils import quantize as mlx_quantize
-
     quantized = {}
     skip_patterns = ("norm.weight", "embed_tokens.weight", "lm_head.weight")
 
@@ -78,16 +99,21 @@ def _quantize_weights(
             quantized[name] = tensor
             continue
 
+        base_name = name
+        if base_name.endswith(".weight"):
+            base_name = base_name[: -len(".weight")]
+
         try:
-            q_names, q_weights = mlx_quantize(
-                {name: tensor},
+            q_weight, q_scale, q_bias = mx.quantize(
+                tensor,
                 group_size=quant_group_size,
                 bits=quant_bits,
             )
-            for qn, qw in zip(q_names, q_weights):
-                quantized[qn] = qw
+            quantized[base_name + ".weight"] = q_weight
+            quantized[base_name + ".scales"] = q_scale
+            quantized[base_name + ".biases"] = q_bias
         except Exception:
-            logger.warning("Quantize failed for %s, keeping bf16", name)
+            logger.warning("Quantize failed for %s, keeping fp16", name)
             quantized[name] = tensor
 
     return quantized
@@ -99,6 +125,7 @@ def _build_mlx_config(
 ) -> dict:
     mlx_config = {
         "model_type": template.name,
+        "model_file": f"{template.name}.py",
         "num_hidden_layers": hf_config.get(
             "num_hidden_layers", hf_config.get("n_layer", 0)
         ),
@@ -180,10 +207,9 @@ def convert_model(
             json.dump(mlx_config, f, indent=2)
         logger.info("Wrote config.json to %s", output_dir)
 
-        weights_path = os.path.join(output_dir, "weights.npz")
-        mx.savez(weights_path, **mlx_weights)
+        _save_weights_safetensors(mlx_weights, output_dir)
         logger.info(
-            "Wrote weights.npz (%d tensors) to %s", len(mlx_weights), output_dir
+            "Wrote weights (%d tensors) to %s", len(mlx_weights), output_dir
         )
 
         tokenizer_src = Path(hf_dir)
@@ -198,6 +224,9 @@ def convert_model(
             if src.exists():
                 shutil.copy2(str(src), os.path.join(output_dir, tok_name))
                 logger.info("Copied %s", tok_name)
+        for custom_tok in sorted(tokenizer_src.glob("tokenization_*.py")):
+            shutil.copy2(str(custom_tok), os.path.join(output_dir, custom_tok.name))
+            logger.info("Copied custom tokenizer %s", custom_tok.name)
 
         result.num_weights = len(mlx_weights)
         total_elements = sum(np.prod(w.shape) for w in mlx_weights.values())
