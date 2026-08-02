@@ -158,6 +158,7 @@ class TestMCPClientStatus:
             name="error-server",
             transport=MCPTransport.STDIO,
             command="bad",
+            skip_security_validation=True,
         )
         client = MCPClient(config)
         client._state = MCPServerState.ERROR
@@ -446,16 +447,12 @@ class TestMCPClientDisconnect:
         client._state = MCPServerState.CONNECTED
         client._session = AsyncMock()
         mock_streamable_http = AsyncMock()
-        mock_http_client = AsyncMock()
         client._streamable_http_client = mock_streamable_http
-        client._http_client = mock_http_client
 
         await client.disconnect()
 
         mock_streamable_http.__aexit__.assert_called_once()
-        mock_http_client.__aexit__.assert_called_once()
         assert client._streamable_http_client is None
-        assert client._http_client is None
 
     @pytest.mark.asyncio
     async def test_connect_failure_cleans_up_resources(self):
@@ -502,7 +499,6 @@ class TestMCPClientDisconnect:
         )
         client = MCPClient(config)
 
-        mock_http_client = AsyncMock()
         mock_streamable = AsyncMock()
 
         with (
@@ -515,7 +511,6 @@ class TestMCPClientDisconnect:
         ):
 
             async def setup_and_fail():
-                client._http_client = mock_http_client
                 client._streamable_http_client = mock_streamable
                 client._session = AsyncMock()
                 raise RuntimeError("Connection failed midway")
@@ -526,7 +521,6 @@ class TestMCPClientDisconnect:
 
         assert result is False
         # Resources should be cleaned up via _cleanup_resources
-        assert client._http_client is None
         assert client._streamable_http_client is None
 
 
@@ -575,7 +569,7 @@ class TestMCPClientCallTool:
     @pytest.mark.asyncio
     async def test_call_tool_success(self, connected_client: MCPClient):
         """Test successful tool call."""
-        mock_result = MagicMock()
+        mock_result = MagicMock(spec=["content", "isError"])
         mock_result.content = [MagicMock(text="Tool output")]
         mock_result.isError = False
         connected_client._session.call_tool.return_value = mock_result
@@ -627,7 +621,7 @@ class TestMCPClientCallTool:
     @pytest.mark.asyncio
     async def test_call_tool_multiple_content_items(self, connected_client: MCPClient):
         """Test tool call with multiple content items."""
-        mock_result = MagicMock()
+        mock_result = MagicMock(spec=["content", "isError"])
         mock_result.content = [
             MagicMock(text="Line 1"),
             MagicMock(text="Line 2"),
@@ -643,10 +637,9 @@ class TestMCPClientCallTool:
     @pytest.mark.asyncio
     async def test_call_tool_data_content(self, connected_client: MCPClient):
         """Test tool call with data content."""
-        mock_result = MagicMock()
+        mock_result = MagicMock(spec=["content", "isError"])
         mock_item = MagicMock(spec=["data"])
         mock_item.data = {"key": "value"}
-        del mock_item.text  # Remove text attribute
         mock_result.content = [mock_item]
         mock_result.isError = False
         connected_client._session.call_tool.return_value = mock_result

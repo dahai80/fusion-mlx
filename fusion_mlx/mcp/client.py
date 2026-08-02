@@ -98,6 +98,8 @@ class MCPClient:
                     await self._connect_stdio()
                 elif self.config.transport == MCPTransport.SSE:
                     await self._connect_sse()
+                elif self.config.transport == MCPTransport.STREAMABLE_HTTP:
+                    await self._connect_streamable_http()
                 else:
                     raise ValueError(f"Unknown transport: {self.config.transport}")
 
@@ -119,6 +121,7 @@ class MCPClient:
                 self._state = MCPServerState.ERROR
                 self._error = str(e)
                 logger.error(f"Failed to connect to MCP server '{self.name}': {e}")
+                await self._cleanup_resources()
                 return False
 
     async def _connect_stdio(self):
@@ -141,6 +144,7 @@ class MCPClient:
             command=self.config.command,
             args=self.config.args or [],
             env=self.config.env,
+            cwd=self.config.cwd,
         )
 
         # Create stdio client context
@@ -169,6 +173,32 @@ class MCPClient:
         self._session = ClientSession(self._read, self._write)
         await self._session.__aenter__()
 
+    async def _connect_streamable_http(self):
+        """Connect via streamable HTTP transport."""
+        try:
+            from mcp import ClientSession
+            from mcp.client.streamable_http import streamable_http_client
+        except ImportError:
+            raise ImportError(
+                "MCP SDK required for MCP support. Install with: pip install mcp"
+            )
+
+        logger.info(
+            "MCP SECURITY AUDIT: Server '%s' connecting via HTTP to: %s",
+            self.name,
+            self.config.url,
+        )
+
+        # Create streamable HTTP client context
+        self._streamable_http_client = streamable_http_client(self.config.url)
+        read_stream, write_stream, _ = await self._streamable_http_client.__aenter__()
+        self._read = read_stream
+        self._write = write_stream
+
+        # Create session
+        self._session = ClientSession(self._read, self._write)
+        await self._session.__aenter__()
+
     async def _initialize_session(self):
         """Initialize the MCP session."""
         if self._session is None:
@@ -178,8 +208,8 @@ class MCPClient:
         result = await self._session.initialize()
         logger.debug(
             f"MCP server '{self.name}' initialized: "
-            f"protocol={result.protocolVersion}, "
-            f"server={result.serverInfo.name if result.serverInfo else 'unknown'}"
+            f"protocol={result.protocol_version}, "
+            f"server={result.server_info.name if result.server_info else 'unknown'}"
         )
 
     async def _discover_tools(self):
@@ -225,6 +255,10 @@ class MCPClient:
                 if hasattr(self, "_sse_client") and self._sse_client:
                     await self._sse_client.__aexit__(None, None, None)
                     self._sse_client = None
+
+                if hasattr(self, "_streamable_http_client") and self._streamable_http_client:
+                    await self._streamable_http_client.__aexit__(None, None, None)
+                    self._streamable_http_client = None
 
             except Exception as e:
                 logger.warning(f"Error disconnecting from '{self.name}': {e}")
@@ -302,6 +336,9 @@ class MCPClient:
 
     def _extract_content(self, result) -> Any:
         """Extract content from MCP tool result."""
+        if hasattr(result, "structuredContent") and result.structuredContent:
+            return result.structuredContent
+
         if not hasattr(result, "content") or not result.content:
             return None
 
@@ -319,6 +356,36 @@ class MCPClient:
         if len(contents) == 1:
             return contents[0]
         return contents
+
+    async def _cleanup_resources(self):
+        """Clean up partial resources after failed connect."""
+        try:
+            if self._session:
+                await self._session.__aexit__(None, None, None)
+                self._session = None
+        except Exception:
+            self._session = None
+
+        try:
+            if hasattr(self, "_stdio_client") and self._stdio_client:
+                await self._stdio_client.__aexit__(None, None, None)
+                self._stdio_client = None
+        except Exception:
+            self._stdio_client = None
+
+        try:
+            if hasattr(self, "_sse_client") and self._sse_client:
+                await self._sse_client.__aexit__(None, None, None)
+                self._sse_client = None
+        except Exception:
+            self._sse_client = None
+
+        try:
+            if hasattr(self, "_streamable_http_client") and self._streamable_http_client:
+                await self._streamable_http_client.__aexit__(None, None, None)
+                self._streamable_http_client = None
+        except Exception:
+            self._streamable_http_client = None
 
     async def refresh_tools(self):
         """Refresh the list of available tools."""

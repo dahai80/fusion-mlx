@@ -6,6 +6,7 @@ MCP configuration loading and validation.
 import json
 import logging
 import os
+import shutil
 from pathlib import Path
 from typing import Any
 
@@ -39,6 +40,32 @@ CONFIG_ENV_VAR_LEGACY = "RAPID_MLX_MCP_CONFIG"
 CONFIG_ENV_VAR_LEGACY2 = "VLLM_MLX_MCP_CONFIG"
 
 
+def _auto_discover_servers() -> dict[str, "MCPServerConfig"]:
+    """Auto-detect fusion-plugin-server on PATH and register it.
+
+    Disabled if FUSION_MLX_MCP_AUTO_DISCOVER=0 is set.
+    """
+    if os.environ.get("FUSION_MLX_MCP_AUTO_DISCOVER", "1") == "0":
+        return {}
+
+    from .types import MCPServerConfig, MCPTransport
+
+    servers = {}
+    if shutil.which("fusion-plugin-server"):
+        try:
+            servers["fusion-plugins"] = MCPServerConfig(
+                name="fusion-plugins",
+                transport=MCPTransport.STDIO,
+                command="fusion-plugin-server",
+                args=["--transport", "stdio"],
+                enabled=True,
+            )
+            logger.info("Auto-discovered fusion-plugin-server on PATH")
+        except ValueError as e:
+            logger.info("Auto-discovered fusion-plugin-server but rejected: %s", e)
+    return servers
+
+
 def load_mcp_config(path: str | Path | None = None) -> MCPConfig:
     """
     Load MCP configuration from file.
@@ -66,7 +93,10 @@ def load_mcp_config(path: str | Path | None = None) -> MCPConfig:
     config_path = _find_config_file(path)
 
     if config_path is None:
-        logger.info("No MCP config file found, using empty config")
+        logger.info("No MCP config file found, checking for auto-discoverable servers")
+        auto_servers = _auto_discover_servers()
+        if auto_servers:
+            return MCPConfig(servers=auto_servers)
         return MCPConfig()
 
     logger.info(f"Loading MCP config from: {config_path}")
@@ -139,8 +169,8 @@ def validate_config(data: dict[str, Any]) -> MCPConfig:
     if not isinstance(data, dict):
         raise ValueError("MCP config must be a dictionary")
 
-    # Validate servers section
-    servers_data = data.get("servers", {})
+    # Validate servers section (accept both "servers" and Claude Desktop "mcpServers")
+    servers_data = data.get("servers") or data.get("mcpServers") or {}
     if not isinstance(servers_data, dict):
         raise ValueError("'servers' must be a dictionary")
 

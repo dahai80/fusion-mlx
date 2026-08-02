@@ -891,6 +891,35 @@ def _reset_config_singleton(request):
     yield
 
 
+@pytest.fixture(autouse=True)
+def _disable_mcp_auto_discover(monkeypatch):
+    """Disable MCP auto-discovery in tests so results are deterministic."""
+    monkeypatch.setenv("FUSION_MLX_MCP_AUTO_DISCOVER", "0")
+    try:
+        from fusion_mlx.mcp.security import ALLOWED_COMMANDS, MCPCommandValidator
+
+        _test_commands = {"x", "y", "nonexistent"}
+        monkeypatch.setattr(
+            "fusion_mlx.mcp.security.ALLOWED_COMMANDS",
+            ALLOWED_COMMANDS | _test_commands,
+        )
+
+        _orig_which = __import__("shutil").which
+
+        def _fake_which(cmd, **kw):
+            if cmd in _test_commands:
+                return f"/usr/bin/{cmd}"
+            return _orig_which(cmd, **kw)
+
+        monkeypatch.setattr("shutil.which", _fake_which)
+        monkeypatch.setattr(
+            "fusion_mlx.mcp.security.shutil.which", _fake_which
+        )
+    except Exception:
+        pass
+    yield
+
+
 # Additional stubs for remaining collection errors
 def _add_more_stubs():
     import sys

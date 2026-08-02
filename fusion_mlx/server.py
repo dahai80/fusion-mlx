@@ -567,6 +567,34 @@ def get_server() -> "Server | None":
     return _server_instance
 
 
+async def init_mcp(config_path: str | None = None):
+    """Initialize MCP manager from config path (standalone, test-friendly).
+
+    Loads config, creates MCPClientManager, starts it, and wires the
+    getter into mcp_routes. Safe to call multiple times — replaces the
+    previous manager if any.
+    """
+    from .api.mcp_routes import set_mcp_manager_getter
+    from .mcp import MCPClientManager, load_mcp_config
+
+    try:
+        mcp_config = load_mcp_config(config_path)
+        if not mcp_config.servers:
+            logger.info("init_mcp: no servers configured")
+            return
+        manager = MCPClientManager(mcp_config)
+        await manager.start()
+        set_mcp_manager_getter(lambda: manager)
+        _server_state["mcp_manager"] = manager
+        logger.info("init_mcp: %d servers started", len(mcp_config.servers))
+    except FileNotFoundError:
+        logger.info("init_mcp: config not found at %s", config_path)
+    except ImportError as e:
+        logger.info("init_mcp: MCP SDK not installed: %s", e)
+    except Exception as e:
+        logger.warning("init_mcp: failed: %s", e)
+
+
 class Server:
     """Main fusion-mlx server with engine pool, routing, and API endpoints."""
 
@@ -1075,7 +1103,31 @@ class Server:
         set_videos_context(self.pool)
         set_audio_context(self.pool)
         set_openclaw_agent_pool(self.pool)
-        set_mcp_manager_getter(lambda: None)  # TODO: wire MCP manager
+        set_mcp_manager_getter(lambda: None)  # placeholder, replaced below
+
+        # Wire MCP client manager
+        _mcp_manager = None
+        try:
+            from .mcp import MCPClientManager, load_mcp_config
+
+            mcp_config = load_mcp_config()
+            if mcp_config.servers:
+                _mcp_manager = MCPClientManager(mcp_config)
+                await _mcp_manager.start()
+                set_mcp_manager_getter(lambda: _mcp_manager)
+                logger.info(
+                    "MCP manager started: %d servers configured",
+                    len(mcp_config.servers),
+                )
+            else:
+                logger.info("MCP: no servers configured, MCP disabled")
+        except FileNotFoundError:
+            logger.info("MCP: no config found, MCP disabled")
+        except ImportError as e:
+            logger.info("MCP SDK not installed, MCP disabled: %s", e)
+        except Exception as e:
+            logger.warning("MCP init failed: %s", e)
+        _server_state["mcp_manager"] = _mcp_manager
         set_embeddings_context(self.pool, _server_state)
         set_rerank_context(self.pool, _server_state)
         set_ner_context(self.pool, _server_state)
@@ -1276,6 +1328,15 @@ class Server:
     async def _shutdown(self):
         """Graceful shutdown."""
         logger.info("fusion-mlx shutting down...")
+
+        # Stop MCP manager
+        _mcp_mgr = _server_state.get("mcp_manager")
+        if _mcp_mgr:
+            try:
+                await _mcp_mgr.stop()
+                logger.info("MCP manager stopped")
+            except Exception as e:
+                logger.debug("MCP manager stop failed (non-fatal): %s", e)
 
         # mDNS: unregister service before teardown
         if self._mdns is not None:

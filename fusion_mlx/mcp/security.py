@@ -47,6 +47,8 @@ ALLOWED_COMMANDS: set[str] = {
     "mcp-server-fetch",
     # Docker (for containerized MCP servers)
     "docker",
+    # Fusion ecosystem plugin server
+    "fusion-plugin-server",
 }
 
 # Patterns that indicate dangerous commands

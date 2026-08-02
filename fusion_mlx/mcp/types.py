@@ -13,6 +13,7 @@ class MCPTransport(str, Enum):
 
     STDIO = "stdio"
     SSE = "sse"
+    STREAMABLE_HTTP = "streamable_http"
 
 
 class MCPServerState(str, Enum):
@@ -35,6 +36,7 @@ class MCPServerConfig:
     command: str | None = None
     args: list[str] | None = None
     env: dict[str, str] | None = None
+    cwd: str | None = None
 
     # For SSE transport
     url: str | None = None
@@ -60,6 +62,11 @@ class MCPServerConfig:
             if not self.url:
                 raise ValueError(
                     f"MCP server '{self.name}': sse transport requires 'url'"
+                )
+        elif self.transport == MCPTransport.STREAMABLE_HTTP:
+            if not self.url:
+                raise ValueError(
+                    f"MCP server '{self.name}': streamable_http transport requires 'url'"
                 )
 
         # Security validation
