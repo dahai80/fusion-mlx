@@ -77,7 +77,9 @@ async def get_spec_routes(
         if entry.family in merged:
             prev = merged[entry.family]
             prev.methods.extend(m for m in entry.methods if m not in prev.methods)
-            prev.constraints.extend(c for c in entry.constraints if c not in prev.constraints)
+            prev.constraints.extend(
+                c for c in entry.constraints if c not in prev.constraints
+            )
             if entry.drafter_map:
                 if prev.drafter_map is None:
                     prev.drafter_map = {}

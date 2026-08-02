@@ -99,7 +99,9 @@ class DFlyContextFC(nn.Module):
 @dataclass
 class DFlyConfig:
     num_draft_layers: int = DEFAULT_NUM_DRAFT_LAYERS
-    target_layer_ids: list[int] = field(default_factory=lambda: list(DEFAULT_TARGET_LAYER_IDS))
+    target_layer_ids: list[int] = field(
+        default_factory=lambda: list(DEFAULT_TARGET_LAYER_IDS)
+    )
     hidden_size: int = DEFAULT_HIDDEN_SIZE
     num_attention_heads: int = 32
     num_key_value_heads: int = 8
@@ -213,7 +215,9 @@ class DFlyDrafter:
     def _load_weights(self, path: str) -> dict[str, mx.array]:
         resolved = Path(os.path.expanduser(path))
         if not resolved.exists():
-            logger.warning("DFlyDrafter: path %s does not exist, using random init", path)
+            logger.warning(
+                "DFlyDrafter: path %s does not exist, using random init", path
+            )
             return {}
         weights: dict[str, mx.array] = {}
         for safetensor_file in sorted(resolved.glob("*.safetensors")):
@@ -227,7 +231,7 @@ class DFlyDrafter:
     @staticmethod
     def _remap_key(key: str) -> str:
         if key.startswith("model."):
-            return key[len("model."):]
+            return key[len("model.") :]
         return key
 
     def draft(

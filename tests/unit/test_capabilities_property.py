@@ -19,15 +19,21 @@ class TestCapabilitiesProperty(unittest.TestCase):
             tool_call_parser="hermes",
             supports_spec_decode=True,
         )
-        self.assertEqual(p.capabilities, frozenset({"vision", "tool_call", "spec_decode"}))
+        self.assertEqual(
+            p.capabilities, frozenset({"vision", "tool_call", "spec_decode"})
+        )
 
     def test_moe_hybrid(self):
         p = AliasProfile(is_moe=True, is_hybrid=True, supports_dspark=True)
-        self.assertEqual(p.capabilities, frozenset({"moe", "hybrid", "dspark", "spec_decode"}))
+        self.assertEqual(
+            p.capabilities, frozenset({"moe", "hybrid", "dspark", "spec_decode"})
+        )
 
     def test_audio_reasoning(self):
         p = AliasProfile(is_audio=True, reasoning_parser="deepseek")
-        self.assertEqual(p.capabilities, frozenset({"audio", "reasoning", "spec_decode"}))
+        self.assertEqual(
+            p.capabilities, frozenset({"audio", "reasoning", "spec_decode"})
+        )
 
     def test_frozen_dataclass_immutability(self):
         p = AliasProfile(supports_dflash=True)

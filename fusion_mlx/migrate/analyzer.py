@@ -67,11 +67,13 @@ def analyze_model(hf_id: str, mirror: bool = False) -> ModelAnalysis:
 
     siblings = api_data.get("siblings", [])
     safetensors_files = [
-        s.get("rfilename", "") for s in siblings
+        s.get("rfilename", "")
+        for s in siblings
         if s.get("rfilename", "").endswith(".safetensors")
     ]
     pytorch_files = [
-        s.get("rfilename", "") for s in siblings
+        s.get("rfilename", "")
+        for s in siblings
         if s.get("rfilename", "").endswith(".bin")
     ]
     has_safetensors = len(safetensors_files) > 0
@@ -103,14 +105,15 @@ def analyze_model(hf_id: str, mirror: bool = False) -> ModelAnalysis:
     if not result.estimated_size_gb:
         n_layers = config.get("num_hidden_layers", config.get("n_layer", 0))
         hidden = config.get("hidden_size", config.get("n_embd", 0))
-        intermediate = config.get("intermediate_size", config.get("n_inner", 4 * hidden))
+        intermediate = config.get(
+            "intermediate_size", config.get("n_inner", 4 * hidden)
+        )
         vocab = config.get("vocab_size", 32000)
         n_heads = config.get("num_attention_heads", config.get("n_head", 0))
         if n_layers and hidden:
             embed_params = vocab * hidden
             attn_params = n_layers * (
-                (hidden * hidden + (hidden * hidden // n_heads) * 2)
-                + hidden * hidden
+                (hidden * hidden + (hidden * hidden // n_heads) * 2) + hidden * hidden
             )
             mlp_params = n_layers * (hidden * intermediate * 3)
             norm_params = n_layers * hidden * 2 + hidden
@@ -141,7 +144,10 @@ def analyze_model(hf_id: str, mirror: bool = False) -> ModelAnalysis:
 
     logger.info(
         "Analyzed %s: type=%s arch=%s compatible=%s size=%.1fGB",
-        hf_id, result.model_type, arch_name, result.compatible,
+        hf_id,
+        result.model_type,
+        arch_name,
+        result.compatible,
         result.estimated_size_gb,
     )
     return result

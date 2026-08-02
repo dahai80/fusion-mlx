@@ -17,7 +17,9 @@ def get_timestep_embedding(
     max_period: int = 10000,
 ) -> mx.array:
     half_dim = embedding_dim // 2
-    exponent = -math.log(max_period) * mx.arange(start=0, stop=half_dim, dtype=mx.float32)
+    exponent = -math.log(max_period) * mx.arange(
+        start=0, stop=half_dim, dtype=mx.float32
+    )
     exponent = exponent / (half_dim - downscale_freq_shift)
     emb = mx.exp(exponent).astype(timesteps.dtype)
     emb = timesteps[:, None].astype(mx.float32) * emb[None, :]
@@ -81,7 +83,9 @@ class MageFlowTimestepProjEmbeddings(nn.Module):
 
     def __call__(self, timestep: mx.array, hidden_states: mx.array) -> mx.array:
         timesteps_proj = self.time_proj(timestep)
-        timesteps_emb = self.timestep_embedder(timesteps_proj.astype(hidden_states.dtype))
+        timesteps_emb = self.timestep_embedder(
+            timesteps_proj.astype(hidden_states.dtype)
+        )
         return timesteps_emb
 
 
@@ -162,7 +166,7 @@ class MageFlowAttention(nn.Module):
             q = _apply_rotary_emb(q, rope)
             k = _apply_rotary_emb(k, rope)
 
-        scale = self.head_dim ** -0.5
+        scale = self.head_dim**-0.5
         attn = (q * scale) @ k.transpose(0, 1, 3, 2)
         attn = nn.softmax(attn.astype(mx.float32), axis=-1).astype(q.dtype)
         out = attn @ v
@@ -191,10 +195,13 @@ class MageFlowEmbedRope(nn.Module):
         half_dim = self.dim // 2
         freqs_h = _freqs_1d(h, half_dim, self.theta)
         freqs_w = _freqs_1d(w, half_dim, self.theta)
-        freqs = mx.concatenate([
-            mx.concatenate([freqs_h for _ in range(w)], axis=0),
-            mx.concatenate([freqs_w for _ in range(h)], axis=0),
-        ], axis=-1)
+        freqs = mx.concatenate(
+            [
+                mx.concatenate([freqs_h for _ in range(w)], axis=0),
+                mx.concatenate([freqs_w for _ in range(h)], axis=0),
+            ],
+            axis=-1,
+        )
         return mx.view_as_complex(freqs)
 
 

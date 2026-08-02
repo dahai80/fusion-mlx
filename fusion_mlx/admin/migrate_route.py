@@ -76,6 +76,7 @@ async def analyze_model(
     is_admin: bool = Depends(require_admin),
 ):
     from ..migrate.analyzer import analyze_model
+
     try:
         result = await asyncio.to_thread(analyze_model, request.hf_id, request.mirror)
         return {"success": True, "analysis": asdict(result)}
@@ -102,7 +103,12 @@ async def download_weights(
             hf_token=request.hf_token or None,
         )
         import json
-        meta = {"migration_id": mid, "hf_id": request.hf_id, "download_task_id": task.task_id}
+
+        meta = {
+            "migration_id": mid,
+            "hf_id": request.hf_id,
+            "download_task_id": task.task_id,
+        }
         with open(os.path.join(mdir, "meta.json"), "w") as f:
             json.dump(meta, f, indent=2)
         logger.info("Migration %s: download started for %s", mid, request.hf_id)
@@ -126,6 +132,7 @@ async def download_status(
         raise HTTPException(status_code=404, detail="Migration not found")
 
     import json
+
     with open(meta_path) as f:
         meta = json.load(f)
 
@@ -160,6 +167,7 @@ async def convert_weights(
         raise HTTPException(status_code=404, detail="Migration not found")
 
     import json
+
     with open(meta_path) as f:
         meta = json.load(f)
 
@@ -175,7 +183,10 @@ async def convert_weights(
         output_dir = os.path.join(mdir, "mlx_model")
         result = await asyncio.to_thread(
             convert_model,
-            hf_dir, output_dir, analysis.config, template,
+            hf_dir,
+            output_dir,
+            analysis.config,
+            template,
             quant_bits=request.quant_bits,
             quant_group_size=request.quant_group_size,
         )
@@ -207,6 +218,7 @@ async def codegen(
         raise HTTPException(status_code=404, detail="Migration not found")
 
     import json
+
     with open(meta_path) as f:
         meta = json.load(f)
 
@@ -221,7 +233,10 @@ async def codegen(
 
         output_dir = os.path.join(mdir, "codegen")
         result = await asyncio.to_thread(
-            generate_model_code, template, analysis.config, output_dir,
+            generate_model_code,
+            template,
+            analysis.config,
+            output_dir,
         )
 
         meta["codegen_dir"] = output_dir
@@ -247,6 +262,7 @@ async def validate(
         raise HTTPException(status_code=404, detail="Migration not found")
 
     import json
+
     with open(meta_path) as f:
         meta = json.load(f)
 
@@ -256,7 +272,10 @@ async def validate(
 
     try:
         result = await asyncio.to_thread(
-            validate_model, mlx_dir, request.prompt, request.max_tokens,
+            validate_model,
+            mlx_dir,
+            request.prompt,
+            request.max_tokens,
         )
         meta["validated"] = result.success
         with open(meta_path, "w") as f:
@@ -278,6 +297,7 @@ async def register_model(
         raise HTTPException(status_code=404, detail="Migration not found")
 
     import json
+
     with open(meta_path) as f:
         meta = json.load(f)
 
@@ -292,7 +312,9 @@ async def register_model(
 
     dest = os.path.join(model_dirs[0], model_name)
     if os.path.exists(dest):
-        raise HTTPException(status_code=409, detail=f"Model '{model_name}' already exists")
+        raise HTTPException(
+            status_code=409, detail=f"Model '{model_name}' already exists"
+        )
 
     try:
         shutil.copytree(mlx_dir, dest)
@@ -313,6 +335,7 @@ async def list_migrations(is_admin: bool = Depends(require_admin)):
         return {"success": True, "migrations": []}
 
     import json
+
     migrations = []
     for d in sorted(Path(MIGRATION_DIR).iterdir()):
         meta_path = d / "meta.json"

@@ -59,7 +59,9 @@ def report(profile: AliasProfile, alias: str | None = None) -> EligibilityReport
     if family != "hunyuan":
         reasons.append(
             "DFly is a Hunyuan (Hy3)-native drafter; model_family={!r} "
-            "is not 'hunyuan'. Use dfly only with Hy3 models.".format(family or "unknown")
+            "is not 'hunyuan'. Use dfly only with Hy3 models.".format(
+                family or "unknown"
+            )
         )
     if profile.is_moe:
         reasons.append(

@@ -55,7 +55,7 @@ def _build_attention_class(template: ArchTemplate, config: dict) -> str:
         self.v_proj = nn.Linear(args.hidden_size, args.num_key_value_heads * self.head_dim, bias=False)
         self.o_proj = nn.Linear(args.num_attention_heads * self.head_dim, args.hidden_size, bias=False)"""
 
-    code = f'''
+    code = f"""
 
 class Attention(nn.Module):
     def __init__(self, args):
@@ -87,15 +87,17 @@ class Attention(nn.Module):
             attn = attn + mask
         attn = mx.softmax(attn, axis=-1)
         out = (attn @ v).transpose(0, 2, 1, 3).reshape(B, L, -1)
-        return self.o_proj(out), new_cache'''
+        return self.o_proj(out), new_cache"""
     return code
 
 
 def _build_mlp_class(template: ArchTemplate) -> str:
     bias = "True" if template.has_mlp_bias else "False"
-    activation = "nn.silu" if template.activation == "silu" else f"nn.{template.activation}"
+    activation = (
+        "nn.silu" if template.activation == "silu" else f"nn.{template.activation}"
+    )
 
-    code = f'''
+    code = f"""
 
 class MLP(nn.Module):
     def __init__(self, args):
@@ -105,12 +107,12 @@ class MLP(nn.Module):
         self.down_proj = nn.Linear(args.intermediate_size, args.hidden_size, bias={bias})
 
     def __call__(self, x):
-        return self.down_proj({activation}(self.gate_proj(x)) * self.up_proj(x))'''
+        return self.down_proj({activation}(self.gate_proj(x)) * self.up_proj(x))"""
     return code
 
 
 def _build_transformer_block(template: ArchTemplate) -> str:
-    code = '''
+    code = """
 
 class TransformerBlock(nn.Module):
     def __init__(self, args):
@@ -124,7 +126,7 @@ class TransformerBlock(nn.Module):
         h, new_cache = self.self_attn(self.input_layernorm(x), mask=mask, cache=cache)
         x = x + h
         x = x + self.mlp(self.post_attention_layernorm(x))
-        return x, new_cache'''
+        return x, new_cache"""
     return code
 
 
@@ -140,7 +142,7 @@ def _build_model_class(template: ArchTemplate, config: dict) -> str:
         lm_head_line = "        self.lm_head = nn.Linear(args.hidden_size, args.vocab_size, bias=False)"
     lm_head_line += tie_comment
 
-    code = f'''
+    code = f"""
 
 class Model(nn.Module):
     def __init__(self, args):
@@ -161,7 +163,7 @@ class Model(nn.Module):
             c = cache[i] if cache is not None else None
             h, new_cache = layer(h, mask=mask, cache=c)
             new_caches.append(new_cache)
-        return self.lm_head(self.norm(h)), new_caches'''
+        return self.lm_head(self.norm(h)), new_caches"""
     return code
 
 
@@ -194,8 +196,9 @@ def generate_model_code(
             "hidden_size": config.get("hidden_size", 0),
             "intermediate_size": config.get("intermediate_size", 0),
             "num_attention_heads": config.get("num_attention_heads", 0),
-            "num_key_value_heads": config.get("num_key_value_heads",
-                                                   config.get("num_attention_heads", 0)),
+            "num_key_value_heads": config.get(
+                "num_key_value_heads", config.get("num_attention_heads", 0)
+            ),
             "rms_norm_eps": config.get("rms_norm_eps", 1e-6),
             "vocab_size": config.get("vocab_size", 0),
             "tie_word_embeddings": config.get("tie_word_embeddings", False),

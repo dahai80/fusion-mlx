@@ -275,7 +275,7 @@ async def verify_scoped_api_key(
         key_body = api_key
         for prefix in _SCOPED_KEY_PREFIXES:
             if api_key.startswith(prefix):
-                key_body = api_key[len(prefix):]
+                key_body = api_key[len(prefix) :]
                 break
         if not key_body or not secrets.compare_digest(key_body, configured_key):
             raise HTTPException(status_code=401, detail="Invalid scoped API key")

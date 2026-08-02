@@ -99,12 +99,15 @@ def _build_mlx_config(
 ) -> dict:
     mlx_config = {
         "model_type": template.name,
-        "num_hidden_layers": hf_config.get("num_hidden_layers", hf_config.get("n_layer", 0)),
+        "num_hidden_layers": hf_config.get(
+            "num_hidden_layers", hf_config.get("n_layer", 0)
+        ),
         "hidden_size": hf_config.get("hidden_size", hf_config.get("d_model", 0)),
         "intermediate_size": hf_config.get("intermediate_size", 0),
         "num_attention_heads": hf_config.get("num_attention_heads", 0),
-        "num_key_value_heads": hf_config.get("num_key_value_heads",
-                                               hf_config.get("num_attention_heads", 0)),
+        "num_key_value_heads": hf_config.get(
+            "num_key_value_heads", hf_config.get("num_attention_heads", 0)
+        ),
         "rms_norm_eps": hf_config.get("rms_norm_eps", 1e-6),
         "vocab_size": hf_config.get("vocab_size", 0),
         "tie_word_embeddings": hf_config.get("tie_word_embeddings", False),
@@ -179,11 +182,18 @@ def convert_model(
 
         weights_path = os.path.join(output_dir, "weights.npz")
         mx.savez(weights_path, **mlx_weights)
-        logger.info("Wrote weights.npz (%d tensors) to %s", len(mlx_weights), output_dir)
+        logger.info(
+            "Wrote weights.npz (%d tensors) to %s", len(mlx_weights), output_dir
+        )
 
         tokenizer_src = Path(hf_dir)
-        for tok_name in ("tokenizer.json", "tokenizer.model", "tokenizer_config.json",
-                         "special_tokens_map.json", "added_tokens.json"):
+        for tok_name in (
+            "tokenizer.json",
+            "tokenizer.model",
+            "tokenizer_config.json",
+            "special_tokens_map.json",
+            "added_tokens.json",
+        ):
             src = tokenizer_src / tok_name
             if src.exists():
                 shutil.copy2(str(src), os.path.join(output_dir, tok_name))

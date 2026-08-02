@@ -48,7 +48,9 @@ class MageFlowPipeline:
 
                 weights = load_safetensors(weights_path)
                 self.transformer.load_weights(list(weights.items()))
-                logger.info("mage_flow: loaded transformer weights from %s", weights_path)
+                logger.info(
+                    "mage_flow: loaded transformer weights from %s", weights_path
+                )
             else:
                 logger.warning(
                     "mage_flow: transformer weights not found at %s", weights_path
@@ -114,7 +116,9 @@ class MageFlowPipeline:
 
         txt_emb = self._encode_text(prompt)
         neg_emb = (
-            self._encode_text(negative_prompt) if negative_prompt else mx.zeros_like(txt_emb)
+            self._encode_text(negative_prompt)
+            if negative_prompt
+            else mx.zeros_like(txt_emb)
         )
         vec = txt_emb.mean(axis=1, keepdims=True)
 

@@ -1795,13 +1795,16 @@ def serve_command(args):
         _auto_qbits = None
         try:
             from .model_auto_config import detect_model_config
+
             _ac = detect_model_config(args.model)
             if _ac:
                 _auto_family = getattr(_ac, "model_family", None)
                 _auto_moe = getattr(_ac, "is_moe", False)
                 _auto_qbits = getattr(_ac, "quant_bits", None)
         except Exception:
-            logger.debug("spec-auto: family detection failed (non-fatal)", exc_info=True)
+            logger.debug(
+                "spec-auto: family detection failed (non-fatal)", exc_info=True
+            )
         _resolution = resolve_spec_auto(
             _hf_cfg_auto,
             model_family=_auto_family,

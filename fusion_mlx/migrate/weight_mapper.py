@@ -25,7 +25,7 @@ class WeightMapRule:
 
     def apply(self, hf_name: str) -> str | None:
         if hf_name.startswith(self.hf_prefix):
-            suffix = hf_name[len(self.hf_prefix):]
+            suffix = hf_name[len(self.hf_prefix) :]
             if suffix in self.tensors:
                 return self.mlx_prefix + suffix
             for t in self.tensors:
@@ -40,11 +40,16 @@ def _llama_rules(template: ArchTemplate) -> list[WeightMapRule]:
 
     if template.has_bias:
         attn_tensors += [
-            "q_proj.bias", "k_proj.bias", "v_proj.bias", "o_proj.bias",
+            "q_proj.bias",
+            "k_proj.bias",
+            "v_proj.bias",
+            "o_proj.bias",
         ]
     if template.has_mlp_bias:
         mlp_tensors += [
-            "gate_proj.bias", "up_proj.bias", "down_proj.bias",
+            "gate_proj.bias",
+            "up_proj.bias",
+            "down_proj.bias",
         ]
 
     return [
@@ -86,16 +91,20 @@ def _llama_rules(template: ArchTemplate) -> list[WeightMapRule]:
     ]
 
 
-def _expand_layer_rules(rules: list[WeightMapRule], num_layers: int) -> list[WeightMapRule]:
+def _expand_layer_rules(
+    rules: list[WeightMapRule], num_layers: int
+) -> list[WeightMapRule]:
     expanded = []
     for rule in rules:
         if "{i}" in rule.hf_prefix:
             for i in range(num_layers):
-                expanded.append(WeightMapRule(
-                    hf_prefix=rule.hf_prefix.replace("{i}", str(i)),
-                    mlx_prefix=rule.mlx_prefix.replace("{i}", str(i)),
-                    tensors=rule.tensors,
-                ))
+                expanded.append(
+                    WeightMapRule(
+                        hf_prefix=rule.hf_prefix.replace("{i}", str(i)),
+                        mlx_prefix=rule.mlx_prefix.replace("{i}", str(i)),
+                        tensors=rule.tensors,
+                    )
+                )
         else:
             expanded.append(rule)
     return expanded
@@ -125,7 +134,10 @@ def build_weight_map(
 
     logger.info(
         "Built weight map: %d entries for family=%s layers=%d bias=%s",
-        len(weight_map), family, num_layers, template.has_bias,
+        len(weight_map),
+        family,
+        num_layers,
+        template.has_bias,
     )
     return weight_map
 

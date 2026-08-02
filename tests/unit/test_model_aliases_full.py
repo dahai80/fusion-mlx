@@ -112,7 +112,9 @@ class TestListAliases(unittest.TestCase):
             with open(af, "w") as f:
                 json.dump({"zeta": "z", "alpha": "a", "mid": "m"}, f)
             with patch.object(ma, "_ALIASES_FILE", af):
-                self.assertEqual(ma.list_aliases(), {"alpha": "a", "mid": "m", "zeta": "z"})
+                self.assertEqual(
+                    ma.list_aliases(), {"alpha": "a", "mid": "m", "zeta": "z"}
+                )
 
     def test_empty_when_no_file(self):
         with patch.object(ma, "_ALIASES_FILE", Path("/nonexistent")):

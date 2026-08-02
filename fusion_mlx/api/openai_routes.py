@@ -586,8 +586,12 @@ async def _run_chat(
             "error": {
                 "type": "model_unavailable",
                 "message": f"Model {exc.model_id} not loaded and insufficient memory",
-                "required_memory_mb": exc.required // (1024 * 1024) if exc.required else 0,
-                "available_memory_mb": exc.current // (1024 * 1024) if exc.current else 0,
+                "required_memory_mb": (
+                    exc.required // (1024 * 1024) if exc.required else 0
+                ),
+                "available_memory_mb": (
+                    exc.current // (1024 * 1024) if exc.current else 0
+                ),
                 "loaded_models": exc.loaded_models,
             }
         }
@@ -854,6 +858,7 @@ async def _stream_chat_generator(
     except InsufficientMemoryError as exc:
         logger.warning("Stream: insufficient memory: %s", exc)
         import json as _json
+
         err_detail = {
             "message": f"Model {exc.model_id} not loaded and insufficient memory",
             "status": 503,
@@ -1206,8 +1211,12 @@ async def chat_completions(
             "error": {
                 "type": "model_unavailable",
                 "message": f"Model {exc.model_id} not loaded and insufficient memory",
-                "required_memory_mb": exc.required // (1024 * 1024) if exc.required else 0,
-                "available_memory_mb": exc.current // (1024 * 1024) if exc.current else 0,
+                "required_memory_mb": (
+                    exc.required // (1024 * 1024) if exc.required else 0
+                ),
+                "available_memory_mb": (
+                    exc.current // (1024 * 1024) if exc.current else 0
+                ),
                 "loaded_models": exc.loaded_models,
             }
         }
@@ -1272,8 +1281,12 @@ async def completions(
             "error": {
                 "type": "model_unavailable",
                 "message": f"Model {exc.model_id} not loaded and insufficient memory",
-                "required_memory_mb": exc.required // (1024 * 1024) if exc.required else 0,
-                "available_memory_mb": exc.current // (1024 * 1024) if exc.current else 0,
+                "required_memory_mb": (
+                    exc.required // (1024 * 1024) if exc.required else 0
+                ),
+                "available_memory_mb": (
+                    exc.current // (1024 * 1024) if exc.current else 0
+                ),
                 "loaded_models": exc.loaded_models,
             }
         }

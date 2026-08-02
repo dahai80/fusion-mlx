@@ -53,7 +53,16 @@ class CausalConv3d(nn.Module):
         pt = kt - 1
         logger.debug(
             "CausalConv3d: input=(%s) k=(%d,%d,%d) s=(%d,%d,%d) pad=(%d,%d,%d)",
-            x.shape, kt, kh, kw, st, sh, sw, pt, ph, pw,
+            x.shape,
+            kt,
+            kh,
+            kw,
+            st,
+            sh,
+            sw,
+            pt,
+            ph,
+            pw,
         )
         x_cl = x.transpose(0, 2, 3, 4, 1)
         w_cl = self.weight.transpose(0, 2, 3, 4, 1)
@@ -178,7 +187,14 @@ class HunyuanVideoVAE(nn.Module):
             cur_ch = base_ch * mult
             use_down = self.SPATIAL_DOWN_BLOCKS[i] or self.TEMPORAL_DOWN_BLOCKS[i]
             temporal_down = self.TEMPORAL_DOWN_BLOCKS[i]
-            enc_blocks.append(HVDownBlock(prev_ch, cur_ch, use_conv_down=use_down, temporal_downsample=temporal_down))
+            enc_blocks.append(
+                HVDownBlock(
+                    prev_ch,
+                    cur_ch,
+                    use_conv_down=use_down,
+                    temporal_downsample=temporal_down,
+                )
+            )
             prev_ch = cur_ch
         self.enc_blocks = enc_blocks
         self.enc_mid1 = HVResBlock(prev_ch)
@@ -193,7 +209,11 @@ class HunyuanVideoVAE(nn.Module):
             cur_ch = base_ch * mult
             use_up = self.SPATIAL_UP_BLOCKS[i] or self.TEMPORAL_UP_BLOCKS[i]
             temporal_up = self.TEMPORAL_UP_BLOCKS[i]
-            dec_blocks.append(HVUpBlock(prev_ch, cur_ch, use_conv_up=use_up, temporal_upsample=temporal_up))
+            dec_blocks.append(
+                HVUpBlock(
+                    prev_ch, cur_ch, use_conv_up=use_up, temporal_upsample=temporal_up
+                )
+            )
             prev_ch = cur_ch
         self.dec_blocks = dec_blocks
         self.dec_conv_out = CausalConv3d(prev_ch, in_channels, 3, 1, 1)
@@ -226,11 +246,18 @@ class HunyuanVideoVAE(nn.Module):
         logger.info("hunyuan vae decode: output shape=%s", h.shape)
         return h
 
-    def decode_tiled(self, z, tile_t=8, tile_h=32, tile_w=32,
-                     overlap_t=2, overlap_h=4, overlap_w=4):
+    def decode_tiled(
+        self, z, tile_t=8, tile_h=32, tile_w=32, overlap_t=2, overlap_h=4, overlap_w=4
+    ):
         logger.info(
             "hunyuan vae decode_tiled: latent shape=%s tile=(%d,%d,%d) overlap=(%d,%d,%d)",
-            z.shape, tile_t, tile_h, tile_w, overlap_t, overlap_h, overlap_w,
+            z.shape,
+            tile_t,
+            tile_h,
+            tile_w,
+            overlap_t,
+            overlap_h,
+            overlap_w,
         )
         B, C, T, H, W = z.shape
         need_t = tile_t < T
@@ -258,7 +285,15 @@ class HunyuanVideoVAE(nn.Module):
                     tile_z = z[:, :, t_start:t_end, h_start:h_end, w_start:w_end]
                     logger.debug(
                         "hunyuan vae decode_tiled: tile %d/%d slice=[%d:%d,%d:%d,%d:%d] shape=%s",
-                        tile_idx, total_tiles, t_start, t_end, h_start, h_end, w_start, w_end, tile_z.shape,
+                        tile_idx,
+                        total_tiles,
+                        t_start,
+                        t_end,
+                        h_start,
+                        h_end,
+                        w_start,
+                        w_end,
+                        tile_z.shape,
                     )
                     tile_out = self.decode(tile_z)
                     mx.eval(tile_out)
@@ -279,18 +314,38 @@ class HunyuanVideoVAE(nn.Module):
                     oh_end = min(oh_end, out_h)
                     ow_end = min(ow_end, out_w)
 
-                    tile_np = tile_np[:, :, :ot_end - ot_start, :oh_end - oh_start, :ow_end - ow_start]
+                    tile_np = tile_np[
+                        :,
+                        :,
+                        : ot_end - ot_start,
+                        : oh_end - oh_start,
+                        : ow_end - ow_start,
+                    ]
 
                     # Compute blending weights (feathered in overlap regions)
-                    w_t = self._blend_weights_1d(tile_np.shape[2], t_start, t_end, T, overlap_t)
-                    w_h = self._blend_weights_1d(tile_np.shape[3], h_start, h_end, H, overlap_h)
-                    w_w = self._blend_weights_1d(tile_np.shape[4], w_start, w_end, W, overlap_w)
+                    w_t = self._blend_weights_1d(
+                        tile_np.shape[2], t_start, t_end, T, overlap_t
+                    )
+                    w_h = self._blend_weights_1d(
+                        tile_np.shape[3], h_start, h_end, H, overlap_h
+                    )
+                    w_w = self._blend_weights_1d(
+                        tile_np.shape[4], w_start, w_end, W, overlap_w
+                    )
 
                     # Outer product -> (1, 1, t, h, w)
-                    w_3d = w_t.reshape(1, 1, -1, 1, 1) * w_h.reshape(1, 1, 1, -1, 1) * w_w.reshape(1, 1, 1, 1, -1)
+                    w_3d = (
+                        w_t.reshape(1, 1, -1, 1, 1)
+                        * w_h.reshape(1, 1, 1, -1, 1)
+                        * w_w.reshape(1, 1, 1, 1, -1)
+                    )
 
-                    output[:, :, ot_start:ot_end, oh_start:oh_end, ow_start:ow_end] += tile_np * w_3d
-                    weight_sum[:, :, ot_start:ot_end, oh_start:oh_end, ow_start:ow_end] += w_3d
+                    output[:, :, ot_start:ot_end, oh_start:oh_end, ow_start:ow_end] += (
+                        tile_np * w_3d
+                    )
+                    weight_sum[
+                        :, :, ot_start:ot_end, oh_start:oh_end, ow_start:ow_end
+                    ] += w_3d
 
                     del tile_np
                     tile_idx_logged = tile_idx
@@ -299,7 +354,11 @@ class HunyuanVideoVAE(nn.Module):
         mask = weight_sum > 0
         output[mask] /= weight_sum[mask]
 
-        logger.info("hunyuan vae decode_tiled: output shape=%s total_tiles=%d", output.shape, total_tiles)
+        logger.info(
+            "hunyuan vae decode_tiled: output shape=%s total_tiles=%d",
+            output.shape,
+            total_tiles,
+        )
         return mx.array(output)
 
     def _compute_output_shape(self, T, H, W):
@@ -351,7 +410,9 @@ class HunyuanVideoVAE(nn.Module):
         if tile_end < dim_size:
             ramp_len = min(overlap, tile_out_size)
             for i in range(ramp_len):
-                weights[tile_out_size - 1 - i] = min(weights[tile_out_size - 1 - i], (i + 1) / (ramp_len + 1))
+                weights[tile_out_size - 1 - i] = min(
+                    weights[tile_out_size - 1 - i], (i + 1) / (ramp_len + 1)
+                )
         return weights
 
     @classmethod

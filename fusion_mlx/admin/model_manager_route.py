@@ -27,16 +27,18 @@ async def list_models(role: str = Depends(verify_scoped_api_key)):
     models_status = status.get("models", [])
     models = []
     for m in models_status:
-        models.append({
-            "id": m.get("id", ""),
-            "loaded": m.get("loaded", False),
-            "is_loading": m.get("is_loading", False),
-            "estimated_size": m.get("estimated_size", 0),
-            "estimated_size_formatted": format_size(m.get("estimated_size", 0)),
-            "pinned": m.get("pinned", False),
-            "engine_type": m.get("engine_type", "batched"),
-            "model_type": m.get("model_type", "llm"),
-        })
+        models.append(
+            {
+                "id": m.get("id", ""),
+                "loaded": m.get("loaded", False),
+                "is_loading": m.get("is_loading", False),
+                "estimated_size": m.get("estimated_size", 0),
+                "estimated_size_formatted": format_size(m.get("estimated_size", 0)),
+                "pinned": m.get("pinned", False),
+                "engine_type": m.get("engine_type", "batched"),
+                "model_type": m.get("model_type", "llm"),
+            }
+        )
     logger.info("model-manager: listed %d models (role=%s)", len(models), role)
     return {"models": models}
 
@@ -54,9 +56,15 @@ async def load_model(
     if entry is None:
         raise HTTPException(status_code=404, detail=f"Model not found: {model_id}")
     if entry.engine is not None:
-        return {"status": "ok", "model_id": model_id, "message": f"Already loaded: {model_id}"}
+        return {
+            "status": "ok",
+            "model_id": model_id,
+            "message": f"Already loaded: {model_id}",
+        }
     if entry.is_loading:
-        raise HTTPException(status_code=409, detail=f"Model is already loading: {model_id}")
+        raise HTTPException(
+            status_code=409, detail=f"Model is already loading: {model_id}"
+        )
 
     try:
         await engine_pool.get_engine(model_id)
@@ -118,13 +126,19 @@ async def embedding_status(role: str = Depends(verify_scoped_api_key)):
     embedding_models = []
     for mid, entry in engine_pool._entries.items():
         if entry.model_type == "embedding":
-            embedding_models.append({
-                "id": mid,
-                "loaded": entry.engine is not None,
-                "is_loading": entry.is_loading,
-                "pinned": entry.pinned,
-            })
-    logger.info("model-manager: embedding status %d models (role=%s)", len(embedding_models), role)
+            embedding_models.append(
+                {
+                    "id": mid,
+                    "loaded": entry.engine is not None,
+                    "is_loading": entry.is_loading,
+                    "pinned": entry.pinned,
+                }
+            )
+    logger.info(
+        "model-manager: embedding status %d models (role=%s)",
+        len(embedding_models),
+        role,
+    )
     return {"embedding_models": embedding_models}
 
 
@@ -141,7 +155,9 @@ async def pin_embedding_model(
     if entry is None:
         raise HTTPException(status_code=404, detail=f"Model not found: {model_id}")
     if entry.model_type != "embedding":
-        raise HTTPException(status_code=400, detail=f"Model {model_id} is not an embedding model")
+        raise HTTPException(
+            status_code=400, detail=f"Model {model_id} is not an embedding model"
+        )
 
     engine_pool.set_pinned(model_id, True)
     logger.info("model-manager: pinned embedding %s (role=%s)", model_id, role)
@@ -161,7 +177,9 @@ async def unpin_embedding_model(
     if entry is None:
         raise HTTPException(status_code=404, detail=f"Model not found: {model_id}")
     if entry.model_type != "embedding":
-        raise HTTPException(status_code=400, detail=f"Model {model_id} is not an embedding model")
+        raise HTTPException(
+            status_code=400, detail=f"Model {model_id} is not an embedding model"
+        )
 
     engine_pool.set_pinned(model_id, False)
     logger.info("model-manager: unpinned embedding %s (role=%s)", model_id, role)

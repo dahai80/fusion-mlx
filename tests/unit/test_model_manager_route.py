@@ -21,6 +21,7 @@ def _make_app():
     app = FastAPI()
     app.include_router(router)
     from fusion_mlx.admin.model_manager_route import verify_scoped_api_key
+
     app.dependency_overrides[verify_scoped_api_key] = _fake_scoped_key
     return app
 
@@ -28,7 +29,9 @@ def _make_app():
 class TestModelManagerListModels(unittest.TestCase):
     def test_list_models_no_pool(self):
         app = _make_app()
-        with patch("fusion_mlx.admin.model_manager_route._get_engine_pool", return_value=None):
+        with patch(
+            "fusion_mlx.admin.model_manager_route._get_engine_pool", return_value=None
+        ):
             client = TestClient(app)
             resp = client.get("/api/model-manager/models")
             self.assertEqual(resp.status_code, 200)
@@ -38,13 +41,22 @@ class TestModelManagerListModels(unittest.TestCase):
         mock_pool = MagicMock()
         mock_pool.get_status.return_value = {
             "models": [
-                {"id": "test-model", "loaded": True, "is_loading": False,
-                 "estimated_size": 1024, "pinned": False,
-                 "engine_type": "batched", "model_type": "llm"},
+                {
+                    "id": "test-model",
+                    "loaded": True,
+                    "is_loading": False,
+                    "estimated_size": 1024,
+                    "pinned": False,
+                    "engine_type": "batched",
+                    "model_type": "llm",
+                },
             ]
         }
         app = _make_app()
-        with patch("fusion_mlx.admin.model_manager_route._get_engine_pool", return_value=mock_pool):
+        with patch(
+            "fusion_mlx.admin.model_manager_route._get_engine_pool",
+            return_value=mock_pool,
+        ):
             client = TestClient(app)
             resp = client.get("/api/model-manager/models")
             self.assertEqual(resp.status_code, 200)
@@ -58,7 +70,10 @@ class TestModelManagerLoadUnload(unittest.TestCase):
         mock_pool = MagicMock()
         mock_pool.get_entry.return_value = None
         app = _make_app()
-        with patch("fusion_mlx.admin.model_manager_route._get_engine_pool", return_value=mock_pool):
+        with patch(
+            "fusion_mlx.admin.model_manager_route._get_engine_pool",
+            return_value=mock_pool,
+        ):
             client = TestClient(app)
             resp = client.post("/api/model-manager/models/no-such-model/load")
             self.assertEqual(resp.status_code, 404)
@@ -69,7 +84,10 @@ class TestModelManagerLoadUnload(unittest.TestCase):
         entry.engine = None
         mock_pool.get_entry.return_value = entry
         app = _make_app()
-        with patch("fusion_mlx.admin.model_manager_route._get_engine_pool", return_value=mock_pool):
+        with patch(
+            "fusion_mlx.admin.model_manager_route._get_engine_pool",
+            return_value=mock_pool,
+        ):
             client = TestClient(app)
             resp = client.post("/api/model-manager/models/test-model/unload")
             self.assertEqual(resp.status_code, 400)
@@ -82,7 +100,10 @@ class TestModelManagerLoadUnload(unittest.TestCase):
         entry.pinned = True
         mock_pool.get_entry.return_value = entry
         app = _make_app()
-        with patch("fusion_mlx.admin.model_manager_route._get_engine_pool", return_value=mock_pool):
+        with patch(
+            "fusion_mlx.admin.model_manager_route._get_engine_pool",
+            return_value=mock_pool,
+        ):
             client = TestClient(app)
             resp = client.get("/api/model-manager/models/test-model/status")
             self.assertEqual(resp.status_code, 200)

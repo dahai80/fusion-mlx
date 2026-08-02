@@ -157,18 +157,26 @@ def generate_video(
     gc.collect()
     mx.clear_cache()
     mx.synchronize()
-    logger.info("hunyuan: after del dit+text, active_mem=%.1fGB", mx.get_active_memory() / 1e9)
+    logger.info(
+        "hunyuan: after del dit+text, active_mem=%.1fGB", mx.get_active_memory() / 1e9
+    )
 
     # VAE decode — use tiled for large latents to stay within Metal memory limits
     mx.eval(vae.parameters())
     B, C_l, T_l, H_l, W_l = latents.shape
     need_tiled = H_l > 64 or W_l > 64 or T_l > 16
     if need_tiled:
-        logger.info("hunyuan: using tiled VAE decode for large latent %s", latents.shape)
+        logger.info(
+            "hunyuan: using tiled VAE decode for large latent %s", latents.shape
+        )
         video = vae.decode_tiled(
             latents,
-            tile_t=8, tile_h=32, tile_w=32,
-            overlap_t=2, overlap_h=4, overlap_w=4,
+            tile_t=8,
+            tile_h=32,
+            tile_w=32,
+            overlap_t=2,
+            overlap_h=4,
+            overlap_w=4,
         )
     else:
         video = vae.decode(latents)

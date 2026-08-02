@@ -30,13 +30,12 @@ def _make_min_bits(threshold: int) -> Callable[[RouteSignals], bool]:
         if signals.quant_bits is None:
             return True
         return signals.quant_bits >= threshold
+
     _check.__name__ = f"min_bits_{threshold}"
     return _check
 
 
-def evaluate_constraints(
-    constraints: tuple[str, ...], signals: RouteSignals
-) -> bool:
+def evaluate_constraints(constraints: tuple[str, ...], signals: RouteSignals) -> bool:
     for c in constraints:
         fn = _CONSTRAINT_EVALUATORS.get(c)
         if fn is not None:

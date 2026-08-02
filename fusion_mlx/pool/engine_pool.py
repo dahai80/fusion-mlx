@@ -958,12 +958,14 @@ class EnginePool:
                 loaded_models = []
                 for mid, ent in self._entries.items():
                     if ent.engine is not None:
-                        loaded_models.append({
-                            "model_id": mid,
-                            "memory_mb": ent.estimated_size // (1024 * 1024),
-                            "active_requests": ent.in_use,
-                            "pinned": ent.is_pinned,
-                        })
+                        loaded_models.append(
+                            {
+                                "model_id": mid,
+                                "memory_mb": ent.estimated_size // (1024 * 1024),
+                                "active_requests": ent.in_use,
+                                "pinned": ent.is_pinned,
+                            }
+                        )
                 raise InsufficientMemoryError(
                     required=entry.estimated_size,
                     current=current,

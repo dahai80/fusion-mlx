@@ -1201,9 +1201,13 @@ class Server:
             entry = self.pool.get_entry(locked_embed)
             if entry is not None:
                 self.pool.set_pinned(locked_embed, True)
-                logger.info("Embedding model %s pinned (embedding_model_locked)", locked_embed)
+                logger.info(
+                    "Embedding model %s pinned (embedding_model_locked)", locked_embed
+                )
             else:
-                logger.warning("embedding_model_locked=%s not found in pool", locked_embed)
+                logger.warning(
+                    "embedding_model_locked=%s not found in pool", locked_embed
+                )
 
         # Single-model ``serve --model <X>`` path: load_model() staged the
         # resolved model on ``_pending_single_model`` before uvicorn started.
@@ -1470,7 +1474,9 @@ class Server:
 
         _server_state["preloading"] = False
         if loaded:
-            logger.info("Preload complete: %d loaded, %d failed", len(loaded), len(failed))
+            logger.info(
+                "Preload complete: %d loaded, %d failed", len(loaded), len(failed)
+            )
         if failed:
             logger.warning("Preload failures: %s", failed)
 

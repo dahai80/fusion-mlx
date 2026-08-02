@@ -183,7 +183,9 @@ def _print_local_alias_table():
     alias_width = max(len(k) for k in profiles)
     alias_width = max(alias_width, 24)
     print(f"  {'Alias':<{alias_width}} {'Capabilities':<32} HF-path")
-    print(f"  {'─' * alias_width} ──────────────────────────────── ──────────────────────────────")
+    print(
+        f"  {'─' * alias_width} ──────────────────────────────── ──────────────────────────────"
+    )
     for name, p in profiles.items():
         caps = ",".join(sorted(p.capabilities)) if p.capabilities else "—"
         hf_short = p.hf_path[:35]

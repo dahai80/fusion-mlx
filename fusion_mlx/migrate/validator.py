@@ -38,7 +38,9 @@ def validate_model(
 
         logger.info("Generating with prompt: %s (max_tokens=%d)", prompt, max_tokens)
         t0 = time.time()
-        output = generate(model, tokenizer, prompt=prompt, max_tokens=max_tokens, verbose=False)
+        output = generate(
+            model, tokenizer, prompt=prompt, max_tokens=max_tokens, verbose=False
+        )
         elapsed = time.time() - t0
 
         result.output_text = output
@@ -47,7 +49,9 @@ def validate_model(
         result.success = True
         logger.info(
             "Validation OK: %d tokens in %.2fs (%.1f tok/s)",
-            result.num_tokens, elapsed, result.tokens_per_sec,
+            result.num_tokens,
+            elapsed,
+            result.tokens_per_sec,
         )
 
     except ImportError:

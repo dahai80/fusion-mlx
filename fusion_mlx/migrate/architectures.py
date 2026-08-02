@@ -173,7 +173,9 @@ def match_template(
         diff = _compute_diff(template, config)
         logger.info(
             "Matched %s to template '%s' (diff=%d items)",
-            model_type, template_name, len(diff),
+            model_type,
+            template_name,
+            len(diff),
         )
         return template, diff
 
@@ -182,7 +184,9 @@ def match_template(
         diff = _compute_diff(template, config)
         logger.info(
             "Inferred template '%s' for %s (diff=%d items)",
-            template.name, model_type, len(diff),
+            template.name,
+            model_type,
+            len(diff),
         )
         return template, diff
 
@@ -196,7 +200,9 @@ def _infer_from_config(config: dict) -> ArchTemplate | None:
 
     has_bias = config.get("bias", False) or config.get("attention_bias", False)
     has_mlp_bias = config.get("mlp_bias", False)
-    norm_type = "rmsnorm" if "RMSNorm" in str(config.get("norm_type", "")) else "layernorm"
+    norm_type = (
+        "rmsnorm" if "RMSNorm" in str(config.get("norm_type", "")) else "layernorm"
+    )
     activation = config.get("hidden_act", "silu")
     rope_theta = config.get("rope_theta", 10000.0)
     n_kv_heads = config.get("num_key_value_heads", 0)

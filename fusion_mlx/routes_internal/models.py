@@ -106,7 +106,9 @@ async def list_models(_auth: bool = Depends(verify_api_key)):
             modality = _resolve_modality(entry.model_name)
             profile = resolve_profile(entry.model_name)
             caps = sorted(profile.capabilities) if profile else []
-            data.append(_entry_payload(entry.model_name, tool, reasoning, modality, caps))
+            data.append(
+                _entry_payload(entry.model_name, tool, reasoning, modality, caps)
+            )
     elif cfg.model_name:
         profile = resolve_profile(cfg.model_alias) if cfg.model_alias else None
         profile_tool = profile.tool_call_parser if profile else None

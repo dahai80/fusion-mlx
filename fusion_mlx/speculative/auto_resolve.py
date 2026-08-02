@@ -108,9 +108,7 @@ def apply_resolution(args, resolution: AutoResolution) -> None:
         args.suffix_decoding = True
 
 
-def _describe(
-    method: str, has_mtp: bool, model_family: str | None
-) -> tuple[str, str]:
+def _describe(method: str, has_mtp: bool, model_family: str | None) -> tuple[str, str]:
     if method == METHOD_DFLY:
         return (
             "dfly",

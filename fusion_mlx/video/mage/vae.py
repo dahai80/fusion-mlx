@@ -19,7 +19,9 @@ class MageVAE(nn.Module):
         super().__init__()
         self.latent_channels = latent_channels
         self.encoder = _VAEEncoder(in_channels, hidden_channels, latent_channels, depth)
-        self.decoder = _VAEDecoder(latent_channels, hidden_channels, out_channels, depth)
+        self.decoder = _VAEDecoder(
+            latent_channels, hidden_channels, out_channels, depth
+        )
         self.quant_conv = nn.Linear(latent_channels * 2, latent_channels * 2)
         self.post_quant_conv = nn.Linear(latent_channels, latent_channels)
 
@@ -40,7 +42,7 @@ class _VAEEncoder(nn.Module):
         self.conv_in = nn.Conv2d(in_ch, hidden_ch, 3, padding=1)
         self.down_blocks = [
             nn.Conv2d(
-                hidden_ch * (2 ** i),
+                hidden_ch * (2**i),
                 hidden_ch * (2 ** (i + 1)),
                 3,
                 stride=2,
@@ -48,7 +50,7 @@ class _VAEEncoder(nn.Module):
             )
             for i in range(depth)
         ]
-        final_ch = hidden_ch * (2 ** depth)
+        final_ch = hidden_ch * (2**depth)
         self.conv_out = nn.Conv2d(final_ch, latent_ch * 2, 3, padding=1)
 
     def __call__(self, x: mx.array) -> mx.array:
@@ -62,16 +64,12 @@ class _VAEEncoder(nn.Module):
 class _VAEDecoder(nn.Module):
     def __init__(self, latent_ch: int, hidden_ch: int, out_ch: int, depth: int):
         super().__init__()
-        final_ch = hidden_ch * (2 ** depth)
+        final_ch = hidden_ch * (2**depth)
         self.conv_in = nn.Conv2d(latent_ch, final_ch, 3, padding=1)
         self.up_blocks = []
         for i in range(depth):
             in_c = hidden_ch * (2 ** (depth - i))
-            out_c = (
-                hidden_ch * (2 ** (depth - i - 1))
-                if i < depth - 1
-                else hidden_ch
-            )
+            out_c = hidden_ch * (2 ** (depth - i - 1)) if i < depth - 1 else hidden_ch
             self.up_blocks.append(nn.Conv2d(in_c, out_c, 3, padding=1))
         self.conv_out = nn.Conv2d(hidden_ch, out_ch, 3, padding=1)
 

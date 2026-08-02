@@ -759,7 +759,9 @@ def generate_video(
             else:
                 # Auto-generate all-white mask (full generation region)
                 # white=1.0 means "generate this region", black=0.0 means "condition on it"
-                logger.info("VACE: no control_mask provided, using all-white default (full generation)")
+                logger.info(
+                    "VACE: no control_mask provided, using all-white default (full generation)"
+                )
                 mask_frames = mx.ones((gen_frames, height, width), dtype=mx.float32)
             mx.eval(mask_frames)
 
