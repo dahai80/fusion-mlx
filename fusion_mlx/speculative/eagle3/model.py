@@ -3,8 +3,8 @@ import logging
 import os
 
 import mlx.core as mx
-import numpy as np
 import mlx.nn as nn
+import numpy as np
 
 logger = logging.getLogger(__name__)
 
@@ -15,7 +15,7 @@ class Eagle3Attention(nn.Module):
         self.num_heads = num_heads
         self.num_kv_heads = num_kv_heads
         self.head_dim = hidden_size // num_heads
-        self.scale = self.head_dim ** -0.5
+        self.scale = self.head_dim**-0.5
         in_dim = input_size or hidden_size
         self.q_proj = nn.Linear(in_dim, num_heads * self.head_dim, bias=False)
         self.k_proj = nn.Linear(in_dim, num_kv_heads * self.head_dim, bias=False)
@@ -27,7 +27,9 @@ class Eagle3Attention(nn.Module):
         B, L, _ = x.shape
         queries = self.q_proj(x).reshape(B, L, self.num_heads, -1).transpose(0, 2, 1, 3)
         keys = self.k_proj(x).reshape(B, L, self.num_kv_heads, -1).transpose(0, 2, 1, 3)
-        values = self.v_proj(x).reshape(B, L, self.num_kv_heads, -1).transpose(0, 2, 1, 3)
+        values = (
+            self.v_proj(x).reshape(B, L, self.num_kv_heads, -1).transpose(0, 2, 1, 3)
+        )
 
         offset = position_offset
         if cache is not None:
@@ -57,7 +59,9 @@ class Eagle3MLP(nn.Module):
 
 
 class Eagle3FirstLayer(nn.Module):
-    def __init__(self, hidden_size, intermediate_size, num_heads, num_kv_heads, rms_eps):
+    def __init__(
+        self, hidden_size, intermediate_size, num_heads, num_kv_heads, rms_eps
+    ):
         super().__init__()
         self.input_layernorm = nn.RMSNorm(hidden_size, eps=rms_eps)
         self.hidden_norm = nn.RMSNorm(hidden_size, eps=rms_eps)
@@ -80,7 +84,9 @@ class Eagle3FirstLayer(nn.Module):
 
 
 class Eagle3DecoderLayer(nn.Module):
-    def __init__(self, hidden_size, intermediate_size, num_heads, num_kv_heads, rms_eps):
+    def __init__(
+        self, hidden_size, intermediate_size, num_heads, num_kv_heads, rms_eps
+    ):
         super().__init__()
         self.input_layernorm = nn.RMSNorm(hidden_size, eps=rms_eps)
         self.self_attn = Eagle3Attention(hidden_size, num_heads, num_kv_heads)
@@ -89,7 +95,10 @@ class Eagle3DecoderLayer(nn.Module):
 
     def __call__(self, x, mask=None, cache=None, position_offset=0):
         h = self.self_attn(
-            self.input_layernorm(x), mask=mask, cache=cache, position_offset=position_offset
+            self.input_layernorm(x),
+            mask=mask,
+            cache=cache,
+            position_offset=position_offset,
         )
         x = x + h
         return x + self.mlp(self.post_attention_layernorm(x))
@@ -118,9 +127,13 @@ class Eagle3Model(nn.Module):
         self.embed_tokens = nn.Embedding(target_vocab_size, hidden_size)
         self.fc = nn.Linear(3 * target_hidden_size, hidden_size, bias=False)
         self.layers = [
-            Eagle3FirstLayer(hidden_size, intermediate_size, num_heads, num_kv_heads, rms_eps),
+            Eagle3FirstLayer(
+                hidden_size, intermediate_size, num_heads, num_kv_heads, rms_eps
+            ),
             *[
-                Eagle3DecoderLayer(hidden_size, intermediate_size, num_heads, num_kv_heads, rms_eps)
+                Eagle3DecoderLayer(
+                    hidden_size, intermediate_size, num_heads, num_kv_heads, rms_eps
+                )
                 for _ in range(1, num_layers)
             ],
         ]
@@ -134,14 +147,17 @@ class Eagle3Model(nn.Module):
             draft_ids = draft_ids + self.d2t[draft_ids]
         return draft_ids
 
-    def forward_standalone(self, tokens, cache=None):
+    def forward_standalone(self, tokens, cache=None, hidden_state=None):
         x = self.embed_tokens(tokens)
         for i, layer in enumerate(self.layers):
             layer_cache = cache[i] if cache else None
             offset = layer_cache.offset if layer_cache else 0
             if i == 0:
-                zero_hidden = mx.zeros_like(x)
-                x = layer(x, zero_hidden, cache=layer_cache, position_offset=offset)
+                if hidden_state is not None:
+                    h = hidden_state
+                else:
+                    h = mx.zeros_like(x)
+                x = layer(x, h, cache=layer_cache, position_offset=offset)
             else:
                 x = layer(x, cache=layer_cache, position_offset=offset)
         x = self.norm(x)
@@ -173,8 +189,8 @@ WEIGHT_REMAP = {
 
 
 def load_eagle3_weights(model_dir: str) -> tuple[dict, dict]:
-    import json
     import glob
+    import json
 
     cfg_path = os.path.join(model_dir, "config.json")
     with open(cfg_path) as f:
@@ -186,6 +202,7 @@ def load_eagle3_weights(model_dir: str) -> tuple[dict, dict]:
         pytorch_path = os.path.join(model_dir, "pytorch_model.bin")
         if os.path.exists(pytorch_path):
             import torch
+
             state_dict = torch.load(pytorch_path, map_location="cpu", weights_only=True)
             for k, v in state_dict.items():
                 weights[k] = mx.array(v.numpy())
@@ -193,9 +210,10 @@ def load_eagle3_weights(model_dir: str) -> tuple[dict, dict]:
             raise FileNotFoundError(f"No weights found in {model_dir}")
     else:
         from safetensors import safe_open
+
         for sf in safetensor_files:
             with safe_open(sf, framework="numpy") as f:
-                for k in f.keys():
+                for k in f:
                     weights[k] = mx.array(f.get_tensor(k))
 
     remapped = {}
@@ -246,7 +264,13 @@ def create_eagle3_model(model_dir: str) -> Eagle3Model:
 
     logger.info(
         "eagle3: model created hidden=%d heads=%d/%d layers=%d draft_vocab=%d target_vocab=%d has_embed=%s",
-        hidden_size, num_heads, num_kv_heads, num_layers, draft_vocab_size, target_vocab_size, has_embed,
+        hidden_size,
+        num_heads,
+        num_kv_heads,
+        num_layers,
+        draft_vocab_size,
+        target_vocab_size,
+        has_embed,
     )
     return model
 
@@ -277,4 +301,8 @@ def _init_embed_from_lm_head(model: Eagle3Model, weights: dict):
             embed[target_id] = lm_head_w[i]
             n_bound += 1
     model.embed_tokens.weight = embed
-    logger.info("eagle3: embed_tokens init from lm_head, bound %d/%d rows", n_bound, target_vocab)
+    logger.info(
+        "eagle3: embed_tokens init from lm_head, bound %d/%d rows",
+        n_bound,
+        target_vocab,
+    )

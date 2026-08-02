@@ -42,8 +42,9 @@ SPEC_ADAPTIVE_WINDOW = int(
 class SpecDecodeState:
     """Per-scheduler speculative decode state."""
 
-    def __init__(self, draft_model_decoder=None):
+    def __init__(self, draft_model_decoder=None, hidden_capture=None):
         self.draft_model = draft_model_decoder
+        self.hidden_capture = hidden_capture
         self.steps_since_start = 0
         self.total_spec_steps = 0
         self.total_draft_proposed = 0

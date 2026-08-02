@@ -308,12 +308,26 @@ class EngineCore:
 
                 loaded = draft.load()
                 if loaded:
+                    hidden_capture = None
                     if spec_method == "eagle3" and hasattr(model, "model"):
                         target_embed = getattr(model.model, "embed_tokens", None)
                         if target_embed is not None:
                             draft.bind_target_embed_from_model(target_embed)
+                        capture_layers = getattr(draft, "capture_layers", [8, 16, 31])
+                        from .speculative.hidden_capture import HiddenStateCapture
+
+                        hidden_capture = HiddenStateCapture(
+                            model, layer_ids=capture_layers
+                        )
+                        hidden_capture.install()
+                        draft.set_hidden_capture(hidden_capture)
+                        logger.info(
+                            "Speculative decode: eagle3 hidden_capture installed layers=%s",
+                            capture_layers,
+                        )
                     self.scheduler._spec_decode_state = SpecDecodeState(
-                        draft_model_decoder=draft
+                        draft_model_decoder=draft,
+                        hidden_capture=hidden_capture,
                     )
                     logger.info(
                         "Speculative decode: draft model enabled (%s, method=%s)",

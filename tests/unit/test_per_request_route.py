@@ -5,6 +5,7 @@ from types import SimpleNamespace
 from fusion_mlx.speculative.auto_router import (
     METHOD_DFLASH,
     METHOD_DSPARK,
+    METHOD_EAGLE3,
     METHOD_MTP,
     METHOD_NGRAM,
     SpecAutoRouter,
@@ -141,6 +142,7 @@ class TestLoadedMethods:
     def test_default_all_false(self):
         assert loaded_methods() == {
             METHOD_NGRAM: False,
+            METHOD_EAGLE3: False,
             METHOD_DFLASH: False,
             METHOD_DSPARK: False,
             METHOD_MTP: False,
@@ -168,12 +170,14 @@ class TestSchedulerLoadedAssembly:
 
         sched = SimpleNamespace(
             _ngram_spec_state=None,
+            _spec_decode_state=None,
             _dflash_runtime=None,
             _dspark_runtime=None,
             model=SimpleNamespace(),
         )
         assert _loaded_spec_methods(sched) == {
             METHOD_NGRAM: False,
+            METHOD_EAGLE3: False,
             METHOD_DFLASH: False,
             METHOD_DSPARK: False,
             METHOD_MTP: False,
@@ -184,6 +188,7 @@ class TestSchedulerLoadedAssembly:
 
         sched = SimpleNamespace(
             _ngram_spec_state=object(),
+            _spec_decode_state=None,
             _dflash_runtime=object(),
             _dspark_runtime=None,
             model=SimpleNamespace(_fusion_mlx_mtp_decode_enabled=True),
@@ -199,6 +204,7 @@ class TestSchedulerLoadedAssembly:
 
         sched = SimpleNamespace(
             _ngram_spec_state=None,
+            _spec_decode_state=None,
             _dflash_runtime=None,
             _dspark_runtime=None,
             model=SimpleNamespace(_fusion_mlx_mtp_decode_enabled=False),
@@ -217,9 +223,11 @@ class TestDecideSpecMethod:
 
         sched = SimpleNamespace(
             _ngram_spec_state=object() if ngram else None,
+            _spec_decode_state=None,
             _dflash_runtime=object() if dflash else None,
             _dspark_runtime=object() if dspark else None,
             model=SimpleNamespace(_fusion_mlx_mtp_decode_enabled=mtp),
+            config=SimpleNamespace(model_name="test"),
         )
         sched._loaded_spec_methods = lambda: _lsm(sched)
         return sched

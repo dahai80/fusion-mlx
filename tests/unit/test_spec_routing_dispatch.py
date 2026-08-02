@@ -24,7 +24,9 @@ def _make_request(method):
 
 
 def _make_sched(request, *, ngram=None, dflash=None, dspark=None, draft=None):
-    return SimpleNamespace(
+    from fusion_mlx.scheduler.sched_step import _loaded_spec_methods as _lsm
+
+    sched = SimpleNamespace(
         running={"r1": request},
         uid_to_request_id={0: "r1"},
         _vlm_mtp_active=False,
@@ -37,7 +39,24 @@ def _make_sched(request, *, ngram=None, dflash=None, dspark=None, draft=None):
         _spec_decode_state=(
             SimpleNamespace(draft_model=draft) if draft is not None else None
         ),
+        model=SimpleNamespace(),
+        config=SimpleNamespace(model_name="test"),
     )
+
+    def _decide(self, req):
+        loaded = _lsm(self)
+        if loaded.get("ngram"):
+            return "ngram"
+        if loaded.get("eagle3"):
+            return "eagle3"
+        if loaded.get("dflash"):
+            return "dflash"
+        if loaded.get("dspark"):
+            return "dspark"
+        return ""
+
+    sched._decide_spec_method = lambda req: _decide(sched, req)
+    return sched
 
 
 def _resp():

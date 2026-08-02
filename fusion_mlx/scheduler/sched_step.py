@@ -545,14 +545,17 @@ def _loaded_spec_methods(self) -> dict[str, bool]:
 
 
 def _decide_spec_method(self, request) -> str:
-    from ..speculative.per_request_route import select_active_method
     from ..model_auto_config import _detect_family_from_path
+    from ..speculative.per_request_route import select_active_method
 
     loaded = self._loaded_spec_methods()
     model_name = getattr(self.config, "model_name", "") or ""
     model_family = _detect_family_from_path(model_name)
     is_recurrent = False
-    if self._spec_decode_state is not None and self._spec_decode_state.draft_model is not None:
+    if (
+        self._spec_decode_state is not None
+        and self._spec_decode_state.draft_model is not None
+    ):
         pass
     method = select_active_method(
         request.num_prompt_tokens,
@@ -603,7 +606,24 @@ def _try_spec_decode(
 
     if last_step_was_mtp(self.batch_generator):
         return []
-    if request_id in self._output_parser_sessions:
+
+    # Per-request spec method routing (#431 Step 2). Decide method on first
+    # pure-decode step if not yet decided.
+    from ..speculative.auto_router import (
+        METHOD_DFLASH,
+        METHOD_DSPARK,
+        METHOD_EAGLE3,
+        METHOD_NGRAM,
+    )
+
+    if not request._active_spec_method:
+        request._active_spec_method = self._decide_spec_method(request)
+
+    # Output-parser sessions conflict with n-gram spec decode (token-level
+    # n-gram matching can't handle parser-managed token streams) but are
+    # compatible with eagle3/dflash/dspark which use draft models.
+    method = request._active_spec_method or ""
+    if method == METHOD_NGRAM and request_id in self._output_parser_sessions:
         return []
 
     if self._pending_abort_ids:
@@ -614,14 +634,6 @@ def _try_spec_decode(
     # fall-through among heuristic methods - the router picked one, running a
     # second would double-spec. Draft-model (not router-controlled) stays as
     # a fallback when the chosen heuristic produced no output this step.
-    from ..speculative.auto_router import (
-        METHOD_DFLASH,
-        METHOD_DSPARK,
-        METHOD_EAGLE3,
-        METHOD_NGRAM,
-    )
-
-    method = request._active_spec_method or ""
     if method == METHOD_NGRAM and self._ngram_spec_state is not None:
         from .ngram_spec import ngram_spec_step
 

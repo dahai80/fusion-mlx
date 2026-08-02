@@ -11,7 +11,7 @@ from dataclasses import dataclass
 
 import mlx.core as mx
 
-from .model import create_eagle3_model, bind_target_embedding
+from .model import bind_target_embedding, create_eagle3_model
 
 logger = logging.getLogger(__name__)
 
@@ -46,7 +46,9 @@ class Eagle3DraftConfig:
         num_draft = int(os.environ.get(ENV_DRAFT_TOKENS, "5"))
         temp = float(os.environ.get(ENV_DRAFT_TEMP, "0.0"))
         if key not in EAGLE3_DRAFT_MODELS:
-            logger.warning("eagle3: unknown draft_model_key=%s, fallback llama3.1-8b", key)
+            logger.warning(
+                "eagle3: unknown draft_model_key=%s, fallback llama3.1-8b", key
+            )
             key = "llama3.1-8b"
         return cls(draft_model_key=key, num_draft=num_draft, temperature=temp)
 
@@ -92,7 +94,11 @@ class Eagle3Speculator:
                 load_path = local_path
             else:
                 load_path = hf_path
-                logger.info("eagle3: local path %s not found, using HF path %s", local_path, hf_path)
+                logger.info(
+                    "eagle3: local path %s not found, using HF path %s",
+                    local_path,
+                    hf_path,
+                )
 
             self.model = create_eagle3_model(load_path)
 
@@ -105,26 +111,78 @@ class Eagle3Speculator:
             self._loaded = True
             logger.info(
                 "eagle3: loaded %s in %.1fs, num_draft=%d, target=%s",
-                load_path, dt, self.config.num_draft, self.target_family,
+                load_path,
+                dt,
+                self.config.num_draft,
+                self.target_family,
             )
             return True
         except Exception as e:
             logger.warning("eagle3: failed to load %s: %s", self.model_path, e)
             import traceback
+
             traceback.print_exc()
             return False
+
+    @property
+    def capture_layers(self):
+        return [8, 16, 31]
+
+    def set_hidden_capture(self, hidden_capture):
+        self._hidden_capture = hidden_capture
+
+    def _build_hidden_from_capture(self, seq_len: int):
+        if not hasattr(self, "_hidden_capture") or self._hidden_capture is None:
+            return None
+        captured = self._hidden_capture.get_prefill_captured()
+        if not captured:
+            return None
+        sorted_ids = sorted(captured.keys())
+        states = [captured[lid] for lid in sorted_ids]
+        try:
+            min_sl = min(s.shape[1] for s in states)
+            states = [s[:, -min_sl:, :] for s in states]
+            cat = mx.concatenate(states, axis=-1)
+            projected = self.model.fc(cat)
+            mx.eval(projected)
+            self._hidden_capture.clear_prefill_captured()
+            return projected
+        except Exception as e:
+            logger.warning("eagle3: _build_hidden_from_capture failed: %s", e)
+            return None
+
+    def _get_decode_hidden(self):
+        if not hasattr(self, "_hidden_capture") or self._hidden_capture is None:
+            return self._prefill_hidden
+        captured = self._hidden_capture.get_captured()
+        if not captured:
+            return self._prefill_hidden
+        sorted_ids = sorted(captured.keys())
+        states = [captured[lid][:, -1:, :] for lid in sorted_ids]
+        try:
+            cat = mx.concatenate(states, axis=-1)
+            projected = self.model.fc(cat)
+            mx.eval(projected)
+            return projected
+        except Exception as e:
+            logger.warning("eagle3: _get_decode_hidden failed: %s", e)
+            return self._prefill_hidden
 
     def bind_target_embed_from_model(self, target_embed):
         if self.model is None:
             logger.warning("eagle3: no eagle3 model loaded, cannot bind embed")
             return
         try:
-            if hasattr(target_embed, "weight") and target_embed.weight.dtype != mx.uint32:
+            if (
+                hasattr(target_embed, "weight")
+                and target_embed.weight.dtype != mx.uint32
+            ):
                 embed_w = target_embed.weight
                 if embed_w.shape[-1] != self.model.hidden_size:
                     logger.warning(
                         "eagle3: target embed shape %s != hidden_size %d",
-                        embed_w.shape, self.model.hidden_size,
+                        embed_w.shape,
+                        self.model.hidden_size,
                     )
                     return
                 bind_target_embedding(self.model, embed_w)
@@ -147,36 +205,49 @@ class Eagle3Speculator:
             os.path.join("~/.fusion-mlx/models", target_model_hf)
         )
         if not os.path.isdir(target_local):
-            logger.info("eagle3: target model %s not found locally, skipping embed bind", target_local)
+            logger.info(
+                "eagle3: target model %s not found locally, skipping embed bind",
+                target_local,
+            )
             return
         try:
             import glob
+
             from safetensors import safe_open
-            safetensor_files = sorted(glob.glob(os.path.join(target_local, "*.safetensors")))
+
+            safetensor_files = sorted(
+                glob.glob(os.path.join(target_local, "*.safetensors"))
+            )
             if not safetensor_files:
-                logger.info("eagle3: no safetensors in %s, skipping embed bind", target_local)
+                logger.info(
+                    "eagle3: no safetensors in %s, skipping embed bind", target_local
+                )
                 return
             for sf in safetensor_files:
                 with safe_open(sf, framework="numpy") as f:
-                    for k in f.keys():
+                    for k in f:
                         if k == "model.embed_tokens.weight":
                             arr = f.get_tensor(k)
                             if arr.shape[-1] != self.model.hidden_size:
                                 logger.info(
                                     "eagle3: target embed_tokens shape %s != hidden_size %d, skipping (quantized?)",
-                                    arr.shape, self.model.hidden_size,
+                                    arr.shape,
+                                    self.model.hidden_size,
                                 )
                                 return
                             embed_w = mx.array(arr)
                             bind_target_embedding(self.model, embed_w)
                             return
-            logger.info("eagle3: embed_tokens not found in target model weights, using lm_head-derived init")
+            logger.info(
+                "eagle3: embed_tokens not found in target model weights, using lm_head-derived init"
+            )
         except Exception as e:
             logger.warning("eagle3: failed to bind target embed: %s", e)
 
     def reset(self):
         self._draft_cache = None
         self._prev_token = None
+        self._prefill_hidden = None
 
     def on_new_request(self, request_id: str, prompt_tokens: list[int]):
         self.reset()
@@ -188,15 +259,34 @@ class Eagle3Speculator:
         if self.model is not None and prompt_tokens:
             try:
                 from mlx_lm.models.cache import KVCache
+
                 with mx.stream(mx.default_stream(mx.gpu)):
-                    input_ids = mx.array(prompt_tokens, mx.uint32)
+                    hidden_state = self._build_hidden_from_capture(len(prompt_tokens))
+                    if hidden_state is not None:
+                        hs_sl = hidden_state.shape[1]
+                        ids = prompt_tokens[-hs_sl:]
+                    else:
+                        ids = prompt_tokens
+                    input_ids = mx.array(ids, mx.uint32)
                     self._draft_cache = [KVCache() for _ in self.model.layers]
-                    self.model.forward_standalone(input_ids[None], cache=self._draft_cache)
+                    self.model.forward_standalone(
+                        input_ids[None],
+                        cache=self._draft_cache,
+                        hidden_state=hidden_state,
+                    )
                     mx.eval(self._draft_cache)
-                    logger.info("eagle3: prefill success, layers=%d", len(self._draft_cache))
+                    if hidden_state is not None:
+                        self._prefill_hidden = hidden_state[:, -1:, :]
+                        mx.eval(self._prefill_hidden)
+                    logger.info(
+                        "eagle3: prefill success, layers=%d has_hidden=%s",
+                        len(self._draft_cache),
+                        hidden_state is not None,
+                    )
             except Exception as e:
                 logger.warning("eagle3: prefill failed: %s", e)
                 import traceback
+
                 traceback.print_exc()
                 self._draft_cache = None
 
@@ -206,17 +296,23 @@ class Eagle3Speculator:
         if self._draft_cache is None:
             return []
 
+        hidden_state = self._get_decode_hidden()
         drafts = []
         token = current_token
         try:
             with mx.stream(mx.default_stream(mx.gpu)):
                 for _ in range(self.config.num_draft):
                     input_ids = mx.array([token], mx.uint32)
-                    logits = self.model.forward_standalone(input_ids[None], cache=self._draft_cache)
+                    logits = self.model.forward_standalone(
+                        input_ids[None],
+                        cache=self._draft_cache,
+                        hidden_state=hidden_state,
+                    )
                     logits = logits.squeeze(0).squeeze(0)
 
                     if self.config.temperature > 0:
                         from mlx_lm.sample_utils import make_sampler
+
                         sampler = make_sampler(temp=self.config.temperature)
                         next_token = sampler(logits)
                     else:
@@ -231,6 +327,7 @@ class Eagle3Speculator:
         except Exception as e:
             logger.warning("eagle3: generate failed: %s", e)
             import traceback
+
             traceback.print_exc()
             self.reset()
             return []
@@ -240,9 +337,7 @@ class Eagle3Speculator:
 
     def get_stats(self) -> dict:
         rate = (
-            self._total_accepted / self._total_drafts
-            if self._total_drafts > 0
-            else 0.0
+            self._total_accepted / self._total_drafts if self._total_drafts > 0 else 0.0
         )
         return {
             "method": "eagle3",
