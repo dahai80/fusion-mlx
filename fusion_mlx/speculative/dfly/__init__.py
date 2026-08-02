@@ -18,14 +18,14 @@ Public API:
 - ``DEFAULT_BLOCK_SIZE``: default block size (16)
 """
 
-from .eligibility import DFlyUnavailable, check, eligible_aliases, report
-from .drafter import DFlyDrafter
 from .accept_counter import (
     DFlyAcceptCounter,
     DFlyAcceptSnapshot,
     get_global_counter,
     reset_global_counter_for_tests,
 )
+from .drafter import DFlyDrafter
+from .eligibility import DFlyUnavailable, check, eligible_aliases, report
 from .runtime import load_runtime
 
 DEFAULT_BLOCK_SIZE = 16

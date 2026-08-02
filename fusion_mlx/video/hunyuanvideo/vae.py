@@ -233,9 +233,9 @@ class HunyuanVideoVAE(nn.Module):
             z.shape, tile_t, tile_h, tile_w, overlap_t, overlap_h, overlap_w,
         )
         B, C, T, H, W = z.shape
-        need_t = T > tile_t
-        need_h = H > tile_h
-        need_w = W > tile_w
+        need_t = tile_t < T
+        need_h = tile_h < H
+        need_w = tile_w < W
 
         if not need_t and not need_h and not need_w:
             logger.info("hunyuan vae decode_tiled: no tiling needed, using decode()")

@@ -15,12 +15,12 @@ import logging
 from dataclasses import dataclass
 
 from .auto_router import (
+    _SPEC_ROUTING_TABLE,
     METHOD_DFLY,
     METHOD_MTP,
     METHOD_NGRAM,
     RouteSignals,
     SpecAutoRouter,
-    _SPEC_ROUTING_TABLE,
 )
 from .mtp import MTPEligibility, detect_mtp_eligibility
 

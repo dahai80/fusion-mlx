@@ -86,12 +86,12 @@ from .api.openclaw_routes import router as openclaw_router
 from .api.openclaw_routes import set_openclaw_agent_pool
 from .api.reasoning_routes import router as reasoning_router
 from .api.reasoning_routes import set_reasoning_context
-from .api.spec_routes import router as spec_router
 from .api.recommend_routes import router as recommend_router
 from .api.rerank_routes import router as rerank_router
 from .api.rerank_routes import set_rerank_context
 from .api.session_routes import router as sessions_router
 from .api.session_routes import set_sessions_context
+from .api.spec_routes import router as spec_router
 from .api.videos_routes import router as videos_router
 from .api.videos_routes import set_videos_context
 from .config import ServerConfig
@@ -1416,7 +1416,6 @@ class Server:
 
     async def _preload_models(self) -> None:
         import json as _json
-
         import os
 
         # Resolve preload list: PRELOAD_MODELS env > settings.json model.preload

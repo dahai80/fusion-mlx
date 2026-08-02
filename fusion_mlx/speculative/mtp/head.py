@@ -29,10 +29,12 @@ def build_mtp_module(args: Any, num_layers: int) -> tuple[type, type]:
             return _MTPDecoderLayer, _MTPModule
 
     try:
-        from mlx_lm.models.qwen3_5 import MLP as _MLP, SparseMoeBlock
+        from mlx_lm.models.qwen3_5 import MLP as _MLP
+        from mlx_lm.models.qwen3_5 import SparseMoeBlock
     except ImportError:
         try:
-            from mlx_lm.models.gemma4_unified import MLP as _MLP, SparseMoeBlock
+            from mlx_lm.models.gemma4_unified import MLP as _MLP
+            from mlx_lm.models.gemma4_unified import SparseMoeBlock
         except ImportError:
             _MLP = None
             SparseMoeBlock = None

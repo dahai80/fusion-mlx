@@ -9,22 +9,20 @@ signals. Phase 3 observability surface.
 from __future__ import annotations
 
 import logging
-from typing import Any
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 
 from ..middleware.auth import verify_api_key
 from ..speculative.auto_router import (
-    METHOD_DFLY,
+    _SPEC_ROUTING_TABLE,
     METHOD_DFLASH,
+    METHOD_DFLY,
     METHOD_DSPARK,
     METHOD_MTP,
     METHOD_NGRAM,
     RouteSignals,
     SpecAutoRouter,
-    _SPEC_ROUTING_TABLE,
-    drafter_for,
     routing_table,
 )
 
