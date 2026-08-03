@@ -19,14 +19,13 @@ import argparse
 import asyncio
 import json
 import logging
-import os
 import sys
 import time
-import uuid
-from dataclasses import dataclass, field, asdict
+from collections.abc import AsyncIterator
+from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Any, AsyncIterator
+from typing import Any
 
 logger = logging.getLogger("benchmark")
 
@@ -179,9 +178,10 @@ class FusionMLXBenchmarkV2:
 
     async def _load_engine(self) -> None:
         """加载模型引擎 (直接使用 mlx_lm + AsyncEngineCore)"""
+        from mlx_lm import load
+
         from fusion_mlx.engine_core import AsyncEngineCore, EngineConfig
         from fusion_mlx.scheduler import SchedulerConfig
-        from mlx_lm import load
 
         logger.info("加载模型: %s ...", self.model_path)
 
@@ -743,8 +743,8 @@ class FusionMLXBenchmarkV2:
         results = []
 
         try:
-            from fusion_mlx.scheduler.spec_decode import SPEC_DRAFT_MODEL_ENABLED
             from fusion_mlx.scheduler.ngram_spec import NGRAM_SPEC_ENABLED
+            from fusion_mlx.scheduler.spec_decode import SPEC_DRAFT_MODEL_ENABLED
         except ImportError:
             logger.warning("  推测解码模块不可用，跳过")
             return results
@@ -879,8 +879,13 @@ class FusionMLXBenchmarkV2:
 
         try:
             from fusion_mlx.engines import (
-                EmbeddingEngine, RerankerEngine, STSEngine,
-                ImageGenEngine, VideoGenEngine, STTEngine, TTSEngine,
+                EmbeddingEngine,
+                ImageGenEngine,
+                RerankerEngine,
+                STSEngine,
+                STTEngine,
+                TTSEngine,
+                VideoGenEngine,
             )
             engine_types = {
                 "EmbeddingEngine": EmbeddingEngine,
@@ -1053,7 +1058,7 @@ def print_report_table(report: BenchReport) -> None:
     """打印人类可读的基准测试结果表"""
     print("\n")
     print("=" * 100)
-    print(f"  fusion-mlx 基准测试报告")
+    print("  fusion-mlx 基准测试报告")
     print(f"  模型: {report.model}")
     print(f"  硬件: {report.hardware.get('device_name', '?')}")
     print(f"  时间: {report.started_at} → {report.finished_at}")

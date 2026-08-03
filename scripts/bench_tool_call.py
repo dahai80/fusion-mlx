@@ -356,7 +356,7 @@ def main():
     print(f"Required fields:       {report['required_fields_present']['count']}/{report['total_calls']}  ({100*report['required_fields_present']['rate']:.1f}%)")
     print(f"Schema compliant:      {report['schema_compliant']['count']}/{report['total_calls']}  ({100*report['schema_compliant']['rate']:.1f}%)")
     if report["errors"]:
-        print(f"\nError breakdown:")
+        print("\nError breakdown:")
         for err_type, count in sorted(report["errors"].items(), key=lambda x: -x[1]):
             print(f"  {err_type}: {count}")
 

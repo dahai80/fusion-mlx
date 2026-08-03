@@ -8,14 +8,13 @@ plus route-level integration via TestClient.
 
 from __future__ import annotations
 
+from unittest.mock import MagicMock, patch
+
 import pytest
-from unittest.mock import patch, MagicMock
 
 from fusion_mlx.service.helpers import (
     build_context_budget_headers,
     compute_prompt_tokens_for_messages,
-    get_model_max_context,
-    count_prompt_tokens,
 )
 
 

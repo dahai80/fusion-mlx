@@ -84,7 +84,7 @@ def bench(model_path: str, max_tokens: int = 200, warmup: int = 1, runs: int = 3
              model_path, mean, mean / 29.24)
     print(f"MODEL={model_path}")
     print(f"MEAN_DECODE_TOK_S={mean:.2f}")
-    print(f"BASELINE=29.24")
+    print("BASELINE=29.24")
     print(f"RATIO={mean/29.24:.3f}")
     print(f"PASS={'yes' if mean >= 29.24 else 'no'}")
     return mean

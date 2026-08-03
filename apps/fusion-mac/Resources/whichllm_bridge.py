@@ -12,20 +12,26 @@ Exit code 0 on success, 1 on error.
 """
 
 import json
-import sys
 import os
+import sys
 
 # whichllm may or may not be installed — provide graceful fallback
 _WHICHLLM_AVAILABLE = False
 try:
-    from whichllm.hardware.detector import detect_hardware
     from whichllm.engine.ranker import rank_models
-    from whichllm.models.fetcher import fetch_models, dicts_to_models, models_to_dicts
-    from whichllm.models.grouper import group_models
-    from whichllm.models.benchmark import fetch_benchmark_scores, load_benchmark_cache, save_benchmark_cache
-    from whichllm.models.cache import load_cache, save_cache
+    from whichllm.hardware.detector import detect_hardware
     from whichllm.models.artifacts import attach_resolved_artifacts
-    from whichllm.output.json_output import display_json as _  # ensure module importable
+    from whichllm.models.benchmark import (
+        fetch_benchmark_scores,
+        load_benchmark_cache,
+        save_benchmark_cache,
+    )
+    from whichllm.models.cache import load_cache, save_cache
+    from whichllm.models.fetcher import dicts_to_models, fetch_models, models_to_dicts
+    from whichllm.models.grouper import group_models
+    from whichllm.output.json_output import (
+        display_json as _,  # ensure module importable
+    )
     _WHICHLLM_AVAILABLE = True
 except ImportError:
     pass
@@ -97,13 +103,13 @@ def _recommend():
     """Detect hardware + fetch models + rank recommendations."""
     if not _WHICHLLM_AVAILABLE:
         return {"error": "whichllm not installed", "hardware": _detect(), "models": []}
-    
+
     import asyncio
-    
+
     async def run():
         hw = detect_hardware()
         hardware_dict = _format_hardware(hw)
-        
+
         # Try cache first
         cached = load_cache()
         if cached is not None:
@@ -111,13 +117,13 @@ def _recommend():
         else:
             models = await fetch_models(include_vision=False)
             save_cache(models_to_dicts(models))
-        
+
         group_models(models)
         all_models = []
         for family in models:
             all_models.append(family.base_model)
             all_models.extend(family.variants)
-        
+
         # Fetch or load benchmark cache
         bench_scores = load_benchmark_cache()
         if bench_scores is None:
@@ -126,7 +132,7 @@ def _recommend():
                 save_benchmark_cache(bench_scores)
             except Exception:
                 bench_scores = {}
-        
+
         results = rank_models(
             all_models, hw,
             context_length=4096, top_n=10,
@@ -136,7 +142,7 @@ def _recommend():
             attach_resolved_artifacts(results, all_models)
         except Exception:
             pass
-        
+
         models_out = []
         for i, r in enumerate(results[:10]):
             q = r.gguf_variant
@@ -161,9 +167,9 @@ def _recommend():
                 "benchmark_status": r.benchmark_status,
                 "uses_multi_gpu": r.uses_multi_gpu,
             })
-        
+
         return {"hardware": hardware_dict, "models": models_out}
-    
+
     return asyncio.run(run())
 
 
@@ -171,7 +177,7 @@ def main():
     if len(sys.argv) < 2:
         print(json.dumps({"error": "Usage: whichllm_bridge.py detect|recommend"}))
         sys.exit(1)
-    
+
     command = sys.argv[1]
     if command == "detect":
         result = _detect()
@@ -180,7 +186,7 @@ def main():
     else:
         print(json.dumps({"error": f"Unknown command: {command}"}))
         sys.exit(1)
-    
+
     print(json.dumps(result, indent=2, default=str))
     sys.exit(0 if "error" not in result else 1)
 

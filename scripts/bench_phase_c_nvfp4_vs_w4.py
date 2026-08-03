@@ -9,7 +9,7 @@ import sys
 import time
 
 import mlx.core as mx
-from mlx_lm import load, generate
+from mlx_lm import generate, load
 
 PROMPT = "The capital of France is"
 MODELS = [

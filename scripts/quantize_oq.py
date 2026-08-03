@@ -32,7 +32,7 @@ def main():
         log.error("output already exists: %s", output)
         sys.exit(1)
 
-    from fusion_mlx.oq import quantize_oq_streaming, estimate_bpw_and_size
+    from fusion_mlx.oq import estimate_bpw_and_size, quantize_oq_streaming
 
     est = estimate_bpw_and_size(SOURCE, oq_level, 64, False)
     log.info("source=%s", SOURCE)
