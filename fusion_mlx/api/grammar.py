@@ -97,7 +97,7 @@ def _get_grammar_compiler_cached(
     vocab_size_key: int | None,
 ) -> object | None:
     """Build (or fetch) a cached ``xgrammar.GrammarCompiler``."""
-    from ..._torch_stub import install as _install_torch_stub
+    from fusion_mlx._torch_stub import install as _install_torch_stub
 
     _install_torch_stub()
     import xgrammar as xgr
@@ -129,12 +129,12 @@ def create_grammar_compiler(tokenizer, model):
     of rebuilding the bitmask table per instance. Returns ``None`` if vocab
     size cannot be determined or xgrammar is unavailable.
     """
-    from ..._torch_stub import install as _install_torch_stub
+    from fusion_mlx._torch_stub import install as _install_torch_stub
 
     _install_torch_stub()
     import xgrammar as xgr  # noqa: F401  (probe import for early failure)
 
-    from ...utils.tokenizer import resolve_vocab_size, unwrap_tokenizer
+    from fusion_mlx.utils.tokenizer import resolve_vocab_size, unwrap_tokenizer
 
     hf_tokenizer = unwrap_tokenizer(tokenizer)
     vocab_size = resolve_vocab_size(model)
@@ -188,7 +188,7 @@ def create_llguidance_matcher(
         logger.debug("llguidance not available for grammar compilation")
         return None
 
-    from ...utils.tokenizer import unwrap_tokenizer
+    from fusion_mlx.utils.tokenizer import unwrap_tokenizer
 
     hf_tokenizer = unwrap_tokenizer(tokenizer)
 
@@ -369,7 +369,7 @@ class GrammarConstraintProcessor:
         return GrammarBackend.XGRAMMAR
 
     def _init_xgrammar(self, compiled_grammar, vocab_size: int):
-        from ..._torch_stub import install as _install_torch_stub
+        from fusion_mlx._torch_stub import install as _install_torch_stub
 
         _install_torch_stub()
         import xgrammar as xgr

@@ -578,15 +578,19 @@ class IPAdapter(VideoAdapter):
             return None
 
         try:
+            mx.default_stream(mx.default_device())
             pixel_values = preprocess_clip_image(path)
             clip_features = self.clip_vision(pixel_values)
+            mx.eval(clip_features)
             logger.debug("IP-Adapter: CLIP features shape=%s", clip_features.shape)
 
             projected = self.projection(clip_features)
+            mx.eval(projected)
             logger.debug("IP-Adapter: projected features shape=%s", projected.shape)
 
             if self.scale != 1.0:
                 projected = projected * self.scale
+                mx.eval(projected)
 
             return projected
         except Exception as exc:
