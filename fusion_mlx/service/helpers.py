@@ -1361,6 +1361,70 @@ def get_model_max_context(engine) -> int:
     return _FALLBACK_MAX_CONTEXT_TOKENS
 
 
+_CONTEXT_BUDGET_WARNING_THRESHOLD = 0.7
+
+
+def build_context_budget_headers(
+    prompt_tokens: int,
+    context_window: int,
+) -> dict[str, str]:
+    if context_window <= 0:
+        return {}
+    used = max(0, prompt_tokens)
+    remaining = max(0, context_window - used)
+    headers = {
+        "X-Context-Budget": f"used={used};total={context_window};remaining={remaining}",
+    }
+    if context_window > 0 and used / context_window > _CONTEXT_BUDGET_WARNING_THRESHOLD:
+        headers["X-Context-Warning"] = "true"
+    logger.debug(
+        "Context budget: used=%d total=%d remaining=%d warning=%s",
+        used,
+        context_window,
+        remaining,
+        used / context_window > _CONTEXT_BUDGET_WARNING_THRESHOLD if context_window > 0 else False,
+    )
+    return headers
+
+
+def compute_prompt_tokens_for_messages(
+    engine,
+    messages: list,
+    *,
+    tools: list | None = None,
+    enable_thinking: bool | None = None,
+) -> int:
+    if getattr(engine, "is_mllm", False):
+        return 0
+    build_prompt = getattr(engine, "build_prompt", None)
+    if build_prompt is None:
+        apply_tpl = getattr(engine, "_apply_chat_template", None)
+        if apply_tpl is not None:
+            try:
+                ct_kwargs = {}
+                if enable_thinking is not None:
+                    ct_kwargs["enable_thinking"] = enable_thinking
+                prompt = apply_tpl(messages, tools=tools, chat_template_kwargs=ct_kwargs or None)
+                return count_prompt_tokens(engine, prompt)
+            except Exception:
+                logger.debug("compute_prompt_tokens_for_messages: _apply_chat_template failed", exc_info=True)
+                return 0
+        return 0
+    try:
+        prompt = _build_prompt_with_thinking_compat(
+            build_prompt,
+            messages,
+            tools=tools,
+            enable_thinking=enable_thinking,
+        )
+    except Exception:
+        logger.debug("compute_prompt_tokens_for_messages: build_prompt failed", exc_info=True)
+        return 0
+    if not prompt:
+        return 0
+    return count_prompt_tokens(engine, prompt)
+
+
 def count_prompt_tokens(engine, prompt) -> int:
     if isinstance(prompt, list):
         if not prompt:

@@ -613,6 +613,23 @@ async def _run_chat(
                         _factor,
                     )
 
+        # X-Context-Budget response header (#327)
+        from ..service.helpers import (
+            build_context_budget_headers,
+            get_model_max_context,
+        )
+
+        _ctx_window = get_model_max_context(engine)
+        _ctx_budget_headers = build_context_budget_headers(
+            prompt_tokens=resp.usage.prompt_tokens if resp.usage else 0,
+            context_window=_ctx_window,
+        )
+        if _ctx_budget_headers:
+            from starlette.responses import JSONResponse
+
+            _resp_dict = resp.model_dump() if hasattr(resp, "model_dump") else resp
+            return JSONResponse(content=_resp_dict, headers=_ctx_budget_headers)
+
         return resp
     except HTTPException:
         raise
@@ -1022,6 +1039,33 @@ async def _stream_chat(
             await _release_engine(model_name, adapter_path=adapter_path)
             raise
 
+    # X-Context-Budget response header (#327)
+    _stream_headers: dict[str, str] = {
+        "Cache-Control": "no-cache",
+        "X-Accel-Buffering": "no",
+    }
+    from ..service.helpers import (
+        build_context_budget_headers,
+        compute_prompt_tokens_for_messages,
+        get_model_max_context,
+    )
+
+    _ctx_window = get_model_max_context(engine)
+    if _ctx_window > 0:
+        _est_prompt = compute_prompt_tokens_for_messages(
+            engine,
+            [
+                m.model_dump() if hasattr(m, "model_dump") else m
+                for m in request.messages
+            ],
+            tools=request.tools,
+        )
+        _ctx_budget_headers = build_context_budget_headers(
+            prompt_tokens=_est_prompt,
+            context_window=_ctx_window,
+        )
+        _stream_headers.update(_ctx_budget_headers)
+
     return StreamingResponse(
         _stream_chat_generator(
             request,
@@ -1033,7 +1077,7 @@ async def _stream_chat(
             headers=headers,
         ),
         media_type="text/event-stream",
-        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        headers=_stream_headers,
     )
 
 
@@ -1272,12 +1316,21 @@ async def chat_completions(
                 CachePolicy.NO_STORE,
                 CachePolicy.BYPASS,
             ):
+                from starlette.responses import JSONResponse
+
                 from ..cache.response_cache import CachePolicy, get_response_cache
 
                 cache = get_response_cache()
-                resp_dict = (
-                    result.model_dump() if hasattr(result, "model_dump") else result
-                )
+                if isinstance(result, JSONResponse):
+                    resp_dict = result.body
+                    if isinstance(resp_dict, bytes):
+                        import json
+
+                        resp_dict = json.loads(resp_dict)
+                else:
+                    resp_dict = (
+                        result.model_dump() if hasattr(result, "model_dump") else result
+                    )
                 cache.put(_cache_key, resp_dict)
 
             return result
