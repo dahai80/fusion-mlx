@@ -406,9 +406,9 @@ def test_seeded_sampler_five_runs_identical(logprobs_fixture):
         sequences.append(_sample_sequence(s, logprobs_fixture, 16))
     # All five must equal the first
     for i, seq in enumerate(sequences[1:], start=1):
-        assert seq == sequences[0], (
-            f"run {i} diverged from run 0 — seed parameter is non-functional"
-        )
+        assert (
+            seq == sequences[0]
+        ), f"run {i} diverged from run 0 — seed parameter is non-functional"
 
 
 def test_seeded_sampler_interleaved_concurrency_isolation(logprobs_fixture):

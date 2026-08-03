@@ -254,9 +254,9 @@ def test_tool_choice_case_mismatch_surfaces_did_you_mean_hint():
     assert "not present in the 'tools' array" in resp.text
     # F-145 hint surfaces the case-matching tool name AND explains why.
     assert "get_Weather" in resp.text, "F-145 hint must name the case-matching tool"
-    assert "case-sensitive" in resp.text, (
-        "F-145 hint must explain the case-sensitivity surface"
-    )
+    assert (
+        "case-sensitive" in resp.text
+    ), "F-145 hint must explain the case-sensitivity surface"
 
 
 def test_tool_choice_no_case_match_omits_hint():
@@ -654,9 +654,9 @@ def test_tool_choice_required_with_stream_passes_through_cloud_routing():
     # Must reach the cloud path: 200 OK + cloud's sentinel content in
     # the body + the cloud router's stream_completion was invoked.
     assert resp.status_code == 200, resp.text
-    assert _CLOUD_SENTINEL_CONTENT in resp.text, (
-        f"cloud sentinel missing — local path was hit instead: {resp.text[:300]}"
-    )
+    assert (
+        _CLOUD_SENTINEL_CONTENT in resp.text
+    ), f"cloud sentinel missing — local path was hit instead: {resp.text[:300]}"
     assert cloud_called["stream"], (
         "cloud router's stream_completion was never called — local 422 fired "
         "or the request silently fell back to local inference"

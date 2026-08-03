@@ -214,9 +214,9 @@ class TestDeepSeekNoTagComparison:
         parser.reset_state()
 
         text = "This is a regular response without any thinking tags. It should be content. "
-        assert len(text) > parser.NO_TAG_CONTENT_THRESHOLD, (
-            "test fixture must exceed threshold to exercise the flip"
-        )
+        assert (
+            len(text) > parser.NO_TAG_CONTENT_THRESHOLD
+        ), "test fixture must exceed threshold to exercise the flip"
         accumulated = ""
         content_parts = []
         reasoning_parts = []
@@ -257,9 +257,9 @@ class TestDeepSeekNoTagComparison:
         """
         vibethinker_parser = get_parser("vibethinker")()
         vibethinker_parser.reset_state()
-        assert vibethinker_parser.NO_TAG_CONTENT_THRESHOLD == 1024, (
-            "vibethinker parser must register the larger 1024-char threshold"
-        )
+        assert (
+            vibethinker_parser.NO_TAG_CONTENT_THRESHOLD == 1024
+        ), "vibethinker parser must register the larger 1024-char threshold"
 
         # 80-char preamble (~13 tokens), then ``<think>...</think>``,
         # then the final answer. Mirrors the failing merge_intervals
@@ -297,17 +297,17 @@ class TestDeepSeekNoTagComparison:
         joined_content = "".join(content_parts)
 
         # The final answer (post-``</think>``) MUST land in content.
-        assert "merge_intervals" in joined_content, (
-            f"final answer leaked out of content. content={joined_content!r}"
-        )
+        assert (
+            "merge_intervals" in joined_content
+        ), f"final answer leaked out of content. content={joined_content!r}"
         # The reasoning trace from inside ``<think>...</think>`` MUST
         # land in reasoning_content (this is the live-test bug
         # signature: previously the trace leaked into content after the
         # 64-char flip).
-        assert "scan the intervals" in joined_reasoning, (
-            f"reasoning trace lost. reasoning={joined_reasoning!r}"
-        )
+        assert (
+            "scan the intervals" in joined_reasoning
+        ), f"reasoning trace lost. reasoning={joined_reasoning!r}"
         # And the final answer must NOT appear in reasoning_content.
-        assert "merge_intervals" not in joined_reasoning, (
-            "final answer leaked into reasoning_content"
-        )
+        assert (
+            "merge_intervals" not in joined_reasoning
+        ), "final answer leaked into reasoning_content"

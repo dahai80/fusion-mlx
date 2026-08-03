@@ -202,9 +202,9 @@ class TestResponsesTopK:
         body = resp.json()
         # Error envelope shape matches the sanitized 400 path
         # (``install_exception_handlers`` converts Pydantic errors).
-        assert "top_k" in resp.text, (
-            f"400 response does not mention 'top_k': {resp.text}"
-        )
+        assert (
+            "top_k" in resp.text
+        ), f"400 response does not mention 'top_k': {resp.text}"
 
     def test_top_k_zero_accepted_by_design(self, responses_client):
         """``top_k=0`` is the documented "disabled" sentinel on mlx-lm —
@@ -339,6 +339,6 @@ class TestResponsesTopKForwarded:
         # The sampling kwargs blob is merged into the engine call; top_k
         # rides in directly. ``build_extended_sampling_kwargs`` is the
         # function that surfaces it.
-        assert kwargs.get("top_k") == 42, (
-            f"top_k not threaded to engine.chat kwargs: {kwargs!r}"
-        )
+        assert (
+            kwargs.get("top_k") == 42
+        ), f"top_k not threaded to engine.chat kwargs: {kwargs!r}"

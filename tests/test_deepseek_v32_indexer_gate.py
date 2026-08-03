@@ -332,9 +332,9 @@ def test_gate_is_noop_when_indexer_types_absent(repro_dir):
     layers = model.model.layers
     assert len(layers) == 4
     for i, layer in enumerate(layers):
-        assert layer.self_attn.indexer is not None, (
-            f"layer {i} should retain Indexer when indexer_types is absent"
-        )
+        assert (
+            layer.self_attn.indexer is not None
+        ), f"layer {i} should retain Indexer when indexer_types is absent"
 
 
 # ----------------------------------------------------------------------

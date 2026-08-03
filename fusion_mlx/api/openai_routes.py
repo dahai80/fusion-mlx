@@ -615,9 +615,11 @@ async def _run_chat(
                         {
                             "prompt_tokens": _usage.prompt_tokens,
                             "prompt_tokens_details": {
-                                "cached_tokens": _usage.prompt_tokens_details.cached_tokens
-                                if _usage.prompt_tokens_details
-                                else 0,
+                                "cached_tokens": (
+                                    _usage.prompt_tokens_details.cached_tokens
+                                    if _usage.prompt_tokens_details
+                                    else 0
+                                ),
                             },
                         },
                         _factor,

@@ -371,9 +371,9 @@ class TestMemoryAwarePrefixCacheTurboQuant:
         # TurboQuantKVCache layer.
         assert len(entry.cache) == 1
         loaded_layer = entry.cache[0]
-        assert isinstance(loaded_layer, TurboQuantKVCache), (
-            f"reload produced {type(loaded_layer).__name__}, not TurboQuantKVCache"
-        )
+        assert isinstance(
+            loaded_layer, TurboQuantKVCache
+        ), f"reload produced {type(loaded_layer).__name__}, not TurboQuantKVCache"
         assert loaded_layer.config.mode == mode
         assert loaded_layer.offset == original_tq.offset
         assert loaded_layer.head_dim == original_tq.head_dim

@@ -61,17 +61,17 @@ def _assert_is_rescue(
     sentinel return — see ``_build_reasoning_rescue_payload``.
     """
     assert result is not None, f"rescue must fire: {msg}"
-    assert result.startswith(REASONING_CUTOFF_SENTINEL), (
-        f"rescue must open with the literal sentinel; got {result!r}: {msg}"
-    )
+    assert result.startswith(
+        REASONING_CUTOFF_SENTINEL
+    ), f"rescue must open with the literal sentinel; got {result!r}: {msg}"
     expected_tail = reasoning_text.rstrip()[-RESCUE_TAIL_LENGTH:]
     assert result.endswith(expected_tail), (
         f"rescue must end with last {RESCUE_TAIL_LENGTH} chars of "
         f"reasoning; expected tail {expected_tail!r}, got {result!r}: {msg}"
     )
-    assert "\n\n" in result, (
-        f"rescue must separate sentinel from tail with a blank line; got {result!r}: {msg}"
-    )
+    assert (
+        "\n\n" in result
+    ), f"rescue must separate sentinel from tail with a blank line; got {result!r}: {msg}"
 
 
 # ──────────────────────────────────────────────────────────────────────
@@ -179,9 +179,9 @@ class TestApplyReasoningCutoffNotice:
             tool_calls=None,
             finish_reason="length",
         )
-        assert result is None, (
-            f"env value {disable_value!r} must opt out of the sentinel"
-        )
+        assert (
+            result is None
+        ), f"env value {disable_value!r} must opt out of the sentinel"
 
     @pytest.mark.parametrize(
         "unknown_value",
@@ -382,9 +382,9 @@ class TestR12_8RescuePayloadShape:
             finish_reason="length",
         )
         assert result is not None
-        assert result.startswith(REASONING_CUTOFF_SENTINEL), (
-            f"sentinel must anchor the rescue prefix; got {result!r}"
-        )
+        assert result.startswith(
+            REASONING_CUTOFF_SENTINEL
+        ), f"sentinel must anchor the rescue prefix; got {result!r}"
 
     def test_rescue_ends_with_last_n_chars_of_reasoning(self, monkeypatch):
         """The tail MUST be the LAST ``RESCUE_TAIL_LENGTH`` characters
@@ -434,9 +434,9 @@ class TestR12_8RescuePayloadShape:
         )
         assert result is not None
         expected = f"{REASONING_CUTOFF_SENTINEL}\n\n{reasoning}"
-        assert result == expected, (
-            f"rescue payload must be exactly 'sentinel\\n\\ntail'; got {result!r}"
-        )
+        assert (
+            result == expected
+        ), f"rescue payload must be exactly 'sentinel\\n\\ntail'; got {result!r}"
 
     def test_rescue_short_reasoning_appended_in_full(self, monkeypatch):
         """When ``reasoning_text`` is shorter than ``RESCUE_TAIL_LENGTH``,
@@ -451,9 +451,9 @@ class TestR12_8RescuePayloadShape:
             tool_calls=None,
             finish_reason="length",
         )
-        assert result == f"{REASONING_CUTOFF_SENTINEL}\n\n{short}", (
-            f"short reasoning must be appended in full; got {result!r}"
-        )
+        assert (
+            result == f"{REASONING_CUTOFF_SENTINEL}\n\n{short}"
+        ), f"short reasoning must be appended in full; got {result!r}"
 
     def test_rescue_strips_trailing_whitespace_before_slicing_tail(self, monkeypatch):
         """Trailing whitespace on the reasoning trace is stripped
@@ -468,12 +468,12 @@ class TestR12_8RescuePayloadShape:
             finish_reason="length",
         )
         assert result is not None
-        assert result.endswith("compute the result"), (
-            f"rescue tail must strip trailing whitespace; got {result!r}"
-        )
-        assert not result.endswith(" "), (
-            f"rescue must NOT end with whitespace; got {result!r}"
-        )
+        assert result.endswith(
+            "compute the result"
+        ), f"rescue tail must strip trailing whitespace; got {result!r}"
+        assert not result.endswith(
+            " "
+        ), f"rescue must NOT end with whitespace; got {result!r}"
 
     def test_rescue_preserves_reasoning_content_unchanged(self, monkeypatch):
         """R12-8 contract: the rescue NEVER mutates ``reasoning_text`` —
@@ -490,9 +490,9 @@ class TestR12_8RescuePayloadShape:
             tool_calls=None,
             finish_reason="length",
         )
-        assert reasoning == original, (
-            f"helper must not mutate reasoning text; got {reasoning!r}"
-        )
+        assert (
+            reasoning == original
+        ), f"helper must not mutate reasoning text; got {reasoning!r}"
 
     @pytest.mark.parametrize(
         "marker",
@@ -531,12 +531,12 @@ class TestR12_8RescuePayloadShape:
             "rescue must still fire when reasoning has special tokens; "
             "sanitization is not a kill-switch"
         )
-        assert result.startswith(REASONING_CUTOFF_SENTINEL), (
-            f"sanitized rescue must keep the sentinel prefix; got {result!r}"
-        )
-        assert marker not in result, (
-            f"sanitizer must strip {marker!r} from the rescue payload; got {result!r}"
-        )
+        assert result.startswith(
+            REASONING_CUTOFF_SENTINEL
+        ), f"sanitized rescue must keep the sentinel prefix; got {result!r}"
+        assert (
+            marker not in result
+        ), f"sanitizer must strip {marker!r} from the rescue payload; got {result!r}"
 
     def test_rescue_falls_back_to_sentinel_when_tail_is_pure_markup(self, monkeypatch):
         """Edge case for the sanitizer: if the tail is ENTIRELY
@@ -554,9 +554,9 @@ class TestR12_8RescuePayloadShape:
             tool_calls=None,
             finish_reason="length",
         )
-        assert result == REASONING_CUTOFF_SENTINEL, (
-            f"all-markup tail must degrade to bare sentinel; got {result!r}"
-        )
+        assert (
+            result == REASONING_CUTOFF_SENTINEL
+        ), f"all-markup tail must degrade to bare sentinel; got {result!r}"
 
     @pytest.mark.parametrize(
         "real_content,description",
@@ -650,9 +650,9 @@ class TestR12_8RescueEnvVar:
             tool_calls=None,
             finish_reason="length",
         )
-        assert result is None, (
-            f"FUSION_REASONING_CUTOFF_NOTICE=off must disable rescue; got {result!r}"
-        )
+        assert (
+            result is None
+        ), f"FUSION_REASONING_CUTOFF_NOTICE=off must disable rescue; got {result!r}"
 
     def test_primary_env_on_enables_rescue(self, monkeypatch):
         """Explicit ``FUSION_REASONING_CUTOFF_NOTICE=on`` — though default
@@ -684,9 +684,9 @@ class TestR12_8RescueEnvVar:
             tool_calls=None,
             finish_reason="length",
         )
-        assert result is None, (
-            f"FUSION_REASONING_CUTOFF_NOTICE={disable_value!r} must disable; got {result!r}"
-        )
+        assert (
+            result is None
+        ), f"FUSION_REASONING_CUTOFF_NOTICE={disable_value!r} must disable; got {result!r}"
 
     def test_legacy_alias_still_honoured(self, monkeypatch):
         """Back-compat: ``RAPID_MLX_REASONING_CUTOFF_NOTICE=disabled``
@@ -702,9 +702,9 @@ class TestR12_8RescueEnvVar:
             tool_calls=None,
             finish_reason="length",
         )
-        assert result is None, (
-            f"legacy alias must still disable the rescue; got {result!r}"
-        )
+        assert (
+            result is None
+        ), f"legacy alias must still disable the rescue; got {result!r}"
 
     def test_either_env_disabling_wins(self, monkeypatch):
         """When BOTH env vars are set and EITHER carries a disable
@@ -719,9 +719,9 @@ class TestR12_8RescueEnvVar:
             tool_calls=None,
             finish_reason="length",
         )
-        assert result is None, (
-            f"legacy=disabled must win even when primary=on; got {result!r}"
-        )
+        assert (
+            result is None
+        ), f"legacy=disabled must win even when primary=on; got {result!r}"
         # Primary off, legacy explicitly on
         monkeypatch.setenv("FUSION_REASONING_CUTOFF_NOTICE", "off")
         monkeypatch.setenv("RAPID_MLX_REASONING_CUTOFF_NOTICE", "1")
@@ -731,9 +731,9 @@ class TestR12_8RescueEnvVar:
             tool_calls=None,
             finish_reason="length",
         )
-        assert result is None, (
-            f"primary=off must win even when legacy=1; got {result!r}"
-        )
+        assert (
+            result is None
+        ), f"primary=off must win even when legacy=1; got {result!r}"
 
     def test_both_unset_defaults_to_on(self, monkeypatch):
         """With both env vars unset, the rescue is ON (the issue #858
@@ -769,9 +769,9 @@ class TestR12_8AntiRegressionGates:
             tool_calls=None,
             finish_reason="stop",
         )
-        assert result is None, (
-            f"finish_reason=stop must NEVER trigger rescue; got {result!r}"
-        )
+        assert (
+            result is None
+        ), f"finish_reason=stop must NEVER trigger rescue; got {result!r}"
 
     def test_no_rescue_when_content_already_present(self, monkeypatch):
         """Coordination with r12-7 (D-MISSING-CONTENT-KEY): r12-7 may
@@ -785,9 +785,9 @@ class TestR12_8AntiRegressionGates:
             tool_calls=None,
             finish_reason="length",
         )
-        assert result == "The answer is 391.", (
-            f"populated content must pass through unmodified; got {result!r}"
-        )
+        assert (
+            result == "The answer is 391."
+        ), f"populated content must pass through unmodified; got {result!r}"
 
     def test_no_rescue_when_reasoning_empty(self, monkeypatch):
         """Empty reasoning + empty content + length finish — the model
@@ -801,9 +801,9 @@ class TestR12_8AntiRegressionGates:
             tool_calls=None,
             finish_reason="length",
         )
-        assert result is None, (
-            f"empty reasoning must NOT trigger rescue; got {result!r}"
-        )
+        assert (
+            result is None
+        ), f"empty reasoning must NOT trigger rescue; got {result!r}"
 
     def test_no_rescue_when_tool_calls_present_on_length_finish(self, monkeypatch):
         """Tool-call turns ship ``content=None`` per OpenAI spec, even
@@ -816,9 +816,9 @@ class TestR12_8AntiRegressionGates:
             tool_calls=[{"id": "x", "type": "function"}],
             finish_reason="length",
         )
-        assert result is None, (
-            f"tool-call turns must not trigger rescue; got {result!r}"
-        )
+        assert (
+            result is None
+        ), f"tool-call turns must not trigger rescue; got {result!r}"
 
 
 # ──────────────────────────────────────────────────────────────────────
@@ -1070,9 +1070,9 @@ class TestParserWideLengthCutMidThinkEnabled:
         # anchors the prefix (parser-independent); the tail is the
         # parser-specific reasoning trace's last RESCUE_TAIL_LENGTH
         # chars.
-        assert content is not None, (
-            f"enabled [{parser_case['name']}]: rescue must fire; got None"
-        )
+        assert (
+            content is not None
+        ), f"enabled [{parser_case['name']}]: rescue must fire; got None"
         assert content.startswith(REASONING_CUTOFF_SENTINEL), (
             f"enabled [{parser_case['name']}]: rescue must open with the "
             f"sentinel; got content={content!r}"
@@ -1617,9 +1617,9 @@ def test_chat_route_opt_out_no_sentinel_on_length_cut(monkeypatch):
                 f"got {content!r}"
             )
         assert payload["choices"][0]["finish_reason"] == "length"
-        assert msg.get("reasoning_content"), (
-            "reasoning_content must remain populated as the canonical truncation cue"
-        )
+        assert msg.get(
+            "reasoning_content"
+        ), "reasoning_content must remain populated as the canonical truncation cue"
     finally:
         reset_config()
 
@@ -1724,9 +1724,9 @@ def test_chat_route_default_env_surfaces_sentinel_regression_858(monkeypatch):
             f"mid-think; got content={content!r}"
         )
         assert payload["choices"][0]["finish_reason"] == "length"
-        assert msg.get("reasoning_content"), (
-            "reasoning_content must remain populated alongside the rescue"
-        )
+        assert msg.get(
+            "reasoning_content"
+        ), "reasoning_content must remain populated alongside the rescue"
     finally:
         reset_config()
 

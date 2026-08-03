@@ -765,9 +765,9 @@ class TestVisibility:
         assert len(lines) >= 8
         # Each row pipes-out at the same column for alignment
         widths = {len(line) for line in lines if line.startswith(("│", "┌", "└"))}
-        assert len(widths) == 1, (
-            f"All rows must be same printable width, got: {widths}\n{table}"
-        )
+        assert (
+            len(widths) == 1
+        ), f"All rows must be same printable width, got: {widths}\n{table}"
 
     def test_table_for_hybrid_shows_disabled_spec(self):
         # r6-A R6-C1: use the A3B MoE Qwen3.5 path — see
@@ -978,9 +978,9 @@ class TestWarnMisboundDeepseekV3Parser:
     )
     def test_warn_on_cross_sub_family_misbind(self, model_path, parser):
         msg = warn_misbound_deepseek_v3_parser(model_path, parser)
-        assert msg is not None, (
-            f"cross-sub-family misbind {parser} on {model_path} must warn"
-        )
+        assert (
+            msg is not None
+        ), f"cross-sub-family misbind {parser} on {model_path} must warn"
         # Must name the offending flag, the model, and reference the
         # body-shape mismatch so the user knows it's not the same as the
         # out-of-lineage case.

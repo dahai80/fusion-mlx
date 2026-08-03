@@ -156,9 +156,9 @@ def test_single_message_zero_boundary_both_paths(monkeypatch):
     messages = [{"role": "user", "content": "single"}]
 
     asyncio.run(engine.chat(messages=messages))
-    assert stub.last_generate_kwargs.get("prefix_boundary", 0) == 0, (
-        f"non-stream path: expected boundary=0 got {stub.last_generate_kwargs!r}"
-    )
+    assert (
+        stub.last_generate_kwargs.get("prefix_boundary", 0) == 0
+    ), f"non-stream path: expected boundary=0 got {stub.last_generate_kwargs!r}"
 
     stub.last_generate_kwargs = None
 
@@ -167,9 +167,9 @@ def test_single_message_zero_boundary_both_paths(monkeypatch):
             break
 
     asyncio.run(_drain())
-    assert stub.last_generate_kwargs.get("prefix_boundary", 0) == 0, (
-        f"stream path: expected boundary=0 got {stub.last_generate_kwargs!r}"
-    )
+    assert (
+        stub.last_generate_kwargs.get("prefix_boundary", 0) == 0
+    ), f"stream path: expected boundary=0 got {stub.last_generate_kwargs!r}"
 
 
 def test_non_hybrid_model_skips_boundary_both_paths(monkeypatch):

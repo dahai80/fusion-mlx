@@ -139,9 +139,9 @@ def test_tq_ssd_batch_roundtrip_exact_at_high_bits():
         ft = fresh[f"batch-{i}"]
         ht, hc = hit[f"batch-{i}"]
         assert hc > 0, f"batch req {i} did not hit SSD cache"
-        assert ft == ht, (
-            f"8-bit batch req {i} hit diverged from fresh (round-trip drift)"
-        )
+        assert (
+            ft == ht
+        ), f"8-bit batch req {i} hit diverged from fresh (round-trip drift)"
 
 
 def test_tq_ssd_batch_coherent_at_low_bits():
@@ -161,6 +161,6 @@ def test_tq_ssd_batch_coherent_at_low_bits():
         assert hc > 0, f"batch req {i} did not hit SSD cache"
         n = min(len(ft), len(ht))
         match = sum(1 for k in range(n) if ft[k] == ht[k]) / n if n else 0.0
-        assert match >= 0.5, (
-            f"batch req {i} hit overlap {match:.0%} too low (not just a near-tie)"
-        )
+        assert (
+            match >= 0.5
+        ), f"batch req {i} hit overlap {match:.0%} too low (not just a near-tie)"

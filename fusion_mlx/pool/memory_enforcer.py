@@ -1304,7 +1304,9 @@ class ProcessMemoryEnforcer:
                                 else:
                                     emergency_current = 0
                                 if emergency and emergency_current >= ceiling:
-                                    aborted = await self._abort_loaded_requests_for_memory_emergency()
+                                    aborted = (
+                                        await self._abort_loaded_requests_for_memory_emergency()
+                                    )
                                     if aborted > 0:
                                         logger.warning(
                                             "Emergency memory pressure: aborted "

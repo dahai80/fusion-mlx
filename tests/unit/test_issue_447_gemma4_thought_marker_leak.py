@@ -138,9 +138,9 @@ def router() -> OutputRouter:
         "Gemma 4 vocab — discovery is broken or the vocab is missing "
         "required tokens (<|channel>, <|tool_call>)."
     )
-    assert r.map.format_tag == "gemma4", (
-        f"Expected Gemma 4 discovery; got format_tag={r.map.format_tag!r}"
-    )
+    assert (
+        r.map.format_tag == "gemma4"
+    ), f"Expected Gemma 4 discovery; got format_tag={r.map.format_tag!r}"
     return r
 
 

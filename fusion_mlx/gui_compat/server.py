@@ -284,9 +284,7 @@ async def _process_image_urls(urls: list[str]) -> list[str]:
                         else (
                             ".gif"
                             if "gif" in ct
-                            else ".webp"
-                            if "webp" in ct
-                            else ".jpg"
+                            else ".webp" if "webp" in ct else ".jpg"
                         )
                     )
                     if not any(x in ct for x in ["png", "gif", "webp", "jpeg"]):
@@ -307,9 +305,7 @@ async def _process_image_urls(urls: list[str]) -> list[str]:
                         else (
                             ".gif"
                             if bd.startswith(b"GIF")
-                            else ".webp"
-                            if bd.startswith(b"RIFF")
-                            else ".png"
+                            else ".webp" if bd.startswith(b"RIFF") else ".png"
                         )
                     )
                 )

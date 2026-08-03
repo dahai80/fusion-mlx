@@ -79,9 +79,9 @@ def test_lru_evictions_total_ticks_when_cache_exceeds_cap():
         cache.store(tokens, _make_cache_entry(per_entry_bytes))
 
     stats = cache.get_stats()
-    assert stats["evictions"] >= 1, (
-        f"LRU-on-cap evictions did not fire; cache stat snapshot: {stats!r}"
-    )
+    assert (
+        stats["evictions"] >= 1
+    ), f"LRU-on-cap evictions did not fire; cache stat snapshot: {stats!r}"
     assert stats["current_memory_mb"] <= stats["max_memory_mb"] + 1.0
 
 
@@ -203,16 +203,16 @@ def test_r7_h7_lru_ordering_least_recently_touched_evicted_first():
     assert cache.store(tokens_d, _make_cache_entry(per_entry_bytes))
 
     present_keys = set(cache._entries.keys())
-    assert tuple(tokens_a) in present_keys, (
-        f"LRU regression: just-fetched entry was evicted; present={present_keys}"
-    )
+    assert (
+        tuple(tokens_a) in present_keys
+    ), f"LRU regression: just-fetched entry was evicted; present={present_keys}"
     assert tuple(tokens_c) in present_keys, (
         f"LRU regression: middle-aged entry was evicted instead of LRU;"
         f" present={present_keys}"
     )
-    assert tuple(tokens_d) in present_keys, (
-        f"newly inserted entry missing from cache; present={present_keys}"
-    )
+    assert (
+        tuple(tokens_d) in present_keys
+    ), f"newly inserted entry missing from cache; present={present_keys}"
     assert tuple(tokens_b) not in present_keys, (
         f"R7-H7 LRU ordering regression: the least-recently-touched"
         f" entry was NOT evicted. Present keys: {present_keys}."

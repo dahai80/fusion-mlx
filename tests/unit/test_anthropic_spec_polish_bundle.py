@@ -308,9 +308,9 @@ def test_f7_tool_choice_auto_keeps_tools():
     )
     assert resp.status_code == 200
     tools_seen = engine.last_chat_kwargs.get("tools")
-    assert tools_seen, (
-        f"tool_choice='auto' must keep tools on engine call; got tools={tools_seen!r}"
-    )
+    assert (
+        tools_seen
+    ), f"tool_choice='auto' must keep tools on engine call; got tools={tools_seen!r}"
 
 
 # ===========================================================================
@@ -345,9 +345,9 @@ def test_f12_count_tokens_applies_chat_template():
     # Pre-fix count: 2 tokens ("hello world" → 2 stub tokens).
     # Post-fix count: 2 + 5 = 7 stub tokens (5 role-prefix tokens
     # plus the 2 content tokens) — proving build_prompt ran.
-    assert body["input_tokens"] == 7, (
-        f"count_tokens should apply the chat template; expected 7, got {body}"
-    )
+    assert (
+        body["input_tokens"] == 7
+    ), f"count_tokens should apply the chat template; expected 7, got {body}"
     # The stub engine recorded the build_prompt call — direct
     # evidence the route delegated to the template path.
     assert engine.last_build_prompt_messages is not None

@@ -848,6 +848,6 @@ def test_batch_masked_decode_is_accurate():
     rel = mx.mean(mx.abs(out - ref)).item() / mx.mean(mx.abs(ref)).item()
     # 8-bit quantized masked decode vs dequantize+SDPA over the same states.
     # Broken RHT kernels give ~140%; the fix brings it into quantization noise.
-    assert rel < 0.05, (
-        f"B>1 masked decode inaccurate (err {rel:.1%}) — RHT fix missing from pinned mlx-vlm?"
-    )
+    assert (
+        rel < 0.05
+    ), f"B>1 masked decode inaccurate (err {rel:.1%}) — RHT fix missing from pinned mlx-vlm?"

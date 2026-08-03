@@ -65,9 +65,9 @@ class TestPathShapedRejection:
 
         with pytest.raises(HTTPException) as exc_info:
             _resolve_stt_model(model_string)
-        assert exc_info.value.status_code == 404, (
-            f"expected 404 for {model_string!r}, got {exc_info.value.status_code}"
-        )
+        assert (
+            exc_info.value.status_code == 404
+        ), f"expected 404 for {model_string!r}, got {exc_info.value.status_code}"
         detail = exc_info.value.detail
         assert isinstance(detail, dict)
         assert detail["error"]["type"] == "model_not_found_error"
@@ -130,9 +130,9 @@ class TestPathShapedRejection:
 
         with pytest.raises(HTTPException) as exc_info:
             _resolve_stt_model(model_string)
-        assert exc_info.value.status_code == 404, (
-            f"expected 404 for {model_string!r}, got {exc_info.value.status_code}"
-        )
+        assert (
+            exc_info.value.status_code == 404
+        ), f"expected 404 for {model_string!r}, got {exc_info.value.status_code}"
         detail = exc_info.value.detail
         assert isinstance(detail, dict)
         assert detail["error"]["type"] == "model_not_found_error"

@@ -273,9 +273,9 @@ class TestDeterministicConcurrentRequests:
                 all_results.append(results)
 
         # Each run should produce same results
-        assert all_results[0] == all_results[1], (
-            f"Results differ between runs: {all_results}"
-        )
+        assert (
+            all_results[0] == all_results[1]
+        ), f"Results differ between runs: {all_results}"
 
 
 class TestBatchingPerformance:

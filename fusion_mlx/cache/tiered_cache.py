@@ -89,9 +89,11 @@ class TieredCacheManager(CacheManager):
                 self._stats.cold_hits += 1
                 logger.debug(
                     "tiered fetch HIT cold: %s",
-                    block_hash.hex()[:16]
-                    if isinstance(block_hash, bytes)
-                    else block_hash,
+                    (
+                        block_hash.hex()[:16]
+                        if isinstance(block_hash, bytes)
+                        else block_hash
+                    ),
                 )
                 if self._promotion_on_cold_hit:
                     self._promote(block_hash, cold_data)
@@ -115,9 +117,11 @@ class TieredCacheManager(CacheManager):
             if saved:
                 logger.debug(
                     "tiered store → cold: %s",
-                    block_hash.hex()[:16]
-                    if isinstance(block_hash, bytes)
-                    else block_hash,
+                    (
+                        block_hash.hex()[:16]
+                        if isinstance(block_hash, bytes)
+                        else block_hash
+                    ),
                 )
                 return True
 
@@ -229,9 +233,11 @@ class TieredCacheManager(CacheManager):
         logger.debug(
             "simple demote block %d hash=%s",
             block.block_id,
-            block.block_hash.hex()[:16]
-            if isinstance(block.block_hash, bytes)
-            else block.block_hash,
+            (
+                block.block_hash.hex()[:16]
+                if isinstance(block.block_hash, bytes)
+                else block.block_hash
+            ),
         )
 
     def _cow_demote(self, block: Any) -> None:
@@ -241,9 +247,11 @@ class TieredCacheManager(CacheManager):
         logger.debug(
             "CoW demote block %d hash=%s ref_count=%d",
             block.block_id,
-            block.block_hash.hex()[:16]
-            if isinstance(block.block_hash, bytes)
-            else block.block_hash,
+            (
+                block.block_hash.hex()[:16]
+                if isinstance(block.block_hash, bytes)
+                else block.block_hash
+            ),
             block.ref_count,
         )
 

@@ -299,6 +299,6 @@ def test_autocomplete_handshake_returns_aliases_on_subprocess() -> None:
         f"stderr={result.stderr!r}; stdout={result.stdout!r}"
     )
     completions = [ln for ln in result.stdout.splitlines() if ln.strip()]
-    assert any(c.startswith("gemma-4-") for c in completions), (
-        f"expected gemma-4-* matches, got: {completions[:5]}"
-    )
+    assert any(
+        c.startswith("gemma-4-") for c in completions
+    ), f"expected gemma-4-* matches, got: {completions[:5]}"

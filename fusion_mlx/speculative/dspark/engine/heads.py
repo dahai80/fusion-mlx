@@ -29,9 +29,9 @@ class MarkovHead(nn.Module):
 
     def __init__(self, vocab_size: int, markov_rank: int):
         super().__init__()
-        assert markov_rank > 0, (
-            f"MarkovHead requires markov_rank > 0, got {markov_rank}"
-        )
+        assert (
+            markov_rank > 0
+        ), f"MarkovHead requires markov_rank > 0, got {markov_rank}"
         self.vocab_size = int(vocab_size)
         self.markov_rank = int(markov_rank)
         self.markov_w1 = nn.Embedding(self.vocab_size, self.markov_rank)

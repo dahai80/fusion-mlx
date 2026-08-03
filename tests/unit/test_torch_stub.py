@@ -275,9 +275,9 @@ def test_install_does_not_touch_env_var_when_real_torch_present(stub_module):
         ):
             result = stub_module.install()
         assert result is False
-        assert "TVM_FFI_DISABLE_TORCH_C_DLPACK" not in os.environ, (
-            "real-torch path must leave the env var alone"
-        )
+        assert (
+            "TVM_FFI_DISABLE_TORCH_C_DLPACK" not in os.environ
+        ), "real-torch path must leave the env var alone"
     finally:
         os.environ.pop("TVM_FFI_DISABLE_TORCH_C_DLPACK", None)
 
@@ -341,12 +341,12 @@ def test_known_probe_names_log_at_debug_not_warning(stub_module, caplog):
     ]
     assert dtype_records, "known-probe name should still log at DEBUG"
     assert unknown_records, "unknown name should still log"
-    assert all(rec.levelname == "DEBUG" for rec in dtype_records), (
-        f"known probe must log at DEBUG, got {[r.levelname for r in dtype_records]}"
-    )
-    assert all(rec.levelname == "WARNING" for rec in unknown_records), (
-        f"unknown attr must log at WARNING, got {[r.levelname for r in unknown_records]}"
-    )
+    assert all(
+        rec.levelname == "DEBUG" for rec in dtype_records
+    ), f"known probe must log at DEBUG, got {[r.levelname for r in dtype_records]}"
+    assert all(
+        rec.levelname == "WARNING" for rec in unknown_records
+    ), f"unknown attr must log at WARNING, got {[r.levelname for r in unknown_records]}"
 
 
 def test_stub_modules_have_real_spec_and_loader(stub_module):
@@ -372,9 +372,9 @@ def test_stub_modules_have_real_spec_and_loader(stub_module):
     ):
         mod = sys.modules[name]
         assert mod.__spec__ is not None, f"{name} missing __spec__"
-        assert isinstance(mod.__spec__, importlib.machinery.ModuleSpec), (
-            f"{name}.__spec__ wrong type: {type(mod.__spec__)}"
-        )
+        assert isinstance(
+            mod.__spec__, importlib.machinery.ModuleSpec
+        ), f"{name}.__spec__ wrong type: {type(mod.__spec__)}"
         assert mod.__spec__.name == name
 
 
@@ -441,8 +441,7 @@ def test_xgrammar_imports_against_stub_only(stub_module, tmp_path):
     stub doesn't cover, this fails loudly at the import step.
     """
     script = tmp_path / "probe.py"
-    script.write_text(
-        textwrap.dedent("""
+    script.write_text(textwrap.dedent("""
         import sys
 
         # Block real torch end-to-end without touching sys.path (which
@@ -489,8 +488,7 @@ def test_xgrammar_imports_against_stub_only(stub_module, tmp_path):
             apply_token_bitmask_mlx,
         )
         print("OK")
-    """)
-    )
+    """))
     env = dict(os.environ)
     env.pop("TVM_FFI_DISABLE_TORCH_C_DLPACK", None)
     out = subprocess.check_output(

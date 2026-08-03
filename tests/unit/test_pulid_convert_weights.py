@@ -38,9 +38,7 @@ class FakeTensor:
         self.shape = (
             self._data.shape
             if ndim == 2
-            else (1, 1, 1, 1)
-            if ndim == 4
-            else self._data.shape
+            else (1, 1, 1, 1) if ndim == 4 else self._data.shape
         )
 
     def float(self):

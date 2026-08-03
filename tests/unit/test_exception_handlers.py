@@ -217,9 +217,9 @@ def test_malformed_json_returns_400_with_clean_envelope(client, path):
         content=b"not json",
         headers={"Content-Type": "application/json"},
     )
-    assert response.status_code == 400, (
-        f"{path}: expected 400, got {response.status_code} body={response.text!r}"
-    )
+    assert (
+        response.status_code == 400
+    ), f"{path}: expected 400, got {response.status_code} body={response.text!r}"
     body = response.json()
     assert "error" in body
     err = body["error"]

@@ -422,6 +422,6 @@ class TestInstallSuffixDecoding:
         # Closure-scoped _pending_emits is reachable indirectly: the
         # wrapped next() pops both before falling through.
         gb.next()  # invokes the wrapped _suffix_next via the install
-        assert 42 not in drafters, (
-            "Drafter for finished uid was retained — _drafters leak"
-        )
+        assert (
+            42 not in drafters
+        ), "Drafter for finished uid was retained — _drafters leak"

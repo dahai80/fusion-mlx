@@ -168,9 +168,9 @@ def test_inject_loads_real_sidecar_weights(loaded_model):
             break
         except Exception:
             continue
-    assert weights_file is not None, (
-        f"No model.safetensors or model-mtp.safetensors found in {sidecar_dir}"
-    )
+    assert (
+        weights_file is not None
+    ), f"No model.safetensors or model-mtp.safetensors found in {sidecar_dir}"
 
     raw = _mx.load(weights_file)
 
@@ -208,9 +208,9 @@ def test_inject_loads_real_sidecar_weights(loaded_model):
     for k in sorted(expected_keys):
         on_disk = sidecar_norm[k]
         in_module = flat_module[k]
-        assert on_disk.shape == in_module.shape, (
-            f"{k}: shape mismatch (disk {on_disk.shape} vs module {in_module.shape})"
-        )
+        assert (
+            on_disk.shape == in_module.shape
+        ), f"{k}: shape mismatch (disk {on_disk.shape} vs module {in_module.shape})"
         diff = _mx.sum(on_disk != in_module).item()
         if diff != 0:
             mismatched.append((k, int(diff)))

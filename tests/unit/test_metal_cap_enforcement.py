@@ -395,9 +395,9 @@ class TestProjectedKVAdmissionGate:
         model.config.head_dim = 128
         sched = Scheduler(model=model, tokenizer=MagicMock(), config=config)
         per_tok = sched._resolve_kv_bytes_per_token()
-        assert per_tok == 42, (
-            f"operator override should win, got {per_tok} instead of 42"
-        )
+        assert (
+            per_tok == 42
+        ), f"operator override should win, got {per_tok} instead of 42"
 
     def test_auto_derivation_falls_back_to_zero_on_missing_model_config(self):
         """When the model has no ``config`` attribute (unit-test
@@ -638,6 +638,6 @@ class TestMetricsRoute:
         )
         body = _render_prometheus(cfg)
         assert "rapid_mlx_metal_cap_violations_total 42" in body
-        assert "# TYPE rapid_mlx_metal_cap_violations_total counter" in body, (
-            "metric type must be 'counter' for monotonic rate() to work"
-        )
+        assert (
+            "# TYPE rapid_mlx_metal_cap_violations_total counter" in body
+        ), "metric type must be 'counter' for monotonic rate() to work"

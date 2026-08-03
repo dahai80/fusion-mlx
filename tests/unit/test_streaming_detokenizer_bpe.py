@@ -310,9 +310,9 @@ class TestIncrementalDecoderNoLeak:
         emitted = ""
         for tid in _REASONING_SEQUENCE_IDS:
             emitted += decoder.add_token(tid)
-        assert any(m in emitted for m in _BYTE_LEVEL_MOJIBAKE_MARKERS), (
-            f"expected mojibake in unrepaired streaming output, got {emitted!r}"
-        )
+        assert any(
+            m in emitted for m in _BYTE_LEVEL_MOJIBAKE_MARKERS
+        ), f"expected mojibake in unrepaired streaming output, got {emitted!r}"
 
 
 # ---------------------------------------------------------------------------

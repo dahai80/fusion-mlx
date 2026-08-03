@@ -462,9 +462,9 @@ class TestMCPClientManagerExecuteTool:
         self, manager_with_connected_client: MCPClientManager
     ):
         """Test execute_tool returns error when server not connected."""
-        manager_with_connected_client._clients[
-            "test"
-        ]._state = MCPServerState.DISCONNECTED
+        manager_with_connected_client._clients["test"]._state = (
+            MCPServerState.DISCONNECTED
+        )
 
         result = await manager_with_connected_client.execute_tool("test__my_tool", {})
 

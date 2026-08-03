@@ -479,9 +479,9 @@ class TestBoundarySnapshotSSDStore:
             self.store.cleanup_request("req-timeout-rescue")
 
             with self.store._cancelled_lock:
-                assert "req-timeout-rescue" in self.store._cancelled_requests, (
-                    "counter dropped on timeout — late-rename rescue would be defeated"
-                )
+                assert (
+                    "req-timeout-rescue" in self.store._cancelled_requests
+                ), "counter dropped on timeout — late-rename rescue would be defeated"
 
             # Let the writer finish; rescue then drops the counter via
             # _is_cancelled → _dec_cancelled.
@@ -801,9 +801,9 @@ class TestBoundarySnapshotSSDStore:
         # Allow a small tolerance for in-flight temp files only — those
         # have "_tmp" in the stem and are not real orphans.
         real_orphans = [p for p in orphans if "_tmp" not in p.stem]
-        assert not real_orphans, (
-            f"Found {len(real_orphans)} orphaned files: {real_orphans[:5]}"
-        )
+        assert (
+            not real_orphans
+        ), f"Found {len(real_orphans)} orphaned files: {real_orphans[:5]}"
 
 
 # ---------------------------------------------------------------------------

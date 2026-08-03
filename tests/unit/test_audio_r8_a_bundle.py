@@ -419,9 +419,9 @@ class TestTTSContentType:
         # The message must list the supported set so the caller can
         # retry with a known-good format.
         msg = err["message"].lower()
-        assert "wav" in msg and "flac" in msg, (
-            f"Error message must list supported formats; got {msg!r}"
-        )
+        assert (
+            "wav" in msg and "flac" in msg
+        ), f"Error message must list supported formats; got {msg!r}"
 
 
 class TestTTSContentTypeTable:
@@ -506,9 +506,9 @@ class TestVoiceValidation:
         # The available list must be in the message so the caller can
         # pick a valid voice from the envelope alone.
         msg = err["message"].lower()
-        assert "af_heart" in msg, (
-            f"Error message must include known voices (e.g. af_heart); got {msg!r}"
-        )
+        assert (
+            "af_heart" in msg
+        ), f"Error message must include known voices (e.g. af_heart); got {msg!r}"
 
     def test_blank_voice_returns_400_envelope(self, monkeypatch):
         """``voice=""`` MUST 400 (Pydantic validator) — pre-fix it 500'd
@@ -1091,6 +1091,6 @@ class TestCliBootGuardShortAlias:
             "R8-M5 regression: the fail-fast message leaked. The audio "
             f"boot guard should fire instead. Output: {err[:500]}"
         )
-        assert "[audio]" in err, (
-            f"R8-M5 regression: the install hint did not surface. Output: {err[:500]}"
-        )
+        assert (
+            "[audio]" in err
+        ), f"R8-M5 regression: the install hint did not surface. Output: {err[:500]}"

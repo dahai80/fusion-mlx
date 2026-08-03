@@ -243,9 +243,9 @@ class TestProfileTableCell:
         widths = {
             len(line) for line in table.splitlines() if line.startswith(("│", "┌", "└"))
         }
-        assert len(widths) == 1, (
-            f"All rows must be same printable width, got: {widths}\n{table}"
-        )
+        assert (
+            len(widths) == 1
+        ), f"All rows must be same printable width, got: {widths}\n{table}"
 
 
 class TestModelConfigDefaults:
@@ -269,6 +269,6 @@ class TestModelConfigDefaults:
         a = ModelConfig()
         b = ModelConfig()
         a.suffix_bench_speedup["chat"] = 1.0
-        assert b.suffix_bench_speedup == {}, (
-            "ModelConfig instances must not share dict state"
-        )
+        assert (
+            b.suffix_bench_speedup == {}
+        ), "ModelConfig instances must not share dict state"

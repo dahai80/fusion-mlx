@@ -111,7 +111,9 @@ class TestComputePromptTokensForMessages:
         engine = _StubEngine(
             tokenizer=_StubTokenizer(chars_per_token=4),
         )
-        engine.build_prompt = lambda messages, tools=None, enable_thinking=None: "Hello world test prompt"
+        engine.build_prompt = (
+            lambda messages, tools=None, enable_thinking=None: "Hello world test prompt"
+        )
         result = compute_prompt_tokens_for_messages(
             engine, [{"role": "user", "content": "Hello world test prompt"}]
         )
@@ -121,7 +123,9 @@ class TestComputePromptTokensForMessages:
         engine = _StubEngine(
             tokenizer=_StubTokenizer(chars_per_token=4),
         )
-        engine._apply_chat_template = lambda messages, tools=None, chat_template_kwargs=None: "A" * 100
+        engine._apply_chat_template = (
+            lambda messages, tools=None, chat_template_kwargs=None: "A" * 100
+        )
         result = compute_prompt_tokens_for_messages(
             engine, [{"role": "user", "content": "test"}]
         )
@@ -162,6 +166,7 @@ class TestContextBudgetRouteIntegration:
     @pytest.fixture
     def app(self):
         from fusion_mlx.server import Server
+
         srv = Server()
         srv.config.api_key = ""
         return srv.app
@@ -169,17 +174,21 @@ class TestContextBudgetRouteIntegration:
     @pytest.fixture
     def client(self, app):
         from starlette.testclient import TestClient
+
         return TestClient(app)
 
     def test_non_streaming_response_has_context_budget_header(self, client):
         with patch("fusion_mlx.api.openai_routes._resolve_engine") as mock_resolve:
             mock_engine = MagicMock()
             mock_engine.is_mllm = False
-            mock_engine._model = _StubModel(args=_StubArgs(max_position_embeddings=8192))
+            mock_engine._model = _StubModel(
+                args=_StubArgs(max_position_embeddings=8192)
+            )
             mock_engine._tokenizer = _StubTokenizer(model_max_length=8192)
             mock_engine.tokenizer = mock_engine._tokenizer
 
             from fusion_mlx.engines.base import GenerationOutput
+
             mock_gen = GenerationOutput(
                 text="Hello",
                 prompt_tokens=100,

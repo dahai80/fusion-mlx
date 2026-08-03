@@ -329,9 +329,9 @@ async def test_vlm_preflight_chat_strips_images_before_template(monkeypatch):
     user_content = call_messages[0]["content"]
     if isinstance(user_content, list):
         types_seen = {part.get("type") for part in user_content}
-        assert "image_url" not in types_seen, (
-            "image_url part leaked into template input"
-        )
+        assert (
+            "image_url" not in types_seen
+        ), "image_url part leaked into template input"
         assert "image" not in types_seen, "image part leaked into template input"
     else:
         # Some packs reduce single-text content to a string.
@@ -398,9 +398,9 @@ async def test_batched_engine_preflight_logs_when_scheduler_unreachable(
     with caplog.at_level(logging.WARNING):
         await engine.preflight_chat(messages=[{"role": "user", "content": "x"}])
 
-    assert any("preflight check skipped" in r.message for r in caplog.records), (
-        "expected a warning when scheduler is unreachable"
-    )
+    assert any(
+        "preflight check skipped" in r.message for r in caplog.records
+    ), "expected a warning when scheduler is unreachable"
 
 
 @pytest.mark.asyncio
@@ -432,12 +432,12 @@ async def test_preflight_chat_swallows_tokenizer_errors(caplog):
         # Must NOT raise the UnicodeDecodeError up to the caller.
         await engine.preflight_chat(messages=[{"role": "user", "content": "x"}])
 
-    assert not raise_called["yes"], (
-        "preflight_or_raise must NOT be called when tokenizer fails"
-    )
-    assert any("tokenizer.encode raised" in r.message for r in caplog.records), (
-        "expected a warning logging the tokenizer error"
-    )
+    assert not raise_called[
+        "yes"
+    ], "preflight_or_raise must NOT be called when tokenizer fails"
+    assert any(
+        "tokenizer.encode raised" in r.message for r in caplog.records
+    ), "expected a warning logging the tokenizer error"
 
 
 @pytest.mark.asyncio
@@ -745,9 +745,9 @@ class TestRejectionMessageNamesBindingCeiling:
             sched, static=64 * 1024**3, dynamic=32 * 1024**3, metal_cap=16 * 1024**3
         )
         rej = self._force_rejection(sched, monkeypatch)
-        assert "iogpu.wired_limit_mb" in rej.message, (
-            f"metal_cap binding must steer user to the sysctl knob; got: {rej.message}"
-        )
+        assert (
+            "iogpu.wired_limit_mb" in rej.message
+        ), f"metal_cap binding must steer user to the sysctl knob; got: {rej.message}"
         assert "metal_cap ceiling" in rej.message
         assert "caps Metal at 16.00 GB" in rej.message
 

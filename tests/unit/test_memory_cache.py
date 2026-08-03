@@ -485,9 +485,9 @@ class TestCacheListTrimmability:
 
         # With the old attribute-sniffing bug, CacheList wrappers (no .offset/.keys
         # on outer object) would be classified as non-trimmable and this would miss.
-        assert result is not None, (
-            "Supersequence match was skipped — CacheList misclassified as non-trimmable"
-        )
+        assert (
+            result is not None
+        ), "Supersequence match was skipped — CacheList misclassified as non-trimmable"
         assert remaining == []
 
     def test_supersequence_non_trimmable_skipped(self, cache):
@@ -516,9 +516,9 @@ class TestCacheListTrimmability:
         result, remaining = cache.fetch(requested)
 
         # LCP path should find shared prefix and trim excess
-        assert result is not None, (
-            "LCP match was skipped — CacheList misclassified as non-trimmable"
-        )
+        assert (
+            result is not None
+        ), "LCP match was skipped — CacheList misclassified as non-trimmable"
         assert remaining == [20, 21]
 
     def test_lcp_non_trimmable_skipped(self, cache):

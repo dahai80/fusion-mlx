@@ -159,9 +159,9 @@ def test_two_session_simulation_pooled_preserved(applied_patch, tmp_path):
 
     # Session 2's pooled state must match session 1's exactly.
     _, _, s2_pooled = s2_cache.state
-    assert s2_pooled is not None, (
-        "pooled element was dropped — V4 corruption regression"
-    )
+    assert (
+        s2_pooled is not None
+    ), "pooled element was dropped — V4 corruption regression"
     assert s2_pooled.shape == pooled_s1.shape
     assert mx.max(mx.abs(s2_pooled - pooled_s1)).item() == 0.0
 

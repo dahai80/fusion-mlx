@@ -469,9 +469,9 @@ class TestNumericalCorrectness:
                 if j <= i:
                     assert mask[0, 0, i, j] == 0.0, f"Expected attend at ({i},{j})"
                 else:
-                    assert mask[0, 0, i, j] == -float("inf"), (
-                        f"Expected mask at ({i},{j})"
-                    )
+                    assert mask[0, 0, i, j] == -float(
+                        "inf"
+                    ), f"Expected mask at ({i},{j})"
 
 
 class TestExtendedCoverage:

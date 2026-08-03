@@ -442,9 +442,9 @@ class TestAnimateDiff:
 
         adapter.remove(dit)
         restored_diff = mx.abs(dit.blocks[0].self_attn.q.weight - orig_weight).max()
-        assert float(restored_diff) < 1e-4, (
-            f"LoRA restore mismatch: diff={restored_diff}"
-        )
+        assert (
+            float(restored_diff) < 1e-4
+        ), f"LoRA restore mismatch: diff={restored_diff}"
 
     def test_inject_no_lora_is_noop(self):
         from fusion_mlx.video.adapters.animatediff import AnimateDiff

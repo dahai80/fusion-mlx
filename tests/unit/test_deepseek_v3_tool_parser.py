@@ -69,9 +69,9 @@ class TestV3WireFormat:
         assert result.tools_called, "V3-shaped payload must trigger tools_called"
         assert len(result.tool_calls) == 1
         tc = result.tool_calls[0]
-        assert tc["name"] == "get_weather", (
-            f"V3 type-tag leak: parser returned name={tc['name']!r}"
-        )
+        assert (
+            tc["name"] == "get_weather"
+        ), f"V3 type-tag leak: parser returned name={tc['name']!r}"
         assert json.loads(tc["arguments"]) == {"city": "Tokyo"}
 
     def test_parallel_v3_tool_calls(self, v3_parser: DeepSeekV3ToolParser) -> None:
@@ -293,9 +293,9 @@ class TestV3Streaming:
     ) -> None:
         events = self._feed(v3_parser, "Let me check.", chunk_size=4)
         content_seen = [ev for ev in events if ev and ev.get("content")]
-        assert content_seen, (
-            f"No content emitted for pre-envelope tokens. Events: {events!r}"
-        )
+        assert (
+            content_seen
+        ), f"No content emitted for pre-envelope tokens. Events: {events!r}"
 
     def test_pre_envelope_prose_in_same_delta_as_marker_is_emitted(
         self, v3_parser: DeepSeekV3ToolParser
@@ -330,9 +330,9 @@ class TestV3Streaming:
         for ev in events:
             if not ev:
                 continue
-            assert "tool_calls" not in ev, (
-                f"V3 stream leaked mid-stream tool_calls: {ev!r}"
-            )
+            assert (
+                "tool_calls" not in ev
+            ), f"V3 stream leaked mid-stream tool_calls: {ev!r}"
 
         result = v3_parser.extract_tool_calls(payload)
         assert result.tools_called
@@ -414,12 +414,12 @@ class TestV3StreamingIntegration:
         for ev in tool_call_events:
             for tc in ev.tool_calls or []:
                 names.append(tc.get("function", {}).get("name") or tc.get("name"))
-        assert "get_weather" in names, (
-            f"V3 finalize path lost the real tool name. Names: {names!r}"
-        )
-        assert "function" not in names, (
-            f"V3 type-tag leaked into the final tool_call event. Names: {names!r}"
-        )
+        assert (
+            "get_weather" in names
+        ), f"V3 finalize path lost the real tool name. Names: {names!r}"
+        assert (
+            "function" not in names
+        ), f"V3 type-tag leaked into the final tool_call event. Names: {names!r}"
 
 
 class TestArgumentBytesPassthrough:

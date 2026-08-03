@@ -52,15 +52,15 @@ def test_chat_completion_request_preserves_extended_sampling_params():
 
     assert req.top_k == 20, f"top_k dropped — got {req.top_k!r}"
     assert req.min_p == 0.0, f"min_p dropped — got {req.min_p!r}"
-    assert req.repetition_penalty == 1.0, (
-        f"repetition_penalty dropped — got {req.repetition_penalty!r}"
-    )
-    assert req.presence_penalty == 0.5, (
-        f"presence_penalty dropped — got {req.presence_penalty!r}"
-    )
-    assert req.frequency_penalty == 0.0, (
-        f"frequency_penalty dropped — got {req.frequency_penalty!r}"
-    )
+    assert (
+        req.repetition_penalty == 1.0
+    ), f"repetition_penalty dropped — got {req.repetition_penalty!r}"
+    assert (
+        req.presence_penalty == 0.5
+    ), f"presence_penalty dropped — got {req.presence_penalty!r}"
+    assert (
+        req.frequency_penalty == 0.0
+    ), f"frequency_penalty dropped — got {req.frequency_penalty!r}"
 
 
 def test_chat_completion_request_defaults_to_none_when_unset():
@@ -167,9 +167,9 @@ def test_chat_kwargs_omits_extended_params_when_client_silent():
         "presence_penalty",
         "frequency_penalty",
     ):
-        assert name not in chat_kwargs, (
-            f"{name!r} leaked into chat_kwargs even though client didn't set it"
-        )
+        assert (
+            name not in chat_kwargs
+        ), f"{name!r} leaked into chat_kwargs even though client didn't set it"
 
 
 def test_completion_route_forwards_extended_params_to_engine():
@@ -301,9 +301,9 @@ def test_sampling_params_ignore_eos_field():
     (community-bench, ad-hoc throughput probes).
     """
     sp_default = SamplingParams(max_tokens=128)
-    assert sp_default.ignore_eos is False, (
-        "ignore_eos must default to False so serve/chat behave normally"
-    )
+    assert (
+        sp_default.ignore_eos is False
+    ), "ignore_eos must default to False so serve/chat behave normally"
 
     sp_optin = SamplingParams(max_tokens=128, ignore_eos=True)
     assert sp_optin.ignore_eos is True

@@ -1566,9 +1566,9 @@ class TestAsyncWriteAndTimeoutLoad:
         # The old implementation used ThreadPoolExecutor(max_workers=1) which
         # caused deadlocks when mx.load() in a worker thread contested Metal
         # GPU resources with the main inference thread. Verify it's gone.
-        assert not hasattr(ssd_cache, "_load_executor"), (
-            "_load_executor should not exist — it causes Metal GPU deadlocks"
-        )
+        assert not hasattr(
+            ssd_cache, "_load_executor"
+        ), "_load_executor should not exist — it causes Metal GPU deadlocks"
 
     def test_sequential_loads_no_queue_blocking(self, ssd_cache, mx):
         """Regression test: consecutive loads must not block each other."""
@@ -1599,9 +1599,9 @@ class TestAsyncWriteAndTimeoutLoad:
 
         # 5 loads from SSD should complete in well under 5s
         # (each ~2ms read + reconstruction)
-        assert elapsed < 5.0, (
-            f"Sequential loads took {elapsed:.1f}s — possible queue blocking"
-        )
+        assert (
+            elapsed < 5.0
+        ), f"Sequential loads took {elapsed:.1f}s — possible queue blocking"
 
     def test_writer_error_handling(self, ssd_cache, mx):
         """Verify that background writer errors clean up the index."""
@@ -3588,9 +3588,9 @@ class TestLayerSignatureSweep:
         dropped = mgr.invalidate_stale_layer_signature()
 
         assert dropped == 1
-        assert mgr._index.get(b"bb" * 10) is not None, (
-            "model-B block must not be touched by model-A's sweep"
-        )
+        assert (
+            mgr._index.get(b"bb" * 10) is not None
+        ), "model-B block must not be touched by model-A's sweep"
         assert mgr._index.get(b"cc" * 10) is None
 
     def test_sweep_skips_legacy_unnamed_blocks(self, tmp_path: Path):

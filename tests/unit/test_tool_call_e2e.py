@@ -447,9 +447,9 @@ class TestToolCallE2E:
         assert content is not None, "Expected text response"
         assert rounds <= 6, f"Should complete in <=6 rounds, got {rounds}"
         tool_names = [t[0] for t in tools]
-        assert any(n in tool_names for n in ("exec", "web_search")), (
-            f"Should use exec or web_search, got {tool_names}"
-        )
+        assert any(
+            n in tool_names for n in ("exec", "web_search")
+        ), f"Should use exec or web_search, got {tool_names}"
 
     def test_no_tool_needed(self):
         """Pure reasoning should return text without tool calls."""
@@ -502,9 +502,9 @@ class TestToolCallE2E:
         if tool_calls:
             tc = tool_calls[0]
             assert "id" in tc, "Tool call should have id"
-            assert tc["id"].startswith("call_"), (
-                f"ID should start with call_, got {tc['id']}"
-            )
+            assert tc["id"].startswith(
+                "call_"
+            ), f"ID should start with call_, got {tc['id']}"
             assert "function" in tc, "Tool call should have function"
             assert "name" in tc["function"], "Function should have name"
             assert "arguments" in tc["function"], "Function should have arguments"

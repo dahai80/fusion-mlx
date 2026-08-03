@@ -73,9 +73,9 @@ class TestPureMemoryKVReconstruct:
         assert len(data) == 2
         for (k_orig, v_orig), (k_rest, v_rest) in zip(cache_data, data):
             assert mx.array_equal(k_orig, k_rest), "key tensor mismatch after roundtrip"
-            assert mx.array_equal(v_orig, v_rest), (
-                "value tensor mismatch after roundtrip"
-            )
+            assert mx.array_equal(
+                v_orig, v_rest
+            ), "value tensor mismatch after roundtrip"
         assert meta["num_layers"] == 2
         assert meta["token_count"] == 8
 

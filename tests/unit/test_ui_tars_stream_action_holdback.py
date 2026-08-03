@@ -154,9 +154,9 @@ class TestStreamingActionHoldback:
         # ``has_pending_tool_call`` returning False.
         deltas = ["Action: type", "(content='hi')"]
         events, content, tool_calls = _drive_stream(parser, deltas)
-        assert "Action:" not in content, (
-            f"delta.content leaked the Action: prefix: {content!r}"
-        )
+        assert (
+            "Action:" not in content
+        ), f"delta.content leaked the Action: prefix: {content!r}"
         assert len(tool_calls) == 1
         assert tool_calls[0]["function"]["name"] == "computer"
         assert '"action": "type"' in tool_calls[0]["function"]["arguments"]
@@ -177,9 +177,9 @@ class TestStreamingActionHoldback:
             "(point='<point>10 20</point>')",
         ]
         events, content, tool_calls = _drive_stream(parser, deltas)
-        assert "Action" not in content, (
-            f"delta.content leaked Action prefix bytes: {content!r}"
-        )
+        assert (
+            "Action" not in content
+        ), f"delta.content leaked Action prefix bytes: {content!r}"
         assert "Acti" not in content
         assert len(tool_calls) == 1
 
@@ -356,9 +356,9 @@ class TestCodexHighWordBoundaryGate:
             _trailing_action_prefix_len,
         )
 
-        assert _trailing_action_prefix_len(text) == expected_held, (
-            f"text={text!r}: hold-back grammar regressed"
-        )
+        assert (
+            _trailing_action_prefix_len(text) == expected_held
+        ), f"text={text!r}: hold-back grammar regressed"
 
     def test_streaming_passthrough_for_non_word_boundary_prefix(self, parser):
         # End-to-end: a stream that ends with a non-word-boundary
@@ -537,9 +537,9 @@ class TestCodexR3HeldPrefixPlusNewAction:
         # to plain prose AND "Action: wait()" completes a tool call
         # all in the same second chunk.
         events, content, tool_calls = _drive_stream(parser, ["Ac", "me Action: wait()"])
-        assert content == "Acme ", (
-            f"Held 'Ac' was dropped when new action fired: events={events!r}"
-        )
+        assert (
+            content == "Acme "
+        ), f"Held 'Ac' was dropped when new action fired: events={events!r}"
         assert len(tool_calls) == 1
         assert tool_calls[0]["function"]["name"] == "computer"
         assert '"action": "wait"' in tool_calls[0]["function"]["arguments"]
@@ -658,9 +658,9 @@ class TestCodexR4TrailingPrefixIsolated:
         # The trailing ``Ac`` must NOT have leaked between deltas
         # — on chunk 1 the streaming parser should hold the strict
         # prefix; on chunk 2 the real action resolves.
-        assert final_content == "Action: is required.\n", (
-            f"unexpected content: {final_content!r}"
-        )
+        assert (
+            final_content == "Action: is required.\n"
+        ), f"unexpected content: {final_content!r}"
         assert len(tool_calls) == 1
         assert '"action": "wait"' in tool_calls[0]["function"]["arguments"]
 

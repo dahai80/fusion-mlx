@@ -155,9 +155,9 @@ class TestSanitizeReasoningHelpers:
         out = sanitize_reasoning_for_stream(" bar <|im_start|>")
         # Leading whitespace MUST survive so the concatenation with the
         # prior delta keeps the word boundary.
-        assert out.startswith(" "), (
-            f"streaming sanitizer must preserve leading whitespace; got {out!r}"
-        )
+        assert out.startswith(
+            " "
+        ), f"streaming sanitizer must preserve leading whitespace; got {out!r}"
         assert "<|im_start|>" not in out
         assert "bar" in out
 
@@ -178,18 +178,18 @@ class TestSanitizeReasoningHelpers:
         leave newlines around stripped markers intact."""
         out = sanitize_reasoning_for_stream("step1\n<|im_end|>\nstep2")
         assert "<|im_end|>" not in out
-        assert out == "step1\n\nstep2", (
-            f"newlines surrounding marker must survive; got {out!r}"
-        )
+        assert (
+            out == "step1\n\nstep2"
+        ), f"newlines surrounding marker must survive; got {out!r}"
 
     def test_sanitize_reasoning_for_stream_pure_marker_collapses_to_empty(self):
         """When the delta is purely markup (no surrounding text),
         the result is ``""`` so the caller can suppress the empty
         delta without surprising clients."""
         for marker in _LEAK_MARKERS:
-            assert sanitize_reasoning_for_stream(marker) == "", (
-                f"pure-marker delta must collapse to empty; marker={marker!r}"
-            )
+            assert (
+                sanitize_reasoning_for_stream(marker) == ""
+            ), f"pure-marker delta must collapse to empty; marker={marker!r}"
 
     def test_sanitize_reasoning_for_stream_two_delta_concat_repro(self):
         """End-to-end of the codex r2 concern: ``"foo"`` + ``" bar
@@ -540,9 +540,9 @@ def test_chat_route_required_repro_exact_vlad_shape():
     msg = body["choices"][0]["message"]
 
     # Tool call survived (the required-branch did its job).
-    assert msg.get("tool_calls"), (
-        f"tool_choice=required must produce tool_calls; got msg={msg!r}"
-    )
+    assert msg.get(
+        "tool_calls"
+    ), f"tool_choice=required must produce tool_calls; got msg={msg!r}"
     assert msg["tool_calls"][0]["function"]["name"] == "get_weather"
 
     # The bug Vlad caught: reasoning_content == "<|im_start|>".

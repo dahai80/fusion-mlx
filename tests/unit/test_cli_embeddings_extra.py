@@ -135,9 +135,9 @@ def test_pyproject_declares_embeddings_extra():
         "the hint is a dead-end."
     )
     deps = extras["embeddings"]
-    assert any(d.startswith("mlx-embeddings") for d in deps), (
-        f"[embeddings] extra must include mlx-embeddings; got {deps!r}"
-    )
+    assert any(
+        d.startswith("mlx-embeddings") for d in deps
+    ), f"[embeddings] extra must include mlx-embeddings; got {deps!r}"
 
 
 if __name__ == "__main__":  # pragma: no cover — convenience only

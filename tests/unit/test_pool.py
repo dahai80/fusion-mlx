@@ -82,9 +82,9 @@ class TestPrioritySchedulerReservedSlots:
         sched._request_priorities["r2"] = PriorityLevel.REALTIME
         sched._request_priorities["r3"] = PriorityLevel.REALTIME
         slots = sched._get_reserved_slots()
-        assert all(v >= 0 for v in slots.values()), (
-            "Reserved slots should never be negative"
-        )
+        assert all(
+            v >= 0 for v in slots.values()
+        ), "Reserved slots should never be negative"
 
 
 class TestPriorityRequest:

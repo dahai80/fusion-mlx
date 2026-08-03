@@ -50,12 +50,12 @@ class TestNativeToolFormatCapability:
             SeedOssToolParser,
         ]
         for parser_cls in native_parsers:
-            assert parser_cls.SUPPORTS_NATIVE_TOOL_FORMAT is True, (
-                f"{parser_cls.__name__} should support native format"
-            )
-            assert parser_cls.supports_native_format() is True, (
-                f"{parser_cls.__name__}.supports_native_format() should return True"
-            )
+            assert (
+                parser_cls.SUPPORTS_NATIVE_TOOL_FORMAT is True
+            ), f"{parser_cls.__name__} should support native format"
+            assert (
+                parser_cls.supports_native_format() is True
+            ), f"{parser_cls.__name__}.supports_native_format() should return True"
 
     def test_parsers_without_native_support(self):
         non_native_parsers = [
@@ -68,12 +68,12 @@ class TestNativeToolFormatCapability:
             UiTarsToolParser,
         ]
         for parser_cls in non_native_parsers:
-            assert parser_cls.SUPPORTS_NATIVE_TOOL_FORMAT is False, (
-                f"{parser_cls.__name__} should not support native format"
-            )
-            assert parser_cls.supports_native_format() is False, (
-                f"{parser_cls.__name__}.supports_native_format() should return False"
-            )
+            assert (
+                parser_cls.SUPPORTS_NATIVE_TOOL_FORMAT is False
+            ), f"{parser_cls.__name__} should not support native format"
+            assert (
+                parser_cls.supports_native_format() is False
+            ), f"{parser_cls.__name__}.supports_native_format() should return False"
 
     def test_via_manager(self):
         for name in [
@@ -93,9 +93,9 @@ class TestNativeToolFormatCapability:
             "seed_oss",
         ]:
             parser_cls = ToolParserManager.get_tool_parser(name)
-            assert parser_cls.supports_native_format() is True, (
-                f"Parser '{name}' should support native format"
-            )
+            assert (
+                parser_cls.supports_native_format() is True
+            ), f"Parser '{name}' should support native format"
 
         for name in [
             "qwen",
@@ -107,9 +107,9 @@ class TestNativeToolFormatCapability:
             "ui_tars",
         ]:
             parser_cls = ToolParserManager.get_tool_parser(name)
-            assert parser_cls.supports_native_format() is False, (
-                f"Parser '{name}' should not support native format"
-            )
+            assert (
+                parser_cls.supports_native_format() is False
+            ), f"Parser '{name}' should not support native format"
 
 
 class TestExtractMultimodalContentNativeFormat:

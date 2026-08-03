@@ -221,9 +221,9 @@ class TestResponsesStreamEventOrder:
         events = _parse_sse(body)
         names = [n for n, _ in events]
 
-        assert "response.in_progress" in names, (
-            f"response.in_progress missing from stream. Events seen: {names}"
-        )
+        assert (
+            "response.in_progress" in names
+        ), f"response.in_progress missing from stream. Events seen: {names}"
 
         created_idx = names.index("response.created")
         in_progress_idx = names.index("response.in_progress")

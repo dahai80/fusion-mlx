@@ -1742,9 +1742,9 @@ class TestNativeQwen2Embedding:
         # Mask-aware pooling agrees to float32 noise (~1e-4); a hardcoded
         # ``[:, -1]`` pool would read the trailing pad token under right padding
         # and diverge by O(0.1+). 1e-3 sits cleanly between the two regimes.
-        assert np.max(np.abs(right - left)) < 1e-3, (
-            "last-token pool is not mask-aware: left/right padding diverged"
-        )
+        assert (
+            np.max(np.abs(right - left)) < 1e-3
+        ), "last-token pool is not mask-aware: left/right padding diverged"
 
     def test_qwen2_is_causal_flag_controls_attention(self, tmp_path):
         """is_causal=False makes attention bidirectional (gte-Qwen2 family).
@@ -1771,6 +1771,6 @@ class TestNativeQwen2Embedding:
             return float(np.max(np.abs(a - b)))
 
         assert first_token_drift(is_causal=True) < 1e-6, "causal leaked future token"
-        assert first_token_drift(is_causal=False) > 1e-3, (
-            "bidirectional did not attend forward"
-        )
+        assert (
+            first_token_drift(is_causal=False) > 1e-3
+        ), "bidirectional did not attend forward"

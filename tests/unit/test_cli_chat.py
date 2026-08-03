@@ -781,9 +781,9 @@ def test_stream_chat_response_aborts_on_no_whitespace_repetition(monkeypatch):
     # after the dump. ``full`` therefore equals the input but the abort
     # message MUST be present.
     assert "Barley" in full
-    assert "repeating" in rendered or "repetition" in rendered, (
-        "char-level guard must fire on no-whitespace repetition"
-    )
+    assert (
+        "repeating" in rendered or "repetition" in rendered
+    ), "char-level guard must fire on no-whitespace repetition"
 
 
 def test_stream_chat_response_token_guard_wins_when_both_eligible(monkeypatch):
@@ -925,9 +925,9 @@ def test_ensure_model_downloaded_uses_strict_cache_probe(monkeypatch):
     )
 
     cli._ensure_model_downloaded("mlx-community/Cached-Model-1B")
-    assert cache_calls == ["mlx-community/Cached-Model-1B"], (
-        "cache probe must be invoked exactly once with the repo id"
-    )
+    assert cache_calls == [
+        "mlx-community/Cached-Model-1B"
+    ], "cache probe must be invoked exactly once with the repo id"
 
 
 def test_chat_command_heredoc_preserves_indentation_and_blank_lines(monkeypatch):
@@ -981,9 +981,9 @@ def test_chat_command_save_uses_exclusive_mode_no_toctou(monkeypatch, tmp_path):
         inputs = iter(["hi", f"/save {target}", "exit"])
         monkeypatch.setattr("builtins.input", lambda _p="": next(inputs))
         cli.chat_command(_ns_for_chat(port))
-    assert "x" in seen_modes, (
-        f"expected /save to open with exclusive mode 'x' (got modes={seen_modes})"
-    )
+    assert (
+        "x" in seen_modes
+    ), f"expected /save to open with exclusive mode 'x' (got modes={seen_modes})"
 
 
 def test_chat_command_sigterm_handler_installed_before_spawn(monkeypatch):
@@ -1115,9 +1115,9 @@ def test_chat_command_switch_model_rollback_on_wait_failure(monkeypatch, capsys)
         cli.chat_command(ns)
 
     out = capsys.readouterr().out
-    assert "Failed to start new server" in out, (
-        "expected explicit rollback message on candidate failure"
-    )
+    assert (
+        "Failed to start new server" in out
+    ), "expected explicit rollback message on candidate failure"
     assert "previous server still running" in out
     # Two user turns: history must NOT be cleared by a failed switch.
     assert len(payloads) == 2, (
@@ -1126,9 +1126,9 @@ def test_chat_command_switch_model_rollback_on_wait_failure(monkeypatch, capsys)
     )
     # Both turns sent the SAME conversation list; the second turn carries
     # the first as history.
-    assert any(m["content"] == "first turn" for m in payloads[1]["messages"]), (
-        "second-turn payload lost the first turn after the failed /model swap"
-    )
+    assert any(
+        m["content"] == "first turn" for m in payloads[1]["messages"]
+    ), "second-turn payload lost the first turn after the failed /model swap"
 
 
 def test_chat_command_slash_command_dispatch_uses_exact_match(
@@ -1208,13 +1208,13 @@ def test_stream_chat_response_repetition_truncates_at_cutoff_in_one_chunk(
     rendered = buf.getvalue()
     # Only the prefix up to the cutoff should land; not all 60 copies.
     barley_count = full.count("Barley")
-    assert barley_count < 60, (
-        f"emitted full degenerate chunk before abort detected ({barley_count}/60)"
-    )
+    assert (
+        barley_count < 60
+    ), f"emitted full degenerate chunk before abort detected ({barley_count}/60)"
     # And the abort hint did print.
-    assert "repeating" in rendered or "repetition" in rendered, (
-        "expected the repetition-abort hint to be visible"
-    )
+    assert (
+        "repeating" in rendered or "repetition" in rendered
+    ), "expected the repetition-abort hint to be visible"
 
 
 # ----------------------------------------------------------------------
@@ -1257,9 +1257,9 @@ def test_chat_think_default_resolution_runtime(monkeypatch, capsys):
     # Resolved value lands in the payload.
     assert payloads[0]["max_tokens"] == 4096
     out = capsys.readouterr().out
-    assert "raised --max-tokens to 4096" in out, (
-        f"expected the --think bump notice in output; got: {out!r}"
-    )
+    assert (
+        "raised --max-tokens to 4096" in out
+    ), f"expected the --think bump notice in output; got: {out!r}"
 
 
 def test_chat_explicit_max_tokens_with_think_is_not_overridden(monkeypatch, capsys):
@@ -1307,9 +1307,9 @@ def test_chat_no_length_warning_when_content_present(monkeypatch, capsys):
         monkeypatch.setattr("builtins.input", lambda _p="": next(inputs))
         cli.chat_command(_ns_for_chat(port))
     out = capsys.readouterr().out
-    assert "reasoning consumed" not in out, (
-        "length cut WITH content must not trigger the empty-answer warning"
-    )
+    assert (
+        "reasoning consumed" not in out
+    ), "length cut WITH content must not trigger the empty-answer warning"
 
 
 def test_stream_chat_response_captures_finish_reason_into_metrics():
@@ -1478,9 +1478,9 @@ def test_chat_command_bye_exits_like_exit(monkeypatch, capsys):
         cli.chat_command(_ns_for_chat(port))
 
     # /bye terminates the REPL → the sentinel is never asked for.
-    assert sentinel not in consumed, (
-        f"/bye must stop the input loop before the sentinel; consumed={consumed}"
-    )
+    assert (
+        sentinel not in consumed
+    ), f"/bye must stop the input loop before the sentinel; consumed={consumed}"
     assert consumed == ["hello", "/bye"]
     # And the first turn (and only the first) hit the server.
     assert len(payloads) == 1
@@ -1566,9 +1566,9 @@ def test_chat_no_thinking_hidden_from_help(capsys):
     assert excinfo.value.code == 0
     captured = capsys.readouterr()
     help_text = captured.out + captured.err
-    assert "--no-thinking" not in help_text, (
-        "hidden cross-alias must not appear in chat --help"
-    )
+    assert (
+        "--no-thinking" not in help_text
+    ), "hidden cross-alias must not appear in chat --help"
     # Sanity check that we actually captured the chat help (not stdlib's).
     assert "--think" in help_text or "--no-think" in help_text
 
@@ -1620,9 +1620,9 @@ def test_chat_banner_shown_on_first_launch_only(monkeypatch, capsys, tmp_path):
         monkeypatch.setattr("builtins.input", lambda _p="": next(inputs))
         cli.chat_command(_ns_for_chat(port))
         first = buf1.getvalue()
-    assert "agents codex" in first, (
-        f"first launch should show the agents-codex tip; got {first!r}"
-    )
+    assert (
+        "agents codex" in first
+    ), f"first launch should show the agents-codex tip; got {first!r}"
 
     # Second launch — marker file now exists, banner should be suppressed.
     canned2 = [_delta("ok")]
@@ -1634,9 +1634,9 @@ def test_chat_banner_shown_on_first_launch_only(monkeypatch, capsys, tmp_path):
         monkeypatch.setattr("builtins.input", lambda _p="": next(inputs2))
         cli.chat_command(_ns_for_chat(port2))
         second = buf2.getvalue()
-    assert "agents codex" not in second, (
-        f"second launch must NOT re-show the banner; got {second!r}"
-    )
+    assert (
+        "agents codex" not in second
+    ), f"second launch must NOT re-show the banner; got {second!r}"
 
 
 def test_chat_banner_skipped_when_no_color_set(monkeypatch, capsys, tmp_path):
@@ -1653,9 +1653,9 @@ def test_chat_banner_skipped_when_no_color_set(monkeypatch, capsys, tmp_path):
     out = capsys.readouterr().out
     assert "agents codex" not in out, "NO_COLOR run should suppress the banner entirely"
     # And no marker file was written.
-    assert not (tmp_path / "seen-tips.json").exists(), (
-        "NO_COLOR run must not pollute the user's config dir"
-    )
+    assert not (
+        tmp_path / "seen-tips.json"
+    ).exists(), "NO_COLOR run must not pollute the user's config dir"
 
 
 def test_chat_banner_write_failure_does_not_abort(monkeypatch, tmp_path, capsys):
@@ -1770,9 +1770,9 @@ def test_teardown_unlinks_only_empty_log_files(tmp_path, monkeypatch):
         ns.port = None
         cli.chat_command(ns)
 
-    assert not empty_log.exists(), (
-        "empty log should be unlinked when swapped out (no debugging value)"
-    )
+    assert (
+        not empty_log.exists()
+    ), "empty log should be unlinked when swapped out (no debugging value)"
 
     # --- Case 2: full log → preserved on swap ---
     call_n2 = {"n": 0}
@@ -1847,9 +1847,9 @@ def test_main_skips_download_gate_when_chat_spawn_env_set(monkeypatch):
         ["rapid-mlx", "serve", "mlx-community/some-uncached-fake-7b"],
     )
     cli.main()
-    assert calls == [], (
-        f"Spawn-child env should bypass the download gate entirely; got calls={calls}"
-    )
+    assert (
+        calls == []
+    ), f"Spawn-child env should bypass the download gate entirely; got calls={calls}"
 
 
 def test_main_skips_size_estimate_in_non_tty_context(monkeypatch):
@@ -1914,9 +1914,9 @@ def test_main_skips_size_estimate_when_auto_pull_env_set(monkeypatch):
     )
     cli.main()
 
-    assert calls == [], (
-        f"AUTO_PULL=1 should skip the cache probe and size estimate; got calls={calls}"
-    )
+    assert (
+        calls == []
+    ), f"AUTO_PULL=1 should skip the cache probe and size estimate; got calls={calls}"
 
 
 def test_spawn_chat_server_sets_chat_spawn_env(monkeypatch, tmp_path):
@@ -2242,14 +2242,14 @@ def test_cleanup_masks_sigint_so_ctrl_c_cannot_orphan_remaining_procs(monkeypatc
 
     # All three procs must have been torn down (the SIGINT mask would
     # have prevented any Ctrl-C-driven unwind from leaving leftovers).
-    assert teardown_calls["n"] == 3, (
-        f"Cleanup must walk every proc; got {teardown_calls['n']}/3"
-    )
+    assert (
+        teardown_calls["n"] == 3
+    ), f"Cleanup must walk every proc; got {teardown_calls['n']}/3"
     # SIG_IGN must appear in sigint_changes — proof that _cleanup masked
     # SIGINT (rather than only SIGTERM as it did in round-2).
-    assert _signal.SIG_IGN in sigint_changes, (
-        f"_cleanup must install SIG_IGN on SIGINT; sigint_changes={sigint_changes}"
-    )
+    assert (
+        _signal.SIG_IGN in sigint_changes
+    ), f"_cleanup must install SIG_IGN on SIGINT; sigint_changes={sigint_changes}"
 
 
 def test_chat_allow_abbrev_disabled_rejects_ambiguous_no_thi(capsys):
@@ -2428,12 +2428,12 @@ def test_spawn_chat_server_releases_log_handle_under_signal_mask(monkeypatch, tm
     for name in ("popen", "append", "release"):
         assert name in milestones, f"milestone {name!r} never ran"
         blocked = milestones[name]
-        assert _signal.SIGTERM in blocked, (
-            f"{name}: SIGTERM not blocked; blocked={blocked}"
-        )
-        assert _signal.SIGINT in blocked, (
-            f"{name}: SIGINT not blocked; blocked={blocked}"
-        )
+        assert (
+            _signal.SIGTERM in blocked
+        ), f"{name}: SIGTERM not blocked; blocked={blocked}"
+        assert (
+            _signal.SIGINT in blocked
+        ), f"{name}: SIGINT not blocked; blocked={blocked}"
 
     # The mask must have been restored — the LAST sigmask call should
     # be a ``SIG_SETMASK`` to the previous mask. The previous mask did
@@ -2441,12 +2441,12 @@ def test_spawn_chat_server_releases_log_handle_under_signal_mask(monkeypatch, tm
     # so SIGTERM/SIGINT are NOT in the post-critical-section blocked
     # set.
     final_blocked = _current_blocked()
-    assert _signal.SIGTERM not in final_blocked, (
-        f"SIGTERM still blocked after spawn returned; blocked={final_blocked}"
-    )
-    assert _signal.SIGINT not in final_blocked, (
-        f"SIGINT still blocked after spawn returned; blocked={final_blocked}"
-    )
+    assert (
+        _signal.SIGTERM not in final_blocked
+    ), f"SIGTERM still blocked after spawn returned; blocked={final_blocked}"
+    assert (
+        _signal.SIGINT not in final_blocked
+    ), f"SIGINT still blocked after spawn returned; blocked={final_blocked}"
 
     # Pr_validate round-2 BLOCKING: the disposition for SIGTERM/SIGINT
     # MUST NOT have been touched. If we set SIG_IGN, the just-spawned
@@ -2489,12 +2489,12 @@ def test_spawn_chat_server_releases_log_handle_under_signal_mask(monkeypatch, tm
         # After preexec_fn, SIGTERM and SIGINT MUST NOT be in the
         # blocked set.
         after = set(real_pthread_sigmask(_signal.SIG_BLOCK, set()))
-        assert _signal.SIGTERM not in after, (
-            f"preexec_fn did not unblock SIGTERM; mask after={after}"
-        )
-        assert _signal.SIGINT not in after, (
-            f"preexec_fn did not unblock SIGINT; mask after={after}"
-        )
+        assert (
+            _signal.SIGTERM not in after
+        ), f"preexec_fn did not unblock SIGTERM; mask after={after}"
+        assert (
+            _signal.SIGINT not in after
+        ), f"preexec_fn did not unblock SIGINT; mask after={after}"
     finally:
         # Restore the simulated parent state.
         real_pthread_sigmask(_signal.SIG_SETMASK, saved_mask)

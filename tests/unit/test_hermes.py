@@ -256,9 +256,9 @@ def test_api_single_tool_call():
     msg = r["choices"][0]["message"]
     assert msg.get("tool_calls"), f"No tool_calls in response: {msg}"
     tc = msg["tool_calls"][0]
-    assert tc["function"]["name"] == "read_file", (
-        f"Wrong tool: {tc['function']['name']}"
-    )
+    assert (
+        tc["function"]["name"] == "read_file"
+    ), f"Wrong tool: {tc['function']['name']}"
     args = json.loads(tc["function"]["arguments"])
     assert "hostname" in args.get("path", "").lower(), f"Wrong path: {args}"
     print(f"  Tool: {tc['function']['name']}({args})")
@@ -306,9 +306,9 @@ def test_api_multi_turn_tool():
         tools=BASIC_TOOLS,
     )
     content2 = r2["choices"][0]["message"]["content"]
-    assert "127.0.0.1" in content2 or "localhost" in content2, (
-        f"Bad follow-up: {content2[:100]}"
-    )
+    assert (
+        "127.0.0.1" in content2 or "localhost" in content2
+    ), f"Bad follow-up: {content2[:100]}"
     print(f"  Multi-turn response: {content2[:80]}")
 
 
@@ -403,9 +403,9 @@ def test_api_no_tool_needed():
     )
     msg = r["choices"][0]["message"]
     content = msg.get("content", "")
-    assert "Paris" in content or "paris" in content.lower(), (
-        f"Expected Paris: {content[:100]}"
-    )
+    assert (
+        "Paris" in content or "paris" in content.lower()
+    ), f"Expected Paris: {content[:100]}"
     # Should NOT call a tool for a general knowledge question
     if msg.get("tool_calls"):
         print(f"  ⚠️ Unnecessary tool call: {msg['tool_calls'][0]['function']['name']}")
@@ -473,9 +473,9 @@ def test_hermes_read_file():
     """Hermes reads a file via tool call."""
     out, err = hermes_query("Read the first line of pyproject.toml")
     fail_or_skip(err)
-    assert "build" in out.lower() or "project" in out.lower(), (
-        f"Unexpected: {out[:100]}"
-    )
+    assert (
+        "build" in out.lower() or "project" in out.lower()
+    ), f"Unexpected: {out[:100]}"
     print(f"  Hermes read_file: {out.strip()[:80]}")
 
 
@@ -530,9 +530,9 @@ def test_hermes_write_and_run():
         timeout=10,
     )
     fib_out = result.stdout + out
-    assert any(str(n) in fib_out for n in [8, 13, 21, 34]), (
-        f"Fibonacci missing: {fib_out[:200]}"
-    )
+    assert any(
+        str(n) in fib_out for n in [8, 13, 21, 34]
+    ), f"Fibonacci missing: {fib_out[:200]}"
     print("  Write+run: fibonacci script works")
 
 
@@ -557,9 +557,9 @@ def test_hermes_code_with_tests():
         text=True,
         timeout=30,
     )
-    assert "passed" in result.stdout.lower(), (
-        f"Tests failed: {result.stdout[:200]}{result.stderr[:200]}"
-    )
+    assert (
+        "passed" in result.stdout.lower()
+    ), f"Tests failed: {result.stdout[:200]}{result.stderr[:200]}"
     print("  Code+tests: pytest passing")
 
 

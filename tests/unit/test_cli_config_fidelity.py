@@ -112,8 +112,7 @@ def test_audit_detects_synthetic_drift(tmp_path):
     """Audit must fail (exit 1) when a CLI flag is dropped at the
     construction site. This is the structural invariant that catches #400."""
     fake_cli = tmp_path / "cli.py"
-    fake_cli.write_text(
-        textwrap.dedent("""
+    fake_cli.write_text(textwrap.dedent("""
             from fusion_mlx.scheduler import SchedulerConfig
 
             def serve_command(args):
@@ -122,8 +121,7 @@ def test_audit_detects_synthetic_drift(tmp_path):
                 # ...but never plumbed into SchedulerConfig — the bug pattern.
                 cfg = SchedulerConfig(max_num_seqs=args.max_num_seqs)
                 return cfg
-            """)
-    )
+            """))
 
     # Run the audit as a script and patch CLI_PATH via env-free monkey-import.
     # The simplest test: import the audit's `audit()` function directly with
@@ -142,9 +140,9 @@ def test_audit_detects_synthetic_drift(tmp_path):
         sys.path.pop(0)
 
     assert issues, "audit did not flag obvious synthetic drift"
-    assert any("prefill_step_size" in line for line in issues), (
-        f"expected prefill_step_size flagged; got: {issues}"
-    )
+    assert any(
+        "prefill_step_size" in line for line in issues
+    ), f"expected prefill_step_size flagged; got: {issues}"
 
 
 def test_load_model_prefill_step_size_back_compat_translation():
@@ -203,9 +201,9 @@ def test_load_model_prefill_step_size_back_compat_translation():
         "load_model(prefill_step_size=X) without scheduler_config must "
         "synthesise a SchedulerConfig so the value actually takes effect."
     )
-    assert cfg.prefill_step_size == 9999, (
-        f"translation failed: cfg.prefill_step_size={cfg.prefill_step_size}, expected 9999"
-    )
+    assert (
+        cfg.prefill_step_size == 9999
+    ), f"translation failed: cfg.prefill_step_size={cfg.prefill_step_size}, expected 9999"
 
 
 def test_audit_no_false_positive_when_field_unused(tmp_path):
@@ -215,8 +213,7 @@ def test_audit_no_false_positive_when_field_unused(tmp_path):
     to pass it). Without this guard the audit would over-flag and become
     noise."""
     fake_cli = tmp_path / "cli.py"
-    fake_cli.write_text(
-        textwrap.dedent("""
+    fake_cli.write_text(textwrap.dedent("""
             from fusion_mlx.scheduler import SchedulerConfig
 
             def benchmark_command(args):
@@ -224,8 +221,7 @@ def test_audit_no_false_positive_when_field_unused(tmp_path):
                 # is not referenced. SchedulerConfig correctly uses the default.
                 cfg = SchedulerConfig(max_num_seqs=args.max_num_seqs)
                 return cfg
-            """)
-    )
+            """))
 
     sys.path.insert(0, str(REPO_ROOT / "scripts"))
     try:

@@ -266,12 +266,12 @@ class TestRateLimitClientId:
             f"Different tokens must produce different client IDs, "
             f"got {client_id_1!r} == {client_id_2!r}"
         )
-        assert "sk-token-alpha" not in client_id_1, (
-            "Raw token must not appear in client_id"
-        )
-        assert "sk-token-beta" not in client_id_2, (
-            "Raw token must not appear in client_id"
-        )
+        assert (
+            "sk-token-alpha" not in client_id_1
+        ), "Raw token must not appear in client_id"
+        assert (
+            "sk-token-beta" not in client_id_2
+        ), "Raw token must not appear in client_id"
 
     def test_rate_limit_groups_unauth_clients_by_subnet(self):
         """IPv4 clients in the same /24 share a bucket."""
@@ -293,9 +293,9 @@ class TestRateLimitClientId:
         client_id_a = _rate_limit_client_id(Request(scope_a))
         client_id_b = _rate_limit_client_id(Request(scope_b))
 
-        assert client_id_a == client_id_b, (
-            f"Same /24 must share a bucket, got {client_id_a!r} != {client_id_b!r}"
-        )
+        assert (
+            client_id_a == client_id_b
+        ), f"Same /24 must share a bucket, got {client_id_a!r} != {client_id_b!r}"
 
     def test_rate_limit_same_token_via_bearer_and_x_api_key_share_bucket(self):
         """Same key value via Bearer and x-api-key maps to same bucket."""
@@ -549,9 +549,9 @@ class TestHTTPExceptionHandlerOnProductionApp:
 
         assert r.status_code == 404
         body = r.json()
-        assert "error" in body, (
-            f"production app returned non-OpenAI shape for 404: {body}"
-        )
+        assert (
+            "error" in body
+        ), f"production app returned non-OpenAI shape for 404: {body}"
         assert body["error"]["type"] == "not_found_error"
         assert body["error"]["code"] is None
         assert body["error"]["param"] is None
@@ -566,7 +566,7 @@ class TestHTTPExceptionHandlerOnProductionApp:
 
         assert r.status_code == 405
         body = r.json()
-        assert "error" in body, (
-            f"production app returned non-OpenAI shape for 405: {body}"
-        )
+        assert (
+            "error" in body
+        ), f"production app returned non-OpenAI shape for 405: {body}"
         assert body["error"]["type"] == "invalid_request_error"

@@ -75,9 +75,9 @@ class TestRouterDecisionLatency:
             router._estimate_tokens(messages)
         elapsed = time.perf_counter() - start
         avg_ms = (elapsed / 100) * 1000
-        assert avg_ms < 1.0, (
-            f"Token estimation {avg_ms:.2f}ms exceeds 1ms for 10k chars"
-        )
+        assert (
+            avg_ms < 1.0
+        ), f"Token estimation {avg_ms:.2f}ms exceeds 1ms for 10k chars"
 
 
 class TestCircuitBreakerThroughput:

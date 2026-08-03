@@ -151,14 +151,14 @@ def test_disallowed_origin_preflight_sets_vary_origin(
     # ``Vary`` must include ``Origin`` token — single-row, normalized.
     vary = r.headers.get("vary", "")
     vary_tokens = {t.strip().lower() for t in vary.split(",") if t.strip()}
-    assert "origin" in vary_tokens, (
-        f"Expected ``Vary: Origin`` on the spec-aligned rejection; got Vary={vary!r}"
-    )
+    assert (
+        "origin" in vary_tokens
+    ), f"Expected ``Vary: Origin`` on the spec-aligned rejection; got Vary={vary!r}"
     # Sanity: no duplicate-row ``Vary: Origin, Origin`` (could trip
     # downstream cache normalizers).
-    assert vary.lower().count("origin") == 1, (
-        f"Vary must not list Origin twice; got Vary={vary!r}"
-    )
+    assert (
+        vary.lower().count("origin") == 1
+    ), f"Vary must not list Origin twice; got Vary={vary!r}"
 
 
 def test_disallowed_method_preflight_is_200_not_400(
@@ -183,9 +183,9 @@ def test_disallowed_method_preflight_is_200_not_400(
     assert r.status_code == 200
     methods = r.headers.get("access-control-allow-methods", "")
     method_set = {m.strip().upper() for m in methods.split(",") if m.strip()}
-    assert "DELETE" not in method_set, (
-        f"DELETE must not appear in ACAM on a 200-rejection; got {method_set!r}"
-    )
+    assert (
+        "DELETE" not in method_set
+    ), f"DELETE must not appear in ACAM on a 200-rejection; got {method_set!r}"
 
 
 def test_allowed_origin_preflight_still_returns_acao(

@@ -113,9 +113,9 @@ class TestGetMaxContextWindow:
 
         state = self._mount_native_and_policy(native_ctx=262_144, policy_cap=128_000)
         with patch("fusion_mlx.server._server_state", state):
-            assert get_max_context_window("big-model") == 128_000, (
-                "Policy of 128k must clamp a model that natively declares 256k"
-            )
+            assert (
+                get_max_context_window("big-model") == 128_000
+            ), "Policy of 128k must clamp a model that natively declares 256k"
 
     def test_policy_set_native_below_policy_wins(self):
         """When the model's native length is already below the policy,
@@ -140,9 +140,9 @@ class TestGetMaxContextWindow:
             max_context_window=200_000
         )
         with patch("fusion_mlx.server._server_state", state):
-            assert get_max_context_window("override-model") == 200_000, (
-                "Per-model override must escape the policy clamp"
-            )
+            assert (
+                get_max_context_window("override-model") == 200_000
+            ), "Per-model override must escape the policy clamp"
 
     def test_policy_does_not_apply_to_fallback_path(self):
         """When the model has no discoverable native context AND no

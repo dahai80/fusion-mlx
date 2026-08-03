@@ -577,9 +577,9 @@ class TestDiffusersRename:
             raw[diff_key] = np.zeros((2, 2, 3, 3, 3), np.float32)
         mapped = _map_vae_decoder_weights({k: mx.array(v) for k, v in raw.items()})
         for diff_key, expected_ours in RENAME_CASES:
-            assert expected_ours in mapped, (
-                f"{diff_key} -> {expected_ours} missing (got {sorted(mapped.keys())})"
-            )
+            assert (
+                expected_ours in mapped
+            ), f"{diff_key} -> {expected_ours} missing (got {sorted(mapped.keys())})"
         # no encoder/non-decoder keys survive
         assert all(not k.startswith("encoder.") for k in mapped)
 

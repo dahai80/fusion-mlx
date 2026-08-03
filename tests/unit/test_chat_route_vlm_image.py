@@ -164,16 +164,16 @@ def test_chat_route_forwards_image_url_content_to_mllm_engine():
     msg = fwd_msgs[0]
     assert isinstance(msg, dict)
     assert msg["role"] == "user"
-    assert isinstance(msg["content"], list), (
-        f"MLLM branch must forward list content, got {type(msg['content']).__name__}"
-    )
+    assert isinstance(
+        msg["content"], list
+    ), f"MLLM branch must forward list content, got {type(msg['content']).__name__}"
 
     parts = msg["content"]
     types = [p.get("type") for p in parts if isinstance(p, dict)]
     assert "text" in types, f"text part missing: {types}"
-    assert "image_url" in types, (
-        f"image_url part dropped by route before reaching engine: {types}"
-    )
+    assert (
+        "image_url" in types
+    ), f"image_url part dropped by route before reaching engine: {types}"
 
     # Image URL payload survives end-to-end.
     image_part = next(p for p in parts if p.get("type") == "image_url")
@@ -252,9 +252,9 @@ def test_chat_route_maps_per_batch_cap_error_to_http_400():
 
     body = resp.json()
     detail = body.get("detail") or body.get("error", {}).get("message", "")
-    assert "exceeds the per-batch cap" in detail, (
-        f"detail must carry the actionable engine message; got {detail!r}"
-    )
+    assert (
+        "exceeds the per-batch cap" in detail
+    ), f"detail must carry the actionable engine message; got {detail!r}"
     assert "downscale the image" in detail
     assert "--prefill-step-size" in detail
 

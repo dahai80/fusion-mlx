@@ -396,15 +396,15 @@ class TestResponsesRouteInputTypeDefault:
             "use the tool please" in (m.get("content") or "") for m in messages
         ), f"leading user message lost during conversion: {messages}"
         joined = " ".join((m.get("content") or "") for m in messages)
-        assert "get_weather" in joined, (
-            f"function_call name was not propagated to the engine: {messages}"
-        )
-        assert "call_abc" in joined, (
-            f"function_call call_id was not propagated to the engine: {messages}"
-        )
-        assert "sunny" in joined, (
-            f"function_call_output payload not propagated: {messages}"
-        )
+        assert (
+            "get_weather" in joined
+        ), f"function_call name was not propagated to the engine: {messages}"
+        assert (
+            "call_abc" in joined
+        ), f"function_call call_id was not propagated to the engine: {messages}"
+        assert (
+            "sunny" in joined
+        ), f"function_call_output payload not propagated: {messages}"
 
     def test_role_only_no_content_still_400(self, responses_client):
         """We loosen the ``type`` default, NOT the content requirement.

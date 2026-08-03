@@ -244,9 +244,9 @@ class TestResponsesEndpointReaches400:
                             "stream": False,
                         },
                     )
-            assert resp.status_code == 400, (
-                f"expected 400, got {resp.status_code}: {resp.text}"
-            )
+            assert (
+                resp.status_code == 400
+            ), f"expected 400, got {resp.status_code}: {resp.text}"
             body = resp.json()
             assert "error" in body, body
             assert "Prefill would require" in body["error"]["message"]

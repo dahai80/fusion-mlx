@@ -73,9 +73,7 @@ class MiniMaxReasoningParser(ReasoningParser):
         r"|(?:^|\n\n)(?:(?:Sure|Of\s+course|Absolutely)[!,.]?\s)"
         r"|(?:^|\n\n)(?:I'(?:d|ll|m)\s+(?:happy|glad)\s+to\s)"
         # Tool call markers (should NOT be stripped)
-        r"|(?:<minimax:tool_call>)"
-        r"|(?:<tool_call>)"
-        r"|(?:<invoke\s)"
+        r"|(?:<minimax:tool_call>)" r"|(?:<tool_call>)" r"|(?:<invoke\s)"
         # Structured output after reasoning
         r"|(?:^|\n\n)(?:\d+\.\s+\*\*)"  # numbered bold list
         r"|(?:^|\n\n)(?:##\s)"  # markdown heading

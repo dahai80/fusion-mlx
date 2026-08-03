@@ -60,8 +60,7 @@ from .base import DeltaMessage, ReasoningParser
 # Non-greedy bodies prevent a runaway thought trace from swallowing
 # legitimate downstream content / action lines.
 _PREAMBLE_RE = re.compile(
-    r"^\s*"
-    r"(?P<thought>"
+    r"^\s*" r"(?P<thought>"
     # 1+2+3 — Action-lane preambles. Body up to the ``Action:`` lookahead.
     r"(?:"
     r"(?:Thought:\s*(?:.*?))"
@@ -80,8 +79,7 @@ _PREAMBLE_RE = re.compile(
     # 5 — generic ``<think>...</think>`` tag. The tag itself is part of
     # the matched preamble; the post-match content (``model_output[m.end():]``)
     # is the user-facing answer.
-    r"|(?:<think>\s*(?:.*?)</think>)"
-    r")",
+    r"|(?:<think>\s*(?:.*?)</think>)" r")",
     re.DOTALL,
 )
 

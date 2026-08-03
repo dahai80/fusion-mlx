@@ -359,7 +359,9 @@ class TestStrictAutoDisableThinking:
         assert engine.chat_calls, "engine.chat was not called"
         assert engine.chat_calls[0]["kwargs"].get("enable_thinking") is True
 
-    def test_non_strict_request_does_not_auto_disable(self, _rate_limiter_state):  # noqa: N802
+    def test_non_strict_request_does_not_auto_disable(
+        self, _rate_limiter_state
+    ):  # noqa: N802
         """Auto-disable is scoped strictly to strict json_schema. A
         plain prompt (no response_format) must reach the engine with
         whatever the client expressed (None here)."""
@@ -579,9 +581,9 @@ class TestBatchedEngineGuidedHonorsEnableThinking:
         the render still receives ``None`` (template default)."""
         engine, engine_cls = self._build_engine_stub()
         captured = self._run_engine_with_capture(engine, engine_cls)
-        assert captured.get("enable_thinking") is None, (
-            "Default enable_thinking must be None (template default)"
-        )
+        assert (
+            captured.get("enable_thinking") is None
+        ), "Default enable_thinking must be None (template default)"
 
     def test_generate_with_schema_preserves_enable_thinking_on_guided_fallback(
         self,

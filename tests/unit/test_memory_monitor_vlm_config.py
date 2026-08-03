@@ -207,9 +207,9 @@ class TestSetModelInfoForMonitorVLMWalk:
         sched._set_model_info_for_monitor()
 
         kwargs = sched.memory_monitor.set_model_info.call_args.kwargs
-        assert kwargs["num_layers"] == 24, (
-            "GPT-style ``n_layer`` in the sub-config should be recognized"
-        )
+        assert (
+            kwargs["num_layers"] == 24
+        ), "GPT-style ``n_layer`` in the sub-config should be recognized"
 
 
 class TestMlaKvMemoryEstimate:

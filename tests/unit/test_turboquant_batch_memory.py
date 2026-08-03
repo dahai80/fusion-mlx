@@ -191,9 +191,9 @@ def _metrics():
 def test_batch_tq_coherent_and_tracks_single():
     m = _metrics()
     for i in range(len(m["lens"])):
-        assert len(m["batch_tq"].get(f"batch-{i}", [])) >= 5, (
-            f"batch req {i} degenerate"
-        )
+        assert (
+            len(m["batch_tq"].get(f"batch-{i}", [])) >= 5
+        ), f"batch req {i} degenerate"
     assert max(m["matches"]) >= 50.0, f"no request tracked single-seq: {m['matches']}"
 
 
@@ -206,9 +206,9 @@ def test_occupancy_tq_below_fp16():
 def test_batch_occupancy_beats_fp16_and_pad_nonnegative():
     m = _metrics()
     # same lengths, so the batch saving equals the per-token ratio (<0.6)
-    assert m["batch_bytes_tq"] < 0.6 * m["batch_bytes_fp16"], (
-        "batch TQ not saving vs fp16"
-    )
+    assert (
+        m["batch_bytes_tq"] < 0.6 * m["batch_bytes_fp16"]
+    ), "batch TQ not saving vs fp16"
     assert m["pad_waste"] >= 0
 
 

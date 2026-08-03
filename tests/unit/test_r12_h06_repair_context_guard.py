@@ -346,9 +346,9 @@ def test_repair_skipped_when_repair_prompt_exceeds_context():
     assert details.get("reason") == "schema_violation"
 
     # Engine MUST NOT have been called a second time.
-    assert len(engine.chat_calls) == 1, (
-        f"repair was skipped → expected 1 chat call, got {len(engine.chat_calls)}"
-    )
+    assert (
+        len(engine.chat_calls) == 1
+    ), f"repair was skipped → expected 1 chat call, got {len(engine.chat_calls)}"
 
     snap = response_format_metrics.snapshot()
     # Skip counter ticked exactly once.

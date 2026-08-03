@@ -288,9 +288,9 @@ def test_case13_stream_partial_opener_at_tail_holds_back(
     )
     # delta1 should be either None (held entirely) or content="" (no new safe bytes).
     if delta1 is not None and "content" in delta1:
-        assert "<func" not in delta1["content"], (
-            f"Partial opener leaked as content: {delta1['content']!r}"
-        )
+        assert (
+            "<func" not in delta1["content"]
+        ), f"Partial opener leaked as content: {delta1['content']!r}"
 
     # Stage 2: completion to a real named-XML opener should claim the
     # held bytes as part of the tool-call block, NOT emit them as content.

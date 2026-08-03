@@ -1418,9 +1418,11 @@ def build_context_budget_headers(
         used,
         context_window,
         remaining,
-        used / context_window > _CONTEXT_BUDGET_WARNING_THRESHOLD
-        if context_window > 0
-        else False,
+        (
+            used / context_window > _CONTEXT_BUDGET_WARNING_THRESHOLD
+            if context_window > 0
+            else False
+        ),
     )
     return headers
 

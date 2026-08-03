@@ -202,7 +202,9 @@ async def test_embedding_discovery():
                     print(f"   📄 Response: {embedding_response.text}")
 
             else:
-                print(f"   ⚠️  Could not load {test_model}: {load_response.status_code}")
+                print(
+                    f"   ⚠️  Could not load {test_model}: {load_response.status_code}"
+                )
                 print("   💡 This is expected if the model is not available")
 
         except Exception as e:

@@ -653,9 +653,9 @@ class TestStreamingPostProcessorGemma4StrippedForm:
         tool_events = [e for e in events if e.type == "tool_call"]
         content_events = [e for e in events if e.type == "content"]
 
-        assert len(tool_events) == 1, (
-            f"expected exactly one tool_call event, got: {events!r}"
-        )
+        assert (
+            len(tool_events) == 1
+        ), f"expected exactly one tool_call event, got: {events!r}"
         tc = tool_events[0].tool_calls[0]
         assert tc["function"]["name"] == "calculator"
         assert json.loads(tc["function"]["arguments"]) == {"expression": "432+1"}
@@ -668,9 +668,9 @@ class TestStreamingPostProcessorGemma4StrippedForm:
         # ``has_pending_tool_call`` on the gemma4 parser detects the
         # ``call:\w+\{`` opener, ``tool_markup_possible`` flips True,
         # and the streaming parser path runs to completion.
-        assert content_events == [], (
-            f"raw wire body leaked as content: {content_events!r}"
-        )
+        assert (
+            content_events == []
+        ), f"raw wire body leaked as content: {content_events!r}"
 
     def test_stripped_form_chunked_suppresses_after_opener_lands(self):
         """Once the opener ``call:NAME{`` is fully visible in accumulated
@@ -695,9 +695,9 @@ class TestStreamingPostProcessorGemma4StrippedForm:
         # Subsequent chunks inside the body must stay suppressed.
         for d in ["expression:432+", "1"]:
             events = pp.process_chunk(_make_output(d))
-            assert [e for e in events if e.type == "content"] == [], (
-                f"chunk {d!r} leaked content after opener: {events!r}"
-            )
+            assert [
+                e for e in events if e.type == "content"
+            ] == [], f"chunk {d!r} leaked content after opener: {events!r}"
 
         # Closing delta — completes the body, expect a tool_call event.
         events = pp.process_chunk(_make_output("}", finished=True))
@@ -1826,9 +1826,9 @@ class TestTextParserParallelCap:
 
         assert len(e1) == 1
         assert e1[0].tool_calls[0]["function"]["name"] == "f"
-        assert len(e2) == 1, (
-            "same-identity no-index re-emit must pass through as continuation"
-        )
+        assert (
+            len(e2) == 1
+        ), "same-identity no-index re-emit must pass through as continuation"
         assert e2[0].tool_calls[0]["function"]["arguments"] == '{"x":'
         assert len(e3) == 1
         assert e3[0].tool_calls[0]["function"]["arguments"] == '{"x":1}'

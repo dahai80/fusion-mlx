@@ -248,12 +248,12 @@ def _request_pair(
     r_openai = client.post("/v1/chat/completions", json=openai_payload)
     r_anthropic = client.post("/v1/messages", json=anthropic_payload)
 
-    assert r_openai.status_code == 200, (
-        f"OpenAI route failed: {r_openai.status_code} {r_openai.text[:300]}"
-    )
-    assert r_anthropic.status_code == 200, (
-        f"Anthropic route failed: {r_anthropic.status_code} {r_anthropic.text[:300]}"
-    )
+    assert (
+        r_openai.status_code == 200
+    ), f"OpenAI route failed: {r_openai.status_code} {r_openai.text[:300]}"
+    assert (
+        r_anthropic.status_code == 200
+    ), f"Anthropic route failed: {r_anthropic.status_code} {r_anthropic.text[:300]}"
 
     if stream:
         return (
@@ -357,12 +357,12 @@ def test_reasoning_extracted_consistently(stream):
     # Both surfaces must agree on the split; we don't pin the exact
     # split rule (that's the parser's contract, tested elsewhere) —
     # only that the two surfaces produce the SAME split.
-    assert openai["text"] == anthropic["text"], (
-        f"text divergence: openai={openai['text']!r} vs anthropic={anthropic['text']!r}"
-    )
-    assert openai["reasoning"] == anthropic["reasoning"], (
-        f"reasoning divergence: openai={openai['reasoning']!r} vs anthropic={anthropic['reasoning']!r}"
-    )
+    assert (
+        openai["text"] == anthropic["text"]
+    ), f"text divergence: openai={openai['text']!r} vs anthropic={anthropic['text']!r}"
+    assert (
+        openai["reasoning"] == anthropic["reasoning"]
+    ), f"reasoning divergence: openai={openai['reasoning']!r} vs anthropic={anthropic['reasoning']!r}"
     # Pin that reasoning was actually extracted (not both surfaces
     # silently dropping it on the floor). Without this, the test passes
     # vacuously if `cfg.reasoning_parser` is unset on either path — the

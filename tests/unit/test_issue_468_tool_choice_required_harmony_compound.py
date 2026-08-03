@@ -157,9 +157,9 @@ def test_harmony_router_compound_analysis_then_commentary(case: _Case, router):
         )
 
     tool_calls = result["tool_calls"]
-    assert tool_calls, (
-        f"tool_calls is empty/None for case={case.id}; got={tool_calls!r}"
-    )
+    assert (
+        tool_calls
+    ), f"tool_calls is empty/None for case={case.id}; got={tool_calls!r}"
     assert len(tool_calls) == 1, (
         f"Expected ONE aggregated tool_calls entry for case={case.id}; got "
         f"{len(tool_calls)}: {tool_calls!r}"

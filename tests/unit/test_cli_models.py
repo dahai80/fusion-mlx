@@ -57,9 +57,9 @@ def test_models_command_renders_hybrid_marker_for_qwen35_moe():
     profiles = list_profiles()
     qwen35_moe = profiles.get("qwen3.5-35b-4bit")
     assert qwen35_moe is not None, "qwen3.5-35b-4bit alias missing — fixture drift"
-    assert qwen35_moe.is_hybrid, (
-        "qwen3.5-35b-4bit (A3B MoE) should remain is_hybrid=True"
-    )
+    assert (
+        qwen35_moe.is_hybrid
+    ), "qwen3.5-35b-4bit (A3B MoE) should remain is_hybrid=True"
 
     matches = [line for line in out.splitlines() if "qwen3.5-35b-4bit " in line]
     assert matches, "no row found for qwen3.5-35b-4bit"
@@ -84,12 +84,12 @@ def test_models_command_renders_parser_for_hermes3_8b():
     row = matches[0]
     profile = list_profiles().get("hermes3-8b-4bit")
     assert profile is not None, "hermes3-8b-4bit alias missing — fixture drift"
-    assert (profile.tool_call_parser or "") in row, (
-        f"expected tool parser {profile.tool_call_parser!r} in row: {row!r}"
-    )
-    assert profile.suffix_decoding_tier in row, (
-        f"expected suffix tier {profile.suffix_decoding_tier!r} in row: {row!r}"
-    )
+    assert (
+        profile.tool_call_parser or ""
+    ) in row, f"expected tool parser {profile.tool_call_parser!r} in row: {row!r}"
+    assert (
+        profile.suffix_decoding_tier in row
+    ), f"expected suffix tier {profile.suffix_decoding_tier!r} in row: {row!r}"
 
 
 def test_models_command_renders_em_dash_for_unset_parsers():
@@ -119,9 +119,9 @@ def test_models_command_mentions_chat_pull_serve_in_tip():
     """The footer should advertise the four canonical actions."""
     out = _capture_models_output()
     for cmd in ("info", "pull", "chat", "serve"):
-        assert f"rapid-mlx {cmd}" in out, (
-            f"footer tip missing 'rapid-mlx {cmd}' suggestion"
-        )
+        assert (
+            f"rapid-mlx {cmd}" in out
+        ), f"footer tip missing 'rapid-mlx {cmd}' suggestion"
 
 
 def test_models_command_subparser_smoke():

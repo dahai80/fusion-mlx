@@ -529,9 +529,7 @@ class _BatchedCacheLayer:
                 v_b = (
                     kv[1][b]
                     if isinstance(kv[1], (list, tuple))
-                    else _slice(kv[1], b)
-                    if len(kv) > 1
-                    else None
+                    else _slice(kv[1], b) if len(kv) > 1 else None
                 )
                 tok_b = (
                     tokens[b]

@@ -104,9 +104,9 @@ def test_eligible_aliases_does_not_parse_quant_suffix_as_size(g12, tmp_path):
     p = tmp_path / "aliases.json"
     p.write_text(json.dumps(aliases))
     eligible = dict(g12._eligible_aliases(p))
-    assert "phantom-air-4bit" not in eligible, (
-        "size parser must not extract 4 from -4bit quant suffix"
-    )
+    assert (
+        "phantom-air-4bit" not in eligible
+    ), "size parser must not extract 4 from -4bit quant suffix"
     assert "phantom-air-8bit" not in eligible, (
         "the 8-bit alias is filtered by quant-only rule anyway, but its "
         "repo name also has no real size token — both filters apply"
@@ -135,9 +135,9 @@ def test_eligible_aliases_sorted_for_reproducible_sampling(g12, tmp_path):
     p_reversed = tmp_path / "aliases_reversed.json"
     p_reversed.write_text(json.dumps(dict(reversed(list(aliases.items())))))
     eligible_c = g12._eligible_aliases(p_reversed)
-    assert eligible_a == eligible_c, (
-        "eligibility must be order-stable across source-file dict orderings"
-    )
+    assert (
+        eligible_a == eligible_c
+    ), "eligibility must be order-stable across source-file dict orderings"
 
 
 def test_real_aliases_json_yields_nonzero_pool(g12):

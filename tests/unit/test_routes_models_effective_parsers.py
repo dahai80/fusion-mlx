@@ -168,12 +168,12 @@ def test_raw_hf_id_surfaces_explicit_cli_parsers():
     ) as client:
         body = client.get("/v1/models").json()
     entry = _by_id(body, raw_id)
-    assert entry["tool_call_parser"] == "hermes", (
-        f"raw HF id must surface the explicit CLI tool-call parser; got {entry!r}"
-    )
-    assert entry["reasoning_parser"] == "qwen", (
-        f"raw HF id must surface the explicit CLI reasoning parser; got {entry!r}"
-    )
+    assert (
+        entry["tool_call_parser"] == "hermes"
+    ), f"raw HF id must surface the explicit CLI tool-call parser; got {entry!r}"
+    assert (
+        entry["reasoning_parser"] == "qwen"
+    ), f"raw HF id must surface the explicit CLI reasoning parser; got {entry!r}"
 
 
 def test_raw_hf_id_surfaces_autodetected_parsers():
