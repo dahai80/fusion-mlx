@@ -1,7 +1,7 @@
 class FusionMlx < Formula
     desc "Unified local model management for Apple Silicon"
     homepage "https://github.com/dahai80/fusion-mlx"
-    url "https://github.com/dahai80/fusion-mlx/archive/refs/tags/v0.5.11.tar.gz"
+    url "https://github.com/dahai80/fusion-mlx/archive/refs/tags/v0.6.9.tar.gz"
     sha256 "PLACEHOLDER_SHA256"
     license "Apache-2.0"
     head "https://github.com/dahai80/fusion-mlx.git", branch: "main"
@@ -10,13 +10,13 @@ class FusionMlx < Formula
 
     # ARM64-native wheels — must be pre-built for macOS arm64
     resource "mlx" do
-        url "https://files.pythonhosted.org/packages/py3/m/mlx/mlx-0.25.1-cp312-cp312-macosx_14_0_arm64.whl"
-        sha256 "PLACEHOLDER_MLX_SHA256"
+        url "https://files.pythonhosted.org/packages/py3/m/mlx/mlx-0.32.0-cp312-cp312-macosx_14_0_arm64.whl"
+        sha256 "ea5a594355c89c0095eaba413fd39d4caa8642fa13432dfb0c9354d141046467"
     end
 
     resource "safetensors" do
-        url "https://files.pythonhosted.org/packages/py3/s/safetensors/safetensors-0.5.3-cp312-cp312-macosx_11_0_arm64.whl"
-        sha256 "PLACEHOLDER_SAFETENSORS_SHA256"
+        url "https://files.pythonhosted.org/packages/py3/s/safetensors/safetensors-0.5.3-cp38-abi3-macosx_11_0_arm64.whl"
+        sha256 "21d01c14ff6c415c485616b8b0bf961c46b3b343ca59110d38d744e577f9cce7"
     end
 
     # Git-pinned MLX ecosystem — pinned to verified commits

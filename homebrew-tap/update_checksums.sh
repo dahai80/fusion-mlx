@@ -49,7 +49,7 @@ print('', file=sys.stderr); sys.exit(1)
 
 # mlx
 log "Fetching mlx SHA256..."
-MLX_SHA=$(fetch_pypi_sha "mlx" "0.25.1")
+MLX_SHA=$(fetch_pypi_sha "mlx" "0.32.0")
 if [ -n "$MLX_SHA" ]; then
     replace_sha "PLACEHOLDER_MLX_SHA256" "$MLX_SHA"
 else

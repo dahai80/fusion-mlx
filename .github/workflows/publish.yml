@@ -1,10 +1,3 @@
-# Publish to PyPI on release using trusted publishing (OIDC).
-#
-# No long-lived PyPI token is required. Configure a trusted publisher at
-# https://pypi.org/manage/project/dspark-metal/settings/publishing/ pointing
-# at this repo + workflow (`publish.yml`) + environment (`pypi`). For the
-# very first release, use a "pending" trusted publisher:
-# https://docs.pypi.org/trusted-publishers/creating-a-project-with-pending-publisher/
 name: publish
 
 on:
@@ -13,14 +6,14 @@ on:
   workflow_dispatch:
 
 permissions:
-  id-token: write   # required for PyPI trusted publishing (OIDC)
-  contents: write   # required for Homebrew tap push
+  id-token: write
+  contents: write
 
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Install uv
         uses: astral-sh/setup-uv@v5
       - name: Build distributions
@@ -31,7 +24,7 @@ jobs:
           sha256sum *.whl *.tar.gz > SHA256SUMS.txt
           cat SHA256SUMS.txt
       - name: Upload distributions
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: dist
           path: dist/
@@ -42,12 +35,12 @@ jobs:
     environment: pypi
     steps:
       - name: Download distributions
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: dist
           path: dist/
       - name: Verify SHA256 checksums
-        run: sha256sum -c dist/SHA256SUMS.txt
+        run: cd dist && sha256sum -c SHA256SUMS.txt
       - name: Publish to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
 
@@ -55,7 +48,7 @@ jobs:
     needs: build
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
       - name: Extract version from tag
