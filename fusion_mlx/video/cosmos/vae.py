@@ -6,6 +6,7 @@ import logging
 
 import mlx.core as mx
 import mlx.nn as nn
+import numpy as np
 
 logger = logging.getLogger(__name__)
 
@@ -178,6 +179,8 @@ class CosmosVAEUpBlock(nn.Module):
 
 
 class CosmosVideoVAE(nn.Module):
+    UP_BLOCKS = [False, True, True, True]
+
     def __init__(self, latent_channels=16, in_channels=3):
         super().__init__()
         self.latent_channels = latent_channels
@@ -237,6 +240,164 @@ class CosmosVideoVAE(nn.Module):
         h = mx.clip(h, 0.0, 1.0)
         logger.info("cosmos vae decode: output shape=%s", h.shape)
         return h
+
+    def decode_tiled(
+        self,
+        z,
+        tile_t=8,
+        tile_h=32,
+        tile_w=32,
+        overlap_t=2,
+        overlap_h=4,
+        overlap_w=4,
+    ):
+        logger.info(
+            "cosmos vae decode_tiled: latent shape=%s tile=(%d,%d,%d) overlap=(%d,%d,%d)",
+            z.shape,
+            tile_t,
+            tile_h,
+            tile_w,
+            overlap_t,
+            overlap_h,
+            overlap_w,
+        )
+        B, C, T, H, W = z.shape
+        need_t = tile_t < T
+        need_h = tile_h < H
+        need_w = tile_w < W
+
+        if not need_t and not need_h and not need_w:
+            logger.info("cosmos vae decode_tiled: no tiling needed, using decode()")
+            return self.decode(z)
+
+        out_t, out_h, out_w = self._compute_output_shape(T, H, W)
+        C_out = self.in_channels
+        output = np.zeros((B, C_out, out_t, out_h, out_w), dtype=np.float32)
+        weight_sum = np.zeros((B, C_out, out_t, out_h, out_w), dtype=np.float32)
+
+        t_positions = self._tile_positions(T, tile_t, overlap_t) if need_t else [(0, T)]
+        h_positions = self._tile_positions(H, tile_h, overlap_h) if need_h else [(0, H)]
+        w_positions = self._tile_positions(W, tile_w, overlap_w) if need_w else [(0, W)]
+
+        total_tiles = len(t_positions) * len(h_positions) * len(w_positions)
+        tile_idx = 0
+        for t_start, t_end in t_positions:
+            for h_start, h_end in h_positions:
+                for w_start, w_end in w_positions:
+                    tile_idx += 1
+                    tile_z = z[:, :, t_start:t_end, h_start:h_end, w_start:w_end]
+                    logger.debug(
+                        "cosmos vae decode_tiled: tile %d/%d slice=[%d:%d,%d:%d,%d:%d] shape=%s",
+                        tile_idx,
+                        total_tiles,
+                        t_start,
+                        t_end,
+                        h_start,
+                        h_end,
+                        w_start,
+                        w_end,
+                        tile_z.shape,
+                    )
+                    tile_out = self.decode(tile_z)
+                    mx.eval(tile_out)
+                    tile_np = np.array(tile_out, dtype=np.float32)
+                    del tile_out
+                    mx.clear_cache()
+
+                    ot_start = t_start * 8
+                    ot_end = ot_start + tile_np.shape[2]
+                    oh_start = h_start * 8
+                    oh_end = oh_start + tile_np.shape[3]
+                    ow_start = w_start * 8
+                    ow_end = ow_start + tile_np.shape[4]
+
+                    ot_end = min(ot_end, out_t)
+                    oh_end = min(oh_end, out_h)
+                    ow_end = min(ow_end, out_w)
+
+                    tile_np = tile_np[
+                        :,
+                        :,
+                        : ot_end - ot_start,
+                        : oh_end - oh_start,
+                        : ow_end - ow_start,
+                    ]
+
+                    w_t = self._blend_weights_1d(
+                        tile_np.shape[2], t_start, t_end, T, overlap_t * 8
+                    )
+                    w_h = self._blend_weights_1d(
+                        tile_np.shape[3], h_start, h_end, H, overlap_h * 8
+                    )
+                    w_w = self._blend_weights_1d(
+                        tile_np.shape[4], w_start, w_end, W, overlap_w * 8
+                    )
+
+                    w_3d = (
+                        w_t.reshape(1, 1, -1, 1, 1)
+                        * w_h.reshape(1, 1, 1, -1, 1)
+                        * w_w.reshape(1, 1, 1, 1, -1)
+                    )
+                    w_3d = np.broadcast_to(w_3d, (1, C_out) + w_3d.shape[2:]).copy()
+
+                    output[:, :, ot_start:ot_end, oh_start:oh_end, ow_start:ow_end] += (
+                        tile_np * w_3d
+                    )
+                    weight_sum[
+                        :, :, ot_start:ot_end, oh_start:oh_end, ow_start:ow_end
+                    ] += w_3d
+
+                    del tile_np
+
+        mask = weight_sum > 0
+        output[mask] /= weight_sum[mask]
+
+        logger.info(
+            "cosmos vae decode_tiled: output shape=%s total_tiles=%d",
+            output.shape,
+            total_tiles,
+        )
+        return mx.array(output)
+
+    def _compute_output_shape(self, T, H, W):
+        t, h, w = T, H, W
+        for up in self.UP_BLOCKS:
+            if up:
+                h = h * 2
+                w = w * 2
+                t = t * 2
+        return t, h, w
+
+    @staticmethod
+    def _tile_positions(dim_size, tile_size, overlap):
+        positions = []
+        start = 0
+        while start < dim_size:
+            end = min(start + tile_size, dim_size)
+            positions.append((start, end))
+            if end >= dim_size:
+                break
+            start = end - overlap
+            if start >= dim_size - 1:
+                break
+        return positions
+
+    @staticmethod
+    def _blend_weights_1d(tile_out_size, tile_start, tile_end, dim_size, overlap):
+        weights = np.ones(tile_out_size, dtype=np.float32)
+        if overlap <= 0 or tile_out_size <= 0:
+            return weights
+        if tile_start > 0:
+            ramp_len = min(overlap, tile_out_size)
+            for i in range(ramp_len):
+                weights[i] = (i + 1) / (ramp_len + 1)
+        if tile_end < dim_size:
+            ramp_len = min(overlap, tile_out_size)
+            for i in range(ramp_len):
+                weights[tile_out_size - 1 - i] = min(
+                    weights[tile_out_size - 1 - i], (i + 1) / (ramp_len + 1)
+                )
+        return weights
 
     @classmethod
     def from_pretrained(cls, model_path, **kwargs):

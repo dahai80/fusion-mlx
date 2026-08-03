@@ -180,9 +180,24 @@ def generate_video(
     if image is not None and is_predict2:
         latents = latents + img_cond * 0.05
 
-    # VAE decode
-    video = vae.decode(latents)
-    mx.eval(video)
+    # VAE decode — use tiled for large latents to stay within memory/time limits
+    mx.eval(vae.parameters())
+    B, C_l, T_l, H_l, W_l = latents.shape
+    need_tiled = H_l > 64 or W_l > 64 or T_l > 16
+    if need_tiled:
+        logger.info("cosmos: using tiled VAE decode for large latent %s", latents.shape)
+        video = vae.decode_tiled(
+            latents,
+            tile_t=8,
+            tile_h=32,
+            tile_w=32,
+            overlap_t=2,
+            overlap_h=4,
+            overlap_w=4,
+        )
+    else:
+        video = vae.decode(latents)
+        mx.eval(video)
 
     # Convert to frames
     frames = video[0]  # (C, T, H, W)
