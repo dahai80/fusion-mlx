@@ -40,6 +40,11 @@ die()  { printf "${RED}[dmg ERROR]${RESET} %s\n" "$*" >&2; exit 1; }
 # shellcheck source=sign_utils.sh
 source "$SCRIPT_DIR/sign_utils.sh"
 
+# Developer ID signing + Apple notarization helpers.
+# Falls back to ad-hoc when no Developer ID certificate is found.
+# shellcheck source=notarize_utils.sh
+source "$SCRIPT_DIR/notarize_utils.sh"
+
 # --- Parse args ---
 DO_BUILD=0
 for arg in "$@"; do
@@ -98,25 +103,19 @@ fi
 APP_SIZE=$(du -sh "$STAGED_APP" | cut -f1)
 log "App bundle after strip: $STAGED_APP ($APP_SIZE)"
 
-# --- Ad-hoc sign (per-file embedded + flat bundle seal) ---
+# --- Sign app bundle ---
 #
 # strip_bundle.sh just mutated the bundle, so signatures must be re-applied
-# AFTER stripping. `codesign --force --sign - --deep` is deprecated and does
-# NOT reliably re-sign the nested .so/.dylib under Resources/Python - it
-# leaves stale page hashes, and macOS SIGKILLs the server child (exit 9,
-# "Code Signature Invalid" / "Invalid Page") on the first dlopen. Sign each
-# embedded Mach-O explicitly, seal the bundle flat, then verify mlx.core so a
-# broken bundle never ships.
+# AFTER stripping. _sign_app_bundle() (from notarize_utils.sh) detects whether
+# a Developer ID certificate is available and either:
+#   - Signs with Developer ID + hardened runtime + entitlements, or
+#   - Falls back to ad-hoc signing (--sign -)
+# Both paths sign each embedded Mach-O explicitly (replacing the deprecated
+# `codesign --deep` which left stale page hashes and caused SIGKILL on launch).
 PYTHON_DIR="$STAGED_APP/Contents/Resources/Python"
 MLX_SITE="$PYTHON_DIR/framework-mlx-base/lib/python3.11/site-packages"
-log "Ad-hoc signing embedded native code (per-file)…"
-_sign_embedded_mach_o_files "$PYTHON_DIR"
-codesign --force --sign - "$STAGED_APP/Contents/MacOS/fusion-cli" >/dev/null 2>&1
+_sign_app_bundle "$STAGED_APP" "$PYTHON_DIR"
 _verify_embedded_signatures "$MLX_SITE"
-log "Ad-hoc resigning app bundle (flat seal)…"
-codesign --force --sign - "$STAGED_APP"
-xattr -dr com.apple.quarantine "$STAGED_APP" 2>/dev/null || true
-ok "Signed"
 
 # --- Create DMG ---
 log "Creating DMG…"
@@ -193,12 +192,19 @@ ok "DMG created: $DMG_PATH ($DMG_FINAL_SIZE)"
 # Quick integrity check
 hdiutil verify "$DMG_PATH" >/dev/null 2>&1 && ok "DMG verified" || warn "DMG verify failed"
 
+# --- Notarize ---
+# Submits the DMG for Apple notarization if Developer ID + credentials are
+# available. Skipped gracefully when no certificate or credentials are found.
+_notarize_dmg "$DMG_PATH"
+
 echo
 echo "To distribute:"
 echo "  $DMG_PATH"
 echo
-echo "Users can:"
-echo "  1. Double-click to mount"
-echo "  2. Drag FusionMLX.app to /Applications"
-echo "  3. Right-click → Open (first launch, bypasses Gatekeeper)"
-echo "  4. Or: xattr -cr /Applications/FusionMLX.app"
+if _has_developer_id; then
+    echo "Signed with Developer ID + notarized (if credentials were set)."
+else
+    echo "Ad-hoc signed (no Developer ID)."
+    echo "Users will need to bypass Gatekeeper on first launch:"
+    echo "  Right-click → Open, or: xattr -cr /Applications/FusionMLX.app"
+fi
