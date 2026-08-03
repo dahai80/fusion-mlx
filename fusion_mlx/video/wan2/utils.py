@@ -37,6 +37,37 @@ def _load_safetensors(path: Path) -> dict[str, mx.array]:
     return mx.load(str(path))
 
 
+def _is_fp8_weights(weights: dict[str, mx.array]) -> bool:
+    for k, v in weights.items():
+        if k.endswith(".weight") and v.dtype == mx.uint8:
+            return True
+    return False
+
+
+def _dequantize_fp8_weights(weights: dict[str, mx.array]) -> dict[str, mx.array]:
+    _FP8_SKIP_SUFFIXES = (".scale_weight", ".scale_input", ".scaled_fp8")
+    out = {}
+    for k, v in weights.items():
+        if any(k.endswith(s) for s in _FP8_SKIP_SUFFIXES):
+            logger.debug("FP8 dequant: dropping meta key %s", k)
+            continue
+        if k.endswith(".weight") and v.dtype == mx.uint8:
+            scale_key = k.rsplit(".", 1)[0] + ".scale_weight"
+            scale = weights.get(scale_key)
+            if scale is not None:
+                v = v.astype(mx.bfloat16) * scale.astype(mx.bfloat16)
+                logger.debug(
+                    "FP8 dequant: %s (uint8 -> bf16, scale=%s)", k, scale.shape
+                )
+            else:
+                v = v.astype(mx.bfloat16)
+                logger.warning(
+                    "FP8 dequant: %s has uint8 weight but no scale_weight", k
+                )
+        out[k] = v
+    return out
+
+
 def load_wan_model(
     model_path: Path,
     config,
@@ -47,6 +78,15 @@ def load_wan_model(
 
     model = WanModel(config)
 
+    weights = _load_safetensors(model_path)
+    weights = model.sanitize(weights)
+
+    is_fp8 = _is_fp8_weights(weights)
+    if is_fp8:
+        logger.info("Detected FP8 weights (uint8 + scale_weight), dequantizing to bf16")
+        weights = _dequantize_fp8_weights(weights)
+        quantization = None
+
     if quantization:
         from .convert import _quantize_predicate
 
@@ -56,9 +96,6 @@ def load_wan_model(
             bits=quantization["bits"],
             class_predicate=lambda path, m: _quantize_predicate(path, m),
         )
-
-    weights = _load_safetensors(model_path)
-    weights = model.sanitize(weights)
 
     # Apply LoRAs: dequantize+merge for quantized models, weight merge for bf16
     if loras:
