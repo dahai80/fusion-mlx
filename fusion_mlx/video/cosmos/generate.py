@@ -180,8 +180,15 @@ def generate_video(
     if image is not None and is_predict2:
         latents = latents + img_cond * 0.05
 
-    # VAE decode
-    video = vae.decode(latents)
+    # VAE decode — use tiled for large latents
+    _, _, t_l, h_l, w_l = latents.shape
+    if h_l > 64 or w_l > 64 or t_l > 16:
+        logger.info(
+            "cosmos: using tiled VAE decode for large latent %s", latents.shape
+        )
+        video = vae.decode_tiled(latents)
+    else:
+        video = vae.decode(latents)
     mx.eval(video)
 
     # Convert to frames
