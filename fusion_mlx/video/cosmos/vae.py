@@ -387,16 +387,15 @@ class CosmosVideoVAE(nn.Module):
         weights = np.ones(tile_out_size, dtype=np.float32)
         if overlap <= 0 or tile_out_size <= 0:
             return weights
+        fade_len = min(overlap, tile_out_size // 2)
+        if fade_len <= 0:
+            return weights
         if tile_start > 0:
-            ramp_len = min(overlap, tile_out_size)
-            for i in range(ramp_len):
-                weights[i] = (i + 1) / (ramp_len + 1)
+            ramp = np.linspace(0, 1, fade_len, dtype=np.float32)
+            weights[:fade_len] *= ramp
         if tile_end < dim_size:
-            ramp_len = min(overlap, tile_out_size)
-            for i in range(ramp_len):
-                weights[tile_out_size - 1 - i] = min(
-                    weights[tile_out_size - 1 - i], (i + 1) / (ramp_len + 1)
-                )
+            ramp = np.linspace(1, 0, fade_len, dtype=np.float32)
+            weights[-fade_len:] *= ramp
         return weights
 
     @classmethod
