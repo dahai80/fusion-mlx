@@ -313,6 +313,7 @@ class ImageGenEngine(BaseNonStreamingEngine):
         sync_cb = make_sync_step_callback(on_step, loop)
 
         def _generate():
+            mx.default_stream(mx.default_device())
             images: list[bytes] = []
             for i in range(max(1, n_images)):
                 gen_kwargs: dict[str, Any] = dict(
