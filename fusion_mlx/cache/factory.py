@@ -19,6 +19,7 @@ if TYPE_CHECKING:
     from .paged_cache import PagedCacheManager
     from .paged_ssd_cache import PagedSSDCacheManager
     from .prefix_cache import BlockAwarePrefixCache
+    from .tiered_cache import TieredCacheManager
 
 
 @dataclass
@@ -231,4 +232,21 @@ class CacheFactory:
             "paged_ssd_cache": paged_ssd_cache,
             "prefix_cache": prefix_cache,
             "memory_monitor": memory_monitor,
+            "tiered_cache": None,
         }
+
+    @staticmethod
+    def create_tiered_cache(
+        hot: "PagedCacheManager",
+        cold: Any | None = None,
+        demotion_threshold: float = 0.85,
+        promotion_on_cold_hit: bool = True,
+    ) -> "TieredCacheManager":
+        from .tiered_cache import TieredCacheManager
+
+        return TieredCacheManager(
+            hot=hot,
+            cold=cold,
+            demotion_threshold=demotion_threshold,
+            promotion_on_cold_hit=promotion_on_cold_hit,
+        )
