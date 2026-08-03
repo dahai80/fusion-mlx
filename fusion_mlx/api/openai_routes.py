@@ -20,6 +20,12 @@ from fastapi.responses import StreamingResponse
 
 from ..api.adapters.base import InternalResponse, StreamChunk
 from ..api.adapters.openai import OpenAIAdapter
+from ..api.context_scaling import (
+    compute_scale_factor,
+    get_context_scaling_settings,
+    is_claude_code_request,
+    scale_usage,
+)
 from ..api.openai_models import (
     ChatCompletionRequest,
     ChatCompletionResponse,
@@ -467,6 +473,7 @@ async def _run_chat(
     *,
     _skip_cap_check: bool = False,
     principal: str | None = None,
+    headers: dict | None = None,
 ) -> ChatCompletionResponse:
     """Execute a non-streaming chat completion."""
     from ..server import resolve_model_with_profile
@@ -566,7 +573,45 @@ async def _run_chat(
             cached_tokens=getattr(gen, "cached_tokens", 0) or 0,
             principal=principal,
         )
-        return _adapter.format_response(internal, request)
+        resp = _adapter.format_response(internal, request)
+
+        # Context scaling for Claude Code via OpenAI API
+        if headers and is_claude_code_request(headers):
+            from ..service.helpers import get_model_max_context
+
+            _enabled, _target = get_context_scaling_settings(
+                getattr(_get_settings(), "global_settings", {})
+            )
+            if _enabled:
+                _model_ctx = get_model_max_context(engine)
+                _factor = compute_scale_factor(_model_ctx, _target)
+                if _factor is not None:
+                    _usage = resp.usage
+                    _scaled = scale_usage(
+                        {
+                            "prompt_tokens": _usage.prompt_tokens,
+                            "prompt_tokens_details": {
+                                "cached_tokens": _usage.prompt_tokens_details.cached_tokens
+                                if _usage.prompt_tokens_details
+                                else 0,
+                            },
+                        },
+                        _factor,
+                    )
+                    _usage.prompt_tokens = _scaled["prompt_tokens"]
+                    if _usage.prompt_tokens_details:
+                        _usage.prompt_tokens_details.cached_tokens = _scaled.get(
+                            "prompt_tokens_details", {}
+                        ).get("cached_tokens", 0)
+                    _usage.total_tokens = _usage.prompt_tokens + _usage.completion_tokens
+                    logger.info(
+                        "OpenAI context scaling: model_ctx=%d target=%d factor=%.4f",
+                        _model_ctx,
+                        _target,
+                        _factor,
+                    )
+
+        return resp
     except HTTPException:
         raise
     except AdapterPathError as exc:
@@ -632,6 +677,7 @@ async def _stream_chat_generator(
     *,
     principal: str | None = None,
     profile_overrides: dict | None = None,
+    headers: dict | None = None,
 ) -> AsyncIterator[str]:
     """Generate SSE events for a streaming chat completion.
 
@@ -659,12 +705,34 @@ async def _stream_chat_generator(
     from .streaming import StreamingJSONEncoder
 
     _keepalive_interval = getattr(get_settings(), "sse_keepalive_seconds", 20.0) or 0.0
+    _is_cc = headers and is_claude_code_request(headers)
+    if _is_cc and _keepalive_interval > 5.0:
+        _keepalive_interval = 5.0
     keepalive = None
     if _keepalive_interval > 0:
         from .utils import SSEKeepalive
 
         keepalive = SSEKeepalive(interval_seconds=_keepalive_interval)
         keepalive.reset()
+
+    # Context scaling for Claude Code streaming
+    _ctx_scale_factor: float | None = None
+    if headers and is_claude_code_request(headers):
+        from ..service.helpers import get_model_max_context
+
+        _enabled, _target = get_context_scaling_settings(
+            getattr(get_settings(), "global_settings", {})
+        )
+        if _enabled:
+            _model_ctx = get_model_max_context(engine)
+            _ctx_scale_factor = compute_scale_factor(_model_ctx, _target)
+            if _ctx_scale_factor is not None:
+                logger.info(
+                    "Stream context scaling: model_ctx=%d target=%d factor=%.4f",
+                    _model_ctx,
+                    _target,
+                    _ctx_scale_factor,
+                )
 
     encoder = StreamingJSONEncoder(
         response_id=request_id,
@@ -673,6 +741,10 @@ async def _stream_chat_generator(
     )
 
     try:
+        # Claude Code: emit connected comment at stream start
+        if _is_cc:
+            yield ": connected\n\n"
+
         # First chunk with role
         first_chunk = StreamChunk(
             text="",
@@ -801,13 +873,18 @@ async def _stream_chat_generator(
             yield _adapter.format_stream_chunk(tchunk, request, encoder=encoder)
 
         # Final chunk with finish_reason
+        _final_prompt = prompt_tokens
+        _final_cached = cached_tokens
+        if _ctx_scale_factor is not None:
+            _final_prompt = int(prompt_tokens * _ctx_scale_factor)
+            _final_cached = int(cached_tokens * _ctx_scale_factor)
         last_chunk = StreamChunk(
             text="",
             is_last=True,
             finish_reason=finish_reason,
-            prompt_tokens=prompt_tokens,
+            prompt_tokens=_final_prompt,
             completion_tokens=completion_tokens,
-            cached_tokens=cached_tokens,
+            cached_tokens=_final_cached,
         )
         yield _adapter.format_stream_chunk(last_chunk, request, encoder=encoder)
         yield _adapter.format_stream_end(request)
@@ -899,6 +976,7 @@ async def _stream_chat(
     *,
     _skip_cap_check: bool = False,
     principal: str | None = None,
+    headers: dict | None = None,
 ) -> StreamingResponse:
     """Execute a streaming chat completion.
 
@@ -950,6 +1028,7 @@ async def _stream_chat(
             adapter_path,
             principal=principal,
             profile_overrides=profile_overrides,
+            headers=headers,
         ),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
@@ -1177,9 +1256,13 @@ async def chat_completions(
 
     try:
         if request.stream:
-            return await _stream_chat(request, principal=principal)
+            return await _stream_chat(
+                request, principal=principal, headers=dict(http_request.headers)
+            )
         else:
-            result = await _run_chat(request, principal=principal)
+            result = await _run_chat(
+                request, principal=principal, headers=dict(http_request.headers)
+            )
 
             # Store in response cache on MISS
             if _cache_key and _cache_policy not in (

@@ -12,12 +12,18 @@ import uuid
 from collections.abc import AsyncIterator
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request as HttpRequest
 from fastapi.responses import StreamingResponse
 
 from ..api._anthropic_helpers import (
     _inject_tool_use_required_suffix,
     enforce_tool_choice,
+)
+from ..api.context_scaling import (
+    compute_scale_factor,
+    get_context_scaling_settings,
+    is_claude_code_request,
+    scale_usage,
 )
 from ..api.adapters.anthropic import AnthropicAdapter
 from ..api.adapters.base import InternalResponse, StreamChunk
@@ -243,6 +249,7 @@ def _build_sampling_params(
 
 async def _run_anthropic_messages(
     req: AnthropicMessagesRequest,
+    headers: dict | None = None,
 ) -> AnthropicMessagesResponse:
     """Execute a non-streaming Anthropic messages request."""
     import time as _time
@@ -352,7 +359,32 @@ async def _run_anthropic_messages(
             generation_duration=_time.perf_counter() - _start,
             model_id=model_name,
         )
-        return _adapter.format_response(internal, req)
+        resp = _adapter.format_response(internal, req)
+
+        # Context scaling: scale reported usage so Claude Code auto-compact
+        # triggers at the right time for models with context < target.
+        if headers and is_claude_code_request(headers):
+            from ..server import get_settings as _get_settings
+            from ..service.helpers import get_model_max_context
+
+            _gs = _get_settings()
+            _enabled, _target = get_context_scaling_settings(
+                getattr(_gs, "global_settings", {})
+            )
+            if _enabled:
+                _model_ctx = get_model_max_context(engine)
+                _factor = compute_scale_factor(_model_ctx, _target)
+                if _factor is not None:
+                    _usage = resp.get("usage", {})
+                    resp["usage"] = scale_usage(_usage, _factor)
+                    logger.info(
+                        "Context scaling applied: model_ctx=%d target=%d factor=%.4f",
+                        _model_ctx,
+                        _target,
+                        _factor,
+                    )
+
+        return resp
     except HTTPException:
         raise
     except ModelNotFoundError as exc:
@@ -398,6 +430,7 @@ async def _stream_anthropic_generator(
     adapter_path: str | None,
     *,
     profile_overrides: dict | None = None,
+    headers: dict | None = None,
 ) -> AsyncIterator[str]:
     """Generate SSE events for a streaming Anthropic messages request.
 
@@ -436,12 +469,35 @@ async def _stream_anthropic_generator(
     from ..server import get_settings
 
     _keepalive_interval = getattr(get_settings(), "sse_keepalive_seconds", 20.0) or 0.0
+    _is_cc = headers and is_claude_code_request(headers)
+    if _is_cc and _keepalive_interval > 5.0:
+        _keepalive_interval = 5.0
     keepalive = None
     if _keepalive_interval > 0:
         from .utils import SSEKeepalive
 
         keepalive = SSEKeepalive(interval_seconds=_keepalive_interval)
         keepalive.reset()
+
+    # Context scaling for Claude Code streaming
+    _ctx_scale_factor: float | None = None
+    if headers and is_claude_code_request(headers):
+        from ..service.helpers import get_model_max_context
+
+        _gs = get_settings()
+        _enabled, _target = get_context_scaling_settings(
+            getattr(_gs, "global_settings", {})
+        )
+        if _enabled:
+            _model_ctx = get_model_max_context(engine)
+            _ctx_scale_factor = compute_scale_factor(_model_ctx, _target)
+            if _ctx_scale_factor is not None:
+                logger.info(
+                    "Stream context scaling: model_ctx=%d target=%d factor=%.4f",
+                    _model_ctx,
+                    _target,
+                    _ctx_scale_factor,
+                )
 
     logger.info(
         "Stream start: %s, max_tokens=%d, prompt=%r",
@@ -450,6 +506,10 @@ async def _stream_anthropic_generator(
         messages[-1].get("content", "")[:120] if messages else "",
     )
     try:
+        # Claude Code: emit connected comment at stream start
+        if _is_cc:
+            yield ": connected\n\n"
+
         # Send message_start
         yield _adapter.format_stream_chunk(
             StreamChunk(text="", is_first=True),
@@ -545,10 +605,14 @@ async def _stream_anthropic_generator(
                     bool(stream_tool_calls),
                 )
                 _gen_cached = getattr(gen, "cached_tokens", 0) or 0
+                _delta_input = getattr(gen, "prompt_tokens", 0)
+                if _ctx_scale_factor is not None:
+                    _delta_input = int(_delta_input * _ctx_scale_factor)
+                    _gen_cached = int(_gen_cached * _ctx_scale_factor)
                 yield create_message_delta_event(
                     stop_reason=stop_reason,
                     output_tokens=getattr(gen, "completion_tokens", 0),
-                    input_tokens=getattr(gen, "prompt_tokens", 0),
+                    input_tokens=_delta_input,
                     cached_tokens=_gen_cached,
                     prefix_cache_enabled=bool(_gen_cached),
                 )
@@ -593,6 +657,7 @@ async def _stream_anthropic_generator(
 @router.post("/messages")
 async def anthropic_messages(
     request: AnthropicMessagesRequest,
+    http_request: HttpRequest,
     _auth: bool = Depends(verify_api_key_or_x_api_key),
     _rate: bool = Depends(check_rate_limit_or_x_api_key),
 ) -> Any:
@@ -647,6 +712,7 @@ async def anthropic_messages(
                 await _release_engine(model_name, adapter_path=adapter_path)
                 raise
 
+            _req_headers = dict(http_request.headers)
             return StreamingResponse(
                 _stream_anthropic_generator(
                     request,
@@ -654,11 +720,12 @@ async def anthropic_messages(
                     model_name,
                     adapter_path,
                     profile_overrides=profile_overrides,
+                    headers=_req_headers,
                 ),
                 media_type="text/event-stream",
                 headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
             )
-        return await _run_anthropic_messages(request)
+        return await _run_anthropic_messages(request, headers=dict(http_request.headers))
     except HTTPException:
         raise
     except ModelNotFoundError as exc:
