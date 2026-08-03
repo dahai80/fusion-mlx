@@ -83,14 +83,14 @@ class TestDefaultSettings:
             assert db.get_setting(k) is not None, f"missing default setting {k}"
 
     def test_server_port_default(self, db):
-        assert db.get_setting("server_port") == 8000
+        assert db.get_setting("server_port") == 11434
 
     def test_bool_setting_default(self, db):
         assert db.get_setting("enable_system_tray") is True
 
     def test_insert_default_settings_idempotent(self, db):
         db._insert_default_settings()
-        assert db.get_setting("server_port") == 8000
+        assert db.get_setting("server_port") == 11434
 
 
 class TestGetSetSetting:

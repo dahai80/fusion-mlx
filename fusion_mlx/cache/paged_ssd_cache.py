@@ -565,6 +565,10 @@ class _SSDCacheStats:
     num_blocks: int = 0
     utilization: float = 0.0
 
+    def reset(self):
+        for f in self.__dataclass_fields__:
+            setattr(self, f, type(getattr(self, f))())
+
 
 PagedSSDCacheStats = _SSDCacheStats
 
@@ -1352,10 +1356,14 @@ class PagedSSDCacheManager:
             count = len(self._hot_cache)
             self._hot_cache.clear()
             self._hot_cache_total_bytes = 0
+        if self._hot_cache_budget is not None:
+            self._hot_cache_budget.forget_owner(self)
         return count
 
     def close(self):
         self._shutting_down = True
+        if self._hot_cache_budget is not None:
+            self._hot_cache_budget.forget_owner(self)
         if self._writer_thread is not None:
             try:
                 self._write_queue.put(None, timeout=5.0)
@@ -1542,6 +1550,8 @@ class PagedSSDCacheManager:
             entry = self._hot_cache.get(block_hash)
             if entry is not None:
                 self._hot_cache.move_to_end(block_hash)
+                if self._hot_cache_budget is not None:
+                    self._hot_cache_budget.touch(self, block_hash)
             return entry
 
     def _hot_cache_put(self, block_hash: bytes, entry: dict):
@@ -1556,6 +1566,18 @@ class PagedSSDCacheManager:
             self._hot_cache[block_hash] = entry
             self._hot_cache_total_bytes += est_bytes
 
+            if self._hot_cache_budget is not None:
+                victims = self._hot_cache_budget.put(self, block_hash, est_bytes)
+                for victim_owner, victim_hash in victims:
+                    evicted = victim_owner._hot_cache_remove(
+                        victim_hash, update_budget=False
+                    )
+                    if evicted is not None:
+                        victim_owner._handle_hot_cache_eviction(
+                            victim_hash, evicted
+                        )
+                        victim_owner._stats["hot_cache_evictions"] += 1
+
             while (
                 self._hot_cache_max_bytes > 0
                 and self._hot_cache_total_bytes > self._hot_cache_max_bytes
@@ -1567,6 +1589,7 @@ class PagedSSDCacheManager:
                     self._hot_cache_total_bytes
                     - evict_entry.get("_estimated_bytes", 0),
                 )
+                self._stats["hot_cache_evictions"] += 1
                 if self._hot_cache_budget is not None:
                     self._hot_cache_budget.forget(self, evict_hash)
 
