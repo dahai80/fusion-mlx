@@ -699,6 +699,7 @@
   },
   "qwen3.6-27b-8bit-dflash": {
     "hf_path": "froggeric/Qwen3.6-27B-MLX-8bit",
+    "modality": "text",
     "supports_dflash": true,
     "model_family": "qwen3_5",
     "drafter_hf_path": "z-lab/Qwen3.5-27B-DFlash",

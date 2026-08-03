@@ -209,6 +209,7 @@ class TestAliasesJsonModality:
                     "video",
                     "audio",
                     "text-diffusion",
+                    "embedding",
                 ), f"alias '{name}' has invalid modality: {entry['modality']}"
             else:
                 raise AssertionError(
