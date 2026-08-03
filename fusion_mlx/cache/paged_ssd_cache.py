@@ -1573,9 +1573,7 @@ class PagedSSDCacheManager:
                         victim_hash, update_budget=False
                     )
                     if evicted is not None:
-                        victim_owner._handle_hot_cache_eviction(
-                            victim_hash, evicted
-                        )
+                        victim_owner._handle_hot_cache_eviction(victim_hash, evicted)
                         victim_owner._stats["hot_cache_evictions"] += 1
 
             while (
