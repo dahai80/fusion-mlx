@@ -41,6 +41,32 @@ resolve_hf_mirror() {
     log_info "HF mirror from default: ${HF_MIRROR}"
 }
 
+# ── Read API key from settings.json ─────────────────────────────────
+resolve_api_key() {
+    if [[ -n "${FUSION_MLX_API_KEY:-}" ]]; then
+        API_KEY="${FUSION_MLX_API_KEY}"
+        return 0
+    fi
+    if [[ -f "${SETTINGS}" ]]; then
+        local key
+        key=$(python3 -c "import json; d=json.load(open('${SETTINGS}')); print(d.get('auth',{}).get('api_key',''))" 2>/dev/null || echo "")
+        if [[ -n "${key}" ]]; then
+            API_KEY="${key}"
+            return 0
+        fi
+    fi
+    API_KEY=""
+}
+
+# ── curl with optional auth ─────────────────────────────────────────
+auth_curl() {
+    if [[ -n "${API_KEY:-}" ]]; then
+        curl -sf -H "Authorization: Bearer ${API_KEY}" "$@"
+    else
+        curl -sf "$@"
+    fi
+}
+
 # ── Activate venv ───────────────────────────────────────────────────
 ensure_venv() {
     if [[ ! -f "${ACTIVATE}" ]]; then
@@ -93,10 +119,11 @@ preflight() {
 
     # Resolve HF mirror from config, then set env
     resolve_hf_mirror
+    resolve_api_key
     export HF_ENDPOINT="${HF_MIRROR}"
     export HUGGINGFACE_HUB_CACHE="${HOME}/.fusion-mlx/models"
 
-    log_info "Preflight OK (port=${PORT}, HF mirror=${HF_MIRROR})"
+    log_info "Preflight OK (port=${PORT}, HF mirror=${HF_MIRROR}, api_key=$([ -n "${API_KEY}" ] && echo "set" || echo "none"))"
 }
 
 # ── Parse start args ─────────────────────────────────────────────────
@@ -165,6 +192,11 @@ do_start() {
     if [[ -n "${START_WATCHDOG}" ]]; then
         _run_with_watchdog "${model_dir}"
     else
+        local api_key_arg=""
+        if [[ -n "${API_KEY}" ]]; then
+            api_key_arg="--api-key ${API_KEY}"
+            export FUSION_MLX_API_KEY="${API_KEY}"
+        fi
         fusion-mlx serve \
             --model-dir "${model_dir}" \
             --host 127.0.0.1 \
@@ -173,6 +205,7 @@ do_start() {
             --enable-prefix-cache \
             --continuous-batching \
             --chunked-prefill-tokens 4096 \
+            ${api_key_arg} \
             &
     fi
 
@@ -189,7 +222,7 @@ do_start() {
     fi
 
     if wait_healthy "${health_timeout}"; then
-        log_info "Fusion-MLX v$(fusion-mlx version 2>/dev/null | /usr/bin/grep -oP '[\d.]+' | head -1) started successfully"
+        log_info "Fusion-MLX v$(fusion-mlx version 2>/dev/null | /usr/bin/grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1) started successfully"
         show_status
     else
         log_error "Start failed. Check logs: ${LOG_DIR}/server.log"
@@ -266,8 +299,9 @@ show_status() {
         printf "  Uptime: %s\n" "${uptime}"
 
         # Models loaded
+        resolve_api_key
         local models
-        models=$(curl -sf "http://127.0.0.1:${PORT}/v1/models" 2>/dev/null \
+        models=$(auth_curl "http://127.0.0.1:${PORT}/v1/models" \
             | python3 -c "import sys,json; d=json.load(sys.stdin); [print(f'    - {m[\"id\"]}') for m in d.get('data',[])]" 2>/dev/null || echo "    (unable to list)")
         printf "  Models:\n%s\n" "${models}"
     else
@@ -432,6 +466,10 @@ _run_with_watchdog() {
         fi
 
         log_info "Launching fusion-mlx (attempt $((crash_count + 1)))..."
+        local api_key_arg=""
+        if [[ -n "${API_KEY:-}" ]]; then
+            api_key_arg="--api-key ${API_KEY}"
+        fi
         fusion-mlx serve \
             --model-dir "${model_dir}" \
             --host 127.0.0.1 \
@@ -439,7 +477,8 @@ _run_with_watchdog() {
             --log-level INFO \
             --enable-prefix-cache \
             --continuous-batching \
-            --chunked-prefill-tokens 4096
+            --chunked-prefill-tokens 4096 \
+            ${api_key_arg}
 
         local exit_code=$?
 
