@@ -269,8 +269,9 @@ class HunyuanVideoVAE(nn.Module):
             return self.decode(z)
 
         out_t, out_h, out_w = self._compute_output_shape(T, H, W)
-        output = np.zeros((B, 3, out_t, out_h, out_w), dtype=np.float32)
-        weight_sum = np.zeros((B, 1, out_t, out_h, out_w), dtype=np.float32)
+        C = 3
+        output = np.zeros((B, C, out_t, out_h, out_w), dtype=np.float32)
+        weight_sum = np.zeros((B, C, out_t, out_h, out_w), dtype=np.float32)
 
         t_positions = self._tile_positions(T, tile_t, overlap_t) if need_t else [(0, T)]
         h_positions = self._tile_positions(H, tile_h, overlap_h) if need_h else [(0, H)]
@@ -333,12 +334,13 @@ class HunyuanVideoVAE(nn.Module):
                         tile_np.shape[4], w_start, w_end, W, overlap_w
                     )
 
-                    # Outer product -> (1, 1, t, h, w)
+                    # Outer product -> (1, C, t, h, w)
                     w_3d = (
                         w_t.reshape(1, 1, -1, 1, 1)
                         * w_h.reshape(1, 1, 1, -1, 1)
                         * w_w.reshape(1, 1, 1, 1, -1)
                     )
+                    w_3d = np.broadcast_to(w_3d, (1, C) + w_3d.shape[2:]).copy()
 
                     output[:, :, ot_start:ot_end, oh_start:oh_end, ow_start:ow_end] += (
                         tile_np * w_3d
