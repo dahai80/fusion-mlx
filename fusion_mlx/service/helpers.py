@@ -1362,6 +1362,42 @@ def get_model_max_context(engine) -> int:
 
 
 _CONTEXT_BUDGET_WARNING_THRESHOLD = 0.7
+_COMPACT_HINT_HIGH_THRESHOLD = 0.7
+_COMPACT_HINT_CRITICAL_THRESHOLD = 0.85
+
+
+def build_compact_hint(prompt_tokens: int, context_window: int) -> str | None:
+    if context_window <= 0 or prompt_tokens <= 0:
+        return None
+    utilization = prompt_tokens / context_window
+    pct = int(utilization * 100)
+    if utilization > _COMPACT_HINT_CRITICAL_THRESHOLD:
+        hint = (
+            f"[WARNING: Context nearly full ({pct}%). "
+            "Use LoadArtifact with preview_only=true, "
+            "or compact the conversation immediately to avoid truncation.]"
+        )
+        logger.info(
+            "Compact hint (critical): prompt_tokens=%d context_window=%d utilization=%.2f",
+            prompt_tokens,
+            context_window,
+            utilization,
+        )
+        return hint
+    if utilization > _COMPACT_HINT_HIGH_THRESHOLD:
+        hint = (
+            f"[Context usage is high ({pct}%). "
+            "Consider using artifact references instead of full content, "
+            "or compact the conversation.]"
+        )
+        logger.info(
+            "Compact hint (high): prompt_tokens=%d context_window=%d utilization=%.2f",
+            prompt_tokens,
+            context_window,
+            utilization,
+        )
+        return hint
+    return None
 
 
 def build_context_budget_headers(
@@ -1382,7 +1418,9 @@ def build_context_budget_headers(
         used,
         context_window,
         remaining,
-        used / context_window > _CONTEXT_BUDGET_WARNING_THRESHOLD if context_window > 0 else False,
+        used / context_window > _CONTEXT_BUDGET_WARNING_THRESHOLD
+        if context_window > 0
+        else False,
     )
     return headers
 
@@ -1404,10 +1442,15 @@ def compute_prompt_tokens_for_messages(
                 ct_kwargs = {}
                 if enable_thinking is not None:
                     ct_kwargs["enable_thinking"] = enable_thinking
-                prompt = apply_tpl(messages, tools=tools, chat_template_kwargs=ct_kwargs or None)
+                prompt = apply_tpl(
+                    messages, tools=tools, chat_template_kwargs=ct_kwargs or None
+                )
                 return count_prompt_tokens(engine, prompt)
             except Exception:
-                logger.debug("compute_prompt_tokens_for_messages: _apply_chat_template failed", exc_info=True)
+                logger.debug(
+                    "compute_prompt_tokens_for_messages: _apply_chat_template failed",
+                    exc_info=True,
+                )
                 return 0
         return 0
     try:
@@ -1418,7 +1461,9 @@ def compute_prompt_tokens_for_messages(
             enable_thinking=enable_thinking,
         )
     except Exception:
-        logger.debug("compute_prompt_tokens_for_messages: build_prompt failed", exc_info=True)
+        logger.debug(
+            "compute_prompt_tokens_for_messages: build_prompt failed", exc_info=True
+        )
         return 0
     if not prompt:
         return 0

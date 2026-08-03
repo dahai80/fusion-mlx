@@ -520,7 +520,31 @@ async def _run_chat(
     sampling = _build_sampling_params(request, profile_overrides=profile_overrides)
     from .utils import cap_max_tokens_to_context
 
-    sampling.max_tokens = cap_max_tokens_to_context(sampling.max_tokens, model_name)
+    # MLX-2: prompt token pre-check — reject if prompt exceeds 85% of context window
+    prompt_token_estimate = 0
+    from ..service.helpers import compute_prompt_tokens_for_messages
+
+    prompt_token_estimate = compute_prompt_tokens_for_messages(
+        engine, messages, tools=request.tools
+    )
+    from ..server import get_max_context_window
+
+    _ctx_win = get_max_context_window(model_name)
+    if _ctx_win and _ctx_win > 0 and prompt_token_estimate > 0:
+        if prompt_token_estimate > _ctx_win * 0.85:
+            logger.warning(
+                "Prompt pre-check: prompt_tokens=%d > 85%% of context_window=%d, rejecting",
+                prompt_token_estimate,
+                _ctx_win,
+            )
+            raise ModelTooLargeError(
+                f"Prompt ({prompt_token_estimate} tokens) exceeds 85% of context window ({_ctx_win} tokens). "
+                f"Reduce conversation length or use /compact."
+            )
+
+    sampling.max_tokens = cap_max_tokens_to_context(
+        sampling.max_tokens, model_name, prompt_token_estimate=prompt_token_estimate
+    )
     request_id = f"chatcmpl-{uuid.uuid4().hex[:12]}"
 
     try:
@@ -615,15 +639,27 @@ async def _run_chat(
 
         # X-Context-Budget response header (#327)
         from ..service.helpers import (
+            build_compact_hint,
             build_context_budget_headers,
             get_model_max_context,
         )
 
         _ctx_window = get_model_max_context(engine)
+        _prompt_tok = resp.usage.prompt_tokens if resp.usage else 0
         _ctx_budget_headers = build_context_budget_headers(
-            prompt_tokens=resp.usage.prompt_tokens if resp.usage else 0,
+            prompt_tokens=_prompt_tok,
             context_window=_ctx_window,
         )
+
+        # MLX-4: compact suggestion hint appended to message content
+        _compact_hint = build_compact_hint(_prompt_tok, _ctx_window)
+        if _compact_hint and resp.choices:
+            _choice = resp.choices[0]
+            if _choice.message and _choice.message.content is not None:
+                _choice.message.content = _choice.message.content + "\n" + _compact_hint
+            elif _choice.message:
+                _choice.message.content = _compact_hint
+
         if _ctx_budget_headers:
             from starlette.responses import JSONResponse
 
@@ -716,7 +752,31 @@ async def _stream_chat_generator(
     # Context scaling: cap max_tokens to model context window
     from .utils import cap_max_tokens_to_context
 
-    sampling.max_tokens = cap_max_tokens_to_context(sampling.max_tokens, model_name)
+    # MLX-2: prompt token pre-check — reject if prompt exceeds 85% of context window
+    prompt_token_estimate = 0
+    from ..service.helpers import compute_prompt_tokens_for_messages
+
+    prompt_token_estimate = compute_prompt_tokens_for_messages(
+        engine, messages, tools=request.tools
+    )
+    from ..server import get_max_context_window
+
+    _ctx_win = get_max_context_window(model_name)
+    if _ctx_win and _ctx_win > 0 and prompt_token_estimate > 0:
+        if prompt_token_estimate > _ctx_win * 0.85:
+            logger.warning(
+                "Prompt pre-check: prompt_tokens=%d > 85%% of context_window=%d, rejecting",
+                prompt_token_estimate,
+                _ctx_win,
+            )
+            raise ModelTooLargeError(
+                f"Prompt ({prompt_token_estimate} tokens) exceeds 85% of context window ({_ctx_win} tokens). "
+                f"Reduce conversation length or use /compact."
+            )
+
+    sampling.max_tokens = cap_max_tokens_to_context(
+        sampling.max_tokens, model_name, prompt_token_estimate=prompt_token_estimate
+    )
     request_id = f"chatcmpl-{uuid.uuid4().hex[:12]}"
 
     # SSE keepalive: prevent client/proxy timeout during long inference
@@ -891,6 +951,23 @@ async def _stream_chat_generator(
             )
             yield _adapter.format_stream_chunk(tchunk, request, encoder=encoder)
 
+        # MLX-4: compact suggestion hint appended as final content delta
+        from ..service.helpers import build_compact_hint, get_model_max_context
+
+        _ctx_window_stream = get_model_max_context(engine)
+        _stream_prompt_tok = prompt_tokens
+        if _ctx_scale_factor is not None:
+            _stream_prompt_tok = int(prompt_tokens * _ctx_scale_factor)
+        _compact_hint = build_compact_hint(_stream_prompt_tok, _ctx_window_stream)
+        if _compact_hint:
+            hint_chunk = StreamChunk(
+                text="\n" + _compact_hint,
+                prompt_tokens=prompt_tokens,
+                completion_tokens=completion_tokens,
+                cached_tokens=cached_tokens,
+            )
+            yield _adapter.format_stream_chunk(hint_chunk, request, encoder=encoder)
+
         # Final chunk with finish_reason
         _final_prompt = prompt_tokens
         _final_cached = cached_tokens
@@ -1052,12 +1129,12 @@ async def _stream_chat(
 
     _ctx_window = get_model_max_context(engine)
     if _ctx_window > 0:
+        _msg_dicts = [
+            m.model_dump() if hasattr(m, "model_dump") else m for m in request.messages
+        ]
         _est_prompt = compute_prompt_tokens_for_messages(
             engine,
-            [
-                m.model_dump() if hasattr(m, "model_dump") else m
-                for m in request.messages
-            ],
+            _msg_dicts,
             tools=request.tools,
         )
         _ctx_budget_headers = build_context_budget_headers(
