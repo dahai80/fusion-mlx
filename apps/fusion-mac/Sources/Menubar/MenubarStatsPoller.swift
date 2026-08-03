@@ -102,9 +102,16 @@ final class MenubarStatsPoller {
             NotificationCenter.default.post(
                 name: Self.didUpdateNotification, object: self
             )
-            if fetchAlltime, hasAPIKey,
-               let alltime = try? await fetchAdminStats(scope: "alltime") {
+            if fetchAlltime,
+               let alltime = try? await fetchPublicAlltimeStats() {
                 self.alltimeStats = alltime
+                StatsStore.shared.update(StatsStore.AlltimeStats(
+                    totalRequests: alltime.totalRequests,
+                    totalPromptTokens: alltime.totalPromptTokens,
+                    totalCompletionTokens: nil,
+                    totalCachedTokens: alltime.totalCachedTokens,
+                    cacheEfficiency: alltime.cacheEfficiency
+                ))
             }
         } catch {
             // Suppress: server may be transitioning, paused, or 401-pending.
@@ -114,6 +121,18 @@ final class MenubarStatsPoller {
 
     private func fetchPublicStatus() async throws -> Stats {
         let url = try makeURL(path: "/api/status")
+        var req = URLRequest(url: url)
+        req.setValue("application/json", forHTTPHeaderField: "Accept")
+        if let key = apiKey, !key.isEmpty {
+            req.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
+        }
+        let (data, response) = try await session.data(for: req)
+        try validateOK(response)
+        return try JSONDecoder().decode(Stats.self, from: data)
+    }
+
+    private func fetchPublicAlltimeStats() async throws -> Stats {
+        let url = try makeURL(path: "/api/stats/alltime")
         var req = URLRequest(url: url)
         req.setValue("application/json", forHTTPHeaderField: "Accept")
         if let key = apiKey, !key.isEmpty {

@@ -786,6 +786,10 @@ class Server:
                 ),
             }
 
+        @app.get("/api/stats/alltime")
+        async def api_stats_alltime():
+            return get_server_metrics().to_alltime_dict()
+
         @app.get("/v1/models/status")
         async def models_status(is_admin: bool = Depends(require_admin)):
             if self.pool is None:
@@ -999,6 +1003,8 @@ class Server:
             write_exit_status("crash")
             raise
         finally:
+            from .server_metrics import get_server_metrics
+            get_server_metrics().flush_alltime()
             remove_pid_file()
         await self._shutdown()
         write_exit_status("clean")

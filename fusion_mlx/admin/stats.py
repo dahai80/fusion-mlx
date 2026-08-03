@@ -400,14 +400,10 @@ async def get_server_stats(
 
     metrics = get_server_metrics()
     resolved_model = resolve_model_id(model) or model if model else ""
-    snapshot = metrics.to_dict()
-    if model or scope != "session":
-        logger.debug(
-            "per-model/scope stats filter requested (model=%r scope=%r) but "
-            "ServerMetrics only exposes a global aggregate; returning global snapshot",
-            model,
-            scope,
-        )
+    if scope == "alltime":
+        snapshot = metrics.to_alltime_dict()
+    else:
+        snapshot = metrics.to_dict()
 
     rich = _get_rich_global_settings()
     flat = _get_global_settings()

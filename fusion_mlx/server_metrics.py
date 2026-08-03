@@ -1,14 +1,37 @@
 """Server metrics tracking for fusion-mlx."""
 
+import json
 import logging
 import threading
 import time
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 logger = logging.getLogger(__name__)
 
 _KV_CACHE_DTYPE_KNOWN = ("bf16", "int8", "int4")
+_STATS_JSON = Path.home() / ".fusion-mlx" / "stats.json"
+_ALLTIME_SAVE_INTERVAL = 10.0
+
+
+def _load_alltime_from_disk() -> dict:
+    try:
+        if _STATS_JSON.exists():
+            data = json.loads(_STATS_JSON.read_text())
+            if isinstance(data, dict):
+                return data
+    except Exception as exc:
+        logger.debug("Failed to load alltime stats: %s", exc)
+    return {}
+
+
+def _save_alltime_to_disk(data: dict) -> None:
+    try:
+        _STATS_JSON.parent.mkdir(parents=True, exist_ok=True)
+        _STATS_JSON.write_text(json.dumps(data, indent=2))
+    except Exception as exc:
+        logger.debug("Failed to save alltime stats: %s", exc)
 
 
 def _resolve_kv_cache_dtype() -> str:
@@ -68,6 +91,9 @@ class ServerMetrics:
     def __post_init__(self):
         self._lock = threading.Lock()
         self._start_time = time.monotonic()
+        self._alltime = _load_alltime_from_disk()
+        self._alltime_dirty = False
+        self._alltime_last_save = time.monotonic()
 
     def inc_tokens(self, generated: int = 0, prompt: int = 0, cached: int = 0) -> None:
         with self._lock:
@@ -121,6 +147,32 @@ class ServerMetrics:
                         old_avg * (stats["requests"] - 1) + tps
                     ) / stats["requests"]
 
+            # Update alltime accumulators
+            at = self._alltime
+            at["total_requests"] = at.get("total_requests", 0) + 1
+            at["total_prompt_tokens"] = at.get("total_prompt_tokens", 0) + prompt_tokens
+            at["total_completion_tokens"] = (
+                at.get("total_completion_tokens", 0) + completion_tokens
+            )
+            at["total_cached_tokens"] = at.get("total_cached_tokens", 0) + cached_tokens
+            if model_id:
+                models = at.setdefault("model_stats", {})
+                ms = models.get(model_id, {
+                    "requests": 0,
+                    "prompt_tokens": 0,
+                    "completion_tokens": 0,
+                })
+                ms["requests"] = ms.get("requests", 0) + 1
+                ms["prompt_tokens"] = ms.get("prompt_tokens", 0) + prompt_tokens
+                ms["completion_tokens"] = ms.get("completion_tokens", 0) + completion_tokens
+                models[model_id] = ms
+            self._alltime_dirty = True
+            now = time.monotonic()
+            if now - self._alltime_last_save >= _ALLTIME_SAVE_INTERVAL:
+                _save_alltime_to_disk(self._alltime)
+                self._alltime_dirty = False
+                self._alltime_last_save = now
+
     def uptime_seconds(self) -> float:
         return time.monotonic() - self._start_time
 
@@ -136,7 +188,50 @@ class ServerMetrics:
             self.model_stats.clear()
 
     def clear_alltime_metrics(self) -> None:
+        with self._lock:
+            self._alltime = {}
+            self._alltime_dirty = False
+            _save_alltime_to_disk({})
         self.clear_metrics()
+
+    def flush_alltime(self) -> None:
+        with self._lock:
+            if self._alltime_dirty:
+                _save_alltime_to_disk(self._alltime)
+                self._alltime_dirty = False
+                self._alltime_last_save = time.monotonic()
+
+    def to_alltime_dict(self) -> dict:
+        with self._lock:
+            at = dict(self._alltime)
+        total_prompt = at.get("total_prompt_tokens", 0)
+        total_cached = at.get("total_cached_tokens", 0)
+        total_gen = at.get("total_completion_tokens", 0)
+        model_stats = at.get("model_stats", {})
+        avg_prefill = 0.0
+        avg_gen = 0.0
+        with self._lock:
+            n_session = len(self.model_stats)
+            if n_session:
+                avg_prefill = (
+                    sum(s.get("avg_prefill_tps", 0.0) for s in self.model_stats.values())
+                    / n_session
+                )
+                avg_gen = (
+                    sum(s.get("avg_generation_tps", 0.0) for s in self.model_stats.values())
+                    / n_session
+                )
+        return {
+            "total_requests": at.get("total_requests", 0),
+            "total_prompt_tokens": total_prompt,
+            "total_completion_tokens": total_gen,
+            "total_tokens_served": total_gen,
+            "total_cached_tokens": total_cached,
+            "cache_efficiency": total_cached / max(1, total_prompt),
+            "model_stats": model_stats,
+            "avg_prefill_tps": avg_prefill,
+            "avg_generation_tps": avg_gen,
+        }
 
     def to_dict(self) -> dict:
         """Return a JSON-safe dict, excluding internal lock."""
