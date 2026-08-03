@@ -5,7 +5,6 @@ from .convolution import CausalConv3d, PaddingModeType
 
 
 class SpaceToDepthDownsample(nn.Module):
-
     def __init__(
         self,
         dims: int,
@@ -79,7 +78,6 @@ class SpaceToDepthDownsample(nn.Module):
 
 
 class DepthToSpaceUpsample(nn.Module):
-
     def __init__(
         self,
         dims: int,

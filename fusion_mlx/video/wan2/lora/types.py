@@ -6,7 +6,6 @@ import mlx.core as mx
 
 @dataclass
 class LoRAWeights:
-
     lora_A: mx.array  # noqa: N815 - matches checkpoint key convention
     lora_B: mx.array  # noqa: N815 - matches checkpoint key convention
     rank: int
@@ -20,7 +19,6 @@ class LoRAWeights:
 
 @dataclass
 class LoRAConfig:
-
     path: Path
     strength: float = 1.0
     target_modules: list[str] | None = None
@@ -35,7 +33,6 @@ class LoRAConfig:
 
 @dataclass
 class AppliedLoRA:
-
     weights: LoRAWeights
     strength: float
 

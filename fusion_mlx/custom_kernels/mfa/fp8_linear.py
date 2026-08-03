@@ -95,7 +95,6 @@ def _dequantize_block_fp8(
 
 
 class FP8Linear(nn.Module):
-
     def __init__(
         self,
         in_features: int,

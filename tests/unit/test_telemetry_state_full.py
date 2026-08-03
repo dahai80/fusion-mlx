@@ -49,7 +49,6 @@ state = _load_module()
 
 
 class TestConsentStateDataclass(unittest.TestCase):
-
     def test_defaults(self):
         cs = state.ConsentState(
             consent=True, prompted_at="2026-07-04T00:00:00Z", prompted_version="0.4.1"
@@ -64,7 +63,6 @@ class TestConsentStateDataclass(unittest.TestCase):
 
 
 class TestPaths(unittest.TestCase):
-
     def test_consent_path_under_fusion_mlx_dir(self):
         p = state.consent_path()
         self.assertIn(".fusion-mlx", str(p))
@@ -81,7 +79,6 @@ class TestPaths(unittest.TestCase):
 
 
 class TestGetConsentState(unittest.TestCase):
-
     def test_no_file_returns_none(self):
         with patch.object(
             state, "consent_path", return_value=Path("/nonexistent/consent.yaml")
@@ -229,7 +226,6 @@ class TestGetConsentState(unittest.TestCase):
 
 
 class TestRecordConsent(unittest.TestCase):
-
     def test_writes_valid_file(self):
         with tempfile.TemporaryDirectory() as td:
             p = Path(td) / "consent.yaml"
@@ -271,7 +267,6 @@ class TestRecordConsent(unittest.TestCase):
 
 
 class TestGetOrCreateClientId(unittest.TestCase):
-
     def test_creates_new_id(self):
         with tempfile.TemporaryDirectory() as td:
             p = Path(td) / "telemetry-client-id"
@@ -306,7 +301,6 @@ class TestGetOrCreateClientId(unittest.TestCase):
 
 
 class TestResetState(unittest.TestCase):
-
     def test_removes_both_files(self):
         with tempfile.TemporaryDirectory() as td:
             cp = Path(td) / "consent.yaml"
@@ -330,7 +324,6 @@ class TestResetState(unittest.TestCase):
 
 
 class TestEnvKillSwitch(unittest.TestCase):
-
     def test_no_env_returns_false(self):
         with patch.dict(os.environ, {}, clear=True):
             self.assertFalse(state._env_kill_switch_active())
@@ -363,7 +356,6 @@ class TestEnvKillSwitch(unittest.TestCase):
 
 
 class TestSetCliKillSwitch(unittest.TestCase):
-
     def setUp(self):
         state.set_cli_kill_switch(False)
 
@@ -386,7 +378,6 @@ class TestSetCliKillSwitch(unittest.TestCase):
 
 
 class TestIsEnabled(unittest.TestCase):
-
     def setUp(self):
         state.set_cli_kill_switch(False)
 
@@ -440,7 +431,6 @@ class TestIsEnabled(unittest.TestCase):
 
 
 class TestConsentSource(unittest.TestCase):
-
     def setUp(self):
         state.set_cli_kill_switch(False)
 
@@ -474,7 +464,6 @@ class TestConsentSource(unittest.TestCase):
 
 
 class TestEnvVarConstant(unittest.TestCase):
-
     def test_env_var_name(self):
         self.assertEqual(state.ENV_VAR, "FUSION_MLX_TELEMETRY")
 

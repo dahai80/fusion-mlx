@@ -29,7 +29,6 @@ def _temporal_rearrange_back(x: mx.array, B: int, S: int, T: int, C: int) -> mx.
 
 
 class TemporalAttention(nn.Module):
-
     def __init__(
         self,
         dim: int,
@@ -80,7 +79,6 @@ class TemporalAttention(nn.Module):
 
 
 class VideoTransformerBlock(nn.Module):
-
     def __init__(
         self,
         dim: int,
@@ -170,7 +168,6 @@ class VideoTransformerBlock(nn.Module):
 
 
 class SpatialVideoTransformer(nn.Module):
-
     def __init__(
         self,
         in_channels: int,

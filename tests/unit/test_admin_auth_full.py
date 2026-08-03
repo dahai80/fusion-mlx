@@ -67,7 +67,6 @@ def _make_request(cookies=None, auth_header=None):
 
 
 class TestRequireAdmin(unittest.IsolatedAsyncioTestCase):
-
     def setUp(self):
         auth._active_sessions.clear()
         auth._api_key = ""
@@ -143,7 +142,6 @@ class TestRequireAdmin(unittest.IsolatedAsyncioTestCase):
 
 
 class TestExtractSessionToken(unittest.TestCase):
-
     def test_returns_cookie_value(self):
         req = MagicMock()
         req.cookies = {auth.SESSION_COOKIE_NAME: "token123"}
@@ -156,7 +154,6 @@ class TestExtractSessionToken(unittest.TestCase):
 
 
 class TestSettingsHelpers(unittest.TestCase):
-
     def test_get_settings_api_key_none(self):
         self.assertEqual(auth._get_settings_api_key(None), "")
 
@@ -206,7 +203,6 @@ class TestSettingsHelpers(unittest.TestCase):
 
 
 class TestValidateApiKey(unittest.TestCase):
-
     def test_valid_key(self):
         self.assertEqual(auth.validate_api_key("strong-key-123"), (True, ""))
 
@@ -235,7 +231,6 @@ class TestValidateApiKey(unittest.TestCase):
 
 
 class TestVerifyApiKey(unittest.TestCase):
-
     def test_matching_keys(self):
         self.assertTrue(auth.verify_api_key("secret", "secret"))
 
@@ -255,7 +250,6 @@ class TestVerifyApiKey(unittest.TestCase):
 
 
 class TestSessionToken(unittest.TestCase):
-
     def setUp(self):
         auth._active_sessions.clear()
 
@@ -284,7 +278,6 @@ class TestSessionToken(unittest.TestCase):
 
 
 class TestVerifySessionFromRequest(unittest.TestCase):
-
     def setUp(self):
         auth._active_sessions.clear()
 
@@ -302,7 +295,6 @@ class TestVerifySessionFromRequest(unittest.TestCase):
 
 
 class TestSetters(unittest.TestCase):
-
     def test_set_api_key(self):
         auth.set_api_key("my-key")
         self.assertEqual(auth._api_key, "my-key")
@@ -314,7 +306,6 @@ class TestSetters(unittest.TestCase):
 
 
 class TestConstants(unittest.TestCase):
-
     def test_cookie_name(self):
         self.assertEqual(auth.SESSION_COOKIE_NAME, "fusionmlx_admin_session")
 

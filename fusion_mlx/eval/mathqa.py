@@ -58,7 +58,7 @@ class MathQABenchmark(BaseBenchmark):
         labels = item["labels"]
 
         parts = [
-            "Solve the following math problem. " "Answer with just the letter.\n",
+            "Solve the following math problem. Answer with just the letter.\n",
             f"Problem: {question}\n",
         ]
         for label, choice in zip(labels, choices):

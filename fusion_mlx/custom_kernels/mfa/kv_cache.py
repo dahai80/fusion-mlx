@@ -13,7 +13,6 @@ logger = logging.getLogger(__name__)
 
 @runtime_checkable
 class KVCacheProtocol(Protocol):
-
     def append(self, key: mx.array, value: mx.array) -> None: ...
 
     def k_for_attention(self) -> mx.array: ...
@@ -27,7 +26,6 @@ class KVCacheProtocol(Protocol):
 
 
 class DenseKVCache:
-
     def __init__(
         self,
         num_heads: int,
@@ -83,7 +81,6 @@ class DenseKVCache:
 
 
 class PagedKVCache:
-
     def __init__(
         self,
         num_heads: int,

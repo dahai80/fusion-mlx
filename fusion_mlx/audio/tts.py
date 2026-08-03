@@ -29,7 +29,6 @@ CHATTERBOX_VOICES = ["default"]
 
 
 class UnsupportedAudioFormatError(Exception):
-
     def __init__(
         self,
         requested: str,
@@ -87,7 +86,6 @@ class AudioOutput:
 
 
 class TTSEngine:
-
     def __init__(
         self,
         model_name: str = DEFAULT_TTS_MODEL,

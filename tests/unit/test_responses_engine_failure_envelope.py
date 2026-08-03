@@ -305,9 +305,9 @@ class TestResponsesNonStreamFailureEnvelope:
         # cloud behaviour on stream-errored requests.
         assert resp.status_code == 200, resp.text
         body = resp.json()
-        assert (
-            body["status"] == "failed"
-        ), f"expected status='failed', got {body['status']!r}. Body: {body}"
+        assert body["status"] == "failed", (
+            f"expected status='failed', got {body['status']!r}. Body: {body}"
+        )
 
     def test_failed_envelope_carries_error_block(self, failing_client):
         """OpenAI Responses spec puts the failure detail in an ``error``
@@ -395,9 +395,9 @@ class TestResponsesStreamFailureEnvelope:
             body = "".join(resp.iter_text())
         events = _parse_sse(body)
         names = [n for n, _ in events]
-        assert (
-            "response.failed" in names
-        ), f"response.failed missing on engine-wedge stream. Events: {names}"
+        assert "response.failed" in names, (
+            f"response.failed missing on engine-wedge stream. Events: {names}"
+        )
         assert "response.completed" not in names, (
             f"response.completed AND response.failed both emitted — "
             f"the terminal event must be the failure shape. Events: {names}"
@@ -452,9 +452,9 @@ class TestResponsesStreamFailureEnvelope:
         ) as resp:
             body = "".join(resp.iter_text())
         names = [n for n, _ in _parse_sse(body)]
-        assert (
-            "response.completed" in names
-        ), f"stop-reason stream missing response.completed terminal — events: {names}"
+        assert "response.completed" in names, (
+            f"stop-reason stream missing response.completed terminal — events: {names}"
+        )
         assert "response.failed" not in names, (
             f"R6-C2 stream guard incorrectly fired on a legitimate "
             f"stop-reason zero-token stream: {names}"

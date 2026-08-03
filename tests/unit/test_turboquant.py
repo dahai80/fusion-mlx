@@ -263,8 +263,8 @@ def test_batch_make_mask_matches_fp16_left_padding():
     got = bt.make_mask(1, return_array=True)
     assert mx.array_equal(ref, got).item(), (
         "B>1 make_mask diverges from BatchKVCache for left-padding "
-        f"(member masks: BK={ref[:,0,0,:].sum(-1).tolist()} "
-        f"TQ={got[:,0,0,:].sum(-1).tolist()})"
+        f"(member masks: BK={ref[:, 0, 0, :].sum(-1).tolist()} "
+        f"TQ={got[:, 0, 0, :].sum(-1).tolist()})"
     )
 
 
@@ -848,6 +848,6 @@ def test_batch_masked_decode_is_accurate():
     rel = mx.mean(mx.abs(out - ref)).item() / mx.mean(mx.abs(ref)).item()
     # 8-bit quantized masked decode vs dequantize+SDPA over the same states.
     # Broken RHT kernels give ~140%; the fix brings it into quantization noise.
-    assert (
-        rel < 0.05
-    ), f"B>1 masked decode inaccurate (err {rel:.1%}) — RHT fix missing from pinned mlx-vlm?"
+    assert rel < 0.05, (
+        f"B>1 masked decode inaccurate (err {rel:.1%}) — RHT fix missing from pinned mlx-vlm?"
+    )

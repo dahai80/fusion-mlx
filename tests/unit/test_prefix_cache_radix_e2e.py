@@ -17,7 +17,6 @@ from fusion_mlx.memory_cache import MemoryAwarePrefixCache, MemoryCacheConfig
 
 
 class _FakeCacheLayer:
-
     def __init__(self, payload_size: int = 1024):
         self.offset = 0
         self._payload = b"\x00" * payload_size

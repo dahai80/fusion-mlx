@@ -755,9 +755,9 @@ def test_inject_mtp_support_refuses_no_sidecar_by_default():
         pytest.skip(f"Qwen3.5 TextModelArgs schema mismatch: {exc}")
 
     # No sidecar, no allow_random_init → must fail closed.
-    assert (
-        inject_mtp_support(model) is False
-    ), "Default inject_mtp_support without sidecar should return False"
+    assert inject_mtp_support(model) is False, (
+        "Default inject_mtp_support without sidecar should return False"
+    )
     # And the model must NOT have been patched — validate_mtp_support
     # checks the four surfaces, none should land on a failed inject.
     assert validate_mtp_support(model) is False

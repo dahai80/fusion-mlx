@@ -342,9 +342,9 @@ async def test_ten_disconnects_on_prod_shape_yield_ten_ten():
         f"expected 10 aborts (lifetime-persistent ledger dedupes the "
         f"two abort paths per disconnect); got {stats}"
     )
-    assert (
-        stats["num_requests_cancelled_via_disconnect"] == 10
-    ), f"expected 10 disconnect-attributed aborts, got {stats}"
+    assert stats["num_requests_cancelled_via_disconnect"] == 10, (
+        f"expected 10 disconnect-attributed aborts, got {stats}"
+    )
     assert (
         stats["num_requests_cancelled_via_disconnect"]
         <= stats["num_requests_cancelled"]

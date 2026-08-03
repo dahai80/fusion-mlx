@@ -21,7 +21,6 @@ def _compute_sigmas(
 
 
 class FlowMatchEulerScheduler:
-
     def __init__(self, num_train_timesteps: int = 1000):
         self.num_train_timesteps = num_train_timesteps
         self.timesteps = None
@@ -57,7 +56,6 @@ class FlowMatchEulerScheduler:
 
 
 class FlowDPMPP2MScheduler:
-
     def __init__(
         self,
         num_train_timesteps: int = 1000,
@@ -156,7 +154,6 @@ class FlowDPMPP2MScheduler:
 
 
 class FlowUniPCScheduler:
-
     def __init__(
         self,
         num_train_timesteps: int = 1000,

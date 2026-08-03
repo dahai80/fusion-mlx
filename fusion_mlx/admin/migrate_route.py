@@ -160,7 +160,9 @@ async def convert_weights(
     request: MigrateConvertRequest,
     is_admin: bool = Depends(require_admin),
 ):
-    from ..migrate.architectures import HF_ARCH_TO_TEMPLATE, KNOWN_TEMPLATES, match_template
+    from ..migrate.architectures import (
+        match_template,
+    )
     from ..migrate.converter import convert_model
 
     mdir = _migration_dir(request.migration_id)
@@ -180,7 +182,9 @@ async def convert_weights(
     try:
         config_path = os.path.join(hf_dir, "config.json")
         if not os.path.exists(config_path):
-            raise HTTPException(status_code=400, detail="config.json not found in HF dir")
+            raise HTTPException(
+                status_code=400, detail="config.json not found in HF dir"
+            )
         with open(config_path) as f:
             hf_config = json.load(f)
 
@@ -239,7 +243,9 @@ async def codegen(
         if template is None:
             config_path = os.path.join(hf_dir, "config.json") if hf_dir else ""
             if not config_path or not os.path.exists(config_path):
-                raise HTTPException(status_code=400, detail="Cannot resolve template: no config.json")
+                raise HTTPException(
+                    status_code=400, detail="Cannot resolve template: no config.json"
+                )
             with open(config_path) as f:
                 hf_config = json.load(f)
             arch_list = hf_config.get("architectures", [])

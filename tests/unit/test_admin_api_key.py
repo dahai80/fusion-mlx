@@ -17,7 +17,6 @@ from fusion_mlx.admin.auth import validate_api_key, verify_api_key
 
 
 class TestValidateApiKey:
-
     def test_valid_key_simple(self):
         is_valid, msg = validate_api_key("abcd")
         assert is_valid is True
@@ -68,7 +67,6 @@ class TestValidateApiKey:
 
 
 class TestVerifyApiKey:
-
     def test_matching_keys(self):
         assert verify_api_key("secret123", "secret123") is True
 
@@ -89,7 +87,6 @@ class TestVerifyApiKey:
 
 
 class TestSubKeyCRUD:
-
     def _mock_global_settings(self, api_key=None):
         mock = MagicMock()
         mock.auth.api_key = api_key
@@ -221,7 +218,6 @@ def _restore_auth_getter(original):
 
 
 class TestLoginRejectsSubKey:
-
     def test_sub_key_rejected_for_login(self):
         from fastapi import HTTPException
 
@@ -257,7 +253,6 @@ class TestLoginRejectsSubKey:
 
 
 class TestSetupApiKeyEndpoint:
-
     def test_setup_rejects_when_key_already_set(self):
         from fastapi import HTTPException
 
@@ -320,7 +315,6 @@ class TestSetupApiKeyEndpoint:
 
 
 class TestLoginEndpoint:
-
     def test_login_rejects_when_no_key_configured(self):
         from fastapi import HTTPException
 
@@ -362,7 +356,6 @@ class TestLoginEndpoint:
 
 
 class TestStatsSecurity:
-
     @pytest.mark.skip(reason="fusion_mlx.utils.install module not yet available")
     def test_stats_response_includes_api_key_for_admin(self):
         mock_settings = MagicMock()
@@ -515,7 +508,6 @@ class TestStatsSecurity:
 
 
 class TestRuntimeCacheObservability:
-
     def test_runtime_cache_uses_model_scoped_ssd_stats(self):
         cache_dir = Path("/tmp/fusion-mlx-cache")
 
@@ -808,7 +800,6 @@ class TestRuntimeCacheObservability:
 
 
 class TestGlobalSettingsValidation:
-
     def test_idle_timeout_rejects_negative(self):
         with pytest.raises(ValidationError):
             admin_models.GlobalSettingsRequest(idle_timeout_seconds=-1)

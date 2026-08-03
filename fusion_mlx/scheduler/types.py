@@ -118,7 +118,7 @@ class _PrefillAbortedError(Exception):
         self.aborted_uids = aborted_uids
         self.processed_tokens = processed_tokens
         super().__init__(
-            f"Prefill aborted for UIDs {aborted_uids} " f"at {processed_tokens} tokens"
+            f"Prefill aborted for UIDs {aborted_uids} at {processed_tokens} tokens"
         )
 
 

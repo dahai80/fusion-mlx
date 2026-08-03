@@ -1505,8 +1505,8 @@ class TestR7M6ComputerUsePreviewAlias:
             validate_responses_tool_types([{"type": "web_search"}])
         detail = exc.value.detail
         # Pydantic dumps are lists; the OpenAI envelope is a dict.
-        assert isinstance(
-            detail, dict
-        ), "Rejection envelope must be a dict, not a Pydantic validation list"
+        assert isinstance(detail, dict), (
+            "Rejection envelope must be a dict, not a Pydantic validation list"
+        )
         # Pydantic dumps don't have an ``error`` wrapper.
         assert "error" in detail

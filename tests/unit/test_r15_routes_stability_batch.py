@@ -349,9 +349,9 @@ class TestResponsesUnknownRole:
             )
         # ``loc`` on the first error must point at the offending field.
         errs = ei.value.errors()
-        assert any(
-            "role" in str(e.get("loc", ())) for e in errs
-        ), f"expected error loc to reference 'role'; got {errs!r}"
+        assert any("role" in str(e.get("loc", ())) for e in errs), (
+            f"expected error loc to reference 'role'; got {errs!r}"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -682,9 +682,9 @@ class TestChatLogprobsBaseSemantic:
             f"got {body['choices'][0]!r}"
         )
         content = lp.get("content")
-        assert (
-            content
-        ), f"choice.logprobs.content must be non-empty when logprobs=true; got {lp!r}"
+        assert content, (
+            f"choice.logprobs.content must be non-empty when logprobs=true; got {lp!r}"
+        )
         first = content[0]
         # Sampled-token fields must be populated.
         assert "token" in first and "logprob" in first

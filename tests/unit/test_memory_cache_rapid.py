@@ -24,7 +24,6 @@ from fusion_mlx.memory_cache import (
 
 
 class TestMemoryCacheConfig:
-
     def test_default_config(self):
         config = MemoryCacheConfig()
         assert config.max_memory_mb is None
@@ -82,7 +81,6 @@ class TestMemoryCacheConfig:
 
 
 class TestCacheStats:
-
     def test_initial_stats(self):
         stats = CacheStats()
         assert stats.hits == 0
@@ -115,33 +113,28 @@ class TestCacheStats:
 
 
 class MockArray:
-
     def __init__(self, nbytes: int):
         self.nbytes = nbytes
 
 
 class MockDtype:
-
     def __init__(self, size: int):
         self.size = size
 
 
 class MockShapeArray:
-
     def __init__(self, shape: tuple, dtype_size: int):
         self.shape = shape
         self.dtype = MockDtype(dtype_size)
 
 
 class MockKVCache:
-
     def __init__(self, key_bytes: int, value_bytes: int):
         self.keys = MockArray(key_bytes)
         self.values = MockArray(value_bytes)
 
 
 class MockStateCache:
-
     def __init__(self, key_bytes: int, value_bytes: int):
         self._keys = MockArray(key_bytes)
         self._values = MockArray(value_bytes)
@@ -152,7 +145,6 @@ class MockStateCache:
 
 
 class TestArrayMemory:
-
     def test_shape_dtype_estimation(self):
         arr = MockShapeArray(shape=(2, 16, 128, 64), dtype_size=2)
         assert _array_memory(arr) == 2 * 16 * 128 * 64 * 2
@@ -185,7 +177,6 @@ class TestArrayMemory:
 
 
 class TestEstimateKvCacheMemory:
-
     def test_empty_cache(self):
         assert estimate_kv_cache_memory([]) == 0
         assert estimate_kv_cache_memory(None) == 0
@@ -210,7 +201,6 @@ class TestEstimateKvCacheMemory:
 
 
 class TestCacheEntry:
-
     def test_create_entry(self):
         cache = [MockKVCache(100, 100)]
         entry = _CacheEntry.create([1, 2, 3], cache)
@@ -220,7 +210,6 @@ class TestCacheEntry:
 
 
 class TestMemoryAwarePrefixCache:
-
     @pytest.fixture
     def model(self):
         return MagicMock()
@@ -390,9 +379,7 @@ class TestMemoryAwarePrefixCache:
 
 
 class TestCacheListTrimmability:
-
     class TrimmableLayer:
-
         def __init__(self, key_bytes: int, value_bytes: int, offset: int = 10):
             self.keys = MockArray(key_bytes)
             self.values = MockArray(value_bytes)
@@ -410,7 +397,6 @@ class TestCacheListTrimmability:
             return True
 
     class NonTrimmableLayer:
-
         def __init__(self, nbytes: int = 100):
             self.keys = MockArray(nbytes)
             self.values = MockArray(nbytes)
@@ -436,9 +422,9 @@ class TestCacheListTrimmability:
         short_tokens = [1, 2, 3, 4, 5]
         result, remaining = cache.fetch(short_tokens)
 
-        assert (
-            result is not None
-        ), "Supersequence match was skipped — CacheList misclassified as non-trimmable"
+        assert result is not None, (
+            "Supersequence match was skipped — CacheList misclassified as non-trimmable"
+        )
         assert remaining == []
 
     def test_supersequence_non_trimmable_skipped(self, cache):
@@ -461,9 +447,9 @@ class TestCacheListTrimmability:
         requested = [1, 2, 3, 4, 5, 20, 21]
         result, remaining = cache.fetch(requested)
 
-        assert (
-            result is not None
-        ), "LCP match was skipped — CacheList misclassified as non-trimmable"
+        assert result is not None, (
+            "LCP match was skipped — CacheList misclassified as non-trimmable"
+        )
         assert remaining == [20, 21]
 
     def test_lcp_non_trimmable_skipped(self, cache):
@@ -479,7 +465,6 @@ class TestCacheListTrimmability:
 
 
 class TestGetAvailableMemory:
-
     def test_with_psutil(self):
         try:
             from importlib.util import find_spec
@@ -497,7 +482,6 @@ class TestGetAvailableMemory:
 
 
 class TestConcurrentAccess:
-
     def _make_cache(self):
         config = MemoryCacheConfig(max_memory_mb=64, max_entries=64)
         return MemoryAwarePrefixCache(MagicMock(), config)

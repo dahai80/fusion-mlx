@@ -57,7 +57,7 @@ class ARCChallengeBenchmark(BaseBenchmark):
         labels = item["labels"]
 
         parts = [
-            "Answer the following science question. " "Answer with just the letter.\n",
+            "Answer the following science question. Answer with just the letter.\n",
             f"Question: {question}\n",
         ]
         for label, choice in zip(labels, choices):

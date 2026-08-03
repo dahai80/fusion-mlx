@@ -645,8 +645,7 @@ class TestSettingsPerfRegression:
             elapsed = time.perf_counter() - t0
             per_call_ms = (elapsed / self._GET_ITERS) * 1000.0
             print(
-                f"#72 get_settings per-call: {per_call_ms:.4f} ms "
-                f"(n={self._GET_ITERS})"
+                f"#72 get_settings per-call: {per_call_ms:.4f} ms (n={self._GET_ITERS})"
             )
             assert per_call_ms < self._PER_CALL_CEIL_MS
 

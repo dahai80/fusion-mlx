@@ -95,7 +95,7 @@ def generate_video(
     """
     if task_type not in TASK_TO_MODEL:
         raise ValueError(
-            f"Unknown task_type: {task_type}. " f"Valid: {list(TASK_TO_MODEL)}"
+            f"Unknown task_type: {task_type}. Valid: {list(TASK_TO_MODEL)}"
         )
 
     model_key = TASK_TO_MODEL[task_type]

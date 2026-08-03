@@ -278,9 +278,9 @@ class FreeKVCacheBlockQueue:
         if n == 0:
             return []
 
-        assert (
-            self.num_free_blocks >= n
-        ), f"Need {n} blocks, have {self.num_free_blocks}"
+        assert self.num_free_blocks >= n, (
+            f"Need {n} blocks, have {self.num_free_blocks}"
+        )
 
         result = []
         curr = self.fake_head.next_free_block

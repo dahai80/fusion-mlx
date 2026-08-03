@@ -37,7 +37,6 @@ except Exception:  # pragma: no cover - xfuser strategy optional
 
 
 class Colors:
-
     CYAN = "\033[96m"
     BLUE = "\033[94m"
     GREEN = "\033[92m"
@@ -481,9 +480,9 @@ def generate_video(
         neg_prompt_resolved = config.sample_neg_prompt
     else:
         neg_prompt_resolved = negative_prompt
-    print(f"{Colors.CYAN}{'='*60}")
+    print(f"{Colors.CYAN}{'=' * 60}")
     print(f"  {version_str} {pipeline_str} Generation (MLX, {mode_str})")
-    print(f"{'='*60}{Colors.RESET}")
+    print(f"{'=' * 60}{Colors.RESET}")
     print(f"{Colors.DIM}  Prompt: {prompt}")
     if is_i2v:
         print(f"  Image: {image}")
@@ -1083,7 +1082,7 @@ def generate_video(
             _nan_count = int(np.isnan(lat_np).sum())
             print(
                 f"  Step {i}: mean={lat_np.mean():.4f} std={lat_np.std():.4f} "
-                f"nan={_nan_count} zero_pct={100*(lat_np==0).sum()/lat_np.size:.1f}%"
+                f"nan={_nan_count} zero_pct={100 * (lat_np == 0).sum() / lat_np.size:.1f}%"
             )
             if _nan_count > 0:
                 print(f"  *** NaN DETECTED at step {i}! Aborting. ***")

@@ -9,7 +9,6 @@ from .utils import get_timestep_embedding
 
 
 class AdaLayerNormSingle(nn.Module):
-
     def __init__(
         self,
         embedding_dim: int,
@@ -51,7 +50,6 @@ class AdaLayerNormSingle(nn.Module):
 
 
 class PixArtAlphaCombinedTimestepSizeEmbeddings(nn.Module):
-
     def __init__(
         self,
         embedding_dim: int,
@@ -101,7 +99,6 @@ class PixArtAlphaCombinedTimestepSizeEmbeddings(nn.Module):
 
 
 class Timesteps(nn.Module):
-
     def __init__(
         self,
         num_channels: int,
@@ -123,7 +120,6 @@ class Timesteps(nn.Module):
 
 
 class TimestepEmbedding(nn.Module):
-
     def __init__(
         self,
         in_channels: int,

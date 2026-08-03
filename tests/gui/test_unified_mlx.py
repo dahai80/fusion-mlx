@@ -661,13 +661,15 @@ class MLXTestSuite:
                     else:
                         preview_str = ", ".join([f"{val:.4f}" for val in embedding_vec])
 
-                    print(f"      Embedding {i+1} ('{input_text}'):")
+                    print(f"      Embedding {i + 1} ('{input_text}'):")
                     print(f"        Dimension: {len(embedding_vec)}")
                     print(f"        Values: [{preview_str}]")
                     print(
                         f"        Range: {min(embedding_vec):.4f} to {max(embedding_vec):.4f}"
                     )
-                    print(f"        Mean: {sum(embedding_vec)/len(embedding_vec):.4f}")
+                    print(
+                        f"        Mean: {sum(embedding_vec) / len(embedding_vec):.4f}"
+                    )
                     print()
 
                 # Success message with details
@@ -1149,7 +1151,7 @@ class MLXTestSuite:
                 if not result.success:
                     print(f"   • {result.name}: {result.message}")
 
-        print(f"\n🎯 Success Rate: {(passed_tests/total_tests)*100:.1f}%")
+        print(f"\n🎯 Success Rate: {(passed_tests / total_tests) * 100:.1f}%")
 
         if failed_tests == 0:
             print("🎉 All tests passed! fusion_gui is working correctly.")
@@ -1191,7 +1193,7 @@ class MLXTestSuite:
 
             for i, (model_name, model_label) in enumerate(test_models):
                 print(
-                    f"\n  📥 Loading model {i+1}/{len(test_models)}: {model_label} ({model_name})"
+                    f"\n  📥 Loading model {i + 1}/{len(test_models)}: {model_label} ({model_name})"
                 )
 
                 # Check current loaded models before loading using the INTERNAL endpoint

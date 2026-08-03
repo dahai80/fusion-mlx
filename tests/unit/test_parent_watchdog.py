@@ -249,9 +249,9 @@ class TestServeCommandWiring:
             "_boot_guard_checks call missing from serve_command — "
             "watchdog install may have been removed."
         )
-        assert (
-            idx_download != -1
-        ), "_ensure_model_downloaded call moved; update this test."
+        assert idx_download != -1, (
+            "_ensure_model_downloaded call moved; update this test."
+        )
         assert idx_guard < idx_download, (
             "rapid-desktop #449 regression: _boot_guard_checks (which "
             "installs the watchdog) fires AFTER _ensure_model_downloaded. "

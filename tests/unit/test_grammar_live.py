@@ -235,9 +235,9 @@ class TestGrammarRegex:
         print(f"\n[{family}] Regex output ({dur:.2f}s): {content}")
         # Harmony may produce multiple final channels whose content gets
         # concatenated, so check that the output starts with a valid match.
-        assert re.match(
-            REGEX_PATTERN, content
-        ), f"Output '{content}' doesn't start with pattern '{REGEX_PATTERN}'"
+        assert re.match(REGEX_PATTERN, content), (
+            f"Output '{content}' doesn't start with pattern '{REGEX_PATTERN}'"
+        )
 
 
 class TestGrammarChoice:
@@ -263,9 +263,9 @@ class TestGrammarChoice:
         print(f"\n[{family}] Choice output ({dur:.2f}s): {content}")
         # Harmony may produce multiple final channels; check that output
         # starts with a valid choice.
-        assert any(
-            content.startswith(c) for c in choices
-        ), f"Output '{content}' doesn't start with any of {choices}"
+        assert any(content.startswith(c) for c in choices), (
+            f"Output '{content}' doesn't start with any of {choices}"
+        )
 
 
 class TestNoGrammar:
@@ -445,7 +445,9 @@ def _print_results(results):
         f"{'TTFT (s)':>14} {'Dur (s)':>14} {'TPS':>14}"
     )
     print(hdr)
-    print(f"  {'-'*25} {'-'*5} {'-'*5} {'-'*4} {'-'*5} {'-'*14} {'-'*14} {'-'*14}")
+    print(
+        f"  {'-' * 25} {'-' * 5} {'-' * 5} {'-' * 4} {'-' * 5} {'-' * 14} {'-' * 14} {'-' * 14}"
+    )
     for r in results:
         tm, ts = r.ttft_stats()
         dm, ds = r.dur_stats()
@@ -489,7 +491,7 @@ class TestPerformance:
                     done += 1
                     label = f"think={thinking} grammar={grammar} conc={conc}"
                     print(
-                        f"  [{done}/{total_combos}] {label} " f"({BENCH_DURATION}s)...",
+                        f"  [{done}/{total_combos}] {label} ({BENCH_DURATION}s)...",
                         end="",
                         flush=True,
                     )

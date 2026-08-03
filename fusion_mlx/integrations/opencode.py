@@ -26,10 +26,7 @@ class OpenCodeIntegration(Integration):
     def get_command(
         self, port: int, api_key: str, model: str, host: str = "127.0.0.1"
     ) -> str:
-        return (
-            f"{get_cli_prefix()} "
-            f"launch opencode --model {model or 'select-a-model'}"
-        )
+        return f"{get_cli_prefix()} launch opencode --model {model or 'select-a-model'}"
 
     @staticmethod
     def _modalities_for_model(model_type: str | None) -> dict[str, list[str]]:

@@ -62,7 +62,6 @@ def make_conv_nd(
 
 
 class CausalConv3d(nn.Module):
-
     def __init__(
         self,
         in_channels: int,
@@ -185,7 +184,6 @@ class CausalConv3d(nn.Module):
 
 
 class CausalConv2d(nn.Module):
-
     def __init__(
         self,
         in_channels: int,

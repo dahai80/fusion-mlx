@@ -157,14 +157,19 @@ class ServerMetrics:
             at["total_cached_tokens"] = at.get("total_cached_tokens", 0) + cached_tokens
             if model_id:
                 models = at.setdefault("model_stats", {})
-                ms = models.get(model_id, {
-                    "requests": 0,
-                    "prompt_tokens": 0,
-                    "completion_tokens": 0,
-                })
+                ms = models.get(
+                    model_id,
+                    {
+                        "requests": 0,
+                        "prompt_tokens": 0,
+                        "completion_tokens": 0,
+                    },
+                )
                 ms["requests"] = ms.get("requests", 0) + 1
                 ms["prompt_tokens"] = ms.get("prompt_tokens", 0) + prompt_tokens
-                ms["completion_tokens"] = ms.get("completion_tokens", 0) + completion_tokens
+                ms["completion_tokens"] = (
+                    ms.get("completion_tokens", 0) + completion_tokens
+                )
                 models[model_id] = ms
             self._alltime_dirty = True
             now = time.monotonic()
@@ -214,11 +219,16 @@ class ServerMetrics:
             n_session = len(self.model_stats)
             if n_session:
                 avg_prefill = (
-                    sum(s.get("avg_prefill_tps", 0.0) for s in self.model_stats.values())
+                    sum(
+                        s.get("avg_prefill_tps", 0.0) for s in self.model_stats.values()
+                    )
                     / n_session
                 )
                 avg_gen = (
-                    sum(s.get("avg_generation_tps", 0.0) for s in self.model_stats.values())
+                    sum(
+                        s.get("avg_generation_tps", 0.0)
+                        for s in self.model_stats.values()
+                    )
                     / n_session
                 )
         return {

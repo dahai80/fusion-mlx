@@ -234,10 +234,7 @@ def main() -> None:
         else args.warmup_max_new_tokens
     )
     if args.warmup_runs > 0:
-        log(
-            f"[warmup] runs={args.warmup_runs} "
-            f"max_new_tokens={warmup_max_new_tokens}"
-        )
+        log(f"[warmup] runs={args.warmup_runs} max_new_tokens={warmup_max_new_tokens}")
     for warmup_idx in range(args.warmup_runs):
         warm_result = runner.generate_from_tokens(
             prompt_tokens=prompt_tokens,

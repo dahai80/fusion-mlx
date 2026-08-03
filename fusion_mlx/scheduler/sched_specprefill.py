@@ -176,7 +176,7 @@ def _try_specprefill_scoring(self, request: Request) -> None:
         logger.info(
             f"SpecPrefill: scored {n_to_score} tokens in {t_score:.1f}s, "
             f"selected {n_selected}/{n_to_score} "
-            f"(keep={n_selected/n_to_score*100:.0f}%, {', '.join(extras)})"
+            f"(keep={n_selected / n_to_score * 100:.0f}%, {', '.join(extras)})"
         )
 
         # Save draft cache for next turn

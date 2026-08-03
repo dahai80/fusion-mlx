@@ -172,7 +172,7 @@ class ImageGenEngine(BaseNonStreamingEngine):
         self._variant = variant or _infer_variant(model_name)
         if self._variant not in VARIANT_MAP:
             logger.warning(
-                "Unknown variant '%s', falling back to txt2img. " "Available: %s",
+                "Unknown variant '%s', falling back to txt2img. Available: %s",
                 self._variant,
                 list(VARIANT_MAP.keys()),
             )

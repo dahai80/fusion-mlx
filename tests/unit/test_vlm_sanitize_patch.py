@@ -23,7 +23,6 @@ def _reset_patch_state():
 
 
 class TestPatchVlmSanitize:
-
     def setup_method(self):
         _reset_patch_state()
 

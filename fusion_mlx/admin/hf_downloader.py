@@ -981,7 +981,7 @@ class HFDownloader:
                         "Try retrying the download."
                     )
                     logger.warning(
-                        f"Download stalled for {task.repo_id} " f"(task_id={task_id})"
+                        f"Download stalled for {task.repo_id} (task_id={task_id})"
                     )
                     # Cancel the snapshot_download thread
                     active_task = self._active_tasks.get(task_id)

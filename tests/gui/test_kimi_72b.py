@@ -121,7 +121,9 @@ async def test_kimi_72b_model():
 
             if load_response.status_code == 200:
                 load_data = load_response.json()
-                print(f"   ✅ Model loaded successfully in {load_end-load_start:.1f}s")
+                print(
+                    f"   ✅ Model loaded successfully in {load_end - load_start:.1f}s"
+                )
                 print(f"   📊 Status: {load_data.get('status', 'unknown')}")
                 if load_data.get("memory_warning"):
                     print(f"   ⚠️  Warning: {load_data['memory_warning']}")
@@ -183,7 +185,7 @@ async def test_kimi_72b_model():
                 if response.status_code == 200:
                     result = response.json()
                     content = result["choices"][0]["message"]["content"]
-                    print(f"   ✅ {test['name']} ({end_time-start_time:.1f}s):")
+                    print(f"   ✅ {test['name']} ({end_time - start_time:.1f}s):")
                     print(f"   💭 {content[:150]}...")
                     if len(content) > 150:
                         print(
@@ -240,7 +242,7 @@ async def test_kimi_72b_model():
 
                     stream_end = time.time()
                     print(
-                        f"\n   ✅ Streaming completed ({stream_end-stream_start:.1f}s)"
+                        f"\n   ✅ Streaming completed ({stream_end - stream_start:.1f}s)"
                     )
                     print(f"   📊 Approximate tokens: {token_count}")
                     if token_count > 0:

@@ -115,7 +115,9 @@ class TTSEngine(BaseNonStreamingEngine):
                 gk["voice"] = (
                     voice
                     if "voice" in gp
-                    else gk.setdefault("instruct", voice) if "instruct" in gp else None
+                    else gk.setdefault("instruct", voice)
+                    if "instruct" in gp
+                    else None
                 )
             if instructions is not None and "instruct" in gp:
                 gk["instruct"] = instructions
@@ -206,7 +208,9 @@ class TTSEngine(BaseNonStreamingEngine):
                 gk["voice"] = (
                     voice
                     if "voice" in gp
-                    else gk.setdefault("instruct", voice) if "instruct" in gp else None
+                    else gk.setdefault("instruct", voice)
+                    if "instruct" in gp
+                    else None
                 )
             if instructions is not None and "instruct" in gp:
                 gk["instruct"] = instructions

@@ -408,7 +408,6 @@ class UniWorldBackend(VideoBackend):
 
         if self._t5_encoder is not None:
             try:
-
                 t5_embeds = self._t5_encoder.encode(prompt)
                 result["sequence"] = t5_embeds
                 logger.info("T5 encoded: shape=%s", tuple(t5_embeds.shape))

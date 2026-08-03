@@ -27,7 +27,6 @@ from fusion_mlx.telemetry.redact import (
 
 
 class TestBucketTokens(unittest.TestCase):
-
     def test_all_buckets(self):
         cases = [
             (0, "0-256"),
@@ -53,7 +52,6 @@ class TestBucketTokens(unittest.TestCase):
 
 
 class TestBucketTtft(unittest.TestCase):
-
     def test_all_buckets(self):
         cases = [
             (0, "<100ms"),
@@ -76,7 +74,6 @@ class TestBucketTtft(unittest.TestCase):
 
 
 class TestBucketTps(unittest.TestCase):
-
     def test_all_buckets(self):
         cases = [
             (0, "<10"),
@@ -99,7 +96,6 @@ class TestBucketTps(unittest.TestCase):
 
 
 class TestBucketMemoryGb(unittest.TestCase):
-
     def test_rounds_to_nearest_gb(self):
         self.assertEqual(bucket_memory_gb(1073741824), 1)  # 1 GiB
         self.assertEqual(bucket_memory_gb(2147483648), 2)  # 2 GiB
@@ -111,7 +107,6 @@ class TestBucketMemoryGb(unittest.TestCase):
 
 
 class TestNormalizeModelPath(unittest.TestCase):
-
     def test_hf_repo_id_passes_through(self):
         self.assertEqual(normalize_model_path("Qwen/Qwen3-4B"), "Qwen/Qwen3-4B")
         self.assertEqual(normalize_model_path("org/model-name.v2"), "org/model-name.v2")
@@ -149,7 +144,6 @@ class TestNormalizeModelPath(unittest.TestCase):
 
 
 class TestHashFlagNames(unittest.TestCase):
-
     def test_extracts_long_flag_names(self):
         result = hash_flag_names(["--api-key", "secret", "--port", "8000"])
         self.assertEqual(set(result), {"api-key", "port"})
@@ -187,7 +181,6 @@ class TestHashFlagNames(unittest.TestCase):
 
 
 class TestFingerprintTraceback(unittest.TestCase):
-
     def test_returns_16_hex_chars(self):
         try:
             raise ValueError("test message with sensitive data")
@@ -229,7 +222,6 @@ class TestFingerprintTraceback(unittest.TestCase):
 
 
 class TestPlatformInfo(unittest.TestCase):
-
     def test_returns_dict_with_required_keys(self):
         info = platform_info()
         for key in ("os", "os_version", "arch", "chip", "memory_gb", "python_version"):

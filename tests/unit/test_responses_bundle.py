@@ -301,9 +301,9 @@ class TestF4ReasoningOutputItem:
         reasoning_items = [o for o in body["output"] if o["type"] == "reasoning"]
         message_items = [o for o in body["output"] if o["type"] == "message"]
 
-        assert (
-            len(reasoning_items) == 1
-        ), f"expected 1 reasoning item, got output={body['output']}"
+        assert len(reasoning_items) == 1, (
+            f"expected 1 reasoning item, got output={body['output']}"
+        )
         assert len(message_items) == 1, body["output"]
 
         # Reasoning item ships before the message item per OpenAI spec.

@@ -271,8 +271,7 @@ def _make_top_level_torch_getattr() -> callable:
             level = logging.DEBUG if name in _KNOWN_PROBE_NAMES else logging.WARNING
             logger.log(
                 level,
-                "fusion-mlx torch stub auto-stubbing: torch.%s "
-                "(returning no-op stub)",
+                "fusion-mlx torch stub auto-stubbing: torch.%s (returning no-op stub)",
                 name,
             )
 
@@ -716,14 +715,14 @@ def _build_modules() -> dict[str, types.ModuleType]:
 
     # torch.compiler submodule
     compiler = _LazyMockModule("compiler")
-    compiler.disable = lambda *a, **kw: (lambda f: f)
-    compiler.enable = lambda *a, **kw: (lambda f: f)
+    compiler.disable = lambda *a, **kw: lambda f: f
+    compiler.enable = lambda *a, **kw: lambda f: f
     torch.compiler = compiler
 
     # torch.jit submodule
     jit = _LazyMockModule("jit")
     jit.script = lambda f: f
-    jit.trace = lambda *a, **kw: (lambda f: f)
+    jit.trace = lambda *a, **kw: lambda f: f
     jit.Final = type(
         "Final", (), {"__class_getitem__": classmethod(lambda cls, item: item)}
     )

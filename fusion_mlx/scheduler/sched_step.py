@@ -295,8 +295,7 @@ def step(self) -> SchedulerOutput:
             import traceback
 
             logger.warning(
-                f"Cache corruption detected: {e}, "
-                f"clearing cache and re-prefilling..."
+                f"Cache corruption detected: {e}, clearing cache and re-prefilling..."
             )
             logger.debug(f"Cache corruption traceback:\n{traceback.format_exc()}")
             # Full reset: clear batch generator, all caches, VLM state
@@ -310,9 +309,7 @@ def step(self) -> SchedulerOutput:
                         request_id=rid,
                         finished=True,
                         finish_reason="error",
-                        error=(
-                            f"Cache corruption not recoverable " f"after retries: {e}"
-                        ),
+                        error=(f"Cache corruption not recoverable after retries: {e}"),
                     )
                 )
                 output.finished_request_ids.add(rid)
@@ -328,9 +325,7 @@ def step(self) -> SchedulerOutput:
     except Exception as e:
         import traceback
 
-        logger.error(
-            f"Error in batch generation step: {e}\n" f"{traceback.format_exc()}"
-        )
+        logger.error(f"Error in batch generation step: {e}\n{traceback.format_exc()}")
         raise
 
     # Clear finished tracking for next step

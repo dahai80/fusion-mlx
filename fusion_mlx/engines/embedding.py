@@ -689,8 +689,7 @@ class MLXEmbeddingModel:
         status = "loaded" if self._loaded else "not loaded"
         impl = "native" if self._using_native else "mlx-embeddings"
         return (
-            f"<MLXEmbeddingModel model={self._model_name} "
-            f"status={status} impl={impl}>"
+            f"<MLXEmbeddingModel model={self._model_name} status={status} impl={impl}>"
         )
 
 

@@ -160,7 +160,7 @@ async def test_llama32_model():
                     content = result["choices"][0]["message"]["content"]
                     usage = result.get("usage", {})
 
-                    print(f"   ✅ {test['name']} ({end_time-start_time:.1f}s):")
+                    print(f"   ✅ {test['name']} ({end_time - start_time:.1f}s):")
                     print(f"   💬 Response: {content[:120]}...")
                     print(
                         f"   📊 Tokens: prompt={usage.get('prompt_tokens', 'N/A')}, completion={usage.get('completion_tokens', 'N/A')}"
@@ -288,7 +288,7 @@ async def test_llama32_model():
                                 continue
 
                     end_time = time.time()
-                    print(f"\n   ✅ Streaming completed ({end_time-start_time:.1f}s)")
+                    print(f"\n   ✅ Streaming completed ({end_time - start_time:.1f}s)")
                     print(f"   📊 Approximate words: {word_count}")
                 else:
                     print(f"   ❌ Streaming failed: {response.status_code}")

@@ -88,6 +88,6 @@ def test_longest_real_alias_does_not_overflow(capsys):
         ln for ln in out.splitlines() if ln.lstrip().startswith(longest_alias)
     )
     after_alias = data_line[2 + len(longest_alias) :]
-    assert after_alias.startswith(
-        " "
-    ), f"No padding between alias and Capabilities column for {longest_alias!r}"
+    assert after_alias.startswith(" "), (
+        f"No padding between alias and Capabilities column for {longest_alias!r}"
+    )

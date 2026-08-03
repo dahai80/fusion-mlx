@@ -66,9 +66,9 @@ def test_harmony_no_tools_recovers_reasoning_from_raw_text():
         "the engine-pre-cleaned cleaned_text has no channel markers, so "
         "the parser must be re-run on raw_text"
     )
-    assert (
-        "17 * 23" in reasoning
-    ), f"recovered reasoning is missing analysis-channel content: {reasoning!r}"
+    assert "17 * 23" in reasoning, (
+        f"recovered reasoning is missing analysis-channel content: {reasoning!r}"
+    )
     # cleaned_text retains the parser's final-channel extraction (or the
     # input cleaned_text if the parser produced no new cleaned value).
     assert cleaned and "391" in cleaned
@@ -620,9 +620,9 @@ def test_vibethinker_truncated_think_engine_routed_no_duplicate():
     assert reasoning == engine_reasoning
     # Content explicitly blanked — must NOT duplicate the trace
     # (the live-test bug signature).
-    assert (
-        not cleaned
-    ), f"truncated <think> trace leaked into engine-routed content: {cleaned!r}"
+    assert not cleaned, (
+        f"truncated <think> trace leaked into engine-routed content: {cleaned!r}"
+    )
 
 
 def test_engine_routed_closed_think_block_passes_through():
@@ -805,9 +805,9 @@ def test_qwen3_truncated_think_no_duplicate_content_reasoning():
     )
     assert reasoning is not None
     assert "Step 3" in reasoning
-    assert (
-        not cleaned
-    ), f"qwen3 truncated <think> trace leaked into content: {cleaned!r}"
+    assert not cleaned, (
+        f"qwen3 truncated <think> trace leaked into content: {cleaned!r}"
+    )
 
 
 def test_qwen3_truncated_think_with_enable_thinking_true():
@@ -843,9 +843,9 @@ def test_qwen3_engine_routed_truncated_think_no_duplicate():
         enable_thinking=None,
     )
     assert reasoning == engine_reasoning
-    assert (
-        not cleaned
-    ), f"qwen3 engine-routed truncated <think> trace leaked: {cleaned!r}"
+    assert not cleaned, (
+        f"qwen3 engine-routed truncated <think> trace leaked: {cleaned!r}"
+    )
 
 
 # ---------------------------------------------------------------------------

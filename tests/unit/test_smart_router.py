@@ -18,7 +18,6 @@ from fusion_mlx.dispatch.smart_router import (
 
 
 class TestSmartRouterDecide:
-
     def _make_router(self, **config_overrides):
         config = RouterConfig(**config_overrides)
         return SmartRouter(
@@ -184,7 +183,6 @@ class TestSmartRouterDecide:
 
 
 class TestSmartRouterRouteChat:
-
     @pytest.mark.asyncio
     async def test_circuit_breaker_on_success(self):
         llm = AsyncMock()
@@ -228,7 +226,6 @@ class TestSmartRouterRouteChat:
 
 
 class TestSmartRouterTokenEstimation:
-
     def test_cjk_heavy_text(self):
         router = SmartRouter(llm_engine=AsyncMock())
         messages = [{"role": "user", "content": "这是一个中文测试文本"}]
@@ -268,7 +265,6 @@ class TestSmartRouterTokenEstimation:
 
 
 class TestSmartRouterStats:
-
     def test_reset_stats_with_lock(self):
         router = SmartRouter(llm_engine=AsyncMock())
         router._route_count["mlx"] = 10
@@ -289,7 +285,6 @@ class TestSmartRouterStats:
 
 
 class TestSmartRouterPriorityResolution:
-
     def test_claude_code_is_realtime(self):
         router = SmartRouter(llm_engine=AsyncMock())
         p = router._resolve_priority("claude_code")
@@ -313,7 +308,6 @@ class TestSmartRouterPriorityResolution:
 
 
 class TestPhaseHandoff:
-
     def test_handoff_creation(self):
         h = PhaseHandoff(
             request_id="r1",
@@ -331,7 +325,6 @@ class TestPhaseHandoff:
 
 
 class TestRouteDecision:
-
     def test_unified_backend(self):
         d = RouteDecision(
             prefill_backend=EngineBackend.MLX,

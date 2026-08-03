@@ -34,7 +34,7 @@ async def test_embedding_discovery():
                 if models:
                     print("   📦 Top embedding models:")
                     for i, model in enumerate(models[:5]):
-                        print(f"      {i+1}. {model['id']}")
+                        print(f"      {i + 1}. {model['id']}")
                         print(f"         Downloads: {model['downloads']:,}")
                         print(f"         Type: {model['model_type']}")
                         print(f"         Size: {model.get('size_gb', 'Unknown')}GB")
@@ -202,9 +202,7 @@ async def test_embedding_discovery():
                     print(f"   📄 Response: {embedding_response.text}")
 
             else:
-                print(
-                    f"   ⚠️  Could not load {test_model}: {load_response.status_code}"
-                )
+                print(f"   ⚠️  Could not load {test_model}: {load_response.status_code}")
                 print("   💡 This is expected if the model is not available")
 
         except Exception as e:
@@ -226,7 +224,7 @@ async def test_embedding_discovery():
                 models = data.get("models", [])
 
                 print(
-                    f"   ⚡ Discovery speed: {end_time-start_time:.2f}s for {len(models)} models"
+                    f"   ⚡ Discovery speed: {end_time - start_time:.2f}s for {len(models)} models"
                 )
                 print(
                     f"   📊 Pipeline filter efficiency: {'✅ Direct MLX filter' if len(models) > 0 else '⚠️ Limited results'}"

@@ -1756,13 +1756,10 @@ def _measure_sensitivity_from_quantized_model(
                     apply_mlx_vlm_mtp_runtime_patch()
                     prev_active = is_mtp_active()
                     set_mtp_active(True)
-                    restore_mtp_active = lambda: set_mtp_active(
-                        prev_active
-                    )  # noqa: E731
+                    restore_mtp_active = lambda: set_mtp_active(prev_active)  # noqa: E731
                 except Exception as e:
                     logger.debug(
-                        "mlx-vlm MTP runtime patch skipped for proxy sensitivity: "
-                        f"{e}"
+                        f"mlx-vlm MTP runtime patch skipped for proxy sensitivity: {e}"
                     )
 
             from mlx_lm.tokenizer_utils import load as load_tokenizer

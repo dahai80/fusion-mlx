@@ -224,7 +224,6 @@ def _shift_segment_time(seg: Any, offset: float) -> None:
 
 
 class STTEngine:
-
     def __init__(
         self,
         model_name: str = DEFAULT_WHISPER_MODEL,

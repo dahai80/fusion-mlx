@@ -30,8 +30,7 @@ def load_image(url_or_base64: str) -> Image.Image:
             "data: URI or a local file path"
         )
         raise ValueError(
-            "Remote image URLs are not supported; use a data: URI or a "
-            "local file path"
+            "Remote image URLs are not supported; use a data: URI or a local file path"
         )
     else:
         img = Image.open(url_or_base64)

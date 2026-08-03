@@ -10,7 +10,6 @@ _MIN_INTERVAL = 10.0
 
 
 class CacheRateTracker:
-
     def __init__(
         self,
         max_snapshots: int = _MAX_SNAPSHOTS,

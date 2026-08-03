@@ -41,7 +41,6 @@ def _linear_dtype(layer) -> mx.Dtype:
 
 
 class WanRMSNorm(nn.Module):
-
     def __init__(self, dim: int, eps: float = 1e-5):
         super().__init__()
         self.eps = eps
@@ -52,7 +51,6 @@ class WanRMSNorm(nn.Module):
 
 
 class WanLayerNorm(nn.Module):
-
     def __init__(self, dim: int, eps: float = 1e-6, elementwise_affine: bool = False):
         super().__init__()
         self.eps = eps
@@ -69,7 +67,6 @@ class WanLayerNorm(nn.Module):
 
 
 class WanSelfAttention(nn.Module):
-
     def __init__(
         self,
         dim: int,
@@ -163,7 +160,6 @@ class WanSelfAttention(nn.Module):
 
 
 class WanCrossAttention(nn.Module):
-
     def __init__(
         self,
         dim: int,

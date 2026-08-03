@@ -603,7 +603,9 @@ async def _run_chat(
                         _usage.prompt_tokens_details.cached_tokens = _scaled.get(
                             "prompt_tokens_details", {}
                         ).get("cached_tokens", 0)
-                    _usage.total_tokens = _usage.prompt_tokens + _usage.completion_tokens
+                    _usage.total_tokens = (
+                        _usage.prompt_tokens + _usage.completion_tokens
+                    )
                     logger.info(
                         "OpenAI context scaling: model_ctx=%d target=%d factor=%.4f",
                         _model_ctx,
@@ -1199,7 +1201,7 @@ async def chat_completions(
         c = getattr(last_msg, "content", "") if last_msg else ""
         prompt_preview = str(c)[:120] if c else ""
     logger.info(
-        "OpenAI /chat: model=%s, stream=%s, max_tokens=%s, " "temp=%s, prompt=%r",
+        "OpenAI /chat: model=%s, stream=%s, max_tokens=%s, temp=%s, prompt=%r",
         request.model,
         request.stream,
         getattr(request, "max_tokens", None),

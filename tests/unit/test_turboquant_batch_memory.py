@@ -191,9 +191,9 @@ def _metrics():
 def test_batch_tq_coherent_and_tracks_single():
     m = _metrics()
     for i in range(len(m["lens"])):
-        assert (
-            len(m["batch_tq"].get(f"batch-{i}", [])) >= 5
-        ), f"batch req {i} degenerate"
+        assert len(m["batch_tq"].get(f"batch-{i}", [])) >= 5, (
+            f"batch req {i} degenerate"
+        )
     assert max(m["matches"]) >= 50.0, f"no request tracked single-seq: {m['matches']}"
 
 
@@ -206,9 +206,9 @@ def test_occupancy_tq_below_fp16():
 def test_batch_occupancy_beats_fp16_and_pad_nonnegative():
     m = _metrics()
     # same lengths, so the batch saving equals the per-token ratio (<0.6)
-    assert (
-        m["batch_bytes_tq"] < 0.6 * m["batch_bytes_fp16"]
-    ), "batch TQ not saving vs fp16"
+    assert m["batch_bytes_tq"] < 0.6 * m["batch_bytes_fp16"], (
+        "batch TQ not saving vs fp16"
+    )
     assert m["pad_waste"] >= 0
 
 
@@ -235,23 +235,23 @@ def _write_report(m, path="tq_batch_memory.md"):
         f"| fp16 bytes/token | {m['bpt_fp16']:,.0f} B |",
         f"| TQ bytes/token | {m['bpt_tq']:,.0f} B |",
         f"| TQ / fp16 ratio | {ratio:.3f}x |",
-        f"| batch(B={nb}) TQ bytes | {m['batch_bytes_tq']/kb:,.0f} KB |",
-        f"| batch(B={nb}) fp16 bytes | {m['batch_bytes_fp16']/kb:,.0f} KB |",
-        f"| batch TQ / fp16 (same lengths) | {m['batch_bytes_tq']/m['batch_bytes_fp16']:.3f}x |",
-        f"| left-padding waste | {m['pad_waste']/kb:,.1f} KB ({100*m['pad_waste']/m['batch_bytes_tq']:.0f}% of batch) |\n",
+        f"| batch(B={nb}) TQ bytes | {m['batch_bytes_tq'] / kb:,.0f} KB |",
+        f"| batch(B={nb}) fp16 bytes | {m['batch_bytes_fp16'] / kb:,.0f} KB |",
+        f"| batch TQ / fp16 (same lengths) | {m['batch_bytes_tq'] / m['batch_bytes_fp16']:.3f}x |",
+        f"| left-padding waste | {m['pad_waste'] / kb:,.1f} KB ({100 * m['pad_waste'] / m['batch_bytes_tq']:.0f}% of batch) |\n",
         f"## Projected KV at {proj_ctx}-token context, B={nb} (where KV dominates)\n",
         "| | total KV |",
         "|---|---:|",
         f"| fp16 | {proj_fp16:.2f} GB |",
         f"| TQ | {proj_tq:.2f} GB |",
-        f"| saved | {proj_fp16 - proj_tq:.2f} GB ({100*(1-proj_tq/proj_fp16):.0f}%) |\n",
+        f"| saved | {proj_fp16 - proj_tq:.2f} GB ({100 * (1 - proj_tq / proj_fp16):.0f}%) |\n",
         "## Peak memory, live decode (short prompts → weights dominate)\n",
         "| scenario | peak |",
         "|---|---:|",
-        f"| single-seq fp16 | {m['peak_single_fp']/gb:.3f} GB |",
-        f"| single-seq TQ | {m['peak_single_tq']/gb:.3f} GB |",
-        f"| batch fp16 | {m['peak_batch_fp']/gb:.3f} GB |",
-        f"| batch TQ | {m['peak_batch_tq']/gb:.3f} GB |",
+        f"| single-seq fp16 | {m['peak_single_fp'] / gb:.3f} GB |",
+        f"| single-seq TQ | {m['peak_single_tq'] / gb:.3f} GB |",
+        f"| batch fp16 | {m['peak_batch_fp'] / gb:.3f} GB |",
+        f"| batch TQ | {m['peak_batch_tq'] / gb:.3f} GB |",
         "",
         "_Note: at short context the 1B model weights (~0.7 GB) dominate peak;_",
         "_TQ's win shows in the projected long-context KV above. B>1 decode now_",

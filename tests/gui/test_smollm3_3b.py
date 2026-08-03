@@ -125,7 +125,7 @@ async def test_smollm3_model():
                     result = response.json()
                     content = result["choices"][0]["message"]["content"]
                     print(
-                        f"   ✅ {test['language']} response ({end_time-start_time:.1f}s):"
+                        f"   ✅ {test['language']} response ({end_time - start_time:.1f}s):"
                     )
                     print(f"   💬 {content[:100]}...")
                     print(f"   📊 Tokens: {result.get('usage', {})}")

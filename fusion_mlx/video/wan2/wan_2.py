@@ -25,7 +25,6 @@ def sinusoidal_embedding_1d(dim: int, position: mx.array) -> mx.array:
 
 
 class Head(nn.Module):
-
     def __init__(self, dim: int, out_dim: int, patch_size: tuple, eps: float = 1e-6):
         super().__init__()
         self.out_dim = out_dim
@@ -50,7 +49,6 @@ class Head(nn.Module):
 
 
 class WanModel(nn.Module):
-
     def __init__(self, config: WanModelConfig):
         super().__init__()
         self.config = config
@@ -289,17 +287,17 @@ class WanModel(nn.Module):
                 nk = nk.replace(".ffn.2.", ".ffn.fc2.")
             # text_embedding: .0 -> _0, .2 -> _1
             elif nk.startswith("text_embedding.0."):
-                nk = f"text_embedding_0.{nk[len('text_embedding.0.'):]}"
+                nk = f"text_embedding_0.{nk[len('text_embedding.0.') :]}"
             elif nk.startswith("text_embedding.2."):
-                nk = f"text_embedding_1.{nk[len('text_embedding.2.'):]}"
+                nk = f"text_embedding_1.{nk[len('text_embedding.2.') :]}"
             # time_embedding: .0 -> _0, .2 -> _1
             elif nk.startswith("time_embedding.0."):
-                nk = f"time_embedding_0.{nk[len('time_embedding.0.'):]}"
+                nk = f"time_embedding_0.{nk[len('time_embedding.0.') :]}"
             elif nk.startswith("time_embedding.2."):
-                nk = f"time_embedding_1.{nk[len('time_embedding.2.'):]}"
+                nk = f"time_embedding_1.{nk[len('time_embedding.2.') :]}"
             # time_projection: .1 -> direct (skip act layer at index 0)
             elif nk.startswith("time_projection.1."):
-                nk = f"time_projection.{nk[len('time_projection.1.'):]}"
+                nk = f"time_projection.{nk[len('time_projection.1.') :]}"
             # Skip activation layers that have no parameters
             if nk != k:
                 logger.debug("sanitize remap: %s -> %s", k, nk)

@@ -11,7 +11,6 @@ from fusion_mlx.model_aliases import resolve_model, resolve_profile
 
 
 class TestResolveModel(unittest.TestCase):
-
     def test_known_alias_resolves(self):
         # README 声明的别名
         result = resolve_model("gpt-4o")
@@ -35,7 +34,6 @@ class TestResolveModel(unittest.TestCase):
 
 
 class TestResolveProfile(unittest.TestCase):
-
     def test_known_profile(self):
         # 尝试已知 profile 名
         result = resolve_profile("gpt-4o")

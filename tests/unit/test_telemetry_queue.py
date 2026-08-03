@@ -216,9 +216,9 @@ def test_start_clears_shutdown_latch_for_restart():
     q.start()
     q.enqueue({"a": 2})
     q.shutdown(timeout=1.0)
-    assert [e["a"] for e in captured] == [
-        2
-    ], "second lifecycle did not drain -- shutdown latch leaked across start()"
+    assert [e["a"] for e in captured] == [2], (
+        "second lifecycle did not drain -- shutdown latch leaked across start()"
+    )
 
 
 def test_start_preserves_wake_for_events_enqueued_pre_start():
@@ -267,9 +267,9 @@ def test_concurrent_start_does_not_spawn_duplicate_daemons():
         t.join(timeout=2.0)
 
     named = [t for t in threading.enumerate() if t.name == "fusion-mlx-telemetry"]
-    assert (
-        len(named) == 1
-    ), f"concurrent start() spawned {len(named)} daemons (want exactly 1)"
+    assert len(named) == 1, (
+        f"concurrent start() spawned {len(named)} daemons (want exactly 1)"
+    )
     q.shutdown(timeout=0.5)
 
 

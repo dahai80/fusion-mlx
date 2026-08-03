@@ -141,9 +141,9 @@ def get_fractional_positions(
     max_pos: list[int],
 ) -> mx.array:
     n_pos_dims = indices_grid.shape[1]
-    assert n_pos_dims == len(
-        max_pos
-    ), f"Number of position dimensions ({n_pos_dims}) must match max_pos length ({len(max_pos)})"
+    assert n_pos_dims == len(max_pos), (
+        f"Number of position dimensions ({n_pos_dims}) must match max_pos length ({len(max_pos)})"
+    )
 
     fractional_positions = []
     for i in range(n_pos_dims):

@@ -559,12 +559,12 @@ def test_c08_no_phantom_text_block_on_thinking_max_tokens_truncation():
         ",",
         " the",
     ], "thinking bytes must reach the wire as thinking_delta events"
-    assert (
-        text_chunks == []
-    ), "no text_delta may be emitted — phantom re-encoding regression"
-    assert (
-        "text" not in block_types
-    ), "no fresh text content_block may open after the thinking close"
+    assert text_chunks == [], (
+        "no text_delta may be emitted — phantom re-encoding regression"
+    )
+    assert "text" not in block_types, (
+        "no fresh text content_block may open after the thinking close"
+    )
     message_delta = next(d for _, d in events if d.get("type") == "message_delta")
     assert message_delta["delta"]["stop_reason"] == "max_tokens", (
         "route must latch the terminal finish_reason='length' chunk before "

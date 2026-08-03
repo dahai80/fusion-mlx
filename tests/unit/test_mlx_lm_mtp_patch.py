@@ -1587,9 +1587,9 @@ class TestMTPPatchSelfHealing:
             )
         except TypeError as e:
             # Must not be the n_confirmed signature error.
-            assert "n_confirmed" not in str(
-                e
-            ), f"signature still rejects n_confirmed: {e}"
+            assert "n_confirmed" not in str(e), (
+                f"signature still rejects n_confirmed: {e}"
+            )
         except Exception:
             # Any other error is fine — body needs real tensors.
             pass
@@ -1643,8 +1643,7 @@ class TestMTPPatchSelfHealing:
         # (has our marker attribute set in the new implementation).
         current_call = GatedDeltaNet.__dict__.get("__call__")
         assert getattr(current_call, "_fusion_mlx_mtp_call_marker", False), (
-            "__call__ should carry the MTP marker after re-apply, "
-            f"got {current_call!r}"
+            f"__call__ should carry the MTP marker after re-apply, got {current_call!r}"
         )
 
 

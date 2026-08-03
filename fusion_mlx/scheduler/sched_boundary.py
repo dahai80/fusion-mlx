@@ -137,8 +137,7 @@ def _detect_boundary_snapshot_need(self) -> bool:
 
     if self._boundary_snapshot_required:
         logger.info(
-            "Enabled boundary cache snapshots for stateful non-sliceable "
-            "cache layers"
+            "Enabled boundary cache snapshots for stateful non-sliceable cache layers"
         )
     else:
         logger.debug(
@@ -224,9 +223,9 @@ def _maybe_capture_boundary_snapshot(self, request: Request, uid: int) -> None:
         if saved:
             self._boundary_cache_snapshots[request.request_id][total_tokens] = None
         else:
-            self._boundary_cache_snapshots[request.request_id][
-                total_tokens
-            ] = snapshot_cache
+            self._boundary_cache_snapshots[request.request_id][total_tokens] = (
+                snapshot_cache
+            )
         # Cross-restart prefix persistence (issue #257): persist a prefix-keyed
         # snapshot so a future request or a restart with the same prompt prefix
         # can warm-start without re-prefilling. VLM image requests are skipped
@@ -250,9 +249,9 @@ def _maybe_capture_boundary_snapshot(self, request: Request, uid: int) -> None:
                     self.config.model_name,
                 )
     else:
-        self._boundary_cache_snapshots[request.request_id][
-            total_tokens
-        ] = snapshot_cache
+        self._boundary_cache_snapshots[request.request_id][total_tokens] = (
+            snapshot_cache
+        )
 
     logger.debug(
         f"Captured boundary cache snapshot for {request.request_id} at "

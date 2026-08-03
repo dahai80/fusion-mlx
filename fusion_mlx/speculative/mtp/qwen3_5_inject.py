@@ -225,7 +225,6 @@ def inject_mtp_support(
     original_class = type(inner)
 
     class _Qwen3_5WithMTP(original_class):  # type: ignore[valid-type, misc]
-
         def __call__(  # type: ignore[override]
             self,
             inputs,

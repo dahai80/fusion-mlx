@@ -36,10 +36,7 @@ class OpenClawIntegration(Integration):
     def get_command(
         self, port: int, api_key: str, model: str, host: str = "127.0.0.1"
     ) -> str:
-        return (
-            f"{get_cli_prefix()} "
-            f"launch openclaw --model {model or 'select-a-model'}"
-        )
+        return f"{get_cli_prefix()} launch openclaw --model {model or 'select-a-model'}"
 
     def configure(
         self,

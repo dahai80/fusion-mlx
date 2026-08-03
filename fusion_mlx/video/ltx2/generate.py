@@ -444,7 +444,6 @@ def generate_video(
             # Phase-2: session tail→first-frame reuse (skip VAE encode on hit)
             session_tail_hit = False
             if session_id is not None:
-
                 tail = get_session_tail(session_id, model_repo)
                 if tail is not None:
                     t_h, t_w = tail.shape[3], tail.shape[4]
@@ -682,7 +681,6 @@ def generate_video(
 
         # Phase-2: capture tail-frame latent for multi-shot session reuse
         if session_id is not None:
-
             tail = latents[:, :, -1:, :, :]
             put_session_tail(session_id, model_repo, tail)
 
@@ -847,7 +845,6 @@ def generate_video(
 
         # Phase-2: capture tail-frame latent for multi-shot session reuse
         if session_id is not None:
-
             tail = latents[:, :, -1:, :, :]
             put_session_tail(session_id, model_repo, tail)
 
@@ -862,7 +859,6 @@ def generate_video(
             # Phase-2: session tail→first-frame reuse (skip VAE encode on hit)
             session_tail_hit = False
             if session_id is not None:
-
                 tail = get_session_tail(session_id, model_repo)
                 if tail is not None:
                     t_h, t_w = tail.shape[3], tail.shape[4]
@@ -1139,7 +1135,6 @@ def generate_video(
 
         # Phase-2: capture tail-frame latent for multi-shot session reuse
         if session_id is not None:
-
             tail = latents[:, :, -1:, :, :]
             put_session_tail(session_id, model_repo, tail)
 
@@ -1162,7 +1157,6 @@ def generate_video(
             # Phase-2: session tail→first-frame reuse (skip VAE encode on hit)
             session_tail_hit = False
             if session_id is not None:
-
                 tail = get_session_tail(session_id, model_repo)
                 if tail is not None:
                     t_h, t_w = tail.shape[3], tail.shape[4]
@@ -1462,7 +1456,6 @@ def generate_video(
 
         # Phase-2: capture tail-frame latent for multi-shot session reuse
         if session_id is not None:
-
             tail = latents[:, :, -1:, :, :]
             put_session_tail(session_id, model_repo, tail)
 

@@ -92,9 +92,9 @@ def generate_video(
 
     pipeline_str = "Image-to-Video" if is_i2v else "Text-to-Video"
     variant = "5B" if config.num_attention_heads > 30 else "2B"
-    print(f"{Colors.CYAN}{'='*60}")
+    print(f"{Colors.CYAN}{'=' * 60}")
     print(f"  CogVideoX-{variant} {pipeline_str} Generation (MLX)")
-    print(f"{'='*60}{Colors.RESET}")
+    print(f"{'=' * 60}{Colors.RESET}")
     print(f"{Colors.DIM}  Prompt: {prompt}")
     print(f"  Size: {width}x{height}, Frames: {num_frames}")
     print(f"  Steps: {steps}, Guide: {guide_scale}, Shift: {shift}")

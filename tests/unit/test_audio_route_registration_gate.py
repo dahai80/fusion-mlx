@@ -760,9 +760,9 @@ class TestCliServeCommandWiresEnableAudioFlag:
             for attr, value in cfg_snapshot.items():
                 setattr(cfg, attr, value)
 
-        assert (
-            "load_model" in call_order
-        ), f"load_model was not invoked by serve_command; call order: {call_order}"
+        assert "load_model" in call_order, (
+            f"load_model was not invoked by serve_command; call order: {call_order}"
+        )
         assert "register_hook" in call_order, (
             f"register_audio_routes_if_enabled was not invoked by "
             f"serve_command; call order: {call_order}"
@@ -772,13 +772,13 @@ class TestCliServeCommandWiresEnableAudioFlag:
         # the inline call inside it doesn't run, so the explicit
         # serve_command call site is the ONE that fires — and it must
         # come AFTER load_model.
-        assert call_order.index("load_model") < call_order.index(
-            "register_hook"
-        ), f"register_hook ran BEFORE load_model — wrong order: {call_order}"
+        assert call_order.index("load_model") < call_order.index("register_hook"), (
+            f"register_hook ran BEFORE load_model — wrong order: {call_order}"
+        )
         if "uvicorn" in call_order:
-            assert call_order.index("register_hook") < call_order.index(
-                "uvicorn"
-            ), f"register_hook must run BEFORE uvicorn; call order: {call_order}"
+            assert call_order.index("register_hook") < call_order.index("uvicorn"), (
+                f"register_hook must run BEFORE uvicorn; call order: {call_order}"
+            )
 
     def test_load_model_invokes_register_hook(self, monkeypatch):
         """``load_model`` is the SHARED loader between

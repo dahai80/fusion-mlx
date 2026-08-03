@@ -323,7 +323,7 @@ def _build_audio_detection_sets():
         stt -= _LLM_TYPE_COLLISIONS
 
         logger.debug(
-            "Audio detection sets loaded from mlx-audio: " "STT=%d, TTS=%d, STS=%d",
+            "Audio detection sets loaded from mlx-audio: STT=%d, TTS=%d, STS=%d",
             len(stt),
             len(tts),
             len(sts),
@@ -1086,7 +1086,7 @@ def model_directory_access_error(path: Path) -> str | None:
             return f"Model directory is not a directory: {path}"
         next(path.iterdir(), None)
     except OSError as e:
-        return f"Model directory is not readable: {path} " f"({type(e).__name__}: {e})"
+        return f"Model directory is not readable: {path} ({type(e).__name__}: {e})"
     return None
 
 
@@ -1101,7 +1101,7 @@ def model_directory_write_error(path: Path, *, create: bool = False) -> str | No
         if not path.is_dir():
             return f"Model directory is not a directory: {path}"
     except OSError as e:
-        return f"Model directory is not writable: {path} " f"({type(e).__name__}: {e})"
+        return f"Model directory is not writable: {path} ({type(e).__name__}: {e})"
 
     access_error = model_directory_access_error(path)
     if access_error is not None:
@@ -1116,7 +1116,7 @@ def model_directory_write_error(path: Path, *, create: bool = False) -> str | No
             f.write(b"")
             f.flush()
     except OSError as e:
-        return f"Model directory is not writable: {path} " f"({type(e).__name__}: {e})"
+        return f"Model directory is not writable: {path} ({type(e).__name__}: {e})"
 
     return None
 

@@ -166,9 +166,9 @@ def test_r2v_config_t2v_cross_attn_no_image_proj():
 
     from fusion_mlx.video.skyreels_v3.convert_skyreels_v3 import MODEL_TYPES
 
-    assert (
-        MODEL_TYPES["r2v_14b"]["cross_attn_type"] == "t2v_cross_attn"
-    ), "r2v_14b MODEL_TYPES 必须用 t2v_cross_attn (源权重无 k_img/v_img/norm_k_img)"
+    assert MODEL_TYPES["r2v_14b"]["cross_attn_type"] == "t2v_cross_attn", (
+        "r2v_14b MODEL_TYPES 必须用 t2v_cross_attn (源权重无 k_img/v_img/norm_k_img)"
+    )
 
     def _leaves(model):
         # tree_flatten 已返回点分路径字符串, 直接取 str(path)

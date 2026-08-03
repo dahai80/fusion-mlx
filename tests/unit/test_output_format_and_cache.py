@@ -337,9 +337,9 @@ class TestT5Dtype:
         except Exception:
             pass
 
-        assert (
-            mx.bfloat16 in captured_dtypes
-        ), f"Expected bfloat16 cast, got {captured_dtypes}"
+        assert mx.bfloat16 in captured_dtypes, (
+            f"Expected bfloat16 cast, got {captured_dtypes}"
+        )
 
     def test_env_override_float32(self, monkeypatch):
         import mlx.core as mx
@@ -374,9 +374,9 @@ class TestT5Dtype:
         except Exception:
             pass
 
-        assert (
-            mx.float32 in captured_dtypes
-        ), f"Expected float32 cast, got {captured_dtypes}"
+        assert mx.float32 in captured_dtypes, (
+            f"Expected float32 cast, got {captured_dtypes}"
+        )
 
     def test_explicit_dtype_overrides_env(self, monkeypatch):
         import mlx.core as mx
@@ -411,9 +411,9 @@ class TestT5Dtype:
         except Exception:
             pass
 
-        assert (
-            mx.bfloat16 in captured_dtypes
-        ), f"Expected bf16 cast, got {captured_dtypes}"
+        assert mx.bfloat16 in captured_dtypes, (
+            f"Expected bf16 cast, got {captured_dtypes}"
+        )
 
     def test_backward_compat_no_dtype_arg(self, monkeypatch):
         from fusion_mlx.video.wan2.utils import load_t5_encoder

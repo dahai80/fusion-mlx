@@ -252,16 +252,19 @@ async def api_generate(
                         text = delta.get("content", "")
                         if text:
                             accumulated += text
-                            yield json.dumps(
-                                {
-                                    "model": request.model,
-                                    "created_at": time.strftime(
-                                        "%Y-%m-%dT%H:%M:%S.000000Z", time.gmtime()
-                                    ),
-                                    "response": text,
-                                    "done": False,
-                                }
-                            ) + "\n"
+                            yield (
+                                json.dumps(
+                                    {
+                                        "model": request.model,
+                                        "created_at": time.strftime(
+                                            "%Y-%m-%dT%H:%M:%S.000000Z", time.gmtime()
+                                        ),
+                                        "response": text,
+                                        "done": False,
+                                    }
+                                )
+                                + "\n"
+                            )
                         usage_chunk = data.get("usage")
                         if usage_chunk:
                             eval_count = usage_chunk.get(
@@ -276,22 +279,27 @@ async def api_generate(
                 yield chunk
                 continue
 
-        yield json.dumps(
-            {
-                "model": request.model,
-                "created_at": time.strftime("%Y-%m-%dT%H:%M:%S.000000Z", time.gmtime()),
-                "response": "",
-                "done": True,
-                "done_reason": "stop",
-                "context": [],
-                "total_duration": 0,
-                "load_duration": 0,
-                "prompt_eval_count": prompt_eval_count,
-                "prompt_eval_duration": 0,
-                "eval_count": eval_count,
-                "eval_duration": 0,
-            }
-        ) + "\n"
+        yield (
+            json.dumps(
+                {
+                    "model": request.model,
+                    "created_at": time.strftime(
+                        "%Y-%m-%dT%H:%M:%S.000000Z", time.gmtime()
+                    ),
+                    "response": "",
+                    "done": True,
+                    "done_reason": "stop",
+                    "context": [],
+                    "total_duration": 0,
+                    "load_duration": 0,
+                    "prompt_eval_count": prompt_eval_count,
+                    "prompt_eval_duration": 0,
+                    "eval_count": eval_count,
+                    "eval_duration": 0,
+                }
+            )
+            + "\n"
+        )
 
     return StreamingResponse(
         _stream_generate(),
@@ -356,16 +364,22 @@ async def api_chat(
                         delta = c.get("delta", {})
                         text = delta.get("content", "")
                         if text:
-                            yield json.dumps(
-                                {
-                                    "model": request.model,
-                                    "created_at": time.strftime(
-                                        "%Y-%m-%dT%H:%M:%S.000000Z", time.gmtime()
-                                    ),
-                                    "message": {"role": "assistant", "content": text},
-                                    "done": False,
-                                }
-                            ) + "\n"
+                            yield (
+                                json.dumps(
+                                    {
+                                        "model": request.model,
+                                        "created_at": time.strftime(
+                                            "%Y-%m-%dT%H:%M:%S.000000Z", time.gmtime()
+                                        ),
+                                        "message": {
+                                            "role": "assistant",
+                                            "content": text,
+                                        },
+                                        "done": False,
+                                    }
+                                )
+                                + "\n"
+                            )
                         usage_chunk = data.get("usage")
                         if usage_chunk:
                             eval_count = usage_chunk.get(
@@ -380,21 +394,26 @@ async def api_chat(
                 yield chunk
                 continue
 
-        yield json.dumps(
-            {
-                "model": request.model,
-                "created_at": time.strftime("%Y-%m-%dT%H:%M:%S.000000Z", time.gmtime()),
-                "message": {"role": "assistant", "content": ""},
-                "done": True,
-                "done_reason": "stop",
-                "total_duration": 0,
-                "load_duration": 0,
-                "prompt_eval_count": prompt_eval_count,
-                "prompt_eval_duration": 0,
-                "eval_count": eval_count,
-                "eval_duration": 0,
-            }
-        ) + "\n"
+        yield (
+            json.dumps(
+                {
+                    "model": request.model,
+                    "created_at": time.strftime(
+                        "%Y-%m-%dT%H:%M:%S.000000Z", time.gmtime()
+                    ),
+                    "message": {"role": "assistant", "content": ""},
+                    "done": True,
+                    "done_reason": "stop",
+                    "total_duration": 0,
+                    "load_duration": 0,
+                    "prompt_eval_count": prompt_eval_count,
+                    "prompt_eval_duration": 0,
+                    "eval_count": eval_count,
+                    "eval_duration": 0,
+                }
+            )
+            + "\n"
+        )
 
     return StreamingResponse(
         _stream_chat(),

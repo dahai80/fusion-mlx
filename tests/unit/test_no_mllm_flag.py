@@ -280,9 +280,9 @@ def test_load_model_alias_resolver_handles_every_import_shape():
     bare = "load_model('q')\n"
     tree = ast.parse(bare)
     direct, module, pkg = _load_model_aliases_in_tree(tree)
-    assert (
-        not direct and not module and not pkg
-    ), "load_model without an import is NOT our entrypoint."
+    assert not direct and not module and not pkg, (
+        "load_model without an import is NOT our entrypoint."
+    )
 
 
 def test_no_star_imports_from_vllm_mlx_server():
@@ -349,9 +349,9 @@ def test_force_text_is_keyword_only_in_load_model():
     from fusion_mlx.engine.batched import BatchedEngine
 
     sig = inspect.signature(BatchedEngine.__init__)
-    assert (
-        sig.parameters["force_text"].kind == inspect.Parameter.KEYWORD_ONLY
-    ), "BatchedEngine.__init__ force_text must be KEYWORD_ONLY too."
+    assert sig.parameters["force_text"].kind == inspect.Parameter.KEYWORD_ONLY, (
+        "BatchedEngine.__init__ force_text must be KEYWORD_ONLY too."
+    )
 
 
 def _flag_in_add_argument_calls(source: str, flag: str) -> bool:
@@ -2163,9 +2163,9 @@ def test_routing_override_kwargs_are_keyword_only_in_load_model():
             f"load_model({kwarg}=...) must be KEYWORD_ONLY to preserve "
             "positional-arg compatibility. See codex R2 on PR #407."
         )
-        assert (
-            batched_sig.parameters[kwarg].kind == inspect.Parameter.KEYWORD_ONLY
-        ), f"BatchedEngine.__init__({kwarg}=...) must be KEYWORD_ONLY too."
+        assert batched_sig.parameters[kwarg].kind == inspect.Parameter.KEYWORD_ONLY, (
+            f"BatchedEngine.__init__({kwarg}=...) must be KEYWORD_ONLY too."
+        )
 
 
 def _make_engine_core_for_override_test(monkeypatch, cfg, *, base=None):

@@ -61,7 +61,7 @@ class MMLUProBenchmark(BaseBenchmark):
         labels = item["labels"]
 
         parts = [
-            "Answer the following question. " "Answer with just the letter.\n",
+            "Answer the following question. Answer with just the letter.\n",
             f"Question: {question}\n",
         ]
         for label, choice in zip(labels, choices):

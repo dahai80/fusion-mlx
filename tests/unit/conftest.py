@@ -896,7 +896,7 @@ def _disable_mcp_auto_discover(monkeypatch):
     """Disable MCP auto-discovery in tests so results are deterministic."""
     monkeypatch.setenv("FUSION_MLX_MCP_AUTO_DISCOVER", "0")
     try:
-        from fusion_mlx.mcp.security import ALLOWED_COMMANDS, MCPCommandValidator
+        from fusion_mlx.mcp.security import ALLOWED_COMMANDS
 
         _test_commands = {"x", "y", "nonexistent"}
         monkeypatch.setattr(
@@ -912,9 +912,7 @@ def _disable_mcp_auto_discover(monkeypatch):
             return _orig_which(cmd, **kw)
 
         monkeypatch.setattr("shutil.which", _fake_which)
-        monkeypatch.setattr(
-            "fusion_mlx.mcp.security.shutil.which", _fake_which
-        )
+        monkeypatch.setattr("fusion_mlx.mcp.security.shutil.which", _fake_which)
     except Exception:
         pass
     yield
@@ -948,8 +946,8 @@ def _add_more_stubs():
         from fusion_mlx.api import anthropic_adapter
 
         if not hasattr(anthropic_adapter, "to_anthropic_tool_use_id"):
-            anthropic_adapter.to_anthropic_tool_use_id = (
-                lambda *a, **k: f"toolu_{id(a[0]) if a else 0}"
+            anthropic_adapter.to_anthropic_tool_use_id = lambda *a, **k: (
+                f"toolu_{id(a[0]) if a else 0}"
             )
     except Exception:
         pass

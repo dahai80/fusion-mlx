@@ -150,9 +150,9 @@ def test_v4_all_blocks_stored_with_snapshots(mx):
     )
 
     assert result is not None
-    assert (
-        len(result.block_ids) == num_blocks
-    ), f"expected {num_blocks} blocks, got {len(result.block_ids)}"
+    assert len(result.block_ids) == num_blocks, (
+        f"expected {num_blocks} blocks, got {len(result.block_ids)}"
+    )
     assert mock_ssd.save_block.call_count == num_blocks
 
 
@@ -180,9 +180,9 @@ def test_continuity_check_still_blocks_when_no_snapshot(mx):
     assert result is not None
     # Block 0 [0:4] passes (cache_start=0 < 4). Block 1 [4:8] fails
     # (cache_start=4 >= 4). Stop.
-    assert (
-        len(result.block_ids) == 1
-    ), f"expected continuity break after 1 block, got {len(result.block_ids)}"
+    assert len(result.block_ids) == 1, (
+        f"expected continuity break after 1 block, got {len(result.block_ids)}"
+    )
 
 
 def test_kvcache_only_unaffected(mx):

@@ -705,8 +705,7 @@ def truncate_tool_result(
     )
 
     notice = (
-        f'\n\n<truncated total_tokens="{total_tokens}" '
-        f'shown_tokens="{shown_tokens}" />'
+        f'\n\n<truncated total_tokens="{total_tokens}" shown_tokens="{shown_tokens}" />'
     )
 
     return truncated_text + notice

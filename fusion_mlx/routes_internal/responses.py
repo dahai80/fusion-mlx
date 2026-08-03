@@ -304,8 +304,7 @@ async def _apply_responses_postgen_validation(
             if ok2:
                 incr_strict_repair_success()
                 logger.info(
-                    "R12-4 strict json_schema repair retry succeeded on "
-                    "/v1/responses."
+                    "R12-4 strict json_schema repair retry succeeded on /v1/responses."
                 )
                 from dataclasses import replace as _dc_replace
 

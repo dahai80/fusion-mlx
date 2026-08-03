@@ -480,8 +480,7 @@ def run_dspark_benchmark(args: argparse.Namespace) -> dict[str, Any]:
             "wall_s": time.perf_counter() - warmup_start,
         }
         print(
-            f"[warmup] {warmup_info['tokens']} tokens in "
-            f"{warmup_info['wall_s']:.1f}s",
+            f"[warmup] {warmup_info['tokens']} tokens in {warmup_info['wall_s']:.1f}s",
             flush=True,
         )
         mx.clear_cache()
@@ -624,8 +623,7 @@ def run_baseline_benchmark(args: argparse.Namespace) -> dict[str, Any]:
             "wall_s": time.perf_counter() - warmup_start,
         }
         print(
-            f"[warmup] {warmup_info['tokens']} tokens in "
-            f"{warmup_info['wall_s']:.1f}s",
+            f"[warmup] {warmup_info['tokens']} tokens in {warmup_info['wall_s']:.1f}s",
             flush=True,
         )
         mx.clear_cache()

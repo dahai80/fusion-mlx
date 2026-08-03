@@ -43,7 +43,6 @@ VAE_STD = [
 
 
 class CausalConv3d(nn.Module):
-
     def __init__(
         self,
         in_channels: int,
@@ -132,7 +131,6 @@ class CausalConv3d(nn.Module):
 
 
 class RMS_norm(nn.Module):
-
     def __init__(self, dim: int, channel_first: bool = True, images: bool = True):
         super().__init__()
         self.channel_first = channel_first
@@ -155,7 +153,6 @@ class RMS_norm(nn.Module):
 
 
 class ResidualBlock(nn.Module):
-
     def __init__(self, in_dim: int, out_dim: int):
         super().__init__()
         self.residual = [
@@ -202,7 +199,6 @@ class ResidualBlock(nn.Module):
 
 
 class AttentionBlock(nn.Module):
-
     def __init__(self, dim: int):
         super().__init__()
         self.norm = RMS_norm(dim, images=True)
@@ -234,7 +230,6 @@ class AttentionBlock(nn.Module):
 
 
 class Resample(nn.Module):
-
     def __init__(self, dim: int, mode: str):
         super().__init__()
         assert mode in ("upsample2d", "upsample3d", "downsample2d", "downsample3d")
@@ -302,7 +297,6 @@ class Resample(nn.Module):
 
 
 class Decoder3d(nn.Module):
-
     def __init__(
         self,
         dim: int = 96,
@@ -363,7 +357,6 @@ class Decoder3d(nn.Module):
 
 
 class Encoder3d(nn.Module):
-
     def __init__(
         self,
         dim: int = 96,
@@ -450,7 +443,6 @@ class Encoder3d(nn.Module):
 
 
 class WanVAE(nn.Module):
-
     def __init__(self, z_dim: int = 16, encoder: bool = False):
         super().__init__()
         self.z_dim = z_dim

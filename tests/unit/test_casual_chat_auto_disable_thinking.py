@@ -1105,9 +1105,7 @@ class TestResponsesAdapterCasualChatRoundTrip:
         # Adapter does not forward ``reasoning`` (the field is not on
         # ChatCompletionRequest), and the chat shape's
         # ``reasoning_max_tokens`` is also None.
-        assert (
-            not hasattr(chat_req, "reasoning") or chat_req.reasoning is None
-        )  # noqa: E501
+        assert not hasattr(chat_req, "reasoning") or chat_req.reasoning is None  # noqa: E501
         # Without extra_signals threading the helper would mistakenly
         # fire — confirm that the threaded signal blocks it.
         assert (

@@ -27,7 +27,6 @@ from fusion_mlx.admin.auth import (
 
 
 class TestValidateApiKey(unittest.TestCase):
-
     def test_valid_key(self):
         self.assertEqual(validate_api_key("strong-key-123"), (True, ""))
 
@@ -61,7 +60,6 @@ class TestValidateApiKey(unittest.TestCase):
 
 
 class TestVerifyApiKey(unittest.TestCase):
-
     def test_matching_keys(self):
         self.assertTrue(verify_api_key("secret", "secret"))
 
@@ -84,7 +82,6 @@ class TestVerifyApiKey(unittest.TestCase):
 
 
 class TestSessionToken(unittest.TestCase):
-
     def test_create_session_token_returns_hex(self):
         token = create_session_token()
         self.assertEqual(len(token), 64)  # token_hex(32) → 64 chars
@@ -118,7 +115,6 @@ class TestSessionToken(unittest.TestCase):
 
 
 class TestVerifySessionFromRequest(unittest.TestCase):
-
     def test_no_cookie_returns_false(self):
         req = MagicMock()
         req.cookies = {}
@@ -137,7 +133,6 @@ class TestVerifySessionFromRequest(unittest.TestCase):
 
 
 class TestSetApiKey(unittest.TestCase):
-
     def test_set_api_key_stores_globally(self):
         from fusion_mlx.admin import auth
 
@@ -153,7 +148,6 @@ class TestSetApiKey(unittest.TestCase):
 
 
 class TestConstants(unittest.TestCase):
-
     def test_cookie_name(self):
         self.assertEqual(SESSION_COOKIE_NAME, "fusionmlx_admin_session")
 

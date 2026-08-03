@@ -29,7 +29,6 @@ ma = _load_module()
 
 
 class TestAliasProfile(unittest.TestCase):
-
     def test_defaults(self):
         p = ma.AliasProfile(name="x", hf_path="org/x")
         self.assertEqual(p.name, "x")
@@ -69,7 +68,6 @@ class TestAliasProfile(unittest.TestCase):
 
 
 class TestLoadAliases(unittest.TestCase):
-
     def test_missing_file_returns_empty(self):
         with patch.object(ma, "_ALIASES_FILE", Path("/nonexistent/aliases.json")):
             self.assertEqual(ma._load_aliases(), {})
@@ -101,7 +99,6 @@ class TestLoadAliases(unittest.TestCase):
 
 
 class TestListAliases(unittest.TestCase):
-
     def setUp(self):
         ma._aliases = None
         ma._hf_to_alias = None
@@ -122,7 +119,6 @@ class TestListAliases(unittest.TestCase):
 
 
 class TestListProfiles(unittest.TestCase):
-
     def setUp(self):
         ma._aliases = None
         ma._hf_to_alias = None
@@ -187,7 +183,6 @@ class TestListProfiles(unittest.TestCase):
 
 
 class TestResolveModel(unittest.TestCase):
-
     def setUp(self):
         ma._aliases = None
         ma._hf_to_alias = None
@@ -228,7 +223,6 @@ class TestResolveModel(unittest.TestCase):
 
 
 class TestResolveProfile(unittest.TestCase):
-
     def setUp(self):
         ma._aliases = None
         ma._hf_to_alias = None
@@ -249,7 +243,6 @@ class TestResolveProfile(unittest.TestCase):
 
 
 class TestSuggestSimilar(unittest.TestCase):
-
     def setUp(self):
         ma._aliases = None
         ma._hf_to_alias = None
@@ -282,7 +275,6 @@ class TestSuggestSimilar(unittest.TestCase):
 
 
 class TestPopularAliasesConstant(unittest.TestCase):
-
     def test_popular_aliases_list(self):
         self.assertIsInstance(ma.POPULAR_ALIASES, list)
         self.assertGreater(len(ma.POPULAR_ALIASES), 0)

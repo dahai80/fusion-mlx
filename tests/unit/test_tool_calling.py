@@ -2052,9 +2052,7 @@ class TestParseToolCallsGemma4Integration:
         full content must round-trip intact."""
         tok = self._make_gemma4_tokenizer()
         tools = [{"type": "function", "function": {"name": "create"}}]
-        text = (
-            "<|tool_call>\n" 'call:ns:create{"content": "has } brace"}\n' "<tool_call|>"
-        )
+        text = '<|tool_call>\ncall:ns:create{"content": "has } brace"}\n<tool_call|>'
 
         cleaned, tool_calls = parse_tool_calls(text, tok, tools)
 
@@ -2073,9 +2071,7 @@ class TestParseToolCallsGemma4Integration:
         closing quote, so a following ``}`` stays string content (#1854)."""
         tok = self._make_gemma4_tokenizer()
         tools = [{"type": "function", "function": {"name": "create"}}]
-        text = (
-            "<|tool_call>\n" 'call:ns:create{"content": "a \\" } b"}\n' "<tool_call|>"
-        )
+        text = '<|tool_call>\ncall:ns:create{"content": "a \\" } b"}\n<tool_call|>'
 
         cleaned, tool_calls = parse_tool_calls(text, tok, tools)
 
@@ -2291,7 +2287,7 @@ class TestGemma4ParenthesizedArgs:
                 "todos": [
                     {
                         "content": (
-                            "Clarify goal and draft labor graph " "for t_77d3100f"
+                            "Clarify goal and draft labor graph for t_77d3100f"
                         ),
                         "id": "todo-1",
                         "status": "pending",

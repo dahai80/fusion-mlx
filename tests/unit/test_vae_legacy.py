@@ -577,9 +577,9 @@ class TestDiffusersRename:
             raw[diff_key] = np.zeros((2, 2, 3, 3, 3), np.float32)
         mapped = _map_vae_decoder_weights({k: mx.array(v) for k, v in raw.items()})
         for diff_key, expected_ours in RENAME_CASES:
-            assert (
-                expected_ours in mapped
-            ), f"{diff_key} -> {expected_ours} missing (got {sorted(mapped.keys())})"
+            assert expected_ours in mapped, (
+                f"{diff_key} -> {expected_ours} missing (got {sorted(mapped.keys())})"
+            )
         # no encoder/non-decoder keys survive
         assert all(not k.startswith("encoder.") for k in mapped)
 
@@ -621,8 +621,8 @@ class TestFullOURSConfig:
         n_params = _count(vae.decoder.parameters())
         # LTX-Video 0.9.x VAE decoder: 512-channel peak, ~238M params
         # (3D 3x3x3 convs at 512ch dominate; consistent with ~500MB bf16 on disk)
-        assert n_params > 200_000_000, f"param count too low: {n_params/1e6:.1f}M"
-        assert n_params < 280_000_000, f"param count too high: {n_params/1e6:.1f}M"
+        assert n_params > 200_000_000, f"param count too low: {n_params / 1e6:.1f}M"
+        assert n_params < 280_000_000, f"param count too high: {n_params / 1e6:.1f}M"
         # every decoder key is a conv/norm weight we expect
         assert "conv_in.conv.weight" in keys
         assert "conv_out.conv.weight" in keys

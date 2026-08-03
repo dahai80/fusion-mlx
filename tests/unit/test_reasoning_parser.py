@@ -15,7 +15,6 @@ logger = logging.getLogger(__name__)
 
 
 class TestParserRegistry:
-
     def test_list_parsers_includes_builtin(self):
         parsers = list_parsers()
         assert "qwen3" in parsers
@@ -54,7 +53,6 @@ class TestParserRegistry:
 
 
 class TestQwen3Parser:
-
     @pytest.fixture
     def parser(self):
         return get_parser("qwen3")()
@@ -73,7 +71,7 @@ class TestQwen3Parser:
 
     def test_extract_multiline_reasoning(self, parser):
         output = (
-            "<think>Step 1: Analyze\nStep 2: Solve\nStep 3: Verify</think>" "Result: 42"
+            "<think>Step 1: Analyze\nStep 2: Solve\nStep 3: Verify</think>Result: 42"
         )
         reasoning, content = parser.extract_reasoning(output)
         assert "Step 1" in reasoning
@@ -145,7 +143,6 @@ class TestQwen3Parser:
 
 
 class TestDeepSeekR1Parser:
-
     @pytest.fixture
     def parser(self):
         return get_parser("deepseek_r1")()
@@ -198,7 +195,6 @@ class TestDeepSeekR1Parser:
 
 
 class TestDeltaMessage:
-
     def test_reasoning_content_alias(self):
         msg = DeltaMessage(reasoning="test reasoning")
         assert msg.reasoning == "test reasoning"
@@ -217,7 +213,6 @@ class TestDeltaMessage:
 
 
 class TestEdgeCases:
-
     @pytest.fixture(params=["qwen3", "deepseek_r1"])
     def parser(self, request):
         return get_parser(request.param)()
@@ -247,7 +242,6 @@ class TestEdgeCases:
 
 
 class TestRealisticStreaming:
-
     @pytest.fixture(params=["qwen3", "deepseek_r1"])
     def parser(self, request):
         return get_parser(request.param)()
@@ -367,7 +361,6 @@ class TestRealisticStreaming:
 
 
 class TestUnicodeAndSpecialCharacters:
-
     @pytest.fixture(params=["qwen3", "deepseek_r1"])
     def parser(self, request):
         return get_parser(request.param)()
@@ -415,7 +408,6 @@ class TestUnicodeAndSpecialCharacters:
 
 
 class TestAPIModelsIntegration:
-
     def test_assistant_message_with_reasoning(self):
         msg = AssistantMessage(
             content="The answer is 42.",
@@ -448,7 +440,6 @@ class TestAPIModelsIntegration:
 
 
 class TestParserPerformance:
-
     @pytest.fixture(params=["qwen3", "deepseek_r1"])
     def parser(self, request):
         return get_parser(request.param)()
@@ -491,7 +482,6 @@ class TestParserPerformance:
 
 
 class TestDeepSeekSpecificCases:
-
     @pytest.fixture
     def parser(self):
         return get_parser("deepseek_r1")()
@@ -533,7 +523,6 @@ class TestDeepSeekSpecificCases:
 
 
 class TestQwen3SpecificCases:
-
     @pytest.fixture
     def parser(self):
         return get_parser("qwen3")()
@@ -570,7 +559,6 @@ class TestQwen3SpecificCases:
 
 
 class TestGptOssParser:
-
     @pytest.fixture
     def parser(self):
         return get_parser("gpt_oss")()
@@ -788,7 +776,6 @@ class TestGptOssParser:
 
 
 class TestDeepSeekNoTagThreshold:
-
     @pytest.fixture
     def parser(self):
         return get_parser("deepseek_r1")()
@@ -898,7 +885,6 @@ class TestDeepSeekNoTagThreshold:
 
 
 class TestGlm4Parser:
-
     @pytest.fixture
     def parser(self):
         return get_parser("glm4")()

@@ -20,7 +20,6 @@ class _MockArray:
 
 
 class TrimmableLayer:
-
     def __init__(self, nbytes: int = 200, offset: int = 0):
         self.keys = _MockArray(nbytes // 2)
         self.values = _MockArray(nbytes // 2)
@@ -39,7 +38,6 @@ class TrimmableLayer:
 
 
 class NonTrimmableLayer:
-
     def __init__(self, nbytes: int = 200):
         self.keys = _MockArray(nbytes // 2)
         self.values = _MockArray(nbytes // 2)
@@ -139,9 +137,9 @@ def test_hybrid_supersequence_still_skipped(cache):
     short_request = list(range(1000, 1100))
     result, remaining = cache.fetch(short_request)
 
-    assert (
-        result is None
-    ), "Trim-required match on non-trimmable hybrid layers must still skip"
+    assert result is None, (
+        "Trim-required match on non-trimmable hybrid layers must still skip"
+    )
     assert remaining == short_request
 
 

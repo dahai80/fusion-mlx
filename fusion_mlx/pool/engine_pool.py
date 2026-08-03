@@ -763,7 +763,7 @@ class EnginePool:
             victims.append(vk)
         if victims:
             logger.info(
-                "Adapter cap %d exceeded; evicting %d derived " "adapter engine(s): %s",
+                "Adapter cap %d exceeded; evicting %d derived adapter engine(s): %s",
                 cap,
                 len(victims),
                 victims,
@@ -2002,7 +2002,7 @@ class EnginePool:
                     entry.model_type = "llm"
                     entry.engine_type = "batched"
                     logger.info(
-                        f"Successfully loaded {model_id} as LLM " f"(fallback from VLM)"
+                        f"Successfully loaded {model_id} as LLM (fallback from VLM)"
                     )
                 else:
                     raise
@@ -2022,7 +2022,7 @@ class EnginePool:
                 )
                 raise ModelLoadingError(
                     model_id,
-                    f"Model {model_id} load aborted: " f"process memory limit exceeded",
+                    f"Model {model_id} load aborted: process memory limit exceeded",
                 )
 
             entry.engine = engine

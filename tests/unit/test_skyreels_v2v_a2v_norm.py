@@ -59,40 +59,40 @@ def test_a2v_block_norm_naming_affine():
 
 def test_v2v_cross_attn_type_default_t2v():
     dit = SkyReelsV2VDiT(_TINY_CFG)
-    assert (
-        dit.cross_attn_type == "t2v_cross_attn"
-    ), f"默认应 t2v (无 added_kv_proj_dim): {dit.cross_attn_type}"
+    assert dit.cross_attn_type == "t2v_cross_attn", (
+        f"默认应 t2v (无 added_kv_proj_dim): {dit.cross_attn_type}"
+    )
 
 
 def test_v2v_cross_attn_type_i2v_when_added_kv():
     cfg = dict(_TINY_CFG, added_kv_proj_dim=128)
     dit = SkyReelsV2VDiT(cfg)
-    assert (
-        dit.cross_attn_type == "i2v_cross_attn"
-    ), f"added_kv_proj_dim 非 None 应 i2v: {dit.cross_attn_type}"
+    assert dit.cross_attn_type == "i2v_cross_attn", (
+        f"added_kv_proj_dim 非 None 应 i2v: {dit.cross_attn_type}"
+    )
 
 
 def test_v2v_cross_attn_type_explicit_config_wins():
     cfg = dict(_TINY_CFG, cross_attn_type="i2v_cross_attn")
     dit = SkyReelsV2VDiT(cfg)
-    assert (
-        dit.cross_attn_type == "i2v_cross_attn"
-    ), f"显式 cross_attn_type 应优先: {dit.cross_attn_type}"
+    assert dit.cross_attn_type == "i2v_cross_attn", (
+        f"显式 cross_attn_type 应优先: {dit.cross_attn_type}"
+    )
 
 
 def test_a2v_cross_attn_type_default_t2v():
     dit = SkyReelsA2VDiT(_TINY_CFG)
-    assert (
-        dit.cross_attn_type == "t2v_cross_attn"
-    ), f"默认应 t2v (无 added_kv_proj_dim): {dit.cross_attn_type}"
+    assert dit.cross_attn_type == "t2v_cross_attn", (
+        f"默认应 t2v (无 added_kv_proj_dim): {dit.cross_attn_type}"
+    )
 
 
 def test_a2v_cross_attn_type_i2v_when_added_kv():
     cfg = dict(_TINY_CFG, added_kv_proj_dim=128)
     dit = SkyReelsA2VDiT(cfg)
-    assert (
-        dit.cross_attn_type == "i2v_cross_attn"
-    ), f"added_kv_proj_dim 非 None 应 i2v: {dit.cross_attn_type}"
+    assert dit.cross_attn_type == "i2v_cross_attn", (
+        f"added_kv_proj_dim 非 None 应 i2v: {dit.cross_attn_type}"
+    )
 
 
 def test_v2v_dit_forward_smoke():

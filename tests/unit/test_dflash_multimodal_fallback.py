@@ -190,9 +190,10 @@ class TestChatMultimodalFallback:
         with patch.object(
             vlm_dflash_engine, "_evict_dflash_and_start_fallback"
         ) as mock_evict:
-            mock_evict.side_effect = lambda: setattr(
-                vlm_dflash_engine, "_fallback_engine", mock_fallback
-            ) or setattr(vlm_dflash_engine, "_in_fallback_mode", True)
+            mock_evict.side_effect = lambda: (
+                setattr(vlm_dflash_engine, "_fallback_engine", mock_fallback)
+                or setattr(vlm_dflash_engine, "_in_fallback_mode", True)
+            )
 
             result = await vlm_dflash_engine.chat(_image_url_messages())
 
@@ -285,9 +286,10 @@ class TestStreamChatMultimodalFallback:
         with patch.object(
             vlm_dflash_engine, "_evict_dflash_and_start_fallback"
         ) as mock_evict:
-            mock_evict.side_effect = lambda: setattr(
-                vlm_dflash_engine, "_fallback_engine", mock_fallback
-            ) or setattr(vlm_dflash_engine, "_in_fallback_mode", True)
+            mock_evict.side_effect = lambda: (
+                setattr(vlm_dflash_engine, "_fallback_engine", mock_fallback)
+                or setattr(vlm_dflash_engine, "_in_fallback_mode", True)
+            )
 
             outputs = []
             async for out in vlm_dflash_engine.stream_chat(_image_url_messages()):

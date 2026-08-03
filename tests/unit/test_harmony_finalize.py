@@ -165,9 +165,9 @@ def test_rescue_skipped_when_harmony_cut_short_finish_unknown():
         finish_reason=None,
         raw_text=raw,
     )
-    assert (
-        rescued is None
-    ), f"D-HARMONY-LEAK gate must be finish_reason-agnostic; got rescued={rescued!r}"
+    assert rescued is None, (
+        f"D-HARMONY-LEAK gate must be finish_reason-agnostic; got rescued={rescued!r}"
+    )
 
 
 def test_rescue_suppressed_on_commentary_tool_call_marker_only():

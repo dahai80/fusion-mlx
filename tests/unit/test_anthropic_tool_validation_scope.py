@@ -901,7 +901,7 @@ def test_pinned_tool_streaming_text_replays_when_enforcement_passes():
     # would see the tool result before the surrounding narration.
     text_block_pos = raw.find(distinctive_text)
     tool_use_pos = raw.find('"type": "tool_use"')
-    assert (
-        text_block_pos < tool_use_pos
-    ), f"text block at {text_block_pos} should precede tool_use at {tool_use_pos}"
+    assert text_block_pos < tool_use_pos, (
+        f"text block at {text_block_pos} should precede tool_use at {tool_use_pos}"
+    )
     assert '"stop_reason": "tool_use"' in raw

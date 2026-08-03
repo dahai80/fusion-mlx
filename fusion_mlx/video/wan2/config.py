@@ -5,7 +5,6 @@ from ..ltx2.config import BaseModelConfig
 
 @dataclass
 class WanModelConfig(BaseModelConfig):
-
     model_type: str = "t2v"
     model_version: str = "2.2"
     patch_size: tuple[int, int, int] = (1, 2, 2)

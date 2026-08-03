@@ -47,7 +47,6 @@ from fusion_mlx.api.utils import (
 
 
 class TestCleanOutputText:
-
     def test_clean_empty_text(self):
         result = clean_output_text("")
         assert result == ""
@@ -147,7 +146,6 @@ class TestCleanOutputText:
 
 
 class TestSpecialTokensPattern:
-
     def test_pattern_matches_im_tokens(self):
         assert SPECIAL_TOKENS_PATTERN.search("<|im_end|>")
         assert SPECIAL_TOKENS_PATTERN.search("<|im_start|>")
@@ -171,7 +169,6 @@ class TestSpecialTokensPattern:
 
 
 class TestExtractTextContent:
-
     def test_simple_text_message(self):
         messages = [Message(role="user", content="Hello")]
         result = extract_text_content(messages)
@@ -360,7 +357,6 @@ class TestExtractTextContent:
 
 
 class TestExtractTextContentReasoningReconstruction:
-
     def test_reasoning_and_content_merged_on_assistant(self):
         messages = [
             Message(role="assistant", reasoning_content="R", content="A"),
@@ -408,7 +404,6 @@ class TestExtractTextContentReasoningReconstruction:
 
 
 class TestExtractTextContentNativeReasoningContent:
-
     def test_native_mode_passes_reasoning_as_field(self):
         messages = [
             Message(role="assistant", reasoning_content="R", content="A"),
@@ -501,7 +496,6 @@ class TestUsesNativeReasoningContent:
 
 
 class TestConvertAnthropicToInternal:
-
     def test_simple_message(self):
         request = MessagesRequest(
             model="claude-3",
@@ -993,7 +987,6 @@ class TestConvertAnthropicToInternal:
 
 
 class TestConvertAnthropicToInternalNativeReasoning:
-
     def test_native_mode_thinking_becomes_reasoning_field(self):
         request = MessagesRequest(
             model="claude-3",
@@ -1095,7 +1088,6 @@ class TestConvertAnthropicToInternalNativeReasoning:
 
 
 class TestConvertAnthropicToolsToInternal:
-
     def test_none_tools(self):
         result = convert_anthropic_tools_to_internal(None)
         assert result is None
@@ -1202,7 +1194,6 @@ class TestConvertAnthropicToolsToInternal:
 
 
 class TestConvertInternalToAnthropicResponse:
-
     def test_basic_response(self):
         result = convert_internal_to_anthropic_response(
             text="Hello!",
@@ -1328,7 +1319,6 @@ class TestRequestHasCacheControl:
 
 
 class TestMapFinishReasonToStopReason:
-
     def test_stop_to_end_turn(self):
         result = map_finish_reason_to_stop_reason("stop", False)
         assert result == "end_turn"
@@ -1355,7 +1345,6 @@ class TestMapFinishReasonToStopReason:
 
 
 class TestSSEEventFormatters:
-
     def test_format_sse_event(self):
         result = format_sse_event("message_start", {"type": "message_start"})
         assert result.startswith("event: message_start\n")
@@ -1446,7 +1435,6 @@ class TestSSEEventFormatters:
 
 
 class TestExtractHarmonyMessages:
-
     def test_simple_message(self):
         messages = [Message(role="user", content="Hello")]
         result = extract_harmony_messages(messages)
@@ -1587,7 +1575,6 @@ class TestExtractHarmonyMessages:
 
 
 class TestConsolidateSystemMessages:
-
     def test_no_system_messages(self):
         msgs = [
             {"role": "user", "content": "Hello"},
@@ -1704,7 +1691,6 @@ class TestPrepareSystemMessagesForTemplate:
 
 
 class TestMergeConsecutiveRoles:
-
     def test_empty_list(self):
         assert _merge_consecutive_roles([]) == []
 
@@ -1932,7 +1918,6 @@ class TestMergeConsecutiveRoles:
 
 
 class TestExtractMultimodalContent:
-
     def test_tool_message_with_content_part_list(self):
         messages = [
             Message(
@@ -2091,7 +2076,6 @@ class TestExtractMultimodalContent:
 
 
 class TestDetectAndStripPartial:
-
     def test_detects_partial_assistant(self):
         messages = [
             {"role": "user", "content": "Hello"},
@@ -2126,7 +2110,6 @@ class TestDetectAndStripPartial:
 
 
 class TestExtractTextContentPreservesNamePartial:
-
     def test_preserves_name_on_text_message(self):
         messages = [
             Message(role="assistant", content="Hello", name="Kimi"),
@@ -2206,7 +2189,6 @@ class TestExtractTextContentPreservesNamePartial:
 
 
 class TestNameFieldSchemaAcceptance:
-
     def test_name_field_accepted_on_all_roles(self):
         msgs = [
             Message(
@@ -2258,7 +2240,6 @@ class TestNameFieldSchemaAcceptance:
 
 
 class TestDropVoidAssistantMessages:
-
     def test_drops_empty_content_no_tool_calls(self):
         msgs = [
             {"role": "user", "content": "Hello"},
@@ -2352,7 +2333,6 @@ class TestDropVoidAssistantMessages:
 
 
 class TestChatTemplateSupportsToolRole:
-
     def test_returns_true_when_has_tool_calling_set(self):
         class _Tok:
             has_tool_calling = True
@@ -2418,7 +2398,6 @@ class TestChatTemplateSupportsToolRole:
 
 
 class TestToolResultWithToolAwareTokenizer:
-
     @staticmethod
     def _tool_aware_tokenizer():
         class _Tok:

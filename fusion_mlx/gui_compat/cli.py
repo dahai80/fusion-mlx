@@ -306,7 +306,9 @@ def discover(
             mlx_ready = (
                 "✅"
                 if model.mlx_compatible
-                else "🔄" if model.has_mlx_version else "❌"
+                else "🔄"
+                if model.has_mlx_version
+                else "❌"
             )
 
             table.add_row(

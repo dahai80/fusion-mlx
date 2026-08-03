@@ -425,9 +425,9 @@ def test_no_double_response_when_handler_already_sent_headers():
         for m in sent
         if m["type"] == "http.response.body" and not m.get("more_body", False)
     ]
-    assert (
-        len(terminal_bodies) == 1
-    ), f"response stream not terminated after cap trip — got {sent}"
+    assert len(terminal_bodies) == 1, (
+        f"response stream not terminated after cap trip — got {sent}"
+    )
 
 
 def test_get_request_is_not_capped():
@@ -497,12 +497,12 @@ def test_oversized_body_returns_413_before_auth_check():
         json=oversized,
         # No Authorization header — auth would normally 401.
     )
-    assert (
-        resp.status_code == 413
-    ), f"expected 413 (body cap before auth), got {resp.status_code}"
-    assert (
-        auth_calls["n"] == 0
-    ), "auth dependency ran before the body cap — ordering regressed"
+    assert resp.status_code == 413, (
+        f"expected 413 (body cap before auth), got {resp.status_code}"
+    )
+    assert auth_calls["n"] == 0, (
+        "auth dependency ran before the body cap — ordering regressed"
+    )
 
 
 def test_cli_flag_overrides_config_default():

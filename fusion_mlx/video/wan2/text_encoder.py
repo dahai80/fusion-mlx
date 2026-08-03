@@ -5,7 +5,6 @@ import mlx.nn as nn
 
 
 class T5LayerNorm(nn.Module):
-
     def __init__(self, dim: int, eps: float = 1e-6):
         super().__init__()
         self.eps = eps
@@ -16,7 +15,6 @@ class T5LayerNorm(nn.Module):
 
 
 class T5RelativeEmbedding(nn.Module):
-
     def __init__(
         self,
         num_buckets: int,
@@ -72,7 +70,6 @@ class T5RelativeEmbedding(nn.Module):
 
 
 class T5Attention(nn.Module):
-
     def __init__(self, dim: int, dim_attn: int, num_heads: int, dropout: float = 0.0):
         super().__init__()
         assert dim_attn % num_heads == 0
@@ -133,7 +130,6 @@ class T5Attention(nn.Module):
 
 
 class T5FeedForward(nn.Module):
-
     def __init__(self, dim: int, dim_ffn: int):
         super().__init__()
         self.dim = dim
@@ -148,7 +144,6 @@ class T5FeedForward(nn.Module):
 
 
 class T5SelfAttentionBlock(nn.Module):
-
     def __init__(
         self,
         dim: int,
@@ -183,7 +178,6 @@ class T5SelfAttentionBlock(nn.Module):
 
 
 class T5Encoder(nn.Module):
-
     def __init__(
         self,
         vocab_size: int = 256384,

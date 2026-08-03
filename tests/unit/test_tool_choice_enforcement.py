@@ -397,9 +397,9 @@ def test_t2_chat_route_wires_deepseek_v31_prefix_to_engine():
     # ``required``) and ships 200.
     assert resp.status_code == 200, resp.text
     body = resp.json()
-    assert body["choices"][0]["message"].get(
-        "tool_calls"
-    ), f"tool_choice=required must yield tool_calls in the response; got {body!r}"
+    assert body["choices"][0]["message"].get("tool_calls"), (
+        f"tool_choice=required must yield tool_calls in the response; got {body!r}"
+    )
     # Separately assert that the prefix WAS injected into engine kwargs
     # — this is the T2 invariant the test pins.
     assert engine.last_chat_kwargs is not None
@@ -465,9 +465,9 @@ def test_t3_scrub_wire_literals_removes_qwen3_leak():
         "</function>",
         "</parameter>",
     ):
-        assert (
-            leak not in out
-        ), f"_scrub_tool_wire_literals left {leak!r} behind: {out!r}"
+        assert leak not in out, (
+            f"_scrub_tool_wire_literals left {leak!r} behind: {out!r}"
+        )
 
 
 def test_t3_scrub_wire_literals_idempotent_on_clean_prose():
@@ -598,23 +598,23 @@ def test_t3_chat_route_strips_wire_leak_from_content_and_reasoning():
     body = resp.json()
     msg = body["choices"][0]["message"]
     # Tool call is present (forced synth)
-    assert msg.get(
-        "tool_calls"
-    ), f"tool_choice=required must produce tool_calls; got msg={msg!r}"
+    assert msg.get("tool_calls"), (
+        f"tool_choice=required must produce tool_calls; got msg={msg!r}"
+    )
     assert msg["tool_calls"][0]["function"]["name"] == "add_numbers"
     # Content is leak-free — the original ``<tool_call>...`` text
     # must NOT survive into the user-visible content channel.
     content = msg.get("content") or ""
     for leak in ("<tool_call>", "</tool_call>", "</function>", "</parameter>"):
-        assert (
-            leak not in content
-        ), f"T3 leak: {leak!r} survived in content: {content!r}"
+        assert leak not in content, (
+            f"T3 leak: {leak!r} survived in content: {content!r}"
+        )
     # And the reasoning content (if any) is also leak-free.
     reasoning = msg.get("reasoning_content") or ""
     for leak in ("<tool_call>", "</tool_call>", "</function>", "</parameter>"):
-        assert (
-            leak not in reasoning
-        ), f"T3 leak: {leak!r} survived in reasoning_content: {reasoning!r}"
+        assert leak not in reasoning, (
+            f"T3 leak: {leak!r} survived in reasoning_content: {reasoning!r}"
+        )
 
 
 def test_t3_chat_route_scrubs_wire_leak_from_reasoning_content():
@@ -662,9 +662,9 @@ def test_t3_chat_route_scrubs_wire_leak_from_reasoning_content():
 
     reasoning = msg.get("reasoning_content") or ""
     for leak in ("<tool_call>", "</tool_call>", "</function>", "</parameter>"):
-        assert (
-            leak not in reasoning
-        ), f"T3 leak: {leak!r} survived in reasoning_content: {reasoning!r}"
+        assert leak not in reasoning, (
+            f"T3 leak: {leak!r} survived in reasoning_content: {reasoning!r}"
+        )
     assert "Need to call the tool." in reasoning
     assert "Done thinking." in reasoning
 
@@ -722,12 +722,12 @@ def test_t3_chat_route_recovers_args_when_possible():
         '"name":',
         '"arguments":',
     ):
-        assert (
-            leak not in content
-        ), f"recoverable-args path leaked {leak!r} into content: {content!r}"
-        assert (
-            leak not in reasoning
-        ), f"recoverable-args path leaked {leak!r} into reasoning: {reasoning!r}"
+        assert leak not in content, (
+            f"recoverable-args path leaked {leak!r} into content: {content!r}"
+        )
+        assert leak not in reasoning, (
+            f"recoverable-args path leaked {leak!r} into reasoning: {reasoning!r}"
+        )
 
 
 # ──────────────────────────────────────────────────────────────────
@@ -980,9 +980,9 @@ def test_codex_r3_blocking_1_scrub_strips_cross_family_qwen3_leak():
         '"arguments":',
         "add_numbers",
     ):
-        assert (
-            leak_token not in out
-        ), f"cross-family scrub left {leak_token!r} behind: {out!r}"
+        assert leak_token not in out, (
+            f"cross-family scrub left {leak_token!r} behind: {out!r}"
+        )
 
 
 def test_codex_r3_blocking_1_scrub_cross_family_preserves_pre_and_post_prose():

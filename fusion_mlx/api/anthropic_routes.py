@@ -12,18 +12,13 @@ import uuid
 from collections.abc import AsyncIterator
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Request as HttpRequest
+from fastapi import APIRouter, Depends, HTTPException
+from fastapi import Request as HttpRequest
 from fastapi.responses import StreamingResponse
 
 from ..api._anthropic_helpers import (
     _inject_tool_use_required_suffix,
     enforce_tool_choice,
-)
-from ..api.context_scaling import (
-    compute_scale_factor,
-    get_context_scaling_settings,
-    is_claude_code_request,
-    scale_usage,
 )
 from ..api.adapters.anthropic import AnthropicAdapter
 from ..api.adapters.base import InternalResponse, StreamChunk
@@ -46,6 +41,12 @@ from ..api.anthropic_utils import (
     create_message_stop_event,
     create_tool_name_delta_event,
     map_finish_reason_to_stop_reason,
+)
+from ..api.context_scaling import (
+    compute_scale_factor,
+    get_context_scaling_settings,
+    is_claude_code_request,
+    scale_usage,
 )
 from ..exceptions import (
     InsufficientMemoryError,
@@ -725,7 +726,9 @@ async def anthropic_messages(
                 media_type="text/event-stream",
                 headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
             )
-        return await _run_anthropic_messages(request, headers=dict(http_request.headers))
+        return await _run_anthropic_messages(
+            request, headers=dict(http_request.headers)
+        )
     except HTTPException:
         raise
     except ModelNotFoundError as exc:

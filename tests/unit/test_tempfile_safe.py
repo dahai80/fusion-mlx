@@ -175,9 +175,9 @@ def test_atexit_fallback_reaps_paths_not_cleaned_by_context_exit():
         assert result.returncode == 0, result.stderr
         leaked_path = marker.read_text().strip()
         assert leaked_path
-        assert not os.path.exists(
-            leaked_path
-        ), f"atexit hook failed to reap {leaked_path}"
+        assert not os.path.exists(leaked_path), (
+            f"atexit hook failed to reap {leaked_path}"
+        )
 
 
 def test_systemexit_inside_context_body_triggers_context_finally():
@@ -210,9 +210,9 @@ def test_systemexit_inside_context_body_triggers_context_finally():
         assert result.returncode == 0, result.stderr
         leaked_path = marker.read_text().strip()
         assert leaked_path
-        assert not os.path.exists(
-            leaked_path
-        ), f"SystemExit path leaked: {leaked_path} still exists"
+        assert not os.path.exists(leaked_path), (
+            f"SystemExit path leaked: {leaked_path} still exists"
+        )
 
 
 def test_os_exit_is_documented_to_skip_cleanup_negative_control():
@@ -301,9 +301,9 @@ def test_setup_window_exception_does_not_leak_path(monkeypatch, tmp_path):
 
     assert captured_path, "mkstemp was not invoked"
     leaked = captured_path[0]
-    assert not os.path.exists(
-        leaked
-    ), f"setup-window leak: {leaked} survived a setup-phase exception"
+    assert not os.path.exists(leaked), (
+        f"setup-window leak: {leaked} survived a setup-phase exception"
+    )
     # Registry should be unchanged.
     assert _tempfile_safe._pending_snapshot() == baseline
 
@@ -351,9 +351,9 @@ def test_cleanup_unlinks_before_discarding_from_registry(monkeypatch, tmp_path):
     assert captured_path, "context manager never yielded a handle"
     leaked = captured_path[0]
     # File survived the interrupted unlink — that's expected.
-    assert os.path.exists(
-        leaked
-    ), "test setup error: unlink wasn't actually intercepted"
+    assert os.path.exists(leaked), (
+        "test setup error: unlink wasn't actually intercepted"
+    )
     # BLOCKING fix: path must still be in the registry so atexit
     # can reap it. Pre-fix the discard ran first → registry was
     # empty → atexit blind.

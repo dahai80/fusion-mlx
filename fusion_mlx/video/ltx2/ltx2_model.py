@@ -20,7 +20,6 @@ logger = logging.getLogger(__name__)
 
 
 class TransformerArgsPreprocessor:
-
     def __init__(
         self,
         patchify_proj: nn.Linear,
@@ -191,7 +190,6 @@ class TransformerArgsPreprocessor:
 
 
 class MultiModalTransformerArgsPreprocessor:
-
     def __init__(
         self,
         patchify_proj: nn.Linear,
@@ -288,7 +286,6 @@ class MultiModalTransformerArgsPreprocessor:
 
 
 class LTXModel(nn.Module):
-
     def __init__(self, config: LTXModelConfig):
 
         super().__init__()
@@ -689,7 +686,6 @@ class LTXModel(nn.Module):
 
 
 class X0Model(nn.Module):
-
     def __init__(self, velocity_model: LTXModel):
 
         super().__init__()

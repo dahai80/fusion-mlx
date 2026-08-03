@@ -10,7 +10,6 @@ import pytest
 
 
 class _StubAsyncEngine:
-
     def __init__(self, returns: bool):
         self._returns = returns
         self.calls: list[str] = []
@@ -21,7 +20,6 @@ class _StubAsyncEngine:
 
 
 class _StubSyncMllmScheduler:
-
     def __init__(self, returns: bool):
         self._returns = returns
         self.calls: list[str] = []

@@ -76,7 +76,10 @@ class TieredCacheManager(CacheManager):
         if hot_block is not None:
             self._stats.record_hit()
             self._stats.hot_hits += 1
-            logger.debug("tiered fetch HIT hot: %s", block_hash.hex()[:16] if isinstance(block_hash, bytes) else block_hash)
+            logger.debug(
+                "tiered fetch HIT hot: %s",
+                block_hash.hex()[:16] if isinstance(block_hash, bytes) else block_hash,
+            )
             return hot_block, True
 
         if self._cold is not None:
@@ -84,13 +87,21 @@ class TieredCacheManager(CacheManager):
             if found and cold_data is not None:
                 self._stats.record_hit()
                 self._stats.cold_hits += 1
-                logger.debug("tiered fetch HIT cold: %s", block_hash.hex()[:16] if isinstance(block_hash, bytes) else block_hash)
+                logger.debug(
+                    "tiered fetch HIT cold: %s",
+                    block_hash.hex()[:16]
+                    if isinstance(block_hash, bytes)
+                    else block_hash,
+                )
                 if self._promotion_on_cold_hit:
                     self._promote(block_hash, cold_data)
                 return cold_data, True
 
         self._stats.record_miss()
-        logger.debug("tiered fetch MISS: %s", block_hash.hex()[:16] if isinstance(block_hash, bytes) else block_hash)
+        logger.debug(
+            "tiered fetch MISS: %s",
+            block_hash.hex()[:16] if isinstance(block_hash, bytes) else block_hash,
+        )
         return None, False
 
     def store(self, key: Any, value: Any) -> bool:
@@ -102,7 +113,12 @@ class TieredCacheManager(CacheManager):
                 cache_data=cache_data,
             )
             if saved:
-                logger.debug("tiered store → cold: %s", block_hash.hex()[:16] if isinstance(block_hash, bytes) else block_hash)
+                logger.debug(
+                    "tiered store → cold: %s",
+                    block_hash.hex()[:16]
+                    if isinstance(block_hash, bytes)
+                    else block_hash,
+                )
                 return True
 
         self._stats.record_miss()
@@ -123,7 +139,12 @@ class TieredCacheManager(CacheManager):
                 self._stats.record_eviction()
 
         if hot_evicted or cold_evicted:
-            logger.debug("tiered evict: %s (hot=%s cold=%s)", block_hash.hex()[:16] if isinstance(block_hash, bytes) else block_hash, hot_evicted, cold_evicted)
+            logger.debug(
+                "tiered evict: %s (hot=%s cold=%s)",
+                block_hash.hex()[:16] if isinstance(block_hash, bytes) else block_hash,
+                hot_evicted,
+                cold_evicted,
+            )
         return hot_evicted or cold_evicted
 
     def clear(self) -> int:
@@ -176,7 +197,11 @@ class TieredCacheManager(CacheManager):
             self._demotion_in_progress = False
 
     def _do_demotion(self) -> int:
-        evictable = self._hot.get_evictable_blocks() if hasattr(self._hot, "get_evictable_blocks") else []
+        evictable = (
+            self._hot.get_evictable_blocks()
+            if hasattr(self._hot, "get_evictable_blocks")
+            else []
+        )
         if not evictable:
             return 0
 
@@ -201,18 +226,34 @@ class TieredCacheManager(CacheManager):
     def _simple_demote(self, block: Any) -> None:
         if self._cold is None or block.block_hash is None:
             return
-        logger.debug("simple demote block %d hash=%s", block.block_id, block.block_hash.hex()[:16] if isinstance(block.block_hash, bytes) else block.block_hash)
+        logger.debug(
+            "simple demote block %d hash=%s",
+            block.block_id,
+            block.block_hash.hex()[:16]
+            if isinstance(block.block_hash, bytes)
+            else block.block_hash,
+        )
 
     def _cow_demote(self, block: Any) -> None:
         if self._cold is None or block.block_hash is None:
             return
         self._stats.cow_copies_during_demotion += 1
-        logger.debug("CoW demote block %d hash=%s ref_count=%d", block.block_id, block.block_hash.hex()[:16] if isinstance(block.block_hash, bytes) else block.block_hash, block.ref_count)
+        logger.debug(
+            "CoW demote block %d hash=%s ref_count=%d",
+            block.block_id,
+            block.block_hash.hex()[:16]
+            if isinstance(block.block_hash, bytes)
+            else block.block_hash,
+            block.ref_count,
+        )
 
     def _promote(self, block_hash: Any, cache_data: Any) -> None:
         if self._cold is None:
             return
-        logger.debug("promote cold→hot: %s", block_hash.hex()[:16] if isinstance(block_hash, bytes) else block_hash)
+        logger.debug(
+            "promote cold→hot: %s",
+            block_hash.hex()[:16] if isinstance(block_hash, bytes) else block_hash,
+        )
         self._stats.promotions += 1
 
     def get_tier_stats(self) -> dict[str, Any]:

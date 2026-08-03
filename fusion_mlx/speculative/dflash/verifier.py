@@ -64,8 +64,7 @@ def verify_block(
     _isfinite_or_raise("temperature", float(temperature))
     if temperature != 0.0:
         raise NotImplementedError(
-            "DFlash verifier currently only supports greedy decoding "
-            "(temperature=0.0)."
+            "DFlash verifier currently only supports greedy decoding (temperature=0.0)."
         )
     if draft_block.ndim != 1:
         raise ValueError(
@@ -122,7 +121,6 @@ def _rewind_cache_to(cache: list[Any], target_offset: int) -> None:
                     c.offset = target_offset
             except AttributeError:
                 logger.warning(
-                    "[dflash.verifier] cache %s has read-only offset; "
-                    "skipping rewind.",
+                    "[dflash.verifier] cache %s has read-only offset; skipping rewind.",
                     type(c).__name__,
                 )

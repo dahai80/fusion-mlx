@@ -71,15 +71,15 @@ class FlickerFixConfig:
 
     def validate(self) -> None:
         """验证配置参数范围."""
-        assert (
-            0.0 <= self.temporal_ema_alpha <= 1.0
-        ), "temporal_ema_alpha must be in [0, 1]"
-        assert (
-            0.0 <= self.boundary_align_alpha <= 1.0
-        ), "boundary_align_alpha must be in [0, 1]"
-        assert (
-            0.0 <= self.step_coherence_beta <= 1.0
-        ), "step_coherence_beta must be in [0, 1]"
+        assert 0.0 <= self.temporal_ema_alpha <= 1.0, (
+            "temporal_ema_alpha must be in [0, 1]"
+        )
+        assert 0.0 <= self.boundary_align_alpha <= 1.0, (
+            "boundary_align_alpha must be in [0, 1]"
+        )
+        assert 0.0 <= self.step_coherence_beta <= 1.0, (
+            "step_coherence_beta must be in [0, 1]"
+        )
         assert self.temporal_loss_weight >= 0.0, "temporal_loss_weight must be >= 0"
 
 

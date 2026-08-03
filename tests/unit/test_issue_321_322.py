@@ -4,21 +4,24 @@ import json
 import logging
 from pathlib import Path
 
-import pytest
-
 logger = logging.getLogger(__name__)
 
 # -- Issue #321: Streaming SSE confirmation --
+
 
 class TestStreamingSSE:
     def test_streaming_encoder_formats_sse(self):
         from fusion_mlx.api.streaming import StreamingJSONEncoder
 
-        enc = StreamingJSONEncoder(response_id="test-id", model="test-model", object_type="chat.completion.chunk")
+        enc = StreamingJSONEncoder(
+            response_id="test-id",
+            model="test-model",
+            object_type="chat.completion.chunk",
+        )
         chunk = enc.encode_chat_chunk(content="hello")
         assert chunk.startswith("data: ")
         assert chunk.endswith("\n\n")
-        payload = json.loads(chunk[len("data: "):].strip())
+        payload = json.loads(chunk[len("data: ") :].strip())
         assert payload["object"] == "chat.completion.chunk"
         assert payload["choices"][0]["delta"]["content"] == "hello"
         logger.info("Issue #321: Streaming SSE format verified")
@@ -26,11 +29,17 @@ class TestStreamingSSE:
     def test_streaming_done_message(self):
         from fusion_mlx.api.streaming import StreamingJSONEncoder
 
-        enc = StreamingJSONEncoder(response_id="test-id", model="test-model", object_type="chat.completion.chunk")
+        enc = StreamingJSONEncoder(
+            response_id="test-id",
+            model="test-model",
+            object_type="chat.completion.chunk",
+        )
         done = enc.encode_done()
         assert done == "data: [DONE]\n\n"
 
+
 # -- Issue #321: JSON Mode --
+
 
 class TestJSONMode:
     def test_response_format_json_object_dict(self):
@@ -46,7 +55,9 @@ class TestJSONMode:
         rf = ResponseFormat(type="json_object")
         assert rf.type == "json_object"
 
+
 # -- Issue #322: Embedding API --
+
 
 class TestEmbeddingAPI:
     def test_embedding_request_model(self):
@@ -64,7 +75,11 @@ class TestEmbeddingAPI:
         assert req.input == ["text1", "text2"]
 
     def test_embedding_response_model(self):
-        from fusion_mlx.api.embedding_models import EmbeddingResponse, EmbeddingData, EmbeddingUsage
+        from fusion_mlx.api.embedding_models import (
+            EmbeddingData,
+            EmbeddingResponse,
+            EmbeddingUsage,
+        )
 
         resp = EmbeddingResponse(
             model="bge-m3",
@@ -78,7 +93,10 @@ class TestEmbeddingAPI:
 
     def test_bge_m3_alias(self):
         import json
-        with open(Path(__file__).parent.parent.parent / "fusion_mlx" / "aliases.json") as f:
+
+        with open(
+            Path(__file__).parent.parent.parent / "fusion_mlx" / "aliases.json"
+        ) as f:
             aliases = json.load(f)
         assert "bge-m3" in aliases
         assert "bge-m3" in aliases

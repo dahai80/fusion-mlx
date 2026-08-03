@@ -537,9 +537,9 @@ class TestBuildUsageReasoningBreakdown:
         )
         usage = _build_usage(output, "reason")
         rt = usage.completion_tokens_details.reasoning_tokens
-        assert (
-            rt >= 1
-        ), f"reasoning_tokens must be >= 1 when reasoning happened, got {rt}"
+        assert rt >= 1, (
+            f"reasoning_tokens must be >= 1 when reasoning happened, got {rt}"
+        )
         assert rt < usage.completion_tokens, (
             f"reasoning_tokens ({rt}) must leave room for content "
             f"(completion_tokens={usage.completion_tokens})"
@@ -943,9 +943,9 @@ class TestExtractStreamingTokenLogprobs:
         with patch("numpy.array", side_effect=[arr_a, arr_b, arr_c]):
             result = _extract_streaming_token_logprobs(chunk, tok, top_k=3)
 
-        assert (
-            len(result) == 3
-        ), f"3-token delta must yield 3 TokenLogProb entries; got {len(result)}"
+        assert len(result) == 3, (
+            f"3-token delta must yield 3 TokenLogProb entries; got {len(result)}"
+        )
 
 
 # ---------------------------------------------------------------------------

@@ -761,16 +761,16 @@ class TestEnvelopeInvariants:
         ]
         for method, path, kwargs in cases:
             response = getattr(client.client, method)(path, **kwargs)
-            assert (
-                400 <= response.status_code < 500
-            ), f"{method.upper()} {path} {kwargs!r}: status={response.status_code}"
+            assert 400 <= response.status_code < 500, (
+                f"{method.upper()} {path} {kwargs!r}: status={response.status_code}"
+            )
             try:
                 envelope = response.json()
             except json.JSONDecodeError:
                 pytest.fail(f"{method.upper()} {path}: non-JSON body {response.text!r}")
-            assert (
-                envelope.get("type") == "error"
-            ), f"{method.upper()} {path}: missing Anthropic wrapper, got {envelope!r}"
+            assert envelope.get("type") == "error", (
+                f"{method.upper()} {path}: missing Anthropic wrapper, got {envelope!r}"
+            )
             assert isinstance(envelope.get("error"), dict)
 
     def test_anthropic_wrapper_idempotent_on_already_wrapped(self, client):

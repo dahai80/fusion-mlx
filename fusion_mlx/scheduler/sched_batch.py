@@ -789,8 +789,7 @@ def _insert_prefilled_request(
             f", {request.cached_tokens} cached" if request.cached_tokens > 0 else ""
         )
         logger.debug(
-            "Scheduled chunked-prefill request %s (uid=%d) "
-            "with %d tokens (%d total)%s",
+            "Scheduled chunked-prefill request %s (uid=%d) with %d tokens (%d total)%s",
             request.request_id,
             uid,
             len(state.last_token),

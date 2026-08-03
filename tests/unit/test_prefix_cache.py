@@ -2772,9 +2772,9 @@ class TestPerBlockMetaStates:
         # Block 1: KVCache meta should fall back to shared meta (empty snapshot meta)
         block1_call = mock_ssd.save_block.call_args_list[0]
         block1_meta = block1_call.kwargs["layer_meta_states"]
-        assert block1_meta[0] == (
-            "8",
-        ), f"KVCache should fall back to shared meta, got {block1_meta[0]}"
+        assert block1_meta[0] == ("8",), (
+            f"KVCache should fall back to shared meta, got {block1_meta[0]}"
+        )
 
     def test_store_cache_no_snapshot_uses_shared_meta(self, mx):
         """Blocks without boundary snapshots should use shared meta (existing behavior)."""

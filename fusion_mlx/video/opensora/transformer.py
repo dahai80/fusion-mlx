@@ -316,9 +316,9 @@ class MMDiTModel(nn.Module):
 
         head_dim = config.hidden_size // config.num_heads
         pe_dim = head_dim
-        assert (
-            sum(config.axes_dim) == pe_dim
-        ), f"axes_dim sum {sum(config.axes_dim)} != head_dim {pe_dim}"
+        assert sum(config.axes_dim) == pe_dim, (
+            f"axes_dim sum {sum(config.axes_dim)} != head_dim {pe_dim}"
+        )
 
         self.pe_embedder = EmbedND(
             dim=pe_dim, theta=config.theta, axes_dim=config.axes_dim

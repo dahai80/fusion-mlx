@@ -569,7 +569,7 @@ try:
         # Surface which ones so a regression in Llama-4 batching is visible
         # to operators without diffing the patch against installed mlx_lm.
         logger.info(
-            "ChunkedKVCache patch: methods already present upstream, " "skipped: %s",
+            "ChunkedKVCache patch: methods already present upstream, skipped: %s",
             ", ".join(_ckvcache_methods_skipped),
         )
 except ImportError:

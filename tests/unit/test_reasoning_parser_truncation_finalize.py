@@ -806,9 +806,9 @@ class TestLiteralSubstringPreservedInContent:
             f"reasoning must be the actual thought, not the literal "
             f"substring or a concatenation: {reasoning!r}"
         )
-        assert (
-            content == "The gemma4 format uses <|channel>thought tag"
-        ), f"content with literal <|channel>thought must survive verbatim: {content!r}"
+        assert content == "The gemma4 format uses <|channel>thought tag", (
+            f"content with literal <|channel>thought must survive verbatim: {content!r}"
+        )
 
     def test_gemma4_literal_channel_thought_in_content_preserved_length(self):
         """``finish_reason="length"`` mid-content: closed thought,
@@ -851,9 +851,9 @@ class TestLiteralSubstringPreservedInContent:
             f"literal <think> in answer must NOT promote answer to "
             f"reasoning: {reasoning!r}"
         )
-        assert (
-            content == raw
-        ), f"literal <think> substring must survive verbatim in content: {content!r}"
+        assert content == raw, (
+            f"literal <think> substring must survive verbatim in content: {content!r}"
+        )
 
     def test_minimax_literal_think_substring_in_answer_preserved_length(self):
         """``finish_reason="length"`` on the same shape — the route

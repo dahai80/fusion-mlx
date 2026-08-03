@@ -42,7 +42,7 @@ def _load_hf_weights(hf_dir: str) -> dict[str, mx.array]:
         f = safe_open(str(fname), framework="pt")
         import torch
 
-        for key in f.keys():
+        for key in f:
             t = f.get_tensor(key)
             if isinstance(t, torch.Tensor):
                 if t.dtype == torch.bfloat16:
@@ -208,9 +208,7 @@ def convert_model(
         logger.info("Wrote config.json to %s", output_dir)
 
         _save_weights_safetensors(mlx_weights, output_dir)
-        logger.info(
-            "Wrote weights (%d tensors) to %s", len(mlx_weights), output_dir
-        )
+        logger.info("Wrote weights (%d tensors) to %s", len(mlx_weights), output_dir)
 
         tokenizer_src = Path(hf_dir)
         for tok_name in (

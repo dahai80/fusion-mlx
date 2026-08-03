@@ -166,6 +166,6 @@ def test_rollback_zero_accepted_restores_pre_verify():
 
     assert cache[0].offset == 5, f"kv offset={cache[0].offset}, want 5"
     assert cache[1].cache == [None, None], "ArraysCache should be restored only"
-    assert not any(
-        len(c) == 1 for c in model.calls
-    ), f"no single-token replay should run when n_accepted=0; calls={model.calls}"
+    assert not any(len(c) == 1 for c in model.calls), (
+        f"no single-token replay should run when n_accepted=0; calls={model.calls}"
+    )

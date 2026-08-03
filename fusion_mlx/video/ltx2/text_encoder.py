@@ -908,8 +908,7 @@ class LTX2TextEncoder(nn.Module):
                 elif isinstance(content, list):
                     text_parts = [c["text"] for c in content if c.get("type") == "text"]
                     formatted += (
-                        f"<start_of_turn>user\n{' '.join(text_parts)}"
-                        f"<end_of_turn>\n"
+                        f"<start_of_turn>user\n{' '.join(text_parts)}<end_of_turn>\n"
                     )
             elif role == "assistant":
                 formatted += f"<start_of_turn>model\n{content}<end_of_turn>\n"

@@ -37,7 +37,7 @@ class PiIntegration(Integration):
     def get_command(
         self, port: int, api_key: str, model: str, host: str = "127.0.0.1"
     ) -> str:
-        return f"{get_cli_prefix()} " f"launch pi --model {model or 'select-a-model'}"
+        return f"{get_cli_prefix()} launch pi --model {model or 'select-a-model'}"
 
     @staticmethod
     def _is_reasoning_model(model: str | None) -> bool:

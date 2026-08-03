@@ -197,7 +197,6 @@ def _make_decoder_block(
 
 
 class VideoEncoder(nn.Module):
-
     _DEFAULT_NORM_NUM_GROUPS = 32
 
     def __init__(self, config: "VideoEncoderModelConfig"):
@@ -424,7 +423,6 @@ class VideoEncoder(nn.Module):
 
 
 class VideoDecoder(nn.Module):
-
     _DEFAULT_NORM_NUM_GROUPS = 32
 
     def __init__(

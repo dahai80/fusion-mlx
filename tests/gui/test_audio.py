@@ -71,7 +71,7 @@ def test_audio_transcription():
                     print("\n📋 Segments:")
                     for i, segment in enumerate(result["segments"]):
                         print(
-                            f"   {i+1}. [{segment.get('start', 0):.1f}s - {segment.get('end', 0):.1f}s]: {segment.get('text', '')}"
+                            f"   {i + 1}. [{segment.get('start', 0):.1f}s - {segment.get('end', 0):.1f}s]: {segment.get('text', '')}"
                         )
 
             elif RESPONSE_FORMAT == "text":

@@ -123,15 +123,15 @@ def test_bare_function_block_streams_as_tool_call():
 
     # No content event should have leaked the raw tool-call markup.
     for text in _content_events(deltas):
-        assert (
-            "<function=" not in text
-        ), f"bare tool-call markup leaked as content: {text!r}"
-        assert (
-            "</function>" not in text
-        ), f"bare tool-call markup leaked as content: {text!r}"
-        assert (
-            "<parameter=" not in text
-        ), f"bare tool-call markup leaked as content: {text!r}"
+        assert "<function=" not in text, (
+            f"bare tool-call markup leaked as content: {text!r}"
+        )
+        assert "</function>" not in text, (
+            f"bare tool-call markup leaked as content: {text!r}"
+        )
+        assert "<parameter=" not in text, (
+            f"bare tool-call markup leaked as content: {text!r}"
+        )
 
 
 def test_bare_multi_function_blocks_stream_both_calls():
@@ -182,9 +182,9 @@ def test_bare_multi_function_blocks_stream_both_calls():
 
     names = _names_by_index(deltas)
     assert names.get(0) == "read_file", f"tool index 0 must be read_file, got {names!r}"
-    assert (
-        names.get(1) == "write_file"
-    ), f"tool index 1 must be write_file, got {names!r}"
+    assert names.get(1) == "write_file", (
+        f"tool index 1 must be write_file, got {names!r}"
+    )
 
     args_0 = json.loads("".join(_argument_fragments_for_index(deltas, 0)))
     args_1 = json.loads("".join(_argument_fragments_for_index(deltas, 1)))
@@ -217,17 +217,17 @@ def test_wrapped_streaming_still_works():
     fragments = _argument_fragments_for_index(deltas, 0)
     combined = "".join(f for f in fragments if f != "")
     decoded = json.loads(combined)
-    assert decoded == {
-        "path": "/src/main.py"
-    }, f"wrapped-mode regression: expected {{'path': '/src/main.py'}}, got {decoded!r}"
+    assert decoded == {"path": "/src/main.py"}, (
+        f"wrapped-mode regression: expected {{'path': '/src/main.py'}}, got {decoded!r}"
+    )
 
     for text in _content_events(deltas):
-        assert (
-            "<tool_call>" not in text
-        ), f"wrapped tool-call markup leaked as content: {text!r}"
-        assert (
-            "<function=" not in text
-        ), f"wrapped tool-call markup leaked as content: {text!r}"
+        assert "<tool_call>" not in text, (
+            f"wrapped tool-call markup leaked as content: {text!r}"
+        )
+        assert "<function=" not in text, (
+            f"wrapped tool-call markup leaked as content: {text!r}"
+        )
 
 
 def test_function_prefix_in_parameter_value_not_counted_as_tool_boundary():
@@ -242,9 +242,9 @@ def test_function_prefix_in_parameter_value_not_counted_as_tool_boundary():
         "</function>"
     )
     starts = parser._function_start_positions(text)
-    assert starts == [
-        0
-    ], f"top-level ``<function=`` scanner miscounted: expected [0], got {starts!r}"
+    assert starts == [0], (
+        f"top-level ``<function=`` scanner miscounted: expected [0], got {starts!r}"
+    )
 
 
 def test_function_end_in_parameter_value_not_counted_as_tool_close():
@@ -286,16 +286,16 @@ def test_streaming_state_not_corrupted_by_function_prefix_in_value():
 
     deltas = _feed(parser, chunks, request)
     names = _names_by_index(deltas)
-    assert set(names.keys()) == {
-        0
-    }, f"phantom tool index emitted; names={names!r}, deltas={deltas!r}"
+    assert set(names.keys()) == {0}, (
+        f"phantom tool index emitted; names={names!r}, deltas={deltas!r}"
+    )
     assert names[0] == "echo"
     # Trailing content after the real tool close must reach the
     # content stream, not vanish into a phantom advance.
     contents = _content_events(deltas)
-    assert any(
-        "done" in c for c in contents
-    ), f"trailing content swallowed by phantom advance; contents={contents!r}"
+    assert any("done" in c for c in contents), (
+        f"trailing content swallowed by phantom advance; contents={contents!r}"
+    )
 
 
 def test_content_before_bare_function_is_emitted_as_content():
@@ -321,9 +321,9 @@ def test_content_before_bare_function_is_emitted_as_content():
     deltas = _feed(parser, chunks, request)
 
     contents = _content_events(deltas)
-    assert any(
-        "Let me read that file. " in c for c in contents
-    ), f"prose before <function=…> was dropped. contents={contents!r}"
+    assert any("Let me read that file. " in c for c in contents), (
+        f"prose before <function=…> was dropped. contents={contents!r}"
+    )
     # And the tool call still fired.
     names = _names_by_index(deltas)
     assert names.get(0) == "read_file", names

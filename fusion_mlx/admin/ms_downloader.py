@@ -207,8 +207,7 @@ async def _fetch_model_config(model_id: str) -> dict | None:
 
     endpoint = _get_ms_endpoint()
     url = (
-        f"{endpoint}/api/v1/models/{model_id}/repo"
-        f"?FilePath=config.json&Revision=master"
+        f"{endpoint}/api/v1/models/{model_id}/repo?FilePath=config.json&Revision=master"
     )
     try:
         resp = await asyncio.wait_for(
@@ -1049,8 +1048,7 @@ class MSDownloader:
                         "Try retrying the download."
                     )
                     logger.warning(
-                        f"MS Download stalled for {task.repo_id} "
-                        f"(task_id={task_id})"
+                        f"MS Download stalled for {task.repo_id} (task_id={task_id})"
                     )
                     # Cancel the snapshot_download thread
                     active_task = self._active_tasks.get(task_id)

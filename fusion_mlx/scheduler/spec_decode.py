@@ -884,7 +884,7 @@ def dspark_spec_step(
         if dspark_state.total_spec_steps % DSPARK_SPEC_LOG_INTERVAL == 1:
             stats = dspark_state.get_stats()
             logger.info(
-                "dspark_spec: step=%d, accepted=%d, rate=%.1f%%, " "sessions=%d",
+                "dspark_spec: step=%d, accepted=%d, rate=%.1f%%, sessions=%d",
                 dspark_state.total_spec_steps,
                 n_accepted,
                 stats["acceptance_rate"] * 100,

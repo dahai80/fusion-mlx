@@ -310,7 +310,7 @@ class TestParseToolCallsFromTokens:
         """Extracts function name and arguments from tool call tokens."""
         # Model output starts from <|channel|> (prompt includes <|start|>assistant)
         tokens = encoding.encode(
-            '<|channel|>commentary<|message|>{"path":"t.py"}<|end|>' "<|return|>",
+            '<|channel|>commentary<|message|>{"path":"t.py"}<|end|><|return|>',
             allowed_special="all",
         )
         # prepend_start=True adds <|start|>assistant

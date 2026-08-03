@@ -34,7 +34,6 @@ class AttentionType(Enum):
 
 @dataclass
 class BaseModelConfig:
-
     @classmethod
     def from_dict(cls, params: dict[str, Any]) -> "BaseModelConfig":
         return cls(

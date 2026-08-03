@@ -306,8 +306,8 @@ class TestParserBackedThinkingBudgetWiring:
         )
 
         tokenizer = MagicMock()
-        tokenizer.encode.side_effect = (
-            lambda text, add_special_tokens=False: encode_map[text]
+        tokenizer.encode.side_effect = lambda text, add_special_tokens=False: (
+            encode_map[text]
         )
         scheduler.tokenizer = tokenizer
         return scheduler

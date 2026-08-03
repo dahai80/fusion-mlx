@@ -43,7 +43,6 @@ def get_timestep_embedding(
 
 
 class TimestepEmbedding(nn.Module):
-
     def __init__(self, in_channels: int, time_embed_dim: int):
         super().__init__()
         self.linear_1 = nn.Linear(in_channels, time_embed_dim)
@@ -58,7 +57,6 @@ class TimestepEmbedding(nn.Module):
 
 
 class PixArtAlphaTimestepEmbedder(nn.Module):
-
     def __init__(self, embedding_dim: int):
         super().__init__()
         self.timestep_embedder = TimestepEmbedding(
@@ -76,7 +74,6 @@ class PixArtAlphaTimestepEmbedder(nn.Module):
 
 
 class ResnetBlock3DSimple(nn.Module):
-
     def __init__(
         self,
         channels: int,
@@ -155,7 +152,6 @@ class ResnetBlock3DSimple(nn.Module):
 
 
 class ResBlockGroup(nn.Module):
-
     def __init__(
         self,
         channels: int,
@@ -199,7 +195,6 @@ class ResBlockGroup(nn.Module):
 
 
 class LTX2VideoDecoder(nn.Module):
-
     DEFAULT_BLOCKS = [
         ("res", 1024, 5),
         ("d2s", 1024, 2, (2, 2, 2)),
@@ -332,7 +327,6 @@ class LTX2VideoDecoder(nn.Module):
                 pass
 
             if ".conv.weight" in new_key or ".conv.bias" in new_key:
-
                 if (
                     ".conv.conv.weight" not in new_key
                     and ".conv.conv.bias" not in new_key

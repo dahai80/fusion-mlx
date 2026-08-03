@@ -5,7 +5,6 @@ from .attention import WanCrossAttention, WanLayerNorm, WanSelfAttention, _linea
 
 
 class WanAttentionBlock(nn.Module):
-
     def __init__(
         self,
         dim: int,
@@ -89,7 +88,6 @@ class WanAttentionBlock(nn.Module):
 
 
 class WanFFN(nn.Module):
-
     def __init__(self, dim: int, ffn_dim: int):
         super().__init__()
         self.fc1 = nn.Linear(dim, ffn_dim)

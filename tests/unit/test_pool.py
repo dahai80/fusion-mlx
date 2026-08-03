@@ -12,7 +12,6 @@ from fusion_mlx.pool.priority_scheduler import (
 
 
 class TestPrioritySchedulerSubmit:
-
     def _make_scheduler(self):
         base = MagicMock()
         base.has_requests = MagicMock(return_value=False)
@@ -51,7 +50,6 @@ class TestPrioritySchedulerSubmit:
 
 
 class TestPrioritySchedulerReservedSlots:
-
     def _make_scheduler(self, config=None):
         base = MagicMock()
         base.has_requests = MagicMock(return_value=False)
@@ -84,13 +82,12 @@ class TestPrioritySchedulerReservedSlots:
         sched._request_priorities["r2"] = PriorityLevel.REALTIME
         sched._request_priorities["r3"] = PriorityLevel.REALTIME
         slots = sched._get_reserved_slots()
-        assert all(
-            v >= 0 for v in slots.values()
-        ), "Reserved slots should never be negative"
+        assert all(v >= 0 for v in slots.values()), (
+            "Reserved slots should never be negative"
+        )
 
 
 class TestPriorityRequest:
-
     def test_is_expired_false_when_no_deadline(self):
         req = PriorityRequest(
             request=MagicMock(),
@@ -119,7 +116,6 @@ class TestPriorityRequest:
 
 
 class TestPriorityLevel:
-
     def test_priority_ordering(self):
         assert PriorityLevel.REALTIME < PriorityLevel.BATCH < PriorityLevel.BACKGROUND
 

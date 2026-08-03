@@ -1334,9 +1334,9 @@ class TestLevelBudgetPlan:
         plan = _build_quant_plan(
             named_shapes, config, 2, target_bpw=2.8, hard_cap_bpw=3.0
         )
-        assert (
-            plan.effective_bpw >= 2.7
-        ), f"Expected bpw >= 2.7, got {plan.effective_bpw:.2f}"
+        assert plan.effective_bpw >= 2.7, (
+            f"Expected bpw >= 2.7, got {plan.effective_bpw:.2f}"
+        )
         assert plan.effective_bpw <= 3.0
         # Attention should be boosted via protection floor
         attn_boosts = [k for k in plan.boost_map if "q_proj" in k or "v_proj" in k]
@@ -3215,9 +3215,9 @@ class TestQuantizeOqStreamingFp8:
 
         idx = _LazyTensorIndex([str(src / "model.safetensors")])
         assert len(idx._fp8_pairs) == 0, "BF16 weight should not pair with .scale"
-        assert (
-            "model.layers.0.self_attn.q_proj.scale" in idx
-        ), "scale key must remain visible"
+        assert "model.layers.0.self_attn.q_proj.scale" in idx, (
+            "scale key must remain visible"
+        )
 
 
 # =============================================================================

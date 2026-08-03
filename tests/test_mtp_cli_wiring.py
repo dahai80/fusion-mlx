@@ -2010,9 +2010,9 @@ def test_install_mtp_vendored_uid_reuse_clears_stale_state(monkeypatch):
     # Step 1 for req-A — FIRST-call construction, generator #1
     # built. State populated with request_id=req-A.
     gb._step()
-    assert (
-        len(generators_built) == 1
-    ), f"expected exactly one generator built for req-A, got {generators_built!r}"
+    assert len(generators_built) == 1, (
+        f"expected exactly one generator built for req-A, got {generators_built!r}"
+    )
 
     # Simulate mlx-lm's request completion + uid reuse: same uid,
     # new request_id. No _cleanup_uid call — this exactly mirrors

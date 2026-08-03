@@ -16,7 +16,6 @@ from fusion_mlx.dispatch.smart_router import (
 
 
 class TestRouterDecisionLatency:
-
     def _make_router(self):
         config = RouterConfig()
         return SmartRouter(
@@ -76,13 +75,12 @@ class TestRouterDecisionLatency:
             router._estimate_tokens(messages)
         elapsed = time.perf_counter() - start
         avg_ms = (elapsed / 100) * 1000
-        assert (
-            avg_ms < 1.0
-        ), f"Token estimation {avg_ms:.2f}ms exceeds 1ms for 10k chars"
+        assert avg_ms < 1.0, (
+            f"Token estimation {avg_ms:.2f}ms exceeds 1ms for 10k chars"
+        )
 
 
 class TestCircuitBreakerThroughput:
-
     def test_rapid_fail_recover_cycle(self):
         cr = CloudRouter(cloud_model="gpt-4", threshold=100000)
         iterations = 10000
@@ -96,7 +94,6 @@ class TestCircuitBreakerThroughput:
 
 
 class TestCloudRouterTimeout:
-
     @pytest.mark.asyncio
     async def test_call_cloud_times_out(self):
         import asyncio

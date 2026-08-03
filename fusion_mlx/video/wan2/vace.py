@@ -12,7 +12,6 @@ from .transformer import WanFFN
 
 
 class VACEBlock(nn.Module):
-
     def __init__(
         self,
         dim: int,

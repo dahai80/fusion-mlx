@@ -1365,9 +1365,9 @@ class TestAnthropicResponseExcludesNullFields:
         )
         result = openai_to_anthropic(resp, "default")
         wire_json = result.model_dump_json(exclude_none=True)
-        assert (
-            ": null" not in wire_json and ":null" not in wire_json
-        ), f"wire JSON leaked a literal null: {wire_json[:500]}"
+        assert ": null" not in wire_json and ":null" not in wire_json, (
+            f"wire JSON leaked a literal null: {wire_json[:500]}"
+        )
 
     def test_tool_use_response_has_no_null_fields(self):
         tc = ToolCall(
@@ -1382,6 +1382,6 @@ class TestAnthropicResponseExcludesNullFields:
         resp = ChatCompletionResponse(model="default", choices=[choice], usage=Usage())
         result = openai_to_anthropic(resp, "default")
         wire_json = result.model_dump_json(exclude_none=True)
-        assert (
-            ": null" not in wire_json and ":null" not in wire_json
-        ), f"tool_use wire JSON leaked a null: {wire_json[:500]}"
+        assert ": null" not in wire_json and ":null" not in wire_json, (
+            f"tool_use wire JSON leaked a null: {wire_json[:500]}"
+        )

@@ -44,7 +44,6 @@ class TransformerArgs:
 
 
 class BasicAVTransformerBlock(nn.Module):
-
     def __init__(
         self,
         idx: int,

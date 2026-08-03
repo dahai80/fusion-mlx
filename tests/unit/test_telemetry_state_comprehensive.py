@@ -22,7 +22,6 @@ from fusion_mlx.telemetry.state import (
 
 
 class TestConsentState(unittest.TestCase):
-
     def test_record_consent_yes(self):
         with tempfile.TemporaryDirectory() as td:
             with patch.object(
@@ -62,14 +61,12 @@ class TestConsentState(unittest.TestCase):
 
 
 class TestEnvVarKillSwitch(unittest.TestCase):
-
     def test_env_var_name(self):
         self.assertIsInstance(ENV_VAR, str)
         self.assertGreater(len(ENV_VAR), 0)
 
 
 class TestPaths(unittest.TestCase):
-
     def test_consent_path_is_path_or_str(self):
         p = consent_path()
         self.assertTrue(isinstance(p, (str, Path)))

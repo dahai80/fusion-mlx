@@ -28,7 +28,6 @@ def get_norm_layer(
 
 
 class ResnetBlock3D(nn.Module):
-
     def __init__(
         self,
         dims: int,
@@ -111,7 +110,6 @@ class ResnetBlock3D(nn.Module):
 
 
 class UNetMidBlock3D(nn.Module):
-
     def __init__(
         self,
         dims: int,

@@ -1041,9 +1041,9 @@ class TestGlobalMLXExecutor:
                 engine1.close()
                 engine2.close()
         assert total_steps >= 4, f"Expected at least 4 steps, got {total_steps}"
-        assert (
-            max_concurrent >= 2
-        ), f"Expected concurrent execution (max_concurrent >= 2), got {max_concurrent}."
+        assert max_concurrent >= 2, (
+            f"Expected concurrent execution (max_concurrent >= 2), got {max_concurrent}."
+        )
 
 
 class TestEngineCoreCloseReleasesSSDManager:

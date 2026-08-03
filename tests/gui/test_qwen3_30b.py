@@ -104,7 +104,7 @@ async def test_qwen3_moe_model():
             if load_response.status_code == 200:
                 load_data = load_response.json()
                 print(
-                    f"   ✅ MoE model loaded successfully in {load_end-load_start:.1f}s"
+                    f"   ✅ MoE model loaded successfully in {load_end - load_start:.1f}s"
                 )
                 print(f"   📊 Status: {load_data.get('status', 'unknown')}")
                 if load_data.get("memory_warning"):
@@ -168,7 +168,7 @@ async def test_qwen3_moe_model():
                     content = result["choices"][0]["message"]["content"]
                     usage = result.get("usage", {})
 
-                    print(f"   🎯 {test['name']} ({end_time-start_time:.1f}s):")
+                    print(f"   🎯 {test['name']} ({end_time - start_time:.1f}s):")
                     print(f"   💭 Expected expert: {test['expected_expert']}")
                     print(f"   📝 Response quality: {len(content)} chars")
                     print(f"   💬 Preview: {content[:100]}...")
@@ -347,9 +347,9 @@ async def test_qwen3_moe_model():
                             if keyword.lower() in full_response.lower():
                                 found_domains[domain] += 1
 
-                    print(f"\n   ✅ Streaming completed ({end_time-start_time:.1f}s)")
+                    print(f"\n   ✅ Streaming completed ({end_time - start_time:.1f}s)")
                     print(
-                        f"   📊 Tokens: ~{total_tokens}, Speed: ~{total_tokens/(end_time-start_time):.1f} tok/s"
+                        f"   📊 Tokens: ~{total_tokens}, Speed: ~{total_tokens / (end_time - start_time):.1f} tok/s"
                     )
                     print("   🧠 Expert domains activated:")
                     for domain, count in found_domains.items():

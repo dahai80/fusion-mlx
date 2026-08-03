@@ -1,9 +1,8 @@
 # SPDX-License-Identifier: Apache-2.0
-import pytest
-from unittest.mock import MagicMock, patch
-from fusion_mlx.cache.tiered_cache import TieredCacheManager, TieredCacheStats
+from unittest.mock import MagicMock
+
 from fusion_mlx.cache.paged_cache import PagedCacheManager
-from fusion_mlx.cache.stats import PagedCacheStats
+from fusion_mlx.cache.tiered_cache import TieredCacheManager, TieredCacheStats
 
 
 class TestTieredCacheStats:
@@ -57,9 +56,9 @@ class TestTieredCacheManager:
         cold.save_block = MagicMock(return_value=True)
         cold.evict = MagicMock(return_value=False)
         cold.clear = MagicMock(return_value=0)
-        cold.get_stats = MagicMock(return_value=MagicMock(
-            to_dict=MagicMock(return_value={})
-        ))
+        cold.get_stats = MagicMock(
+            return_value=MagicMock(to_dict=MagicMock(return_value={}))
+        )
         cold.get_stats_dict = MagicMock(return_value={})
         return cold
 
@@ -81,6 +80,7 @@ class TestTieredCacheManager:
         tm = TieredCacheManager(hot=hot, cold=cold)
 
         from fusion_mlx.cache.paged_cache import CacheBlock
+
         block = CacheBlock(block_id=1)
         block.block_hash = b"\x01" * 32
         hot.cached_block_hash_to_block.insert(block.block_hash, block)

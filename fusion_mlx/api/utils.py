@@ -1424,7 +1424,6 @@ def get_tool_call_tags() -> list[tuple[str, str]]:
 
 
 class StreamingToolCallFilter:
-
     def __init__(self, extra_tags: list[tuple[str, str]] | None = None):
         self._buffer = ""
         self._in_block = False

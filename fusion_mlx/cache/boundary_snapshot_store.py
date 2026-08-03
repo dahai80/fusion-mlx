@@ -293,7 +293,7 @@ class BoundarySnapshotSSDStore:
                 # only" promise was already broken because cleanup
                 # discards the in-memory copy anyway.
                 logger.warning(
-                    "Boundary snapshot write queue full, dropping " "snapshot %s/%d",
+                    "Boundary snapshot write queue full, dropping snapshot %s/%d",
                     request_id,
                     token_count,
                 )

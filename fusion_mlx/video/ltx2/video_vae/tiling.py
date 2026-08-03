@@ -41,7 +41,6 @@ def compute_trapezoidal_mask_1d(
 
 @dataclass(frozen=True)
 class SpatialTilingConfig:
-
     tile_size_in_pixels: int
     tile_overlap_in_pixels: int = 0
 
@@ -66,7 +65,6 @@ class SpatialTilingConfig:
 
 @dataclass(frozen=True)
 class TemporalTilingConfig:
-
     tile_size_in_frames: int
     tile_overlap_in_frames: int = 0
 
@@ -91,7 +89,6 @@ class TemporalTilingConfig:
 
 @dataclass(frozen=True)
 class TilingConfig:
-
     spatial_config: SpatialTilingConfig | None = None
     temporal_config: TemporalTilingConfig | None = None
 
@@ -179,7 +176,6 @@ class TilingConfig:
 
 @dataclass
 class DimensionIntervals:
-
     starts: list[int]
     ends: list[int]
     left_ramps: list[int]

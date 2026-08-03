@@ -63,13 +63,13 @@ def _build_model_args(template: ArchTemplate, config: dict) -> str:
         elif isinstance(v, int):
             lines.append(f"    {k}: int = {v}")
     lines.append(f"    rope_theta: float = {rope_theta}")
-    lines.append(f"    rope_traditional: bool = False")
-    lines.append(f"    rope_scaling: Optional[dict] = None")
+    lines.append("    rope_traditional: bool = False")
+    lines.append("    rope_scaling: Optional[dict] = None")
     lines.append(f"    max_position_embeddings: int = {max_pos}")
     if template.has_bias:
-        lines.append(f"    bias: bool = True")
+        lines.append("    bias: bool = True")
     if template.has_mlp_bias:
-        lines.append(f"    mlp_bias: bool = True")
+        lines.append("    mlp_bias: bool = True")
     return "\n".join(lines)
 
 

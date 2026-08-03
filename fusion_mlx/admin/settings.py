@@ -123,29 +123,29 @@ def _save_global_settings_fallback(request: GlobalSettingsRequest) -> dict:
         sj.setdefault("memory", {})["memory_guard_tier"] = request.memory_guard_tier
         runtime_applied.append("memory_guard_tier")
     if request.memory_guard_custom_ceiling_gb is not None:
-        sj.setdefault("memory", {})[
-            "memory_guard_custom_ceiling_gb"
-        ] = request.memory_guard_custom_ceiling_gb
+        sj.setdefault("memory", {})["memory_guard_custom_ceiling_gb"] = (
+            request.memory_guard_custom_ceiling_gb
+        )
         runtime_applied.append("memory_guard_custom_ceiling_gb")
     if request.memory_prefill_memory_guard is not None:
-        sj.setdefault("memory", {})[
-            "prefill_memory_guard"
-        ] = request.memory_prefill_memory_guard
+        sj.setdefault("memory", {})["prefill_memory_guard"] = (
+            request.memory_prefill_memory_guard
+        )
         runtime_applied.append("prefill_memory_guard")
 
     # Scheduler settings
     if request.max_concurrent_requests is not None:
-        sj.setdefault("scheduler", {})[
-            "max_concurrent_requests"
-        ] = request.max_concurrent_requests
+        sj.setdefault("scheduler", {})["max_concurrent_requests"] = (
+            request.max_concurrent_requests
+        )
     if request.embedding_batch_size is not None:
         if request.embedding_batch_size <= 0:
             raise HTTPException(
                 status_code=400, detail="Invalid embedding_batch_size: must be > 0"
             )
-        sj.setdefault("scheduler", {})[
-            "embedding_batch_size"
-        ] = request.embedding_batch_size
+        sj.setdefault("scheduler", {})["embedding_batch_size"] = (
+            request.embedding_batch_size
+        )
         runtime_applied.append("embedding_batch_size")
     if request.chunked_prefill is not None:
         sj.setdefault("scheduler", {})["chunked_prefill"] = request.chunked_prefill
@@ -164,9 +164,9 @@ def _save_global_settings_fallback(request: GlobalSettingsRequest) -> dict:
     if request.hot_cache_max_size is not None:
         sj.setdefault("cache", {})["hot_cache_max_size"] = request.hot_cache_max_size
     if request.initial_cache_blocks is not None:
-        sj.setdefault("cache", {})[
-            "initial_cache_blocks"
-        ] = request.initial_cache_blocks
+        sj.setdefault("cache", {})["initial_cache_blocks"] = (
+            request.initial_cache_blocks
+        )
 
     # MCP settings
     if request.mcp_config is not None:
@@ -234,9 +234,9 @@ def _save_global_settings_fallback(request: GlobalSettingsRequest) -> dict:
     # Sampling settings
     sampling_changed = False
     if request.sampling_max_context_window is not None:
-        sj.setdefault("sampling", {})[
-            "max_context_window"
-        ] = request.sampling_max_context_window
+        sj.setdefault("sampling", {})["max_context_window"] = (
+            request.sampling_max_context_window
+        )
         sampling_changed = True
     if request.sampling_max_tokens is not None:
         sj.setdefault("sampling", {})["max_tokens"] = request.sampling_max_tokens
@@ -251,9 +251,9 @@ def _save_global_settings_fallback(request: GlobalSettingsRequest) -> dict:
         sj.setdefault("sampling", {})["top_k"] = request.sampling_top_k
         sampling_changed = True
     if request.sampling_repetition_penalty is not None:
-        sj.setdefault("sampling", {})[
-            "repetition_penalty"
-        ] = request.sampling_repetition_penalty
+        sj.setdefault("sampling", {})["repetition_penalty"] = (
+            request.sampling_repetition_penalty
+        )
         sampling_changed = True
     if sampling_changed:
         runtime_applied.append("sampling")
@@ -261,14 +261,14 @@ def _save_global_settings_fallback(request: GlobalSettingsRequest) -> dict:
     # Claude Code settings
     cc_changed = False
     if request.claude_code_context_scaling_enabled is not None:
-        sj.setdefault("claude_code", {})[
-            "context_scaling_enabled"
-        ] = request.claude_code_context_scaling_enabled
+        sj.setdefault("claude_code", {})["context_scaling_enabled"] = (
+            request.claude_code_context_scaling_enabled
+        )
         cc_changed = True
     if request.claude_code_target_context_size is not None:
-        sj.setdefault("claude_code", {})[
-            "target_context_size"
-        ] = request.claude_code_target_context_size
+        sj.setdefault("claude_code", {})["target_context_size"] = (
+            request.claude_code_target_context_size
+        )
         cc_changed = True
     if request.claude_code_mode is not None:
         sj.setdefault("claude_code", {})["mode"] = request.claude_code_mode
@@ -277,14 +277,14 @@ def _save_global_settings_fallback(request: GlobalSettingsRequest) -> dict:
         sj.setdefault("claude_code", {})["opus_model"] = request.claude_code_opus_model
         cc_changed = True
     if "claude_code_sonnet_model" in request.model_fields_set:
-        sj.setdefault("claude_code", {})[
-            "sonnet_model"
-        ] = request.claude_code_sonnet_model
+        sj.setdefault("claude_code", {})["sonnet_model"] = (
+            request.claude_code_sonnet_model
+        )
         cc_changed = True
     if "claude_code_haiku_model" in request.model_fields_set:
-        sj.setdefault("claude_code", {})[
-            "haiku_model"
-        ] = request.claude_code_haiku_model
+        sj.setdefault("claude_code", {})["haiku_model"] = (
+            request.claude_code_haiku_model
+        )
         cc_changed = True
     if cc_changed:
         runtime_applied.append("claude_code")
@@ -292,37 +292,37 @@ def _save_global_settings_fallback(request: GlobalSettingsRequest) -> dict:
     # Integrations settings
     int_changed = False
     if "integrations_copilot_model" in request.model_fields_set:
-        sj.setdefault("integrations", {})[
-            "copilot_model"
-        ] = request.integrations_copilot_model
+        sj.setdefault("integrations", {})["copilot_model"] = (
+            request.integrations_copilot_model
+        )
         int_changed = True
     if "integrations_codex_model" in request.model_fields_set:
-        sj.setdefault("integrations", {})[
-            "codex_model"
-        ] = request.integrations_codex_model
+        sj.setdefault("integrations", {})["codex_model"] = (
+            request.integrations_codex_model
+        )
         int_changed = True
     if "integrations_opencode_model" in request.model_fields_set:
-        sj.setdefault("integrations", {})[
-            "opencode_model"
-        ] = request.integrations_opencode_model
+        sj.setdefault("integrations", {})["opencode_model"] = (
+            request.integrations_opencode_model
+        )
         int_changed = True
     if "integrations_openclaw_model" in request.model_fields_set:
-        sj.setdefault("integrations", {})[
-            "openclaw_model"
-        ] = request.integrations_openclaw_model
+        sj.setdefault("integrations", {})["openclaw_model"] = (
+            request.integrations_openclaw_model
+        )
         int_changed = True
     if "integrations_hermes_model" in request.model_fields_set:
-        sj.setdefault("integrations", {})[
-            "hermes_model"
-        ] = request.integrations_hermes_model
+        sj.setdefault("integrations", {})["hermes_model"] = (
+            request.integrations_hermes_model
+        )
         int_changed = True
     if "integrations_pi_model" in request.model_fields_set:
         sj.setdefault("integrations", {})["pi_model"] = request.integrations_pi_model
         int_changed = True
     if "integrations_openclaw_tools_profile" in request.model_fields_set:
-        sj.setdefault("integrations", {})[
-            "openclaw_tools_profile"
-        ] = request.integrations_openclaw_tools_profile
+        sj.setdefault("integrations", {})["openclaw_tools_profile"] = (
+            request.integrations_openclaw_tools_profile
+        )
         int_changed = True
     if int_changed:
         runtime_applied.append("integrations")
@@ -334,9 +334,9 @@ def _save_global_settings_fallback(request: GlobalSettingsRequest) -> dict:
 
     # Idle timeout
     if "idle_timeout_seconds" in request.model_fields_set:
-        sj.setdefault("idle_timeout", {})[
-            "idle_timeout_seconds"
-        ] = request.idle_timeout_seconds
+        sj.setdefault("idle_timeout", {})["idle_timeout_seconds"] = (
+            request.idle_timeout_seconds
+        )
         runtime_applied.append("idle_timeout_seconds")
 
     # Auth settings
@@ -351,9 +351,9 @@ def _save_global_settings_fallback(request: GlobalSettingsRequest) -> dict:
         runtime_applied.append("api_key")
 
     if request.skip_api_key_verification is not None:
-        sj.setdefault("auth", {})[
-            "skip_api_key_verification"
-        ] = request.skip_api_key_verification
+        sj.setdefault("auth", {})["skip_api_key_verification"] = (
+            request.skip_api_key_verification
+        )
         runtime_applied.append("skip_api_key_verification")
 
     # Persist
@@ -978,7 +978,7 @@ async def update_global_settings(
             del os.environ["HF_ENDPOINT"]
         runtime_applied.append("hf_endpoint")
         logger.info(
-            f"HuggingFace endpoint updated to: " f"{request.hf_endpoint or '(default)'}"
+            f"HuggingFace endpoint updated to: {request.hf_endpoint or '(default)'}"
         )
 
     # Apply ModelScope settings (Live - immediately applied via env var)
@@ -990,7 +990,7 @@ async def update_global_settings(
             del os.environ["MODELSCOPE_DOMAIN"]
         runtime_applied.append("ms_endpoint")
         logger.info(
-            f"ModelScope endpoint updated to: " f"{request.ms_endpoint or '(default)'}"
+            f"ModelScope endpoint updated to: {request.ms_endpoint or '(default)'}"
         )
 
     # Apply network settings (Live - immediately applied via env vars)

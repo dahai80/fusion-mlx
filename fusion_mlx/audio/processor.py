@@ -19,7 +19,6 @@ class SeparationResult:
 
 
 class AudioProcessor:
-
     def __init__(
         self,
         model_name: str = DEFAULT_SAM_MODEL,

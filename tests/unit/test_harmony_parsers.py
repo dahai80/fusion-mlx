@@ -13,7 +13,6 @@ logger = logging.getLogger(__name__)
 
 
 class TestHarmonyToolParser:
-
     @pytest.fixture()
     def parser(self):
         return HarmonyToolParser()
@@ -199,7 +198,6 @@ class TestHarmonyToolParser:
 
 
 class TestHarmonyReasoningParser:
-
     @pytest.fixture()
     def parser(self):
         return HarmonyReasoningParser()
@@ -390,7 +388,6 @@ class TestHarmonyReasoningParser:
 
 
 class TestHarmonyToolDefinitionConverter:
-
     def test_simple_tool(self):
         tools = [
             {
@@ -588,7 +585,6 @@ class TestHarmonyToolDefinitionConverter:
 
 
 class TestHarmonyEnginePipeline:
-
     def test_commentary_only_output_extracts_tool_call(self):
         from fusion_mlx.api.utils import clean_output_text
 
@@ -663,7 +659,6 @@ class TestHarmonyEnginePipeline:
 
 
 class TestHarmonyEdgeCases:
-
     def test_tool_parser_unterminated_call_is_now_parsed(self):
         parser = HarmonyToolParser()
         text = '<|channel|>commentary to=functions.func\n<|message|>{"arg": "value"}'
@@ -761,7 +756,6 @@ class TestHarmonyEdgeCases:
 
 
 class TestHarmonyExtractToolCalls:
-
     @pytest.fixture()
     def parser(self):
         return HarmonyToolParser()
@@ -888,7 +882,6 @@ class TestHarmonyExtractToolCalls:
 
 
 class TestHarmonyStreaming:
-
     @pytest.fixture()
     def parser(self):
         return HarmonyToolParser()
@@ -1049,7 +1042,6 @@ class TestHarmonyStreaming:
 
 
 class TestHarmonyHasPendingToolCall:
-
     @pytest.fixture()
     def parser(self):
         return HarmonyToolParser()
@@ -1095,7 +1087,6 @@ class TestHarmonyHasPendingToolCall:
 
 
 class TestHarmonyHelperFunctions:
-
     def test_strip_control_tokens_removes_all(self):
         from fusion_mlx.tool_parsers.harmony_tool_parser import _strip_control_tokens
 
@@ -1186,7 +1177,6 @@ class TestHarmonyHelperFunctions:
 
 
 class TestHarmonyCLIIntegration:
-
     def test_harmony_in_cli_choices(self):
         assert "harmony" in ToolParserManager.tool_parsers
 
@@ -1220,7 +1210,6 @@ class TestServeLogLevelFlags:
 
 
 class TestHarmonyNativeFormat:
-
     def test_supports_native_format_true(self):
         assert HarmonyToolParser.SUPPORTS_NATIVE_TOOL_FORMAT is True
         assert HarmonyToolParser.supports_native_format() is True

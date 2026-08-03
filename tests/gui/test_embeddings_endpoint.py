@@ -86,9 +86,9 @@ def test_embeddings_endpoint():
     # Base URL for the API
     # Ensure the model is installed and ready to avoid flakiness
     _ensure_model_installed(BASE_URL, DEFAULT_MODEL_NAME, DEFAULT_MODEL_ID)
-    assert _load_and_wait_ready(
-        BASE_URL, DEFAULT_MODEL_NAME, timeout_s=180
-    ), "Embedding model failed to become ready in time"
+    assert _load_and_wait_ready(BASE_URL, DEFAULT_MODEL_NAME, timeout_s=180), (
+        "Embedding model failed to become ready in time"
+    )
 
     # Test data
     test_data = {
@@ -217,9 +217,9 @@ def test_embeddings_with_base64():
 
     # Ensure the model is installed and ready to avoid flakiness
     _ensure_model_installed(BASE_URL, DEFAULT_MODEL_NAME, DEFAULT_MODEL_ID)
-    assert _load_and_wait_ready(
-        BASE_URL, DEFAULT_MODEL_NAME, timeout_s=180
-    ), "Embedding model failed to become ready in time"
+    assert _load_and_wait_ready(BASE_URL, DEFAULT_MODEL_NAME, timeout_s=180), (
+        "Embedding model failed to become ready in time"
+    )
 
     test_data = {
         "input": "This is a test with base64 encoding.",

@@ -43,8 +43,7 @@ def resolve_pdf_ocr_model(
     config_model_type = str(getattr(entry, "config_model_type", "") or "").lower()
     if "ocr" not in config_model_type:
         raise MarkItDownRequestError(
-            "MarkItDown PDF OCR model must have OCR in config model_type: "
-            f"{model_id}",
+            f"MarkItDown PDF OCR model must have OCR in config model_type: {model_id}",
             status_code=400,
         )
 

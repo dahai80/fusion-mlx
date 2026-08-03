@@ -11,7 +11,6 @@ pytestmark = pytest.mark.integration
 
 
 class TestChatRequestFlow:
-
     @pytest.mark.skip(reason="Requires running MLX engine")
     @pytest.mark.asyncio
     async def test_chat_request_full_flow(self):
@@ -77,7 +76,6 @@ class TestChatRequestFlow:
 
 
 class TestCloudFallbackFlow:
-
     @pytest.mark.skip(reason="Requires cloud API key")
     @pytest.mark.asyncio
     async def test_cloud_fallback_for_large_prompt(self):
@@ -107,7 +105,6 @@ class TestCloudFallbackFlow:
 
 
 class TestPhaseSplitFlow:
-
     @pytest.mark.skip(reason="Requires two running MLX engines")
     @pytest.mark.asyncio
     async def test_phase_split_prefill_decode(self):

@@ -19,7 +19,11 @@ def is_claude_code_request(headers: dict) -> bool:
 
 
 def get_context_scaling_settings(global_settings: dict) -> tuple[bool, int]:
-    cc = global_settings.get("claude_code", {}) if isinstance(global_settings, dict) else {}
+    cc = (
+        global_settings.get("claude_code", {})
+        if isinstance(global_settings, dict)
+        else {}
+    )
     enabled = bool(cc.get("context_scaling_enabled", False))
     target = cc.get("target_context_size", _DEFAULT_TARGET_CONTEXT)
     try:
@@ -50,7 +54,12 @@ def scale_usage(usage: dict, factor: float) -> dict:
     if factor <= 0 or factor >= 1:
         return usage
     scaled = dict(usage)
-    for key in ("input_tokens", "cache_creation_input_tokens", "cache_read_input_tokens", "prompt_tokens"):
+    for key in (
+        "input_tokens",
+        "cache_creation_input_tokens",
+        "cache_read_input_tokens",
+        "prompt_tokens",
+    ):
         val = scaled.get(key)
         if isinstance(val, (int, float)) and val > 0:
             scaled[key] = int(val * factor)

@@ -384,7 +384,7 @@ class BlockAwarePrefixCache(CacheManager):
             self._tokens_requested_total += len(tokens)
 
             logger.debug(
-                f"Prefix index hit for {request_id}: " f"{prefix_len} tokens matched"
+                f"Prefix index hit for {request_id}: {prefix_len} tokens matched"
             )
 
             return block_table, remaining

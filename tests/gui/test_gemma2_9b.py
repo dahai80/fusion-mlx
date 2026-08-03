@@ -125,7 +125,7 @@ async def test_gemma2_model():
                     content = result["choices"][0]["message"]["content"]
                     usage = result.get("usage", {})
 
-                    print(f"   ✅ {test['name']} ({end_time-start_time:.1f}s):")
+                    print(f"   ✅ {test['name']} ({end_time - start_time:.1f}s):")
                     # Check for structured thinking
                     if any(
                         indicator in content.lower()
@@ -266,7 +266,7 @@ async def test_gemma2_model():
                                 continue
 
                     end_time = time.time()
-                    print(f"\n   ✅ Streaming completed ({end_time-start_time:.1f}s)")
+                    print(f"\n   ✅ Streaming completed ({end_time - start_time:.1f}s)")
                     print(f"   📊 Approximate sentences: {sentence_count}")
                 else:
                     print(f"   ❌ Streaming failed: {response.status_code}")
@@ -311,13 +311,13 @@ async def test_gemma2_model():
                         for indicator in ["def ", "function", "SELECT", "```", "return"]
                     )
                     print(
-                        f"   💻 Code Test {i+1}: {'✅ Contains code' if has_code else '⚠️ May lack code'}"
+                        f"   💻 Code Test {i + 1}: {'✅ Contains code' if has_code else '⚠️ May lack code'}"
                     )
                     print(f"   📝 Preview: {content[:80]}...")
                     print()
 
             except Exception as e:
-                print(f"   ❌ Code test {i+1} error: {e}")
+                print(f"   ❌ Code test {i + 1} error: {e}")
 
         # Step 8: Performance and characteristics summary
         print("8️⃣ Model performance summary...")

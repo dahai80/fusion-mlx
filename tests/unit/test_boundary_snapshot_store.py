@@ -480,8 +480,7 @@ class TestBoundarySnapshotSSDStore:
 
             with self.store._cancelled_lock:
                 assert "req-timeout-rescue" in self.store._cancelled_requests, (
-                    "counter dropped on timeout — late-rename rescue "
-                    "would be defeated"
+                    "counter dropped on timeout — late-rename rescue would be defeated"
                 )
 
             # Let the writer finish; rescue then drops the counter via
@@ -803,7 +802,7 @@ class TestBoundarySnapshotSSDStore:
         # have "_tmp" in the stem and are not real orphans.
         real_orphans = [p for p in orphans if "_tmp" not in p.stem]
         assert not real_orphans, (
-            f"Found {len(real_orphans)} orphaned files: " f"{real_orphans[:5]}"
+            f"Found {len(real_orphans)} orphaned files: {real_orphans[:5]}"
         )
 
 

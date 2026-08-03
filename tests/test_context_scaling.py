@@ -1,5 +1,3 @@
-import pytest
-
 from fusion_mlx.api.context_scaling import (
     compute_scale_factor,
     get_context_scaling_settings,
@@ -48,21 +46,36 @@ class TestGetContextScalingSettings:
 
     def test_enabled_custom_target(self):
         enabled, target = get_context_scaling_settings(
-            {"claude_code": {"context_scaling_enabled": True, "target_context_size": 200000}}
+            {
+                "claude_code": {
+                    "context_scaling_enabled": True,
+                    "target_context_size": 200000,
+                }
+            }
         )
         assert enabled
         assert target == 200000
 
     def test_invalid_target_falls_back(self):
         enabled, target = get_context_scaling_settings(
-            {"claude_code": {"context_scaling_enabled": True, "target_context_size": "bad"}}
+            {
+                "claude_code": {
+                    "context_scaling_enabled": True,
+                    "target_context_size": "bad",
+                }
+            }
         )
         assert enabled
         assert target == 128000
 
     def test_negative_target_falls_back(self):
         enabled, target = get_context_scaling_settings(
-            {"claude_code": {"context_scaling_enabled": True, "target_context_size": -1}}
+            {
+                "claude_code": {
+                    "context_scaling_enabled": True,
+                    "target_context_size": -1,
+                }
+            }
         )
         assert enabled
         assert target == 128000

@@ -403,7 +403,7 @@ class TestRealWeightsLoad(unittest.TestCase):
         self.assertGreater(
             nonzero,
             emb.size * 0.9,
-            f"真权重应 >90% 非零, 实 {100*nonzero/emb.size:.1f}%",
+            f"真权重应 >90% 非零, 实 {100 * nonzero / emb.size:.1f}%",
         )
 
     def test_vae_real_weights_load(self):

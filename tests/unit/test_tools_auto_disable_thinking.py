@@ -861,13 +861,13 @@ def test_responses_strict_with_tools_still_rejects_with_400(_rate_limiter_state)
     code = body.get("error", {}).get("code") or body.get("detail", {}).get(
         "error", {}
     ).get("code")
-    assert (
-        code == "strict_with_tools_unsupported"
-    ), f"expected strict_with_tools_unsupported, got body={body!r}"
+    assert code == "strict_with_tools_unsupported", (
+        f"expected strict_with_tools_unsupported, got body={body!r}"
+    )
     # And no engine call happened — the route bailed at the gate.
-    assert (
-        not engine.chat_calls
-    ), "strict+tools must reject at the gate without dispatching to the engine"
+    assert not engine.chat_calls, (
+        "strict+tools must reject at the gate without dispatching to the engine"
+    )
 
 
 def test_chat_strict_with_tools_still_rejects_with_400(_rate_limiter_state):
@@ -899,7 +899,7 @@ def test_chat_strict_with_tools_still_rejects_with_400(_rate_limiter_state):
     code = body.get("error", {}).get("code") or body.get("detail", {}).get(
         "error", {}
     ).get("code")
-    assert (
-        code == "strict_with_tools_unsupported"
-    ), f"expected strict_with_tools_unsupported, got body={body!r}"
+    assert code == "strict_with_tools_unsupported", (
+        f"expected strict_with_tools_unsupported, got body={body!r}"
+    )
     assert not engine.chat_calls

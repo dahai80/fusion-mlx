@@ -57,7 +57,7 @@ async def test_auto_unload_behavior():
         )
 
         for i, model_name in enumerate(test_models):
-            print(f"\n  📥 Loading model {i+1}/{len(test_models)}: {model_name}")
+            print(f"\n  📥 Loading model {i + 1}/{len(test_models)}: {model_name}")
 
             # Check current state before loading using the INTERNAL endpoint
             models_response = await client.get(f"{BASE_URL}/v1/manager/models")

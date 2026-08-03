@@ -1004,6 +1004,7 @@ class Server:
             raise
         finally:
             from .server_metrics import get_server_metrics
+
             get_server_metrics().flush_alltime()
             remove_pid_file()
         await self._shutdown()

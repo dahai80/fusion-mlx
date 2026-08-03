@@ -216,18 +216,18 @@ def test_chat_completions_nonstream_no_truncated_injection():
         msg = payload["choices"][0]["message"]
         content = msg.get("content")
 
-        assert (
-            content != REASONING_CUTOFF_SENTINEL
-        ), f"chat non-stream must NOT inject sentinel; got content={content!r}"
+        assert content != REASONING_CUTOFF_SENTINEL, (
+            f"chat non-stream must NOT inject sentinel; got content={content!r}"
+        )
         if content:
             assert _TRUNCATED_SUBSTRING not in content.lower(), (
                 f"chat non-stream content must not carry 'truncated' "
                 f"synthetic text; got {content!r}"
             )
         assert payload["choices"][0]["finish_reason"] == "length"
-        assert msg.get(
-            "reasoning_content"
-        ), "reasoning_content must remain populated as the canonical truncation cue"
+        assert msg.get("reasoning_content"), (
+            "reasoning_content must remain populated as the canonical truncation cue"
+        )
     finally:
         reset_config()
 
@@ -286,9 +286,9 @@ def test_chat_completions_stream_no_truncated_injection():
             "chat stream must surface finish_reason=length as the "
             "canonical truncation cue"
         )
-        assert (
-            streamed_reasoning
-        ), "chat stream reasoning_content deltas must still flow"
+        assert streamed_reasoning, (
+            "chat stream reasoning_content deltas must still flow"
+        )
     finally:
         reset_config()
 

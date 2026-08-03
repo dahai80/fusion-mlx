@@ -306,9 +306,9 @@ class TestLeadingItemOrdering:
         added = _assert_leading_items_before_message(events)
 
         added_types = [t for t, _ in added]
-        assert (
-            "message" in added_types
-        ), f"No message item emitted — events: {[n for n, _ in events]}"
+        assert "message" in added_types, (
+            f"No message item emitted — events: {[n for n, _ in events]}"
+        )
         assert "reasoning" in added_types, (
             "Empty-reasoning case: reasoning item MUST still be emitted "
             "before the message item per OpenAI Responses spec. "

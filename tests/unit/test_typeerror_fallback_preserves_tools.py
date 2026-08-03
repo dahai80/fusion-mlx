@@ -32,7 +32,6 @@ def _tools_spec():
 
 
 class TestTypeErrorFallbackPreservesTools:
-
     def test_no_typeerror_no_fallback(self):
         engine = _make_engine()
         mock_tok = MagicMock()

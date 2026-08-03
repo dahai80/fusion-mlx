@@ -243,7 +243,6 @@ def apply_loras_to_weights(
 
 
 class LoRALinear(nn.Module):
-
     def __init__(
         self,
         linear: nn.Module,

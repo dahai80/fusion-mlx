@@ -863,9 +863,9 @@ class TestRealWeightLoad:
         )
 
         # 修复前仅 40/1377 命中, 修复后探测参数必须变化 (真实权重落地)
-        assert (
-            abs(probe_after - probe_before) > 1e-3
-        ), "探测参数加载前后未变化 -> 真实权重未落地 (重映射回归)"
+        assert abs(probe_after - probe_before) > 1e-3, (
+            "探测参数加载前后未变化 -> 真实权重未落地 (重映射回归)"
+        )
 
 
 class TestR2VArchIssue164:

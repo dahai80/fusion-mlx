@@ -32,7 +32,6 @@ class FastAttnMethod(Flag):
 
 
 class MLXFastAttention:
-
     def __init__(
         self,
         window_size: int = -1,

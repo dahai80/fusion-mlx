@@ -268,8 +268,7 @@ def _apply_chat_template_sidecar(model_path: Path, tokenizer) -> bool:
             logger.info("Chat template loaded from chat_template.json sidecar")
             return True
         logger.warning(
-            "chat_template.json at %s has no 'chat_template' string key; "
-            "got keys=%s",
+            "chat_template.json at %s has no 'chat_template' string key; got keys=%s",
             json_path,
             list(data.keys()),
         )

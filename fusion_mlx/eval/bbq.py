@@ -61,8 +61,7 @@ class BBQBenchmark(BaseBenchmark):
         labels = item["labels"]
 
         parts = [
-            "Read the context and answer the question. "
-            "Answer with just the letter.\n",
+            "Read the context and answer the question. Answer with just the letter.\n",
             f"Context: {context}\n",
             f"Question: {question}\n",
         ]

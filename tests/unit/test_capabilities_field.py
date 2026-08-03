@@ -69,9 +69,9 @@ class TestTextOnlyModel:
             restore()
         caps = entry["capabilities"]
         assert isinstance(caps, list)
-        assert (
-            "spec_decode" in caps
-        ), f"text-only model should have spec_decode from profile: {caps}"
+        assert "spec_decode" in caps, (
+            f"text-only model should have spec_decode from profile: {caps}"
+        )
 
     def test_unregistered_text_path_gets_empty_capabilities(self):
         unknown_id = "operator/custom-text-model"
@@ -118,9 +118,9 @@ class TestVisionModel:
         finally:
             restore()
         caps = entry["capabilities"]
-        assert (
-            "vision" in caps
-        ), f"VLM {vlm_id} missing 'vision' in capabilities: {caps}"
+        assert "vision" in caps, (
+            f"VLM {vlm_id} missing 'vision' in capabilities: {caps}"
+        )
 
     def test_raw_hf_vlm_path_advertises_vision(self):
         import pytest

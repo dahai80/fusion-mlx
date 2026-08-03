@@ -1818,9 +1818,7 @@ def serve_command(args):
         args.enable_dflash = False
         args.enable_dspark = False
         apply_resolution(args, _resolution)
-        print(
-            f"Spec-decode: auto → {_resolution.cli_target} " f"({_resolution.reason})"
-        )
+        print(f"Spec-decode: auto → {_resolution.cli_target} ({_resolution.reason})")
     # R15-P1 #302: native Qwen3.5/3.6 MTP via vendored mlx-lm PR #990.
     # Banner line + boot-time eligibility check fires here so misuse
     # (--spec-decode mtp on a non-Qwen3.5/3.6 model) bounces with a
@@ -1968,9 +1966,9 @@ def serve_command(args):
         _profile = resolve_profile(_alias_name)
         # The eligibility check at top of serve_command guarantees this
         # passes — assert to be defensive against future refactors.
-        assert (
-            _profile is not None and _profile.supports_dflash
-        ), f"DFlash profile invariant violated for {_alias_name!r}"
+        assert _profile is not None and _profile.supports_dflash, (
+            f"DFlash profile invariant violated for {_alias_name!r}"
+        )
         # ``--dflash-drafter-path`` override stays valid through both
         # ``--enable-dflash`` and the ``--spec-decode dflash`` redirect
         # path (#318): an operator-supplied path wins over the profile

@@ -557,7 +557,6 @@ def _flatten_keys(tree, prefix=""):
 
 
 class SVDTemporalUNet(nn.Module):
-
     def __init__(
         self,
         in_channels=8,

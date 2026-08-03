@@ -682,8 +682,9 @@ def parse_tool_calls(
                 if isinstance(mfa_result, tuple):
                     fn_name, fn_args = mfa_result[0], mfa_result[1]
                 elif hasattr(mfa_result, "name"):
-                    fn_name, fn_args = mfa_result.name, getattr(
-                        mfa_result, "arguments", "{}"
+                    fn_name, fn_args = (
+                        mfa_result.name,
+                        getattr(mfa_result, "arguments", "{}"),
                     )
                 else:
                     fn_name, fn_args = None, "{}"

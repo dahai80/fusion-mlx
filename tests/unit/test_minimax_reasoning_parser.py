@@ -10,7 +10,6 @@ logger = logging.getLogger(__name__)
 
 
 class TestMiniMaxReasoningParserInit:
-
     def test_default_init(self):
         parser = MiniMaxReasoningParser()
         assert parser._buffer == ""
@@ -39,7 +38,6 @@ class TestMiniMaxReasoningParserInit:
 
 
 class TestExtractReasoningExplicitTags:
-
     def test_explicit_standard_tags(self):
         parser = MiniMaxReasoningParser()
         output = "<think>Let me think about this.</think>Here is the answer."
@@ -78,7 +76,6 @@ class TestExtractReasoningExplicitTags:
 
 
 class TestDirectContentDetection:
-
     @pytest.mark.parametrize(
         "content",
         [
@@ -101,7 +98,6 @@ class TestDirectContentDetection:
 
 
 class TestReasoningStartPatterns:
-
     @pytest.mark.parametrize(
         "text",
         [
@@ -192,7 +188,6 @@ class TestReasoningStartPatterns:
 
 
 class TestTransitionDetection:
-
     def test_transition_answer_is(self):
         parser = MiniMaxReasoningParser()
         output = "The user wants a poem.\n\nThe answer is: roses are red."
@@ -296,7 +291,6 @@ class TestTransitionDetection:
 
 
 class TestStreamingBasic:
-
     def test_direct_content_early_detection(self):
         parser = MiniMaxReasoningParser()
 
@@ -371,7 +365,6 @@ class TestStreamingBasic:
 
 
 class TestStreamingThinkTags:
-
     def test_think_tag_start(self):
         parser = MiniMaxReasoningParser()
 
@@ -420,7 +413,6 @@ class TestStreamingThinkTags:
 
 
 class TestStreamingTransition:
-
     def test_transition_during_stream(self):
         parser = MiniMaxReasoningParser()
 
@@ -456,7 +448,6 @@ class TestStreamingTransition:
 
 
 class TestFinalizeStreaming:
-
     def test_finalize_undecided_with_text(self):
         parser = MiniMaxReasoningParser()
 
@@ -492,7 +483,6 @@ class TestFinalizeStreaming:
 
 
 class TestEdgeCases:
-
     def test_empty_input_extract(self):
         parser = MiniMaxReasoningParser()
         reasoning, content = parser.extract_reasoning("")

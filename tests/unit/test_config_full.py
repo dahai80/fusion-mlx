@@ -22,7 +22,6 @@ cfg = _load_module()
 
 
 class TestEnums(unittest.TestCase):
-
     def test_memory_tier_values(self):
         self.assertTrue(hasattr(cfg, "MemoryTier"))
         names = [t.name for t in cfg.MemoryTier]
@@ -36,7 +35,6 @@ class TestEnums(unittest.TestCase):
 
 
 class TestDeepMerge(unittest.TestCase):
-
     def test_simple_override(self):
         self.assertEqual(cfg._deep_merge({"a": 1}, {"a": 2}), {"a": 2})
 
@@ -62,7 +60,6 @@ class TestDeepMerge(unittest.TestCase):
 
 
 class TestSchedulerConfig(unittest.TestCase):
-
     def test_defaults(self):
         c = cfg.SchedulerConfig()
         # 验证有默认字段（具体值可能变，但字段应存在）
@@ -74,7 +71,6 @@ class TestSchedulerConfig(unittest.TestCase):
 
 
 class TestServerConfig(unittest.TestCase):
-
     def test_defaults(self):
         c = cfg.ServerConfig()
         self.assertIsNotNone(c.host)
@@ -87,7 +83,6 @@ class TestServerConfig(unittest.TestCase):
 
 
 class TestLoadModelConfig(unittest.TestCase):
-
     def test_returns_dict(self):
         # _load_model_config 读 pkg + user 配置，应始终返回 dict（可能为空）
         result = cfg._load_model_config()
@@ -100,7 +95,6 @@ class TestLoadModelConfig(unittest.TestCase):
 
 
 class TestGetConfig(unittest.TestCase):
-
     def test_returns_server_config(self):
         c = cfg.get_config()
         self.assertIsInstance(c, cfg.ServerConfig)

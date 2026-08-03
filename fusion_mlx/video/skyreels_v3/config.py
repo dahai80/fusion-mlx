@@ -134,7 +134,7 @@ def get_branch_config(model_key: str) -> SkyReelsBranchConfig:
     """
     if model_key not in BRANCH_CONFIGS:
         raise ValueError(
-            f"Unknown model_key: {model_key}. " f"Valid: {list(BRANCH_CONFIGS)}"
+            f"Unknown model_key: {model_key}. Valid: {list(BRANCH_CONFIGS)}"
         )
     return BRANCH_CONFIGS[model_key]
 

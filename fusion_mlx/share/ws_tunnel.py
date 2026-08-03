@@ -67,7 +67,6 @@ def public_url_for(tunnel_id: str, relay_url: str = DEFAULT_RAPIDSERVER_WSS) -> 
 
 
 class TunnelClient:
-
     def __init__(
         self,
         *,

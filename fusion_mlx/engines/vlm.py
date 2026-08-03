@@ -1221,7 +1221,6 @@ class VLMBatchedEngine(BaseEngine):
                 cache_key_ranges,
             )
         elif videos:
-
             video_fps = kwargs.get("video_fps", DEFAULT_FPS)
             video_max_frames = kwargs.get("video_max_frames", MAX_FRAMES)
 

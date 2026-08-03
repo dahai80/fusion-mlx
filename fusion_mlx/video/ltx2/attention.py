@@ -78,7 +78,6 @@ def scaled_dot_product_attention(
 
 
 class Attention(nn.Module):
-
     def __init__(
         self,
         query_dim: int,

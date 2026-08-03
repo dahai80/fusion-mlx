@@ -34,7 +34,6 @@ async def test_different_image_formats():
     model_name = "gemma-3n-e4b-it-mlx-8bit"
 
     async with httpx.AsyncClient(timeout=TIMEOUT) as client:
-
         # Test Format 1: Standard OpenAI format (what our test script uses)
         print("\n📝 Test 1: Standard OpenAI format")
         format1 = {
@@ -148,7 +147,7 @@ async def test_different_image_formats():
 
         successful_count = sum(1 for _, success in results if success)
         print(
-            f"\n🎯 Success Rate: {successful_count}/{len(results)} ({successful_count/len(results)*100:.1f}%)"
+            f"\n🎯 Success Rate: {successful_count}/{len(results)} ({successful_count / len(results) * 100:.1f}%)"
         )
 
         return successful_count > 0
@@ -167,7 +166,7 @@ async def send_test_request(client, test_name, request_data):
                 print(f"      Content type: array with {len(content)} items")
                 for i, item in enumerate(content):
                     if item.get("type") == "text":
-                        print(f"      Item {i+1}: text = '{item.get('text', '')}'")
+                        print(f"      Item {i + 1}: text = '{item.get('text', '')}'")
                     elif item.get("type") == "image_url":
                         img_url = item.get("image_url", {})
                         if "url" in img_url:
@@ -176,7 +175,9 @@ async def send_test_request(client, test_name, request_data):
                                 if len(img_url["url"]) > 50
                                 else img_url["url"]
                             )
-                            print(f"      Item {i+1}: image_url.url = '{url_preview}'")
+                            print(
+                                f"      Item {i + 1}: image_url.url = '{url_preview}'"
+                            )
                         elif "image" in img_url:
                             img_preview = (
                                 img_url["image"][:50] + "..."
@@ -184,7 +185,7 @@ async def send_test_request(client, test_name, request_data):
                                 else img_url["image"]
                             )
                             print(
-                                f"      Item {i+1}: image_url.image = '{img_preview}'"
+                                f"      Item {i + 1}: image_url.image = '{img_preview}'"
                             )
             else:
                 print(f"      Content type: string = '{content}'")

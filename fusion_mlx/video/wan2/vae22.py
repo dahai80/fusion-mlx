@@ -116,7 +116,6 @@ VAE22_STD = mx.array(
 
 
 class CausalConv3d(nn.Module):
-
     def __init__(self, in_channels, out_channels, kernel_size, stride=1, padding=0):
         super().__init__()
         if isinstance(kernel_size, int):
@@ -203,7 +202,6 @@ class CausalConv3d(nn.Module):
 
 
 class RMS_norm(nn.Module):
-
     def __init__(self, dim):
         super().__init__()
         self.scale = dim**0.5
@@ -220,7 +218,6 @@ class RMS_norm(nn.Module):
 
 
 class ResidualBlock(nn.Module):
-
     def __init__(self, in_dim, out_dim):
         super().__init__()
         # Sequential residual path: [norm, silu, conv3d, norm, silu, dropout, conv3d]
@@ -234,7 +231,6 @@ class ResidualBlock(nn.Module):
 
 
 class ResidualBlockLayers(nn.Module):
-
     def __init__(self, in_dim, out_dim):
         super().__init__()
         # Indices match PyTorch nn.Sequential indices for weight key compat
@@ -276,7 +272,6 @@ class ResidualBlockLayers(nn.Module):
 
 
 class AttentionBlock(nn.Module):
-
     def __init__(self, dim):
         super().__init__()
         self.dim = dim
@@ -322,7 +317,6 @@ class AttentionBlock(nn.Module):
 
 
 class DupUp3D(nn.Module):
-
     def __init__(self, in_channels, out_channels, factor_t, factor_s=1):
         super().__init__()
         self.in_channels = in_channels
@@ -362,7 +356,6 @@ class DupUp3D(nn.Module):
 
 
 class AvgDown3D(nn.Module):
-
     def __init__(self, in_channels, out_channels, factor_t, factor_s=1):
         super().__init__()
         self.in_channels = in_channels
@@ -397,7 +390,6 @@ class AvgDown3D(nn.Module):
 
 
 class Resample(nn.Module):
-
     def __init__(self, dim, mode):
         super().__init__()
         self.dim = dim
@@ -515,7 +507,6 @@ class Resample(nn.Module):
 
 
 class Up_ResidualBlock(nn.Module):
-
     def __init__(
         self, in_dim, out_dim, num_res_blocks, temperal_upsample=False, up_flag=False
     ):
@@ -563,7 +554,6 @@ class Up_ResidualBlock(nn.Module):
 
 
 class Down_ResidualBlock(nn.Module):
-
     def __init__(
         self,
         in_dim,
@@ -616,7 +606,6 @@ class Down_ResidualBlock(nn.Module):
 
 
 class Decoder3d(nn.Module):
-
     def __init__(
         self,
         dim=256,
@@ -673,7 +662,6 @@ class Decoder3d(nn.Module):
 
 
 class Encoder3d(nn.Module):
-
     def __init__(
         self,
         dim=160,
@@ -762,7 +750,6 @@ class Encoder3d(nn.Module):
 
 
 class Head22(nn.Module):
-
     def __init__(self, dim, out_channels=12):
         super().__init__()
         # Index 0: RMS_norm
@@ -800,7 +787,6 @@ def _count_conv3d(module):
 
 
 class Wan22VAEEncoder(nn.Module):
-
     def __init__(self, z_dim=48, dim=160):
         super().__init__()
         self.z_dim = z_dim
@@ -851,7 +837,6 @@ class Wan22VAEEncoder(nn.Module):
 
 
 class Wan22VAEDecoder(nn.Module):
-
     def __init__(self, z_dim=48, dim=160, dec_dim=256):
         super().__init__()
         self.z_dim = z_dim

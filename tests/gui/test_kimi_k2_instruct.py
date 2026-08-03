@@ -111,7 +111,9 @@ async def test_kimi_k2_model():
 
             if load_response.status_code == 200:
                 load_data = load_response.json()
-                print(f"   🎉 Model loaded successfully in {load_end-load_start:.1f}s")
+                print(
+                    f"   🎉 Model loaded successfully in {load_end - load_start:.1f}s"
+                )
                 print(f"   📊 Status: {load_data.get('status', 'unknown')}")
                 if load_data.get("memory_warning"):
                     print(f"   ⚠️  Warning: {load_data['memory_warning']}")
@@ -192,7 +194,7 @@ async def test_kimi_k2_model():
                 if response.status_code == 200:
                     result = response.json()
                     content = result["choices"][0]["message"]["content"]
-                    print(f"   ✅ {test['name']} ({end_time-start_time:.1f}s):")
+                    print(f"   ✅ {test['name']} ({end_time - start_time:.1f}s):")
                     print(f"   💭 {content[:120]}...")
                     print(f"   📊 Response length: {len(content)} characters")
                     print()
@@ -288,9 +290,9 @@ async def test_kimi_k2_model():
                             if keyword.lower() in full_response.lower():
                                 domain_coverage[domain] += 1
 
-                    print(f"\n   ✅ Streaming completed ({end_time-start_time:.1f}s)")
+                    print(f"\n   ✅ Streaming completed ({end_time - start_time:.1f}s)")
                     print(
-                        f"   📊 Tokens: ~{total_tokens}, Speed: ~{total_tokens/(end_time-start_time):.1f} tok/s"
+                        f"   📊 Tokens: ~{total_tokens}, Speed: ~{total_tokens / (end_time - start_time):.1f} tok/s"
                     )
                     print("   🧠 Domain coverage analysis:")
                     for domain, count in domain_coverage.items():
