@@ -1012,7 +1012,10 @@ def generate_video(
         else:
             # CFG: batch cond + uncond into single B=2 forward pass
             if is_dual:
-                gs = guide_scale[1] if timestep_val >= boundary else guide_scale[0]
+                if isinstance(guide_scale, (int, float)):
+                    gs = guide_scale
+                else:
+                    gs = guide_scale[1] if timestep_val >= boundary else guide_scale[0]
             else:
                 gs = (
                     guide_scale
