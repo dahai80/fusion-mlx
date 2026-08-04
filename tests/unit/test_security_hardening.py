@@ -61,14 +61,26 @@ def _guard_app() -> FastAPI:
     return app
 
 
-def test_route_guard_warn_only_by_default():
-    # No X-Fusion-Route, enforce off -> request passes through.
+def test_route_guard_enforces_by_default(monkeypatch):
+    # #349: enforce is the default since v0.7.0. No X-Fusion-Route -> 403.
+    monkeypatch.delenv("FUSION_ROUTE_WARN_ONLY", raising=False)
+    monkeypatch.delenv("FUSION_ROUTE_ENFORCE", raising=False)
+    client = TestClient(_guard_app())
+    r = client.get("/v1/chat/completions")
+    assert r.status_code == 403
+    assert r.json()["error"]["code"] == "missing_route"
+
+
+def test_route_guard_warn_only_via_env(monkeypatch):
+    # FUSION_ROUTE_WARN_ONLY=true restores Phase 1 warn-only behavior.
+    monkeypatch.setenv("FUSION_ROUTE_WARN_ONLY", "true")
     client = TestClient(_guard_app())
     r = client.get("/v1/chat/completions")
     assert r.status_code == 200
 
 
 def test_route_guard_enforce_rejects_missing_header(monkeypatch):
+    monkeypatch.delenv("FUSION_ROUTE_WARN_ONLY", raising=False)
     monkeypatch.setenv("FUSION_ROUTE_ENFORCE", "true")
     client = TestClient(_guard_app())
     r = client.get("/v1/chat/completions")
@@ -77,6 +89,7 @@ def test_route_guard_enforce_rejects_missing_header(monkeypatch):
 
 
 def test_route_guard_enforce_allows_with_header(monkeypatch):
+    monkeypatch.delenv("FUSION_ROUTE_WARN_ONLY", raising=False)
     monkeypatch.setenv("FUSION_ROUTE_ENFORCE", "true")
     client = TestClient(_guard_app())
     r = client.get("/v1/chat/completions", headers={"X-Fusion-Route": "gateway"})
@@ -87,6 +100,7 @@ def test_route_guard_enforce_allows_with_header(monkeypatch):
     "path", ["/", "/health", "/healthz", "/readyz", "/livez", "/openapi.json"]
 )
 def test_route_guard_exempt_paths_pass_without_header(monkeypatch, path):
+    monkeypatch.delenv("FUSION_ROUTE_WARN_ONLY", raising=False)
     monkeypatch.setenv("FUSION_ROUTE_ENFORCE", "true")
     client = TestClient(_guard_app())
     r = client.get(path)
@@ -94,6 +108,7 @@ def test_route_guard_exempt_paths_pass_without_header(monkeypatch, path):
 
 
 def test_route_guard_options_preflight_exempt(monkeypatch):
+    monkeypatch.delenv("FUSION_ROUTE_WARN_ONLY", raising=False)
     monkeypatch.setenv("FUSION_ROUTE_ENFORCE", "true")
     client = TestClient(_guard_app())
     r = client.options("/v1/chat/completions")
@@ -218,12 +233,13 @@ def test_anonymous_rejected_non_loopback_without_override(monkeypatch):
     assert _anonymous_access_allowed(req) is False
 
 
-def test_anonymous_allowed_for_loopback_without_override(monkeypatch):
+def test_anonymous_rejected_for_loopback_without_override(monkeypatch):
+    # #350: loopback no longer grants anonymous access.
     monkeypatch.delenv("FUSION_ALLOW_ANONYMOUS", raising=False)
     from fusion_mlx.middleware.auth import _anonymous_access_allowed
 
     req = _make_request(host="127.0.0.1")
-    assert _anonymous_access_allowed(req) is True
+    assert _anonymous_access_allowed(req) is False
 
 
 def test_anonymous_allowed_with_env_override():
@@ -253,12 +269,25 @@ def test_management_access_rejects_non_loopback_no_creds(monkeypatch):
     assert exc.value.status_code == 401
 
 
-def test_management_access_loopback_allowed_dev(monkeypatch):
+def test_management_access_loopback_rejected(monkeypatch):
+    # #350: loopback no longer exempts management endpoints from auth.
     monkeypatch.delenv("FUSION_ALLOW_ANONYMOUS", raising=False)
     from fusion_mlx.middleware.auth import verify_management_access
 
     req = _make_request(host="127.0.0.1")
-    assert asyncio.run(verify_management_access(req)) is True
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(verify_management_access(req))
+    assert exc.value.status_code == 401
+
+
+def test_management_access_loopback_allows_with_valid_key(monkeypatch):
+    # #350: a same-host client with a valid api_key still passes.
+    monkeypatch.delenv("FUSION_ALLOW_ANONYMOUS", raising=False)
+    from fusion_mlx.middleware import auth as auth_mod
+
+    monkeypatch.setattr(auth_mod, "_get_configured_api_key", lambda: "server-secret")
+    req = _make_request(host="127.0.0.1", headers={"x-api-key": "server-secret"})
+    assert asyncio.run(auth_mod.verify_management_access(req)) is True
 
 
 def test_management_access_rejects_x_fusion_route_when_key_configured(monkeypatch):

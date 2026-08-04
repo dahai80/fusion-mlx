@@ -902,6 +902,10 @@ def _disable_mcp_auto_discover(monkeypatch):
     # dev environment - opt into the documented dev override here.
     # Dedicated security tests unset this to assert the reject path.
     monkeypatch.setenv("FUSION_ALLOW_ANONYMOUS", "true")
+    # #349: route-guard enforce is the default since v0.7.0. The unit-test
+    # suite does not inject X-Fusion-Route, so opt into warn-only here to
+    # keep no-header requests passing. Dedicated route-guard tests override.
+    monkeypatch.setenv("FUSION_ROUTE_WARN_ONLY", "true")
     try:
         from fusion_mlx.mcp.security import ALLOWED_COMMANDS
 
