@@ -52,8 +52,15 @@ class _T5DenseReluDense(nn.Module):
 
 
 class _T5Attention(nn.Module):
-    def __init__(self, d_model, num_heads, d_kv, rel_num_buckets=32,
-                 rel_max_distance=128, has_bias=False):
+    def __init__(
+        self,
+        d_model,
+        num_heads,
+        d_kv,
+        rel_num_buckets=32,
+        rel_max_distance=128,
+        has_bias=False,
+    ):
         super().__init__()
         self.num_heads = num_heads
         self.d_kv = d_kv
@@ -100,9 +107,21 @@ class _T5Attention(nn.Module):
 
     def __call__(self, hidden, position_bias, mask=None):
         b, s, _ = hidden.shape
-        q = self.q(hidden).reshape(b, s, self.num_heads, self.d_kv).transpose(0, 2, 1, 3)
-        k = self.k(hidden).reshape(b, s, self.num_heads, self.d_kv).transpose(0, 2, 1, 3)
-        v = self.v(hidden).reshape(b, s, self.num_heads, self.d_kv).transpose(0, 2, 1, 3)
+        q = (
+            self.q(hidden)
+            .reshape(b, s, self.num_heads, self.d_kv)
+            .transpose(0, 2, 1, 3)
+        )
+        k = (
+            self.k(hidden)
+            .reshape(b, s, self.num_heads, self.d_kv)
+            .transpose(0, 2, 1, 3)
+        )
+        v = (
+            self.v(hidden)
+            .reshape(b, s, self.num_heads, self.d_kv)
+            .transpose(0, 2, 1, 3)
+        )
         scores = mx.matmul(q, k.transpose(0, 1, 3, 2))
         scores = scores + position_bias
         if mask is not None:
@@ -114,11 +133,25 @@ class _T5Attention(nn.Module):
 
 
 class _T5Block(nn.Module):
-    def __init__(self, d_model, d_ff, num_heads, d_kv, eps=1e-6,
-                 has_bias=False, rel_num_buckets=32, rel_max_distance=128):
+    def __init__(
+        self,
+        d_model,
+        d_ff,
+        num_heads,
+        d_kv,
+        eps=1e-6,
+        has_bias=False,
+        rel_num_buckets=32,
+        rel_max_distance=128,
+    ):
         super().__init__()
         self.attn = _T5Attention(
-            d_model, num_heads, d_kv, rel_num_buckets, rel_max_distance, has_bias,
+            d_model,
+            num_heads,
+            d_kv,
+            rel_num_buckets,
+            rel_max_distance,
+            has_bias,
         )
         self.norm1 = _T5LayerNorm(d_model, eps)
         self.ffn = _T5DenseReluDense(d_model, d_ff)
@@ -196,7 +229,9 @@ class CosmosT5Encoder(nn.Module):
             shards = sorted(model_path.glob("*.safetensors"))
         if not shards:
             raise FileNotFoundError(f"cosmos t5: no safetensors in {model_path}")
-        logger.info("cosmos t5: loading %d shards from %s", len(shards), model_path.name)
+        logger.info(
+            "cosmos t5: loading %d shards from %s", len(shards), model_path.name
+        )
         raw = {}
         for shard in shards:
             raw.update(mx.load(str(shard)))
@@ -204,7 +239,12 @@ class CosmosT5Encoder(nn.Module):
         _update_module(model, mapped)
         mx.eval(model.parameters())
         elapsed = time.time() - t0
-        logger.info("cosmos t5: ready d_model=%d layers=%d dt=%.2fs", config["d_model"], config["num_layers"], elapsed)
+        logger.info(
+            "cosmos t5: ready d_model=%d layers=%d dt=%.2fs",
+            config["d_model"],
+            config["num_layers"],
+            elapsed,
+        )
         return model
 
     def encode(self, prompt, tokenizer, max_length=512):
@@ -228,6 +268,7 @@ class CosmosT5Encoder(nn.Module):
 
 def _map_cosmos_t5_weights(raw):
     import re
+
     out = {}
     for k, v in raw.items():
         if k in ("shared.weight", "encoder.embed_tokens.weight"):
@@ -243,10 +284,10 @@ def _map_cosmos_t5_weights(raw):
                     if rest == "SelfAttention.relative_attention_bias.weight":
                         out[f"{prefix}.attn.relative_attention_bias.weight"] = v
                     elif rest.startswith("SelfAttention."):
-                        attr = rest[len("SelfAttention."):]
+                        attr = rest[len("SelfAttention.") :]
                         out[f"{prefix}.attn.{attr}"] = v
                     elif rest.startswith("layer_norm."):
-                        attr = rest[len("layer_norm."):]
+                        attr = rest[len("layer_norm.") :]
                         out[f"{prefix}.norm1.{attr}"] = v
                     else:
                         out[f"{prefix}.{rest}"] = v
@@ -256,14 +297,14 @@ def _map_cosmos_t5_weights(raw):
                     elif rest == "DenseReluDense.wo.weight":
                         out[f"{prefix}.ffn.wo.weight"] = v
                     elif rest.startswith("layer_norm."):
-                        attr = rest[len("layer_norm."):]
+                        attr = rest[len("layer_norm.") :]
                         out[f"{prefix}.norm2.{attr}"] = v
                     else:
                         out[f"{prefix}.{rest}"] = v
                 else:
                     out[f"{prefix}.{rest}"] = v
             else:
-                out[k[len("encoder."):]] = v
+                out[k[len("encoder.") :]] = v
         elif not k.startswith(("decoder.", "lm_head.")):
             out[k] = v
     return out

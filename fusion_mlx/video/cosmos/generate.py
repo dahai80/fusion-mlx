@@ -29,9 +29,11 @@ def _encode_prompt(prompt, text_encoder_path, max_length=512):
     te = CosmosT5Encoder.from_pretrained(te_path)
     try:
         from transformers import T5Tokenizer
+
         tokenizer = T5Tokenizer.from_pretrained(te_path, local_files_only=True)
     except Exception:
         from transformers import AutoTokenizer
+
         tokenizer = AutoTokenizer.from_pretrained(te_path, local_files_only=True)
     text_emb = te.encode(prompt, tokenizer, max_length=max_length)
     return text_emb
@@ -155,12 +157,20 @@ def generate_video(
     for i, t in enumerate(scheduler.timesteps):
         timestep = mx.array([float(t)] * 1, dtype=mx.float32)
         noise_pred_uncond = dit(
-            latents, timestep, text_emb_null,
-            fps=fps, padding_mask=padding_mask, condition_mask=condition_mask,
+            latents,
+            timestep,
+            text_emb_null,
+            fps=fps,
+            padding_mask=padding_mask,
+            condition_mask=condition_mask,
         )
         noise_pred_cond = dit(
-            latents, timestep, text_emb,
-            fps=fps, padding_mask=padding_mask, condition_mask=condition_mask,
+            latents,
+            timestep,
+            text_emb,
+            fps=fps,
+            padding_mask=padding_mask,
+            condition_mask=condition_mask,
         )
         noise_pred = noise_pred_uncond + cfg * (noise_pred_cond - noise_pred_uncond)
         latents = scheduler.step(noise_pred, t, latents)

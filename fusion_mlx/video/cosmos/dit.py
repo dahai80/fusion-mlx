@@ -106,9 +106,21 @@ class _SelfAttention(nn.Module):
 
     def __call__(self, x, rope_cos=None, rope_sin=None):
         B, L, _ = x.shape
-        q = self.q_proj(x).reshape(B, L, self.num_heads, self.head_dim).transpose(0, 2, 1, 3)
-        k = self.k_proj(x).reshape(B, L, self.num_heads, self.head_dim).transpose(0, 2, 1, 3)
-        v = self.v_proj(x).reshape(B, L, self.num_heads, self.head_dim).transpose(0, 2, 1, 3)
+        q = (
+            self.q_proj(x)
+            .reshape(B, L, self.num_heads, self.head_dim)
+            .transpose(0, 2, 1, 3)
+        )
+        k = (
+            self.k_proj(x)
+            .reshape(B, L, self.num_heads, self.head_dim)
+            .transpose(0, 2, 1, 3)
+        )
+        v = (
+            self.v_proj(x)
+            .reshape(B, L, self.num_heads, self.head_dim)
+            .transpose(0, 2, 1, 3)
+        )
         q = self.q_norm(q)
         k = self.k_norm(k)
         if rope_cos is not None and rope_sin is not None:
@@ -134,9 +146,21 @@ class _CrossAttention(nn.Module):
 
     def __call__(self, x, context):
         B, L, _ = x.shape
-        q = self.q_proj(x).reshape(B, L, self.num_heads, self.head_dim).transpose(0, 2, 1, 3)
-        k = self.k_proj(context).reshape(B, -1, self.num_heads, self.head_dim).transpose(0, 2, 1, 3)
-        v = self.v_proj(context).reshape(B, -1, self.num_heads, self.head_dim).transpose(0, 2, 1, 3)
+        q = (
+            self.q_proj(x)
+            .reshape(B, L, self.num_heads, self.head_dim)
+            .transpose(0, 2, 1, 3)
+        )
+        k = (
+            self.k_proj(context)
+            .reshape(B, -1, self.num_heads, self.head_dim)
+            .transpose(0, 2, 1, 3)
+        )
+        v = (
+            self.v_proj(context)
+            .reshape(B, -1, self.num_heads, self.head_dim)
+            .transpose(0, 2, 1, 3)
+        )
         q = self.q_norm(q)
         k = self.k_norm(k)
         out = mx.fast.scaled_dot_product_attention(q, k, v, scale=self.scale)
@@ -156,8 +180,15 @@ class _MLP(nn.Module):
 
 
 class _CosmosBlock(nn.Module):
-    def __init__(self, hidden_size, num_heads, mlp_ratio=4.0, rope_dim=None,
-                 adaln_lora_dim=256, text_embed_dim=1024):
+    def __init__(
+        self,
+        hidden_size,
+        num_heads,
+        mlp_ratio=4.0,
+        rope_dim=None,
+        adaln_lora_dim=256,
+        text_embed_dim=1024,
+    ):
         super().__init__()
         self.adaln_modulation_self_attn = _AdaLNZero(hidden_size, adaln_lora_dim)
         self.self_attn = _SelfAttention(hidden_size, num_heads, rope_dim)
@@ -166,8 +197,16 @@ class _CosmosBlock(nn.Module):
         self.adaln_modulation_mlp = _AdaLNZero(hidden_size, adaln_lora_dim)
         self.mlp = _MLP(hidden_size, mlp_ratio)
 
-    def __call__(self, x, text_emb, embedded_t, temb, rope_cos=None, rope_sin=None,
-                 extra_pos_emb=None):
+    def __call__(
+        self,
+        x,
+        text_emb,
+        embedded_t,
+        temb,
+        rope_cos=None,
+        rope_sin=None,
+        extra_pos_emb=None,
+    ):
         if extra_pos_emb is not None:
             x = x + extra_pos_emb
         x_norm, gate = self.adaln_modulation_self_attn(x, embedded_t, temb)
@@ -292,7 +331,10 @@ class CosmosDiT(nn.Module):
         self.final_layer = _AdaLNOut(self.hidden_size, self.adaln_lora_dim)
         self.final_linear = nn.Linear(
             self.hidden_size,
-            self.out_channels * self.patch_size[0] * self.patch_size[1] * self.patch_size[2],
+            self.out_channels
+            * self.patch_size[0]
+            * self.patch_size[1]
+            * self.patch_size[2],
             bias=False,
         )
 
@@ -314,9 +356,15 @@ class CosmosDiT(nn.Module):
         w_theta = 10000.0 * w_ntk
         t_theta = 10000.0 * t_ntk
         seq = mx.arange(max(ot, oh, ow), dtype=dtype)
-        h_freqs = 1.0 / (h_theta ** (mx.arange(0, dim_h, 2, dtype=dtype)[:dim_h // 2] / dim_h))
-        w_freqs = 1.0 / (w_theta ** (mx.arange(0, dim_w, 2, dtype=dtype)[:dim_w // 2] / dim_w))
-        t_freqs = 1.0 / (t_theta ** (mx.arange(0, dim_t, 2, dtype=dtype)[:dim_t // 2] / dim_t))
+        h_freqs = 1.0 / (
+            h_theta ** (mx.arange(0, dim_h, 2, dtype=dtype)[: dim_h // 2] / dim_h)
+        )
+        w_freqs = 1.0 / (
+            w_theta ** (mx.arange(0, dim_w, 2, dtype=dtype)[: dim_w // 2] / dim_w)
+        )
+        t_freqs = 1.0 / (
+            t_theta ** (mx.arange(0, dim_t, 2, dtype=dtype)[: dim_t // 2] / dim_t)
+        )
         emb_h = mx.outer(seq[:oh], h_freqs)[None, :, None, :]
         emb_h = mx.broadcast_to(emb_h, (ot, oh, ow, emb_h.shape[-1]))
         emb_w = mx.outer(seq[:ow], w_freqs)[None, None, :, :]
@@ -333,7 +381,9 @@ class CosmosDiT(nn.Module):
         rope_sin = mx.sin(freqs_flat)
         return rope_cos, rope_sin
 
-    def __call__(self, x, timestep, text_emb, fps=None, padding_mask=None, condition_mask=None):
+    def __call__(
+        self, x, timestep, text_emb, fps=None, padding_mask=None, condition_mask=None
+    ):
         B, C, T, H, W = x.shape
         if condition_mask is not None:
             x = mx.concatenate([x, condition_mask], axis=1)
@@ -368,7 +418,9 @@ class CosmosDiT(nn.Module):
         if os.path.isfile(model_path) and model_path.endswith(".safetensors"):
             safetensor_files = [model_path]
         else:
-            safetensor_files = sorted(glob.glob(os.path.join(model_path, "*.safetensors")))
+            safetensor_files = sorted(
+                glob.glob(os.path.join(model_path, "*.safetensors"))
+            )
         if not safetensor_files:
             logger.warning("cosmos dit: no safetensors at %s, random init", model_path)
             return dit
@@ -398,7 +450,9 @@ class CosmosDiT(nn.Module):
         total_weight = len(mapped)
         logger.info(
             "cosmos dit: matched %d/%d model params from %d weight keys",
-            matched, len(flat_model), total_weight,
+            matched,
+            len(flat_model),
+            total_weight,
         )
         if shape_mismatches:
             logger.warning(
@@ -511,11 +565,11 @@ def _remap_nvidia(params, hidden_size):
             elif "linear.weight" in nk:
                 nk = "final_linear.weight"
         elif nk.startswith("pos_embedder."):
-            if nk == "pos_embedder.seq":
-                continue
-            elif nk == "pos_embedder.dim_spatial_range":
-                continue
-            elif nk == "pos_embedder.dim_temporal_range":
+            if (
+                nk == "pos_embedder.seq"
+                or nk == "pos_embedder.dim_spatial_range"
+                or nk == "pos_embedder.dim_temporal_range"
+            ):
                 continue
             elif "pos_emb_" in nk:
                 nk = nk.replace("pos_embedder.", "learnable_pos_embed.")
@@ -523,18 +577,28 @@ def _remap_nvidia(params, hidden_size):
             logger.debug("cosmos dit nvidia: unhandled key %s", k)
             continue
         if "blocks." in nk:
-            nk = nk.replace("adaln_modulation_self_attn.1.weight",
-                            "adaln_modulation_self_attn.linear_1.weight")
-            nk = nk.replace("adaln_modulation_self_attn.2.weight",
-                            "adaln_modulation_self_attn.linear_2.weight")
-            nk = nk.replace("adaln_modulation_cross_attn.1.weight",
-                            "adaln_modulation_cross_attn.linear_1.weight")
-            nk = nk.replace("adaln_modulation_cross_attn.2.weight",
-                            "adaln_modulation_cross_attn.linear_2.weight")
-            nk = nk.replace("adaln_modulation_mlp.1.weight",
-                            "adaln_modulation_mlp.linear_1.weight")
-            nk = nk.replace("adaln_modulation_mlp.2.weight",
-                            "adaln_modulation_mlp.linear_2.weight")
+            nk = nk.replace(
+                "adaln_modulation_self_attn.1.weight",
+                "adaln_modulation_self_attn.linear_1.weight",
+            )
+            nk = nk.replace(
+                "adaln_modulation_self_attn.2.weight",
+                "adaln_modulation_self_attn.linear_2.weight",
+            )
+            nk = nk.replace(
+                "adaln_modulation_cross_attn.1.weight",
+                "adaln_modulation_cross_attn.linear_1.weight",
+            )
+            nk = nk.replace(
+                "adaln_modulation_cross_attn.2.weight",
+                "adaln_modulation_cross_attn.linear_2.weight",
+            )
+            nk = nk.replace(
+                "adaln_modulation_mlp.1.weight", "adaln_modulation_mlp.linear_1.weight"
+            )
+            nk = nk.replace(
+                "adaln_modulation_mlp.2.weight", "adaln_modulation_mlp.linear_2.weight"
+            )
             nk = nk.replace("mlp.fc1.", "mlp.layer1.")
             nk = nk.replace("mlp.fc2.", "mlp.layer2.")
             nk = nk.replace("out_proj.", "output_proj.")
