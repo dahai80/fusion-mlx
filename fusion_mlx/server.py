@@ -726,6 +726,20 @@ class Server:
         app.include_router(gc_router)
         app.include_router(admin_router)
 
+        # #357: /v1/models/status MUST be registered before the gui_compat
+        # router's /v1/models/{model_name} catch-all. Starlette matches routes
+        # in registration order; a specific path shadowed by a parameter route
+        # is unreachable (status was captured as model_name -> 404). Keep
+        # specific /v1/models/* routes above the gui_compat include.
+        @app.get("/v1/models/status")
+        async def models_status(is_admin: bool = Depends(require_admin)):
+            if self.pool is None:
+                raise HTTPException(status_code=503, detail="Server not initialized")
+            status = self.pool.get_status()
+            n = len(status.get("models", [])) if isinstance(status, dict) else 0
+            logger.debug("GET /v1/models/status -> %d models", n)
+            return status
+
         # Register GUI compatibility router (discovery, settings, manager, admin UI)
         if get_gui_compat_router:
             app.include_router(get_gui_compat_router())
@@ -796,13 +810,6 @@ class Server:
         @app.get("/api/stats/alltime")
         async def api_stats_alltime():
             return get_server_metrics().to_alltime_dict()
-
-        @app.get("/v1/models/status")
-        async def models_status(is_admin: bool = Depends(require_admin)):
-            if self.pool is None:
-                raise HTTPException(status_code=503, detail="Server not initialized")
-            status = self.pool.get_status()
-            return status
 
         @app.post("/v1/models/{model_id}/load")
         async def load_model_public(
