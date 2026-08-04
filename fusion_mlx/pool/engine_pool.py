@@ -89,6 +89,12 @@ class EngineEntry:
     ]  # Engine type to use
     estimated_size: int  # Pre-calculated from safetensors (bytes)
     actual_size: int | None = None  # Observed process-memory delta after load settles
+    # #355: last measured load footprint, persists across unload (unlike
+    # actual_size, which is reset to None on async unload for display
+    # accuracy). Fed back into the admission projection so a model whose
+    # real load footprint exceeds its weights-only estimate is admitted
+    # against its observed size on reload, not the underestimate.
+    last_observed_size: int | None = None
     config_model_type: str = (
         ""  # Raw model_type from config.json (e.g., "deepseekocr_2")
     )
@@ -203,6 +209,32 @@ class EnginePool:
             return int(cb())
         except Exception:  # noqa: BLE001
             return 0
+
+    def _kv_admission_headroom(self) -> int:
+        # #355: soft KV-cache headroom reserved for the incoming model at
+        # admission. estimated_size/last_observed_size capture weights + load
+        # overhead but NOT runtime KV-cache + activation growth, which caused
+        # admission under-projection. FUSION_MLX_ADMISSION_KV_HEADROOM_GB
+        # overrides (float GiB; 0 disables = pre-#355 behavior). Default:
+        # min(scheduler max_kv_cache_memory, 2 GiB) - covers measured ~0.75
+        # GiB short-context KV overhead with margin without the full 4 GiB cap.
+        env = os.environ.get("FUSION_MLX_ADMISSION_KV_HEADROOM_GB")
+        if env is not None:
+            try:
+                gb = float(env)
+            except ValueError:
+                logger.warning(
+                    "invalid FUSION_MLX_ADMISSION_KV_HEADROOM_GB=%r, using default",
+                    env,
+                )
+            else:
+                if gb <= 0:
+                    return 0
+                return int(gb * 1024**3)
+        max_kv = getattr(self._scheduler_config, "max_kv_cache_memory", None) or (
+            4 * 1024**3
+        )
+        return min(int(max_kv), 2 * 1024**3)
 
     def _wake_process_memory_enforcer(self, *, active: bool = False) -> None:
         enforcer = self._process_memory_enforcer
@@ -927,14 +959,29 @@ class EnginePool:
         # Pre-load admission check (outside lock — memory state is approximate)
         ceiling = self._current_ceiling()
         if ceiling > 0:
+            # #355: prefer the last observed load footprint (persists across
+            # unload) over the weights-only estimate, and reserve KV-cache
+            # headroom the estimate doesn't capture.
+            effective_size = entry.last_observed_size or entry.estimated_size
+            kv_headroom = self._kv_admission_headroom()
             for _ in range(20):
                 current = max(
                     mx.get_active_memory(),
                     get_phys_footprint(),
                     self._current_model_memory,
                 )
-                projected = current + entry.estimated_size
+                projected = current + effective_size + kv_headroom
                 if projected <= ceiling:
+                    logger.debug(
+                        "admission ok %s: projected=%s ceiling=%s "
+                        "(current=%s effective=%s kv_headroom=%s)",
+                        entry_key,
+                        format_size(projected),
+                        format_size(ceiling),
+                        format_size(current),
+                        format_size(effective_size),
+                        format_size(kv_headroom),
+                    )
                     break
                 victim = self._find_lru_victim()
                 if victim is not None:
@@ -953,28 +1000,32 @@ class EnginePool:
                     entry.loading_event = None
                 if loading_event is not None:
                     loading_event.set()
-                if entry.estimated_size > ceiling:
-                    raise ModelTooLargeError(model_id, entry.estimated_size, ceiling)
+                if effective_size + kv_headroom > ceiling:
+                    raise ModelTooLargeError(
+                        model_id, effective_size + kv_headroom, ceiling
+                    )
                 loaded_models = []
                 for mid, ent in self._entries.items():
                     if ent.engine is not None:
+                        ent_size = ent.last_observed_size or ent.estimated_size
                         loaded_models.append(
                             {
                                 "model_id": mid,
-                                "memory_mb": ent.estimated_size // (1024 * 1024),
+                                "memory_mb": ent_size // (1024 * 1024),
                                 "active_requests": ent.in_use,
                                 "pinned": ent.is_pinned,
                             }
                         )
                 raise InsufficientMemoryError(
-                    required=entry.estimated_size,
+                    required=effective_size + kv_headroom,
                     current=current,
                     message=(
                         f"Cannot load {model_id}: projected memory "
                         f"{format_size(projected)} would exceed the memory "
                         f"ceiling {format_size(ceiling)} "
                         f"(current: {format_size(current)}, "
-                        f"model: {format_size(entry.estimated_size)}). "
+                        f"model: {format_size(effective_size)}, "
+                        f"kv_headroom: {format_size(kv_headroom)}). "
                         "Free system memory or lower memory_guard_tier."
                     ),
                     model_id=model_id,
@@ -2096,6 +2147,8 @@ class EnginePool:
             post_load_memory = max(mx.get_active_memory(), get_phys_footprint())
             observed_delta = max(0, post_load_memory - pre_load_memory)
             entry.actual_size = observed_delta or entry.estimated_size
+            # #355: persist across unload for the next admission projection
+            entry.last_observed_size = entry.actual_size
 
             logger.info(
                 f"Loaded model: {model_id} "

@@ -1200,6 +1200,8 @@ class TestEnginePoolEviction:
         # Set limit to allow each model individually but not both together
         pool = _make_pool(ceiling=2500)  # Allows each but not both
         pool.discover_models(str(small_mock_model_dir))
+        # #355: byte-sized ceiling tests eviction logic, not GiB KV headroom
+        monkeypatch.setenv("FUSION_MLX_ADMISSION_KV_HEADROOM_GB", "0")
         monkeypatch.setattr(
             "fusion_mlx.pool.engine_pool.get_phys_footprint",
             lambda: pool._current_model_memory,
@@ -1257,6 +1259,8 @@ class TestEnginePoolEviction:
         """
         pool = _make_pool(ceiling=2500)  # each model fits alone, not both
         pool.discover_models(str(small_mock_model_dir))
+        # #355: byte-sized ceiling tests eviction logic, not GiB KV headroom
+        monkeypatch.setenv("FUSION_MLX_ADMISSION_KV_HEADROOM_GB", "0")
         monkeypatch.setattr("fusion_mlx.pool.engine_pool.get_phys_footprint", lambda: 0)
         monkeypatch.setattr(
             "fusion_mlx.pool.engine_pool.mx.get_active_memory", lambda: 0

@@ -1192,6 +1192,36 @@ FUSION_MLX_BOUNDARY_PREFIX_MAX_BYTES=53687091200 fusion-mlx serve --model <model
 > recovered N tokens in M blocks`. Config fields `boundary_prefix_persist` /
 > `boundary_prefix_max_bytes` live on `SchedulerConfig`.
 
+### Model-load admission & KV headroom (#355)
+
+Before admitting a model, fusion-mlx projects memory as
+`projected = current_footprint + model_size + kv_headroom`:
+
+- **`model_size`** uses the **last observed** post-load footprint when available
+  (persisted across unload), falling back to the static weight estimate. Re-loading
+  a previously-seen model is admitted against its real cost, not an underestimate.
+- **`kv_headroom`** reserves space for the live KV cache + activations, so an
+  admitted model does not immediately OOM under concurrent requests. This closes
+  the #355 admission under-projection (the weights-only estimate ignored runtime KV
+  growth).
+
+| Variable | Default | Effect |
+|----------|---------|--------|
+| `FUSION_MLX_ADMISSION_KV_HEADROOM_GB` | `min(max_kv_cache_memory, 2 GiB)` (≈ 2 GiB) | KV bytes reserved in the admission projection. Float in GiB. `0` disables the headroom (admit on weights alone, pre-#355 behavior). Invalid values warn and fall back to the default. Tracks `SchedulerConfig.max_kv_cache_memory` (default 4 GiB), capped at 2 GiB. |
+
+```bash
+# Reserve 1.5 GiB for KV cache in the load-admission projection
+FUSION_MLX_ADMISSION_KV_HEADROOM_GB=1.5 fusion-mlx serve --model qwen3.5-27b-mxfp8
+# Disable the headroom (admit on model weights alone)
+FUSION_MLX_ADMISSION_KV_HEADROOM_GB=0 fusion-mlx serve --model qwen3.5-4b-4bit
+```
+
+> When a model alone exceeds the ceiling (`model_size + kv_headroom > ceiling`),
+> the server raises `ModelTooLargeError`. When the model fits alone but no LRU
+> victim can be evicted to free `model_size + kv_headroom`, it raises
+> `InsufficientMemoryError`. Both log the projected footprint breakdown
+> (`current / effective / kv_headroom`) at WARN for diagnosis.
+
 <!-- Video Adapters section: documents IP-Adapter, ControlNet, AnimateDiff adapters.
   Importers: fusion_mlx.video.adapters.{ip_adapter,controlnet,animatediff}
   Callers: SkyReelsPipelineConfig, VideoGenParams, VideoGenerateRequest
