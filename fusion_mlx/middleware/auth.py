@@ -352,8 +352,11 @@ def _anonymous_access_allowed(request: Request | None) -> bool:
             _client_host(request),
         )
         return True
-    if request is not None and request.headers.get("x-fusion-route"):
-        return True
+    # X-Fusion-Route is routing provenance (validated by RouteGuardMiddleware),
+    # NOT an authentication credential. Any client can set the header, so its
+    # mere presence must not grant access. Same-host gateway traffic is already
+    # covered by the loopback branch above; cross-host gateways must forward a
+    # valid api_key. See issue #352 for a shared-secret enhancement.
     return False
 
 
@@ -374,8 +377,11 @@ async def verify_management_access(request: Request) -> bool:
         if not all(secrets.compare_digest(k, configured_key) for k in provided):
             raise HTTPException(status_code=401, detail="Invalid API key")
         return True
-    if request.headers.get("x-fusion-route"):
-        return True
+    # X-Fusion-Route is NOT an auth credential (spoofable by any client); it is
+    # routing provenance handled by RouteGuardMiddleware. A gateway that needs
+    # to reach management endpoints must forward a valid api_key (or run on
+    # loopback). Rejecting here closes the header-spoof bypass on /metrics and
+    # /v1/status. See issue #352 for a shared-secret enhancement.
     if _is_loopback_client(request):
         logger.warning(
             "Management endpoint loopback access without auth (dev mode) host=%s",

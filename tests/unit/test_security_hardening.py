@@ -120,11 +120,13 @@ def test_metrics_rejects_anonymous_non_loopback(monkeypatch):
     assert r.status_code == 401
 
 
-def test_metrics_allows_with_x_fusion_route(monkeypatch):
+def test_metrics_rejects_x_fusion_route_without_key(monkeypatch):
+    # X-Fusion-Route is provenance, not auth: a non-loopback caller with no
+    # api_key must still be rejected even when it sets the header.
     monkeypatch.delenv("FUSION_ALLOW_ANONYMOUS", raising=False)
     client = TestClient(_mgmt_app())
     r = client.get("/metrics", headers={"X-Fusion-Route": "gateway"})
-    assert r.status_code == 200
+    assert r.status_code == 401
 
 
 def test_status_rejects_anonymous_non_loopback(monkeypatch):
@@ -134,11 +136,13 @@ def test_status_rejects_anonymous_non_loopback(monkeypatch):
     assert r.status_code == 401
 
 
-def test_status_allows_with_x_fusion_route(monkeypatch):
+def test_status_rejects_x_fusion_route_without_key(monkeypatch):
+    # X-Fusion-Route is provenance, not auth: a non-loopback caller with no
+    # api_key must still be rejected even when it sets the header.
     monkeypatch.delenv("FUSION_ALLOW_ANONYMOUS", raising=False)
     client = TestClient(_mgmt_app())
     r = client.get("/v1/status", headers={"X-Fusion-Route": "gateway"})
-    assert r.status_code == 200
+    assert r.status_code == 401
 
 
 # --- #345: load/unload require X-Fusion-Source: model-hub ----------------
@@ -230,12 +234,13 @@ def test_anonymous_allowed_with_env_override():
     assert _anonymous_access_allowed(req) is True
 
 
-def test_anonymous_allowed_with_x_fusion_route(monkeypatch):
+def test_anonymous_rejected_with_only_x_fusion_route(monkeypatch):
+    # X-Fusion-Route alone must not grant anonymous access (spoofable header).
     monkeypatch.delenv("FUSION_ALLOW_ANONYMOUS", raising=False)
     from fusion_mlx.middleware.auth import _anonymous_access_allowed
 
     req = _make_request(host="203.0.113.5", headers={"x-fusion-route": "gateway"})
-    assert _anonymous_access_allowed(req) is True
+    assert _anonymous_access_allowed(req) is False
 
 
 def test_management_access_rejects_non_loopback_no_creds(monkeypatch):
@@ -254,3 +259,17 @@ def test_management_access_loopback_allowed_dev(monkeypatch):
 
     req = _make_request(host="127.0.0.1")
     assert asyncio.run(verify_management_access(req)) is True
+
+
+def test_management_access_rejects_x_fusion_route_when_key_configured(monkeypatch):
+    # Regression for the #344 header-spoof bypass: with an api_key configured,
+    # a non-loopback caller that omits the key but sets X-Fusion-Route must
+    # still get 401 - the header is provenance, not a credential.
+    monkeypatch.delenv("FUSION_ALLOW_ANONYMOUS", raising=False)
+    from fusion_mlx.middleware import auth as auth_mod
+
+    monkeypatch.setattr(auth_mod, "_get_configured_api_key", lambda: "server-secret")
+    req = _make_request(host="203.0.113.5", headers={"x-fusion-route": "gateway"})
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(auth_mod.verify_management_access(req))
+    assert exc.value.status_code == 401

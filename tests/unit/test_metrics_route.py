@@ -101,11 +101,12 @@ def test_metrics_rejects_unauthenticated_when_api_key_set(metrics_client, monkey
     assert resp.status_code == 401
 
 
-# #344: the gateway injects X-Fusion-Route; management endpoints trust it.
-def test_metrics_allows_access_via_x_fusion_route(metrics_client, monkeypatch):
+# #344: X-Fusion-Route is provenance, not auth. With an api_key configured
+# (test-secret), a caller that omits the key but sets the header must be 401.
+def test_metrics_rejects_x_fusion_route_without_key(metrics_client, monkeypatch):
     monkeypatch.delenv("FUSION_ALLOW_ANONYMOUS", raising=False)
     resp = metrics_client.client.get("/metrics", headers={"X-Fusion-Route": "gateway"})
-    assert resp.status_code == 200
+    assert resp.status_code == 401
 
 
 # ---------------------------------------------------------------------------

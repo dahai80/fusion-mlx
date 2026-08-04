@@ -946,10 +946,10 @@ fusion-mlx is the link endpoint in a 3-tier chain: App -> Gateway -> MLX. By def
 
 ### Access policy
 
-- **Route guard (#343):** routed requests should carry `X-Fusion-Route: gateway` so the server knows they came through the gateway. Exempt paths: `/`, `/health`, `/healthz`, `/readyz`, `/livez`, `/openapi.json`, `/docs`, `/redoc`, `/favicon.ico`, and `OPTIONS` preflight. Set `FUSION_ROUTE_ENFORCE=true` to reject un-routed traffic.
-- **Management endpoints (#344):** `/metrics` and `/v1/status` require `verify_management_access` - a valid API key, the `X-Fusion-Route` header, or a loopback client. Non-loopback anonymous requests get `401`.
+- **Route guard (#343):** routed requests should carry `X-Fusion-Route: gateway` so the server knows they came through the gateway. Exempt paths: `/`, `/health`, `/healthz`, `/readyz`, `/livez`, `/openapi.json`, `/docs`, `/redoc`, `/favicon.ico`, and `OPTIONS` preflight. Set `FUSION_ROUTE_ENFORCE=true` to reject un-routed traffic. The header is routing provenance only - it does **not** authenticate a caller (any client can set it).
+- **Management endpoints (#344):** `/metrics` and `/v1/status` require `verify_management_access` - a valid API key or a loopback client. Non-loopback anonymous requests get `401`. `X-Fusion-Route` is not accepted as authentication; a cross-host gateway must forward a valid API key.
 - **Model lifecycle (#345):** `/v1/models/load` and `/v1/models/unload` require `X-Fusion-Source: model-hub` (or a loopback client); otherwise `403`.
-- **Anonymous access (#346):** rejected by default. Allow only for local dev via `FUSION_ALLOW_ANONYMOUS=true`. Loopback clients and `X-Fusion-Route`-bearing requests are exempt.
+- **Anonymous access (#346):** rejected by default. Allow only for local dev via `FUSION_ALLOW_ANONYMOUS=true`; loopback clients are exempt. A cross-host gateway must forward a valid API key - `X-Fusion-Route` alone does not authenticate.
 
 ```bash
 # Bind loopback only (default)
