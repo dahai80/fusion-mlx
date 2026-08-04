@@ -10,7 +10,7 @@
 #   runtime-fail  - collects but fails on stale assertions / removed attrs
 #   timeout       - hangs or exceeds the unit-gate budget (integration-style)
 #
-# Total: 271 modules excluded; 324 healthy modules remain in the CI gate.
+# Total: 269 modules excluded; 326 healthy modules remain in the CI gate.
 # Pay down by updating each module to the current released API, then remove
 # its line here. See memory: fusion-mlx-rapid-mlx-test-debt.
 #
@@ -25,7 +25,7 @@ test_per_request_thinking_budget.py
 test_server.py
 test_settings.py
 
-## runtime-fail (317)
+## runtime-fail (315)
 test_447_stream_tool_choice_auto.py
 test_active_models_visibility.py
 test_admin_auth.py
@@ -230,8 +230,9 @@ test_schema_v2_accepts_v1.py
 test_schema_v2_rejects_partial_harness.py
 test_seed_reproducibility.py
 test_serve_host_loopback_default.py
-test_serve_listen_fd.py
-test_serve_port_collision.py
+# test_serve_listen_fd.py + test_serve_port_collision.py rescued (#351):
+# fixed stale cli.->cli_serve/_cli_base stub targets after the serve-code
+# extraction; both now fully green (21 + 9 tests) and re-enter CI.
 test_server_api_key_env_fallback.py
 test_server_auth_ordering.py
 test_server_load_model_order.py

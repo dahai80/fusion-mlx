@@ -44,7 +44,8 @@ import types
 
 import pytest
 
-from fusion_mlx import cli
+from fusion_mlx import _cli_base
+from fusion_mlx._cli_base import _port_is_busy, _run_uvicorn
 
 
 def _claim_loopback_port() -> tuple[socket.socket, int]:
@@ -100,7 +101,7 @@ def test_run_uvicorn_exits_nonzero_on_eaddrinuse(monkeypatch, capsys):
 
         ns = _serve_ns(port)
         with pytest.raises(SystemExit) as excinfo:
-            cli._run_uvicorn(object(), ns, "error")
+            _run_uvicorn(object(), ns, "error")
 
         assert (
             excinfo.value.code == 1
@@ -135,7 +136,7 @@ def test_run_uvicorn_reraises_unrelated_oserror(monkeypatch):
 
     ns = _serve_ns(port=80)  # port irrelevant — uvicorn.run is stubbed
     with pytest.raises(OSError) as excinfo:
-        cli._run_uvicorn(object(), ns, "error")
+        _run_uvicorn(object(), ns, "error")
 
     assert (
         excinfo.value.errno == errno.EACCES
@@ -174,7 +175,7 @@ def test_run_uvicorn_eaddrinuse_socket_level_discriminator(monkeypatch, capsys):
 
         ns = _serve_ns(port)
         with pytest.raises(SystemExit) as excinfo:
-            cli._run_uvicorn(object(), ns, "error")
+            _run_uvicorn(object(), ns, "error")
 
         assert excinfo.value.code == 1
         captured = capsys.readouterr()
@@ -217,7 +218,7 @@ def test_run_uvicorn_systemexit_from_uvicorn_eaddrinuse_reemits_message(
 
         ns = _serve_ns(port)
         with pytest.raises(SystemExit) as excinfo:
-            cli._run_uvicorn(object(), ns, "error")
+            _run_uvicorn(object(), ns, "error")
 
         assert (
             excinfo.value.code == 1
@@ -252,11 +253,11 @@ def test_run_uvicorn_probe_failure_does_not_mask_systemexit(monkeypatch):
     import uvicorn
 
     monkeypatch.setattr(uvicorn, "run", _raise_sysexit)
-    monkeypatch.setattr(cli, "_port_is_busy", _probe_explodes)
+    monkeypatch.setattr(_cli_base, "_port_is_busy", _probe_explodes)
 
     ns = _serve_ns(port=8000)
     with pytest.raises(SystemExit) as excinfo:
-        cli._run_uvicorn(object(), ns, "error")
+        _run_uvicorn(object(), ns, "error")
 
     # The original SystemExit from uvicorn must propagate untouched —
     # NOT the TypeError the probe raised.
@@ -279,8 +280,8 @@ def test_port_is_busy_returns_false_on_probe_side_exception():
     must convert that into ``False`` rather than re-raising.
     """
     # Should return False, NOT raise.
-    assert cli._port_is_busy(None, 8000) is False  # type: ignore[arg-type]
-    assert cli._port_is_busy(12345, 8000) is False  # type: ignore[arg-type]
+    assert _port_is_busy(None, 8000) is False  # type: ignore[arg-type]
+    assert _port_is_busy(12345, 8000) is False  # type: ignore[arg-type]
 
 
 def test_run_uvicorn_systemexit_passthrough_when_port_not_busy(monkeypatch, capsys):
@@ -307,7 +308,7 @@ def test_run_uvicorn_systemexit_passthrough_when_port_not_busy(monkeypatch, caps
 
     ns = _serve_ns(port)
     with pytest.raises(SystemExit) as excinfo:
-        cli._run_uvicorn(object(), ns, "error")
+        _run_uvicorn(object(), ns, "error")
 
     assert excinfo.value.code == 1
     captured = capsys.readouterr()
@@ -338,7 +339,7 @@ def test_run_uvicorn_listen_fd_eaddrinuse_uses_fd_specific_message(monkeypatch, 
 
     ns = types.SimpleNamespace(host="127.0.0.1", port=8000, listen_fd=11)
     with pytest.raises(SystemExit) as excinfo:
-        cli._run_uvicorn(object(), ns, "error")
+        _run_uvicorn(object(), ns, "error")
 
     assert excinfo.value.code == 1
     captured = capsys.readouterr()

@@ -247,6 +247,10 @@ class ServerConfig:
     bind_host: str | None = None
     bind_port: int | None = None
     bind_listen_fd: int | None = None
+    # #351: Unix Domain Socket listen mode. Set when --host unix:/path
+    # is used; only a process with filesystem access to the socket can
+    # reach MLX (physical isolation on top of the auth chain).
+    bind_uds: str | None = None
 
     # Defaults
     default_max_tokens: int = 4096

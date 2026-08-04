@@ -10,6 +10,7 @@ ACTIVATE="${VENV}/bin/activate"
 LOG_DIR="${HOME}/.fusion-mlx/logs"
 SETTINGS="${HOME}/.fusion-mlx/settings.json"
 PORT=11434
+HOST="${FUSION_HOST:-127.0.0.1}"
 HF_MIRROR_DEFAULT="https://hf-mirror.com"
 
 # ── Colors ──────────────────────────────────────────────────────────
@@ -60,10 +61,52 @@ resolve_api_key() {
 
 # ── curl with optional auth ─────────────────────────────────────────
 auth_curl() {
-    if [[ -n "${API_KEY:-}" ]]; then
-        curl -sf -H "Authorization: Bearer ${API_KEY}" "$@"
+    if is_uds; then
+        local sock
+        sock="$(uds_socket)"
+        if [[ -n "${API_KEY:-}" ]]; then
+            curl -sf --unix-socket "${sock}" -H "Authorization: Bearer ${API_KEY}" "$@"
+        else
+            curl -sf --unix-socket "${sock}" "$@"
+        fi
     else
-        curl -sf "$@"
+        if [[ -n "${API_KEY:-}" ]]; then
+            curl -sf -H "Authorization: Bearer ${API_KEY}" "$@"
+        else
+            curl -sf "$@"
+        fi
+    fi
+}
+
+# ── UDS listen mode (#351) ───────────────────────────────────────────
+# FUSION_HOST=unix:/path/to.sock -> listen on a Unix Domain Socket so
+# only a process with filesystem access to the socket can reach MLX
+# (physical isolation on top of the #349/#350 auth chain). Default TCP
+# loopback is unchanged.
+is_uds() { [[ "${HOST}" == unix:* ]]; }
+uds_socket() { echo "${HOST#unix:}"; }
+
+base_url() {
+    if is_uds; then
+        echo "http://localhost"
+    else
+        echo "http://${HOST}:${PORT}"
+    fi
+}
+
+health_curl() {
+    if is_uds; then
+        curl -sf --unix-socket "$(uds_socket)" http://localhost/health
+    else
+        curl -sf "http://${HOST}:${PORT}/health"
+    fi
+}
+
+host_port_args() {
+    if is_uds; then
+        echo "--host ${HOST}"
+    else
+        echo "--host ${HOST} --port ${PORT}"
     fi
 }
 
@@ -78,11 +121,19 @@ ensure_venv() {
 
 # ── Check if server is running ──────────────────────────────────────
 is_running() {
-    fusion-mlx ps 2>/dev/null | /usr/bin/grep -q "${PORT}"
+    if is_uds; then
+        fusion-mlx ps 2>/dev/null | /usr/bin/grep -Fq "$(uds_socket)"
+    else
+        fusion-mlx ps 2>/dev/null | /usr/bin/grep -q "${PORT}"
+    fi
 }
 
 get_pid() {
-    fusion-mlx ps 2>/dev/null | /usr/bin/grep "${PORT}" | awk '{print $1}' | head -1
+    if is_uds; then
+        fusion-mlx ps 2>/dev/null | /usr/bin/grep -F "$(uds_socket)" | awk '{print $1}' | head -1
+    else
+        fusion-mlx ps 2>/dev/null | /usr/bin/grep "${PORT}" | awk '{print $1}' | head -1
+    fi
 }
 
 # ── Wait for healthy ────────────────────────────────────────────────
@@ -90,7 +141,7 @@ wait_healthy() {
     local timeout="${1:-60}"
     local elapsed=0
     while (( elapsed < timeout )); do
-        if curl -sf "http://127.0.0.1:${PORT}/health" >/dev/null 2>&1; then
+        if health_curl >/dev/null 2>&1; then
             log_info "Server is healthy (took ${elapsed}s)"
             return 0
         fi
@@ -160,7 +211,7 @@ do_start() {
     preflight
 
     if is_running; then
-        log_warn "Server already running on port ${PORT} (PID $(get_pid))"
+        log_warn "Server already running on ${HOST} (PID $(get_pid))"
         wait_healthy 10
         return 0
     fi
@@ -199,12 +250,11 @@ do_start() {
         fi
         fusion-mlx serve \
             --model-dir "${model_dir}" \
-            --host 127.0.0.1 \
-            --port "${PORT}" \
             --log-level INFO \
             --enable-prefix-cache \
             --continuous-batching \
             --chunked-prefill-tokens 4096 \
+            $(host_port_args) \
             ${api_key_arg} \
             &
     fi
@@ -281,11 +331,11 @@ show_status() {
     if is_running; then
         local pid
         pid=$(get_pid)
-        printf "${GREEN}● Running${NC}  PID=%s  PORT=%s\n" "${pid}" "${PORT}"
+        printf "${GREEN}● Running${NC}  PID=%s  ADDR=%s\n" "${pid}" "${HOST}"
 
         # Quick health check
         local health
-        health=$(curl -sf "http://127.0.0.1:${PORT}/health" 2>/dev/null || echo "unreachable")
+        health=$(health_curl 2>/dev/null || echo "unreachable")
         printf "  Health: %s\n" "${health}"
 
         # Memory usage
@@ -301,7 +351,7 @@ show_status() {
         # Models loaded
         resolve_api_key
         local models
-        models=$(auth_curl "http://127.0.0.1:${PORT}/v1/models" \
+        models=$(auth_curl "$(base_url)/v1/models" \
             | python3 -c "import sys,json; d=json.load(sys.stdin); [print(f'    - {m[\"id\"]}') for m in d.get('data',[])]" 2>/dev/null || echo "    (unable to list)")
         printf "  Models:\n%s\n" "${models}"
     else
@@ -472,12 +522,11 @@ _run_with_watchdog() {
         fi
         fusion-mlx serve \
             --model-dir "${model_dir}" \
-            --host 127.0.0.1 \
-            --port "${PORT}" \
             --log-level INFO \
             --enable-prefix-cache \
             --continuous-batching \
             --chunked-prefill-tokens 4096 \
+            $(host_port_args) \
             ${api_key_arg}
 
         local exit_code=$?
@@ -609,7 +658,10 @@ Commands:
   help                Show this help
 
 Environment:
-  PORT            Server port (default: 11434)
+  PORT            Server port (default: 11434; ignored in UDS mode)
+  FUSION_HOST     Bind address (default: 127.0.0.1). Set to unix:/path/to.sock
+                  for UDS listen mode (#351) - only a process with filesystem
+                  access to the socket can reach MLX. TCP loopback is the default.
   HF_MIRROR       HuggingFace mirror override (default: read from config)
   PRELOAD_MODELS  Comma-separated models to preload (overrides --preload)
 

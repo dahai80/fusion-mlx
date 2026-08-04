@@ -26,6 +26,7 @@ from unittest.mock import patch
 import pytest
 
 from fusion_mlx import cli
+from fusion_mlx._cli_base import _run_uvicorn
 
 # ---------------------------------------------------------------------------
 # Helpers — mirror the chat-command test style: drive ``cli.main()`` and
@@ -189,7 +190,7 @@ def test_run_uvicorn_passes_fd_when_listen_fd_set(monkeypatch):
 
     ns = _minimal_serve_ns(listen_fd=7, port=9000, host="127.0.0.1")
     sentinel_app = object()
-    cli._run_uvicorn(sentinel_app, ns, "info")
+    _run_uvicorn(sentinel_app, ns, "info")
 
     assert captured_kwargs.get("app") is sentinel_app
     assert (
@@ -224,7 +225,7 @@ def test_run_uvicorn_passes_host_port_when_listen_fd_unset(monkeypatch):
     ns = _minimal_serve_ns(port=9000, host="127.0.0.1")
     assert getattr(ns, "listen_fd", None) is None
     sentinel_app = object()
-    cli._run_uvicorn(sentinel_app, ns, "info")
+    _run_uvicorn(sentinel_app, ns, "info")
 
     assert captured_kwargs.get("app") is sentinel_app
     assert captured_kwargs.get("host") == "127.0.0.1"
@@ -247,19 +248,24 @@ def stub_heavy_serve_deps(monkeypatch):
     so the test stays faithful to the real execution path.
     """
     from fusion_mlx import _version_check
-    from fusion_mlx import cli as cli_mod
+    from fusion_mlx import cli_serve as cli_serve_mod
     from fusion_mlx import server as server_mod
 
     monkeypatch.setattr(_version_check, "prompt_upgrade_if_available", lambda: False)
     monkeypatch.setattr(_version_check, "print_staleness_warning_if_any", lambda: None)
-    monkeypatch.setattr(cli_mod, "_ensure_model_downloaded", lambda model: None)
-    monkeypatch.setattr(cli_mod, "_check_memory_capacity", lambda *a, **kw: None)
-    monkeypatch.setattr(cli_mod, "_check_disk_space", lambda *a, **kw: None)
+    # serve_command resolves these as bare names in fusion_mlx.cli_serve
+    # (where they are defined), NOT in fusion_mlx.cli - stubbing cli_mod
+    # was a stale target left by the cli->cli_serve extraction and never
+    # intercepted the real call.
+    monkeypatch.setattr(cli_serve_mod, "_ensure_model_downloaded", lambda model: None)
+    monkeypatch.setattr(cli_serve_mod, "_check_memory_capacity", lambda *a, **kw: None)
+    monkeypatch.setattr(cli_serve_mod, "_check_disk_space", lambda *a, **kw: None)
     monkeypatch.setattr(server_mod, "configure_logging", lambda level: "info")
     monkeypatch.setattr(server_mod, "load_model", lambda *a, **kw: None)
-    # ``serve_command`` calls ``server.configure_cors`` which does an
-    # ``app.add_middleware``. That fails with "Cannot add middleware
-    # after an application has started" if a prior test in the suite
+    # ``serve_command`` calls ``server.configure_cors_from_env`` (renamed
+    # from ``configure_cors``) which does an ``app.add_middleware``. That
+    # fails with "Cannot add middleware after an application has started"
+    # if a prior test in the suite
     # has already booted a ``TestClient`` against ``vllm_mlx.server.app``
     # — order-dependent flake. Stub it to a no-op for these tests; the
     # CORS plumbing has its own dedicated tests.
@@ -267,7 +273,7 @@ def stub_heavy_serve_deps(monkeypatch):
     # keyword args (methods=, headers=, max_age=, allow_credentials=) once
     # the default-wildcard friendly UX landed — accept arbitrary kwargs so
     # the stub keeps matching the real signature.
-    monkeypatch.setattr(server_mod, "configure_cors", lambda *a, **kw: None)
+    monkeypatch.setattr(server_mod, "configure_cors_from_env", lambda *a, **kw: [])
     # Some serve_command branches touch the rate-limiter wiring.
     from fusion_mlx.middleware import auth as auth_mod
 
