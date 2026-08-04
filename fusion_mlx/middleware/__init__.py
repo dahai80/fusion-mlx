@@ -7,8 +7,10 @@ from .auth import (
     check_rate_limit_or_x_api_key,
     configure_rate_limiter,
     rate_limiter,
+    require_model_hub_source,
     verify_api_key,
     verify_api_key_or_x_api_key,
+    verify_management_access,
 )
 from .body_depth import (
     RequestBodyDepthMiddleware,
@@ -21,6 +23,7 @@ from .probe_fastpath import (
     install_probe_fastpath_middleware,
 )
 from .request_id import RequestIdMiddleware, install_request_id_middleware
+from .route_guard import RouteGuardMiddleware, install_route_guard_middleware
 
 __all__ = [
     "ProbeFastPathMiddleware",
@@ -28,6 +31,7 @@ __all__ = [
     "RequestIdMiddleware",
     "RequestBodyDepthMiddleware",
     "RequestBodyLimitMiddleware",
+    "RouteGuardMiddleware",
     "check_rate_limit",
     "check_rate_limit_or_x_api_key",
     "configure_rate_limiter",
@@ -36,7 +40,10 @@ __all__ = [
     "install_request_body_depth_middleware",
     "install_request_body_limit_middleware",
     "install_request_id_middleware",
+    "install_route_guard_middleware",
     "rate_limiter",
+    "require_model_hub_source",
     "verify_api_key",
     "verify_api_key_or_x_api_key",
+    "verify_management_access",
 ]

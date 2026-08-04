@@ -5,6 +5,7 @@ import hashlib
 import hmac
 import ipaddress
 import logging
+import os
 import secrets
 import threading
 import time
@@ -208,11 +209,18 @@ def _get_configured_api_key() -> str | None:
     return None
 
 
-def _verify_api_key_values(*api_keys: str | None) -> bool:
+def _verify_api_key_values(
+    *api_keys: str | None, request: Request | None = None
+) -> bool:
     configured_key = _get_configured_api_key()
     if configured_key is None:
-        logger.debug("No API key configured — anonymous access allowed (dev mode)")
-        return True
+        if _anonymous_access_allowed(request):
+            return True
+        logger.warning(
+            "Anonymous access rejected - no API key configured host=%s",
+            _client_host(request),
+        )
+        raise HTTPException(status_code=401, detail="API key required")
     provided_keys = [api_key for api_key in api_keys if api_key]
     if not provided_keys:
         raise HTTPException(status_code=401, detail="API key required")
@@ -223,9 +231,12 @@ def _verify_api_key_values(*api_keys: str | None) -> bool:
     return True
 
 
-async def verify_api_key(credentials: HTTPAuthorizationCredentials = Depends(security)):
+async def verify_api_key(
+    request: Request,
+    credentials: HTTPAuthorizationCredentials = Depends(security),
+):
     bearer_key = credentials.credentials if credentials is not None else None
-    return _verify_api_key_values(bearer_key)
+    return _verify_api_key_values(bearer_key, request=request)
 
 
 async def verify_api_key_or_x_api_key(
@@ -233,7 +244,9 @@ async def verify_api_key_or_x_api_key(
     credentials: HTTPAuthorizationCredentials = Depends(security),
 ):
     bearer_key = credentials.credentials if credentials is not None else None
-    return _verify_api_key_values(bearer_key, request.headers.get("x-api-key"))
+    return _verify_api_key_values(
+        bearer_key, request.headers.get("x-api-key"), request=request
+    )
 
 
 _SCOPED_KEY_PREFIXES = {
@@ -310,3 +323,79 @@ def _is_loopback_client(request: Request) -> bool:
         return ipaddress.ip_address(host).is_loopback
     except ValueError:
         return False
+
+
+# ---------------------------------------------------------------------------
+# #342-#346 security hardening: source validation + anonymous-access gate
+# ---------------------------------------------------------------------------
+
+_TRUTHY = frozenset({"1", "true", "yes", "on"})
+
+
+def _env_truthy(name: str) -> bool:
+    return os.environ.get(name, "").strip().lower() in _TRUTHY
+
+
+def _client_host(request: Request | None) -> str:
+    if request is not None and request.client:
+        return request.client.host
+    return "unknown"
+
+
+def _anonymous_access_allowed(request: Request | None) -> bool:
+    if _env_truthy("FUSION_ALLOW_ANONYMOUS"):
+        logger.debug("Anonymous access allowed via FUSION_ALLOW_ANONYMOUS env")
+        return True
+    if request is not None and _is_loopback_client(request):
+        logger.warning(
+            "Anonymous loopback access allowed (dev mode) host=%s",
+            _client_host(request),
+        )
+        return True
+    if request is not None and request.headers.get("x-fusion-route"):
+        return True
+    return False
+
+
+async def verify_management_access(request: Request) -> bool:
+    # #344/#346: FUSION_ALLOW_ANONYMOUS is the documented dev/test override
+    # that disables auth across the board (mirrors the inference path in
+    # _anonymous_access_allowed). The unit-test conftest sets it because
+    # Starlette TestClient uses host "testclient" (not loopback), so the
+    # functional /metrics + /v1/status tests would otherwise 401. Production
+    # leaves it unset -> management endpoints stay fully gated.
+    if _env_truthy("FUSION_ALLOW_ANONYMOUS"):
+        return True
+    configured_key = _get_configured_api_key()
+    bearer = _extract_bearer_token(request.headers.get("authorization"))
+    x_api_key = request.headers.get("x-api-key")
+    provided = [k for k in (bearer, x_api_key) if k]
+    if configured_key is not None and provided:
+        if not all(secrets.compare_digest(k, configured_key) for k in provided):
+            raise HTTPException(status_code=401, detail="Invalid API key")
+        return True
+    if request.headers.get("x-fusion-route"):
+        return True
+    if _is_loopback_client(request):
+        logger.warning(
+            "Management endpoint loopback access without auth (dev mode) host=%s",
+            _client_host(request),
+        )
+        return True
+    raise HTTPException(status_code=401, detail="Authentication required")
+
+
+async def require_model_hub_source(request: Request) -> bool:
+    source = request.headers.get("x-fusion-source", "").strip().lower()
+    if source == "model-hub":
+        return True
+    if _is_loopback_client(request):
+        logger.warning(
+            "Model management from loopback without X-Fusion-Source (dev mode) host=%s",
+            _client_host(request),
+        )
+        return True
+    raise HTTPException(
+        status_code=403,
+        detail="Model management requires X-Fusion-Source: model-hub",
+    )

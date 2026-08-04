@@ -139,8 +139,11 @@ def test_destructive_route_requires_credential_when_api_key_configured(
 @pytest.mark.parametrize(("method", "path"), _DESTRUCTIVE_ROUTES)
 def test_destructive_route_open_when_no_api_key(client_factory, method, path):
     """When ``--api-key`` is unset (single-machine default), the routes
-    run wide open per the #728 revert. Pin this so a future tightening is
-    a conscious decision, not an accidental regression."""
+    stay reachable. After #346 anonymous access is rejected by default;
+    the unit-test conftest sets ``FUSION_ALLOW_ANONYMOUS=true`` (the
+    documented dev override) so these wire tests keep exercising the
+    no-credential path. The default-reject behaviour is pinned separately
+    in ``test_security_hardening.py``."""
     build, _ = client_factory
     client = build(api_key=None)
 

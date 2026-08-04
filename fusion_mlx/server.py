@@ -50,6 +50,8 @@ from .middleware import (
     install_request_body_depth_middleware,
     install_request_body_limit_middleware,
     install_request_id_middleware,
+    install_route_guard_middleware,
+    require_model_hub_source,
 )
 
 # GUI compatibility layer
@@ -277,7 +279,7 @@ def _node_load_snapshot(pool, config) -> dict[str, Any]:
     import socket
 
     metrics = get_server_metrics().to_dict()
-    host = getattr(config, "bind_host", None) or getattr(config, "host", "0.0.0.0")
+    host = getattr(config, "bind_host", None) or getattr(config, "host", "127.0.0.1")
     port = getattr(config, "bind_port", None) or getattr(config, "port", 0)
     try:
         hostname = socket.gethostname()
@@ -686,6 +688,11 @@ class Server:
         # propagates into the handler's task.
         install_request_id_middleware(app)
 
+        # #343: X-Fusion-Route source validation. Warn-only by default;
+        # rejects 403 when FUSION_ROUTE_ENFORCE=true. Health probes and
+        # CORS preflight stay exempt (handled inside the middleware).
+        install_route_guard_middleware(app)
+
         # Probe fast-path (OUTERMOST — installed last so it runs first)
         install_probe_fastpath_middleware(app)
 
@@ -799,7 +806,9 @@ class Server:
 
         @app.post("/v1/models/{model_id}/load")
         async def load_model_public(
-            model_id: str, is_admin: bool = Depends(require_admin)
+            model_id: str,
+            is_admin: bool = Depends(require_admin),
+            _source: bool = Depends(require_model_hub_source),
         ):
             if self.pool is None:
                 raise HTTPException(status_code=503, detail="Server not initialized")
@@ -838,7 +847,9 @@ class Server:
 
         @app.post("/v1/models/{model_id}/unload")
         async def unload_model_public(
-            model_id: str, is_admin: bool = Depends(require_admin)
+            model_id: str,
+            is_admin: bool = Depends(require_admin),
+            _source: bool = Depends(require_model_hub_source),
         ):
             if self.pool is None:
                 raise HTTPException(status_code=503, detail="Server not initialized")
@@ -1573,7 +1584,7 @@ def main():
     import argparse
 
     parser = argparse.ArgumentParser(description="fusion-mlx server")
-    parser.add_argument("--host", default="0.0.0.0", help="Bind address")
+    parser.add_argument("--host", default="127.0.0.1", help="Bind address")
     parser.add_argument("--port", type=int, default=11434, help="Port")
     parser.add_argument("--model-dir", default=None, help="Model directory")
     parser.add_argument(

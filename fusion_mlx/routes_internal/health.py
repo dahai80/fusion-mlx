@@ -5,6 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import JSONResponse
 
 from ..admin.auth import require_admin
+from ..middleware.auth import verify_management_access
 
 logger = logging.getLogger(__name__)
 
@@ -92,7 +93,7 @@ async def livez():
 
 
 @router.get("/v1/status")
-async def status():
+async def status(_auth: bool = Depends(verify_management_access)):
     from ..server import _server_state
 
     pool = _server_state.get("engine_pool")

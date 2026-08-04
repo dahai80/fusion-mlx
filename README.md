@@ -932,6 +932,33 @@ Derived from: `supports_dflash`, `supports_dspark`, `supports_spec_decode`, `too
 
 The CLI `models` command also displays a unified `Capabilities` column instead of the previous 4 separate columns.
 
+## Security
+
+fusion-mlx is the link endpoint in a 3-tier chain: App -> Gateway -> MLX. By default it binds to `127.0.0.1` (loopback only), so it is not exposed on the LAN. The controls below harden access when it must listen on a wider interface or sit behind a gateway (#342-#346).
+
+### Environment variables
+
+| Variable | Default | Effect |
+|----------|---------|--------|
+| `server.host` (config) / `--host` | `127.0.0.1` | Bind address. `0.0.0.0` exposes the server on all interfaces - only do this behind a gateway. |
+| `FUSION_ROUTE_ENFORCE` | `false` | When `true`, requests missing the `X-Fusion-Route` header are rejected with `403`. When `false` (default), missing headers are logged at WARN and allowed (phase-1). |
+| `FUSION_ALLOW_ANONYMOUS` | `false` | Dev override. When `true`, requests without an API key are allowed. Does **not** bypass a configured `api_key` - a matching key is still required when one is set. |
+
+### Access policy
+
+- **Route guard (#343):** routed requests should carry `X-Fusion-Route: gateway` so the server knows they came through the gateway. Exempt paths: `/`, `/health`, `/healthz`, `/readyz`, `/livez`, `/openapi.json`, `/docs`, `/redoc`, `/favicon.ico`, and `OPTIONS` preflight. Set `FUSION_ROUTE_ENFORCE=true` to reject un-routed traffic.
+- **Management endpoints (#344):** `/metrics` and `/v1/status` require `verify_management_access` - a valid API key, the `X-Fusion-Route` header, or a loopback client. Non-loopback anonymous requests get `401`.
+- **Model lifecycle (#345):** `/v1/models/load` and `/v1/models/unload` require `X-Fusion-Source: model-hub` (or a loopback client); otherwise `403`.
+- **Anonymous access (#346):** rejected by default. Allow only for local dev via `FUSION_ALLOW_ANONYMOUS=true`. Loopback clients and `X-Fusion-Route`-bearing requests are exempt.
+
+```bash
+# Bind loopback only (default)
+fusion-mlx serve --model qwen3.5-4b-4bit --host 127.0.0.1 --port 11434
+
+# Enforce the gateway route header (production behind a gateway)
+FUSION_ROUTE_ENFORCE=true fusion-mlx serve --model qwen3.5-4b-4bit
+```
+
 ## Performance
 
 Benchmarks on Apple M5 Max (128 GB RAM, 40 GPU cores), MLX 0.32.0.dev - 2026-07-04.

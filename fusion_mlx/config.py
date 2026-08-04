@@ -224,7 +224,7 @@ class MemoryConfig:
 
 @dataclass
 class ServerConfig:
-    host: str = "0.0.0.0"
+    host: str = "127.0.0.1"
     port: int = 11434
     model_dir: str | None = None
     settings_dir: str | None = None

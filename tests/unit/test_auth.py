@@ -123,7 +123,7 @@ class TestRequireAdmin:
 
 
 class TestMiddlewareAuth:
-    def test_no_configured_key_allows_anonymous(self):
+    def test_no_configured_key_allows_anonymous_via_dev_override(self):
         from unittest.mock import patch
 
         from fusion_mlx.middleware.auth import _verify_api_key_values
@@ -132,7 +132,23 @@ class TestMiddlewareAuth:
             "fusion_mlx.middleware.auth._get_configured_api_key",
             return_value=None,
         ):
+            # FUSION_ALLOW_ANONYMOUS=true is set by the autouse conftest
+            # fixture (#346 dev override).
             assert _verify_api_key_values() is True
+
+    def test_no_configured_key_rejects_anonymous_by_default(self, monkeypatch):
+        from unittest.mock import patch
+
+        from fusion_mlx.middleware.auth import _verify_api_key_values
+
+        monkeypatch.delenv("FUSION_ALLOW_ANONYMOUS", raising=False)
+        with patch(
+            "fusion_mlx.middleware.auth._get_configured_api_key",
+            return_value=None,
+        ):
+            with pytest.raises(HTTPException) as exc_info:
+                _verify_api_key_values()
+            assert exc_info.value.status_code == 401
 
     def test_configured_key_requires_matching_key(self):
         import secrets

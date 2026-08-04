@@ -895,6 +895,13 @@ def _reset_config_singleton(request):
 def _disable_mcp_auto_discover(monkeypatch):
     """Disable MCP auto-discovery in tests so results are deterministic."""
     monkeypatch.setenv("FUSION_MLX_MCP_AUTO_DISCOVER", "0")
+
+    # #346: anonymous access is now rejected by default. The unit-test
+    # suite uses Starlette TestClient (host "testclient", NOT loopback),
+    # so every no-credential request would otherwise 401. Tests ARE a
+    # dev environment - opt into the documented dev override here.
+    # Dedicated security tests unset this to assert the reject path.
+    monkeypatch.setenv("FUSION_ALLOW_ANONYMOUS", "true")
     try:
         from fusion_mlx.mcp.security import ALLOWED_COMMANDS
 

@@ -3,11 +3,12 @@ import logging
 import threading
 from typing import Any
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 from fastapi.responses import PlainTextResponse
 
 from .._version import __version__
 from ..api import response_format_metrics
+from ..middleware.auth import verify_management_access
 
 logger = logging.getLogger(__name__)
 
@@ -32,6 +33,16 @@ class _StickyCounterAccumulator:
 
 
 _cache_counter_accumulator = _StickyCounterAccumulator()
+
+
+def _reset_accumulator_for_tests() -> None:
+    # Test-only hook: reset the sticky counter accumulator to a fresh
+    # (last_raw=0, baseline=0) state so each test sees clean counters.
+    # The live server never calls this; reassigning the module global is
+    # safe because render_prometheus_metrics reads it at call time.
+    global _cache_counter_accumulator
+    _cache_counter_accumulator = _StickyCounterAccumulator()
+    logger.debug("reset sticky counter accumulator for tests")
 
 
 def _escape_label_value(value: str) -> str:
@@ -279,6 +290,6 @@ def render_prometheus_metrics() -> str:
 
 
 @router.get("/metrics")
-async def prometheus_metrics():
+async def prometheus_metrics(_auth: bool = Depends(verify_management_access)):
     body = render_prometheus_metrics()
     return PlainTextResponse(content=body, media_type=_CONTENT_TYPE)

@@ -32,7 +32,7 @@ def metrics_client():
 
     cfg = reset_config()
     cfg.model_name = "qwen3.5-4b"
-    cfg.api_key = "test-secret"  # auth IS set, but /metrics must ignore it.
+    cfg.api_key = "test-secret"  # #344: /metrics now gated; functional tests pass via FUSION_ALLOW_ANONYMOUS (conftest).
     _reset_accumulator_for_tests()
 
     app = FastAPI()
@@ -90,15 +90,21 @@ def test_metrics_engine_get_stats_raises_falls_back_to_build_info(metrics_client
     assert "rapid_mlx_build_info" in resp.text
 
 
-def test_metrics_unauthenticated_even_when_api_key_set(metrics_client):
-    """/metrics ignores --api-key (Prometheus scrapers cannot send one).
-
-    The fixture sets ``cfg.api_key = "test-secret"`` to assert that the
-    handler itself is on a no-auth router and would still respond even
-    with no Authorization header.
-    """
+# #344: /metrics is gated behind verify_management_access. With an API key
+# configured, a request carrying no credentials and no X-Fusion-Route header
+# must be rejected (401). Prometheus scrapers reach /metrics through the
+# gateway, which injects X-Fusion-Route.
+def test_metrics_rejects_unauthenticated_when_api_key_set(metrics_client, monkeypatch):
+    monkeypatch.delenv("FUSION_ALLOW_ANONYMOUS", raising=False)
     assert metrics_client.cfg.api_key == "test-secret"
     resp = metrics_client.client.get("/metrics")  # no Authorization header
+    assert resp.status_code == 401
+
+
+# #344: the gateway injects X-Fusion-Route; management endpoints trust it.
+def test_metrics_allows_access_via_x_fusion_route(metrics_client, monkeypatch):
+    monkeypatch.delenv("FUSION_ALLOW_ANONYMOUS", raising=False)
+    resp = metrics_client.client.get("/metrics", headers={"X-Fusion-Route": "gateway"})
     assert resp.status_code == 200
 
 
