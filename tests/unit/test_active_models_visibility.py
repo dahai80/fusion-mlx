@@ -1,7 +1,7 @@
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from fusion_mlx.admin import routes as admin_routes
+from fusion_mlx.admin import stats as admin_stats
 
 
 class FakePool:
@@ -64,18 +64,18 @@ def test_active_models_generation_includes_activity_and_waiting_rows():
 
     with (
         patch.object(
-            admin_routes, "_get_engine_pool", return_value=FakePool(scheduler)
+            admin_stats, "_get_engine_pool", return_value=FakePool(scheduler)
         ),
-        patch("fusion_mlx.admin.routes._get_server_state", return_value=None),
-        patch.object(admin_routes, "_get_settings_manager", return_value=None),
-        patch.object(admin_routes, "_get_global_settings", return_value=None),
+        patch("fusion_mlx.admin.stats._get_server_state", return_value=None),
+        patch.object(admin_stats, "_get_settings_manager", return_value=None),
+        patch.object(admin_stats, "_get_global_settings", return_value=None),
         patch(
             "fusion_mlx.prefill_progress.get_prefill_tracker",
             return_value=FakePrefillTracker(),
         ),
         patch("time.monotonic", return_value=110.0),
     ):
-        data = admin_routes._build_active_models_data()
+        data = admin_stats._build_active_models_data()
 
     model = data["models"][0]
     assert data["total_active_requests"] == 2
@@ -120,18 +120,18 @@ def test_active_models_does_not_count_waiting_collectors_as_active():
 
     with (
         patch.object(
-            admin_routes, "_get_engine_pool", return_value=FakePool(scheduler)
+            admin_stats, "_get_engine_pool", return_value=FakePool(scheduler)
         ),
-        patch("fusion_mlx.admin.routes._get_server_state", return_value=None),
-        patch.object(admin_routes, "_get_settings_manager", return_value=None),
-        patch.object(admin_routes, "_get_global_settings", return_value=None),
+        patch("fusion_mlx.admin.stats._get_server_state", return_value=None),
+        patch.object(admin_stats, "_get_settings_manager", return_value=None),
+        patch.object(admin_stats, "_get_global_settings", return_value=None),
         patch(
             "fusion_mlx.prefill_progress.get_prefill_tracker",
             return_value=EmptyPrefillTracker(),
         ),
         patch("time.monotonic", return_value=110.0),
     ):
-        data = admin_routes._build_active_models_data()
+        data = admin_stats._build_active_models_data()
 
     model = data["models"][0]
     assert data["total_active_requests"] == 0
@@ -148,20 +148,20 @@ def test_active_models_loading_includes_elapsed_and_percent_estimate():
 
     with (
         patch.object(
-            admin_routes,
+            admin_stats,
             "_get_engine_pool",
             return_value=FakePool(scheduler, loading_started_at=102.0),
         ),
-        patch("fusion_mlx.admin.routes._get_server_state", return_value=None),
-        patch.object(admin_routes, "_get_settings_manager", return_value=None),
-        patch.object(admin_routes, "_get_global_settings", return_value=None),
+        patch("fusion_mlx.admin.stats._get_server_state", return_value=None),
+        patch.object(admin_stats, "_get_settings_manager", return_value=None),
+        patch.object(admin_stats, "_get_global_settings", return_value=None),
         patch(
             "fusion_mlx.prefill_progress.get_prefill_tracker",
             return_value=FakePrefillTracker(),
         ),
         patch("time.monotonic", return_value=110.0),
     ):
-        data = admin_routes._build_active_models_data()
+        data = admin_stats._build_active_models_data()
 
     model = data["models"][0]
     assert model["is_loading"] is True
@@ -216,18 +216,18 @@ def test_active_models_includes_non_streaming_activity_rows():
 
     with (
         patch.object(
-            admin_routes, "_get_engine_pool", return_value=FakeNonStreamingPool()
+            admin_stats, "_get_engine_pool", return_value=FakeNonStreamingPool()
         ),
-        patch("fusion_mlx.admin.routes._get_server_state", return_value=None),
-        patch.object(admin_routes, "_get_settings_manager", return_value=None),
-        patch.object(admin_routes, "_get_global_settings", return_value=None),
+        patch("fusion_mlx.admin.stats._get_server_state", return_value=None),
+        patch.object(admin_stats, "_get_settings_manager", return_value=None),
+        patch.object(admin_stats, "_get_global_settings", return_value=None),
         patch(
             "fusion_mlx.prefill_progress.get_prefill_tracker",
             return_value=EmptyPrefillTracker(),
         ),
         patch("time.monotonic", return_value=110.0),
     ):
-        data = admin_routes._build_active_models_data()
+        data = admin_stats._build_active_models_data()
 
     model = data["models"][0]
     assert data["total_active_requests"] == 1
@@ -294,14 +294,14 @@ class EmptyPrefillTracker:
 def test_idle_seconds_computed_from_last_access():
     """idle_seconds = time.time() - last_access for a loaded model."""
     with (
-        patch("fusion_mlx.admin.routes._get_server_state", return_value=None),
+        patch("fusion_mlx.admin.stats._get_server_state", return_value=None),
         patch.object(
-            admin_routes,
+            admin_stats,
             "_get_engine_pool",
             return_value=FakeIdlePool(last_access=100.0),
         ),
-        patch.object(admin_routes, "_get_settings_manager", return_value=None),
-        patch.object(admin_routes, "_get_global_settings", return_value=None),
+        patch.object(admin_stats, "_get_settings_manager", return_value=None),
+        patch.object(admin_stats, "_get_global_settings", return_value=None),
         patch(
             "fusion_mlx.prefill_progress.get_prefill_tracker",
             return_value=EmptyPrefillTracker(),
@@ -309,7 +309,7 @@ def test_idle_seconds_computed_from_last_access():
         patch("time.time", return_value=115.0),
         patch("time.monotonic", return_value=115.0),
     ):
-        data = admin_routes._build_active_models_data()
+        data = admin_stats._build_active_models_data()
 
     model = data["models"][0]
     assert model["idle_seconds"] == 15.0
@@ -319,12 +319,12 @@ def test_idle_seconds_computed_from_last_access():
 def test_idle_seconds_none_when_no_last_access():
     """idle_seconds is None when last_access is missing or 0."""
     with (
-        patch("fusion_mlx.admin.routes._get_server_state", return_value=None),
+        patch("fusion_mlx.admin.stats._get_server_state", return_value=None),
         patch.object(
-            admin_routes, "_get_engine_pool", return_value=FakeIdlePool(last_access=0)
+            admin_stats, "_get_engine_pool", return_value=FakeIdlePool(last_access=0)
         ),
-        patch.object(admin_routes, "_get_settings_manager", return_value=None),
-        patch.object(admin_routes, "_get_global_settings", return_value=None),
+        patch.object(admin_stats, "_get_settings_manager", return_value=None),
+        patch.object(admin_stats, "_get_global_settings", return_value=None),
         patch(
             "fusion_mlx.prefill_progress.get_prefill_tracker",
             return_value=EmptyPrefillTracker(),
@@ -332,7 +332,7 @@ def test_idle_seconds_none_when_no_last_access():
         patch("time.time", return_value=115.0),
         patch("time.monotonic", return_value=115.0),
     ):
-        data = admin_routes._build_active_models_data()
+        data = admin_stats._build_active_models_data()
 
     assert data["models"][0]["idle_seconds"] is None
 
@@ -340,18 +340,18 @@ def test_idle_seconds_none_when_no_last_access():
 def test_ttl_remaining_from_per_model_setting():
     """TTL countdown uses per-model ttl_seconds when available."""
     with (
-        patch("fusion_mlx.admin.routes._get_server_state", return_value=None),
+        patch("fusion_mlx.admin.stats._get_server_state", return_value=None),
         patch.object(
-            admin_routes,
+            admin_stats,
             "_get_engine_pool",
             return_value=FakeIdlePool(last_access=100.0),
         ),
         patch.object(
-            admin_routes,
+            admin_stats,
             "_get_settings_manager",
             return_value=_make_settings_manager(ttl_seconds=30),
         ),
-        patch.object(admin_routes, "_get_global_settings", return_value=None),
+        patch.object(admin_stats, "_get_global_settings", return_value=None),
         patch(
             "fusion_mlx.prefill_progress.get_prefill_tracker",
             return_value=EmptyPrefillTracker(),
@@ -359,7 +359,7 @@ def test_ttl_remaining_from_per_model_setting():
         patch("time.time", return_value=115.0),
         patch("time.monotonic", return_value=115.0),
     ):
-        data = admin_routes._build_active_models_data()
+        data = admin_stats._build_active_models_data()
 
     model = data["models"][0]
     assert model["idle_seconds"] == 15.0
@@ -370,19 +370,19 @@ def test_ttl_remaining_from_per_model_setting():
 def test_ttl_remaining_falls_back_to_global_idle_timeout():
     """When per-model ttl_seconds is None, global idle_timeout is used."""
     with (
-        patch("fusion_mlx.admin.routes._get_server_state", return_value=None),
+        patch("fusion_mlx.admin.stats._get_server_state", return_value=None),
         patch.object(
-            admin_routes,
+            admin_stats,
             "_get_engine_pool",
             return_value=FakeIdlePool(last_access=100.0),
         ),
         patch.object(
-            admin_routes,
+            admin_stats,
             "_get_settings_manager",
             return_value=_make_settings_manager(ttl_seconds=None),
         ),
         patch.object(
-            admin_routes,
+            admin_stats,
             "_get_global_settings",
             return_value=_make_global_settings(idle_timeout_seconds=60),
         ),
@@ -393,7 +393,7 @@ def test_ttl_remaining_falls_back_to_global_idle_timeout():
         patch("time.time", return_value=115.0),
         patch("time.monotonic", return_value=115.0),
     ):
-        data = admin_routes._build_active_models_data()
+        data = admin_stats._build_active_models_data()
 
     model = data["models"][0]
     assert model["idle_seconds"] == 15.0
@@ -404,19 +404,19 @@ def test_ttl_remaining_falls_back_to_global_idle_timeout():
 def test_ttl_remaining_per_model_takes_priority():
     """Per-model ttl_seconds overrides global idle_timeout."""
     with (
-        patch("fusion_mlx.admin.routes._get_server_state", return_value=None),
+        patch("fusion_mlx.admin.stats._get_server_state", return_value=None),
         patch.object(
-            admin_routes,
+            admin_stats,
             "_get_engine_pool",
             return_value=FakeIdlePool(last_access=100.0),
         ),
         patch.object(
-            admin_routes,
+            admin_stats,
             "_get_settings_manager",
             return_value=_make_settings_manager(ttl_seconds=20),
         ),
         patch.object(
-            admin_routes,
+            admin_stats,
             "_get_global_settings",
             return_value=_make_global_settings(idle_timeout_seconds=300),
         ),
@@ -427,7 +427,7 @@ def test_ttl_remaining_per_model_takes_priority():
         patch("time.time", return_value=115.0),
         patch("time.monotonic", return_value=115.0),
     ):
-        data = admin_routes._build_active_models_data()
+        data = admin_stats._build_active_models_data()
 
     model = data["models"][0]
     # per-model 20s wins over global 300s
@@ -437,18 +437,18 @@ def test_ttl_remaining_per_model_takes_priority():
 def test_ttl_remaining_clamped_to_zero():
     """ttl_remaining_seconds floors at 0 when TTL has expired."""
     with (
-        patch("fusion_mlx.admin.routes._get_server_state", return_value=None),
+        patch("fusion_mlx.admin.stats._get_server_state", return_value=None),
         patch.object(
-            admin_routes,
+            admin_stats,
             "_get_engine_pool",
             return_value=FakeIdlePool(last_access=100.0),
         ),
         patch.object(
-            admin_routes,
+            admin_stats,
             "_get_settings_manager",
             return_value=_make_settings_manager(ttl_seconds=10),
         ),
-        patch.object(admin_routes, "_get_global_settings", return_value=None),
+        patch.object(admin_stats, "_get_global_settings", return_value=None),
         patch(
             "fusion_mlx.prefill_progress.get_prefill_tracker",
             return_value=EmptyPrefillTracker(),
@@ -456,7 +456,7 @@ def test_ttl_remaining_clamped_to_zero():
         patch("time.time", return_value=130.0),  # 30s idle, 10s TTL → expired
         patch("time.monotonic", return_value=130.0),
     ):
-        data = admin_routes._build_active_models_data()
+        data = admin_stats._build_active_models_data()
 
     assert data["models"][0]["ttl_remaining_seconds"] == 0.0
 
@@ -486,10 +486,10 @@ def test_idle_and_ttl_not_computed_for_loading_model():
             }
 
     with (
-        patch("fusion_mlx.admin.routes._get_server_state", return_value=None),
-        patch.object(admin_routes, "_get_engine_pool", return_value=LoadingPool()),
-        patch.object(admin_routes, "_get_settings_manager", return_value=None),
-        patch.object(admin_routes, "_get_global_settings", return_value=None),
+        patch("fusion_mlx.admin.stats._get_server_state", return_value=None),
+        patch.object(admin_stats, "_get_engine_pool", return_value=LoadingPool()),
+        patch.object(admin_stats, "_get_settings_manager", return_value=None),
+        patch.object(admin_stats, "_get_global_settings", return_value=None),
         patch(
             "fusion_mlx.prefill_progress.get_prefill_tracker",
             return_value=EmptyPrefillTracker(),
@@ -497,7 +497,7 @@ def test_idle_and_ttl_not_computed_for_loading_model():
         patch("time.time", return_value=115.0),
         patch("time.monotonic", return_value=115.0),
     ):
-        data = admin_routes._build_active_models_data()
+        data = admin_stats._build_active_models_data()
 
     model = data["models"][0]
     assert model["is_loading"] is True

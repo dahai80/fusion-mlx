@@ -558,10 +558,14 @@ def _build_active_models_data() -> dict:
         prefilling = tracker.get_model_progress(model_id)
         prefilling_ids = {p["request_id"] for p in prefilling}
 
-        # Generating = active requests that finished prefill.
+        # Generating = active requests that finished prefill and are still in
+        # the running batch. Orphan collectors (not running, e.g. a request
+        # that just finished) and waiting collectors are not generating.
         generating = []
         for rid in sorted(active_request_ids - prefilling_ids - waiting_ids):
             req = running_by_id.get(rid)
+            if req is None:
+                continue
             generated_tokens = getattr(req, "num_output_tokens", 0) if req else 0
             started_at = getattr(req, "generation_started_at", None) if req else None
             last_activity_at = getattr(req, "last_activity_at", None) if req else None
@@ -583,6 +587,12 @@ def _build_active_models_data() -> dict:
                     "max_tokens": getattr(req, "max_tokens", None) if req else None,
                 }
             )
+
+        # Active = generating (running) + prefilling; excludes waiting and
+        # orphan collectors. Non-streaming engines keep their snapshot count
+        # above (active_request_ids is empty for them).
+        if active_request_ids:
+            active_requests = len(generating) + len(prefilling)
 
         loading_started_at = model_info.get("loading_started_at")
         loading_elapsed_seconds = (

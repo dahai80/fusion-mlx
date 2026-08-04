@@ -27,7 +27,6 @@ test_settings.py
 
 ## runtime-fail (315)
 test_447_stream_tool_choice_auto.py
-test_active_models_visibility.py
 test_admin_auth.py
 test_admin_dashboard_draft_filters.py
 test_admin_update_check.py
