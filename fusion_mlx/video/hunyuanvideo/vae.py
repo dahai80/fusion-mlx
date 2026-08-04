@@ -38,7 +38,15 @@ def _group_norm_5d(norm, x):
 
 
 class CausalConv3d(nn.Module):
-    def __init__(self, in_channels, out_channels, kernel_size=3, stride=1, padding=0, wrap_conv=True):
+    def __init__(
+        self,
+        in_channels,
+        out_channels,
+        kernel_size=3,
+        stride=1,
+        padding=0,
+        wrap_conv=True,
+    ):
         super().__init__()
         self.in_channels = in_channels
         self.out_channels = out_channels
@@ -80,7 +88,16 @@ class CausalConv3d(nn.Module):
         pt = kt - 1
         logger.debug(
             "CausalConv3d: input=(%s) k=(%d,%d,%d) s=(%d,%d,%d) pad=(%d,%d,%d)",
-            x.shape, kt, kh, kw, st, sh, sw, pt, ph, pw,
+            x.shape,
+            kt,
+            kh,
+            kw,
+            st,
+            sh,
+            sw,
+            pt,
+            ph,
+            pw,
         )
         cw, cb = self._get_wb()
         x_cl = x.transpose(0, 2, 3, 4, 1)
@@ -138,7 +155,7 @@ class MidAttention(nn.Module):
         q = q.reshape(B * T, C, H * W).transpose(0, 2, 1)
         k = k.reshape(B * T, C, H * W).transpose(0, 2, 1)
         v = v.reshape(B * T, C, H * W).transpose(0, 2, 1)
-        scale = C ** -0.5
+        scale = C**-0.5
         attn = (q * scale) @ k.transpose(0, 2, 1)
         attn = mx.softmax(attn, axis=-1)
         out = (attn @ v).transpose(0, 2, 1).reshape(B, C, T, H, W)
@@ -161,7 +178,7 @@ class Upsample(nn.Module):
         # Temporal upsampling: each frame after the first gets duplicated
         if self.temporal_up and T > 1:
             first = h[:, :, 0:1, :, :]  # (B, C, 1, H*2, W*2)
-            rest = h[:, :, 1:, :, :]    # (B, C, T-1, H*2, W*2)
+            rest = h[:, :, 1:, :, :]  # (B, C, T-1, H*2, W*2)
             rest = rest.reshape(B, C, T - 1, 1, H * 2, W * 2)
             rest = mx.broadcast_to(rest, (B, C, T - 1, 2, H * 2, W * 2))
             rest = rest.reshape(B, C, (T - 1) * 2, H * 2, W * 2)
@@ -270,11 +287,15 @@ class HunyuanVideoVAE(nn.Module):
         self.decoder.up = nn.Module()
         for i in range(4):
             setattr(
-                self.decoder.up, str(i),
+                self.decoder.up,
+                str(i),
                 DecoderUpBlock(
-                    dec_up_in[i], dec_up_out[i],
-                    NUM_RES_BLOCKS_DEC[i], DECODER_SPATIAL_UP[i], DECODER_TEMPORAL_UP[i]
-                )
+                    dec_up_in[i],
+                    dec_up_out[i],
+                    NUM_RES_BLOCKS_DEC[i],
+                    DECODER_SPATIAL_UP[i],
+                    DECODER_TEMPORAL_UP[i],
+                ),
             )
 
         # Encoder
@@ -301,15 +322,23 @@ class HunyuanVideoVAE(nn.Module):
         self.encoder.down = nn.Module()
         for i in range(4):
             setattr(
-                self.encoder.down, str(i),
+                self.encoder.down,
+                str(i),
                 EncoderDownBlock(
-                    enc_down_in[i], enc_down_out[i],
-                    NUM_RES_BLOCKS_ENC[i], ENCODER_SPATIAL_DOWN[i], ENCODER_TEMPORAL_DOWN[i]
-                )
+                    enc_down_in[i],
+                    enc_down_out[i],
+                    NUM_RES_BLOCKS_ENC[i],
+                    ENCODER_SPATIAL_DOWN[i],
+                    ENCODER_TEMPORAL_DOWN[i],
+                ),
             )
 
-        self.quant_conv = CausalConv3d(latent_channels * 2, latent_channels * 2, 1, 1, 0, wrap_conv=False)
-        self.post_quant_conv = CausalConv3d(latent_channels, latent_channels, 1, 1, 0, wrap_conv=False)
+        self.quant_conv = CausalConv3d(
+            latent_channels * 2, latent_channels * 2, 1, 1, 0, wrap_conv=False
+        )
+        self.post_quant_conv = CausalConv3d(
+            latent_channels, latent_channels, 1, 1, 0, wrap_conv=False
+        )
 
     def encode(self, x):
         logger.info("hunyuan vae encode: input shape=%s", x.shape)
@@ -352,7 +381,13 @@ class HunyuanVideoVAE(nn.Module):
     ):
         logger.info(
             "hunyuan vae decode_tiled: latent shape=%s tile=(%d,%d,%d) overlap=(%d,%d,%d)",
-            z.shape, tile_t, tile_h, tile_w, overlap_t, overlap_h, overlap_w,
+            z.shape,
+            tile_t,
+            tile_h,
+            tile_w,
+            overlap_t,
+            overlap_h,
+            overlap_w,
         )
         B, C, T, H, W = z.shape
         need_t = tile_t < T
@@ -381,7 +416,14 @@ class HunyuanVideoVAE(nn.Module):
                     tile_z = z[:, :, t_start:t_end, h_start:h_end, w_start:w_end]
                     logger.debug(
                         "hunyuan vae decode_tiled: tile %d/%d slice=[%d:%d,%d:%d,%d:%d] shape=%s",
-                        tile_idx, total_tiles, t_start, t_end, h_start, h_end, w_start, w_end,
+                        tile_idx,
+                        total_tiles,
+                        t_start,
+                        t_end,
+                        h_start,
+                        h_end,
+                        w_start,
+                        w_end,
                         tile_z.shape,
                     )
                     tile_out = self.decode(tile_z)
@@ -402,7 +444,8 @@ class HunyuanVideoVAE(nn.Module):
                     ow_end = min(ow_end, out_w)
 
                     tile_np = tile_np[
-                        :, :,
+                        :,
+                        :,
                         : ot_end - ot_start,
                         : oh_end - oh_start,
                         : ow_end - ow_start,
@@ -439,7 +482,8 @@ class HunyuanVideoVAE(nn.Module):
 
         logger.info(
             "hunyuan vae decode_tiled: output shape=%s total_tiles=%d",
-            output.shape, total_tiles,
+            output.shape,
+            total_tiles,
         )
         return mx.array(output)
 
@@ -526,10 +570,14 @@ class HunyuanVideoVAE(nn.Module):
                 unmatched.append(k)
         logger.info(
             "hunyuan vae: loaded %d/%d params from %s",
-            matched, len(flat), model_path,
+            matched,
+            len(flat),
+            model_path,
         )
         if unmatched:
-            logger.debug("hunyuan vae: unmatched params (%d): %s", len(unmatched), unmatched[:20])
+            logger.debug(
+                "hunyuan vae: unmatched params (%d): %s", len(unmatched), unmatched[:20]
+            )
 
         # Build nested dict preserving numeric string keys as dict keys
         # (tree_unflatten converts numeric keys to list indices, breaking nn.Module.update)
