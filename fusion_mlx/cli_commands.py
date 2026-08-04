@@ -522,6 +522,7 @@ def ps_command(_args):
         }
         model = "(unknown)"
         port = "11434"  # serve's default
+        host = ""  # --host value; unix:/path means UDS listen mode (#351)
         try:
             i = cmd.index("serve") + 1
             # Pre-PR this loop ``break``ed on the first positional, so a
@@ -537,10 +538,14 @@ def ps_command(_args):
                         key, val = tok.split("=", 1)
                         if key == "--port":
                             port = val
+                        elif key == "--host":
+                            host = val
                         i += 1
                     elif tok in VALUE_FLAGS:
                         if tok == "--port" and i + 1 < len(cmd):
                             port = cmd[i + 1]
+                        elif tok == "--host" and i + 1 < len(cmd):
+                            host = cmd[i + 1]
                         i += 2
                     else:
                         i += 1
@@ -555,18 +560,26 @@ def ps_command(_args):
         uptime_s = max(0, int(time.time() - proc.info["create_time"]))
         h, m = uptime_s // 3600, (uptime_s % 3600) // 60
         uptime = f"{h}h{m:02d}m" if h else f"{m}m{uptime_s % 60:02d}s"
-        rows.append((proc.info["pid"], port, model, uptime))
+        # #351: --host unix:/path is UDS listen mode - surface the socket
+        # path as the listen address so `fusion-mlx ps` (and start.sh's
+        # PID grep) can find UDS servers, which have no TCP port.
+        addr = host if host.startswith("unix:") else port
+        rows.append((proc.info["pid"], addr, model, uptime))
 
     if not rows:
         print("\n  No fusion-mlx servers running.")
         return
 
     print()
-    print(f"  {'PID':<8}{'PORT':<8}{'MODEL':<40}{'UPTIME':<10}")
-    print(f"  {'-' * 66}")
+    print(f"  {'PID':<8}{'ADDR':<24}{'MODEL':<40}{'UPTIME':<10}")
+    print(f"  {'-' * 82}")
     # Sort numerically by port — string sort would put "10000" before "8000".
-    for pid, port, model, uptime in sorted(rows, key=lambda r: int(r[1])):
-        print(f"  {pid:<8}{port:<8}{model:<40}{uptime:<10}")
+    # UDS socket paths (non-numeric) sort after numeric ports.
+    for pid, addr, model, uptime in sorted(
+        rows,
+        key=lambda r: (1, r[1]) if not r[1].isdigit() else (0, int(r[1])),
+    ):
+        print(f"  {pid:<8}{addr:<24}{model:<40}{uptime:<10}")
     print()
 
 

@@ -976,16 +976,35 @@ class Server:
             model_name="",
         )
 
-    @asynccontextmanager
     def run(self):
         """Start the server using uvicorn."""
-        uvicorn.run(
-            self.app,
-            host=self.config.host,
-            port=self.config.port,
-            log_level="info",
-            timeout_graceful_shutdown=15,
+        from ._cli_base import (
+            _cleanup_uds_socket,
+            _prepare_uds_socket,
+            _uds_path_from_host,
         )
+
+        uds_path = _uds_path_from_host(self.config.host)
+        if uds_path is not None:
+            uds_fd = _prepare_uds_socket(uds_path)
+            logger.info("UDS listen mode: %s", uds_path)
+            try:
+                uvicorn.run(
+                    self.app,
+                    fd=uds_fd,
+                    log_level="info",
+                    timeout_graceful_shutdown=15,
+                )
+            finally:
+                _cleanup_uds_socket(uds_path, fd=uds_fd)
+        else:
+            uvicorn.run(
+                self.app,
+                host=self.config.host,
+                port=self.config.port,
+                log_level="info",
+                timeout_graceful_shutdown=15,
+            )
 
     async def _lifespan(self):
         """Startup/shutdown lifecycle."""

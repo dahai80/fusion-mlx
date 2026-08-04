@@ -963,6 +963,30 @@ FUSION_ROUTE_WARN_ONLY=true fusion-mlx serve --model qwen3.5-4b-4bit
 fusion-mlx serve --model qwen3.5-4b-4bit
 ```
 
+### Unix Domain Socket (UDS) listen mode (#351)
+
+For gateway deployments, UDS provides **transport-layer physical isolation** on top of the auth chain (#349/#350): MLX listens on a Unix socket instead of a TCP port, so only a process with filesystem access to the socket file can connect. A same-host process without access to the socket path cannot reach MLX at all.
+
+- Trigger: `--host unix:/path/to.sock` (the `unix:` prefix selects UDS mode).
+- The socket is created with owner-only `0600` permissions *before* it accepts connections (no race window where it is world-connectable).
+- No TCP port is opened in UDS mode; `--port` is ignored.
+- Backward compatible: `--host 127.0.0.1` (the default) keeps TCP loopback behavior unchanged.
+- The gateway connects over the socket, e.g. `curl --unix-socket /path/to.sock http://localhost/health`.
+- `fusion-mlx ps` shows the socket path in the `ADDR` column so UDS servers are discoverable for stop/status.
+
+```bash
+# UDS listen mode - only filesystem access to the socket can reach MLX
+fusion-mlx serve --model qwen3.5-4b-4bit --host unix:/run/fusion-mlx.sock
+
+# Gateway-side health check over the socket
+curl --unix-socket /run/fusion-mlx.sock http://localhost/health
+
+# Via start.sh (sets --host, drops --port, health-checks over the socket)
+FUSION_HOST=unix:/run/fusion-mlx.sock ./start.sh start
+```
+
+> UDS is orthogonal to the #349/#350 auth chain: even over the socket, a valid API key is still required when one is configured. UDS removes the *transport* reachability; auth removes *request* authorization. Use both for defense in depth.
+
 ## Performance
 
 Benchmarks on Apple M5 Max (128 GB RAM, 40 GPU cores), MLX 0.32.0.dev - 2026-07-04.

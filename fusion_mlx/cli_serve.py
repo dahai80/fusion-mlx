@@ -14,6 +14,7 @@ from fusion_mlx._cli_base import (
     _resolve_audio_model_for_serve,
     _resolve_embedding_alias,
     _run_uvicorn,
+    _uds_path_from_host,
 )
 
 
@@ -177,15 +178,22 @@ def _serve_audio_mode(args, entry) -> None:
     # prints the right URL. Mirrors the text-path block.
     host_display = "localhost" if args.host == "0.0.0.0" else args.host
     listen_fd = getattr(args, "listen_fd", None)
+    uds_path = _uds_path_from_host(args.host)
 
     # Port preflight — same friendly "port already in use" probe the
     # text path runs. Skip in --listen-fd mode (the supervisor owns
     # the socket; binding here would race). Mirrors the rationale on
-    # the text-path call site.
-    if listen_fd is None:
+    # the text-path call site. --host unix: also skips (#351: no
+    # TCP port to probe).
+    if listen_fd is None and uds_path is None:
         _port_preflight_or_die(args.host, args.port, model=args.model)
 
-    if listen_fd is not None:
+    if uds_path is not None:
+        print(
+            f"  Starting server on unix socket: {uds_path} "
+            "(audio routes ready immediately)"
+        )
+    elif listen_fd is not None:
         print(
             f"  Starting server on inherited fd {listen_fd} "
             "(audio routes ready immediately)"
@@ -205,7 +213,10 @@ def _serve_audio_mode(args, entry) -> None:
     _cfg.bind_host = None
     _cfg.bind_port = None
     _cfg.bind_listen_fd = None
-    if listen_fd is None:
+    _cfg.bind_uds = None
+    if uds_path is not None:
+        _cfg.bind_uds = uds_path
+    elif listen_fd is None:
         _cfg.bind_host = host_display
         _cfg.bind_port = args.port
     else:
@@ -1928,7 +1939,11 @@ def serve_command(args):
     # Skip in --listen-fd mode: the supervisor has already bound the socket
     # and handed us the fd. There is no host/port for us to check, and any
     # bind we attempt here would race or collide with the inherited socket.
-    if getattr(args, "listen_fd", None) is None:
+    # --host unix: also skips (#351: UDS mode has no TCP port to probe).
+    if (
+        getattr(args, "listen_fd", None) is None
+        and _uds_path_from_host(args.host) is None
+    ):
         # Shared helper so the legacy ``python -m fusion_mlx.server``
         # entrypoint (fusion_mlx/server.py) can call the same probe
         # without duplicating the wildcard-alias / loopback-shadow
@@ -2088,7 +2103,13 @@ def serve_command(args):
     print()
     host_display = "localhost" if args.host == "0.0.0.0" else args.host
     listen_fd = getattr(args, "listen_fd", None)
-    if listen_fd is not None:
+    uds_path = _uds_path_from_host(args.host)
+    if uds_path is not None:
+        print(
+            f"  Starting server on unix socket: {uds_path} "
+            "(warming up - this can take a few seconds)"
+        )
+    elif listen_fd is not None:
         # Socket activation path — supervisor pre-bound the listening
         # socket. We don't know the actual address from the fd without a
         # ``getsockname`` lookup; surfacing fd=<N> in the banner is the
@@ -2128,7 +2149,10 @@ def serve_command(args):
     _cfg.bind_host = None
     _cfg.bind_port = None
     _cfg.bind_listen_fd = None
-    if listen_fd is None:
+    _cfg.bind_uds = None
+    if uds_path is not None:
+        _cfg.bind_uds = uds_path
+    elif listen_fd is None:
         _cfg.bind_host = host_display
         _cfg.bind_port = args.port
     else:

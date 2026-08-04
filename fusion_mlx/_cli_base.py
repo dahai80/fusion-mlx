@@ -1,8 +1,11 @@
 """Shared CLI helpers and constants for fusion-mlx."""
 
 import argparse
+import logging
 import os
 import sys
+
+logger = logging.getLogger(__name__)
 
 MIRROR_DEFAULT = "https://models.fusionmlx.com"
 
@@ -283,6 +286,76 @@ def _print_port_collision_and_exit(
     sys.exit(1)
 
 
+def _uds_path_from_host(host):
+    # #351: ``--host unix:/path/to.sock`` selects Unix Domain Socket
+    # listen mode (physical isolation - only a process with filesystem
+    # access to the socket can reach MLX). Returns the socket path, or
+    # None for normal TCP hosts. Raises ValueError on a bare ``unix:``
+    # so a typo does not silently fall back to TCP.
+    if not isinstance(host, str) or not host.startswith("unix:"):
+        return None
+    path = host[len("unix:") :]
+    if not path:
+        raise ValueError(
+            "--host unix: requires a socket path, "
+            "e.g. --host unix:/run/fusion-mlx.sock"
+        )
+    return path
+
+
+def _prepare_uds_socket(path):
+    # #351: create an AF_UNIX listening socket with owner-only (0600)
+    # permissions and return its fd for uvicorn's ``fd=`` dispatch. We
+    # own the lifecycle (not uvicorn's ``uds=``) so the mode is set
+    # BEFORE listen() - the socket never accepts at a wider permission,
+    # and shutdown cleanup is guaranteed by the caller's finally block.
+    import socket
+
+    try:
+        os.unlink(path)
+    except FileNotFoundError:
+        pass
+    except OSError as exc:
+        logger.warning("UDS pre-unlink failed for %s: %s", path, exc)
+
+    sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    try:
+        sock.bind(path)
+        # chmod before listen: the socket only accepts connections once
+        # listen() returns, by which point the mode is already 0600.
+        os.chmod(path, 0o600)
+        sock.listen(128)
+    except OSError:
+        sock.close()
+        try:
+            os.unlink(path)
+        except OSError:
+            pass
+        raise
+    fd = sock.detach()
+    logger.info("UDS listen socket ready: %s (mode 0600, fd=%d)", path, fd)
+    return fd
+
+
+def _cleanup_uds_socket(path, *, fd=None):
+    # #351: unlink the UDS file on shutdown. Best-effort close of the
+    # detached fd (uvicorn may have already closed it on a clean exit,
+    # so EBADF is expected and swallowed).
+    if fd is not None:
+        try:
+            os.close(fd)
+        except OSError:
+            pass
+    try:
+        os.unlink(path)
+    except FileNotFoundError:
+        pass
+    except OSError as exc:
+        logger.warning("UDS cleanup failed for %s: %s", path, exc)
+    else:
+        logger.info("UDS socket removed: %s", path)
+
+
 def _run_uvicorn(app, args, log_level: str) -> None:
     """Dispatch into ``uvicorn.run`` with the kwargs that match the
     current ``--listen-fd`` / ``--host``/``--port`` mode.
@@ -323,8 +396,23 @@ def _run_uvicorn(app, args, log_level: str) -> None:
     import uvicorn
 
     listen_fd = getattr(args, "listen_fd", None)
+    uds_path = _uds_path_from_host(getattr(args, "host", None))
+    uds_fd = None
     try:
-        if listen_fd is not None:
+        if uds_path is not None:
+            # #351: UDS listen mode. We create the AF_UNIX socket with
+            # owner-only (0600) permissions and hand uvicorn the fd via
+            # ``fd=`` (same dispatch arm as --listen-fd). uvicorn's own
+            # ``uds=`` is not used so the mode is deterministic and the
+            # stale-socket cleanup is owned here, not by uvicorn.
+            uds_fd = _prepare_uds_socket(uds_path)
+            uvicorn.run(
+                app,
+                fd=uds_fd,
+                log_level=log_level,
+                timeout_keep_alive=30,
+            )
+        elif listen_fd is not None:
             # ``fd=`` overrides ``host``/``port``: uvicorn skips its own
             # ``socket.bind()`` and adopts the inherited fd directly. This
             # is the close of the bind→auth TOCTOU window — the supervisor
@@ -350,7 +438,7 @@ def _run_uvicorn(app, args, log_level: str) -> None:
         # path. Translate to the friendly message; unrelated OSErrors
         # (e.g. EACCES on a low port) keep their original trace and
         # propagate so the failure is debuggable.
-        if exc.errno == errno.EADDRINUSE:
+        if exc.errno == errno.EADDRINUSE and uds_path is None:
             _print_port_collision_and_exit(
                 args.host, args.port, in_listen_fd_mode=listen_fd is not None
             )
@@ -375,7 +463,7 @@ def _run_uvicorn(app, args, log_level: str) -> None:
         # uvicorn's exit. ``_port_is_busy`` ALSO defends internally,
         # but a future refactor that drops that guard (or a monkeypatch
         # in a test harness) must not corrupt the failure signal.
-        if exc.code in (1, "1") and listen_fd is None:
+        if exc.code in (1, "1") and listen_fd is None and uds_path is None:
             try:
                 busy = _port_is_busy(args.host, args.port)
             except BaseException:
@@ -385,6 +473,11 @@ def _run_uvicorn(app, args, log_level: str) -> None:
                     args.host, args.port, in_listen_fd_mode=False
                 )
         raise
+    finally:
+        # #351: UDS socket cleanup on every exit path (clean shutdown,
+        # bind failure, uvicorn SystemExit). No-op for TCP/listen-fd.
+        if uds_path is not None:
+            _cleanup_uds_socket(uds_path, fd=uds_fd)
 
 
 def _port_is_busy(host: str, port: int) -> bool:
