@@ -6,8 +6,15 @@ the trusted gateway chain (App -> Gateway -> MLX) by checking the
 ``X-Fusion-Route`` header injected by the gateway.
 
 Two phases:
-- Phase 1 (default): missing header -> WARN + allow (observability rollout).
-- Phase 2 (``FUSION_ROUTE_ENFORCE=true``): missing header -> 403 reject.
+- Phase 1 (``FUSION_ROUTE_WARN_ONLY=true``): missing header -> WARN + allow
+  (dev/standalone fallback for deployments without a gateway).
+- Phase 2 (default): missing header -> 403 reject.
+
+#349: enforce is the default since v0.7.0. Deployments running fusion-mlx
+standalone (no gateway injecting X-Fusion-Route) set
+``FUSION_ROUTE_WARN_ONLY=true`` to keep the previous warn-only behavior.
+``FUSION_ROUTE_ENFORCE=true`` remains accepted as an explicit opt-in
+(redundant with the new default, kept for backward compatibility).
 
 Probe paths (/health, /healthz, /readyz, /livez, /) and CORS preflight
 (OPTIONS) are exempt so k8s/load-balancer health checks and browser
@@ -40,8 +47,18 @@ _EXEMPT_PATHS: frozenset[bytes] = frozenset(
 _TRUTHY = frozenset({"1", "true", "yes", "on"})
 
 
+def _warn_only_enabled() -> bool:
+    return os.environ.get("FUSION_ROUTE_WARN_ONLY", "").strip().lower() in _TRUTHY
+
+
 def _route_enforce_enabled() -> bool:
-    return os.environ.get("FUSION_ROUTE_ENFORCE", "").strip().lower() in _TRUTHY
+    # #349: Phase 2 enforce is now the DEFAULT. Standalone/dev deployments
+    # without a gateway set FUSION_ROUTE_WARN_ONLY=true to restore the prior
+    # warn-only (Phase 1) behavior. FUSION_ROUTE_ENFORCE=true remains accepted
+    # as an explicit opt-in (redundant with the new default).
+    if _warn_only_enabled():
+        return False
+    return True
 
 
 def _raw_path(scope: dict[str, Any]) -> bytes:

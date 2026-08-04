@@ -941,22 +941,26 @@ fusion-mlx is the link endpoint in a 3-tier chain: App -> Gateway -> MLX. By def
 | Variable | Default | Effect |
 |----------|---------|--------|
 | `server.host` (config) / `--host` | `127.0.0.1` | Bind address. `0.0.0.0` exposes the server on all interfaces - only do this behind a gateway. |
-| `FUSION_ROUTE_ENFORCE` | `false` | When `true`, requests missing the `X-Fusion-Route` header are rejected with `403`. When `false` (default), missing headers are logged at WARN and allowed (phase-1). |
+| `FUSION_ROUTE_ENFORCE` | `true` | When `true` (default since v0.7.0, #349), requests missing the `X-Fusion-Route` header are rejected with `403`. Accepted as an explicit opt-in (redundant with the default, kept for backward compatibility). |
+| `FUSION_ROUTE_WARN_ONLY` | `false` | Dev/standalone override (#349). When `true`, restores phase-1 warn-only behavior: a missing `X-Fusion-Route` is logged at WARN and allowed. Set this for standalone local-server use without a gateway. |
 | `FUSION_ALLOW_ANONYMOUS` | `false` | Dev override. When `true`, requests without an API key are allowed. Does **not** bypass a configured `api_key` - a matching key is still required when one is set. |
 
 ### Access policy
 
-- **Route guard (#343):** routed requests should carry `X-Fusion-Route: gateway` so the server knows they came through the gateway. Exempt paths: `/`, `/health`, `/healthz`, `/readyz`, `/livez`, `/openapi.json`, `/docs`, `/redoc`, `/favicon.ico`, and `OPTIONS` preflight. Set `FUSION_ROUTE_ENFORCE=true` to reject un-routed traffic. The header is routing provenance only - it does **not** authenticate a caller (any client can set it).
-- **Management endpoints (#344):** `/metrics` and `/v1/status` require `verify_management_access` - a valid API key or a loopback client. Non-loopback anonymous requests get `401`. `X-Fusion-Route` is not accepted as authentication; a cross-host gateway must forward a valid API key.
+- **Route guard (#343):** routed requests should carry `X-Fusion-Route: gateway` so the server knows they came through the gateway. Exempt paths: `/`, `/health`, `/healthz`, `/readyz`, `/livez`, `/openapi.json`, `/docs`, `/redoc`, `/favicon.ico`, and `OPTIONS` preflight. Enforce is the default since v0.7.0 (#349): un-routed traffic is rejected with `403`. Set `FUSION_ROUTE_WARN_ONLY=true` to restore warn-only behavior for standalone use. The header is routing provenance only - it does **not** authenticate a caller (any client can set it).
+- **Management endpoints (#344):** `/metrics` and `/v1/status` require `verify_management_access` - a valid API key or `FUSION_ALLOW_ANONYMOUS=true`. Since v0.7.0 (#350) loopback no longer exempts management endpoints: a same-host client (including a co-located gateway) must forward a valid API key, or set the dev override. `X-Fusion-Route` is not accepted as authentication.
 - **Model lifecycle (#345):** `/v1/models/load` and `/v1/models/unload` require `X-Fusion-Source: model-hub` (or a loopback client); otherwise `403`.
-- **Anonymous access (#346):** rejected by default. Allow only for local dev via `FUSION_ALLOW_ANONYMOUS=true`; loopback clients are exempt. A cross-host gateway must forward a valid API key - `X-Fusion-Route` alone does not authenticate.
+- **Anonymous access (#346):** rejected by default. Allow only for local dev via `FUSION_ALLOW_ANONYMOUS=true`. Since v0.7.0 (#350) loopback clients are no longer exempt - a same-host client (including a co-located gateway) must present a valid API key. A gateway must forward a valid API key; `X-Fusion-Route` alone does not authenticate.
 
 ```bash
 # Bind loopback only (default)
 fusion-mlx serve --model qwen3.5-4b-4bit --host 127.0.0.1 --port 11434
 
-# Enforce the gateway route header (production behind a gateway)
-FUSION_ROUTE_ENFORCE=true fusion-mlx serve --model qwen3.5-4b-4bit
+# Standalone local server (no gateway): opt into warn-only route guard
+FUSION_ROUTE_WARN_ONLY=true fusion-mlx serve --model qwen3.5-4b-4bit
+
+# Behind a gateway (default since v0.7.0: enforce X-Fusion-Route)
+fusion-mlx serve --model qwen3.5-4b-4bit
 ```
 
 ## Performance

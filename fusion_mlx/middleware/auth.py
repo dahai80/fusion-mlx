@@ -346,17 +346,12 @@ def _anonymous_access_allowed(request: Request | None) -> bool:
     if _env_truthy("FUSION_ALLOW_ANONYMOUS"):
         logger.debug("Anonymous access allowed via FUSION_ALLOW_ANONYMOUS env")
         return True
-    if request is not None and _is_loopback_client(request):
-        logger.warning(
-            "Anonymous loopback access allowed (dev mode) host=%s",
-            _client_host(request),
-        )
-        return True
-    # X-Fusion-Route is routing provenance (validated by RouteGuardMiddleware),
-    # NOT an authentication credential. Any client can set the header, so its
-    # mere presence must not grant access. Same-host gateway traffic is already
-    # covered by the loopback branch above; cross-host gateways must forward a
-    # valid api_key. See issue #352 for a shared-secret enhancement.
+    # #350: loopback no longer grants anonymous access. A same-host client
+    # (including a co-located gateway) must present a valid api_key, or the
+    # deployment sets FUSION_ALLOW_ANONYMOUS=true for dev/test. X-Fusion-Route
+    # is routing provenance, not auth (spoofable by any client; see #352), so
+    # it is not accepted here. A same-host gateway must forward a valid
+    # api_key.
     return False
 
 
@@ -377,17 +372,11 @@ async def verify_management_access(request: Request) -> bool:
         if not all(secrets.compare_digest(k, configured_key) for k in provided):
             raise HTTPException(status_code=401, detail="Invalid API key")
         return True
-    # X-Fusion-Route is NOT an auth credential (spoofable by any client); it is
-    # routing provenance handled by RouteGuardMiddleware. A gateway that needs
-    # to reach management endpoints must forward a valid api_key (or run on
-    # loopback). Rejecting here closes the header-spoof bypass on /metrics and
-    # /v1/status. See issue #352 for a shared-secret enhancement.
-    if _is_loopback_client(request):
-        logger.warning(
-            "Management endpoint loopback access without auth (dev mode) host=%s",
-            _client_host(request),
-        )
-        return True
+    # #350: loopback no longer exempts management endpoints from auth. A
+    # same-host client must forward a valid api_key (or the deployment sets
+    # FUSION_ALLOW_ANONYMOUS=true for dev/test). X-Fusion-Route is not auth
+    # (spoofable by any client; see #352). This closes the loopback bypass on
+    # /metrics and /v1/status.
     raise HTTPException(status_code=401, detail="Authentication required")
 
 
