@@ -92,6 +92,7 @@ def generate_video(
     input_ids = _tokenize_prompt(prompt)
     text_emb, text_pooled = text_encoder(input_ids, input_ids)
     text_emb_null = mx.zeros_like(text_emb)
+    text_pooled_null = mx.zeros_like(text_pooled)
 
     latent_ch = config["in_channels"]
     pt, ph, pw = config["patch_size"]
@@ -136,9 +137,24 @@ def generate_video(
     cfg = float(cfg_scale) if cfg_scale is not None else 6.0
     for i, t in enumerate(scheduler.timesteps):
         timestep = mx.array([float(t)] * 1, dtype=mx.float32)
-        noise_pred_uncond = dit(latents, timestep, text_emb_null, image_cond=image_cond)
+        guidance = mx.array([cfg], dtype=mx.float32)
+        noise_pred_uncond = dit(
+            latents,
+            timestep,
+            text_emb_null,
+            pooled_emb=text_pooled_null,
+            guidance=guidance,
+            image_cond=image_cond,
+        )
         mx.eval(noise_pred_uncond)
-        noise_pred_cond = dit(latents, timestep, text_emb, image_cond=image_cond)
+        noise_pred_cond = dit(
+            latents,
+            timestep,
+            text_emb,
+            pooled_emb=text_pooled,
+            guidance=guidance,
+            image_cond=image_cond,
+        )
         mx.eval(noise_pred_cond)
         noise_pred = noise_pred_uncond + cfg * (noise_pred_cond - noise_pred_uncond)
         del noise_pred_uncond, noise_pred_cond
@@ -151,7 +167,7 @@ def generate_video(
         logger.debug("hunyuan denoise step %d/%d", i + 1, total_steps)
 
     # Free DiT and text encoder before VAE decode to reduce peak memory
-    del dit, text_encoder, text_emb, text_emb_null
+    del dit, text_encoder, text_emb, text_emb_null, text_pooled, text_pooled_null
     if image_cond is not None:
         del image_cond
     gc.collect()

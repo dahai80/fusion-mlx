@@ -174,7 +174,7 @@ class _DoubleStreamAttn(nn.Module):
         self.norm.query_norm = nn.RMSNorm(head_dim, eps=1e-6)
         self.norm.key_norm = nn.RMSNorm(head_dim, eps=1e-6)
 
-    def _forward_attn(self, x, rope_cos=None, rope_sin=None):
+    def _forward_attn(self, x, num_img_tokens=0, rope_cos=None, rope_sin=None):
         B, L, _ = x.shape
         qkv = self.qkv(x)
         qkv = qkv.reshape(B, L, 3, self.num_heads, self.head_dim)
@@ -182,9 +182,13 @@ class _DoubleStreamAttn(nn.Module):
         q, k, v = qkv[0], qkv[1], qkv[2]
         q = _rms_norm(q, self.norm.query_norm.weight)
         k = _rms_norm(k, self.norm.key_norm.weight)
-        if rope_cos is not None:
-            q = _apply_rope(q, rope_cos, rope_sin)
-            k = _apply_rope(k, rope_cos, rope_sin)
+        if rope_cos is not None and num_img_tokens > 0:
+            q_img = q[:, :, :num_img_tokens]
+            k_img = k[:, :, :num_img_tokens]
+            q_img = _apply_rope(q_img, rope_cos, rope_sin)
+            k_img = _apply_rope(k_img, rope_cos, rope_sin)
+            q = mx.concatenate([q_img, q[:, :, num_img_tokens:]], axis=2)
+            k = mx.concatenate([k_img, k[:, :, num_img_tokens:]], axis=2)
         attn = (q * self.scale) @ k.transpose(0, 1, 3, 2)
         attn = mx.softmax(attn, axis=-1)
         out = attn @ v
@@ -193,7 +197,9 @@ class _DoubleStreamAttn(nn.Module):
 
     def __call__(self, img, txt, rope_cos=None, rope_sin=None):
         x = mx.concatenate([img, txt], axis=1)
-        out = self._forward_attn(x, rope_cos, rope_sin)
+        out = self._forward_attn(
+            x, num_img_tokens=img.shape[1], rope_cos=rope_cos, rope_sin=rope_sin
+        )
         img_out = out[:, : img.shape[1]]
         txt_out = out[:, img.shape[1] :]
         return img_out, txt_out
@@ -290,7 +296,7 @@ class _SingleStreamBlock(nn.Module):
         self.norm.key_norm = nn.RMSNorm(head_dim, eps=1e-6)
         self._ln = nn.LayerNorm(hidden_size, eps=1e-6, affine=False)
 
-    def __call__(self, x, emb, rope_cos=None, rope_sin=None):
+    def __call__(self, x, emb, num_img_tokens=0, rope_cos=None, rope_sin=None):
         shift, scale, gate = mx.split(self.modulation.lin(_silu(emb)), 3, axis=-1)
         x_norm = self._ln(x)
         x_norm = x_norm * (1 + mx.expand_dims(scale, 1)) + mx.expand_dims(shift, 1)
@@ -304,9 +310,13 @@ class _SingleStreamBlock(nn.Module):
         q, k, v = qkv[0], qkv[1], qkv[2]
         q = _rms_norm(q, self.norm.query_norm.weight)
         k = _rms_norm(k, self.norm.key_norm.weight)
-        if rope_cos is not None:
-            q = _apply_rope(q, rope_cos, rope_sin)
-            k = _apply_rope(k, rope_cos, rope_sin)
+        if rope_cos is not None and num_img_tokens > 0:
+            q_img = q[:, :, :num_img_tokens]
+            k_img = k[:, :, :num_img_tokens]
+            q_img = _apply_rope(q_img, rope_cos, rope_sin)
+            k_img = _apply_rope(k_img, rope_cos, rope_sin)
+            q = mx.concatenate([q_img, q[:, :, num_img_tokens:]], axis=2)
+            k = mx.concatenate([k_img, k[:, :, num_img_tokens:]], axis=2)
         scale_f = self.head_dim**-0.5
         attn = (q * scale_f) @ k.transpose(0, 1, 3, 2)
         attn = mx.softmax(attn, axis=-1)
@@ -359,13 +369,12 @@ class HunyuanVideoDiT(nn.Module):
 
         pt, ph, pw = self.patch_size
         self.img_in = nn.Module()
-        self.img_in.proj = nn.Conv3d(
-            self.in_channels,
-            self.hidden_size,
-            kernel_size=(pt, ph, pw),
-            stride=(pt, ph, pw),
-            bias=True,
+        self.img_in.proj = nn.Module()
+        self.img_in.proj.weight = mx.zeros(
+            (self.hidden_size, self.in_channels, pt, ph, pw), dtype=mx.float32
         )
+        self.img_in.proj.bias = mx.zeros((self.hidden_size,), dtype=mx.float32)
+        self._patch_size = (pt, ph, pw)
 
         self.txt_in = _TokenRefiner(
             self.hidden_size,
@@ -410,19 +419,20 @@ class HunyuanVideoDiT(nn.Module):
     def _compute_rope(self, ot, oh, ow, dtype=mx.float32):
         axes_grids = []
         for size, dim in zip([ot, oh, ow], self.rope_axes_dim):
-            grid = mx.arange(size, dtype=dtype)
-            freqs = grid[:, None] * mx.exp(
-                -math.log(self.rope_theta) * mx.arange(0, dim, 2, dtype=dtype) / dim
-            )
-            axes_grids.append(freqs)
-        t_grid, h_grid, w_grid = axes_grids
-        t_grid = t_grid[:, None, None, :, :]
-        h_grid = h_grid[None, :, None, :, :]
-        w_grid = w_grid[None, None, :, :, :]
-        freqs = t_grid + h_grid + w_grid
+            pos = mx.arange(size, dtype=dtype)
+            freqs = 1.0 / (self.rope_theta ** (mx.arange(0, dim, 2, dtype=dtype) / dim))
+            grid = mx.outer(pos, freqs)
+            axes_grids.append(grid)
+        t_freqs, h_freqs, w_freqs = axes_grids
+        t_4d = t_freqs[:, None, None, :]
+        h_4d = h_freqs[None, :, None, :]
+        w_4d = w_freqs[None, None, :, :]
+        t_full = mx.broadcast_to(t_4d, (ot, oh, ow, t_freqs.shape[-1]))
+        h_full = mx.broadcast_to(h_4d, (ot, oh, ow, h_freqs.shape[-1]))
+        w_full = mx.broadcast_to(w_4d, (ot, oh, ow, w_freqs.shape[-1]))
+        freqs = mx.concatenate([t_full, h_full, w_full], axis=-1)
         L = ot * oh * ow
-        D = t_grid.shape[-1]
-        freqs = freqs.reshape(L, D)
+        freqs = freqs.reshape(L, -1)
         freqs_cos = mx.cos(freqs)
         freqs_sin = mx.sin(freqs)
         return freqs_cos, freqs_sin
@@ -431,12 +441,18 @@ class HunyuanVideoDiT(nn.Module):
         self, x, timestep, text_emb, pooled_emb=None, guidance=None, image_cond=None
     ):
         B, C, T, H, W = x.shape
-        pt, ph, pw = self.patch_size
+        pt, ph, pw = self._patch_size
         ot = T // pt
         oh = H // ph
         ow = W // pw
 
-        img = self.img_in.proj(x)
+        w = self.img_in.proj.weight
+        b = self.img_in.proj.bias
+        x_thw = x.transpose(0, 2, 3, 4, 1)
+        w_thw = w.transpose(0, 2, 3, 4, 1)
+        img = mx.conv3d(x_thw, w_thw, stride=(pt, ph, pw))
+        img = img.transpose(0, 4, 1, 2, 3)
+        img = img + b.reshape(1, -1, 1, 1, 1)
         img = img.reshape(B, self.hidden_size, ot * oh * ow).transpose(0, 2, 1)
 
         txt = self.txt_in(text_emb, timestep)
@@ -464,7 +480,7 @@ class HunyuanVideoDiT(nn.Module):
         combined = mx.concatenate([img, txt], axis=1)
         for i in range(self.num_single_layers):
             block = getattr(self.single_blocks, str(i))
-            combined = block(combined, emb, rope_cos_img, rope_sin_img)
+            combined = block(combined, emb, num_img_tokens, rope_cos_img, rope_sin_img)
         img = combined[:, :num_img_tokens]
         txt = combined[:, num_img_tokens:]
 
@@ -537,8 +553,7 @@ def _remap_dit_weights(params):
         # RMSNorm: official uses .scale, MLX uses .weight
         nk = nk.replace("norm.query_norm.scale", "norm.query_norm.weight")
         nk = nk.replace("norm.key_norm.scale", "norm.key_norm.weight")
-        # Conv3d: official (C_out, C_in, kT, kH, kW), MLX (C_out, kT, kH, kW, C_in)
-        if nk == "img_in.proj.weight":
-            v = v.transpose(0, 2, 3, 4, 1)
+        # Token refiner: official nests under individual_token_refiner
+        nk = nk.replace("txt_in.individual_token_refiner.", "txt_in.")
         out[nk] = v
     return out
