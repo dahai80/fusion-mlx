@@ -37,15 +37,21 @@ class _CLIPEncoderLayer(nn.Module):
     def __call__(self, x):
         B, L, _ = x.shape
         h = self.layer_norm1(x)
-        q = self.self_attn.q_proj(h).reshape(
-            B, L, self._num_heads, self._head_dim
-        ).transpose(0, 2, 1, 3)
-        k = self.self_attn.k_proj(h).reshape(
-            B, L, self._num_heads, self._head_dim
-        ).transpose(0, 2, 1, 3)
-        v = self.self_attn.v_proj(h).reshape(
-            B, L, self._num_heads, self._head_dim
-        ).transpose(0, 2, 1, 3)
+        q = (
+            self.self_attn.q_proj(h)
+            .reshape(B, L, self._num_heads, self._head_dim)
+            .transpose(0, 2, 1, 3)
+        )
+        k = (
+            self.self_attn.k_proj(h)
+            .reshape(B, L, self._num_heads, self._head_dim)
+            .transpose(0, 2, 1, 3)
+        )
+        v = (
+            self.self_attn.v_proj(h)
+            .reshape(B, L, self._num_heads, self._head_dim)
+            .transpose(0, 2, 1, 3)
+        )
         scale = self._head_dim**-0.5
         attn = (q * scale) @ k.transpose(0, 1, 3, 2)
         attn = mx.softmax(attn, axis=-1)
@@ -67,9 +73,7 @@ class CLIPTextEncoder(nn.Module):
         )
         self.encoder = nn.Module()
         for i in range(num_layers):
-            setattr(
-                self.encoder, str(i), _CLIPEncoderLayer(hidden_size, num_heads)
-            )
+            setattr(self.encoder, str(i), _CLIPEncoderLayer(hidden_size, num_heads))
         self.final_layer_norm = nn.LayerNorm(hidden_size)
         self._num_layers = num_layers
 
@@ -103,30 +107,28 @@ class _LlamaAttention(nn.Module):
         self.num_heads = num_heads
         self.num_kv_heads = num_kv_heads
         self.head_dim = hidden_size // num_heads
-        self.q_proj = nn.Linear(
-            hidden_size, num_heads * self.head_dim, bias=False
-        )
-        self.k_proj = nn.Linear(
-            hidden_size, num_kv_heads * self.head_dim, bias=False
-        )
-        self.v_proj = nn.Linear(
-            hidden_size, num_kv_heads * self.head_dim, bias=False
-        )
-        self.o_proj = nn.Linear(
-            num_heads * self.head_dim, hidden_size, bias=False
-        )
+        self.q_proj = nn.Linear(hidden_size, num_heads * self.head_dim, bias=False)
+        self.k_proj = nn.Linear(hidden_size, num_kv_heads * self.head_dim, bias=False)
+        self.v_proj = nn.Linear(hidden_size, num_kv_heads * self.head_dim, bias=False)
+        self.o_proj = nn.Linear(num_heads * self.head_dim, hidden_size, bias=False)
 
     def __call__(self, x, mask=None):
         B, L, _ = x.shape
-        q = self.q_proj(x).reshape(
-            B, L, self.num_heads, self.head_dim
-        ).transpose(0, 2, 1, 3)
-        k = self.k_proj(x).reshape(
-            B, L, self.num_kv_heads, self.head_dim
-        ).transpose(0, 2, 1, 3)
-        v = self.v_proj(x).reshape(
-            B, L, self.num_kv_heads, self.head_dim
-        ).transpose(0, 2, 1, 3)
+        q = (
+            self.q_proj(x)
+            .reshape(B, L, self.num_heads, self.head_dim)
+            .transpose(0, 2, 1, 3)
+        )
+        k = (
+            self.k_proj(x)
+            .reshape(B, L, self.num_kv_heads, self.head_dim)
+            .transpose(0, 2, 1, 3)
+        )
+        v = (
+            self.v_proj(x)
+            .reshape(B, L, self.num_kv_heads, self.head_dim)
+            .transpose(0, 2, 1, 3)
+        )
         if self.num_kv_heads < self.num_heads:
             n_rep = self.num_heads // self.num_kv_heads
             k = mx.repeat(k, n_rep, axis=1)
@@ -252,12 +254,8 @@ class HunyuanDualTextEncoder(nn.Module):
         import os
 
         enc = cls(**kwargs)
-        clip_files = sorted(
-            glob.glob(os.path.join(model_path, "clip_l*.safetensors"))
-        )
-        llama_files = sorted(
-            glob.glob(os.path.join(model_path, "llava*.safetensors"))
-        )
+        clip_files = sorted(glob.glob(os.path.join(model_path, "clip_l*.safetensors")))
+        llama_files = sorted(glob.glob(os.path.join(model_path, "llava*.safetensors")))
         if not clip_files and not llama_files:
             safetensor_files = sorted(
                 glob.glob(os.path.join(model_path, "*.safetensors"))
@@ -265,9 +263,7 @@ class HunyuanDualTextEncoder(nn.Module):
             if not safetensor_files:
                 logger.warning("no safetensors at %s, random init", model_path)
                 return enc
-            clip_files = [
-                f for f in safetensor_files if "clip" in f.lower()
-            ]
+            clip_files = [f for f in safetensor_files if "clip" in f.lower()]
             llama_files = [
                 f
                 for f in safetensor_files
@@ -294,9 +290,7 @@ class HunyuanDualTextEncoder(nn.Module):
                     matched += 1
                 else:
                     loaded[k] = v
-            logger.info(
-                "hunyuan text enc clip_l: %d/%d matched", matched, len(flat)
-            )
+            logger.info("hunyuan text enc clip_l: %d/%d matched", matched, len(flat))
             _update_module(enc.clip_l, loaded)
 
         if llama_files:
@@ -317,9 +311,7 @@ class HunyuanDualTextEncoder(nn.Module):
                     matched += 1
                 else:
                     loaded[k] = v
-            logger.info(
-                "hunyuan text enc llama3: %d/%d matched", matched, len(flat)
-            )
+            logger.info("hunyuan text enc llama3: %d/%d matched", matched, len(flat))
             _update_module(enc.llama3, loaded)
 
         return enc
@@ -343,7 +335,7 @@ def _remap_clip_weights(params):
     for k, v in params.items():
         nk = k
         if nk.startswith("text_model."):
-            nk = nk[len("text_model."):]
+            nk = nk[len("text_model.") :]
         nk = nk.replace("encoder.layers.", "encoder.")
         out[nk] = v
     return out
@@ -354,7 +346,7 @@ def _remap_llama_weights(params):
     for k, v in params.items():
         nk = k
         if nk.startswith("model."):
-            nk = nk[len("model."):]
+            nk = nk[len("model.") :]
         if nk in ("scaled_fp8", "tokenizer") or nk.startswith("lm_head"):
             continue
         if nk.endswith(".scale_weight"):

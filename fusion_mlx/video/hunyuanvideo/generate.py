@@ -33,6 +33,7 @@ def _get_clip_tokenizer():
     global _clip_tokenizer
     if _clip_tokenizer is None:
         from transformers import CLIPTokenizer
+
         _clip_tokenizer = CLIPTokenizer.from_pretrained(_CLIP_TOKENIZER_ID)
         logger.info("hunyuan: loaded CLIP tokenizer from %s", _CLIP_TOKENIZER_ID)
     return _clip_tokenizer
@@ -42,6 +43,7 @@ def _get_llama_tokenizer():
     global _llama_tokenizer
     if _llama_tokenizer is None:
         from transformers import AutoTokenizer
+
         _llama_tokenizer = AutoTokenizer.from_pretrained(_LLAMA_TOKENIZER_ID)
         logger.info("hunyuan: loaded Llama3 tokenizer from %s", _LLAMA_TOKENIZER_ID)
     return _llama_tokenizer
