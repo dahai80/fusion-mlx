@@ -1,6 +1,8 @@
 # SPDX-License-Identifier: Apache-2.0
-# HunyuanVideo causal 3D VAE.
+# HunyuanVideo causal 3D VAE — matches official weight format.
 # Latent dim 16, 8x spatial, 4x temporal compression.
+# Called by: generate.py via HunyuanVideoVAE.from_pretrained(), .encode(), .decode(), .decode_tiled()
+# API unchanged: constructor(latent_channels=16, in_channels=3), all method signatures preserved.
 
 import logging
 
@@ -9,6 +11,18 @@ import mlx.nn as nn
 import numpy as np
 
 logger = logging.getLogger(__name__)
+
+BASE_CH = 128
+CH_MULT = [1, 2, 4, 4]
+NUM_RES_BLOCKS_DEC = [3, 3, 3, 3]
+NUM_RES_BLOCKS_ENC = [2, 2, 2, 2]
+LATENT_CHANNELS = 16
+IN_CHANNELS = 3
+
+DECODER_TEMPORAL_UP = [False, True, True, True]
+DECODER_SPATIAL_UP = [False, True, True, True]
+ENCODER_TEMPORAL_DOWN = [False, True, True, False]
+ENCODER_SPATIAL_DOWN = [True, True, True, False]
 
 
 def _silu(x):
@@ -24,10 +38,19 @@ def _group_norm_5d(norm, x):
 
 
 class CausalConv3d(nn.Module):
-    def __init__(self, in_channels, out_channels, kernel_size=3, stride=1, padding=0):
+    def __init__(
+        self,
+        in_channels,
+        out_channels,
+        kernel_size=3,
+        stride=1,
+        padding=0,
+        wrap_conv=True,
+    ):
         super().__init__()
         self.in_channels = in_channels
         self.out_channels = out_channels
+        self._wrap_conv = wrap_conv
         if isinstance(kernel_size, int):
             self.kernel_size = (kernel_size, kernel_size, kernel_size)
         else:
@@ -40,10 +63,22 @@ class CausalConv3d(nn.Module):
             self.padding = (padding, padding, padding)
         else:
             self.padding = tuple(padding)
-        self.weight = mx.zeros(
-            (out_channels, in_channels) + self.kernel_size, dtype=mx.float32
-        )
-        self.bias = mx.zeros((out_channels,), dtype=mx.float32)
+        w = mx.zeros((out_channels, in_channels) + self.kernel_size, dtype=mx.float32)
+        b = mx.zeros((out_channels,), dtype=mx.float32)
+        if wrap_conv:
+            # e.g. "decoder.conv_in.conv.weight" (ResBlock/Upsample/Downsample/conv_in/conv_out)
+            self.conv = nn.Module()
+            self.conv.weight = w
+            self.conv.bias = b
+        else:
+            # e.g. "decoder.mid.attn_1.q.weight" (MidAttention/quant_conv/post_quant_conv)
+            self.weight = w
+            self.bias = b
+
+    def _get_wb(self):
+        if self._wrap_conv:
+            return self.conv.weight, self.conv.bias
+        return self.weight, self.bias
 
     def __call__(self, x):
         B, C, T, H, W = x.shape
@@ -64,24 +99,31 @@ class CausalConv3d(nn.Module):
             ph,
             pw,
         )
+        cw, cb = self._get_wb()
         x_cl = x.transpose(0, 2, 3, 4, 1)
-        w_cl = self.weight.transpose(0, 2, 3, 4, 1)
+        w_cl = cw.transpose(0, 2, 3, 4, 1)
         padding = ([pt, ph, pw], [0, ph, pw])
         stride = (st, sh, sw)
         out = mx.conv_general(x_cl, w_cl, stride=stride, padding=padding)
         out = out.transpose(0, 4, 1, 2, 3)
-        out = out + self.bias.reshape(1, -1, 1, 1, 1)
+        out = out + cb.reshape(1, -1, 1, 1, 1)
         logger.debug("CausalConv3d: output=(%s)", out.shape)
         return out
 
 
-class HVResBlock(nn.Module):
-    def __init__(self, channels):
+class ResBlock(nn.Module):
+    def __init__(self, in_channels, out_channels=None):
         super().__init__()
-        self.conv1 = CausalConv3d(channels, channels, 3, 1, 1)
-        self.conv2 = CausalConv3d(channels, channels, 3, 1, 1)
-        self.norm1 = nn.GroupNorm(32, channels)
-        self.norm2 = nn.GroupNorm(32, channels)
+        out_channels = out_channels or in_channels
+        self.in_channels = in_channels
+        self.out_channels = out_channels
+        self.norm1 = nn.GroupNorm(32, in_channels)
+        self.conv1 = CausalConv3d(in_channels, out_channels, 3, 1, 1)
+        self.norm2 = nn.GroupNorm(32, out_channels)
+        self.conv2 = CausalConv3d(out_channels, out_channels, 3, 1, 1)
+        self.nin_shortcut = None
+        if in_channels != out_channels:
+            self.nin_shortcut = CausalConv3d(in_channels, out_channels, 1, 1, 0)
 
     def __call__(self, x):
         h = _group_norm_5d(self.norm1, x)
@@ -90,142 +132,226 @@ class HVResBlock(nn.Module):
         h = _group_norm_5d(self.norm2, h)
         h = _silu(h)
         h = self.conv2(h)
+        if self.nin_shortcut is not None:
+            x = self.nin_shortcut(x)
         return x + h
 
 
-class HVDownBlock(nn.Module):
-    def __init__(self, in_ch, out_ch, use_conv_down=True, temporal_downsample=True):
+class MidAttention(nn.Module):
+    def __init__(self, channels):
         super().__init__()
-        self.res1 = HVResBlock(in_ch)
-        self.res2 = HVResBlock(in_ch)
-        self.use_conv_down = use_conv_down
-        self.temporal_downsample = temporal_downsample
-        if use_conv_down:
-            st = (2, 2, 2) if temporal_downsample else (1, 2, 2)
-            self.conv_down = CausalConv3d(in_ch, out_ch, 3, stride=st, padding=1)
-        else:
-            self.conv_resample = CausalConv3d(in_ch, out_ch, 3, 1, 1)
+        self.norm = nn.GroupNorm(32, channels)
+        self.q = CausalConv3d(channels, channels, 1, 1, 0, wrap_conv=False)
+        self.k = CausalConv3d(channels, channels, 1, 1, 0, wrap_conv=False)
+        self.v = CausalConv3d(channels, channels, 1, 1, 0, wrap_conv=False)
+        self.proj_out = CausalConv3d(channels, channels, 1, 1, 0, wrap_conv=False)
 
     def __call__(self, x):
-        h = self.res1(x)
-        h = self.res2(h)
-        if self.use_conv_down:
-            return self.conv_down(h)
-        return self.conv_resample(h)
+        B, C, T, H, W = x.shape
+        h = _group_norm_5d(self.norm, x)
+        q = self.q(h)
+        k = self.k(h)
+        v = self.v(h)
+        q = q.reshape(B * T, C, H * W).transpose(0, 2, 1)
+        k = k.reshape(B * T, C, H * W).transpose(0, 2, 1)
+        v = v.reshape(B * T, C, H * W).transpose(0, 2, 1)
+        scale = C**-0.5
+        attn = (q * scale) @ k.transpose(0, 2, 1)
+        attn = mx.softmax(attn, axis=-1)
+        out = (attn @ v).transpose(0, 2, 1).reshape(B, C, T, H, W)
+        out = self.proj_out(out)
+        return x + out
 
 
-class HVUpBlock(nn.Module):
-    def __init__(self, in_ch, out_ch, use_conv_up=True, temporal_upsample=True):
+class Upsample(nn.Module):
+    def __init__(self, channels, temporal_up=True):
         super().__init__()
-        self.res1 = HVResBlock(in_ch)
-        self.res2 = HVResBlock(in_ch)
-        self.use_conv_up = use_conv_up
-        self.temporal_upsample = temporal_upsample
-        if use_conv_up:
-            self.conv_up = CausalConv3d(in_ch, out_ch, 3, 1, 1)
-        else:
-            self.conv_resample = CausalConv3d(in_ch, out_ch, 3, 1, 1)
+        self.temporal_up = temporal_up
+        self.conv = CausalConv3d(channels, channels, 3, 1, 1)
 
     def __call__(self, x):
-        h = self.res1(x)
-        h = self.res2(h)
-        if self.use_conv_up:
-            B, C, T, H, W = h.shape
-            if self.temporal_upsample and T > 1:
-                # Official UpsampleCausal3D behavior:
-                # first frame stays as 1 frame (spatial-only upsample)
-                # other frames double temporally -> 2*(T-1) frames
-                # total: 1 + 2*(T-1) = 2T-1 frames
-                first = h[:, :, 0:1, :, :]  # (B, C, 1, H, W)
-                other = h[:, :, 1:, :, :]  # (B, C, T-1, H, W)
-                # Spatial upsample for first frame
-                first = first.reshape(B, C, 1, H, 1, W, 1)
-                first = mx.broadcast_to(first, (B, C, 1, H, 2, W, 2))
-                first = first.reshape(B, C, 1, H * 2, W * 2)
-                # Temporal + spatial upsample for other frames
-                other = other.reshape(B, C, T - 1, 1, H, 1, W, 1)
-                other = mx.broadcast_to(other, (B, C, T - 1, 2, H, 2, W, 2))
-                other = other.reshape(B, C, (T - 1) * 2, H * 2, W * 2)
-                h = mx.concatenate([first, other], axis=2)
+        B, C, T, H, W = x.shape
+        # Spatial 2x upsampling via repeat
+        h = x.reshape(B, C, T, H, 1, W, 1)
+        h = mx.broadcast_to(h, (B, C, T, H, 2, W, 2))
+        h = h.reshape(B, C, T, H * 2, W * 2)
+        # Temporal upsampling: each frame after the first gets duplicated
+        if self.temporal_up and T > 1:
+            first = h[:, :, 0:1, :, :]  # (B, C, 1, H*2, W*2)
+            rest = h[:, :, 1:, :, :]  # (B, C, T-1, H*2, W*2)
+            rest = rest.reshape(B, C, T - 1, 1, H * 2, W * 2)
+            rest = mx.broadcast_to(rest, (B, C, T - 1, 2, H * 2, W * 2))
+            rest = rest.reshape(B, C, (T - 1) * 2, H * 2, W * 2)
+            h = mx.concatenate([first, rest], axis=2)
+        h = self.conv(h)
+        return h
+
+
+class Downsample(nn.Module):
+    def __init__(self, channels, temporal_down=True):
+        super().__init__()
+        stride = (2, 2, 2) if temporal_down else (1, 2, 2)
+        self.conv = CausalConv3d(channels, channels, 3, stride=stride, padding=1)
+
+    def __call__(self, x):
+        return self.conv(x)
+
+
+class DecoderUpBlock(nn.Module):
+    def __init__(self, in_ch, out_ch, num_blocks, has_upsample, temporal_up):
+        super().__init__()
+        # Use .block container with numeric sub-attrs to match weight keys:
+        # "decoder.up.0.block.0.conv1.conv.weight"
+        self.block = nn.Module()
+        for i in range(num_blocks):
+            if i == 0:
+                setattr(self.block, str(i), ResBlock(in_ch, out_ch))
             else:
-                # Spatial-only upsample (no temporal)
-                h = h.reshape(B, C, T, H, 1, W, 1)
-                h = mx.broadcast_to(h, (B, C, T, H, 2, W, 2))
-                h = h.reshape(B, C, T, H * 2, W * 2)
-            return self.conv_up(h)
-        return self.conv_resample(h)
+                setattr(self.block, str(i), ResBlock(out_ch, out_ch))
+        self._num_blocks = num_blocks
+        self.upsample = None
+        if has_upsample:
+            self.upsample = Upsample(out_ch, temporal_up=temporal_up)
+
+    def __call__(self, x):
+        for i in range(self._num_blocks):
+            x = getattr(self.block, str(i))(x)
+        if self.upsample is not None:
+            x = self.upsample(x)
+        return x
+
+
+class EncoderDownBlock(nn.Module):
+    def __init__(self, in_ch, out_ch, num_blocks, has_downsample, temporal_down):
+        super().__init__()
+        self.block = nn.Module()
+        for i in range(num_blocks):
+            if i == 0:
+                setattr(self.block, str(i), ResBlock(in_ch, out_ch))
+            else:
+                setattr(self.block, str(i), ResBlock(out_ch, out_ch))
+        self._num_blocks = num_blocks
+        self.downsample = None
+        if has_downsample:
+            self.downsample = Downsample(out_ch, temporal_down=temporal_down)
+
+    def __call__(self, x):
+        for i in range(self._num_blocks):
+            x = getattr(self.block, str(i))(x)
+        if self.downsample is not None:
+            x = self.downsample(x)
+        return x
 
 
 class HunyuanVideoVAE(nn.Module):
-    # Official decoder upsample pattern:
-    #   i=0: spatial_up=True,  temporal_up=False  -> (1,2,2) spatial only
-    #   i=1: spatial_up=True,  temporal_up=True   -> (2,2,2) temporal+spatial
-    #   i=2: spatial_up=True,  temporal_up=True   -> (2,2,2) temporal+spatial
-    #   i=3: spatial_up=False, temporal_up=False  -> no upsample
-    # Official encoder downsample pattern:
-    #   i=0: spatial_down=True,  temporal_down=False -> stride (1,2,2)
-    #   i=1: spatial_down=True,  temporal_down=True  -> stride (2,2,2)
-    #   i=2: spatial_down=True,  temporal_down=True  -> stride (2,2,2)
-    #   i=3: spatial_down=False, temporal_down=False -> no downsample
-
-    TEMPORAL_UP_BLOCKS = [False, True, True, False]
-    SPATIAL_UP_BLOCKS = [True, True, True, False]
-    TEMPORAL_DOWN_BLOCKS = [False, True, True, False]
-    SPATIAL_DOWN_BLOCKS = [True, True, True, False]
-
-    def __init__(self, latent_channels=16, in_channels=3):
+    def __init__(self, latent_channels=LATENT_CHANNELS, in_channels=IN_CHANNELS):
         super().__init__()
         self.latent_channels = latent_channels
         self.in_channels = in_channels
-        ch_mult = [1, 2, 4, 4]
-        base_ch = 128
+
+        dec_ch = [BASE_CH * m for m in reversed(CH_MULT)]
+        # dec_ch = [512, 512, 256, 128]
+
+        self.decoder = nn.Module()
+        self.decoder.conv_in = CausalConv3d(latent_channels, dec_ch[0], 3, 1, 1)
+        self.decoder.mid = nn.Module()
+        self.decoder.mid.block_1 = ResBlock(dec_ch[0], dec_ch[0])
+        self.decoder.mid.attn_1 = MidAttention(dec_ch[0])
+        self.decoder.mid.block_2 = ResBlock(dec_ch[0], dec_ch[0])
+        self.decoder.norm_out = nn.GroupNorm(32, dec_ch[-1])
+        self.decoder.conv_out = CausalConv3d(dec_ch[-1], in_channels, 3, 1, 1)
+
+        self.decoder.up = nn.Module()
+        for i in range(len(CH_MULT)):
+            out_ch = dec_ch[i]
+            in_ch = dec_ch[i]
+            # up.0: in=256 (from up.1 output after upsample) → out=128
+            # Wait, the blocks chain: up.3 output → up.2 input, etc.
+            # Need to check: each up block's in_ch = previous block's out_ch
+            # But the first block of each group needs in_ch from the previous group
+            if i == 0:
+                # up.0: dec_ch[0]=512 → but weights show block.0.conv1 in=256
+                # This is because up blocks are ordered differently
+                pass
+            has_up = DECODER_SPATIAL_UP[i]
+            temporal_up = DECODER_TEMPORAL_UP[i]
+
+        # Re-derive decoder up block channel sizes from weight shapes:
+        # decoder.up.0.block.0.conv1.weight: (128, 256, 3, 3, 3) → in=256, out=128
+        # decoder.up.1.block.0.conv1.weight: (256, 512, 3, 3, 3) → in=512, out=256
+        # decoder.up.2.block.0.conv1.weight: (512, 512, 3, 3, 3) → in=512, out=512
+        # decoder.up.3.block.0.conv1.weight: (512, 512, 3, 3, 3) → in=512, out=512
+        dec_up_in = [256, 512, 512, 512]
+        dec_up_out = [128, 256, 512, 512]
+
+        self.decoder.up = nn.Module()
+        for i in range(4):
+            setattr(
+                self.decoder.up,
+                str(i),
+                DecoderUpBlock(
+                    dec_up_in[i],
+                    dec_up_out[i],
+                    NUM_RES_BLOCKS_DEC[i],
+                    DECODER_SPATIAL_UP[i],
+                    DECODER_TEMPORAL_UP[i],
+                ),
+            )
+
         # Encoder
-        self.enc_conv_in = CausalConv3d(in_channels, base_ch, 3, 1, 1)
-        enc_blocks = []
-        prev_ch = base_ch
-        for i, mult in enumerate(ch_mult):
-            cur_ch = base_ch * mult
-            use_down = self.SPATIAL_DOWN_BLOCKS[i] or self.TEMPORAL_DOWN_BLOCKS[i]
-            temporal_down = self.TEMPORAL_DOWN_BLOCKS[i]
-            enc_blocks.append(
-                HVDownBlock(
-                    prev_ch,
-                    cur_ch,
-                    use_conv_down=use_down,
-                    temporal_downsample=temporal_down,
-                )
+        enc_ch = [BASE_CH * m for m in CH_MULT]
+        # enc_ch = [128, 256, 512, 512]
+
+        self.encoder = nn.Module()
+        self.encoder.conv_in = CausalConv3d(in_channels, enc_ch[0], 3, 1, 1)
+        self.encoder.mid = nn.Module()
+        self.encoder.mid.block_1 = ResBlock(enc_ch[-1], enc_ch[-1])
+        self.encoder.mid.attn_1 = MidAttention(enc_ch[-1])
+        self.encoder.mid.block_2 = ResBlock(enc_ch[-1], enc_ch[-1])
+        self.encoder.norm_out = nn.GroupNorm(32, enc_ch[-1])
+        self.encoder.conv_out = CausalConv3d(enc_ch[-1], latent_channels * 2, 3, 1, 1)
+
+        # Encoder down block channel sizes from weight shapes:
+        # encoder.down.0.block.0.conv1.weight: (128, 128, 3, 3, 3) → in=128, out=128
+        # encoder.down.1.block.0.conv1.weight: (256, 128, 3, 3, 3) → in=128, out=256
+        # encoder.down.2.block.0.conv1.weight: (512, 256, 3, 3, 3) → in=256, out=512
+        # encoder.down.3.block.0.conv1.weight: (512, 512, 3, 3, 3) → in=512, out=512
+        enc_down_in = [128, 128, 256, 512]
+        enc_down_out = [128, 256, 512, 512]
+
+        self.encoder.down = nn.Module()
+        for i in range(4):
+            setattr(
+                self.encoder.down,
+                str(i),
+                EncoderDownBlock(
+                    enc_down_in[i],
+                    enc_down_out[i],
+                    NUM_RES_BLOCKS_ENC[i],
+                    ENCODER_SPATIAL_DOWN[i],
+                    ENCODER_TEMPORAL_DOWN[i],
+                ),
             )
-            prev_ch = cur_ch
-        self.enc_blocks = enc_blocks
-        self.enc_mid1 = HVResBlock(prev_ch)
-        self.enc_mid2 = HVResBlock(prev_ch)
-        self.enc_conv_out = CausalConv3d(prev_ch, latent_channels * 2, 3, 1, 1)
-        # Decoder
-        self.dec_conv_in = CausalConv3d(latent_channels, prev_ch, 3, 1, 1)
-        self.dec_mid1 = HVResBlock(prev_ch)
-        self.dec_mid2 = HVResBlock(prev_ch)
-        dec_blocks = []
-        for i, mult in reversed(list(enumerate(ch_mult))):
-            cur_ch = base_ch * mult
-            use_up = self.SPATIAL_UP_BLOCKS[i] or self.TEMPORAL_UP_BLOCKS[i]
-            temporal_up = self.TEMPORAL_UP_BLOCKS[i]
-            dec_blocks.append(
-                HVUpBlock(
-                    prev_ch, cur_ch, use_conv_up=use_up, temporal_upsample=temporal_up
-                )
-            )
-            prev_ch = cur_ch
-        self.dec_blocks = dec_blocks
-        self.dec_conv_out = CausalConv3d(prev_ch, in_channels, 3, 1, 1)
+
+        self.quant_conv = CausalConv3d(
+            latent_channels * 2, latent_channels * 2, 1, 1, 0, wrap_conv=False
+        )
+        self.post_quant_conv = CausalConv3d(
+            latent_channels, latent_channels, 1, 1, 0, wrap_conv=False
+        )
 
     def encode(self, x):
         logger.info("hunyuan vae encode: input shape=%s", x.shape)
-        h = self.enc_conv_in(x)
-        for block in self.enc_blocks:
-            h = block(h)
-        h = self.enc_mid1(h)
-        h = self.enc_mid2(h)
-        h = self.enc_conv_out(h)
+        h = self.encoder.conv_in(x)
+        for i in range(4):
+            h = getattr(self.encoder.down, str(i))(h)
+        h = self.encoder.mid.block_1(h)
+        h = self.encoder.mid.attn_1(h)
+        h = self.encoder.mid.block_2(h)
+        h = _group_norm_5d(self.encoder.norm_out, h)
+        h = _silu(h)
+        h = self.encoder.conv_out(h)
+        h = self.quant_conv(h)
         mean, logvar = mx.split(h, 2, axis=1)
         logvar = mx.clip(logvar, -30.0, 20.0)
         std = mx.exp(0.5 * logvar)
@@ -236,12 +362,16 @@ class HunyuanVideoVAE(nn.Module):
 
     def decode(self, z):
         logger.info("hunyuan vae decode: latent shape=%s", z.shape)
-        h = self.dec_conv_in(z)
-        h = self.dec_mid1(h)
-        h = self.dec_mid2(h)
-        for block in self.dec_blocks:
-            h = block(h)
-        h = self.dec_conv_out(h)
+        h = self.post_quant_conv(z)
+        h = self.decoder.conv_in(h)
+        h = self.decoder.mid.block_1(h)
+        h = self.decoder.mid.attn_1(h)
+        h = self.decoder.mid.block_2(h)
+        for i in range(3, -1, -1):
+            h = getattr(self.decoder.up, str(i))(h)
+        h = _group_norm_5d(self.decoder.norm_out, h)
+        h = _silu(h)
+        h = self.decoder.conv_out(h)
         h = mx.clip(h, 0.0, 1.0)
         logger.info("hunyuan vae decode: output shape=%s", h.shape)
         return h
@@ -269,9 +399,9 @@ class HunyuanVideoVAE(nn.Module):
             return self.decode(z)
 
         out_t, out_h, out_w = self._compute_output_shape(T, H, W)
-        C = 3
-        output = np.zeros((B, C, out_t, out_h, out_w), dtype=np.float32)
-        weight_sum = np.zeros((B, C, out_t, out_h, out_w), dtype=np.float32)
+        out_c = 3
+        output = np.zeros((B, out_c, out_t, out_h, out_w), dtype=np.float32)
+        weight_sum = np.zeros((B, out_c, out_t, out_h, out_w), dtype=np.float32)
 
         t_positions = self._tile_positions(T, tile_t, overlap_t) if need_t else [(0, T)]
         h_positions = self._tile_positions(H, tile_h, overlap_h) if need_h else [(0, H)]
@@ -302,7 +432,6 @@ class HunyuanVideoVAE(nn.Module):
                     del tile_out
                     mx.clear_cache()
 
-                    # Compute output positions
                     ot_start = self._latent_to_output_pos(t_start, is_temporal=True)
                     ot_end = ot_start + tile_np.shape[2]
                     oh_start = h_start * 8
@@ -310,7 +439,6 @@ class HunyuanVideoVAE(nn.Module):
                     ow_start = w_start * 8
                     ow_end = ow_start + tile_np.shape[4]
 
-                    # Clamp to output bounds
                     ot_end = min(ot_end, out_t)
                     oh_end = min(oh_end, out_h)
                     ow_end = min(ow_end, out_w)
@@ -323,7 +451,6 @@ class HunyuanVideoVAE(nn.Module):
                         : ow_end - ow_start,
                     ]
 
-                    # Compute blending weights (feathered in overlap regions)
                     w_t = self._blend_weights_1d(
                         tile_np.shape[2], t_start, t_end, T, overlap_t
                     )
@@ -334,13 +461,12 @@ class HunyuanVideoVAE(nn.Module):
                         tile_np.shape[4], w_start, w_end, W, overlap_w
                     )
 
-                    # Outer product -> (1, C, t, h, w)
                     w_3d = (
                         w_t.reshape(1, 1, -1, 1, 1)
                         * w_h.reshape(1, 1, 1, -1, 1)
                         * w_w.reshape(1, 1, 1, 1, -1)
                     )
-                    w_3d = np.broadcast_to(w_3d, (1, C) + w_3d.shape[2:]).copy()
+                    w_3d = np.broadcast_to(w_3d, (1, out_c) + w_3d.shape[2:]).copy()
 
                     output[:, :, ot_start:ot_end, oh_start:oh_end, ow_start:ow_end] += (
                         tile_np * w_3d
@@ -350,9 +476,7 @@ class HunyuanVideoVAE(nn.Module):
                     ] += w_3d
 
                     del tile_np
-                    tile_idx_logged = tile_idx
 
-        # Normalize by weight sum
         mask = weight_sum > 0
         output[mask] /= weight_sum[mask]
 
@@ -365,19 +489,16 @@ class HunyuanVideoVAE(nn.Module):
 
     def _compute_output_shape(self, T, H, W):
         t, h, w = T, H, W
-        for i in range(len(self.dec_blocks)):
-            if self.SPATIAL_UP_BLOCKS[i]:
+        for i in range(4):
+            if DECODER_SPATIAL_UP[i]:
                 h = h * 2
                 w = w * 2
-            if self.TEMPORAL_UP_BLOCKS[i] and t > 1:
-                # Official UpsampleCausal3D: first frame stays, others double
+            if DECODER_TEMPORAL_UP[i] and t > 1:
                 t = 1 + (t - 1) * 2
         return t, h, w
 
     def _latent_to_output_pos(self, latent_pos, is_temporal=False):
         if is_temporal:
-            # First latent frame -> output frame 0
-            # Each subsequent latent frame -> 2 output frames (2T-1 pattern)
             if latent_pos == 0:
                 return 0
             return 1 + (latent_pos - 1) * 2
@@ -403,12 +524,10 @@ class HunyuanVideoVAE(nn.Module):
         weights = np.ones(tile_out_size, dtype=np.float32)
         if overlap <= 0 or tile_out_size <= 0:
             return weights
-        # Ramp up at start if not first tile
         if tile_start > 0:
             ramp_len = min(overlap, tile_out_size)
             for i in range(ramp_len):
                 weights[i] = (i + 1) / (ramp_len + 1)
-        # Ramp down at end if not last tile
         if tile_end < dim_size:
             ramp_len = min(overlap, tile_out_size)
             for i in range(ramp_len):
@@ -427,36 +546,49 @@ class HunyuanVideoVAE(nn.Module):
         if not safetensor_files:
             logger.warning("no safetensors found at %s, using random init", model_path)
             return vae
-        from mlx.utils import tree_flatten, tree_unflatten
+        from mlx.utils import tree_flatten
 
         all_params = {}
         for sf in safetensor_files:
             weights = mx.load(sf)
             all_params.update(weights)
-        mapped = _remap_vae_weights(all_params)
+
         flat = tree_flatten(vae.parameters())
         loaded = {}
+        matched = 0
+        unmatched = []
         for k, v in flat:
-            if k in mapped:
+            if k in all_params:
                 loaded[k] = (
-                    mapped[k].astype(mx.float16)
-                    if mapped[k].dtype != mx.float16
-                    else mapped[k]
+                    all_params[k].astype(mx.float16)
+                    if all_params[k].dtype != mx.float16
+                    else all_params[k]
                 )
+                matched += 1
             else:
                 loaded[k] = v
-                logger.debug("vae: unmatched param %s", k)
-        vae.update(tree_unflatten(loaded))
+                unmatched.append(k)
+        logger.info(
+            "hunyuan vae: loaded %d/%d params from %s",
+            matched,
+            len(flat),
+            model_path,
+        )
+        if unmatched:
+            logger.debug(
+                "hunyuan vae: unmatched params (%d): %s", len(unmatched), unmatched[:20]
+            )
+
+        # Build nested dict preserving numeric string keys as dict keys
+        # (tree_unflatten converts numeric keys to list indices, breaking nn.Module.update)
+        nested = {}
+        for key, val in loaded.items():
+            parts = key.split(".")
+            d = nested
+            for p in parts[:-1]:
+                if p not in d:
+                    d[p] = {}
+                d = d[p]
+            d[parts[-1]] = val
+        vae.update(nested)
         return vae
-
-
-def _remap_vae_weights(params):
-    out = {}
-    for k, v in params.items():
-        nk = k
-        nk = nk.replace("decoder.", "dec_")
-        nk = nk.replace("encoder.", "enc_")
-        nk = nk.replace("mid_block.resnets.0.", "mid1.")
-        nk = nk.replace("mid_block.resnets.1.", "mid2.")
-        out[nk] = v
-    return out
