@@ -9,6 +9,7 @@ import numpy as np
 
 from .dit import COSMOS_2B_CONFIG, COSMOS_7B_CONFIG, CosmosDiT
 from .scheduler import CosmosFlowScheduler, CosmosPredict2Scheduler
+from .text_encoder import CosmosT5Encoder
 from .vae import CosmosVideoVAE
 
 logger = logging.getLogger(__name__)
@@ -19,33 +20,23 @@ _DEFAULT_WIDTH = 848
 _DEFAULT_HEIGHT = 480
 
 
-def _load_text_embeddings(prompt, model_path, max_length=512):
-    # Cosmos uses T5-XXL text embeddings, typically pre-computed
-    # For pure-MLX we attempt to load from cache or use UMT5 fallback
-    emb_path = os.path.join(model_path, "text_embeddings")
-    if os.path.exists(emb_path):
-        npz_files = [f for f in os.listdir(emb_path) if f.endswith(".npz")]
-        if npz_files:
-            data = np.load(os.path.join(emb_path, npz_files[0]), allow_pickle=False)
-            keys = list(data.keys())
-            if keys:
-                emb = mx.array(data[keys[0]], dtype=mx.float32)
-                logger.info("cosmos: loaded pre-computed text emb shape=%s", emb.shape)
-                return emb
-    # Fallback: random placeholder (for testing / no T5 available)
-    logger.warning("cosmos: no pre-computed text embeddings, using zero placeholder")
-    text_dim = COSMOS_7B_CONFIG["text_embed_dim"]
-    emb = mx.zeros((1, max_length, text_dim), dtype=mx.float32)
-    return emb
+def _encode_prompt(prompt, text_encoder_path, max_length=512):
+    te_path = (
+        os.path.join(text_encoder_path, "text_encoder")
+        if os.path.isdir(os.path.join(text_encoder_path, "text_encoder"))
+        else text_encoder_path
+    )
+    te = CosmosT5Encoder.from_pretrained(te_path)
+    try:
+        from transformers import T5Tokenizer
 
+        tokenizer = T5Tokenizer.from_pretrained(te_path, local_files_only=True)
+    except Exception:
+        from transformers import AutoTokenizer
 
-def _load_clip_vision(image, model_path):
-    # Cosmos Predict2 uses CLIP vision for image conditioning
-    # Return zero placeholder for now; real CLIP loading requires mlx-vlm
-    logger.info("cosmos predict2: using zero CLIP vision placeholder")
-    vision_dim = 1024
-    emb = mx.zeros((1, 1, vision_dim), dtype=mx.float32)
-    return emb
+        tokenizer = AutoTokenizer.from_pretrained(te_path, local_files_only=True)
+    text_emb = te.encode(prompt, tokenizer, max_length=max_length)
+    return text_emb
 
 
 def generate_video(
@@ -107,7 +98,7 @@ def generate_video(
     mx.eval(vae.parameters())
 
     # Text embeddings
-    text_emb = _load_text_embeddings(prompt, model_path)
+    text_emb = _encode_prompt(prompt, model_path)
     text_emb_null = mx.zeros_like(text_emb)
 
     # Latent shape
@@ -132,9 +123,8 @@ def generate_video(
     )
 
     # I2V conditioning
-    image_cond = None
+    condition_mask = None
     if image is not None and is_predict2:
-        # VAE encode image -> replicate across time -> blend with noise
         import PIL.Image as PILImage
 
         if isinstance(image, str):
@@ -147,28 +137,41 @@ def generate_video(
         img_arr = mx.array(img_np, dtype=mx.float32)
         img_arr = img_arr.transpose(2, 0, 1)[None]  # (1, 3, H, W)
         img_arr = img_arr[:, :, None, :, :]  # (1, 3, 1, H, W)
-        # Pad to latent time dim
         img_latent = vae.encode(img_arr)
-        # Replicate across temporal dim
         img_cond = mx.broadcast_to(
             img_latent, (1, latent_ch, t_latent, h_latent, w_latent)
         )
-        # Blend with noise: Cosmos Predict2 uses noise + conditioning
-        noise = noise + img_cond * 0.1  # gentle conditioning blend
-        image_cond = img_latent  # Latent-space for DiT patch_embed (C=16)
+        noise = noise + img_cond * 0.1
+        condition_mask = mx.ones((1, 1, t_latent, h_latent, w_latent), dtype=mx.float32)
+        condition_mask = mx.concatenate(
+            [mx.zeros((1, 1, 1, h_latent, w_latent)), condition_mask[:, :, 1:]], axis=2
+        )
 
     # Scheduler
     scheduler.set_timesteps(num_inference_steps)
 
-    # Denoise
+    padding_mask = mx.ones((1, 1, h_latent, w_latent), dtype=mx.float32)
     latents = noise
     total_steps = len(scheduler.timesteps)
     cfg = float(cfg_scale) if cfg_scale is not None else 7.0
     for i, t in enumerate(scheduler.timesteps):
         timestep = mx.array([float(t)] * 1, dtype=mx.float32)
-        # CFG: uncond + cond
-        noise_pred_uncond = dit(latents, timestep, text_emb_null, image_cond=image_cond)
-        noise_pred_cond = dit(latents, timestep, text_emb, image_cond=image_cond)
+        noise_pred_uncond = dit(
+            latents,
+            timestep,
+            text_emb_null,
+            fps=fps,
+            padding_mask=padding_mask,
+            condition_mask=condition_mask,
+        )
+        noise_pred_cond = dit(
+            latents,
+            timestep,
+            text_emb,
+            fps=fps,
+            padding_mask=padding_mask,
+            condition_mask=condition_mask,
+        )
         noise_pred = noise_pred_uncond + cfg * (noise_pred_cond - noise_pred_uncond)
         latents = scheduler.step(noise_pred, t, latents)
         mx.eval(latents)
@@ -177,7 +180,7 @@ def generate_video(
         logger.debug("cosmos denoise step %d/%d", i + 1, total_steps)
 
     # I2V: blend conditioning back
-    if image is not None and is_predict2:
+    if image is not None and is_predict2 and img_cond is not None:
         latents = latents + img_cond * 0.05
 
     # VAE decode — use tiled for large latents to stay within memory/time limits
