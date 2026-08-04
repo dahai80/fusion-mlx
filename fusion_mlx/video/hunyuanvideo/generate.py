@@ -21,14 +21,54 @@ _DEFAULT_WIDTH = 720
 _DEFAULT_HEIGHT = 480
 
 
-def _tokenize_prompt(prompt, max_length=77):
-    tokens = [49406]
-    for ch in prompt[: max_length - 2]:
-        tokens.append(ord(ch) % 49408)
-    tokens.append(49407)
-    while len(tokens) < max_length:
-        tokens.append(0)
-    return mx.array(tokens[:max_length], dtype=mx.int32)[None]
+_CLIP_TOKENIZER_ID = "openai/clip-vit-large-patch14"
+_LLAMA_TOKENIZER_ID = "unsloth/llama-3-8b-bnb-4bit"
+_LLAMA_MAX_LENGTH = 256
+
+_clip_tokenizer = None
+_llama_tokenizer = None
+
+
+def _get_clip_tokenizer():
+    global _clip_tokenizer
+    if _clip_tokenizer is None:
+        from transformers import CLIPTokenizer
+        _clip_tokenizer = CLIPTokenizer.from_pretrained(_CLIP_TOKENIZER_ID)
+        logger.info("hunyuan: loaded CLIP tokenizer from %s", _CLIP_TOKENIZER_ID)
+    return _clip_tokenizer
+
+
+def _get_llama_tokenizer():
+    global _llama_tokenizer
+    if _llama_tokenizer is None:
+        from transformers import AutoTokenizer
+        _llama_tokenizer = AutoTokenizer.from_pretrained(_LLAMA_TOKENIZER_ID)
+        logger.info("hunyuan: loaded Llama3 tokenizer from %s", _LLAMA_TOKENIZER_ID)
+    return _llama_tokenizer
+
+
+def _tokenize_clip(prompt, max_length=77):
+    tok = _get_clip_tokenizer()
+    ids = tok(
+        prompt,
+        padding="max_length",
+        max_length=max_length,
+        truncation=True,
+        return_tensors="np",
+    )
+    return mx.array(ids["input_ids"], dtype=mx.int32)
+
+
+def _tokenize_llama(prompt, max_length=_LLAMA_MAX_LENGTH):
+    tok = _get_llama_tokenizer()
+    ids = tok(
+        prompt,
+        padding="max_length",
+        max_length=max_length,
+        truncation=True,
+        return_tensors="np",
+    )
+    return mx.array(ids["input_ids"], dtype=mx.int32)
 
 
 def generate_video(
@@ -89,8 +129,9 @@ def generate_video(
     mx.eval(text_encoder.parameters())
     mx.clear_cache()
 
-    input_ids = _tokenize_prompt(prompt)
-    text_emb, text_pooled = text_encoder(input_ids, input_ids)
+    clip_ids = _tokenize_clip(prompt)
+    llama_ids = _tokenize_llama(prompt)
+    text_emb, text_pooled = text_encoder(clip_ids, llama_ids)
     text_emb_null = mx.zeros_like(text_emb)
     text_pooled_null = mx.zeros_like(text_pooled)
 
