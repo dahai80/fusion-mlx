@@ -117,7 +117,7 @@ test_embedding.py
 test_embeddings.py
 test_embeddings_extra_guard.py
 test_embeddings_route.py
-test_embeddings_timeout_admission.py
+# test_embeddings_timeout_admission.py  # un-quarantined: H22 fixed, H6/C4 xfail(strict=True)
 test_enable_thinking_prompt_accounting.py
 test_enable_thinking_warning_header.py
 test_engine_keepalive.py
