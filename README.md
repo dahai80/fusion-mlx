@@ -841,6 +841,13 @@ Train LoRA or DORA adapters on any loaded model using `mlx_lm.tuner` under the h
 | POST | `/admin/api/fine-tune/adapters/{model_id}/{adapter_name}/serve` | Serve adapter via EnginePool |
 | POST | `/admin/api/fine-tune/adapters/{model_id}/{adapter_name}/unload` | Unload adapter engine |
 | GET | `/admin/api/fine-tune/models` | List fine-tunable models |
+| POST | `/admin/api/fine-tune/logprob` | Score prompt+completion logprob (#363) |
+| POST | `/admin/api/fine-tune/grpo/jobs` | Create a GRPO RL training job (#363) |
+| GET | `/admin/api/fine-tune/grpo/jobs` | List GRPO jobs |
+| GET | `/admin/api/fine-tune/grpo/jobs/{id}` | Get GRPO job details |
+| GET | `/admin/api/fine-tune/grpo/jobs/{id}/stream` | SSE GRPO progress stream |
+| POST | `/admin/api/fine-tune/grpo/jobs/{id}/cancel` | Cancel a GRPO job |
+| DELETE | `/admin/api/fine-tune/grpo/jobs/{id}` | Delete a GRPO job record |
 
 ### Quick Example
 
@@ -876,6 +883,74 @@ curl -X POST http://localhost:11434/admin/api/fine-tune/adapters/qwen3.5-9b/my-l
 # Unload adapter when done
 curl -X POST http://localhost:11434/admin/api/fine-tune/adapters/qwen3.5-9b/my-lora/unload
 ```
+
+### Logprob Scoring (#363 Phase 1)
+
+Score a completion under a prompt (teacher-forcing single forward pass).
+Optionally score under a LoRA adapter via `adapter_path`.
+
+```bash
+curl -X POST http://localhost:11434/admin/api/fine-tune/logprob \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model_id": "qwen3.5-9b",
+    "prompt": "The capital of France is",
+    "completion": " Paris",
+    "adapter_name": "my-lora"
+  }'
+# -> { "logprob": -1.28, "token_count": 1, "per_token": [-1.28] }
+```
+
+### GRPO Reinforcement Learning (#363 Phase 2)
+
+Group Relative Policy Optimization: trains a LoRA policy with PPO-clipped
+loss and group-normalized advantages. The reference (base) model is loaded
+on demand and evicted after each step to bound memory.
+
+```bash
+curl -X POST http://localhost:11434/admin/api/fine-tune/grpo/jobs \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model_id": "qwen3.5-9b",
+    "prompts": ["Solve: 2+2=", "Translate to French: hello"],
+    "adapter_name": "grpo-math",
+    "config": {
+      "group_size": 4,
+      "iters": 50,
+      "batch_size": 2,
+      "learning_rate": 1e-5,
+      "lora_layers": 16,
+      "lora_rank": 8,
+      "lora_alpha": 16.0,
+      "max_completion_len": 64,
+      "clip_ratio": 0.2,
+      "reward_endpoint": "http://localhost:8000/reward",
+      "temperature": 1.0
+    }
+  }'
+
+# Stream GRPO progress (SSE)
+curl -N http://localhost:11434/admin/api/fine-tune/grpo/jobs/{job_id}/stream
+```
+
+#### GRPO Config
+
+| Field | Default | Description |
+|-------|---------|-------------|
+| `group_size` | 4 | Completions sampled per prompt for advantage normalization |
+| `iters` | 50 | Training iterations |
+| `batch_size` | 2 | Prompts per iteration |
+| `learning_rate` | 1e-5 | AdamW learning rate (LoRA params only) |
+| `lora_layers` | 16 | Number of layers to convert to LoRA |
+| `lora_rank` | 8 | LoRA rank |
+| `lora_alpha` | 16.0 | LoRA scale (alpha) |
+| `lora_dropout` | 0.0 | LoRA dropout |
+| `max_completion_len` | 64 | Max tokens sampled per completion |
+| `clip_ratio` | 0.2 | PPO ratio clip |
+| `reward_endpoint` | "" | HTTP reward server (`POST {prompt, completions} -> {rewards}`); length-based fallback if empty |
+| `temperature` | 1.0 | Sampling temperature (0 = greedy) |
+| `seed` | 0 | MLX RNG seed |
+| `reward_timeout` | 30.0 | Reward endpoint timeout (seconds) |
 
 ### Key Behaviors
 
