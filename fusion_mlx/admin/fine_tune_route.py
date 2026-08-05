@@ -306,4 +306,61 @@ async def list_finetunable_models(
     return models
 
 
+# =============================================================================
+# Logprob Scoring Endpoint (#363 Phase 1)
+# =============================================================================
+
+
+@_router.post("/api/fine-tune/logprob")
+async def compute_logprob_endpoint(
+    request: Request,
+    is_admin: bool = Depends(require_admin),
+):
+    # Score sum log p(completion | prompt) under model_id, optionally with a
+    # trained adapter. Loads standalone (separate from inference pool), scores,
+    # evicts. Used by external RL trainers to get per-sample logprobs.
+    body = await request.json()
+
+    model_id = body.get("model_id", "")
+    prompt = body.get("prompt", "")
+    completion = body.get("completion", "")
+    adapter_name = body.get("adapter_name", "")
+
+    if not model_id:
+        raise HTTPException(status_code=400, detail="model_id is required")
+    if not completion:
+        raise HTTPException(status_code=400, detail="completion is required")
+
+    svc = _get_service()
+    model_path = svc._resolve_model_path(model_id)
+    if model_path is None:
+        raise HTTPException(status_code=404, detail=f"Model not found: {model_id}")
+
+    adapter_path = None
+    if adapter_name:
+        from fusion_mlx.training.service import ADAPTER_BASE_DIR
+
+        adapter_path = str(ADAPTER_BASE_DIR / model_id / adapter_name)
+        import os
+
+        if not os.path.isdir(adapter_path):
+            raise HTTPException(
+                status_code=404,
+                detail=f"Adapter not found: {model_id}/{adapter_name}",
+            )
+
+    from fusion_mlx.training.logprob import score_text
+
+    logger.info("logprob endpoint: model=%s adapter=%s", model_path, adapter_path)
+    try:
+        result = await asyncio.to_thread(
+            score_text, model_path, prompt, completion, adapter_path
+        )
+    except Exception as e:
+        logger.exception("logprob scoring failed")
+        raise HTTPException(status_code=500, detail=f"Scoring failed: {e}")
+
+    return result.to_dict()
+
+
 router = _router

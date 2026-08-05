@@ -209,6 +209,9 @@ ignore_missing_imports = true
 testpaths = ["tests"]
 python_files = ["test_*.py"]
 asyncio_mode = "auto"
+markers = [
+    "real_model: tests that load a real MLX model (gated by FUSION_MLX_REAL_MODEL_TESTS env var)",
+]
 
 [tool.coverage.run]
 source = ["fusion_mlx"]
