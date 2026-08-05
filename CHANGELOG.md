@@ -1,5 +1,38 @@
 # Changelog
 
+## [0.7.10] - 2026-08-05
+
+Remove the dead engine-method guided-decoding branch on `/v1/responses`
+(#373). The route read `engine.supports_guided_generation` and called
+`engine.generate_with_schema(...)`, but no engine class defines either
+symbol — the branch was dead code and a latent `AttributeError`. The
+live constrained path on `/v1/responses` is the R12-4 post-generate
+validation branch (`use_strict_postgen_validation`), which is buffered-
+only by design (the Responses surface has no guided-streaming SSE
+helper).
+
+### Fixed
+- **#373 - Dead guided-decoding branch on `/v1/responses`.** Removed the
+  `use_guided` / `engine.generate_with_schema` /
+  `engine.supports_guided_generation` references from
+  `fusion_mlx/routes_internal/responses.py` (`_resolve_strict_context`
+  and the `_non_stream` dispatch). Strict `json_schema` requests now go
+  straight to the R12-4 post-generate validation + single-repair-retry
+  path (the only live constrained path on this surface). Live constrained
+  decoding for the chat surface runs through the grammar-compiler
+  (xgrammar/llguidance) path in `openai_routes.py`, unchanged. The unused
+  `validate_output_against_schema` import was dropped.
+
+### Removed
+- `tests/unit/test_responses_chat_template_kwargs.py`: deleted the
+  `TestBatchedEngineGuidedHonorsEnableThinking` class (3 tests pinning
+  the removed `BatchedEngine.generate_with_schema` +
+  `shared_apply_chat_template` contract, previously `@pytest.mark.skip`)
+  and `test_strict_via_guided_path_also_auto_disables` (asserted the
+  removed `engine.generate_with_schema` call). Simplified the `_Engine`
+  mock (dropped `supports_guided` / `generate_with_schema` / `guided_calls`
+  / `guided_text`). 15 tests remain green.
+
 ## [0.7.9] - 2026-08-05
 
 Fix non-streaming chat completions returning empty `content` for Qwen3
