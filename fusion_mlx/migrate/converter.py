@@ -42,7 +42,7 @@ def _load_hf_weights(hf_dir: str) -> dict[str, mx.array]:
         f = safe_open(str(fname), framework="pt")
         import torch
 
-        for key in f:
+        for key in f.keys():  # noqa: SIM118 - safe_open is not iterable
             t = f.get_tensor(key)
             if isinstance(t, torch.Tensor):
                 if t.dtype == torch.bfloat16:
