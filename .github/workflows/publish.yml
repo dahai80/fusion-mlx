@@ -33,6 +33,10 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     environment: pypi
+    env:
+      # 阶段一(API token 首发,创建 PyPI 项目):PYPI_API_TOKEN 存在用 token
+      # 阶段二(trusted publisher):secret 删除后 fallback 到 OIDC
+      HAS_API_TOKEN: ${{ secrets.PYPI_API_TOKEN != '' }}
     steps:
       - name: Download distributions
         uses: actions/download-artifact@v8
@@ -41,7 +45,13 @@ jobs:
           path: dist/
       - name: Verify SHA256 checksums
         run: cd dist && sha256sum -c SHA256SUMS.txt
-      - name: Publish to PyPI
+      - name: Publish to PyPI (API token - first release to create project)
+        if: env.HAS_API_TOKEN == 'true'
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          password: ${{ secrets.PYPI_API_TOKEN }}
+      - name: Publish to PyPI (trusted publisher - OIDC)
+        if: env.HAS_API_TOKEN != 'true'
         uses: pypa/gh-action-pypi-publish@release/v1
 
   update-homebrew:
