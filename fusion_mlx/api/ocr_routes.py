@@ -129,7 +129,9 @@ async def list_ocr_models() -> dict[str, Any]:
     if _pool is None:
         raise HTTPException(status_code=503, detail="Server not initialized")
     models = []
-    for engine in _pool.engines.values():
+    for mid in _pool.get_loaded_model_ids():
+        entry = _pool.get_entry(mid)
+        engine = entry.engine if entry else None
         if isinstance(engine, VLMBatchedEngine) and engine.is_ocr_model:
             models.append(
                 {
