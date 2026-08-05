@@ -1,5 +1,44 @@
 # Changelog
 
+## [0.7.9] - 2026-08-05
+
+Fix non-streaming chat completions returning empty `content` for Qwen3
+thinking models when speculative decoding finishes the request (#364).
+
+### Fixed
+- **#364 - Non-stream `content: null` on Qwen3 thinking models.** The
+  EAGLE3 draft-model speculative-decode path (`spec_decode_step` in
+  `scheduler/spec_decode.py`) finished the request without setting
+  `out.output_text` on the final `RequestOutput`. Non-streaming reads
+  `output_text` off the merged final output (`engines/batched.py` →
+  `clean_special_tokens`), so `content` came back empty while
+  `completion_tokens` was still billed. Streaming (which accumulates
+  `new_text` per-token) was unaffected. Mirrored the `output_text`
+  decode + assignment already present in the sibling `ngram_spec_step`
+  and `dflash_spec_step` finish paths.
+- **#364 - `enable_thinking` dropped on `/v1/responses`.** The route
+  set `enable_thinking` as a top-level chat kwarg, but `engine.chat`
+  only forwards `chat_template_kwargs` to the chat-template render, so
+  the Qwen3 template ran in default thinking-on mode and a
+  `max_tokens`-truncated response lost the visible answer. Routed
+  `enable_thinking` through `chat_template_kwargs` and applied the
+  shared disable-by-default (`resolve_enable_thinking_default`) on both
+  the stream and non-stream paths, matching the `/v1/chat/completions`
+  behavior.
+- **Test debt - stale mock targets after `vllm_mlx`→`fusion_mlx` rename.**
+  `test_responses_chat_template_kwargs.py::TestAdapterForwarding`
+  patched `vllm_mlx.service.helpers.get_config`; corrected to
+  `fusion_mlx.config.get_config` (where `_get_cfg_attr` actually
+  imports it).
+
+### Skipped
+- **#373 - Guided-decoding drift.** Skipped
+  `TestBatchedEngineGuidedHonorsEnableThinking` (3 tests): pins
+  `BatchedEngine.generate_with_schema` + `shared_apply_chat_template`,
+  which were removed when guided decoding moved to the standalone
+  `api/guided.py` helper. The `/v1/responses` route still calls the
+  removed engine methods; tracked separately in #373.
+
 ## [0.7.8] - 2026-08-05
 
 Expose GRPO / logprob endpoints to support real reinforcement-learning

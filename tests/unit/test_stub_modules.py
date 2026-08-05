@@ -1,50 +1,25 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Unit tests for stub modules: _parent_watchdog, _download_gate.
+"""Unit tests for stub modules: _download_gate.
 
-These modules are stubs in the fusion-mlx build. Tests verify their
-no-op interface contract so they are not accidentally broken by refactors.
+``_download_gate`` is a no-op stub in this build; tests pin its no-op
+interface so it is not accidentally broken by refactors.
+
+Note: ``_parent_watchdog`` was a stub when this file was created but is
+now a real implementation (commit d152bb9). Its contract is covered by
+``test_parent_watchdog.py``. The former ``TestParentWatchdogStub`` class
+was removed because it installed the watchdog with a bogus ppid and no
+``on_orphan`` mock, so the real implementation's default orphan callback
+SIGTERM-killed the test runner. See ``test_parent_watchdog.py`` for the
+correct install-with-mock pattern.
 """
 
 from __future__ import annotations
-
-import logging
 
 from fusion_mlx._download_gate import (
     confirm_or_abort,
     estimate_repo_size_bytes,
     is_repo_cached,
 )
-from fusion_mlx._parent_watchdog import install_parent_watchdog, resolve_expected_ppid
-
-# =========================================================================
-# _parent_watchdog stub
-# =========================================================================
-
-
-class TestParentWatchdogStub:
-    """Parent watchdog is a no-op stub in this build."""
-
-    def test_install_does_not_raise(self):
-        # Should not raise regardless of arguments
-        install_parent_watchdog(12345)
-        install_parent_watchdog(0)
-        install_parent_watchdog(-1)
-
-    def test_install_with_interval_does_not_raise(self):
-        install_parent_watchdog(12345, interval=5.0)
-
-    def test_resolve_returns_same_value(self):
-        assert resolve_expected_ppid(42) == 42
-        assert resolve_expected_ppid(0) == 0
-
-    def test_resolve_none_returns_none(self):
-        assert resolve_expected_ppid(None) is None
-
-    def test_install_logs_debug_message(self, caplog):
-        caplog.set_level(logging.DEBUG)
-        install_parent_watchdog(99999)
-        assert any("Parent watchdog skipped" in r.message for r in caplog.records)
-
 
 # =========================================================================
 # _download_gate stub

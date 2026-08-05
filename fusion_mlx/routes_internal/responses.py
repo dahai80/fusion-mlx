@@ -50,6 +50,7 @@ from ..api.tool_calling import (
 from ..api.utils import (
     StreamingToolCallFilter,
     clean_output_text,
+    resolve_enable_thinking_default,
     strip_special_tokens,
 )
 from ..middleware.auth import verify_api_key
@@ -237,12 +238,13 @@ async def _apply_responses_postgen_validation(
         repair_kwargs = dict(chat_kwargs)
         for _k in ("tools", "tool_choice", "logprobs", "top_logprobs"):
             repair_kwargs.pop(_k, None)
+        _repair_ct = repair_kwargs.get("chat_template_kwargs") or {}
         _repair_fits = repair_messages_fit_context(
             engine,
             repair_messages,
             tools=None,
             max_tokens=repair_kwargs.get("max_tokens"),
-            enable_thinking=chat_kwargs.get("enable_thinking"),
+            enable_thinking=_repair_ct.get("enable_thinking"),
         )
         repair_output = None
         if not _repair_fits:
@@ -407,9 +409,21 @@ async def _non_stream(
     if openai_request.tools:
         chat_kwargs["tools"] = convert_tools_for_template(openai_request.tools)
 
+    # #364 — enable_thinking must reach the chat template via
+    # chat_template_kwargs, NOT the top-level chat_kwargs (engine.chat
+    # only forwards chat_template_kwargs to _apply_chat_template; a
+    # top-level enable_thinking is silently dropped). Without this,
+    # Qwen3 thinking models run in default thinking-on mode and a
+    # truncated response (max_tokens) yields content=None — the visible
+    # answer is lost while completion_tokens is still billed. Apply the
+    # shared disable-by-default so non-stream matches openai/anthropic
+    # routes (resolve_enable_thinking_default).
+    ct_kwargs = dict(getattr(openai_request, "chat_template_kwargs", {}) or {})
     resolved_thinking = getattr(openai_request, "enable_thinking", None)
     if resolved_thinking is not None:
-        chat_kwargs["enable_thinking"] = resolved_thinking
+        ct_kwargs["enable_thinking"] = resolved_thinking
+    resolve_enable_thinking_default(ct_kwargs)
+    chat_kwargs["chat_template_kwargs"] = ct_kwargs
 
     if strict_ctx is None:
         strict_ctx = {
@@ -629,9 +643,14 @@ async def _stream_responses(
     if openai_request.tools:
         chat_kwargs["tools"] = convert_tools_for_template(openai_request.tools)
 
+    # #364 — route enable_thinking through chat_template_kwargs (see
+    # _non_stream for rationale) so the Qwen3 chat template honors it.
+    ct_kwargs_stream = dict(getattr(openai_request, "chat_template_kwargs", {}) or {})
     resolved_thinking = getattr(openai_request, "enable_thinking", None)
     if resolved_thinking is not None:
-        chat_kwargs["enable_thinking"] = resolved_thinking
+        ct_kwargs_stream["enable_thinking"] = resolved_thinking
+    resolve_enable_thinking_default(ct_kwargs_stream)
+    chat_kwargs["chat_template_kwargs"] = ct_kwargs_stream
 
     uses_computer_use = request_uses_computer_use(responses_request)
 
