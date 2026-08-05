@@ -1189,6 +1189,15 @@ class Server:
         _fine_tune_svc.set_loop(asyncio.get_running_loop())
         set_fine_tune_context(self.pool, _fine_tune_svc)
 
+        # Wire GRPO service (#363)
+        from .admin.fine_tune_route import set_grpo_context
+        from .training.grpo_service import GRPOService
+
+        _grpo_svc = GRPOService()
+        _grpo_svc.set_engine_pool(self.pool)
+        _grpo_svc.set_loop(asyncio.get_running_loop())
+        set_grpo_context(self.pool, _grpo_svc)
+
         # Auto-add adapters dir to FUSION_LORA_ALLOWED_DIRS so trained
         # adapters can be served via EnginePool hot-swap without manual env config
         import os

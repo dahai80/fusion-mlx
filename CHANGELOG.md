@@ -1,5 +1,31 @@
 # Changelog
 
+## [0.7.8] - 2026-08-05
+
+Expose GRPO / logprob endpoints to support real reinforcement-learning
+training (#363).
+
+### Added
+- **#363 Phase 1 - `logprob` endpoint.** `POST /admin/api/fine-tune/logprob`
+  returns `{logprob, token_count, per_token}` for a prompt+completion pair
+  under a teacher-forcing single forward pass. Optional `adapter_path`
+  scores under a LoRA adapter via native `mlx_lm.load(adapter_path=...)`.
+  Backed by `fusion_mlx.training.logprob.compute_logprob` (handles both
+  bare-logits and `(logits, cache)` model return shapes).
+- **#363 Phase 2 - GRPO training endpoints.**
+  - `POST /admin/api/fine-tune/grpo/jobs` creates a Group Relative Policy
+    Optimization training job (LoRA policy, on-demand base-model reference).
+  - `GET /admin/api/fine-tune/grpo/jobs`, `GET .../{id}`,
+    `POST .../{id}/cancel`, `DELETE .../{id}`, `GET .../{id}/stream` (SSE).
+  - `fusion_mlx.training.grpo.GRPOTrainer`: PPO-clipped policy loss with
+    group-normalized advantages, `generate_step` sampling, configurable
+    reward endpoint (`POST {prompt, completions} -> {rewards}`) with a
+    length-based fallback, AdamW optimizer over LoRA params.
+  - `fusion_mlx.training.grpo_service.GRPOService`: job queue mirroring
+    `FineTuneService` lifecycle (persisted to
+    `~/.fusion-mlx/adapters/grpo_jobs.json`), load-on-demand reference model
+    evicted after each step.
+
 ## [0.7.7] - 2026-08-05
 
 Implement the missing `fusion_mlx.positioned_kv_cache` module (#360).
