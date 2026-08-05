@@ -406,6 +406,17 @@ def spec_decode_step(
                 else RequestStatus.FINISHED_LENGTH_CAPPED
             )
             out.output_token_ids = list(request.output_token_ids)
+            # Non-streaming responses read ``output_text`` off the final
+            # RequestOutput (``engine_core.generate`` returns the last
+            # output). The regular finalize path in ``sched_response``
+            # that normally sets ``output_text`` is bypassed when the
+            # spec path finishes the request, so mirror it here — decode
+            # the full token list, leaving special-token scrubbing to
+            # the engine layer (``clean_special_tokens``). Without this
+            # the non-streaming ``content`` comes back empty while
+            # streaming (which uses ``new_text``) stays correct (#364).
+            out.output_text = scheduler.tokenizer.decode(request.output_token_ids)
+            request.output_text = out.output_text
 
         outputs.append(out)
         if is_finished:
