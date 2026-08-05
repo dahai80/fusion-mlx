@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.7.2] - 2026-08-05
+
+Patch release shipping fixes for #355, #356, #357, a latent converter weight-loading bug, and CI lint repairs.
+
+### Reliability
+- **#355 - load admission KV headroom.** Admission projection now reserves `min(max_kv_cache_memory, 2 GiB)` for the live KV cache + activations, using the last observed post-load footprint when available. Closes the weights-only under-projection that admitted models which then OOMed under concurrent load. Tunable via `FUSION_MLX_ADMISSION_KV_HEADROOM_GB` (0 disables).
+- **#357 - `/v1/models/status` route shadowing.** The status route is now registered before the `gui_compat` catch-all `/v1/models/{model_name}`, so status is reachable.
+- **Converter SIM118 breakage (latent).** `migrate/converter.py` iterated a `safetensors.safe_open` handle with `for key in f:`, which raises `TypeError` (safe_open has no `__iter__`). Restored `for key in f.keys():` with `# noqa: SIM118`. Runtime weight-mapping path; no test coverage.
+
+### Observability / Docs
+- **#356 - unset `iogpu.wired_limit_mb`.** When the sysctl is unset and the Apple Metal cap is within the static ceiling, the startup log is raised from `DEBUG` -> `INFO` with the actionable `sudo sysctl iogpu.wired_limit_mb=N` hint. New README subsection documents when/how to set the sysctl, value guidance, and persistence via `/etc/sysctl.conf`.
+- **Admin active_requests counting** restored to a precise count.
+
+### CI/CD
+- **Lint job runs on Python 3.13.** black's AST safety check needs runner Python >= highest `target-version` (py313). Bumped `.github/workflows/ci.yml` lint job from 3.12 -> 3.13.
+- Reformat `tests/unit/test_active_models_visibility.py` (committed unformatted).
+
 ## [Unreleased]
 
 ### Security
