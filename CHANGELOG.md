@@ -1,5 +1,33 @@
 # Changelog
 
+## [0.7.6] - 2026-08-05
+
+Fine-tune queue-stuck fix (#361) + source-code TODO hygiene.
+
+### Fixed
+- **#361 - second fine-tune job stuck in `queued`.**
+  `FineTuneService.start_processing()` gated on a sticky `_running` flag
+  that was set on the first job and never cleared — so every subsequent
+  job was enqueued but `_process_queue()` was never called and the job
+  stayed `queued` forever. `_running` is now treated as a one-time
+  "initialized" marker (not a concurrency gate); `start_processing()`
+  always calls `_process_queue()`, and `_current_job_id is not None` is
+  the sole concurrency guard (it already was). Regression tests:
+  `test_second_job_processed_after_first_drains`,
+  `test_start_processing_idempotent_when_running`.
+
+### Maintenance
+- **Stale TODOs removed.** Three placeholder TODOs in
+  `runtime/diffusion_lane.py` and `doctor/__init__.py` referenced
+  modules that now exist (`model_aliases.resolve_profile`,
+  `scheduler.BackpressureError`/`SchedulerConfig`, `bench.tier_runner`)
+  — replaced with factual comments.
+- **#360 - `fusion_mlx.positioned_kv_cache` not implemented.** The one
+  genuinely-missing module referenced by `runtime/disk_kv_checkpoint.py`
+  (lines 99/130/443, for `positioned_update_and_fetch` pre-checkpoint
+  writes) now has a tracking issue (#360); the in-source TODO updated to
+  reference it.
+
 ## [0.7.5] - 2026-08-05
 
 Regression-test coverage for the OCR model enumeration crash (#359).
