@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.7.5] - 2026-08-05
+
+Regression-test coverage for the OCR model enumeration crash (#359).
+
+### Tests
+- **#359 - `GET /v1/ocr/models` regression tests.** The crash
+  (`AttributeError: 'EnginePool' object has no attribute 'engines'` at
+  `ocr_routes.py:132`) was fixed on `main` in commit `0c15ff6` by switching to
+  the public accessors `get_loaded_model_ids()` + `get_entry()`, but had no
+  test coverage. Added `TestListOcrModelsRoute` to `tests/unit/test_ocr_routes.py`
+  (2 cases): lists only `is_ocr_model` engines via the accessor contract, and
+  no crash on an empty pool. Uses `MagicMock(spec=VLMBatchedEngine)` so the
+  route's `isinstance` filter is exercised.
+
 ## [0.7.4] - 2026-08-05
 
 Cross-host gateway shared-secret authentication (#352).

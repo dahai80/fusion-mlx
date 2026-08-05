@@ -72,3 +72,66 @@ class TestSetOcrContext:
         from fusion_mlx.api.ocr_routes import _pool
 
         assert _pool is mock_pool
+
+
+class TestListOcrModelsRoute:
+    # #359: GET /v1/ocr/models crashed with AttributeError 'EnginePool' has no
+    # attribute 'engines' after the pool refactor moved engines to _entries.
+    # Regression: route must use get_loaded_model_ids() + get_entry().
+
+    def _make_engine(self, is_ocr: bool, model_id: str):
+        # spec=VLMBatchedEngine so isinstance(engine, VLMBatchedEngine) in the
+        # route passes (the real filter the #359 regression hinges on).
+        from fusion_mlx.engines.vlm import VLMBatchedEngine
+
+        engine = MagicMock(spec=VLMBatchedEngine)
+        engine.is_ocr_model = is_ocr
+        engine.model_id = model_id
+        engine.model_type = "vlm_ocr"
+        return engine
+
+    def _make_pool(self, engines: list):
+        # Build a mock pool honoring the public accessor contract (#359 fix).
+        ids = [e.model_id for e in engines]
+        entries = {e.model_id: MagicMock(engine=e) for e in engines}
+
+        pool = MagicMock()
+        pool.get_loaded_model_ids.return_value = ids
+        pool.get_entry.side_effect = lambda mid: entries.get(mid)
+        return pool
+
+    def test_lists_only_ocr_engines(self):
+        from fastapi import FastAPI
+        from fastapi.testclient import TestClient
+
+        from fusion_mlx.api.ocr_routes import router, set_ocr_context
+
+        engines = [
+            self._make_engine(is_ocr=True, model_id="ocr-a"),
+            self._make_engine(is_ocr=False, model_id="vlm-b"),
+        ]
+        set_ocr_context(self._make_pool(engines))
+
+        app = FastAPI()
+        app.include_router(router)
+        client = TestClient(app)
+        r = client.get("/v1/ocr/models")
+        assert r.status_code == 200
+        body = r.json()
+        ids = [m["id"] for m in body["models"]]
+        assert ids == ["ocr-a"]
+        assert body["models"][0]["capabilities"] == ["chat", "vision", "ocr"]
+
+    def test_no_crash_on_empty_pool(self):
+        from fastapi import FastAPI
+        from fastapi.testclient import TestClient
+
+        from fusion_mlx.api.ocr_routes import router, set_ocr_context
+
+        set_ocr_context(self._make_pool([]))
+        app = FastAPI()
+        app.include_router(router)
+        client = TestClient(app)
+        r = client.get("/v1/ocr/models")
+        assert r.status_code == 200
+        assert r.json() == {"models": []}
