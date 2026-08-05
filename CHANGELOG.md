@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.7.3] - 2026-08-05
+
+Packaging fix to enable the PyPI first release (#348). The five git-commit-pinned
+dependencies violated PyPI's no-direct-dependency policy
+(`400 Can't have direct dependency: mlx-lm @ git+https://...`), blocking upload.
+
+### Packaging
+- **#348 - PyPI direct-dependency fix.** Replaced the five `@ git+...@<commit>`
+  pins with precise PyPI `==` version pins that map to the same upstream code:
+  `mlx-lm==0.31.3`, `mlx-embeddings==0.1.0`, `mlx-vlm==0.5.0`,
+  `dflash-mlx==0.1.7`, `mlx-audio[tts,stt,sts]==0.4.3` (audio extra). Both the
+  `[project] dependencies` and `[tool.uv] override-dependencies` sections updated.
+- **Supply-chain integrity migration.** Replaced `scripts/verify_git_pins.sh`
+  (validated git commit SHAs) with `scripts/verify_pypi_hashes.sh`, which locks
+  and verifies the SHA256 of each pinned wheel + sdist against pypi.org's
+  published digests. Run with `bash scripts/verify_pypi_hashes.sh` (5/5 OK).
+
 ## [0.7.2] - 2026-08-05
 
 Patch release shipping fixes for #355, #356, #357, a latent converter weight-loading bug, and CI lint repairs.
