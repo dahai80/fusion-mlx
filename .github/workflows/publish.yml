@@ -23,11 +23,19 @@ jobs:
           cd dist/
           sha256sum *.whl *.tar.gz > SHA256SUMS.txt
           cat SHA256SUMS.txt
+          # 把 checksum 移出 dist/,避免 pypa/gh-action-pypi-publish 把它当成发布物
+          # (InvalidDistribution: Unknown distribution format: 'SHA256SUMS.txt')
+          mv SHA256SUMS.txt ../SHA256SUMS.txt
       - name: Upload distributions
         uses: actions/upload-artifact@v7
         with:
           name: dist
           path: dist/
+      - name: Upload checksums
+        uses: actions/upload-artifact@v7
+        with:
+          name: checksums
+          path: SHA256SUMS.txt
 
   publish:
     needs: build
@@ -43,8 +51,13 @@ jobs:
         with:
           name: dist
           path: dist/
+      - name: Download checksums
+        uses: actions/download-artifact@v8
+        with:
+          name: checksums
+          path: .
       - name: Verify SHA256 checksums
-        run: cd dist && sha256sum -c SHA256SUMS.txt
+        run: cd dist && sha256sum -c ../SHA256SUMS.txt
       - name: Publish to PyPI (API token - first release to create project)
         if: env.HAS_API_TOKEN == 'true'
         uses: pypa/gh-action-pypi-publish@release/v1
