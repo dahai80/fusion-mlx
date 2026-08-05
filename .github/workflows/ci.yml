@@ -13,7 +13,11 @@ jobs:
             - uses: actions/checkout@v7
             - uses: actions/setup-python@v7
               with:
-                  python-version: "3.12"
+                  # Black's target-version includes py313, so its AST safety
+                  # check must run on a Python >= the highest target (3.13).
+                  # Running on 3.12 makes py313-formatted files "would reformat"
+                  # spuriously. Matches the dev env + the test matrix's 3.13.
+                  python-version: "3.13"
             - run: pip install ruff black mypy
             - run: ruff check fusion_mlx/ tests/
             - run: black --check fusion_mlx/ tests/

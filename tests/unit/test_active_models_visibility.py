@@ -63,9 +63,7 @@ def test_active_models_generation_includes_activity_and_waiting_rows():
     )
 
     with (
-        patch.object(
-            admin_stats, "_get_engine_pool", return_value=FakePool(scheduler)
-        ),
+        patch.object(admin_stats, "_get_engine_pool", return_value=FakePool(scheduler)),
         patch("fusion_mlx.admin.stats._get_server_state", return_value=None),
         patch.object(admin_stats, "_get_settings_manager", return_value=None),
         patch.object(admin_stats, "_get_global_settings", return_value=None),
@@ -119,9 +117,7 @@ def test_active_models_does_not_count_waiting_collectors_as_active():
     )
 
     with (
-        patch.object(
-            admin_stats, "_get_engine_pool", return_value=FakePool(scheduler)
-        ),
+        patch.object(admin_stats, "_get_engine_pool", return_value=FakePool(scheduler)),
         patch("fusion_mlx.admin.stats._get_server_state", return_value=None),
         patch.object(admin_stats, "_get_settings_manager", return_value=None),
         patch.object(admin_stats, "_get_global_settings", return_value=None),
