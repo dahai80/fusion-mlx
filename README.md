@@ -1222,6 +1222,39 @@ FUSION_MLX_ADMISSION_KV_HEADROOM_GB=0 fusion-mlx serve --model qwen3.5-4b-4bit
 > `InsufficientMemoryError`. Both log the projected footprint breakdown
 > (`current / effective / kv_headroom`) at WARN for diagnosis.
 
+### Metal wired memory limit (`iogpu.wired_limit_mb`, #356)
+
+Metal's wired-memory allocator is capped by macOS at roughly 75% of unified
+memory (`max_recommended_working_set_size`). fusion-mlx's ceiling model is
+`Ceiling = min(static_ceiling, dynamic_ceiling, metal_cap)`, so when `metal_cap`
+is the Apple default, the configured `memory_guard_tier` ceiling cannot be
+reached above that ~75% line even if `static_ceiling` allows it.
+
+To let fusion-mlx use more of unified memory for model weights + KV cache, raise
+the kernel wired limit with:
+
+```bash
+# N = desired wired-memory ceiling in MB. Example: 96 GiB on a 128 GB Mac.
+sudo sysctl iogpu.wired_limit_mb=98304
+```
+
+Persist it across reboots by appending to `/etc/sysctl.conf`:
+
+```bash
+echo 'iogpu.wired_limit_mb=98304' | sudo tee -a /etc/sysctl.conf
+```
+
+How to choose `N`:
+- Leave ~10% RAM for the OS and other apps: `N_mb ≈ (total_ram_gb * 0.9) * 1024`.
+- fusion-mlx reads the live value via `sysctl -n iogpu.wired_limit_mb` on
+  startup; no restart of the daemon is needed if you set it before `serve`.
+- `0` (unset) is the safe default - Metal keeps the Apple cap and fusion-mlx
+  still clamps against it; no crash, just a lower effective ceiling.
+
+At startup, if `iogpu.wired_limit_mb` is unset, fusion-mlx logs an `INFO` line
+naming the current Apple cap and the `sudo sysctl` command to raise it, so the
+hint is visible at the default log level (previously `DEBUG`).
+
 <!-- Video Adapters section: documents IP-Adapter, ControlNet, AnimateDiff adapters.
   Importers: fusion_mlx.video.adapters.{ip_adapter,controlnet,animatediff}
   Callers: SkyReelsPipelineConfig, VideoGenParams, VideoGenerateRequest

@@ -199,11 +199,16 @@ def _apply_metal_wired_limit(desired_bytes: int) -> tuple[int, int | None]:
                 desired_bytes // (1024**2),
             )
         else:
-            logger.debug(
-                "Skipping mx.set_wired_limit because iogpu.wired_limit_mb is "
-                "unset (target=%s, Apple cap=%s)",
-                _format_gb(desired_bytes),
+            logger.info(
+                "iogpu.wired_limit_mb is unset; Metal wired limit keeps "
+                "Apple's default cap (%s). The static ceiling (%s) is within "
+                "the Apple cap, so no clamping occurs - but the configured "
+                "memory_guard_tier ceiling cannot be reached above the Apple "
+                "default. To raise it, set: sudo sysctl "
+                "iogpu.wired_limit_mb=%d",
                 _format_gb(effective_cap),
+                _format_gb(desired_bytes),
+                desired_bytes // (1024**2),
             )
         return 0, None
 
