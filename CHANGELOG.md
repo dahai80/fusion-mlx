@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.7.4] - 2026-08-05
+
+Cross-host gateway shared-secret authentication (#352).
+
+### Security
+- **#352 - `FUSION_ROUTE_TOKEN` shared secret.** When the `FUSION_ROUTE_TOKEN`
+  env var is set, `X-Fusion-Route` is upgraded from spoofable routing provenance
+  to a credential: its value must equal the token, validated with
+  `hmac.compare_digest` (constant time). Missing/mismatched → `403
+  invalid_route_token`. When unset (default), the header keeps its
+  presence-only check from #343 — no behavior change for existing single-host
+  deployments. Validation lives in `RouteGuardMiddleware` (ASGI layer), so it
+  applies uniformly before any route handler. Health probes (`/`, `/health`,
+  `/healthz`, `/readyz`, `/livez`, `/openapi.json`, `/docs`, `/redoc`,
+  `/favicon.ico`) and `OPTIONS` preflight remain exempt. The token is enforced
+  even under `FUSION_ROUTE_WARN_ONLY=true` (stricter wins), so a cross-host
+  gateway can't be accidentally downgraded to warn-only. Added
+  `tests/unit/test_route_guard_token.py` (8 cases).
+
 ## [0.7.3] - 2026-08-05
 
 Packaging fix to enable the PyPI first release (#348). The five git-commit-pinned

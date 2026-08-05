@@ -944,10 +944,11 @@ fusion-mlx is the link endpoint in a 3-tier chain: App -> Gateway -> MLX. By def
 | `FUSION_ROUTE_ENFORCE` | `true` | When `true` (default since v0.7.0, #349), requests missing the `X-Fusion-Route` header are rejected with `403`. Accepted as an explicit opt-in (redundant with the default, kept for backward compatibility). |
 | `FUSION_ROUTE_WARN_ONLY` | `false` | Dev/standalone override (#349). When `true`, restores phase-1 warn-only behavior: a missing `X-Fusion-Route` is logged at WARN and allowed. Set this for standalone local-server use without a gateway. |
 | `FUSION_ALLOW_ANONYMOUS` | `false` | Dev override. When `true`, requests without an API key are allowed. Does **not** bypass a configured `api_key` - a matching key is still required when one is set. |
+| `FUSION_ROUTE_TOKEN` | _(unset)_ | #352. Optional shared secret for cross-host gateway→MLX auth. When set, `X-Fusion-Route`'s value must equal this token (constant-time compare); missing/mismatched → `403 invalid_route_token`. When unset, `X-Fusion-Route` keeps its provenance-only presence check (#343). The token is enforced even under `FUSION_ROUTE_WARN_ONLY=true` (stricter wins). |
 
 ### Access policy
 
-- **Route guard (#343):** routed requests should carry `X-Fusion-Route: gateway` so the server knows they came through the gateway. Exempt paths: `/`, `/health`, `/healthz`, `/readyz`, `/livez`, `/openapi.json`, `/docs`, `/redoc`, `/favicon.ico`, and `OPTIONS` preflight. Enforce is the default since v0.7.0 (#349): un-routed traffic is rejected with `403`. Set `FUSION_ROUTE_WARN_ONLY=true` to restore warn-only behavior for standalone use. The header is routing provenance only - it does **not** authenticate a caller (any client can set it).
+- **Route guard (#343):** routed requests should carry `X-Fusion-Route: gateway` so the server knows they came through the gateway. Exempt paths: `/`, `/health`, `/healthz`, `/readyz`, `/livez`, `/openapi.json`, `/docs`, `/redoc`, `/favicon.ico`, and `OPTIONS` preflight. Enforce is the default since v0.7.0 (#349): un-routed traffic is rejected with `403`. Set `FUSION_ROUTE_WARN_ONLY=true` to restore warn-only behavior for standalone use. The header is routing provenance only - it does **not** authenticate a caller (any client can set it). For cross-host deployments where the gateway is on a different machine, set `FUSION_ROUTE_TOKEN` (#352) to upgrade `X-Fusion-Route` from spoofable provenance to a shared-secret credential: its value must equal the token, else `403 invalid_route_token`.
 - **Management endpoints (#344):** `/metrics` and `/v1/status` require `verify_management_access` - a valid API key or `FUSION_ALLOW_ANONYMOUS=true`. Since v0.7.0 (#350) loopback no longer exempts management endpoints: a same-host client (including a co-located gateway) must forward a valid API key, or set the dev override. `X-Fusion-Route` is not accepted as authentication.
 - **Model lifecycle (#345):** `/v1/models/load` and `/v1/models/unload` require `X-Fusion-Source: model-hub` (or a loopback client); otherwise `403`.
 - **Anonymous access (#346):** rejected by default. Allow only for local dev via `FUSION_ALLOW_ANONYMOUS=true`. Since v0.7.0 (#350) loopback clients are no longer exempt - a same-host client (including a co-located gateway) must present a valid API key. A gateway must forward a valid API key; `X-Fusion-Route` alone does not authenticate.
@@ -961,6 +962,10 @@ FUSION_ROUTE_WARN_ONLY=true fusion-mlx serve --model qwen3.5-4b-4bit
 
 # Behind a gateway (default since v0.7.0: enforce X-Fusion-Route)
 fusion-mlx serve --model qwen3.5-4b-4bit
+
+# Cross-host gateway (#352): shared-secret on X-Fusion-Route value
+FUSION_ROUTE_TOKEN=$(cat /etc/fusion/gateway.token) fusion-mlx serve --model qwen3.5-4b-4bit
+# Gateway then sends: X-Fusion-Route: <same-token>
 ```
 
 ### Unix Domain Socket (UDS) listen mode (#351)

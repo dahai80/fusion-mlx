@@ -23,6 +23,7 @@ preflights keep working without the header.
 
 from __future__ import annotations
 
+import hmac
 import json
 import logging
 import os
@@ -59,6 +60,15 @@ def _route_enforce_enabled() -> bool:
     if _warn_only_enabled():
         return False
     return True
+
+
+def _configured_route_token() -> str | None:
+    # #352: optional shared secret for cross-host gateway->MLX auth. When set,
+    # X-Fusion-Route is upgraded from spoofable provenance to a credential
+    # validated with hmac.compare_digest. Empty/unset = feature OFF (current
+    # presence-check behavior). Env-only, like the other FUSION_ROUTE_* vars.
+    token = os.environ.get("FUSION_ROUTE_TOKEN", "").strip()
+    return token or None
 
 
 def _raw_path(scope: dict[str, Any]) -> bytes:
@@ -106,6 +116,47 @@ class RouteGuardMiddleware:
             return await self.app(scope, receive, send)
 
         route = _header_value(scope, "x-fusion-route")
+        token = _configured_route_token()
+        if token:
+            # #352: X-Fusion-Route carries the shared secret. Constant-time
+            # compare; missing/mismatched -> 403 invalid_route_token. This is
+            # stricter than the presence check below, so it takes precedence.
+            if not route or not hmac.compare_digest(route, token):
+                logger.warning(
+                    "[route_guard] rejected: invalid X-Fusion-Route token "
+                    "host=%s path=%s",
+                    _client_host(scope),
+                    path.decode("ascii", "replace"),
+                )
+                body = json.dumps(
+                    {
+                        "error": {
+                            "message": "Invalid X-Fusion-Route token",
+                            "code": "invalid_route_token",
+                        }
+                    },
+                    separators=(",", ":"),
+                ).encode("utf-8")
+                await send(
+                    {
+                        "type": "http.response.start",
+                        "status": 403,
+                        "headers": [
+                            (b"content-type", b"application/json"),
+                            (b"content-length", str(len(body)).encode("ascii")),
+                        ],
+                    }
+                )
+                await send(
+                    {
+                        "type": "http.response.body",
+                        "body": body,
+                        "more_body": False,
+                    }
+                )
+                return
+            return await self.app(scope, receive, send)
+
         if route:
             return await self.app(scope, receive, send)
 
