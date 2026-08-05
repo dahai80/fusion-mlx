@@ -44,9 +44,8 @@ from typing import Any
 
 from ..engine.base import BaseEngine, GenerationOutput
 
-# TODO: fusion_mlx.model_aliases does not yet export resolve_profile.
-# The function exists in Rapid-MLX but is missing here; port it before
-# using DiffusionEngine with alias-based tool-call routing.
+# resolve_profile is available on fusion_mlx.model_aliases (ported from
+# Rapid-MLX). Used for alias-based tool-call routing in DiffusionEngine.
 from ..model_aliases import resolve_profile
 
 logger = logging.getLogger(__name__)
@@ -596,9 +595,8 @@ class DiffusionEngine(BaseEngine):
         through). When no config is provided (test stubs,
         programmatic callers), the dataclass default applies.
         """
-        # TODO: fusion_mlx.scheduler does not yet exist.
-        # Port BackpressureError and SchedulerConfig from Rapid-MLX
-        # before enabling admission control.
+        # BackpressureError + SchedulerConfig are available on
+        # fusion_mlx.scheduler (ported from Rapid-MLX).
         from ..scheduler import BackpressureError, SchedulerConfig
 
         # Stuck-worker short-circuit — refuse new work while the
@@ -1083,8 +1081,7 @@ class DiffusionEngine(BaseEngine):
             # equivalent. ``check_admission`` continues to deliver the
             # clean 503 for the NORMAL admission path.
             if self._worker_stuck:
-                # TODO: fusion_mlx.scheduler does not yet exist.
-                # Port BackpressureError from Rapid-MLX.
+                # BackpressureError is available on fusion_mlx.scheduler.
                 from ..scheduler import BackpressureError
 
                 raise BackpressureError(

@@ -96,9 +96,10 @@ below the per-step scheduler cadence.
 # into server lifespan via runtime.cache.load_prefix_cache_from_disk /
 # save_prefix_cache_to_disk.
 
-# TODO: fusion_mlx.positioned_kv_cache does not exist yet in fusion-mlx.
-# Referenced for positioned_update_and_fetch pre-checkpoint writes.
-# Adapt the integration once fusion_mlx.positioned_kv_cache is implemented.
+# TODO(#360): fusion_mlx.positioned_kv_cache does not exist yet in fusion-mlx.
+# Referenced for positioned_update_and_fetch pre-checkpoint writes
+# (see lines 129, 442). Adapt the integration once the module is implemented.
+# Tracked in issue #360.
 
 from __future__ import annotations
 

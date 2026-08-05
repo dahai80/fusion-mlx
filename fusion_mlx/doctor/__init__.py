@@ -20,12 +20,11 @@ Exit codes:
 from .env_health import Check, CheckStatus, Report, Section, run_all
 
 # Deprecated compatibility re-exports. The internal consumer
-# (``fusion_mlx.bench.tiers.*``) was removed; these are kept solely so
+# (``fusion_mlx.bench.tier_runner.*``) was removed; these are kept solely so
 # external PyPI users with ``from fusion_mlx.doctor import DoctorRunner``
 # (or any of the others) don't break across the upgrade. Prefer
 # importing from ``fusion_mlx.doctor.runner`` directly. May be dropped in
 # a future major-version bump.
-# TODO: fusion_mlx.bench.tiers may not exist in fusion-mlx; verify availability
 from .runner import (  # noqa: F401  # public surface, deprecated
     CheckResult,
     DoctorRunner,
