@@ -1,5 +1,28 @@
 # Changelog
 
+## [0.7.7] - 2026-08-05
+
+Implement the missing `fusion_mlx.positioned_kv_cache` module (#360).
+
+### Added
+- **#360 - `positioned_kv_cache` module.** Implements
+  `positioned_update_and_fetch(cache, keys, values, position)` — a
+  non-appending write that places keys/values at an arbitrary position
+  in MLX-LM `KVCache` / `QuantizedKVCache` layers (buffer grows
+  step-aligned via `_grow_kv_cache`, offset advances to
+  `max(offset, position+num_steps)`). Operates on plain cache layers
+  without subclassing, so layers still round-trip through
+  `mlx_lm.save_prompt_cache` / `load_prompt_cache`. This is the
+  pre-checkpoint write contract referenced by
+  `runtime/disk_kv_checkpoint.py:443`. 11 unit tests
+  (`tests/unit/test_positioned_kv_cache.py`): positioned writes on
+  dense + quantized caches, step-aligned growth, offset semantics,
+  negative-position rejection, and save/load round-trip for both cache
+  types. The `disk_kv_checkpoint.py` TODO updated to reflect the module
+  now exists; the scheduler hook that drives that checkpoint path
+  remains unmigrated (tracked by
+  `tests/unit/test_scheduler_disk_kv_hook.py` skip-tests).
+
 ## [0.7.6] - 2026-08-05
 
 Fine-tune queue-stuck fix (#361) + source-code TODO hygiene.
