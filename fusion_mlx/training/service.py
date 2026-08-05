@@ -336,8 +336,11 @@ class FineTuneService:
     # =========================================================================
 
     def start_processing(self):
-        if self._running:
-            return
+        # _running is a one-time "initialized" marker, NOT a concurrency gate.
+        # Concurrency is guarded by _current_job_id in _process_queue(). Gating
+        # start_processing on a sticky _running flag meant jobs submitted after
+        # the first one never got processed (issue #361): create_job enqueues,
+        # but start_processing bailed out and _process_queue was never called.
         self._running = True
         if self._loop is None:
             try:
@@ -345,7 +348,7 @@ class FineTuneService:
             except RuntimeError:
                 self._loop = asyncio.new_event_loop()
         self._process_queue()
-        logger.info("Fine-tune service started, processing queue")
+        logger.info("Fine-tune service processing queue (jobs=%d)", len(self._queue))
 
     def _process_queue(self):
         if not self._running:

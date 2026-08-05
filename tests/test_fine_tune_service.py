@@ -415,3 +415,48 @@ class TestProgressCallback:
         assert job.progress.val_loss == 3.0
         assert len(job.events) == 1
         assert job.events[0]["type"] == "val_loss"
+
+
+class TestStartProcessingQueueDrain:
+    # Regression for issue #361: jobs submitted after the first one stayed
+    # stuck in "queued" because start_processing early-returned on the sticky
+    # _running flag and never called _process_queue for later submissions.
+
+    def test_second_job_processed_after_first_drains(self, svc):
+        svc.set_loop(MagicMock())
+        run_calls = []
+
+        async def _fake_run(self, job):
+            run_calls.append(job.job_id)
+            job.status = JobStatus.COMPLETED
+            job.terminal = True
+            job.finished_at = 0.0
+
+        with patch.object(FineTuneService, "_run_job", _fake_run), \
+             patch.object(FineTuneService, "_execute_training", lambda self, j: None):
+            job_a = svc.create_job("m", "/tmp/d", FineTuneConfig(), "a")
+            svc.start_processing()
+            assert job_a.status == JobStatus.RUNNING
+            assert svc._current_job_id == job_a.job_id
+            # simulate _run_job finally block draining the running job
+            svc._current_job_id = None
+            job_a.status = JobStatus.COMPLETED
+            job_a.terminal = True
+            # second submission after queue is idle
+            job_b = svc.create_job("m", "/tmp/d", FineTuneConfig(), "b")
+            svc.start_processing()
+            assert job_b.status == JobStatus.RUNNING, \
+                "second job must transition to running, not stay queued"
+
+    def test_start_processing_idempotent_when_running(self, svc):
+        svc.set_loop(MagicMock())
+        with patch.object(FineTuneService, "_run_job", AsyncMock()), \
+             patch.object(FineTuneService, "_execute_training", lambda self, j: None):
+            svc.create_job("m", "/tmp/d", FineTuneConfig(), "a")
+            svc.start_processing()
+            assert svc._running is True
+            # calling again with a new job must still process it
+            svc._current_job_id = None
+            job_b = svc.create_job("m", "/tmp/d", FineTuneConfig(), "b")
+            svc.start_processing()
+            assert job_b.status == JobStatus.RUNNING
