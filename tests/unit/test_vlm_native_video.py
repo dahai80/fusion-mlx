@@ -38,6 +38,12 @@ class TestNativeVideoLoadVideoCall:
     def test_load_video_called_with_positional_args(self, monkeypatch):
         captured = {}
 
+        def fake_load_video_ele(ele):
+            captured["video_path"] = ele["video"]
+            captured["fps"] = ele["fps"]
+            captured["max_frames"] = ele["max_frames"]
+            return np.zeros((4, 3, 8, 8), dtype=np.uint8), 2.0
+
         def fake_load_video(video_path, fps=2.0, max_frames=768, **kw):
             captured["video_path"] = video_path
             captured["fps"] = fps
@@ -62,6 +68,7 @@ class TestNativeVideoLoadVideoCall:
         monkeypatch.setattr(
             "fusion_mlx.utils.video.process_video_input", lambda v: "/tmp/x.mp4"
         )
+        monkeypatch.setattr("mlx_vlm.video_generate.load_video", fake_load_video_ele)
         monkeypatch.setattr("mlx_vlm.utils.load_video", fake_load_video)
         monkeypatch.setattr("mlx_vlm.utils.prepare_inputs", fake_prepare_inputs)
         monkeypatch.setattr(

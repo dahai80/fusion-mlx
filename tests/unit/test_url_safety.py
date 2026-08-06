@@ -1,3 +1,4 @@
+from fusion_mlx.api import _url_safety as _us
 from fusion_mlx.api._url_safety import is_safe_local_path, is_safe_url
 
 
@@ -27,7 +28,8 @@ class TestIsSafeUrl:
 class TestIsSafeLocalPath:
     def test_allowed_model_dir(self, tmp_path, monkeypatch):
         monkeypatch.setattr(
-            "fusion_mlx.api._url_safety._ALLOWED_READ_DIRS",
+            _us,
+            "_ALLOWED_READ_DIRS",
             [str(tmp_path)],
         )
         test_file = tmp_path / "model.safetensors"
@@ -36,14 +38,16 @@ class TestIsSafeLocalPath:
 
     def test_traversal_blocked(self, tmp_path, monkeypatch):
         monkeypatch.setattr(
-            "fusion_mlx.api._url_safety._ALLOWED_READ_DIRS",
+            _us,
+            "_ALLOWED_READ_DIRS",
             [str(tmp_path)],
         )
         assert not is_safe_local_path("/etc/passwd")
 
     def test_path_traversal_dotdot_blocked(self, tmp_path, monkeypatch):
         monkeypatch.setattr(
-            "fusion_mlx.api._url_safety._ALLOWED_READ_DIRS",
+            _us,
+            "_ALLOWED_READ_DIRS",
             [str(tmp_path / "safe")],
         )
         (tmp_path / "safe").mkdir()
@@ -58,7 +62,8 @@ class TestIsSafeLocalPath:
 
     def test_file_uri_scheme(self, tmp_path, monkeypatch):
         monkeypatch.setattr(
-            "fusion_mlx.api._url_safety._ALLOWED_READ_DIRS",
+            _us,
+            "_ALLOWED_READ_DIRS",
             [str(tmp_path)],
         )
         test_file = tmp_path / "model.bin"
@@ -67,7 +72,8 @@ class TestIsSafeLocalPath:
 
     def test_nonexistent_path_in_allowed_dir(self, tmp_path, monkeypatch):
         monkeypatch.setattr(
-            "fusion_mlx.api._url_safety._ALLOWED_READ_DIRS",
+            _us,
+            "_ALLOWED_READ_DIRS",
             [str(tmp_path)],
         )
         assert is_safe_local_path(str(tmp_path / "does_not_exist.bin"))
