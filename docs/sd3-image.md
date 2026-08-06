@@ -33,9 +33,33 @@ text-conditioning stack.
 | Asset | Source repo | Notes |
 |-------|-------------|-------|
 | Transformer + VAE | `argmaxinc/mlx-stable-diffusion-3-medium` (`sd3_medium.safetensors`) | ComfyUI naming (`model.diffusion_model.*`, `first_stage_model.*`). Loaded via `weights.load_transformer` / `weights.load_vae`. |
-| CLIP-L | `frankjoshua/stable-diffusion-3-medium-diffusers` (`text_encoder/`) | HF `text_model.*` naming, loads directly. |
+| CLIP-L | `frankjoshua/stable-diffusion-3-medium-diffusers` (`text_encoder/`) | HF `text_model.*` naming, loads directly. Cast to fp32 (mflux CLIPEncoder float32 mask must promote under fp16 weights). |
 | CLIP-G | same repo (`text_encoder_2/`) | HF `text_model.*` naming. |
-| T5-XXL | same repo (`text_encoder_3/`) | Sharded `model-0000{1,2}-of-00002.safetensors` + index. |
+| T5-XXL | same repo (`text_encoder_3/`) | Sharded `model-0000{1,2}-of-00002.safetensors` + index (fp16). |
+
+### fp8 T5 (single-file)
+
+T5-XXL is also supported as a single **fp8 e4m3fn** file
+(`t5xxl_fp8_e4m3fn.safetensors`, ~4.9 GB — the common ComfyUI distribution).
+When present it is decoded via `torch.float8_e4m3fn → float32 → bfloat16` and
+preferred over the sharded fp16 path; if absent the loader falls back to
+shards automatically. This is what the validated E2E used (SD3.5-medium
+cache ships the same encoders as SD3-medium).
+
+### Local / offline weight override
+
+All encoder + tokenizer resolutions honor `SD3_LOCAL_DIR`: when set, files
+are read directly from that directory (plain folder layout, no HF blob
+cache) before falling back to `hf_hub_download`. Additional env overrides:
+
+| Env var | Purpose |
+|---------|---------|
+| `SD3_LOCAL_DIR` | Root dir of a local SD3 weight tree (encoders + tokenizers) |
+| `SD3_ENCODERS_REPO` | Override the HF encoders repo |
+| `SD3_CLIP_L_SUBFOLDER` / `SD3_CLIP_L_FILE` | CLIP-L weight location |
+| `SD3_CLIP_G_SUBFOLDER` / `SD3_CLIP_G_FILE` | CLIP-G weight location |
+| `SD3_T5_SUBFOLDER` | T5 shard subfolder (fp16 fallback) |
+| `SD3_T5_FP8_SUBFOLDER` / `SD3_T5_FP8_FILE` | fp8 T5 single-file location |
 
 Conv weights are transposed PyTorch `(out,in,kH,kW)` → MLX `(out,kH,kW,in)`;
 attention 1×1 convs `(c,c,1,1)` are squeezed to `(c,c)` for `nn.Linear`.
@@ -112,5 +136,18 @@ factory and carry their own config object.
   reuse the mflux/Flux VAE class.
 - **`safe_open` iteration**: use `f.keys()` (not `for k in f`) — `safe_open`
   objects are not iterable in safetensors ≥ 0.8.
+- **CLIP-L fp16 mask promotion**: mflux's `CLIPEncoder` builds a float32
+  causal mask; with fp16 weights `scaled_dot_product_attention` raises
+  "Mask type must promote to output type float16". CLIP-L weights are cast
+  to fp32 on load (196 keys, ~235 MB — negligible). CLIP-G uses the
+  in-tree `CLIPTextModel` whose mask is cast to `hidden.dtype`, so it stays
+  native precision.
+- **fp8 T5 has no native MLX dtype**: MLX reads `F8_E4M3` tensors as raw
+  `uint8`; decoding goes through `torch.float8_e4m3fn → float32` (torch is
+  the authority) then to `bfloat16` for the mflux `T5Encoder`.
+- **Rectified-flow runs N+1 steps**: `FlowMatchEulerScheduler` produces
+  `N+1` timesteps (sigmas `linspace(1,0,N+1)` time-shifted + appended 0);
+  the denoise loop iterates all of them — `step {N+1}/{N+1}` is expected,
+  not an off-by-one.
 - **fp16 mask**: the CLIP causal mask must be cast to `hidden.dtype` for
   `scaled_dot_product_attention` (weights ship as fp16).
