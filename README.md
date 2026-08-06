@@ -1154,6 +1154,13 @@ to the correct pure-MLX implementation. Supported backends:
 Aliases: `svd-xt`, `stable-video-diffusion`, `cosmos-1.0`, `predict2`,
 `video2world`, `hunyuan-video`, `hunyuan_video`, `cogvideox`, `ltx-video`, `wan`.
 
+> **Video DiT throughput (#367):** HunyuanVideo and Cosmos fuse the
+> uncond+cond CFG pair into a single batched B=2 DiT forward (~2x
+> throughput, no quality change). `cfg_scale <= 1.0` skips the uncond
+> branch (single-forward shortcut). Step-level it/s INFO logging
+> reports progress for ComfyUI and makes hangs vs. slow steps
+> diagnosable. Wan2/VACE already used batched CFG.
+
 ### VACE: Video-Conditioned Auxiliary Control (Wan2.1-VACE-14B)
 
 VACE enables **Video-to-Video (V2V)** and **Audio-to-Video (A2V)** control on
