@@ -109,6 +109,26 @@ VARIANT_MAP: dict[str, tuple[str, str, str, float]] = {
         "sd3_medium",
         4.0,
     ),
+    # SDXL native MLX pipeline (dual text encoders CLIP-L + OpenCLIP-G,
+    # 2048 cross-attn dim). Covers sdxl_base / cosxl_edit / sdxs variants.
+    "sdxl": (
+        "fusion_mlx.image.sdxl.generate",
+        "SDXLPipeline",
+        "sdxl_base",
+        7.5,
+    ),
+    "cosxl": (
+        "fusion_mlx.image.sdxl.generate",
+        "SDXLPipeline",
+        "cosxl_edit",
+        7.5,
+    ),
+    "sdxs": (
+        "fusion_mlx.image.sdxl.generate",
+        "SDXLPipeline",
+        "sdxs",
+        4.0,
+    ),
 }
 
 
@@ -116,6 +136,12 @@ def _infer_variant(model_path: str) -> str:
     name = (model_path or "").lower()
     if "sd3" in name or "stable-diffusion-3" in name:
         return "sd3"
+    if "sdxs" in name:
+        return "sdxs"
+    if "cosxl" in name:
+        return "cosxl"
+    if "sdxl" in name or "stable-diffusion-xl" in name or "stable_diffusion-xl" in name:
+        return "sdxl"
     if "controlnet" in name and "upscaler" in name:
         return "controlnet_upscaler"
     if "controlnet" in name and "canny" in name:
@@ -421,7 +447,15 @@ class ImageGenEngine(BaseNonStreamingEngine):
                     shift = kwargs.get("shift")
                     if shift is not None:
                         gen_kwargs["shift"] = shift
-                if negative_prompt is not None and variant != "sd3":
+                elif variant in ("sdxl", "cosxl", "sdxs"):
+                    if negative_prompt is not None:
+                        gen_kwargs["negative_prompt"] = negative_prompt
+                if negative_prompt is not None and variant not in (
+                    "sd3",
+                    "sdxl",
+                    "cosxl",
+                    "sdxs",
+                ):
                     logger.warning(
                         "Flux does not support negative_prompt; "
                         "ignoring (got %d chars)",
