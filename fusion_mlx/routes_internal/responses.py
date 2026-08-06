@@ -45,7 +45,6 @@ from ..api.tool_calling import (
     convert_tools_for_template,
     extract_json_schema_for_guided,
     is_strict_json_schema,
-    validate_output_against_schema,
 )
 from ..api.utils import (
     StreamingToolCallFilter,
@@ -97,7 +96,6 @@ def _resolve_strict_context(
             "strict_mode": False,
             "strict_enforcement_active": False,
             "json_schema": None,
-            "use_guided": False,
             "use_strict_postgen_validation": False,
         }
 
@@ -183,19 +181,23 @@ def _resolve_strict_context(
         )
 
     incr_strict_request()
-    use_guided = bool(engine.supports_guided_generation)
+    # #373 — the legacy engine-method guided path
+    # (``engine.supports_guided_generation`` /
+    # ``engine.generate_with_schema``) was removed when guided decoding
+    # moved to the standalone-helper / grammar-compiler architecture, but
+    # the route kept reading those symbols. No engine defines them, so
+    # ``use_guided`` was always False and the live constrained path on
+    # /v1/responses is the R12-4 post-generate validation branch below
+    # (buffered-only by design — no guided-streaming SSE helper exists
+    # for the Responses event shape). The dead ``engine.generate_with_schema``
+    # call site was a latent ``AttributeError``; it is removed here.
     use_strict_postgen_validation = False
-    if use_guided:
-        logger.info(
-            "Using guided generation for JSON schema enforcement on "
-            "/v1/responses (strict=true)"
-        )
-    elif strict_enforcement_active:
+    if strict_enforcement_active:
         use_strict_postgen_validation = True
         logger.info(
-            "Strict json_schema mode active without [guided] extra on "
-            "/v1/responses - engaging R12-4 post-generate validation + "
-            "single repair retry path."
+            "Strict json_schema mode active on /v1/responses - engaging "
+            "R12-4 post-generate validation + single repair retry path "
+            "(constrained decoding on the Responses surface is buffered-only)."
         )
     else:
         logger.warning(
@@ -208,7 +210,6 @@ def _resolve_strict_context(
         "strict_mode": True,
         "strict_enforcement_active": strict_enforcement_active,
         "json_schema": schema_check,
-        "use_guided": use_guided,
         "use_strict_postgen_validation": use_strict_postgen_validation,
     }
 
@@ -428,103 +429,24 @@ async def _non_stream(
     if strict_ctx is None:
         strict_ctx = {
             "strict_mode": False,
-            "use_guided": False,
             "use_strict_postgen_validation": False,
             "json_schema": None,
         }
     strict_mode = strict_ctx["strict_mode"]
-    use_guided = strict_ctx["use_guided"]
     use_strict_postgen_validation = strict_ctx["use_strict_postgen_validation"]
     json_schema = strict_ctx["json_schema"]
 
     start_time = time.perf_counter()
     output = None
-    if use_guided and json_schema:
-        # Constrained dispatch. Strip any colliding ``raise_on_failure``
-        # a caller may have injected via sampling kwargs, then set it
-        # explicitly so guided failures propagate to the tight try below
-        # (instead of the engine silently returning invalid output).
-        guided_kwargs = {
-            k: v for k, v in chat_kwargs.items() if k != "raise_on_failure"
-        }
-        guided_kwargs["raise_on_failure"] = True
-        try:
-            output = await _wait_with_disconnect(
-                engine.generate_with_schema(
-                    messages=messages,
-                    json_schema=json_schema,
-                    **guided_kwargs,
-                ),
-                request,
-                timeout=300.0,
-            )
-        except HTTPException:
-            raise
-        except Exception as guided_err:
-            if strict_mode:
-                incr_strict_violation()
-                logger.warning(
-                    "Strict json_schema guided generation failed on "
-                    "/v1/responses; refusing to fall back to unconstrained "
-                    "because strict=true: %s",
-                    guided_err,
-                )
-                raise HTTPException(
-                    status_code=502,
-                    detail={
-                        "error": {
-                            "message": (
-                                "strict response_format could not be "
-                                "honored: the constrained-decoding path "
-                                f"raised {type(guided_err).__name__} "
-                                "before producing any output. The server "
-                                "refuses to fall back to unconstrained "
-                                "generation because the client asked for "
-                                "strict=true."
-                            ),
-                            "type": "api_error",
-                            "code": "strict_schema_violation",
-                            "param": "text.format",
-                        }
-                    },
-                ) from guided_err
-            logger.warning(
-                "Guided generation failed on /v1/responses, falling back "
-                "to standard: %s",
-                guided_err,
-            )
-            output = await _wait_with_disconnect(
-                engine.chat(messages=messages, **chat_kwargs),
-                request,
-                timeout=300.0,
-            )
-        if strict_mode and output is not None:
-            ok, err = validate_output_against_schema(output.text or "", json_schema)
-            if not ok:
-                incr_strict_violation()
-                logger.warning(
-                    "Strict json_schema response failed post-decode "
-                    "validation on /v1/responses: %s",
-                    err,
-                )
-                raise HTTPException(
-                    status_code=502,
-                    detail={
-                        "error": {
-                            "message": (
-                                "strict response_format violated: model "
-                                "output did not validate against the "
-                                f"supplied schema ({err}). This indicates "
-                                "the constrained-decoding path silently "
-                                "degraded."
-                            ),
-                            "type": "api_error",
-                            "code": "strict_schema_violation",
-                            "param": "text.format",
-                        }
-                    },
-                )
-    elif use_strict_postgen_validation and json_schema:
+    # #373 — the legacy engine-method guided branch
+    # (``engine.generate_with_schema`` / ``supports_guided_generation``) was
+    # removed: no engine defines those symbols, so the branch was dead code
+    # and a latent ``AttributeError``. The live constrained path on
+    # /v1/responses is the R12-4 post-generate validation branch below
+    # (buffered-only — the Responses surface has no guided-streaming SSE
+    # helper). Live constrained decoding for the chat surface runs through
+    # the grammar-compiler (xgrammar/llguidance) path in openai_routes.py.
+    if use_strict_postgen_validation and json_schema:
         try:
             output = await _wait_with_disconnect(
                 engine.chat(messages=messages, **chat_kwargs),
