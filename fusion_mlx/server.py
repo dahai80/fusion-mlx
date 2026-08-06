@@ -271,6 +271,24 @@ def _runtime_base_info(pool) -> dict[str, Any]:
     }
 
 
+_NODE_PLATFORM_CACHE: str | None = None
+
+
+def _node_platform() -> str:
+    """Cached platform tag for this node (#365).
+
+    Detected once per process via ``cluster.platform.detect_platform`` and
+    cached so repeated snapshots don't re-probe torch.cuda.
+    """
+    global _NODE_PLATFORM_CACHE
+    if _NODE_PLATFORM_CACHE is None:
+        from .cluster.platform import detect_platform
+
+        _NODE_PLATFORM_CACHE = str(detect_platform())
+        logger.info("node platform: %s", _NODE_PLATFORM_CACHE)
+    return _NODE_PLATFORM_CACHE
+
+
 def _node_load_snapshot(pool, config) -> dict[str, Any]:
     # Issue #264: node-level load snapshot for Multi-Node cluster routing.
     # Reuses pool.get_status() + ServerMetrics + psutil; adds system memory
@@ -336,6 +354,7 @@ def _node_load_snapshot(pool, config) -> dict[str, Any]:
         "node_id": node_id,
         "host": host,
         "port": port,
+        "platform": _node_platform(),
         "uptime_seconds": round(metrics.get("uptime_seconds", 0.0), 3),
         "active_requests": metrics.get("active_requests", 0),
         "memory": {

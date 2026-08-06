@@ -55,6 +55,10 @@ x86+CUDA stack structurally cannot match. These are **landed and running today**
   pipeline: prior → decoder (unified `StableCascadeUNet` by
   `switch_level`) → VQGAN, DDPM-Würstchen scheduler, CLIP-ViT-bigG.
   See [docs/cascade-image.md](docs/cascade-image.md).
+- **Windows CUDA backend node (#365)** - optional vLLM-powered OpenAI-compatible
+  node for heavy LLM inference (DeepSeek 70B / Qwen 72B FP8) on Windows CUDA,
+  self-registering `platform=windows-cuda` over mDNS for fusion-gateway
+  platform routing. See [docs/cuda-node.md](docs/cuda-node.md).
 - **Metal Flash Attention (MFA) (#86)** - vendored Metal kernels for DiT
   attention (LTX-2, Wan2).
 

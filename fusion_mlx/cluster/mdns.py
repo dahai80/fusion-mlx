@@ -24,6 +24,8 @@ def build_txt_records(snapshot: dict) -> dict[str, str]:
     records["node_id"] = str(snapshot.get("node_id", ""))
     records["host"] = str(snapshot.get("host", ""))
     records["port"] = str(snapshot.get("port", ""))
+    # Platform tag for fusion-gateway platform routing (#365).
+    records["platform"] = str(snapshot.get("platform", "mac"))
     loaded = [m["id"] for m in snapshot.get("models", []) if m.get("loaded")]
     records["models_csv"] = ",".join(loaded)
     mem = snapshot.get("memory", {})

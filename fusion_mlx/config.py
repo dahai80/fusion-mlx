@@ -305,6 +305,11 @@ class ServerConfig:
     # mDNS/Bonjour cluster advertising
     cluster_advertise: bool = False
 
+    # Node platform tag for gateway routing (#365). Auto-detected when None
+    # (darwin->mac, win32+CUDA->windows-cuda); override with FUSION_PLATFORM
+    # or this field. Surfaced via mDNS TXT "platform".
+    platform: str | None = None
+
     # Behavior flags
     gc_control: bool = True
     no_thinking: bool = False
