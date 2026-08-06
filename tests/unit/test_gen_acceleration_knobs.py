@@ -164,11 +164,25 @@ class TestImageGenKnobFlow:
             def flux2_klein_9b():
                 return "flux2_klein_9b_cfg"
 
+            @staticmethod
+            def schnell():
+                return "flux1_schnell_cfg"
+
+            @staticmethod
+            def dev():
+                return "flux1_dev_cfg"
+
         fake_cfg_mod.ModelConfig = ModelConfig
         fake_flux_mod = types.ModuleType(
             "mflux.models.flux2.variants.txt2img.flux2_klein"
         )
         fake_flux_mod.Flux2Klein = FakeFlux
+        # FLUX.1 (dev/schnell) lives in mflux.models.flux.cli.flux_generate
+        # since #368/#375; "flux-schnell" resolves to flux1_schnell -> Flux1.
+        fake_flux1_pkg_flux = types.ModuleType("mflux.models.flux")
+        fake_flux1_pkg_cli = types.ModuleType("mflux.models.flux.cli")
+        fake_flux1_mod = types.ModuleType("mflux.models.flux.cli.flux_generate")
+        fake_flux1_mod.Flux1 = FakeFlux
         fake_mflux = types.ModuleType("mflux")
         fake_mflux_pkg_models = types.ModuleType("mflux.models")
         fake_mflux_pkg_common = types.ModuleType("mflux.models.common")
@@ -182,6 +196,11 @@ class TestImageGenKnobFlow:
         monkeypatch.setitem(sys.modules, "mflux.models.common", fake_mflux_pkg_common)
         monkeypatch.setitem(
             sys.modules, "mflux.models.common.config.model_config", fake_cfg_mod
+        )
+        monkeypatch.setitem(sys.modules, "mflux.models.flux", fake_flux1_pkg_flux)
+        monkeypatch.setitem(sys.modules, "mflux.models.flux.cli", fake_flux1_pkg_cli)
+        monkeypatch.setitem(
+            sys.modules, "mflux.models.flux.cli.flux_generate", fake_flux1_mod
         )
         monkeypatch.setitem(sys.modules, "mflux.models.flux2", fake_mflux_pkg_flux2)
         monkeypatch.setitem(

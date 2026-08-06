@@ -3,6 +3,7 @@
 
 import logging
 import os
+import time
 
 import mlx.core as mx
 import numpy as np
@@ -154,30 +155,81 @@ def generate_video(
     latents = noise
     total_steps = len(scheduler.timesteps)
     cfg = float(cfg_scale) if cfg_scale is not None else 7.0
+    # #367 perf: CFG batched guidance — fuse uncond+cond into a single B=2
+    # forward (DiT is batch-safe along dim 0) instead of two separate full
+    # forwards. ~2x throughput, no quality change. cfg<=1.0 skips the uncond
+    # branch entirely (single-forward shortcut).
+    use_single_forward = cfg <= 1.0
+    if use_single_forward:
+        logger.info("cosmos: cfg=%.2f <=1.0, single-forward (no uncond branch)", cfg)
+    logger.info(
+        "cosmos: denoise start steps=%d cfg=%.2f batched_cfg=%s",
+        total_steps,
+        cfg,
+        not use_single_forward,
+    )
+    step_t0 = time.time()
     for i, t in enumerate(scheduler.timesteps):
-        timestep = mx.array([float(t)] * 1, dtype=mx.float32)
-        noise_pred_uncond = dit(
-            latents,
-            timestep,
-            text_emb_null,
-            fps=fps,
-            padding_mask=padding_mask,
-            condition_mask=condition_mask,
-        )
-        noise_pred_cond = dit(
-            latents,
-            timestep,
-            text_emb,
-            fps=fps,
-            padding_mask=padding_mask,
-            condition_mask=condition_mask,
-        )
-        noise_pred = noise_pred_uncond + cfg * (noise_pred_cond - noise_pred_uncond)
+        if use_single_forward:
+            timestep = mx.array([float(t)], dtype=mx.float32)
+            noise_pred = dit(
+                latents,
+                timestep,
+                text_emb,
+                fps=fps,
+                padding_mask=padding_mask,
+                condition_mask=condition_mask,
+            )
+            mx.eval(noise_pred)
+        else:
+            timestep = mx.array([float(t)] * 2, dtype=mx.float32)
+            latents_2 = mx.concatenate([latents, latents], axis=0)
+            text_emb_2 = mx.concatenate([text_emb_null, text_emb], axis=0)
+            padding_mask_2 = (
+                mx.broadcast_to(padding_mask, (2, 1, h_latent, w_latent))
+                if padding_mask is not None
+                else None
+            )
+            condition_mask_2 = (
+                mx.broadcast_to(condition_mask, (2, 1, t_latent, h_latent, w_latent))
+                if condition_mask is not None
+                else None
+            )
+            noise_pred_2 = dit(
+                latents_2,
+                timestep,
+                text_emb_2,
+                fps=fps,
+                padding_mask=padding_mask_2,
+                condition_mask=condition_mask_2,
+            )
+            mx.eval(noise_pred_2)
+            noise_pred_uncond, noise_pred_cond = noise_pred_2[0:1], noise_pred_2[1:2]
+            noise_pred = noise_pred_uncond + cfg * (noise_pred_cond - noise_pred_uncond)
+            del latents_2, text_emb_2, padding_mask_2, condition_mask_2
+            del noise_pred_2, noise_pred_uncond, noise_pred_cond
         latents = scheduler.step(noise_pred, t, latents)
         mx.eval(latents)
+        mx.clear_cache()
         if on_step is not None:
             on_step(i + 1, total_steps)
-        logger.debug("cosmos denoise step %d/%d", i + 1, total_steps)
+        step_dt = time.time() - step_t0
+        if (i + 1) % 5 == 0 or i == 0 or i == total_steps - 1:
+            logger.info(
+                "cosmos denoise step %d/%d dt=%.2fs it/s=%.2f",
+                i + 1,
+                total_steps,
+                step_dt / (i + 1),
+                (i + 1) / step_dt,
+            )
+        else:
+            logger.debug("cosmos denoise step %d/%d", i + 1, total_steps)
+    logger.info(
+        "cosmos: denoise done steps=%d total=%.2fs avg_it/s=%.2f",
+        total_steps,
+        time.time() - step_t0,
+        total_steps / (time.time() - step_t0),
+    )
 
     # I2V: blend conditioning back
     if image is not None and is_predict2 and img_cond is not None:

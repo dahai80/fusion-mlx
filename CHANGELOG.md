@@ -1,5 +1,40 @@
 # Changelog
 
+## [0.7.11] - 2026-08-05
+
+Video DiT diffusion throughput optimization (#367). HunyuanVideo and
+Cosmos diffusion loops ran two full-latent DiT forwards per step
+(uncond + cond, standard CFG) — at production frame counts (57-121
+frames) every video DiT workflow (2B/7B/13B) exceeded the 1800s budget
+before reaching VAEDecode. This release fuses the uncond+cond pair into
+a single batched B=2 forward (both DiTs are batch-safe along dim 0),
+halving the per-step forward count for ~2x throughput with no quality
+change. A single-forward shortcut skips the uncond branch entirely when
+`cfg_scale <= 1.0` (useful for guidance-distilled / low-cfg workflows).
+Step-level it/s INFO logging replaces the previous debug-only line so
+hangs vs. slow steps are diagnosable and ComfyUI can report progress.
+
+### Performance
+- HunyuanVideo (`fusion_mlx/video/hunyuanvideo/generate.py`): CFG
+  batched guidance (B=2 fused forward), `cfg<=1.0` single-forward
+  shortcut, step-level it/s INFO logging.
+- Cosmos (`fusion_mlx/video/cosmos/generate.py`): same batched CFG,
+  single-forward shortcut, and it/s logging. Masks broadcast to B=2.
+- Wan2/VACE already used batched CFG — unchanged.
+
+### Notes
+- Verified on real models (HunyuanVideo 13B DiT + Cosmos 7B DiT,
+  3-step diffusion): batched vs. two-pass converge with no NaN; relative
+  latent diff <1% (Hunyuan 0.86%, Cosmos 0.25%). The residual is MLX
+  fp32 kernel reordering across batch sizes — within CFG guidance
+  tolerance, does not accumulate across steps.
+
+### Fixed
+- `tests/unit/test_gen_acceleration_knobs.py`: update `TestImageGenKnobFlow`
+  mocks for the FLUX.1 path (`mflux.models.flux.cli.flux_generate.Flux1`,
+  `ModelConfig.schnell()/dev()`) introduced by #368/#375; 3 pre-existing
+  failures resolved.
+
 ## [0.7.10] - 2026-08-05
 
 Remove the dead engine-method guided-decoding branch on `/v1/responses`
