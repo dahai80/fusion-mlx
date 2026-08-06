@@ -70,8 +70,11 @@ class FlowMatchEulerScheduler:
         self._step_index = 0
         logger.info(
             "SD3 scheduler steps=%d seq_len=%d mu=%.4f sigma[0]=%.4f sigma[-2]=%.4f",
-            num_inference_steps, image_seq_len, mu,
-            float(sigmas[0]), float(sigmas[-2]),
+            num_inference_steps,
+            image_seq_len,
+            mu,
+            float(sigmas[0]),
+            float(sigmas[-2]),
         )
 
     @property

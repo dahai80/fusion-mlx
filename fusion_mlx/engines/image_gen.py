@@ -102,11 +102,20 @@ VARIANT_MAP: dict[str, tuple[str, str, str, float]] = {
         "dev_redux",
         4.0,
     ),
+    # SD3-Medium native MLX pipeline (no mflux ModelConfig; SD3Config inside).
+    "sd3": (
+        "fusion_mlx.image.sd3.generate",
+        "SD3Pipeline",
+        "sd3_medium",
+        4.0,
+    ),
 }
 
 
 def _infer_variant(model_path: str) -> str:
     name = (model_path or "").lower()
+    if "sd3" in name or "stable-diffusion-3" in name:
+        return "sd3"
     if "controlnet" in name and "upscaler" in name:
         return "controlnet_upscaler"
     if "controlnet" in name and "canny" in name:
@@ -244,6 +253,23 @@ class ImageGenEngine(BaseNonStreamingEngine):
         def _load():
             import importlib
 
+            mod = importlib.import_module(module_path)
+            cls = getattr(mod, cls_name)
+            # Native (fusion_mlx) variants carry their own config object and
+            # do not use mflux's ModelConfig factory.
+            if module_path.startswith("fusion_mlx."):
+                logger.info(
+                    "ImageGen loading native variant=%s class=%s path=%s",
+                    self._variant,
+                    cls_name,
+                    self._model_path,
+                )
+                flux = cls(
+                    model_config=None,
+                    model_path=self._model_path,
+                    quantize=self._quantize,
+                )
+                return flux
             model_config = getattr(ModelConfig, config_label)()
             logger.info(
                 "ImageGen loading variant=%s config=%s path=%s",
@@ -251,8 +277,6 @@ class ImageGenEngine(BaseNonStreamingEngine):
                 config_label,
                 self._model_path,
             )
-            mod = importlib.import_module(module_path)
-            cls = getattr(mod, cls_name)
             flux = cls(
                 model_config=model_config,
                 model_path=self._model_path,
@@ -391,7 +415,13 @@ class ImageGenEngine(BaseNonStreamingEngine):
                         gen_kwargs["image_path"] = img
                         if image_strength is not None:
                             gen_kwargs["image_strength"] = image_strength
-                if negative_prompt is not None:
+                elif variant == "sd3":
+                    if negative_prompt is not None:
+                        gen_kwargs["negative_prompt"] = negative_prompt
+                    shift = kwargs.get("shift")
+                    if shift is not None:
+                        gen_kwargs["shift"] = shift
+                if negative_prompt is not None and variant != "sd3":
                     logger.warning(
                         "Flux does not support negative_prompt; "
                         "ignoring (got %d chars)",

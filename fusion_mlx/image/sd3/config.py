@@ -1,5 +1,5 @@
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 logger = logging.getLogger(__name__)
 
@@ -36,12 +36,35 @@ class SD3Config:
 class SD3ModelPaths:
     transformer_ckpt: str = "argmaxinc/mlx-stable-diffusion-3-medium"
     transformer_file: str = "sd3_medium.safetensors"
-    clip_l_repo: str = "openai/clip-vit-large-patch14"
-    clip_l_subfolder: str = ""
-    clip_g_repo: str = "laion/CLIP-ViT-bigG-14-laion2B-39B-b160k"
-    clip_g_subfolder: str = ""
-    t5_repo: str = "google/t5-v1_1-xxl"
-    t5_subfolder: str = ""
+    encoders_repo: str = "frankjoshua/stable-diffusion-3-medium-diffusers"
+    clip_l_subfolder: str = "text_encoder"
+    clip_g_subfolder: str = "text_encoder_2"
+    t5_subfolder: str = "text_encoder_3"
+    clip_l_tokenizer_subfolder: str = "tokenizer"
+    clip_g_tokenizer_subfolder: str = "tokenizer_2"
+    t5_tokenizer_subfolder: str = "tokenizer_3"
+
+
+@dataclass
+class ClipLConfig:
+    dims: int = 768
+    num_layers: int = 12
+    num_heads: int = 12
+    intermediate: int = 3072
+    act: str = "quick_gelu"
+    vocab: int = 49408
+    max_pos: int = 77
+
+
+@dataclass
+class ClipGConfig:
+    dims: int = 1280
+    num_layers: int = 32
+    num_heads: int = 20
+    intermediate: int = 5120
+    act: str = "gelu"
+    vocab: int = 49408
+    max_pos: int = 77
 
 
 VARIANTS = {
@@ -59,7 +82,10 @@ def get_config(variant: str) -> SD3Config:
     cfg = VARIANTS[key]
     logger.info(
         "SD3 config variant=%s inner_dim=%d layers=%d heads=%d head_dim=%d",
-        key, cfg.inner_dim, cfg.num_layers,
-        cfg.num_attention_heads, cfg.attention_head_dim,
+        key,
+        cfg.inner_dim,
+        cfg.num_layers,
+        cfg.num_attention_heads,
+        cfg.attention_head_dim,
     )
     return cfg

@@ -8,11 +8,11 @@ from mlx.core.fast import scaled_dot_product_attention
 logger = logging.getLogger(__name__)
 
 
-def timestep_embedding(t: mx.array, dim: int = 256, max_period: int = 10000) -> mx.array:
+def timestep_embedding(
+    t: mx.array, dim: int = 256, max_period: int = 10000
+) -> mx.array:
     half = dim // 2
-    freqs = mx.exp(
-        -math.log(max_period) * mx.arange(half, dtype=mx.float32) / half
-    )
+    freqs = mx.exp(-math.log(max_period) * mx.arange(half, dtype=mx.float32) / half)
     args = t[:, None].astype(mx.float32) * freqs[None, :]
     emb = mx.concatenate([mx.cos(args), mx.sin(args)], axis=-1)
     if dim % 2 == 1:
@@ -51,7 +51,9 @@ def modulate(x: mx.array, shift: mx.array, scale: mx.array) -> mx.array:
 
 
 class JointAttention(nn.Module):
-    def __init__(self, dim: int, heads: int, head_dim: int, context_pre_only: bool = False):
+    def __init__(
+        self, dim: int, heads: int, head_dim: int, context_pre_only: bool = False
+    ):
         super().__init__()
         self.heads = heads
         self.head_dim = head_dim
@@ -98,7 +100,9 @@ class JointBlock(nn.Module):
         self.x_mod = Modulation(dim, double=True)
         self.context_norm1 = nn.LayerNorm(dim, eps=1e-6, bias=False, affine=False)
         self.context_mod = Modulation(dim, double=not context_pre_only)
-        self.attn = JointAttention(dim, heads, head_dim, context_pre_only=context_pre_only)
+        self.attn = JointAttention(
+            dim, heads, head_dim, context_pre_only=context_pre_only
+        )
         self.x_norm2 = nn.LayerNorm(dim, eps=1e-6, bias=False, affine=False)
         self.x_mlp = Mlp(dim, dim * 4)
         if not context_pre_only:
@@ -163,17 +167,21 @@ class MMDiT(nn.Module):
         self.patch_size = config.patch_size
         self.in_channels = config.in_channels
         self.out_channels = config.out_channels
-        self.pos_embed = mx.zeros((1, config.pos_embed_max_size ** 2, dim))
+        self.pos_embed = mx.zeros((1, config.pos_embed_max_size**2, dim))
         self.t_embedder = Embedder(256, dim)
         self.y_embedder = Embedder(config.pooled_projection_dim, dim)
         self.context_embedder = nn.Linear(config.joint_attention_dim, dim)
         self.x_embedder_proj = nn.Conv2d(
-            self.in_channels, dim,
-            kernel_size=config.patch_size, stride=config.patch_size,
+            self.in_channels,
+            dim,
+            kernel_size=config.patch_size,
+            stride=config.patch_size,
         )
         self.joint_blocks = [
             JointBlock(
-                dim, heads, head_dim,
+                dim,
+                heads,
+                head_dim,
                 context_pre_only=(i == config.num_layers - 1),
             )
             for i in range(config.num_layers)
@@ -215,7 +223,9 @@ class MMDiT(nn.Module):
         hp, wp = h // patch, w // patch
         size = self.pos_embed.shape[1]
         max_side = int(round(math.sqrt(size)))
-        pos = mx.reshape(self.pos_embed, (1, max_side, max_side, self.pos_embed.shape[-1]))
+        pos = mx.reshape(
+            self.pos_embed, (1, max_side, max_side, self.pos_embed.shape[-1])
+        )
         pos = pos[:, :hp, :wp]
         return mx.reshape(pos, (1, hp * wp, -1))
 

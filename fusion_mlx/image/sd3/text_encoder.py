@@ -123,7 +123,7 @@ class CLIPTextModel(nn.Module):
 
     def __call__(self, tokens: mx.array) -> mx.array:
         hidden = self.text_model.embeddings(tokens)
-        mask = _causal_mask(hidden.shape)
+        mask = _causal_mask(hidden.shape).astype(hidden.dtype)
         hidden = self.text_model.encoder(hidden, mask)
         hidden = self.text_model.final_layer_norm(hidden)
         eos = mx.argmax(tokens, axis=-1)
