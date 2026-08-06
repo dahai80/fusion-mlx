@@ -2,11 +2,17 @@
 
 ## [0.8.1] - 2026-08-06
 
-Patch release. Fixes 7 pre-existing full-suite test failures that
-blocked CI green on main (#380): url_safety shadowing in the security
-test fixtures and a vlm video load_video path mismatch. No behavior
-change to runtime code. Unit suite now 7937 pass / 0 fail locally;
-CI test (3.11) drops from a 2h+ hang to ~15m.
+Patch release.
+
+- Fix background fine-tune jobs crashing with `BrokenPipeError` when tqdm
+  flushes the closed stderr pipe of the background service (#381). The
+  `train()` call is now wrapped in `redirect_stderr(io.StringIO())` so
+  tqdm writes to an in-memory buffer instead of the dead pipe.
+- Fix 7 pre-existing full-suite test failures that blocked CI green on
+  main (#380): url_safety shadowing in the security test fixtures and a
+  vlm video load_video path mismatch. No behavior change to runtime code.
+  Unit suite now 7937 pass / 0 fail locally; CI test (3.11) drops from a
+  2h+ hang to ~15m.
 
 ## [0.8.0] - 2026-08-06
 
