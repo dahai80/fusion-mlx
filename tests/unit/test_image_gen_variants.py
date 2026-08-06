@@ -38,6 +38,12 @@ class TestVariantMap:
     def test_redux_exists(self):
         assert "redux" in VARIANT_MAP
 
+    def test_flux1_dev_exists(self):
+        assert "flux1_dev" in VARIANT_MAP
+
+    def test_flux1_schnell_exists(self):
+        assert "flux1_schnell" in VARIANT_MAP
+
 
 class TestInferVariant:
     @pytest.mark.parametrize(
@@ -58,6 +64,13 @@ class TestInferVariant:
             ("FLUX.2-klein", "txt2img"),
             ("some-llm-model", "txt2img"),
             ("", "txt2img"),
+            ("flux1-dev.safetensors", "flux1_dev"),
+            ("flux1-schnell.safetensors", "flux1_schnell"),
+            ("FLUX.1-dev", "flux1_dev"),
+            ("FLUX.1-schnell", "flux1_schnell"),
+            ("black-forest-labs/FLUX.1-dev", "flux1_dev"),
+            ("black-forest-labs/FLUX.1-schnell", "flux1_schnell"),
+            ("FLUX.2-klein-base-4B", "txt2img"),
         ],
     )
     def test_variant_inference(self, path, expected):
@@ -92,6 +105,26 @@ class TestImageGenEngineInit:
     def test_inferred_variant_from_path(self):
         eng = ImageGenEngine(model_name="FLUX.1-Redux-dev")
         assert eng.variant == "redux"
+
+    def test_inferred_flux1_dev_from_path(self):
+        eng = ImageGenEngine(model_name="FLUX.1-dev")
+        assert eng.variant == "flux1_dev"
+
+    def test_inferred_flux1_schnell_from_path(self):
+        eng = ImageGenEngine(model_name="FLUX.1-schnell")
+        assert eng.variant == "flux1_schnell"
+
+    def test_explicit_flux1_dev_variant(self):
+        eng = ImageGenEngine(model_name="flux-1", variant="flux1_dev")
+        assert eng.variant == "flux1_dev"
+
+    def test_explicit_flux1_schnell_variant(self):
+        eng = ImageGenEngine(model_name="flux-1", variant="flux1_schnell")
+        assert eng.variant == "flux1_schnell"
+
+    def test_flux2_klein_still_txt2img(self):
+        eng = ImageGenEngine(model_name="FLUX.2-klein-9B")
+        assert eng.variant == "txt2img"
 
     def test_unknown_variant_falls_back(self):
         eng = ImageGenEngine(model_name="flux-2", variant="nonexistent")

@@ -52,6 +52,20 @@ VARIANT_MAP: dict[str, tuple[str, str, str, float]] = {
         "flux2_klein_9b",
         1.0,
     ),
+    # FLUX.1 base txt2img (dev / schnell). mflux ships Flux1 in
+    # flux.cli.flux_generate; ModelConfig.dev()/schnell() are classmethods.
+    "flux1_dev": (
+        "mflux.models.flux.cli.flux_generate",
+        "Flux1",
+        "dev",
+        4.0,
+    ),
+    "flux1_schnell": (
+        "mflux.models.flux.cli.flux_generate",
+        "Flux1",
+        "schnell",
+        0.0,
+    ),
     "controlnet_canny": (
         "mflux.models.flux.variants.controlnet.flux_controlnet",
         "Flux1Controlnet",
@@ -107,6 +121,12 @@ def _infer_variant(model_path: str) -> str:
         return "kontext"
     if "redux" in name:
         return "redux"
+    # FLUX.1 base txt2img: distinguish from FLUX.2 klein.
+    # "schnell" is unique to FLUX.1; "dev" without klein/flux2 is FLUX.1-dev.
+    if "schnell" in name:
+        return "flux1_schnell"
+    if "dev" in name and "klein" not in name and "flux2" not in name:
+        return "flux1_dev"
     return "txt2img"
 
 
@@ -365,7 +385,7 @@ class ImageGenEngine(BaseNonStreamingEngine):
                         gen_kwargs["redux_image_strengths"] = reference_strengths
                     if image_strength is not None:
                         gen_kwargs["image_strength"] = image_strength
-                elif variant == "txt2img":
+                elif variant in ("txt2img", "flux1_dev", "flux1_schnell"):
                     if edit_image is not None or control_image is not None:
                         img = edit_image or control_image
                         gen_kwargs["image_path"] = img
