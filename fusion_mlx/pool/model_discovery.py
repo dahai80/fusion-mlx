@@ -179,6 +179,8 @@ DIFFUSERS_PIPELINE_TASKS = {
     "CogView3Pipeline": "text-to-image",
     "CogView4Pipeline": "text-to-image",
     "WuerstchenPipeline": "text-to-image",
+    "StableCascadePriorPipeline": "text-to-image",
+    "StableCascadeDecoderPipeline": "text-to-image",
     "Kandinsky3Pipeline": "text-to-image",
     "LTXImagePipeline": "text-to-image",
     "LTXVideoPipeline": "text-to-video",
