@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.8.4] - 2026-08-05
+
+Patch release.
+
+- Add Windows CUDA backend node (#365): optional vLLM-powered
+  OpenAI-compatible server for heavy LLM inference (DeepSeek 70B / Qwen 72B
+  FP8) on Windows CUDA hosts. New `fusion-mlx cuda-node` subcommand builds a
+  FastAPI app embedding vLLM's `AsyncLLMEngine`, serving `/health`,
+  `/v1/models`, `/v1/chat/completions`, `/v1/completions`. The node
+  self-registers with the cluster via mDNS under `platform=windows-cuda` so a
+  fusion-gateway can route heavy-model intents to it (gateway-side platform
+  routing landed in v0.8.0). Platform detection (`FUSION_PLATFORM` env →
+  `sys.platform` + CUDA probe → `mac`) surfaces a `platform` TXT record on
+  every node's mDNS advertisement. vLLM is imported lazily so the package
+  stays importable on Mac; starting the node without vLLM raises a clear
+  `RuntimeError`. LLM-only scope (diffusion-on-CUDA tracked separately).
+  See [docs/cuda-node.md](docs/cuda-node.md).
+
 ## [0.8.3] - 2026-08-05
 
 Patch release.

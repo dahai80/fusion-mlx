@@ -1397,6 +1397,37 @@ Examples:
         help="List models in the local HuggingFace cache (alias for `models --cached`)",
     )
 
+    # CUDA node (#365) — vLLM-powered Windows CUDA backend node.
+    cuda_node_parser = subparsers.add_parser(
+        "cuda-node",
+        help="Start vLLM Windows CUDA backend node (OpenAI-compatible, heavy LLM)",
+    )
+    cuda_node_parser.add_argument(
+        "model", help="Heavy model to serve (HF repo, e.g. Qwen/Qwen2.5-72B-Instruct)"
+    )
+    cuda_node_parser.add_argument("--host", default="0.0.0.0", help="Bind host")
+    cuda_node_parser.add_argument("--port", type=int, default=8000, help="Bind port")
+    cuda_node_parser.add_argument(
+        "--tensor-parallel-size", "-tp", type=int, default=1, help="vLLM TP size"
+    )
+    cuda_node_parser.add_argument(
+        "--gpu-memory-utilization", type=float, default=0.90, help="vLLM GPU mem util"
+    )
+    cuda_node_parser.add_argument(
+        "--quantization", default=None, help="fp8 / awq / gptq / None"
+    )
+    cuda_node_parser.add_argument(
+        "--max-model-len", type=int, default=None, help="Max model context length"
+    )
+    cuda_node_parser.add_argument(
+        "--trust-remote-code", action="store_true", help="Trust remote code"
+    )
+    cuda_node_parser.add_argument(
+        "--no-cluster-advertise",
+        action="store_true",
+        help="Disable mDNS cluster advertising",
+    )
+
     # Version + help — utility commands that mirror the existing flags but
     # are scriptable as plain subcommands.
     subparsers.add_parser("version", help="Show version number")
@@ -2039,6 +2070,21 @@ Examples:
         # know which command name it was invoked under.
         args.cached = True
         models_command(args)
+    elif args.command == "cuda-node":
+        from fusion_mlx.backends.cuda_node import CudaNodeConfig, run_cuda_node
+
+        node_cfg = CudaNodeConfig(
+            model=args.model,
+            host=args.host,
+            port=args.port,
+            tensor_parallel_size=args.tensor_parallel_size,
+            gpu_memory_utilization=args.gpu_memory_utilization,
+            quantization=args.quantization,
+            max_model_len=args.max_model_len,
+            trust_remote_code=args.trust_remote_code,
+            cluster_advertise=not args.no_cluster_advertise,
+        )
+        run_cuda_node(node_cfg)
     elif args.command == "version":
         print(f"fusion-mlx {_version}")
     elif args.command == "help":
