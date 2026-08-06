@@ -1,4 +1,5 @@
 import logging
+import os
 from dataclasses import dataclass
 
 logger = logging.getLogger(__name__)
@@ -43,6 +44,24 @@ class SD3ModelPaths:
     clip_l_tokenizer_subfolder: str = "tokenizer"
     clip_g_tokenizer_subfolder: str = "tokenizer_2"
     t5_tokenizer_subfolder: str = "tokenizer_3"
+
+    def __post_init__(self) -> None:
+        env = os.environ
+        if v := env.get("SD3_ENCODERS_REPO"):
+            self.encoders_repo = v
+        if v := env.get("SD3_CLIP_L_SUBFOLDER"):
+            self.clip_l_subfolder = v
+        if v := env.get("SD3_CLIP_G_SUBFOLDER"):
+            self.clip_g_subfolder = v
+        if v := env.get("SD3_T5_SUBFOLDER"):
+            self.t5_subfolder = v
+        logger.info(
+            "SD3 paths encoders_repo=%s clip_l=%s clip_g=%s t5=%s",
+            self.encoders_repo,
+            self.clip_l_subfolder,
+            self.clip_g_subfolder,
+            self.t5_subfolder,
+        )
 
 
 @dataclass

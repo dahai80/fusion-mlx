@@ -21,7 +21,25 @@ class GenResult:
         self.image = image
 
 
+def _local_path(subfolder: str, filename: str) -> str | None:
+    base = os.environ.get("SD3_LOCAL_DIR")
+    if not base:
+        return None
+    cand = (
+        os.path.join(base, subfolder, filename)
+        if subfolder
+        else os.path.join(base, filename)
+    )
+    if os.path.exists(cand):
+        logger.info("SD3 local resolve %s", cand)
+        return cand
+    return None
+
+
 def _resolve(repo: str, subfolder: str, filename: str) -> str:
+    local = _local_path(subfolder, filename)
+    if local:
+        return local
     from huggingface_hub import hf_hub_download
 
     path_in_repo = f"{subfolder}/{filename}" if subfolder else filename
@@ -41,6 +59,10 @@ def _load_safetensors(paths: list[str]) -> dict:
 
 
 def _resolve_dir(repo: str, subfolder: str) -> str:
+    base = os.environ.get("SD3_LOCAL_DIR")
+    if base and os.path.isdir(os.path.join(base, subfolder)):
+        logger.info("SD3 local resolve_dir %s/%s", base, subfolder)
+        return os.path.join(base, subfolder)
     from huggingface_hub import snapshot_download
 
     return snapshot_download(
@@ -48,15 +70,57 @@ def _resolve_dir(repo: str, subfolder: str) -> str:
     )
 
 
-def _clip_pairs_direct(repo: str, subfolder: str) -> list:
-    path = _resolve(repo, subfolder, "model.safetensors")
+def _clip_pairs_direct(
+    repo: str, subfolder: str, filename: str = "model.safetensors", dtype=None
+) -> list:
+    path = _resolve(repo, subfolder, filename)
     raw = _load_safetensors([path])
-    pairs = [(k, v) for k, v in raw.items() if k.startswith("text_model.")]
-    logger.info("SD3 clip %s loaded %d keys", subfolder, len(pairs))
+    pairs = []
+    for k, v in raw.items():
+        if k.startswith("text_model."):
+            pairs.append((k, v.astype(dtype) if dtype is not None else v))
+    logger.info("SD3 clip %s/%s loaded %d keys", subfolder, filename, len(pairs))
     return pairs
 
 
+def _load_safetensors_fp8(path: str) -> dict:
+    import torch
+    from safetensors import safe_open
+
+    raw = {}
+    with safe_open(path, "pt") as f:
+        keys = list(f.keys())
+        for k in keys:
+            t = f.get_tensor(k)
+            if t.dtype.is_floating_point and str(t.dtype) == "torch.float8_e4m3fn":
+                t = t.to(torch.float32)
+            raw[k] = mx.array(t.numpy())
+    return raw
+
+
 def _t5_pairs(repo: str, subfolder: str) -> list:
+    fp8_name = os.environ.get("SD3_T5_FP8_FILE", "t5xxl_fp8_e4m3fn.safetensors")
+    fp8_sub = os.environ.get("SD3_T5_FP8_SUBFOLDER", "text_encoders")
+    try:
+        path = (
+            _resolve(repo, "", fp8_name)
+            if fp8_sub == ""
+            else _resolve(repo, fp8_sub, fp8_name)
+        )
+        raw = _load_safetensors_fp8(path)
+        pairs = []
+        for k, v in raw.items():
+            new = _map_t5(k)
+            if new is not None:
+                pairs.append((new, v.astype(mx.bfloat16)))
+        logger.info("SD3 t5 fp8 decoded+remapped %d / %d keys", len(pairs), len(raw))
+        return pairs
+    except Exception as exc:
+        logger.info("SD3 t5 fp8 path unavailable (%s), falling back to shards", exc)
+    return _t5_pairs_shards(repo, subfolder)
+
+
+def _t5_pairs_shards(repo: str, subfolder: str) -> list:
     index_path = _resolve(repo, subfolder, "model.safetensors.index.json")
     import json
 
@@ -151,9 +215,14 @@ class SD3Pipeline:
         from transformers import CLIPTokenizer, T5TokenizerFast
 
         repo = self.paths.encoders_repo
+        clip_l_file = os.environ.get("SD3_CLIP_L_FILE", "model.safetensors")
+        clip_g_file = os.environ.get("SD3_CLIP_G_FILE", "model.safetensors")
         self.clip_l = CLIPEncoder()
         self.clip_l.load_weights(
-            _clip_pairs_direct(repo, self.paths.clip_l_subfolder), strict=False
+            _clip_pairs_direct(
+                repo, self.paths.clip_l_subfolder, clip_l_file, mx.float32
+            ),
+            strict=False,
         )
         cg = ClipGConfig()
         self.clip_g = CLIPTextModel(
@@ -166,7 +235,8 @@ class SD3Pipeline:
             max_pos=cg.max_pos,
         )
         self.clip_g.load_weights(
-            _clip_pairs_direct(repo, self.paths.clip_g_subfolder), strict=False
+            _clip_pairs_direct(repo, self.paths.clip_g_subfolder, clip_g_file),
+            strict=False,
         )
         self.t5 = T5Encoder()
         self.t5.load_weights(_t5_pairs(repo, self.paths.t5_subfolder), strict=False)
@@ -301,7 +371,7 @@ class SD3Pipeline:
                 noise = self.transformer(latent, t_arr, pooled, context, h_lat, w_lat)
             latent = scheduler.step(noise, latent)
             mx.eval(latent)
-            logger.info("SD3 step %d/%d done", i + 1, num_inference_steps)
+            logger.info("SD3 step %d/%d done", i + 1, len(timesteps))
         image = self.vae.decode(latent)
         mx.eval(image)
         return GenResult(image=_to_pil(image))
