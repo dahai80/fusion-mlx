@@ -5,13 +5,54 @@ import mlx.core as mx
 logger = logging.getLogger(__name__)
 
 
+_VAE_CONV_SUFFIXES = (
+    ".conv_in.weight",
+    ".conv_out.weight",
+    ".conv1.weight",
+    ".conv2.weight",
+    ".nin_shortcut.weight",
+    ".upsample.conv.weight",
+    ".downsample.conv.weight",
+)
+
+
+def remap_vae_weights(raw: dict) -> list:
+    P = "first_stage_model."
+    pairs = []
+    attn_suffixes = (".q.weight", ".k.weight", ".v.weight", ".proj_out.weight")
+    for k, v in raw.items():
+        if not k.startswith(P):
+            continue
+        rest = k[len(P) :]
+        if rest.endswith(_VAE_CONV_SUFFIXES):
+            v = mx.transpose(v, (0, 2, 3, 1))
+        elif rest.endswith(attn_suffixes) and v.ndim == 4:
+            v = v.reshape(v.shape[0], v.shape[1])
+        pairs.append((rest, v))
+    logger.info("SD3 vae remapped %d / %d keys", len(pairs), len(raw))
+    return pairs
+
+
+def load_vae(vae, raw: dict) -> None:
+    pairs = remap_vae_weights(raw)
+    vae.load_weights(pairs, strict=False)
+    loaded = set(p for p, _ in pairs)
+    flat = []
+    _flatten(vae.parameters(), "", flat)
+    missing = [p for p in flat if p not in loaded]
+    if missing:
+        logger.warning(
+            "SD3 vae missing %d params (first 10): %s", len(missing), missing[:10]
+        )
+
+
 def remap_transformer_weights(raw: dict, num_layers: int) -> list:
     P = "model.diffusion_model."
     pairs = []
     for k, v in raw.items():
         if not k.startswith(P):
             continue
-        rest = k[len(P):]
+        rest = k[len(P) :]
         new = _map_one(rest, num_layers)
         if new is None:
             logger.debug("SD3 weights skip unmapped key: %s", k)
@@ -83,7 +124,8 @@ def load_transformer(model, raw: dict, num_layers: int) -> None:
     if missing:
         logger.warning(
             "SD3 transformer missing %d params (first 10): %s",
-            len(missing), missing[:10],
+            len(missing),
+            missing[:10],
         )
 
 
