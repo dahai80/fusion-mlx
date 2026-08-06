@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.8.2] - 2026-08-06
+
+Patch release.
+
+- Add SDXL image generation: native MLX port of
+  `StableDiffusionXLPipeline` with CosXL (`cosxl_edit`) and SDXS variant
+  support (#371). Dual text encoders (CLIP-L + OpenCLIP-G, cross-attn
+  dim 2048), EulerDiscreteScheduler, AutoencoderKL. Wired into the
+  `image_gen` engine (`sdxl`/`cosxl`/`sdxs` variants) and the
+  `/v1/images/generate` API. Validated end-to-end with real
+  `stabilityai/stable-diffusion-xl-base-1.0` weights.
+
 ## [0.8.1] - 2026-08-06
 
 Patch release.
