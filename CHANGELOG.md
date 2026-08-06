@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.8.1] - 2026-08-06
+
+Patch release. Fixes 7 pre-existing full-suite test failures that
+blocked CI green on main (#380): url_safety shadowing in the security
+test fixtures and a vlm video load_video path mismatch. No behavior
+change to runtime code. Unit suite now 7937 pass / 0 fail locally;
+CI test (3.11) drops from a 2h+ hang to ~15m.
+
 ## [0.8.0] - 2026-08-06
 
 Stable Diffusion 3-Medium full MLX txt2img (#369). From-scratch MLX port
