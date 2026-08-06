@@ -20,7 +20,9 @@ User verbatim instruction: "开始做，注意设计方案需要有GUI的设计�
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import gc
+import io
 import json
 import logging
 import os
@@ -505,14 +507,20 @@ class FineTuneService:
             f"Starting training: job={job.job_id} iters={cfg.iters} "
             f"batch_size={cfg.batch_size} lr={cfg.learning_rate}"
         )
-        train(
-            model=model,
-            args=training_args,
-            optimizer=optimizer,
-            train_dataset=CacheDataset(train_set),
-            val_dataset=CacheDataset(valid_set) if valid_set else None,
-            training_callback=callback,
-        )
+        # tqdm (used inside mlx_lm trainer for eval/train loops) writes to
+        # sys.stderr; when fusion-mlx runs as a background service the stderr
+        # pipe is closed, and tqdm.status_printer flushes stderr on init →
+        # BrokenPipeError kills the job. Redirect stderr to an in-memory
+        # buffer for the duration of train(). See issue #381.
+        with contextlib.redirect_stderr(io.StringIO()):
+            train(
+                model=model,
+                args=training_args,
+                optimizer=optimizer,
+                train_dataset=CacheDataset(train_set),
+                val_dataset=CacheDataset(valid_set) if valid_set else None,
+                training_callback=callback,
+            )
 
         # Save final adapter weights
         adapter_weights = dict(tree_flatten(model.trainable_parameters()))
