@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.8.0] - 2026-08-06
+
+Stable Diffusion 3-Medium full MLX txt2img (#369). From-scratch MLX port
+of the SD3-Medium MMDiT (24 joint transformer blocks, inner_dim=1536,
+joint_attention_dim=4096, pooled_projection_dim=2048) + AutoencoderKL
+VAE + FlowMatchEuler rectified-flow scheduler, in `fusion_mlx/image/sd3/`.
+Text encoders reuse mflux T5-XXL + CLIP-L (CLIPEncoder) alongside a
+custom parametrized CLIPTextModel for CLIP-G (20 heads). Wired into the
+image engine: `/v1/images/generate` with `model="sd3-medium"` auto-detects
+the sd3 variant, supports `negative_prompt` and `shift` (unlike Flux).
+fp8 T5 (`t5xxl_fp8_e4m3fn.safetensors`, decoded via torch) is preferred
+over sharded fp16 with automatic fallback. `SD3_LOCAL_DIR` +
+`SD3_*_SUBFOLDER`/`_FILE` env vars allow offline/local weight resolution.
+Real-model E2E validated (CLIP-L+CLIP-G+T5+MMDiT+VAE → PIL). 28 unit
+tests in `test_image_gen_sd3.py`.
+
 ## [0.7.11] - 2026-08-05
 
 Video DiT diffusion throughput optimization (#367). HunyuanVideo and
