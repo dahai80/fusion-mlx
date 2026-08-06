@@ -129,6 +129,14 @@ VARIANT_MAP: dict[str, tuple[str, str, str, float]] = {
         "sdxs",
         4.0,
     ),
+    # Stable Cascade (Wuerstchen 3-stage: prior -> decoder -> vqgan) native
+    # MLX pipeline. Prior default guidance=4.0; decoder guidance=0.0.
+    "stable_cascade": (
+        "fusion_mlx.image.cascade.generate",
+        "CascadePipeline",
+        "stable_cascade",
+        4.0,
+    ),
 }
 
 
@@ -138,6 +146,10 @@ def _infer_variant(model_path: str) -> str:
         return "sd3"
     if "sdxs" in name:
         return "sdxs"
+    # Stable Cascade / Wuerstchen: check BEFORE sdxl/sd3 since
+    # "stable-cascade" contains neither substring.
+    if "cascade" in name or "wuerstchen" in name:
+        return "stable_cascade"
     if "cosxl" in name:
         return "cosxl"
     if "sdxl" in name or "stable-diffusion-xl" in name or "stable_diffusion-xl" in name:
@@ -450,11 +462,22 @@ class ImageGenEngine(BaseNonStreamingEngine):
                 elif variant in ("sdxl", "cosxl", "sdxs"):
                     if negative_prompt is not None:
                         gen_kwargs["negative_prompt"] = negative_prompt
+                elif variant == "stable_cascade":
+                    if negative_prompt is not None:
+                        gen_kwargs["negative_prompt"] = negative_prompt
+                    # decoder_steps / decoder_guidance optional overrides
+                    d_steps = kwargs.get("decoder_steps")
+                    if d_steps is not None:
+                        gen_kwargs["decoder_steps"] = d_steps
+                    d_guidance = kwargs.get("decoder_guidance")
+                    if d_guidance is not None:
+                        gen_kwargs["decoder_guidance"] = d_guidance
                 if negative_prompt is not None and variant not in (
                     "sd3",
                     "sdxl",
                     "cosxl",
                     "sdxs",
+                    "stable_cascade",
                 ):
                     logger.warning(
                         "Flux does not support negative_prompt; "

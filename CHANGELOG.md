@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.8.3] - 2026-08-05
+
+Patch release.
+
+- Add Stable Cascade image generation: native MLX port of the Würstchen
+  3-stage pipeline (#370). Unified `StableCascadeUNet` serves both the
+  prior (`switch_level=(False,)` → `UpDownBlock2d` 1×1 mapping, no
+  spatial change) and decoder (`switch_level=None` → `Conv2d(k=2,s=2)`
+  down / `ConvTranspose2d(k=2,s=2)` up), with a PaellaVQModel
+  decode-only VQGAN and a CLIP-ViT-bigG text encoder. DDPM-Würstchen
+  scheduler (cosine `_alpha_cumprod`, `linspace(1.0,0.0,steps+1)`
+  timesteps). Wired into the `image_gen` engine (`stable_cascade`
+  variant, auto-detected from `cascade`/`wuerstchen` model names) and
+  the `/v1/images/generate` API. Validated end-to-end with real
+  stabilityai weights (prior 1550/1550, decoder 1726/1726, VQGAN
+  121/122, CLIP 517/517 keys). See [docs/cascade-image.md](docs/cascade-image.md).
+
 ## [0.8.2] - 2026-08-06
 
 Patch release.

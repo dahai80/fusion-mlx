@@ -51,6 +51,10 @@ x86+CUDA stack structurally cannot match. These are **landed and running today**
   AutoencoderKL + dual CLIP-L/OpenCLIP-G encoders (2048 cross-attn dim),
   Euler-discrete epsilon scheduler. Covers sdxl / cosxl / sdxs variants.
   See [docs/sdxl-image.md](docs/sdxl-image.md).
+- **Stable Cascade native MLX (#370)** - from-scratch Würstchen 3-stage
+  pipeline: prior → decoder (unified `StableCascadeUNet` by
+  `switch_level`) → VQGAN, DDPM-Würstchen scheduler, CLIP-ViT-bigG.
+  See [docs/cascade-image.md](docs/cascade-image.md).
 - **Metal Flash Attention (MFA) (#86)** - vendored Metal kernels for DiT
   attention (LTX-2, Wan2).
 
@@ -426,7 +430,7 @@ export HF_MIRROR=https://hf-mirror.com
 | Reranker | `RerankerEngine` | Cohere, Jina rerankers |
 | STT | `STTEngine` | Whisper, VibeVoice-ASR |
 | TTS | `TTSEngine` | Kokoro, VibeVoice |
-| ImageGen | `ImageGenEngine` | Flux 2, SD3-Medium, SDXL |
+| ImageGen | `ImageGenEngine` | Flux 2, SD3-Medium, SDXL, Stable Cascade |
 | VideoGen | `VideoGenEngine` | LTX-2, Wan2, SkyReels-V3 (pure-MLX ports) |
 
 ## Quantization Formats
@@ -475,7 +479,7 @@ The macOS app offers a mode toggle between:
 | OpenAI Legacy | `/v1/completions` | ✅ Supported |
 | Anthropic Messages | `/v1/messages`, `/v1/count_tokens` | ✅ Fully compatible |
 | Audio | `/v1/audio/transcriptions`, `/v1/audio/speech` | ✅ Supported |
-| Images | `/v1/images/generate` | ✅ Supported (Flux 2, SD3-Medium, SDXL) |
+| Images | `/v1/images/generate` | ✅ Supported (Flux 2, SD3-Medium, SDXL, Stable Cascade) |
 | Videos | `/v1/videos/generate` | ✅ Supported (LTX-2, Wan2, SkyReels-V3; pure-MLX ports) |
 | Embeddings | `/v1/embeddings` | ✅ Supported |
 | Reasoning | `/v1/reasoning` | ✅ Explicit thinking step API (DeepSeek-R1, QwQ, etc.) |
