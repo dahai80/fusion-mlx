@@ -712,6 +712,34 @@ class EnginePool:
             return model_id
         return f"{model_id}::lora::{adapter_path}"
 
+    def _resolve_hf_repo_id(self, model_id: str) -> str:
+        # Issue #372: accept HuggingFace repo ids (e.g.
+        # "mlx-community/Qwen3-0.6B-4bit") in addition to registry short
+        # names. HF-cache-backed entries carry the canonical repo id in
+        # source_repo_id; resolve a repo-id request to that entry's short
+        # model_id so downstream lookup hits. No-op when already a short
+        # name or an exact entry key (fast path: no scan when exact match).
+        if not model_id or "/" not in model_id:
+            return model_id
+        if model_id in self._entries:
+            return model_id
+        resolved = self._case_insensitive_entry_match(model_id)
+        if resolved is not None:
+            return resolved
+        target = model_id.strip()
+        for mid, entry in self._entries.items():
+            repo = getattr(entry, "source_repo_id", None)
+            if not repo:
+                continue
+            if repo == target or repo.lower() == target.lower():
+                logger.info(
+                    "resolve_hf_repo_id: %s -> %s (source_repo_id match)",
+                    model_id,
+                    mid,
+                )
+                return mid
+        return model_id
+
     @staticmethod
     def _resolve_allowed_adapter_dirs() -> list[str]:
         raw = os.getenv("FUSION_LORA_ALLOWED_DIRS", "").strip()
@@ -850,6 +878,9 @@ class EnginePool:
         # Canonicalizes to realpath and enforces the allow-list (default-deny).
         if adapter_path:
             adapter_path = self._validate_adapter_path(adapter_path)
+        # Issue #372: normalize HF repo ids (e.g. "mlx-community/X") to the
+        # registry short name before lookup so all routes accept either form.
+        model_id = self._resolve_hf_repo_id(model_id)
         # Phase 1: Quick check under lock for already-loaded models
         entry_key = self._adapter_key(model_id, adapter_path)
         adapter_victims: list[str] = []

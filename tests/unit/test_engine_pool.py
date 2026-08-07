@@ -2515,3 +2515,72 @@ class TestDiscoverModelsAsyncRace:
             pool.discover_models_async(str(small_mock_model_dir)),
         )
         assert pool.get_entry("model-a").engine is mock_engine
+
+
+class TestHfRepoIdResolution:
+    """Issue #372: accept HuggingFace repo ids in get_engine, not just short names."""
+
+    @staticmethod
+    def _pool_with_repo_entry():
+        pool = _make_pool(ceiling=10 * 1024**3)
+        entry = EngineEntry(
+            model_id="Qwen3-0.6B-4bit",
+            model_path="/fake/Qwen3-0.6B-4bit",
+            model_type="llm",
+            engine_type="batched",
+            estimated_size=1024,
+            source_repo_id="mlx-community/Qwen3-0.6B-4bit",
+        )
+        pool._entries["Qwen3-0.6B-4bit"] = entry
+        return pool
+
+    def test_short_name_unchanged(self):
+        pool = self._pool_with_repo_entry()
+        assert pool._resolve_hf_repo_id("Qwen3-0.6B-4bit") == "Qwen3-0.6B-4bit"
+
+    def test_hf_repo_id_resolves_to_short_name(self):
+        pool = self._pool_with_repo_entry()
+        assert (
+            pool._resolve_hf_repo_id("mlx-community/Qwen3-0.6B-4bit")
+            == "Qwen3-0.6B-4bit"
+        )
+
+    def test_hf_repo_id_case_insensitive(self):
+        pool = self._pool_with_repo_entry()
+        assert (
+            pool._resolve_hf_repo_id("mlx-community/qwen3-0.6b-4bit")
+            == "Qwen3-0.6B-4bit"
+        )
+
+    def test_unknown_repo_id_returned_unchanged(self):
+        pool = self._pool_with_repo_entry()
+        # No matching source_repo_id -> passthrough (later raises ModelNotFoundError)
+        assert pool._resolve_hf_repo_id("org/does-not-exist") == "org/does-not-exist"
+
+    def test_no_slash_passthrough(self):
+        pool = self._pool_with_repo_entry()
+        assert pool._resolve_hf_repo_id("plain-name") == "plain-name"
+
+    def test_exact_short_name_skips_scan(self):
+        # Exact short name is a fast path; with no '/' we return immediately.
+        pool = self._pool_with_repo_entry()
+        assert pool._resolve_hf_repo_id("Qwen3-0.6B-4bit") == "Qwen3-0.6B-4bit"
+
+    @pytest.mark.asyncio
+    async def test_get_engine_accepts_hf_repo_id(self):
+        # End-to-end: get_engine(repo_id) resolves to short name before lookup.
+        # Query an unknown repo id to force the not-found path and confirm
+        # get_engine does not crash on the repo-id form (issue #372).
+        pool = _make_pool(ceiling=10 * 1024**3)
+        entry = EngineEntry(
+            model_id="other-model",
+            model_path="/fake/other",
+            model_type="llm",
+            engine_type="batched",
+            estimated_size=1024,
+            source_repo_id="mlx-community/Qwen3-0.6B-4bit",
+        )
+        pool._entries["other-model"] = entry
+        with pytest.raises(ModelNotFoundError) as exc_info:
+            await pool.get_engine("mlx-community/definitely-not-here")
+        assert exc_info.value.model_id == "mlx-community/definitely-not-here"
