@@ -835,7 +835,9 @@ class EnginePool:
         if not raw:
             return []
         dirs: list[str] = []
-        for part in raw.split(","):
+        # #394: accept both "," and ":" as separators — server.py auto-add
+        # joins with ":" while the historical contract documented ",".
+        for part in raw.replace(":", ",").split(","):
             part = part.strip()
             if not part:
                 continue
@@ -853,14 +855,18 @@ class EnginePool:
         if not path or not path.strip():
             raise AdapterPathError(path or "")
         real = os.path.realpath(os.path.expanduser(path))
-        if not self._allowed_adapter_dirs:
+        # #394: re-resolve from env each call so server.py's startup auto-add
+        # of ~/.fusion-mlx/adapters takes effect even when EnginePool cached
+        # an empty list at init time (pool created before the auto-add block).
+        allowed = self._resolve_allowed_adapter_dirs() or self._allowed_adapter_dirs
+        if not allowed:
             raise AdapterPathError(
                 path,
                 "Per-request LoRA adapters are disabled. Set "
-                "FUSION_LORA_ALLOWED_DIRS (comma-separated list of adapter "
-                "directories) to enable them.",
+                "FUSION_LORA_ALLOWED_DIRS (comma- or colon-separated list of "
+                "adapter directories) to enable them.",
             )
-        if not any(self._is_within(real, base) for base in self._allowed_adapter_dirs):
+        if not any(self._is_within(real, base) for base in allowed):
             raise AdapterPathError(path)
         return real
 
