@@ -35,6 +35,7 @@ def _active_mem() -> int:
     except Exception:
         return -1
 
+
 # Max T5 text-embedding cache entries (LRU eviction when exceeded).
 _T5_EMBED_CACHE_MAX = 16
 # Timeout for T5 encoder preload during start() — large model may take minutes.
@@ -433,7 +434,9 @@ class Wan2Backend(VideoBackend):
         # the caller disabled CFG (no negative FusionTextEncoder node). Derive
         # cfg_disabled to match the monolith's fast path (guide_scale<=1.0).
         cfg_disabled = neg_embed is None or cfg <= 1.0
-        context_null = neg_embed if (not cfg_disabled and neg_embed is not None) else None
+        context_null = (
+            neg_embed if (not cfg_disabled and neg_embed is not None) else None
+        )
 
         # Infer height/width/num_frames from the caller's latent shape if it is
         # a 5D (1, c, t, h, w) FusionComfyUI latent; otherwise fall back to the

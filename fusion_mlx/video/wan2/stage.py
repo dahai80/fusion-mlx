@@ -372,9 +372,7 @@ def run_denoise(
                     guide_scale
                     if isinstance(guide_scale, (int, float))
                     else (
-                        guide_scale[1]
-                        if timestep_val >= boundary
-                        else guide_scale[0]
+                        guide_scale[1] if timestep_val >= boundary else guide_scale[0]
                     )
                 )
             else:
@@ -403,9 +401,7 @@ def run_denoise(
                     y_camera=None,
                 )
             noise_pred_cond, noise_pred_uncond = preds[0], preds[1]
-            noise_pred = noise_pred_uncond + gs * (
-                noise_pred_cond - noise_pred_uncond
-            )
+            noise_pred = noise_pred_uncond + gs * (noise_pred_cond - noise_pred_uncond)
             del noise_pred_cond, noise_pred_uncond, preds
 
         latents = sched.step(noise_pred[None], timestep_val, latents[None]).squeeze(0)

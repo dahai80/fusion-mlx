@@ -33,9 +33,7 @@ def _make_fake_stage(monkeypatch):
     import fusion_mlx.video.wan2.stage as stage_mod
     import fusion_mlx.video.wan2.utils as utils_mod
 
-    monkeypatch.setattr(
-        stage_mod, "load_wan_config", lambda model_dir: (config, quant)
-    )
+    monkeypatch.setattr(stage_mod, "load_wan_config", lambda model_dir: (config, quant))
     monkeypatch.setattr(
         stage_mod, "resolve_t5_path", lambda model_dir: Path("/fake/t5")
     )
@@ -57,14 +55,10 @@ def _make_fake_stage(monkeypatch):
     )
 
     fake_dit = SimpleNamespace()
-    monkeypatch.setattr(
-        utils_mod, "load_wan_model", lambda path, cfg, q: fake_dit
-    )
+    monkeypatch.setattr(utils_mod, "load_wan_model", lambda path, cfg, q: fake_dit)
 
     fake_vae = SimpleNamespace()
-    monkeypatch.setattr(
-        utils_mod, "load_vae_decoder", lambda path, cfg=None: fake_vae
-    )
+    monkeypatch.setattr(utils_mod, "load_vae_decoder", lambda path, cfg=None: fake_vae)
 
     # run_denoise returns a 4D latent (z_dim, t_lat, h_lat, w_lat); the stage
     # denoise() wrapper adds the batch dim -> 5D.
