@@ -1217,6 +1217,15 @@ class Server:
         _grpo_svc.set_loop(asyncio.get_running_loop())
         set_grpo_context(self.pool, _grpo_svc)
 
+        # Wire DPO/ORPO service (#399)
+        from .admin.fine_tune_route import set_dpo_context
+        from .training.dpo_service import DPOService
+
+        _dpo_svc = DPOService()
+        _dpo_svc.set_engine_pool(self.pool)
+        _dpo_svc.set_loop(asyncio.get_running_loop())
+        set_dpo_context(self.pool, _dpo_svc)
+
         # Auto-add adapters dir to FUSION_LORA_ALLOWED_DIRS so trained
         # adapters can be served via EnginePool hot-swap without manual env config
         import os
