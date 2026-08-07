@@ -1,5 +1,29 @@
 # Changelog
 
+## [0.8.9] - 2026-08-07
+
+Patch release.
+
+- LoRA allowed-dirs startup race (#394): `FUSION_LORA_ALLOWED_DIRS` hit a
+  startup-order race — `EnginePool` cached an empty allowed-list at init
+  (constructed before `server.py`'s auto-add of `~/.fusion-mlx/adapters`),
+  then rejected all per-request adapters. `server.py` also joins the env
+  with `:` while the historical contract documented `,`, so a colon-joined
+  list parsed as one literal segment. `_resolve_allowed_adapter_dirs()`
+  now accepts both `,` and `:`; `_validate_adapter_path()` re-resolves from
+  env on each call (falls back to the cached list only when env is empty),
+  so the late auto-add takes effect.
+- Standalone route-guard default (#398): since v0.7.0 `route_guard`
+  enforces `X-Fusion-Route` by default; the gateway injects it, but
+  `start.sh` is the standalone launcher (loopback, no gateway) — so every
+  local /v1/* call was rejected. `preflight()` now defaults
+  `FUSION_ROUTE_WARN_ONLY=true` when unset. Gateway deployments override
+  with `=false`; pre-existing values are never clobbered.
+- Rescued quarantined `test_admin_auth.py` back into the CI gate: fixed
+  stale assertions (bound-name patch target for `TestCheckUpdate`,
+  loopback-only `skip_api_key_verification` for `TestSkipAdminAuth`,
+  renamed `fusionmlx_admin_session` cookie for `TestSessionCookieName`).
+
 ## [0.8.8] - 2026-08-07
 
 Patch release.
