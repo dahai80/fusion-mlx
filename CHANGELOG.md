@@ -1,5 +1,28 @@
 # Changelog
 
+## [0.8.11] - 2026-08-08
+
+Patch release — Wan2 video backend pipeline stage API (#410/#416),
+and VL cold-start crash fix verified (#413 closed).
+
+- Wan2 pipeline stage API (#410, PR #416): refactors the Wan2 video
+  backend into a staged pipeline so `Wan2Backend` exposes the issue #170
+  stage contract (10 methods: `load_text_encoder`/`encode_text`/
+  `unload_text_encoder`, `load_dit`/`denoise`/`unload_dit`,
+  `load_vae`/`decode`/`decode_tiled`/`unload_vae`). New
+  `fusion_mlx/video/wan2/stage.py` shares the weight-loading path with
+  `generate.py`. Unblocks Fusion-ComfyUI Phase-2 sequential-offload flow
+  (load → use → unload each component so only one heavy model holds
+  memory at a time). Text-to-video scope; I2V/VACE stay on the
+  monolithic `generate()` path. 20 new unit tests, full suite 8110
+  passed 0 failed.
+- VL cold-start crash (#413): closed as fixed. Verified on main
+  (post-v0.8.10) that cold-start first VL request against
+  `Qwen2.5-VL-7B-Instruct-4bit` returns HTTP 200 with no
+  `There is no Stream(gpu, N)` error. Root cause (#411/#414, MLX 0.31.3+
+  cross-stream weight binding) fixed by binding VLM load to a dedicated
+  single-worker MLX executor.
+
 ## [0.8.10] - 2026-08-07
 
 Patch release — preference-alignment training, QLoRA quantized-base
