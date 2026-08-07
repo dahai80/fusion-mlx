@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.8.7] - 2026-08-07
+
+Patch release.
+
+- Incremental `tool_call_delta` streaming (#385): wire the dormant
+  `extract_tool_calls_streaming` into the streaming chat generator so tool
+  calls emit as `delta.tool_calls` SSE mid-generation (OpenAI standard)
+  instead of waiting for `gen.finished` all-at-once. Opt-in only when
+  `request.tools` is present; non-tool streams are byte-identical
+  (backward compatible). Reuses existing tool parsers via
+  `_resolve_streaming_tool_parser` (profile/registry -> `"auto"` fallback);
+  dedups emitted calls by `index`. The `gen.finished` finalize fallback is
+  preserved (skips re-emit when already streamed; emits all-at-once when no
+  inline detection fired).
+- Prefix cache session-agnostic documentation (#386): document that the
+  prefix cache is keyed purely by token-prefix chain hash (no `session_id`
+  dimension), so forked sessions share prefix KV automatically. Closed by
+  design; no code change.
+
 ## [0.8.6] - 2026-08-05
 
 Patch release.
