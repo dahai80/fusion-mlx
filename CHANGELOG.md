@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.8.8] - 2026-08-07
+
+Patch release.
+
+- Fine-tune models-list route (#397): add static route
+  `GET /admin/api/fine-tune/jobs/models` aliasing the existing
+  `list_finetunable_models` handler, registered before the parameterized
+  `/api/fine-tune/jobs/{job_id}` route. Previously the parametric route
+  captured `job_id=="models"` and returned `404 Job not found: models`,
+  breaking fusion-trainer's model enumeration. The legacy
+  `/api/fine-tune/models` path is unchanged (backward compatible). Same
+  payload: `[{model_id, model_type, model_path, loaded}]`.
+
 ## [0.8.7] - 2026-08-07
 
 Patch release.
