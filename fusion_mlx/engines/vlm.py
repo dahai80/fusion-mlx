@@ -6,6 +6,7 @@ import copy
 import logging
 import time
 from collections.abc import AsyncIterator
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
 
@@ -17,7 +18,6 @@ from ..engine_core import (
     _init_mlx_step_thread,
     get_executor,
 )
-from concurrent.futures import ThreadPoolExecutor
 from ..models.vlm import VLMModelAdapter
 from ..utils.image import (
     compute_image_hash,
