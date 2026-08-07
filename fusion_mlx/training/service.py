@@ -53,8 +53,17 @@ class FineTuneConfig:
     lora_rank: int = 8
     lora_alpha: float = 16.0
     lora_dropout: float = 0.0
-    fine_tune_type: str = "lora"  # lora | dora | full
+    fine_tune_type: str = "lora"  # lora | dora | full | qlora
     optimizer: str = "adamw"
+    # #402: QLoRA — quantize the frozen base to 4/8-bit, then attach LoRA
+    # (mlx-lm has no --quantize-base flag; QLoRA is implicit once the base
+    # is a QuantizedLinear, so we quantize on load when quantize_base=True).
+    quantize_base: bool = False
+    quant_bits: int = 4  # 4 | 8 (ignored unless quantize_base / qlora)
+    # #402: MXFP8 mixed-precision training. mlx-lm 0.31.3 has NO fp8 training
+    # path (mxfp8 is inference-only weight quant). Field exists to mirror the
+    # fusion-trainer API surface; setting it True fails loudly until landed.
+    mxfp8: bool = False
     learning_rate: float = 1e-5
     batch_size: int = 4
     iters: int = 100
@@ -449,10 +458,45 @@ class FineTuneService:
         mx.random.seed(cfg.seed)
         model.freeze()
 
+        # #402: MXFP8 training is not supported by mlx-lm 0.31.3 — fail loudly
+        # instead of silently ignoring the switch (Rule 12: fail visibly).
+        if cfg.mxfp8:
+            raise ValueError(
+                "mxfp8 mixed-precision training is not yet supported "
+                "(mlx-lm 0.31.3 has no fp8 training path). Use qlora for "
+                "memory savings; mxfp8 will be landed in a later phase."
+            )
+
+        # #402: QLoRA — quantize the frozen base to 4/8-bit before attaching
+        # LoRA. If the base is already a quantized MLX model, quantize_base is
+        # a no-op (LoRALinear.from_base wraps QuantizedLinear as-is). For an
+        # unquantized base, nn.quantize() converts Linears in place.
+        is_qlora = cfg.fine_tune_type == "qlora"
+        if is_qlora or cfg.quantize_base:
+            if cfg.quant_bits not in (4, 8):
+                raise ValueError(f"quant_bits must be 4 or 8, got {cfg.quant_bits}")
+            already_quant = any(
+                hasattr(l, "to_quantized") and getattr(l, "bits", None)
+                for l in model.layers
+            )
+            if not already_quant:
+                logger.info(
+                    "QLoRA: quantizing base to %d-bit (group_size=64)",
+                    cfg.quant_bits,
+                )
+                import mlx.nn as nn
+
+                nn.quantize(model, group_size=64, bits=cfg.quant_bits)
+            else:
+                logger.info("QLoRA: base already quantized, skipping quantize step")
+
         if cfg.fine_tune_type == "full":
             for layer in model.layers[-max(cfg.lora_layers, 0) :]:
                 layer.unfreeze()
-        elif cfg.fine_tune_type in ("lora", "dora"):
+        elif cfg.fine_tune_type in ("lora", "dora", "qlora"):
+            # qlora uses plain LoRA on top of the quantized base (not DoRA:
+            # DoRALinear support for quantized weights is incomplete).
+            use_dora = cfg.fine_tune_type == "dora"
             lora_params = {
                 "rank": cfg.lora_rank,
                 "dropout": cfg.lora_dropout,
@@ -462,7 +506,7 @@ class FineTuneService:
                 model,
                 cfg.lora_layers,
                 lora_params,
-                use_dora=(cfg.fine_tune_type == "dora"),
+                use_dora=use_dora,
             )
         else:
             raise ValueError(f"Unknown fine_tune_type: {cfg.fine_tune_type}")
