@@ -1,0 +1,34 @@
+{
+  "tag": "eagle3_inproc",
+  "target_model": "mlx-community/Meta-Llama-3.1-8B-Instruct-4bit",
+  "draft_model": "yuhuili/EAGLE3-LLaMA3.1-Instruct-8B",
+  "method": "eagle3",
+  "num_draft_tokens": 5,
+  "note": "In-process probe with HiddenStateCapture (faithful to engine_core._init_draft path). N=generation length, K=draft tokens.",
+  "short_prompt_N120": {
+    "prompt": "Write a detailed essay about the ocean and its ecosystems.",
+    "n_generate": 120,
+    "baseline_tps_avg": 104.45,
+    "eagle3_tps_avg": 150.94,
+    "acceptance_rate": 0.634,
+    "speedup": 1.445,
+    "trials": 5,
+    "per_trial_speedup": [1.480, 1.450, 1.445, 1.450, 1.400]
+  },
+  "long_prompt_N256": {
+    "prompt": "Write a detailed 400-word essay about the ocean, its ecosystems, and its importance to life on Earth.",
+    "n_generate": 256,
+    "baseline_tps_avg": 74.46,
+    "eagle3_tps_avg": 76.89,
+    "acceptance_rate": 0.473,
+    "speedup": 1.033,
+    "trials": 5,
+    "per_trial_speedup": [0.982, 1.008, 1.066, 1.177, 0.951]
+  },
+  "draft_model_method": {
+    "draft_model": "mlx-community/Llama-3.2-1B-Instruct-4bit",
+    "acceptance_rate": 0.246,
+    "speedup": 0.782,
+    "verdict": "SLOWER - generic 1B draft cannot predict 8B greedy tokens"
+  }
+}

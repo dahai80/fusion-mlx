@@ -871,6 +871,13 @@ copy, correct for quantized bases. See
 | GET | `/admin/api/fine-tune/grpo/jobs/{id}/stream` | SSE GRPO progress stream |
 | POST | `/admin/api/fine-tune/grpo/jobs/{id}/cancel` | Cancel a GRPO job |
 | DELETE | `/admin/api/fine-tune/grpo/jobs/{id}` | Delete a GRPO job record |
+| POST | `/admin/api/fine-tune/dpo/jobs` | Create a DPO preference training job (#399) |
+| POST | `/admin/api/fine-tune/orpo/jobs` | Create an ORPO preference training job (#399) |
+| GET | `/admin/api/fine-tune/dpo/jobs` | List DPO/ORPO jobs |
+| GET | `/admin/api/fine-tune/dpo/jobs/{id}` | Get DPO/ORPO job details |
+| GET | `/admin/api/fine-tune/dpo/jobs/{id}/stream` | SSE DPO/ORPO progress stream |
+| POST | `/admin/api/fine-tune/dpo/jobs/{id}/cancel` | Cancel a DPO/ORPO job |
+| DELETE | `/admin/api/fine-tune/dpo/jobs/{id}` | Delete a DPO/ORPO job record |
 
 ### Quick Example
 
@@ -974,6 +981,63 @@ curl -N http://localhost:11434/admin/api/fine-tune/grpo/jobs/{job_id}/stream
 | `temperature` | 1.0 | Sampling temperature (0 = greedy) |
 | `seed` | 0 | MLX RNG seed |
 | `reward_timeout` | 30.0 | Reward endpoint timeout (seconds) |
+
+### DPO / ORPO Preference Alignment (#399)
+
+Direct Preference Optimization (DPO) and Odds Ratio Preference Optimization
+(ORPO) align a LoRA policy to human preference pairs `{prompt, chosen, rejected}`.
+
+- **DPO** trains against a frozen reference model (base, no adapter) loaded
+  on demand and evicted after each step — same memory-bounded pattern as
+  GRPO. Loss: `-log σ(β·((π_θ(w)−π_ref(w)) − (π_θ(l)−π_ref(l))))`.
+- **ORPO** folds the reference into an odds-ratio penalty (SFT NLL on chosen
+  + `λ·log σ(log p_w − log p_l)`) — **no reference model**, lower memory.
+
+```bash
+# DPO
+curl -X POST http://localhost:11434/admin/api/fine-tune/dpo/jobs \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model_id": "qwen3.5-9b",
+    "preference_pairs": [
+      {"prompt": "What is MLX?", "chosen": "MLX is Apple's array framework.", "rejected": "idk"},
+      {"prompt": "What is LoRA?", "chosen": "Low-rank adaptation.", "rejected": "a fruit"}
+    ],
+    "adapter_name": "dpo-pref",
+    "config": {"iters": 50, "batch_size": 2, "beta": 0.1, "lora_layers": 16}
+  }'
+
+# ORPO (same shape, different endpoint)
+curl -X POST http://localhost:11434/admin/api/fine-tune/orpo/jobs \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model_id": "qwen3.5-9b",
+    "preference_pairs": [
+      {"prompt": "What is MLX?", "chosen": "MLX is Apple's array framework.", "rejected": "idk"}
+    ],
+    "config": {"iters": 50, "lambda_odds": 1.0, "lora_layers": 16}
+  }'
+
+# Stream progress (SSE): dpo_step / orpo_step {iter, total_iters, loss, reward_margin, acc_chosen}
+curl -N http://localhost:11434/admin/api/fine-tune/dpo/jobs/{job_id}/stream
+```
+
+#### DPO / ORPO Config
+
+| Field | Default | Description |
+|-------|---------|-------------|
+| `method` | `dpo` | `dpo` (uses ref model) or `orpo` (odds-ratio, no ref); forced by endpoint |
+| `iters` | 50 | Training iterations |
+| `batch_size` | 2 | Preference pairs per iteration |
+| `learning_rate` | 1e-5 | AdamW learning rate (LoRA params only) |
+| `lora_layers` | 16 | Number of layers to convert to LoRA |
+| `lora_rank` | 8 | LoRA rank |
+| `lora_alpha` | 16.0 | LoRA scale (alpha) |
+| `lora_dropout` | 0.0 | LoRA dropout |
+| `beta` | 0.1 | DPO temperature (ignored by ORPO) |
+| `lambda_odds` | 1.0 | ORPO odds-ratio penalty weight (ignored by DPO) |
+| `max_seq_length` | 1024 | Max prompt + completion tokens (truncated) |
+| `seed` | 0 | MLX RNG seed |
 
 ### Key Behaviors
 
