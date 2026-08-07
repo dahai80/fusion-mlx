@@ -1,6 +1,7 @@
 import logging
 
 import mlx.core as mx
+
 from mlx import nn
 
 logger = logging.getLogger(__name__)

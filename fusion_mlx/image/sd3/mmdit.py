@@ -2,8 +2,9 @@ import logging
 import math
 
 import mlx.core as mx
-from mlx import nn
 from mlx.core.fast import scaled_dot_product_attention
+
+from mlx import nn
 
 logger = logging.getLogger(__name__)
 

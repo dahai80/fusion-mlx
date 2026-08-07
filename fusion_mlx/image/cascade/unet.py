@@ -1,7 +1,6 @@
 import logging
 
 import mlx.core as mx
-from mlx import nn
 
 from fusion_mlx.image.cascade.common import (
     AttnBlock,
@@ -10,6 +9,7 @@ from fusion_mlx.image.cascade.common import (
     WuerstchenLayerNorm,
     gen_r_embedding,
 )
+from mlx import nn
 
 logger = logging.getLogger(__name__)
 
