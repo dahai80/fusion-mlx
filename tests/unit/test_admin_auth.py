@@ -272,6 +272,13 @@ class TestSkipAdminAuth:
         try:
             mock_request = MagicMock()
             mock_request.cookies.get.return_value = None
+            # #349: skip_api_key_verification applies to loopback only;
+            # the mock must look like a loopback request to take the skip path.
+            # MagicMock headers.get returns a truthy MagicMock, which would
+            # trip the proxy-header guard in _is_loopback_request, so stub it
+            # to return None for every header probe.
+            mock_request.headers.get.return_value = None
+            mock_request.client = MagicMock(host="127.0.0.1")
             result = asyncio.run(admin_auth.require_admin(mock_request))
             assert result is True
         finally:
@@ -368,8 +375,10 @@ class TestRememberMe:
 
 
 class TestSessionCookieName:
-    def test_cookie_name_is_session_token(self):
-        assert admin_auth.SESSION_COOKIE_NAME == "session_token"
+    def test_cookie_name_is_fusionmlx_admin_session(self):
+        # c503812: renamed from the legacy "session_token" to a namespaced
+        # cookie name to avoid collisions when co-hosted with other services.
+        assert admin_auth.SESSION_COOKIE_NAME == "fusionmlx_admin_session"
 
 
 class _FakeResponse:
@@ -407,7 +416,7 @@ class TestCheckUpdate:
         with (
             patch("fusion_mlx.admin.update_check.asyncio") as mock_asyncio,
             patch(
-                "fusion_mlx.utils.release_check.select_latest_stable_release",
+                "fusion_mlx.admin.update_check.select_latest_stable_release",
                 return_value=None,
             ),
         ):
@@ -435,7 +444,7 @@ class TestCheckUpdate:
         with (
             patch("fusion_mlx.admin.update_check.asyncio") as mock_asyncio,
             patch(
-                "fusion_mlx.utils.release_check.select_latest_stable_release",
+                "fusion_mlx.admin.update_check.select_latest_stable_release",
                 return_value=stable_data,
             ),
             patch(
@@ -464,7 +473,7 @@ class TestCheckUpdate:
         with (
             patch("fusion_mlx.admin.update_check.asyncio") as mock_asyncio,
             patch(
-                "fusion_mlx.utils.release_check.select_latest_stable_release",
+                "fusion_mlx.admin.update_check.select_latest_stable_release",
                 return_value=None,
             ),
         ):

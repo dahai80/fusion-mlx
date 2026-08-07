@@ -174,6 +174,15 @@ preflight() {
     export HF_ENDPOINT="${HF_MIRROR}"
     export HUGGINGFACE_HUB_CACHE="${HOME}/.fusion-mlx/models"
 
+    # #398: start.sh is the standalone launcher (loopback, no gateway
+    # injecting X-Fusion-Route). Default to route-guard warn-only so
+    # local /v1/* calls are not rejected. Gateway deployments inject the
+    # header at the gateway and can override with FUSION_ROUTE_WARN_ONLY=false.
+    if [[ -z "${FUSION_ROUTE_WARN_ONLY:-}" ]]; then
+        export FUSION_ROUTE_WARN_ONLY=true
+        log_info "Standalone mode: FUSION_ROUTE_WARN_ONLY=true (no gateway; override with =false if behind a gateway)"
+    fi
+
     log_info "Preflight OK (port=${PORT}, HF mirror=${HF_MIRROR}, api_key=$([ -n "${API_KEY}" ] && echo "set" || echo "none"))"
 }
 
