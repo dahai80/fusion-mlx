@@ -1,0 +1,40 @@
+{
+  "tag": "spec_on",
+  "model": "llama8b",
+  "family": "llama",
+  "runs": [
+    {
+      "model": "llama8b",
+      "max_tokens": 256,
+      "n_tokens": 269,
+      "ttft_s": 0.612,
+      "total_s": 2.961,
+      "decode_tps": 114.09,
+      "overall_tps": 90.86,
+      "tag": "spec_on"
+    },
+    {
+      "model": "llama8b",
+      "max_tokens": 256,
+      "n_tokens": 263,
+      "ttft_s": 0.472,
+      "total_s": 2.739,
+      "decode_tps": 115.56,
+      "overall_tps": 96.03,
+      "tag": "spec_on"
+    },
+    {
+      "model": "llama8b",
+      "max_tokens": 256,
+      "n_tokens": 0,
+      "ttft_s": 0.0,
+      "total_s": 0.451,
+      "decode_tps": 2.22,
+      "overall_tps": 0.0,
+      "tag": "spec_on"
+    }
+  ],
+  "avg_ttft_s": 0.361,
+  "avg_decode_tps": 77.29,
+  "avg_overall_tps": 62.3
+}

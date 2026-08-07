@@ -1,0 +1,50 @@
+{
+  "tag": "eagle3_on",
+  "model": "llama8b",
+  "family": "llama",
+  "runs": [
+    {
+      "model": "llama8b",
+      "max_tokens": 256,
+      "n_tokens": 260,
+      "ttft_s": 0.501,
+      "total_s": 2.714,
+      "decode_tps": 117.0,
+      "overall_tps": 95.79,
+      "tag": "eagle3_on"
+    },
+    {
+      "model": "llama8b",
+      "max_tokens": 256,
+      "n_tokens": 257,
+      "ttft_s": 0.407,
+      "total_s": 2.629,
+      "decode_tps": 115.21,
+      "overall_tps": 97.74,
+      "tag": "eagle3_on"
+    },
+    {
+      "model": "llama8b",
+      "max_tokens": 256,
+      "n_tokens": 260,
+      "ttft_s": 0.497,
+      "total_s": 2.715,
+      "decode_tps": 116.76,
+      "overall_tps": 95.75,
+      "tag": "eagle3_on"
+    },
+    {
+      "model": "llama8b",
+      "max_tokens": 256,
+      "n_tokens": 260,
+      "ttft_s": 0.42,
+      "total_s": 2.637,
+      "decode_tps": 116.82,
+      "overall_tps": 98.61,
+      "tag": "eagle3_on"
+    }
+  ],
+  "avg_ttft_s": 0.456,
+  "avg_decode_tps": 116.45,
+  "avg_overall_tps": 96.97
+}
