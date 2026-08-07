@@ -1,5 +1,44 @@
 # Changelog
 
+## [0.8.10] - 2026-08-07
+
+Patch release — preference-alignment training, QLoRA quantized-base
+fine-tuning, speculative-decoding benchmark, and a VLM cross-stream
+load fix.
+
+- DPO/ORPO preference training (#399): new `DPOConfig`/`DPOTrainer`
+  pipeline with DPO reference-model loss and ORPO odds-ratio (no ref
+  model) variants, exposed via `POST /admin/api/fine-tune/dpo/jobs` and
+  `POST /admin/api/fine-tune/orpo/jobs` (+ list/status/cancel routes).
+  `DPOService` runs the job queue; saved adapters reuse the existing
+  `tree_flatten` adapter path. 15 unit tests cover config validation,
+  service lifecycle, and both loss paths.
+- QLoRA fine-tune (#402): `FineTuneConfig` gains `quantize_base` /
+  `quant_bits` and a `qlora` `fine_tune_type`. Quantizes the frozen base
+  weights (4/8-bit) so larger models fit in VRAM during LoRA training,
+  then dequantizes for adapter merge/save.
+- Speculative-decoding benchmark (#388): `scripts/bench_spec_decode_388.py`
+  streaming bench + `BENCHMARK_SPEC_388.md` report. EAGLE3 on
+  Llama-3.1-8B-Instruct (dense KV-cache) = 1.445× @ 63.4% acceptance on
+  short generation, degrading to 1.033× @ 47.3% on long generation. A
+  generic draft model was a 0.78× slowdown (24.6% acceptance) — an
+  EAGLE3-trained draft is required, not a generic LM. The PRD target
+  Qwen3.6-27B-mxfp8 is hybrid GDN (recurrent `ArraysCache`), so
+  draft-model/EAGLE3 spec is auto-gated off by design (`spec_eligible =
+  not model_has_recurrent_cache(model)`); only N-gram/suffix/prompt-lookup
+  spec runs there — use DFlash for that model.
+- VLM cross-stream load fix (#411): MLX 0.31.3+ binds model weights to the
+  stream of the thread that first touches them. The VLM on-demand load ran
+  on `get_executor("io")` (a 2-worker pool without MLX stream init), so
+  weights bound to an io-worker thread's stream while vision-prep + prefill
+  ran on the engine's `mlx_executor` → cross-stream access raised
+  `There is no Stream(gpu, 0) in current thread` on every VL request when a
+  text model was already warm. Load now runs on a dedicated single-worker
+  `ThreadPoolExecutor` with `initializer=_init_mlx_step_thread`, reusing
+  the engine's owning thread/stream so load + prefill share one stream.
+- CI: fixed ruff I001 in `engines/vlm.py` (stdlib import wedged mid
+  first-party block) that blocked PR #414's lint job.
+
 ## [0.8.9] - 2026-08-07
 
 Patch release.
