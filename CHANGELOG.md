@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.8.5] - 2026-08-05
+
+Patch release.
+
+- Accept HuggingFace repo ids in model resolution (#372): `/v1/chat/completions`
+  (and all OpenAI/Anthropic routes) now accept HF repo ids like
+  `mlx-community/Qwen3-0.6B-4bit` in addition to registry short names. The
+  engine pool normalizes a repo-id request to the discovered entry whose
+  `source_repo_id` matches (case-insensitive) before lookup, so clients using
+  the OpenAI-standard `org/repo` form no longer hit an opaque 502 through the
+  gateway; unmatched ids still raise a clear `ModelNotFoundError` (404) listing
+  available short names.
+- Fix stale `--lora-path` CLI help (#390): the help text and inline comment
+  claimed "Runtime hot-swap is not yet supported", contradicting the
+  per-request adapter hot-swap already implemented in `engine_pool`
+  (`_adapter_key`/`_make_adapter_entry`, wired into the OpenAI/Anthropic routes
+  via the request `adapters` field). Help text now reflects that per-request
+  adapter hot-swap is supported.
+
 ## [0.8.4] - 2026-08-05
 
 Patch release.

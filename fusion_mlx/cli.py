@@ -663,7 +663,8 @@ Examples:
     # Boot-time LoRA adapter (Phase B LoRA slice 1). Applies a PEFT LoRA
     # adapter at model load via mlx_lm.load(adapter_path=...). Single-model
     # ``serve --model`` path only; multi-model ``--model-dir`` per-model LoRA
-    # and runtime hot-swap are follow-ups.
+    # is a follow-up. Per-request runtime hot-swap IS supported via the
+    # request ``adapters`` field (engine_pool per-request adapter dispatch).
     serve_parser.add_argument(
         "--lora-path",
         dest="lora_path",
@@ -671,8 +672,9 @@ Examples:
         help="Path to a PEFT LoRA adapter directory (adapter_config.json) to "
         "apply at boot. Fuses the adapter into the base model weights via "
         "mlx_lm.load(adapter_path=...). Single-model ``serve --model`` only; "
-        "ignored by multi-model ``--model-dir``. Runtime hot-swap is not yet "
-        "supported.",
+        "ignored by multi-model ``--model-dir``. Per-request adapter hot-swap "
+        "is supported at runtime via the request ``adapters`` field "
+        "(see engine_pool per-request adapter dispatch).",
     )
     serve_parser.add_argument(
         "--dspark-draft-quant-bits",
