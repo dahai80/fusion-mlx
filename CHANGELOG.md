@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.8.6] - 2026-08-05
+
+Patch release.
+
+- In-place LoRA swap (#389): keep a single base engine resident and swap the
+  LoRA adapter onto it in place via mlx_lm's `LoRALinear` machinery
+  (`load_adapters` / `remove_lora_layers`) instead of reloading the full base
+  model per adapter. Correct for 4-bit / 8-bit quantized bases (low-rank arrays
+  added beside the quantized linear, never fused into packed weights) and
+  allocates no second base copy. A per-base `asyncio.Lock` serializes the
+  apply → infer → restore window; bare-base requests wait for any in-flight
+  swap to restore. Opt-in via `FUSION_LORA_INPLACE_SWAP=1` (default OFF
+  preserves the existing per-adapter derived-engine behavior). Switch latency
+  ~7 ms apply / ~1 ms restore on Qwen3-0.6B-4bit. See
+  [docs/lora-inplace-swap.md](docs/lora-inplace-swap.md).
+
 ## [0.8.5] - 2026-08-05
 
 Patch release.
