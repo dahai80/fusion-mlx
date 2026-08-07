@@ -726,6 +726,34 @@ async def _run_chat(
         await _release()
 
 
+def _resolve_streaming_tool_parser(engine: Any, model_name: str) -> Any:
+    # #385 增量 tool_call_delta 流式: 为流式路径解析工具解析器。
+    # 复用 routes_internal.models.effective_parsers_for 的分层解析
+    # (registry live state -> ServerConfig -> alias-profile)，无配置时
+    # 回退 "auto" 自动探测。仅在 request.tools 存在时调用，不影响普通流。
+    try:
+        from ..config import get_config
+        from ..model_aliases import resolve_profile
+        from ..routes_internal.models import effective_parsers_for
+        from ..tool_parsers import ToolParserManager
+
+        cfg = get_config()
+        profile = resolve_profile(model_name)
+        profile_tool = profile.tool_call_parser if profile else None
+        tool_name, _ = effective_parsers_for(model_name, profile_tool, None)
+        if not tool_name:
+            tool_name = "auto"
+        tokenizer = getattr(engine, "_tokenizer", None)
+        parser_cls = ToolParserManager.get_tool_parser(tool_name)
+        logger.debug(
+            "streaming tool parser resolved: parser=%s model=%s", tool_name, model_name
+        )
+        return parser_cls(tokenizer)
+    except Exception as e:
+        logger.debug("streaming tool parser resolve failed: %s", e)
+        return None
+
+
 async def _stream_chat_generator(
     request: ChatCompletionRequest,
     engine: Any,
@@ -846,6 +874,15 @@ async def _stream_chat_generator(
         # from the real answer (issue #21). No-op for tag-free text.
         parser = ThinkingParser()
 
+        # #385 增量 tool_call_delta 流式: 仅当 request.tools 存在时启用工具解析器。
+        # 无 tools 时 tool_parser=None，路径与改造前逐字节一致 (向后兼容)。
+        tool_parser = None
+        if request.tools:
+            tool_parser = _resolve_streaming_tool_parser(engine, model_name)
+        tool_text_accumulated = ""
+        tool_calls_streamed = 0
+        tool_calls_in_stream = False
+
         ct_kwargs_stream = dict(getattr(request, "chat_template_kwargs", {}) or {})
         # AtomCode 专题优化: enable_thinking 默认禁思考收敛单点 (流式路径, 2026-07-19)
         from .utils import resolve_enable_thinking_default
@@ -874,29 +911,107 @@ async def _stream_chat_generator(
                 if keepalive:
                     keepalive.reset()
                 accumulated += gen.new_text
-                thinking_delta, content_delta = parser.feed(gen.new_text)
-                if content_delta:
-                    chunk = StreamChunk(
-                        text=content_delta,
-                        prompt_tokens=gen.prompt_tokens,
-                        completion_tokens=gen.completion_tokens,
-                        cached_tokens=gen.cached_tokens,
-                        logprobs=getattr(gen, "logprobs", None),
-                    )
-                    yield _adapter.format_stream_chunk(chunk, request, encoder=encoder)
-                if thinking_delta:
-                    rchunk = StreamChunk(
-                        text="",
-                        reasoning_content=thinking_delta,
-                        prompt_tokens=gen.prompt_tokens,
-                        completion_tokens=gen.completion_tokens,
-                        cached_tokens=gen.cached_tokens,
-                        logprobs=getattr(gen, "logprobs", None),
-                    )
-                    yield _adapter.format_stream_chunk(rchunk, request, encoder=encoder)
-                prompt_tokens = gen.prompt_tokens or prompt_tokens
-                completion_tokens = gen.completion_tokens or completion_tokens
-                cached_tokens = gen.cached_tokens or cached_tokens
+
+                # #385 增量 tool_call_delta: 当启用工具解析器时，由解析器决定
+                # 本段 delta 是普通 content、还是已闭合的 tool_call、或需抑制
+                # (工具标记未闭合)。解析器返回 {"tool_calls": [...]} 时按 index
+                # 去重，仅发射新增调用；返回 None 抑制整段 (处于标记内部)；
+                # 否则取 result["content"] 经 ThinkingParser 拆分后发射。
+                if tool_parser is not None:
+                    prev_tool_text = tool_text_accumulated
+                    tool_text_accumulated += gen.new_text
+                    try:
+                        tresult = tool_parser.extract_tool_calls_streaming(
+                            prev_tool_text,
+                            tool_text_accumulated,
+                            gen.new_text,
+                        )
+                    except Exception as e:
+                        logger.debug("streaming tool parse failed: %s", e)
+                        tresult = {"content": gen.new_text}
+
+                    if tresult is None:
+                        # 工具标记未闭合，抑制 content，仅更新计数
+                        prompt_tokens = gen.prompt_tokens or prompt_tokens
+                        completion_tokens = gen.completion_tokens or completion_tokens
+                        cached_tokens = gen.cached_tokens or cached_tokens
+                    else:
+                        new_calls = tresult.get("tool_calls")
+                        if new_calls:
+                            for tc in new_calls:
+                                idx = tc.get("index", tool_calls_streamed)
+                                if idx < tool_calls_streamed:
+                                    continue  # 已发射，跳过去重
+                                tool_calls_streamed = idx + 1
+                                tool_calls_in_stream = True
+                                tc_chunk = StreamChunk(
+                                    tool_call_delta=[tc],
+                                    prompt_tokens=gen.prompt_tokens,
+                                    completion_tokens=gen.completion_tokens,
+                                    cached_tokens=gen.cached_tokens,
+                                    logprobs=getattr(gen, "logprobs", None),
+                                )
+                                yield _adapter.format_stream_chunk(
+                                    tc_chunk, request, encoder=encoder
+                                )
+                        # 解析器过滤后的 content (已剥离工具标记)，经 ThinkingParser
+                        content_piece = tresult.get("content", "")
+                        if content_piece:
+                            thinking_delta, content_delta = parser.feed(content_piece)
+                            if content_delta:
+                                chunk = StreamChunk(
+                                    text=content_delta,
+                                    prompt_tokens=gen.prompt_tokens,
+                                    completion_tokens=gen.completion_tokens,
+                                    cached_tokens=gen.cached_tokens,
+                                    logprobs=getattr(gen, "logprobs", None),
+                                )
+                                yield _adapter.format_stream_chunk(
+                                    chunk, request, encoder=encoder
+                                )
+                            if thinking_delta:
+                                rchunk = StreamChunk(
+                                    text="",
+                                    reasoning_content=thinking_delta,
+                                    prompt_tokens=gen.prompt_tokens,
+                                    completion_tokens=gen.completion_tokens,
+                                    cached_tokens=gen.cached_tokens,
+                                    logprobs=getattr(gen, "logprobs", None),
+                                )
+                                yield _adapter.format_stream_chunk(
+                                    rchunk, request, encoder=encoder
+                                )
+                        prompt_tokens = gen.prompt_tokens or prompt_tokens
+                        completion_tokens = gen.completion_tokens or completion_tokens
+                        cached_tokens = gen.cached_tokens or cached_tokens
+                else:
+                    thinking_delta, content_delta = parser.feed(gen.new_text)
+                    if content_delta:
+                        chunk = StreamChunk(
+                            text=content_delta,
+                            prompt_tokens=gen.prompt_tokens,
+                            completion_tokens=gen.completion_tokens,
+                            cached_tokens=gen.cached_tokens,
+                            logprobs=getattr(gen, "logprobs", None),
+                        )
+                        yield _adapter.format_stream_chunk(
+                            chunk, request, encoder=encoder
+                        )
+                    if thinking_delta:
+                        rchunk = StreamChunk(
+                            text="",
+                            reasoning_content=thinking_delta,
+                            prompt_tokens=gen.prompt_tokens,
+                            completion_tokens=gen.completion_tokens,
+                            cached_tokens=gen.cached_tokens,
+                            logprobs=getattr(gen, "logprobs", None),
+                        )
+                        yield _adapter.format_stream_chunk(
+                            rchunk, request, encoder=encoder
+                        )
+                    prompt_tokens = gen.prompt_tokens or prompt_tokens
+                    completion_tokens = gen.completion_tokens or completion_tokens
+                    cached_tokens = gen.cached_tokens or cached_tokens
             else:
                 # No new text — maybe emit SSE keepalive ping
                 if keepalive:
@@ -906,8 +1021,11 @@ async def _stream_chat_generator(
 
             if gen.finished:
                 finish_reason = gen.finish_reason or "stop"
-                # Emit tool call deltas if present
-                if gen.tool_calls:
+                # #385: 已在流中增量发射 tool_call 时，仅标注 finish_reason，
+                # 不再重复全量发射 (避免双份)。未增量发射时保留原 finalize 回退。
+                if tool_calls_in_stream:
+                    finish_reason = "tool_calls"
+                elif gen.tool_calls:
                     finish_reason = "tool_calls"
                     for idx, tc in enumerate(gen.tool_calls):
                         tc_chunk = StreamChunk(

@@ -1290,6 +1290,29 @@ T5/UMT5).
 - Opt-in, default **off** - does not affect the existing paged-cache path when
   disabled.
 
+#### Session-agnostic prefix cache & fork reuse (#386)
+
+The prefix cache is keyed purely by **token-prefix chain hash**
+(`hash_k = sha256(hash_{k-1} || block_k_tokens || model_name)`) — it has **no
+session-id dimension**. Block hashes
+(`fusion_mlx/cache/paged_cache.py` `compute_block_hash`) and lookups
+(`BlockAwarePrefixCache.fetch_cache`, `PagedCacheManager.find_shared_prefix`)
+consider only the token stream and model name, never `session_id` or
+`request_id`. The `session_id` request field (`openai_models.py`) is confined
+to per-session usage stats (#226).
+
+By design this means **forked sessions share prefix KV automatically**: two
+requests with identical `messages[:N]` (and identical tools / system /
+chat-template-kwargs) produce identical `prompt_token_ids[:K]`, both hit the
+same chain-hash blocks, and the second request reuses the cached prefix up to
+the divergence point with no re-prefill — regardless of whether they share a
+`session_id`. Adding `session_id` to the cache key would *defeat* this
+cross-session reuse and lower hit rates, so it is intentionally excluded.
+
+A copy-on-write `fork_cache(source_request_id, new_request_id)` helper exists
+in `BlockAwarePrefixCache` for an explicit fork API if one is needed in the
+future, but the automatic token-prefix path already covers the fork case.
+
 ```bash
 # Enable cross-restart prefix persistence (default off)
 FUSION_MLX_BOUNDARY_PREFIX_PERSIST=1 fusion-mlx serve --model <model>
