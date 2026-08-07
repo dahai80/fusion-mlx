@@ -17,6 +17,7 @@ from collections.abc import Callable
 from typing import Any
 
 import mlx.core as mx
+import numpy as np
 
 from ..._tempfile_safe import managed_tempfile_path
 from ...engine_core import get_executor, get_video_gen_timeout
@@ -26,6 +27,14 @@ from .base import VideoBackend, VideoConstraints, VideoGenParams
 logger = logging.getLogger(__name__)
 
 _DEFAULT_SCHEDULER = "unipc"
+
+
+def _active_mem() -> int:
+    try:
+        return int(mx.metal.get_active_memory())
+    except Exception:
+        return -1
+
 
 # Max T5 text-embedding cache entries (LRU eviction when exceeded).
 _T5_EMBED_CACHE_MAX = 16
@@ -70,6 +79,20 @@ class Wan2Backend(VideoBackend):
         self._t5_config = None
         self._embed_cache = {}
         self._embed_cache_lock = threading.Lock()
+        # Stage API (#410): per-component loaded state for ComfyUI sequential
+        # offload. Mirrors skyreels._stage_flags. DiT/VAE load lazily in
+        # load_dit()/load_vae(); T5 is preloaded in start() but
+        # load_text_encoder() is the stage entry point.
+        self._stage_flags = {
+            "text_encoder": False,
+            "dit": False,
+            "vae": False,
+        }
+        self._stage_config = None
+        self._stage_quant = None
+        self._stage_dit_models = None
+        self._stage_vae = None
+        self._stage_on_step = None
 
     @classmethod
     def detect(cls, model_path: str) -> bool:
@@ -155,6 +178,16 @@ class Wan2Backend(VideoBackend):
         self._t5_encoder = None
         self._t5_tokenizer = None
         self._t5_config = None
+        self._stage_dit_models = None
+        self._stage_vae = None
+        self._stage_config = None
+        self._stage_quant = None
+        self._stage_on_step = None
+        self._stage_flags = {
+            "text_encoder": False,
+            "dit": False,
+            "vae": False,
+        }
         with self._embed_cache_lock:
             self._embed_cache.clear()
         gc.collect()
@@ -269,6 +302,287 @@ class Wan2Backend(VideoBackend):
             loop.run_in_executor(get_executor("video"), _generate),
             timeout=get_video_gen_timeout(),
         )
+
+    # ------------------------------------------------------------------
+    # Pipeline stage API (issue #410). Override VideoBackend NotImplementedError
+    # defaults to expose individual pipeline stages for Fusion-ComfyUI
+    # sequential offload. Video latents are 5D (batch, c, num_frames, h, w).
+    # Scope: T2V. I2V/VACE/camera stay on the monolithic generate() path.
+    # ------------------------------------------------------------------
+    def _ensure_stage_config(self):
+        if self._stage_config is None:
+            from pathlib import Path
+
+            from fusion_mlx.video.wan2.stage import load_wan_config
+
+            config, quant = load_wan_config(Path(self._model_dir))
+            self._stage_config = config
+            self._stage_quant = quant
+            # Refresh the T5 config used by start() so encode_text_stage uses
+            # the resolved text_len (start() may have inferred from path).
+            if self._t5_config is None:
+                self._t5_config = config
+        return self._stage_config
+
+    async def load_text_encoder(self) -> None:
+        from pathlib import Path
+
+        from fusion_mlx.video.wan2.stage import resolve_t5_path
+        from fusion_mlx.video.wan2.utils import load_t5_encoder
+
+        config = self._ensure_stage_config()
+        if self._t5_encoder is None:
+            t5_path = resolve_t5_path(Path(self._model_dir))
+
+            def _load():
+                return load_t5_encoder(t5_path, config)
+
+            loop = asyncio.get_running_loop()
+            self._t5_encoder = await asyncio.wait_for(
+                loop.run_in_executor(get_executor("io"), _load),
+                timeout=_T5_PRELOAD_TIMEOUT,
+            )
+        self._stage_flags["text_encoder"] = True
+        gc.collect()
+        logger.info("stage:text_encoder load wan2 active_mem=%s", _active_mem())
+
+    async def encode_text(self, prompt: str) -> dict:
+        from fusion_mlx.video.wan2.stage import encode_text_stage
+
+        if self._t5_encoder is None:
+            raise RuntimeError("text_encoder is unloaded; call load_text_encoder().")
+        if self._t5_tokenizer is None:
+            from transformers import AutoTokenizer
+
+            self._t5_tokenizer = AutoTokenizer.from_pretrained("google/umt5-xxl")
+        config = self._ensure_stage_config()
+        t5_encoder = self._t5_encoder
+        tokenizer = self._t5_tokenizer
+        text_len = config.text_len
+
+        def _enc():
+            return encode_text_stage(t5_encoder, tokenizer, prompt, text_len)
+
+        loop = asyncio.get_running_loop()
+        context = await loop.run_in_executor(get_executor("video"), _enc)
+        logger.info(
+            "stage:text_encoder encode wan2 prompt_len=%d context_shape=%s",
+            len(prompt),
+            tuple(context.shape),
+        )
+        return {"embed": context}
+
+    async def unload_text_encoder(self) -> None:
+        self._t5_encoder = None
+        self._stage_flags["text_encoder"] = False
+        gc.collect()
+        mx.synchronize()
+        mx.clear_cache()
+        logger.info("stage:text_encoder unload wan2")
+
+    async def load_dit(self) -> None:
+        from pathlib import Path
+
+        from fusion_mlx.video.wan2.stage import resolve_t5_path  # noqa: F401
+        from fusion_mlx.video.wan2.utils import load_wan_model
+
+        config = self._ensure_stage_config()
+        quant = self._stage_quant
+        model_dir = Path(self._model_dir)
+        is_dual = config.dual_model
+
+        def _load():
+            if is_dual:
+                low = load_wan_model(
+                    model_dir / "low_noise_model.safetensors", config, quant
+                )
+                high = load_wan_model(
+                    model_dir / "high_noise_model.safetensors", config, quant
+                )
+                return [low, high]
+            dit_path = model_dir / "model.safetensors"
+            if not dit_path.exists() and (model_dir / "dit").is_dir():
+                dit_path = model_dir / "dit"
+            return [load_wan_model(dit_path, config, quant)]
+
+        loop = asyncio.get_running_loop()
+        self._stage_dit_models = await asyncio.wait_for(
+            loop.run_in_executor(get_executor("video"), _load),
+            timeout=_T5_PRELOAD_TIMEOUT,
+        )
+        self._stage_flags["dit"] = True
+        gc.collect()
+        logger.info("stage:dit load wan2 dual=%s active_mem=%s", is_dual, _active_mem())
+
+    async def denoise(
+        self,
+        latent: mx.array,
+        pos_embed: mx.array,
+        neg_embed: mx.array | None,
+        steps: int,
+        cfg: float,
+        seed: int,
+        num_frames: int,
+    ) -> mx.array:
+        from fusion_mlx.video.wan2.stage import compute_target_shape, run_denoise
+
+        if self._stage_dit_models is None:
+            raise RuntimeError("dit is unloaded; call load_dit().")
+        config = self._ensure_stage_config()
+
+        # cfg: the stage contract passes a single float. neg_embed is None when
+        # the caller disabled CFG (no negative FusionTextEncoder node). Derive
+        # cfg_disabled to match the monolith's fast path (guide_scale<=1.0).
+        cfg_disabled = neg_embed is None or cfg <= 1.0
+        context_null = (
+            neg_embed if (not cfg_disabled and neg_embed is not None) else None
+        )
+
+        # Infer height/width/num_frames from the caller's latent shape if it is
+        # a 5D (1, c, t, h, w) FusionComfyUI latent; otherwise fall back to the
+        # config frame_num and the latent's spatial dims. The denoise generates
+        # its own seeded noise from target_shape (the passed latent is the
+        # empty zeros latent from FusionKSampler.create_empty_latent and is not
+        # used as the init — T2V starts from pure noise).
+        if latent.ndim == 5:
+            _, _, t_lat, h_lat, w_lat = latent.shape
+            num_frames = num_frames or (t_lat * config.vae_stride[0] - 1) or 1
+            height = h_lat * config.vae_stride[1]
+            width = w_lat * config.vae_stride[2]
+        else:
+            num_frames = num_frames or config.frame_num
+            height = latent.shape[-2] * config.vae_stride[1]
+            width = latent.shape[-1] * config.vae_stride[2]
+        target_shape, seq_len, _h, _w = compute_target_shape(
+            config, num_frames, height, width
+        )
+
+        guide_scale = cfg
+        shift = config.sample_shift
+        scheduler = "unipc"
+        no_compile = True
+        models = self._stage_dit_models
+        on_step = self._stage_on_step
+
+        def _denoise():
+            return run_denoise(
+                config,
+                models,
+                pos_embed,
+                context_null,
+                target_shape,
+                seq_len,
+                steps,
+                guide_scale,
+                shift,
+                scheduler,
+                seed,
+                no_compile,
+                on_step=on_step,
+            )
+
+        loop = asyncio.get_running_loop()
+        result_4d = await loop.run_in_executor(get_executor("video"), _denoise)
+        # 5D contract: add batch dim -> (1, z_dim, t_latent, h_lat, w_lat).
+        result = result_4d[None]
+        logger.info(
+            "stage:dit denoise wan2 steps=%d cfg=%.2f out_shape=%s",
+            steps,
+            cfg,
+            tuple(result.shape),
+        )
+        return result
+
+    async def unload_dit(self) -> None:
+        self._stage_dit_models = None
+        self._stage_flags["dit"] = False
+        gc.collect()
+        mx.synchronize()
+        mx.clear_cache()
+        logger.info("stage:dit unload wan2")
+
+    async def load_vae(self) -> None:
+        from pathlib import Path
+
+        from fusion_mlx.video.wan2.stage import resolve_vae_path
+        from fusion_mlx.video.wan2.utils import load_vae_decoder
+
+        config = self._ensure_stage_config()
+        vae_path = resolve_vae_path(Path(self._model_dir))
+
+        def _load():
+            return load_vae_decoder(vae_path, config)
+
+        loop = asyncio.get_running_loop()
+        self._stage_vae = await asyncio.wait_for(
+            loop.run_in_executor(get_executor("io"), _load),
+            timeout=_T5_PRELOAD_TIMEOUT,
+        )
+        self._stage_flags["vae"] = True
+        gc.collect()
+        logger.info("stage:vae load wan2 active_mem=%s", _active_mem())
+
+    async def decode(self, latent: mx.array) -> mx.array:
+        from fusion_mlx.video.wan2.stage import decode_wan_vae
+
+        if self._stage_vae is None:
+            raise RuntimeError("vae is unloaded; call load_vae().")
+        config = self._ensure_stage_config()
+        # Accept 5D (1, c, t, h, w) or 4D (c, t, h, w); run_denoise returns 5D.
+        lat_4d = latent[0] if latent.ndim == 5 else latent
+        vae = self._stage_vae
+
+        def _decode():
+            return decode_wan_vae(lat_4d, config, vae, tiling_config=None)
+
+        loop = asyncio.get_running_loop()
+        frames_u8 = await loop.run_in_executor(get_executor("video"), _decode)
+        # frames_u8: [T, H, W, 3] uint8 -> float [T, H, W, 3] in [0,1] -> add
+        # batch dim -> (1, T, H, W, 3). Matches the IMAGE contract (N,H,W,C).
+        pixels = mx.array(frames_u8.astype(np.float32) / 255.0)[None]
+        logger.info("stage:vae decode wan2 out_shape=%s", tuple(pixels.shape))
+        return pixels
+
+    async def decode_tiled(self, latent: mx.array, tile_size: int = 256) -> mx.array:
+        from fusion_mlx.video.ltx2.video_vae.tiling import TilingConfig
+        from fusion_mlx.video.wan2.stage import decode_wan_vae
+
+        if self._stage_vae is None:
+            raise RuntimeError("vae is unloaded; call load_vae().")
+        config = self._ensure_stage_config()
+        lat_4d = latent[0] if latent.ndim == 5 else latent
+        # tile_size is in pixels (ComfyUI convention); auto derives spatial+temporal.
+        height = lat_4d.shape[-2] * config.vae_stride[1]
+        width = lat_4d.shape[-1] * config.vae_stride[2]
+        num_frames = lat_4d.shape[1] * config.vae_stride[0] - 1
+        tiling_config = TilingConfig.auto(height, width, num_frames)
+        vae = self._stage_vae
+
+        def _decode():
+            return decode_wan_vae(lat_4d, config, vae, tiling_config=tiling_config)
+
+        loop = asyncio.get_running_loop()
+        frames_u8 = await loop.run_in_executor(get_executor("video"), _decode)
+        pixels = mx.array(frames_u8.astype(np.float32) / 255.0)[None]
+        logger.info(
+            "stage:vae decode_tiled wan2 tile=%d out_shape=%s",
+            tile_size,
+            tuple(pixels.shape),
+        )
+        return pixels
+
+    async def unload_vae(self) -> None:
+        self._stage_vae = None
+        self._stage_flags["vae"] = False
+        gc.collect()
+        mx.synchronize()
+        mx.clear_cache()
+        logger.info("stage:vae unload wan2")
+
+    def set_progress_callback(self, cb):
+        # Wired by FusionEngineWrapper.set_progress_callback before load_dit().
+        # Stored so denoise() can forward per-step progress to the node.
+        self._stage_on_step = cb
 
     def constraints(self) -> VideoConstraints:
         return VideoConstraints(
