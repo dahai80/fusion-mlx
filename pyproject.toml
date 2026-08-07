@@ -187,6 +187,13 @@ select = ["E", "F", "W", "I", "N", "UP", "B", "SIM"]
 # the codebase's established permissive style; correctness rules stay active.
 ignore = ["E402", "E501", "E731", "F811", "F841", "B004", "B007", "B008", "B011", "B017", "B905", "N801", "N806", "SIM103", "SIM108", "SIM110", "SIM117", "SIM222", "UP028", "SIM102", "SIM105", "SIM115", "B904", "UP042", "E741", "N802", "N803", "N807", "N811", "N814", "N818", "SIM113", "SIM116"]
 
+# Pin the MLX-family packages as third-party so isort classifies them
+# deterministically. CI (ubuntu) cannot install the macOS-only `mlx` wheel,
+# so ruff's environment-probe heuristic misclassifies `mlx` and emits I001
+# false positives on adapter files that group `mlx.core`/`mlx` imports.
+[tool.ruff.lint.isort]
+known-third-party = ["mlx", "mlx.core", "mlx_lm", "mlx_vlm", "mlx_embeddings"]
+
 [tool.ruff.lint.per-file-ignores]
 # Package re-export surfaces: F401 (re-exports) is the __init__.py purpose.
 "__init__.py" = ["F401"]
