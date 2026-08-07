@@ -11,7 +11,13 @@ from typing import Any
 
 import mlx.core as mx
 
-from ..engine_core import AsyncEngineCore, EngineConfig, get_executor
+from ..engine_core import (
+    AsyncEngineCore,
+    EngineConfig,
+    _init_mlx_step_thread,
+    get_executor,
+)
+from concurrent.futures import ThreadPoolExecutor
 from ..models.vlm import VLMModelAdapter
 from ..utils.image import (
     compute_image_hash,
@@ -186,6 +192,7 @@ class VLMBatchedEngine(BaseEngine):
         self._tokenizer = None
         self._adapter = None
         self._engine = None
+        self._vlm_load_executor = None
         self._loaded = False
         self._vision_cache = None
         self._vision_cache_enabled = True
@@ -361,8 +368,27 @@ class VLMBatchedEngine(BaseEngine):
             return model, processor
 
         loop = asyncio.get_running_loop()
+        # VLM model load MUST run on a single-worker MLX executor whose
+        # initializer binds generation_stream (and mlx_vlm.generate.
+        # generation_stream) to the worker thread's default stream. MLX
+        # 0.31.3+ binds model weights to the stream of the thread that
+        # first touches them; loading on get_executor("io") (max_workers=2,
+        # no _init_mlx_step_thread) bound weights to an io-worker thread's
+        # stream, while vision-prep + prefill run on the engine's own
+        # mlx_executor (a different thread/stream) -> cross-stream weight
+        # access raised "There is no Stream(gpu, 0) in current thread" on
+        # every VL request when a text model was already warm (#411).
+        # Mirror engines/batched.py:_model_load_executor and reuse the same
+        # executor as AsyncEngineCore._mlx_executor so load + prefill share
+        # one owning thread.
+        self._vlm_load_executor = ThreadPoolExecutor(
+            max_workers=1,
+            thread_name_prefix="fusion-mlx-vlm-load",
+            initializer=_init_mlx_step_thread,
+        )
         self._vlm_model, self._processor = await asyncio.wait_for(
-            loop.run_in_executor(get_executor("io"), _load_vlm_sync), timeout=120.0
+            loop.run_in_executor(self._vlm_load_executor, _load_vlm_sync),
+            timeout=120.0,
         )
 
         # Vision feature cache
@@ -406,7 +432,10 @@ class VLMBatchedEngine(BaseEngine):
             stream_interval=self._stream_interval,
         )
         self._engine = AsyncEngineCore(
-            model=self._adapter, tokenizer=self._tokenizer, config=engine_config
+            model=self._adapter,
+            tokenizer=self._tokenizer,
+            config=engine_config,
+            executor=self._vlm_load_executor,
         )
         await self._engine.engine.start()
 
@@ -612,6 +641,13 @@ class VLMBatchedEngine(BaseEngine):
                     self._engine.engine.close()
                 except Exception as e:
                     logger.warning("Error closing engine: %s", e)
+        # EngineCore.close() preserves the reused _mlx_executor in
+        # _immortal_mlx_executors (does not shut it down), so the VLM
+        # load executor we created in start() must be shut down here to
+        # avoid leaking the single-worker MLX thread across model swaps.
+        if self._vlm_load_executor is not None:
+            self._vlm_load_executor.shutdown(wait=False)
+            self._vlm_load_executor = None
         if self._vision_cache is not None:
             self._vision_cache.close()
             self._vision_cache = None
