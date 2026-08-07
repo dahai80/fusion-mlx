@@ -140,6 +140,16 @@ async def list_fine_tune_jobs(
     return [job.to_dict() for job in svc.list_jobs()]
 
 
+@_router.get("/api/fine-tune/jobs/models")
+async def list_finetunable_models_jobs_path(
+    is_admin: bool = Depends(require_admin),
+):
+    # #397: fusion-trainer calls /admin/api/fine-tune/jobs/models to
+    # enumerate trainable models. Register this STATIC path before the
+    # parameterized /jobs/{job_id} route, else job_id=="models" shadows it.
+    return await list_finetunable_models(is_admin=is_admin)
+
+
 @_router.get("/api/fine-tune/jobs/{job_id}")
 async def get_fine_tune_job(
     job_id: str,
