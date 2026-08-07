@@ -172,6 +172,17 @@ class EnginePool:
             os.getenv("FUSION_MAX_ADAPTER_ENGINES", "4")
         )
         self._allowed_adapter_dirs: list[str] = self._resolve_allowed_adapter_dirs()
+        # Issue #389: in-place LoRA swap. When enabled, a request carrying an
+        # adapter reuses the resident base engine and swaps the LoRA in place
+        # (mlx_lm load_adapters/remove_lora_layers) instead of materializing a
+        # derived engine that reloads the full base. One adapter active per
+        # base at a time -> per-base lock serializes the apply->infer->restore
+        # window. Default OFF (existing per-adapter-engine behavior preserved).
+        self._inplace_swap: bool = (
+            os.getenv("FUSION_LORA_INPLACE_SWAP", "0").strip() == "1"
+        )
+        self._adapter_swap_locks: dict[str, asyncio.Lock] = {}
+        self._active_swap: dict[str, object] = {}
         self._load_seconds_per_gb_ema: float | None = None
         self._load_time_observations: int = 0
         self.configure_hot_cache_budget()
@@ -740,6 +751,84 @@ class EnginePool:
                 return mid
         return model_id
 
+    def _swap_lock(self, base_model_id: str) -> asyncio.Lock:
+        lock = self._adapter_swap_locks.get(base_model_id)
+        if lock is None:
+            lock = asyncio.Lock()
+            self._adapter_swap_locks[base_model_id] = lock
+        return lock
+
+    async def _acquire_inplace_adapter(
+        self, base_model_id: str, adapter_path: str
+    ) -> BaseEngine:
+        # Issue #389: resolve to the resident base engine, serialize against
+        # other adapter swaps on the same base, apply the LoRA in place.
+        # Returns the base engine with the adapter active; pair with
+        # _release_inplace_adapter. The base engine must already be loaded.
+        from ..adapter.weight_swap import InPlaceLoRASwap
+
+        base_entry = self._entries.get(base_model_id)
+        if base_entry is None or base_entry.engine is None:
+            raise ModelNotFoundError(base_model_id, list(self._entries.keys()))
+        lock = self._swap_lock(base_model_id)
+        await lock.acquire()
+        try:
+            # Wait out any in-flight swap from a prior request, then apply ours.
+            prior = self._active_swap.get(base_model_id)
+            if prior is not None:
+                prior.restore()
+                self._active_swap.pop(base_model_id, None)
+            engine = base_entry.engine
+            model = getattr(engine, "_model", None)
+            if model is None:
+                raise RuntimeError(
+                    f"in-place swap: base engine {base_model_id} has no _model"
+                )
+            swap = InPlaceLoRASwap(model, adapter_path)
+            swap.apply()
+            self._active_swap[base_model_id] = swap
+            base_entry.in_use += 1
+            logger.info(
+                "inplace_swap: acquired %s on base %s (in_use=%d)",
+                adapter_path,
+                base_model_id,
+                base_entry.in_use,
+            )
+            return engine
+        except Exception:
+            lock.release()
+            raise
+
+    async def _release_inplace_adapter(
+        self, base_model_id: str, adapter_path: str
+    ) -> None:
+        from ..adapter.weight_swap import InPlaceLoRASwap  # noqa: F401
+
+        base_entry = self._entries.get(base_model_id)
+        swap = self._active_swap.pop(base_model_id, None)
+        try:
+            if swap is not None:
+                swap.restore()
+        except Exception as e:
+            logger.warning(
+                "inplace_swap: restore failed for %s on %s: %s",
+                adapter_path,
+                base_model_id,
+                e,
+            )
+        finally:
+            if base_entry is not None and base_entry.in_use > 0:
+                base_entry.in_use -= 1
+            lock = self._adapter_swap_locks.get(base_model_id)
+            if lock is not None and lock.locked():
+                lock.release()
+            logger.info(
+                "inplace_swap: released %s on base %s (in_use=%d)",
+                adapter_path,
+                base_model_id,
+                base_entry.in_use if base_entry else -1,
+            )
+
     @staticmethod
     def _resolve_allowed_adapter_dirs() -> list[str]:
         raw = os.getenv("FUSION_LORA_ALLOWED_DIRS", "").strip()
@@ -881,6 +970,22 @@ class EnginePool:
         # Issue #372: normalize HF repo ids (e.g. "mlx-community/X") to the
         # registry short name before lookup so all routes accept either form.
         model_id = self._resolve_hf_repo_id(model_id)
+        # Issue #389: in-place LoRA swap path. Reuse the resident base engine
+        # and swap the adapter in place instead of building a derived engine
+        # that reloads the full base. Only when the flag is on AND a base
+        # engine is already loaded; fall through to the derived path if the
+        # base is not yet loaded (first request still cold-loads the base).
+        if self._inplace_swap and adapter_path:
+            base_entry = self._entries.get(model_id)
+            if base_entry is not None and base_entry.engine is not None:
+                return await self._acquire_inplace_adapter(model_id, adapter_path)
+        # Issue #389: a non-adapter request on a base with an active in-place
+        # swap would read LoRA-applied weights. Wait for any in-flight swap to
+        # restore before serving the bare-base request. The lock is released
+        # here (no swap applied); the request proceeds on the restored base.
+        if self._inplace_swap and not adapter_path and model_id in self._active_swap:
+            async with self._swap_lock(model_id):
+                pass
         # Phase 1: Quick check under lock for already-loaded models
         entry_key = self._adapter_key(model_id, adapter_path)
         adapter_victims: list[str] = []
@@ -1080,6 +1185,14 @@ class EnginePool:
         self, model_id: str, adapter_path: str | None = None
     ) -> None:
         """Release one in-use lease previously taken via get_engine(_lease=True)."""
+        # Issue #389: in-place swap lease path. When the flag is on and this
+        # was an adapter request served from the resident base engine, restore
+        # the base weights and release the per-base swap lock.
+        if self._inplace_swap and adapter_path:
+            base_entry = self._entries.get(model_id)
+            if base_entry is not None and base_entry.engine is not None:
+                await self._release_inplace_adapter(model_id, adapter_path)
+                return
         entry_key = self._adapter_key(model_id, adapter_path)
         # Detach under the lock (fast), settle outside it. Holding the pool
         # lock across unload_engine_async's ~settle barrier (gc + synchronize +

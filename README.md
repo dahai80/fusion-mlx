@@ -841,6 +841,14 @@ Download from [GitHub Releases](https://github.com/dahai80/fusion-mlx/releases).
 
 Train LoRA or DORA adapters on any loaded model using `mlx_lm.tuner` under the hood.
 
+### In-place adapter serving (#389)
+
+By default each served adapter reloads the full base model. Set
+`FUSION_LORA_INPLACE_SWAP=1` (plus `FUSION_LORA_ALLOWED_DIRS`) to keep one base
+engine resident and swap adapters in place in milliseconds — no second base
+copy, correct for quantized bases. See
+[docs/lora-inplace-swap.md](docs/lora-inplace-swap.md).
+
 ### API Endpoints
 
 | Method | Endpoint | Description |
