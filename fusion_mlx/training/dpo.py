@@ -105,10 +105,12 @@ class DPOTrainer:
 
     def _ref_logprobs_pair(self, prompt_ids, chosen_ids, rejected_ids):
         # Cache ref logprobs per pair to avoid reloading the base twice per step.
+        # prompt_ids/chosen_ids/rejected_ids 来自 tokenizer.encode,是 Python list;
+        # mx.sum 只接受 mx.array,需先转换(#420)。
         key = (
-            int(mx.sum(prompt_ids)),
-            int(mx.sum(chosen_ids)),
-            int(mx.sum(rejected_ids)),
+            int(mx.sum(mx.array(prompt_ids))),
+            int(mx.sum(mx.array(chosen_ids))),
+            int(mx.sum(mx.array(rejected_ids))),
         )
         if key in self._ref_cache:
             return self._ref_cache[key]
