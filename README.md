@@ -6,16 +6,22 @@
 
 Drop-in replacement for Ollama / vLLM - runs natively on Metal via MLX
 
-[![Version](https://img.shields.io/badge/v0.5.11-blue.svg)](https://github.com/dahai80/fusion-mlx/releases)
+[![Version](https://img.shields.io/pypi/v/fusion-mlx?label=version&color=blue)](https://pypi.org/project/fusion-mlx/)
 [![Python](https://img.shields.io/badge/Python-3.11+-3776AB.svg)](https://www.python.org/)
 [![License](https://img.shields.io/badge/License-Apache--2.0-green.svg)](LICENSE)
-[![Tests](https://img.shields.io/badge/Tests-1200+-success.svg)](tests/)
+[![Tests](https://img.shields.io/badge/Tests-377%20active-success.svg)](tests/)
+[![CI](https://github.com/dahai80/fusion-mlx/actions/workflows/ci.yml/badge.svg)](https://github.com/dahai80/fusion-mlx/actions/workflows/ci.yml)
+[![GitHub stars](https://img.shields.io/github/stars/dahai80/fusion-mlx?style=social)](https://github.com/dahai80/fusion-mlx/stargazers)
 
 [English](README.md) | [Chinese](README_CN.md)
 
 [Get Started](#quick-start) · [Download App](https://github.com/dahai80/fusion-mlx/releases) · [Benchmarks](https://bench.dpdns.org/) · [Documentation](docs/)
 
 </div>
+
+> **Scope & maturity**: macOS / Apple Silicon only (MLX-native). Beta —
+> single-maintainer project, [seeking contributors](CONTRIBUTING.md). See
+> [ROADMAP.md](ROADMAP.md) for the full-modality plan and supported models.
 
 ---
 
