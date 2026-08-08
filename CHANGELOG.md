@@ -1,5 +1,28 @@
 # Changelog
 
+## [0.8.12] - 2026-08-08
+
+Patch release — GGUF load guard, Wan2 staged VAE decode cross-thread
+fix, and a DPO logprobs TypeError fix.
+
+- GGUF load guard (#423): mlx-lm/mlx-vlm/mlx-embeddings have no GGUF
+  load path (mx.save_gguf is one-way export); loading a .gguf file or
+  GGUF-only dir crashed with an opaque error. New shared guard
+  `fusion_mlx/engine/gguf_guard.py` (`assert_not_gguf`) is called
+  before every load entry (LLM/VLM/Embedding/Reranker ×3) and raises a
+  clear `GGUFLoadError` pointing at `mlx-community` repos or
+  `POST /v1/convert`. Non-GGUF targets are a no-op. 10 unit tests.
+  Closes the "GGUF 加载桥" audit action item; duplicate-engine debt
+  tracked in #422.
+- Wan2 staged VAE decode Stream fix (#419, closes #418): the Phase-2
+  staged pipeline raised `There is no Stream(gpu, N)` at VAE decode
+  because a lazy denoised latent crossed threads. Fix: `mx.eval` the
+  5D batch projection on the executor thread before returning; slice
+  `latent[0]` inside `_decode` on the executor thread. Real-model e2e
+  (Wan2.1-T2V-1.3B) passes, sequential offload confirmed.
+- DPO logprobs TypeError fix (#421, closes #420): `_ref_logprobs_pair`
+  called `mx.sum` on a Python list; convert to `mx.array` first.
+
 ## [0.8.11] - 2026-08-08
 
 Patch release — Wan2 video backend pipeline stage API (#410/#416),
