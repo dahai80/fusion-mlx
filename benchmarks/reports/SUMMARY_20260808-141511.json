@@ -1,0 +1,116 @@
+{
+  "timestamp": "20260808-141511",
+  "prompt_tokens": 512,
+  "gen_tokens": 128,
+  "base_url": "http://127.0.0.1:11434",
+  "results": [
+    {
+      "model": "mlx-community--Qwen3-0.6B-8bit",
+      "prompt_tokens_requested": 512,
+      "gen_tokens_requested": 128,
+      "prompt_tokens": 702,
+      "completion_tokens": 137,
+      "wall_seconds": 0.815,
+      "tokens_per_second": 168.13,
+      "ttft_seconds": 0.435,
+      "timestamp": "20260808-141511",
+      "base_url": "http://127.0.0.1:11434"
+    },
+    {
+      "model": "mlx-community--Qwen3.5-4B-4bit",
+      "prompt_tokens_requested": 512,
+      "gen_tokens_requested": 128,
+      "prompt_tokens": 701,
+      "completion_tokens": 128,
+      "wall_seconds": 1.586,
+      "tokens_per_second": 80.73,
+      "ttft_seconds": 0.751,
+      "timestamp": "20260808-141511",
+      "base_url": "http://127.0.0.1:11434"
+    },
+    {
+      "model": "mlx-community--Qwen3.5-9B-4bit",
+      "prompt_tokens_requested": 512,
+      "gen_tokens_requested": 128,
+      "prompt_tokens": 701,
+      "completion_tokens": 128,
+      "wall_seconds": 2.426,
+      "tokens_per_second": 52.77,
+      "ttft_seconds": 1.223,
+      "timestamp": "20260808-141511",
+      "base_url": "http://127.0.0.1:11434"
+    },
+    {
+      "model": "mlx-community--Qwen3.6-27B-mxfp8",
+      "prompt_tokens_requested": 512,
+      "gen_tokens_requested": 128,
+      "prompt_tokens": 701,
+      "completion_tokens": 128,
+      "wall_seconds": 83.43,
+      "tokens_per_second": 1.53,
+      "ttft_seconds": 20.748,
+      "timestamp": "20260808-141511",
+      "base_url": "http://127.0.0.1:11434"
+    },
+    {
+      "model": "mlx-community--Llama-3.2-1B-Instruct-4bit",
+      "prompt_tokens_requested": 512,
+      "gen_tokens_requested": 128,
+      "prompt_tokens": 720,
+      "completion_tokens": 136,
+      "wall_seconds": 8.689,
+      "tokens_per_second": 15.65,
+      "ttft_seconds": 1.375,
+      "timestamp": "20260808-141511",
+      "base_url": "http://127.0.0.1:11434"
+    },
+    {
+      "model": "Meta-Llama-3.1-8B-Instruct-4bit",
+      "prompt_tokens_requested": 512,
+      "gen_tokens_requested": 128,
+      "prompt_tokens": 719,
+      "completion_tokens": 128,
+      "wall_seconds": 16.8,
+      "tokens_per_second": 7.62,
+      "ttft_seconds": 4.44,
+      "timestamp": "20260808-141511",
+      "base_url": "http://127.0.0.1:11434"
+    },
+    {
+      "model": "mlx-community--gemma-4-26b-a4b-it-4bit",
+      "prompt_tokens_requested": 512,
+      "gen_tokens_requested": 128,
+      "prompt_tokens": 703,
+      "completion_tokens": 128,
+      "wall_seconds": 3.065,
+      "tokens_per_second": 41.76,
+      "ttft_seconds": 2.694,
+      "timestamp": "20260808-141511",
+      "base_url": "http://127.0.0.1:11434"
+    },
+    {
+      "model": "deepseek-r1-7b-4bit",
+      "prompt_tokens_requested": 512,
+      "gen_tokens_requested": 128,
+      "error": "HTTP 404: {\"error\":{\"message\":\"Model 'deepseek-r1-7b-4bit' not found. Available models: dit, text_encoder, vae, FLUX.2-klein-base-4B, transformer, SkyReels-V3-A2V-19B-MLX, SkyReels-V3-R2V-14B-MLX, SkyReels-V3-V2V-14B-MLX, Wan2.1-1.3B, Wan2.1-1.3B-Diffusers, Wan2.1-14B, Wan2.1-VACE-14B, Wan2.2-14B, Wan2.2-14B-",
+      "timestamp": "20260808-141511",
+      "base_url": "http://127.0.0.1:11434"
+    },
+    {
+      "model": "phi-4-4bit",
+      "prompt_tokens_requested": 512,
+      "gen_tokens_requested": 128,
+      "error": "HTTP 404: {\"error\":{\"message\":\"Model 'phi-4-4bit' not found. Available models: dit, text_encoder, vae, FLUX.2-klein-base-4B, transformer, SkyReels-V3-A2V-19B-MLX, SkyReels-V3-R2V-14B-MLX, SkyReels-V3-V2V-14B-MLX, Wan2.1-1.3B, Wan2.1-1.3B-Diffusers, Wan2.1-14B, Wan2.1-VACE-14B, Wan2.2-14B, Wan2.2-14B-T2V, Wan2",
+      "timestamp": "20260808-141511",
+      "base_url": "http://127.0.0.1:11434"
+    },
+    {
+      "model": "minimax-m2.5-4bit",
+      "prompt_tokens_requested": 512,
+      "gen_tokens_requested": 128,
+      "error": "HTTP 404: {\"error\":{\"message\":\"Model 'minimax-m2.5-4bit' not found. Available models: dit, text_encoder, vae, FLUX.2-klein-base-4B, transformer, SkyReels-V3-A2V-19B-MLX, SkyReels-V3-R2V-14B-MLX, SkyReels-V3-V2V-14B-MLX, Wan2.1-1.3B, Wan2.1-1.3B-Diffusers, Wan2.1-14B, Wan2.1-VACE-14B, Wan2.2-14B, Wan2.2-14B-T2",
+      "timestamp": "20260808-141511",
+      "base_url": "http://127.0.0.1:11434"
+    }
+  ]
+}

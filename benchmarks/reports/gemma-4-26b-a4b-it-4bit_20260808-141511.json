@@ -1,0 +1,12 @@
+{
+  "model": "mlx-community--gemma-4-26b-a4b-it-4bit",
+  "prompt_tokens_requested": 512,
+  "gen_tokens_requested": 128,
+  "prompt_tokens": 703,
+  "completion_tokens": 128,
+  "wall_seconds": 3.065,
+  "tokens_per_second": 41.76,
+  "ttft_seconds": 2.694,
+  "timestamp": "20260808-141511",
+  "base_url": "http://127.0.0.1:11434"
+}

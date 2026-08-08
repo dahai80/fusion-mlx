@@ -1,0 +1,12 @@
+{
+  "model": "Meta-Llama-3.1-8B-Instruct-4bit",
+  "prompt_tokens_requested": 512,
+  "gen_tokens_requested": 128,
+  "prompt_tokens": 719,
+  "completion_tokens": 128,
+  "wall_seconds": 16.8,
+  "tokens_per_second": 7.62,
+  "ttft_seconds": 4.44,
+  "timestamp": "20260808-141511",
+  "base_url": "http://127.0.0.1:11434"
+}
