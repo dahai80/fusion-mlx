@@ -437,6 +437,15 @@ def run_denoise(
     del model, kv
     gc.collect()
     mx.clear_cache()
+    # Ensure the returned latents are fully materialized on this executor
+    # thread. The staged path runs VAE decode in a *separate* executor call and
+    # round-trips this array through the event-loop main thread; MLX Metal
+    # streams are thread-local, so a still-lazy array evaluated later on the
+    # decode thread raises "There is no Stream(gpu, N) in current thread". The
+    # caller (wan2.py denoise()) further evaluates the batch-dim projection on
+    # this same thread before returning. The monolith shares one executor call
+    # so this is a no-op for it (still correct).
+    mx.eval(latents)
     return latents
 
 
@@ -444,6 +453,15 @@ def decode_wan_vae(latent, config, vae, tiling_config=None):
     # VAE decode extracted from generate_video() lines 1149-1254 (T2V branch,
     # no I2V mask_blend). latent is 4D (z_dim, t_latent, h_lat, w_lat).
     # Returns uint8 frames [T, H, W, 3].
+    # Materialize the incoming latent on this executor thread. In the staged
+    # path it is produced by denoise() in a *separate* executor call and
+    # round-trips through the event-loop main thread; MLX Metal streams are
+    # thread-local, so a still-lazy array (or a slice built off-thread) raises
+    # "There is no Stream(gpu, N) in current thread" at the decode-side
+    # mx.eval. Evaluating here on the decode thread makes it concrete and
+    # portable. The caller (wan2.py decode()) already slices on this thread,
+    # so the latent is local; this eval is the materialization guarantee.
+    mx.eval(latent)
     is_wan22_vae = config.vae_z_dim == 48
     if is_wan22_vae:
         from .vae22 import denormalize_latents

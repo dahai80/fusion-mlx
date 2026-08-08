@@ -36,6 +36,20 @@ def _active_mem() -> int:
         return -1
 
 
+async def _clear_mlx_cache() -> None:
+    # Run mx.synchronize()/mx.clear_cache() on the video executor thread, NOT
+    # the event-loop main thread. MLX Metal streams are thread-local: a
+    # clear_cache() issued from the main thread invalidates the worker's
+    # thread-local stream table, so the next run_in_executor call (e.g. VAE
+    # decode after unload_dit) raises "There is no Stream(gpu, N) in current
+    # thread". Keeping the sync+clear on the same worker thread that owns the
+    # streams preserves the table across staged unload/load boundaries (#410).
+    loop = asyncio.get_running_loop()
+    await loop.run_in_executor(
+        get_executor("video"), lambda: (mx.synchronize(), mx.clear_cache())
+    )
+
+
 # Max T5 text-embedding cache entries (LRU eviction when exceeded).
 _T5_EMBED_CACHE_MAX = 16
 # Timeout for T5 encoder preload during start() — large model may take minutes.
@@ -376,8 +390,7 @@ class Wan2Backend(VideoBackend):
         self._t5_encoder = None
         self._stage_flags["text_encoder"] = False
         gc.collect()
-        mx.synchronize()
-        mx.clear_cache()
+        await _clear_mlx_cache()
         logger.info("stage:text_encoder unload wan2")
 
     async def load_dit(self) -> None:
@@ -465,7 +478,7 @@ class Wan2Backend(VideoBackend):
         on_step = self._stage_on_step
 
         def _denoise():
-            return run_denoise(
+            lat_4d = run_denoise(
                 config,
                 models,
                 pos_embed,
@@ -480,11 +493,23 @@ class Wan2Backend(VideoBackend):
                 no_compile,
                 on_step=on_step,
             )
+            # 5D contract: add batch dim -> (1, z_dim, t_latent, h_lat, w_lat).
+            # Build the projection AND evaluate it on THIS executor thread so
+            # the returned array is concrete, not a lazy graph that references
+            # this call's auto-allocated Stream(gpu, N). The staged path later
+            # runs VAE decode in a *separate* executor call and round-trips this
+            # array through the event-loop main thread; MLX Metal streams are
+            # thread-local, so a lazy array (or a main-thread [None] projection
+            # of one) built on this call's streams raises
+            # "There is no Stream(gpu, N) in current thread" at the decode-side
+            # mx.eval. An mx.eval'd array is portable across threads. The
+            # monolith shares one executor call so this is a no-op for it.
+            lat_5d = lat_4d[None]
+            mx.eval(lat_5d)
+            return lat_5d
 
         loop = asyncio.get_running_loop()
-        result_4d = await loop.run_in_executor(get_executor("video"), _denoise)
-        # 5D contract: add batch dim -> (1, z_dim, t_latent, h_lat, w_lat).
-        result = result_4d[None]
+        result = await loop.run_in_executor(get_executor("video"), _denoise)
         logger.info(
             "stage:dit denoise wan2 steps=%d cfg=%.2f out_shape=%s",
             steps,
@@ -497,8 +522,7 @@ class Wan2Backend(VideoBackend):
         self._stage_dit_models = None
         self._stage_flags["dit"] = False
         gc.collect()
-        mx.synchronize()
-        mx.clear_cache()
+        await _clear_mlx_cache()
         logger.info("stage:dit unload wan2")
 
     async def load_vae(self) -> None:
@@ -514,8 +538,14 @@ class Wan2Backend(VideoBackend):
             return load_vae_decoder(vae_path, config)
 
         loop = asyncio.get_running_loop()
+        # Load VAE on the *video* executor (not "io"): MLX Metal streams are
+        # thread-local, and decode() runs on get_executor("video"). Weights
+        # loaded on a different (io) thread bind to that thread's streams; the
+        # decode-side mx.eval then raises "There is no Stream(gpu, N) in
+        # current thread". Matches load_dit() + denoise() both on "video", and
+        # the monolith generate() which load+decode on one executor call.
         self._stage_vae = await asyncio.wait_for(
-            loop.run_in_executor(get_executor("io"), _load),
+            loop.run_in_executor(get_executor("video"), _load),
             timeout=_T5_PRELOAD_TIMEOUT,
         )
         self._stage_flags["vae"] = True
@@ -529,10 +559,16 @@ class Wan2Backend(VideoBackend):
             raise RuntimeError("vae is unloaded; call load_vae().")
         config = self._ensure_stage_config()
         # Accept 5D (1, c, t, h, w) or 4D (c, t, h, w); run_denoise returns 5D.
-        lat_4d = latent[0] if latent.ndim == 5 else latent
+        # NOTE: do NOT slice latent[0] here on the main thread — that builds a
+        # lazy projection referencing the source array's (possibly cross-thread)
+        # stream, which raises "There is no Stream(gpu, N) in current thread"
+        # at decode-side mx.eval. Pass the full latent and slice on the executor
+        # thread inside _decode (decode_wan_vae then mx.eval's it locally).
         vae = self._stage_vae
+        ndim = latent.ndim
 
         def _decode():
+            lat_4d = latent[0] if ndim == 5 else latent
             return decode_wan_vae(lat_4d, config, vae, tiling_config=None)
 
         loop = asyncio.get_running_loop()
@@ -550,15 +586,20 @@ class Wan2Backend(VideoBackend):
         if self._stage_vae is None:
             raise RuntimeError("vae is unloaded; call load_vae().")
         config = self._ensure_stage_config()
-        lat_4d = latent[0] if latent.ndim == 5 else latent
-        # tile_size is in pixels (ComfyUI convention); auto derives spatial+temporal.
-        height = lat_4d.shape[-2] * config.vae_stride[1]
-        width = lat_4d.shape[-1] * config.vae_stride[2]
-        num_frames = lat_4d.shape[1] * config.vae_stride[0] - 1
-        tiling_config = TilingConfig.auto(height, width, num_frames)
+        # Slice on the executor thread (see decode() note): main-thread
+        # latent[0] builds a lazy cross-thread projection.
         vae = self._stage_vae
+        ndim = latent.ndim
+        # tile_size is in pixels (ComfyUI convention); auto derives spatial+temporal.
+        # t-axis index: 2 for 5D (1,c,t,h,w), 1 for 4D (c,t,h,w).
+        height = latent.shape[-2] * config.vae_stride[1]
+        width = latent.shape[-1] * config.vae_stride[2]
+        t_idx = 2 if ndim == 5 else 1
+        num_frames = latent.shape[t_idx] * config.vae_stride[0] - 1
+        tiling_config = TilingConfig.auto(height, width, num_frames)
 
         def _decode():
+            lat_4d = latent[0] if ndim == 5 else latent
             return decode_wan_vae(lat_4d, config, vae, tiling_config=tiling_config)
 
         loop = asyncio.get_running_loop()
@@ -575,8 +616,7 @@ class Wan2Backend(VideoBackend):
         self._stage_vae = None
         self._stage_flags["vae"] = False
         gc.collect()
-        mx.synchronize()
-        mx.clear_cache()
+        await _clear_mlx_cache()
         logger.info("stage:vae unload wan2")
 
     def set_progress_callback(self, cb):
