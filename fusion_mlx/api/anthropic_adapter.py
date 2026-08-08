@@ -9,9 +9,12 @@ Handles translation of:
 """
 
 import json
+import logging
 import re
 import secrets
 import uuid
+
+logger = logging.getLogger(__name__)
 
 from .anthropic_models import (
     AnthropicMessage,
@@ -215,6 +218,18 @@ def openai_to_anthropic(
                     tool_input = json.loads(args_raw)
                 except (json.JSONDecodeError, AttributeError):
                     tool_input = {}
+
+                if func_name == "computer":
+                    from ..tool_parsers.ui_tars_tool_parser import (
+                        translate_to_anthropic_spec_keys,
+                    )
+
+                    logger.info(
+                        "ui_tars anthropic coord translate: tool=%s keys=%s",
+                        func_name,
+                        list(tool_input.keys()),
+                    )
+                    tool_input = translate_to_anthropic_spec_keys(tool_input)
 
                 content.append(
                     ContentBlockToolUse(
