@@ -237,6 +237,21 @@ class GRPOService:
     def _execute_grpo(self, job: GRPOJob):
         # Run GRPO training in a background thread (blocking). Load model,
         # apply LoRA, run train loop, save adapter, cleanup.
+        # This runs under asyncio.to_thread, so MLX's thread-local
+        # generation_stream (used by mlx_lm.generate.generate_step inside
+        # GRPOTrainer._sample_completions) is not bound on this worker thread.
+        # Establish a thread-local default stream first, otherwise generate_step
+        # raises "There is no Stream(gpu, N) in current thread." (#430).
+        import mlx.core as mx
+
+        logger.info(
+            "GRPO execute(worker): establishing thread-local stream job=%s", job.job_id
+        )
+        worker_stream = mx.new_thread_local_stream(mx.default_device())
+        with mx.stream(worker_stream):
+            self._run_grpo(job)
+
+    def _run_grpo(self, job: GRPOJob):
         import mlx_lm.utils as mlx_utils
         from mlx_lm.tuner.utils import linear_to_lora_layers
 
