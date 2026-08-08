@@ -39,6 +39,7 @@ _fine_tune_service = None
 _engine_pool_ref = None
 _grpo_service = None
 _dpo_service = None
+_reward_service = None
 
 _router = APIRouter()
 
@@ -65,6 +66,13 @@ def set_dpo_context(pool, service=None):
         service.set_engine_pool(pool)
 
 
+def set_reward_context(pool, service=None):
+    global _reward_service
+    _reward_service = service
+    if service is not None and pool is not None:
+        service.set_engine_pool(pool)
+
+
 def _get_grpo_service():
     global _grpo_service
     if _grpo_service is None:
@@ -85,6 +93,17 @@ def _get_dpo_service():
         if _engine_pool_ref is not None:
             _dpo_service.set_engine_pool(_engine_pool_ref)
     return _dpo_service
+
+
+def _get_reward_service():
+    global _reward_service
+    if _reward_service is None:
+        from fusion_mlx.training.reward_service import RewardService
+
+        _reward_service = RewardService()
+        if _engine_pool_ref is not None:
+            _reward_service.set_engine_pool(_engine_pool_ref)
+    return _reward_service
 
 
 def _get_service():
@@ -722,6 +741,119 @@ async def stream_dpo_progress(
             "X-Accel-Buffering": "no",
         },
     )
+
+
+# =============================================================================
+# Reward model training (#424) — /api/fine-tune/reward/jobs
+# =============================================================================
+
+
+def _create_reward_job(request_body: dict):
+    # Body: {model_id, preference_pairs: [{prompt, chosen, rejected}],
+    #        adapter_name?, config?}.
+    model_id = request_body.get("model_id", "")
+    pairs = request_body.get("preference_pairs", [])
+    adapter_name = request_body.get("adapter_name", "")
+
+    if not model_id:
+        raise HTTPException(status_code=400, detail="model_id is required")
+    if not pairs or not isinstance(pairs, list):
+        raise HTTPException(
+            status_code=400, detail="preference_pairs (non-empty list) required"
+        )
+    for idx, p in enumerate(pairs):
+        if not isinstance(p, dict) or not all(
+            k in p for k in ("prompt", "chosen", "rejected")
+        ):
+            raise HTTPException(
+                status_code=400,
+                detail=f"preference_pairs[{idx}] must have prompt/chosen/rejected",
+            )
+
+    from fusion_mlx.training.reward import RewardConfig
+
+    config_body = dict(request_body.get("config", {}))
+    try:
+        config = RewardConfig(**config_body)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Invalid config: {e}")
+
+    pool = _get_engine_pool()
+    if pool is not None:
+        entry = pool.get_entry(model_id)
+        if entry is None:
+            raise HTTPException(status_code=404, detail=f"Model not found: {model_id}")
+        if entry.model_type not in ("llm", "vlm", None):
+            raise HTTPException(
+                status_code=400,
+                detail=f"Model {model_id} is not a text model (type: {entry.model_type})",
+            )
+
+    svc = _get_reward_service()
+    job = svc.create_job(
+        model_id=model_id,
+        preference_pairs=pairs,
+        config=config,
+        adapter_name=adapter_name,
+    )
+    svc.start_processing()
+    return job.to_dict()
+
+
+@_router.post("/api/fine-tune/reward/jobs")
+async def create_reward_job(
+    request: Request,
+    is_admin: bool = Depends(require_admin),
+):
+    body = await request.json()
+    return _create_reward_job(body)
+
+
+@_router.get("/api/fine-tune/reward/jobs")
+async def list_reward_jobs(
+    is_admin: bool = Depends(require_admin),
+):
+    svc = _get_reward_service()
+    return [job.to_dict() for job in svc.list_jobs()]
+
+
+@_router.get("/api/fine-tune/reward/jobs/{job_id}")
+async def get_reward_job(
+    job_id: str,
+    is_admin: bool = Depends(require_admin),
+):
+    svc = _get_reward_service()
+    job = svc.get_job(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail=f"Job not found: {job_id}")
+    return job.to_dict()
+
+
+@_router.post("/api/fine-tune/reward/jobs/{job_id}/cancel")
+async def cancel_reward_job(
+    job_id: str,
+    is_admin: bool = Depends(require_admin),
+):
+    svc = _get_reward_service()
+    if not svc.cancel_job(job_id):
+        raise HTTPException(
+            status_code=404, detail=f"Job not found or not cancellable: {job_id}"
+        )
+    job = svc.get_job(job_id)
+    return job.to_dict() if job else {"status": "cancelled"}
+
+
+@_router.delete("/api/fine-tune/reward/jobs/{job_id}")
+async def delete_reward_job(
+    job_id: str,
+    is_admin: bool = Depends(require_admin),
+):
+    svc = _get_reward_service()
+    if not svc.delete_job(job_id):
+        raise HTTPException(
+            status_code=404, detail=f"Job not found or currently running: {job_id}"
+        )
+    return {"status": "deleted"}
 
 
 router = _router

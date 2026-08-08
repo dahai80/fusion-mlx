@@ -1226,6 +1226,15 @@ class Server:
         _dpo_svc.set_loop(asyncio.get_running_loop())
         set_dpo_context(self.pool, _dpo_svc)
 
+        # Wire reward-model training service (#424)
+        from .admin.fine_tune_route import set_reward_context
+        from .training.reward_service import RewardService
+
+        _reward_svc = RewardService()
+        _reward_svc.set_engine_pool(self.pool)
+        _reward_svc.set_loop(asyncio.get_running_loop())
+        set_reward_context(self.pool, _reward_svc)
+
         # Auto-add adapters dir to FUSION_LORA_ALLOWED_DIRS so trained
         # adapters can be served via EnginePool hot-swap without manual env config
         import os
