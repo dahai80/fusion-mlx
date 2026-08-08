@@ -9,7 +9,7 @@ Drop-in replacement for Ollama / vLLM - runs natively on Metal via MLX
 [![Version](https://img.shields.io/pypi/v/fusion-mlx?label=version&color=blue)](https://pypi.org/project/fusion-mlx/)
 [![Python](https://img.shields.io/badge/Python-3.11+-3776AB.svg)](https://www.python.org/)
 [![License](https://img.shields.io/badge/License-Apache--2.0-green.svg)](LICENSE)
-[![Tests](https://img.shields.io/badge/Tests-431%20files%20%7C%208742%20items-success.svg)](tests/)
+[![Tests](https://img.shields.io/badge/Tests-377%20active-success.svg)](tests/)
 [![CI](https://github.com/dahai80/fusion-mlx/actions/workflows/ci.yml/badge.svg)](https://github.com/dahai80/fusion-mlx/actions/workflows/ci.yml)
 [![GitHub stars](https://img.shields.io/github/stars/dahai80/fusion-mlx?style=social)](https://github.com/dahai80/fusion-mlx/stargazers)
 
@@ -57,10 +57,6 @@ x86+CUDA stack structurally cannot match. These are **landed and running today**
   AutoencoderKL + dual CLIP-L/OpenCLIP-G encoders (2048 cross-attn dim),
   Euler-discrete epsilon scheduler. Covers sdxl / cosxl / sdxs variants.
   See [docs/sdxl-image.md](docs/sdxl-image.md).
-- **SD1.5 + img2img (#480)** - from-scratch UNet4 + kl-f8 VAE + CLIP-L
-  (768 cross-attn, 512 native res), wired into `ImageGenEngine`. img2img /
-  partial-denoise via `image_strength` (denoise fraction) for SD1.5 / SDXL
-  / SD3 (epsilon + flow-match noise conventions).
 - **Stable Cascade native MLX (#370)** - from-scratch Würstchen 3-stage
   pipeline: prior → decoder (unified `StableCascadeUNet` by
   `switch_level`) → VQGAN, DDPM-Würstchen scheduler, CLIP-ViT-bigG.
@@ -444,7 +440,7 @@ export HF_MIRROR=https://hf-mirror.com
 | Reranker | `RerankerEngine` | Cohere, Jina rerankers |
 | STT | `STTEngine` | Whisper, VibeVoice-ASR |
 | TTS | `TTSEngine` | Kokoro, VibeVoice |
-| ImageGen | `ImageGenEngine` | Flux 2, SD3-Medium, SDXL, SD1.5, Stable Cascade |
+| ImageGen | `ImageGenEngine` | Flux 2, SD3-Medium, SDXL, Stable Cascade |
 | VideoGen | `VideoGenEngine` | LTX-2, Wan2, SkyReels-V3 (pure-MLX ports) |
 
 ## Quantization Formats
@@ -493,7 +489,7 @@ The macOS app offers a mode toggle between:
 | OpenAI Legacy | `/v1/completions` | ✅ Supported |
 | Anthropic Messages | `/v1/messages`, `/v1/count_tokens` | ✅ Fully compatible |
 | Audio | `/v1/audio/transcriptions`, `/v1/audio/speech` | ✅ Supported |
-| Images | `/v1/images/generate` | ✅ Supported (Flux 2, SD3-Medium, SDXL, SD1.5, Stable Cascade) |
+| Images | `/v1/images/generate` | ✅ Supported (Flux 2, SD3-Medium, SDXL, Stable Cascade) |
 | Videos | `/v1/videos/generate` | ✅ Supported (LTX-2, Wan2, SkyReels-V3; pure-MLX ports) |
 | Embeddings | `/v1/embeddings` | ✅ Supported |
 | Reasoning | `/v1/reasoning` | ✅ Explicit thinking step API (DeepSeek-R1, QwQ, etc.) |
@@ -580,33 +576,6 @@ fusion-mlx ships 21 tool-call parsers, matching or exceeding every other MLX run
 | qwen3coder | Qwen3-Coder | ✅ |
 | auto | Auto-detect from model config | ✅ |
 | 3gap_stream | 3-gap streaming | ✅ |
-
-### UI-TARS Computer-Use — 3-Lane Action-API Injection
-
-A UI-TARS-aliased model (`ui-tars-7b-4bit` → `UI-TARS-7B-DPO-4bit`) that
-declares a Computer-Use tool gets the UI-TARS action-API system prompt
-**auto-injected** across all three request lanes — `/v1/chat/completions`,
-`/v1/messages` (Anthropic), and `/v1/responses`. The injection is
-**tool-coupled, not lane-coupled**: it fires only when the request
-declares a Computer-Use tool and `tool_choice != "none"`, so plain-text
-requests to the same model are left untouched.
-
-The lane-agnostic wrapper `inject_ui_tars_sysprompt_for_lane` resolves
-the model's `tool_call_parser` (via the alias profile / disk-scan /
-HF-path name shapes) and delegates to `maybe_inject_ui_tars_system_prompt`.
-Without a Computer-Use tool the model emits raw box tokens
-(`<|box_start|>(953,40)<|box_end|>`); with one it emits the structured
-action-API format the parser surfaces as a tool call:
-
-```
-Thought: Click the search box at (953, 40).
-Action: click(start_box='<|box_start|>(953, 40)<|box_end|>')
-```
-
-The `/v1/responses` lane is wired to the async engine pool (alias
-resolve + on-demand load + LRU lease), matching the chat and Anthropic
-lanes, so a not-yet-resident UI-TARS model loads on demand instead of
-returning 500.
 
 ### Grammar-Constrained Decoding — Dual Backend
 
@@ -1266,7 +1235,6 @@ to the correct pure-MLX implementation. Supported backends:
 
 | Backend | Key | Models | I2V | Status |
 |---|---|---|---|---|
-| LTX-2.5 | `ltx2_5` | LTX-2.5 22B distilled/dev | ✅ | T2V distilled E2E verified (25 frames 512×320, real 22B+12b TE); strict-load 0 mismatch vs 22B ([docs](docs/ltx2-5.md)) |
 | LTX-2 | `ltx2` | LTX-2, LTX-2.3 | ✅ | ✅ shipped |
 | Wan2 | `wan2` | Wan2.1, Wan2.2 (TI2V), VACE-14B | ✅ | ✅ shipped |
 | SkyReels-V3 | `skyreels` | R2V/V2V/A2V 14B-19B | ✅ (R2V) | ✅ shipped |
@@ -1274,13 +1242,10 @@ to the correct pure-MLX implementation. Supported backends:
 | SVD | `svd` | Stable Video Diffusion XT | ✅ | ✅ #212 |
 | Cosmos | `cosmos` | 7B T2V + Predict2 2B I2V | ✅ (Predict2) | ✅ #213 |
 | HunyuanVideo | `hunyuanvideo` | HunyuanVideo | ✅ | ✅ #214 |
-| MiniMax-H3 | `minimax_h3` | H3 FL2VA/Ref2VA (33B video+audio) | ✅ | 🔧 P0-P6 (config/VAE/DiT/scheduler/text-encoder/backend+registry + t2va video-only packed-sequence E2E path; real-model E2E pending weights) |
 | CogVideo | `cogvideo` | CogVideoX | — | stub (no MLX port) |
 
-Aliases: `ltx-2.5`, `ltx_2.5`, `ltx2.5`, `ltx-2.5-distilled`, `svd-xt`,
-`stable-video-diffusion`, `cosmos-1.0`, `predict2`, `video2world`,
-`hunyuan-video`, `hunyuan_video`, `cogvideox`, `ltx-video`, `wan`,
-`minimax-h3`, `h3`, `h3-fl2va`, `h3-ref2va`, `fl2va`, `ref2va`.
+Aliases: `svd-xt`, `stable-video-diffusion`, `cosmos-1.0`, `predict2`,
+`video2world`, `hunyuan-video`, `hunyuan_video`, `cogvideox`, `ltx-video`, `wan`.
 
 > **Video DiT throughput (#367):** HunyuanVideo and Cosmos fuse the
 > uncond+cond CFG pair into a single batched B=2 DiT forward (~2x
@@ -1713,8 +1678,6 @@ has been dormant 20+ days, so fusion-mlx evolves it independently.
 - [Configuration](docs/configuration.md) - Memory tiers, scheduler settings, TurboQuant, aliases, executor pools
 - [Speculative Decoding](docs/speculative-decoding.md) - Suffix/DFlash/DSpark/MTP/VLM-MTP methods, selection guide, auto-router
 - [Video Input](docs/video-input.md) - VLM video support: `video_url` API, frame extraction, Qwen native path, limits
-- [LTX-2.5](docs/ltx2-5.md) - 22B AV DiT port: 4 deltas vs LTX-2, T2V distilled E2E verified, two-stage flow (connector ownership + isotropic temporal upsampler)
-- [MiniMax-H3](docs/minimax-h3.md) - 33B Omni-Transformer packed-sequence DiT, t2va video-only E2E (P0-P8 verified), rectified-flow scheduler
 - [FR Differentiation](docs/FR_DIFFERENTIATION.md) - Verified analysis of fusion-mlx's spec-decode/TurboQuant/scheduling differentiation
 
 ## whichllm Integration
