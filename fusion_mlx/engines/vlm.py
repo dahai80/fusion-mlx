@@ -346,6 +346,9 @@ class VLMBatchedEngine(BaseEngine):
         def _load_vlm_sync():
             start = time.monotonic()
             logger.info("Loading VLM model: %s", self._model_name)
+            from ..engine.gguf_guard import assert_not_gguf
+
+            assert_not_gguf(self._model_name, engine_kind="VLM")
             model, processor = vlm_load(
                 self._model_name, trust_remote_code=self._trust_remote_code
             )

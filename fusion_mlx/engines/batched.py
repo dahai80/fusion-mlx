@@ -303,6 +303,9 @@ class BatchedEngine(BaseEngine):
             if self._lora_path:
                 load_kwargs["adapter_path"] = self._lora_path
                 logger.info("Applying LoRA adapter: %s", self._lora_path)
+            from ..engine.gguf_guard import assert_not_gguf
+
+            assert_not_gguf(self._model_name, engine_kind="LLM")
             model, tokenizer = load(self._model_name, **load_kwargs)
             elapsed = time.monotonic() - start
             # Estimate model size from loaded weights
