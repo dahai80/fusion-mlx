@@ -220,3 +220,101 @@ class RewardTrainer:
         weights = dict(tree_flatten(self.model.trainable_parameters()))
         mx.save_safetensors(adapter_path, weights)
         logger.info("REWARD: saved reward adapter to %s", adapter_path)
+
+
+@dataclass
+class RewardScoreResult:
+    rewards: list
+    model_id: str
+    adapter_name: str
+
+    def to_dict(self):
+        return {
+            "rewards": self.rewards,
+            "model_id": self.model_id,
+            "adapter_name": self.adapter_name,
+        }
+
+
+def score_text(model, tokenizer, model_path, prompt, completions, adapter_path=None):
+    # Inference-time scalar reward scoring for (prompt, completion) pairs,
+    # using a trained reward adapter (LoRA backbone + value head, #424).
+    # Mirror of RewardTrainer._score but non-differentiable: forward the
+    # concatenated sequence, take the last-token hidden, project via the
+    # value head to a scalar. Loads value_head weights from the adapter's
+    # safetensors (the standard mlx_utils.load adapter_path path applies
+    # LoRA but does not restore the custom value_head submodule).
+    import os
+
+    from safetensors import safe_open
+
+    logger.info(
+        "reward score_text: model=%s adapter=%s prompt_len=%d n_completions=%d",
+        model_path,
+        adapter_path,
+        len(prompt),
+        len(completions),
+    )
+
+    head = None
+    if adapter_path:
+        weights_file = os.path.join(adapter_path, "adapters.safetensors")
+        vh_keys = {}
+        if os.path.isfile(weights_file):
+            with safe_open(weights_file, "mlx") as f:
+                for k in list(f.keys()):
+                    if k.startswith("value_head."):
+                        vh_keys[k] = f.get_tensor(k)
+        if "value_head.proj.weight" in vh_keys:
+            hidden = int(vh_keys["value_head.proj.weight"].shape[1])
+            head = _ValueHead(hidden)
+            head.load_weights(
+                [
+                    ("proj.weight", vh_keys["value_head.proj.weight"]),
+                    ("proj.bias", vh_keys["value_head.proj.bias"]),
+                ]
+            )
+            logger.info("reward score_text: value head loaded hidden=%d", hidden)
+        else:
+            logger.warning(
+                "reward score_text: adapter has no value_head weights (%s), "
+                "scoring with untrained head",
+                weights_file,
+            )
+
+    if getattr(model, "value_head", None) is None:
+        if head is not None:
+            model.value_head = head
+        else:
+            raise ValueError(
+                "reward score_text: model has no value_head and adapter "
+                "provided no value_head weights; not a reward model"
+            )
+
+    def _score_one(prompt_ids, completion_ids):
+        full = mx.concatenate([prompt_ids, completion_ids])
+        trunk = getattr(model, "transformer", None) or getattr(model, "model", None)
+        if trunk is not None:
+            hidden = trunk(full[None, :])
+            if isinstance(hidden, tuple):
+                hidden = hidden[0]
+            hidden = hidden[0]
+        else:
+            logits = _model_forward_logits(model, full)
+            if isinstance(logits, tuple):
+                logits = logits[0]
+            n_comp = int(completion_ids.shape[0])
+            hidden = mx.mean(logits[0, -n_comp:, :].astype(mx.float32), axis=0)
+            hidden = mx.expand_dims(hidden, 0)
+        s = model.value_head(hidden)
+        mx.eval(s)
+        return float(s)
+
+    rewards = []
+    prompt_ids = mx.array(tokenizer.encode(prompt))
+    for completion in completions:
+        completion_ids = mx.array(tokenizer.encode(completion))
+        rewards.append(_score_one(prompt_ids, completion_ids))
+
+    logger.info("reward score_text: rewards=%s", rewards)
+    return rewards
