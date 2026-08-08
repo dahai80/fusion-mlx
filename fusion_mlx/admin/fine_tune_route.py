@@ -856,4 +856,100 @@ async def delete_reward_job(
     return {"status": "deleted"}
 
 
+@_router.post("/api/fine-tune/reward/score")
+async def score_reward_endpoint(
+    request: Request,
+    is_admin: bool = Depends(require_admin),
+):
+    # Score (prompt, completions) under a trained reward adapter (#431).
+    # Loads standalone (separate from inference pool), attaches the trained
+    # value head, scores each completion, evicts. Closes the Phase1 (#424)
+    # reward-model -> Phase2 (#363 GRPO) loop: this URL is passed as GRPO's
+    # config.reward_endpoint, which POSTs {prompt, completions} -> {rewards}.
+    # GRPO's callback protocol is fixed at {prompt, completions} (no
+    # model_id/adapter_name), so those MUST be supplied as query params in
+    # the reward_endpoint URL, e.g. .../reward/score?key=T&model_id=X&adapter_name=Y.
+    body = await request.json()
+
+    model_id = body.get("model_id", "") or request.query_params.get("model_id", "")
+    adapter_name = body.get("adapter_name", "") or request.query_params.get(
+        "adapter_name", ""
+    )
+    prompt = body.get("prompt", "")
+    completions = body.get("completions", [])
+
+    if not model_id:
+        raise HTTPException(status_code=400, detail="model_id is required")
+    if not prompt:
+        raise HTTPException(status_code=400, detail="prompt is required")
+    if not completions or not isinstance(completions, list):
+        raise HTTPException(
+            status_code=400, detail="completions (non-empty list) required"
+        )
+    if not adapter_name:
+        raise HTTPException(
+            status_code=400,
+            detail="adapter_name is required (a trained reward adapter)",
+        )
+
+    svc = _get_service()
+    model_path = svc._resolve_model_path(model_id)
+    if model_path is None:
+        raise HTTPException(status_code=404, detail=f"Model not found: {model_id}")
+
+    from fusion_mlx.training.service import ADAPTER_BASE_DIR
+
+    adapter_path = str(ADAPTER_BASE_DIR / model_id / adapter_name)
+    import os
+
+    if not os.path.isdir(adapter_path):
+        raise HTTPException(
+            status_code=404,
+            detail=f"Adapter not found: {model_id}/{adapter_name}",
+        )
+
+    from fusion_mlx.training.reward import RewardScoreResult
+    from fusion_mlx.training.reward import score_text as reward_score_text
+
+    logger.info(
+        "reward score endpoint: model=%s adapter=%s n_completions=%d",
+        model_path,
+        adapter_path,
+        len(completions),
+    )
+
+    def _run():
+        import mlx_lm.utils as mlx_utils
+
+        model, tokenizer = mlx_utils.load(model_path, adapter_path=adapter_path)
+        try:
+            rewards = reward_score_text(
+                model, tokenizer, model_path, prompt, completions, adapter_path
+            )
+            return RewardScoreResult(
+                rewards=rewards, model_id=model_id, adapter_name=adapter_name
+            )
+        finally:
+            del model
+            del tokenizer
+            import gc
+
+            import mlx.core as mx
+
+            gc.collect()
+            mx.clear_cache()
+            logger.info("reward score endpoint: model evicted")
+
+    try:
+        result = await asyncio.to_thread(_run)
+    except ValueError as e:
+        logger.exception("reward score endpoint: bad adapter")
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.exception("reward score endpoint failed")
+        raise HTTPException(status_code=500, detail=f"Scoring failed: {e}")
+
+    return result.to_dict()
+
+
 router = _router
