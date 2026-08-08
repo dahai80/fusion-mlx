@@ -183,6 +183,9 @@ class MLXRerankerModel:
 
         model_path = str(self._model_name)
         tokenizer_config = {"trust_remote_code": self._trust_remote_code}
+        from ..engine.gguf_guard import assert_not_gguf
+
+        assert_not_gguf(model_path, engine_kind="Reranker")
         custom_loaded = maybe_load_custom_quantization(
             model_path,
             is_vlm=False,
@@ -239,6 +242,9 @@ class MLXRerankerModel:
 
         model_path = str(self._model_name)
         tokenizer_config = {"trust_remote_code": self._trust_remote_code}
+        from ..engine.gguf_guard import assert_not_gguf
+
+        assert_not_gguf(model_path, engine_kind="Reranker")
         custom_loaded = maybe_load_custom_quantization(
             model_path,
             is_vlm=False,
@@ -494,6 +500,9 @@ class MLXRerankerModel:
                 patch_qwen3_vl_processor_for_torch_free_image_loading()
                 from mlx_embeddings import load
 
+                from ..engine.gguf_guard import assert_not_gguf
+
+                assert_not_gguf(self._model_name, engine_kind="Reranker")
                 self._model, self._processor = load(
                     self._model_name,
                     tokenizer_config={"trust_remote_code": self._trust_remote_code},

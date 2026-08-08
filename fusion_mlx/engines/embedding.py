@@ -172,6 +172,9 @@ class MLXEmbeddingModel:
             logger.info(
                 "Loading embedding model via mlx-embeddings: %s", self._model_name
             )
+            from ..engine.gguf_guard import assert_not_gguf
+
+            assert_not_gguf(self._model_name, engine_kind="Embedding")
             self._model, self._processor = load(
                 self._model_name,
                 tokenizer_config={"trust_remote_code": self._trust_remote_code},
