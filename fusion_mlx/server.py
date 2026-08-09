@@ -107,6 +107,7 @@ from .routes_internal.health import router as health_router
 from .routes_internal.metrics import router as metrics_router
 from .routes_internal.models import set_models_context
 from .routes_internal.responses import router as responses_router
+from .routes_internal.responses import set_responses_context
 from .server_metrics import get_server_metrics
 from .settings import Settings
 
@@ -1162,6 +1163,7 @@ class Server:
         set_openai_context(self.pool, self.request_router)
         set_ollama_context(self.pool)
         set_anthropic_context(self.pool)
+        set_responses_context(self.pool)
         set_images_context(self.pool)
         set_videos_context(self.pool)
         set_audio_context(self.pool)

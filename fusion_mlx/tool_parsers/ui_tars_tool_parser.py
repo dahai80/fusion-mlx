@@ -344,6 +344,85 @@ def maybe_inject_ui_tars_system_prompt(
     return [sys_msg, *messages]
 
 
+_UI_TARS_PARSER_NAMES = frozenset({"ui_tars", "ui-tars", "uitars"})
+
+
+def resolve_ui_tars_parser_name(model_name: str) -> str | None:
+    """Resolve the effective ``tool_call_parser`` for ``model_name`` and
+    return it only when it is a UI-TARS parser name; otherwise ``None``.
+
+    Single source of truth for the 3 request lanes (chat / anthropic /
+    responses) so the inject decision never drifts per-route. The lookup
+    mirrors :func:`routes_internal.models.effective_parsers_for`:
+    registry live state -> ServerConfig -> alias-profile default.
+    Accepts 3 inbound name shapes: route alias (``ui-tars-7b-4bit``),
+    disk-scan basename (``UI-TARS-7B-DPO-4bit``), and HF path
+    (``mlx-community/UI-TARS-7B-DPO-4bit``). The disk-scan name strips
+    the org so we reverse-lookup ``mlx-community/<basename>`` too.
+    """
+    if not model_name:
+        return None
+    try:
+        from ..model_aliases import resolve_profile
+        from ..routes_internal.models import effective_parsers_for
+
+        profile = resolve_profile(model_name)
+        profile_tool = profile.tool_call_parser if profile else None
+        tool_name, _ = effective_parsers_for(model_name, profile_tool, None)
+        if tool_name and tool_name in _UI_TARS_PARSER_NAMES:
+            return tool_name
+        if "/" not in model_name:
+            hf_path = f"mlx-community/{model_name}"
+            profile2 = resolve_profile(hf_path)
+            profile_tool2 = profile2.tool_call_parser if profile2 else None
+            tool_name2, _ = effective_parsers_for(hf_path, profile_tool2, None)
+            if tool_name2 and tool_name2 in _UI_TARS_PARSER_NAMES:
+                return tool_name2
+    except Exception as e:
+        logger.debug("resolve_ui_tars_parser_name failed for %s: %s", model_name, e)
+    return None
+
+
+def inject_ui_tars_sysprompt_for_lane(
+    messages: list,
+    *,
+    model_name: str,
+    tool_choice: Any = None,
+    tools: Any = None,
+) -> list:
+    """Lane-agnostic wrapper the 3 routes call (DRY) before generation.
+
+    Resolves the UI-TARS parser name from ``model_name``; if the model is
+    NOT a UI-TARS model this is a no-op (returns ``messages`` unchanged).
+    Otherwise delegates to :func:`maybe_inject_ui_tars_system_prompt`
+    with the tool-coupled gate (parser + tool_choice != none + computer
+    tool declared + no existing preamble). Logs the inject decision so
+    lane-completeness is verifiable from the server log.
+    """
+    parser_name = resolve_ui_tars_parser_name(model_name)
+    if parser_name is None:
+        return messages
+    before = len(messages)
+    out = maybe_inject_ui_tars_system_prompt(
+        messages,
+        tool_call_parser=parser_name,
+        tool_choice=tool_choice,
+        tools=tools,
+    )
+    if len(out) != before:
+        logger.info(
+            "ui_tars sysprompt injected lane model=%s parser=%s "
+            "before=%d after=%d tool_choice=%r tools=%d",
+            model_name,
+            parser_name,
+            before,
+            len(out),
+            tool_choice,
+            len(tools) if tools else 0,
+        )
+    return out
+
+
 def has_ui_tars_system_prompt(messages: list) -> bool:
     """Return True if any ``system`` message already contains a UI-TARS preamble.
 

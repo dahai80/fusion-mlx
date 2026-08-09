@@ -5,6 +5,7 @@ import logging
 import time
 import uuid
 from collections.abc import AsyncIterator
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import Response, StreamingResponse
@@ -60,7 +61,6 @@ from ..service.helpers import (
     _resolve_top_p,
     _validate_model_name,
     _wait_with_disconnect,
-    get_engine,
     maybe_apply_reasoning_effort,
     repair_messages_fit_context,
 )
@@ -68,6 +68,30 @@ from ..service.helpers import (
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+_pool: Any = None
+
+
+def set_responses_context(pool) -> None:
+    global _pool
+    _pool = pool
+
+
+async def _resolve_engine(model_name: str, adapter_path=None):
+    if _pool is not None:
+        engine = await _pool.get_engine(
+            model_name, _lease=True, adapter_path=adapter_path
+        )
+        return engine
+    from ..service.helpers import get_engine
+
+    logger.debug("_pool None, falling back to helpers.get_engine for %s", model_name)
+    return get_engine(model_name)
+
+
+async def _release_engine(model_name: str, adapter_path=None) -> None:
+    if _pool is not None:
+        await _pool.release_engine(model_name, adapter_path=adapter_path)
 
 
 def _resolved_sampling_kwargs(openai_request: ChatCompletionRequest) -> dict:
@@ -374,7 +398,22 @@ async def create_response(request: Request):
     maybe_apply_reasoning_effort(openai_request)
 
     _validate_model_name(openai_request.model)
-    engine = get_engine(openai_request.model)
+    from ..server import resolve_model_with_profile
+
+    resolved_model, _profile_overrides = resolve_model_with_profile(openai_request.model)
+    adapter_path = getattr(openai_request, "adapters", None)
+    logger.info(
+        "responses lane resolve_model_with_profile: %s -> %s",
+        openai_request.model,
+        resolved_model,
+    )
+    engine = await _resolve_engine(resolved_model, adapter_path=adapter_path)
+    if engine is None:
+        await _release_engine(resolved_model, adapter_path=adapter_path)
+        raise HTTPException(404, f"Model {resolved_model} not available")
+
+    async def _release() -> None:
+        await _release_engine(resolved_model, adapter_path=adapter_path)
 
     # R12-4 parity: resolve the strict-mode dispatch decision (gates +
     # guided/postgen/disabled) once here so both the stream and non-stream
@@ -384,12 +423,15 @@ async def create_response(request: Request):
 
     if responses_request.stream:
         return await _stream_responses(
-            engine, openai_request, responses_request, request
+            engine, openai_request, responses_request, request, _release
         )
     else:
-        return await _non_stream(
-            engine, openai_request, responses_request, request, strict_ctx
-        )
+        try:
+            return await _non_stream(
+                engine, openai_request, responses_request, request, strict_ctx
+            )
+        finally:
+            await _release()
 
 
 async def _non_stream(
@@ -402,6 +444,14 @@ async def _non_stream(
     created_at = int(time.time())
 
     messages = _prepare_messages(openai_request)
+    from ..tool_parsers.ui_tars_tool_parser import inject_ui_tars_sysprompt_for_lane
+
+    messages = inject_ui_tars_sysprompt_for_lane(
+        messages,
+        model_name=openai_request.model,
+        tool_choice=getattr(openai_request, "tool_choice", None),
+        tools=getattr(openai_request, "tools", None),
+    )
 
     chat_kwargs = {
         "max_tokens": _resolve_max_tokens(openai_request.max_tokens),
@@ -552,11 +602,20 @@ async def _stream_responses(
     openai_request: ChatCompletionRequest,
     responses_request: ResponsesRequest,
     request: Request,
+    _release=None,
 ) -> StreamingResponse:
     created_at = int(time.time())
     response_id = f"resp_{uuid.uuid4().hex[:24]}"
 
     messages = _prepare_messages(openai_request)
+    from ..tool_parsers.ui_tars_tool_parser import inject_ui_tars_sysprompt_for_lane
+
+    messages = inject_ui_tars_sysprompt_for_lane(
+        messages,
+        model_name=openai_request.model,
+        tool_choice=getattr(openai_request, "tool_choice", None),
+        tools=getattr(openai_request, "tools", None),
+    )
 
     chat_kwargs = {
         "max_tokens": _resolve_max_tokens(openai_request.max_tokens),
@@ -875,8 +934,16 @@ async def _stream_responses(
             },
         )
 
+    async def _generate_with_release() -> AsyncIterator[str]:
+        try:
+            async for event in _generate():
+                yield event
+        finally:
+            if _release is not None:
+                await _release()
+
     return StreamingResponse(
-        _generate(),
+        _generate_with_release(),
         media_type="text/event-stream",
         headers=SSE_RESPONSE_HEADERS,
     )

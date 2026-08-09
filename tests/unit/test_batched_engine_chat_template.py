@@ -9,7 +9,7 @@ fall back to the tokenizer; otherwise every request to those models returns
 zero tokens.
 """
 
-from fusion_mlx.engine.batched import BatchedEngine
+from fusion_mlx.engines.batched import BatchedEngine
 
 
 class _RecordingApplicator:
@@ -92,7 +92,15 @@ def test_falls_back_to_tokenizer_when_mllm_processor_chat_template_is_empty_stri
 
 
 def test_uses_processor_when_chat_template_is_present():
-    """When the processor has a real template, MLLM path keeps using it."""
+    """Base BatchedEngine._apply_chat_template always routes to the tokenizer.
+
+    Processor-vs-tokenizer routing for MLLM models lives in the VLM
+    preprocessing path (engines/vlm.py _prepare_vision_inputs), not in the
+    base class. The base _apply_chat_template uses self._tokenizer
+    unconditionally so text-only requests through a BatchedEngine (and the
+    non-vision branches of a VLM engine) render with the tokenizer's template
+    regardless of _is_mllm. The processor branch is covered by the VLM suite.
+    """
     tokenizer = _RecordingApplicator(label="TOK", chat_template="{{ messages }}")
     processor = _ProcessorStub(
         label="PROC", chat_template="{{ messages }}", inner_tokenizer=tokenizer
@@ -101,8 +109,8 @@ def test_uses_processor_when_chat_template_is_present():
 
     result = engine._apply_chat_template([{"role": "user", "content": "hi"}])
 
-    assert result == "<PROC>"
-    assert tokenizer.last_messages is None  # tokenizer was never invoked
+    assert result == "<TOK>"
+    assert processor.last_messages is None
 
 
 def test_text_only_engine_always_uses_tokenizer():

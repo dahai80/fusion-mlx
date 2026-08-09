@@ -577,6 +577,33 @@ fusion-mlx ships 21 tool-call parsers, matching or exceeding every other MLX run
 | auto | Auto-detect from model config | ✅ |
 | 3gap_stream | 3-gap streaming | ✅ |
 
+### UI-TARS Computer-Use — 3-Lane Action-API Injection
+
+A UI-TARS-aliased model (`ui-tars-7b-4bit` → `UI-TARS-7B-DPO-4bit`) that
+declares a Computer-Use tool gets the UI-TARS action-API system prompt
+**auto-injected** across all three request lanes — `/v1/chat/completions`,
+`/v1/messages` (Anthropic), and `/v1/responses`. The injection is
+**tool-coupled, not lane-coupled**: it fires only when the request
+declares a Computer-Use tool and `tool_choice != "none"`, so plain-text
+requests to the same model are left untouched.
+
+The lane-agnostic wrapper `inject_ui_tars_sysprompt_for_lane` resolves
+the model's `tool_call_parser` (via the alias profile / disk-scan /
+HF-path name shapes) and delegates to `maybe_inject_ui_tars_system_prompt`.
+Without a Computer-Use tool the model emits raw box tokens
+(`<|box_start|>(953,40)<|box_end|>`); with one it emits the structured
+action-API format the parser surfaces as a tool call:
+
+```
+Thought: Click the search box at (953, 40).
+Action: click(start_box='<|box_start|>(953, 40)<|box_end|>')
+```
+
+The `/v1/responses` lane is wired to the async engine pool (alias
+resolve + on-demand load + LRU lease), matching the chat and Anthropic
+lanes, so a not-yet-resident UI-TARS model loads on demand instead of
+returning 500.
+
 ### Grammar-Constrained Decoding — Dual Backend
 
 | Backend | Install | Priority |

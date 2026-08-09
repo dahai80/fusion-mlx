@@ -41,6 +41,8 @@ class FakeStreamingCore:
             finish_reason=None,
             tool_calls=None,
             cached_tokens=0,
+            logprobs=None,
+            new_token_ids=[],
         )
 
     async def abort_request(self, request_id):
@@ -236,7 +238,7 @@ class TestBatchedEngineInitialization:
 
     def test_init_stores_parameters(self):
         """Test BatchedEngine stores initialization parameters."""
-        from fusion_mlx.engine.batched import BatchedEngine
+        from fusion_mlx.engines.batched import BatchedEngine
 
         engine = BatchedEngine(
             model_name="test-model",
@@ -256,7 +258,7 @@ class TestBatchedEngineInitialization:
 
     def test_init_default_values(self):
         """Test BatchedEngine default values."""
-        from fusion_mlx.engine.batched import BatchedEngine
+        from fusion_mlx.engines.batched import BatchedEngine
 
         engine = BatchedEngine(model_name="test-model")
 
@@ -268,7 +270,7 @@ class TestBatchedEngineInitialization:
 
     def test_model_name_property(self):
         """Test model_name property."""
-        from fusion_mlx.engine.batched import BatchedEngine
+        from fusion_mlx.engines.batched import BatchedEngine
 
         engine = BatchedEngine(model_name="my-model")
 
@@ -276,7 +278,7 @@ class TestBatchedEngineInitialization:
 
     def test_tokenizer_property_before_load(self):
         """Test tokenizer property returns None before loading."""
-        from fusion_mlx.engine.batched import BatchedEngine
+        from fusion_mlx.engines.batched import BatchedEngine
 
         engine = BatchedEngine(model_name="test-model")
 
@@ -284,7 +286,7 @@ class TestBatchedEngineInitialization:
 
     def test_model_type_property_before_load(self):
         """Test model_type property returns None before loading."""
-        from fusion_mlx.engine.batched import BatchedEngine
+        from fusion_mlx.engines.batched import BatchedEngine
 
         engine = BatchedEngine(model_name="test-model")
 
@@ -297,7 +299,7 @@ class TestBatchedEngineStreamingCleanup:
     @pytest.mark.asyncio
     async def test_stream_abort_uses_captured_engine_if_engine_cleared(self):
         """Generator finalization aborts on the original engine reference."""
-        from fusion_mlx.engine.batched import BatchedEngine
+        from fusion_mlx.engines.batched import BatchedEngine
 
         fake_engine = FakeStreamingCore()
         engine = BatchedEngine(model_name="test-model")
@@ -306,7 +308,7 @@ class TestBatchedEngineStreamingCleanup:
 
         stream = engine.stream_generate("hello")
         first = await stream.__anext__()
-        assert first.text == "partial"
+        assert first.new_text == "partial"
 
         engine._engine = None
         await stream.aclose()
@@ -319,7 +321,7 @@ class TestBatchedEngineApplyChatTemplate:
 
     def test_apply_chat_template_with_tokenizer(self):
         """Test _apply_chat_template when tokenizer has apply_chat_template."""
-        from fusion_mlx.engine.batched import BatchedEngine
+        from fusion_mlx.engines.batched import BatchedEngine
 
         engine = BatchedEngine(model_name="test-model")
 
@@ -340,7 +342,7 @@ class TestBatchedEngineApplyChatTemplate:
 
     def test_apply_chat_template_with_tools(self):
         """Test _apply_chat_template passes tools to tokenizer."""
-        from fusion_mlx.engine.batched import BatchedEngine
+        from fusion_mlx.engines.batched import BatchedEngine
 
         engine = BatchedEngine(model_name="test-model")
 
@@ -353,14 +355,17 @@ class TestBatchedEngineApplyChatTemplate:
 
         engine._apply_chat_template(messages, tools=tools)
 
-        # Verify tools were passed
         call_kwargs = mock_tokenizer.apply_chat_template.call_args[1]
         assert "tools" in call_kwargs
-        assert call_kwargs["tools"] == tools
+        passed = call_kwargs["tools"]
+        assert len(passed) == 1
+        assert passed[0]["function"]["name"] == "test"
+        assert "description" in passed[0]["function"]
+        assert "parameters" in passed[0]["function"]
 
     def test_apply_chat_template_with_enable_thinking(self):
         """Test _apply_chat_template passes enable_thinking."""
-        from fusion_mlx.engine.batched import BatchedEngine
+        from fusion_mlx.engines.batched import BatchedEngine
 
         engine = BatchedEngine(model_name="test-model", enable_thinking=True)
 
@@ -377,7 +382,7 @@ class TestBatchedEngineApplyChatTemplate:
 
     def test_apply_chat_template_fallback(self):
         """Test _apply_chat_template fallback when tokenizer lacks method."""
-        from fusion_mlx.engine.batched import BatchedEngine
+        from fusion_mlx.engines.batched import BatchedEngine
 
         engine = BatchedEngine(model_name="test-model")
 
@@ -399,7 +404,7 @@ class TestBatchedEngineApplyChatTemplate:
 
     def test_apply_chat_template_handles_type_error(self):
         """Test _apply_chat_template handles TypeError from tokenizer."""
-        from fusion_mlx.engine.batched import BatchedEngine
+        from fusion_mlx.engines.batched import BatchedEngine
 
         engine = BatchedEngine(model_name="test-model", enable_thinking=True)
 
@@ -430,7 +435,7 @@ class TestBatchedEnginePreprocessMessages:
 
     def test_preprocess_messages_non_harmony(self):
         """Test _preprocess_messages returns unchanged for non-Harmony models."""
-        from fusion_mlx.engine.batched import BatchedEngine
+        from fusion_mlx.engines.batched import BatchedEngine
 
         engine = BatchedEngine(model_name="test-model")
         engine._model = MagicMock()
@@ -445,7 +450,7 @@ class TestBatchedEnginePreprocessMessages:
 
     def test_preprocess_messages_model_type_none(self):
         """Test _preprocess_messages when model_type is None."""
-        from fusion_mlx.engine.batched import BatchedEngine
+        from fusion_mlx.engines.batched import BatchedEngine
 
         engine = BatchedEngine(model_name="test-model")
         # No model loaded
@@ -462,7 +467,7 @@ class TestBatchedEngineStats:
 
     def test_get_stats_before_load(self):
         """Test get_stats() before model is loaded."""
-        from fusion_mlx.engine.batched import BatchedEngine
+        from fusion_mlx.engines.batched import BatchedEngine
 
         engine = BatchedEngine(model_name="test-model", stream_interval=3)
 
@@ -475,7 +480,7 @@ class TestBatchedEngineStats:
 
     def test_get_stats_includes_engine_stats(self):
         """Test get_stats() includes engine stats when loaded."""
-        from fusion_mlx.engine.batched import BatchedEngine
+        from fusion_mlx.engines.batched import BatchedEngine
 
         engine = BatchedEngine(model_name="test-model")
 
@@ -496,7 +501,7 @@ class TestBatchedEngineStats:
 
     def test_get_cache_stats_before_load(self):
         """Test get_cache_stats() before model is loaded."""
-        from fusion_mlx.engine.batched import BatchedEngine
+        from fusion_mlx.engines.batched import BatchedEngine
 
         engine = BatchedEngine(model_name="test-model")
 
@@ -506,7 +511,7 @@ class TestBatchedEngineStats:
 
     def test_get_cache_stats_after_load(self):
         """Test get_cache_stats() when engine is loaded."""
-        from fusion_mlx.engine.batched import BatchedEngine
+        from fusion_mlx.engines.batched import BatchedEngine
 
         engine = BatchedEngine(model_name="test-model")
 
@@ -524,7 +529,7 @@ class TestBatchedEngineModelType:
 
     def test_model_type_from_config(self):
         """Test model_type from model.config."""
-        from fusion_mlx.engine.batched import BatchedEngine
+        from fusion_mlx.engines.batched import BatchedEngine
 
         engine = BatchedEngine(model_name="test-model")
 
@@ -537,7 +542,7 @@ class TestBatchedEngineModelType:
 
     def test_model_type_from_config_dict(self):
         """Test model_type from dict-style config."""
-        from fusion_mlx.engine.batched import BatchedEngine
+        from fusion_mlx.engines.batched import BatchedEngine
 
         engine = BatchedEngine(model_name="test-model")
 
@@ -553,7 +558,7 @@ class TestBatchedEngineModelType:
 
     def test_model_type_from_args(self):
         """Test model_type from model.args."""
-        from fusion_mlx.engine.batched import BatchedEngine
+        from fusion_mlx.engines.batched import BatchedEngine
 
         engine = BatchedEngine(model_name="test-model")
 
@@ -566,7 +571,7 @@ class TestBatchedEngineModelType:
 
     def test_model_type_none_when_not_available(self):
         """Test model_type returns None when not available."""
-        from fusion_mlx.engine.batched import BatchedEngine
+        from fusion_mlx.engines.batched import BatchedEngine
 
         engine = BatchedEngine(model_name="test-model")
 
@@ -581,7 +586,7 @@ class TestApplyChatTemplatePartialMode:
 
     def test_partial_mode_sets_continue_final_message(self):
         """Final assistant message with partial=True sets continue_final_message."""
-        from fusion_mlx.engine.batched import BatchedEngine
+        from fusion_mlx.engines.batched import BatchedEngine
 
         engine = BatchedEngine(model_name="test-model")
 
@@ -602,7 +607,7 @@ class TestApplyChatTemplatePartialMode:
 
     def test_partial_non_assistant_ignored(self):
         """partial=True on a non-assistant message does not trigger partial mode."""
-        from fusion_mlx.engine.batched import BatchedEngine
+        from fusion_mlx.engines.batched import BatchedEngine
 
         engine = BatchedEngine(model_name="test-model")
 
@@ -622,7 +627,7 @@ class TestApplyChatTemplatePartialMode:
 
     def test_partial_field_stripped_before_template(self):
         """partial field is removed from messages before calling apply_chat_template."""
-        from fusion_mlx.engine.batched import BatchedEngine
+        from fusion_mlx.engines.batched import BatchedEngine
 
         engine = BatchedEngine(model_name="test-model")
 
@@ -656,7 +661,7 @@ class TestApplyChatTemplatePartialMode:
         model-template-specific — many templates silently ignore it, so
         assertions on template output would be fragile and model-dependent.
         """
-        from fusion_mlx.engine.batched import BatchedEngine
+        from fusion_mlx.engines.batched import BatchedEngine
 
         engine = BatchedEngine(model_name="test-model")
 
@@ -697,7 +702,7 @@ class TestApplyChatTemplatePartialMode:
         not the generation path.  This test confirms the kwargs are set
         correctly when the messages would be used in a streaming context.
         """
-        from fusion_mlx.engine.batched import BatchedEngine
+        from fusion_mlx.engines.batched import BatchedEngine
 
         engine = BatchedEngine(model_name="test-model")
 
@@ -729,7 +734,7 @@ class TestApplyChatTemplatePartialMode:
         the same partial-mode flags to apply_chat_template.
         """
         from fusion_mlx.api.utils import detect_and_strip_partial
-        from fusion_mlx.engine.batched import BatchedEngine
+        from fusion_mlx.engines.batched import BatchedEngine
 
         engine = BatchedEngine(model_name="test-model")
 

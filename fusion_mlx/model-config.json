@@ -1,6 +1,7 @@
 {
   "aliases": {
-    "claude-4.6-sonnet": "Qwen3.6-27B-mxfp8"
+    "claude-4.6-sonnet": "Qwen3.6-27B-mxfp8",
+    "ui-tars-7b-4bit": "UI-TARS-7B-DPO-4bit"
   },
   "models": {
     "Qwen3.6-27B-mxfp8": {

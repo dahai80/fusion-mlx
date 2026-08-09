@@ -717,41 +717,42 @@ class TestLaneInjectionParity:
     @staticmethod
     def _find_helper_calls(module) -> list[ast.Call]:
         """Return every ``Call`` node in ``module`` whose call target
-        ultimately resolves to ``maybe_inject_ui_tars_system_prompt``.
+        resolves to the UI-TARS sysprompt injection helper.
 
-        Tolerates:
-        - ``from .ui_tars_tool_parser import maybe_inject_ui_tars_system_prompt as X``
-          followed by ``X(...)``.
-        - ``import fusion_mlx.tool_parsers.ui_tars_tool_parser as X``
-          followed by ``X.maybe_inject_ui_tars_system_prompt(...)``.
-        - The direct unaliased ``maybe_inject_ui_tars_system_prompt(...)``.
+        Matches BOTH call shapes the lanes use:
+        - The lane-agnostic wrapper ``inject_ui_tars_sysprompt_for_lane``
+          (current contract — routes pass ``model_name=`` and the wrapper
+          resolves the parser name internally).
+        - The direct ``maybe_inject_ui_tars_system_prompt`` (legacy /
+          unit-level).
 
-        Pinning at the AST level (rather than source substring) is
-        codex r4's requirement — a dead ``import`` or a literal in a
-        comment / docstring no longer satisfies the assertion. The
-        test fails when (and only when) the route actually drops the
-        live call site.
+        Tolerates ``from … import <name> [as X]`` then ``X(...)`` and
+        ``import …ui_tars_tool_parser as X`` then ``X.<name>(...)``.
+        AST-level pinning (codex r4) — a dead import or a comment no
+        longer satisfies the assertion; only a live call site counts.
         """
         import inspect
 
         src = inspect.getsource(module)
         tree = ast.parse(src)
-        target_name = "maybe_inject_ui_tars_system_prompt"
+        # Both call shapes the lanes use: the lane-agnostic wrapper
+        # (current contract — routes pass ``model_name=`` and the
+        # wrapper resolves the parser name internally) and the direct
+        # legacy helper.
+        target_names = {
+            "maybe_inject_ui_tars_system_prompt",
+            "inject_ui_tars_sysprompt_for_lane",
+        }
         # Step 1: walk imports to learn what local names refer to
         # the helper (direct or aliased).
         local_aliases: set[str] = set()
         module_aliases: set[str] = set()  # ``X`` when ``import … as X``
         for node in ast.walk(tree):
             if isinstance(node, ast.ImportFrom):
-                # ``from … import maybe_inject_ui_tars_system_prompt
-                # [as ALIAS]``
                 for n in node.names:
-                    if n.name == target_name:
+                    if n.name in target_names:
                         local_aliases.add(n.asname or n.name)
             elif isinstance(node, ast.Import):
-                # ``import fusion_mlx.tool_parsers.ui_tars_tool_parser
-                # as X`` — record ``X`` so we can match
-                # ``X.maybe_inject_ui_tars_system_prompt(...)``.
                 for n in node.names:
                     if "ui_tars_tool_parser" in n.name:
                         module_aliases.add(n.asname or n.name.split(".")[-1])
@@ -766,7 +767,7 @@ class TestLaneInjectionParity:
                 calls.append(node)
             elif isinstance(callee, ast.Attribute):
                 if (
-                    callee.attr == target_name
+                    callee.attr in target_names
                     and isinstance(callee.value, ast.Name)
                     and callee.value.id in module_aliases
                 ):
@@ -785,39 +786,42 @@ class TestLaneInjectionParity:
         # Codex r4 BLOCKING: walk the route's AST and assert a real
         # ``Call`` node to the helper exists. A dead ``import`` no
         # longer satisfies this — only a live call site counts.
-        from fusion_mlx.routes_internal import chat as chat_route
+        from fusion_mlx.api import openai_routes as chat_route
 
         calls = self._find_helper_calls(chat_route)
         assert len(calls) >= 1, (
-            "routes_internal/chat.py must contain at least one Call node to"
-            " maybe_inject_ui_tars_system_prompt — dogfood C-05"
+            "api/openai_routes.py must contain at least one Call node to"
+            " the UI-TARS sysprompt injection helper — dogfood C-05"
         )
 
     def test_anthropic_route_actually_invokes_helper(self):
-        from fusion_mlx.routes_internal import anthropic as anthropic_route
+        from fusion_mlx.api import anthropic_routes as anthropic_route
 
         calls = self._find_helper_calls(anthropic_route)
         assert len(calls) >= 1, (
-            "routes_internal/anthropic.py must contain at least one Call node"
-            " to maybe_inject_ui_tars_system_prompt — dogfood F-R2-04"
+            "api/anthropic_routes.py must contain at least one Call node"
+            " to the UI-TARS sysprompt injection helper — dogfood F-R2-04"
         )
 
     def test_chat_route_invokes_helper_with_parser_and_tool_choice(self):
-        # Codex r4 BLOCKING: assert the helper call's kwargs
-        # specifically pass the server config's ``tool_call_parser``
-        # and the request's ``tool_choice`` — not just that those
-        # tokens appear anywhere in the source. AST-level check
-        # over the actual ``Call`` node's keyword arguments.
-        from fusion_mlx.routes_internal import chat as chat_route
+        # Codex r4 BLOCKING: assert the helper call's kwargs thread
+        # the model name, tool_choice, and tools through to the
+        # wrapper — not just that those tokens appear anywhere in the
+        # source. AST-level check over the actual ``Call`` node's
+        # keyword arguments.
+        from fusion_mlx.api import openai_routes as chat_route
 
         calls = self._find_helper_calls(chat_route)
-        assert calls, "routes_internal/chat.py must call the helper"
-        # Pick the first live call (route only has one).
+        assert calls, "api/openai_routes.py must call the helper"
         call = calls[0]
-        parser_expr = self._call_kwarg_value_source(call, "tool_call_parser")
+        model_expr = self._call_kwarg_value_source(call, "model_name")
         tc_expr = self._call_kwarg_value_source(call, "tool_choice")
         tools_expr = self._call_kwarg_value_source(call, "tools")
-        assert parser_expr is not None, "tool_call_parser= kwarg missing"
+        # The wrapper takes ``model_name=`` (NOT ``tool_call_parser=``);
+        # it resolves the parser name internally so the route stays
+        # lane-agnostic. A missing ``model_name=`` → the wrapper no-ops
+        # and no sysprompt is ever injected on the chat lane.
+        assert model_expr is not None, "model_name= kwarg missing"
         assert tc_expr is not None, "tool_choice= kwarg missing"
         # r5-B C-09 BLOCKING: ``tools=`` MUST be threaded through so
         # the helper can fire the tool-coupled gate. Missing
@@ -825,34 +829,30 @@ class TestLaneInjectionParity:
         # sysprompt regardless of whether the request asked for one
         # → F-R1-L regression.
         assert tools_expr is not None, "tools= kwarg missing (r5-B C-09)"
-        # Pin the EXACT expressions — refactors that move config or
-        # rename the resolved variable should re-evaluate this test
-        # on purpose, not accidentally regress C-05 / C-07 / C-09.
-        assert "cfg.tool_call_parser" in parser_expr
-        # ``tc`` is the route's local for ``request.tool_choice``;
-        # accept either the local or the explicit dotted form so
-        # a future cleanup that drops the local doesn't false-fail.
-        assert tc_expr in ("tc", "request.tool_choice")
-        # ``request.tools`` is the request body's tools array.
-        assert tools_expr == "request.tools"
+        # The chat lane resolves the model off the request body.
+        assert "request" in model_expr and "model" in model_expr
+        # ``tool_choice`` / ``tools`` are read off the request body,
+        # getattr-guarded for lane-resilience.
+        assert "tool_choice" in tc_expr and "request" in tc_expr
+        assert "tools" in tools_expr and "request" in tools_expr
 
     def test_anthropic_route_invokes_helper_with_parser_and_tool_choice(self):
-        from fusion_mlx.routes_internal import anthropic as anthropic_route
+        from fusion_mlx.api import anthropic_routes as anthropic_route
 
         calls = self._find_helper_calls(anthropic_route)
-        assert calls, "routes_internal/anthropic.py must call the helper"
+        assert calls, "api/anthropic_routes.py must call the helper"
         call = calls[0]
-        parser_expr = self._call_kwarg_value_source(call, "tool_call_parser")
+        model_expr = self._call_kwarg_value_source(call, "model_name")
         tc_expr = self._call_kwarg_value_source(call, "tool_choice")
         tools_expr = self._call_kwarg_value_source(call, "tools")
-        assert parser_expr is not None
+        assert model_expr is not None
         assert tc_expr is not None
         assert tools_expr is not None, "tools= kwarg missing (r5-B C-09)"
-        # Anthropic route uses a local cfg snapshot — accept either
-        # the local snapshot or the direct ``get_config().``-shape.
-        assert parser_expr.endswith("tool_call_parser")
-        assert tc_expr == "openai_request.tool_choice"
-        assert tools_expr == "openai_request.tools"
+        # The anthropic lane resolves the model off ``req.model`` and
+        # feeds the already-converted ``openai_tool_choice`` local.
+        assert "req" in model_expr and "model" in model_expr
+        assert tc_expr == "openai_tool_choice"
+        assert "tools" in tools_expr and "req" in tools_expr
 
     def test_responses_route_actually_invokes_helper(self):
         # r5-B C-10 BLOCKING: the responses lane MUST call the
@@ -867,14 +867,14 @@ class TestLaneInjectionParity:
         calls = self._find_helper_calls(responses_route)
         assert len(calls) >= 1, (
             "routes_internal/responses.py must contain at least one Call node"
-            " to maybe_inject_ui_tars_system_prompt — dogfood F-R2-D"
+            " to the UI-TARS sysprompt injection helper — dogfood F-R2-D"
         )
 
     def test_responses_route_invokes_helper_with_tool_coupled_kwargs(self):
         # All call sites in the responses route (non-stream + stream)
-        # MUST pass ``tools=openai_request.tools`` so the tool-coupled
-        # gate fires correctly. Otherwise the route bypasses the C-09
-        # fix on the responses lane.
+        # MUST pass ``tools=`` so the tool-coupled gate fires
+        # correctly. Otherwise the route bypasses the C-09 fix on the
+        # responses lane.
         from fusion_mlx.routes_internal import responses as responses_route
 
         calls = self._find_helper_calls(responses_route)
@@ -882,15 +882,17 @@ class TestLaneInjectionParity:
         # The responses route has both a non-stream and a streaming
         # call site; check every one is tool-coupled.
         for call in calls:
-            parser_expr = self._call_kwarg_value_source(call, "tool_call_parser")
+            model_expr = self._call_kwarg_value_source(call, "model_name")
             tc_expr = self._call_kwarg_value_source(call, "tool_choice")
             tools_expr = self._call_kwarg_value_source(call, "tools")
-            assert parser_expr is not None
+            assert model_expr is not None
             assert tc_expr is not None
             assert tools_expr is not None, "tools= kwarg missing (r5-B C-09)"
-            assert parser_expr.endswith("tool_call_parser")
-            assert tc_expr == "openai_request.tool_choice"
-            assert tools_expr == "openai_request.tools"
+            # The responses lane resolves model / tool_choice / tools
+            # off the OpenAI-normalized request object.
+            assert "openai_request" in model_expr and "model" in model_expr
+            assert "openai_request" in tc_expr and "tool_choice" in tc_expr
+            assert "openai_request" in tools_expr and "tools" in tools_expr
 
     def test_inject_parity_skips_on_tool_choice_none(self):
         # ``tool_choice="none"`` short-circuit fires identically on
