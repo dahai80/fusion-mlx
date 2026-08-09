@@ -438,18 +438,60 @@ def _apply_reasoning_cutoff_notice(
 
 
 def _validate_response_format(response_format) -> None:
+    # F-013: reject malformed response_format BEFORE build_json_system_prompt
+    # runs, so a missing/empty inner json_schema or an unknown type surfaces a
+    # clean 400 instead of leaking a raw AttributeError ('NoneType' has no
+    # 'get') or being silently accepted as unconstrained text. Handles both
+    # the dict shape (route passes a raw dict) and the ResponseFormat model.
     if response_format is None:
         return
-    rf_type = getattr(response_format, "type", None)
-    if rf_type is None:
-        return
     if isinstance(response_format, dict):
-        rf_type = response_format.get("type")
+        rf_dict = response_format
+    else:
+        rf_dict = getattr(response_format, "__dict__", None) or {}
+        if not rf_dict and hasattr(response_format, "model_dump"):
+            rf_dict = response_format.model_dump()
+    rf_type = rf_dict.get("type")
+    if not rf_type:
+        # {} or {"type": ""} — no usable type. Used to silent-200 because the
+        # route defaulted missing type to "text".
+        raise HTTPException(
+            status_code=400,
+            detail="response_format.type is required and must be one of: "
+            "text, json_object, json_schema",
+        )
     if rf_type not in ("text", "json_object", "json_schema"):
         raise HTTPException(
             status_code=400,
-            detail=f"Unsupported response_format type: {rf_type}",
+            detail=(
+                f"response_format.type must be one of: "
+                f"text, json_object, json_schema (got {rf_type!r})"
+            ),
         )
+    if rf_type == "json_schema":
+        spec = rf_dict.get("json_schema")
+        if not spec:
+            # type:"json_schema" with no inner field. The field defaults to
+            # None (not {}), so build_json_system_prompt's chained .get would
+            # raise AttributeError on None — the original raw-leak path.
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "response_format.json_schema must be a non-empty object "
+                    "with a 'name' and a 'schema' member"
+                ),
+            )
+        inner_schema = spec.get("schema") if isinstance(spec, dict) else None
+        if not inner_schema:
+            # Inner dict present but missing/empty 'schema' member —
+            # functionally equivalent to no constraint; used to silent-200.
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "response_format.json_schema.schema must be a non-empty "
+                    "JSON schema object"
+                ),
+            )
 
 
 def _is_structured_output_requested(request) -> bool:

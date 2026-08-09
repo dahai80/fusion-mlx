@@ -104,7 +104,18 @@ test_chat_route_vlm_image.py
 test_chat_template_kwargs.py
 test_check_gha_pinning.py
 test_check_mlx_upstream_calls.py
-test_clean_error_messages.py
+# test_clean_error_messages.py RESCUED 2026-08-09 (26 pass): restored F-013 +
+# F-066 prod guards. _validate_response_format (service/helpers.py) had been
+# gutted to a 3-line type-only check — re-added json_schema completeness
+# validation (missing/empty inner field + empty schema member) + "type is
+# required" for {} and "must be one of" for unknown types, closing the raw
+# AttributeError ('NoneType' has no 'get') leak + silent-200 paths.
+# F-066 schema guard was missing: ContentPart's image_url/video_url/audio_url
+# union (ImageUrl|dict|str|None) fell back to the dict arm for a non-string
+# url, so ContentPart validators never ran. Added a Message.content
+# mode="before" validator scanning dict parts — rejects non-string url
+# (clean 422 "image_url.url must be a string") + bare-string shorthand
+# (was silently dropped by the multimodal preprocessor).
 test_cli.py
 test_cli_argcomplete.py
 test_cli_chat.py

@@ -91,6 +91,42 @@ class Message(BaseModel):
     # For tool response messages (role="tool")
     tool_call_id: str | None = None
 
+    @field_validator("content", mode="before")
+    @classmethod
+    def _validate_multimodal_content(cls, v):
+        # F-066: the ``content`` union selects the ``list[dict]`` arm for a
+        # multimodal part whose ``image_url``/``video_url``/``audio_url``
+        # carries a non-string ``url`` (ImageUrl rejects int url, the union
+        # falls back to dict, ``{"url": 123}`` is a valid dict), so
+        # ContentPart's own validators never run. That non-string url then
+        # crashed ``process_image_input`` -> ``is_base64_image(123)`` with a
+        # raw ``AttributeError: 'int' object has no attribute 'startswith'``
+        # that leaked into the 400 body. Scan dict parts here and reject
+        # non-string url / bare-string shorthand at the schema layer (422).
+        if not isinstance(v, list):
+            return v
+        media_fields = ("image_url", "video_url", "audio_url")
+        for part in v:
+            if not isinstance(part, dict):
+                continue
+            for field_name in media_fields:
+                slot = part.get(field_name)
+                if slot is None:
+                    continue
+                if isinstance(slot, str):
+                    raise ValueError(
+                        f"{field_name} must be an object with a 'url' field "
+                        f"(got a bare string)"
+                    )
+                if isinstance(slot, dict):
+                    url = slot.get("url")
+                    if not isinstance(url, str):
+                        raise ValueError(
+                            f"{field_name}.url must be a string "
+                            f"(got {type(url).__name__})"
+                        )
+        return v
+
 
 # =============================================================================
 # Tool Calling
