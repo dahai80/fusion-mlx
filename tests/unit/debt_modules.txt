@@ -175,6 +175,14 @@ test_context_window.py
 # (cli_origins->cors_origins) and contract are both divergent.
 test_cors_env_configurable.py
 test_cors_lockdown_response_shape.py
+# KEEP_QUARANTINED: asserts the D-ANTHRO-VALIDATION contract (F1 envelope
+# rewrap + loc sanitizer, F4 block-shape, F10 role-block compat, F11 empty-
+# messages->400) ported from Rapid-MLX. fusion-mlx's typed-block union only
+# enforces the type discriminator, not completeness/role-compat (verified:
+# messages=[] accepted, should 400). Missing-feature gap — tracked in issue
+# #443. ALSO deep-drift: the _build_app fixture injects vllm_mlx.routes.*
+# (old package name); rescue needs both the feature port and a fixture
+# re-point to fusion_mlx.*.
 test_d_anthro_validation.py
 test_deepseek_v4_vendored.py
 test_dense_sampler_fastpath.py
@@ -185,6 +193,13 @@ test_dflash_prefill_memory_guard.py
 test_dflash_spec_decode.py
 test_diffusion_engine.py
 test_disconnect_counter_prod_shape.py
+# KEEP_QUARANTINED: imports ``_run_with_disconnect_guard`` from
+# fusion_mlx.server — a symbol that exists in NEITHER fusion-mlx nor
+# Rapid-MLX under that name (rapid-mlx has ``_disconnect_guard`` only).
+# Dead-symbol / deep drift; fusion-mlx handles client disconnect inline in
+# the streaming route (openai_routes.py:1140) with no guard-wrapper API.
+# Don't fabricate a _run_with_disconnect_guard to satisfy a test whose
+# target symbol never shipped.
 test_disconnect_guard.py
 test_disconnect_guard_aborts_scheduler.py
 test_disk_space_check.py
@@ -201,7 +216,19 @@ test_engine_keepalive.py
 test_engine_preflight.py
 test_engine_router_non_stream.py
 test_engine_step_thread.py
+# test_envelope_field_extraction.py RESCUED 2026-08-10 (27 pass): already
+# fully green, was stale-debt (envelope field extraction prod code is
+# correct; the quarantine predates a fix).
 test_envelope_field_extraction.py
+# KEEP_QUARANTINED: same deep-drift pattern as test_d_anthro_validation —
+# the _build_app fixture injects ``vllm_mlx.engine`` / ``vllm_mlx.routes.*``
+# (old package name, no fusion_mlx shim), so the 21 failing tests hit the
+# injected stub routes instead of fusion-mlx's real exception-handler
+# envelope. The shipped install_exception_handlers (middleware/
+# exception_handlers.py) already covers the live envelope contract; this
+# test's failures are the fixture's vllm_mlx package drift, not a prod gap.
+# Rescue needs a fixture rewrite to fusion_mlx.* (fragile module-injection
+# gymnastics), not a prod change.
 test_exception_handlers.py
 test_finalize_harmony_raw_text.py
 test_gemma4_messages.py
