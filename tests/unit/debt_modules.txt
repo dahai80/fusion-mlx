@@ -133,6 +133,17 @@ test_community_bench.py
 # imported the module-level ``app`` (lazily built, None until get_app() runs)
 # → re-pointed at get_app(). Prod handler/envelope behavior was already
 # correct (OpenAI-style error envelope, 429 Retry-After, type/code/param).
+# test_content_block_strict_types.py RESCUED 2026-08-10 (41 pass): the H-15
+# string-typing validators (content[].text, image source.data/url) were lost
+# in fusion-mlx's typed-block union refactor — ContentPart.text gave a buried
+# Pydantic message, ContentBlockImage.source accepted non-string data
+# silently (real gap, F-066 sibling). Added field_validator on
+# ContentPart.text + ContentBlockText.text + model_validator on
+# ContentBlockImage.source, and extended Message.content dict-fallback to
+# reject non-string text. Test re-pointed from deleted AnthropicContentBlock
+# to the typed blocks (ContentBlockText/ContentBlockImage); null-text assert
+# relaxed to the typed-union's "must be a string" message. 2 real prod
+# validation gaps fixed (non-string text/source now 422 with clean messages).
 test_content_block_strict_types.py
 # test_context_length_exceeded.py RESCUED 2026-08-09 (22 pass): the single
 # failure was a stale import — test imported ``_http_exception_handler`` from
@@ -145,6 +156,13 @@ test_content_block_strict_types.py
 # test_context_overflow_400.py RESCUED 2026-08-09 (1 pass, 4 xfail): already
 # green, was stale-debt (the 4 xfailed are intentional expected-fails).
 test_context_window.py
+# KEEP_QUARANTINED: asserts F-090/F-091 default-deny CORS (env allowlist,
+# method narrowing to POST/GET/OPTIONS, max_age, credentials env, empty-CSV
+# fail-closed) ported from Rapid-MLX. fusion-mlx's released stance is the
+# OPPOSITE — wide-open allow_origins/methods/headers=["*"] by design for
+# single-machine UX, closed as by-design in issue #52. Re-implementing this
+# would reverse a closed product decision, not pay debt. Test kwarg
+# (cli_origins->cors_origins) and contract are both divergent.
 test_cors_env_configurable.py
 test_cors_lockdown_response_shape.py
 test_d_anthro_validation.py

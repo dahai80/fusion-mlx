@@ -9,6 +9,7 @@ These models define the request and response schemas for:
 - MCP (Model Context Protocol) integration
 """
 
+import logging
 import time
 import uuid
 from typing import Literal
@@ -23,6 +24,8 @@ from pydantic import (
     field_validator,
     model_validator,
 )
+
+logger = logging.getLogger(__name__)
 
 # =============================================================================
 # Content Types (for multimodal messages)
@@ -67,6 +70,25 @@ class ContentPart(BaseModel):
     video_url: VideoUrl | dict | str | None = None
     audio_url: AudioUrl | dict | str | None = None
 
+    @field_validator("text", mode="before")
+    @classmethod
+    def _validate_text_type(cls, value):
+        # H-15: reject non-string ``text`` with a clean, field-named
+        # message. ``text: str | None`` already 422s on a non-string
+        # value, but Pydantic's default ``string_type`` message buries
+        # ``text`` under a nested loc trail. Run a ``mode="before"``
+        # validator so the error surfaces a single actionable line
+        # naming ``content[].text`` (parity with the Anthropic side).
+        if value is None or isinstance(value, str):
+            return value
+        logger.debug(
+            "ContentPart rejecting non-string text type=%s",
+            type(value).__name__,
+        )
+        raise ValueError(
+            f"content[].text must be a string (got {type(value).__name__})"
+        )
+
 
 # =============================================================================
 # Messages
@@ -103,12 +125,27 @@ class Message(BaseModel):
         # raw ``AttributeError: 'int' object has no attribute 'startswith'``
         # that leaked into the 400 body. Scan dict parts here and reject
         # non-string url / bare-string shorthand at the schema layer (422).
+        # H-15 sibling: the same dict-fallback escapes a non-string ``text``
+        # (ContentPart's ``text`` validator only fires on the
+        # ``list[ContentPart]`` arm). A non-string ``text`` in a dict part
+        # used to surface as a buried union error or a downstream 500 in
+        # ``_join_text_parts``; reject it here with the same clean message.
         if not isinstance(v, list):
             return v
         media_fields = ("image_url", "video_url", "audio_url")
         for part in v:
             if not isinstance(part, dict):
                 continue
+            text_value = part.get("text")
+            if text_value is not None and not isinstance(text_value, str):
+                logger.debug(
+                    "Message rejecting non-string text in dict part type=%s",
+                    type(text_value).__name__,
+                )
+                raise ValueError(
+                    f"content[].text must be a string "
+                    f"(got {type(text_value).__name__})"
+                )
             for field_name in media_fields:
                 slot = part.get(field_name)
                 if slot is None:

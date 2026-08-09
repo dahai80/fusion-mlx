@@ -8,6 +8,7 @@ These models define the request and response schemas for:
 - Tool calling in Anthropic format
 """
 
+import logging
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -15,6 +16,9 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 from fusion_mlx.api.shared_models import IDPrefix, generate_id
 
 from .models import StreamOptions, _validate_token_budget
+
+logger = logging.getLogger(__name__)
+
 
 ANTHROPIC_EFFORT_TO_REASONING_MAX_TOKENS: dict[str, int] = {
     "low": 512,
@@ -33,6 +37,31 @@ class ContentBlockText(BaseModel):
     type: Literal["text"] = "text"
     text: str
 
+    @field_validator("text", mode="before")
+    @classmethod
+    def _validate_text_type(cls, value):
+        # H-15: reject non-string ``text`` with a clean, field-named
+        # message. ``text: str`` already 422s on a non-string value, but
+        # Pydantic's default ``string_type`` message buries ``text`` under
+        # the ``str | list[ContentBlock]`` union loc trail on the parent
+        # ``AnthropicMessage.content``. Run a ``mode="before"`` validator
+        # so the error surfaces a single actionable line naming
+        # ``content[].text`` (parity with the OpenAI ``ContentPart`` side).
+        # D-ANTHRO-VALIDATION F4: a text block with null/missing ``text``
+        # carries no usable content — the spec rejects ``{type:'text'}``.
+        # ``ContentBlockText`` is text-only (unlike the OpenAI ``ContentPart``
+        # union where ``text=None`` is legal for a media part), so reject
+        # ``None`` here with the same field-named message.
+        if isinstance(value, str):
+            return value
+        logger.debug(
+            "ContentBlockText rejecting non-string text type=%s",
+            type(value).__name__,
+        )
+        raise ValueError(
+            f"content[].text must be a string (got {type(value).__name__})"
+        )
+
 
 class ContentBlockImage(BaseModel):
     """Image content block with source data."""
@@ -41,6 +70,32 @@ class ContentBlockImage(BaseModel):
     source: dict[
         str, Any
     ]  # {"type": "base64"|"url", "media_type": "...", "data"|"url": "..."}
+
+    @model_validator(mode="after")
+    def _validate_source_string_fields(self):
+        # H-15 sibling: ``source`` is declared ``dict[str, Any]`` (no inner
+        # schema), so a non-string ``data`` / ``url`` value (e.g. a nested
+        # list or int) falls through the schema layer and surfaces as an
+        # uninformative downstream error when the adapter decodes the
+        # base64/url. Pin a string-typed check here for parity with the
+        # OpenAI-side ``image_url.url`` rule (F-066) so the failure names
+        # the field cleanly at the schema layer.
+        if isinstance(self.source, dict):
+            for key in ("data", "url"):
+                if key in self.source:
+                    val = self.source[key]
+                    if val is not None and not isinstance(val, str):
+                        logger.debug(
+                            "ContentBlockImage rejecting non-string source.%s"
+                            " type=%s",
+                            key,
+                            type(val).__name__,
+                        )
+                        raise ValueError(
+                            f"image source.{key} must be a string "
+                            f"(got {type(val).__name__})"
+                        )
+        return self
 
 
 class ContentBlockToolUse(BaseModel):

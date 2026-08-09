@@ -53,7 +53,11 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
-from fusion_mlx.api.anthropic_models import AnthropicContentBlock, AnthropicRequest
+from fusion_mlx.api.anthropic_models import (
+    AnthropicRequest,
+    ContentBlockImage,
+    ContentBlockText,
+)
 from fusion_mlx.api.models import ChatCompletionRequest, ContentPart, Message
 from fusion_mlx.middleware.exception_handlers import _validation_error_response
 
@@ -142,9 +146,11 @@ class TestMessageDictFallbackTextStrictType:
 
 
 # ---------------------------------------------------------------------------
-# Anthropic content block — `text: str | None` already 422s, but the
-# H-15 fix adds an explicit field validator so the error message
-# names ``content[].text`` cleanly.
+# Anthropic content block — fusion-mlx ships a per-type union
+# (``ContentBlockText`` / ``ContentBlockImage`` / ...) rather than
+# rapid-mlx's monolithic ``AnthropicContentBlock``. The H-15 validators
+# live on the typed blocks directly; these tests construct the typed
+# blocks to pin the same schema-layer rejection contract.
 # ---------------------------------------------------------------------------
 
 
@@ -159,24 +165,27 @@ class TestAnthropicContentBlockTextStrictType:
     )
     def test_non_string_text_rejected(self, value: Any, type_name: str) -> None:
         with pytest.raises(ValidationError) as exc_info:
-            AnthropicContentBlock(type="text", text=value)
+            ContentBlockText(text=value)
         msg = str(exc_info.value)
         assert "content[].text must be a string" in msg, msg
         assert f"got {type_name}" in msg, msg
 
     def test_string_text_accepted(self) -> None:
-        block = AnthropicContentBlock(type="text", text="hi")
+        block = ContentBlockText(text="hi")
         assert block.text == "hi"
 
     def test_null_text_rejected(self) -> None:
-        """D-ANTHRO-VALIDATION F4 update: ``text=None`` was previously
-        treated as a legal no-op text part. Sergei's F4 evidence
-        shows the Anthropic spec rejects ``{type:'text'}`` (and the
-        ``text=None`` shape is equivalent — both pass no usable text
-        to the model). Aligned with the spec at the schema layer."""
+        """D-ANTHRO-VALIDATION F4 update: ``text=None`` (or an omitted
+        ``text``) is rejected at the schema layer. fusion-mlx's typed
+        ``ContentBlockText`` declares ``text: str`` (required), so a
+        missing/null ``text`` surfaces as Pydantic's ``Field required``
+        error rather than rapid-mlx's custom ``missing required
+        field(s)`` message — same rejection, the typed-union message."""
         with pytest.raises(ValidationError) as exc_info:
-            AnthropicContentBlock(type="text", text=None)
-        assert "is missing required field(s): text" in str(exc_info.value)
+            ContentBlockText(text=None)
+        msg = str(exc_info.value)
+        assert "text" in msg, msg
+        assert "must be a string" in msg, msg
 
 
 class TestAnthropicImageSourceStrictType:
@@ -186,16 +195,14 @@ class TestAnthropicImageSourceStrictType:
     @pytest.mark.parametrize("key", ["data", "url"])
     def test_non_string_source_field_rejected(self, key: str) -> None:
         with pytest.raises(ValidationError) as exc_info:
-            AnthropicContentBlock(
-                type="image",
+            ContentBlockImage(
                 source={"type": "base64", "media_type": "image/png", key: 123},
             )
         msg = str(exc_info.value)
         assert f"image source.{key} must be a string" in msg, msg
 
     def test_valid_source_accepted(self) -> None:
-        block = AnthropicContentBlock(
-            type="image",
+        block = ContentBlockImage(
             source={
                 "type": "base64",
                 "media_type": "image/png",
