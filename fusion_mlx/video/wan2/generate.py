@@ -743,7 +743,56 @@ def generate_video(
 
     # VACE: encode control video + mask -> control_hidden_states
     if is_vace and control_hidden_states is None:
-        if control_video is not None:
+        if control_video is None and reference_images:
+            # Reference-only mode (no control_video, only reference_image).
+            # Upstream ComfyUI WanVaceToVideo synthesizes a gray filler video
+            # (torch.ones*0.5) with an all-white mask so the VACE control branch
+            # still runs and the reference image is encoded/prepended. Without
+            # this, reference_images would be dropped and the VACE DiT would run
+            # as plain T2V with no reference guidance. Neutral gray in [-1,1] is
+            # 0.0; all-white mask (1.0) means "generate full region".
+            logger.info(
+                "VACE: reference-only mode (no control_video) -> synthesizing "
+                "gray filler video + all-white mask so reference_images apply"
+            )
+            video_frames = mx.zeros(
+                (3, gen_frames, height, width), dtype=mx.float32
+            )
+            mask_frames = mx.ones(
+                (gen_frames, height, width), dtype=mx.float32
+            )
+            mx.eval(video_frames, mask_frames)
+
+            print(f"\n{Colors.BLUE}Encoding VACE reference-only control...{Colors.RESET}")
+            t_vace = time.time()
+
+            vae_path = _resolve_model_file(model_dir, "vae.safetensors", "vae")
+            vae_enc = load_vae_encoder(vae_path, config)
+
+            ref_imgs = [_load_ref_image(p, width, height) for p in reference_images]
+            mx.eval(*ref_imgs)
+
+            control_hidden_states = [
+                _prepare_vace_control_latents(
+                    vae_encoder=vae_enc,
+                    control_video=video_frames,
+                    control_mask=mask_frames,
+                    reference_images=ref_imgs,
+                    vae_stride=config.vae_stride,
+                    h_latent=h_latent,
+                    w_latent=w_latent,
+                    t_latent=t_latent,
+                    z_dim=config.vae_z_dim,
+                )
+            ]
+
+            del vae_enc, video_frames, mask_frames, ref_imgs
+            gc.collect()
+            mx.clear_cache()
+            print(
+                f"{Colors.DIM}  VACE control encoding: {time.time() - t_vace:.1f}s{Colors.RESET}"
+            )
+        elif control_video is not None:
             print(f"\n{Colors.BLUE}Encoding VACE control video+mask...{Colors.RESET}")
             t_vace = time.time()
 
@@ -791,7 +840,7 @@ def generate_video(
             )
         else:
             logger.warning(
-                "VACE model but no control_video provided — running without control"
+                "VACE model but no control_video and no reference_images — running without control"
             )
 
     # Camera: prepare y_camera for Fun-Camera models
