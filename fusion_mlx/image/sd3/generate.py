@@ -263,8 +263,20 @@ class SD3Pipeline:
         self.vae = SD3VAE()
         load_vae(self.vae, raw)
         if self.quantize:
+            has_quant_meta = any(
+                k.startswith("model.diffusion_model.")
+                and (k.endswith(".scales") or k.endswith(".biases") or k.endswith(".qweight"))
+                for k in raw
+            )
             nn.quantize(self.transformer, group_size=64, bits=8)
-            load_transformer(self.transformer, raw, self.config.num_layers)
+            if has_quant_meta:
+                load_transformer(self.transformer, raw, self.config.num_layers)
+            else:
+                logger.info(
+                    "SD3 transformer quantized in-memory (ckpt is fp16, no "
+                    "scales/biases to reload); skipping post-quant reload to "
+                    "avoid overwriting uint32 weights with fp16"
+                )
         mx.eval(self.transformer.parameters())
         logger.info("SD3 transformer + vae loaded from %s", ckpt_path)
 
