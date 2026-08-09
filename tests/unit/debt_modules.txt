@@ -37,7 +37,15 @@ test_settings.py
 test_447_stream_tool_choice_auto.py
 test_admin_dashboard_draft_filters.py
 test_admin_update_check.py
-test_alias_hybrid_classification.py
+# test_alias_hybrid_classification.py RESCUED 2026-08-09 (43 pass): re-pointed
+# guard alias sets at real registry entries. DENSE_QWEN36 dropped the
+# aspirational qwen3.6-27b-ud (no mlx build ships; no -ud convention) and the
+# real qwen3.6-27b-8bit alias was ADDED to aliases.json (dense, mirrors
+# qwen3.6-27b-4bit). MOE set re-pointed at the shipped A3B/A10B aliases
+# (qwen3.5-35b-a3b-*, qwen3.5-35b-8bit, qwen3.5-122b-a10b-*,
+# qwen3.6-35b-a3b-4bit) — the bare 35b/122b/-ud/-dwq names had no HF build
+# and no registry entry (14 KeyError failures, all stale-test refs not prod
+# bugs).
 test_anthropic_route_auth.py
 test_anthropic_spec_polish_bundle.py
 test_anthropic_stop_sequences.py
@@ -85,7 +93,11 @@ test_cancelled_requests_metric.py
 test_casual_chat_auto_disable_thinking.py
 test_chat_image_upload.py
 test_chat_logprobs_channel_routing.py
-test_chat_n_must_equal_1.py
+# test_chat_n_must_equal_1.py RESCUED 2026-08-09 (29 pass): restored shared
+# _reject_non_one_n helper + added n field_validator to ChatCompletionRequest
+# (F-155 regression: chat route silently accepted n!=1/bool). CompletionRequest
+# validator refactored to mode="before" so Field(ge=1,le=128) doesn't mask the
+# "must equal 1" message for 0/-1/1000.
 test_chat_route_forced_tool_prefix_wiring.py
 test_chat_route_tool_choice_enforcement.py
 test_chat_route_vlm_image.py

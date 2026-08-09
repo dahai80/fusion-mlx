@@ -285,6 +285,16 @@
     "is_hybrid_explicit": true,
     "supports_spec_decode": false
   },
+  "qwen3.6-27b-8bit": {
+    "hf_path": "mlx-community/Qwen3.6-27B-8bit",
+    "modality": "text",
+    "tool_call_parser": "qwen3_coder_xml",
+    "reasoning_parser": "qwen3",
+    "is_hybrid": false,
+    "is_moe": false,
+    "is_hybrid_explicit": true,
+    "supports_spec_decode": false
+  },
   "qwen3.6-35b-a3b-4bit": {
     "hf_path": "mlx-community/Qwen3.6-35B-A3B-4bit",
     "modality": "text",

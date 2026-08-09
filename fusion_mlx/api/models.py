@@ -256,6 +256,25 @@ def _validate_token_budget(v, field_name: str):
     return v
 
 
+def _reject_non_one_n(v):
+    # F-155: pin the wire schema - ``n`` must equal 1 on both
+    # /v1/chat/completions and /v1/completions. Server generates one
+    # completion per request (no server-side rerank); n=0 is an
+    # off-by-one typo, n=-1 is the SDK "use default" sentinel, n>1
+    # requests rerank we don't implement. All three were silently
+    # accepted as HTTP 200 with one choice, hiding the client bug.
+    # bool is a Python int subclass - reject it BEFORE the == 1 check
+    # so True->1 doesn't sneak through and False->0 doesn't re-intro n=0.
+    if isinstance(v, bool):
+        raise ValueError("n must be an integer, not bool")
+    if v is None or v == 1:
+        return v
+    raise ValueError(
+        "n must equal 1 (server generates one completion per "
+        "request; no server-side rerank)"
+    )
+
+
 class StreamOptions(BaseModel):
     """Options for streaming responses."""
 
@@ -358,6 +377,16 @@ class ChatCompletionRequest(BaseModel):
         # Reject bool / non-int / non-positive before Pydantic lax-coerces
         # "100"->100 or True->1 - pinned by TestPositiveIntGenerationBudget.
         return _validate_token_budget(v, info.field_name)
+
+    @field_validator("n", mode="before")
+    @classmethod
+    def _validate_chat_n(cls, v):
+        # F-155: n must equal 1 (no server-side rerank). Mirrors the
+        # CompletionRequest guard so both routes reject n!=1 at parse
+        # time (422) instead of silently returning one choice (200).
+        # mode="before" so bool True is caught before Pydantic coerces
+        # it to int 1 (bool is an int subclass).
+        return _reject_non_one_n(v)
 
     # Hard cap on reasoning token budget (set by reasoning_effort tier or
     # explicitly by the client).  None = no cap / server default.
@@ -563,19 +592,17 @@ class CompletionRequest(BaseModel):
     # Request timeout in seconds (None = use server default)
     timeout: float | None = None
 
-    @field_validator("n")
+    @field_validator("n", mode="before")
     @classmethod
     def _validate_completion_n(cls, v):
         # F-152: pin the wire schema - ``n`` must equal 1. Pydantic raises
         # here (422 at the schema layer) before the route's own 400 envelope
         # runs; the production server still rewrites 422->400, but the raw
         # contract is "one completion per request, no server-side rerank".
-        if v is not None and v != 1:
-            raise ValueError(
-                "n must equal 1 (server generates one completion per "
-                "request; no server-side rerank)"
-            )
-        return v
+        # mode="before" so this fires ahead of the Field(ge=1, le=128)
+        # constraint and every illegal n surfaces the "must equal 1" message
+        # (0/-1 fail ge=1, 1000 fails le=128 - both would mask the real rule).
+        return _reject_non_one_n(v)
 
     @field_validator("max_tokens", mode="before")
     @classmethod

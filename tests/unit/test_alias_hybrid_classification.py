@@ -50,24 +50,26 @@ DENSE_QWEN35_ALIASES = (
     "qwen3.5-27b-4bit",
     "qwen3.5-27b-8bit",
 )
-# Dense Qwen3.6 — same architecture story, same wedge risk.
+# Dense Qwen3.6 — same architecture story, same wedge risk. The HF 8bit
+# build exists at mlx-community/Qwen3.6-27B-8bit (no ``-ud`` mlx build ships,
+# so that aspirational name was dropped from the guard set).
 DENSE_QWEN36_ALIASES = (
     "qwen3.6-27b-4bit",
     "qwen3.6-27b-8bit",
-    "qwen3.6-27b-ud",
 )
-# MoE — A3B / A10B variants stay legitimately hybrid (the prefix-boundary
-# snapshot + throttle path was originally written for these).
+# MoE — the A3B / A10B builds are the only MoE Qwen3.5 / 3.6 variants mlx-
+# community ships; they stay legitimately hybrid (the prefix-boundary
+# snapshot + throttle path was originally written for these). The earlier
+# guard set listed bare ``35b`` / ``122b`` / ``-ud`` / ``-dwq`` names that
+# have no corresponding mlx build and no registry entry, so it never
+# exercised a real alias. Re-pointed at the shipped A3B / A10B aliases.
 MOE_QWEN35_36_ALIASES = (
-    "qwen3.5-35b-4bit",
+    "qwen3.5-35b-a3b-4bit",
+    "qwen3.5-35b-a3b-8bit",
     "qwen3.5-35b-8bit",
-    "qwen3.5-122b-mxfp4",
-    "qwen3.5-122b-8bit",
-    "qwen3.6-35b-4bit",
-    "qwen3.6-35b-6bit",
-    "qwen3.6-35b-8bit",
-    "qwen3.6-35b-ud",
-    "qwen3.6-35b-dwq",
+    "qwen3.5-122b-a10b-4bit",
+    "qwen3.5-122b-a10b-8bit",
+    "qwen3.6-35b-a3b-4bit",
 )
 
 
