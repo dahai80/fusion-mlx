@@ -503,8 +503,22 @@ class WanModel(nn.Module):
             # VACE injection at specified layers
             if i in vace_hints:
                 hint, scale = vace_hints[i]
-                # Pad hint to match x seq_len if needed
-                if hint.shape[1] < x.shape[1]:
+                # Align hint to main sequence x. In fusion-mlx VACE the reference
+                # frames live ONLY in control_hidden_states (prepended along time),
+                # so the hint may carry extra leading reference-frame tokens that
+                # the denoised latent (T = t_latent, no refs) does not have.
+                # Drop leading reference tokens and keep the control tokens that
+                # align with x; pad only when the hint is shorter (plain T2V with
+                # a shorter control video).
+                if hint.shape[1] > x.shape[1]:
+                    drop = hint.shape[1] - x.shape[1]
+                    logger.debug(
+                        "VACE hint longer than x: %d vs %d, dropping %d leading "
+                        "reference-frame tokens",
+                        hint.shape[1], x.shape[1], drop,
+                    )
+                    hint = hint[:, drop:, :]
+                elif hint.shape[1] < x.shape[1]:
                     hint = mx.concatenate(
                         [
                             hint,
