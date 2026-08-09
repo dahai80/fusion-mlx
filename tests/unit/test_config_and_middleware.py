@@ -455,13 +455,18 @@ class TestHTTPExceptionHandler:
     def _make_app_with_handler(self):
         from fastapi import FastAPI, HTTPException
 
-        from fusion_mlx.server import _http_exception_handler
+        # The HTTP exception handler moved out of fusion_mlx.server into
+        # fusion_mlx.middleware.exception_handlers (install_exception_handlers)
+        # during the middleware extraction; the old ``_http_exception_handler``
+        # symbol no longer exists. install_exception_handlers registers the
+        # real production handler (covers StarletteHTTPException, which
+        # fastapi.HTTPException subclasses).
+        from fusion_mlx.middleware.exception_handlers import (
+            install_exception_handlers,
+        )
 
         app = FastAPI()
-        app.add_exception_handler(
-            HTTPException,
-            _http_exception_handler,
-        )
+        install_exception_handlers(app)
 
         @app.get("/rate-limit")
         async def rate_limit():
@@ -542,9 +547,10 @@ class TestHTTPExceptionHandlerOnProductionApp:
         # the fastapi class only, this still returns the default
         # {"detail": "Not Found"} shape — which would break OpenAI-SDK
         # clients that parse error.message.
-        from fusion_mlx.server import app
+        # ``app`` is lazily built (None until get_app() runs) — use get_app().
+        from fusion_mlx.server import get_app
 
-        client = TestClient(app)
+        client = TestClient(get_app())
         r = client.get("/this-route-does-not-exist-anywhere")
 
         assert r.status_code == 404
@@ -558,9 +564,10 @@ class TestHTTPExceptionHandlerOnProductionApp:
 
     def test_wrong_method_returns_openai_envelope(self):
         # Same class of bug as 404 — router-emitted 405.
-        from fusion_mlx.server import app
+        # ``app`` is lazily built (None until get_app() runs) — use get_app().
+        from fusion_mlx.server import get_app
 
-        client = TestClient(app)
+        client = TestClient(get_app())
         # /healthz is GET-only; a POST should 405 via the router
         r = client.post("/healthz")
 

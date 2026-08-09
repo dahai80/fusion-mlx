@@ -124,7 +124,15 @@ test_cli_embeddings_extra.py
 test_cli_models.py
 test_codex_profile.py
 test_community_bench.py
-test_config_and_middleware.py
+# test_config_and_middleware.py RESCUED 2026-08-09 (28 pass, was 23/5): the 5
+# failures were stale symbol refs after the middleware extraction, not prod
+# bugs. TestHTTPExceptionHandler imported ``_http_exception_handler`` from
+# fusion_mlx.server (moved to fusion_mlx.middleware.exception_handlers as a
+# closure inside install_exception_handlers) → re-pointed at
+# install_exception_handlers(app). TestHTTPExceptionHandlerOnProductionApp
+# imported the module-level ``app`` (lazily built, None until get_app() runs)
+# → re-pointed at get_app(). Prod handler/envelope behavior was already
+# correct (OpenAI-style error envelope, 429 Retry-After, type/code/param).
 test_content_block_strict_types.py
 # test_context_length_exceeded.py RESCUED 2026-08-09 (22 pass): the single
 # failure was a stale import — test imported ``_http_exception_handler`` from
