@@ -122,6 +122,16 @@ test_cli_chat.py
 test_cli_config_fidelity.py
 test_cli_embeddings_extra.py
 test_cli_models.py
+# KEEP_QUARANTINED: asserts the codex AgentProfile system (get_profile,
+# list_profiles, .recommended_models/.render_config/.needs_function_calling,
+# YAML profiles under agents/profiles/) ported from Rapid-MLX. fusion-mlx
+# stubbed the ENTIRE fusion_mlx.agents subsystem (get_profile->None,
+# list_profiles->[], adapter.py/testing.py 340B/409B stubs). The CLI still
+# advertises `fusion-mlx agents codex --setup` (cli_commands.py:1533, 2135)
+# but agents_command imports the stubs and would crash. This is a missing-
+# feature gap (~30K LOC: base/adapter/testing/__init__/codex_catalog + YAML),
+# not stale-ref debt; rescue requires porting the agent subsystem + real-model
+# validation. Tracked in issue #442 (agents-subsystem port).
 test_codex_profile.py
 test_community_bench.py
 # test_config_and_middleware.py RESCUED 2026-08-09 (28 pass, was 23/5): the 5
