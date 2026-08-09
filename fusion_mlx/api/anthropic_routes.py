@@ -297,6 +297,15 @@ async def _run_anthropic_messages(
         openai_tool_choice,
         tools=getattr(req, "tools", None),
     )
+    # UI-TARS lane-completeness: 工具门控 sysprompt 注入 (anthropic lane)。
+    from ..tool_parsers.ui_tars_tool_parser import inject_ui_tars_sysprompt_for_lane
+
+    messages = inject_ui_tars_sysprompt_for_lane(
+        messages,
+        model_name=model_name,
+        tool_choice=openai_tool_choice,
+        tools=getattr(req, "tools", None),
+    )
     sampling = _build_sampling_params(req, profile_overrides=profile_overrides)
     from .utils import cap_max_tokens_to_context
 
@@ -458,6 +467,15 @@ async def _stream_anthropic_generator(
     _inject_tool_use_required_suffix(
         messages,
         openai_tool_choice,
+        tools=getattr(req, "tools", None),
+    )
+    # UI-TARS lane-completeness: 工具门控 sysprompt 注入 (anthropic lane)。
+    from ..tool_parsers.ui_tars_tool_parser import inject_ui_tars_sysprompt_for_lane
+
+    messages = inject_ui_tars_sysprompt_for_lane(
+        messages,
+        model_name=model_name,
+        tool_choice=openai_tool_choice,
         tools=getattr(req, "tools", None),
     )
     sampling = _build_sampling_params(req, profile_overrides=profile_overrides)

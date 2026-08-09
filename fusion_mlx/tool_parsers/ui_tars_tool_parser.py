@@ -375,6 +375,50 @@ def has_ui_tars_system_prompt(messages: list) -> bool:
     return False
 
 
+def resolve_ui_tars_parser_name(model_name: str | None) -> str | None:
+    # 解析模型的 tool_call_parser 名，3 lane 共用同一解析路径。
+    if not model_name:
+        return None
+    try:
+        from ..model_aliases import resolve_profile
+        from ..routes_internal.models import effective_parsers_for
+
+        profile = resolve_profile(model_name)
+        profile_tool = profile.tool_call_parser if profile else None
+        tool_name, _ = effective_parsers_for(model_name, profile_tool, None)
+        return tool_name or None
+    except Exception as e:
+        logger.debug("ui-tars parser resolve failed model=%s err=%s", model_name, e)
+        return None
+
+
+def inject_ui_tars_sysprompt_for_lane(
+    messages: list,
+    *,
+    model_name: str | None,
+    tool_choice: Any = None,
+    tools: Any = None,
+) -> list:
+    # lane 无关的 UI-TARS sysprompt 注入，chat/anthropic/responses 共用。
+    parser_name = resolve_ui_tars_parser_name(model_name)
+    if parser_name != "ui_tars":
+        return messages
+    injected = maybe_inject_ui_tars_system_prompt(
+        messages,
+        tool_call_parser=parser_name,
+        tool_choice=tool_choice,
+        tools=tools,
+    )
+    if injected is not messages and len(injected) > len(messages):
+        logger.info(
+            "ui-tars sysprompt injected lane model=%s tools=%d tool_choice=%s",
+            model_name,
+            len(tools) if tools else 0,
+            tool_choice,
+        )
+    return injected
+
+
 # Verbs UI-TARS may emit. The set is a superset of the desktop
 # (``COMPUTER_USE_DOUBAO``) and mobile (``MOBILE_USE_DOUBAO``) action
 # spaces in ``codes/ui_tars/prompt.py``. Verbs not in this set are still

@@ -402,6 +402,15 @@ async def _non_stream(
     created_at = int(time.time())
 
     messages = _prepare_messages(openai_request)
+    # UI-TARS lane-completeness: 工具门控 sysprompt 注入 (responses lane)。
+    from ..tool_parsers.ui_tars_tool_parser import inject_ui_tars_sysprompt_for_lane
+
+    messages = inject_ui_tars_sysprompt_for_lane(
+        messages,
+        model_name=openai_request.model,
+        tool_choice=getattr(openai_request, "tool_choice", None),
+        tools=getattr(openai_request, "tools", None),
+    )
 
     chat_kwargs = {
         "max_tokens": _resolve_max_tokens(openai_request.max_tokens),
@@ -557,6 +566,15 @@ async def _stream_responses(
     response_id = f"resp_{uuid.uuid4().hex[:24]}"
 
     messages = _prepare_messages(openai_request)
+    # UI-TARS lane-completeness: 工具门控 sysprompt 注入 (responses lane)。
+    from ..tool_parsers.ui_tars_tool_parser import inject_ui_tars_sysprompt_for_lane
+
+    messages = inject_ui_tars_sysprompt_for_lane(
+        messages,
+        model_name=openai_request.model,
+        tool_choice=getattr(openai_request, "tool_choice", None),
+        tools=getattr(openai_request, "tools", None),
+    )
 
     chat_kwargs = {
         "max_tokens": _resolve_max_tokens(openai_request.max_tokens),

@@ -517,6 +517,15 @@ async def _run_chat(
     await _inject_web_search(request)
 
     messages = _messages_for_engine(request.messages, getattr(engine, "is_mllm", False))
+    # UI-TARS lane-completeness: 工具门控 sysprompt 注入 (非流式)。
+    from ..tool_parsers.ui_tars_tool_parser import inject_ui_tars_sysprompt_for_lane
+
+    messages = inject_ui_tars_sysprompt_for_lane(
+        messages,
+        model_name=model_name,
+        tool_choice=getattr(request, "tool_choice", None),
+        tools=getattr(request, "tools", None),
+    )
     sampling = _build_sampling_params(request, profile_overrides=profile_overrides)
     from .utils import cap_max_tokens_to_context
 
@@ -778,6 +787,15 @@ async def _stream_chat_generator(
     await _inject_web_search(request)
 
     messages = _messages_for_engine(request.messages, getattr(engine, "is_mllm", False))
+    # UI-TARS lane-completeness: 工具门控 sysprompt 注入 (流式)。
+    from ..tool_parsers.ui_tars_tool_parser import inject_ui_tars_sysprompt_for_lane
+
+    messages = inject_ui_tars_sysprompt_for_lane(
+        messages,
+        model_name=model_name,
+        tool_choice=getattr(request, "tool_choice", None),
+        tools=getattr(request, "tools", None),
+    )
     sampling = _build_sampling_params(request, profile_overrides=profile_overrides)
     # Context scaling: cap max_tokens to model context window
     from .utils import cap_max_tokens_to_context
