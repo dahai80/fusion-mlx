@@ -275,3 +275,45 @@ class TestVACEGeneratePipeline:
         assert "control_video" in sig.parameters
         assert "control_mask" in sig.parameters
         assert "reference_images" in sig.parameters
+
+    def test_prepare_vace_reference_only_gray_filler(self):
+        # Reference-only mode (no control_video): the fix synthesizes a gray
+        # filler video (zeros in [-1,1]) + all-white mask, so reference_images
+        # get encoded into control_hidden_states instead of being dropped.
+        from fusion_mlx.video.wan2.generate import _prepare_vace_control_latents
+
+        z_dim = 16
+        S = 8
+        t_latent = 3
+        h_latent = 4
+        w_latent = 4
+        vae_stride = (4, S, S)
+        num_frames = 1 + (t_latent - 1) * vae_stride[0]
+        num_refs = 1
+
+        class FakeVAEEncoder:
+            def encode(self, x):
+                B, C, T, H, W = x.shape
+                T_lat = (T - 1) // vae_stride[0] + 1
+                return mx.zeros((B, z_dim, T_lat, H // S, W // S))
+
+        # Synthesized filler (matches the fix): zeros video + ones mask
+        video = mx.zeros((3, num_frames, h_latent * S, w_latent * S))
+        mask = mx.ones((num_frames, h_latent * S, w_latent * S))
+        refs = [mx.zeros((3, h_latent * S, w_latent * S)) for _ in range(num_refs)]
+
+        control = _prepare_vace_control_latents(
+            vae_encoder=FakeVAEEncoder(),
+            control_video=video,
+            control_mask=mask,
+            reference_images=refs,
+            vae_stride=vae_stride,
+            h_latent=h_latent,
+            w_latent=w_latent,
+            t_latent=t_latent,
+            z_dim=z_dim,
+        )
+
+        assert control.shape[0] == 2 * z_dim + S * S  # 96
+        # Reference frames prepended -> T = t_latent + num_refs
+        assert control.shape[1] == t_latent + num_refs
