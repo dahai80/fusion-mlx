@@ -83,6 +83,14 @@ class VideoGenEngine(BaseNonStreamingEngine):
             on_step=on_step,
             session_id=kwargs.get("session_id"),
             output_format=output_format,
+            # VACE / camera control kwargs — forward to backend params so the
+            # Wan2 generate_video path receives them (control_video,
+            # control_mask, reference_images, camera_conditions). Without this
+            # the caller's VACE reference_images were silently dropped here.
+            control_video=kwargs.get("control_video"),
+            control_mask=kwargs.get("control_mask"),
+            reference_images=kwargs.get("reference_images"),
+            camera_conditions=kwargs.get("camera_conditions"),
         )
 
         t0 = time.monotonic()
