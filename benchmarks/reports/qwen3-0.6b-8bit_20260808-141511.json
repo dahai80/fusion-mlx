@@ -1,0 +1,12 @@
+{
+  "model": "mlx-community--Qwen3-0.6B-8bit",
+  "prompt_tokens_requested": 512,
+  "gen_tokens_requested": 128,
+  "prompt_tokens": 702,
+  "completion_tokens": 137,
+  "wall_seconds": 0.815,
+  "tokens_per_second": 168.13,
+  "ttft_seconds": 0.435,
+  "timestamp": "20260808-141511",
+  "base_url": "http://127.0.0.1:11434"
+}

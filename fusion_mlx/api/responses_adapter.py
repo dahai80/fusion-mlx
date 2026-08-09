@@ -131,10 +131,13 @@ def validate_responses_tool_types(tools: list[dict] | None) -> None:
             _raise_unsupported_tool_type(ttype)
 
 
-def _is_computer_use_tool(tool: dict) -> bool:
-    if not isinstance(tool, dict):
-        return False
-    return _canonicalize_tool_type(tool.get("type")) == "computer_20251022"
+def _is_computer_use_tool(tool) -> bool:
+    ttype = None
+    if isinstance(tool, dict):
+        ttype = tool.get("type")
+    else:
+        ttype = getattr(tool, "type", None)
+    return _canonicalize_tool_type(ttype) == "computer_20251022"
 
 
 def request_uses_computer_use(request: ResponsesRequest) -> bool:

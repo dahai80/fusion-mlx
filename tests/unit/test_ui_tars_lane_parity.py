@@ -1347,12 +1347,20 @@ class TestR10C2NoReasoningAliasOnChatWire:
         # keys) must be absent.
         import inspect
 
+        import fusion_mlx.api.openai_routes as _routes_mod
         import fusion_mlx.routes_internal.chat as _chat_mod
 
-        route_src = inspect.getsource(_chat_mod)
-        # R10-C2 invariant — the dup-emission template must be gone.
+        # The fast-path SSE helper migrated from the (now-shim)
+        # ``routes_internal.chat`` to ``api.openai_routes`` in the
+        # r10-B refactor. Inspect the canonical module that holds it.
+        route_src = inspect.getsource(_routes_mod)
+        _shim_src = inspect.getsource(_chat_mod)
+        # R10-C2 invariant — the dup-emission template must be gone
+        # from BOTH the canonical module and the legacy shim.
         assert '"reasoning_content":{escaped},' not in route_src
         assert '"reasoning":{escaped}' not in route_src
+        assert '"reasoning_content":{escaped},' not in _shim_src
+        assert '"reasoning":{escaped}' not in _shim_src
         # The fast-path helper still references reasoning_content as
         # the field-name parameter passed by callers.
         assert "reasoning_content" in route_src

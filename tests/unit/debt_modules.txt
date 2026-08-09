@@ -10,7 +10,15 @@
 #   runtime-fail  - collects but fails on stale assertions / removed attrs
 #   timeout       - hangs or exceeds the unit-gate budget (integration-style)
 #
-# Total: 269 modules excluded; 326 healthy modules remain in the CI gate.
+# Total: 247 modules excluded; 431 healthy modules remain in the CI gate.
+# (678 test_*.py files under tests/unit; 8742 test items collected.)
+# Phase-1 (mlx-enhance): 15 stale debt entries whose prod code had since
+# been fixed were re-activated (test_embedding, test_hot_cache,
+# test_mcp_config/manager, test_smart_router, test_model_aliases,
+# test_grammar, test_reranker_causal_lm, test_capabilities_field,
+# test_install_detection, test_server_auth_ordering,
+# test_responses_chat_template_kwargs, test_alias_recommended_sampling,
+# test_cli_info, test_models_command_layout) — all green on full run.
 # Pay down by updating each module to the current released API, then remove
 # its line here. See memory: fusion-mlx-rapid-mlx-test-debt.
 #
@@ -30,7 +38,6 @@ test_447_stream_tool_choice_auto.py
 test_admin_dashboard_draft_filters.py
 test_admin_update_check.py
 test_alias_hybrid_classification.py
-test_alias_recommended_sampling.py
 test_anthropic_route_auth.py
 test_anthropic_spec_polish_bundle.py
 test_anthropic_stop_sequences.py
@@ -57,7 +64,6 @@ test_audio_sts.py
 test_audio_stt.py
 test_audio_tts.py
 test_audio_upload_size_limit.py
-test_audio_utils.py
 test_batched_engine.py
 test_batched_engine_chat_template.py
 test_batched_engine_output_router.py
@@ -68,7 +74,6 @@ test_benchmark.py
 test_body_receive_timeout.py
 test_cache_routes.py
 test_cancelled_requests_metric.py
-test_capabilities_field.py
 test_casual_chat_auto_disable_thinking.py
 test_chat_image_upload.py
 test_chat_logprobs_channel_routing.py
@@ -85,7 +90,6 @@ test_cli_argcomplete.py
 test_cli_chat.py
 test_cli_config_fidelity.py
 test_cli_embeddings_extra.py
-test_cli_info.py
 test_cli_models.py
 test_codex_profile.py
 test_community_bench.py
@@ -112,7 +116,6 @@ test_disk_space_check.py
 test_doctor_env_health.py
 test_doctor_no_model_load.py
 test_download_gate.py
-test_embedding.py
 test_embeddings.py
 test_embeddings_extra_guard.py
 test_embeddings_route.py
@@ -130,21 +133,16 @@ test_gemma4_messages.py
 test_gemma4_text_import_guard.py
 test_generation_config_loader.py
 test_glm_moe_dsa_patch.py
-test_grammar.py
 test_harmony_finalize.py
 test_hermes.py
 test_hermes_harness_contract.py
 test_hf_downloader.py
-test_hot_cache.py
 test_image_url_must_be_object.py
 test_index_cache.py
-test_install_detection.py
 test_internal_route_auth.py
 test_langchain.py
 test_librechat_docker.py
 test_mcp_client.py
-test_mcp_config.py
-test_mcp_manager.py
 test_memory_cache.py
 test_memory_monitor_vlm_config.py
 test_metal_cap_enforcement.py
@@ -156,11 +154,9 @@ test_mirror_pull.py
 test_mlx_compat.py
 test_mlx_embeddings_compat.py
 test_mlx_vlm_diffusion_patch.py
-test_model_aliases.py
 test_model_auto_config.py
 test_model_loading.py
 test_model_profiles_ssot.py
-test_models_command_layout.py
 test_mtp_inject_and_install.py
 test_mtp_spec_decode.py
 test_mtp_stream_contract.py
@@ -201,11 +197,9 @@ test_release_check_random.py
 test_request_body_size_limit.py
 test_request_cancellation.py
 test_request_time_alias_resolution.py
-test_reranker_causal_lm.py
 test_responses_591_followups.py
 test_responses_budget_exhaust_streaming.py
 test_responses_bundle.py
-test_responses_chat_template_kwargs.py
 test_responses_engine_failure_envelope.py
 test_responses_input_default_type.py
 test_responses_param_validation.py
@@ -232,14 +226,12 @@ test_serve_host_loopback_default.py
 # fixed stale cli.->cli_serve/_cli_base stub targets after the serve-code
 # extraction; both now fully green (21 + 9 tests) and re-enter CI.
 test_server_api_key_env_fallback.py
-test_server_auth_ordering.py
 test_server_load_model_order.py
 test_server_prefill_memory_handler.py
 test_server_queue_full_handler.py
 test_server_utils.py
 test_silent_drop_rescue_569.py
 test_singleton_cache_passthrough.py
-test_smart_router.py
 test_specprefill.py
 test_sse_keepalive.py
 test_status_endpoint.py

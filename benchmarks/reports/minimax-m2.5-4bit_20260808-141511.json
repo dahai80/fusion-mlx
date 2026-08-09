@@ -1,0 +1,8 @@
+{
+  "model": "minimax-m2.5-4bit",
+  "prompt_tokens_requested": 512,
+  "gen_tokens_requested": 128,
+  "error": "HTTP 404: {\"error\":{\"message\":\"Model 'minimax-m2.5-4bit' not found. Available models: dit, text_encoder, vae, FLUX.2-klein-base-4B, transformer, SkyReels-V3-A2V-19B-MLX, SkyReels-V3-R2V-14B-MLX, SkyReels-V3-V2V-14B-MLX, Wan2.1-1.3B, Wan2.1-1.3B-Diffusers, Wan2.1-14B, Wan2.1-VACE-14B, Wan2.2-14B, Wan2.2-14B-T2",
+  "timestamp": "20260808-141511",
+  "base_url": "http://127.0.0.1:11434"
+}

@@ -1,0 +1,8 @@
+{
+  "model": "qwen3-0.6b-4bit",
+  "prompt_tokens_requested": 512,
+  "gen_tokens_requested": 128,
+  "error": "HTTP 401: {\"error\":{\"message\":\"API key required\",\"type\":\"authentication_error\",\"code\":null,\"param\":null}}",
+  "timestamp": "20260808-141403",
+  "base_url": "http://127.0.0.1:11434"
+}

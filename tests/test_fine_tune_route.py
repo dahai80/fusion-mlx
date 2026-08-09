@@ -244,3 +244,76 @@ class TestModelEndpoint:
         resp = client.get("/api/fine-tune/models")
         assert resp.status_code == 200
         assert resp.json() == []
+
+
+class TestRewardScoreEndpoint:
+    # /admin/api/fine-tune/reward/score (#431) — scores completions under a
+    # trained reward-model adapter. score_completions is patched to avoid a
+    # real model load; the route wiring (resolve, adapter dir, response shape)
+    # is what these tests cover.
+
+    def _make_adapter(self, tmp_adapter_dir, model_id="qwen3", name="rm-1"):
+        adapter_dir = tmp_adapter_dir / model_id / name
+        adapter_dir.mkdir(parents=True)
+        (adapter_dir / "adapter_config.json").write_text(
+            json.dumps({"reward_model": True, "fine_tune_type": "lora"})
+        )
+        return adapter_dir
+
+    def test_score_reward_happy_path(self, client, mock_pool, tmp_adapter_dir):
+        mock_pool.get_entry.return_value = MagicMock(
+            model_type="llm", model_path="/tmp/qwen3"
+        )
+        self._make_adapter(tmp_adapter_dir)
+        with patch(
+            "fusion_mlx.training.reward_score.score_completions",
+            return_value=[0.9, 0.1],
+        ):
+            resp = client.post(
+                "/api/fine-tune/reward/score",
+                json={
+                    "model_id": "qwen3",
+                    "adapter_name": "rm-1",
+                    "prompt": "What is 1+1?",
+                    "completions": ["The answer is 2.", "The answer is 101."],
+                },
+            )
+        assert resp.status_code == 200, resp.text
+        data = resp.json()
+        assert data["rewards"] == [0.9, 0.1]
+        assert data["model_id"] == "qwen3"
+        assert data["adapter_name"] == "rm-1"
+
+    def test_score_reward_missing_model_id(self, client):
+        resp = client.post(
+            "/api/fine-tune/reward/score",
+            json={"adapter_name": "rm-1", "prompt": "x", "completions": ["a"]},
+        )
+        assert resp.status_code == 400
+
+    def test_score_reward_missing_completions(self, client):
+        resp = client.post(
+            "/api/fine-tune/reward/score",
+            json={
+                "model_id": "qwen3",
+                "adapter_name": "rm-1",
+                "prompt": "x",
+                "completions": [],
+            },
+        )
+        assert resp.status_code == 400
+
+    def test_score_reward_adapter_not_found(self, client, mock_pool):
+        mock_pool.get_entry.return_value = MagicMock(
+            model_type="llm", model_path="/tmp/qwen3"
+        )
+        resp = client.post(
+            "/api/fine-tune/reward/score",
+            json={
+                "model_id": "qwen3",
+                "adapter_name": "nope",
+                "prompt": "x",
+                "completions": ["a"],
+            },
+        )
+        assert resp.status_code == 404
