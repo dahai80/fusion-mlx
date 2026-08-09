@@ -121,9 +121,6 @@ class TestBaseEngine:
             "stream_generate",
             "chat",
             "stream_chat",
-            "model_type",
-            "get_stats",
-            "get_cache_stats",
         }
 
         # Check abstractmethods
@@ -222,7 +219,7 @@ class TestBaseNonStreamingEngine:
 
     def test_abstract_methods(self):
         """Test BaseNonStreamingEngine defines required abstract methods."""
-        abstract_methods = {"model_name", "start", "stop", "get_stats"}
+        abstract_methods = {"model_name", "start", "stop"}
 
         actual_methods = set()
         for name in dir(BaseNonStreamingEngine):
