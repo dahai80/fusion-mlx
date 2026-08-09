@@ -440,13 +440,16 @@ def test_structured_detail_passes_through_global_handler():
             },
         )
 
-    # Re-register the global handler from fusion_mlx.server on our tiny app
-    # so we exercise the actual production handler, not FastAPI's default.
-    from starlette.exceptions import HTTPException as StarletteHTTPException
+    # Re-register the production exception handlers on our tiny app so we
+    # exercise the actual handler, not FastAPI's default. The handler moved
+    # out of fusion_mlx.server into fusion_mlx.middleware.exception_handlers
+    # (install_exception_handlers) during the middleware extraction; the old
+    # ``_http_exception_handler`` symbol no longer exists.
+    from fusion_mlx.middleware.exception_handlers import (
+        install_exception_handlers,
+    )
 
-    from fusion_mlx.server import _http_exception_handler
-
-    app.add_exception_handler(StarletteHTTPException, _http_exception_handler)
+    install_exception_handlers(app)
 
     from fastapi.testclient import TestClient
 

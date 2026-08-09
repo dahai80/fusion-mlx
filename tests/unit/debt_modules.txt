@@ -126,8 +126,16 @@ test_codex_profile.py
 test_community_bench.py
 test_config_and_middleware.py
 test_content_block_strict_types.py
-test_context_length_exceeded.py
-test_context_overflow_400.py
+# test_context_length_exceeded.py RESCUED 2026-08-09 (22 pass): the single
+# failure was a stale import — test imported ``_http_exception_handler`` from
+# fusion_mlx.server, but the handler moved to
+# fusion_mlx.middleware.exception_handlers during the middleware extraction
+# (now a closure inside install_exception_handlers, not a module symbol).
+# Re-pointed the test at install_exception_handlers(app); prod behavior
+# (_http_error_response preserves structured detail code/param) was already
+# correct — pure stale-ref fix.
+# test_context_overflow_400.py RESCUED 2026-08-09 (1 pass, 4 xfail): already
+# green, was stale-debt (the 4 xfailed are intentional expected-fails).
 test_context_window.py
 test_cors_env_configurable.py
 test_cors_lockdown_response_shape.py
