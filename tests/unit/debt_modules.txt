@@ -154,7 +154,7 @@ test_community_bench.py
 # to the typed blocks (ContentBlockText/ContentBlockImage); null-text assert
 # relaxed to the typed-union's "must be a string" message. 2 real prod
 # validation gaps fixed (non-string text/source now 422 with clean messages).
-test_content_block_strict_types.py
+# (rescued — left in list by mistake) test_content_block_strict_types.py
 # test_context_length_exceeded.py RESCUED 2026-08-09 (22 pass): the single
 # failure was a stale import — test imported ``_http_exception_handler`` from
 # fusion_mlx.server, but the handler moved to
@@ -219,7 +219,7 @@ test_engine_step_thread.py
 # test_envelope_field_extraction.py RESCUED 2026-08-10 (27 pass): already
 # fully green, was stale-debt (envelope field extraction prod code is
 # correct; the quarantine predates a fix).
-test_envelope_field_extraction.py
+# (rescued — left in list by mistake) test_envelope_field_extraction.py
 # KEEP_QUARANTINED: same deep-drift pattern as test_d_anthro_validation —
 # the _build_app fixture injects ``vllm_mlx.engine`` / ``vllm_mlx.routes.*``
 # (old package name, no fusion_mlx shim), so the 21 failing tests hit the
@@ -231,7 +231,13 @@ test_envelope_field_extraction.py
 # gymnastics), not a prod change.
 test_exception_handlers.py
 test_finalize_harmony_raw_text.py
-test_gemma4_messages.py
+# test_gemma4_messages.py RESCUED 2026-08-10 (47 pass): 3 real prod gaps fixed
+# — (1) extract_gemma4_messages lacked consolidate_system_messages kwarg
+# (parity with anthropic/responses extractors); (2) ContentPart lacked
+# input_audio field so chat-completions audio content was silently dropped
+# at model_dump (real F-066-class gap); (3) stray <|tool_call>/<tool_call|>
+# markers in assistant content were not stripped (leaked as literal text).
+# (rescued — left in list by mistake) test_gemma4_messages.py
 test_gemma4_text_import_guard.py
 test_generation_config_loader.py
 test_glm_moe_dsa_patch.py

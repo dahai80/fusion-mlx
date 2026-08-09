@@ -4,12 +4,15 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
 from typing import Any
 
 from ..api.utils import _PRESERVE_BOUNDARY_KEY
 from ..utils.tokenizer import create_streaming_detokenizer
 from .output_parser import OutputParserFinalizeResult, OutputParserTokenResult
+
+logger = logging.getLogger(__name__)
 
 _OPEN_MARKER = "<|channel>thought\n"
 _OPEN_MARKER_BARE = "<|channel>"
@@ -19,6 +22,18 @@ _TOOL_RESPONSE_OPEN = "<|tool_response>"
 _TOOL_RESPONSE_CLOSE = "<tool_response|>"
 _THINK_OPEN = "<think>\n"
 _THINK_CLOSE = "</think>\n"
+
+
+# Stray tool-call protocol markers that leak into assistant content when a
+# client replays a prior turn without preserving tool_calls. These carry no
+# payload on their own (the structured tool_calls field holds the real
+# call), so strip them so they don't render as literal text in the chat
+# template and so a marker-only void message can be dropped downstream.
+_TOOL_CALL_OPEN = "<|tool_call>"
+_TOOL_CALL_CLOSE = "<tool_call|>"
+_TOOL_CALL_MARKER_RE = re.compile(
+    re.escape(_TOOL_CALL_OPEN) + "|" + re.escape(_TOOL_CALL_CLOSE)
+)
 
 _LEADING_THOUGHT_RE = re.compile(
     r"\A\s*(?:(?:<think>.*?</think>|<\|channel>.*?<channel\|>)\s*)+",
@@ -63,6 +78,7 @@ def extract_gemma4_messages(
     messages: list[Any],
     max_tool_result_tokens: int | None = None,
     tokenizer: Any | None = None,
+    consolidate_system_messages: bool = True,
 ) -> list[dict]:
     """Convert OpenAI-format messages to Gemma 4 chat-template format.
 
@@ -83,12 +99,24 @@ def extract_gemma4_messages(
         name when no match is found.
     - JSON-parses tool result content into a dict/list where possible so
         the template renders structured responses correctly.
+    - Strips stray ``<|tool_call>`` / ``<tool_call|>`` protocol markers that
+        leak into assistant ``content`` when a client replays a prior turn
+        without preserving ``tool_calls`` (the real call lives in the
+        structured field), so they neither render as literal text nor leave
+        a marker-only void message behind.
+    - Preserves ``input_audio`` (and ``image_url``) parts on user turns for
+        VLM processing instead of flattening them to text.
 
     Args:
         messages: OpenAI-format Message objects or dicts.
         max_tool_result_tokens: Maximum token count for tool results
             (truncation applied when tokenizer is provided).
         tokenizer: Tokenizer for optional truncation.
+        consolidate_system_messages: When True (default) all system/developer
+            messages are hoisted to the front and merged, matching strict
+            chat templates. When False, system messages stay in their
+            original position (parity with the Anthropic/responses
+            extractors).
 
     Returns:
         List of dicts ready for ``tokenizer.apply_chat_template``.
@@ -172,6 +200,19 @@ def extract_gemma4_messages(
             # Per Gemma 4's multi-turn rule, prior thought blocks must not
             # be fed back into the next turn. Strip them before rendering.
             content = _strip_thinking(content)
+            # Strip stray tool-call protocol markers that leak into content
+            # when a client replays a turn without preserving tool_calls.
+            # The real call lives in the structured ``tool_calls`` field;
+            # the markers here carry no payload and would render as literal
+            # text. A marker-only message becomes void (empty content) and
+            # is dropped by ``_drop_void_assistant_messages`` below.
+            if isinstance(content, str) and _TOOL_CALL_MARKER_RE.search(content):
+                logger.debug(
+                    "gemma4 stripping stray tool-call markers from assistant "
+                    "content (len=%d)",
+                    len(content),
+                )
+                content = _TOOL_CALL_MARKER_RE.sub("", content)
 
             out_msg: dict = {"role": "assistant", "content": content or ""}
 
@@ -243,14 +284,18 @@ def extract_gemma4_messages(
             continue
 
         # All other roles (user, system)
-        # Preserve image_url parts for VLM processing
+        # Preserve image_url / input_audio parts for VLM processing; flatten
+        # to text only when no media is present.
         content = msg.get("content", "")
         if isinstance(content, list):
             from ..api.utils import _extract_multimodal_content_list
 
             multimodal_parts = _extract_multimodal_content_list(content)
-            has_images = any(p.get("type") == "image_url" for p in multimodal_parts)
-            if has_images:
+            has_media = any(
+                p.get("type") in ("image_url", "input_audio", "video", "video_url", "audio_url")
+                for p in multimodal_parts
+            )
+            if has_media:
                 content = multimodal_parts
             else:
                 content = _extract_text_from_content_list(content)
@@ -258,15 +303,20 @@ def extract_gemma4_messages(
         processed.append(out)
         i += 1
 
-    # Standard cleanup passes shared with other extractors
+    # Standard cleanup passes shared with other extractors. System-message
+    # consolidation is gated on ``consolidate_system_messages`` for parity
+    # with the Anthropic/responses extractors (default True hoists system
+    # to the front for strict chat templates; False leaves it in place).
     from ..api.utils import (
         _consolidate_system_messages,
         _drop_void_assistant_messages,
         _merge_consecutive_roles,
     )
 
+    if consolidate_system_messages:
+        processed = _consolidate_system_messages(processed)
     return _merge_consecutive_roles(
-        _drop_void_assistant_messages(_consolidate_system_messages(processed))
+        _drop_void_assistant_messages(processed)
     )
 
 

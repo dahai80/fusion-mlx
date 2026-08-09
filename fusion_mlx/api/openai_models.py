@@ -68,6 +68,12 @@ class ContentPart(BaseModel):
     video_url: VideoURL | dict | str | None = None
     audio_url: AudioURL | dict | str | None = None
     file: dict | None = None
+    # OpenAI Chat Completions audio input part: ``{data, format}``. Declared
+    # so ``model_dump()`` preserves it for the VLM multimodal path — without
+    # this field pydantic silently drops the sub-dict and audio content sent
+    # through the chat endpoint is lost (parity with responses_models and
+    # the image_url/file fields above).
+    input_audio: dict[str, Any] | None = None
     # Anthropic-compatible cache_control hint (extension for OpenAI endpoint).
     # When set on a system message content part, marks the prefix boundary
     # for KV cache reuse across requests sharing the same system prompt.
