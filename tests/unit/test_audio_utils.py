@@ -7,7 +7,7 @@ import wave
 import mlx.core as mx
 import numpy as np
 
-from fusion_mlx.engine.audio_utils import audio_to_wav_bytes
+from fusion_mlx.engines.audio_utils import audio_to_wav_bytes
 
 
 def _read_wav(data: bytes):
