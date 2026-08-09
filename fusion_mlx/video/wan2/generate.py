@@ -541,7 +541,23 @@ def generate_video(
     t_latent = (gen_frames - 1) // vae_stride[0] + 1
     h_latent = height // vae_stride[1]
     w_latent = width // vae_stride[2]
+
+    # VACE reference-only / reference+control: native Wan VACE prepends reference
+    # frames to BOTH the control signal and the denoised latent so the VACE block
+    # `ctrl + x` aligns. We extend the denoised latent by num_ref_lat frames and
+    # trim them after decode. Reference frames are 1 latent frame each (VAE encodes
+    # a single image to T_lat=1). Only count when this is a VACE run with refs.
+    num_ref_lat = 0
+    if is_vace and reference_images:
+        num_ref_lat = len(reference_images)
+        t_latent = t_latent + num_ref_lat
+        logger.info(
+            "VACE: extending denoised latent by %d reference frames -> t_latent=%d",
+            num_ref_lat, t_latent,
+        )
     target_shape = (z_dim, t_latent, h_latent, w_latent)
+    # t_latent_gen = latent frames actually generated (excluding reference prefix)
+    t_latent_gen = t_latent - num_ref_lat
 
     # Sequence length for transformer
     seq_len = math.ceil(
@@ -781,7 +797,7 @@ def generate_video(
                     vae_stride=config.vae_stride,
                     h_latent=h_latent,
                     w_latent=w_latent,
-                    t_latent=t_latent,
+                    t_latent=t_latent_gen,
                     z_dim=config.vae_z_dim,
                 )
             ]
@@ -827,7 +843,7 @@ def generate_video(
                     vae_stride=config.vae_stride,
                     h_latent=h_latent,
                     w_latent=w_latent,
-                    t_latent=t_latent,
+                    t_latent=t_latent_gen,
                     z_dim=config.vae_z_dim,
                 )
             ]
@@ -1202,6 +1218,19 @@ def generate_video(
     vae = load_vae_decoder(vae_path, config)
 
     is_wan22_vae = config.vae_z_dim == 48
+
+    # VACE: drop the leading reference latent frames we prepended for ctrl+x
+    # alignment. The denoised reference-prefix frames are not part of the output;
+    # reference guidance was applied through the control branch. Mirrors native
+    # TrimVideoLatent (s1[:, :, trim_amount:]).
+    if num_ref_lat > 0:
+        logger.info(
+            "VACE: trimming %d leading reference latent frames before decode "
+            "(latents T=%d -> %d)",
+            num_ref_lat, latents.shape[1], latents.shape[1] - num_ref_lat,
+        )
+        latents = latents[:, num_ref_lat:, :]
+        mx.eval(latents)
 
     # Temporal extend: prepend reflected latent frames to the VAE input so that
     # the CausalConv3d zero-padding artifacts fall on the prefix (which we crop).
