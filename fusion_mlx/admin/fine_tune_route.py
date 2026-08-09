@@ -431,6 +431,78 @@ async def compute_logprob_endpoint(
 
 
 # =============================================================================
+# Reward Scoring Endpoint (#431 Phase1->Phase2 closed loop)
+# =============================================================================
+
+
+@_router.post("/api/fine-tune/reward/score")
+async def score_reward_endpoint(
+    request: Request,
+    is_admin: bool = Depends(require_admin),
+):
+    # Score completions under a trained reward-model adapter (value head).
+    # Closes the RLSL loop: Phase 1 RM (#424) -> this endpoint -> Phase 2 GRPO
+    # (#363) reward_endpoint callback. Standalone load-and-evict (same pattern
+    # as logprob), not routed through the inference pool.
+    body = await request.json()
+
+    model_id = body.get("model_id", "")
+    adapter_name = body.get("adapter_name", "")
+    prompt = body.get("prompt", "")
+    completions = body.get("completions", [])
+
+    if not model_id:
+        raise HTTPException(status_code=400, detail="model_id is required")
+    if not adapter_name:
+        raise HTTPException(status_code=400, detail="adapter_name is required")
+    if not isinstance(completions, list) or not completions:
+        raise HTTPException(
+            status_code=400, detail="completions (non-empty list) required"
+        )
+
+    svc = _get_service()
+    model_path = svc._resolve_model_path(model_id)
+    if model_path is None:
+        raise HTTPException(status_code=404, detail=f"Model not found: {model_id}")
+
+    from fusion_mlx.training.service import ADAPTER_BASE_DIR
+
+    adapter_path = str(ADAPTER_BASE_DIR / model_id / adapter_name)
+    import os
+
+    if not os.path.isdir(adapter_path):
+        raise HTTPException(
+            status_code=404,
+            detail=f"Adapter not found: {model_id}/{adapter_name}",
+        )
+
+    from fusion_mlx.training.reward_score import score_completions
+
+    logger.info(
+        "reward/score endpoint: model=%s adapter=%s n_completions=%d",
+        model_id,
+        adapter_name,
+        len(completions),
+    )
+    try:
+        rewards = await asyncio.to_thread(
+            score_completions, model_path, adapter_path, prompt, list(completions)
+        )
+    except ValueError as e:
+        logger.warning("reward/score rejected: %s", e)
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.exception("reward/score scoring failed")
+        raise HTTPException(status_code=500, detail=f"Scoring failed: {e}")
+
+    return {
+        "rewards": rewards,
+        "model_id": model_id,
+        "adapter_name": adapter_name,
+    }
+
+
+# =============================================================================
 # GRPO Training Endpoints (#363 Phase 2)
 # =============================================================================
 

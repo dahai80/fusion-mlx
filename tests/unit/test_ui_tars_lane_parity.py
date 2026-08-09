@@ -1347,8 +1347,8 @@ class TestR10C2NoReasoningAliasOnChatWire:
         # keys) must be absent.
         import inspect
 
-        import fusion_mlx.routes_internal.chat as _chat_mod
         import fusion_mlx.api.openai_routes as _routes_mod
+        import fusion_mlx.routes_internal.chat as _chat_mod
 
         # The fast-path SSE helper migrated from the (now-shim)
         # ``routes_internal.chat`` to ``api.openai_routes`` in the
