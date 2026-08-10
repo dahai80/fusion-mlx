@@ -89,6 +89,42 @@ class ContentPart(BaseModel):
             f"content[].text must be a string (got {type(value).__name__})"
         )
 
+    @model_validator(mode="after")
+    def _reject_bare_string_media(self):
+        # F-065: a typed media part (type=="image_url"|"video_url"|
+        # "audio_url") that carries a bare string in its media slot
+        # (image_url="data:..." instead of {"url":"data:..."}) used to
+        # slip past the schema layer — the union ``ImageUrl | dict | str``
+        # accepts the string, the multimodal preprocessor unwraps
+        # ``image["url"]`` only on the dict shape, and the bare-string
+        # form was silently dropped (model received text only and
+        # hallucinated, or 400'd on modality with a misleading message).
+        # Reject at the ContentPart level so direct construction (not
+        # just the Message dict-fallback arm) is guarded. Gate on
+        # ``type`` so a type:"text" part carrying an unrelated
+        # image_url string slot (legacy clients) is NOT collaterally
+        # broken.
+        media_slots = (
+            ("image_url", "image_url"),
+            ("video_url", "video_url"),
+            ("audio_url", "audio_url"),
+        )
+        for type_value, field_name in media_slots:
+            if self.type != type_value:
+                continue
+            slot = getattr(self, field_name, None)
+            if isinstance(slot, str):
+                logger.debug(
+                    "ContentPart rejecting bare-string %s (type=%s)",
+                    field_name,
+                    type_value,
+                )
+                raise ValueError(
+                    f"{field_name} must be an object with a 'url' field "
+                    f"(got a bare string)"
+                )
+        return self
+
 
 # =============================================================================
 # Messages

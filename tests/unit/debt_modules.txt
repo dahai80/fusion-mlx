@@ -314,8 +314,34 @@ test_hermes.py
 # — would require porting the entire agents/testing harness + relocating
 # test_hermes.py to tests/integrations/ (a feature decision, not a debt fix).
 test_hermes_harness_contract.py
+# KEEP_QUARANTINED test_hf_downloader.py (88 pass / 15 fail): 3 distinct drift
+# clusters, none a fusion-mlx prod gap to fix.
+# (A) 10 ImportError — list_hf_models/delete_hf_model moved routes→hf_download
+#     (admin/routes.py imports only the router, not the symbols). Even re-pointing
+#     the import fails the assertions: test expects display_name + org-prefix
+#     display (deepsweet/Qwen3.6-...), but actual list_hf_models returns name
+#     only (no display_name). Frontend _models.html:84 TOLERATES this
+#     (model.display_name || model.name) — the strict display_name contract is
+#     a not-ported rapid-mlx enhancement, not a frontend requirement.
+# (B) 5 download-mechanics — environmental/library-version: test_xet_disabled
+#     fails under the pytest runner (is_xet_available()=True despite
+#     HF_HUB_DISABLE_XET=True set at module load — pytest import-order/xet
+#     availability); test_download_repo_not_found fails because HF 1.22.0
+#     RepositoryNotFoundError("msg", response=Mock()) raises TypeError
+#     (Mock is not httpx.Response) — upstream HF API drift, not fusion-mlx;
+#     test_download_gated_repo / test_cancel_* fail on not-ported gated-repo
+#     + cancel-status classification. None are fusion-mlx prod bugs.
+# 88 passing tests (DownloadTask dataclass + non-drifted downloader paths)
+# cannot be partially rescued (file-level quarantine). KEEP.
 test_hf_downloader.py
-test_image_url_must_be_object.py
+# RESCUED test_image_url_must_be_object.py (10/10 pass): F-065 prod gap fixed —
+# added ContentPart model_validator (models.py) rejecting bare-string media
+# (image_url="data:..." / video_url / audio_url) when type advertises the media
+# kind. Message-level dict-fallback validator already worked (end-to-end tests
+# pass); the new ContentPart-level validator guards direct construction too.
+# Gated on type so type:"text" with an unrelated image_url string slot is NOT
+# rejected (legacy clients). 2350-test content/model regression clean.
+# test_image_url_must_be_object.py
 test_index_cache.py
 test_internal_route_auth.py
 test_langchain.py
