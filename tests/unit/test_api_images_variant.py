@@ -1,4 +1,6 @@
 from fusion_mlx.api.images import ImageGenerateRequest
+from fusion_mlx.config import DEFAULT_ALIASES
+from fusion_mlx.server import resolve_model_id
 
 
 class TestImageGenerateRequestVariant:
@@ -51,3 +53,23 @@ class TestImageGenerateRequestVariant:
         # Variant validation happens in the route handler, not Pydantic
         req = ImageGenerateRequest(prompt="test", variant="nonexistent")
         assert req.variant == "nonexistent"
+
+
+class TestImageAliasResolution:
+    def test_flux2_alias_registered(self):
+        assert DEFAULT_ALIASES.get("flux-2") == "flux2-klein-9b-4bit"
+
+    def test_kokoro_alias_registered(self):
+        assert DEFAULT_ALIASES.get("kokoro") == "Qwen3-TTS-12Hz-1.7B-Base-8bit"
+
+    def test_resolve_flux2_alias(self):
+        assert resolve_model_id("flux-2") == "flux2-klein-9b-4bit"
+
+    def test_resolve_kokoro_alias(self):
+        assert resolve_model_id("kokoro") == "Qwen3-TTS-12Hz-1.7B-Base-8bit"
+
+    def test_existing_alias_unchanged(self):
+        assert resolve_model_id("claude-4.6-sonnet") == "Qwen3.6-27B-mxfp8"
+
+    def test_unknown_model_returned_as_is(self):
+        assert resolve_model_id("not-a-real-model") == "not-a-real-model"
