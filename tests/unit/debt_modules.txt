@@ -384,7 +384,13 @@ test_librechat_docker.py
 # never execute the command, so the value is irrelevant. Changed to "x"
 # (conftest-extended test whitelist command, conftest.py:912). No prod gap.
 # test_mcp_client.py
-test_memory_cache.py
+# RESCUED test_memory_cache.py (49/49 pass): stale omlx->fusion_mlx rename —
+# 2 patch targets at lines 68/77 still referenced vllm_mlx.memory_cache.
+# _get_available_memory (rapid-mlx package name) so the patch never applied
+# and compute_memory_limit used real machine RAM (~25.5GB) instead of the
+# mocked 8GB. Imports were already renamed (line 15 fusion_mlx.memory_cache);
+# only the patch target strings were missed. No prod gap.
+# test_memory_cache.py
 test_memory_monitor_vlm_config.py
 test_metal_cap_enforcement.py
 test_metal_error_recovery.py

@@ -65,7 +65,7 @@ class TestMemoryCacheConfig:
 
     def test_compute_memory_limit_auto(self):
         with patch(
-            "vllm_mlx.memory_cache._get_available_memory",
+            "fusion_mlx.memory_cache._get_available_memory",
             return_value=8 * 1024 * 1024 * 1024,  # 8GB
         ):
             config = MemoryCacheConfig(max_memory_percent=0.25)
@@ -74,7 +74,7 @@ class TestMemoryCacheConfig:
 
     def test_compute_memory_limit_fallback(self):
         with patch(
-            "vllm_mlx.memory_cache._get_available_memory",
+            "fusion_mlx.memory_cache._get_available_memory",
             return_value=0,  # Detection failed
         ):
             config = MemoryCacheConfig(max_memory_percent=0.25)
