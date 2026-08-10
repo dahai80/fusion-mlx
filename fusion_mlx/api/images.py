@@ -111,7 +111,9 @@ async def generate_image(request: ImageGenerateRequest) -> ImageGenerateResponse
         try:
             engine = await _pool.get_engine(model_name)
         except ModelNotFoundError as exc:
-            avail = ", ".join(exc.available_models) if exc.available_models else "(none)"
+            avail = (
+                ", ".join(exc.available_models) if exc.available_models else "(none)"
+            )
             raise HTTPException(
                 404,
                 f"Image generation model '{model_name}' not found. Available: {avail}. "
