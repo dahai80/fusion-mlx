@@ -307,6 +307,13 @@ class BatchedEngine(BaseEngine):
 
             assert_not_gguf(self._model_name, engine_kind="LLM")
             model, tokenizer = load(self._model_name, **load_kwargs)
+            # Post-load transforms (IndexCache freq dispatch, etc.) run on
+            # the load thread so mutated weights bind to the same stream as
+            # prefill/decode (#KV-0 same-thread rule). Settings-driven;
+            # None/absent is a no-op.
+            from ..utils.model_loading import apply_post_load_transforms
+
+            model = apply_post_load_transforms(model, self._model_settings)
             elapsed = time.monotonic() - start
             # Estimate model size from loaded weights
             total_params = 0

@@ -342,7 +342,15 @@ test_hf_downloader.py
 # Gated on type so type:"text" with an unrelated image_url string slot is NOT
 # rejected (legacy clients). 2350-test content/model regression clean.
 # test_image_url_must_be_object.py
-test_index_cache.py
+# RESCUED test_index_cache.py (18/18 pass): real prod gap — apply_index_cache
+# (patches/index_cache.py) was defined but NEVER called from any load path;
+# index_cache_freq was parsed into ModelSettings + admin UI but the transform
+# was dead code (feature half-wired). Added apply_post_load_transforms entry
+# point in utils/model_loading.py (centralized post-load dispatch: freq>=2 →
+# apply_index_cache, None/absent/<2/non-int → no-op returns model). Wired the
+# call into BatchedEngine._load_model_sync right after mlx_lm.load() (same
+# thread, #KV-0 same-stream rule). 1364-test engine/load/pool regression clean.
+# test_index_cache.py
 test_internal_route_auth.py
 test_langchain.py
 test_librechat_docker.py

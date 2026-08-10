@@ -76,6 +76,46 @@ def _checkpoint_has_mtp_weights(model_path: str | Path) -> bool:
     return False
 
 
+def apply_post_load_transforms(model: Any, model_settings: Any | None = None) -> Any:
+    # Centralized post-load transform entry point. Dispatches per-setting
+    # transforms that mutate the loaded model in-place. Returns the model
+    # unchanged (same object) so callers can treat this as a pass-through
+    # pipeline. Settings that are None/absent are no-ops.
+    #
+    # IndexCache: index_cache_freq is parsed from admin UI / engine_pool
+    # settings (model_settings.index_cache_freq) but, without this entry
+    # point, apply_index_cache was never called from any load path — the
+    # feature was half-wired (settings stored, transform dead). freq<2 is
+    # a no-op (apply_index_cache itself rejects <2); None/absent no-op.
+    if model_settings is None:
+        return model
+    freq = getattr(model_settings, "index_cache_freq", None)
+    if freq is None:
+        return model
+    try:
+        freq_int = int(freq)
+    except (TypeError, ValueError):
+        logger.debug("index_cache_freq not int (%r), skipping transforms", freq)
+        return model
+    if freq_int < 2:
+        logger.debug("index_cache_freq=%d < 2, skipping IndexCache", freq_int)
+        return model
+    try:
+        from ..patches.index_cache import apply_index_cache
+
+        applied = apply_index_cache(model, freq_int)
+        if applied:
+            logger.info("post-load IndexCache applied (freq=%d)", freq_int)
+        else:
+            logger.debug(
+                "post-load IndexCache not applied (model unsupported, freq=%d)",
+                freq_int,
+            )
+    except Exception as e:
+        logger.warning("post-load IndexCache transform failed: %s", e)
+    return model
+
+
 def maybe_apply_pre_load_patches(
     model_name: str,
     model_settings: Any | None = None,
