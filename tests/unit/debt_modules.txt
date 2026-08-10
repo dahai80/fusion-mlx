@@ -239,7 +239,16 @@ test_finalize_harmony_raw_text.py
 # markers in assistant content were not stripped (leaked as literal text).
 # (rescued — left in list by mistake) test_gemma4_messages.py
 test_gemma4_text_import_guard.py
-test_generation_config_loader.py
+# test_generation_config_loader.py RESCUED 2026-08-10 (47 pass): 3 real prod
+# gaps fixed — (1) _SAMPLING_KEYS used camelCase presencePenalty/
+# frequencyPenalty but HF generation_config.json canonical keys are
+# snake_case (parity with rapid-mlx), so presence/frequency penalties from
+# model configs were silently dropped; (2) _get_stop_tokens never unioned
+# tokenizer._eos_token_ids (the set grown by augment_eos...), so augmented
+# chat-template terminators (Gemma 3 <end_of_turn> id 106) were lost and
+# emitted as literal text; (3) _generation_config_eos/_output_parser_factory
+# unguarded getattr broke bare-__new__ Scheduler stubs.
+# (rescued — left in list by mistake) test_generation_config_loader.py
 test_glm_moe_dsa_patch.py
 test_harmony_finalize.py
 test_hermes.py

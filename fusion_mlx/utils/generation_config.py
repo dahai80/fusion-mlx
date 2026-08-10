@@ -11,8 +11,8 @@ _SAMPLING_KEYS: tuple[str, ...] = (
     "top_k",
     "min_p",
     "repetition_penalty",
-    "presencePenalty",
-    "frequencyPenalty",
+    "presence_penalty",
+    "frequency_penalty",
 )
 
 

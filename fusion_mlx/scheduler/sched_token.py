@@ -159,6 +159,23 @@ def _get_stop_tokens(self) -> set[int]:
             stop_tokens.add(eos_ids)
         else:
             stop_tokens.update(eos_ids)
+    # Union the private wrapper stop set grown by
+    # ``augment_eos_token_ids_from_generation_config`` (e.g. Gemma 3's
+    # ``<end_of_turn>`` id 106, declared only in generation_config.json's
+    # ``eos_token_id`` array). Without this union the augmented ids are
+    # grown on the wrapper but never reach the scheduler stop set, so the
+    # model emits the chat-template terminator as a literal token until
+    # ``max_tokens``. Guarded so tokenizers without the attribute (or a
+    # Scheduler built without full ``__init__``) are unaffected.
+    wrapper_eos_set = getattr(self.tokenizer, "_eos_token_ids", None)
+    if isinstance(wrapper_eos_set, set):
+        before = len(stop_tokens)
+        stop_tokens.update(wrapper_eos_set)
+        if len(stop_tokens) > before:
+            logger.debug(
+                "unioned %d eos id(s) from tokenizer._eos_token_ids",
+                len(stop_tokens) - before,
+            )
 
     # End-of-turn token (e.g. Harmony <turn|> = 106). Some tokenizers
     # expose eot_token_id directly; others expose only the eot_token
@@ -185,13 +202,18 @@ def _get_stop_tokens(self) -> set[int]:
 
     # Read additional EOS tokens from generation_config.json.
     # Some models (e.g. GLM-4.6V) define multiple EOS tokens there
-    # that are not reflected in tokenizer.eos_token_id.
-    if self._generation_config_eos is not None:
-        stop_tokens.update(self._generation_config_eos)
+    # that are not reflected in tokenizer.eos_token_id. Guarded with
+    # getattr so a Scheduler constructed without ``__init__`` (e.g. a
+    # unit-test stub via ``__new__``) does not AttributeError here.
+    _gen_cfg_eos = getattr(self, "_generation_config_eos", None)
+    if _gen_cfg_eos is not None:
+        stop_tokens.update(_gen_cfg_eos)
 
-    # Add protocol-specific stop tokens (e.g. Harmony action stops)
-    if self._output_parser_factory is not None:
-        stop_tokens.update(self._output_parser_factory.stop_token_ids)
+    # Add protocol-specific stop tokens (e.g. Harmony action stops).
+    # Guarded with getattr for the same ``__new__``-stub reason as above.
+    _parser_factory = getattr(self, "_output_parser_factory", None)
+    if _parser_factory is not None:
+        stop_tokens.update(_parser_factory.stop_token_ids)
 
     return stop_tokens
 
