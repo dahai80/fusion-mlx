@@ -72,7 +72,7 @@ class TestMCPClientProperties:
         config = MCPServerConfig(
             name="test",
             transport=MCPTransport.STDIO,
-            command="echo",
+            command="x",
         )
         return MCPClient(config)
 

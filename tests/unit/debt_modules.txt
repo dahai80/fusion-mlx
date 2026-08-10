@@ -377,7 +377,13 @@ test_hf_downloader.py
 test_internal_route_auth.py
 test_langchain.py
 test_librechat_docker.py
-test_mcp_client.py
+# RESCUED test_mcp_client.py (37/37 pass): stale fixture command —
+# TestMCPClientProperties.client used command="echo" which is not in the
+# MCP security whitelist (ALLOWED_COMMANDS, security.py:25 — echo is not an
+# MCP server runner). The 4 property tests (name/state/is_connected/tools)
+# never execute the command, so the value is irrelevant. Changed to "x"
+# (conftest-extended test whitelist command, conftest.py:912). No prod gap.
+# test_mcp_client.py
 test_memory_cache.py
 test_memory_monitor_vlm_config.py
 test_metal_cap_enforcement.py
