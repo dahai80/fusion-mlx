@@ -321,5 +321,24 @@ class PaellaVQModel(nn.Module):
         x = _nhwc_to_nchw(x)
         return x
 
+    def encode(self, x: mx.array) -> mx.array:
+        x = _nchw_to_nhwc(x)
+        x = _pixel_unshuffle_nhwc(x, self.in_block[0])
+        x = self.in_block[1](x)
+        for block in self.down_blocks:
+            if isinstance(block, list):
+                for layer in block:
+                    x = layer(x)
+            else:
+                x = block(x)
+        x = _nhwc_to_nchw(x)
+        x = x * self.scale_factor
+        logger.debug(
+            "PaellaVQModel.encode: out shape=%s scale_factor=%s",
+            x.shape,
+            self.scale_factor,
+        )
+        return x
+
     def __call__(self, h: mx.array) -> mx.array:
         return self.decode(h)
