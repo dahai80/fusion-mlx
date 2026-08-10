@@ -272,7 +272,7 @@ test_glm_moe_dsa_patch.py
 # predicate call-site), not current behavior. UNDERLYING GAP IS REAL: streaming
 # Harmony/GPT-OSS reasoning is NOT routed to reasoning_content (ThinkingParser
 # sees no <think> tags in channel-marker text → emits trace as content) — see
-# tracking issue (streaming reasoning-parser wiring). But this test cannot be
+# tracking issue #444 (streaming reasoning-parser wiring). But this test cannot be
 # rescued without reverting the route refactor or fabricating the deleted
 # contract; re-pointing to openai_routes would still fail the 2 source-
 # inspection tests (they require the dead helper in route source). KEEP until
