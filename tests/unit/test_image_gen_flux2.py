@@ -30,3 +30,25 @@ def test_flux2_config_base_4b():
 def test_flux2_config_base_9b():
     assert _infer_flux2_config("FLUX.2-klein-base-9B") == "flux2_klein_base_9b"
     assert _infer_flux2_config("flux2-klein-base-9b") == "flux2_klein_base_9b"
+
+
+def test_flux2_config_quantized_4bit_suffix_not_misclassified():
+    # Regression for #449: model id "flux2-klein-9b-4bit" contains the
+    # substring "4b" (from "4bit"); it must NOT be classified as the 4b
+    # config (heads=24), which mismatches the 9b weights (inner_dim=4096)
+    # and breaks the transformer reshape.
+    assert _infer_flux2_config("flux2-klein-9b-4bit") == "flux2_klein_9b"
+    assert _infer_flux2_config("mlx-community/flux2-klein-9b-4bit") == "flux2_klein_9b"
+    assert _infer_flux2_config("mlx-community/flux2-klein-4b-4bit") == "flux2_klein_4b"
+    assert (
+        _infer_flux2_config("mlx-community/flux2-klein-9b-kv-4bit")
+        == "flux2_klein_9b_kv"
+    )
+    assert (
+        _infer_flux2_config("mlx-community/FLUX.2-klein-base-4B-4bit")
+        == "flux2_klein_base_4b"
+    )
+    assert (
+        _infer_flux2_config("mlx-community/FLUX.2-klein-base-9B-4bit")
+        == "flux2_klein_base_9b"
+    )

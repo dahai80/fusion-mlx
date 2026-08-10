@@ -556,6 +556,12 @@ async def create_speech(request: AudioSpeechRequest):
             detail=f"Model '{resolved_model}' not found. Available: {avail}",
         ) from exc
     except Exception as exc:
+        logger.exception(
+            "audio speech engine load failed for %s: %s(%s)",
+            resolved_model,
+            type(exc).__name__,
+            exc,
+        )
         raise HTTPException(status_code=500, detail="Internal server error") from exc
 
     if not isinstance(engine, TTSEngine):
@@ -583,6 +589,11 @@ async def create_speech(request: AudioSpeechRequest):
         except HTTPException:
             raise
         except Exception as exc:
+            logger.exception(
+                "audio speech streaming failed: %s(%s)",
+                type(exc).__name__,
+                exc,
+            )
             raise HTTPException(
                 status_code=500, detail="Internal server error"
             ) from exc
@@ -608,6 +619,12 @@ async def create_speech(request: AudioSpeechRequest):
     except HTTPException:
         raise
     except Exception as exc:
+        logger.exception(
+            "audio speech synthesize failed for %s: %s(%s)",
+            resolved_model,
+            type(exc).__name__,
+            exc,
+        )
         raise HTTPException(status_code=500, detail="Internal server error") from exc
     finally:
         _cleanup_tempfile(ref_audio_path)
