@@ -230,7 +230,17 @@ test_engine_step_thread.py
 # Rescue needs a fixture rewrite to fusion_mlx.* (fragile module-injection
 # gymnastics), not a prod change.
 test_exception_handlers.py
-test_finalize_harmony_raw_text.py
+# test_finalize_harmony_raw_text.py RESCUED 2026-08-10 (46 pass): 2 real prod
+# gaps fixed in service/helpers.py — (1) _parser_accepts_enable_thinking only
+# checked explicit enable_thinking param, missing **kwargs catch-all parsers
+# (parity with rapid-mlx) → harmony/channel parsers that absorb the flag via
+# **kwargs were misclassified as not-accepting → wrong finalize path; (2)
+# case4 + truncated_think paths in _finalize_content_and_reasoning fell
+# through to _apply_reasoning_cap which prepended the over-cap reasoning
+# suffix into cleaned_text (the empty-content fallback), re-injecting the
+# leaked thought trace as content. Early-return with _truncate_reasoning_only
+# caps reasoning WITHOUT rerouting overflow into content.
+# (rescued — left in list by mistake) test_finalize_harmony_raw_text.py
 # test_gemma4_messages.py RESCUED 2026-08-10 (47 pass): 3 real prod gaps fixed
 # — (1) extract_gemma4_messages lacked consolidate_system_messages kwarg
 # (parity with anthropic/responses extractors); (2) ContentPart lacked
@@ -250,6 +260,23 @@ test_gemma4_text_import_guard.py
 # unguarded getattr broke bare-__new__ Scheduler stubs.
 # (rescued — left in list by mistake) test_generation_config_loader.py
 test_glm_moe_dsa_patch.py
+# KEEP_QUARANTINED test_harmony_finalize.py (18 pass / 3 fail): deep route-
+# refactor drift (GOTCHA ⑧ chat.py shim). The 3 streaming failures all root
+# in the test mounting routes_internal/chat whose stream_chat_completion is a
+# "Compatibility stub" yielding nothing, and asserting the dead-code helper
+# _is_harmony_cut_short_stream (chat.py:204, never called in prod) appears in
+# that stub's source via inspect.getsource. The real streaming route moved to
+# api/openai_routes.py and uses ThinkingParser (tag-based) directly — it never
+# consults cfg.reasoning_parser/_is_harmony_cut_short_stream. The test asserts
+# the DELETED rapid-mlx-style routes/chat contract (postprocessor + harmony
+# predicate call-site), not current behavior. UNDERLYING GAP IS REAL: streaming
+# Harmony/GPT-OSS reasoning is NOT routed to reasoning_content (ThinkingParser
+# sees no <think> tags in channel-marker text → emits trace as content) — see
+# tracking issue (streaming reasoning-parser wiring). But this test cannot be
+# rescued without reverting the route refactor or fabricating the deleted
+# contract; re-pointing to openai_routes would still fail the 2 source-
+# inspection tests (they require the dead helper in route source). KEEP until
+# streaming reasoning-parser wiring lands + test rewritten against real route.
 test_harmony_finalize.py
 test_hermes.py
 test_hermes_harness_contract.py

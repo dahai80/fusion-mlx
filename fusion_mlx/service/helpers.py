@@ -249,9 +249,27 @@ def _finalize_content_and_reasoning(
                     reasoning_text, reasoning_max_tokens
                 )
         if enable_thinking is True and first_parse_was_case4:
+            # F-041: when the chat template pre-injected the think-open
+            # marker and the model was truncated mid-thought emitting NO
+            # tags, the accumulated text IS the thought trace. Letting it
+            # fall through to ``_apply_reasoning_cap`` would prepend the
+            # over-cap reasoning suffix back into the (now-blank)
+            # cleaned_text and ship the leaked thought trace as content.
+            # Use the reasoning-only cap so the overflow is dropped.
             cleaned_text = ""
+            return cleaned_text, _truncate_reasoning_only(
+                reasoning_text, reasoning_max_tokens
+            )
         if first_parse_was_truncated_think:
-            cleaned_text = cleaned_text.partition("<think>")[0].rstrip()
+            # Codex r3 P2: bypass _apply_reasoning_cap's overflow-into-
+            # content path for truncated thoughts - the overflow IS the
+            # leaked thought the partition just trimmed. Keep cleaned_text
+            # blanked/preamble-only; cap reasoning without rerouting the
+            # overflow.
+            cleaned_text = (cleaned_text or "").partition("<think>")[0].rstrip()
+            return cleaned_text, _truncate_reasoning_only(
+                reasoning_text, reasoning_max_tokens
+            )
     return _apply_reasoning_cap(
         cleaned_text,
         reasoning_text,
@@ -508,11 +526,23 @@ def _is_structured_output_requested(request) -> bool:
 
 
 def _parser_accepts_enable_thinking(parser) -> bool:
-    try:
-        sig = inspect.signature(parser.extract_reasoning)
-        return "enable_thinking" in sig.parameters
-    except Exception:
+    # Return True iff ``parser.extract_reasoning`` declares an
+    # ``enable_thinking`` parameter or a ``**kwargs`` catch-all. Static
+    # signature check (no side-effecting ``extract("")`` probe) — a probe
+    # can hide an unrelated TypeError raised inside a third-party parser
+    # body and trigger empty-input side effects on stateful accumulators.
+    # A ``**kwargs`` parser can absorb the flag, so treat it as accepting.
+    extract = getattr(parser, "extract_reasoning", None)
+    if extract is None:
         return False
+    try:
+        sig = inspect.signature(extract)
+    except (TypeError, ValueError):
+        return False
+    params = sig.parameters
+    if "enable_thinking" in params:
+        return True
+    return any(p.kind is inspect.Parameter.VAR_KEYWORD for p in params.values())
 
 
 def _cascade(request_value, server_default, fallback):
