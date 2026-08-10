@@ -265,7 +265,11 @@ class SD3Pipeline:
         if self.quantize:
             has_quant_meta = any(
                 k.startswith("model.diffusion_model.")
-                and (k.endswith(".scales") or k.endswith(".biases") or k.endswith(".qweight"))
+                and (
+                    k.endswith(".scales")
+                    or k.endswith(".biases")
+                    or k.endswith(".qweight")
+                )
                 for k in raw
             )
             nn.quantize(self.transformer, group_size=64, bits=8)
