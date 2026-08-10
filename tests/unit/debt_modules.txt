@@ -122,17 +122,16 @@ test_cli_chat.py
 test_cli_config_fidelity.py
 test_cli_embeddings_extra.py
 test_cli_models.py
-# KEEP_QUARANTINED: asserts the codex AgentProfile system (get_profile,
-# list_profiles, .recommended_models/.render_config/.needs_function_calling,
-# YAML profiles under agents/profiles/) ported from Rapid-MLX. fusion-mlx
-# stubbed the ENTIRE fusion_mlx.agents subsystem (get_profile->None,
-# list_profiles->[], adapter.py/testing.py 340B/409B stubs). The CLI still
-# advertises `fusion-mlx agents codex --setup` (cli_commands.py:1533, 2135)
-# but agents_command imports the stubs and would crash. This is a missing-
-# feature gap (~30K LOC: base/adapter/testing/__init__/codex_catalog + YAML),
-# not stale-ref debt; rescue requires porting the agent subsystem + real-model
-# validation. Tracked in issue #442 (agents-subsystem port).
-test_codex_profile.py
+# test_codex_profile.py RESCUED 2026-08-10 (6/6 pass): the agent-profile
+# subsystem was ported from Rapid-MLX in issue #442 — base.py (AgentProfile
+# dataclasses + render_config), __init__.py (YAML loader, ~/.fusion-mlx/agents),
+# adapter.py (setup_agent_config/get_setup_instructions, vllm_mlx->fusion_mlx,
+# rapid-mlx->fusion-mlx, RAPID_MLX_API_KEY->FUSION_MLX_API_KEY), codex_catalog.py,
+# testing.py (AgentTestRunner, register_tool_call_tag from fusion_mlx.api.utils),
+# + 10 profiles/*.yaml. codex.yaml recommended models remapped to existing
+# aliases (qwen3.6-35b-4bit->qwen3.6-27b-4bit, qwen3-coder-30b-4bit->-a3b-4bit).
+# Test asserts model_provider="fusion-mlx" + [model_providers.fusion-mlx].
+# test_codex_profile.py
 test_community_bench.py
 # test_config_and_middleware.py RESCUED 2026-08-09 (28 pass, was 23/5): the 5
 # failures were stale symbol refs after the middleware extraction, not prod
