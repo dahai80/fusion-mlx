@@ -375,7 +375,19 @@ test_hf_downloader.py
 # NOTE: when this file collects it leaks _server_state state polluting
 # test_hot_cache — staying quarantined also prevents that ordering issue.
 test_internal_route_auth.py
+# KEEP_QUARANTINED test_langchain.py (0 tests collected): script-style integration
+# test (def _run_tests(), not pytest functions) requiring langchain_core +
+# langchain_openai + a live fusion-mlx server. Read by the rapid-mlx
+# `bench --tier harness` path (vllm_mlx/agents/testing.py::_run_specific_tests,
+# NOT ported — fusion-mlx agents/testing.py is a bare NotImplementedError stub).
+# Misplaced in tests/unit/; belongs in tests/integrations/ + needs the agents
+# harness ported (issue #442). Not a unit test, not rescuable without external deps.
 test_langchain.py
+# KEEP_QUARANTINED test_librechat_docker.py (0 tests collected): E2E integration
+# test requiring a running LibreChat Docker container + live fusion-mlx server
+# (register/login/JWT/ask proxy). Script-style (no pytest functions). Misplaced
+# in tests/unit/; belongs in tests/integrations/ + Docker compose. Not a unit
+# test, not rescuable without the full LibreChat stack running.
 test_librechat_docker.py
 # RESCUED test_mcp_client.py (37/37 pass): stale fixture command —
 # TestMCPClientProperties.client used command="echo" which is not in the
