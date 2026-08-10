@@ -3,12 +3,28 @@
 # Latent dim 16, 8x spatial compression, 4x temporal compression.
 
 import logging
+import os
 
 import mlx.core as mx
 import mlx.nn as nn
 import numpy as np
 
 logger = logging.getLogger(__name__)
+
+
+def _vae_checkpoint_enabled() -> bool:
+    # Metal freezes on tiled 3D-conv VAE decode when the full forward
+    # graph is held until one mx.eval at the end — peak intermediate
+    # buffers accumulate across all up-blocks. Checkpointing evals each
+    # block and frees it before the next, keeping only the running
+    # activation resident. Env-only knob so existing callers are
+    # untouched. 0/empty = disabled.
+    return os.getenv("FUSION_COSMOS_VAE_CHECKPOINT", "1").strip() not in (
+        "0",
+        "",
+        "false",
+        "False",
+    )
 
 
 def _silu(x):
@@ -229,13 +245,25 @@ class CosmosVideoVAE(nn.Module):
         logger.info("cosmos vae encode: latent shape=%s", z.shape)
         return z
 
-    def decode(self, z):
+    def decode(self, z, *, checkpoint=None):
         logger.info("cosmos vae decode: latent shape=%s", z.shape)
+        if checkpoint is None:
+            checkpoint = _vae_checkpoint_enabled()
         h = self.dec_conv_in(z)
         h = self.dec_mid1(h)
         h = self.dec_mid2(h)
-        for block in self.dec_blocks:
-            h = block(h)
+        if checkpoint:
+            # Evaluate each block and free its graph so Metal only holds
+            # the running activation, not the full forward graph. Avoids
+            # the large-tensor freeze on tiled 3D-conv decode (#441).
+            mx.eval(h)
+            for block in self.dec_blocks:
+                h = block(h)
+                mx.eval(h)
+                mx.clear_cache()
+        else:
+            for block in self.dec_blocks:
+                h = block(h)
         h = self.dec_conv_out(h)
         h = mx.clip(h, 0.0, 1.0)
         logger.info("cosmos vae decode: output shape=%s", h.shape)
@@ -298,6 +326,23 @@ class CosmosVideoVAE(nn.Module):
                         w_end,
                         tile_z.shape,
                     )
+                    # Fail-visible: warn once if checkpointing is off and
+                    # the tile is large enough to risk a Metal freeze.
+                    tile_elems = int(
+                        tile_z.shape[0]
+                        * tile_z.shape[1]
+                        * tile_z.shape[2]
+                        * tile_z.shape[3]
+                        * tile_z.shape[4]
+                    )
+                    if not _vae_checkpoint_enabled() and tile_elems > 1_000_000:
+                        logger.warning(
+                            "cosmos vae decode_tiled: tile %d/%d has %d elems; "
+                            "set FUSION_COSMOS_VAE_CHECKPOINT=1 to avoid Metal freeze",
+                            tile_idx,
+                            total_tiles,
+                            tile_elems,
+                        )
                     tile_out = self.decode(tile_z)
                     mx.eval(tile_out)
                     tile_np = np.array(tile_out, dtype=np.float32)
