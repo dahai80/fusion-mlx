@@ -10,6 +10,7 @@ module actually calls the lane helper at its messages-prep site. A
 regression that unwires one lane (e.g. a refactor that drops the call)
 trips these asserts before it can ship a silent no-op lane.
 """
+
 from __future__ import annotations
 
 import inspect
@@ -33,27 +34,27 @@ def test_chat_lane_wires_injection():
     from fusion_mlx.api import openai_routes
 
     src = _source(openai_routes)
-    assert "inject_ui_tars_sysprompt_for_lane" in src, (
-        "chat lane (/v1/chat/completions) must call inject_ui_tars_sysprompt_for_lane"
-    )
+    assert (
+        "inject_ui_tars_sysprompt_for_lane" in src
+    ), "chat lane (/v1/chat/completions) must call inject_ui_tars_sysprompt_for_lane"
 
 
 def test_anthropic_lane_wires_injection():
     from fusion_mlx.api import anthropic_routes
 
     src = _source(anthropic_routes)
-    assert "inject_ui_tars_sysprompt_for_lane" in src, (
-        "anthropic lane (/v1/messages) must call inject_ui_tars_sysprompt_for_lane"
-    )
+    assert (
+        "inject_ui_tars_sysprompt_for_lane" in src
+    ), "anthropic lane (/v1/messages) must call inject_ui_tars_sysprompt_for_lane"
 
 
 def test_responses_lane_wires_injection():
     from fusion_mlx.routes_internal import responses
 
     src = _source(responses)
-    assert "inject_ui_tars_sysprompt_for_lane" in src, (
-        "responses lane (/v1/responses) must call inject_ui_tars_sysprompt_for_lane"
-    )
+    assert (
+        "inject_ui_tars_sysprompt_for_lane" in src
+    ), "responses lane (/v1/responses) must call inject_ui_tars_sysprompt_for_lane"
 
 
 def test_resolve_returns_ui_tars_for_alias():
