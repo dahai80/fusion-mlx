@@ -285,7 +285,8 @@ class ChatCompletionRequest(BaseModel):
     # request is routed to a derived engine entry keyed by (model, adapter)
     # so each adapter gets its own loaded model instance.
     adapters: str | None = None
-    messages: list[Message]
+    # D-ANTHRO-VALIDATION F11 parity: messages=[] must 400, not 500.
+    messages: list[Message] = Field(min_length=1)
     temperature: float | None = None
     top_p: float | None = None
     top_k: int | None = None
