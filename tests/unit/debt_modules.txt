@@ -248,6 +248,21 @@ test_exception_handlers.py
 # at model_dump (real F-066-class gap); (3) stray <|tool_call>/<tool_call|>
 # markers in assistant content were not stripped (leaked as literal text).
 # (rescued — left in list by mistake) test_gemma4_messages.py
+# KEEP_QUARANTINED test_gemma4_text_import_guard.py (2 fail): reversed product
+# decision + deleted prod contract. The rapid-mlx gemma4_text.py had a real
+# load_gemma4_text (with mlx_vlm import guard) + is_gemma4_model (fetched
+# config.json via hf_hub_download to check model_type=="gemma4"). Fusion-mlx
+# reduced gemma4_text.py to a bare 105-byte stub (conftest stubs
+# load_gemma4_text=lambda returning None); live path uses mlx-lm native load()
+# (utils/tokenizer.py:577) gated by a pure STRING HEURISTIC is_gemma4_model
+# (tokenizer.py:26: "gemma" and "4" in path) — no config.json fetch, no mlx_vlm
+# import. Both test contracts are gone: (1) mlx_vlm import guard moot (live
+# path never imports mlx_vlm for gemma4); (2) hf_hub_download contract replaced
+# by the heuristic (arguably better — no HF network dependency at boot). The
+# heuristic IS a real design trade-off (string match can false-positive on
+# "gemma4" in a non-gemma4 repo name) but that is a separate concern, not what
+# this test asserts. KEEP — would require restoring the deleted fetch-based
+# loader + mlx_vlm guard (reversing the native-load decision).
 test_gemma4_text_import_guard.py
 # test_generation_config_loader.py RESCUED 2026-08-10 (47 pass): 3 real prod
 # gaps fixed — (1) _SAMPLING_KEYS used camelCase presencePenalty/
@@ -278,7 +293,26 @@ test_glm_moe_dsa_patch.py
 # inspection tests (they require the dead helper in route source). KEEP until
 # streaming reasoning-parser wiring lands + test rewritten against real route.
 test_harmony_finalize.py
+# KEEP_QUARANTINED test_hermes.py (10 skip / 10 fail): MISPLACED INTEGRATION
+# TEST, not debt-from-drift. Requires a live fusion-mlx server (port 8000,
+# http://localhost:8000/v1) + the Hermes agent binary (~/.hermes/venv/bin/hermes
+# or /tmp/hermes-agent/.venv/bin/hermes). The 10 test_api_* cases fail with
+# httpx.ConnectError (no server running); the 10 test_hermes_* cases skip via
+# fail_or_skip when the Hermes binary is absent. This is environmental, not a
+# code fix — belongs in tests/integration/ with a server-running marker. KEEP
+# (would need moving to integration + a live-server skip marker; not a prod gap).
 test_hermes.py
+# KEEP_QUARANTINED test_hermes_harness_contract.py (1 fail): deleted prod
+# contract. Pins the doctor-harness ↔ tests/integrations/test_hermes.py
+# contract (vllm_mlx/agents/testing.py:_run_specific_tests loads the fixture
+# via spec_from_file_location + exec_module, reads mod.results). BOTH sides
+# gone in fusion-mlx: (1) fixture tests/integrations/test_hermes.py does not
+# exist (test_hermes.py is in tests/unit/, not tests/integrations/); (2)
+# fusion_mlx/agents/testing.py is a stub raising NotImplementedError("Agent
+# testing not available in this build") — _run_specific_tests was NOT ported.
+# The doctor-harness agent-testing infra is a deleted rapid-mlx feature. KEEP
+# — would require porting the entire agents/testing harness + relocating
+# test_hermes.py to tests/integrations/ (a feature decision, not a debt fix).
 test_hermes_harness_contract.py
 test_hf_downloader.py
 test_image_url_must_be_object.py
