@@ -351,6 +351,29 @@ test_hf_downloader.py
 # call into BatchedEngine._load_model_sync right after mlx_lm.load() (same
 # thread, #KV-0 same-stream rule). 1364-test engine/load/pool regression clean.
 # test_index_cache.py
+# KEEP_QUARANTINED test_internal_route_auth.py (0 err / 15 fail after prod fix):
+# The test is built on rapid-mlx's REVERTED auth premises (#728/#756 revert):
+# (a) fixture wires cfg.engine (rapid-mlx single-engine arch) but fusion-mlx
+#     routes read _server_state["engine_pool"] (multi-engine pool arch) → 503;
+# (b) cache export/import/info tests expect anonymous-reachable routes (no
+#     admin gate, plain verify_api_key) but fusion-mlx cache_router keeps
+#     require_admin (intentional #349 hardening — TestClient is NOT loopback
+#     so require_admin 401s) → "Admin authentication required";
+# (c) auth-matrix expects x-api-key acceptance via the reverted gate.
+# REAL PROD GAPS THIS SURFACED — ALL FIXED IN PROD (commit below):
+#   - admin_router symbol lost in routes/→routes_internal/ rename (5fd79e0) →
+#     RESTORED in health.py with cancel + DELETE aliases + cache-clear.
+#   - cancel route was a LYING NO-OP (always 200/cancelled=True, never called
+#     abort_request) → REWRITTEN to iterate pool engines, 404 on unknown id
+#     (synchronous scheduler.requests existence check), 500 generic (no HF
+#     path leak), success envelope omits model_name (F-151 hardening).
+#   - DELETE /v1/requests/{id} + DELETE /v1/cache aliases → RESTORED.
+# Test file itself KEEP: rescuing requires reverting the #349 admin gate
+# (product decision) or rewriting the fixture against the pool arch (test
+# rewrite, exceeds debt-cleanup scope). The security leak-shape assertions
+# are valuable but their auth premises conflict with intentional hardening.
+# NOTE: when this file collects it leaks _server_state state polluting
+# test_hot_cache — staying quarantined also prevents that ordering issue.
 test_internal_route_auth.py
 test_langchain.py
 test_librechat_docker.py

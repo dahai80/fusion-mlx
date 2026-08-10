@@ -102,6 +102,7 @@ from .engine_core import AsyncEngineCore
 from .pool import EnginePool, ProcessMemoryEnforcer
 from .routes_internal.cache import router as cache_router
 from .routes_internal.gc import router as gc_router
+from .routes_internal.health import admin_router as health_admin_router
 from .routes_internal.health import probe_router as health_probe_router
 from .routes_internal.health import router as health_router
 from .routes_internal.metrics import router as metrics_router
@@ -741,6 +742,7 @@ class Server:
         app.include_router(responses_router)
         app.include_router(health_probe_router)
         app.include_router(health_router)
+        app.include_router(health_admin_router)
         app.include_router(metrics_router)
         app.include_router(cache_router)
         app.include_router(gc_router)
