@@ -515,7 +515,9 @@ class WanModel(nn.Module):
                     logger.debug(
                         "VACE hint longer than x: %d vs %d, dropping %d leading "
                         "reference-frame tokens",
-                        hint.shape[1], x.shape[1], drop,
+                        hint.shape[1],
+                        x.shape[1],
+                        drop,
                     )
                     hint = hint[:, drop:, :]
                 elif hint.shape[1] < x.shape[1]:

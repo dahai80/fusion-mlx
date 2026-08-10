@@ -489,7 +489,7 @@ def _validate_response_format(response_format) -> None:
     if rf_type == "json_schema":
         spec = rf_dict.get("json_schema")
         if not spec:
-            # type:"json_schema" with no inner field. The field defaults to
+            # type: "json_schema" with no inner field. The field defaults to
             # None (not {}), so build_json_system_prompt's chained .get would
             # raise AttributeError on None — the original raw-leak path.
             raise HTTPException(

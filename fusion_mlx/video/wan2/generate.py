@@ -553,7 +553,8 @@ def generate_video(
         t_latent = t_latent + num_ref_lat
         logger.info(
             "VACE: extending denoised latent by %d reference frames -> t_latent=%d",
-            num_ref_lat, t_latent,
+            num_ref_lat,
+            t_latent,
         )
     target_shape = (z_dim, t_latent, h_latent, w_latent)
     # t_latent_gen = latent frames actually generated (excluding reference prefix)
@@ -771,15 +772,13 @@ def generate_video(
                 "VACE: reference-only mode (no control_video) -> synthesizing "
                 "gray filler video + all-white mask so reference_images apply"
             )
-            video_frames = mx.zeros(
-                (3, gen_frames, height, width), dtype=mx.float32
-            )
-            mask_frames = mx.ones(
-                (gen_frames, height, width), dtype=mx.float32
-            )
+            video_frames = mx.zeros((3, gen_frames, height, width), dtype=mx.float32)
+            mask_frames = mx.ones((gen_frames, height, width), dtype=mx.float32)
             mx.eval(video_frames, mask_frames)
 
-            print(f"\n{Colors.BLUE}Encoding VACE reference-only control...{Colors.RESET}")
+            print(
+                f"\n{Colors.BLUE}Encoding VACE reference-only control...{Colors.RESET}"
+            )
             t_vace = time.time()
 
             vae_path = _resolve_model_file(model_dir, "vae.safetensors", "vae")
@@ -1227,7 +1226,9 @@ def generate_video(
         logger.info(
             "VACE: trimming %d leading reference latent frames before decode "
             "(latents T=%d -> %d)",
-            num_ref_lat, latents.shape[1], latents.shape[1] - num_ref_lat,
+            num_ref_lat,
+            latents.shape[1],
+            latents.shape[1] - num_ref_lat,
         )
         latents = latents[:, num_ref_lat:, :]
         mx.eval(latents)

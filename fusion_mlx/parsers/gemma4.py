@@ -292,7 +292,8 @@ def extract_gemma4_messages(
 
             multimodal_parts = _extract_multimodal_content_list(content)
             has_media = any(
-                p.get("type") in ("image_url", "input_audio", "video", "video_url", "audio_url")
+                p.get("type")
+                in ("image_url", "input_audio", "video", "video_url", "audio_url")
                 for p in multimodal_parts
             )
             if has_media:
@@ -315,9 +316,7 @@ def extract_gemma4_messages(
 
     if consolidate_system_messages:
         processed = _consolidate_system_messages(processed)
-    return _merge_consecutive_roles(
-        _drop_void_assistant_messages(processed)
-    )
+    return _merge_consecutive_roles(_drop_void_assistant_messages(processed))
 
 
 def _matching_prefix_len(text: str, marker: str) -> int:

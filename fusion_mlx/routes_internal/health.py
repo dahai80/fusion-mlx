@@ -139,9 +139,7 @@ async def cancel_request(request_id: str):
         if engine is None:
             continue
         scheduler = getattr(engine, "scheduler", None)
-        if scheduler is not None and request_id in getattr(
-            scheduler, "requests", {}
-        ):
+        if scheduler is not None and request_id in getattr(scheduler, "requests", {}):
             owning_engine = engine
             break
 

@@ -400,7 +400,9 @@ async def create_response(request: Request):
     _validate_model_name(openai_request.model)
     from ..server import resolve_model_with_profile
 
-    resolved_model, _profile_overrides = resolve_model_with_profile(openai_request.model)
+    resolved_model, _profile_overrides = resolve_model_with_profile(
+        openai_request.model
+    )
     adapter_path = getattr(openai_request, "adapters", None)
     logger.info(
         "responses lane resolve_model_with_profile: %s -> %s",
