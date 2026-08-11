@@ -689,8 +689,20 @@ def generate_video(
             msk = msk.reshape(1, msk.shape[1] // 4, 4, h_latent, w_latent)
             msk = msk.transpose(0, 2, 1, 3, 4)[0]  # [4, T_lat, H_lat, W_lat]
 
-            # y = concat([mask, encoded_video]) -> [20, T_lat, H_lat, W_lat]
-            y_i2v = mx.concatenate([msk, z_video], axis=0)
+            # Channel count mirrors upstream WAN21.concat_cond (model_base.py:1594):
+            #   extra_channels = in_dim - vae_z_dim.
+            # Wan2.2-14B (in_dim=36): extra=20 == z_dim(16)+4 -> y=[mask(4), video(16)]=20ch.
+            # Wan2.1-14B / Fun-Camera-1.3B (in_dim=32): extra=16 == z_dim -> y=video only (16ch),
+            #   the 4-ch mask path is NOT taken (extra != z_dim+4). Issue #456.
+            extra_channels = config.in_dim - config.vae_z_dim
+            if extra_channels == config.vae_z_dim + 4:
+                y_i2v = mx.concatenate([msk, z_video], axis=0)  # [20, T_lat, H_lat, W_lat]
+            else:
+                y_i2v = z_video  # [16, T_lat, H_lat, W_lat]
+                logger.info(
+                    "i2v channel-concat: in_dim=%d extra=%d -> video-only y (%d ch, no mask)",
+                    config.in_dim, extra_channels, y_i2v.shape[0],
+                )
             mx.eval(y_i2v)
 
             del vae_enc, img_arr, img_chw, video, z_video, msk
