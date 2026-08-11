@@ -176,11 +176,112 @@ class SystemContent(BaseModel):
 # =============================================================================
 
 
+_ALLOWED_ANTHROPIC_BLOCK_TYPES = frozenset(
+    {
+        "text",
+        "image",
+        "tool_use",
+        "tool_result",
+        "thinking",
+        "document",
+        "input_audio",
+    }
+)
+
+_ANTHROPIC_BLOCK_REQUIRED_FIELDS: dict[str, tuple[str, ...]] = {
+    "text": ("text",),
+    "image": ("source",),
+    "tool_use": ("id", "name", "input"),
+    "tool_result": ("tool_use_id", "content"),
+    "thinking": ("thinking",),
+    "document": ("source",),
+    "input_audio": ("source",),
+}
+
+# D-ANTHRO-VALIDATION F10: role-block compatibility matrix. user-role
+# messages carry tool results / images / documents; assistant-role
+# messages carry thinking / tool_use. Cross-role blocks have undefined
+# semantics and must 400 at the schema layer.
+_ROLE_DISALLOWED_BLOCKS: dict[str, frozenset[str]] = {
+    "user": frozenset({"thinking", "tool_use"}),
+    "assistant": frozenset({"tool_result", "image"}),
+}
+
+
 class AnthropicMessage(BaseModel):
     """A message in an Anthropic conversation."""
 
     role: Literal["user", "assistant", "system"]
     content: str | list[ContentBlock]
+
+    @model_validator(mode="before")
+    @classmethod
+    def _validate_block_shape_and_role(cls, data):
+        # D-ANTHRO-VALIDATION F4 + F10: validate content-block shape
+        # (recognized type + per-type required fields) and role
+        # recognition at the raw-input layer so the error surfaces a
+        # single actionable line rather than the union-arm error salad
+        # Pydantic emits when the discriminated union fails.
+        if not isinstance(data, dict):
+            return data
+        role = data.get("role")
+        if role is not None and role not in ("user", "assistant", "system"):
+            logger.debug("AnthropicMessage rejecting unrecognized role=%r", role)
+            raise ValueError(
+                f"{role!r} is not recognized as a role; allowed roles "
+                f"are: user, assistant, system"
+            )
+        content = data.get("content")
+        if not isinstance(content, list):
+            return data
+        for block in content:
+            if not isinstance(block, dict):
+                continue
+            btype = block.get("type")
+            if btype not in _ALLOWED_ANTHROPIC_BLOCK_TYPES:
+                logger.debug(
+                    "AnthropicMessage rejecting unrecognized block type=%r",
+                    btype,
+                )
+                raise ValueError(
+                    f"{btype!r} is not a recognized Anthropic content block "
+                    f"type; allowed types are: "
+                    f"{', '.join(sorted(_ALLOWED_ANTHROPIC_BLOCK_TYPES))}"
+                )
+            required = _ANTHROPIC_BLOCK_REQUIRED_FIELDS.get(btype, ())
+            missing = [f for f in required if f not in block or block[f] is None]
+            if missing:
+                logger.debug(
+                    "AnthropicMessage rejecting %s block missing=%s",
+                    btype,
+                    missing,
+                )
+                raise ValueError(
+                    f"{btype} block is missing required field(s): "
+                    f"{', '.join(missing)}"
+                )
+        return data
+
+    @model_validator(mode="after")
+    def _validate_role_block_compat(self):
+        # D-ANTHRO-VALIDATION F10: cross-role block-type violations
+        # (user-role thinking/tool_use, assistant-role tool_result/image)
+        # have undefined semantics. Reject at the schema layer.
+        disallowed = _ROLE_DISALLOWED_BLOCKS.get(self.role, frozenset())
+        if not disallowed or not isinstance(self.content, list):
+            return self
+        for block in self.content:
+            btype = getattr(block, "type", None)
+            if btype in disallowed:
+                logger.debug(
+                    "AnthropicMessage rejecting role=%s with block=%s",
+                    self.role,
+                    btype,
+                )
+                raise ValueError(
+                    f"role {self.role!r} is not allowed to use block type " f"{btype!r}"
+                )
+        return self
 
 
 # =============================================================================
@@ -253,7 +354,9 @@ class MessagesRequest(BaseModel):
     # so each adapter gets its own loaded model instance.
     adapters: str | None = None
     max_tokens: int = Field(ge=1, le=131072)
-    messages: list[AnthropicMessage]
+    # D-ANTHRO-VALIDATION F11: messages=[] must 400 (not 500). Pydantic
+    # ``min_length=1`` surfaces a clear "at least 1 item" message.
+    messages: list[AnthropicMessage] = Field(min_length=1)
     system: str | list[SystemContent] | None = None
     stop_sequences: list[str] | None = None
     stream: bool = False
@@ -262,8 +365,51 @@ class MessagesRequest(BaseModel):
     top_k: int | None = Field(None, ge=0)
     metadata: dict[str, Any] | None = None
     tools: list[AnthropicTool] | None = None
-    tool_choice: ToolChoice | dict[str, Any] | None = None
+    tool_choice: dict[str, Any] | ToolChoice | None = None
     thinking: ThinkingConfig | None = None
+
+    @field_validator("tool_choice", mode="before")
+    @classmethod
+    def _validate_tool_choice_type(cls, v):
+        # D-ANTHRO-VALIDATION F1 / M-03 (#742 follow-up): parse-time
+        # validation of ``tool_choice.type`` on /v1/messages. Before
+        # this, ``tool_choice={"type":"banana"}`` silently degraded to
+        # "auto" (the adapter's _convert_tool_choice fell through).
+        # The field is ``dict | ToolChoice | None`` with ``dict`` first
+        # so a spec-legal dict is preserved verbatim (the adapter and
+        # chat route read the raw dict; coercing to ``ToolChoice`` would
+        # drop extra keys like ``disable_parallel_tool_use``).
+        if v is None:
+            return v
+        # Non-dict (e.g. a bare string "auto" — the OpenAI shape) is
+        # rejected by the union arm; return as-is so the union surfaces
+        # a "tool_choice" field-named error rather than a misleading
+        # gate message.
+        if not isinstance(v, dict):
+            return v
+        ctype = v.get("type")
+        # Empty dict {} is spec-back-compat: the adapter defaults to
+        # "auto" (pinned by TestConvertToolChoice.test_missing_type).
+        if ctype is None:
+            return v
+        if ctype not in ("auto", "any", "tool", "none"):
+            logger.debug("MessagesRequest rejecting tool_choice.type=%r", ctype)
+            raise ValueError(
+                f"tool_choice.type {ctype!r} is not recognized; "
+                f"allowed types are: auto, any, tool, none"
+            )
+        if ctype == "tool":
+            name = v.get("name")
+            if not isinstance(name, str) or name.strip() == "":
+                logger.debug(
+                    "MessagesRequest rejecting tool_choice type=tool " "name=%r",
+                    name,
+                )
+                raise ValueError(
+                    "tool_choice.type 'tool' requires a non-empty string " "'name'"
+                )
+        return v
+
     # Chat template kwargs (e.g. enable_thinking, reasoning_effort)
     chat_template_kwargs: dict[str, Any] | None = None
     # OpenAI-compat surface: stream_options.include_usage gates the trailing
@@ -291,7 +437,7 @@ class TokenCountRequest(BaseModel):
     """Request for token counting (Anthropic format)."""
 
     model: str
-    messages: list[AnthropicMessage]
+    messages: list[AnthropicMessage] = Field(min_length=1)
     system: str | list[SystemContent] | None = None
     tools: list[AnthropicTool] | None = None
     tool_choice: ToolChoice | dict[str, Any] | None = None

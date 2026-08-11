@@ -1,7 +1,12 @@
+import logging
+import os
+
 import mlx.core as mx
 import mlx.nn as nn
 
 from .rope import rope_apply
+
+logger = logging.getLogger(__name__)
 
 try:
     from fusion_mlx.custom_kernels.xfuser_attention import (
@@ -15,6 +20,18 @@ except Exception:  # pragma: no cover - xfuser strategy optional
     _fa_active = None
 
 
+def _attn_chunk_size() -> int:
+    # Metal hangs/freeze on very large attention matrices (seq>=~50k,
+    # 40 heads, dim 5120). Chunking the Q sequence caps the per-op
+    # attention matrix at (B, H, chunk, seq) instead of (B, H, seq, seq).
+    # 0 = disabled (use single mx.fast SDPA). Env-only knob so existing
+    # callers are untouched.
+    try:
+        return max(0, int(os.getenv("FUSION_WAN2_ATTN_CHUNK", "0")))
+    except (TypeError, ValueError):
+        return 0
+
+
 def _sdpa(q, k, v, scale, mask=None, *, fast_attn=None, step=0, batch_size=None):
     if fast_attn is not None:
         return fast_attn(q, k, v, step, scale=scale, mask=mask, batch_size=batch_size)
@@ -25,6 +42,31 @@ def _sdpa(q, k, v, scale, mask=None, *, fast_attn=None, step=0, batch_size=None)
     if mask is not None:
         return mx.fast.scaled_dot_product_attention(q, k, v, scale=scale, mask=mask)
     return mx.fast.scaled_dot_product_attention(q, k, v, scale=scale)
+
+
+def _sdpa_chunked(q, k, v, scale, mask=None):
+    # Exact chunked SDPA: split Q along seq (dim 2), each chunk attends to
+    # the full K/V. softmax(Q_chunk @ K^T) @ V is identical to the unchunked
+    # result because each Q row is independent. Cuts peak attention memory
+    # from seq*seq to chunk*seq. Used when seq exceeds Metal freeze threshold.
+    b, h, s, d = q.shape
+    chunk = _attn_chunk_size()
+    if chunk <= 0 or s <= chunk:
+        return _sdpa(q, k, v, scale, mask)
+    logger.info(
+        "wan2 chunked sdpa: seq=%d heads=%d chunk=%d (FUSION_WAN2_ATTN_CHUNK)",
+        s,
+        h,
+        chunk,
+    )
+    outs = []
+    for start in range(0, s, chunk):
+        end = min(start + chunk, s)
+        q_chunk = q[:, :, start:end, :]
+        out_chunk = _sdpa(q_chunk, k, v, scale, mask)
+        outs.append(out_chunk)
+        mx.eval(out_chunk)
+    return mx.concatenate(outs, axis=2)
 
 
 def _linear_dtype(layer) -> mx.Dtype:
@@ -153,7 +195,18 @@ class WanSelfAttention(nn.Module):
                 batch_size=b,
             )
         else:
-            out = _sdpa(q, k, v, self.scale, mask)
+            # Fail-visible: large seq freezes Metal on a single seq*seq
+            # attention matrix. Warn once per freeze-sized call so the
+            # user knows to set FUSION_WAN2_ATTN_CHUNK.
+            chunk = _attn_chunk_size()
+            if chunk <= 0 and s > 16384:
+                logger.warning(
+                    "wan2 self-attn seq=%d exceeds safe threshold; "
+                    "set FUSION_WAN2_ATTN_CHUNK (e.g. 8192) to avoid "
+                    "Metal freeze",
+                    s,
+                )
+            out = _sdpa_chunked(q, k, v, self.scale, mask)
 
         out = out.transpose(0, 2, 1, 3).reshape(b, s, -1)
         return self.o(out)
@@ -242,7 +295,9 @@ class WanCrossAttention(nn.Module):
                 batch_size=b,
             )
         else:
-            out = _sdpa(q, k, v, self.scale, mask)
+            # Cross-attn Q seq is short (text tokens) so freeze risk is
+            # low; still route through chunked helper for consistency.
+            out = _sdpa_chunked(q, k, v, self.scale, mask)
 
         out = out.transpose(0, 2, 1, 3).reshape(b, -1, n * d)
         return self.o(out)

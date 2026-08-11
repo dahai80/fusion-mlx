@@ -3,7 +3,7 @@
 
 Confirms the YAML loads, the template substitutes correctly, and the
 config shape matches what Codex CLI's TOML parser actually expects —
-catches refactor-time breakage of `rapid-mlx agents codex --setup`.
+catches refactor-time breakage of `fusion-mlx agents codex --setup`.
 """
 
 import tomllib
@@ -21,14 +21,14 @@ def test_codex_profile_is_loadable():
 
 
 def test_codex_profile_is_listed():
-    """`rapid-mlx agents` (no args) lists profiles; codex must show up."""
+    """`fusion-mlx agents` (no args) lists profiles; codex must show up."""
     names = {p.name for p in list_profiles()}
     assert "codex" in names
 
 
 def test_codex_capabilities_match_supported_surface():
     profile = get_profile("codex")
-    # rapid-mlx >= 0.7.10 implements /v1/responses streaming + tool calls;
+    # fusion-mlx >= 0.7.10 implements /v1/responses streaming + tool calls;
     # the profile must advertise those so `--test` plans the right checks.
     assert profile.needs_function_calling is True
     assert profile.needs_streaming is True
@@ -53,23 +53,23 @@ def test_codex_template_renders_to_valid_toml():
     profile = get_profile("codex")
     rendered = profile.render_config(
         base_url="http://localhost:8000/v1",
-        model_id="qwen3.6-35b-4bit",
+        model_id="qwen3.6-27b-4bit",
     )
     assert isinstance(rendered, str)
     parsed = tomllib.loads(rendered)
     # Top-level keys Codex reads.
-    assert parsed["model"] == "qwen3.6-35b-4bit"
-    assert parsed["model_provider"] == "rapid-mlx"
+    assert parsed["model"] == "qwen3.6-27b-4bit"
+    assert parsed["model_provider"] == "fusion-mlx"
     # Provider block.
     providers = parsed["model_providers"]
-    assert "rapid-mlx" in providers
-    rmlx = providers["rapid-mlx"]
+    assert "fusion-mlx" in providers
+    rmlx = providers["fusion-mlx"]
     assert rmlx["base_url"] == "http://localhost:8000/v1"
     # name is a display-only field, must be a string.
     assert isinstance(rmlx["name"], str)
     # Codex CLI >= 0.135 rejects an inline `api_key = "..."` literal under
     # `--strict-config` (the field is unknown; credentials come from
-    # `env_key = "VAR_NAME"` indirection instead). rapid-mlx is unauthed
+    # `env_key = "VAR_NAME"` indirection instead). fusion-mlx is unauthed
     # by default so the template omits both — verify neither variant
     # sneaks back in via a future refactor.
     assert "api_key" not in rmlx, (

@@ -122,17 +122,16 @@ test_cli_chat.py
 test_cli_config_fidelity.py
 test_cli_embeddings_extra.py
 test_cli_models.py
-# KEEP_QUARANTINED: asserts the codex AgentProfile system (get_profile,
-# list_profiles, .recommended_models/.render_config/.needs_function_calling,
-# YAML profiles under agents/profiles/) ported from Rapid-MLX. fusion-mlx
-# stubbed the ENTIRE fusion_mlx.agents subsystem (get_profile->None,
-# list_profiles->[], adapter.py/testing.py 340B/409B stubs). The CLI still
-# advertises `fusion-mlx agents codex --setup` (cli_commands.py:1533, 2135)
-# but agents_command imports the stubs and would crash. This is a missing-
-# feature gap (~30K LOC: base/adapter/testing/__init__/codex_catalog + YAML),
-# not stale-ref debt; rescue requires porting the agent subsystem + real-model
-# validation. Tracked in issue #442 (agents-subsystem port).
-test_codex_profile.py
+# test_codex_profile.py RESCUED 2026-08-10 (6/6 pass): the agent-profile
+# subsystem was ported from Rapid-MLX in issue #442 — base.py (AgentProfile
+# dataclasses + render_config), __init__.py (YAML loader, ~/.fusion-mlx/agents),
+# adapter.py (setup_agent_config/get_setup_instructions, vllm_mlx->fusion_mlx,
+# rapid-mlx->fusion-mlx, RAPID_MLX_API_KEY->FUSION_MLX_API_KEY), codex_catalog.py,
+# testing.py (AgentTestRunner, register_tool_call_tag from fusion_mlx.api.utils),
+# + 10 profiles/*.yaml. codex.yaml recommended models remapped to existing
+# aliases (qwen3.6-35b-4bit->qwen3.6-27b-4bit, qwen3-coder-30b-4bit->-a3b-4bit).
+# Test asserts model_provider="fusion-mlx" + [model_providers.fusion-mlx].
+# test_codex_profile.py
 test_community_bench.py
 # test_config_and_middleware.py RESCUED 2026-08-09 (28 pass, was 23/5): the 5
 # failures were stale symbol refs after the middleware extraction, not prod
@@ -175,15 +174,25 @@ test_context_window.py
 # (cli_origins->cors_origins) and contract are both divergent.
 test_cors_env_configurable.py
 test_cors_lockdown_response_shape.py
-# KEEP_QUARANTINED: asserts the D-ANTHRO-VALIDATION contract (F1 envelope
-# rewrap + loc sanitizer, F4 block-shape, F10 role-block compat, F11 empty-
-# messages->400) ported from Rapid-MLX. fusion-mlx's typed-block union only
-# enforces the type discriminator, not completeness/role-compat (verified:
-# messages=[] accepted, should 400). Missing-feature gap — tracked in issue
-# #443. ALSO deep-drift: the _build_app fixture injects vllm_mlx.routes.*
-# (old package name); rescue needs both the feature port and a fixture
-# re-point to fusion_mlx.*.
-test_d_anthro_validation.py
+# test_d_anthro_validation.py RESCUED 2026-08-10 (#443): 31/31 pass.
+# Ported D-ANTHRO-VALIDATION F1/F4/F10/F11 to the Pydantic model layer
+# (anthropic_models.py + openai_models.py + responses_models.py):
+#   F1  — Anthropic error envelope rewrap already in exception_handlers;
+#          added tool_choice.type M-03 gate (reject unknown types) so
+#          HTTPException 4xx paths surface the wrapped envelope.
+#   F4  — AnthropicMessage._validate_block_shape_and_role (mode=before)
+#          rejects unrecognized block types + missing per-type required
+#          fields with a single actionable line.
+#   F10 — AnthropicMessage._validate_role_block_compat (mode=after)
+#          enforces the role-block matrix; unknown roles rejected in the
+#          before validator.
+#   F11 — messages: list[...]=Field(min_length=1) on MessagesRequest,
+#          ChatCompletionRequest, TokenCountRequest; ResponsesRequest
+#          gains _validate_input_not_empty (""/[] -> 400).
+# The _build_app fixture was already re-pointed to fusion_mlx.* (the
+# vllm_mlx.* refs were only leftover naming in the lightweight-engine
+# stub constant). No quarantining needed.
+# test_d_anthro_validation.py
 test_deepseek_v4_vendored.py
 test_dense_sampler_fastpath.py
 test_dflash_adapter_signature.py

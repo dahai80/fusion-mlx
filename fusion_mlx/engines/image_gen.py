@@ -179,14 +179,20 @@ def _infer_variant(model_path: str) -> str:
 
 def _infer_flux2_config(model_path: str) -> str:
     name = (model_path or "").lower()
-    if "base" in name and "4b" in name:
-        return "flux2_klein_base_4b"
-    if "base" in name and "9b" in name:
-        return "flux2_klein_base_9b"
-    if "4b" in name:
-        return "flux2_klein_4b"
+    # NOTE: check "9b"/"kv" before "4b" — quantized model ids like
+    # "flux2-klein-9b-4bit" contain the substring "4b" (from "4bit"),
+    # which would otherwise misclassify the 9b model as the 4b config
+    # (heads=24 vs 32) and break the transformer reshape (#449).
     if "kv" in name and "9b" in name:
         return "flux2_klein_9b_kv"
+    if "base" in name and "9b" in name:
+        return "flux2_klein_base_9b"
+    if "base" in name and "4b" in name:
+        return "flux2_klein_base_4b"
+    if "9b" in name:
+        return "flux2_klein_9b"
+    if "4b" in name:
+        return "flux2_klein_4b"
     return "flux2_klein_9b"
 
 

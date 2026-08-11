@@ -100,11 +100,25 @@ async def generate_image(request: ImageGenerateRequest) -> ImageGenerateResponse
             )
 
         # Find an image gen engine
+        from fusion_mlx.exceptions import ModelNotFoundError
+        from fusion_mlx.server import resolve_model_id
+
         model_name = request.model
         if not model_name:
             model_name = "flux-2"
+        model_name = resolve_model_id(model_name) or model_name
 
-        engine = await _pool.get_engine(model_name)
+        try:
+            engine = await _pool.get_engine(model_name)
+        except ModelNotFoundError as exc:
+            avail = (
+                ", ".join(exc.available_models) if exc.available_models else "(none)"
+            )
+            raise HTTPException(
+                404,
+                f"Image generation model '{model_name}' not found. Available: {avail}. "
+                "Load a Flux model first.",
+            ) from exc
         if engine is None or not isinstance(engine, ImageGenEngine):
             raise HTTPException(
                 404,

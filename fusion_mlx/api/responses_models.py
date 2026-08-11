@@ -154,6 +154,21 @@ class ResponsesRequest(BaseModel):
         # pinned by TestPositiveIntGenerationBudget (cross-route parity).
         return _validate_token_budget(v, info.field_name)
 
+    @model_validator(mode="after")
+    def _validate_input_not_empty(self):
+        # D-ANTHRO-VALIDATION F11 Responses parity: empty ``input``
+        # ("" or []) must 400 with a clear envelope, not silently run
+        # inference on nothing. ``input`` defaults to None (allowed —
+        # some flows rely on ``instructions`` + ``previous_response_id``);
+        # only reject the explicitly-empty string/list shapes.
+        if self.input is None:
+            return self
+        if isinstance(self.input, str) and self.input == "":
+            raise ValueError("input must not be empty")
+        if isinstance(self.input, list) and len(self.input) == 0:
+            raise ValueError("input must not be empty")
+        return self
+
 
 # =============================================================================
 # Response Models

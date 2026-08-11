@@ -762,6 +762,55 @@ def _resolve_streaming_tool_parser(engine: Any, model_name: str) -> Any:
         return None
 
 
+# Channel-based reasoning parsers route their reasoning trace via channel
+# tokens (not <think> tags). Their extract_reasoning_streaming correctly
+# separates reasoning from content; the tag-based ThinkingParser does NOT
+# (it passes channel markers through as content — issue #444). These are
+# the parsers that MUST use the named streaming method; qwen3/deepseek are
+# tag-based and already handled by ThinkingParser, so they stay on it.
+_CHANNEL_REASONING_PARSERS = frozenset({"harmony", "gpt_oss", "gemma4"})
+
+
+def _resolve_streaming_reasoning_parser(model_name: str) -> Any:
+    # #444 流式 reasoning_parser: 解析 model_settings.reasoning_parser。
+    # 仅对 channel-based 解析器 (harmony/gpt_oss/gemma4) 返回实例，其余
+    # 返回 None (继续走 ThinkingParser 标签路径)。复用 effective_parsers_for
+    # 分层解析 + detect_model_config 回退 (同 _apply_reasoning_parser 非流式)。
+    try:
+        parser_name = None
+        try:
+            from ..model_aliases import resolve_profile
+            from ..routes_internal.models import effective_parsers_for
+
+            profile = resolve_profile(model_name)
+            profile_reasoning = profile.reasoning_parser if profile else None
+            _, parser_name = effective_parsers_for(model_name, None, profile_reasoning)
+        except Exception:
+            parser_name = None
+        if not parser_name:
+            from ..model_auto_config import detect_model_config
+
+            auto = detect_model_config(model_name)
+            if auto is not None:
+                parser_name = auto.reasoning_parser
+        if not parser_name or parser_name not in _CHANNEL_REASONING_PARSERS:
+            return None
+        from ..reasoning import get_parser
+
+        parser_cls = get_parser(parser_name)
+        parser = parser_cls(tokenizer=None)
+        parser.reset_state()
+        logger.info(
+            "streaming reasoning parser resolved: parser=%s model=%s",
+            parser_name,
+            model_name,
+        )
+        return parser
+    except Exception as e:
+        logger.debug("streaming reasoning parser resolve failed: %s", e)
+        return None
+
+
 async def _stream_chat_generator(
     request: ChatCompletionRequest,
     engine: Any,
@@ -889,6 +938,13 @@ async def _stream_chat_generator(
         # reasoning_content vs content so OpenAI clients can tell thinking
         # from the real answer (issue #21). No-op for tag-free text.
         parser = ThinkingParser()
+        # #444 流式 channel-based reasoning parser: harmony/gpt_oss/gemma4
+        # 用 channel token 路由推理，ThinkingParser 会把 channel 标记当
+        # content 泄漏。检测到 channel 解析器时，delta 先过其
+        # extract_reasoning_streaming 拆 reasoning/content，再走 ThinkingParser
+        # 兜底标签。无 channel 解析器时 reasoning_parser=None，路径不变。
+        reasoning_parser = _resolve_streaming_reasoning_parser(model_name)
+        reasoning_prev_text = ""
 
         # #385 增量 tool_call_delta 流式: 仅当 request.tools 存在时启用工具解析器。
         # 无 tools 时 tool_parser=None，路径与改造前逐字节一致 (向后兼容)。
@@ -928,106 +984,161 @@ async def _stream_chat_generator(
                     keepalive.reset()
                 accumulated += gen.new_text
 
+                # #444 channel-based reasoning parser 先于 ThinkingParser 拆分:
+                # harmony/gpt_oss/gemma4 的 channel 标记若直接进 ThinkingParser
+                # 会被当 content 泄漏。reasoning_parser 存在时，先抽 reasoning，
+                # 剩余 content 再走标签兜底。无 reasoning_parser 时 passthrough。
+                reasoning_delta_pre = ""
+                content_for_downstream = gen.new_text
+                if reasoning_parser is not None:
+                    try:
+                        dmsg = reasoning_parser.extract_reasoning_streaming(
+                            reasoning_prev_text,
+                            reasoning_prev_text + gen.new_text,
+                            gen.new_text,
+                        )
+                    except Exception as e:
+                        logger.debug("streaming reasoning parse failed: %s", e)
+                        dmsg = None
+                    reasoning_prev_text += gen.new_text
+                    if dmsg is not None:
+                        reasoning_delta_pre = dmsg.reasoning or ""
+                        content_for_downstream = dmsg.content or ""
+                    else:
+                        content_for_downstream = ""
+                if reasoning_delta_pre:
+                    rchunk_pre = StreamChunk(
+                        text="",
+                        reasoning_content=reasoning_delta_pre,
+                        prompt_tokens=gen.prompt_tokens,
+                        completion_tokens=gen.completion_tokens,
+                        cached_tokens=gen.cached_tokens,
+                        logprobs=getattr(gen, "logprobs", None),
+                    )
+                    yield _adapter.format_stream_chunk(
+                        rchunk_pre, request, encoder=encoder
+                    )
+
                 # #385 增量 tool_call_delta: 当启用工具解析器时，由解析器决定
                 # 本段 delta 是普通 content、还是已闭合的 tool_call、或需抑制
                 # (工具标记未闭合)。解析器返回 {"tool_calls": [...]} 时按 index
                 # 去重，仅发射新增调用；返回 None 抑制整段 (处于标记内部)；
                 # 否则取 result["content"] 经 ThinkingParser 拆分后发射。
                 if tool_parser is not None:
-                    prev_tool_text = tool_text_accumulated
-                    tool_text_accumulated += gen.new_text
-                    try:
-                        tresult = tool_parser.extract_tool_calls_streaming(
-                            prev_tool_text,
-                            tool_text_accumulated,
-                            gen.new_text,
-                        )
-                    except Exception as e:
-                        logger.debug("streaming tool parse failed: %s", e)
-                        tresult = {"content": gen.new_text}
-
-                    if tresult is None:
-                        # 工具标记未闭合，抑制 content，仅更新计数
+                    if not content_for_downstream:
+                        # channel reasoning parser 抑制了本段 content (纯推理)
                         prompt_tokens = gen.prompt_tokens or prompt_tokens
                         completion_tokens = gen.completion_tokens or completion_tokens
                         cached_tokens = gen.cached_tokens or cached_tokens
                     else:
-                        new_calls = tresult.get("tool_calls")
-                        if new_calls:
-                            for tc in new_calls:
-                                idx = tc.get("index", tool_calls_streamed)
-                                if idx < tool_calls_streamed:
-                                    continue  # 已发射，跳过去重
-                                tool_calls_streamed = idx + 1
-                                tool_calls_in_stream = True
-                                tc_chunk = StreamChunk(
-                                    tool_call_delta=[tc],
-                                    prompt_tokens=gen.prompt_tokens,
-                                    completion_tokens=gen.completion_tokens,
-                                    cached_tokens=gen.cached_tokens,
-                                    logprobs=getattr(gen, "logprobs", None),
+                        prev_tool_text = tool_text_accumulated
+                        tool_text_accumulated += content_for_downstream
+                        try:
+                            tresult = tool_parser.extract_tool_calls_streaming(
+                                prev_tool_text,
+                                tool_text_accumulated,
+                                content_for_downstream,
+                            )
+                        except Exception as e:
+                            logger.debug("streaming tool parse failed: %s", e)
+                            tresult = {"content": content_for_downstream}
+
+                        if tresult is None:
+                            # 工具标记未闭合，抑制 content，仅更新计数
+                            prompt_tokens = gen.prompt_tokens or prompt_tokens
+                            completion_tokens = (
+                                gen.completion_tokens or completion_tokens
+                            )
+                            cached_tokens = gen.cached_tokens or cached_tokens
+                        else:
+                            new_calls = tresult.get("tool_calls")
+                            if new_calls:
+                                for tc in new_calls:
+                                    idx = tc.get("index", tool_calls_streamed)
+                                    if idx < tool_calls_streamed:
+                                        continue  # 已发射，跳过去重
+                                    tool_calls_streamed = idx + 1
+                                    tool_calls_in_stream = True
+                                    tc_chunk = StreamChunk(
+                                        tool_call_delta=[tc],
+                                        prompt_tokens=gen.prompt_tokens,
+                                        completion_tokens=gen.completion_tokens,
+                                        cached_tokens=gen.cached_tokens,
+                                        logprobs=getattr(gen, "logprobs", None),
+                                    )
+                                    yield _adapter.format_stream_chunk(
+                                        tc_chunk, request, encoder=encoder
+                                    )
+                            # 解析器过滤后的 content (已剥离工具标记)，经 ThinkingParser
+                            content_piece = tresult.get("content", "")
+                            if content_piece:
+                                thinking_delta, content_delta = parser.feed(
+                                    content_piece
                                 )
-                                yield _adapter.format_stream_chunk(
-                                    tc_chunk, request, encoder=encoder
-                                )
-                        # 解析器过滤后的 content (已剥离工具标记)，经 ThinkingParser
-                        content_piece = tresult.get("content", "")
-                        if content_piece:
-                            thinking_delta, content_delta = parser.feed(content_piece)
-                            if content_delta:
-                                chunk = StreamChunk(
-                                    text=content_delta,
-                                    prompt_tokens=gen.prompt_tokens,
-                                    completion_tokens=gen.completion_tokens,
-                                    cached_tokens=gen.cached_tokens,
-                                    logprobs=getattr(gen, "logprobs", None),
-                                )
-                                yield _adapter.format_stream_chunk(
-                                    chunk, request, encoder=encoder
-                                )
-                            if thinking_delta:
-                                rchunk = StreamChunk(
-                                    text="",
-                                    reasoning_content=thinking_delta,
-                                    prompt_tokens=gen.prompt_tokens,
-                                    completion_tokens=gen.completion_tokens,
-                                    cached_tokens=gen.cached_tokens,
-                                    logprobs=getattr(gen, "logprobs", None),
-                                )
-                                yield _adapter.format_stream_chunk(
-                                    rchunk, request, encoder=encoder
-                                )
+                                if content_delta:
+                                    chunk = StreamChunk(
+                                        text=content_delta,
+                                        prompt_tokens=gen.prompt_tokens,
+                                        completion_tokens=gen.completion_tokens,
+                                        cached_tokens=gen.cached_tokens,
+                                        logprobs=getattr(gen, "logprobs", None),
+                                    )
+                                    yield _adapter.format_stream_chunk(
+                                        chunk, request, encoder=encoder
+                                    )
+                                if thinking_delta:
+                                    rchunk = StreamChunk(
+                                        text="",
+                                        reasoning_content=thinking_delta,
+                                        prompt_tokens=gen.prompt_tokens,
+                                        completion_tokens=gen.completion_tokens,
+                                        cached_tokens=gen.cached_tokens,
+                                        logprobs=getattr(gen, "logprobs", None),
+                                    )
+                                    yield _adapter.format_stream_chunk(
+                                        rchunk, request, encoder=encoder
+                                    )
+                            prompt_tokens = gen.prompt_tokens or prompt_tokens
+                            completion_tokens = (
+                                gen.completion_tokens or completion_tokens
+                            )
+                            cached_tokens = gen.cached_tokens or cached_tokens
+                else:
+                    if not content_for_downstream:
+                        # channel reasoning parser 抑制了本段 (纯推理 delta)
                         prompt_tokens = gen.prompt_tokens or prompt_tokens
                         completion_tokens = gen.completion_tokens or completion_tokens
                         cached_tokens = gen.cached_tokens or cached_tokens
-                else:
-                    thinking_delta, content_delta = parser.feed(gen.new_text)
-                    if content_delta:
-                        chunk = StreamChunk(
-                            text=content_delta,
-                            prompt_tokens=gen.prompt_tokens,
-                            completion_tokens=gen.completion_tokens,
-                            cached_tokens=gen.cached_tokens,
-                            logprobs=getattr(gen, "logprobs", None),
+                    else:
+                        thinking_delta, content_delta = parser.feed(
+                            content_for_downstream
                         )
-                        yield _adapter.format_stream_chunk(
-                            chunk, request, encoder=encoder
-                        )
-                    if thinking_delta:
-                        rchunk = StreamChunk(
-                            text="",
-                            reasoning_content=thinking_delta,
-                            prompt_tokens=gen.prompt_tokens,
-                            completion_tokens=gen.completion_tokens,
-                            cached_tokens=gen.cached_tokens,
-                            logprobs=getattr(gen, "logprobs", None),
-                        )
-                        yield _adapter.format_stream_chunk(
-                            rchunk, request, encoder=encoder
-                        )
-                    prompt_tokens = gen.prompt_tokens or prompt_tokens
-                    completion_tokens = gen.completion_tokens or completion_tokens
-                    cached_tokens = gen.cached_tokens or cached_tokens
+                        if content_delta:
+                            chunk = StreamChunk(
+                                text=content_delta,
+                                prompt_tokens=gen.prompt_tokens,
+                                completion_tokens=gen.completion_tokens,
+                                cached_tokens=gen.cached_tokens,
+                                logprobs=getattr(gen, "logprobs", None),
+                            )
+                            yield _adapter.format_stream_chunk(
+                                chunk, request, encoder=encoder
+                            )
+                        if thinking_delta:
+                            rchunk = StreamChunk(
+                                text="",
+                                reasoning_content=thinking_delta,
+                                prompt_tokens=gen.prompt_tokens,
+                                completion_tokens=gen.completion_tokens,
+                                cached_tokens=gen.cached_tokens,
+                                logprobs=getattr(gen, "logprobs", None),
+                            )
+                            yield _adapter.format_stream_chunk(
+                                rchunk, request, encoder=encoder
+                            )
+                        prompt_tokens = gen.prompt_tokens or prompt_tokens
+                        completion_tokens = gen.completion_tokens or completion_tokens
+                        cached_tokens = gen.cached_tokens or cached_tokens
             else:
                 # No new text — maybe emit SSE keepalive ping
                 if keepalive:
