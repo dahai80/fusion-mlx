@@ -267,10 +267,15 @@ class WanModel(nn.Module):
                     )
                 elif suffix == "bias" and v.ndim > 1:
                     v = v.reshape(-1)
-            # Remap control_adapter conv keys: Conv2d weight/bias pass through
-            # SimpleCameraAdapter uses nn.Conv2d with same key format
+            # Remap control_adapter conv keys. The key names already match MLX
+            # nn.Conv2d, but PyTorch stores Conv2d weights as (out, in, kh, kw)
+            # while MLX nn.Conv2d expects (out, kh, kw, in). Transpose 4D
+            # weights so the SimpleCameraAdapter convolutions compute correctly
+            # (issue #451: without this, camera pose conditioning is garbage).
             elif k.startswith("control_adapter."):
-                nk = k  # keys already match MLX nn.Conv2d layout
+                nk = k
+                if v.ndim == 4:
+                    v = v.transpose(0, 2, 3, 1)
             # Remap patch_embedding (Conv3d) -> patch_embedding_proj (Linear)
             elif k.startswith("patch_embedding."):
                 suffix = k[len("patch_embedding.") :]
