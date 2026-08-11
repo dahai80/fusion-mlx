@@ -1,5 +1,42 @@
 # Changelog
 
+## [0.8.13] - 2026-08-10
+
+Patch release — Flux.2-klein 9B config misclassification fix, image
+route alias-resolution 404 fix, flux-2/kokoro aliases, SD3 fp16
+quant-reload guard, and TTS audio/speech traceback logging.
+
+- Flux.2-klein 9B config misclassification (#449, closes #449): the
+  `_infer_flux2_config` matcher tested the substring "4b" before "9b",
+  so quantized model ids like `flux2-klein-9b-4bit` matched "4b" (from
+  "4bit") and picked the 4b config (24 heads). The 4b config's
+  inner_dim=3072 mismatches the 9b weights' inner_dim=4096, breaking
+  the transformer reshape with
+  `Cannot reshape array of size 4194304 into shape (1,1024,24,128)`.
+  Fix: reorder checks so "9b"/"kv"/"base" are tested before "4b".
+  Regression test added. Real-model verified (valid 1024x1024 PNG).
+- Image route alias-resolution 404 (#446, closes #446): image
+  generation requests with a short alias hit a 404 because the image
+  route resolved the model id against the wrong registry. Wired alias
+  resolution through the shared `resolve_model_id` path so aliases
+  like `flux-2` and `kokoro` resolve before the route lookup.
+- flux-2 / kokoro aliases (#447, closes #447): added `flux-2` ->
+  `flux2-klein-9b-4bit` and `kokoro` -> `Qwen3-TTS-12Hz-1.7B-Base-8bit`
+  to `model-config.json` aliases.
+- SD3 fp16 quant-reload guard (#435, closes #435):
+  `SD3Pipeline._load_transformer_and_vae` ran `nn.quantize` then
+  unconditionally reloaded `load_transformer`, which overwrote uint32
+  quantized weights with fp16 checkpoint tensors and broke
+  `quantized_matmul` on SD3-Medium. Fix: only reload when the
+  checkpoint has quant metadata (.scales/.biases/.qweight); fp16
+  checkpoints skip the reload.
+- TTS audio/speech traceback logging (#450, closes #450): the
+  `/v1/audio/speech` endpoint swallowed engine-load, streaming, and
+  synthesize exceptions into a bare 500 with no traceback, making
+  failures undiagnosable. Added `logger.exception` to all three
+  swallowed except blocks. (The 500 itself no longer reproduces after
+  the alias work; the logging is for future diagnosability.)
+
 ## [0.8.12] - 2026-08-08
 
 Patch release — GGUF load guard, Wan2 staged VAE decode cross-thread
