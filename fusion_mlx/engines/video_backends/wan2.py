@@ -165,6 +165,10 @@ class Wan2Backend(VideoBackend):
                 else:
                     config = _infer_config_from_path(model_dir)
 
+                from fusion_mlx.video.wan2.utils import correct_in_dim
+
+                config = correct_in_dim(config, md)
+
                 t5_path = md / "t5_encoder.safetensors"
                 if t5_path.exists():
                     self._t5_encoder = load_t5_encoder(t5_path, config)
@@ -713,7 +717,7 @@ def _generate_one(
         tiling,
         precomputed_context is not None,
         bool(control_video),
-        bool(camera_conditions),
+        camera_conditions is not None,
     )
 
     if raw_output:

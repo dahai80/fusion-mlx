@@ -335,11 +335,28 @@ class WanModel(nn.Module):
         if y is not None:
             x_list = [mx.concatenate([u, v], axis=0) for u, v in zip(x_list, y)]
 
-        # Camera adapter: add camera control features to latent x
+        # Camera adapter features are computed here but injected AFTER
+        # _patchify (token space), matching upstream comfy/ldm/wan/model.py
+        # where x = patch_embedding(x) + control_adapter(camera_conditions).
+        # The adapter output is [B, dim, F, H/16, W/16] (token-space), so it
+        # cannot be added to the raw latent [C, F, H/8, W/8] here. Deferred
+        # to the post-patchify block below. Issue #453.
+        camera_feat_tokens = None
         if self.control_adapter is not None and y_camera is not None:
-            camera_feat = self.control_adapter(y_camera)
-            x_list = [u + v for u, v in zip(x_list, camera_feat)]
-            logger.debug("Camera adapter features injected into x_list")
+            cam_in = y_camera[0] if isinstance(y_camera, list) else y_camera
+            # cam_in: [B_cam, C_cam, F, H, W] -> adapter -> [B_cam, dim, F, H/16, W/16]
+            camera_feat = self.control_adapter(cam_in)
+            # Convert to token order [F, H/16, W/16, dim] -> [B_cam, L, dim],
+            # matching _patchify's [F', H', W'] flatten order.
+            bf, _, cf, hf, wf = camera_feat.shape
+            camera_feat_tokens = camera_feat.transpose(0, 2, 3, 4, 1).reshape(
+                bf, cf * hf * wf, self.dim
+            )
+            logger.debug(
+                "Camera adapter tokens: %s (cam_in=%s)",
+                camera_feat_tokens.shape,
+                cam_in.shape,
+            )
 
         if all_same:
             # Patchify once and broadcast — saves a Linear projection per step
@@ -381,6 +398,26 @@ class WanModel(nn.Module):
                 ],
                 axis=0,
             )  # [B, seq_len, dim]
+
+        # Camera adapter: inject token-space features AFTER patchify.
+        # camera_feat_tokens: [B_cam, L, dim]; x: [B, seq_len, dim] with
+        # seq_len >= L (padding tokens appended by _patchify block above).
+        # Broadcast across the CFG batch (cond + uncond share the same pose)
+        # and add to the first L real tokens. Issue #453.
+        if camera_feat_tokens is not None:
+            b_cam, l_cam, _ = camera_feat_tokens.shape
+            if l_cam <= x.shape[1]:
+                cam_tok = camera_feat_tokens.astype(x.dtype)
+                if b_cam == 1 and x.shape[0] > 1:
+                    cam_tok = mx.broadcast_to(cam_tok, (x.shape[0], l_cam, self.dim))
+                x = mx.concatenate([x[:, :l_cam, :] + cam_tok, x[:, l_cam:, :]], axis=1)
+                logger.debug("Camera tokens injected: x=%s", x.shape)
+            else:
+                logger.warning(
+                    "Camera token count %d exceeds seq_len %d; skipping injection",
+                    l_cam,
+                    x.shape[1],
+                )
 
         # Time embedding: sinusoidal from precomputed inv_freq.
         # inv_freq was computed in float64 for precision, stored as float32.
