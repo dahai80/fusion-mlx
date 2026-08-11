@@ -110,6 +110,9 @@ def load_wan_config(model_dir: str | Path):
                 "vae_stride": (4, 16, 16),
             }
         )
+    from .utils import correct_in_dim
+
+    config = correct_in_dim(config, model_dir)
     return config, quantization
 
 

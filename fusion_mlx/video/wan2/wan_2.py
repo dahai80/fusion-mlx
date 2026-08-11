@@ -353,7 +353,9 @@ class WanModel(nn.Module):
                 bf, cf * hf * wf, self.dim
             )
             logger.debug(
-                "Camera adapter tokens: %s (cam_in=%s)", camera_feat_tokens.shape, cam_in.shape
+                "Camera adapter tokens: %s (cam_in=%s)",
+                camera_feat_tokens.shape,
+                cam_in.shape,
             )
 
         if all_same:
@@ -408,9 +410,7 @@ class WanModel(nn.Module):
                 cam_tok = camera_feat_tokens.astype(x.dtype)
                 if b_cam == 1 and x.shape[0] > 1:
                     cam_tok = mx.broadcast_to(cam_tok, (x.shape[0], l_cam, self.dim))
-                x = mx.concatenate(
-                    [x[:, :l_cam, :] + cam_tok, x[:, l_cam:, :]], axis=1
-                )
+                x = mx.concatenate([x[:, :l_cam, :] + cam_tok, x[:, l_cam:, :]], axis=1)
                 logger.debug("Camera tokens injected: x=%s", x.shape)
             else:
                 logger.warning(

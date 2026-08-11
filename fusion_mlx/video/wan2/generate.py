@@ -434,6 +434,15 @@ def generate_video(
             }
         )
 
+    # Re-derive in_dim from the DiT patch_embedding weight when config.json
+    # is stale (e.g. Wan2.1-14B dir holds an i2v checkpoint with in_dim=36
+    # but config.json says 32). A wrong in_dim makes the channel-concat y
+    # tensor hold the wrong channel count -> addmm shape error at the first
+    # DiT block. Issue #456.
+    from .utils import correct_in_dim
+
+    config = correct_in_dim(config, model_dir)
+
     # Apply defaults from config if not overridden
     if steps is None:
         steps = config.sample_steps
@@ -696,12 +705,16 @@ def generate_video(
             #   the 4-ch mask path is NOT taken (extra != z_dim+4). Issue #456.
             extra_channels = config.in_dim - config.vae_z_dim
             if extra_channels == config.vae_z_dim + 4:
-                y_i2v = mx.concatenate([msk, z_video], axis=0)  # [20, T_lat, H_lat, W_lat]
+                y_i2v = mx.concatenate(
+                    [msk, z_video], axis=0
+                )  # [20, T_lat, H_lat, W_lat]
             else:
                 y_i2v = z_video  # [16, T_lat, H_lat, W_lat]
                 logger.info(
                     "i2v channel-concat: in_dim=%d extra=%d -> video-only y (%d ch, no mask)",
-                    config.in_dim, extra_channels, y_i2v.shape[0],
+                    config.in_dim,
+                    extra_channels,
+                    y_i2v.shape[0],
                 )
             mx.eval(y_i2v)
 

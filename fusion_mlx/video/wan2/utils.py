@@ -37,6 +37,63 @@ def _load_safetensors(path: Path) -> dict[str, mx.array]:
     return mx.load(str(path))
 
 
+def _probe_in_dim_from_weights(model_dir: Path) -> int | None:
+    # Read patch_embedding weight from the DiT safetensors and derive in_dim.
+    # patch_embedding (Conv3d) weight is (out, in, kt, kh, kw); after sanitize
+    # it becomes patch_embedding_proj.weight (out, in*kt*kh*kw). We probe the
+    # raw file so this works regardless of sanitize. Returns None if no weight
+    # file is found. pt, ph, pw are fixed at (1,2,2) for all Wan models, so
+    # in_dim = second_dim // 4 for the Linear form, or shape[1] for Conv3d.
+    candidates = []
+    dit = model_dir / "dit"
+    if dit.is_dir():
+        candidates.extend(sorted(dit.glob("*.safetensors")))
+    for name in ("model.safetensors", "high_noise_model.safetensors"):
+        p = model_dir / name
+        if p.exists():
+            candidates.append(p)
+    if not candidates:
+        return None
+    probe = _load_safetensors(candidates[0])
+    in_dim = None
+    for k, v in probe.items():
+        if k.endswith("patch_embedding.weight") and v.ndim == 5:
+            in_dim = int(v.shape[1])
+            break
+        if k.endswith("patch_embedding_proj.weight") and v.ndim == 2:
+            in_dim = int(v.shape[1]) // 4
+            break
+    del probe
+    return in_dim
+
+
+def correct_in_dim(config, model_dir: Path):
+    # config.json in_dim is sometimes stale (e.g. Wan2.1-14B dir holds an
+    # i2v checkpoint with in_dim=36 but config.json says 32). The patch
+    # embedding weight is authoritative: patch_embedding.weight.shape[1] is
+    # the true in_dim. A mismatch makes the channel-concat build a y tensor
+    # with the wrong channel count -> addmm shape error at the first DiT
+    # block (input 128 vs weight 144). Re-derive in_dim from weights and
+    # override the config when they disagree. Issue #456.
+    true_in_dim = _probe_in_dim_from_weights(Path(model_dir))
+    if true_in_dim is None or true_in_dim == config.in_dim:
+        return config
+    logger.warning(
+        "correct_in_dim: config.in_dim=%d disagrees with patch_embedding "
+        "weight in_dim=%d (model_dir=%s); overriding config from weights",
+        config.in_dim,
+        true_in_dim,
+        model_dir,
+    )
+    fields = {
+        f.name: getattr(config, f.name) for f in config.__dataclass_fields__.values()
+    }
+    fields["in_dim"] = true_in_dim
+    from .config import WanModelConfig
+
+    return WanModelConfig(**fields)
+
+
 def _is_fp8_weights(weights: dict[str, mx.array]) -> bool:
     for k, v in weights.items():
         if k.endswith(".weight") and v.dtype == mx.uint8:
