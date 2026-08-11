@@ -1,5 +1,41 @@
 # Changelog
 
+## [0.8.14] - 2026-08-11
+
+Patch release — Wan2.1-Fun-Camera control_adapter fixes: Conv2d weight
+layout, post-patchify token-space injection, camera_conditions log
+crash, and i2v channel-concat in_dim gating with stale-config probing.
+
+- Wan2.1-Fun-Camera Conv2d weight layout (#451, closes #451, PR #452):
+  `WanModel.sanitize()` passed `control_adapter.conv.weight` through
+  without transposing from PyTorch `(out, in, kh, kw)` to MLX
+  `(out, kh, kw, in)`. Camera pose conditioning produced garbage
+  features. Fix: transpose 4D `control_adapter.*` weights `(0, 2, 3, 1)`.
+- Camera adapter post-patchify injection (#453, closes #453, PR #454):
+  `WanModel.__call__` injected `control_adapter(y_camera)` into the raw
+  latent `x_list` BEFORE `_patchify` (latent space `[C,F,H/8,W/8]`), but
+  the adapter output is post-patchify token space `[B,dim,F,H/16,W/16]`
+  — a shape-incompatible add. Fix: defer injection to after `_patchify`
+  in token space `[B,L,dim]` (transpose + reshape), matching upstream
+  ComfyUI `x = patch_embedding(x) + control_adapter(camera_conditions)`.
+- camera_conditions log crash (#455, closes #455, PR #454): the generate
+  log line used `bool(camera_conditions)`, which raises
+  `ValueError: Only length-1 arrays can be converted to Python scalars`
+  once camera_conditions is an `mx.array`. Fix: `camera_conditions is not None`.
+- i2v channel-concat in_dim gating (#456, closes #456, PR #454): the i2v
+  channel-concat path always built `y_i2v = [mask(4), z_video(16)] = 20ch`,
+  correct only for in_dim=36 (Wan2.2-14B). For in_dim=32 (Wan2.1-14B,
+  Fun-Camera-1.3B) the patch_embedding Conv3d expects 32 channels but
+  received 36 → `addmm` shape error (input 128 vs weight 144). Fix: gate
+  mask concatenation on `extra_channels == vae_z_dim + 4` (20ch for
+  Wan2.2-14B; 16ch video-only for in_dim=32).
+- Stale config.json in_dim probing (#456, PR #454): Wan2.1-14B dirs can
+  hold an i2v checkpoint with in_dim=36 (from patch_embedding.weight) but
+  config.json says 32. `correct_in_dim()` probes the DiT safetensors for
+  `patch_embedding.weight` and overrides config.in_dim when it disagrees
+  with the weights, mirroring upstream ComfyUI. Wired into all three
+  config-load sites (generate.py, wan2 backend, stage.py).
+
 ## [0.8.13] - 2026-08-10
 
 Patch release — Flux.2-klein 9B config misclassification fix, image
