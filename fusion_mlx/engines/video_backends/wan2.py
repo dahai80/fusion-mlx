@@ -713,7 +713,7 @@ def _generate_one(
         tiling,
         precomputed_context is not None,
         bool(control_video),
-        bool(camera_conditions),
+        camera_conditions is not None,
     )
 
     if raw_output:
