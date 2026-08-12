@@ -123,3 +123,37 @@ def test_decode_default_follows_env(monkeypatch):
     out = vae.decode(z)
     mx.eval(out)
     assert out.shape[0] == 1 and out.shape[1] == 3
+
+
+# --- Cosmos flow scheduler sigma-shift regression (#460) ---
+# sigma_max must stay in [0,1] (normalized flow space). The Cosmos
+# time-shift s' = shift*s/(1+(shift-1)*s) saturates for s>>1; a raw
+# sigma_max=80 collapses every timestep to ~1.49 so the sample never
+# denoises (all-black output). These guard against that regression.
+
+def test_flow_scheduler_sigma_max_is_normalized():
+    from fusion_mlx.video.cosmos.scheduler import CosmosFlowScheduler
+
+    sch = CosmosFlowScheduler()
+    assert sch.sigma_max <= 1.0, "sigma_max must be in normalized [0,1] flow space"
+
+
+def test_flow_scheduler_timesteps_are_monotonic_and_spread():
+    from fusion_mlx.video.cosmos.scheduler import CosmosFlowScheduler
+
+    sch = CosmosFlowScheduler()
+    sch.set_timesteps(6)
+    ts = [float(t) for t in sch.timesteps.tolist()]
+    assert all(ts[i] > ts[i + 1] for i in range(len(ts) - 1)), ts
+    assert ts[0] - ts[-1] > 0.5, f"timesteps collapsed: {ts}"
+    assert ts[0] < 1.01, f"first timestep too high: {ts[0]}"
+
+
+def test_flow_scheduler_old_sigma_max_collapsed():
+    from fusion_mlx.video.cosmos.scheduler import CosmosFlowScheduler
+
+    sch = CosmosFlowScheduler(sigma_max=80.0)
+    sch.set_timesteps(6)
+    ts = [float(t) for t in sch.timesteps.tolist()]
+    assert ts[0] - ts[-1] < 0.1, f"expected collapse, got spread: {ts}"
+
