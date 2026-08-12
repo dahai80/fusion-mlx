@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Regression tests for Cosmos VAE decode checkpointing (#441 Metal freeze)."""
+"""Regression tests for Cosmos VAE (#441 Metal checkpoint, #461 factored-conv)."""
 
 import pytest
 
@@ -35,60 +35,25 @@ def test_checkpoint_enabled_explicit(monkeypatch):
     assert _vae_checkpoint_enabled() is True
 
 
+# Tiny config so a decode forward is fast enough for a unit test.
+# patch_size=2, one hybrid up-block: latent (1,4,2,4,4) -> (1,3,3,8,8).
+_TINY_CONFIG = {
+    "in_channels": 3,
+    "latent_channels": 4,
+    "decode_block_out_channels": [8, 8],
+    "encoder_block_out_channels": [8, 8],
+    "num_layers": 1,
+    "patch_size": 2,
+    "patch_type": "haar",
+    "resolution": 16,
+    "spatial_compression_ratio": 4,
+    "temporal_compression_ratio": 4,
+    "attention_resolutions": [],
+}
+
+
 def _tiny_vae():
-    # CosmosVideoVAE hardcodes base_ch=128; patch to a tiny channel
-    # count so a decode forward is fast enough for a unit test.
-    import mlx.nn as nn
-
-    from fusion_mlx.video.cosmos.vae import (
-        CosmosVAEConv3d,
-        CosmosVAEDownBlock,
-        CosmosVAEResBlock,
-        CosmosVAEUpBlock,
-    )
-
-    orig_init = CosmosVideoVAE.__init__
-    orig_up = CosmosVideoVAE.UP_BLOCKS
-
-    def tiny_init(self, latent_channels=4, in_channels=3):
-        nn.Module.__init__(self)
-        self.latent_channels = latent_channels
-        self.in_channels = in_channels
-        ch_mult = [1, 2]
-        base_ch = 32  # must be divisible by GroupNorm num_groups (32)
-        self.enc_conv_in = CosmosVAEConv3d(in_channels, base_ch, 3, 1, 1)
-        prev_ch = base_ch
-        enc_blocks = []
-        for i, mult in enumerate(ch_mult):
-            cur_ch = base_ch * mult
-            down = i < len(ch_mult) - 1
-            enc_blocks.append(CosmosVAEDownBlock(prev_ch, cur_ch, downsample=down))
-            prev_ch = cur_ch
-        self.enc_blocks = enc_blocks
-        self.enc_mid1 = CosmosVAEResBlock(prev_ch)
-        self.enc_mid2 = CosmosVAEResBlock(prev_ch)
-        self.enc_conv_out = CosmosVAEConv3d(prev_ch, latent_channels * 2, 3, 1, 1)
-        self.dec_conv_in = CosmosVAEConv3d(latent_channels, prev_ch, 3, 1, 1)
-        self.dec_mid1 = CosmosVAEResBlock(prev_ch)
-        self.dec_mid2 = CosmosVAEResBlock(prev_ch)
-        dec_blocks = []
-        for i, mult in reversed(list(enumerate(ch_mult))):
-            cur_ch = base_ch * mult
-            up = i > 0
-            dec_blocks.append(CosmosVAEUpBlock(prev_ch, cur_ch, upsample=up))
-            prev_ch = cur_ch
-        self.dec_blocks = dec_blocks
-        self.dec_conv_out = CosmosVAEConv3d(prev_ch, in_channels, 3, 1, 1)
-
-    CosmosVideoVAE.__init__ = tiny_init
-    # UP_BLOCKS is a class attr; patch it (2-block decoder: [False, True])
-    # so _compute_output_shape reports the right temporal/spatial upscale.
-    CosmosVideoVAE.UP_BLOCKS = [False, True]
-    try:
-        return CosmosVideoVAE(latent_channels=4, in_channels=3)
-    finally:
-        CosmosVideoVAE.__init__ = orig_init
-        CosmosVideoVAE.UP_BLOCKS = orig_up
+    return CosmosVideoVAE(latent_channels=4, in_channels=3, config=_TINY_CONFIG)
 
 
 def test_decode_checkpoint_matches_non_checkpoint(monkeypatch):
@@ -112,8 +77,8 @@ def test_decode_checkpoint_kwarg_overrides_env(monkeypatch):
     z = mx.random.normal((1, 4, 2, 4, 4))
     out = vae.decode(z, checkpoint=True)
     mx.eval(out)
-    # 1 up-block: spatial 4x4 -> 8x8 (2x), temporal 2 -> 4 (2x)
-    assert out.shape == (1, 3, 4, 8, 8)
+    # 1 up-block: spatial 4x4 -> 8x8 (2x), temporal 2 -> 3
+    assert out.shape == (1, 3, 3, 8, 8)
 
 
 def test_decode_default_follows_env(monkeypatch):
@@ -130,6 +95,7 @@ def test_decode_default_follows_env(monkeypatch):
 # time-shift s' = shift*s/(1+(shift-1)*s) saturates for s>>1; a raw
 # sigma_max=80 collapses every timestep to ~1.49 so the sample never
 # denoises (all-black output). These guard against that regression.
+
 
 def test_flow_scheduler_sigma_max_is_normalized():
     from fusion_mlx.video.cosmos.scheduler import CosmosFlowScheduler
@@ -156,4 +122,3 @@ def test_flow_scheduler_old_sigma_max_collapsed():
     sch.set_timesteps(6)
     ts = [float(t) for t in sch.timesteps.tolist()]
     assert ts[0] - ts[-1] < 0.1, f"expected collapse, got spread: {ts}"
-
