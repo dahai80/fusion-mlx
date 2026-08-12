@@ -277,6 +277,13 @@ class Resample(nn.Module):
             # upsample — upsample3d degrades to spatial-only. Temporal
             # frames are produced across latent chunks via the cache, not
             # within a single non-cached pass (issue #458).
+            #
+            # CRITICAL: the cached branch passes feat_cache[idx] as cache_x
+            # to time_conv (CausalConv3d), which uses it to SUBSTITUTE the
+            # left causal zero-pad (pad减去cache帧数). Do NOT pre-concatenate
+            # cache+x then call with cache_x=None — that double-pads (zeros
+            # AND cache) and produces t+2 output frames instead of t, breaking
+            # the reshape (issue #458).
             if feat_cache is not None:
                 idx = feat_idx[0]
                 if feat_cache[idx] is None:
@@ -287,9 +294,7 @@ class Resample(nn.Module):
                     if feat_cache[idx] == "Rep":
                         x_t = self.time_conv(x)
                     else:
-                        x_t = self.time_conv(
-                            mx.concatenate([feat_cache[idx], x], axis=2)
-                        )
+                        x_t = self.time_conv(x, feat_cache[idx])
                     feat_cache[idx] = cache_x
                     feat_idx[0] += 1
                     x_t = x_t.reshape(b, 2, c, t, h, w)
