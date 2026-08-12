@@ -61,9 +61,13 @@ class CausalConv3d(nn.Module):
 
         self.kernel_size = kernel_size
         self.stride = stride
-        # Causal padding: match reference formula dilation*(k-1) + (1-stride)
-        # With dilation=1: k-stride (pads left only, no future context)
-        self._causal_pad_t = kernel_size[0] - stride[0]
+        # Causal time padding: upstream CausalConv3d sets _padding = 2*padding[0]
+        # (left-only causal pad, no future context). This equals k-stride for the
+        # common stride=1 case but is 0 for the downsample3d time_conv which uses
+        # padding=(0,0,0) — the causal context there comes from cache_x, not zero
+        # padding. Using k-stride instead of 2*padding[0] over-pads the stride=2
+        # path and corrupts both frame count and values (issue #458).
+        self._causal_pad_t = 2 * padding[0]
         self._pad_h = padding[1]
         self._pad_w = padding[2]
 
@@ -116,14 +120,24 @@ class CausalConv3d(nn.Module):
         st, sh, sw = self.stride
         t_out = (t - kt) // st + 1
 
-        # Pre-reshape weight: [O, D, H, W, I] -> [O, H, W, D*I]
-        w_2d = self.weight.transpose(0, 2, 3, 1, 4).reshape(
+        # Loaded 5D weights are PyTorch-layout [O, I, D, H, W] (the VAE
+        # loader transposes only 4D Conv2d weights, not 5D CausalConv3d).
+        # Build a 2D conv weight [O, kh, kw, kt*c_in] whose last axis is
+        # ordered (di, ci) — di outer, ci inner — to match the window
+        # flatten below (time slices concatenated per-channel).
+        # [O, I, D, H, W] -> [O, H, W, D, I] -> [O, kh, kw, kt*c_in]
+        # Last axis ordered (di, ci) — di outer, ci inner — to match the
+        # window flatten below (transpose(0,2,3,1,4) gives [B,H,W,kt,C] ->
+        # [B,H,W,kt*C] with di outer, ci inner).
+        # Axes: [O,ci,di,kh,kw] -> [O,kh,kw,di,ci] = (0,3,4,2,1).
+        w_2d = self.weight.transpose(0, 3, 4, 2, 1).reshape(
             self.weight.shape[0], kh, kw, kt * c_in
         )
         outputs = []
         for t_i in range(t_out):
             t_start = t_i * st
             window = x[:, t_start : t_start + kt]
+            # [B, kt, H, W, C] -> [B, H, W, kt*C] (di outer, ci inner)
             window = window.transpose(0, 2, 3, 1, 4).reshape(b, h, w, kt * c_in)
             out_2d = mx.conv2d(window, w_2d, stride=(sh, sw)) + self.bias
             outputs.append(out_2d)
@@ -166,7 +180,7 @@ class ResidualBlock(nn.Module):
         ]
         self.shortcut = CausalConv3d(in_dim, out_dim, 1) if in_dim != out_dim else None
 
-    def __call__(self, x: mx.array, feat_cache=None, feat_idx=None) -> mx.array:
+    def __call__(self, x: mx.array, feat_cache=None, feat_idx=None, final=False) -> mx.array:
         h = x if self.shortcut is None else self.shortcut(x)
 
         if feat_cache is not None:
@@ -251,15 +265,39 @@ class Resample(nn.Module):
                     dim, dim, (3, 1, 1), stride=(2, 1, 1), padding=(0, 0, 0)
                 )
 
-    def __call__(self, x: mx.array, feat_cache=None, feat_idx=None) -> mx.array:
+    def __call__(self, x: mx.array, feat_cache=None, feat_idx=None, final=False) -> mx.array:
         b, c, t, h, w = x.shape
 
         if self.mode == "upsample3d":
-            # Temporal upsample via learned conv
-            x_t = self.time_conv(x)  # [B, 2C, T, H, W]
-            x_t = x_t.reshape(b, 2, c, t, h, w)
-            x = mx.stack([x_t[:, 0], x_t[:, 1]], axis=3).reshape(b, c, t * 2, h, w)
-            t = t * 2
+            # Upstream Resample.forward upsample3d (vae.py:104-123): the
+            # temporal upsample (time_conv + interleave to t*2) happens ONLY
+            # in the cache 'else' branch (a subsequent chunk). The first
+            # cached call sets a 'Rep' marker and does NO temporal upsample
+            # (spatial only). With feat_cache=None there is NEVER a temporal
+            # upsample — upsample3d degrades to spatial-only. Temporal
+            # frames are produced across latent chunks via the cache, not
+            # within a single non-cached pass (issue #458).
+            if feat_cache is not None:
+                idx = feat_idx[0]
+                if feat_cache[idx] is None:
+                    feat_cache[idx] = "Rep"
+                    feat_idx[0] += 1
+                else:
+                    cache_x = x[:, :, -CACHE_T:, :, :]
+                    if feat_cache[idx] == "Rep":
+                        x_t = self.time_conv(x)
+                    else:
+                        x_t = self.time_conv(
+                            mx.concatenate([feat_cache[idx], x], axis=2)
+                        )
+                    feat_cache[idx] = cache_x
+                    feat_idx[0] += 1
+                    x_t = x_t.reshape(b, 2, c, t, h, w)
+                    x = mx.stack([x_t[:, 0], x_t[:, 1]], axis=3).reshape(
+                        b, c, t * 2, h, w
+                    )
+                    t = t * 2
+            # feat_cache is None: spatial-only (no temporal upsample).
 
         if self.mode.startswith("upsample"):
             # Per-frame spatial upsample: nearest 2x + Conv2d
@@ -280,17 +318,32 @@ class Resample(nn.Module):
 
             if self.mode == "downsample3d":
                 if feat_cache is not None:
+                    # Upstream Resample.forward downsample3d (vae.py:129-150):
+                    #   slot idx     = last-frame cache (time_conv context)
+                    #   slot idx+1   = deferred whole-frame buffer
+                    #   feat_idx += 2 (two slots per downsample3d stage).
+                    # First chunk: store x, RETURN x unchanged (no time_conv).
+                    # Subsequent chunks: prepend cached last frame, run
+                    # time_conv, splice any deferred frames. A 1-frame
+                    # non-final result is deferred and None returned.
                     idx = feat_idx[0]
                     if feat_cache[idx] is None:
-                        # First chunk: save x, skip time_conv
                         feat_cache[idx] = x
-                        feat_idx[0] += 1
                     else:
-                        # Subsequent chunks: use cached frame as temporal context
-                        cache_x = x[:, :, -1:]
-                        x = self.time_conv(x, cache_x=feat_cache[idx][:, :, -1:])
+                        cached = feat_cache[idx][:, :, -1:, :, :]
+                        cache_x = x[:, :, -1:, :, :]
+                        x = self.time_conv(mx.concatenate([cached, x], axis=2))
                         feat_cache[idx] = cache_x
-                        feat_idx[0] += 1
+
+                        deferred_x = feat_cache[idx + 1]
+                        if deferred_x is not None:
+                            x = mx.concatenate([deferred_x, x], axis=2)
+                            feat_cache[idx + 1] = None
+
+                        if x.shape[2] == 1 and not final:
+                            feat_cache[idx + 1] = x
+                            x = None
+                    feat_idx[0] += 2
                 else:
                     x = self.time_conv(x)
             return x
@@ -342,18 +395,82 @@ class Decoder3d(nn.Module):
             CausalConv3d(dims[-1], 3, 3, padding=1),  # [2]
         ]
 
-    def __call__(self, x: mx.array) -> mx.array:
-        x = self.conv1(x)
+    def run_up(self, layer_idx, x_ref, feat_cache, feat_idx, out_chunks):
+        # Upstream Decoder3d.run_up (vae.py:363-398): recursive split into
+        # 2-frame sub-chunks at each upsample3d. The causal structure REQUIRES
+        # this split — a flat sequential pass upsamples all frames together
+        # and produces wrong frame counts/values (issue #458).
+        x = x_ref[0]
+        x_ref[0] = None
+        if layer_idx >= len(self.upsamples):
+            x = nn.silu(self.head[0](x))
+            if feat_cache is not None:
+                idx = feat_idx[0]
+                cache_x = x[:, :, -CACHE_T:, :, :]
+                if cache_x.shape[2] < CACHE_T and feat_cache[idx] is not None:
+                    cache_x = mx.concatenate(
+                        [feat_cache[idx][:, :, -1:], cache_x], axis=2
+                    )
+                x = self.head[2](x, cache_x=feat_cache[idx])
+                feat_cache[idx] = cache_x
+                feat_idx[0] += 1
+            else:
+                x = self.head[2](x)
+            out_chunks.append(x)
+            return
+
+        layer = self.upsamples[layer_idx]
+        if feat_cache is not None and isinstance(
+            layer, (ResidualBlock, Resample)
+        ):
+            x = layer(x, feat_cache=feat_cache, feat_idx=feat_idx)
+        else:
+            x = layer(x)
+
+        if (
+            isinstance(layer, Resample)
+            and layer.mode == "upsample3d"
+            and x.shape[2] > 2
+        ):
+            for frame_idx in range(0, x.shape[2], 2):
+                self.run_up(
+                    layer_idx + 1,
+                    [x[:, :, frame_idx : frame_idx + 2, :, :]],
+                    feat_cache,
+                    list(feat_idx),
+                    out_chunks,
+                )
+            return
+
+        self.run_up(layer_idx + 1, [x], feat_cache, feat_idx, out_chunks)
+
+    def __call__(
+        self, x: mx.array, feat_cache=None, feat_idx=None
+    ) -> list:
+        # Returns a LIST of output chunks (upstream forward returns out_chunks).
+        # WanVAE.decode concatenates the lists from each latent chunk.
+        if feat_cache is not None:
+            idx = feat_idx[0]
+            cache_x = x[:, :, -CACHE_T:]
+            if cache_x.shape[2] < CACHE_T and feat_cache[idx] is not None:
+                cache_x = mx.concatenate(
+                    [feat_cache[idx][:, :, -1:], cache_x], axis=2
+                )
+            x = self.conv1(x, cache_x=feat_cache[idx])
+            feat_cache[idx] = cache_x
+            feat_idx[0] += 1
+        else:
+            x = self.conv1(x)
 
         for layer in self.middle:
-            x = layer(x)
+            if feat_cache is not None and isinstance(layer, ResidualBlock):
+                x = layer(x, feat_cache=feat_cache, feat_idx=feat_idx)
+            else:
+                x = layer(x)
 
-        for layer in self.upsamples:
-            x = layer(x)
-
-        x = nn.silu(self.head[0](x))
-        x = self.head[2](x)
-        return x
+        out_chunks = []
+        self.run_up(0, [x], feat_cache, feat_idx, out_chunks)
+        return out_chunks
 
 
 class Encoder3d(nn.Module):
@@ -400,7 +517,7 @@ class Encoder3d(nn.Module):
             CausalConv3d(dims[-1], z_dim, 3, padding=1),
         ]
 
-    def __call__(self, x: mx.array, feat_cache=None, feat_idx=None) -> mx.array:
+    def __call__(self, x: mx.array, feat_cache=None, feat_idx=None, final=False) -> mx.array:
         if feat_cache is not None:
             # conv1 with caching
             idx = feat_idx[0]
@@ -415,13 +532,15 @@ class Encoder3d(nn.Module):
 
         for layer in self.downsamples:
             if feat_cache is not None and isinstance(layer, (ResidualBlock, Resample)):
-                x = layer(x, feat_cache=feat_cache, feat_idx=feat_idx)
+                x = layer(x, feat_cache=feat_cache, feat_idx=feat_idx, final=final)
+                if x is None:
+                    return None
             else:
                 x = layer(x)
 
         for layer in self.middle:
             if feat_cache is not None and isinstance(layer, ResidualBlock):
-                x = layer(x, feat_cache=feat_cache, feat_idx=feat_idx)
+                x = layer(x, feat_cache=feat_cache, feat_idx=feat_idx, final=final)
             else:
                 x = layer(x)
 
@@ -458,23 +577,35 @@ class WanVAE(nn.Module):
             self.conv1 = CausalConv3d(z_dim * 2, z_dim * 2, 1)
 
     def encode(self, x: mx.array) -> mx.array:
-        # Count cacheable CausalConv3d slots in encoder
+        # Streaming causal encode matching upstream WanVAE.encode: chunk the
+        # time axis as 1, then 2,2,2... (not 1,4,4). The 1+2N pattern is what
+        # the downsample3d deferred-frame cache expects; 1+4N corrupts the
+        # temporal context and produces a latent uncorrelated to upstream
+        # (issue #458). A chunk may return None when a downsample3d stage
+        # defers a single frame to the next chunk.
         num_slots = self._count_encoder_cache_slots()
         feat_cache = [None] * num_slots
 
         t = x.shape[2]
-        num_chunks = 1 + (t - 1) // 4
+        t = 1 + ((t - 1) // 2) * 2  # round down to 1+2N like upstream
+        iter_ = 1 + (t - 1) // 2
 
         out = None
-        for i in range(num_chunks):
+        for i in range(iter_):
             feat_idx = [0]
             if i == 0:
                 chunk = x[:, :, :1]
+                final = iter_ == 1
             else:
-                chunk = x[:, :, 1 + 4 * (i - 1) : 1 + 4 * i]
+                chunk = x[:, :, 1 + 2 * (i - 1) : 1 + 2 * i]
+                final = i == iter_ - 1
 
-            chunk_out = self.encoder(chunk, feat_cache=feat_cache, feat_idx=feat_idx)
+            chunk_out = self.encoder(
+                chunk, feat_cache=feat_cache, feat_idx=feat_idx, final=final
+            )
 
+            if chunk_out is None:
+                continue
             if out is None:
                 out = chunk_out
             else:
@@ -488,26 +619,71 @@ class WanVAE(nn.Module):
         return (mu - mean) * inv_std
 
     def _count_encoder_cache_slots(self) -> int:
-        count = 1  # encoder.conv1
-        for layer in self.encoder.downsamples:
-            if isinstance(layer, ResidualBlock):
-                count += 2  # two convs in residual path
-            elif isinstance(layer, Resample) and layer.mode == "downsample3d":
-                count += 1  # time_conv
-        for layer in self.encoder.middle:
-            if isinstance(layer, ResidualBlock):
-                count += 2
-        count += 1  # encoder.head CausalConv3d
-        return count
+        # Match upstream count_cache_layers: every CausalConv3d (5D weight)
+        # plus every downsample3d Resample (which reserves a deferred-frame
+        # slot in addition to the cache slot its time_conv CausalConv3d
+        # already contributes).
+        import mlx.nn as nn
+
+        cc = sum(
+            1
+            for k, v in nn.utils.tree_flatten(self.encoder.parameters())
+            if hasattr(v, "ndim") and v.ndim == 5
+        )
+        ds3d = sum(
+            1
+            for layer in self.encoder.downsamples
+            if isinstance(layer, Resample) and layer.mode == "downsample3d"
+        )
+        return cc + ds3d
 
     def decode(self, z: mx.array) -> mx.array:
+        # Upstream WanVAE.decode (vae.py:491-511): chunk latents as 1,2,2...
+        # (iter_ = 1 + z.shape[2]//2), decode each chunk through the recursive
+        # decoder (which returns a LIST of output sub-chunks), extend the
+        # output list across chunks, then concatenate along time. A flat
+        # single-pass decode produces the wrong frame count (8 vs 5) because
+        # the causal upsample3d recursion must split per 2-frame group
+        # (issue #458).
         mean = self.mean.reshape(1, -1, 1, 1, 1)
         inv_std = self.inv_std.reshape(1, -1, 1, 1, 1)
         z = z / inv_std + mean
 
         x = self.conv2(z)
-        out = self.decoder(x)
-        return mx.clip(out, -1, 1)
+        iter_ = 1 + z.shape[2] // 2
+        feat_map = None
+        if iter_ > 1:
+            feat_map = [None] * self._count_decoder_cache_slots()
+
+        out_chunks = None
+        for i in range(iter_):
+            feat_idx = [0]
+            if i == 0:
+                chunk = x[:, :, :1]
+            else:
+                chunk = x[:, :, 1 + 2 * (i - 1) : 1 + 2 * i]
+            chunk_out = self.decoder(chunk, feat_cache=feat_map, feat_idx=feat_idx)
+            if out_chunks is None:
+                out_chunks = chunk_out
+            else:
+                out_chunks.extend(chunk_out)
+
+        out = mx.concatenate(out_chunks, axis=2)
+        # Upstream WanVAE.decode does NOT clip — clamping to [-1,1] is the
+        # caller's responsibility (done at save time, e.g. (x*255+127.5)).
+        # Clipping here distorts outputs whose head exceeds the range.
+        return out
+
+    def _count_decoder_cache_slots(self) -> int:
+        # Match upstream count_cache_layers: every CausalConv3d (5D weight).
+        # Decoder has no downsample3d, so no extra deferred slots.
+        import mlx.nn as nn
+
+        return sum(
+            1
+            for k, v in nn.utils.tree_flatten(self.decoder.parameters())
+            if hasattr(v, "ndim") and v.ndim == 5
+        )
 
     def decode_tiled(self, z: mx.array, tiling_config=None) -> mx.array:
         from .tiling import TilingConfig, decode_with_tiling
@@ -537,8 +713,26 @@ class WanVAE(nn.Module):
 
         def tile_decode(tile_latents, **kwargs):
             x = self.conv2(tile_latents)
-            out = self.decoder(x)
-            return mx.clip(out, -1, 1)
+            iter_ = 1 + tile_latents.shape[2] // 2
+            feat_map = None
+            if iter_ > 1:
+                feat_map = [None] * self._count_decoder_cache_slots()
+            out_chunks = None
+            for i in range(iter_):
+                feat_idx = [0]
+                if i == 0:
+                    chunk = x[:, :, :1]
+                else:
+                    chunk = x[:, :, 1 + 2 * (i - 1) : 1 + 2 * i]
+                chunk_out = self.decoder(
+                    chunk, feat_cache=feat_map, feat_idx=feat_idx
+                )
+                if out_chunks is None:
+                    out_chunks = chunk_out
+                else:
+                    out_chunks.extend(chunk_out)
+            out = mx.concatenate(out_chunks, axis=2)
+            return out
 
         return decode_with_tiling(
             decoder_fn=tile_decode,
