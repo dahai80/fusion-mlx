@@ -13,7 +13,7 @@ class CosmosFlowScheduler:
     def __init__(
         self,
         sigma_min=0.002,
-        sigma_max=80.0,
+        sigma_max=1.0,
         num_train_timesteps=1000,
         prediction_type="flow_prediction",
         shift=3.0,
@@ -34,7 +34,11 @@ class CosmosFlowScheduler:
         n = num_inference_steps
         s_max = sigma_max or self.sigma_max
         sigmas = mx.linspace(s_max, self.sigma_min, n + 1, dtype=mx.float32)
-        # Apply shift for Cosmos-specific schedule
+        # Apply Cosmos time-shift on NORMALIZED flow sigmas (sigma in [0,1],
+        # 1=pure noise, 0=clean). The shift formula shift*s/(1+(shift-1)*s)
+        # saturates for s>>1, so sigma_max MUST stay in [0,1]; feeding raw
+        # sigma_max=80 collapses every timestep to ~1.49 and the sample never
+        # denoises (all-black output). See issue #460.
         if self.shift != 1.0:
             sigmas = self.shift * sigmas / (1.0 + (self.shift - 1.0) * sigmas)
         timesteps = sigmas[:-1]
