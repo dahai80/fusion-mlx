@@ -180,7 +180,9 @@ class ResidualBlock(nn.Module):
         ]
         self.shortcut = CausalConv3d(in_dim, out_dim, 1) if in_dim != out_dim else None
 
-    def __call__(self, x: mx.array, feat_cache=None, feat_idx=None, final=False) -> mx.array:
+    def __call__(
+        self, x: mx.array, feat_cache=None, feat_idx=None, final=False
+    ) -> mx.array:
         h = x if self.shortcut is None else self.shortcut(x)
 
         if feat_cache is not None:
@@ -265,7 +267,9 @@ class Resample(nn.Module):
                     dim, dim, (3, 1, 1), stride=(2, 1, 1), padding=(0, 0, 0)
                 )
 
-    def __call__(self, x: mx.array, feat_cache=None, feat_idx=None, final=False) -> mx.array:
+    def __call__(
+        self, x: mx.array, feat_cache=None, feat_idx=None, final=False
+    ) -> mx.array:
         b, c, t, h, w = x.shape
 
         if self.mode == "upsample3d":
@@ -425,9 +429,7 @@ class Decoder3d(nn.Module):
             return
 
         layer = self.upsamples[layer_idx]
-        if feat_cache is not None and isinstance(
-            layer, (ResidualBlock, Resample)
-        ):
+        if feat_cache is not None and isinstance(layer, (ResidualBlock, Resample)):
             x = layer(x, feat_cache=feat_cache, feat_idx=feat_idx)
         else:
             x = layer(x)
@@ -449,18 +451,14 @@ class Decoder3d(nn.Module):
 
         self.run_up(layer_idx + 1, [x], feat_cache, feat_idx, out_chunks)
 
-    def __call__(
-        self, x: mx.array, feat_cache=None, feat_idx=None
-    ) -> list:
+    def __call__(self, x: mx.array, feat_cache=None, feat_idx=None) -> list:
         # Returns a LIST of output chunks (upstream forward returns out_chunks).
         # WanVAE.decode concatenates the lists from each latent chunk.
         if feat_cache is not None:
             idx = feat_idx[0]
             cache_x = x[:, :, -CACHE_T:]
             if cache_x.shape[2] < CACHE_T and feat_cache[idx] is not None:
-                cache_x = mx.concatenate(
-                    [feat_cache[idx][:, :, -1:], cache_x], axis=2
-                )
+                cache_x = mx.concatenate([feat_cache[idx][:, :, -1:], cache_x], axis=2)
             x = self.conv1(x, cache_x=feat_cache[idx])
             feat_cache[idx] = cache_x
             feat_idx[0] += 1
@@ -522,7 +520,9 @@ class Encoder3d(nn.Module):
             CausalConv3d(dims[-1], z_dim, 3, padding=1),
         ]
 
-    def __call__(self, x: mx.array, feat_cache=None, feat_idx=None, final=False) -> mx.array:
+    def __call__(
+        self, x: mx.array, feat_cache=None, feat_idx=None, final=False
+    ) -> mx.array:
         if feat_cache is not None:
             # conv1 with caching
             idx = feat_idx[0]
@@ -729,9 +729,7 @@ class WanVAE(nn.Module):
                     chunk = x[:, :, :1]
                 else:
                     chunk = x[:, :, 1 + 2 * (i - 1) : 1 + 2 * i]
-                chunk_out = self.decoder(
-                    chunk, feat_cache=feat_map, feat_idx=feat_idx
-                )
+                chunk_out = self.decoder(chunk, feat_cache=feat_map, feat_idx=feat_idx)
                 if out_chunks is None:
                     out_chunks = chunk_out
                 else:
