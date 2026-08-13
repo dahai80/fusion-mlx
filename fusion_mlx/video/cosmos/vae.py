@@ -58,10 +58,6 @@ def _repeat_interleave(x, repeats, axis):
     tiles = [1] * x_e.ndim
     tiles[axis + 1] = repeats
     x_e = mx.tile(x_e, tiles)
-    perm = list(range(x_e.ndim))
-    perm.pop(axis + 1)
-    perm.insert(axis, axis + 1)
-    x_e = x_e.transpose(*perm)
     new_shape = list(x.shape)
     new_shape[axis] = new_shape[axis] * repeats
     return x_e.reshape(new_shape)
