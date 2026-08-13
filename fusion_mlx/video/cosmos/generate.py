@@ -254,10 +254,13 @@ def generate_video(
         video = vae.decode(latents)
         mx.eval(video)
 
-    # Convert to frames
+    # Convert to frames — Cosmos VAE outputs [-1,1] (diffusers convention);
+    # denormalize to [0,1] before scaling to uint8, matching diffusers
+    # VaeImageProcessor.denormalize: (x * 0.5 + 0.5).clamp(0,1)
     frames = video[0]  # (C, T, H, W)
     frames = frames.transpose(1, 2, 3, 0)  # (T, H, W, C)
-    frames = mx.clip(frames * 255.0, 0, 255).astype(mx.uint8)
+    frames = mx.clip(frames * 0.5 + 0.5, 0.0, 1.0)
+    frames = (frames * 255.0).astype(mx.uint8)
     frames_np = np.array(frames)
 
     # Write MP4
