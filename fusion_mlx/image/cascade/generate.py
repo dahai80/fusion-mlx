@@ -335,6 +335,7 @@ class CascadePipeline:
                 timestep_ratio=t_in,
                 clip_text_pooled=pooled_in,
                 effnet=effnet_in,
+                sca=t_in,
             )
             if do_cfg:
                 pred_cond, pred_un = mx.split(pred, 2, axis=0)
