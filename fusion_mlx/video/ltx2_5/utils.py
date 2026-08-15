@@ -4,9 +4,53 @@
 # layout is: diffusion_models/, vae/, text_encoders/, model_patches/,
 # latent_upscale_models/. We resolve either a local dir or an HF snapshot.
 import logging
+import math
 from pathlib import Path
 
+import mlx.core as mx
+
 logger = logging.getLogger(__name__)
+
+
+def rms_norm(x: mx.array, eps: float = 1e-6) -> mx.array:
+    return mx.fast.rms_norm(x, mx.ones((x.shape[-1],), dtype=x.dtype), eps)
+
+
+def to_denoised(noisy: mx.array, velocity: mx.array, sigma) -> mx.array:
+    original_dtype = noisy.dtype
+    noisy_f32 = noisy.astype(mx.float32)
+    velocity_f32 = velocity.astype(mx.float32)
+    if isinstance(sigma, (int, float)):
+        sigma_f32 = mx.array(sigma, dtype=mx.float32)
+    else:
+        sigma_f32 = sigma.astype(mx.float32)
+        while sigma_f32.ndim < velocity_f32.ndim:
+            sigma_f32 = mx.expand_dims(sigma_f32, axis=-1)
+    result = noisy_f32 - sigma_f32 * velocity_f32
+    return result.astype(original_dtype)
+
+
+def get_timestep_embedding(
+    timesteps: mx.array,
+    embedding_dim: int,
+    flip_sin_to_cos: bool = False,
+    downscale_freq_shift: float = 1.0,
+    scale: float = 1.0,
+    max_period: int = 10000,
+) -> mx.array:
+    assert timesteps.ndim == 1, "Timesteps should be 1D"
+    half_dim = embedding_dim // 2
+    exponent = -math.log(max_period) * mx.arange(0, half_dim, dtype=mx.float32)
+    exponent = exponent / (half_dim - downscale_freq_shift)
+    emb = mx.exp(exponent)
+    emb = (timesteps[:, None].astype(mx.float32) * scale) * emb[None, :]
+    if flip_sin_to_cos:
+        emb = mx.concatenate([mx.cos(emb), mx.sin(emb)], axis=-1)
+    else:
+        emb = mx.concatenate([mx.sin(emb), mx.cos(emb)], axis=-1)
+    if embedding_dim % 2 == 1:
+        emb = mx.pad(emb, [(0, 0), (0, 1)])
+    return emb
 
 # LTX-2.5 Comfy 单文件仓的子目录与权重文件名（附录 A）。
 _LTX2_5_REPO = "Lightricks/LTX-2.5"

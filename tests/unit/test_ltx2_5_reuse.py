@@ -63,10 +63,15 @@ class TestModelConfigSynthesis:
         assert cfg.num_layers == 48
         assert cfg.caption_channels == 3840
 
-    def test_model_subclasses_ltx2(self):
+    def test_model_is_independent_from_ltx2(self):
+        # 2.5 transformer is a self-contained nn.Module (user decision:
+        # ltx2_5 独立目录全量重写), NOT an LTXModel subclass.
+        import mlx.nn as nn
+
         from fusion_mlx.video.ltx2.ltx2_model import LTXModel
 
-        assert issubclass(LTX2_5Model, LTXModel)
+        assert issubclass(LTX2_5Model, nn.Module)
+        assert not issubclass(LTX2_5Model, LTXModel)
 
 
 class TestModelFromPretrainedMissingWeights:

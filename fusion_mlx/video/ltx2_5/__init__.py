@@ -1,7 +1,9 @@
 # SPDX-License-Identifier: Apache-2.0
-# Pure-MLX port of LTX-2.5 (22B video+audio). Reuses fusion_mlx.video.ltx2
-# skeleton (transformer block / VAE / scheduler / denoise / conditioning /
-# positions / rope / adaln / feed_forward / attention / guidance / lora).
+# Pure-MLX port of LTX-2.5 (22B video+audio), independent self-contained module.
+# Deltas over LTX-2 (code-verified vs real 22b-distilled checkpoint, 4349 keys):
+# has_prompt_adaln=True (prompt_adaln_single + to_gate_logits on all attn),
+# ff_bias/audio_ff_bias asymmetry, keyframes_abs_pos_embedding, video/audio
+# embeddings_connector (258 keys, sanitize no longer skips them).
 # New vs LTX-2/2.3: Gemma4-12b text encoder, duration-head, two-stage
 # spatial+temporal upsampler, 48-layer transformer, caption_channels=3840.
 from .config import (
