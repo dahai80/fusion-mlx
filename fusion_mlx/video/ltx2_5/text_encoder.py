@@ -88,7 +88,9 @@ class LTX2_5TextEncoder(nn.Module):
         )
         return hidden
 
-    def __call__(self, input_ids: mx.array, attention_mask: mx.array | None = None) -> mx.array:
+    def __call__(
+        self, input_ids: mx.array, attention_mask: mx.array | None = None
+    ) -> mx.array:
         return self.encode(input_ids, attention_mask)
 
 
@@ -98,7 +100,7 @@ def _split_projection_weights(weights: dict) -> tuple[dict, dict]:
     lang: dict = {}
     for k, v in weights.items():
         if k.startswith(_PROJ_KEY_PREFIX):
-            proj[k[len(_PROJ_KEY_PREFIX):]] = v
+            proj[k[len(_PROJ_KEY_PREFIX) :]] = v
         else:
             lang[k] = v
     logger.info(
@@ -117,9 +119,13 @@ def load_text_encoder(
     # config.json). Raises FileNotFoundError if config/weights absent (fail
     # visible per Rule 12) — no silent zero-init.
     weights_path = Path(weights_path)
-    config_path = Path(config_path) if config_path else weights_path.parent / "config.json"
+    config_path = (
+        Path(config_path) if config_path else weights_path.parent / "config.json"
+    )
     if not weights_path.exists():
-        raise FileNotFoundError(f"LTX-2.5 text encoder weights not found: {weights_path}")
+        raise FileNotFoundError(
+            f"LTX-2.5 text encoder weights not found: {weights_path}"
+        )
     if not config_path.exists():
         raise FileNotFoundError(f"LTX-2.5 text encoder config not found: {config_path}")
 
@@ -150,7 +156,9 @@ def load_text_encoder(
         in_features = text_config.hidden_size
         projection = LTX2_5TextProjection(in_features=in_features)
         projection.load_weights(list(proj_weights.items()), strict=False)
-        logger.info("LTX2_5TextEncoder: loaded projection head (%d keys)", len(proj_weights))
+        logger.info(
+            "LTX2_5TextEncoder: loaded projection head (%d keys)", len(proj_weights)
+        )
     else:
         logger.warning("LTX2_5TextEncoder: no projection keys found in checkpoint")
 

@@ -16,17 +16,29 @@ from fusion_mlx.video.ltx2_5.duration_head import (
 
 class TestDurationHead:
     def test_video_only_output_shape(self):
-        head = DurationHead(video_cross_attention_dim=32, audio_cross_attention_dim=16, pooler_hidden_dim=8)
+        head = DurationHead(
+            video_cross_attention_dim=32,
+            audio_cross_attention_dim=16,
+            pooler_hidden_dim=8,
+        )
         out = head(video_tokens=mx.random.normal((1, 4, 32)))
         assert out.shape == (1,)
 
     def test_audio_only_output_shape(self):
-        head = DurationHead(video_cross_attention_dim=32, audio_cross_attention_dim=16, pooler_hidden_dim=8)
+        head = DurationHead(
+            video_cross_attention_dim=32,
+            audio_cross_attention_dim=16,
+            pooler_hidden_dim=8,
+        )
         out = head(audio_tokens=mx.random.normal((1, 6, 16)))
         assert out.shape == (1,)
 
     def test_both_modalities_batch(self):
-        head = DurationHead(video_cross_attention_dim=32, audio_cross_attention_dim=16, pooler_hidden_dim=8)
+        head = DurationHead(
+            video_cross_attention_dim=32,
+            audio_cross_attention_dim=16,
+            pooler_hidden_dim=8,
+        )
         out = head(
             video_tokens=mx.random.normal((3, 4, 32)),
             audio_tokens=mx.random.normal((3, 6, 16)),
@@ -34,17 +46,29 @@ class TestDurationHead:
         assert out.shape == (3,)
 
     def test_requires_at_least_one_modality(self):
-        head = DurationHead(video_cross_attention_dim=32, audio_cross_attention_dim=16, pooler_hidden_dim=8)
+        head = DurationHead(
+            video_cross_attention_dim=32,
+            audio_cross_attention_dim=16,
+            pooler_hidden_dim=8,
+        )
         with pytest.raises(ValueError, match="at least one"):
             head()
 
     def test_predict_duration_clamps(self):
-        head = DurationHead(video_cross_attention_dim=8, audio_cross_attention_dim=8, pooler_hidden_dim=8)
+        head = DurationHead(
+            video_cross_attention_dim=8,
+            audio_cross_attention_dim=8,
+            pooler_hidden_dim=8,
+        )
         out = head.predict_duration(mx.random.normal((1, 2, 8)))
         assert 0.5 <= float(out[0]) <= 60.0
 
     def test_predict_duration_no_clamp_runs(self):
-        head = DurationHead(video_cross_attention_dim=8, audio_cross_attention_dim=8, pooler_hidden_dim=8)
+        head = DurationHead(
+            video_cross_attention_dim=8,
+            audio_cross_attention_dim=8,
+            pooler_hidden_dim=8,
+        )
         out = head.predict_duration(mx.random.normal((1, 2, 8)), clamp=False)
         assert out.shape == (1,)
 
@@ -73,14 +97,22 @@ class TestDurationToNumFrames:
 
 class TestInferNumFrames:
     def test_end_to_end_video(self):
-        head = DurationHead(video_cross_attention_dim=16, audio_cross_attention_dim=8, pooler_hidden_dim=8)
+        head = DurationHead(
+            video_cross_attention_dim=16,
+            audio_cross_attention_dim=8,
+            pooler_hidden_dim=8,
+        )
         frames = infer_num_frames(head, mx.random.normal((1, 5, 16)), None, fps=24.0)
         assert isinstance(frames, int)
         assert frames % 8 == 1
         assert frames >= 1
 
     def test_end_to_end_both(self):
-        head = DurationHead(video_cross_attention_dim=16, audio_cross_attention_dim=8, pooler_hidden_dim=8)
+        head = DurationHead(
+            video_cross_attention_dim=16,
+            audio_cross_attention_dim=8,
+            pooler_hidden_dim=8,
+        )
         frames = infer_num_frames(
             head,
             mx.random.normal((1, 5, 16)),

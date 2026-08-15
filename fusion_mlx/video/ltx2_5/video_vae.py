@@ -50,7 +50,9 @@ _STATS_STD_KEY = "per_channel_statistics.std-of-means"
 
 def ltx2_5_encoder_config() -> VideoEncoderModelConfig:
     # 2.5 conv VAE encoder 配置（实测 down_blocks.4 = 4 res_blocks）。
-    return VideoEncoderModelConfig(encoder_blocks=[list(b) for b in LTX2_5_ENCODER_BLOCKS])
+    return VideoEncoderModelConfig(
+        encoder_blocks=[list(b) for b in LTX2_5_ENCODER_BLOCKS]
+    )
 
 
 def _split_vae_weights(
@@ -64,9 +66,9 @@ def _split_vae_weights(
     other = 0
     for k, v in weights.items():
         if k.startswith("encoder."):
-            enc[k[len("encoder."):]] = v
+            enc[k[len("encoder.") :]] = v
         elif k.startswith("decoder."):
-            dec[k[len("decoder."):]] = v
+            dec[k[len("decoder.") :]] = v
         elif k in (_STATS_MEAN_KEY, _STATS_STD_KEY):
             stats[k] = v
         else:
@@ -75,8 +77,12 @@ def _split_vae_weights(
         logger.warning(
             "ltx2_5 VAE split: %d unrecognized keys dropped (first 10: %s)",
             other,
-            sorted(k for k in weights if not k.startswith(("encoder.", "decoder."))
-                   and k not in (_STATS_MEAN_KEY, _STATS_STD_KEY))[:10],
+            sorted(
+                k
+                for k in weights
+                if not k.startswith(("encoder.", "decoder."))
+                and k not in (_STATS_MEAN_KEY, _STATS_STD_KEY)
+            )[:10],
         )
     logger.info(
         "ltx2_5 VAE split: %s total=%d encoder=%d decoder=%d stats=%d other=%d",
@@ -124,7 +130,11 @@ def _infer_conv_decoder_blocks(dec: dict[str, mx.array]) -> list:
     # 2.5 conv decoder 块推断。与 ltx2 _infer_blocks 逻辑同构，但 in_channels
     # 读 PyTorch 5D 布局 shape[1]（ltx2 读 shape[-1] 对原始权重是 kernel W）。
     idxs = sorted(
-        {int(k.split(".")[1]) for k in dec if k.startswith("up_blocks.") and k.split(".")[1].isdigit()}
+        {
+            int(k.split(".")[1])
+            for k in dec
+            if k.startswith("up_blocks.") and k.split(".")[1].isdigit()
+        }
     )
     raw = []
     for idx in idxs:
@@ -149,7 +159,7 @@ def _infer_conv_decoder_blocks(dec: dict[str, mx.array]) -> list:
             blocks.append(b)
             continue
         in_ch, out_ch = b[1], b[2]
-        next_ch = next((r[1] for r in raw[i + 1:] if r[0] == "res"), in_ch // 2)
+        next_ch = next((r[1] for r in raw[i + 1 :] if r[0] == "res"), in_ch // 2)
         reduction = max(1, in_ch // next_ch)
         mult = out_ch // next_ch if next_ch else 8
         stride = {8: (2, 2, 2), 4: (1, 2, 2), 2: (2, 1, 1)}.get(mult, (2, 2, 2))

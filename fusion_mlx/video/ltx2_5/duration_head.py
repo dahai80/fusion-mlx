@@ -131,10 +131,14 @@ class DurationHead(nn.Module):
         self.pooler_hidden_dim = pooler_hidden_dim
         self.num_queries = num_queries
 
-        self.video_input_proj = nn.Linear(video_cross_attention_dim, pooler_hidden_dim, bias=True)
+        self.video_input_proj = nn.Linear(
+            video_cross_attention_dim, pooler_hidden_dim, bias=True
+        )
         self.video_modality_emb = mx.zeros((pooler_hidden_dim,))
 
-        self.audio_input_proj = nn.Linear(audio_cross_attention_dim, pooler_hidden_dim, bias=True)
+        self.audio_input_proj = nn.Linear(
+            audio_cross_attention_dim, pooler_hidden_dim, bias=True
+        )
         self.audio_modality_emb = mx.zeros((pooler_hidden_dim,))
 
         self.attention_pooler = AttentionPooler(
@@ -142,7 +146,9 @@ class DurationHead(nn.Module):
             num_queries=num_queries,
             num_heads=num_pooler_heads,
         )
-        self.mlp_hidden = nn.Linear(pooler_hidden_dim * num_queries, mlp_hidden, bias=True)
+        self.mlp_hidden = nn.Linear(
+            pooler_hidden_dim * num_queries, mlp_hidden, bias=True
+        )
         self.mlp_out = nn.Linear(mlp_hidden, 1, bias=True)
 
     def __call__(
@@ -211,7 +217,7 @@ def _sanitize_duration_head(weights: dict[str, mx.array]) -> dict[str, mx.array]
     dropped = 0
     for k, v in weights.items():
         if k.startswith(prefix):
-            out[k[len(prefix):]] = v
+            out[k[len(prefix) :]] = v
         else:
             dropped += 1
     if dropped:

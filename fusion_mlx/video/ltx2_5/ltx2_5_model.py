@@ -696,9 +696,7 @@ class LTX2_5Model(nn.Module):
         else:
             weight_files = sorted(weights_path.glob("*.safetensors"))
             if not weight_files:
-                raise FileNotFoundError(
-                    f"no .safetensors under {weights_path}"
-                )
+                raise FileNotFoundError(f"no .safetensors under {weights_path}")
             weights = {}
             for wf in weight_files:
                 weights.update(mx.load(str(wf)))

@@ -92,8 +92,7 @@ def generate_video(
         "load_video_encoder / load_video_decoder / load_duration_head / "
         "load_spatial_upsampler_2_5 / load_temporal_upsampler into the "
         "stage1 -> spatial-up -> stage2 -> temporal-up -> VAE-decode flow "
-        "(mirror ltx2 generate.py:555-700). Variant="
-        + variant.value
+        "(mirror ltx2 generate.py:555-700). Variant=" + variant.value
     )
     # 以下为真实模型首跑需接通的流程骨架（unreachable until weights land）：
     # 1. text_encoder = load_text_encoder(text_encoder_weights)  # Gemma4-12b

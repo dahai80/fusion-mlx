@@ -52,6 +52,7 @@ def get_timestep_embedding(
         emb = mx.pad(emb, [(0, 0), (0, 1)])
     return emb
 
+
 # LTX-2.5 Comfy 单文件仓的子目录与权重文件名（附录 A）。
 _LTX2_5_REPO = "Lightricks/LTX-2.5"
 _LTX2_5_FILES = {

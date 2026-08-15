@@ -106,7 +106,9 @@ class BasicAVTransformerBlock(nn.Module):
                 norm_eps=norm_eps,
                 has_gate_logits=has_prompt_adaln,
             )
-            self.audio_ff = FeedForward(audio.dim, dim_out=audio.dim, bias=audio_ff_bias)
+            self.audio_ff = FeedForward(
+                audio.dim, dim_out=audio.dim, bias=audio_ff_bias
+            )
             num_audio_ada_params = 9 if has_prompt_adaln else 6
             self.audio_scale_shift_table = mx.zeros((num_audio_ada_params, audio.dim))
 

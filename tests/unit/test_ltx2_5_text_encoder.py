@@ -122,7 +122,9 @@ class TestLTX2_5TextEncoder:
 
             def __call__(self, inputs, mask=None, skip_final_norm=False, **kwargs):
                 self.received_mask = mask
-                return super().__call__(inputs, mask=mask, skip_final_norm=skip_final_norm)
+                return super().__call__(
+                    inputs, mask=mask, skip_final_norm=skip_final_norm
+                )
 
         lm = _MaskCapture()
         enc = LTX2_5TextEncoder(lm, projection=None)
@@ -139,7 +141,9 @@ class TestLTX2_5TextEncoder:
 
             def __call__(self, inputs, mask=None, skip_final_norm=False, **kwargs):
                 self.skip_received = skip_final_norm
-                return super().__call__(inputs, mask=mask, skip_final_norm=skip_final_norm)
+                return super().__call__(
+                    inputs, mask=mask, skip_final_norm=skip_final_norm
+                )
 
         lm = _NormCapture()
         enc = LTX2_5TextEncoder(lm, projection=None)

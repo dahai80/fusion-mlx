@@ -88,7 +88,9 @@ class LatentTemporalUpsampler(nn.Module):
         }
 
         r = int(temporal_scale)
-        self.upsampler = TemporalUpsampler2x(mid_channels=mid_channels, upscale_factor=r)
+        self.upsampler = TemporalUpsampler2x(
+            mid_channels=mid_channels, upscale_factor=r
+        )
 
         self.post_upsample_res_blocks = {
             i: ResBlock3D(mid_channels) for i in range(num_blocks_per_stage)
@@ -118,7 +120,9 @@ class LatentTemporalUpsampler(nn.Module):
         return x
 
 
-def load_temporal_upsampler(weights_path: str | Path) -> tuple[LatentTemporalUpsampler, float]:
+def load_temporal_upsampler(
+    weights_path: str | Path,
+) -> tuple[LatentTemporalUpsampler, float]:
     # 加载时间上采样器：检测 mid_channels + temporal_scale。
     weights_path = Path(weights_path)
     if not weights_path.exists():
@@ -169,5 +173,7 @@ def load_temporal_upsampler(weights_path: str | Path) -> tuple[LatentTemporalUps
 
 
 # 复用 ltx2 的 spatial 加载器，便于 backend 单点引用。
-def load_spatial_upsampler_2_5(weights_path: str | Path) -> tuple[LatentUpsampler, float]:
+def load_spatial_upsampler_2_5(
+    weights_path: str | Path,
+) -> tuple[LatentUpsampler, float]:
     return load_spatial_upsampler(str(weights_path))

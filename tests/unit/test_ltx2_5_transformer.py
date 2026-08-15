@@ -137,11 +137,21 @@ class TestModelKeyTree:
     def test_sanitize_strips_prefix_and_remaps(self):
         m = LTX2_5Model(CFG)
         raw = {
-            "model.diffusion_model.transformer_blocks.0.attn1.to_out.0.weight": mx.zeros((1, 1)),
-            "model.diffusion_model.transformer_blocks.0.ff.net.0.proj.weight": mx.zeros((1, 1)),
-            "model.diffusion_model.transformer_blocks.0.ff.net.2.weight": mx.zeros((1, 1)),
-            "model.diffusion_model.adaln_single.emb.timestep_embedder.linear_1.weight": mx.zeros((1, 1)),
-            "model.diffusion_model.video_embeddings_connector.learnable_registers": mx.zeros((1, 1)),
+            "model.diffusion_model.transformer_blocks.0.attn1.to_out.0.weight": mx.zeros(
+                (1, 1)
+            ),
+            "model.diffusion_model.transformer_blocks.0.ff.net.0.proj.weight": mx.zeros(
+                (1, 1)
+            ),
+            "model.diffusion_model.transformer_blocks.0.ff.net.2.weight": mx.zeros(
+                (1, 1)
+            ),
+            "model.diffusion_model.adaln_single.emb.timestep_embedder.linear_1.weight": mx.zeros(
+                (1, 1)
+            ),
+            "model.diffusion_model.video_embeddings_connector.learnable_registers": mx.zeros(
+                (1, 1)
+            ),
             "model.diffusion_model.keyframes_abs_pos_embedding": mx.zeros((1, 1)),
             "unrelated.other.key": mx.zeros((1, 1)),
         }

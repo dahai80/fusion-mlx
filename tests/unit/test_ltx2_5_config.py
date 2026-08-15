@@ -2,7 +2,6 @@
 # P0 checkpoint: LTX-2.5 config instantiation + field defaults + path utils.
 import pytest
 
-from fusion_mlx.video.ltx2_5.config import LTXModelType, LTXRopeType
 from fusion_mlx.video.ltx2_5 import (
     LTX2_5ModelConfig,
     LTX2_5Variant,
@@ -10,6 +9,7 @@ from fusion_mlx.video.ltx2_5 import (
     default_ltx2_5_config,
     resolve_component,
 )
+from fusion_mlx.video.ltx2_5.config import LTXModelType, LTXRopeType
 
 
 class TestLTX2_5ConfigDefaults:

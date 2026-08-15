@@ -97,7 +97,9 @@ class TestLatentTemporalUpsampler:
 
 class TestLoadTemporalUpsampler:
     def test_missing_weights_raises(self, tmp_path):
-        with pytest.raises(FileNotFoundError, match="temporal upsampler weights not found"):
+        with pytest.raises(
+            FileNotFoundError, match="temporal upsampler weights not found"
+        ):
             load_temporal_upsampler(tmp_path / "nope.safetensors")
 
 
