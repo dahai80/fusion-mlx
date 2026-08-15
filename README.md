@@ -1270,9 +1270,11 @@ to the correct pure-MLX implementation. Supported backends:
 | Cosmos | `cosmos` | 7B T2V + Predict2 2B I2V | ✅ (Predict2) | ✅ #213 |
 | HunyuanVideo | `hunyuanvideo` | HunyuanVideo | ✅ | ✅ #214 |
 | CogVideo | `cogvideo` | CogVideoX | — | stub (no MLX port) |
+| MiniMax-H3 | `minimax_h3` | H3 FL2VA/Ref2VA (33B video+audio) | ✅ | 🔧 P0-P5 (config/VAE/DiT/scheduler/text-encoder/backend+registry; E2E pending) |
 
 Aliases: `svd-xt`, `stable-video-diffusion`, `cosmos-1.0`, `predict2`,
-`video2world`, `hunyuan-video`, `hunyuan_video`, `cogvideox`, `ltx-video`, `wan`.
+`video2world`, `hunyuan-video`, `hunyuan_video`, `cogvideox`, `ltx-video`, `wan`,
+`minimax-h3`, `h3`, `h3-fl2va`, `h3-ref2va`, `fl2va`, `ref2va`.
 
 > **Video DiT throughput (#367):** HunyuanVideo and Cosmos fuse the
 > uncond+cond CFG pair into a single batched B=2 DiT forward (~2x
