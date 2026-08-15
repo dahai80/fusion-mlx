@@ -33,11 +33,17 @@ def _resolve_dir(repo: str, subfolder: str) -> str:
         return os.path.join(base, subfolder)
     from huggingface_hub import snapshot_download
 
-    return snapshot_download(
+    root = snapshot_download(
         repo,
         allow_patterns=[f"{subfolder}/*"],
         endpoint=os.environ.get("HF_ENDPOINT"),
     )
+    # snapshot_download returns the snapshot root even with allow_patterns;
+    # the caller expects the subfolder dir itself. Joining is required or
+    # CLIPTokenizer.from_pretrained(root) degenerates to vocab_size=2 (#473).
+    resolved = os.path.join(root, subfolder)
+    logger.info("Cascade resolve_dir %s/%s -> %s", repo, subfolder, resolved)
+    return resolved
 
 
 def _resolve(repo: str, subfolder: str, filename: str) -> str:
