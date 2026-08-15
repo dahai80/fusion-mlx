@@ -60,9 +60,13 @@ class Conv2d(nn.Module):
 def _pixel_unshuffle_nhwc(x: mx.array, patch: int) -> mx.array:
     # NHWC (b,h,w,c) -> (b, h/patch, w/patch, c*patch^2). Downsamples
     # spatial, expands channels — matches torch.nn.PixelUnshuffle.
+    # torch (NCHW): (b,c,h,w)->(b,c,p,h/p,p,w/p)->t(0,1,4,2,5,3)->(b,c*p2,h/p,w/p).
+    # NHWC equivalent: (b,h/p,p,w/p,p,c)->t(0,1,3,5,2,4)->(b,h/p,w/p,c*p2).
+    # The prior transpose (0,1,3,4,5,2) reordered channels wrong and only
+    # passed because the prior uses patch_size=1 (this op is a no-op there).
     b, h, w, c = x.shape
     x = x.reshape(b, h // patch, patch, w // patch, patch, c)
-    x = x.transpose(0, 1, 3, 4, 5, 2)
+    x = x.transpose(0, 1, 3, 5, 2, 4)
     x = x.reshape(b, h // patch, w // patch, c * patch * patch)
     return x
 

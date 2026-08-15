@@ -63,15 +63,6 @@ class DepthwiseConv2d(nn.Module):
             raise ValueError(
                 f"depthwise groups mismatch: in_ch={self.groups} x_ch={x.shape[-1]}"
             )
-        w = mx.broadcast_to(
-            self.weight,
-            (
-                self.weight.shape[0],
-                self.weight.shape[1],
-                self.weight.shape[2],
-                self.groups,
-            ),
-        )
         if self.padding > 0:
             x = mx.pad(
                 x,
@@ -82,7 +73,10 @@ class DepthwiseConv2d(nn.Module):
                     (0, 0),
                 ),
             )
-        y = mx.conv2d(x, w, stride=1)
+        # depthwise: groups=in_ch, weight (out,k,k,1). MLX conv2d with
+        # groups=G expects (C_out,KH,KW,C_in/G) = (C,k,k,1). Do NOT
+        # broadcast to (C,k,k,C) + groups=1, that is a full conv.
+        y = mx.conv2d(x, self.weight, stride=1, groups=self.groups)
         y = y + self.bias
         return y
 
