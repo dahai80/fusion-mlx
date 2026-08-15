@@ -18,6 +18,7 @@ from .cogvideox import CogVideoBackend
 from .cosmos import CosmosBackend
 from .hunyuanvideo import HunyuanVideoBackend
 from .ltx2 import LTX2Backend
+from .ltx2_5 import LTX2_5Backend
 from .ltx_video_legacy import LegacyLTXBackend
 from .minimax_h3 import MiniMaxH3Backend
 from .opensora import OpenSoraBackend
@@ -27,6 +28,7 @@ from .uniworld import UniWorldBackend
 from .wan2 import Wan2Backend
 
 BACKENDS: dict[str, type[VideoBackend]] = {
+    "ltx2_5": LTX2_5Backend,
     "ltx2": LTX2Backend,
     "cosmos": CosmosBackend,
     "svd": SVDBackend,
@@ -46,6 +48,10 @@ _ALIASES: dict[str, str] = {
     "ltx_2": "ltx2",
     "ltx-2.3": "ltx2",
     "ltx2.3": "ltx2",
+    "ltx-2.5": "ltx2_5",
+    "ltx_2.5": "ltx2_5",
+    "ltx2.5": "ltx2_5",
+    "ltx-2.5-distilled": "ltx2_5",
     "cosmos": "cosmos",
     "cosmos-1.0": "cosmos",
     "cosmos-predict2": "cosmos",
@@ -133,6 +139,7 @@ __all__ = [
     "resolve_backend",
     "constraints_for",
     "LTX2Backend",
+    "LTX2_5Backend",
     "CosmosBackend",
     "HunyuanVideoBackend",
     "SVDBackend",

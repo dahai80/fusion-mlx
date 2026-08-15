@@ -43,6 +43,9 @@ class LTX2Backend(VideoBackend):
     @classmethod
     def detect(cls, model_path: str) -> bool:
         p = model_path.lower()
+        # Exclude LTX-2.5 paths (handled by LTX2_5Backend, registered first).
+        if "ltx-2.5" in p or "ltx_2.5" in p or "ltx2.5" in p:
+            return False
         return "ltx-2" in p or "ltx_2" in p or "ltx-2.3" in p
 
     async def start(self, model_path: str, **kwargs: Any) -> None:
