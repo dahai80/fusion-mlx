@@ -1709,6 +1709,7 @@ has been dormant 20+ days, so fusion-mlx evolves it independently.
 - [Configuration](docs/configuration.md) - Memory tiers, scheduler settings, TurboQuant, aliases, executor pools
 - [Speculative Decoding](docs/speculative-decoding.md) - Suffix/DFlash/DSpark/MTP/VLM-MTP methods, selection guide, auto-router
 - [Video Input](docs/video-input.md) - VLM video support: `video_url` API, frame extraction, Qwen native path, limits
+- [LTX-2.5](docs/ltx2-5.md) - 22B AV DiT structural port: 4 deltas vs LTX-2, connector key tree, strict-load verification
 - [FR Differentiation](docs/FR_DIFFERENTIATION.md) - Verified analysis of fusion-mlx's spec-decode/TurboQuant/scheduling differentiation
 
 ## whichllm Integration
