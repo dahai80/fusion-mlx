@@ -1262,6 +1262,7 @@ to the correct pure-MLX implementation. Supported backends:
 
 | Backend | Key | Models | I2V | Status |
 |---|---|---|---|---|
+| LTX-2.5 | `ltx2_5` | LTX-2.5 22B distilled/dev | ✅ | structural port — strict-load 0 mismatch vs 22B ([docs](docs/ltx2-5.md)); E2E pending |
 | LTX-2 | `ltx2` | LTX-2, LTX-2.3 | ✅ | ✅ shipped |
 | Wan2 | `wan2` | Wan2.1, Wan2.2 (TI2V), VACE-14B | ✅ | ✅ shipped |
 | SkyReels-V3 | `skyreels` | R2V/V2V/A2V 14B-19B | ✅ (R2V) | ✅ shipped |
@@ -1269,11 +1270,12 @@ to the correct pure-MLX implementation. Supported backends:
 | SVD | `svd` | Stable Video Diffusion XT | ✅ | ✅ #212 |
 | Cosmos | `cosmos` | 7B T2V + Predict2 2B I2V | ✅ (Predict2) | ✅ #213 |
 | HunyuanVideo | `hunyuanvideo` | HunyuanVideo | ✅ | ✅ #214 |
-| CogVideo | `cogvideo` | CogVideoX | — | stub (no MLX port) |
 | MiniMax-H3 | `minimax_h3` | H3 FL2VA/Ref2VA (33B video+audio) | ✅ | 🔧 P0-P5 (config/VAE/DiT/scheduler/text-encoder/backend+registry; E2E pending) |
+| CogVideo | `cogvideo` | CogVideoX | — | stub (no MLX port) |
 
-Aliases: `svd-xt`, `stable-video-diffusion`, `cosmos-1.0`, `predict2`,
-`video2world`, `hunyuan-video`, `hunyuan_video`, `cogvideox`, `ltx-video`, `wan`,
+Aliases: `ltx-2.5`, `ltx_2.5`, `ltx2.5`, `ltx-2.5-distilled`, `svd-xt`,
+`stable-video-diffusion`, `cosmos-1.0`, `predict2`, `video2world`,
+`hunyuan-video`, `hunyuan_video`, `cogvideox`, `ltx-video`, `wan`,
 `minimax-h3`, `h3`, `h3-fl2va`, `h3-ref2va`, `fl2va`, `ref2va`.
 
 > **Video DiT throughput (#367):** HunyuanVideo and Cosmos fuse the
@@ -1707,6 +1709,7 @@ has been dormant 20+ days, so fusion-mlx evolves it independently.
 - [Configuration](docs/configuration.md) - Memory tiers, scheduler settings, TurboQuant, aliases, executor pools
 - [Speculative Decoding](docs/speculative-decoding.md) - Suffix/DFlash/DSpark/MTP/VLM-MTP methods, selection guide, auto-router
 - [Video Input](docs/video-input.md) - VLM video support: `video_url` API, frame extraction, Qwen native path, limits
+- [LTX-2.5](docs/ltx2-5.md) - 22B AV DiT structural port: 4 deltas vs LTX-2, connector key tree, strict-load verification
 - [FR Differentiation](docs/FR_DIFFERENTIATION.md) - Verified analysis of fusion-mlx's spec-decode/TurboQuant/scheduling differentiation
 
 ## whichllm Integration
