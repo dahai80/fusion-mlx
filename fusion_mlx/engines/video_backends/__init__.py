@@ -19,6 +19,7 @@ from .cosmos import CosmosBackend
 from .hunyuanvideo import HunyuanVideoBackend
 from .ltx2 import LTX2Backend
 from .ltx_video_legacy import LegacyLTXBackend
+from .minimax_h3 import MiniMaxH3Backend
 from .opensora import OpenSoraBackend
 from .skyreels import SkyReelsBackend
 from .svd import SVDBackend
@@ -36,6 +37,7 @@ BACKENDS: dict[str, type[VideoBackend]] = {
     "hunyuanvideo": HunyuanVideoBackend,
     "opensora": OpenSoraBackend,
     "uniworld": UniWorldBackend,
+    "minimax_h3": MiniMaxH3Backend,
 }
 
 # Stable name aliases -> canonical registry key.
@@ -81,6 +83,13 @@ _ALIASES: dict[str, str] = {
     "uniworld": "uniworld",
     "uniworld-v1": "uniworld",
     "univa": "uniworld",
+    "minimax-h3": "minimax_h3",
+    "minimax_h3": "minimax_h3",
+    "h3": "minimax_h3",
+    "h3-fl2va": "minimax_h3",
+    "h3-ref2va": "minimax_h3",
+    "fl2va": "minimax_h3",
+    "ref2va": "minimax_h3",
 }
 
 
@@ -133,4 +142,5 @@ __all__ = [
     "CogVideoBackend",
     "OpenSoraBackend",
     "UniWorldBackend",
+    "MiniMaxH3Backend",
 ]

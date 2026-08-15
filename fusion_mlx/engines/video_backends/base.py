@@ -76,6 +76,15 @@ class VideoGenParams:
     reference_images: list[str] | None = None
     # Camera control: camera pose video path for Wan2.1-Fun-Camera models.
     camera_conditions: str | None = None
+    # MiniMax-H3 multimodal inputs (P5 backend). fl2va partition:
+    #   image=首帧 (i2va/fl2va), last_frame_image=末帧 (l2va/fl2va),
+    #   ref2va uses reference_images/control_video + reference_audio.
+    last_frame_image: str | None = None
+    reference_audio: list[str] | None = None
+    # H3 分辨率："768p"（默认）或 "2k"（触发 in-context 再生，显存翻倍）。
+    resolution: str = "768p"
+    # H3 本地 prompt 结构化开关（Context-IR 替代，无需联网调 LLM）。
+    use_prompt_skill: bool | None = None
     extra: dict[str, Any] = field(default_factory=dict)
     # Output format: "mp4" (default, returns bytes) or "raw" (returns numpy
     # array of shape [T, H, W, 3] uint8 — skips MP4 encoding entirely).
