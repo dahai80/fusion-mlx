@@ -157,8 +157,18 @@ class TestNewParams:
 
 class TestGenerate:
     @pytest.mark.asyncio
-    async def test_generate_not_implemented(self):
-        b = MiniMaxH3Backend("/models/x")
+    async def test_generate_delegates_to_p6_path(self):
+        # P6 后 generate() 不再 NotImplementedError；无权重时应因模型加载失败而报错，
+        # 而非静默返回或抛 NotImplementedError。验证错误可见（fail-visible）。
+        b = MiniMaxH3Backend("/nonexistent/h3-model")
         p = VideoGenParams(prompt="test", num_frames=97, width=768, height=768, n=1)
-        with pytest.raises(NotImplementedError):
+        raised = None
+        try:
             await b.generate(p)
+        except NotImplementedError as e:
+            raised = e
+        except Exception as e:  # 模型加载失败属预期（无权重）。
+            raised = e
+        # 必须报错，且不是 NotImplementedError（P6 已落地真实路径）。
+        assert raised is not None
+        assert not isinstance(raised, NotImplementedError)

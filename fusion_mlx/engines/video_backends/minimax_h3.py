@@ -8,7 +8,9 @@ import logging
 
 import mlx.core as mx
 
-from ...engine_core import get_executor
+from ..._tempfile_safe import managed_tempfile_path
+from ...api._url_safety import is_safe_local_path
+from ...engine_core import get_executor, get_video_gen_timeout
 from .base import VideoBackend, VideoConstraints, VideoGenParams, validate_params
 
 logger = logging.getLogger(__name__)
@@ -129,19 +131,50 @@ class MiniMaxH3Backend(VideoBackend):
             raise ValueError(
                 f"resolution must be one of {_H3_RESOLUTIONS}, got {params.resolution!r}"
             )
+        if self._model_name.startswith(("/", "~")) or ".." in self._model_name:
+            if not is_safe_local_path(self._model_name):
+                raise ValueError(
+                    f"model_path outside allowed directories: {self._model_name}"
+                )
         if not self._loaded:
             await self.start()
-        # P6 condition + packed-sequence 组装 / P8 真实模型 E2E 未落地。
-        # fail-visible：明确报未实现，不静默返回空。
-        logger.error(
-            "minimax_h3 backend: generate() not implemented (P6/P8 pending); "
-            "partition=%s resolution=%s frames=%d",
-            self._partition,
-            params.resolution,
-            params.num_frames,
-        )
-        raise NotImplementedError(
-            "MiniMax-H3 generate() E2E path is not implemented in this phase "
-            "(P6 condition/packed-sequence + P8 real-model E2E pending). "
-            f"partition={self._partition} resolution={params.resolution}"
-        )
+
+        from fusion_mlx.video.minimax_h3.generate import generate_video
+
+        results = []
+        for i in range(params.n):
+            seed = (params.seed + i) if params.seed is not None else None
+
+            with managed_tempfile_path(prefix="fusion_h3_", suffix=".mp4") as handle:
+                output_path = handle.path
+
+                try:
+                    timeout = get_video_gen_timeout()
+                    await asyncio.wait_for(
+                        asyncio.get_running_loop().run_in_executor(
+                            get_executor("video"),
+                            lambda s=seed, op=output_path: generate_video(
+                                model_path=self._model_name,
+                                prompt=params.prompt,
+                                num_frames=params.num_frames,
+                                width=params.width,
+                                height=params.height,
+                                fps=params.fps,
+                                seed=s,
+                                num_inference_steps=(params.num_inference_steps or 40),
+                                output_path=op,
+                            ),
+                        ),
+                        timeout=timeout,
+                    )
+                    handle.release()
+                    with open(output_path, "rb") as f:
+                        results.append(f.read())
+                except TimeoutError:
+                    logger.error("minimax_h3: generation timed out after %ds", timeout)
+                    raise
+                except Exception as e:
+                    logger.error("minimax_h3: generation failed: %s", e)
+                    raise
+
+        return results
