@@ -21,6 +21,16 @@ class GenResult:
         self.image = image
 
 
+def _pil_to_nchw(image: Image.Image, height: int, width: int) -> mx.array:
+    # Resize to target then normalize to [-1, 1] NCHW for VAE encode (img2img).
+    if image.size != (width, height):
+        image = image.resize((width, height), Image.LANCZOS)
+    arr = np.array(image.convert("RGB")).astype(np.float32) / 255.0
+    arr = (arr * 2.0) - 1.0
+    arr = np.transpose(arr, (2, 0, 1))
+    return mx.array(arr)[None]
+
+
 def _local_path(subfolder: str, filename: str) -> str | None:
     base = os.environ.get("SD3_LOCAL_DIR")
     if not base:
@@ -331,6 +341,8 @@ class SD3Pipeline:
         shift: float | None = None,
         negative_prompt: str = "",
         max_t5_len: int = 256,
+        image_path: str | None = None,
+        image_strength: float | None = None,
         **kwargs,
     ) -> GenResult:
         self._load_all()
@@ -339,16 +351,40 @@ class SD3Pipeline:
             raise ValueError("SD3 height/width must be multiples of 16")
         h_lat = height // 8
         w_lat = width // 8
-        logger.info(
-            "SD3 generate prompt=%r steps=%d %dx%d guidance=%.2f shift=%s seed=%d",
-            prompt[:60],
-            num_inference_steps,
-            width,
-            height,
-            guidance,
-            shift,
-            seed,
-        )
+        # img2img: image_strength (a.k.a. denoise fraction) controls how many
+        # steps run. strength=1.0 -> full txt2img from noise; strength=0.5 ->
+        # run half the steps from a noised init image (#480). When image_path
+        # is None, fall back to pure txt2img.
+        is_img2img = image_path is not None
+        strength = float(image_strength) if image_strength is not None else 1.0
+        if is_img2img:
+            if strength <= 0.0 or strength > 1.0:
+                logger.warning(
+                    "SD3 image_strength=%.3f out of (0,1], clamping", strength
+                )
+                strength = max(min(strength, 1.0), 1e-3)
+            eff_steps = max(1, int(round(num_inference_steps * strength)))
+            logger.info(
+                "SD3 img2img prompt=%r steps=%d eff_steps=%d strength=%.3f %dx%d",
+                prompt[:60],
+                num_inference_steps,
+                eff_steps,
+                strength,
+                width,
+                height,
+            )
+        else:
+            eff_steps = num_inference_steps
+            logger.info(
+                "SD3 generate prompt=%r steps=%d %dx%d guidance=%.2f shift=%s seed=%d",
+                prompt[:60],
+                num_inference_steps,
+                width,
+                height,
+                guidance,
+                shift,
+                seed,
+            )
         mx.random.seed(seed)
         pooled, context = self._encode_prompt(prompt, max_t5_len)
         if guidance > 1:
@@ -359,7 +395,6 @@ class SD3Pipeline:
             pooled_un = None
             context_un = None
 
-        latent = mx.random.normal((1, cfg.in_channels, h_lat, w_lat), dtype=mx.float32)
         image_seq_len = (h_lat // cfg.patch_size) * (w_lat // cfg.patch_size)
         scheduler = FlowMatchEulerScheduler(
             num_train_timesteps=cfg.num_train_timesteps,
@@ -371,6 +406,29 @@ class SD3Pipeline:
         )
         scheduler.set_timesteps(num_inference_steps, image_seq_len)
         timesteps = scheduler.timesteps
+        # Slice the last eff_steps timesteps (strongest denoise near the end),
+        # matching diffusers SD3 img2img skip.
+        if is_img2img and eff_steps < len(timesteps):
+            timesteps = timesteps[len(timesteps) - eff_steps :]
+            scheduler.sigmas = scheduler.sigmas[len(scheduler.sigmas) - 1 - eff_steps :]
+            scheduler._step_index = 0
+        if is_img2img:
+            init_img = Image.open(image_path).convert("RGB")
+            init_lat = self.vae.encode(_pil_to_nchw(init_img, height, width))
+            init_lat = init_lat.astype(mx.float32)
+            # flow-match convention: at sigma s, noisy = (1-s)*init + s*noise.
+            # sigma_start ~ 1.0 -> mostly noise; ~0.0 -> mostly init image.
+            sigma_start = float(scheduler.sigmas[0])
+            noise = mx.random.normal(init_lat.shape, dtype=mx.float32)
+            latent = (1.0 - sigma_start) * init_lat + sigma_start * noise
+            mx.eval(latent)
+            logger.info(
+                "SD3 img2img init latent encoded, sigma_start=%.4f", sigma_start
+            )
+        else:
+            latent = mx.random.normal(
+                (1, cfg.in_channels, h_lat, w_lat), dtype=mx.float32
+            )
         for i, t in enumerate(timesteps):
             t_arr = mx.array([float(t)])
             if guidance > 1:

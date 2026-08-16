@@ -276,6 +276,7 @@ class SD15Pipeline:
             latent = mx.random.normal(
                 (1, cfg.in_channels, h_lat, w_lat), dtype=mx.float32
             )
+            latent = latent * scheduler.init_noise_sigma
 
         for i, t in enumerate(timesteps):
             t_arr = mx.array([float(t)])
@@ -283,11 +284,13 @@ class SD15Pipeline:
                 latent_in = mx.concatenate([latent, latent], axis=0)
                 context_in = mx.concatenate([context, context_un], axis=0)
                 t_in = mx.concatenate([t_arr, t_arr], axis=0)
-                noise = self.unet(latent_in, t_in, context_in)
+                noise = self.unet(
+                    scheduler.scale_model_input(latent_in), t_in, context_in
+                )
                 noise_cond, noise_un = mx.split(noise, 2, axis=0)
                 noise = noise_un + guidance * (noise_cond - noise_un)
             else:
-                noise = self.unet(latent, t_arr, context)
+                noise = self.unet(scheduler.scale_model_input(latent), t_arr, context)
             latent = scheduler.step(noise, latent)
             mx.eval(latent)
             logger.info("SD15 step %d/%d done", i + 1, len(timesteps))

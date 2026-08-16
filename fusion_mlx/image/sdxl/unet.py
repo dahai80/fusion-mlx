@@ -17,14 +17,20 @@ def _nhwc_to_nchw(x: mx.array) -> mx.array:
 
 
 def timestep_embedding(
-    timesteps: mx.array, dim: int, max_period: int = 10000
+    timesteps: mx.array,
+    dim: int,
+    max_period: int = 10000,
+    flip_sin_to_cos: bool = True,
+    downscale_freq_shift: float = 0.0,
 ) -> mx.array:
     half = dim // 2
     exponent = -math.log(max_period) * mx.arange(half, dtype=mx.float32)
-    exponent = exponent / (half - 1)
+    exponent = exponent / (half - downscale_freq_shift)
     freqs = mx.exp(exponent)
     emb = timesteps.reshape(-1, 1).astype(mx.float32) * freqs.reshape(1, -1)
     emb = mx.concatenate([mx.sin(emb), mx.cos(emb)], axis=-1)
+    if flip_sin_to_cos:
+        emb = mx.concatenate([emb[:, half:], emb[:, :half]], axis=-1)
     if dim % 2 == 1:
         emb = mx.pad(emb, ((0, 0), (0, 1)))
     return emb
