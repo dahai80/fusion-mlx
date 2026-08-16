@@ -618,6 +618,23 @@ async def create_speech(request: AudioSpeechRequest):
         )
     except HTTPException:
         raise
+    except TimeoutError as exc:
+        # asyncio.wait_for in TTSEngine.synthesize raises TimeoutError when the
+        # audio executor is starved by concurrent GPU work (LLM prefill / FLUX.2).
+        # Surface as 503 (retryable) — not 500 — so downstream callers (e.g.
+        # fusion-comfyui voice.py) can retry with backoff (#472).
+        logger.warning(
+            "audio speech synthesize timed out for %s: %s(%s) — GPU busy, "
+            "retry later (raise FUSION_TTS_TIMEOUT to extend the ceiling)",
+            resolved_model,
+            type(exc).__name__,
+            exc,
+        )
+        raise HTTPException(
+            status_code=503,
+            detail="TTS synthesis timed out (GPU busy), retry later",
+            headers={"Retry-After": "5"},
+        ) from exc
     except Exception as exc:
         logger.exception(
             "audio speech synthesize failed for %s: %s(%s)",

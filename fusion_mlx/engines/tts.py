@@ -5,6 +5,7 @@ import asyncio
 import gc
 import inspect
 import logging
+import os
 import time
 from collections.abc import AsyncIterator
 from typing import Any
@@ -161,13 +162,33 @@ class TTSEngine(BaseNonStreamingEngine):
         )
         try:
             loop = asyncio.get_running_loop()
-            # 180s: mlx-audio generate() for long text + cold-start (lazy
-            # tokenizer/Metal kernel JIT) can exceed the old 60s ceiling and
-            # surface as an empty-message 500.
-            result = await asyncio.wait_for(
-                loop.run_in_executor(get_executor("audio"), _synthesize_sync),
-                timeout=180.0,
-            )
+            # Configurable via FUSION_TTS_TIMEOUT (seconds). Default 180s:
+            # mlx-audio generate() for long text + cold-start (lazy
+            # tokenizer/Metal kernel JIT) can exceed the old 60s ceiling.
+            # Under GPU contention (concurrent LLM prefill / FLUX.2) the
+            # TTS executor blocks on the shared Metal device and can hit
+            # this ceiling even for short text (#472). The route layer maps
+            # the resulting TimeoutError to 503 (retryable).
+            try:
+                timeout = float(os.environ.get("FUSION_TTS_TIMEOUT", "180"))
+            except ValueError:
+                logger.warning(
+                    "Invalid FUSION_TTS_TIMEOUT=%r, falling back to 180s",
+                    os.environ.get("FUSION_TTS_TIMEOUT"),
+                )
+                timeout = 180.0
+            try:
+                result = await asyncio.wait_for(
+                    loop.run_in_executor(get_executor("audio"), _synthesize_sync),
+                    timeout=timeout,
+                )
+            except TimeoutError:
+                logger.error(
+                    "TTS synthesize timed out after %.0fs (GPU contention? "
+                    "raise FUSION_TTS_TIMEOUT to allow longer waits)",
+                    timeout,
+                )
+                raise
             return result
         finally:
             await self._finish_activity(activity_id)
