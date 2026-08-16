@@ -1270,7 +1270,7 @@ to the correct pure-MLX implementation. Supported backends:
 | SVD | `svd` | Stable Video Diffusion XT | ✅ | ✅ #212 |
 | Cosmos | `cosmos` | 7B T2V + Predict2 2B I2V | ✅ (Predict2) | ✅ #213 |
 | HunyuanVideo | `hunyuanvideo` | HunyuanVideo | ✅ | ✅ #214 |
-| MiniMax-H3 | `minimax_h3` | H3 FL2VA/Ref2VA (33B video+audio) | ✅ | 🔧 P0-P5 (config/VAE/DiT/scheduler/text-encoder/backend+registry; E2E pending) |
+| MiniMax-H3 | `minimax_h3` | H3 FL2VA/Ref2VA (33B video+audio) | ✅ | 🔧 P0-P6 (config/VAE/DiT/scheduler/text-encoder/backend+registry + t2va video-only packed-sequence E2E path; real-model E2E pending weights) |
 | CogVideo | `cogvideo` | CogVideoX | — | stub (no MLX port) |
 
 Aliases: `ltx-2.5`, `ltx_2.5`, `ltx2.5`, `ltx-2.5-distilled`, `svd-xt`,
@@ -1710,6 +1710,7 @@ has been dormant 20+ days, so fusion-mlx evolves it independently.
 - [Speculative Decoding](docs/speculative-decoding.md) - Suffix/DFlash/DSpark/MTP/VLM-MTP methods, selection guide, auto-router
 - [Video Input](docs/video-input.md) - VLM video support: `video_url` API, frame extraction, Qwen native path, limits
 - [LTX-2.5](docs/ltx2-5.md) - 22B AV DiT structural port: 4 deltas vs LTX-2, connector key tree, strict-load verification
+- [MiniMax-H3](docs/minimax-h3.md) - 33B Omni-Transformer packed-sequence DiT, t2va video-only E2E (P0-P8 verified), rectified-flow scheduler
 - [FR Differentiation](docs/FR_DIFFERENTIATION.md) - Verified analysis of fusion-mlx's spec-decode/TurboQuant/scheduling differentiation
 
 ## whichllm Integration
