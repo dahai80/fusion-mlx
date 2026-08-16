@@ -57,6 +57,10 @@ x86+CUDA stack structurally cannot match. These are **landed and running today**
   AutoencoderKL + dual CLIP-L/OpenCLIP-G encoders (2048 cross-attn dim),
   Euler-discrete epsilon scheduler. Covers sdxl / cosxl / sdxs variants.
   See [docs/sdxl-image.md](docs/sdxl-image.md).
+- **SD1.5 + img2img (#480)** - from-scratch UNet4 + kl-f8 VAE + CLIP-L
+  (768 cross-attn, 512 native res), wired into `ImageGenEngine`. img2img /
+  partial-denoise via `image_strength` (denoise fraction) for SD1.5 / SDXL
+  / SD3 (epsilon + flow-match noise conventions).
 - **Stable Cascade native MLX (#370)** - from-scratch Würstchen 3-stage
   pipeline: prior → decoder (unified `StableCascadeUNet` by
   `switch_level`) → VQGAN, DDPM-Würstchen scheduler, CLIP-ViT-bigG.
@@ -440,7 +444,7 @@ export HF_MIRROR=https://hf-mirror.com
 | Reranker | `RerankerEngine` | Cohere, Jina rerankers |
 | STT | `STTEngine` | Whisper, VibeVoice-ASR |
 | TTS | `TTSEngine` | Kokoro, VibeVoice |
-| ImageGen | `ImageGenEngine` | Flux 2, SD3-Medium, SDXL, Stable Cascade |
+| ImageGen | `ImageGenEngine` | Flux 2, SD3-Medium, SDXL, SD1.5, Stable Cascade |
 | VideoGen | `VideoGenEngine` | LTX-2, Wan2, SkyReels-V3 (pure-MLX ports) |
 
 ## Quantization Formats
@@ -489,7 +493,7 @@ The macOS app offers a mode toggle between:
 | OpenAI Legacy | `/v1/completions` | ✅ Supported |
 | Anthropic Messages | `/v1/messages`, `/v1/count_tokens` | ✅ Fully compatible |
 | Audio | `/v1/audio/transcriptions`, `/v1/audio/speech` | ✅ Supported |
-| Images | `/v1/images/generate` | ✅ Supported (Flux 2, SD3-Medium, SDXL, Stable Cascade) |
+| Images | `/v1/images/generate` | ✅ Supported (Flux 2, SD3-Medium, SDXL, SD1.5, Stable Cascade) |
 | Videos | `/v1/videos/generate` | ✅ Supported (LTX-2, Wan2, SkyReels-V3; pure-MLX ports) |
 | Embeddings | `/v1/embeddings` | ✅ Supported |
 | Reasoning | `/v1/reasoning` | ✅ Explicit thinking step API (DeepSeek-R1, QwQ, etc.) |
