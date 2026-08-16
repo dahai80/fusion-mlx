@@ -233,6 +233,7 @@ class SDXLPipeline:
         )
         scheduler.set_timesteps(num_inference_steps)
         timesteps = scheduler.timesteps
+        latent = latent * scheduler.init_noise_sigma
         for i, t in enumerate(timesteps):
             t_arr = mx.array([float(t)])
             if guidance > 1:
@@ -241,11 +242,17 @@ class SDXLPipeline:
                 pooled_in = mx.concatenate([pooled, pooled_un], axis=0)
                 tids_in = mx.concatenate([time_ids, time_ids_un], axis=0)
                 t_in = mx.concatenate([t_arr, t_arr], axis=0)
-                noise = self.unet(latent_in, t_in, context_in, pooled_in, tids_in)
+                noise = self.unet(
+                    scheduler.scale_model_input(latent_in), t_in, context_in,
+                    pooled_in, tids_in,
+                )
                 noise_cond, noise_un = mx.split(noise, 2, axis=0)
                 noise = noise_un + guidance * (noise_cond - noise_un)
             else:
-                noise = self.unet(latent, t_arr, context, pooled, time_ids)
+                noise = self.unet(
+                    scheduler.scale_model_input(latent), t_arr, context, pooled,
+                    time_ids,
+                )
             latent = scheduler.step(noise, latent)
             mx.eval(latent)
             logger.info("SDXL step %d/%d done", i + 1, len(timesteps))
