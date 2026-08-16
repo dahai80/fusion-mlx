@@ -13,7 +13,7 @@ from fusion_mlx.image.sdxl.weights import (
     _find_missing,
     _flatten,
     _map_key,
-    load_clip,
+    load_clip,  # noqa: F401  — re-exported for sd15.generate
 )
 
 logger = logging.getLogger(__name__)
