@@ -221,7 +221,7 @@ class SD15UNet(nn.Module):
         super().__init__()
         self.config = config
         uc = config.block_out_channels  # (320, 640, 1280, 1280)
-        head_dim = config.attention_head_dim  # 8 -> heads = ch // 8
+        num_heads = config.attention_head_dim  # SD1.5: 8 heads; head_dim = ch // 8
         tl = config.transformer_layers_per_block  # 1
         cross = config.cross_attention_dim  # 768
         temb_ch = uc[0] * 4  # 1280
@@ -240,8 +240,8 @@ class SD15UNet(nn.Module):
                 uc[0],
                 uc[0],
                 temb_ch,
-                uc[0] // head_dim,
-                head_dim,
+                num_heads,
+                uc[0] // num_heads,
                 cross,
                 num_layers=config.layers_per_block,
                 num_tf_layers=tl,
@@ -253,8 +253,8 @@ class SD15UNet(nn.Module):
                 uc[0],
                 uc[1],
                 temb_ch,
-                uc[1] // head_dim,
-                head_dim,
+                num_heads,
+                uc[1] // num_heads,
                 cross,
                 num_layers=config.layers_per_block,
                 num_tf_layers=tl,
@@ -266,8 +266,8 @@ class SD15UNet(nn.Module):
                 uc[1],
                 uc[2],
                 temb_ch,
-                uc[2] // head_dim,
-                head_dim,
+                num_heads,
+                uc[2] // num_heads,
                 cross,
                 num_layers=config.layers_per_block,
                 num_tf_layers=tl,
@@ -285,7 +285,7 @@ class SD15UNet(nn.Module):
         )
 
         self.mid_block = SD15MidCrossAttnBlock(
-            uc[3], temb_ch, uc[3] // head_dim, head_dim, cross, num_tf_layers=tl
+            uc[3], temb_ch, num_heads, uc[3] // num_heads, cross, num_tf_layers=tl
         )
 
         # up_blocks: reversed(uc) = (1280, 1280, 640, 320).
@@ -309,8 +309,8 @@ class SD15UNet(nn.Module):
                 r[0],
                 r[2],
                 temb_ch,
-                r[1] // head_dim,
-                head_dim,
+                num_heads,
+                r[1] // num_heads,
                 cross,
                 num_layers=config.layers_per_block + 1,
                 num_tf_layers=tl,
@@ -324,8 +324,8 @@ class SD15UNet(nn.Module):
                 r[1],
                 r[3],
                 temb_ch,
-                r[2] // head_dim,
-                head_dim,
+                num_heads,
+                r[2] // num_heads,
                 cross,
                 num_layers=config.layers_per_block + 1,
                 num_tf_layers=tl,
@@ -339,8 +339,8 @@ class SD15UNet(nn.Module):
                 r[2],
                 r[3],
                 temb_ch,
-                r[3] // head_dim,
-                head_dim,
+                num_heads,
+                r[3] // num_heads,
                 cross,
                 num_layers=config.layers_per_block + 1,
                 num_tf_layers=tl,
