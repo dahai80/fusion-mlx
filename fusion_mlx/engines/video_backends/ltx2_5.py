@@ -1,20 +1,20 @@
 # SPDX-License-Identifier: Apache-2.0
 # LTX-2.5 video backend (pure-MLX port). Mirrors LTX2Backend but targets the
 # LTX-2.5 22B model (Gemma4-12b text encoder, duration-head, two-stage
-# spatial+temporal upsampler). P0-P5 structural port landed (config / text
-# encoder / duration-head / temporal upsampler); the full E2E generate path
-# (P6 generate.py two-stage + audio mux) is pending real 22B weights, so
-# generate() raises a clear NotImplementedError (fail visible, Rule 12).
-# Detection runs BEFORE LTX2Backend so an "ltx-2.5" path does not fall through
-# the "ltx-2" substring match (AR doc §3.3 / §7 detect-order conflict).
+# spatial+temporal upsampler). generate() delegates to
+# fusion_mlx.video.ltx2_5.generate.generate_video (two-stage distilled T2V,
+# real-model verified). Detection runs BEFORE LTX2Backend so an "ltx-2.5"
+# path does not fall through the "ltx-2" substring match (AR doc §3.3 / §7).
 import asyncio
 import gc
 import logging
+import random
 from typing import Any
 
 import mlx.core as mx
 
-from ...engine_core import get_executor
+from ..._tempfile_safe import managed_tempfile_path
+from ...engine_core import get_executor, get_video_gen_timeout
 from .base import VideoBackend, VideoConstraints, VideoGenParams
 
 logger = logging.getLogger(__name__)
@@ -71,6 +71,8 @@ class LTX2_5Backend(VideoBackend):
         self._loaded = False
         gc.collect()
         loop = asyncio.get_running_loop()
+        # io executor (max_workers=2) 而非单 worker video executor，避免 stop()
+        # 排在长生成任务后触发 5s 超时（mirror ltx2 backend）。
         await asyncio.wait_for(
             loop.run_in_executor(
                 get_executor("io"), lambda: (mx.synchronize(), mx.clear_cache())
@@ -79,19 +81,41 @@ class LTX2_5Backend(VideoBackend):
         )
 
     async def generate(self, params: VideoGenParams) -> list[bytes]:
-        # P6 E2E path (two-stage distilled + audio mux + duration-head) is not
-        # implemented this round — real 22B weights are required. Fail visible.
-        logger.error(
-            "LTX2_5Backend.generate: E2E generate path not implemented "
-            "(P6 pending 22B weights). prompt=%r frames=%s",
-            params.prompt[:60] if params.prompt else "",
-            params.num_frames,
+        if params.on_step is not None:
+            logger.debug(
+                "ltx2_5: on_step progress callback accepted but per-step "
+                "streaming not yet emitted for this backend (issue #171 follow-up)"
+            )
+        base_seed = (
+            params.seed if params.seed is not None else random.randint(0, 2**31 - 1)
         )
-        raise NotImplementedError(
-            "LTX-2.5 generate() E2E path is not implemented in this phase "
-            "(P6/P8 pending real 22B weights download via hf-mirror). "
-            "Structural port (config/text-encoder/duration-head/temporal-"
-            "upsampler) is landed; see fusion_mlx.video.ltx2_5."
+
+        def _generate():
+            results: list[bytes] = []
+            for i in range(max(1, params.n)):
+                mp4_bytes = _generate_one(
+                    self._model_name,
+                    self._pipeline,
+                    prompt=params.prompt,
+                    num_frames=params.num_frames,
+                    width=params.width,
+                    height=params.height,
+                    fps=params.fps,
+                    seed=base_seed + i,
+                    num_inference_steps=params.num_inference_steps,
+                    cfg_scale=params.cfg_scale,
+                    tiling=params.tiling,
+                    image=params.image,
+                    image_strength=params.image_strength,
+                    two_stage=self._two_stage,
+                )
+                results.append(mp4_bytes)
+            return results
+
+        loop = asyncio.get_running_loop()
+        return await asyncio.wait_for(
+            loop.run_in_executor(get_executor("video"), _generate),
+            timeout=get_video_gen_timeout(),
         )
 
     def constraints(self) -> VideoConstraints:
@@ -103,3 +127,67 @@ class LTX2_5Backend(VideoBackend):
             num_frames_hint="num_frames % 8 == 1 (or omit to let duration-head decide)",
             dim_hint="width and height must be divisible by 32",
         )
+
+
+def _generate_one(
+    model_repo,
+    pipeline,
+    *,
+    prompt: str,
+    num_frames: int,
+    width: int,
+    height: int,
+    fps: int,
+    seed: int,
+    num_inference_steps: int | None = None,
+    cfg_scale: float | None = None,
+    tiling: str | None = None,
+    image: str | None = None,
+    image_strength: float = 1.0,
+    two_stage: bool = True,
+) -> bytes:
+    from fusion_mlx.video.ltx2_5.config import LTX2_5Variant
+    from fusion_mlx.video.ltx2_5.generate import generate_video
+
+    variant = LTX2_5Variant.DISTILLED if pipeline == "distilled" else LTX2_5Variant.DEV
+    gen_kwargs: dict[str, Any] = dict(
+        variant=variant,
+        height=height,
+        width=width,
+        num_frames=num_frames,
+        seed=seed,
+        fps=fps,
+        output_path=None,
+        verbose=False,
+        two_stage=two_stage,
+    )
+    if num_inference_steps is not None:
+        gen_kwargs["num_inference_steps"] = num_inference_steps
+    if cfg_scale is not None:
+        gen_kwargs["cfg_scale"] = cfg_scale
+    if tiling is not None:
+        gen_kwargs["tiling"] = tiling
+    if image is not None:
+        gen_kwargs["image"] = image
+        gen_kwargs["image_strength"] = image_strength
+    with managed_tempfile_path(prefix="fusion_video_", suffix=".mp4") as handle:
+        temp_path = handle.path
+        gen_kwargs["output_path"] = temp_path
+        logger.info(
+            "VideoGen generate (ltx2_5): prompt_len=%d frames=%d %dx%d@%dfps "
+            "seed=%d steps=%s cfg=%s tiling=%s image=%s two_stage=%s",
+            len(prompt),
+            num_frames,
+            width,
+            height,
+            fps,
+            seed,
+            num_inference_steps,
+            cfg_scale,
+            tiling,
+            image is not None,
+            two_stage,
+        )
+        generate_video(model_repo, prompt, **gen_kwargs)
+        with open(temp_path, "rb") as f:
+            return f.read()

@@ -1262,7 +1262,7 @@ to the correct pure-MLX implementation. Supported backends:
 
 | Backend | Key | Models | I2V | Status |
 |---|---|---|---|---|
-| LTX-2.5 | `ltx2_5` | LTX-2.5 22B distilled/dev | ✅ | structural port — strict-load 0 mismatch vs 22B ([docs](docs/ltx2-5.md)); E2E pending |
+| LTX-2.5 | `ltx2_5` | LTX-2.5 22B distilled/dev | ✅ | T2V distilled E2E verified (25 frames 512×320, real 22B+12b TE); strict-load 0 mismatch vs 22B ([docs](docs/ltx2-5.md)) |
 | LTX-2 | `ltx2` | LTX-2, LTX-2.3 | ✅ | ✅ shipped |
 | Wan2 | `wan2` | Wan2.1, Wan2.2 (TI2V), VACE-14B | ✅ | ✅ shipped |
 | SkyReels-V3 | `skyreels` | R2V/V2V/A2V 14B-19B | ✅ (R2V) | ✅ shipped |
@@ -1709,7 +1709,7 @@ has been dormant 20+ days, so fusion-mlx evolves it independently.
 - [Configuration](docs/configuration.md) - Memory tiers, scheduler settings, TurboQuant, aliases, executor pools
 - [Speculative Decoding](docs/speculative-decoding.md) - Suffix/DFlash/DSpark/MTP/VLM-MTP methods, selection guide, auto-router
 - [Video Input](docs/video-input.md) - VLM video support: `video_url` API, frame extraction, Qwen native path, limits
-- [LTX-2.5](docs/ltx2-5.md) - 22B AV DiT structural port: 4 deltas vs LTX-2, connector key tree, strict-load verification
+- [LTX-2.5](docs/ltx2-5.md) - 22B AV DiT port: 4 deltas vs LTX-2, T2V distilled E2E verified, two-stage flow (connector ownership + isotropic temporal upsampler)
 - [MiniMax-H3](docs/minimax-h3.md) - 33B Omni-Transformer packed-sequence DiT, t2va video-only E2E (P0-P8 verified), rectified-flow scheduler
 - [FR Differentiation](docs/FR_DIFFERENTIATION.md) - Verified analysis of fusion-mlx's spec-decode/TurboQuant/scheduling differentiation
 

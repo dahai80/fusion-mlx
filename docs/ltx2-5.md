@@ -85,14 +85,71 @@ they are different classes with the same value strings. Tests and downstream
 code MUST import enums from `fusion_mlx.video.ltx2_5.config`, not
 `fusion_mlx.video.ltx2.config`.
 
+## E2E generation (T2V distilled)
+
+`fusion_mlx/video/ltx2_5/generate.py` implements the two-stage distilled T2V
+flow end-to-end. Real-model verified on M5 Max (22B transformer + 12b Gemma4
+text encoder, ≈50 GB; stop the fusion-mlx server first via
+`~/claude-home/fusion-mlx/start.sh stop`).
+
+Flow:
+
+```
+text_encoder.encode(prompt, return_audio_embeddings=False)
+  → (video_features[4096], additive_mask)
+transformer.video_embeddings_connector(video_features, additive_mask)
+  → (context, context_mask)        # connector run explicitly in generate
+mx.random.seed(seed); latents = normal((1, 128, latent_frames, h//64, w//64))
+denoise_distilled_t2v(latents, positions, context, transformer, STAGE_1_SIGMAS)  # 8 steps
+upsample_latents(latents, spatial_up, latent_mean, latent_std)                  # spatial x2
+latents = noise * STAGE_2_SIGMAS[0] + latents * (1 - STAGE_2_SIGMAS[0])          # re-noise
+denoise_distilled_t2v(latents, positions, context, transformer, STAGE_2_SIGMAS)  # 3 steps
+temporal_up(latents)                                                             # temporal x2
+vae_decoder(latents) → video → clip → uint8 → mp4 bytes
+```
+
+### Connector ownership
+
+`LTX2_5Model.__call__` / `prepare` **never** run the connectors — `has_prompt_adaln=True`
+means there is no `caption_projection`, so the connector output **is** the context
+(inner_dim 4096). `generate_video` runs
+`transformer.video_embeddings_connector(video_features, additive_mask)` explicitly
+and passes the resulting `(context, context_mask)` through `Modality.context_mask`.
+
+### VAE
+
+`load_video_decoder` requires the **conv** VAE variant
+(`vae/ltx-2.5-video-vae-conv-bf16.safetensors`); it raises `ValueError` on the
+detection VAE. Spatial factor 32, temporal factor 8 (causal:
+`out_frames = (f-1)*8 + 1`). `utils.py` exposes the `video_vae_conv` key so
+`resolve_component` can find it.
+
+### Temporal upsampler
+
+`LatentTemporalUpsampler` doubles the latent frame count via a 3³ Conv3d
+(padding=1, **isotropic** — not a `(3,1,1)` temporal-only conv; the checkpoint
+`upsampler.0.weight` is `(Cout, Cin, 3, 3, 3)`) + `TemporalPixelShuffle(2)`.
+The isotropic conv with padding=1 preserves spatial dims; a `(3,1,1)` conv
+would load a shape-mismatched weight under `strict=False` and shrink H/W by 2
+(kernel-1). VAE then decodes to the correct resolution.
+
+### Fail-visible guards
+
+I2V (`image`), single-stage (`two_stage=False`), and duration-head-driven
+`num_frames=None` all raise `NotImplementedError` (Rule 12). `num_frames`
+must satisfy `num_frames % 8 == 1` (auto-adjusted otherwise); `width`/`height`
+must be divisible by 32.
+
 ## Status
 
 - **Structural port: LANDED.** Strict-load 0 unmatched / 0 missing verified
   against real 22B-distilled weights. Forward smoke finite (min -2.92,
-  max 3.03, no NaN). 134 tests pass, ruff clean.
-- **E2E generation: PENDING.** `backend.generate` raises `NotImplementedError`
-  (fail visible — Rule 12). Wiring the connectors into the conditioning
-  pipeline, the Gemma4-12b text encoder, and the duration-head is a later phase.
+  max 3.03, no NaN).
+- **E2E generation: LANDED (T2V distilled).** Real-model verified: 25 frames
+  512×320 @ 24 fps in ~26 s, non-trivial content (frame0 std 11.0, temporal
+  std across frames 10.6). 135 tests pass, ruff + black clean.
+- **Not yet wired:** I2V, audio, duration-head `num_frames` inference, backend
+  rewire. Fail-visible `NotImplementedError` (Rule 12).
 
 ## Tests
 
@@ -100,10 +157,10 @@ code MUST import enums from `fusion_mlx.video.ltx2_5.config`, not
 |------|--------|
 | `tests/unit/test_ltx2_5_transformer.py` | block key count = 84, ff_bias asymmetry, 12 gate logits, connector 129×2, model 4349, sanitize remaps (incl. no-skip connectors), real-weight strict-load (skipped if checkpoint absent) |
 | `tests/unit/test_ltx2_5_config.py` | config deltas (has_prompt_adaln, ff_bias, connectors) |
-| `tests/unit/test_ltx2_5_reuse.py` | independence assertion (NOT subclass of `LTXModel`) |
+| `tests/unit/test_ltx2_5_reuse.py` | independence assertion (NOT subclass of `LTXModel`), VAE split, generate boundary guards (duration-head / dim / missing-repo) |
 | `tests/unit/test_ltx2_5_backend.py` | backend registration + aliases |
 | `tests/unit/test_ltx2_5_duration_head.py` | duration-head exp()=seconds |
-| `tests/unit/test_ltx2_5_text_encoder.py` | text-encoder wiring |
+| `tests/unit/test_ltx2_5_text_encoder.py` | Gemma4-12b text encoder + aggregate feature extractor, `encode` video/audio modes, additive_mask, tokenizer-missing guard |
 | `tests/unit/test_ltx2_5_upsampler.py` | upsampler |
 
 Real-weight tests are marked `@pytest.mark.realmodel` and skip if the 68GB

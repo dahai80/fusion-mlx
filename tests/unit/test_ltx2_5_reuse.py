@@ -147,10 +147,11 @@ class TestGenerateSkeleton:
                 height=512,
             )
 
-    def test_generate_weights_boundary_raises(self):
-        with pytest.raises(NotImplementedError, match="22B weights"):
+    def test_generate_missing_repo_raises(self):
+        # 越过所有输入校验后, 解析不到真实权重目录应 fail visible (FileNotFoundError)。
+        with pytest.raises((FileNotFoundError, RuntimeError)):
             generate_video(
-                "Lightricks/LTX-2.5",
+                "Lightricks/LTX-2.5-DOES-NOT-EXIST-9f8a2c",
                 "a cat",
                 num_frames=9,
                 width=768,

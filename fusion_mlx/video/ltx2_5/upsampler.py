@@ -45,15 +45,17 @@ class TemporalPixelShuffle(nn.Module):
 
 
 class TemporalUpsampler2x(nn.Module):
-    # 时间维 x2：Conv3d 扩通道 -> TemporalPixelShuffle 时间翻倍。
+    # 时间维 x2：Conv3d(3^3, pad=1) 扩通道 -> TemporalPixelShuffle 时间翻倍。
+    # checkpoint upsampler.0.weight 为 (Cout, Cin, 3, 3, 3) 各向同性卷积，非
+    # (3,1,1) 时间轴卷积；padding=1 保住 H/W（否则 spatial 缩 2）。
     def __init__(self, mid_channels: int = 1024, upscale_factor: int = 2):
         super().__init__()
         self.r = upscale_factor
         self.conv = Conv3d(
             mid_channels,
             mid_channels * upscale_factor,
-            kernel_size=(3, 1, 1),
-            padding=(1, 0, 0),
+            kernel_size=3,
+            padding=1,
         )
         self.pixel_shuffle = TemporalPixelShuffle(upscale_factor)
 
@@ -137,7 +139,12 @@ def load_temporal_upsampler(
     else:
         mid_channels = 1024
 
+    # 实测 checkpoint 用 'upsampler.0.weight'（Conv3d 单层），模型树是
+    # upsampler.conv（TemporalUpsampler2x.conv）。检测 + 重映射（mirror ltx2
+    # spatial load_upsampler 的 upsampler.0.->upsampler.conv. 重映射）。
     conv_key = "upsampler.conv.weight"
+    if conv_key not in raw_weights and "upsampler.0.weight" in raw_weights:
+        conv_key = "upsampler.0.weight"
     if conv_key in raw_weights:
         out_channels = raw_weights[conv_key].shape[0]
         temporal_scale = float(out_channels // mid_channels)
@@ -160,6 +167,8 @@ def load_temporal_upsampler(
     sanitized = {}
     for key, value in raw_weights.items():
         new_key = key
+        if new_key.startswith("upsampler.0."):
+            new_key = new_key.replace("upsampler.0.", "upsampler.conv.")
         if "weight" in new_key and value.ndim == 5:
             value = mx.transpose(value, (0, 2, 3, 4, 1))
         if ("weight" in new_key or "kernel" in new_key) and value.ndim == 4:
