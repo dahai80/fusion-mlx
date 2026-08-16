@@ -137,6 +137,15 @@ VARIANT_MAP: dict[str, tuple[str, str, str, float]] = {
         "sd15_base",
         7.5,
     ),
+    # SD2.1 native MLX pipeline (UNet4 + kl-f8 VAE + ViT-H/14 CLIP, 768
+    # native res, v_prediction DDIM). Cross-attention dim 1024, heads per
+    # block [5,10,20,20] (head_dim 64). Distinct from SD1.5/SDXL.
+    "sd2": (
+        "fusion_mlx.image.sd2.generate",
+        "SD2Pipeline",
+        "sd2_base",
+        7.5,
+    ),
     # Stable Cascade (Wuerstchen 3-stage: prior -> decoder -> vqgan) native
     # MLX pipeline. Prior default guidance=4.0; decoder guidance=0.0.
     "stable_cascade": (
@@ -195,6 +204,18 @@ def _infer_variant(model_path: str) -> str:
         or "stable-diffusion-v1-4" in name
     ):
         return "sd15"
+    # SD2.1: "stable-diffusion-2-1" / "sd2.1" / "sd21" / "v2-1" / "768-v".
+    # Check BEFORE cascade/sdxl — "stable-diffusion-2" matches neither.
+    if (
+        "stable-diffusion-2" in name
+        or "sd2.1" in name
+        or "sd2-1" in name
+        or "sd21" in name
+        or "v2-1" in name
+        or "768-v" in name
+        or "768v" in name
+    ):
+        return "sd2"
     # Stable Cascade / Wuerstchen: check BEFORE sdxl/sd3 since
     # "stable-cascade" contains neither substring.
     if "cascade" in name or "wuerstchen" in name:
@@ -302,6 +323,17 @@ class ImageGenEngine(BaseNonStreamingEngine):
         self._quantize = kwargs.get("quantize")
         if self._quantize is None:
             self._quantize = _flux_quantize_from_env()
+        # SD2.1 (v_prediction DDIM) + int8/int4 量化在 >768 分辨率数值
+        # 不稳定: UNet 输出逐步累积量化误差, ~step 5-6 溢出为 NaN (已验证
+        # 8bit/4bit @1152 均 NaN, fp16 @1152 正常; SD1.5 8bit @1152 正常,
+        # 故为 SD2 v_prediction 特有). 降级为 fp16 不量化以保证稳定.
+        if self._variant == "sd2" and self._quantize is not None:
+            logger.warning(
+                "SD2 v_prediction + quantize=%s 在高分辨率下数值不稳定, "
+                "降级为 fp16 不量化 (variant=sd2)",
+                self._quantize,
+            )
+            self._quantize = None
         # #178 UMA radix text-embedding cache (mirrors UMT5/CLIP pattern)
         self._text_cache = (
             DiffusionRadixCache(max_mb=512, name="flux_img")
@@ -515,10 +547,10 @@ class ImageGenEngine(BaseNonStreamingEngine):
                     shift = kwargs.get("shift")
                     if shift is not None:
                         gen_kwargs["shift"] = shift
-                elif variant in ("sdxl", "cosxl", "sdxs", "sd15"):
+                elif variant in ("sdxl", "cosxl", "sdxs", "sd15", "sd2"):
                     if negative_prompt is not None:
                         gen_kwargs["negative_prompt"] = negative_prompt
-                if variant in ("sd3", "sdxl", "cosxl", "sdxs", "sd15") and (
+                if variant in ("sd3", "sdxl", "cosxl", "sdxs", "sd15", "sd2") and (
                     edit_image is not None or control_image is not None
                 ):
                     # img2img / partial-denoise (#480): each pipeline encodes
@@ -543,6 +575,7 @@ class ImageGenEngine(BaseNonStreamingEngine):
                     "cosxl",
                     "sdxs",
                     "sd15",
+                    "sd2",
                     "stable_cascade",
                 ):
                     logger.warning(
