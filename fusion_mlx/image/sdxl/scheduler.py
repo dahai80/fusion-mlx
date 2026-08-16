@@ -1,5 +1,7 @@
 import logging
 
+import numpy as _np
+
 import mlx.core as mx
 
 logger = logging.getLogger(__name__)
@@ -66,41 +68,47 @@ class SDXLEulerDiscreteScheduler:
         self.sigmas_full = mx.sqrt((1.0 - alphas_cumprod) / alphas_cumprod)
 
     def set_timesteps(self, num_inference_steps: int) -> None:
+        # Mirror diffusers EulerDiscreteScheduler.set_timesteps exactly
+        # (numpy compute, then wrap in mx.array). The prior MLX impl derived
+        # timesteps with non-integer ratios and STRETCHED sigmas onto the
+        # [min,max] range instead of np.interp lookup, giving sigma[0]=14.6
+        # vs diffusers 11.0 (33% wrong) for leading spacing. See issue #488.
         self.num_inference_steps = num_inference_steps
-        sigmas = self.sigmas_full
+        sigmas_full = _np.array(self.sigmas_full, dtype=_np.float32)
         n = self.num_train_timesteps
         if self.timestep_spacing == "linspace":
-            timesteps = mx.linspace(0, n - 1, num_inference_steps, dtype=mx.float32)
+            timesteps = _np.linspace(
+                0, n - 1, num_inference_steps, dtype=_np.float32
+            )[::-1].copy()
         elif self.timestep_spacing == "trailing":
-            ratio = mx.arange(num_inference_steps, 0, -1, dtype=mx.float32) / (
-                num_inference_steps + 1
+            step_ratio = n / num_inference_steps
+            timesteps = (
+                _np.arange(n, 0, -step_ratio).round().copy().astype(_np.float32)
             )
-            timesteps = ratio * n
+            timesteps -= 1
         else:
-            ratio = (
-                mx.arange(0, num_inference_steps, dtype=mx.float32)
-                / num_inference_steps
+            # leading
+            step_ratio = n // num_inference_steps
+            timesteps = (
+                (_np.arange(0, num_inference_steps) * step_ratio)
+                .round()[::-1]
+                .copy()
+                .astype(_np.float32)
             )
-            timesteps = (1.0 - ratio) * (n - 1)
-            timesteps = timesteps + self.steps_offset
-        idx = (timesteps * (len(sigmas) - 1) / n).astype(mx.int32)
-        idx = mx.clip(idx, 0, len(sigmas) - 1)
+            timesteps += self.steps_offset
         if self.interpolation_type == "linear":
-            t_max = float(timesteps.max())
-            t_min = float(timesteps.min())
-            sig_idx = sigmas[idx]
-            if t_max > t_min:
-                sigma_interp = (timesteps - t_min) / (t_max - t_min) * (
-                    float(sig_idx.max()) - float(sig_idx.min())
-                ) + float(sig_idx.min())
-            else:
-                sigma_interp = sig_idx
+            sigma_interp = _np.interp(
+                timesteps, _np.arange(0, len(sigmas_full)), sigmas_full
+            )
         else:
-            sigma_interp = sigmas[idx]
-        sigma_interp = mx.concatenate([sigma_interp, mx.zeros(1, dtype=mx.float32)])
-        self.sigmas = sigma_interp
-        self.timesteps = timesteps
+            sigma_interp = sigmas_full[timesteps.astype(_np.int32)]
+        sigma_interp = _np.concatenate(
+            [sigma_interp, _np.zeros(1, dtype=_np.float32)]
+        ).astype(_np.float32)
+        self.sigmas = mx.array(sigma_interp)
+        self.timesteps = mx.array(timesteps)
         self._step_index = 0
+        self._scale_called = False
         logger.info(
             "SDXL scheduler steps=%d spacing=%s sigma[0]=%.4f sigma[-2]=%.4f",
             num_inference_steps,
@@ -108,6 +116,25 @@ class SDXLEulerDiscreteScheduler:
             float(self.sigmas[0]),
             float(self.sigmas[-2]),
         )
+
+    @property
+    def init_noise_sigma(self) -> float:
+        # diffusers: leading -> sqrt(max_sigma^2 + 1);
+        # linspace/trailing -> max_sigma.
+        max_sigma = float(self.sigmas.max())
+        if self.timestep_spacing in ("linspace", "trailing"):
+            return max_sigma
+        return (max_sigma**2 + 1) ** 0.5
+
+    def scale_model_input(
+        self, sample: mx.array, step_index: int = None
+    ) -> mx.array:
+        # diffusers scale_model_input: sample / (sigma^2 + 1)^0.5
+        if step_index is None:
+            step_index = self._step_index
+        sigma = float(self.sigmas[step_index])
+        self._scale_called = True
+        return sample / ((sigma**2 + 1) ** 0.5)
 
     @property
     def step_index(self) -> int:
