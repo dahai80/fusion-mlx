@@ -137,11 +137,12 @@ fusion_mlx/video/minimax_h3/
 ├── scheduler.py         # MiniMaxH3Scheduler (rectified-flow Euler, standard sign)
 ├── text_encoder.py      # MiniMaxH3TextEncoder (Qwen3-VL layer 49)
 ├── condition.py         # P6: packed-sequence assembly + patchify + normalize
-└── generate.py          # P6: t2va video-only denoise loop + generate_video
+├── generate.py          # P6: t2va video-only denoise loop + generate_video
+└── quantize.py          # 运行时量化 (in-place, DiT 8-bit / TE 4-bit)
 ```
 
 Backend: `fusion_mlx/engines/video_backends/minimax_h3.py` (`MiniMaxH3Backend`).
-Tests: `tests/unit/test_minimax_h3_{config,vae,transformer,scheduler,text_encoder,condition,generate,backend}.py`.
+Tests: `tests/unit/test_minimax_h3_{config,vae,transformer,scheduler,text_encoder,condition,generate,quantize,backend}.py`.
 
 ## Usage
 
@@ -165,3 +166,36 @@ Resolutions: `768p`, `2k`. Max 361 frames (≤15s @24fps), `n=1`.
 ```
 
 Single-directory layouts are also accepted (subdir fallback in `generate.py`).
+
+## Memory & quantization
+
+FL2VA total weights ≈ 144 GB (TE ~67 GB + DiT ~66 GB + VAE ~11 GB), exceeding
+M5 Max 137 GB physical RAM. `generate_video` uses **staged loading** to fit:
+load TE → encode prompt → materialize `text_embeds` → release TE + clear Metal
+cache → load DiT + VAE → denoise. `text_embeds` is only a few MB.
+
+For official-scale resolutions (768p+), pass `quantize=` to `generate_video`
+for **runtime in-place quantization** (no on-disk format change):
+
+| `quantize`  | TE    | DiT   | ~peak RAM | Use when                       |
+|-------------|-------|-------|-----------|--------------------------------|
+| `"none"`    | bf16  | bf16  | ~144 GB   | default; only small configs    |
+| `"te4"`     | 4-bit | bf16  | ~95 GB    | TE peak is the bottleneck      |
+| `"dit8"`    | bf16  | 8-bit | ~85 GB    | DiT peak is the bottleneck     |
+| `"dit8_te4`"| 4-bit | 8-bit | ~62 GB    | 768p official-scale configs    |
+
+Quantization scheme (minimal precision loss):
+
+- **TE** (`Qwen3-VL`, 33 B): 4-bit, group_size=64. Only produces `text_embeds`
+  (an intermediate representation consumed by DiT denoising), so most
+  quantization-robust. Skips `embed_tokens` + all norms.
+- **DiT** (33 B): 8-bit, group_size=64. Skips F32 small layers
+  (`time_embedder`, `video_patch_proj`, `audio_patch_proj`, `rope`) and output
+  projections (`final_layer.video_out/audio_out`, `condition_proj`); quantizes
+  `adaln_proj` / `mlp` / `attn` Linear. 8-bit on 33 B is near-lossless.
+- **VAE** (2.6 B, all F32): not quantized — small, and directly outputs
+  pixels (artifacts risk).
+
+Verified: quantized 256×256 std=112.3 vs bf16 113.6 (1% drift); 512×512 and
+768×448 configs that OOM-killed under bf16 run end-to-end with `dit8_te4`.
+

@@ -77,11 +77,19 @@ class MiniMaxH3TextEncoder(nn.Module):
 def _mask_from_attention(attention_mask, input_ids):
     # attention_mask (1,seq) 1=keep 0=pad → 返回 mlx-vlm 层期望的 additive 4D mask 或 None。
     # H3 t2va 通常无 padding，None 即可；有 padding 时构造 4D additive mask。
+    # mask dtype 须与 q/k/v (bfloat16) 可 promote，否则 mx.fast.scaled_dot_product_attention
+    # 报 "Mask type must promote to output type bfloat16"。
     if attention_mask is None:
         return None
     b, s = attention_mask.shape
-    am = mx.asarray(attention_mask).astype(mx.float32)
-    mask = mx.where(am > 0, 0.0, mx.full(am.shape, float("-inf")))
+    # 全 1（无 padding）直接返 None，省一次构造。
+    am = mx.asarray(attention_mask)
+    if int(am.min()) == 1:
+        return None
+    am = am.astype(mx.bfloat16)
+    mask = mx.where(
+        am > 0, mx.array(0.0, mx.bfloat16), mx.array(-float("inf"), mx.bfloat16)
+    )
     mask = mask[:, None, None, :]
     mask = mx.broadcast_to(mask, (b, 1, s, s))
     return mask
