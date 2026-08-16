@@ -95,6 +95,10 @@ _VAE_CONV_SUFFIXES = (
     ".conv_shortcut.weight",
     ".downsamplers.0.conv.weight",
     ".upsamplers.0.conv.weight",
+    ".quant_conv.weight",
+    ".post_quant_conv.weight",
+    "quant_conv.weight",
+    "post_quant_conv.weight",
 )
 
 
