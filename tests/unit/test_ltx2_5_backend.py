@@ -142,16 +142,82 @@ class TestConstraints:
 
 
 class TestGenerate:
-    def test_generate_raises_not_implemented(self):
+    def test_generate_passes_params_to_port(self, monkeypatch):
+        # Stub _generate_one (no real 22B weights) — verify generate() forwards
+        # params + seeds each sample in the n loop.
+        calls = {"calls": []}
+
+        def fake_generate_one(model_repo, pipeline, **kwargs):
+            calls["calls"].append({"repo": model_repo, "pipeline": pipeline, **kwargs})
+            return b"mp4"
+
+        import fusion_mlx.engines.video_backends.ltx2_5 as mod
+
+        monkeypatch.setattr(mod, "_generate_one", fake_generate_one)
+        b = LTX2_5Backend("Lightricks/LTX-2.5")
+        params = VideoGenParams(
+            prompt="a cat",
+            num_frames=9,
+            width=512,
+            height=320,
+            fps=24,
+            seed=1,
+            n=2,
+            cfg_scale=4.0,
+            tiling="auto",
+        )
+        out = asyncio.run(b.generate(params))
+        assert out == [b"mp4", b"mp4"]
+        assert len(calls["calls"]) == 2
+        c0 = calls["calls"][0]
+        assert c0["repo"] == "Lightricks/LTX-2.5"
+        assert c0["pipeline"] == "distilled"
+        assert c0["prompt"] == "a cat"
+        assert c0["num_frames"] == 9
+        assert c0["width"] == 512
+        assert c0["height"] == 320
+        assert c0["seed"] == 1
+        assert c0["seed"] + 1 == calls["calls"][1]["seed"]
+        assert c0["two_stage"] is True
+
+    def test_generate_two_stage_off_propagated(self, monkeypatch):
+        calls = {"calls": []}
+
+        def fake_generate_one(model_repo, pipeline, **kwargs):
+            calls["calls"].append(kwargs)
+            return b"mp4"
+
+        import fusion_mlx.engines.video_backends.ltx2_5 as mod
+
+        monkeypatch.setattr(mod, "_generate_one", fake_generate_one)
+        b = LTX2_5Backend("repo", two_stage=False)
+        params = VideoGenParams(
+            prompt="a cat", num_frames=9, width=512, height=320, n=1, seed=0
+        )
+        asyncio.run(b.generate(params))
+        assert calls["calls"][0]["two_stage"] is False
+
+    def test_generate_i2v_passes_image(self, monkeypatch):
+        calls = {"calls": []}
+
+        def fake_generate_one(model_repo, pipeline, **kwargs):
+            calls["calls"].append(kwargs)
+            return b"mp4"
+
+        import fusion_mlx.engines.video_backends.ltx2_5 as mod
+
+        monkeypatch.setattr(mod, "_generate_one", fake_generate_one)
         b = LTX2_5Backend("repo")
         params = VideoGenParams(
             prompt="a cat",
             num_frames=9,
             width=512,
-            height=512,
-            fps=24,
-            seed=1,
+            height=320,
             n=1,
+            seed=0,
+            image="/tmp/frame.png",
+            image_strength=0.8,
         )
-        with pytest.raises(NotImplementedError, match="E2E path is not implemented"):
-            asyncio.run(b.generate(params))
+        asyncio.run(b.generate(params))
+        assert calls["calls"][0]["image"] == "/tmp/frame.png"
+        assert calls["calls"][0]["image_strength"] == 0.8
