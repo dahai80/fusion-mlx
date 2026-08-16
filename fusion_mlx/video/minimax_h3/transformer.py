@@ -458,8 +458,13 @@ def _update_module(module, flat_params):
 def _remap_transformer_weights(params, config):
     out = {}
     dropped = {"rope.inv_freq"}
+    # final_layer.norm 是 adaln 用的 norm，模型里挂在 adaln_proj.norm 下。
+    final_norm_map = {"final_layer.norm.weight": "final_layer.adaln_proj.norm.weight"}
     for k, v in params.items():
         if k in dropped:
+            continue
+        if k in final_norm_map:
+            out[final_norm_map[k]] = v
             continue
         if k.endswith(".attn.qkv_proj.weight"):
             reordered = reorder_interleaved_qkv(v, config.num_heads, config.head_dim)
@@ -484,12 +489,15 @@ def load_dit_from_pretrained(model_path, config=None):
     for sf in safetensor_files:
         all_params.update(mx.load(sf))
     mapped = _remap_transformer_weights(all_params, config)
-    flat_model = _flatten_params(model.parameters())
+    from mlx.utils import tree_flatten, tree_unflatten
+
+    flat_model = tree_flatten(model.parameters())
+    flat_keys = {k for k, _ in flat_model}
     loaded = {}
     matched = 0
     shape_mismatches = []
     unmatched_model = []
-    for k, v in flat_model.items():
+    for k, v in flat_model:
         if k in mapped:
             w = mapped[k]
             if list(v.shape) == list(w.shape):
@@ -514,6 +522,10 @@ def load_dit_from_pretrained(model_path, config=None):
             shape_mismatches[:10],
         )
     if unmatched_model:
-        logger.debug("minimax_h3 dit: unmatched model keys: %s", unmatched_model[:20])
-    _update_module(model, loaded)
+        logger.warning(
+            "minimax_h3 dit: %d unmatched model keys: %s",
+            len(unmatched_model),
+            unmatched_model[:20],
+        )
+    model.update(tree_unflatten(loaded))
     return model

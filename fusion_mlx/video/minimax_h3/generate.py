@@ -104,6 +104,8 @@ def generate_t2va_video(
             video_output, packed["latent_shape"], (1, 2, 2)
         )
         latents = scheduler.step(model_output, t, latents)
+        # 物化并释放计算图，避免多步累积 OOM（MLX lazy，需显式 eval）。
+        mx.eval(latents)
         if i % 10 == 0 or i == len(timesteps) - 1:
             logger.info(
                 "h3 t2va generate: step %d/%d t=%.4f", i, len(timesteps), t_video
@@ -132,10 +134,23 @@ def _to_frames(decoded):
 
 def _resolve_subdir(model_path, name):
     # 优先 model_path/<name>，否则回退 model_path（单目录布局）。
+    # VAE 权重在真实布局里位于 <name>/source/（config.json source_path=source），
+    # 当 <name>/ 无 safetensors 但 <name>/source/ 有时，落到 source 子目录。
+    import glob
     import os
 
     sub = os.path.join(model_path, name)
-    return sub if os.path.isdir(sub) else model_path
+    if not os.path.isdir(sub):
+        return model_path
+    if glob.glob(os.path.join(sub, "*.safetensors")):
+        return sub
+    source_sub = os.path.join(sub, "source")
+    if os.path.isdir(source_sub) and glob.glob(
+        os.path.join(source_sub, "*.safetensors")
+    ):
+        logger.info("h3: %s weights resolved to nested source/ subdir", name)
+        return source_sub
+    return sub
 
 
 def _encode_prompt(text_encoder, tokenizer, prompt, max_length=256):

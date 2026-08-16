@@ -433,11 +433,12 @@ def apply_rotary_pos_emb(t, rotary_pos_emb):
 
 
 class FeedForward(nn.Module):
-    def __init__(self, dim, use_gated=True, bias=True):
+    def __init__(self, dim, use_gated=True, bias=True, mult=4):
         super().__init__()
         self.use_gated = use_gated
-        # mult=4, ratio=2/3 (gated) -> inner_dim = round(dim*8/3)
-        inner_dim = round(dim * 4 * (2.0 / 3.0))
+        # ViT 解码器 FF：inner_dim = dim*mult（mult=4），gated 时 w1 输出 2*inner_dim。
+        # 真实 ckpt dim=2048 → inner_dim=8192，w1=(16384,2048) w2=(2048,8192)。
+        inner_dim = dim * mult
         self.inner_dim = inner_dim
         if use_gated:
             self.w1 = nn.Linear(dim, inner_dim * 2, bias=bias)

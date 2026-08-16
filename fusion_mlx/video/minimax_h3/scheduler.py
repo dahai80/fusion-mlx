@@ -3,7 +3,8 @@
 # 源码（权威）：/tmp/h3src/scheduling_minimax_h3.py（diffusers GitHub main）
 #
 # 与 FlowMatchEulerDiscreteScheduler 不兼容的三点（逐条对齐源码注释）：
-#   1. 速度符号反向：预测 data-ward velocity，x0 = x_t + sigma*v（非减号）。
+#   1. 速度符号：标准 rectified-flow，x0 = x_t - sigma*v（真实模型验证：PLUS 会使
+#      空间结构坍缩为常数帧，MINUS 保留）。早期推断曾误用 PLUS，已校正。
 #   2. timestep t = 1 - sigma，t=1 为干净；scheduler.timesteps = 1 - sigmas[:-1]。
 #   3. sigma 网格 linspace(1,0,N)，终点 0 在请求步数内；shift 后 unique_consecutive 折叠重复。
 #
@@ -114,7 +115,7 @@ class MiniMaxH3Scheduler:
         sigma_from_timestep = 1.0 - timestep
         while sigma_from_timestep.ndim < sample.ndim:
             sigma_from_timestep = mx.expand_dims(sigma_from_timestep, -1)
-        denoised = sample + sigma_from_timestep * model_output
+        denoised = sample - sigma_from_timestep * model_output
 
         compute_dtype = (
             mx.float32 if sample.dtype in (mx.float16, mx.bfloat16) else sample.dtype

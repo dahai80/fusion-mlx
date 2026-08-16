@@ -5,14 +5,13 @@ audio from text. Unlike cross-attention DiTs, H3 scatters text/video/audio rows
 into **one** packed sequence and runs full self-attention over all of it
 (`is_causal=False`, no mask). This is a pure-MLX port in `fusion_mlx/video/minimax_h3/`.
 
-> **Status: P0–P6 landed.** Config / VAE / DiT / scheduler / text-encoder /
-> backend+registry are complete, and the **t2va video-only** packed-sequence E2E
-> path is wired. Real-model E2E (P8) is pending the 144 GB FL2VA weight set
-> (transformer 66 GB + text_encoder 67 GB + VAE 11 GB); the code path is
-> unblocked once weights are present.
->
-> **The packed-layout assembly is inferred (UNVERIFIED)** — see the contract note
-> below. It must be corrected against the real model before shipping.
+> **Status: P0–P6 landed, P8 real-model E2E VERIFIED.** Config / VAE / DiT /
+> scheduler / text-encoder / backend+registry are complete, and the **t2va
+> video-only** packed-sequence E2E path is wired **and verified against the real
+> 33B FL2VA weights** (DiT 534/536 params matched, VAE 559/560; 2-step 256×256
+> bf16 smoke produces non-trivial frames: frame0 std=115.7, min=0, max=255).
+> The text_encoder (Qwen3-VL, 67 GB) remains deferred; E2E currently uses a
+> fake text embedding for the DiT.
 
 ## Phase map
 
@@ -24,10 +23,10 @@ into **one** packed sequence and runs full self-attention over all of it
 | P3 | Rectified-flow scheduler (reversed velocity, two shifts) | ✅ |
 | P4 | Text encoder (Qwen3-VL, layer 49 hidden states) | ✅ |
 | P5 | Backend + BACKENDS registry + constraints | ✅ |
-| **P6** | **t2va video-only packed-sequence assembly + denoise loop** | **✅ (inferred)** |
+| **P6** | **t2va video-only packed-sequence assembly + denoise loop** | **✅ verified** |
 | P7 | Prompt skill (h3-prompt-writing Context-IR) | deferred |
-| P8 | Real-model E2E | pending weights |
-| P9 | Tests + real-model E2E validation | pending weights |
+| **P8** | **Real-model E2E** | **✅ verified** |
+| **P9** | **Tests (118 pass) + real-model E2E validation** | **✅ verified** |
 
 ## Packed-sequence contract
 
@@ -80,18 +79,52 @@ VAE `config.json` (see `condition.py`).
 
 ## Scheduler
 
-`MiniMaxH3Scheduler` — rectified-flow Euler, `eta=0`. Three incompatibilities
-with `FlowMatchEulerDiscreteScheduler` (all verified against the diffusers
-source):
+`MiniMaxH3Scheduler` — rectified-flow Euler, `eta=0`. Three properties
+verified against the diffusers source **and the real model**:
 
-1. **Velocity sign reversed**: `x0 = x_t + sigma·v` (plus, not minus).
+1. **Velocity sign is STANDARD (minus)**: `x0 = x_t - sigma·v`.
+   The early P5 inference wrongly used a *plus* sign; real-model E2E proved the
+   plus sign collapses spatial structure (latents variance → 0, frames go
+   all-white). Minus preserves it (ch0 variance 4.14 vs 0.033 for plus).
+   See the **P8 corrections** note below.
 2. **`t = 1 - sigma`**, t=1 is clean; `timesteps = 1 - sigmas[:-1]`.
 3. **sigma grid** `linspace(1,0,N)` + exponential shift
    `s·σ/(1+(s-1)σ)` + `_unique_consecutive` fold.
 
-Euler step: `denoised = sample + sigma·output; prev = ratio·sample + (1-ratio)·denoised`
+Euler step: `denoised = sample - sigma·output; prev = ratio·sample + (1-ratio)·denoised`
 where `ratio = sigma_next/sigma`. Two instances: video `shift=12.0`,
 audio `shift=3.0`.
+
+## P8 corrections (real-model bugs found & fixed)
+
+Loading the real 33B FL2VA weights surfaced six bugs in the inferred P0–P6 code.
+All fixed and verified end-to-end (DiT 534/536 params, VAE 559/560, non-trivial
+frames):
+
+1. **Weight path resolution** (`generate.py::_resolve_subdir`). Loaders globbed
+   `<dir>/*.safetensors` but real weights nest under `source/`
+   (`video_vae/source/model.safetensors`). Now resolves the nested subdir.
+2. **VAE FeedForward inner_dim** (`vae.py`). ViT3D decoder FF used
+   `round(dim*8/3)`; real ckpt is `dim*4` (dim=2048 → inner_dim=8192, gated `w1`
+   outputs 2×inner_dim=16384). Fixed to `inner_dim = dim * mult`, `mult=4`.
+3. **DiT param tree** (`transformer.py::load_dit_from_pretrained`). The old
+   `_flatten_params`/`_update_module` did not recurse `ModuleList`, so only
+   18/20 top-level params loaded — the 50-block 33B body was random init.
+   Rewritten with `mlx.utils.tree_flatten`/`tree_unflatten` + `model.update`;
+   now 534/536 matched (2 unmatched: `rope.inv_freq` non-learned,
+   `final_layer.norm.weight` dead-norm, both benign).
+4. **DiT final_layer.norm remap** (`transformer.py::_remap_transformer_weights`).
+   ckpt key `final_layer.norm.weight` is the AdaLN norm used in `__call__`, but
+   was loaded into the unused dead `self.norm`. Redirected to
+   `final_layer.adaln_proj.norm.weight`.
+5. **Velocity sign** (`scheduler.py`). Plus → minus (see Scheduler above).
+   Early inference used `x0 = x_t + sigma·v`; real model needs the standard
+   `x0 = x_t - sigma·v`. Plus collapses latents to near-zero variance →
+   all-white frames.
+6. **Multi-step OOM** (`generate.py`). MLX lazy graph accumulates across denoise
+   steps → EXIT=137. Added per-step `mx.eval(latents)` to materialize and free
+   the graph. (Separately, the real 77 GB load needs ~100 GB free RAM — stop the
+   fusion-mlx server via `start.sh stop` before real-model runs.)
 
 ## Files
 
@@ -101,7 +134,7 @@ fusion_mlx/video/minimax_h3/
 ├── config.py            # H3Config / H3VAEConfig / H3AudioVAEConfig / H3Partition
 ├── vae.py               # MiniMaxH3VideoVAE (encode/decode/encode_base)
 ├── transformer.py       # MiniMaxH3DiTModel (packed-scatter forward)
-├── scheduler.py         # MiniMaxH3Scheduler (reversed-velocity Euler)
+├── scheduler.py         # MiniMaxH3Scheduler (rectified-flow Euler, standard sign)
 ├── text_encoder.py      # MiniMaxH3TextEncoder (Qwen3-VL layer 49)
 ├── condition.py         # P6: packed-sequence assembly + patchify + normalize
 └── generate.py          # P6: t2va video-only denoise loop + generate_video

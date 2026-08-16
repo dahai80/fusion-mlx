@@ -97,7 +97,8 @@ class TestStep:
         assert prev.shape == sample.shape
         assert sched.step_index == 1
 
-    def test_velocity_sign_reversed(self):
+    def test_velocity_sign_standard(self):
+        # 标准 rectified-flow：x0 = x_t - sigma*v（真实模型验证：PLUS 坍缩空间结构）。
         sched = MiniMaxH3Scheduler(shift=12.0)
         sched.set_timesteps(num_inference_steps=10)
         sample = mx.zeros((1, 4), dtype=mx.float32)
@@ -106,9 +107,8 @@ class TestStep:
         prev = sched.step(v, t, sample)
         sigma = float(sched.sigmas[0])
         sigma_next = float(sched.sigmas[1])
-        expected = (sigma_next / sigma) * 0.0 + (1.0 - sigma_next / sigma) * (
-            sigma * 1.0
-        )
+        ratio = sigma_next / sigma
+        expected = ratio * 0.0 + (1.0 - ratio) * (-sigma * 1.0)
         assert mx.allclose(prev, mx.full((1, 4), float(expected)), atol=1e-5)
 
     def test_integer_timestep_rejected(self):
