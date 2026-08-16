@@ -115,11 +115,10 @@ class ResnetBlock(nn.Module):
 class Downsample(nn.Module):
     def __init__(self, channels: int):
         super().__init__()
-        self.conv = Conv2d(channels, channels, k=3, stride=2, padding=0)
+        self.conv = Conv2d(channels, channels, k=3, stride=2, padding=1)
 
     def __call__(self, x: mx.array) -> mx.array:
-        h = mx.pad(x, ((0, 0), (0, 0), (0, 1), (0, 1)))
-        h = _nchw_to_nhwc(h)
+        h = _nchw_to_nhwc(x)
         h = self.conv(h)
         return _nhwc_to_nchw(h)
 
