@@ -20,7 +20,7 @@ into **one** packed sequence and runs full self-attention over all of it
 | P0 | H3Config / H3VAEConfig / H3AudioVAEConfig / H3Partition | ✅ |
 | P1 | Video VAE (spatial 16×, temporal 4×, z=24, ViT3D decoder) | ✅ |
 | P2 | DiT transformer (packed-scatter forward, AdaLN 3-modality table) | ✅ |
-| P3 | Rectified-flow scheduler (reversed velocity, two shifts) | ✅ |
+| P3 | Rectified-flow scheduler (data-ward velocity, two shifts) | ✅ |
 | P4 | Text encoder (Qwen3-VL, layer 49 hidden states) | ✅ |
 | P5 | Backend + BACKENDS registry + constraints | ✅ |
 | **P6** | **t2va video-only packed-sequence assembly + denoise loop** | **✅ verified** |
@@ -82,18 +82,22 @@ VAE `config.json` (see `condition.py`).
 `MiniMaxH3Scheduler` — rectified-flow Euler, `eta=0`. Three properties
 verified against the diffusers source **and the real model**:
 
-1. **Velocity sign is STANDARD (minus)**: `x0 = x_t - sigma·v`.
-   The early P5 inference wrongly used a *plus* sign; real-model E2E proved the
-   plus sign collapses spatial structure (latents variance → 0, frames go
-   all-white). Minus preserves it (ch0 variance 4.14 vs 0.033 for plus).
-   See the **P8 corrections** note below.
+1. **Velocity sign is data-ward (PLUS)**: `x0 = x_t + sigma·v`. H3's
+   transformer predicts a *data-ward* velocity, the opposite of diffusers'
+   default `x0 = x_t - sigma·v`. An early port wrongly used the standard
+   minus sign, which made denoising move in the wrong direction and oscillate
+   near the fixed point — the signature was heavy motion jitter (frame-to-frame
+   motion 49 vs the official ~12). Corrected to the official PLUS sign;
+   real-model E2E then gave motion 9.8 / std 83 (from 49 / 112), matching the
+   official range. See the **P8 corrections** note below.
 2. **`t = 1 - sigma`**, t=1 is clean; `timesteps = 1 - sigmas[:-1]`.
 3. **sigma grid** `linspace(1,0,N)` + exponential shift
    `s·σ/(1+(s-1)σ)` + `_unique_consecutive` fold.
 
-Euler step: `denoised = sample - sigma·output; prev = ratio·sample + (1-ratio)·denoised`
+Euler step: `denoised = sample + sigma·output; prev = ratio·sample + (1-ratio)·denoised`
 where `ratio = sigma_next/sigma`. Two instances: video `shift=12.0`,
-audio `shift=3.0`.
+audio `shift=3.0`. Default `num_inference_steps=20` (matches the ComfyUI
+base-quality profile).
 
 ## P8 corrections (real-model bugs found & fixed)
 
@@ -117,10 +121,15 @@ frames):
    ckpt key `final_layer.norm.weight` is the AdaLN norm used in `__call__`, but
    was loaded into the unused dead `self.norm`. Redirected to
    `final_layer.adaln_proj.norm.weight`.
-5. **Velocity sign** (`scheduler.py`). Plus → minus (see Scheduler above).
-   Early inference used `x0 = x_t + sigma·v`; real model needs the standard
-   `x0 = x_t - sigma·v`. Plus collapses latents to near-zero variance →
-   all-white frames.
+5. **Velocity sign** (`scheduler.py`). Minus → plus (see Scheduler above).
+   The port initially used the standard `x0 = x_t - sigma·v`, but the official
+   diffusers source uses the *data-ward* `x0 = x_t + sigma·v`. The wrong sign
+   made denoising move against the flow and oscillate near the fixed point —
+   the visible symptom was heavy frame-to-frame motion jitter (motion 49,
+   std 112 vs the official ~12 / ~68). Corrected to PLUS; real-model E2E
+   then gave motion 9.8 / std 83. (The earlier "plus collapses frames"
+   conclusion came from a 2-step 256×256 smoke test with confounding factors
+   and was a misread; the official source is authoritative.)
 6. **Multi-step OOM** (`generate.py`). MLX lazy graph accumulates across denoise
    steps → EXIT=137. Added per-step `mx.eval(latents)` to materialize and free
    the graph. (Separately, the real 77 GB load needs ~100 GB free RAM — stop the
@@ -134,14 +143,15 @@ fusion_mlx/video/minimax_h3/
 ├── config.py            # H3Config / H3VAEConfig / H3AudioVAEConfig / H3Partition
 ├── vae.py               # MiniMaxH3VideoVAE (encode/decode/encode_base)
 ├── transformer.py       # MiniMaxH3DiTModel (packed-scatter forward)
-├── scheduler.py         # MiniMaxH3Scheduler (rectified-flow Euler, standard sign)
+├── scheduler.py         # MiniMaxH3Scheduler (rectified-flow Euler, data-ward PLUS sign)
 ├── text_encoder.py      # MiniMaxH3TextEncoder (Qwen3-VL layer 49)
 ├── condition.py         # P6: packed-sequence assembly + patchify + normalize
-└── generate.py          # P6: t2va video-only denoise loop + generate_video
+├── generate.py          # P6: t2va video-only denoise loop + generate_video
+└── quantize.py          # 运行时量化 (in-place, DiT 8-bit / TE 4-bit)
 ```
 
 Backend: `fusion_mlx/engines/video_backends/minimax_h3.py` (`MiniMaxH3Backend`).
-Tests: `tests/unit/test_minimax_h3_{config,vae,transformer,scheduler,text_encoder,condition,generate,backend}.py`.
+Tests: `tests/unit/test_minimax_h3_{config,vae,transformer,scheduler,text_encoder,condition,generate,quantize,backend}.py`.
 
 ## Usage
 
@@ -165,3 +175,36 @@ Resolutions: `768p`, `2k`. Max 361 frames (≤15s @24fps), `n=1`.
 ```
 
 Single-directory layouts are also accepted (subdir fallback in `generate.py`).
+
+## Memory & quantization
+
+FL2VA total weights ≈ 144 GB (TE ~67 GB + DiT ~66 GB + VAE ~11 GB), exceeding
+M5 Max 137 GB physical RAM. `generate_video` uses **staged loading** to fit:
+load TE → encode prompt → materialize `text_embeds` → release TE + clear Metal
+cache → load DiT + VAE → denoise. `text_embeds` is only a few MB.
+
+For official-scale resolutions (768p+), pass `quantize=` to `generate_video`
+for **runtime in-place quantization** (no on-disk format change):
+
+| `quantize`  | TE    | DiT   | ~peak RAM | Use when                       |
+|-------------|-------|-------|-----------|--------------------------------|
+| `"none"`    | bf16  | bf16  | ~144 GB   | default; only small configs    |
+| `"te4"`     | 4-bit | bf16  | ~95 GB    | TE peak is the bottleneck      |
+| `"dit8"`    | bf16  | 8-bit | ~85 GB    | DiT peak is the bottleneck     |
+| `"dit8_te4`"| 4-bit | 8-bit | ~62 GB    | 768p official-scale configs    |
+
+Quantization scheme (minimal precision loss):
+
+- **TE** (`Qwen3-VL`, 33 B): 4-bit, group_size=64. Only produces `text_embeds`
+  (an intermediate representation consumed by DiT denoising), so most
+  quantization-robust. Skips `embed_tokens` + all norms.
+- **DiT** (33 B): 8-bit, group_size=64. Skips F32 small layers
+  (`time_embedder`, `video_patch_proj`, `audio_patch_proj`, `rope`) and output
+  projections (`final_layer.video_out/audio_out`, `condition_proj`); quantizes
+  `adaln_proj` / `mlp` / `attn` Linear. 8-bit on 33 B is near-lossless.
+- **VAE** (2.6 B, all F32): not quantized — small, and directly outputs
+  pixels (artifacts risk).
+
+Verified: quantized 256×256 std=112.3 vs bf16 113.6 (1% drift); 512×512 and
+768×448 configs that OOM-killed under bf16 run end-to-end with `dit8_te4`.
+
