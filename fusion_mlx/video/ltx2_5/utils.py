@@ -59,6 +59,7 @@ _LTX2_5_FILES = {
     "transformer_distilled": "diffusion_models/ltx-2.5-22b-distilled-transformer-bf16.safetensors",
     "transformer_dev": "diffusion_models/ltx-2.5-22b-dev-transformer-bf16.safetensors",
     "video_vae": "vae/ltx-2.5-video-vae-bf16.safetensors",
+    "video_vae_conv": "vae/ltx-2.5-video-vae-conv-bf16.safetensors",
     "audio_vae": "vae/ltx-2.5-audio-vae-bf16.safetensors",
     "text_encoder": "text_encoders/gemma4-12b-with-proj-ltx-2.5-bf16.safetensors",
     "duration_head": "model_patches/ltx-2.5-duration-head-bf16.safetensors",

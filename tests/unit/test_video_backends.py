@@ -92,7 +92,8 @@ class TestResolveBackend:
         # ltx2 + wan2 ship real mlx-video impls; ltx_video_legacy is a pure-MLX
         # port (Phase 3); cogvideo graduated to a real port
         # (no MLX port exists upstream); skyreels is a pure-MLX port
-        # (SkyReels-V3 R2V/V2V/A2V, Phase 4).
+        # (SkyReels-V3 R2V/V2V/A2V, Phase 4); ltx2_5 (22B) + minimax_h3 (33B)
+        # are independent pure-MLX ports.
         assert set(BACKENDS) == {
             "ltx2",
             "cosmos",
@@ -104,6 +105,8 @@ class TestResolveBackend:
             "cogvideo",
             "opensora",
             "uniworld",
+            "ltx2_5",
+            "minimax_h3",
         }
 
     def test_vace_alias_resolves_to_wan2(self):

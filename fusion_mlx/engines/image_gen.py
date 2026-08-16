@@ -139,6 +139,37 @@ VARIANT_MAP: dict[str, tuple[str, str, str, float]] = {
     ),
 }
 
+# Per-call executor timeout for image generation / model load (#481). The
+# hard-coded 600s killed legitimate SD1.5 1024x1024 img2img (hires-fix 2nd
+# pass). Override via FUSION_IMAGE_TIMEOUT (seconds). Invalid/non-positive
+# values fall back to the default with a warning.
+_IMAGE_GEN_TIMEOUT_DEFAULT_S = 600.0
+
+
+def get_image_gen_timeout() -> float:
+    import os
+
+    raw = os.environ.get("FUSION_IMAGE_TIMEOUT")
+    if not raw:
+        return _IMAGE_GEN_TIMEOUT_DEFAULT_S
+    try:
+        val = float(raw)
+    except (TypeError, ValueError):
+        logger.warning(
+            "FUSION_IMAGE_TIMEOUT=%r is not a number, using default %.0fs",
+            raw,
+            _IMAGE_GEN_TIMEOUT_DEFAULT_S,
+        )
+        return _IMAGE_GEN_TIMEOUT_DEFAULT_S
+    if val <= 0:
+        logger.warning(
+            "FUSION_IMAGE_TIMEOUT=%r <= 0, using default %.0fs",
+            raw,
+            _IMAGE_GEN_TIMEOUT_DEFAULT_S,
+        )
+        return _IMAGE_GEN_TIMEOUT_DEFAULT_S
+    return val
+
 
 def _infer_variant(model_path: str) -> str:
     name = (model_path or "").lower()
@@ -330,7 +361,8 @@ class ImageGenEngine(BaseNonStreamingEngine):
 
         loop = asyncio.get_running_loop()
         self._flux = await asyncio.wait_for(
-            loop.run_in_executor(get_executor("image"), _load), timeout=600.0
+            loop.run_in_executor(get_executor("image"), _load),
+            timeout=get_image_gen_timeout(),
         )
         logger.info(
             "ImageGen engine loaded: %s variant=%s", self._model_name, self._variant
@@ -520,7 +552,8 @@ class ImageGenEngine(BaseNonStreamingEngine):
 
         try:
             result = await asyncio.wait_for(
-                loop.run_in_executor(get_executor("image"), _generate), timeout=600.0
+                loop.run_in_executor(get_executor("image"), _generate),
+                timeout=get_image_gen_timeout(),
             )
             elapsed = time.monotonic() - t0
             self._update_activity(activity_id, elapsed_seconds=elapsed)

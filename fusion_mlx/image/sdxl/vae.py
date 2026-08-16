@@ -267,16 +267,33 @@ class SDXLVAE(nn.Module):
         super().__init__()
         self.encoder = VAEEncoder()
         self.decoder = VAEDecoder()
+        # 1x1 convs sitting between encoder/decoder and the latent space
+        # (diffusers AutoencoderKL: quant_conv after encoder, post_quant_conv
+        # before decoder). Without these the latents are wrong (#482).
+        self.quant_conv = Conv2d(
+            2 * self.latent_channels, 2 * self.latent_channels, k=1, padding=0
+        )
+        self.post_quant_conv = Conv2d(
+            self.latent_channels, self.latent_channels, k=1, padding=0
+        )
 
     def decode(self, latents: mx.array) -> mx.array:
         if latents.ndim == 5:
             latents = latents[:, :, 0, :, :]
         scaled = latents.astype(mx.float32) / self.scaling_factor
+        # post_quant_conv is a Conv2d (expects NHWC); latents are NCHW here.
+        scaled = _nchw_to_nhwc(scaled)
+        scaled = self.post_quant_conv(scaled)
+        scaled = _nhwc_to_nchw(scaled)
         decoded = self.decoder(scaled)
         return decoded
 
     def encode(self, image: mx.array) -> mx.array:
         latents = self.encoder(image)
+        # quant_conv is a Conv2d (expects NHWC); encoder returns NCHW.
+        latents = _nchw_to_nhwc(latents)
+        latents = self.quant_conv(latents)
+        latents = _nhwc_to_nchw(latents)
         mean, _ = mx.split(latents, 2, axis=1)
         latent = mean * self.scaling_factor
         return latent
