@@ -51,7 +51,7 @@ def generate_t2va_video(
     height,
     width,
     seed=None,
-    num_inference_steps=40,
+    num_inference_steps=20,
     guide_scale=5.0,
     z_channels=24,
     vae_ratio=16,
@@ -204,7 +204,7 @@ def generate_video(
     height=768,
     fps=24,
     seed=None,
-    num_inference_steps=40,
+    num_inference_steps=20,
     output_path=None,
     quantize="none",
 ):
