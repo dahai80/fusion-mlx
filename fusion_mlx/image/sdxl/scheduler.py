@@ -1,8 +1,7 @@
 import logging
 
-import numpy as _np
-
 import mlx.core as mx
+import numpy as _np
 
 logger = logging.getLogger(__name__)
 
@@ -77,14 +76,12 @@ class SDXLEulerDiscreteScheduler:
         sigmas_full = _np.array(self.sigmas_full, dtype=_np.float32)
         n = self.num_train_timesteps
         if self.timestep_spacing == "linspace":
-            timesteps = _np.linspace(
-                0, n - 1, num_inference_steps, dtype=_np.float32
-            )[::-1].copy()
+            timesteps = _np.linspace(0, n - 1, num_inference_steps, dtype=_np.float32)[
+                ::-1
+            ].copy()
         elif self.timestep_spacing == "trailing":
             step_ratio = n / num_inference_steps
-            timesteps = (
-                _np.arange(n, 0, -step_ratio).round().copy().astype(_np.float32)
-            )
+            timesteps = _np.arange(n, 0, -step_ratio).round().copy().astype(_np.float32)
             timesteps -= 1
         else:
             # leading
@@ -126,9 +123,7 @@ class SDXLEulerDiscreteScheduler:
             return max_sigma
         return (max_sigma**2 + 1) ** 0.5
 
-    def scale_model_input(
-        self, sample: mx.array, step_index: int = None
-    ) -> mx.array:
+    def scale_model_input(self, sample: mx.array, step_index: int = None) -> mx.array:
         # diffusers scale_model_input: sample / (sigma^2 + 1)^0.5
         if step_index is None:
             step_index = self._step_index

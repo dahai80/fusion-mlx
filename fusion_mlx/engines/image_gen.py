@@ -129,6 +129,14 @@ VARIANT_MAP: dict[str, tuple[str, str, str, float]] = {
         "sdxs",
         4.0,
     ),
+    # SD1.5 native MLX pipeline (UNet4 + kl-f8 VAE + CLIP-L, 512 native res).
+    # Single text encoder, no time_ids/pooled — distinct from SDXL.
+    "sd15": (
+        "fusion_mlx.image.sd15.generate",
+        "SD15Pipeline",
+        "sd15_base",
+        7.5,
+    ),
     # Stable Cascade (Wuerstchen 3-stage: prior -> decoder -> vqgan) native
     # MLX pipeline. Prior default guidance=4.0; decoder guidance=0.0.
     "stable_cascade": (
@@ -177,6 +185,16 @@ def _infer_variant(model_path: str) -> str:
         return "sd3"
     if "sdxs" in name:
         return "sdxs"
+    # SD1.5: "stable-diffusion-v1-5" / "sd1.5" / "sd15". Check BEFORE sdxl
+    # and BEFORE the flux1_dev "dev" fallback ("v1-5" has no "dev" but is
+    # also not sdxl/sd3, so it would otherwise fall through to flux2 txt2img).
+    if (
+        "sd1.5" in name
+        or "sd15" in name
+        or "stable-diffusion-v1-5" in name
+        or "stable-diffusion-v1-4" in name
+    ):
+        return "sd15"
     # Stable Cascade / Wuerstchen: check BEFORE sdxl/sd3 since
     # "stable-cascade" contains neither substring.
     if "cascade" in name or "wuerstchen" in name:
@@ -497,9 +515,18 @@ class ImageGenEngine(BaseNonStreamingEngine):
                     shift = kwargs.get("shift")
                     if shift is not None:
                         gen_kwargs["shift"] = shift
-                elif variant in ("sdxl", "cosxl", "sdxs"):
+                elif variant in ("sdxl", "cosxl", "sdxs", "sd15"):
                     if negative_prompt is not None:
                         gen_kwargs["negative_prompt"] = negative_prompt
+                if variant in ("sd3", "sdxl", "cosxl", "sdxs", "sd15") and (
+                    edit_image is not None or control_image is not None
+                ):
+                    # img2img / partial-denoise (#480): each pipeline encodes
+                    # the init image to a latent, noises to t_start, and runs a
+                    # partial denoise at image_strength (denoise fraction).
+                    gen_kwargs["image_path"] = edit_image or control_image
+                    if image_strength is not None:
+                        gen_kwargs["image_strength"] = image_strength
                 elif variant == "stable_cascade":
                     if negative_prompt is not None:
                         gen_kwargs["negative_prompt"] = negative_prompt
@@ -515,6 +542,7 @@ class ImageGenEngine(BaseNonStreamingEngine):
                     "sdxl",
                     "cosxl",
                     "sdxs",
+                    "sd15",
                     "stable_cascade",
                 ):
                     logger.warning(

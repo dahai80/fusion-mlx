@@ -44,6 +44,14 @@ class TestVariantMap:
     def test_flux1_schnell_exists(self):
         assert "flux1_schnell" in VARIANT_MAP
 
+    def test_sd15_exists(self):
+        assert "sd15" in VARIANT_MAP
+        module_path, cls_name, config_label, default_guidance = VARIANT_MAP["sd15"]
+        assert module_path == "fusion_mlx.image.sd15.generate"
+        assert cls_name == "SD15Pipeline"
+        assert config_label == "sd15_base"
+        assert default_guidance == 7.5
+
 
 class TestInferVariant:
     @pytest.mark.parametrize(
@@ -71,10 +79,21 @@ class TestInferVariant:
             ("black-forest-labs/FLUX.1-dev", "flux1_dev"),
             ("black-forest-labs/FLUX.1-schnell", "flux1_schnell"),
             ("FLUX.2-klein-base-4B", "txt2img"),
+            ("runwayml/stable-diffusion-v1-5", "sd15"),
+            ("stable-diffusion-v1-5", "sd15"),
+            ("stable-diffusion-v1-4", "sd15"),
+            ("sd15-base", "sd15"),
+            ("SD1.5", "sd15"),
         ],
     )
     def test_variant_inference(self, path, expected):
         assert _infer_variant(path) == expected
+
+    def test_sd15_does_not_fall_through_to_flux(self):
+        # SD1.5 repo id has no sdxl/sd3/dev/schnell substring; must route to
+        # sd15, not the flux1_dev/txt2img fallback (#480).
+        assert _infer_variant("runwayml/stable-diffusion-v1-5") == "sd15"
+        assert _infer_variant("sd15-base") == "sd15"
 
 
 class TestInferFlux2Config:
@@ -113,6 +132,14 @@ class TestImageGenEngineInit:
     def test_inferred_flux1_schnell_from_path(self):
         eng = ImageGenEngine(model_name="FLUX.1-schnell")
         assert eng.variant == "flux1_schnell"
+
+    def test_inferred_sd15_from_path(self):
+        eng = ImageGenEngine(model_name="runwayml/stable-diffusion-v1-5")
+        assert eng.variant == "sd15"
+
+    def test_explicit_sd15_variant(self):
+        eng = ImageGenEngine(model_name="foo", variant="sd15")
+        assert eng.variant == "sd15"
 
     def test_explicit_flux1_dev_variant(self):
         eng = ImageGenEngine(model_name="flux-1", variant="flux1_dev")

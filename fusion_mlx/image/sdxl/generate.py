@@ -23,6 +23,16 @@ class GenResult:
         self.image = image
 
 
+def _pil_to_nchw(image: Image.Image, height: int, width: int) -> mx.array:
+    # Resize to target then normalize to [-1, 1] NCHW for VAE encode (img2img).
+    if image.size != (width, height):
+        image = image.resize((width, height), Image.LANCZOS)
+    arr = np.array(image.convert("RGB")).astype(np.float32) / 255.0
+    arr = (arr * 2.0) - 1.0
+    arr = np.transpose(arr, (2, 0, 1))
+    return mx.array(arr)[None]
+
+
 def _local_path(subfolder: str, filename: str) -> str | None:
     base = os.environ.get("SDXL_LOCAL_DIR")
     if not base:
@@ -193,6 +203,8 @@ class SDXLPipeline:
         width: int = 1024,
         guidance: float = 7.5,
         negative_prompt: str = "",
+        image_path: str | None = None,
+        image_strength: float | None = None,
         **kwargs,
     ) -> GenResult:
         self._load_all()
@@ -201,15 +213,39 @@ class SDXLPipeline:
             raise ValueError("SDXL height/width must be multiples of 8")
         h_lat = height // 8
         w_lat = width // 8
-        logger.info(
-            "SDXL generate prompt=%r steps=%d %dx%d guidance=%.2f seed=%d",
-            prompt[:60],
-            num_inference_steps,
-            width,
-            height,
-            guidance,
-            seed,
-        )
+        # img2img: image_strength (a.k.a. denoise fraction) controls how many
+        # steps run. strength=1.0 -> full txt2img from noise; strength=0.5 ->
+        # run half the steps from a noised init image (#480). When image_path
+        # is None, fall back to pure txt2img.
+        is_img2img = image_path is not None
+        strength = float(image_strength) if image_strength is not None else 1.0
+        if is_img2img:
+            if strength <= 0.0 or strength > 1.0:
+                logger.warning(
+                    "SDXL image_strength=%.3f out of (0,1], clamping", strength
+                )
+                strength = max(min(strength, 1.0), 1e-3)
+            eff_steps = max(1, int(round(num_inference_steps * strength)))
+            logger.info(
+                "SDXL img2img prompt=%r steps=%d eff_steps=%d strength=%.3f %dx%d",
+                prompt[:60],
+                num_inference_steps,
+                eff_steps,
+                strength,
+                width,
+                height,
+            )
+        else:
+            eff_steps = num_inference_steps
+            logger.info(
+                "SDXL generate prompt=%r steps=%d %dx%d guidance=%.2f seed=%d",
+                prompt[:60],
+                num_inference_steps,
+                width,
+                height,
+                guidance,
+                seed,
+            )
         mx.random.seed(seed)
         context, pooled = self._encode_prompt(prompt)
         time_ids = self._default_time_ids(height, width)
@@ -221,7 +257,6 @@ class SDXLPipeline:
             pooled_un = None
             time_ids_un = None
 
-        latent = mx.random.normal((1, cfg.in_channels, h_lat, w_lat), dtype=mx.float32)
         scheduler = SDXLEulerDiscreteScheduler(
             num_train_timesteps=1000,
             beta_start=0.00085,
@@ -233,7 +268,29 @@ class SDXLPipeline:
         )
         scheduler.set_timesteps(num_inference_steps)
         timesteps = scheduler.timesteps
-        latent = latent * scheduler.init_noise_sigma
+        # Slice the last eff_steps timesteps (strongest denoise near the end),
+        # matching diffusers img2img init_noise + skip.
+        if is_img2img and eff_steps < len(timesteps):
+            timesteps = timesteps[len(timesteps) - eff_steps :]
+            scheduler.sigmas = scheduler.sigmas[len(scheduler.sigmas) - 1 - eff_steps :]
+            scheduler._step_index = 0
+        if is_img2img:
+            init_img = Image.open(image_path).convert("RGB")
+            init_lat = self.vae.encode(_pil_to_nchw(init_img, height, width))
+            init_lat = init_lat.astype(mx.float32)
+            # epsilon noise convention: latent = init_lat + sigma_start * noise.
+            sigma_start = float(scheduler.sigmas[0])
+            noise = mx.random.normal(init_lat.shape, dtype=mx.float32)
+            latent = init_lat + sigma_start * noise
+            mx.eval(latent)
+            logger.info(
+                "SDXL img2img init latent encoded, sigma_start=%.4f", sigma_start
+            )
+        else:
+            latent = mx.random.normal(
+                (1, cfg.in_channels, h_lat, w_lat), dtype=mx.float32
+            )
+            latent = latent * scheduler.init_noise_sigma
         for i, t in enumerate(timesteps):
             t_arr = mx.array([float(t)])
             if guidance > 1:
@@ -243,14 +300,20 @@ class SDXLPipeline:
                 tids_in = mx.concatenate([time_ids, time_ids_un], axis=0)
                 t_in = mx.concatenate([t_arr, t_arr], axis=0)
                 noise = self.unet(
-                    scheduler.scale_model_input(latent_in), t_in, context_in,
-                    pooled_in, tids_in,
+                    scheduler.scale_model_input(latent_in),
+                    t_in,
+                    context_in,
+                    pooled_in,
+                    tids_in,
                 )
                 noise_cond, noise_un = mx.split(noise, 2, axis=0)
                 noise = noise_un + guidance * (noise_cond - noise_un)
             else:
                 noise = self.unet(
-                    scheduler.scale_model_input(latent), t_arr, context, pooled,
+                    scheduler.scale_model_input(latent),
+                    t_arr,
+                    context,
+                    pooled,
                     time_ids,
                 )
             latent = scheduler.step(noise, latent)
