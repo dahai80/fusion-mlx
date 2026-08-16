@@ -13,9 +13,7 @@ from mlx import nn
 # the SDXL Transformer2D hardcodes nn.Linear proj_in/proj_out.
 from fusion_mlx.image.sdxl.unet import (
     Conv2d,
-    CrossAttention,
     Downsample,
-    FeedForward,
     GroupNorm,
     ResnetBlock,
     TransformerBlock,
@@ -239,29 +237,50 @@ class SD15UNet(nn.Module):
         self.down_blocks = []
         self.down_blocks.append(
             SD15CrossAttnDownBlock(
-                uc[0], uc[0], temb_ch, uc[0] // head_dim, head_dim, cross,
-                num_layers=config.layers_per_block, num_tf_layers=tl,
+                uc[0],
+                uc[0],
+                temb_ch,
+                uc[0] // head_dim,
+                head_dim,
+                cross,
+                num_layers=config.layers_per_block,
+                num_tf_layers=tl,
                 add_downsample=True,
             )
         )
         self.down_blocks.append(
             SD15CrossAttnDownBlock(
-                uc[0], uc[1], temb_ch, uc[1] // head_dim, head_dim, cross,
-                num_layers=config.layers_per_block, num_tf_layers=tl,
+                uc[0],
+                uc[1],
+                temb_ch,
+                uc[1] // head_dim,
+                head_dim,
+                cross,
+                num_layers=config.layers_per_block,
+                num_tf_layers=tl,
                 add_downsample=True,
             )
         )
         self.down_blocks.append(
             SD15CrossAttnDownBlock(
-                uc[1], uc[2], temb_ch, uc[2] // head_dim, head_dim, cross,
-                num_layers=config.layers_per_block, num_tf_layers=tl,
+                uc[1],
+                uc[2],
+                temb_ch,
+                uc[2] // head_dim,
+                head_dim,
+                cross,
+                num_layers=config.layers_per_block,
+                num_tf_layers=tl,
                 add_downsample=True,
             )
         )
         self.down_blocks.append(
             SD15DownBlock(
-                uc[2], uc[3], temb_ch,
-                num_layers=config.layers_per_block, add_downsample=False,
+                uc[2],
+                uc[3],
+                temb_ch,
+                num_layers=config.layers_per_block,
+                add_downsample=False,
             )
         )
 
@@ -274,31 +293,57 @@ class SD15UNet(nn.Module):
         self.up_blocks = []
         self.up_blocks.append(
             SD15UpBlock(
-                r[1], r[0], r[0], r[1], temb_ch,
-                num_layers=config.layers_per_block + 1, add_upsample=True,
-            )
-        )
-        self.up_blocks.append(
-            SD15CrossAttnUpBlock(
-                r[2], r[1], r[0], r[2], temb_ch,
-                r[1] // head_dim, head_dim, cross,
-                num_layers=config.layers_per_block + 1, num_tf_layers=tl,
+                r[1],
+                r[0],
+                r[0],
+                r[1],
+                temb_ch,
+                num_layers=config.layers_per_block + 1,
                 add_upsample=True,
             )
         )
         self.up_blocks.append(
             SD15CrossAttnUpBlock(
-                r[3], r[2], r[1], r[3], temb_ch,
-                r[2] // head_dim, head_dim, cross,
-                num_layers=config.layers_per_block + 1, num_tf_layers=tl,
+                r[2],
+                r[1],
+                r[0],
+                r[2],
+                temb_ch,
+                r[1] // head_dim,
+                head_dim,
+                cross,
+                num_layers=config.layers_per_block + 1,
+                num_tf_layers=tl,
                 add_upsample=True,
             )
         )
         self.up_blocks.append(
             SD15CrossAttnUpBlock(
-                r[3], r[3], r[2], r[3], temb_ch,
-                r[3] // head_dim, head_dim, cross,
-                num_layers=config.layers_per_block + 1, num_tf_layers=tl,
+                r[3],
+                r[2],
+                r[1],
+                r[3],
+                temb_ch,
+                r[2] // head_dim,
+                head_dim,
+                cross,
+                num_layers=config.layers_per_block + 1,
+                num_tf_layers=tl,
+                add_upsample=True,
+            )
+        )
+        self.up_blocks.append(
+            SD15CrossAttnUpBlock(
+                r[3],
+                r[3],
+                r[2],
+                r[3],
+                temb_ch,
+                r[3] // head_dim,
+                head_dim,
+                cross,
+                num_layers=config.layers_per_block + 1,
+                num_tf_layers=tl,
                 add_upsample=False,
             )
         )

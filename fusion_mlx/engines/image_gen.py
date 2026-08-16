@@ -361,7 +361,8 @@ class ImageGenEngine(BaseNonStreamingEngine):
 
         loop = asyncio.get_running_loop()
         self._flux = await asyncio.wait_for(
-            loop.run_in_executor(get_executor("image"), _load), timeout=get_image_gen_timeout()
+            loop.run_in_executor(get_executor("image"), _load),
+            timeout=get_image_gen_timeout(),
         )
         logger.info(
             "ImageGen engine loaded: %s variant=%s", self._model_name, self._variant
@@ -551,7 +552,8 @@ class ImageGenEngine(BaseNonStreamingEngine):
 
         try:
             result = await asyncio.wait_for(
-                loop.run_in_executor(get_executor("image"), _generate), timeout=get_image_gen_timeout()
+                loop.run_in_executor(get_executor("image"), _generate),
+                timeout=get_image_gen_timeout(),
             )
             elapsed = time.monotonic() - t0
             self._update_activity(activity_id, elapsed_seconds=elapsed)

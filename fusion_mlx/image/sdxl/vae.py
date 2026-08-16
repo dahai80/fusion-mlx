@@ -270,8 +270,12 @@ class SDXLVAE(nn.Module):
         # 1x1 convs sitting between encoder/decoder and the latent space
         # (diffusers AutoencoderKL: quant_conv after encoder, post_quant_conv
         # before decoder). Without these the latents are wrong (#482).
-        self.quant_conv = Conv2d(2 * self.latent_channels, 2 * self.latent_channels, k=1, padding=0)
-        self.post_quant_conv = Conv2d(self.latent_channels, self.latent_channels, k=1, padding=0)
+        self.quant_conv = Conv2d(
+            2 * self.latent_channels, 2 * self.latent_channels, k=1, padding=0
+        )
+        self.post_quant_conv = Conv2d(
+            self.latent_channels, self.latent_channels, k=1, padding=0
+        )
 
     def decode(self, latents: mx.array) -> mx.array:
         if latents.ndim == 5:

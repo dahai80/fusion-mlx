@@ -57,9 +57,9 @@ async def test_timeout_env_applied(monkeypatch):
     monkeypatch.setenv("FUSION_TTS_TIMEOUT", "0.05")
     eng = _make_engine()
     timeout = await _run_synthesize_capturing_timeout(eng)
-    assert timeout == pytest.approx(0.05), (
-        f"expected timeout=0.05 from env, got {timeout}"
-    )
+    assert timeout == pytest.approx(
+        0.05
+    ), f"expected timeout=0.05 from env, got {timeout}"
 
 
 @pytest.mark.asyncio
@@ -67,9 +67,7 @@ async def test_timeout_env_invalid_falls_back(monkeypatch):
     monkeypatch.setenv("FUSION_TTS_TIMEOUT", "not-a-number")
     eng = _make_engine()
     timeout = await _run_synthesize_capturing_timeout(eng)
-    assert timeout == 180.0, (
-        f"expected fallback timeout=180.0, got {timeout}"
-    )
+    assert timeout == 180.0, f"expected fallback timeout=180.0, got {timeout}"
 
 
 @pytest.mark.asyncio
