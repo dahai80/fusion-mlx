@@ -69,24 +69,30 @@ _LTX2_5_FILES = {
 
 
 def get_model_path(model_repo: str = _LTX2_5_REPO) -> Path:
-    # 解析 LTX-2.5 仓根目录：本地路径优先，否则 HF snapshot 下载（限 safetensors/json）。
+    # 解析 LTX-2.5 仓根目录：本地路径优先，否则 HF snapshot 下载。
+    # 只拉取 _LTX2_5_FILES 中实际用到的组件文件 (bf16), 跳过 nvfp4/int8 等未用变体,
+    # 避免 local_files_only 因仓内多余文件缺失而触发全量重下 (20GB+ 浪费).
+    if Path(model_repo).exists():
+        logger.info("ltx2_5 get_model_path: local dir %s", model_repo)
+        return Path(model_repo)
+    from huggingface_hub import snapshot_download
+
+    allow = list(_LTX2_5_FILES.values()) + ["*.json"]
     try:
-        if Path(model_repo).exists():
-            logger.info("ltx2_5 get_model_path: local dir %s", model_repo)
-            return Path(model_repo)
-        from huggingface_hub import snapshot_download
-
-        return Path(snapshot_download(repo_id=model_repo, local_files_only=True))
-    except Exception:
-        logger.info("ltx2_5 get_model_path: downloading %s", model_repo)
-        from huggingface_hub import snapshot_download
-
+        return Path(
+            snapshot_download(
+                repo_id=model_repo, local_files_only=True, allow_patterns=allow
+            )
+        )
+    except Exception as exc:
+        logger.info(
+            "ltx2_5 get_model_path: local incomplete (%s), fetching %s", exc, model_repo
+        )
         return Path(
             snapshot_download(
                 repo_id=model_repo,
                 local_files_only=False,
-                resume_download=True,
-                allow_patterns=["*.safetensors", "*.json"],
+                allow_patterns=allow,
             )
         )
 
