@@ -131,11 +131,20 @@ def generate_t2va_video(
 def _to_frames(decoded):
     # decoded (1, 3, t, h, w) float (可能 bfloat16) → list[(H,W,3) uint8]。
     # np.array 对 MLX bfloat16 会失败/极慢，先转 float32 并显式 eval 物化。
+    #
+    # VAE decoder 输出为 imagenet 归一化像素空间（mean/std 见 vae.NORM_*），
+    # 官方 vae_processor.revert_tensor = transform_rev(x).clamp(0,1)，
+    # 即先反归一化 x*std+mean 再 clamp。早期移植漏掉反归一化直接 clip，
+    # 致 decoded DC 偏负时（如 1344×768 mean=-1.15）几乎全裁到 0 → 近黑。
+    # 768×448 decoded mean=+0.81 偶然为正才"看起来正常"，实为同一缺陷。
     import numpy as np
 
-    x = decoded[0]
+    from .vae import _denormalize_pixel
+
+    x = decoded[0:1].astype(mx.float32)
+    x = _denormalize_pixel(x)  # (1,3,t,h,w) imagenet 反归一化 → [0,1] 像素
+    x = x[0]
     x = mx.transpose(x, (1, 2, 3, 0))  # (t,h,w,3)
-    x = x.astype(mx.float32)
     mx.eval(x)
     x = mx.clip(x, 0.0, 1.0)
     x = (x * 255.0).astype(mx.uint8)

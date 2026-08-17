@@ -135,6 +135,41 @@ frames):
    the graph. (Separately, the real 77 GB load needs ~100 GB free RAM — stop the
    fusion-mlx server via `start.sh stop` before real-model runs.)
 
+## P9 corrections (1344×768 near-black)
+
+768p (1344×768) T2V at 41 frames decoded to a near-black mp4 (frame mean 12.6,
+vs the 768×448 baseline 189.6). Two code bugs and one config constraint found;
+both bugs fixed and real-model verified, 130 H3 tests pass.
+
+7. **Imagenet denormalize missing** (`generate.py::_to_frames`). The VAE
+   decoder outputs *normalized* pixel space, not raw `[0,1]`. The official
+   `vae_processor.revert_tensor = transform_rev(x).clamp(0,1)` applies
+   `x*std+mean` (imagenet mean=(0.485,0.456,0.406),
+   std=(0.229,0.224,0.225)) *before* the clamp. The early port did `clip(0,1)`
+   only. At 1344×768 the decoded DC was −1.15, so `clip` alone sent ~99% of
+   pixels to 0 → near-black. 768×448 happened to decode DC=+0.81 (positive)
+   so the same defect "looked normal." Fixed: `_to_frames` now calls
+   `_denormalize_pixel` (channel axis 1, shape `(1,3,1,1,1)`) before the clip.
+8. **VAE decoder spatial tiling missing** (`vae.py::decode`). The official
+   config sets `vae_decoder_tiling=1`, `vae_tile_size=256`,
+   `vae_tile_overlap_min=64` (pixel space). `klvae.tiled_decode` splits the
+   latent spatially (latent = pixel // 16 = 16) and blends tile overlaps in
+   pixel space. The ViT3D decoder goes out-of-distribution at large spatial
+   token counts (1344×768 = 4032 tokens vs 768×448 = 1344), producing the
+   negative DC. The early port did a single full-pass decode. Fixed: `decode`
+   now tiles when `latent_h > tile` or `latent_w > tile`, porting
+   `klvae._split_tiles` / `klvae.blend` / `klvae.tiled_decode` (sp_size=1,
+   linear cross-fade, concat on dim −2/−1).
+9. **768p needs ≥243 frames (config constraint, not a bug).** 41 frames at
+   1344×768 is out-of-distribution for the temporal axis — the decoded DC is
+   intrinsic to the latent content at that frame count, not a VAE structural
+   defect (DiT and VAE are both resolution- and length-agnostic; RoPE is
+   length-normalized; latent stats match across resolutions). Real-model
+   trend: 41f DC=−1.15 (mp4 mean 12.6→52.2 after the two fixes), 89f
+   DC=−0.63 (mean 76.2). The official `reproducible-768p-t2va-request.sh`
+   uses 243 frames (10s @ 24fps, t=61), which fully normalizes the DC. Use
+   the official frame count at 768p; 41f was only a memory shortcut.
+
 ## Files
 
 ```

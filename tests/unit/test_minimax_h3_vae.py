@@ -167,6 +167,61 @@ class TestMiniMaxH3VideoVAE:
         z = vae.encode_base(x)
         assert z.shape[1] == 24  # z_channels
 
+    def test_split_tiles_small_passthrough(self):
+        # input_len <= tile_size -> 单块全覆盖，无 overlap。
+        cfg = H3VAEConfig()
+        vae = MiniMaxH3VideoVAE(config=cfg)
+        start, length, overlap = vae._split_tiles(256)
+        assert start == [0]
+        assert length == [256]
+        assert overlap == []
+
+    def test_split_tiles_covers_full_extent(self):
+        # 分块 start+length 必须覆盖整段，相邻块 overlap>=overlap_min。
+        cfg = H3VAEConfig()
+        vae = MiniMaxH3VideoVAE(config=cfg)
+        start, length, overlap = vae._split_tiles(768)
+        assert start[0] == 0
+        assert start[-1] + length[-1] >= 768
+        for o in overlap:
+            assert o >= cfg.vae_tile_overlap_min
+        for ln in length:
+            assert ln == cfg.vae_tile_size
+
+    def test_blend_linear_ramp(self):
+        # blend_extent=2：w_a=[1,0.5], w_b=[0,0.5]。
+        # a 尾 [10,10] 与 b 头 [20,20] -> [10*1+20*0, 10*0.5+20*0.5]=[10,15]。
+        a = mx.array([[0.0], [0.0], [10.0], [10.0]], dtype=mx.float32)  # (4,1)
+        b = mx.array([[20.0], [20.0], [30.0], [30.0]], dtype=mx.float32)
+        out = MiniMaxH3VideoVAE._blend(a, b, 2, dim=0)
+        mx.eval(out)
+        assert float(out[0, 0]) == 10.0
+        assert float(out[1, 0]) == 15.0
+        assert float(out[2, 0]) == 30.0
+
+    def test_tiled_decode_shape_matches_single_pass(self):
+        # latent 48×84（>tile 16）触发分块；decoder 36 层太重，缩到 2 层验证形状。
+        cfg = H3VAEConfig()
+        vae = MiniMaxH3VideoVAE(config=cfg)
+        vae.decoder = ViT3DDecoder(
+            patch_size=cfg.vae_ratio,
+            patch_size_t=cfg.vae_ratio_t,
+            t_causal=cfg.causal_decoder,
+            in_channels=cfg.z_channels,
+            out_channels=cfg.in_channels,
+            num_layers=2,
+            heads=cfg.vit_heads,
+            dim_head=cfg.vit_dim_head,
+            norm_type=cfg.vit_norm_type,
+            ffn_use_gated=cfg.vit_ffn_use_gated,
+            rope_theta=cfg.vit_rope_theta,
+            rope_dim_ratio=cfg.vit_rope_dim_ratio,
+        )
+        z = mx.zeros((1, cfg.z_channels, 5, 48, 84), dtype=mx.float32)
+        dec = vae.decode(z)
+        mx.eval(dec)
+        assert dec.shape == (1, 3, 20, 768, 1344)
+
 
 class TestRemapWeights:
     def test_pointwise_5d_squeezed_to_2d(self):
