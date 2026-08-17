@@ -57,6 +57,19 @@ latents (b, c, f, h, w)
 Single-file `.safetensors`, all 4349 keys under `model.diffusion_model.` prefix.
 Download via the mirror site `https://hf-mirror.com` per project convention.
 
+### `get_model_path` download scoping (utils.py)
+
+`get_model_path` resolves the repo root via `snapshot_download`. It passes
+`allow_patterns` = the `_LTX2_5_FILES` values (bf16 components actually used)
+plus `*.json`, to both the `local_files_only=True` attempt and the fallback
+fetch. This deliberately **skips the `nvfp4` / `int8` / `comfy-int8-convrot`
+variants and `hf-hero-web.webp`** that the repo also ships — otherwise a
+partial local snapshot (those unused files missing) makes
+`local_files_only=True` raise `IncompleteSnapshotError`, triggering a full
+re-download of all `*.safetensors` (20 GB+ wasted). Passing the explicit
+component list lets a snapshot containing only the needed bf16 files resolve
+locally.
+
 ## Key-loading remaps (`sanitize`)
 
 PyTorch checkpoint naming → MLX module naming. **Critical 2.5 delta: connectors
