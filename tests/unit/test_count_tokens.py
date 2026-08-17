@@ -72,7 +72,12 @@ class TestExtractRequestText:
         assert "Block text" in text
 
     def test_empty_messages(self):
-        req = TokenCountRequest(model="test-model", messages=[])
+        # D-ANTHRO-VALIDATION F11：messages=[] 在模型层即 400（min_length=1），
+        # 故用空内容消息验证 _extract_request_text 对无文本返回 "" 的契约。
+        req = TokenCountRequest(
+            model="test-model",
+            messages=[AnthropicMessage(role="user", content="")],
+        )
         text = _extract_request_text(req)
         assert text == ""
 
