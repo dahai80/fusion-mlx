@@ -703,6 +703,14 @@ class MiniMaxH3VideoVAE(nn.Module):
         self.causal_decoder = cfg.causal_decoder
         self.embed_dim = cfg.embed_dim
         self.z_channels = cfg.z_channels
+        # 解码器空间分块（源自官方 klvae.tiled_decode + vae_processor）。
+        # ViT3D 解码器在大空间 token 数下越界分布（1344×768 decoded DC=-1.15
+        # vs 768×448 +0.81），官方 config vae_decoder_tiling=1 强制分块。
+        # tile_size/overlap 为像素空间，latent = pixel//vae_ratio。
+        self.decoder_tile_size = int(kwargs.get("decoder_tile_size", cfg.vae_tile_size))
+        self.decoder_tile_overlap_min = int(
+            kwargs.get("decoder_tile_overlap_min", cfg.vae_tile_overlap_min)
+        )
 
         self.encoder = EncoderFCN3D(
             ch=cfg.ch,
@@ -743,9 +751,103 @@ class MiniMaxH3VideoVAE(nn.Module):
 
     def decode(self, z):
         logger.info("h3 vae decode: latent shape=%s", z.shape)
-        z2 = self.post_quant_conv(z)
-        dec = self.decoder(z2)
+        # 空间分块：latent 空间 h/w 超过单 tile（像素 tile_size//vae_ratio）时分块
+        # 解码再 blend，保持 ViT3D 解码器 token 数在训练分布内。
+        latent_h, latent_w = z.shape[-2], z.shape[-1]
+        latent_tile = self.decoder_tile_size // self.vae_ratio
+        if latent_h > latent_tile or latent_w > latent_tile:
+            dec = self.tiled_decode(z)
+        else:
+            z2 = self.post_quant_conv(z)
+            dec = self.decoder(z2)
         logger.info("h3 vae decode: output shape=%s", dec.shape)
+        return dec
+
+    def _split_tiles(self, input_len):
+        # 官方 klvae.split_tiles(is_decoder=True) 的纯 MLX 移植。
+        # input_len 为像素空间长度，返回 (start_idx, tile_len, overlap) 像素空间。
+        import math
+
+        tile_size = self.decoder_tile_size
+        overlap_min = self.decoder_tile_overlap_min
+        if tile_size >= input_len:
+            return [0], [input_len], []
+        n = math.ceil(input_len / tile_size)
+        while True:
+            overlaps = [overlap_min] * (n - 1)
+            remaining = tile_size * n - sum(overlaps) - input_len
+            if remaining < 0:
+                n += 1
+            else:
+                break
+        remaining_units = remaining // self.vae_ratio
+        for i in range(remaining_units):
+            overlaps[i % (n - 1)] += self.vae_ratio
+        start_idx = [0]
+        for i in range(n - 1):
+            start_idx.append(start_idx[-1] + tile_size - overlaps[i])
+        tile_len = [tile_size] * n
+        return start_idx, tile_len, overlaps
+
+    @staticmethod
+    def _blend(a, b, blend_extent, dim):
+        # 官方 klvae.blend：a 尾部与 b 头部线性交叉融合 blend_extent 个单元。
+        blend_extent = min(a.shape[dim], b.shape[dim], blend_extent)
+        positions = mx.arange(blend_extent, dtype=a.dtype)
+        weight_a = 1.0 - positions / blend_extent
+        weight_b = positions / blend_extent
+        shape = [1] * a.ndim
+        shape[dim] = blend_extent
+        weight_a = weight_a.reshape(shape)
+        weight_b = weight_b.reshape(shape)
+        sl_a = [slice(None)] * a.ndim
+        sl_a[dim] = slice(-blend_extent, None)
+        a_overlap = a[tuple(sl_a)]
+        sl_b = [slice(None)] * b.ndim
+        sl_b[dim] = slice(0, blend_extent)
+        b_overlap = b[tuple(sl_b)]
+        blended = a_overlap * weight_a + b_overlap * weight_b
+        if blend_extent < b.shape[dim]:
+            sl_rest = [slice(None)] * b.ndim
+            sl_rest[dim] = slice(blend_extent, None)
+            b_rest = b[tuple(sl_rest)]
+            return mx.concatenate([blended, b_rest], axis=dim)
+        return blended
+
+    def tiled_decode(self, z):
+        # 官方 klvae.tiled_decode（单进程 sp_size=1）纯 MLX 移植。
+        # z: (b,c,t,h,w) latent。按像素空间 h/w 分块，每块独立 decode 再 blend。
+        height = z.shape[-2] * self.vae_ratio
+        width = z.shape[-1] * self.vae_ratio
+        y_idx, y_len, y_overlap = self._split_tiles(height)
+        x_idx, x_len, x_overlap = self._split_tiles(width)
+        i_max, j_max = len(y_idx), len(x_idx)
+
+        rows = [[None] * j_max for _ in range(i_max)]
+        for i, (i_pos, i_len) in enumerate(zip(y_idx, y_len)):
+            i_pos_l, i_len_l = i_pos // self.vae_ratio, i_len // self.vae_ratio
+            for j, (j_pos, j_len) in enumerate(zip(x_idx, x_len)):
+                j_pos_l, j_len_l = j_pos // self.vae_ratio, j_len // self.vae_ratio
+                tile = z[..., i_pos_l : i_pos_l + i_len_l, j_pos_l : j_pos_l + j_len_l]
+                z2 = self.post_quant_conv(tile)
+                rows[i][j] = self.decoder(z2)
+                mx.eval(rows[i][j])
+
+        result_rows = []
+        for i, row in enumerate(rows):
+            result_row = []
+            for j, tile in enumerate(row):
+                if i > 0:
+                    tile = self._blend(rows[i - 1][j], tile, y_overlap[i - 1], dim=-2)
+                if j > 0:
+                    tile = self._blend(row[j - 1], tile, x_overlap[j - 1], dim=-1)
+                if i < len(rows) - 1:
+                    tile = tile[..., : -y_overlap[i], :]
+                if j < len(row) - 1:
+                    tile = tile[..., :, : -x_overlap[j]]
+                result_row.append(tile)
+            result_rows.append(mx.concatenate(result_row, axis=-1))
+        dec = mx.concatenate(result_rows, axis=-2)
         return dec
 
     def encode_base(self, x, process_image=False):
