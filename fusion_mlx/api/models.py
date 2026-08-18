@@ -10,6 +10,7 @@ These models define the request and response schemas for:
 """
 
 import logging
+import math
 import time
 import uuid
 from typing import Literal
@@ -26,6 +27,15 @@ from pydantic import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _reject_nonfinite_float(v):
+    if v is None:
+        return v
+    if not math.isfinite(v):
+        raise ValueError("sampling parameter must be finite")
+    return v
+
 
 # =============================================================================
 # Content Types (for multimodal messages)
@@ -460,6 +470,18 @@ class ChatCompletionRequest(BaseModel):
     # Valid values: "minimal", "low", "medium", "high", "none".
     reasoning_effort: str | None = None
 
+    @field_validator(
+        "temperature",
+        "top_p",
+        "min_p",
+        "repetition_penalty",
+        "presence_penalty",
+        "frequency_penalty",
+    )
+    @classmethod
+    def _reject_nonfinite_sampling(cls, v):
+        return _reject_nonfinite_float(v)
+
     @field_validator("reasoning_effort")
     @classmethod
     def _validate_reasoning_effort(cls, v: str | None) -> str | None:
@@ -700,6 +722,18 @@ class CompletionRequest(BaseModel):
     suffix: str | None = None
     # Request timeout in seconds (None = use server default)
     timeout: float | None = None
+
+    @field_validator(
+        "temperature",
+        "top_p",
+        "min_p",
+        "repetition_penalty",
+        "presence_penalty",
+        "frequency_penalty",
+    )
+    @classmethod
+    def _reject_nonfinite_sampling(cls, v):
+        return _reject_nonfinite_float(v)
 
     @field_validator("n", mode="before")
     @classmethod
