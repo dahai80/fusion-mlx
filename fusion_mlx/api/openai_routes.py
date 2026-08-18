@@ -723,6 +723,13 @@ async def _run_chat(
         err_msg = str(exc)
         if "Failed to process image" in err_msg or "Failed to process video" in err_msg:
             raise HTTPException(status_code=400, detail="Invalid media input")
+        if "exceeds the per-batch cap" in err_msg:
+            logger.warning(
+                "Non-streaming chat hit per-batch prefill cap for %s: %s",
+                request_id,
+                err_msg,
+            )
+            raise HTTPException(status_code=400, detail=err_msg)
         logger.exception(
             "Non-streaming chat failed for %s: %s(%s)",
             request_id,
@@ -1302,6 +1309,14 @@ async def _stream_chat_generator(
         err_msg = str(exc)
         if "Failed to process image" in err_msg or "Failed to process video" in err_msg:
             yield 'data: {"error": {"message": "Invalid media input", "status": 400}}\n\n'
+        elif "exceeds the per-batch cap" in err_msg:
+            logger.warning(
+                "Streaming chat hit per-batch prefill cap for %s: %s",
+                request_id,
+                err_msg,
+            )
+            payload = _json.dumps({"error": {"message": err_msg, "status": 400}})
+            yield f"data: {payload}\n\n"
         else:
             logger.exception(
                 "Streaming chat failed for %s: %s(%s)",

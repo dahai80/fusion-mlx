@@ -20,6 +20,7 @@ from __future__ import annotations
 
 from typing import Any
 
+import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
@@ -90,6 +91,18 @@ _TOOLS = [
 ]
 
 
+@pytest.mark.xfail(
+    reason=(
+        "mechanism removed: the chat route no longer passes "
+        "forced_assistant_prefix as an engine chat kwarg — prefix "
+        "injection was replaced by post-parse synthesis "
+        "(_enforce_required_tool_choice_present). "
+        "seed_forced_assistant_prefix has no prod callers. The 7 "
+        "swallow/no-pollution tests still guard the postprocessor "
+        "replay path. strict xfail so restoring injection forces review."
+    ),
+    strict=True,
+)
 def test_forced_named_function_sets_assistant_prefix():
     engine = _RecordingEngine()
     client = _make_client(engine, parser="hermes")
@@ -114,6 +127,15 @@ def test_forced_named_function_sets_assistant_prefix():
     assert '"name": "get_weather"' in prefix
 
 
+@pytest.mark.xfail(
+    reason=(
+        "mechanism removed: see test_forced_named_function_sets_"
+        "assistant_prefix — forced_assistant_prefix is no longer an "
+        "engine chat kwarg (post-parse synthesis replaced injection). "
+        "strict xfail."
+    ),
+    strict=True,
+)
 def test_forced_required_with_solo_tool_sets_prefix():
     engine = _RecordingEngine()
     client = _make_client(engine, parser="hermes")

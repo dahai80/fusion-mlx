@@ -24,16 +24,18 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from fusion_mlx.config import reset_config
-from fusion_mlx.routes_internal.anthropic import (
+from fusion_mlx.api._anthropic_helpers import (
     _enforce_required_tool_choice_present,
-    _estimate_anthropic_prompt_tokens,
     _inject_tool_use_required_suffix,
     _is_required_tool_choice,
     _synthesize_anthropic_forced_tool_call,
-    router,
 )
-from fusion_mlx.service.helpers import _TOOL_USE_REQUIRED_SUFFIX
+from fusion_mlx.config import reset_config
+from fusion_mlx.routes_internal.anthropic import router
+from fusion_mlx.service.helpers import (
+    _TOOL_USE_REQUIRED_SUFFIX,
+    compute_prompt_tokens_for_messages,
+)
 
 # ──────────────────────────────────────────────────────────────────
 # Engine doubles
@@ -676,7 +678,7 @@ def test_estimate_prompt_tokens_uses_build_prompt():
     ``engine.build_prompt`` + tokenizer.encode and returns a > 0 count."""
     engine = _BaseEngine()
     messages = [{"role": "user", "content": "hello there world"}]
-    n = _estimate_anthropic_prompt_tokens(engine, messages, tools=None)
+    n = compute_prompt_tokens_for_messages(engine, messages, tools=None)
     # The fake tokenizer returns 1 token per word + 1 BOS. Render is
     # "user: hello there world" → 5 tokens (4 words + BOS).
     assert n == 5, n
@@ -691,7 +693,7 @@ def test_estimate_prompt_tokens_zero_when_no_build_prompt():
         is_mllm = False
         tokenizer = _Tokenizer()
 
-    n = _estimate_anthropic_prompt_tokens(
+    n = compute_prompt_tokens_for_messages(
         _NoBuildPromptEngine(), [{"role": "user", "content": "x"}], tools=None
     )
     assert n == 0
@@ -704,7 +706,7 @@ def test_estimate_prompt_tokens_zero_when_mllm():
     class _MLLMEngine(_BaseEngine):
         is_mllm = True
 
-    n = _estimate_anthropic_prompt_tokens(
+    n = compute_prompt_tokens_for_messages(
         _MLLMEngine(), [{"role": "user", "content": "x"}], tools=None
     )
     assert n == 0
@@ -737,7 +739,7 @@ def test_stream_message_start_carries_nonzero_input_tokens():
     # Must match what the pre-compute helper would have returned for
     # the same messages — i.e. byte-for-byte tied to the source of
     # truth (``build_prompt`` + tokenizer.encode).
-    expected = _estimate_anthropic_prompt_tokens(
+    expected = compute_prompt_tokens_for_messages(
         engine,
         [{"role": "user", "content": "answer directly please"}],
         tools=None,

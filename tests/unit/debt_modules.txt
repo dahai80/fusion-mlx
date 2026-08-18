@@ -34,7 +34,13 @@ test_server.py
 test_settings.py
 
 ## runtime-fail (315)
-test_447_stream_tool_choice_auto.py
+# test_447_stream_tool_choice_auto.py RESCUED 2026-08-18 (13 pass + 1 xfail):
+# re-pointed stale import fusion_mlx.config.server_config → get_config()
+# (no server_config singleton; API is get_config()/reset_config() since
+# the config refactor). 1 test (test_synth_fires_when_parser_saw_nothing)
+# xfails strict: harness drift — _drive_stream drives the dead
+# routes_internal.chat.stream_chat_completion stub (if False: yield);
+# real streaming now lives in api/openai_routes._stream_chat.
 test_admin_dashboard_draft_filters.py
 test_admin_update_check.py
 # test_alias_hybrid_classification.py RESCUED 2026-08-09 (43 pass): re-pointed
@@ -51,15 +57,50 @@ test_anthropic_spec_polish_bundle.py
 test_anthropic_stop_sequences.py
 test_anthropic_streaming_reasoning.py
 test_anthropic_think_leak_r12_m1b.py
-test_anthropic_tool_choice_validation.py
+# test_anthropic_tool_choice_validation.py RESCUED 2026-08-18 (19 pass):
+# clean pass, no re-point needed — prod enforcer symbols unchanged.
+# KEEP_QUARANTINED 2026-08-18: deep multi-axis drift after the anthropic
+# route rewrite. Import re-point applied
+# (routes_internal.anthropic no longer re-exports the _enforce_required_*
+# family → re-pointed to api._anthropic_helpers; dead
+# _estimate_anthropic_prompt_tokens → service.helpers.compute_prompt_tokens_for_messages)
+# to unblock collection, but 14/31 still fail across 5 axes: (1) prod
+# _synthesize_anthropic_forced_tool_call returns DICT not object (test asserts
+# .function.name); (2) route reads gen.prompt_tokens, test engine doubles
+# don't expose it; (3) _stream_anthropic_messages removed/relocated; (4)
+# _TOOL_USE_REQUIRED_SUFFIX injected text changed; (5) _drive_stream drives
+# dead stream_chat_completion stub. Rescue requires re-authoring the route-
+# level harness against api/openai_routes — deferred.
 test_anthropic_tool_usage_d.py
+# KEEP_QUARANTINED 2026-08-18: 89 pass / 19 fail, two
+# contract-conflict clusters (NOT import drift): (1) 13 tests expect
+# ValidationError on content=None for input roles (user/system/developer)
+# but prod Message intentionally accepts None (lenient); (2) 6 tests
+# (D-MISSING-CONTENT-KEY) assert serialized assistant messages always
+# carry a `content` key (OpenAI spec) but prod omits it for reasoning-only
+# / tool-call-only / empty completions. Resolving = product decision
+# (tighten prod = breaking, or accept tests stale) + real SDK-compat
+# verification. Deferred out of debt-rescue scope.
 test_api_models.py
 test_api_validation_bundle.py
 test_app_bundle_cli_wrapper.py
-test_audio.py
+# test_audio.py RESCUED 2026-08-18 (21 pass + 3 skip, isolation): re-pointed
+# stale import fusion_mlx.api → fusion_mlx.api.models (AudioTranscriptionRequest
+# line 854, AudioUrl line 48 live in api.models, not re-exported from the
+# api package __init__). NOTE: also listed in conftest _OPT_DEP_SUITES under
+# "mlx_audio"; find_spec('mlx_audio') raises ValueError (spec unset) on this
+# venv so the suite is excluded from full-dir collection — runs only when
+# invoked directly. Not a CI regression risk.
 test_audio_alias_registry.py
 test_audio_api.py
-test_audio_extras_lockin.py
+# test_audio_extras_lockin.py RESCUED 2026-08-18 (1 pass + 2 skip + 2 xfail,
+# isolation): fixed stale PYPROJECT_PATH (.parent.parent → .parent.parent.parent; tests
+# moved into tests/unit/). 2 aspirational pin tests (espeakng-loader,
+# phonemizer-fork) xfail strict: those pins have NO git history in
+# pyproject.toml — [audio] extra is only mlx-audio[tts,stt,sts]==0.4.3,
+# which does not transitively pull them. Real Kokoro /v1/audio/speech
+# crash risk (misaki/espeak.py imports espeakng_loader) — track as a
+# packaging issue, not test drift.
 test_audio_memory.py
 test_audio_path_shaped_model.py
 test_audio_probe_consistency.py
@@ -98,9 +139,22 @@ test_chat_logprobs_channel_routing.py
 # (F-155 regression: chat route silently accepted n!=1/bool). CompletionRequest
 # validator refactored to mode="before" so Field(ge=1,le=128) doesn't mask the
 # "must equal 1" message for 0/-1/1000.
-test_chat_route_forced_tool_prefix_wiring.py
+# test_chat_route_forced_tool_prefix_wiring.py RESCUED 2026-08-18 (7 pass
+# + 2 xfail): 7 swallow/no-pollution tests guard the postprocessor
+# synthetic-prefix replay path (alive). 2 injection tests xfail strict —
+# the route no longer passes forced_assistant_prefix as an engine chat
+# kwarg (mechanism replaced by post-parse synthesis; "
+# seed_forced_assistant_prefix has no prod callers). Added import pytest.
 test_chat_route_tool_choice_enforcement.py
-test_chat_route_vlm_image.py
+# test_chat_route_vlm_image.py RESCUED 2026-08-18 (3 pass + 2 xfail): PROD
+# FIX — route now maps "exceeds the per-batch cap" ValueError to HTTP 400
+# with the actionable engine message (was generic 500; issue #682 never
+# landed). Fixed in BOTH non-stream (openai_routes.py:722) and stream
+# (openai_routes.py:1308) catch-alls. 2 audio-rejection tests xfail
+# strict: aspirational — chat route has no audio lane (audio_url/
+# input_audio rendered as '[audio]' text placeholder at :170, silently
+# dropped, not 400). No supports_audio engine flag exists; needs product
+# decision.
 test_chat_template_kwargs.py
 test_check_gha_pinning.py
 test_check_mlx_upstream_calls.py

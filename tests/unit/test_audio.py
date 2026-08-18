@@ -223,7 +223,7 @@ class TestAudioImports:
 
     def test_import_api_models(self):
         """Test importing audio API models."""
-        from fusion_mlx.api import (
+        from fusion_mlx.api.models import (
             AudioTranscriptionRequest,
             AudioUrl,
         )
