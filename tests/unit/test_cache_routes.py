@@ -37,7 +37,19 @@ def sandbox(monkeypatch, tmp_path):
 
 @pytest.fixture
 def cache_client(monkeypatch, sandbox):
-    """FastAPI TestClient with the cache router + auth enabled."""
+    """FastAPI TestClient with the cache router + auth enabled.
+
+    The cache router gates on both ``verify_api_key`` (middleware, reads
+    ``cfg.api_key`` via ``_get_configured_api_key``) and ``require_admin``
+    (admin/auth, reads the module global ``_api_key`` set via
+    ``set_api_key`` — NOT ``cfg.api_key``). TestClient's host is
+    "testclient" (not loopback), so the loopback bypass in
+    ``require_admin`` never fires. Wiring only ``cfg.api_key`` leaves the
+    admin dep seeing an empty key → 401 on every valid-bearer request.
+    Set the module global too so a valid Bearer satisfies both deps
+    without reverting the admin gate (no product decision changed).
+    """
+    from fusion_mlx.admin.auth import set_api_key
     from fusion_mlx.config import reset_config
     from fusion_mlx.routes_internal.cache import router
 
@@ -45,11 +57,13 @@ def cache_client(monkeypatch, sandbox):
     cfg.api_key = "test-secret"
     cfg.engine = SimpleNamespace()  # unused — stub doesn't touch the engine
     cfg.model_name = "test-model"
+    set_api_key("test-secret")
 
     app = FastAPI()
     app.include_router(router)
     yield SimpleNamespace(client=TestClient(app), sandbox=sandbox)
 
+    set_api_key("")
     reset_config()
 
 

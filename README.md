@@ -1254,6 +1254,17 @@ Aliases: `svd-xt`, `stable-video-diffusion`, `cosmos-1.0`, `predict2`,
 > reports progress for ComfyUI and makes hangs vs. slow steps
 > diagnosable. Wan2/VACE already used batched CFG.
 
+> **Wan2 self-attn overflow (#500):** Wan2.2-TI2V-5B at large
+> resolutions (e.g. 1280×704×121f → seq=27280) overflows Metal on a
+> single `(B,H,seq,seq)` attention matrix, yielding all-NaN latents
+> and a static video. When the transformer seq exceeds the safe
+> threshold (16384), `generate_video` auto-enables Q-chunking
+> (`FUSION_WAN2_ATTN_CHUNK=8192`) so users never hit the NaN by hand.
+> A user-set `FUSION_WAN2_ATTN_CHUNK` is honored as-is (set `0` to
+> force-off). If NaN latents still reach the VAE, decode now fails
+> visibly (raises) instead of silently zeroing pixels into a static
+> clip.
+
 ### VACE: Video-Conditioned Auxiliary Control (Wan2.1-VACE-14B)
 
 VACE enables **Video-to-Video (V2V)** and **Audio-to-Video (A2V)** control on

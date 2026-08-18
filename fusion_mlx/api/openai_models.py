@@ -11,6 +11,7 @@ These models define the request and response schemas for:
 """
 
 import json
+import math
 from typing import Any
 
 from pydantic import AliasChoices, BaseModel, Field, field_validator, model_validator
@@ -21,6 +22,15 @@ from fusion_mlx.api.shared_models import (
     generate_id,
     get_unix_timestamp,
 )
+
+
+def _reject_nonfinite_float(v):
+    if v is None:
+        return v
+    if not math.isfinite(v):
+        raise ValueError("sampling parameter must be finite")
+    return v
+
 
 # =============================================================================
 # Content Types
@@ -287,19 +297,19 @@ class ChatCompletionRequest(BaseModel):
     adapters: str | None = None
     # D-ANTHRO-VALIDATION F11 parity: messages=[] must 400, not 500.
     messages: list[Message] = Field(min_length=1)
-    temperature: float | None = None
-    top_p: float | None = None
+    temperature: float | None = Field(None, ge=0.0, le=2.0)
+    top_p: float | None = Field(None, ge=0.0, le=1.0)
     top_k: int | None = None
-    repetition_penalty: float | None = None
+    repetition_penalty: float | None = Field(None, ge=0.0)
     max_tokens: int | None = Field(None, ge=1, le=131072)
     stream: bool = False
     stream_options: StreamOptions | None = None
     stop: list[str] | None = None
-    min_p: float | None = None
+    min_p: float | None = Field(None, ge=0.0, le=1.0)
     xtc_probability: float | None = None
     xtc_threshold: float | None = None
-    presence_penalty: float | None = None
-    frequency_penalty: float | None = None
+    presence_penalty: float | None = Field(None, ge=-2.0, le=2.0)
+    frequency_penalty: float | None = Field(None, ge=-2.0, le=2.0)
     # Tool calling
     tools: list[ToolDefinition] | None = None
     tool_choice: str | dict | None = None  # "auto", "none", or specific tool
@@ -350,6 +360,18 @@ class ChatCompletionRequest(BaseModel):
             elif "max_completion_tokens" in values:
                 values.pop("max_completion_tokens")
         return values
+
+    @field_validator(
+        "temperature",
+        "top_p",
+        "min_p",
+        "repetition_penalty",
+        "presence_penalty",
+        "frequency_penalty",
+    )
+    @classmethod
+    def _reject_nonfinite_sampling(cls, v):
+        return _reject_nonfinite_float(v)
 
 
 class AssistantMessage(BaseModel):
@@ -419,19 +441,19 @@ class CompletionRequest(BaseModel):
     # ChatCompletionRequest.adapters for routing semantics.
     adapters: str | None = None
     prompt: str | list[str]
-    temperature: float | None = None
-    top_p: float | None = None
+    temperature: float | None = Field(None, ge=0.0, le=2.0)
+    top_p: float | None = Field(None, ge=0.0, le=1.0)
     top_k: int | None = None
-    repetition_penalty: float | None = None
+    repetition_penalty: float | None = Field(None, ge=0.0)
     max_tokens: int | None = Field(None, ge=1, le=131072)
     stream: bool = False
     stream_options: StreamOptions | None = None
     stop: list[str] | None = None
-    min_p: float | None = None
+    min_p: float | None = Field(None, ge=0.0, le=1.0)
     xtc_probability: float | None = None
     xtc_threshold: float | None = None
-    presence_penalty: float | None = None
-    frequency_penalty: float | None = None
+    presence_penalty: float | None = Field(None, ge=-2.0, le=2.0)
+    frequency_penalty: float | None = Field(None, ge=-2.0, le=2.0)
     # Seed for reproducible generation (best-effort)
     seed: int | None = None
 
@@ -442,6 +464,18 @@ class CompletionRequest(BaseModel):
         if isinstance(v, str):
             return [v]
         return v
+
+    @field_validator(
+        "temperature",
+        "top_p",
+        "min_p",
+        "repetition_penalty",
+        "presence_penalty",
+        "frequency_penalty",
+    )
+    @classmethod
+    def _reject_nonfinite_sampling(cls, v):
+        return _reject_nonfinite_float(v)
 
 
 class CompletionChoice(BaseModel):
