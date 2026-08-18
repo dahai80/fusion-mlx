@@ -52,7 +52,21 @@ test_admin_update_check.py
 # qwen3.6-35b-a3b-4bit) — the bare 35b/122b/-ud/-dwq names had no HF build
 # and no registry entry (14 KeyError failures, all stale-test refs not prod
 # bugs).
-test_anthropic_route_auth.py
+# test_anthropic_route_auth.py RESCUED 2026-08-18 (26 pass + 1 xfail): 3 stale-ref
+# fixes + 1 prod gap. (1) count_tokens path /v1/messages/count_tokens → /v1/count_tokens
+# (prod route is @router.post("/count_tokens") under prefix /v1; Anthropic moved
+# count_tokens out from under /messages). (2) count_tokens payloads missing required
+# `model` field (TokenCountRequest.model: str, no default) → 422; added
+# model="test-model" to 10 payloads. (3) _Tokenizer.encode(**kwargs) +
+# _Engine.build_prompt(raise → route fallback _encode_token_count path) stub
+# completeness for the count_tokens encode path. PROD FIX: /v1/count_tokens was
+# missing the check_rate_limit_or_x_api_key dep (only had verify_api_key_or_x_api_key)
+# — DoS vector (unbounded token-counting requests bypassed the rate limiter that
+# /v1/messages enforces). Added the dep, parity with /v1/messages. 1 xfail strict:
+# test_anthropic_messages_accepts_claude_model_name — route echoes client model
+# name (model=model_name), not loaded model; consistent with /v1/chat/completions;
+# aspirational model-name normalization, track separately.
+# test_anthropic_route_auth.py  (RESCUED — commented out = un-quarantined = collected)
 test_anthropic_spec_polish_bundle.py
 test_anthropic_stop_sequences.py
 test_anthropic_streaming_reasoning.py
@@ -129,7 +143,18 @@ test_batching.py
 test_bench_vs_ollama.py
 test_benchmark.py
 test_body_receive_timeout.py
-test_cache_routes.py
+# test_cache_routes.py RESCUED 2026-08-18 (35 pass): fixture-wiring gap, NOT prod bug
+# nor product-decision revert. cache router gates on [verify_api_key (middleware,
+# reads cfg.api_key via _get_configured_api_key) + require_admin (admin/auth, reads
+# module global _api_key set via set_api_key — NOT cfg.api_key)]. TestClient host=
+# "testclient" (not loopback) so require_admin's loopback bypass never fires. Fixture
+# wired only cfg.api_key → require_admin saw empty _api_key → 401 on every valid-bearer
+# request (17 fail, all assert 401 == <route-status>). Fix: call set_api_key("test-secret")
+# in fixture + set_api_key("") cleanup. Admin gate INTACT (no #349 revert) — a valid
+# Bearer now satisfies both deps the same way app startup wires it. 18 pre-passing
+# (protocol unit tests + auth-rejection tests expecting 401) unaffected. No global-state
+# leak (cleanup verified _api_key→"" post-suite; test_admin_auth.py co-run 86 pass 0 fail).
+# test_cache_routes.py  (RESCUED — commented out = un-quarantined = collected)
 test_cancelled_requests_metric.py
 test_casual_chat_auto_disable_thinking.py
 test_chat_image_upload.py
@@ -534,7 +559,7 @@ test_rst_mid_sse_zombie_kv.py
 test_runtime_cache_path.py
 test_sampling_param_finite_range.py
 test_sampling_params_passthrough.py
-test_sampling_validation.py
+# test_sampling_validation.py  (RESCUED round 10c — commented out = un-quarantined = collected; 109 pass. PROD FIX F-011: openai_models route classes had no Field bounds/finite validator → NaN/inf/out-of-range sampling params reached engine; added Field(ge/le)+_reject_nonfinite_float to ChatCompletionRequest+CompletionRequest in openai_models.py AND api/models.py. Harness re-point: dead _create_chat_completion_impl→live _run_chat seam; rate_limiter singleton disabled in fixture.)
 test_sanitize_output.py
 test_scheduler_chunked_prefill.py
 test_scheduler_prefill_memory_guard.py

@@ -775,6 +775,7 @@ async def anthropic_messages(
 async def count_tokens(
     request: TokenCountRequest,
     _auth: bool = Depends(verify_api_key_or_x_api_key),
+    _rate: bool = Depends(check_rate_limit_or_x_api_key),
 ) -> TokenCountResponse:
     try:
         engine = await _resolve_engine(request.model)

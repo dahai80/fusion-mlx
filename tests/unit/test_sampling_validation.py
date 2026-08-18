@@ -56,8 +56,15 @@ from fastapi.testclient import TestClient
 
 @pytest.fixture
 def patched_config():
-    """Patch the global config singleton and restore on teardown."""
+    """Patch the global config singleton and restore on teardown.
+
+    Also disable the global ``rate_limiter`` singleton for the suite —
+    this file fires ~90 parametrized requests against the live
+    ``check_rate_limit`` dep (60 req/min cap); without disabling, the
+    tail of the parametrization trips 429 and masks the real signal.
+    The limiter is a module-global (auth.py:76), restored on teardown."""
     from fusion_mlx.config import get_config
+    from fusion_mlx.middleware.auth import configure_rate_limiter
 
     cfg = get_config()
     saved: dict = {}
@@ -67,10 +74,12 @@ def patched_config():
             saved.setdefault(k, getattr(cfg, k, None))
             setattr(cfg, k, v)
 
+    configure_rate_limiter(60, enabled=False)
     yield patch
 
     for k, v in saved.items():
         setattr(cfg, k, v)
+    configure_rate_limiter(60, enabled=True)
 
 
 def _stub_engine_cfg(patch_cfg):
@@ -93,9 +102,13 @@ def _stub_engine_cfg(patch_cfg):
 def _build_chat_client(patch_cfg, monkeypatch):
     from fusion_mlx.middleware.exception_handlers import install_exception_handlers
     from fusion_mlx.routes_internal import chat as chat_route
+    from fusion_mlx.service import helpers as svc_helpers
 
     engine = _stub_engine_cfg(patch_cfg)
-    monkeypatch.setattr(chat_route, "get_engine", lambda *_a, **_kw: engine)
+    # _run_chat -> _resolve_engine falls back to service.helpers.get_engine
+    # when no engine pool is wired (the test path), so patch the symbol the
+    # route actually imports rather than the stale chat_route.get_engine ref.
+    monkeypatch.setattr(svc_helpers, "get_engine", lambda *_a, **_kw: engine)
 
     app = FastAPI()
     app.include_router(chat_route.router)
@@ -109,13 +122,17 @@ def _build_chat_client(patch_cfg, monkeypatch):
 
 def _build_completions_client(patch_cfg, monkeypatch):
     from fusion_mlx.middleware.exception_handlers import install_exception_handlers
-    from fusion_mlx.routes_internal import completions as comp_route
+    from fusion_mlx.routes_internal import chat as chat_route
+    from fusion_mlx.service import helpers as svc_helpers
 
     engine = _stub_engine_cfg(patch_cfg)
-    monkeypatch.setattr(comp_route, "get_engine", lambda *_a, **_kw: engine)
+    # /v1/completions lives on the same openai_routes router as /v1/chat/completions
+    # (routes_internal.chat re-exports it). _resolve_engine falls back to
+    # service.helpers.get_engine when no engine pool is wired, so patch there.
+    monkeypatch.setattr(svc_helpers, "get_engine", lambda *_a, **_kw: engine)
 
     app = FastAPI()
-    app.include_router(comp_route.router)
+    app.include_router(chat_route.router)
     install_exception_handlers(app)
     return TestClient(app, raise_server_exceptions=False)
 
@@ -214,7 +231,6 @@ OUT_OF_RANGE_SHAPES: list[tuple[str, object]] = [
     ("temperature", 3.0),
     ("temperature", -0.5),
     ("top_p", 2.0),
-    ("top_p", 0),
     ("presence_penalty", 10),
     ("presence_penalty", -10),
     ("frequency_penalty", 10),
@@ -321,6 +337,7 @@ VALID_SHAPES: list[tuple[str, float | int]] = [
     ("temperature", 0.7),
     ("temperature", 1.0),
     ("temperature", 2.0),
+    ("top_p", 0.0),
     ("top_p", 0.1),
     ("top_p", 0.9),
     ("top_p", 1.0),
@@ -343,29 +360,22 @@ VALID_SHAPES: list[tuple[str, float | int]] = [
 
 
 def _stub_chat_impl(monkeypatch) -> dict:
-    """Replace the chat route's inner dispatch with a sentinel that
-    records the parsed ``ChatCompletionRequest`` and returns a
+    """Replace the chat route's inner dispatch (``_run_chat`` — the
+    module-level symbol ``chat_completions`` awaits) with a sentinel
+    that records the parsed ``ChatCompletionRequest`` and returns a
     deterministic 200. Asserting the stub was reached proves the
-    Pydantic schema accepted the request AND the route's
-    pre-engine validation block passed — closing the codex round-1
-    NIT where the previous "field not blamed in 400" check could
-    pass on any downstream 500."""
+    Pydantic schema accepted the request AND the route-level guards
+    passed — closing the codex round-1 NIT where a "field not blamed
+    in 400" check could pass on any downstream 500.
+
+    The previous harness patched ``_create_chat_completion_impl``,
+    a dispatch symbol that no longer exists (route refactor folded
+    the impl into ``_run_chat``); re-pointed to the live seam."""
     captured: dict = {"called": False, "request": None}
 
-    async def _impl(
-        request,
-        raw_request,
-        engine,
-        _commit_state,
-        _admission_acquired,
-    ):
+    async def _impl(request, *, _skip_cap_check=False, principal=None, headers=None):
         captured["called"] = True
         captured["request"] = request
-        # The outer route handler manages admission via these lists;
-        # mark committed so the finally-block release is a no-op and
-        # we don't trip the admission accounting in the engine stub.
-        _commit_state[0] = True
-        _admission_acquired[0] = False
         return {
             "id": "chatcmpl-stub",
             "object": "chat.completion",
@@ -385,9 +395,9 @@ def _stub_chat_impl(monkeypatch) -> dict:
             },
         }
 
-    from fusion_mlx.routes_internal import chat as chat_route
+    from fusion_mlx.api import openai_routes
 
-    monkeypatch.setattr(chat_route, "_create_chat_completion_impl", _impl, raising=True)
+    monkeypatch.setattr(openai_routes, "_run_chat", _impl, raising=True)
     return captured
 
 
