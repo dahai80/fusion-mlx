@@ -2,6 +2,7 @@ import argparse
 import gc
 import logging
 import math
+import os
 import random
 import time
 from collections.abc import Callable
@@ -277,6 +278,26 @@ def _best_output_size(w, h, dw, dh, max_area):
     if max(ratio / ratio1, ratio1 / ratio) < max(ratio / ratio2, ratio2 / ratio):
         return ow1, oh1
     return ow2, oh2
+
+
+# #500: above this self-attn seq the fused (B,H,seq,seq) matrix overflows
+# Metal and yields all-NaN latents. Q-chunking (FUSION_WAN2_ATTN_CHUNK)
+# sidesteps it by capping the per-op matrix to (B,H,chunk,seq).
+WAN2_SAFE_SEQ = 16384
+
+
+def _auto_enable_attn_chunk(seq_len: int) -> None:
+    if seq_len <= WAN2_SAFE_SEQ:
+        return
+    if os.getenv("FUSION_WAN2_ATTN_CHUNK"):
+        return
+    os.environ["FUSION_WAN2_ATTN_CHUNK"] = "8192"
+    logger.warning(
+        "wan2 seq=%d exceeds safe threshold %d; auto-enabling "
+        "FUSION_WAN2_ATTN_CHUNK=8192 to avoid self-attn NaN (#500)",
+        seq_len,
+        WAN2_SAFE_SEQ,
+    )
 
 
 def _resolve_model_file(model_dir: Path, flat_name: str, sub_dir: str) -> Path:
@@ -576,6 +597,13 @@ def generate_video(
 
     print(f"{Colors.DIM}  Latent shape: {target_shape}")
     print(f"  Sequence length: {seq_len}{Colors.RESET}")
+
+    # #500: large self-attn seq overflows Metal on a single (B,H,seq,seq)
+    # matrix -> all-NaN latents -> VAE decode zeros NaN -> static video.
+    # Auto-enable Q-chunking when seq exceeds the safe threshold so users
+    # never need to set FUSION_WAN2_ATTN_CHUNK by hand. A user-set env is
+    # honored as-is (even 0 = force-off, on their own risk).
+    _auto_enable_attn_chunk(seq_len)
 
     # Load T5 encoder
     t1 = time.time()
@@ -1314,13 +1342,18 @@ def generate_video(
 
         video = np.array(video[0])  # [T', H', W', 3]
         video = (video + 1.0) / 2.0
-        nan_count = np.isnan(video).sum()
+        nan_count = int(np.isnan(video).sum())
         if nan_count > 0:
-            logger.warning(
-                "Wan2 VAE decode (wan22): %d NaN in video, replacing with 0",
-                int(nan_count),
+            # #500: fail visibly instead of silently zeroing NaN -> static
+            # video. NaN here means the denoised latents already went bad
+            # (overflow/freeze). Tell the user and abort, don't emit a
+            # misleading "successful" static clip.
+            raise RuntimeError(
+                f"Wan2 VAE decode produced {nan_count} NaN pixels — "
+                f"denoised latents are corrupt (self-attn overflow at this "
+                f"resolution/frame-count). Reduce resolution or frames. "
+                f"seq={seq_len} chunk={os.getenv('FUSION_WAN2_ATTN_CHUNK','0')}"
             )
-            video = np.nan_to_num(video, nan=0.0)
         video = np.clip(video * 255.0, 0, 255).astype(np.uint8)
     else:
         if tiling_config is not None:
@@ -1332,13 +1365,15 @@ def generate_video(
 
         video = np.array(video[0])  # [3, T', H, W]
         video = (video + 1.0) / 2.0
-        nan_count = np.isnan(video).sum()
+        nan_count = int(np.isnan(video).sum())
         if nan_count > 0:
-            logger.warning(
-                "Wan2 VAE decode (wan21): %d NaN in video, replacing with 0",
-                int(nan_count),
+            # #500: fail visibly (see wan22 branch above for rationale)
+            raise RuntimeError(
+                f"Wan2 VAE decode produced {nan_count} NaN pixels — "
+                f"denoised latents are corrupt (self-attn overflow at this "
+                f"resolution/frame-count). Reduce resolution or frames. "
+                f"seq={seq_len} chunk={os.getenv('FUSION_WAN2_ATTN_CHUNK','0')}"
             )
-            video = np.nan_to_num(video, nan=0.0)
         video = np.clip(video * 255.0, 0, 255).astype(np.uint8)
         video = video.transpose(1, 2, 3, 0)  # [T, H, W, 3]
 
