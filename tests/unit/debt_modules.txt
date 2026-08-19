@@ -1186,6 +1186,57 @@ test_mtp_spec_decode.py
 test_mtp_stream_contract.py
 test_mxfp4_moe_guardrail.py
 test_nested_nstate_serialization.py
+# KEEP_QUARANTINED: b23 2026-08-19 — harness-layout-drift, NOT feature gap.
+# test_no_mllm_flag.py (2428L, 19 fail / 9 pass) ported verbatim from upstream
+# omlx/rapid-mlx (still imports `vllm_mlx` at L213 _pkg_root, never adapted to
+# fusion's reorg). All 19 failures are harness form-bugs; prod state verified
+# CORRECT:
+#   - load_model (server.py:446) takes routing overrides keyword-only:
+#     force_hybrid/no_hybrid/force_spec_decode/no_spec_decode/
+#     force_openai_harmony_streaming/no_openai_harmony_streaming/force_text.
+#   - cli.py has 185 add_argument (flags registered HERE, not server.py).
+#   - server.py = FastAPI app, only 7 add_argument (NOT upstream CLI).
+#   - scheduler is a PACKAGE (fusion_mlx/scheduler/__init__.py), not
+#     scheduler.py.
+#   - BatchedEngine DEAD CODE removed in #422 (PR #428, 357->42L shim).
+#   - fusion_mlx/benchmark.py GENUINELY DELETED (only admin/benchmark.py +
+#     speculative/dspark/engine/benchmark_cli.py remain, diff modules).
+#
+# Root-cause map of 19 fails (~8 categories):
+#   1. ImportError BatchedEngine from fusion_mlx.engine.batched (L349,L984,
+#      L2132) — test imports REMOVED class. Hint msg says VLMBatchedEngine but
+#      no class def found in engine/. Fix: import active engine class.
+#   2. required_files=("cli.py","server.py") hard-coded for all 5 pairs
+#      (L89,99,107,115,129) — fusion split CLI (cli.py/cli_serve.py) from
+#      server.py (FastAPI app). server.py has no routing add_argument.
+#      "force-on flag --tool-call-parser not registered via add_argument()
+#      in server.py" (L1421). Fix: required_files=("cli.py",) only.
+#   3. cli_serve.py calls load_model() but does NOT register --tool-call-parser
+#      (L1529) — flag in cli.py, cli_serve.py consumes via getattr. Fix: gate
+#      cli_serve.py on consumption not registration.
+#   4. Entrypoint discovery dropped known files: ['benchmark.py'] (L847) —
+#      _KNOWN_ENTRYPOINTS_SEED (L611-612) lists benchmark.py but file deleted.
+#      Fix: remove benchmark.py from seed.
+#   5. DID NOT RAISE ValueError (L2086,L2099) — mutex tests; load_model does
+#      not raise. Fix: assert via load_model error path OR remove mutex test.
+#   6. EngineConfig.__init__() got unexpected kwarg 'force_hybrid' (L2301x4,
+#      L2353x2) — test L2298 builds EngineConfig(**{kwarg:True}) but
+#      EngineConfig.__init__ (engine_core.py:194) takes NO routing overrides
+#      (only model/tokenizer/config/engine_id/force_model_ownership/executor).
+#      Overrides go through load_model, NOT EngineConfig. Wrong layer. Fix:
+#      route override test through load_model not EngineConfig ctor.
+#   7. engine_core has no attribute 'Scheduler' (L2234) + FileNotFoundError
+#      scheduler.py — engine_core.py:241 `from .scheduler import Scheduler`
+#      (scheduler is PACKAGE). Import works at runtime; test imports wrong
+#      path. Fix: import from fusion_mlx.scheduler not scheduler.py.
+#   8. assert -1 != -1 (L2424) — str.find() returning -1. Fix: assert
+#      substring present before find, or use `in`.
+#
+# Classification: RESCUE-eligible (all harness drift, no prod change needed)
+# but LARGE — 19 fails across 8 root-cause categories in 2428L file, plus
+# wholesale vllm_mlx->fusion_mlx rename of every import. Exceeds single-cycle
+# token budget (Rule 6). DEFER to next cycle: batch the rename + 8 fix
+# categories. Issue-first flow per CLAUDE.md.
 test_no_mllm_flag.py
 # test_no_out_of_band_routing.py  (RESCUED 2026-08-19 b21 — commented out = un-quarantined = collected; 14/14 pass. Harness-allowlist catch-up, NO prod routing change. 4 test fixes: (1) _field_type_is_str helper bug L410 — get_args traversal false-positive on container GenericAlias tuple[str,...] (spec_methods/spec_constraints) → gate get_args on origin being Union/UnionType only, preserves Union[str,int]=True contract + makes tuple[tuple[str,float],...]|None=False; (2) 5 real str fields added to ALLOWED_STR_FIELDS — name/description/drafter_hf_path/modality/model_family (modality is closed enum _VALID_MODALITIES validated by _coerce like pflash_tier; rest open-ended non-routing); (3) 11 non-routing env vars added to ALLOWED_FUSION_MLX_ENV_VARS (boundary-prefix persist+max-bytes, max-tokens default, cluster-advertise, models search-path, mcp auto-discover, comfyui URL, stt-vad-pretrim, context-scaling, admission-kv-headroom, mtp-dispatch-timeout); (4) no_compile pydantic field added to NON_ROUTING_PYDANTIC_FIELDS_ALLOWLIST (videos_routes.py:71 diffusion mx.compile toggle, not routing flip); (5) _check_env_constant false-positive guard — error-log/doc strings that MENTION an allowed env-var name as substring no longer flagged. Issue #533, PR pending.)
 # test_openai_tool_choice_validation.py  (RESCUED 2026-08-18 — commented out = un-quarantined = collected; 32 pass. PROD FIX H-16 OpenAI-surface parity: openai_models.ChatCompletionRequest had NO tool_choice validator → malformed tool_choice ({"type":"banana"}, "any", {"foo":"bar"}) silent-degraded to free-form generation on /v1/chat/completions; H-16 was only closed on Anthropic surface (anthropic_models._validate_tool_choice_type). Added _validate_tool_choice_shape field_validator(mode=before) to openai_models.ChatCompletionRequest: string allowed-set {none,auto,required,function}, object requires type in {auto,none,function,required}, missing-type rejected, extra keys preserved, function-without-name passes schema (route owns that check). Harness re-point: test import api.models.ChatCompletionRequest (dead class, no route) → openai_models.ChatCompletionRequest (live route class). Regression-checked: 298 tool_choice-touching tests pass, 3 pre-existing mlx_vlm-surface fails unrelated.)
