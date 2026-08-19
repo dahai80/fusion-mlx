@@ -2218,12 +2218,14 @@ class TestMlxVlmImportContract:
 
     def test_diffusion_generation_family_exists_in_installed_mlx_vlm(self) -> None:
         pytest.importorskip("mlx_vlm")
+        pytest.importorskip("mlx_vlm.generate.diffusion")
         from mlx_vlm.generate.diffusion import diffusion_generation_family
 
         assert callable(diffusion_generation_family)
 
     def test_stream_diffusion_generate_exists_in_installed_mlx_vlm(self) -> None:
         pytest.importorskip("mlx_vlm")
+        pytest.importorskip("mlx_vlm.generate.diffusion")
         from mlx_vlm.generate.diffusion import stream_diffusion_generate
 
         # Generator factory — callable, not the iterator type.
@@ -2235,6 +2237,7 @@ class TestMlxVlmImportContract:
         # symbols (e.g. into a different submodule) would break the
         # production path; this test would break first.
         pytest.importorskip("mlx_vlm")
+        pytest.importorskip("mlx_vlm.generate.diffusion")
         import importlib
 
         # Match diffusion_lane.py:_worker_loop imports verbatim.

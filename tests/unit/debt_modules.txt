@@ -608,12 +608,38 @@ test_cors_lockdown_response_shape.py
 test_deepseek_v4_vendored.py
 # KEEP_QUARANTINED: round10q — dense-sampler fast-path + Scheduler sampler-cache interning NOT ported. _install_dense_sampler_fastpath absent (conftest:737 injects no-op lambda stub → 7 "no-op-expected" tests pass, 1 "swap-expected" test fails). Scheduler._get_request_sampler + _sampler_cache + _sampler_cache_max absent (2 cache tests hard-fail AttributeError). Perf feature gap (homogeneous-batch fast path + bounded-LRU sampler interning). File issue for port.
 test_dense_sampler_fastpath.py
+# KEEP_QUARANTINED round10q-b7 (2026-08-19): dflash spec-decode cluster
+# (5 suites, 5f/36f/20f/15f/49f). Real feature/migration gap, NOT harness
+# drift — paths, signatures, CLI surface all diverged. Per CLAUDE.md
+# issue-first flow, file issue for port. Specific gaps:
+# - test_dflash_engine: imports fusion_mlx.adapter.output_parser.detect_output_parser
+#   (path MOVED to fusion_mlx.parsers.output_parser) + legacy 1-arg signature
+#   detect_output_parser(cfg) vs prod 3-arg (model_name, model_config, tokenizer);
+#   also imports external dflash_mlx.runtime + dflash_mlx.server.prefix_cache_flow
+#   PrefixCacheFlow (unported upstream pkg).
+# - test_dflash_adapter_signature: pins vllm_mlx.speculative.dflash driver API
+#   (sys.modules stub KeyError — module not ported).
+# - test_dflash_prefill_memory_guard: _DFlashPrefillGuard() takes no args vs test
+#   ctor args — guard API migrated.
+# - test_dflash_spec_decode: subprocess `python -m vllm_mlx.cli serve --help`
+#   (vllm_mlx CLI surface; fusion-mlx has own fusion_mlx CLI) + metrics/bench
+#   dflash counters.
+# - test_dflash_multimodal_fallback: depends on dflash engine/router above.
+# Rule 9: repoint would mask regression (test passing for wrong reason).
 test_dflash_adapter_signature.py
 test_dflash_engine.py
 test_dflash_multimodal_fallback.py
 test_dflash_prefill_memory_guard.py
 test_dflash_spec_decode.py
-test_diffusion_engine.py
+# RESCUED round10q-b7 (2026-08-19): TestMlxVlmImportContract 3 contract tests
+# (L2219/2225/2232) pin mlx-vlm 0.6.3 surface; installed 0.5.0 lacks
+# mlx_vlm.generate.diffusion submodule → ModuleNotFoundError. Added
+# pytest.importorskip("mlx_vlm.generate.diffusion") so contract tests skip
+# cleanly on <0.6.3, still enforce surface on >=0.6.3. 80 behavior tests use
+# synthetic mock (L139-186) unaffected. Verified 80 passed, 3 skipped.
+# Prod fusion_mlx/patches/mlx_vlm_diffusion.py:32 already try/except-guards
+# missing module (graceful return False). Test-only, no prod change.
+# test_diffusion_engine.py
 # KEEP_QUARANTINED: pins unimplemented C-01 disconnect-attribution METRICS +
 # deep-path resolver. 8/8 fail. Missing prod: helpers re-export of
 # _resolve_sync_scheduler_for_abort / _resolve_disconnect_abort_recorder(engine) /
