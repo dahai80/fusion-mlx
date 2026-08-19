@@ -1267,6 +1267,20 @@ test_tools_auto_disable_thinking.py
 test_torch_stub.py
 test_truncate_tool_result.py
 test_truncation_no_synthetic_text.py
+# KEEP_QUARANTINED turboquant cluster (round10q-b6 2026-08-19): 4 suites,
+# upstream mlx_vlm API drift + integration/real-model, NOT harness drift.
+# test_turboquant 3f/30p: decode-token quantize err 136% + B>1 masked decode
+#   138% (RHT fix missing from pinned mlx-vlm) + KVCache type mismatch —
+#   real-model/kernel, integration not unit.
+# test_turboquant_batch_memory 4f: _helpers() imports MISSING integration/
+#   test_full_integration.py (deleted in oq.py refactor) — tooling gap + real-model.
+# test_turboquant_kvcache_state 28f: TurboQuantKVCache.from_kv_cache absent
+#   (prod has from_cache(cache,bits,seed) — sig contract changed) +
+#   TurboQuantConfig absent in installed mlx_vlm — upstream API version drift.
+# test_turboquant_ssd 3f: same missing integration/test_full_integration.py +
+#   real-model (skipif MODEL_REPO not cached, slow mark).
+# CANDIDATE ISSUE: upstream mlx_vlm turboquant API (TurboQuantConfig/
+# from_kv_cache) vs installed from_cache — pin/upgrade decision needed.
 test_turboquant.py
 test_turboquant_batch_memory.py
 test_turboquant_kvcache_state.py
@@ -1305,6 +1319,25 @@ test_validate_release_subject.py
 # test_version_check.py
 test_vision_extra_install.py
 test_vision_feature_cache.py
+# KEEP_QUARANTINED vlm cluster (round10q-b6 2026-08-19): 3 suites, many
+# unported VLM methods, NOT clean harness drift. Attempted partial rescue
+# (repoint engine.vlm→engines.vlm) unblocked 30 pass but 50 fail remain.
+# test_vlm_engine 87f/0p→50f/30p post-repoint: import drift (singular
+#   engine.vlm→plural engines.vlm, 15 refs) BUT many missing methods:
+#   _format_messages_for_vlm_template (13), _apply_chat_template (10),
+#   _iter_diffusion_outputs_sync (2), preflight_chat (2) absent on
+#   VLMBatchedEngine; convert_tools_for_template/_read_image_dims/
+#   _count_image_tokens_real (0 prod refs, unported); _prepare_vision_inputs
+#   audio kwarg API drift (3); mlx_vlm.generate.diffusion ModuleNotFound (3,
+#   upstream mlx_vlm package restructure). Reverted — too intermingled.
+# test_vlm_model_adapter 4f/26p: KeyError position_ids + mock identity +
+#   assert False is True — adapter contract drift.
+# test_vlm_mtp 5f/14p: _buffer_mtp_target_cache absent on speculative.vlm_mtp
+#   (2, unported attr) + assert False (2) — MTP cache feature gap.
+# CANDIDATE ISSUE: port VLM engine methods (_format_messages_for_vlm_template,
+# _apply_chat_template, _read_image_dims, _count_image_tokens_real,
+# convert_tools_for_template, _iter_diffusion_outputs_sync, preflight_chat) +
+# vlm_mtp _buffer_mtp_target_cache. Rule 2/3: feature-port not inline rescue.
 test_vlm_engine.py
 test_vlm_model_adapter.py
 test_vlm_mtp.py
