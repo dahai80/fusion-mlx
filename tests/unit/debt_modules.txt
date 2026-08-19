@@ -423,6 +423,24 @@ test_benchmark.py
 # Would need: scheduler counters + ledger + recorder(engine) seam + route series.
 # Leave quarantined; candidate for C-01 feature port, not inline test-debt rescue.
 test_cancelled_requests_metric.py
+# KEEP_QUARANTINED (eval b20 2026-08-19, issue #531): R12-T2F-276 casual-chat
+# thinking auto-disable helper family not ported to fusion_mlx + test harness
+# stale vs prod convergence point. 40 cases across 6 contracts. Gaps:
+#  - maybe_auto_disable_thinking_for_casual_chat (helpers.py:792) is no-op stub,
+#    wrong sig (request, enable_thinking) vs test (request, extra_signals=None)
+#    -> bool with cfg-gated injection + _auto_disabled_thinking marker + merge.
+#  - maybe_auto_disable_thinking_for_tools (helpers.py:709) sig mismatch: test
+#    calls single-arg + asserts False on tool_choice="none", impl returns None.
+#  - get_config not a module attr of helpers (_get_cfg_attr lazy-imports inside
+#    fn body) -> 4 patch sites vllm_mlx.service.helpers.get_config (L90/105/
+#    421/881) raise AttributeError at fixture setup.
+#  - warning header name drift: prod X-FusionMLX-Warning vs test X-RapidMLX-Warning.
+#  - route wiring: prod uses resolve_enable_thinking_default setdefault (utils
+#    .py:1537, called openai_routes.py:564) — functionally default-disables
+#    thinking already, but passes flag nested under chat_template_kwargs= not
+#    flat enable_thinking= kwarg; mock engine asserts flat kwarg -> shape fail.
+# Two paths (A port helper family / B align test to convergence point) in #531.
+# Not a CI blocker (collect_ignore). Leave quarantined pending #531 resolution.
 test_casual_chat_auto_disable_thinking.py
 # test_chat_image_upload.py (RESCUED 2026-08-19 round10q-b4: 13/13 pass.
 # Harness path bug — I18N_DIR was Path(__file__).parent.parent / "fusion_mlx"
