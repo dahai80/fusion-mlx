@@ -1220,6 +1220,14 @@ test_probe_fastpath.py
 # test_pull_summary.py
 test_r10_scrub_validation_bundle.py
 test_r12_h06_repair_context_guard.py
+# KEEP_QUARANTINED: 2/4 pass after PROD FIX responses.py:692 chat(stream=True)
+# -> stream_chat (chat has no stream param, returned non-iterable GenerationOutput
+# -> TypeError async-for; real streaming-crash bug). Remaining 2 fails = feature
+# gap: handler parses only OpenAI choices[].delta chunks, but BaseEngine.stream_chat
+# yields FLAT GenerationOutput (new_text/channel, no choices). Reasoning-first
+# ordering + completed-output-index-matches-wire invariants unmet. Needs flat-chunk
+# parse branch + empty-reasoning emit logic = feature work. 0 regression
+# (228 responses tests pass). ISSUE #513 FILED.
 test_r12_m3_responses_stream_leading_items_order.py
 test_r12_reasoning_sanitizer_required.py
 test_r15_routes_stability_batch.py

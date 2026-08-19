@@ -689,7 +689,7 @@ async def _stream_responses(
         )
 
         try:
-            stream = await engine.chat(messages=messages, stream=True, **chat_kwargs)
+            stream = engine.stream_chat(messages=messages, **chat_kwargs)
             async for chunk in stream:
                 if await request.is_disconnected():
                     logger.info("Client disconnected during responses stream")
