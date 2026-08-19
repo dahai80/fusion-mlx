@@ -7,7 +7,7 @@ from pathlib import Path
 
 
 def _extract_cli_wrapper_script() -> str:
-    build_script = Path("apps/fusion_mlx-mac/Scripts/build.sh").read_text()
+    build_script = Path("apps/fusion-mac/Scripts/build.sh").read_text()
     match = re.search(
         r"cat > \"\$CLI_WRAPPER\" <<'EOF'\n(?P<script>.*?)\nEOF",
         build_script,

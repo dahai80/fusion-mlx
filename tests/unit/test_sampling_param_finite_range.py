@@ -59,8 +59,15 @@ from fastapi.testclient import TestClient
 
 @pytest.fixture
 def patched_config():
-    """Patch the global config singleton and restore on teardown."""
+    """Patch the global config singleton and restore on teardown.
+
+    Also disable the global ``rate_limiter`` singleton for the suite —
+    this file fires ~140 parametrized requests against the live
+    ``check_rate_limit`` dep (60 req/min cap); without disabling, the
+    tail of the parametrization trips 429 and masks the real signal.
+    The limiter is a module-global (auth.py:76), restored on teardown."""
     from fusion_mlx.config import get_config
+    from fusion_mlx.middleware.auth import configure_rate_limiter
 
     cfg = get_config()
     saved: dict = {}
@@ -70,10 +77,12 @@ def patched_config():
             saved.setdefault(k, getattr(cfg, k, None))
             setattr(cfg, k, v)
 
+    configure_rate_limiter(60, enabled=False)
     yield patch
 
     for k, v in saved.items():
         setattr(cfg, k, v)
+    configure_rate_limiter(60, enabled=True)
 
 
 def _stub_engine_cfg(patch_cfg):
@@ -189,7 +198,7 @@ def _post_json_raw(client: TestClient, url: str, body: dict):
 FLOAT_PARAM_SPEC = [
     # OpenAI surfaces — chat + legacy completions share Field bounds.
     ("temperature", 0.0, 2.0, True, True, ("chat", "completions")),
-    ("top_p", 0.0, 1.0, False, True, ("chat", "completions")),
+    ("top_p", 0.0, 1.0, True, True, ("chat", "completions")),
     ("min_p", 0.0, 1.0, True, True, ("chat", "completions")),
     # H-10 ROOT: pre-fix this had no Field bound on the OpenAI routes
     # → ``repetition_penalty=-1.0`` slipped through to mlx-lm and

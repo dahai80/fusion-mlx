@@ -7,7 +7,13 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 from .models import StreamOptions, _validate_response_format_raw, _validate_token_budget
-from .shared_models import IDPrefix, generate_id, get_unix_timestamp
+from .shared_models import (
+    IDPrefix,
+    generate_id,
+    get_unix_timestamp,
+    validate_seed,
+    validate_top_k,
+)
 
 # =============================================================================
 # Request Models
@@ -153,6 +159,21 @@ class ResponsesRequest(BaseModel):
         # Reject bool / non-int / non-positive before lax coercion -
         # pinned by TestPositiveIntGenerationBudget (cross-route parity).
         return _validate_token_budget(v, info.field_name)
+
+    @field_validator("top_k", mode="before")
+    @classmethod
+    def _validate_top_k_field(cls, v):
+        # R6-H8 parity: /v1/responses must honour the same top_k cap +
+        # bool/negative rejection as the chat surface. Pre-fix the
+        # Responses surface silently dropped pathological top_k values.
+        return validate_top_k(v, "top_k")
+
+    @field_validator("seed", mode="before")
+    @classmethod
+    def _validate_seed_field(cls, v):
+        # H-11 / r5-E B-8 parity: reject negative + bool seed before lax
+        # coercion. seed=0 is a legitimate PRNG key and stays valid.
+        return validate_seed(v, "seed")
 
     @model_validator(mode="after")
     def _validate_input_not_empty(self):

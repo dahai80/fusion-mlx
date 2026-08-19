@@ -912,6 +912,16 @@ def convert_internal_to_anthropic_response(
                 func = tc.get("function", {})
                 args_raw = func.get("arguments", "{}")
                 func_name = func.get("name", "")
+                # F-017: some routers (HarmonyStreamingRouter / qwen3-coder)
+                # emit a FLAT tool_call shape {"id","name","arguments"} with
+                # no ``function`` wrapper. The nested extraction above sees
+                # func={} and silently drops the name to "" — producing a
+                # tool_use block with an empty name. Fall back to the
+                # top-level fields when the nested function block is empty.
+                if not func_name and "name" in tc:
+                    func_name = tc.get("name", "")
+                if (not args_raw or args_raw == "{}") and "arguments" in tc:
+                    args_raw = tc.get("arguments", "{}")
             else:
                 tc_id = tc.id
                 args_raw = tc.function.arguments

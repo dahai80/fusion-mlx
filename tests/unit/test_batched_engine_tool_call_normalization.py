@@ -7,7 +7,9 @@ contract gives it as a JSON string. Without normalization the template render
 raises mid-batch with ``AttributeError: 'str' object has no attribute 'items'``.
 """
 
-from fusion_mlx.engine.batched import _normalize_tool_call_arguments_for_template
+from fusion_mlx.utils.chat_template import (
+    _normalize_assistant_tool_call_arguments as _normalize_tool_call_arguments_for_template,
+)
 
 
 class TestToolCallReplayNormalization:

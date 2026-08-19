@@ -38,6 +38,8 @@ from unittest.mock import patch
 
 import pytest
 
+from fusion_mlx import cli_serve
+
 # ---------------------------------------------------------------------------
 # A) Registry resolution table
 # ---------------------------------------------------------------------------
@@ -332,9 +334,9 @@ class TestAudioServeModeDispatch:
         from fusion_mlx import cli
 
         with (
-            patch.object(cli, "_serve_audio_mode") as mock_audio,
-            patch.object(cli, "_ensure_model_downloaded") as mock_download,
-            patch("vllm_mlx.server.load_model") as mock_load,
+            patch.object(cli_serve, "_serve_audio_mode") as mock_audio,
+            patch.object(cli_serve, "_ensure_model_downloaded") as mock_download,
+            patch("fusion_mlx.server.load_model") as mock_load,
         ):
             args = _make_serve_args("kokoro")
             cli.serve_command(args)
@@ -379,8 +381,8 @@ class TestAudioServeModeDispatch:
         from fusion_mlx import cli
 
         with (
-            patch.object(cli, "_serve_audio_mode") as mock_audio,
-            patch.object(cli, "_ensure_model_downloaded") as mock_download,
+            patch.object(cli_serve, "_serve_audio_mode") as mock_audio,
+            patch.object(cli_serve, "_ensure_model_downloaded") as mock_download,
         ):
             args = _make_serve_args(alias)
             cli.serve_command(args)
@@ -401,7 +403,7 @@ class TestAudioServeModeDispatch:
             captured["entry_hf_id"] = entry.hf_id
             captured["entry_type"] = entry.type
 
-        with patch.object(cli, "_serve_audio_mode", side_effect=_capture):
+        with patch.object(cli_serve, "_serve_audio_mode", side_effect=_capture):
             args = _make_serve_args("kokoro")
             cli.serve_command(args)
 
@@ -437,9 +439,9 @@ class TestTextBootDoesNotRegress:
         from fusion_mlx import cli
 
         with (
-            patch.object(cli, "_serve_audio_mode") as mock_audio,
+            patch.object(cli_serve, "_serve_audio_mode") as mock_audio,
             patch(
-                "vllm_mlx._version_check.prompt_upgrade_if_available",
+                "fusion_mlx._version_check.prompt_upgrade_if_available",
                 side_effect=SystemExit(0),
             ),
         ):
@@ -518,8 +520,8 @@ class TestAudioServeModeSyncsServerConfig:
         server._api_key = None
 
         with (
-            patch.object(cli, "_run_uvicorn"),
-            patch.object(cli, "_port_preflight_or_die"),
+            patch.object(cli_serve, "_run_uvicorn"),
+            patch.object(cli_serve, "_port_preflight_or_die"),
         ):
             args = _make_serve_args("kokoro")
             args.api_key = "SECRET-r10c1"
@@ -547,8 +549,8 @@ class TestAudioServeModeSyncsServerConfig:
         server._model_alias = None
 
         with (
-            patch.object(cli, "_run_uvicorn"),
-            patch.object(cli, "_port_preflight_or_die"),
+            patch.object(cli_serve, "_run_uvicorn"),
+            patch.object(cli_serve, "_port_preflight_or_die"),
         ):
             args = _make_serve_args("kokoro")
             cli.serve_command(args)
@@ -567,8 +569,8 @@ class TestAudioServeModeSyncsServerConfig:
         server._max_request_bytes = 8 * 1024 * 1024
 
         with (
-            patch.object(cli, "_run_uvicorn"),
-            patch.object(cli, "_port_preflight_or_die"),
+            patch.object(cli_serve, "_run_uvicorn"),
+            patch.object(cli_serve, "_port_preflight_or_die"),
         ):
             args = _make_serve_args("kokoro")
             args.max_request_bytes = 16 * 1024 * 1024
@@ -668,8 +670,8 @@ class TestAudioServeHonorsServedModelName:
         server._model_path = None
 
         with (
-            patch.object(cli, "_run_uvicorn"),
-            patch.object(cli, "_port_preflight_or_die"),
+            patch.object(cli_serve, "_run_uvicorn"),
+            patch.object(cli_serve, "_port_preflight_or_die"),
         ):
             args = _make_serve_args("kokoro")
             args.served_model_name = "custom-tts"
@@ -706,8 +708,8 @@ class TestAudioServeHonorsServedModelName:
         server._model_path = None
 
         with (
-            patch.object(cli, "_run_uvicorn"),
-            patch.object(cli, "_port_preflight_or_die"),
+            patch.object(cli_serve, "_run_uvicorn"),
+            patch.object(cli_serve, "_port_preflight_or_die"),
         ):
             args = _make_serve_args("kokoro")
             # served_model_name is None (default) — fixture is r11-K aware.
@@ -749,8 +751,8 @@ class TestAudioServeHonorsServedModelName:
         server._model_alias = None
 
         with (
-            patch.object(cli, "_run_uvicorn"),
-            patch.object(cli, "_port_preflight_or_die"),
+            patch.object(cli_serve, "_run_uvicorn"),
+            patch.object(cli_serve, "_port_preflight_or_die"),
         ):
             args = _make_serve_args(alias)
             args.served_model_name = f"gateway/{alias}"
@@ -1033,16 +1035,21 @@ class TestTextServeServedModelNameDoesNotRegress:
             if not isinstance(node, ast.Assign):
                 continue
             for tgt in node.targets:
-                if isinstance(tgt, ast.Name) and tgt.id == "_model_name":
+                if (
+                    isinstance(tgt, ast.Attribute)
+                    and tgt.attr == "model_name"
+                    and isinstance(tgt.value, ast.Name)
+                    and tgt.value.id == "cfg"
+                ):
                     assign_rhs = node.value
                     break
             if assign_rhs is not None:
                 break
 
         assert assign_rhs is not None, (
-            "server.load_model no longer assigns to ``_model_name`` "
+            "server.load_model no longer assigns to ``cfg.model_name`` "
             "in a recognisable shape. The audio dispatcher's mirror "
-            "(``server._model_name = served_name or entry.hf_id``) "
+            "(``cfg.model_name = served_name or entry.hf_id``) "
             "depends on this assignment existing on the text side; "
             "both must change in lockstep."
         )
@@ -1050,39 +1057,39 @@ class TestTextServeServedModelNameDoesNotRegress:
         assert isinstance(assign_rhs, ast.BoolOp) and isinstance(
             assign_rhs.op, ast.Or
         ), (
-            "server.load_model ``_model_name = ...`` RHS is no longer "
+            "server.load_model ``cfg.model_name = ...`` RHS is no longer "
             "an ``or`` expression (got "
             f"{ast.unparse(assign_rhs)!r}). The audio dispatcher's "
             "mirror would drift — both sides must move together."
         )
         assert len(assign_rhs.values) == 2, (
-            "server.load_model ``_model_name`` RHS is no longer "
+            "server.load_model ``cfg.model_name`` RHS is no longer "
             "exactly 2 operands (got "
             f"{[ast.unparse(v) for v in assign_rhs.values]!r}). "
             "Any extra fallback (e.g. ``served_model_name or "
-            "other_name or model_name``) changes the contract — "
+            "other_name or resolved``) changes the contract — "
             "the audio mirror would need to add the same fallback."
         )
         # Order matters: ``served_model_name`` MUST come first, so a
-        # user-supplied value wins over the model_name default.
+        # user-supplied value wins over the resolved default.
         assert (
             isinstance(assign_rhs.values[0], ast.Name)
             and assign_rhs.values[0].id == "served_model_name"
         ), (
-            "server.load_model ``_model_name`` RHS first operand is "
+            "server.load_model ``cfg.model_name`` RHS first operand is "
             f"no longer ``served_model_name`` (got "
             f"{ast.unparse(assign_rhs.values[0])!r}). Reversing the "
-            "order would make ``model_name`` always win — "
+            "order would make ``resolved`` always win — "
             "--served-model-name would become inert."
         )
         assert (
             isinstance(assign_rhs.values[1], ast.Name)
-            and assign_rhs.values[1].id == "model_name"
+            and assign_rhs.values[1].id == "resolved"
         ), (
-            "server.load_model ``_model_name`` RHS second operand is "
-            f"no longer ``model_name`` (got "
+            "server.load_model ``cfg.model_name`` RHS second operand is "
+            f"no longer ``resolved`` (got "
             f"{ast.unparse(assign_rhs.values[1])!r}). The fallback "
-            "default must remain the underlying engine model id."
+            "default must remain the underlying engine model path."
         )
 
 
@@ -1105,10 +1112,10 @@ class TestAudioServeHonorsEmbeddingModel:
             calls.append((name, lock))
 
         with (
-            patch.object(cli, "_run_uvicorn"),
-            patch.object(cli, "_port_preflight_or_die"),
+            patch.object(cli_serve, "_run_uvicorn"),
+            patch.object(cli_serve, "_port_preflight_or_die"),
             patch.object(server, "load_embedding_model", side_effect=_capture),
-            patch("vllm_mlx.embedding.require_mlx_embeddings_or_exit"),
+            patch("fusion_mlx.embedding.require_mlx_embeddings_or_exit"),
         ):
             args = _make_serve_args("kokoro")
             args.embedding_model = "mlx-community/all-MiniLM-L6-v2-4bit"
@@ -1136,8 +1143,8 @@ class TestAudioServeHonorsEmbeddingModel:
             calls.append((name, lock))
 
         with (
-            patch.object(cli, "_run_uvicorn"),
-            patch.object(cli, "_port_preflight_or_die"),
+            patch.object(cli_serve, "_run_uvicorn"),
+            patch.object(cli_serve, "_port_preflight_or_die"),
             patch.object(server, "load_embedding_model", side_effect=_capture),
         ):
             args = _make_serve_args("kokoro")

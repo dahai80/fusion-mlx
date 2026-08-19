@@ -52,6 +52,7 @@ from .middleware import (
     install_request_id_middleware,
     install_route_guard_middleware,
     require_model_hub_source,
+    scheduler_queue_full_handler,  # noqa: F401  re-exported for handler tests
 )
 
 # GUI compatibility layer

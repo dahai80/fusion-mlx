@@ -13,7 +13,7 @@ from unittest.mock import patch
 
 import pytest
 
-from fusion_mlx.cli import _check_disk_space
+from fusion_mlx.cli_serve import _check_disk_space
 
 
 def _make_info(file_sizes_bytes: list[int]) -> SimpleNamespace:

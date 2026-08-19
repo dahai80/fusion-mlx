@@ -852,7 +852,12 @@ class TestLaneInjectionParity:
         # feeds the already-converted ``openai_tool_choice`` local.
         assert "req" in model_expr and "model" in model_expr
         assert tc_expr == "openai_tool_choice"
-        assert "tools" in tools_expr and "req" in tools_expr
+        # F7: tools may flow through ``effective_tools`` (derived from
+        # req.tools, None only when tool_choice="none") instead of a bare
+        # req.tools read. Either form keeps the helper wired to tools=.
+        assert "tools" in tools_expr and (
+            "req" in tools_expr or "effective_tools" in tools_expr
+        )
 
     def test_responses_route_actually_invokes_helper(self):
         # r5-B C-10 BLOCKING: the responses lane MUST call the

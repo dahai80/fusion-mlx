@@ -489,6 +489,46 @@ def _recursion_error_response() -> JSONResponse:
     )
 
 
+_QUEUE_FULL_RETRY_AFTER = "1"
+
+
+def scheduler_queue_full_handler(request: Request, exc):
+    """Map SchedulerQueueFullError to HTTP 503 + Retry-After.
+
+    Admission control (scheduler/sched_admission.py) raises this when the
+    waiting queue hits its depth cap; the server layer promised (exceptions.py
+    docstring) to surface it as 503 with a short Retry-After so clients back
+    off. API routes (/v1/...) get the OpenAI ``{"error":{...}}`` envelope;
+    non-API routes get a plain ``{"detail": ...}`` body.
+    """
+    depth = getattr(exc, "current_depth", "?")
+    cap = getattr(exc, "max_depth", "?")
+    message = f"Scheduler queue full ({depth}/{cap}); retry shortly."
+    logger.warning(
+        "SchedulerQueueFullError on %s %s — depth %s/%s, returning 503.",
+        request.method,
+        request.url.path,
+        depth,
+        cap,
+    )
+    is_api = request.url.path.startswith("/v1/")
+    if is_api:
+        content = {
+            "error": {
+                "message": message,
+                "type": "server_busy",
+                "code": "scheduler_queue_full",
+            }
+        }
+    else:
+        content = {"detail": message}
+    return JSONResponse(
+        status_code=503,
+        content=content,
+        headers={"Retry-After": _QUEUE_FULL_RETRY_AFTER},
+    )
+
+
 def _register_canonical_request_models() -> None:
     try:
         from ..api.anthropic_models import MessagesRequest
@@ -594,6 +634,15 @@ def install_exception_handlers(app: FastAPI) -> None:
         if _is_anthropic_path(request):
             response = _wrap_for_anthropic(response)
         return response
+
+    from ..exceptions import SchedulerQueueFullError
+
+    @app.exception_handler(SchedulerQueueFullError)
+    async def _scheduler_queue_full_handler(
+        request: Request,
+        exc: SchedulerQueueFullError,
+    ):
+        return scheduler_queue_full_handler(request, exc)
 
     @app.exception_handler(Exception)
     async def _generic_handler(request: Request, exc: Exception):

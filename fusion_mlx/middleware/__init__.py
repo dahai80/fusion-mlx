@@ -17,7 +17,7 @@ from .body_depth import (
     install_request_body_depth_middleware,
 )
 from .body_size import RequestBodyLimitMiddleware, install_request_body_limit_middleware
-from .exception_handlers import install_exception_handlers
+from .exception_handlers import install_exception_handlers, scheduler_queue_full_handler
 from .probe_fastpath import (
     ProbeFastPathMiddleware,
     install_probe_fastpath_middleware,
@@ -43,6 +43,7 @@ __all__ = [
     "install_route_guard_middleware",
     "rate_limiter",
     "require_model_hub_source",
+    "scheduler_queue_full_handler",
     "verify_api_key",
     "verify_api_key_or_x_api_key",
     "verify_management_access",

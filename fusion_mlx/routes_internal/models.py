@@ -13,9 +13,11 @@ Lookup order (effective_parsers_for):
 """
 
 import logging
+from types import SimpleNamespace
 
 from fastapi import APIRouter, Depends
 
+from fusion_mlx.audio.registry import resolve_audio_alias
 from fusion_mlx.config import get_config
 from fusion_mlx.middleware.auth import verify_api_key
 from fusion_mlx.model_aliases import resolve_profile
@@ -25,6 +27,13 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 _pool: object | None = None
+
+# R11-B-F4 (#505): audio type -> advertised capability tag. TTS aliases
+# report ``audio.speech``, STT aliases report ``audio.transcription``.
+_AUDIO_TYPE_TO_CAPABILITY: dict[str, str] = {
+    "tts": "audio.speech",
+    "stt": "audio.transcription",
+}
 
 _MODEL_TYPE_TO_MODALITY: dict[str, str] = {
     "llm": "text",
@@ -71,6 +80,11 @@ def effective_parsers_for(model_id, profile_tool, profile_reasoning):
 
 
 def _resolve_modality(model_id: str) -> str:
+    # R11-B-F4 (#505): audio registry wins — short alias + HF id both
+    # resolve via resolve_audio_alias (reverse HF-id index).
+    audio_entry = resolve_audio_alias(model_id)
+    if audio_entry is not None:
+        return "audio"
     profile = resolve_profile(model_id)
     if profile is not None and profile.modality:
         return profile.modality
@@ -81,6 +95,26 @@ def _resolve_modality(model_id: str) -> str:
             if mt and mt in _MODEL_TYPE_TO_MODALITY:
                 return _MODEL_TYPE_TO_MODALITY[mt]
     return "text"
+
+
+def _build_model_info(model_id: str) -> SimpleNamespace:
+    # R11-B-F4 (#505): single-id model card builder used by the pure
+    # regression net. Audio aliases (tts/stt) short-circuit to an
+    # audio-only capability set — no ``text`` leak. Text models keep
+    # ``capabilities=["text"]`` and resolve modality via _resolve_modality.
+    audio_entry = resolve_audio_alias(model_id)
+    if audio_entry is not None:
+        cap = _AUDIO_TYPE_TO_CAPABILITY.get(audio_entry.type, "audio")
+        return SimpleNamespace(
+            id=model_id,
+            modality="audio",
+            capabilities=[cap],
+        )
+    return SimpleNamespace(
+        id=model_id,
+        modality=_resolve_modality(model_id),
+        capabilities=["text"],
+    )
 
 
 def _entry_payload(model_id, tool, reasoning, modality="text", capabilities=None):

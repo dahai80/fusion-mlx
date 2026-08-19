@@ -64,30 +64,56 @@ def _run_step(
     """Drive ``_process_batch_responses`` once for a single request and return
     the resulting RequestOutput.
 
-    ``decoded_full`` is what the tokenizer will return when asked to
-    decode the full output_token_ids list AFTER the new token is appended.
-    We stub _decode_tokens to return ``decoded_full`` so the test fully
-    controls the surface the stop-string check scans.
+    ``decoded_full`` is the full decoded text AFTER the new token is
+    appended. The production path decodes through a streaming detokenizer
+    (``_get_detokenizer`` → ``detokenizer.add_token`` / ``detokenizer.text``
+    / ``detokenizer.last_segment``), then re-decodes the full token list on
+    finish via ``tokenizer.decode``. We stub both seams so the test fully
+    controls the surface the stop-string check scans without a real
+    tokenizer backend.
     """
     rid = request.request_id
     uid = 0
     scheduler.running[rid] = request
     scheduler.uid_to_request_id[uid] = rid
 
-    # Stub _decode_tokens to return controllable strings. The scheduler
-    # calls it both for the stop check (full output) and for the
-    # ``prev_text`` computation (output minus last token); we approximate
-    # both by stripping the last char of decoded_full for the prev case.
-    def _decode(tokens):
-        if tokens == request.output_token_ids:
-            return decoded_full
-        if len(tokens) == len(request.output_token_ids) - 1:
-            # The "previously streamed" surface — anything shorter than
-            # the full text is fine for the test invariants we're pinning.
-            return decoded_full[:-1] if decoded_full else ""
-        return decoded_full
+    # Stub the streaming detokenizer. Each test drives a single new token,
+    # so after add_token the detokenizer's full text == decoded_full and
+    # last_segment (the delta from the prior state) == decoded_full too —
+    # no prior text was fed. Production computes prev_len =
+    # len(text) - len(last_segment) = 0, so the stop scan starts at 0.
+    class _FakeDetok:
+        def __init__(self):
+            self._text = ""
+            self._finalized = False
 
-    scheduler._decode_tokens = _decode  # type: ignore[method-assign]
+        def reset(self):
+            self._text = ""
+            self._finalized = False
+
+        def add_token(self, _tok):
+            self._text = decoded_full
+
+        @property
+        def text(self):
+            return self._text
+
+        @property
+        def last_segment(self):
+            # add_token already published the full segment; finalize() has
+            # nothing left to flush, so post-finalize reads are empty (the
+            # production NaiveStreamingDetokenizer clears its buffer).
+            return "" if self._finalized else self._text
+
+        def finalize(self):
+            self._finalized = True
+            return None
+
+    detok = _FakeDetok()
+    scheduler._get_detokenizer = lambda _rid: detok  # type: ignore[method-assign]
+
+    # Finished path re-decodes the full token list via tokenizer.decode.
+    scheduler.tokenizer.decode = lambda _tokens: decoded_full  # type: ignore[method-assign]
 
     # Build a minimal Response stub matching BatchGenerator's contract.
     response = MagicMock()

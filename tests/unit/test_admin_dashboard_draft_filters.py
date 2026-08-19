@@ -2,10 +2,12 @@
 
 from pathlib import Path
 
+import fusion_mlx.admin
+
 
 def _dashboard_js() -> str:
-    root = Path(__file__).resolve().parents[1]
-    return (root / "fusion_mlx/admin/static/js/dashboard.js").read_text()
+    root = Path(fusion_mlx.admin.__file__).resolve().parent
+    return (root / "static/js/dashboard.js").read_text()
 
 
 def _method_block(js: str, signature: str, following_signature: str) -> str:

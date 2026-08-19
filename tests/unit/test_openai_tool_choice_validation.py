@@ -22,7 +22,7 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
-from fusion_mlx.api.models import ChatCompletionRequest
+from fusion_mlx.api.openai_models import ChatCompletionRequest
 
 
 def _base_request(**overrides):

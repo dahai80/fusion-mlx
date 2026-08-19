@@ -114,7 +114,7 @@ def test_huge_hf_cache_marks_warn():
 
     warn_rows = [c for c in section.checks if c.status is eh.CheckStatus.WARN]
     assert any("HF cache size: 246 GB" in c.label for c in warn_rows)
-    assert any("rapid-mlx rm" in c.label for c in warn_rows)
+    assert any("fusion-mlx rm" in c.label for c in warn_rows)
 
 
 # ---------------------------------------------------------------------------
@@ -378,27 +378,31 @@ def test_argcomplete_not_in_rc_marks_warning(tmp_path: Path):
     fake_rc.write_text("export PATH=$PATH:~/bin\n")  # no argcomplete hook
 
     section = eh.section_shell_integration(
-        which=lambda name: "/usr/local/bin/rapid-mlx" if name == "rapid-mlx" else None,
+        which=lambda name: (
+            "/usr/local/bin/fusion-mlx" if name == "fusion-mlx" else None
+        ),
         rcs=[fake_rc],
     )
     argc_row = next(c for c in section.checks if "argcomplete" in c.label)
     assert argc_row.status is eh.CheckStatus.WARN
-    assert "register-python-argcomplete rapid-mlx" in argc_row.label
+    assert "register-python-argcomplete fusion-mlx" in argc_row.label
 
 
 def test_argcomplete_present_marks_ok(tmp_path: Path):
     fake_rc = tmp_path / ".zshrc"
-    fake_rc.write_text('eval "$(register-python-argcomplete rapid-mlx)"\n')
+    fake_rc.write_text('eval "$(register-python-argcomplete fusion-mlx)"\n')
 
     section = eh.section_shell_integration(
-        which=lambda name: "/usr/local/bin/rapid-mlx" if name == "rapid-mlx" else None,
+        which=lambda name: (
+            "/usr/local/bin/fusion-mlx" if name == "fusion-mlx" else None
+        ),
         rcs=[fake_rc],
     )
     argc_row = next(c for c in section.checks if "argcomplete" in c.label)
     assert argc_row.status is eh.CheckStatus.OK
 
 
-def test_rapid_mlx_not_on_path_marks_fail(tmp_path: Path):
+def test_fusion_mlx_not_on_path_marks_fail(tmp_path: Path):
     section = eh.section_shell_integration(
         which=lambda name: None,
         rcs=[tmp_path / "missing.zshrc"],
@@ -499,7 +503,7 @@ def test_render_outputs_section_headers(capsys):
     out = buf.getvalue()
     assert "MySection" in out
     assert "Summary:" in out
-    assert "Rapid-MLX Doctor" in out
+    assert "Fusion-MLX Doctor" in out
 
 
 def test_render_verbose_includes_detail():
@@ -527,6 +531,6 @@ def test_render_verbose_includes_detail():
 
 
 def test_env_health_public_exports():
-    pkg = importlib.import_module("vllm_mlx.doctor")
+    pkg = importlib.import_module("fusion_mlx.doctor")
     for name in ("run_all", "Report", "Section", "Check", "CheckStatus"):
-        assert hasattr(pkg, name), f"vllm_mlx.doctor missing {name}"
+        assert hasattr(pkg, name), f"fusion_mlx.doctor missing {name}"

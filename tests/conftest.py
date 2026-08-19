@@ -150,10 +150,21 @@ except ImportError:
     sys.modules["mlx_vlm.models"] = MagicMock()
     sys.modules["mlx_vlm.utils"] = MagicMock()
 
-# Other MLX ecosystem mocks
-sys.modules["mlx_embeddings"] = MagicMock()
-sys.modules["mlx_audio"] = MagicMock()
-sys.modules["dflash_mlx"] = MagicMock()
+
+# Other MLX ecosystem mocks. Give each a real ModuleSpec so
+# importlib.util.find_spec returns non-None (probe.require_audio_or_exit
+# treats a missing/unset spec as "extra not installed" and sys.exit(2)s).
+def _inject_mock_pkg(name: str) -> None:
+    import importlib.util
+
+    mod = types.ModuleType(name)
+    mod.__spec__ = importlib.util.spec_from_loader(name, loader=None)
+    sys.modules[name] = mod
+
+
+_inject_mock_pkg("mlx_embeddings")
+_inject_mock_pkg("mlx_audio")
+_inject_mock_pkg("dflash_mlx")
 
 # Mock heavy/optional dependencies
 # transformers: preserve real package if available (mlx_lm depends on it)

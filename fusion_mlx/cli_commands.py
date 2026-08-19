@@ -192,6 +192,30 @@ def _print_local_alias_table():
         print(f"  {name:<{alias_width}} {caps:<32} {hf_short}")
     print()
 
+    # Audio models — surface the registry's audio aliases so the audio
+    # surface is discoverable in-tool even when no server is reachable
+    # (test_models_lists_kokoro_and_whisper_and_parakeet contract).
+    try:
+        from fusion_mlx.audio.registry import list_audio_aliases
+
+        audio_entries = list_audio_aliases()
+    except Exception as exc:
+        import logging
+
+        logging.getLogger(__name__).warning(
+            "audio alias listing unavailable: %s: %s", type(exc).__name__, exc
+        )
+        audio_entries = []
+    if audio_entries:
+        print("Audio models")
+        print(f"  {'Alias':<{alias_width}} {'Kind':<14} HF-path")
+        print(f"  {'─' * alias_width} ────────────── ──────────────────────────────")
+        for entry in audio_entries:
+            kind_tag = f"[audio:{entry.type}]"
+            hf_short = entry.hf_id[:35]
+            print(f"  {entry.alias:<{alias_width}} {kind_tag:<14} {hf_short}")
+        print()
+
 
 def models_command(args):
     # Released 1.0/2.0/3.0 contract (docs/cli-reference.md "models"): query the

@@ -1720,5 +1720,6 @@ def enforce_context_length_for_prompt(
 
 from .disconnect_guard import (  # noqa: E402, F401
     _disconnect_guard,
+    _force_abort_request,
     _wait_with_disconnect,
 )

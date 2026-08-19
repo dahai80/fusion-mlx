@@ -201,6 +201,17 @@ def _enforce_required_tool_choice_present(
         solo_name = (
             fn.get("name") if isinstance(fn, dict) else getattr(fn, "name", None)
         )
+        # F-015: Anthropic tool format carries the name at the TOP level
+        # ({"name": ..., "input_schema": ...}) with no ``function`` wrapper.
+        # The OpenAI-shaped extraction above misses it and silently falls
+        # through to the multi-tool 422 on a single-tool forced-any request.
+        # Covers BOTH shapes: the raw dict (request never validated) and the
+        # parsed pydantic AnthropicTool (.name attribute, not a dict).
+        if not solo_name:
+            if isinstance(tool, dict):
+                solo_name = tool.get("name")
+            else:
+                solo_name = getattr(tool, "name", None)
         if solo_name:
             logger.warning(
                 "tool_choice={'type':'any'} on Anthropic route produced no "
