@@ -303,6 +303,25 @@ test_audio_api.py
 # crash risk (misaki/espeak.py imports espeakng_loader) — track as a
 # packaging issue, not test drift.
 test_audio_memory.py
+# KEEP_QUARANTINED round10q-b8 (2026-08-19): audio route cluster (11 suites)
+# depends on server-refactor architecture (module-level `app` -> instance
+# Server; fusion_mlx.server.app = None at L141, real app via _create_app
+# L682). Same refactor family as test_server/test_settings (quarantined
+# round10). Fail patterns: 503 "Server not initialized" (singleton not
+# init in test), 404 "Not Found" (route not mounted on stale app),
+# AttributeError srv._embedding_model_locked (removed attr). NOT harness
+# drift — real architecture change. Rule 9: cannot repoint without
+# rebuilding server fixtures (would mask regression). Sub-gaps:
+# - test_audio_path_shaped_model: 7/33 pass (valid repo-id accept);
+#   19 rejection tests pin HF repo-id structural validation (reject
+#   3-segment/leading-slash/hidden/.git/over-length) that prod
+#   _resolve_stt_model LACKS (passthrough on "/" -> model-load).
+#   Real validation gap -> file issue (path-shaped model 500 not 404).
+# - test_audio_route_registration_gate: cli_serve --enable-audio wiring.
+# - test_audio_probe_consistency: route source-file path read drift.
+# - bundles (r11_b/r7_c/r8_a/routes): srv._embedding_model_locked.
+# File issue for: (a) server-fixture rebuild for audio route tests,
+# (b) HF repo-id structural validation in _resolve_stt_model/_resolve_tts_model.
 test_audio_path_shaped_model.py
 test_audio_probe_consistency.py
 test_audio_r11_b_bundle.py
