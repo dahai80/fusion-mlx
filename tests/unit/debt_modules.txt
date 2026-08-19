@@ -1205,7 +1205,17 @@ test_r15_routes_stability_batch.py
 test_ready_banner_timing.py
 test_reasoning_content_null_rescue.py
 test_release_check_random.py
-test_request_body_size_limit.py
+# RESCUED b10 2026-08-19: 11/11 pass. Two prod fixes in fusion_mlx/middleware/body_size.py —
+# (1) _resolve_limit read fresh ServerConfig() (dead, default 8MiB) instead of get_config()
+#     singleton → CLI flag/cap ignored; now reads get_config() singleton (cap==0 → disabled).
+# (2) import repoint fusion_mlx.config.server_config → fusion_mlx.config (12 occurrences,
+#     config is FILE not package, server_config submodule removed in server-refactor #50).
+# Same dead-ServerConfig-field bug pattern as b9 body_receive_timeout. Test L508
+# test_cli_flag_overrides_config_default rewritten: removed dead server_mod._max_request_bytes
+# module global + _sync_config path (module global removed, _sync_config only propagates
+# _api_key per server.py:156 #50); now sets get_config().max_request_bytes directly + asserts
+# _resolve_limit() reads it (12/12). Issue #510 filed for _resolve_limit dead-read.
+# test_request_body_size_limit.py
 # KEEP_QUARANTINED: stub file — all 3 classes are empty `pass` with
 # @pytest.mark.skip (no test methods → "no tests collected"). Skip reasons
 # partly STALE (routes_internal.health NOW exists with cancel_request

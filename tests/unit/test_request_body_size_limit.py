@@ -34,7 +34,7 @@ def _isolate_config():
     """Each test starts from a clean ServerConfig singleton so the
     8 MiB default isn't carried over from a previous test that
     monkey-patched ``max_request_bytes``."""
-    from fusion_mlx.config.server_config import get_config, reset_config
+    from fusion_mlx.config import get_config, reset_config
 
     reset_config()
     yield
@@ -79,7 +79,7 @@ def test_honest_content_length_over_cap_returns_413():
     ``test_body_never_reaches_handler_on_413`` below covers the
     "did we actually read the bytes" property.
     """
-    from fusion_mlx.config.server_config import get_config
+    from fusion_mlx.config import get_config
 
     get_config().max_request_bytes = 1024  # 1 KiB cap
 
@@ -102,7 +102,7 @@ def test_body_just_under_cap_passes_through():
     and return its normal response. Catches regressions where the
     middleware is overly aggressive (e.g. off-by-one on the boundary,
     or rejection of every POST regardless of size)."""
-    from fusion_mlx.config.server_config import get_config
+    from fusion_mlx.config import get_config
 
     get_config().max_request_bytes = 16 * 1024  # 16 KiB cap
 
@@ -119,7 +119,7 @@ def test_disabled_when_cap_is_zero():
     """``--max-request-bytes 0`` (the documented escape hatch)
     must disable the cap entirely. Operators with their own DoS
     controls upstream rely on this."""
-    from fusion_mlx.config.server_config import get_config
+    from fusion_mlx.config import get_config
 
     get_config().max_request_bytes = 0
 
@@ -139,7 +139,7 @@ def test_unguarded_path_is_not_capped():
     or anything else outside those prefixes must pass through even
     if their body would exceed the cap. Without this scoping, a
     health-check tool that POSTs JSON would 413 spuriously."""
-    from fusion_mlx.config.server_config import get_config
+    from fusion_mlx.config import get_config
 
     get_config().max_request_bytes = 512  # tiny cap
 
@@ -161,7 +161,7 @@ def test_audio_path_is_excluded_from_generic_cap():
     We assert by ensuring our generic middleware does NOT respond
     to ``/v1/audio/transcriptions`` even when the body advertises
     a length that would otherwise exceed our cap."""
-    from fusion_mlx.config.server_config import get_config
+    from fusion_mlx.config import get_config
 
     get_config().max_request_bytes = 1024
 
@@ -191,7 +191,7 @@ def test_body_never_reaches_handler_on_413():
     A receive-tracer counts how often the inner ASGI app sees a
     body message. If the middleware does its job, that count is 0.
     """
-    from fusion_mlx.config.server_config import get_config
+    from fusion_mlx.config import get_config
 
     from fusion_mlx.middleware.body_size import RequestBodyLimitMiddleware
 
@@ -263,7 +263,7 @@ def test_chunked_streaming_body_aborts_mid_stream():
 
     Without this guard, a Transfer-Encoding: chunked client could
     stream gigabytes before any byte-count gate fired."""
-    from fusion_mlx.config.server_config import get_config
+    from fusion_mlx.config import get_config
 
     from fusion_mlx.middleware.body_size import RequestBodyLimitMiddleware
 
@@ -351,7 +351,7 @@ def test_no_double_response_when_handler_already_sent_headers():
     the read loop; the middleware catches ``_BodyTooLargeError`` and must
     silently let the response complete (logged warning, no double 413).
     """
-    from fusion_mlx.config.server_config import get_config
+    from fusion_mlx.config import get_config
 
     from fusion_mlx.middleware.body_size import RequestBodyLimitMiddleware
 
@@ -436,7 +436,7 @@ def test_get_request_is_not_capped():
     etc. A spuriously large GET shouldn't be possible in HTTP/1.1
     anyway, but we still want zero per-request overhead on read
     paths."""
-    from fusion_mlx.config.server_config import get_config
+    from fusion_mlx.config import get_config
 
     get_config().max_request_bytes = 1  # absurdly tiny — every body would fail
 
@@ -464,7 +464,7 @@ def test_oversized_body_returns_413_before_auth_check():
     ordering load-bearing — anyone moving the body cap *behind* the
     auth dependency will fail it and have to think about it.
     """
-    from fusion_mlx.config.server_config import get_config
+    from fusion_mlx.config import get_config
 
     from fusion_mlx.middleware.body_size import install_request_body_limit_middleware
 
@@ -506,22 +506,22 @@ def test_oversized_body_returns_413_before_auth_check():
 
 
 def test_cli_flag_overrides_config_default():
-    """The ``--max-request-bytes`` flag is wired through
-    ``vllm_mlx.server._max_request_bytes`` and ``_sync_config`` into
-    ``ServerConfig.max_request_bytes``. We don't exercise the full
-    CLI here (too heavy — needs model load) but we do assert the
-    wiring: writing the module global and calling ``_sync_config``
-    propagates the value to the config singleton the middleware
-    reads."""
-    from fusion_mlx.config.server_config import get_config
+    """The ``--max-request-bytes`` flag is wired by ``cli_serve``
+    directly onto the ``ServerConfig`` singleton
+    (``get_config().max_request_bytes = ...``); the middleware reads
+    that same singleton via ``_resolve_limit``. We assert the
+    end-to-end wiring a regression that broke the singleton read
+    (e.g. ``_resolve_limit`` constructing a fresh ``ServerConfig()``
+    instance) would silently let the cap fall back to the 8 MiB
+    default and the CLI flag would be ignored."""
+    from fusion_mlx.config import get_config
 
-    import fusion_mlx.server as server_mod
+    from fusion_mlx.middleware.body_size import _resolve_limit
 
-    original = server_mod._max_request_bytes
+    original = get_config().max_request_bytes
     try:
-        server_mod._max_request_bytes = 12345
-        server_mod._sync_config()
+        get_config().max_request_bytes = 12345
         assert get_config().max_request_bytes == 12345
+        assert _resolve_limit() == 12345
     finally:
-        server_mod._max_request_bytes = original
-        server_mod._sync_config()
+        get_config().max_request_bytes = original

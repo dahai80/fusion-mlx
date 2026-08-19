@@ -67,13 +67,14 @@ def _resolve_limit() -> int:
     except (ValueError, TypeError):
         pass
     try:
-        from ..config import ServerConfig
+        from ..config import get_config
 
-        sc = ServerConfig()
-        cap = getattr(sc, "max_request_bytes", _DEFAULT_MAX_REQUEST_BYTES)
+        cap = int(get_config().max_request_bytes)
         if cap > 0:
             return cap
-    except Exception:
+        if cap == 0:
+            return 0
+    except (ValueError, TypeError):
         pass
     return _DEFAULT_MAX_REQUEST_BYTES
 
