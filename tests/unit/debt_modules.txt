@@ -486,6 +486,18 @@ test_cli.py
 # ported to fusion-mlx aliases.json (prod has 3: gemma-4-{4b,12b,26b}-4bit).
 # CANDIDATE ISSUE: port #523 aliases.json QAT additions. Prefix-filter +
 # csv head-carry contracts covered by other live tests.
+# KEEP_QUARANTINED test_cli_chat.py (round10q-b6 2026-08-19): CLI-port feature
+# work, NOT harness drift. 46 pass / 29 fail. 29 fails split 3 buckets:
+# (a) removed CLI helper fns NEVER ported from rapid-mlx: _stream_chat_response
+# (10), _spawn_chat_server (7), _has_seen_tip (2), _has_short_pattern_dominating_
+# suffix (2), _ensure_model_downloaded (1) — 0 prod refs, feature gap;
+# (b) download_gate fn-attr: vllm_mlx._download_gate now stub fn not module,
+# is_repo_cached/estimate_repo_size_bytes attrs gone (4) — arch drift;
+# (c) brand-drift asserts pin "rapid-mlx"/"# rapid-mlx chat" strings (2) —
+# prod correctly rebranded fusion-mlx, test assertion stale (test-side bug).
+# (a)+(b) = port CLI chat helpers + download_gate fns (Rule 2/3: don't invent
+# fns to satisfy tests). (c) alone fixable but intermingled w/ (a) fn calls.
+# CANDIDATE ISSUE: port rapid-mlx CLI chat spawn/stream/tips/download helpers.
 test_cli_chat.py
 # KEEP_QUARANTINED: round10q-b5 — CLI-port feature work, NOT harness drift.
 # (1) test_cli_config_fidelity 6/6 fail: brand-drift paths vllm_mlx/cli.py +
