@@ -322,6 +322,7 @@ test_audio_memory.py
 # - bundles (r11_b/r7_c/r8_a/routes): srv._embedding_model_locked.
 # File issue for: (a) server-fixture rebuild for audio route tests,
 # (b) HF repo-id structural validation in _resolve_stt_model/_resolve_tts_model.
+# Tracked in issue #508 (filed 2026-08-19).
 test_audio_path_shaped_model.py
 test_audio_probe_consistency.py
 test_audio_r11_b_bundle.py
