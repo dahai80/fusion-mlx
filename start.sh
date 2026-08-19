@@ -257,6 +257,12 @@ do_start() {
             api_key_arg="--api-key ${API_KEY}"
             export FUSION_MLX_API_KEY="${API_KEY}"
         fi
+        # Redirect serve stdout+stderr to server.log so the detached
+        # process never holds a dead tty. Without this, tqdm (writes to
+        # stderr) crashes once the launching terminal closes -> image
+        # generation 500 (#501). show_log/show_errors already tail this
+        # file. Truncate on each start (singular server.log convention).
+        : > "${LOG_DIR}/server.log"
         fusion-mlx serve \
             --model-dir "${model_dir}" \
             --log-level INFO \
@@ -265,7 +271,7 @@ do_start() {
             --chunked-prefill-tokens 4096 \
             $(host_port_args) \
             ${api_key_arg} \
-            &
+            > "${LOG_DIR}/server.log" 2>&1 &
     fi
 
     local serve_pid=$!
@@ -529,6 +535,8 @@ _run_with_watchdog() {
         if [[ -n "${API_KEY:-}" ]]; then
             api_key_arg="--api-key ${API_KEY}"
         fi
+        # Redirect to server.log (same tty-detach fix as do_start, #501).
+        : > "${LOG_DIR}/server.log"
         fusion-mlx serve \
             --model-dir "${model_dir}" \
             --log-level INFO \
@@ -536,7 +544,8 @@ _run_with_watchdog() {
             --continuous-batching \
             --chunked-prefill-tokens 4096 \
             $(host_port_args) \
-            ${api_key_arg}
+            ${api_key_arg} \
+            > "${LOG_DIR}/server.log" 2>&1
 
         local exit_code=$?
 
