@@ -17,6 +17,7 @@ from typing import Any
 
 from pydantic import AliasChoices, BaseModel, Field, field_validator, model_validator
 
+from fusion_mlx.api.models import _validate_response_format_raw
 from fusion_mlx.api.shared_models import (
     BaseUsage,
     IDPrefix,
@@ -565,6 +566,19 @@ class CompletionRequest(BaseModel):
     # when non-empty since no MLX engine implements FIM yet (silently
     # ignoring it produces wrong completions on code-completion clients).
     suffix: str | None = None
+    # R10-H4: /v1/completions response_format parity with the chat lane.
+    # Pre-fix the field was undeclared -> Pydantic dropped it (extra=ignore)
+    # -> {"type":"json_object"} silently vanished on both sync + stream.
+    # Declared + validated so the route can apply the same JSON peel.
+    response_format: ResponseFormat | dict | None = None
+
+    @field_validator("response_format", mode="before")
+    @classmethod
+    def _validate_response_format_field(cls, v):
+        # Same closed-set check the chat lane runs (text/json_object/
+        # json_schema). Rejects unknown type + missing type + malformed
+        # json_schema shape before Pydantic's Union arm coerces them.
+        return _validate_response_format_raw(v)
 
     @field_validator("stop", mode="before")
     @classmethod
