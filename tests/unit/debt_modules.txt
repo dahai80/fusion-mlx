@@ -368,6 +368,7 @@ test_batching.py
 #   TestComputeMetrics/TestRunSingleTest/TestBenchmarkEngineSelection/
 #   TestExperimentalFeatureDetection/TestUploadToBenchSite — not cleanly
 #   splittable. File issue for benchmark metrics refactor port.
+# Tracked in issue #509 (filed 2026-08-19).
 test_bench_vs_ollama.py
 test_benchmark.py
 # RESCUED round10q-b9 (2026-08-19): 14/14 pass. Three drifts fixed:
