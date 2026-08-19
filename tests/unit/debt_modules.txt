@@ -353,9 +353,43 @@ test_batched_engine_output_router.py
 # untouched, already-mapping left alone, missing tool_calls safe). Test-file-only.
 # test_batched_engine_tool_call_normalization.py
 test_batching.py
+# KEEP_QUARANTINED round10q-b9 (2026-08-19): bench cluster, real feature
+# removal/refactor, NOT harness drift.
+# - test_bench_vs_ollama: 63f/0p. load_bench_module loads
+#   tests/scripts/bench_vs_ollama.py which is DELETED (tests/scripts/ dir
+#   gone entirely). Bench-vs-ollama comparison script removed. File issue
+#   if feature to be restored; else retire test.
+# - test_benchmark: 17f/44p. Benchmark metrics + engine-selection refactor:
+#   _compute_single_metrics (admin/benchmark.py:184) signature changed —
+#   prefill_duration_s param REMOVED (test passes it -> TypeError); VLM-MTP
+#   engine selection force_lm behavior flipped (assert [False] got [True]);
+#   native-duration / diffusion-canvas / producer-timestamp metrics paths
+#   changed. 44 pass cover stable parts but 17 fails interleaved across
+#   TestComputeMetrics/TestRunSingleTest/TestBenchmarkEngineSelection/
+#   TestExperimentalFeatureDetection/TestUploadToBenchSite — not cleanly
+#   splittable. File issue for benchmark metrics refactor port.
 test_bench_vs_ollama.py
 test_benchmark.py
-test_body_receive_timeout.py
+# RESCUED round10q-b9 (2026-08-19): 14/14 pass. Three drifts fixed:
+# (1) import repoint fusion_mlx.config.server_config -> fusion_mlx.config
+#     (15 occurrences; reset_config/ServerConfig/get_config all at config.py),
+#     fusion_mlx.cli._apply_body_receive_timeout_env ->
+#     fusion_mlx._cli_base (impl moved). Test-only repoint.
+# (2) PROD FIX middleware/body_size._resolve_body_receive_timeout: added
+#     ServerConfig.body_receive_timeout_seconds fallback (env var ->
+#     ServerConfig -> default 15.0, negative clamps to 0.0). The
+#     ServerConfig field was DEAD — _apply_body_receive_timeout_env
+#     (_cli_base.py:99) writes it but middleware never read it (env-var
+#     only). Now wired. No behavior change when env set OR config at
+#     default. Aligns with H-14/F-072 slow-DoS gate intent.
+# (3) test_h14_env_var_override_reduces_timeout assert repoint:
+#     server_mod._body_receive_timeout_seconds (removed module global)
+#     -> get_config().body_receive_timeout_seconds (ServerConfig field
+#     that _apply now writes). Architecture: config moved module-global
+#     -> ServerConfig singleton (server-refactor family).
+# Verified: test_body_receive_timeout 14/14, test_config_and_middleware
+# + test_middleware 37/37 no regression.
+# test_body_receive_timeout.py
 # test_cache_routes.py RESCUED 2026-08-18 (35 pass): fixture-wiring gap, NOT prod bug
 # nor product-decision revert. cache router gates on [verify_api_key (middleware,
 # reads cfg.api_key via _get_configured_api_key) + require_admin (admin/auth, reads

@@ -87,6 +87,15 @@ def _resolve_body_receive_timeout() -> float:
                 return timeout
     except (ValueError, TypeError):
         pass
+    try:
+        from ..config import get_config
+
+        cfg_timeout = float(get_config().body_receive_timeout_seconds)
+        if cfg_timeout < 0:
+            return 0.0
+        return cfg_timeout
+    except (ValueError, TypeError):
+        pass
     return _DEFAULT_BODY_RECEIVE_TIMEOUT
 
 

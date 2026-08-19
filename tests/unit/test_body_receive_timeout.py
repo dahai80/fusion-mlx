@@ -43,7 +43,7 @@ def _isolate_config():
     assignment path. ``reset_config()`` only handles the
     ``ServerConfig`` dataclass — it does NOT restore module globals.
     """
-    from fusion_mlx.config.server_config import reset_config
+    from fusion_mlx.config import reset_config
 
     import fusion_mlx.server as _server_mod
 
@@ -81,7 +81,7 @@ def test_default_serverconfig_carries_body_receive_timeout():
     """Catch a regression that removes the dataclass field. The
     middleware reads ``ServerConfig.body_receive_timeout_seconds``
     per request — without the field the gate silently no-ops."""
-    from fusion_mlx.config.server_config import ServerConfig, get_config
+    from fusion_mlx.config import ServerConfig, get_config
 
     # Default value is the documented 15 s.
     assert ServerConfig().body_receive_timeout_seconds == 15.0
@@ -102,7 +102,7 @@ def test_resolve_body_receive_timeout_clamps_and_falls_back():
       would mask the real cause — the resolver mirrors the
       :func:`_resolve_limit` "sane default beats unlimited" choice.
     """
-    from fusion_mlx.config.server_config import get_config
+    from fusion_mlx.config import get_config
 
     from fusion_mlx.middleware.body_size import _resolve_body_receive_timeout
 
@@ -130,7 +130,7 @@ def test_normal_post_under_timeout_passes_through():
     receive frame (TestClient's behaviour) MUST reach the handler
     and return its response. A regression that fired the timeout
     against well-behaved clients would 408 every request."""
-    from fusion_mlx.config.server_config import get_config
+    from fusion_mlx.config import get_config
 
     get_config().body_receive_timeout_seconds = 10.0
 
@@ -158,7 +158,7 @@ def test_slow_body_receive_emits_408():
     a real network."""
     import asyncio
 
-    from fusion_mlx.config.server_config import get_config
+    from fusion_mlx.config import get_config
 
     from fusion_mlx.middleware.body_size import RequestBodyLimitMiddleware
 
@@ -226,7 +226,7 @@ def test_timeout_disabled_when_zero():
     log analysis."""
     import asyncio
 
-    from fusion_mlx.config.server_config import get_config
+    from fusion_mlx.config import get_config
 
     from fusion_mlx.middleware.body_size import RequestBodyLimitMiddleware
 
@@ -282,7 +282,7 @@ def test_timeout_does_not_truncate_long_running_response():
     timer the moment the engine pauses for a beat between chunks."""
     import asyncio
 
-    from fusion_mlx.config.server_config import get_config
+    from fusion_mlx.config import get_config
 
     from fusion_mlx.middleware.body_size import RequestBodyLimitMiddleware
 
@@ -354,7 +354,7 @@ def test_size_cap_only_guards_listed_path_prefixes():
     """
     import asyncio
 
-    from fusion_mlx.config.server_config import get_config
+    from fusion_mlx.config import get_config
 
     from fusion_mlx.middleware.body_size import RequestBodyLimitMiddleware
 
@@ -423,7 +423,7 @@ def test_h14_receive_idle_gate_fires_on_unguarded_path():
     """
     import asyncio
 
-    from fusion_mlx.config.server_config import get_config
+    from fusion_mlx.config import get_config
 
     from fusion_mlx.middleware.body_size import RequestBodyLimitMiddleware
 
@@ -489,7 +489,7 @@ def test_h14_receive_idle_gate_fires_on_audio_excluded_path():
     """
     import asyncio
 
-    from fusion_mlx.config.server_config import get_config
+    from fusion_mlx.config import get_config
 
     from fusion_mlx.middleware.body_size import RequestBodyLimitMiddleware
 
@@ -549,7 +549,7 @@ def test_h14_progressive_upload_not_killed_by_per_chunk_timer():
     """
     import asyncio
 
-    from fusion_mlx.config.server_config import get_config
+    from fusion_mlx.config import get_config
 
     from fusion_mlx.middleware.body_size import RequestBodyLimitMiddleware
 
@@ -639,7 +639,7 @@ def test_h14_no_double_send_after_408_rewrite():
     """
     import asyncio
 
-    from fusion_mlx.config.server_config import get_config
+    from fusion_mlx.config import get_config
 
     from fusion_mlx.middleware.body_size import RequestBodyLimitMiddleware
 
@@ -724,10 +724,10 @@ def test_h14_env_var_override_reduces_timeout(monkeypatch):
     """
     import logging
 
-    from fusion_mlx.config.server_config import get_config
+    from fusion_mlx.config import get_config
 
     from fusion_mlx import server as server_mod
-    from fusion_mlx.cli import _apply_body_receive_timeout_env
+    from fusion_mlx._cli_base import _apply_body_receive_timeout_env
     from fusion_mlx.middleware.body_size import _resolve_body_receive_timeout
 
     # Drive the REAL resolver function — the exact callable
@@ -736,14 +736,13 @@ def test_h14_env_var_override_reduces_timeout(monkeypatch):
     # ``_apply_body_receive_timeout_env`` fails here.
     monkeypatch.setenv("FUSION_MLX_BODY_RECEIVE_TIMEOUT_SECONDS", "0.05")
     _apply_body_receive_timeout_env(server_mod, logger=logging.getLogger("test"))
-    assert server_mod._body_receive_timeout_seconds == 0.05
+    assert get_config().body_receive_timeout_seconds == 0.05
 
     # And mirror what ``_sync_config`` does at request time so the
     # middleware-side resolver picks it up from ``ServerConfig``. The
     # production binary runs ``_sync_config`` inside ``load_model``;
     # we don't load a model in unit tests, so push the value through
     # the bridge ourselves and assert the middleware sees it.
-    get_config().body_receive_timeout_seconds = server_mod._body_receive_timeout_seconds
     assert _resolve_body_receive_timeout() == 0.05
 
     # Non-numeric value: the resolver MUST fall back to the 15 s
@@ -753,7 +752,7 @@ def test_h14_env_var_override_reduces_timeout(monkeypatch):
     # under a typo).
     monkeypatch.setenv("FUSION_MLX_BODY_RECEIVE_TIMEOUT_SECONDS", "not-a-number")
     _apply_body_receive_timeout_env(server_mod, logger=logging.getLogger("test"))
-    assert server_mod._body_receive_timeout_seconds == 15.0
+    assert get_config().body_receive_timeout_seconds == 15.0
 
 
 def test_h14_default_timeout_value_is_15_seconds():
@@ -762,7 +761,7 @@ def test_h14_default_timeout_value_is_15_seconds():
     is unset — a regression that bumped the default to 60 s would
     widen the slowloris surface from 15 s × N workers to 60 s × N.
     """
-    from fusion_mlx.config.server_config import ServerConfig
+    from fusion_mlx.config import ServerConfig
 
     assert ServerConfig().body_receive_timeout_seconds == 15.0
 
@@ -782,7 +781,7 @@ def test_timeout_path_does_not_double_send_when_body_size_also_trips():
     fire."""
     import asyncio
 
-    from fusion_mlx.config.server_config import get_config
+    from fusion_mlx.config import get_config
 
     from fusion_mlx.middleware.body_size import RequestBodyLimitMiddleware
 
