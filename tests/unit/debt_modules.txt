@@ -278,6 +278,21 @@ test_anthropic_think_leak_r12_m1b.py
 # 6 live audio-adjacent suites 105/105 pass; 4 quarantined suites' fails
 # pre-existing (test_cli_models pins '(82 aliases)' summary line unrelated).
 # test_audio_alias_registry.py
+# KEEP_QUARANTINED: audio cluster (test_audio_api + 13 below through
+# test_audio_upload_size_limit) — 3 shared blockers, not pure harness drift:
+#   (a) lazy server.app: tests do `from fusion_mlx.server import app` (None
+#       until get_app()) → AttributeError/TypeError in lifespan. Fixable
+#       via get_app() (test_status_endpoint idiom).
+#   (b) Server._lifespan calls install_signal_handlers() (server.py:1051)
+#       inside the TestClient lifespan THREAD → "signal only works in main
+#       thread". Needs main-thread pre-instantiation or lifespan stub.
+#   (c) mlx_audio.stt.utils.load_model absent in installed mlx_audio
+#       (STTEngine.load ImportError) — upstream API/integration gap, needs
+#       real mlx-audio STT subsystem + model. STTEngine-direct tests are
+#       integration, not unit.
+# (a)+(b) harness drift; (c) feature/dep gap — file issue per CLAUDE.md
+# upstream flow. Bundle suites ALSO have srv._embedding_model_locked
+# AttributeError (server refactor removed attr).
 test_audio_api.py
 # test_audio_extras_lockin.py RESCUED 2026-08-18 (1 pass + 2 skip + 2 xfail,
 # isolation): fixed stale PYPROJECT_PATH (.parent.parent → .parent.parent.parent; tests
