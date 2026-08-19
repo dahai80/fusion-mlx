@@ -155,7 +155,9 @@ where = ["."]
 include = ["fusion_mlx*"]
 
 [tool.setuptools.package-data]
-"fusion_mlx" = ["aliases.json"]
+"fusion_mlx" = ["aliases.json", "model-config.json", "oq_calibration_data.json"]
+"fusion_mlx.audio" = ["aliases.json"]
+"fusion_mlx.agents" = ["profiles/*.yaml"]
 "fusion_mlx.admin" = ["templates/**/*.html", "static/**/*", "i18n/*.json"]
 "fusion_mlx.gui_compat" = ["templates/**/*.html"]
 

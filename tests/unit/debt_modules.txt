@@ -1161,7 +1161,7 @@ test_no_mllm_flag.py
 test_no_out_of_band_routing.py
 # test_openai_tool_choice_validation.py  (RESCUED 2026-08-18 — commented out = un-quarantined = collected; 32 pass. PROD FIX H-16 OpenAI-surface parity: openai_models.ChatCompletionRequest had NO tool_choice validator → malformed tool_choice ({"type":"banana"}, "any", {"foo":"bar"}) silent-degraded to free-form generation on /v1/chat/completions; H-16 was only closed on Anthropic surface (anthropic_models._validate_tool_choice_type). Added _validate_tool_choice_shape field_validator(mode=before) to openai_models.ChatCompletionRequest: string allowed-set {none,auto,required,function}, object requires type in {auto,none,function,required}, missing-type rejected, extra keys preserved, function-without-name passes schema (route owns that check). Harness re-point: test import api.models.ChatCompletionRequest (dead class, no route) → openai_models.ChatCompletionRequest (live route class). Regression-checked: 298 tool_choice-touching tests pass, 3 pre-existing mlx_vlm-surface fails unrelated.)
 test_openwebui.py
-test_packaging_data_files.py
+# test_packaging_data_files.py  (RESCUED 2026-08-19 — commented out = un-quarantined = collected; 10/10 pass. PROD FIX wheel silent-drop: pyproject.toml [tool.setuptools.package-data] had ONLY fusion_mlx=[aliases.json] + fusion_mlx.admin + fusion_mlx.gui_compat. 4 runtime data files silently dropped from built wheel — fusion_mlx/audio/aliases.json (read audio/registry.py:resolve_audio_alias), model-config.json (read config.py:346), oq_calibration_data.json (read oq/streaming.py:907), agents/profiles/*.yaml (read agents/__init__.py:32 PROFILES_DIR). Source-tree tests passed (files on disk) but pip install → FileNotFoundError at runtime. Added 5 package-data entries: fusion_mlx=[aliases.json,model-config.json,oq_calibration_data.json], fusion_mlx.audio=[aliases.json], fusion_mlx.agents=[profiles/*.yaml]. Harness re-point: REQUIRED_DATA_FILES vllm_mlx→fusion_mlx + 3 new file entries; _package_data_entries() single-key .get("vllm_mlx")→package-aware .get(package); test_required_data_file_declared_in_pyproject_package_data uses _package param; docstrings vllm_mlx/rapid-mlx→fusion_mlx. r10-B audio bug now generalized to whole-package regression guard.)
 test_paged_cache_benefits.py
 test_paged_cache_real_inference.py
 test_paged_cache_real_model.py
@@ -1219,6 +1219,20 @@ test_probe_fastpath.py
 # No prod change.
 # test_pull_summary.py
 test_r10_scrub_validation_bundle.py
+# KEEP_QUARANTINED: 4/7 pass. 3 chat-path tests FAIL = feature gap: /v1/chat/completions
+# has NO strict json_schema postgen validation + repair-retry (parity gap vs
+# /v1/responses which implements it via _apply_responses_postgen_validation
+# responses.py:258 + repair_messages_fit_context helpers.py:1672). Chat route
+# returns 200 with violating body {"age":5} when guidance compile fails (stub
+# tokenizer missing eos_token_id -> xgrammar fallback -> unconstrained). Stale
+# comment responses.py:270 claims "Mirrors chat.py:2894-3075" but chat.py is now
+# 263-line shim re-exporting api.openai_routes.router; openai_routes.py has NO
+# validate_and_envelope/build_repair_messages/incr_strict_repair_* calls. grep
+# confirms repair logic ONLY in responses.py. 4 PASSING tests = responses-path
+# (_responses_client) + repair_messages_fit_context helper contract direct
+# (mllm permissive-skip, build_prompt-missing permissive-skip, responses
+# skip-repair, responses repair-runs). Needs full chat-path postgen+repair port
+# = feature work, not surgical. ISSUE #514 FILED. 0 regression (responses tests pass).
 test_r12_h06_repair_context_guard.py
 # KEEP_QUARANTINED: 2/4 pass after PROD FIX responses.py:692 chat(stream=True)
 # -> stream_chat (chat has no stream param, returned non-iterable GenerationOutput
@@ -1266,6 +1280,16 @@ test_release_check_random.py
 # real cancel/abort routing tests = new feature work, not harness drift.
 # BatchedEngine genuinely removed (#422 dedup). Track as test-coverage gap.
 test_request_cancellation.py
+# KEEP_QUARANTINED: 15 fail / 5 pass. Pins PRE-REDESIGN R-03/R-04 alias contract:
+# 2-arg helpers _resolve_request_alias_or_default(request, locked) + _aliases_match("a","b")
+# — prod redesigned to 1-arg (helpers.py:596 _resolve_request_alias_or_default(request_model)
+# None/""/"default"->cfg.model_name else verbatim; helpers.py:583 _aliases_match(request_model)).
+# 6 route tests inject stale vllm_mlx.server stub + patch vllm_mlx.middleware.auth +
+# vllm_mlx.model_aliases + import fusion_mlx.routes_internal.embeddings (route now at
+# api/embeddings_routes.py using get_embedding_engine + resolve_model model_aliases.py:335).
+# Feature PRESERVED via new design (not regression): /v1/embeddings get_embedding_engine
+# resolves short alias->HF path. Architecture drift, full route-test rewrite needed
+# (not surgical). ISSUE #515 FILED. No prod change.
 test_request_time_alias_resolution.py
 test_responses_591_followups.py
 test_responses_budget_exhaust_streaming.py
