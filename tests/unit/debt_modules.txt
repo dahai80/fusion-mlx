@@ -1255,7 +1255,25 @@ test_r12_h06_repair_context_guard.py
 # (228 responses tests pass). ISSUE #513 FILED.
 test_r12_m3_responses_stream_leading_items_order.py
 test_r12_reasoning_sanitizer_required.py
-test_r15_routes_stability_batch.py
+# test_r15_routes_stability_batch.py RESCUED 2026-08-19 (b17, 16 pass + 2 xfail):
+# Bug 1 /healthz drain 503 — PROD FIX routes_internal/health.py:58 healthz() now
+# reads get_config().draining (was _server_state["draining"] which had ZERO
+# writers -> always False -> never 503). Unifies with middleware/probe_fastpath.py
+# :35 _build_healthz_payload which already read cfg.draining. Rule 7 surface-conflict
+# fix: 2 readers diverged (_server_state vs cfg), picked cfg (matches fastpath,
+# has test). 3 healthz tests pass. Bug 2 /healthz route↔fastpath model_name drift
+# — PROD FIX same route: healthz() 3 return paths now include model_name (read
+# cfg.model_name), matching _build_healthz_payload which always emitted it. Route
+# was missing field -> test_probe_fastpath TestFastPathFallThrough::test_origin_
+# header_falls_through KeyError (pre-existing on origin/main, NOT my change).
+# Bug 3 /v1/responses unknown-role 400 — feature gap #524 (InputItem.role plain
+# str|None responses_models.py:33, no enum validator -> unknown role passes
+# Pydantic -> 500 in Jinja template). 2 role tests marked @pytest.mark.xfail(
+# strict=True, reason="#524") — xpass when #524 ships. Known-roles parametrize
+# (5) passes (no validation needed). 6 TestServePortCollision + completions/chat
+# tests were already passing/skipping (skips = routes_internal/{completions,chat}
+# .py removed #71 dedup). Issue #524 filed for role enum.
+# test_r15_routes_stability_batch.py
 # KEEP_QUARANTINED: round10p — Ready-banner feature removed from main server. lifespan now nested closure in Server._create_app (server.py:671) calling _lifespan() generator (L1039) — NO "Ready: http" print, NO _cfg.ready=True flip, NO module-level server._engine/server.lifespan attrs. Banner only in speculative/dflash/server.py:730. Test pins deleted behavior (server.lifespan + _engine + banner). Architectural gap, not harness drift. config.ready field exists but no main-server consumer.
 test_ready_banner_timing.py
 test_reasoning_content_null_rescue.py

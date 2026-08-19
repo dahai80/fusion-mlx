@@ -57,11 +57,14 @@ async def health_ready():
 
 @probe_router.get("/healthz")
 async def healthz():
+    from ..config import get_config
     from ..server import _server_state
 
     pool = _server_state.get("engine_pool")
-    draining = _server_state.get("draining", False)
+    cfg = get_config()
+    draining = getattr(cfg, "draining", False)
     preloading = _server_state.get("preloading", False)
+    model_name = getattr(cfg, "model_name", "")
     if draining:
         return JSONResponse(
             status_code=503,
@@ -69,6 +72,7 @@ async def healthz():
                 "status": "draining",
                 "ready": False,
                 "model_loaded": pool is not None and pool.loaded_model_count > 0,
+                "model_name": model_name,
             },
         )
     if preloading:
@@ -78,12 +82,14 @@ async def healthz():
                 "status": "preloading",
                 "ready": False,
                 "model_loaded": pool is not None and pool.loaded_model_count > 0,
+                "model_name": model_name,
             },
         )
     return {
         "status": "healthy",
         "ready": pool is not None,
         "model_loaded": pool is not None and pool.loaded_model_count > 0,
+        "model_name": model_name,
     }
 
 
