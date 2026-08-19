@@ -1,21 +1,21 @@
 # SPDX-License-Identifier: Apache-2.0
 """r10-I — packaging regression: data files must ship in installed wheel.
 
-Codex r10-B caught that ``vllm_mlx/audio/aliases.json`` was added under
-``vllm_mlx/audio/`` but never declared in ``[tool.setuptools.package-data]``.
+Codex r10-B caught that ``fusion_mlx/audio/aliases.json`` was added under
+``fusion_mlx/audio/`` but never declared in ``[tool.setuptools.package-data]``.
 A sdist/wheel built from that state silently dropped the file — source-tree
-tests passed (the file is right there on disk), but ``pip install rapid-mlx``
-and then ``rapid-mlx serve kokoro`` would raise ``FileNotFoundError`` inside
-``vllm_mlx/audio/registry.py::resolve_audio_alias`` before any audio engine
+tests passed (the file is right there on disk), but ``pip install fusion-mlx``
+and then ``fusion-mlx serve kokoro`` would raise ``FileNotFoundError`` inside
+``fusion_mlx/audio/registry.py::resolve_audio_alias`` before any audio engine
 loaded.
 
 This test pins two invariants:
 
-1. Every non-Python data file that ``vllm_mlx`` reads at runtime via
+1. Every non-Python data file that ``fusion_mlx`` reads at runtime via
    ``importlib.resources`` must be reachable through that API in the
    current installed/source layout.
 2. Every such file must be listed in
-   ``[tool.setuptools.package-data].vllm_mlx`` in ``pyproject.toml`` so
+   ``[tool.setuptools.package-data].<package>`` in ``pyproject.toml`` so
    it actually ends up in the built wheel and sdist.
 
 If a future contributor adds a new JSON/YAML registry file but forgets the
@@ -42,10 +42,19 @@ except ModuleNotFoundError:  # pragma: no cover
 # entry (either an exact match or a glob that covers it).
 REQUIRED_DATA_FILES: list[tuple[str, str, str]] = [
     # Text-model alias registry — has always shipped.
-    ("vllm_mlx", "aliases.json", "aliases.json"),
+    ("fusion_mlx", "aliases.json", "aliases.json"),
     # r10-A: audio alias registry. Codex r10-B caught this missing from
     # package-data; this entry locks the fix in place.
-    ("vllm_mlx", "audio/aliases.json", "audio/aliases.json"),
+    ("fusion_mlx.audio", "aliases.json", "aliases.json"),
+    # model-config.json — runtime model defaults loaded by config.py:346
+    # via Path(__file__).parent. Silent wheel-drop = broken pkg defaults.
+    ("fusion_mlx", "model-config.json", "model-config.json"),
+    # oq_calibration_data.json — streaming output-quality calibration,
+    # loaded by oq/streaming.py:907 via Path(__file__).parent.
+    ("fusion_mlx", "oq_calibration_data.json", "oq_calibration_data.json"),
+    # agents/profiles/*.yaml — agent-integration profiles globbed by
+    # agents/__init__.py:32 PROFILES_DIR. Whole dir dropped without entry.
+    ("fusion_mlx.agents", "profiles/codex.yaml", "profiles/*.yaml"),
 ]
 
 
@@ -61,14 +70,14 @@ def _pyproject_path() -> Path:
     raise FileNotFoundError("pyproject.toml not found from tests dir")
 
 
-def _package_data_entries() -> list[str]:
+def _package_data_entries(package: str) -> list[str]:
     with _pyproject_path().open("rb") as fh:
         data = tomllib.load(fh)
     return list(
         data.get("tool", {})
         .get("setuptools", {})
         .get("package-data", {})
-        .get("vllm_mlx", [])
+        .get(package, [])
     )
 
 
@@ -83,7 +92,7 @@ def test_required_data_file_resolvable_via_importlib_resources(
     """The file must be reachable through ``importlib.resources``.
 
     This mirrors how production code reads the registry (see
-    ``vllm_mlx/audio/registry.py`` and ``vllm_mlx/aliases.py``), so the
+    ``fusion_mlx/audio/registry.py`` and ``fusion_mlx/aliases.py``), so the
     test fails the same way a real install would if the file were
     missing.
     """
@@ -100,14 +109,14 @@ def test_required_data_file_resolvable_via_importlib_resources(
 
 
 @pytest.mark.parametrize(
-    ("_package", "_relpath", "glob"),
+    ("package", "_relpath", "glob"),
     REQUIRED_DATA_FILES,
     ids=lambda v: v if isinstance(v, str) else "",
 )
 def test_required_data_file_declared_in_pyproject_package_data(
-    _package: str, _relpath: str, glob: str
+    package: str, _relpath: str, glob: str
 ) -> None:
-    """The file must appear in ``[tool.setuptools.package-data].vllm_mlx``.
+    """The file must appear in ``[tool.setuptools.package-data].<package>``.
 
     setuptools only bundles files explicitly listed (or matched by a glob)
     in package-data. A file that exists on disk but is missing from this
@@ -117,9 +126,9 @@ def test_required_data_file_declared_in_pyproject_package_data(
     if not _pyproject_path().exists():  # pragma: no cover
         pytest.skip("pyproject.toml not available (installed wheel layout)")
 
-    entries = _package_data_entries()
+    entries = _package_data_entries(package)
     assert glob in entries, (
-        f"Expected {glob!r} in [tool.setuptools.package-data].vllm_mlx, "
+        f"Expected {glob!r} in [tool.setuptools.package-data].{package}, "
         f"got entries={entries!r}. Without this declaration the file will "
         f"be missing from the built wheel/sdist."
     )
