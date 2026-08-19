@@ -258,11 +258,62 @@ class ToolCall(BaseModel):
     function: FunctionCall
 
 
+# R10-H6: chat-lane computer_use shorthand parity with the Responses
+# lane (responses_adapter._convert_tools). A bare {"type": alias}
+# (no ``function`` field) is rewritten to a synthetic ``computer``
+# function tool so the UI-TARS tool parser sees a matching entry.
+# Geometry hints (display_width / display_height / environment) ride
+# inside ``function.parameters._computer_use`` — same plumbing the
+# Responses lane uses. Aliases mirror _RESPONSES_TOOL_TYPE_ALIASES
+# plus the bare ``computer_use`` shorthand. Module-level (NOT class
+# attrs — pydantic treats a leading underscore as ModelPrivateAttr,
+# breaking ``in`` lookups inside validators).
+_COMPUTER_USE_ALIASES: frozenset[str] = frozenset(
+    {"computer_use", "computer_use_preview", "computer_20251022"}
+)
+_COMPUTER_USE_HINT_KEYS: tuple[str, ...] = (
+    "display_width",
+    "display_height",
+    "environment",
+)
+
+
 class ToolDefinition(BaseModel):
     """Definition of a tool that can be called by the model."""
 
     type: str = "function"
     function: dict
+
+    @model_validator(mode="before")
+    @classmethod
+    def _normalize_computer_use_shorthand(cls, data):
+        # mode="before" so we see the raw dict before Pydantic enforces
+        # ``function: dict`` (which would 400 on the shorthand). Only
+        # rewrite the alias shape; the classic {"type":"function",
+        # "function":{...}} shape passes through untouched.
+        if not isinstance(data, dict):
+            return data
+        ttype = data.get("type")
+        if ttype not in _COMPUTER_USE_ALIASES:
+            return data
+        if "function" in data and isinstance(data["function"], dict):
+            # Caller already supplied a function block for the alias;
+            # don't clobber — only stamp the canonical name if missing.
+            fn = dict(data["function"])
+            fn.setdefault("name", "computer")
+            fn.setdefault("parameters", {})
+            data["type"] = "function"
+            data["function"] = fn
+            return data
+        hints = {k: data[k] for k in _COMPUTER_USE_HINT_KEYS if k in data}
+        params = {"_computer_use": hints} if hints else {}
+        data["type"] = "function"
+        data["function"] = {"name": "computer", "parameters": params}
+        # Drop the hint keys from the top level so extra=ignore doesn't
+        # surface them (clean round-trip; the hints live under params).
+        for k in _COMPUTER_USE_HINT_KEYS:
+            data.pop(k, None)
+        return data
 
     @field_validator("function")
     @classmethod
@@ -320,6 +371,39 @@ class ResponseFormat(BaseModel):
 
 
 _VALID_RESPONSE_FORMAT_TYPES = ("text", "json_object", "json_schema")
+
+# OpenAI / Anthropic compatible reasoning_effort closed set. Shared by
+# ChatCompletionRequest (top-level field) and ResponsesRequest (top-level
+# + nested reasoning.effort) so the two surfaces can't drift. "none" is
+# the explicit-disable value (distinct from field-absent None).
+_REASONING_EFFORT_ALLOWED: frozenset[str] = frozenset(
+    {"minimal", "low", "medium", "high", "none"}
+)
+
+
+def _validate_reasoning_effort_value(v, *, field_path: str = "reasoning_effort"):
+    # Shared ``mode="before"``-style guard for reasoning_effort. Rejects
+    # non-spec strings (e.g. "banana") before they reach the model. bool
+    # is an int subclass but is not a str, so Pydantic's type coercion
+    # rejects True/42/[]/{}/None-with-value at the field layer; this
+    # guard closes the str-valued hole. Error surfaces the field path so
+    # the nested reasoning.effort case reports "reasoning.effort". The
+    # nested ``reasoning`` field is a free-form dict, so effort can
+    # arrive as any type (list/int/bool) — reject non-str without
+    # crashing on ``v not in frozenset`` (unhashable []/{} TypeError).
+    if v is None:
+        return v
+    if not isinstance(v, str):
+        raise ValueError(
+            f"{field_path} must be one of "
+            f"{sorted(_REASONING_EFFORT_ALLOWED)}, got {v!r}"
+        )
+    if v not in _REASONING_EFFORT_ALLOWED:
+        raise ValueError(
+            f"{field_path} must be one of "
+            f"{sorted(_REASONING_EFFORT_ALLOWED)}, got {v!r}"
+        )
+    return v
 
 
 def _validate_response_format_raw(v):
@@ -583,14 +667,7 @@ class ChatCompletionRequest(BaseModel):
     @field_validator("reasoning_effort")
     @classmethod
     def _validate_reasoning_effort(cls, v: str | None) -> str | None:
-        if v is None:
-            return v
-        allowed = {"minimal", "low", "medium", "high", "none"}
-        if v not in allowed:
-            raise ValueError(
-                f"reasoning_effort must be one of {sorted(allowed)}, got {v!r}"
-            )
-        return v
+        return _validate_reasoning_effort_value(v)
 
     @field_validator("response_format", mode="before")
     @classmethod
@@ -832,6 +909,17 @@ class CompletionRequest(BaseModel):
     suffix: str | None = None
     # Request timeout in seconds (None = use server default)
     timeout: float | None = None
+
+    @field_validator("response_format", mode="before")
+    @classmethod
+    def _validate_response_format_field(cls, v):
+        # R10-H4: /v1/completions response_format parity with the chat
+        # lane. Pre-fix the field was declared but UNVALIDATED -> a dict
+        # like {"type":"xml"} or {} parsed silently into ResponseFormat
+        # (type is a bare str with no enum). Closed-set check rejects
+        # unknown type + missing type + malformed json_schema before the
+        # route applies the JSON peel. Pinned by test_r10_h4.
+        return _validate_response_format_raw(v)
 
     @field_validator("temperature")
     @classmethod

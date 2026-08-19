@@ -1298,21 +1298,23 @@ test_probe_fastpath.py
 # cli_commands._format_pull_duration. cli.pull_command kept (re-export from cli.py:35).
 # No prod change.
 # test_pull_summary.py
-test_r10_scrub_validation_bundle.py
-# KEEP_QUARANTINED: 4/7 pass. 3 chat-path tests FAIL = feature gap: /v1/chat/completions
-# has NO strict json_schema postgen validation + repair-retry (parity gap vs
-# /v1/responses which implements it via _apply_responses_postgen_validation
-# responses.py:258 + repair_messages_fit_context helpers.py:1672). Chat route
-# returns 200 with violating body {"age":5} when guidance compile fails (stub
-# tokenizer missing eos_token_id -> xgrammar fallback -> unconstrained). Stale
-# comment responses.py:270 claims "Mirrors chat.py:2894-3075" but chat.py is now
-# 263-line shim re-exporting api.openai_routes.router; openai_routes.py has NO
-# validate_and_envelope/build_repair_messages/incr_strict_repair_* calls. grep
-# confirms repair logic ONLY in responses.py. 4 PASSING tests = responses-path
-# (_responses_client) + repair_messages_fit_context helper contract direct
-# (mllm permissive-skip, build_prompt-missing permissive-skip, responses
-# skip-repair, responses repair-runs). Needs full chat-path postgen+repair port
-# = feature work, not surgical. ISSUE #514 FILED. 0 regression (responses tests pass).
+# RESCUED b18 2026-08-19: r10_scrub 57/57 green. 3 gaps fixed (issue #527):
+#  H5 reasoning_effort enum — top-level + nested reasoning.effort now reject
+#    unknown values (shared _validate_reasoning_effort_value helper in
+#    models.py, wired into ChatCompletionRequest + ResponsesRequest). Non-str
+#    guard defends nested dict[str,Any] arm (list/bool unhashable crash).
+#  H4 CompletionRequest.response_format — validator on BOTH classes
+#    (models.py:822 + openai_models.py:541) rejects {"type":"xml"} / {} with
+#    ValidationError. Dual-class GOTCHA: test imports models.py version.
+#  H6 ToolDefinition computer_use shorthand — {"type":"computer_use"|
+#    "computer_use_preview"|"computer_20251022"} rewritten via
+#    model_validator(mode="before") to {"type":"function","function":
+#    {"name":"computer","parameters":{"_computer_use":{hints}}}}. Geometry
+#    hints (display_width/display_height/environment) flow under params.
+#    Aliases module-level (NOT class attrs — pydantic treats _-prefix as
+#    ModelPrivateAttr, broke ``in`` lookup). Regression: response_format/
+#    d_anthro/tool_choice/ui_tars 104p/7xfail.
+# test_r10_scrub_validation_bundle.py
 test_r12_h06_repair_context_guard.py
 # KEEP_QUARANTINED: 2/4 pass after PROD FIX responses.py:692 chat(stream=True)
 # -> stream_chat (chat has no stream param, returned non-iterable GenerationOutput

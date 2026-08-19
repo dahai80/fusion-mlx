@@ -6,7 +6,12 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
-from .models import StreamOptions, _validate_response_format_raw, _validate_token_budget
+from .models import (
+    StreamOptions,
+    _validate_reasoning_effort_value,
+    _validate_response_format_raw,
+    _validate_token_budget,
+)
 from .shared_models import (
     IDPrefix,
     generate_id,
@@ -153,6 +158,15 @@ class ResponsesRequest(BaseModel):
     def _validate_response_format_field(cls, v):
         return _validate_response_format_raw(v)
 
+    @field_validator("reasoning_effort")
+    @classmethod
+    def _validate_reasoning_effort_field(cls, v):
+        # R10-H5: top-level shorthand surface. /v1/responses accepts the
+        # same reasoning_effort set as /v1/chat/completions — "banana"
+        # must 422, not silently flow to the model. Mirrors the chat
+        # lane via the shared _validate_reasoning_effort_value helper.
+        return _validate_reasoning_effort_value(v)
+
     @field_validator("max_output_tokens", mode="before")
     @classmethod
     def _validate_token_budget_field(cls, v, info):
@@ -188,6 +202,23 @@ class ResponsesRequest(BaseModel):
             raise ValueError("input must not be empty")
         if isinstance(self.input, list) and len(self.input) == 0:
             raise ValueError("input must not be empty")
+        return self
+
+    @model_validator(mode="after")
+    def _validate_reasoning_nested_effort(self):
+        # R10-H5: canonical OpenAI Responses spec nests effort under
+        # ``reasoning.effort`` (not the top-level shorthand). The
+        # ``reasoning`` field is a free-form dict (other keys like
+        # ``summary`` / ``encrypted_content`` must pass through), so we
+        # only gate the ``effort`` key when present. Error surfaces the
+        # dotted path ``reasoning.effort`` so the 400 envelope names the
+        # right param. Mirrors the chat lane allowed-set.
+        if not isinstance(self.reasoning, dict):
+            return self
+        if "effort" in self.reasoning:
+            self.reasoning["effort"] = _validate_reasoning_effort_value(
+                self.reasoning["effort"], field_path="reasoning.effort"
+            )
         return self
 
 
