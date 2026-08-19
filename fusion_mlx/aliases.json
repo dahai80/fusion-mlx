@@ -551,7 +551,7 @@
     "tool_call_parser": "harmony",
     "reasoning_parser": "harmony",
     "is_hybrid": false,
-    "is_moe": false,
+    "is_moe": true,
     "is_hybrid_explicit": false,
     "supports_spec_decode": true
   },
