@@ -20,6 +20,25 @@ except Exception:  # pragma: no cover - xfuser strategy optional
     _fa_active = None
 
 
+def _q8_fp32_seq() -> int:
+    # MLX QuantizedLinear with bfloat16 INPUT accumulates the per-group
+    # dot product in bfloat16. At long patch-seq (Wan2.2-TI2V-5B
+    # 1280x704x121f -> seq=27280) the self-attention o-projection (q8,
+    # group_size=64, 3072 in-features) overflows the bf16 accumulator to
+    # bf16 max (1.70141e+38) even though the SDPA output feeding it is
+    # finite (am=5.65). The saturated value then propagates through the
+    # residual and norms -> fp32 overflow -> all-NaN latents (#500/#503).
+    # PyTorch fp16/bf16 matmuls accumulate in float32, so the official
+    # Wan2 never hits this; it is MLX-q8-specific.
+    # Cast the o-proj input to float32 above this seq threshold so the
+    # q8 matmul accumulates in float32 (verified finite: am=19.5 vs
+    # 1.7e38 saturated). 0 = always bf16 input (legacy, NaN at long seq).
+    try:
+        return max(0, int(os.getenv("FUSION_WAN2_Q8_FP32_SEQ", "16384")))
+    except (TypeError, ValueError):
+        return 16384
+
+
 def _attn_chunk_size() -> int:
     # Metal hangs/freeze on very large attention matrices (seq>=~50k,
     # 40 heads, dim 5120). Chunking the Q sequence caps the per-op
@@ -145,9 +164,17 @@ class WanSelfAttention(nn.Module):
         b, s, _ = x.shape
         n, d = self.num_heads, self.head_dim
 
-        # Cast to compute dtype for efficient matmul (bfloat16 matching official autocast)
+        # Cast to compute dtype for efficient matmul (bfloat16 matching official autocast).
+        # q8 q/k/v share the bf16-accumulator overflow of the o-proj (#500/#503):
+        # at later blocks the residual grows (b1 entry am~73) and the q8
+        # q-proj (3072 in-features) overflows its bf16 accumulator on bf16
+        # input. Cast to float32 above the seq threshold so the q8 matmuls
+        # accumulate in float32. Gated by seq so short-seq runs keep bf16.
         w_dtype = _linear_dtype(self.q)
-        x_w = x.astype(w_dtype)
+        if s > _q8_fp32_seq():
+            x_w = x.astype(mx.float32)
+        else:
+            x_w = x.astype(w_dtype)
 
         q = self.q(x_w)
         k = self.k(x_w)
@@ -209,6 +236,12 @@ class WanSelfAttention(nn.Module):
             out = _sdpa_chunked(q, k, v, self.scale, mask)
 
         out = out.transpose(0, 2, 1, 3).reshape(b, s, -1)
+        # q8 o-proj: cast input to float32 at long seq to avoid bf16
+        # accumulator overflow in the QuantizedLinear matmul (#500/#503).
+        # SDPA emits bf16; feeding bf16 to the q8 o-proj saturates to
+        # 1.7e38 at seq>=~16k. fp32 input accumulates in fp32 -> finite.
+        if s > _q8_fp32_seq():
+            out = out.astype(mx.float32)
         return self.o(out)
 
 
@@ -257,9 +290,15 @@ class WanCrossAttention(nn.Module):
         b = x.shape[0]
         n, d = self.num_heads, self.head_dim
 
-        # Cast to compute dtype for efficient matmul (bfloat16 matching official autocast)
+        # Cast to compute dtype for efficient matmul (bfloat16 matching official autocast).
+        # q8 q/k/v share the bf16-accumulator overflow of the o-proj (#500/#503):
+        # the q-proj input is the residual stream, which grows at later blocks
+        # (b1 entry am~73) and overflows the q8 bf16 accumulator. Cast to
+        # float32 above the seq threshold (denoiser token count x.shape[1]).
         w_dtype = _linear_dtype(self.q)
-        q = self.q(x.astype(w_dtype))
+        s = x.shape[1]
+        q_in = x.astype(mx.float32) if s > _q8_fp32_seq() else x.astype(w_dtype)
+        q = self.q(q_in)
         if self.norm_q is not None:
             q = self.norm_q(q)
         q = q.reshape(b, -1, n, d).transpose(0, 2, 1, 3)
@@ -267,12 +306,16 @@ class WanCrossAttention(nn.Module):
         if kv_cache is not None:
             k, v = kv_cache
         else:
-            ctx = context.astype(w_dtype)
-            k = self.k(ctx)
+            ctx_in = (
+                context.astype(mx.float32)
+                if s > _q8_fp32_seq()
+                else context.astype(w_dtype)
+            )
+            k = self.k(ctx_in)
             if self.norm_k is not None:
                 k = self.norm_k(k)
             k = k.reshape(b, -1, n, d).transpose(0, 2, 1, 3)
-            v = self.v(ctx).reshape(b, -1, n, d).transpose(0, 2, 1, 3)
+            v = self.v(ctx_in).reshape(b, -1, n, d).transpose(0, 2, 1, 3)
 
         # Optional context masking
         mask = None
@@ -300,4 +343,11 @@ class WanCrossAttention(nn.Module):
             out = _sdpa_chunked(q, k, v, self.scale, mask)
 
         out = out.transpose(0, 2, 1, 3).reshape(b, -1, n * d)
+        # q8 o-proj: same bf16-accumulator overflow as self-attn (#500/#503).
+        # The o-proj output feeds back into the long-seq residual, so gate on
+        # the denoiser token count (x.shape[1], e.g. 27280 for 1280x704x121f),
+        # not the short text-context length. Verified: bf16 input (am=1.27
+        # finite) -> cross.o OUT nan=106170; fp32 input -> finite.
+        if x.shape[1] > _q8_fp32_seq():
+            out = out.astype(mx.float32)
         return self.o(out)
