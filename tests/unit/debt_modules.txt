@@ -748,6 +748,14 @@ test_embeddings_route.py
 # _raise_preflight_eviction_if_available patch (never shipped, not called by
 # _preflight_memory_check).
 test_engine_preflight.py
+# KEEP_QUARANTINED test_engine_router_non_stream.py (round10q-b6 2026-08-19):
+# collection ImportError + missing core method. Import drift: singular
+# fusion_mlx.engine.batched→plural fusion_mlx.engines.batched (BatchedEngine
+# exists there). BUT all 15 tests call engine._route_tokens_for_channels —
+# method 0 prod refs (NEVER ported from rapid-mlx reasoning-channel routing).
+# Also _loaded/_is_mllm instance attrs absent. Import repoint unblocks import
+# only; all tests then AttributeError on missing method. Feature port
+# (reasoning-channel token routing), not harness drift (Rule 2/3). File issue.
 test_engine_router_non_stream.py
 # KEEP_QUARANTINED 2026-08-19 round10q-b4: 5 fail / 8 errors — REAL arch
 # divergence. 8 setup errors: fusion_mlx.engine_core has NO Scheduler
@@ -1212,6 +1220,41 @@ test_telemetry_cli.py
 test_tempfile_safe.py
 test_thinking.py
 test_thinking_budget.py
+# KEEP_QUARANTINED tool cluster (round10q-b6 2026-08-19): 9 suites, all
+# feature/contract gaps NOT pure harness drift. Verified per-suite fail
+# patterns (run 2026-08-19):
+# test_tool_calling 57f/173p: Gemma4 format ValueError (4 — _parse_gemma4
+#   tool_call strictness), assert None is not None (3 — bare Calling tool:
+#   parse dropped), KeyError description (2). Mixed feature/contract drift.
+# test_tool_choice_enforcement COLLECTION ERR: imports
+#   _contains_structural_tool_wire_leak from routes_internal.chat — guard fn
+#   NEVER ported (0 prod refs). #445 normalization gap (per memory).
+# test_tool_logits_schema_guards 26f/2p: schema-guard fn called on
+#   non-dict (NoneType/list/str/int .get) — contract/signature drift, guard
+#   expects dict but receives raw types.
+# test_tool_param_enforcement 5f/9p: _validate_tool_call_params range
+#   (min/max), length (min/max_length), union-type validation NOT enforced
+#   (DID NOT RAISE HTTPException). JSON-schema enforcement incomplete.
+# test_tool_param_enforcement_f141a 15f/10p: same _validate_tool_call_params
+#   — pattern (regex) + format (email/uri/uuid/date) validation NOT enforced.
+#   F-141a JSON-schema format/pattern feature gap.
+# test_tool_parser_coverage 5f/0p: ModuleNotFoundError audit_tool_parser_
+#   coverage — MISSING scripts/audit_tool_parser_coverage.py (like
+#   test_cli_config_fidelity missing audit script). Tooling gap.
+# test_tool_parsers 3f/153p: parse_tool_calls signature changed — now
+#   (text, tokenizer, tools=None); tests call (text)/(text, request) —
+#   tokenizer required, bare Calling tool: format dropped (prod L223 only
+#   [Calling tool: bracketed). API contract change.
+# test_tool_result_content_array 3f/14p: extract_multimodal_content lost
+#   preserve_native_format kwarg (2 — API drift) + multimodal-msg feature
+#   gap (1 — text-only assertion).
+# test_tools_auto_disable_thinking 13f/17p: _ChatEngine._tokenizer attr
+#   missing (engine attr drift) + assert None is False/True (9 —
+#   auto-disable-thinking flag not propagated).
+# CANDIDATE ISSUE: port tool-call param JSON-schema enforcement (range/
+# length/union/pattern/format — F-141a/F-011 cont), _contains_structural_
+# tool_wire_leak guard, audit_tool_parser_coverage.py script. Rule 2/3:
+# don't invent validators/guards/scripts to satisfy tests.
 test_tool_calling.py
 test_tool_choice_enforcement.py
 test_tool_logits_schema_guards.py
