@@ -53,6 +53,31 @@ from fusion_mlx.middleware.auth import verify_api_key
 logger = logging.getLogger(__name__)
 
 
+async def _resolve_pool_model(model_name: str) -> dict | None:
+    srv = None
+    try:
+        from fusion_mlx.server import get_server, resolve_model_id
+
+        srv = get_server()
+    except Exception as e:
+        logger.debug("pool fallback unavailable: %s", e)
+        return None
+    if srv is None or getattr(srv, "pool", None) is None:
+        return None
+    resolved = resolve_model_id(model_name)
+    entry = srv.pool.get_entry(resolved)
+    if entry is None:
+        return None
+    if getattr(entry, "engine", None) is not None:
+        return {"status": "ok", "model_id": model_name, "message": f"Already loaded: {model_name}"}
+    try:
+        await srv.pool.get_engine(resolved)
+    except Exception as e:
+        logger.error("pool fallback load failed for %s: %s", model_name, e)
+        return None
+    return {"status": "ok", "model_id": model_name, "message": f"Loaded {model_name}"}
+
+
 # ── Pydantic models ──
 
 
@@ -415,6 +440,9 @@ def get_gui_compat_router() -> APIRouter:
     ):
         mr = db.query(Model).filter(Model.name == model_name).first()
         if not mr:
+            resolved = await _resolve_pool_model(model_name)
+            if resolved is not None:
+                return resolved
             raise HTTPException(
                 status_code=404, detail=f"Model '{model_name}' not found"
             )
