@@ -1,7 +1,13 @@
 import mlx.core as mx
 import mlx.nn as nn
 
-from .attention import WanCrossAttention, WanLayerNorm, WanSelfAttention, _linear_dtype
+from .attention import (
+    WanCrossAttention,
+    WanLayerNorm,
+    WanSelfAttention,
+    _linear_dtype,
+    _q8_fp32_seq,
+)
 
 
 class WanAttentionBlock(nn.Module):
@@ -95,6 +101,18 @@ class WanFFN(nn.Module):
         self.fc2 = nn.Linear(ffn_dim, dim)
 
     def __call__(self, x: mx.array) -> mx.array:
+        # q8 fc1/fc2: same bf16-accumulator overflow as the attention o-proj
+        # (#500/#503). fc2 (14336 in-features) overflows its bf16 accumulator
+        # even with finite bf16 input (gelu out am=6.65 -> fc2 nan=106170);
+        # fp32 input -> finite am=25.64. Cast both fc1 and fc2 inputs to
+        # float32 above the seq threshold so the q8 matmuls accumulate in
+        # float32. Gated by seq so short-seq runs keep the fast bf16 path.
+        s = x.shape[1]
+        if s > _q8_fp32_seq():
+            x_w = x.astype(mx.float32)
+            h = self.fc1(x_w)
+            h = self.act(h).astype(mx.float32)
+            return self.fc2(h)
         # Cast to compute dtype for efficient matmul (bfloat16 matching official autocast)
         x_w = x.astype(_linear_dtype(self.fc1))
         return self.fc2(self.act(self.fc1(x_w)))
