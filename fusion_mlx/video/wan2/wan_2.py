@@ -303,6 +303,25 @@ class WanModel(nn.Module):
             # time_projection: .1 -> direct (skip act layer at index 0)
             elif nk.startswith("time_projection.1."):
                 nk = f"time_projection.{nk[len('time_projection.1.') :]}"
+            # diffusers naming (Wan2.1-T2V-1.3B checkpoint). issue #518:
+            # condition_embedder.* / proj_out / scale_shift_table use diffusers
+            # names; without remap these 14 weights are dropped by strict=False
+            # and the text/time conditioning + output head stay random-init,
+            # producing 花屏 (garbled) video. Shapes are identical, rename only.
+            elif nk.startswith("condition_embedder.text_embedder.linear_1."):
+                nk = f"text_embedding_0.{nk[len('condition_embedder.text_embedder.linear_1.') :]}"
+            elif nk.startswith("condition_embedder.text_embedder.linear_2."):
+                nk = f"text_embedding_1.{nk[len('condition_embedder.text_embedder.linear_2.') :]}"
+            elif nk.startswith("condition_embedder.time_embedder.linear_1."):
+                nk = f"time_embedding_0.{nk[len('condition_embedder.time_embedder.linear_1.') :]}"
+            elif nk.startswith("condition_embedder.time_embedder.linear_2."):
+                nk = f"time_embedding_1.{nk[len('condition_embedder.time_embedder.linear_2.') :]}"
+            elif nk.startswith("condition_embedder.time_proj."):
+                nk = f"time_projection.{nk[len('condition_embedder.time_proj.') :]}"
+            elif nk.startswith("proj_out."):
+                nk = f"head.head.{nk[len('proj_out.') :]}"
+            elif nk == "scale_shift_table":
+                nk = "head.modulation"
             # Skip activation layers that have no parameters
             if nk != k:
                 logger.debug("sanitize remap: %s -> %s", k, nk)
