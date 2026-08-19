@@ -9,6 +9,7 @@ Provides FastAPI routes for:
 """
 
 import asyncio
+import copy
 import logging
 import time
 import uuid
@@ -580,6 +581,49 @@ async def _run_chat(
             ),
             compiled_grammar=compiled_grammar,
         )
+        # R12: route-level fallback tool-call extraction. Real engines
+        # self-parse via _fallback_parse_tool_calls (engines/batched.py),
+        # but engines that don't (or test harnesses) leave the hermes
+        # envelope in gen.text and gen.tool_calls empty — the envelope
+        # then leaks into message.content. Parse here as a safety net,
+        # gated on tools present + no engine-emitted tool_calls so real
+        # engines skip (no double-parse).
+        if request.tools and not getattr(gen, "tool_calls", None):
+            try:
+                from .tool_calling import convert_tools_for_template, parse_tool_calls
+
+                _dict_tools = convert_tools_for_template(request.tools) or request.tools
+                _tok = getattr(engine, "_tokenizer", None) or getattr(
+                    engine, "tokenizer", None
+                )
+                _cleaned, _tc_list = parse_tool_calls(gen.text, _tok, _dict_tools)
+                if _tc_list:
+                    _tc_dicts = []
+                    for _tc in _tc_list:
+                        _tc_dicts.append(
+                            {
+                                "id": _tc.id,
+                                "type": _tc.type,
+                                "function": {
+                                    "name": _tc.function.name,
+                                    "arguments": _tc.function.arguments,
+                                },
+                            }
+                        )
+                    gen = copy.deepcopy(gen)
+                    gen.tool_calls = _tc_dicts
+                    if (
+                        _cleaned.strip()
+                        and _cleaned.strip() != (gen.text or "").strip()
+                    ):
+                        gen.text = _cleaned
+                    logger.info(
+                        "r12 fallback tool-call parse: model=%s calls=%d",
+                        model_name,
+                        len(_tc_dicts),
+                    )
+            except Exception as e:
+                logger.debug("r12 fallback tool-call parse failed: %s", e)
         # Honor parallel_tool_calls=false by capping to 1 call
         tool_calls = gen.tool_calls
         if (
@@ -1610,7 +1654,10 @@ async def chat_completions(
                 top_p=request.top_p,
                 max_tokens=request.max_tokens,
                 stop=request.stop,
-                tools=request.tools,
+                tools=[
+                    t.model_dump() if hasattr(t, "model_dump") else t
+                    for t in (request.tools or [])
+                ],
                 response_format=getattr(request, "response_format", None),
                 seed=request.seed,
                 adapters=getattr(request, "adapters", None),

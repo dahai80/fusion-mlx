@@ -1325,7 +1325,18 @@ test_r12_h06_repair_context_guard.py
 # parse branch + empty-reasoning emit logic = feature work. 0 regression
 # (228 responses tests pass). ISSUE #513 FILED.
 test_r12_m3_responses_stream_leading_items_order.py
-test_r12_reasoning_sanitizer_required.py
+# RESCUED b19 r12_reasoning_sanitizer: 80/80 green. Fixes — (1) AssistantMessage
+# + ChatCompletionChunkDelta field validators on openai_models (route-serialized
+# classes, NOT models.py parallels) sanitize content/reasoning at type boundary;
+# (2) streaming fast-path (adapters/openai.py format_stream_chunk encoder branch)
+# bypassed pydantic — sanitize content+reasoning before encode_chat_chunk; (3)
+# _FINAL_SANITIZER (utils.py) gained hermes tool-call envelope pair so
+# tool_choice=none strips residue envelope from content; (4) route-level
+# non-stream fallback tool-call parse (openai_routes _run_chat) gated on
+# tools+no-gen.tool_calls — populates tool_calls + strips envelope (engines that
+# don't self-parse); (5) cache fingerprint ToolDefinition serialization
+# (tools=request.tools -> list[dict]) pre-existing TypeError fix.
+# test_r12_reasoning_sanitizer_required.py
 # test_r15_routes_stability_batch.py RESCUED 2026-08-19 (b17, 16 pass + 2 xfail):
 # Bug 1 /healthz drain 503 — PROD FIX routes_internal/health.py:58 healthz() now
 # reads get_config().draining (was _server_state["draining"] which had ZERO

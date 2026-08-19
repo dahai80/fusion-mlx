@@ -21,7 +21,12 @@ from ..openai_models import (
 )
 from ..thinking import extract_thinking
 from ..tool_calling import convert_tools_for_template
-from ..utils import clean_special_tokens, extract_text_content
+from ..utils import (
+    clean_special_tokens,
+    extract_text_content,
+    sanitize_output,
+    sanitize_reasoning_for_stream,
+)
 from .base import (
     BaseAdapter,
     InternalMessage,
@@ -164,16 +169,22 @@ class OpenAIAdapter(BaseAdapter):
     ) -> str:
         if encoder is not None and not chunk.is_first and not chunk.is_last:
             if chunk.text and not chunk.tool_call_delta and not chunk.reasoning_content:
-                return encoder.encode_chat_chunk(
-                    content=chunk.text,
-                    finish_reason=None,
-                )
+                _content = sanitize_output(chunk.text)
+                if _content:
+                    return encoder.encode_chat_chunk(
+                        content=_content,
+                        finish_reason=None,
+                    )
+                return ""
             if chunk.reasoning_content and not chunk.text and not chunk.tool_call_delta:
-                return encoder.encode_chat_chunk(
-                    content=None,
-                    finish_reason=None,
-                    reasoning_content=chunk.reasoning_content,
-                )
+                _rc = sanitize_reasoning_for_stream(chunk.reasoning_content)
+                if _rc:
+                    return encoder.encode_chat_chunk(
+                        content=None,
+                        finish_reason=None,
+                        reasoning_content=_rc,
+                    )
+                return ""
 
         if encoder is not None:
             request_id = encoder.response_id
