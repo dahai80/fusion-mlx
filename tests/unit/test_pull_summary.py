@@ -28,7 +28,7 @@ from unittest.mock import patch
 
 import pytest
 
-from fusion_mlx import cli
+from fusion_mlx import cli, cli_commands
 
 
 def _make_fake_snapshot(root: Path, total_bytes: int) -> Path:
@@ -69,7 +69,7 @@ def test_summary_printed_on_hf_success(
     args = argparse.Namespace(model="mlx-community/Qwen3-0.6B-4bit")
 
     with (
-        patch.object(cli, "_try_mirror_prefetch", return_value=False),
+        patch.object(cli_commands, "_try_mirror_prefetch", return_value=False),
         patch(
             "huggingface_hub.snapshot_download",
             return_value=str(snapshot_dir),
@@ -115,7 +115,7 @@ def test_summary_printed_on_mirror_success(
 
     args = argparse.Namespace(model=repo_id)
 
-    with patch.object(cli, "_try_mirror_prefetch", return_value=True):
+    with patch.object(cli_commands, "_try_mirror_prefetch", return_value=True):
         cli.pull_command(args)
 
     out = capsys.readouterr().out
@@ -140,7 +140,7 @@ def test_summary_not_printed_on_404(
     args = argparse.Namespace(model="mlx-community/does-not-exist")
 
     with (
-        patch.object(cli, "_try_mirror_prefetch", return_value=False),
+        patch.object(cli_commands, "_try_mirror_prefetch", return_value=False),
         patch(
             "huggingface_hub.snapshot_download",
             side_effect=Exception("404 Client Error"),
@@ -156,10 +156,10 @@ def test_summary_not_printed_on_404(
 
 def test_format_pull_duration_units() -> None:
     """Sub-minute keeps decimals; ``>=60s`` switches to ``m`` + ``s``."""
-    assert cli._format_pull_duration(0.0) == "0.0s"
-    assert cli._format_pull_duration(4.2) == "4.2s"
-    assert cli._format_pull_duration(59.9) == "59.9s"
-    assert cli._format_pull_duration(60.0) == "1m 0s"
-    assert cli._format_pull_duration(125.0) == "2m 5s"
+    assert cli_commands._format_pull_duration(0.0) == "0.0s"
+    assert cli_commands._format_pull_duration(4.2) == "4.2s"
+    assert cli_commands._format_pull_duration(59.9) == "59.9s"
+    assert cli_commands._format_pull_duration(60.0) == "1m 0s"
+    assert cli_commands._format_pull_duration(125.0) == "2m 5s"
     # Rounding rule: 119.9s reads as 2m 0s, not 1m 59s.
-    assert cli._format_pull_duration(119.9) == "2m 0s"
+    assert cli_commands._format_pull_duration(119.9) == "2m 0s"

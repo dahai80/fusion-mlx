@@ -1189,13 +1189,35 @@ test_pflash_scheduler.py
 # from actual locations + drop MLXPlatform tests (gutting half the suite). Out
 # of debt-rescue scope. Track as missing-module gap.
 test_platform.py
+# KEEP_QUARANTINED: prefill-OOM/eviction/requeue subsystem removed from
+# Scheduler. Test (22 tests, 562L) pins 10 deleted symbols: const attrs
+# _PREFILL_ABORT_MARGIN, _PREFILL_HEADROOM_SAFETY, _PREFILL_TRANSIENT_SAFETY
+# + methods _guard_prefill_chunk, _prefill_abort_cap, _prefill_abort_description,
+# _prefill_step_size_for_progress, _raise_prefill_eviction_if_available,
+# _requeue_or_fail_prefill + module exc _PrefillEvictionNeeded. Prod
+# fusion_mlx/scheduler/core.py Scheduler NOW has: abort_request/_do_abort_request
+# (abort survives, eviction path does NOT), _adaptive_chunk_size/_PREFILL_STEP_TIERS
+# (adaptive sizing survives), _preflight_abort_description (renamed from
+# _prefill_abort_description). Collection ERROR on import (AttributeError
+# Scheduler._PREFILL_ABORT_MARGIN). NOT harness drift — entire prefill
+# memory-guard + eviction + requeue-with-budget design refactored away.
+# Rescuing = re-implement removed subsystem OR rewrite 22 tests against new
+# abort-only surface = new feature work. Track as architecture gap. ISSUE
+# #511 FILED.
 test_prefill_oom_graceful.py
 test_prefix_boundary_path_parity.py
 test_prefix_cache_persistence.py
 test_prefix_cache_rotating_tip_strip.py
 test_prefix_divergence_probe.py
 test_probe_fastpath.py
-test_pull_summary.py
+# RESCUED b11 2026-08-19: 4/4 pass. CLI-extraction drift: _try_mirror_prefetch
+# + _format_pull_duration live in fusion_mlx/cli_commands.py (pull_command reads
+# _try_mirror_prefetch as its own module global). Test imported cli + patch.object(cli,
+# "_try_mirror_prefetch") — DEAD patch (pull_command reads cli_commands global, not cli).
+# Repoint: import cli_commands, patch.object(cli_commands, "_try_mirror_prefetch"),
+# cli_commands._format_pull_duration. cli.pull_command kept (re-export from cli.py:35).
+# No prod change.
+# test_pull_summary.py
 test_r10_scrub_validation_bundle.py
 test_r12_h06_repair_context_guard.py
 test_r12_m3_responses_stream_leading_items_order.py
@@ -1204,6 +1226,18 @@ test_r15_routes_stability_batch.py
 # KEEP_QUARANTINED: round10p — Ready-banner feature removed from main server. lifespan now nested closure in Server._create_app (server.py:671) calling _lifespan() generator (L1039) — NO "Ready: http" print, NO _cfg.ready=True flip, NO module-level server._engine/server.lifespan attrs. Banner only in speculative/dflash/server.py:730. Test pins deleted behavior (server.lifespan + _engine + banner). Architectural gap, not harness drift. config.ready field exists but no main-server consumer.
 test_ready_banner_timing.py
 test_reasoning_content_null_rescue.py
+# KEEP_QUARANTINED: release-gauntlet orchestrator script DELETED.
+# test_release_check_random.py (7 tests) loads tests/scripts/release_check_m3_random.py
+# via importlib (g12 fixture, SCRIPT_PATH L15) — file gone. Pins 4 helpers from the
+# deleted script: _eligible_aliases(path)->dict, _hf_cache_dir(repo_id)->Path,
+# _free_disk_gb()->float, _hf_cache_root()->Path. Package eligibility module
+# (fusion_mlx/speculative/dspark/eligibility.py) has DIFFERENT surface:
+# eligible_aliases() (no underscore, returns EligibilityReport not dict), check(),
+# AliasProfile, _looks_like_4bit. hf_cache path-math + free_disk walker NOT in
+# package. Collection ERROR (FileNotFoundError). NOT harness drift — release-
+# gauntlet infra removed, helpers not extracted. Rescuing = re-extract helpers
+# into package OR restore script OR rewrite 7 tests against eligibility.check
+# surface = new feature work. Track as infra gap. ISSUE #512 FILED.
 test_release_check_random.py
 # RESCUED b10 2026-08-19: 11/11 pass. Two prod fixes in fusion_mlx/middleware/body_size.py —
 # (1) _resolve_limit read fresh ServerConfig() (dead, default 8MiB) instead of get_config()
