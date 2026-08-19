@@ -1294,7 +1294,7 @@ test_r12_reasoning_sanitizer_required.py
 # test_r15_routes_stability_batch.py
 # KEEP_QUARANTINED: round10p — Ready-banner feature removed from main server. lifespan now nested closure in Server._create_app (server.py:671) calling _lifespan() generator (L1039) — NO "Ready: http" print, NO _cfg.ready=True flip, NO module-level server._engine/server.lifespan attrs. Banner only in speculative/dflash/server.py:730. Test pins deleted behavior (server.lifespan + _engine + banner). Architectural gap, not harness drift. config.ready field exists but no main-server consumer.
 test_ready_banner_timing.py
-test_reasoning_content_null_rescue.py
+# test_reasoning_content_null_rescue.py  (RESCUED 2026-08-19 b22 — commented out = un-quarantined = collected; 90 pass/14 skip/0 fail, NO code fix needed. Was quarantined as stale-debt; tests already green on current tree. R12 reasoning-content null-rescue surface (openai_models.ChatCompletionChunkDelta/AssistantMessage reasoning_content field + helpers cutoff-notice) already ported/converged in fusion_mlx. Harness-only un-quarantine.)
 # KEEP_QUARANTINED: release-gauntlet orchestrator script DELETED.
 # test_release_check_random.py (7 tests) loads tests/scripts/release_check_m3_random.py
 # via importlib (g12 fixture, SCRIPT_PATH L15) — file gone. Pins 4 helpers from the
