@@ -43,9 +43,8 @@ def _isolate_config():
     assignment path. ``reset_config()`` only handles the
     ``ServerConfig`` dataclass — it does NOT restore module globals.
     """
-    from fusion_mlx.config import reset_config
-
     import fusion_mlx.server as _server_mod
+    from fusion_mlx.config import reset_config
 
     saved_globals = {
         "_body_receive_timeout_seconds": getattr(
@@ -103,7 +102,6 @@ def test_resolve_body_receive_timeout_clamps_and_falls_back():
       :func:`_resolve_limit` "sane default beats unlimited" choice.
     """
     from fusion_mlx.config import get_config
-
     from fusion_mlx.middleware.body_size import _resolve_body_receive_timeout
 
     # Negative numeric: clamp to 0 (gate disabled).
@@ -159,7 +157,6 @@ def test_slow_body_receive_emits_408():
     import asyncio
 
     from fusion_mlx.config import get_config
-
     from fusion_mlx.middleware.body_size import RequestBodyLimitMiddleware
 
     get_config().body_receive_timeout_seconds = 0.1
@@ -227,7 +224,6 @@ def test_timeout_disabled_when_zero():
     import asyncio
 
     from fusion_mlx.config import get_config
-
     from fusion_mlx.middleware.body_size import RequestBodyLimitMiddleware
 
     get_config().body_receive_timeout_seconds = 0.0
@@ -283,7 +279,6 @@ def test_timeout_does_not_truncate_long_running_response():
     import asyncio
 
     from fusion_mlx.config import get_config
-
     from fusion_mlx.middleware.body_size import RequestBodyLimitMiddleware
 
     get_config().body_receive_timeout_seconds = 0.05
@@ -355,7 +350,6 @@ def test_size_cap_only_guards_listed_path_prefixes():
     import asyncio
 
     from fusion_mlx.config import get_config
-
     from fusion_mlx.middleware.body_size import RequestBodyLimitMiddleware
 
     # Disable receive-idle gate so this test isolates the cap path.
@@ -424,7 +418,6 @@ def test_h14_receive_idle_gate_fires_on_unguarded_path():
     import asyncio
 
     from fusion_mlx.config import get_config
-
     from fusion_mlx.middleware.body_size import RequestBodyLimitMiddleware
 
     get_config().body_receive_timeout_seconds = 0.1
@@ -490,7 +483,6 @@ def test_h14_receive_idle_gate_fires_on_audio_excluded_path():
     import asyncio
 
     from fusion_mlx.config import get_config
-
     from fusion_mlx.middleware.body_size import RequestBodyLimitMiddleware
 
     get_config().body_receive_timeout_seconds = 0.1
@@ -550,7 +542,6 @@ def test_h14_progressive_upload_not_killed_by_per_chunk_timer():
     import asyncio
 
     from fusion_mlx.config import get_config
-
     from fusion_mlx.middleware.body_size import RequestBodyLimitMiddleware
 
     get_config().body_receive_timeout_seconds = 1.0
@@ -640,7 +631,6 @@ def test_h14_no_double_send_after_408_rewrite():
     import asyncio
 
     from fusion_mlx.config import get_config
-
     from fusion_mlx.middleware.body_size import RequestBodyLimitMiddleware
 
     get_config().body_receive_timeout_seconds = 0.05
@@ -724,10 +714,9 @@ def test_h14_env_var_override_reduces_timeout(monkeypatch):
     """
     import logging
 
-    from fusion_mlx.config import get_config
-
     from fusion_mlx import server as server_mod
     from fusion_mlx._cli_base import _apply_body_receive_timeout_env
+    from fusion_mlx.config import get_config
     from fusion_mlx.middleware.body_size import _resolve_body_receive_timeout
 
     # Drive the REAL resolver function — the exact callable
@@ -782,7 +771,6 @@ def test_timeout_path_does_not_double_send_when_body_size_also_trips():
     import asyncio
 
     from fusion_mlx.config import get_config
-
     from fusion_mlx.middleware.body_size import RequestBodyLimitMiddleware
 
     get_config().body_receive_timeout_seconds = 0.05

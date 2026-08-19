@@ -192,7 +192,6 @@ def test_body_never_reaches_handler_on_413():
     body message. If the middleware does its job, that count is 0.
     """
     from fusion_mlx.config import get_config
-
     from fusion_mlx.middleware.body_size import RequestBodyLimitMiddleware
 
     get_config().max_request_bytes = 1024
@@ -264,7 +263,6 @@ def test_chunked_streaming_body_aborts_mid_stream():
     Without this guard, a Transfer-Encoding: chunked client could
     stream gigabytes before any byte-count gate fired."""
     from fusion_mlx.config import get_config
-
     from fusion_mlx.middleware.body_size import RequestBodyLimitMiddleware
 
     get_config().max_request_bytes = 1024  # 1 KiB cap
@@ -352,7 +350,6 @@ def test_no_double_response_when_handler_already_sent_headers():
     silently let the response complete (logged warning, no double 413).
     """
     from fusion_mlx.config import get_config
-
     from fusion_mlx.middleware.body_size import RequestBodyLimitMiddleware
 
     get_config().max_request_bytes = 1024
@@ -465,7 +462,6 @@ def test_oversized_body_returns_413_before_auth_check():
     auth dependency will fail it and have to think about it.
     """
     from fusion_mlx.config import get_config
-
     from fusion_mlx.middleware.body_size import install_request_body_limit_middleware
 
     get_config().max_request_bytes = 1024  # 1 KiB cap
@@ -515,7 +511,6 @@ def test_cli_flag_overrides_config_default():
     instance) would silently let the cap fall back to the 8 MiB
     default and the CLI flag would be ignored."""
     from fusion_mlx.config import get_config
-
     from fusion_mlx.middleware.body_size import _resolve_limit
 
     original = get_config().max_request_bytes
