@@ -32,6 +32,7 @@ import ast
 import importlib.resources
 import pathlib
 import re
+import types
 
 # ---------------------------------------------------------------------------
 # Constants — kept LOCAL to this file (not imported from test_no_mllm_flag)
@@ -338,6 +339,64 @@ ALLOWED_FUSION_MLX_ENV_VARS: frozenset[str] = frozenset(
         # blow up the FS. Pure wire-level capacity gate — never
         # selects a model, parser, or routing tier.
         "FUSION_MLX_KV_CHECKPOINT_MAX_BYTES",
+        # b21 rescue #533 — harness-allowlist catch-up for non-routing
+        # FUSION_MLX_* knobs added since the last gate refresh. None of
+        # these flip ``_is_mllm`` / ``is_hybrid`` / ``is_moe`` / any
+        # ROUTING_ATTRS — they are capacity / UX / download / observ-
+        # ability knobs. Each entry pins the consuming module + reason.
+        # Boundary-prefix persistence toggle for the fused SSE
+        # boundary-prefix writer (config.py:173). Stores the prefix
+        # across restarts so resuming clients re-sync on the same
+        # delimiter. Pure transport-recovery knob — never selects a
+        # model / parser / tier.
+        "FUSION_MLX_BOUNDARY_PREFIX_PERSIST",
+        # Ceiling (bytes) for the persisted boundary-prefix table
+        # (config.py:177). Bounds the on-disk prefix store so a churning
+        # client can't blow up the FS. Pure capacity knob.
+        "FUSION_MLX_BOUNDARY_PREFIX_MAX_BYTES",
+        # Default per-request ``max_tokens`` ceiling (request.py:11).
+        # Request-validation default only — never chooses model/routing;
+        # the explicit per-request value always wins.
+        "FUSION_MLX_MAX_TOKENS",
+        # Cluster-advertise string for multi-node discovery
+        # (cli_serve.py:1140). Lets a node publish an alternate advertise
+        # address on a mesh. Pure mesh-topology knob — never selects a
+        # model / parser / tier.
+        "FUSION_MLX_CLUSTER_ADVERTISE",
+        # Extra model search-path list (model_registry.py:137). Points
+        # the registry at additional on-disk model dirs. Pure lookup-path
+        # knob — selects WHERE models are found on disk, not which
+        # routing tier engages.
+        "FUSION_MLX_MODELS",
+        # MCP auto-discovery opt-out (mcp/config.py:48). Set to ``0`` to
+        # skip the auto-scan for MCP tool servers. Pure tool-server
+        # toggle — external tool endpoints, never engine routing.
+        "FUSION_MLX_MCP_AUTO_DISCOVER",
+        # Base URL for the comfyui integration client
+        # (integrations/comfyui.py:498). Where to POST generation jobs
+        # to the external ComfyUI stage. Pure integration-endpoint knob
+        # — never selects model / parser / tier.
+        "FUSION_MLX_URL",
+        # STT VAD pre-trim window (audio/stt.py:54). Bounds how much
+        # leading silence the VAD trims before Whisper decode. Pure
+        # audio-pipeline knob — never selects model / parser / tier.
+        "FUSION_MLX_STT_VAD_PRETRIM",
+        # Context-scaling opt-in (api/context_scaling.py:10). Enables
+        # the RoPE/Yarn context-extension path. Pure context-window
+        # knob — never selects model / parser / tier; the loaded model
+        # is unchanged, only its effective context length widens.
+        "FUSION_MLX_CONTEXT_SCALING",
+        # Admission-control KV headroom budget (GB)
+        # (pool/engine_pool.py:232). Safety margin the admission
+        # scheduler reserves against KV-cache projection error. Pure
+        # scheduling-capacity knob — never selects model / parser / tier.
+        "FUSION_MLX_ADMISSION_KV_HEADROOM_GB",
+        # Timeout (seconds) for the MTP dispatch worker
+        # (engine/batched/_mtp_dispatch.py:23). Bounds how long the
+        # multi-token-prediction dispatch waits before falling back to
+        # single-token. Pure latency knob — never selects model / parser
+        # / tier.
+        "FUSION_MLX_MTP_DISPATCH_TIMEOUT_SEC",
     }
 )
 
@@ -352,6 +411,17 @@ NON_ROUTING_PYDANTIC_FIELDS_ALLOWLIST: frozenset[str] = frozenset(
         # OpenAI-compatible chat-template toggle (mirrors --no-thinking
         # CLI flag, also non-routing-allowlisted there).
         "enable_thinking",
+        # Per-video-generation ``mx.compile`` toggle
+        # (api/videos_routes.py:71). True = compile OFF (safe/verified
+        # default); False = compiled faster path (opt-in, unverified).
+        # Diffusion-acceleration knob — does NOT flip ``_is_mllm`` /
+        # ``is_hybrid`` / ``is_moe`` / any ROUTING_ATTRS. It only decides
+        # whether the diffusion pipeline runs under ``mx.compile``. The
+        # ``no_`` prefix name-shape trips the gate but the decision is
+        # per-request compute, not model routing. Registered here so the
+        # gate surfaces any FUTURE per-request routing field (b21 rescue
+        # #533).
+        "no_compile",
     }
 )
 
@@ -406,10 +476,16 @@ def _field_type_is_str(t: object) -> bool:
                 return True
         return False
     # Real ``types.UnionType`` (PEP 604 ``str | None``) or
-    # ``typing.Optional[str]`` / ``typing.Union[str, None]``.
-    args = typing.get_args(t)
-    if args:
-        return any(a is str for a in args)
+    # ``typing.Optional[str]`` / ``typing.Union[str, None]``. ONLY descend
+    # into ``get_args`` for UNION types — a container GenericAlias like
+    # ``tuple[str, ...]`` also yields ``str`` via ``get_args``, which would
+    # falsely classify ``spec_methods: tuple[str, ...]`` as a str field
+    # (b21 rescue #533). Gate on the origin being a Union so container
+    # members stay out of the str check.
+    origin = typing.get_origin(t)
+    is_union = origin is typing.Union or origin is types.UnionType
+    if is_union:
+        return any(a is str for a in typing.get_args(t))
     return False
 
 
@@ -939,6 +1015,18 @@ def _check_env_constant(
     elif value.startswith("FUSION_MLX_"):
         # Only treat FUSION_MLX_ as our namespace; bare MLX_ may be from
         # upstream mlx-lm or transformers.
+        # False-positive guard (b21 rescue #533): the Constant scan also
+        # sees string literals that merely MENTION an env-var name inside
+        # a larger message — e.g. an error-log f-string
+        # ``"FUSION_MLX_BOUNDARY_PREFIX_MAX_BYTES=%r is not an integer..."``
+        # or a help/doc string ``"FUSION_MLX_URL=http://..."``. These are
+        # not env-var reads. If any ALLOWED env-var name is a substring
+        # of the literal, the mention refers to an already-reviewed
+        # non-routing knob, so let it pass. A routing-shaped name can
+        # never reach here: it would have matched
+        # ``ENV_VAR_ROUTING_PATTERN`` above and already been flagged.
+        if any(allowed in value for allowed in ALLOWED_FUSION_MLX_ENV_VARS):
+            return
         offenders.append(
             f"{rel}:{lineno} references env var `{value}` — not in "
             "ALLOWED_FUSION_MLX_ENV_VARS. If this is a non-routing knob, "
@@ -1249,6 +1337,33 @@ def test_alias_profile_str_fields_are_explicitly_listed():
             # registered here AND in their VALID_*_TIERS enum — adding
             # the dataclass field alone is what broke the gate in #952.
             "turboquant_tier",
+            # Alias registry key (the lookup name itself). Identifier, not
+            # a value that routes — same role as a dict key. Open-ended
+            # but bounded by the alias set, never flipped to change tier.
+            "name",
+            # Free-text human description shown in ``/v1/models`` listings
+            # and the admin UI. Pure display string — no code branches on
+            # its value. Open-ended.
+            "description",
+            # HF repo path for the spec-decode drafter model (the
+            # target-model counterpart to ``dflash_draft_model``).
+            # Open-ended URL-like string, not a routing-tier value — same
+            # shape as ``dflash_draft_model`` / ``hf_path``.
+            "drafter_hf_path",
+            # Modality closed enum: one of ``_VALID_MODALITIES``
+            # ({"text","text-diffusion","embedding"}) or
+            # ``_RESERVED_MODALITIES`` ({"vision","image-gen"}). Validated
+            # by ``_coerce`` at JSON load (model_aliases.py:187-192) so a
+            # typo'd value fails loud rather than silently misrouting.
+            # Same routing-vs-data tradeoff as ``pflash_tier`` / ``turbo
+            # quant_tier``: closed set, validated at load, CLI flag wins.
+            "modality",
+            # Spec-decode family identifier (e.g. "eagle3", "ngram").
+            # Open-ended string labelling which drafter family a model
+            # belongs to for spec-decode bookkeeping — not a tier flip
+            # with a closed enum. Same open-ended shape as the HF-path
+            # / parser-key fields above.
+            "model_family",
         }
     )
 
