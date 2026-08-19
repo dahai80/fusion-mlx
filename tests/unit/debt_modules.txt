@@ -496,6 +496,17 @@ test_chat_route_tool_choice_enforcement.py
 # scripts/check_gha_pinning.py via importlib; script NEVER committed (no file,
 # no CI ref, no git history). oMLX GHA-pinning security check unported.
 test_check_gha_pinning.py
+# KEEP_QUARANTINED: test_check_mlx_upstream_calls.py — orphan test (issue #522).
+# Loads scripts/check_mlx_upstream_calls.py via importlib.util.spec_from_file_location
+# (L20-25 _load_module -> spec.loader.exec_module) but the script was NEVER committed.
+# Zero refs outside the test (no CI, no Makefile, no docs, no git history). Same
+# orphan pattern as test_check_gha_pinning.py above. Test pins AST scanner contract:
+# flags module-scope mx.new_thread_local_stream/mx.set_default_device/mx.metal.
+# is_available calls (Stream(gpu,0) perf root-cause family); function/method-scope
+# calls NOT flagged; class-body init = known gap (L114-131). scan_file(path)->list
+# [(path,chain,?)]. 12 tests, ALL ERROR at fixture (FileNotFoundError on missing
+# script). Upstream oMLX scanner unported — needs scripts/check_mlx_upstream_calls.py
+# ported to un-quarantine. b15 2026-08-19.
 test_check_mlx_upstream_calls.py
 # test_clean_error_messages.py RESCUED 2026-08-09 (26 pass): restored F-013 +
 # F-066 prod guards. _validate_response_format (service/helpers.py) had been
