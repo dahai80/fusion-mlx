@@ -1219,6 +1219,20 @@ test_probe_fastpath.py
 # No prod change.
 # test_pull_summary.py
 test_r10_scrub_validation_bundle.py
+# KEEP_QUARANTINED: 4/7 pass. 3 chat-path tests FAIL = feature gap: /v1/chat/completions
+# has NO strict json_schema postgen validation + repair-retry (parity gap vs
+# /v1/responses which implements it via _apply_responses_postgen_validation
+# responses.py:258 + repair_messages_fit_context helpers.py:1672). Chat route
+# returns 200 with violating body {"age":5} when guidance compile fails (stub
+# tokenizer missing eos_token_id -> xgrammar fallback -> unconstrained). Stale
+# comment responses.py:270 claims "Mirrors chat.py:2894-3075" but chat.py is now
+# 263-line shim re-exporting api.openai_routes.router; openai_routes.py has NO
+# validate_and_envelope/build_repair_messages/incr_strict_repair_* calls. grep
+# confirms repair logic ONLY in responses.py. 4 PASSING tests = responses-path
+# (_responses_client) + repair_messages_fit_context helper contract direct
+# (mllm permissive-skip, build_prompt-missing permissive-skip, responses
+# skip-repair, responses repair-runs). Needs full chat-path postgen+repair port
+# = feature work, not surgical. ISSUE #514 FILED. 0 regression (responses tests pass).
 test_r12_h06_repair_context_guard.py
 # KEEP_QUARANTINED: 2/4 pass after PROD FIX responses.py:692 chat(stream=True)
 # -> stream_chat (chat has no stream param, returned non-iterable GenerationOutput
