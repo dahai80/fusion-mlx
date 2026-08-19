@@ -2,7 +2,7 @@
 """R15 task #297 — load-time guardrail for the MoE+MXFP4+multi-device cliff.
 
 Covers the detection matrix for the two upstream MLX issues exposed by
-``vllm_mlx/_mxfp4_moe_guardrail.py``:
+``fusion_mlx/mxfp4_moe_guardrail.py``:
 
 * mlx#3402 — MoE + MXFP4 + multi-device throughput cliff
   (3-of-3 → fire; any 2-of-3 → silent).
@@ -583,8 +583,8 @@ def test_render_prometheus_lines_exposes_both_counters():
     """The pure render helper emits HELP/TYPE/sample for both counters.
 
     This test deliberately calls ``render_prometheus_lines()`` directly
-    instead of going through ``vllm_mlx.routes.metrics``. The route
-    module's transitive import closure pulls in ``vllm_mlx.config`` →
+    instead of going through ``fusion_mlx.routes.metrics``. The route
+    module's transitive import closure pulls in ``fusion_mlx.config`` →
     ``BaseEngine`` → the engine stack, which codex rounds 3/4 flagged
     as too heavy for a focused unit test. The new pure helper lives
     in the guardrail module so a single ``import`` is enough.
@@ -605,15 +605,15 @@ def test_render_prometheus_lines_exposes_both_counters():
     lines = g.render_prometheus_lines()
     body = "\n".join(lines)
 
-    assert "rapid_mlx_mxfp4_moe_distributed_warnings_total" in body
-    assert "rapid_mlx_nvfp4_moe_warnings_total" in body
+    assert "fusion_mlx_mxfp4_moe_distributed_warnings_total" in body
+    assert "fusion_mlx_nvfp4_moe_warnings_total" in body
     # Counter type discoverable via TYPE line — required by Prometheus
     # exposition format spec.
-    assert "# TYPE rapid_mlx_mxfp4_moe_distributed_warnings_total counter" in body
-    assert "# TYPE rapid_mlx_nvfp4_moe_warnings_total counter" in body
+    assert "# TYPE fusion_mlx_mxfp4_moe_distributed_warnings_total counter" in body
+    assert "# TYPE fusion_mlx_nvfp4_moe_warnings_total counter" in body
     # Values were both bumped to 1.
-    assert "rapid_mlx_mxfp4_moe_distributed_warnings_total 1" in body
-    assert "rapid_mlx_nvfp4_moe_warnings_total 1" in body
+    assert "fusion_mlx_mxfp4_moe_distributed_warnings_total 1" in body
+    assert "fusion_mlx_nvfp4_moe_warnings_total 1" in body
 
 
 def test_render_prometheus_lines_zero_state():
@@ -626,5 +626,5 @@ def test_render_prometheus_lines_zero_state():
     # Counters reset by the autouse fixture, so call render directly.
     lines = g.render_prometheus_lines()
     body = "\n".join(lines)
-    assert "rapid_mlx_mxfp4_moe_distributed_warnings_total 0" in body
-    assert "rapid_mlx_nvfp4_moe_warnings_total 0" in body
+    assert "fusion_mlx_mxfp4_moe_distributed_warnings_total 0" in body
+    assert "fusion_mlx_nvfp4_moe_warnings_total 0" in body
