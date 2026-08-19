@@ -1185,7 +1185,22 @@ test_mtp_inject_and_install.py
 test_mtp_spec_decode.py
 test_mtp_stream_contract.py
 # test_mxfp4_moe_guardrail.py  (RESCUED 2026-08-19 — commented out = un-quarantined = collected; 42 pass. Brand-rename drift: 2 Prometheus render tests asserted stale rapid_mlx_* prefix but prod render_prometheus_lines() emits fusion_mlx_* (fusion_mlx/mxfp4_moe_guardrail.py:205-210); docstring ref vllm_mlx/_mxfp4_moe_guardrail.py → fusion_mlx/mxfp4_moe_guardrail.py. REAL data fix: aliases.json gpt-oss-20b-mxfp4-q8 is_moe false→true (20B/3.6B-active OpenAI MoE, was false → mlx#3402 guardrail returned before warning → alerts inert). Issue #544.)
-test_nested_nstate_serialization.py
+# RESCUED 2026-08-19 b24 — commented out = un-quarantined = collected; 6/6 pass.
+# PROD FIX in fusion_mlx/cache/paged_ssd_cache.py: top-level __nstate__ marker
+# store/load path assumed every element was a flat mx.array, so composite
+# elements (2-tuple of arrays, nested __nstate__ marker with None sub-elems,
+# bare None, zero-size array) crashed _extract_tensor_bytes (mx.array on
+# tuple/str/None) and bled the block save. DeepSeek-V4-Flash CacheList layers
+# (RotatingKVCache + PoolingCache) hit this. Added recursive
+# _store_nstate_element/_load_nstate_element/_nstate_element_kind helpers:
+# composite elements flatten to layer_{i}_state_{k}_sub_{m} tensor keys +
+# _kind/_count/_class metadata; flat arrays keep legacy untagged key (v3
+# caches stay readable, format version NOT bumped, stays "3"). Also fixed
+# nstate-marker reconstruct gate state_count>=3→nstate_class (single-element
+# __nstate__ marker like DeepSeekV4Composite with 1 composite element was
+# misrouted to flat 2-tuple path). NO regression: 820 cache tests pass.
+# Issue #539 + PR fix.
+# test_nested_nstate_serialization.py
 # KEEP_QUARANTINED: b23 2026-08-19 — harness-layout-drift, NOT feature gap.
 # test_no_mllm_flag.py (2428L, 19 fail / 9 pass) ported verbatim from upstream
 # omlx/rapid-mlx (still imports `vllm_mlx` at L213 _pkg_root, never adapted to
