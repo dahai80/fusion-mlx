@@ -763,6 +763,11 @@ test_engine_step_thread.py
 # Real feature port (route alias + handler-wiring + TokenCountRequest
 # validators + audio), not inline test-debt rescue. Candidate for issue
 # (esp. route path — spec violation).
+# KEEP_QUARANTINED: feature/contract gap — 4 port blocks (malformed-json
+# envelope code invalid_request vs invalid_json, F-160/F-167 count_tokens
+# TokenCountRequest validators NOT ported by #443, audio_route alias via
+# query/form-field, route path spec violation). File issue first per
+# CLAUDE.md upstream flow, then PR. 21 fails PRE-EXISTING (L1125 note).
 test_exception_handlers.py
 # test_finalize_harmony_raw_text.py RESCUED 2026-08-10 (46 pass): 2 real prod
 # gaps fixed in service/helpers.py — (1) _parser_accepts_enable_thinking only
@@ -940,6 +945,21 @@ test_librechat_docker.py
 test_memory_monitor_vlm_config.py
 test_metal_cap_enforcement.py
 test_metal_error_recovery.py
+# KEEP_QUARANTINED: feature/arch gap — test pins rapid-mlx metrics arch
+# (issue #701): cfg.engine.get_stats() with num_requests_processed/
+# metal_*_memory_gb/prefix_cache + rapid_mlx_* series (build_info,
+# requests_processed_total, prefix_cache_hits_total, metal_active_memory_bytes,
+# steps_executed_total, uptime_seconds, requests_running/waiting). fusion-mlx
+# metrics route reads server_metrics + engine_pool + response_cache +
+# response_format_metrics, emits fusion_mlx_* series (requests_total,
+# prompt/completion_tokens_total, response_cache_*, build_info) — NO metal/
+# prefix_cache/steps/uptime/running/waiting series. 15 content fails (name
+# + arch mismatch, not just prefix), 5 protocol passes (200/content-type/
+# 2x auth-401/trailing-newline/accumulator-unit). ALSO prometheus_client
+# NOT installed (3 parser tests ModuleNotFoundError). Rescuing = port
+# rapid-mlx metric series (new feature) — file issue first per CLAUDE.md
+# upstream flow, then PR. Accumulator unit test (_StickyCounterAccumulator)
+# is the only portable piece; rest is arch-specific.
 test_metrics_route.py
 # KEEP_QUARANTINED: round10q — scripts/microbench_parsers.py not ported (no git history, FileNotFoundError on load). Test loads threshold-gate + sample-wiring + exit-code logic from that script. Feature gap (parser microbench harness), not harness drift. File issue for port.
 test_microbench_parsers.py
