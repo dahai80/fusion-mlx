@@ -334,7 +334,7 @@ def test_f12_count_tokens_applies_chat_template():
     engine = _RecordingEngine()
     client = _make_client(engine)
     resp = client.post(
-        "/v1/messages/count_tokens",
+        "/v1/count_tokens",
         json={
             "model": "test-model",
             "messages": [{"role": "user", "content": "hello world"}],
@@ -411,7 +411,7 @@ def test_f12_count_tokens_matches_messages_usage_input_tokens():
         "/v1/messages",
         json={**body, "max_tokens": 5},
     )
-    r2 = client.post("/v1/messages/count_tokens", json=body)
+    r2 = client.post("/v1/count_tokens", json=body)
     assert r1.status_code == 200, r1.text
     assert r2.status_code == 200, r2.text
     # The wire-level parity contract: both surfaces report the same
@@ -450,7 +450,7 @@ def test_f12_count_tokens_excludes_role_overhead_on_fallback():
     engine = _NoBuildPromptEngine()
     client = _make_client(engine)
     resp = client.post(
-        "/v1/messages/count_tokens",
+        "/v1/count_tokens",
         json={
             "model": "test-model",
             "messages": [{"role": "user", "content": "hello world"}],
@@ -470,7 +470,7 @@ def test_f12_count_tokens_without_max_tokens_does_not_422():
     engine = _RecordingEngine()
     client = _make_client(engine)
     resp = client.post(
-        "/v1/messages/count_tokens",
+        "/v1/count_tokens",
         json={
             "model": "test-model",
             "messages": [{"role": "user", "content": "hi"}],

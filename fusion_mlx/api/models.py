@@ -11,6 +11,7 @@ These models define the request and response schemas for:
 
 import logging
 import math
+import re
 import time
 import uuid
 from typing import Literal
@@ -23,7 +24,14 @@ from pydantic import (
     StrictInt,
     StrictStr,
     field_validator,
+    model_serializer,
     model_validator,
+)
+
+from .shared_models import (
+    _validate_finite_in_range,
+    _validate_logit_bias_finite,
+    _validate_nonnegative_int,
 )
 
 logger = logging.getLogger(__name__)
@@ -210,6 +218,25 @@ class Message(BaseModel):
                         )
         return v
 
+    @model_validator(mode="after")
+    def _reject_null_content_for_input_roles(self):
+        # R15 #175 item 3 (adversarial fuzz a9c828): a request body carrying
+        # ``{"role":"user","content":null}`` (or "system" / "developer")
+        # used to return HTTP 200 with garbled output (the chat-template
+        # flattened ``None`` to the literal string ``"None"`` on some
+        # templates, dropped the turn on others). Reject at the schema layer
+        # so the route surfaces 400 via the RequestValidationError envelope.
+        # Assistant + tool roles keep ``content=None`` allowed (OpenAI spec:
+        # assistant content=null when tool_calls present; tool turn content
+        # is the tool-result payload and may legitimately be null in
+        # follow-up roundtrips).
+        if self.role in ("user", "system", "developer") and self.content is None:
+            raise ValueError(
+                f"content is required for role '{self.role}' "
+                f"(content must not be null)"
+            )
+        return self
+
 
 # =============================================================================
 # Tool Calling
@@ -236,6 +263,28 @@ class ToolDefinition(BaseModel):
 
     type: str = "function"
     function: dict
+
+    @field_validator("function")
+    @classmethod
+    def _validate_function_name(cls, v):
+        # F-035 / F-146: ``function.name`` must match the OpenAI spec regex
+        # ``^[a-zA-Z0-9_-]{1,64}$``. Pre-fix the schema accepted any dict,
+        # and empty / emoji / 10k-char / shell-metachar / newline / space /
+        # dot / slash names all 200'd — on hermes-parser models the
+        # empty-name case leaked literal ``<tool_call>{"name":"",...}`` into
+        # ``content`` because the tool-call detector keyed off a non-empty
+        # name. A single regex constraint at the schema layer covers the
+        # whole class. Surface the field path as ``function.name`` so the
+        # OpenAI-shaped 400 envelope can populate ``error.param``.
+        if not isinstance(v, dict):
+            raise ValueError("function must be an object")
+        name = v.get("name")
+        if not isinstance(name, str) or not re.match(r"^[a-zA-Z0-9_-]{1,64}$", name):
+            raise ValueError(
+                "function.name must match ^[a-zA-Z0-9_-]{1,64}$ "
+                "(1-64 chars: letters, digits, underscore, hyphen)"
+            )
+        return v
 
 
 # =============================================================================
@@ -470,17 +519,66 @@ class ChatCompletionRequest(BaseModel):
     # Valid values: "minimal", "low", "medium", "high", "none".
     reasoning_effort: str | None = None
 
-    @field_validator(
-        "temperature",
-        "top_p",
-        "min_p",
-        "repetition_penalty",
-        "presence_penalty",
-        "frequency_penalty",
-    )
+    @field_validator("temperature")
     @classmethod
-    def _reject_nonfinite_sampling(cls, v):
-        return _reject_nonfinite_float(v)
+    def _check_temperature(cls, v):
+        return _validate_finite_in_range(
+            v, min_value=0.0, max_value=2.0, field_name="temperature"
+        )
+
+    @field_validator("top_p")
+    @classmethod
+    def _check_top_p(cls, v):
+        # OpenAI surface: top_p in [0.0, 1.0] — inclusive min to match the
+        # Field(ge=0.0) bound and the committed contract pinned by
+        # test_sampling_validation (top_p=0.0 = greedy, legal).
+        return _validate_finite_in_range(
+            v,
+            min_value=0.0,
+            max_value=1.0,
+            field_name="top_p",
+            min_inclusive=True,
+        )
+
+    @field_validator("min_p")
+    @classmethod
+    def _check_min_p(cls, v):
+        return _validate_finite_in_range(
+            v, min_value=0.0, max_value=1.0, field_name="min_p"
+        )
+
+    @field_validator("repetition_penalty")
+    @classmethod
+    def _check_repetition_penalty(cls, v):
+        # H-10 root bug: pre-fix no upper cap → penalty > 2 degenerates the
+        # distribution. Range matches mlx-lm's non-negative contract + cap.
+        return _validate_finite_in_range(
+            v, min_value=0.0, max_value=2.0, field_name="repetition_penalty"
+        )
+
+    @field_validator("presence_penalty")
+    @classmethod
+    def _check_presence_penalty(cls, v):
+        return _validate_finite_in_range(
+            v, min_value=-2.0, max_value=2.0, field_name="presence_penalty"
+        )
+
+    @field_validator("frequency_penalty")
+    @classmethod
+    def _check_frequency_penalty(cls, v):
+        return _validate_finite_in_range(
+            v, min_value=-2.0, max_value=2.0, field_name="frequency_penalty"
+        )
+
+    @field_validator("top_k")
+    @classmethod
+    def _check_top_k(cls, v):
+        return _validate_nonnegative_int(v, field_name="top_k")
+
+    @field_validator("logit_bias")
+    @classmethod
+    def _check_logit_bias(cls, v):
+        return _validate_logit_bias_finite(v)
 
     @field_validator("reasoning_effort")
     @classmethod
@@ -616,15 +714,27 @@ class AssistantMessage(BaseModel):
     tool_calls: list[ToolCall] | None = None
 
     def model_post_init(self, __context) -> None:
-        """Add deprecated 'reasoning' alias for backward compatibility."""
         pass
 
-    def model_dump(self, **kwargs) -> dict:
-        """Include 'reasoning' as alias of reasoning_content for clients expecting it."""
-        d = super().model_dump(**kwargs)
-        # Add backward-compat alias — clients may read either field
-        if "reasoning_content" in d:
-            d["reasoning"] = d["reasoning_content"]
+    @model_serializer(mode="wrap")
+    def _serialize(self, handler, info):
+        # F-040 / D-MISSING-CONTENT-KEY: ``content`` is a REQUIRED key on
+        # OpenAI's chat.completion assistant message wire schema. When the
+        # server emits ``content=None`` (reasoning-only / tool-call-only /
+        # empty-stop turns), ``exclude_none=True`` drops the key and strict
+        # clients (Swift Codable, Rust serde, pydantic-strict) crash with a
+        # missing-required-key / KeyError. Serialize ``None`` as ``""`` so
+        # the ``string`` type discriminator survives exclude_none.
+        # R9-CRIT3: the deprecation-window ``reasoning`` alias of
+        # ``reasoning_content`` (R7-H2) was the byte-for-byte root cause of
+        # openai-agents text_delta doubling — do NOT re-add it.
+        d = handler(self)
+        if d.get("content") is None and not (info.mode_is_json() and info.exclude_none):
+            # dict path (model_dump): fill before exclude_none stripping
+            d["content"] = ""
+        elif d.get("content") is None and info.mode_is_json() and info.exclude_none:
+            # json path: exclude_none already stripped content — re-add ""
+            d["content"] = ""
         return d
 
 
@@ -723,17 +833,56 @@ class CompletionRequest(BaseModel):
     # Request timeout in seconds (None = use server default)
     timeout: float | None = None
 
-    @field_validator(
-        "temperature",
-        "top_p",
-        "min_p",
-        "repetition_penalty",
-        "presence_penalty",
-        "frequency_penalty",
-    )
+    @field_validator("temperature")
     @classmethod
-    def _reject_nonfinite_sampling(cls, v):
-        return _reject_nonfinite_float(v)
+    def _check_temperature(cls, v):
+        return _validate_finite_in_range(
+            v, min_value=0.0, max_value=2.0, field_name="temperature"
+        )
+
+    @field_validator("top_p")
+    @classmethod
+    def _check_top_p(cls, v):
+        return _validate_finite_in_range(
+            v,
+            min_value=0.0,
+            max_value=1.0,
+            field_name="top_p",
+            min_inclusive=True,
+        )
+
+    @field_validator("min_p")
+    @classmethod
+    def _check_min_p(cls, v):
+        return _validate_finite_in_range(
+            v, min_value=0.0, max_value=1.0, field_name="min_p"
+        )
+
+    @field_validator("repetition_penalty")
+    @classmethod
+    def _check_repetition_penalty(cls, v):
+        return _validate_finite_in_range(
+            v, min_value=0.0, max_value=2.0, field_name="repetition_penalty"
+        )
+
+    @field_validator("presence_penalty")
+    @classmethod
+    def _check_presence_penalty(cls, v):
+        return _validate_finite_in_range(
+            v, min_value=-2.0, max_value=2.0, field_name="presence_penalty"
+        )
+
+    @field_validator("frequency_penalty")
+    @classmethod
+    def _check_frequency_penalty(cls, v):
+        return _validate_finite_in_range(
+            v, min_value=-2.0, max_value=2.0, field_name="frequency_penalty"
+        )
+
+    @field_validator("top_k")
+    @classmethod
+    def _check_top_k(cls, v):
+        return _validate_nonnegative_int(v, field_name="top_k")
 
     @field_validator("n", mode="before")
     @classmethod
@@ -904,6 +1053,9 @@ class AudioTranscriptionResponse(BaseModel):
     segments: list[dict] | None = None
 
 
+_ALLOWED_AUDIO_FORMATS = ("wav", "pcm", "flac", "ogg", "opus", "mp3")
+
+
 class AudioSpeechRequest(BaseModel):
     """Request for text-to-speech."""
 
@@ -912,6 +1064,40 @@ class AudioSpeechRequest(BaseModel):
     voice: str = "af_heart"
     speed: float = 1.0
     response_format: str = "wav"
+
+    @model_validator(mode="before")
+    @classmethod
+    def _fold_format_alias(cls, values):
+        # R11-B-F2 (#505): legacy ``format`` field folds into
+        # ``response_format``. Explicit ``response_format`` wins;
+        # ``format=None`` is treated as unset so the Pydantic default
+        # still applies. Non-string values fall through to the
+        # response_format type validator which surfaces the 400 on the
+        # canonical field name (loc=response_format, not format).
+        if not isinstance(values, dict):
+            return values
+        fmt = values.get("format")
+        rf_present = (
+            "response_format" in values and values["response_format"] is not None
+        )
+        if fmt is not None and not rf_present:
+            values["response_format"] = fmt
+        values.pop("format", None)
+        return values
+
+    @field_validator("response_format", mode="before")
+    @classmethod
+    def _validate_audio_response_format(cls, v):
+        if v is None:
+            return v
+        if not isinstance(v, str):
+            raise ValueError("response_format must be a string")
+        if v not in _ALLOWED_AUDIO_FORMATS:
+            raise ValueError(
+                f"response_format must be one of "
+                f"{', '.join(_ALLOWED_AUDIO_FORMATS)} (got {v!r})"
+            )
+        return v
 
 
 class AudioSeparationRequest(BaseModel):
@@ -1005,6 +1191,22 @@ class ChatCompletionChunkDelta(BaseModel):
     content: str | None = None
     reasoning_content: str | None = None
     tool_calls: list[dict] | None = None
+
+    @model_serializer(mode="wrap")
+    def _serialize(self, handler, info):
+        # F-040 / D-MISSING-CONTENT-KEY (streaming sibling): a terminal
+        # chunk delta carrying reasoning_content / tool_calls but no content
+        # must expose ``content: ""`` so clients reading
+        # ``chunk.choices[0].delta.content`` on the last chunk do not crash
+        # with a missing-required-key under exclude_none. A truly empty
+        # finish-marker delta (no payload at all) stays ``{}`` — do not
+        # pollute pure finish chunks with a spurious content key.
+        d = handler(self)
+        if d.get("content") is None and (
+            self.reasoning_content is not None or self.tool_calls is not None
+        ):
+            d["content"] = ""
+        return d
 
 
 class ChatCompletionChunkChoice(BaseModel):

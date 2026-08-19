@@ -191,6 +191,20 @@ def maybe_apply_pre_load_patches(
         except Exception as e:
             logger.debug("qwen3_6 nested-visual patch import failed: %s", e)
 
+    if for_vlm and model_type == "minimax_m3_vl":
+        try:
+            from ..patches.minimax_m3_sparse_attention import (
+                apply_minimax_m3_sparse_attention_patch,
+            )
+
+            if apply_minimax_m3_sparse_attention_patch():
+                logger.info(
+                    "minimax_m3 sparse-attention left-padding patch applied for %s",
+                    model_name,
+                )
+        except Exception as e:
+            logger.debug("minimax_m3 sparse-attention patch import failed: %s", e)
+
 
 def maybe_load_custom_quantization(model_name, *, is_vlm=False):
     return None

@@ -1724,6 +1724,18 @@ async def completions(
     _rate: bool = Depends(check_rate_limit),
 ) -> Any:
     """Handle legacy text completion requests."""
+    # FIM suffix guard: no MLX engine implements fill-in-the-middle yet.
+    # A non-empty suffix would be silently dropped (we only forward the
+    # prompt), producing wrong completions on code-completion clients
+    # (Continue, Cody). Fail visibly with 400 so the client can fall back.
+    # The empty-string case is harmless — defensive clients always send it.
+    if request.suffix:
+        logger.info("Rejecting /v1/completions suffix (FIM unsupported)")
+        raise HTTPException(
+            status_code=400,
+            detail="suffix is not supported: this server does not implement "
+            "fill-in-the-middle completion",
+        )
     # #226 IDOR scope: bind recorded session stats to the authenticated caller.
     principal = request_principal(http_request)
     try:

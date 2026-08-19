@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Regression tests for L-05 — ``X-RapidMLX-Warning`` header surfaces
+"""Regression tests for L-05 — ``X-FusionMLX-Warning`` header surfaces
 silent ``enable_thinking`` drops on non-Qwen reasoning parsers.
 
 Pre-fix: ``chat_template_kwargs={"enable_thinking": false}`` was honored
@@ -17,7 +17,7 @@ deployment (deepseek_r1 parser) got reasoning_content back anyway with
 no signal that their hint was unhonored.
 
 Post-fix: ``enable_thinking_warning_header(request, parser_name)`` builds
-``{"X-RapidMLX-Warning": "enable_thinking ignored for parser=<name>"}``
+``{"X-FusionMLX-Warning": "enable_thinking ignored for parser=<name>"}``
 when the client EXPLICITLY set ``chat_template_kwargs.enable_thinking``
 AND the parser is not in ``_THINKING_FLAG_HONORING_PARSERS``. The chat
 route propagates this dict into ``Response(headers=...)`` (non-stream)
@@ -72,7 +72,7 @@ def test_honoring_parsers_set_is_just_qwen3() -> None:
 )
 def test_warning_fires_for_non_qwen_parser_with_explicit_false(parser: str) -> None:
     """Headline L-05: client sent ``chat_template_kwargs.enable_thinking=False``
-    on a non-Qwen parser → ``X-RapidMLX-Warning`` carries the parser
+    on a non-Qwen parser → ``X-FusionMLX-Warning`` carries the parser
     name so the client can decide what to do (downgrade reasoning_content
     handling, retry against a different deployment, etc.)."""
     request = SimpleNamespace(
@@ -80,7 +80,7 @@ def test_warning_fires_for_non_qwen_parser_with_explicit_false(parser: str) -> N
     )
     headers = enable_thinking_warning_header(request, parser)
     assert headers == {
-        "X-RapidMLX-Warning": f"enable_thinking ignored for parser={parser}"
+        "X-FusionMLX-Warning": f"enable_thinking ignored for parser={parser}"
     }
 
 
@@ -94,7 +94,7 @@ def test_warning_also_fires_when_explicit_true_on_non_qwen() -> None:
     )
     headers = enable_thinking_warning_header(request, "deepseek_r1")
     assert (
-        headers.get("X-RapidMLX-Warning")
+        headers.get("X-FusionMLX-Warning")
         == "enable_thinking ignored for parser=deepseek_r1"
     )
 
@@ -154,14 +154,14 @@ def test_no_warning_when_parser_name_is_none() -> None:
 # ──────────────────────────────────────────────────────────────────────
 
 
-def test_header_name_is_x_rapidmlx_warning() -> None:
-    """The header MUST be exactly ``X-RapidMLX-Warning`` — the L-05 spec
+def test_header_name_is_x_fusionmlx_warning() -> None:
+    """The header MUST be exactly ``X-FusionMLX-Warning`` — the L-05 spec
     pins this name. Renaming would break any client that sniffs it."""
     request = SimpleNamespace(
         chat_template_kwargs={"enable_thinking": False}, enable_thinking=None
     )
     headers = enable_thinking_warning_header(request, "deepseek_r1")
-    assert list(headers.keys()) == ["X-RapidMLX-Warning"]
+    assert list(headers.keys()) == ["X-FusionMLX-Warning"]
 
 
 def test_header_value_is_ascii_safe_and_carries_parser_name() -> None:
@@ -171,7 +171,9 @@ def test_header_value_is_ascii_safe_and_carries_parser_name() -> None:
     request = SimpleNamespace(
         chat_template_kwargs={"enable_thinking": False}, enable_thinking=None
     )
-    value = enable_thinking_warning_header(request, "vibethinker")["X-RapidMLX-Warning"]
+    value = enable_thinking_warning_header(request, "vibethinker")[
+        "X-FusionMLX-Warning"
+    ]
     assert value == "enable_thinking ignored for parser=vibethinker"
     # ASCII-only — no smart quotes, no unicode dashes that could
     # confuse an HTTP/1.1 hop or a header-sniffing client.

@@ -13,7 +13,12 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from fusion_mlx.api.shared_models import IDPrefix, generate_id
+from fusion_mlx.api.shared_models import (
+    IDPrefix,
+    _validate_finite_in_range,
+    _validate_nonnegative_int,
+    generate_id,
+)
 
 from .models import StreamOptions, _validate_token_budget
 
@@ -367,6 +372,34 @@ class MessagesRequest(BaseModel):
     tools: list[AnthropicTool] | None = None
     tool_choice: dict[str, Any] | ToolChoice | None = None
     thinking: ThinkingConfig | None = None
+
+    @field_validator("temperature")
+    @classmethod
+    def _check_temperature(cls, v):
+        # Anthropic spec: temperature in [0.0, 1.0] (narrower than OpenAI's
+        # [0, 2]). The Field allows up to 2.0 for forward-compat with the
+        # OpenAI surface, but /v1/messages rejects > 1.0 per the Anthropic
+        # contract (H-10 sweep).
+        return _validate_finite_in_range(
+            v, min_value=0.0, max_value=1.0, field_name="temperature"
+        )
+
+    @field_validator("top_p")
+    @classmethod
+    def _check_top_p(cls, v):
+        # Anthropic spec: top_p in (0.0, 1.0] — 0.0 is illegal (exclusive min).
+        return _validate_finite_in_range(
+            v,
+            min_value=0.0,
+            max_value=1.0,
+            field_name="top_p",
+            min_inclusive=False,
+        )
+
+    @field_validator("top_k")
+    @classmethod
+    def _check_top_k(cls, v):
+        return _validate_nonnegative_int(v, field_name="top_k")
 
     @field_validator("tool_choice", mode="before")
     @classmethod

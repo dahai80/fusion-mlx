@@ -801,6 +801,8 @@
     "hf_path": "froggeric/Qwen3.6-27B-MLX-8bit",
     "modality": "text",
     "supports_dflash": true,
+    "is_hybrid": false,
+    "supports_spec_decode": false,
     "model_family": "qwen3_5",
     "drafter_hf_path": "z-lab/Qwen3.5-27B-DFlash",
     "description": "Qwen3.6-27B 8-bit with DFlash speculative decode",
@@ -809,18 +811,21 @@
   "bge-m3": {
     "hf_path": "mlx-community/bge-m3-mlx-fp16",
     "modality": "embedding",
+    "is_hybrid": false,
     "supports_spec_decode": false,
     "description": "BGE-M3 multilingual embedding model (1024d), best for Chinese scientific text. FP16 MLX conversion."
   },
   "bge-m3-4bit": {
     "hf_path": "mlx-community/bge-m3-mlx-4bit",
     "modality": "embedding",
+    "is_hybrid": false,
     "supports_spec_decode": false,
     "description": "BGE-M3 multilingual embedding model (1024d), 4-bit quantized MLX conversion."
   },
   "bge-m3-8bit": {
     "hf_path": "mlx-community/bge-m3-mlx-8bit",
     "modality": "embedding",
+    "is_hybrid": false,
     "supports_spec_decode": false,
     "description": "BGE-M3 multilingual embedding model (1024d), 8-bit quantized MLX conversion."
   }

@@ -1066,6 +1066,7 @@ _FINAL_SANITIZER = re.compile(
     r"<\|tool_call>.*?<tool_call\|>"
     r"|<\|[a-z_\"]+>|<[a-z_\"]+\|>"
     r"|<\|[a-z_]+\|>"
+    r"|</[a-z_]+>"
     r"|\[Calling\s+tool[^\]]*\]?"
     r"|</think>|<think>",
     re.DOTALL,

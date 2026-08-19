@@ -7,6 +7,7 @@ Provides FastAPI routes for:
 - POST /v1/count_tokens     - Token counting
 """
 
+import json
 import logging
 import uuid
 from collections.abc import AsyncIterator
@@ -18,6 +19,8 @@ from fastapi.responses import StreamingResponse
 
 from ..api._anthropic_helpers import (
     _inject_tool_use_required_suffix,
+    _is_required_tool_choice,
+    _named_tool_choice_target,
     enforce_tool_choice,
 )
 from ..api.adapters.anthropic import AnthropicAdapter
@@ -38,6 +41,7 @@ from ..api.anthropic_utils import (
     create_content_block_stop_event,
     create_input_json_delta_event,
     create_message_delta_event,
+    create_message_start_event,
     create_message_stop_event,
     create_tool_name_delta_event,
     map_finish_reason_to_stop_reason,
@@ -292,10 +296,19 @@ async def _run_anthropic_messages(
         if getattr(req, "tool_choice", None)
         else None
     )
+    # F7: tool_choice="none" strips tools before the engine call so the chat
+    # template never injects tool definitions into the prompt. Pre-fix tools
+    # were forwarded verbatim, the model saw them, and a partial tool-call
+    # marker (e.g. "<tool>{...") leaked into the text block. enforce_tool_choice
+    # post-gen only drops tool_use blocks, not raw marker text. Matches OpenAI
+    # tool_choice="none" semantics.
+    effective_tools = (
+        None if openai_tool_choice == "none" else getattr(req, "tools", None)
+    )
     _inject_tool_use_required_suffix(
         messages,
         openai_tool_choice,
-        tools=getattr(req, "tools", None),
+        tools=effective_tools,
     )
     from ..tool_parsers.ui_tars_tool_parser import inject_ui_tars_sysprompt_for_lane
 
@@ -303,7 +316,7 @@ async def _run_anthropic_messages(
         messages,
         model_name=req.model,
         tool_choice=openai_tool_choice,
-        tools=getattr(req, "tools", None),
+        tools=effective_tools,
     )
     sampling = _build_sampling_params(req, profile_overrides=profile_overrides)
     from .utils import cap_max_tokens_to_context
@@ -322,7 +335,7 @@ async def _run_anthropic_messages(
             max_tokens=sampling.max_tokens,
             temperature=sampling.temperature,
             top_p=sampling.top_p,
-            tools=getattr(req, "tools", None),
+            tools=effective_tools,
             stop=sampling.stop,
             chat_template_kwargs=ct_kwargs if ct_kwargs else None,
             prefix_cache_boundary=prefix_cache_boundary,
@@ -463,10 +476,26 @@ async def _stream_anthropic_generator(
         if getattr(req, "tool_choice", None)
         else None
     )
+    # F7: tool_choice="none" strips tools before the engine call (stream path).
+    effective_tools = (
+        None if openai_tool_choice == "none" else getattr(req, "tools", None)
+    )
+    # F-018: forced tool_choice ({"type":"any"} -> "required" or a named
+    # {"type":"tool","name":X}) means the model MUST emit a tool_use, not
+    # text. A local model can defy the pin and stream text first; once that
+    # text is on the wire we cannot take it back, and the client sees a
+    # half text + synthesized tool_use response. Buffer the text deltas
+    # while a forced tool_choice is in effect and decide at finish: if the
+    # enforcement synthesized or the model emitted a tool call, drop the
+    # buffered text; only flush it when no tool call materialized at all.
+    _force_tool_choice = _is_required_tool_choice(openai_tool_choice) or bool(
+        _named_tool_choice_target(openai_tool_choice)
+    )
+    _text_buffer: list[str] = []
     _inject_tool_use_required_suffix(
         messages,
         openai_tool_choice,
-        tools=getattr(req, "tools", None),
+        tools=effective_tools,
     )
     from ..tool_parsers.ui_tars_tool_parser import inject_ui_tars_sysprompt_for_lane
 
@@ -474,7 +503,7 @@ async def _stream_anthropic_generator(
         messages,
         model_name=req.model,
         tool_choice=openai_tool_choice,
-        tools=getattr(req, "tools", None),
+        tools=effective_tools,
     )
     sampling = _build_sampling_params(req, profile_overrides=profile_overrides)
     from .utils import cap_max_tokens_to_context
@@ -527,11 +556,26 @@ async def _stream_anthropic_generator(
         if _is_cc:
             yield ": connected\n\n"
 
-        # Send message_start
-        yield _adapter.format_stream_chunk(
-            StreamChunk(text="", is_first=True),
-            req,
+        # F5: pre-compute the prompt-token count BEFORE message_start hits
+        # the wire. Without this the Anthropic stream hard-codes
+        # input_tokens=0 on message_start (the count was only known inside
+        # the engine loop, after the event was already sent), under-
+        # reporting the input share by 100%. Same build_prompt +
+        # count_prompt_tokens source of truth the non-stream adapter and
+        # the context-length DoS gate use; returns 0 when the engine has
+        # no chat template (MLLM / stub), which is the correct floor.
+        from ..service.helpers import compute_prompt_tokens_for_messages
+
+        _precomputed_input = compute_prompt_tokens_for_messages(
+            engine, messages, tools=effective_tools
         )
+        _message_id = f"msg_{uuid.uuid4().hex[:24]}"
+
+        # Send message_start with the pre-computed input_tokens
+        yield create_message_start_event(
+            _message_id, model_name, input_tokens=_precomputed_input
+        )
+        yield create_content_block_start_event(0, "text")
 
         ct_kwargs_stream = dict(getattr(req, "chat_template_kwargs", {}) or {})
         # AtomCode 专题优化: enable_thinking 默认禁思考收敛单点 (流式路径, 2026-07-19)
@@ -543,7 +587,7 @@ async def _stream_anthropic_generator(
             max_tokens=sampling.max_tokens,
             temperature=sampling.temperature,
             top_p=sampling.top_p,
-            tools=getattr(req, "tools", None),
+            tools=effective_tools,
             stop=sampling.stop,
             chat_template_kwargs=ct_kwargs_stream if ct_kwargs_stream else None,
             prefix_cache_boundary=prefix_cache_boundary,
@@ -551,10 +595,16 @@ async def _stream_anthropic_generator(
             if gen.new_text:
                 if keepalive:
                     keepalive.reset()
+                # F-018: under a forced tool_choice, hold the text in the
+                # buffer instead of streaming it; decide at finish whether
+                # to flush or drop (see the finished branch below).
+                if _force_tool_choice:
+                    _text_buffer.append(gen.new_text)
+                    continue
                 chunk = StreamChunk(
                     text=gen.new_text,
-                    prompt_tokens=gen.prompt_tokens,
-                    completion_tokens=gen.completion_tokens,
+                    prompt_tokens=getattr(gen, "prompt_tokens", 0),
+                    completion_tokens=getattr(gen, "completion_tokens", 0),
                     cached_tokens=getattr(gen, "cached_tokens", 0),
                 )
                 yield _adapter.format_stream_chunk(chunk, req)
@@ -595,7 +645,7 @@ async def _stream_anthropic_generator(
                         request_id,
                         stream_tc_err,
                     )
-                    yield f'event: error\ndata: {{"error": {{"type": "invalid_request_error", "message": {stream_tc_err!r}}}, "status": 422}}\n\n'
+                    yield f'event: error\ndata: {{"type": "error", "error": {{"type": "invalid_request_error", "message": {json.dumps(stream_tc_err)}}}, "status": 422}}\n\n'
                     yield create_message_stop_event()
                     return
 
@@ -603,8 +653,16 @@ async def _stream_anthropic_generator(
                 if stream_tool_calls:
                     for i, tc in enumerate(stream_tool_calls):
                         tc_id = tc.get("id", f"call_{i}")
-                        tc_name = tc.get("function", {}).get("name", "")
-                        tc_args = tc.get("function", {}).get("arguments", "{}")
+                        _func = tc.get("function", {})
+                        tc_name = _func.get("name", "")
+                        tc_args = _func.get("arguments", "{}")
+                        # F-017: flat tool_call shape (Harmony/qwen3 routers)
+                        # has no ``function`` wrapper — fall back to the
+                        # top-level fields so the tool_use name isn't blank.
+                        if not tc_name and "name" in tc:
+                            tc_name = tc.get("name", "")
+                        if (not tc_args or tc_args == "{}") and "arguments" in tc:
+                            tc_args = tc.get("arguments", "{}")
                         block_index = 1 + i
                         yield create_content_block_start_event(
                             block_index,
@@ -623,6 +681,11 @@ async def _stream_anthropic_generator(
                 )
                 _gen_cached = getattr(gen, "cached_tokens", 0) or 0
                 _delta_input = getattr(gen, "prompt_tokens", 0)
+                # F5 floor: when the engine never surfaces prompt_tokens on
+                # its chunks, the terminal message_delta must be no worse
+                # than the message_start estimate we already sent.
+                if _delta_input < _precomputed_input:
+                    _delta_input = _precomputed_input
                 if _ctx_scale_factor is not None:
                     _delta_input = int(_delta_input * _ctx_scale_factor)
                     _gen_cached = int(_gen_cached * _ctx_scale_factor)
@@ -636,23 +699,23 @@ async def _stream_anthropic_generator(
                 yield create_message_stop_event()
 
                 record_llm_metrics(
-                    prompt_tokens=gen.prompt_tokens or 0,
-                    completion_tokens=gen.completion_tokens or 0,
-                    cached_tokens=gen.cached_tokens or 0,
+                    prompt_tokens=getattr(gen, "prompt_tokens", 0) or 0,
+                    completion_tokens=getattr(gen, "completion_tokens", 0) or 0,
+                    cached_tokens=getattr(gen, "cached_tokens", 0) or 0,
                     generation_duration=_time.perf_counter() - _start,
                     model_id=model_name,
                 )
 
     except ModelNotFoundError as exc:
-        yield f'event: error\ndata: {{"error": {str(exc)!r}, "status": 404}}\n\n'
+        yield f'event: error\ndata: {{"error": {json.dumps(str(exc))}, "status": 404}}\n\n'
     except (ModelLoadingError, ModelBusyError) as exc:
         logger.warning("Anthropic stream: model temporarily unavailable: %s", exc)
-        yield f'event: error\ndata: {{"error": {{"message": {str(exc)!r}, "type": "server_busy"}}, "status": 503}}\n\n'
+        yield f'event: error\ndata: {{"error": {{"message": {json.dumps(str(exc))}, "type": "server_busy"}}, "status": 503}}\n\n'
     except InsufficientMemoryError as exc:
         logger.warning("Anthropic stream: insufficient memory: %s", exc)
-        yield f'event: error\ndata: {{"error": {{"message": {str(exc)!r}, "type": "resource_exhausted"}}, "status": 503}}\n\n'
+        yield f'event: error\ndata: {{"error": {{"message": {json.dumps(str(exc))}, "type": "resource_exhausted"}}, "status": 503}}\n\n'
     except ModelTooLargeError as exc:
-        yield f'event: error\ndata: {{"error": {{"message": {str(exc)!r}, "type": "model_too_large"}}, "status": 413}}\n\n'
+        yield f'event: error\ndata: {{"error": {{"message": {json.dumps(str(exc))}, "type": "model_too_large"}}, "status": 413}}\n\n'
     except Exception as exc:
         err_msg = str(exc)
         logger.error(
@@ -664,9 +727,9 @@ async def _stream_anthropic_generator(
             exc_info=True,
         )
         if "Failed to process image" in err_msg or "Failed to process video" in err_msg:
-            yield f'event: error\ndata: {{"error": {err_msg!r}, "status": 400}}\n\n'
+            yield f'event: error\ndata: {{"error": {json.dumps(err_msg)}, "status": 400}}\n\n'
         else:
-            yield f'event: error\ndata: {{"error": {f"{type(exc).__name__}: {exc}"!r}}}\n\n'
+            yield f'event: error\ndata: {{"error": {json.dumps(f"{type(exc).__name__}: {exc}")}}}\n\n'
     finally:
         await _release()
 

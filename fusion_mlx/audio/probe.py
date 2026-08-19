@@ -7,6 +7,24 @@ from dataclasses import dataclass
 logger = logging.getLogger(__name__)
 
 
+def _mlx_audio_spec_present() -> bool:
+    # find_spec("mlx_audio") raises ValueError when the package is in
+    # sys.modules but __spec__ is unset (partial / namespace / stub install).
+    # Treat that the same as "not cleanly importable" so callers fall through
+    # to the install-hint / not-installed path instead of an uncaught
+    # ValueError traceback on a half-installed audio extra.
+    try:
+        return importlib.util.find_spec("mlx_audio") is not None
+    except (ValueError, ModuleNotFoundError) as exc:
+        logger.warning(
+            "mlx_audio find_spec raised %s: %s; treating audio extra as "
+            "not cleanly installed (fall through to install-hint path).",
+            type(exc).__name__,
+            exc,
+        )
+        return False
+
+
 @dataclass(frozen=True)
 class _Verdict:
     ok: bool
@@ -133,7 +151,7 @@ def _probe_lane(lane: str) -> _Verdict:
         return _cached_verdict[lane]
 
     if "" not in _cached_verdict:
-        if importlib.util.find_spec("mlx_audio") is None:
+        if not _mlx_audio_spec_present():
             _cached_verdict[""] = _Verdict(
                 ok=False, reason="mlx-audio is not installed"
             )
@@ -224,7 +242,7 @@ def is_audio_model_alias(model_name: str | None) -> bool:
 
 
 def require_audio_or_exit(model_name: str) -> None:
-    if importlib.util.find_spec("mlx_audio") is not None:
+    if _mlx_audio_spec_present():
         return
     print(
         f"error: model {model_name!r} is an audio alias and requires the "

@@ -100,6 +100,23 @@ def _resolved_sampling_kwargs(openai_request: ChatCompletionRequest) -> dict:
         "top_p": _resolve_top_p(openai_request.top_p),
         "stop": getattr(openai_request, "stop", None),
     }
+    # #355 / R6-H8: forward the extended sampling params the chat surface
+    # threads to engine.chat so /v1/responses does not silently drop them.
+    top_k = getattr(openai_request, "top_k", None)
+    if top_k is not None:
+        out["top_k"] = top_k
+    min_p = getattr(openai_request, "min_p", None)
+    if min_p is not None:
+        out["min_p"] = min_p
+    repetition_penalty = getattr(openai_request, "repetition_penalty", None)
+    if repetition_penalty is not None:
+        out["repetition_penalty"] = repetition_penalty
+    presence_penalty = getattr(openai_request, "presence_penalty", None)
+    if presence_penalty is not None:
+        out["presence_penalty"] = presence_penalty
+    frequency_penalty = getattr(openai_request, "frequency_penalty", None)
+    if frequency_penalty is not None:
+        out["frequency_penalty"] = frequency_penalty
     return out
 
 

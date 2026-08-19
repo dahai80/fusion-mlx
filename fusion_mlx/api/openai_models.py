@@ -11,6 +11,7 @@ These models define the request and response schemas for:
 """
 
 import json
+import logging
 import math
 from typing import Any
 
@@ -19,9 +20,14 @@ from pydantic import AliasChoices, BaseModel, Field, field_validator, model_vali
 from fusion_mlx.api.shared_models import (
     BaseUsage,
     IDPrefix,
+    _validate_finite_in_range,
+    _validate_logit_bias_finite,
+    _validate_nonnegative_int,
     generate_id,
     get_unix_timestamp,
 )
+
+logger = logging.getLogger(__name__)
 
 
 def _reject_nonfinite_float(v):
@@ -334,6 +340,11 @@ class ChatCompletionRequest(BaseModel):
     # Logprobs: return log probabilities of output tokens (OpenAI-compatible).
     logprobs: bool | None = None
     top_logprobs: int | None = None
+    # OpenAI logit_bias — declared so Pydantic stops silently dropping it;
+    # values validated finite by _check_logit_bias (H-10). Currently not
+    # forwarded to the mlx-lm sampler (tracked separately); the field gate
+    # still rejects nan/inf/bool defensively before the route runs.
+    logit_bias: dict[str, float] | None = None
     # Issue #226: optional client-supplied session id for per-session usage stats.
     session_id: str | None = None
 
@@ -351,6 +362,55 @@ class ChatCompletionRequest(BaseModel):
             return [v]
         return v
 
+    @field_validator("tool_choice", mode="before")
+    @classmethod
+    def _validate_tool_choice_shape(cls, v):
+        # H-16 OpenAI-surface parity: parse-time validation of
+        # ``tool_choice`` on /v1/chat/completions. Before this, malformed
+        # values (``{"type":"banana"}``, ``"any"``, ``{"foo":"bar"}``)
+        # silent-degraded to free-form generation because the typed
+        # ``str | dict`` union swallowed the shape and the chat-route
+        # ``type=='function'`` guard did not match. Mirrors M-03's
+        # ``_validate_tool_choice_type`` on the Anthropic surface
+        # (anthropic_models.py), adapted to the OpenAI vocabulary.
+        if v is None:
+            return v
+        if isinstance(v, str):
+            allowed_strings = ("none", "auto", "required", "function")
+            if v not in allowed_strings:
+                logger.debug("ChatCompletionRequest rejecting tool_choice string=%r", v)
+                raise ValueError(
+                    f"tool_choice {v!r} is not recognized; "
+                    f"allowed string values are: none, auto, required, function"
+                )
+            return v
+        if isinstance(v, dict):
+            ctype = v.get("type")
+            if ctype is None:
+                logger.debug(
+                    "ChatCompletionRequest rejecting tool_choice object "
+                    "without type field=%r",
+                    v,
+                )
+                raise ValueError(
+                    "tool_choice object must include a 'type' field; "
+                    "allowed types are: auto, none, function, required"
+                )
+            allowed_types = ("auto", "none", "function", "required")
+            if ctype not in allowed_types:
+                logger.debug(
+                    "ChatCompletionRequest rejecting tool_choice.type=%r",
+                    ctype,
+                )
+                raise ValueError(
+                    f"tool_choice.type {ctype!r} is not recognized; "
+                    f"allowed types are: auto, none, function, required"
+                )
+            return v
+        # Non-str/non-dict (numbers, lists, booleans) is rejected by the
+        # ``str | dict`` union arm with a field-named error.
+        return v
+
     @model_validator(mode="before")
     @classmethod
     def _alias_max_completion_tokens(cls, values: Any) -> Any:
@@ -361,17 +421,61 @@ class ChatCompletionRequest(BaseModel):
                 values.pop("max_completion_tokens")
         return values
 
-    @field_validator(
-        "temperature",
-        "top_p",
-        "min_p",
-        "repetition_penalty",
-        "presence_penalty",
-        "frequency_penalty",
-    )
+    @field_validator("temperature")
     @classmethod
-    def _reject_nonfinite_sampling(cls, v):
-        return _reject_nonfinite_float(v)
+    def _check_temperature(cls, v):
+        return _validate_finite_in_range(
+            v, min_value=0.0, max_value=2.0, field_name="temperature"
+        )
+
+    @field_validator("top_p")
+    @classmethod
+    def _check_top_p(cls, v):
+        return _validate_finite_in_range(
+            v,
+            min_value=0.0,
+            max_value=1.0,
+            field_name="top_p",
+            min_inclusive=True,
+        )
+
+    @field_validator("min_p")
+    @classmethod
+    def _check_min_p(cls, v):
+        return _validate_finite_in_range(
+            v, min_value=0.0, max_value=1.0, field_name="min_p"
+        )
+
+    @field_validator("repetition_penalty")
+    @classmethod
+    def _check_repetition_penalty(cls, v):
+        return _validate_finite_in_range(
+            v, min_value=0.0, max_value=2.0, field_name="repetition_penalty"
+        )
+
+    @field_validator("presence_penalty")
+    @classmethod
+    def _check_presence_penalty(cls, v):
+        return _validate_finite_in_range(
+            v, min_value=-2.0, max_value=2.0, field_name="presence_penalty"
+        )
+
+    @field_validator("frequency_penalty")
+    @classmethod
+    def _check_frequency_penalty(cls, v):
+        return _validate_finite_in_range(
+            v, min_value=-2.0, max_value=2.0, field_name="frequency_penalty"
+        )
+
+    @field_validator("top_k")
+    @classmethod
+    def _check_top_k(cls, v):
+        return _validate_nonnegative_int(v, field_name="top_k")
+
+    @field_validator("logit_bias")
+    @classmethod
+    def _check_logit_bias(cls, v):
+        return _validate_logit_bias_finite(v)
 
 
 class AssistantMessage(BaseModel):
@@ -456,6 +560,11 @@ class CompletionRequest(BaseModel):
     frequency_penalty: float | None = Field(None, ge=-2.0, le=2.0)
     # Seed for reproducible generation (best-effort)
     seed: int | None = None
+    # OpenAI FIM (fill-in-the-middle) suffix. Declared so Pydantic stops
+    # silently dropping it; rejected with 400 in the /v1/completions route
+    # when non-empty since no MLX engine implements FIM yet (silently
+    # ignoring it produces wrong completions on code-completion clients).
+    suffix: str | None = None
 
     @field_validator("stop", mode="before")
     @classmethod
@@ -465,17 +574,56 @@ class CompletionRequest(BaseModel):
             return [v]
         return v
 
-    @field_validator(
-        "temperature",
-        "top_p",
-        "min_p",
-        "repetition_penalty",
-        "presence_penalty",
-        "frequency_penalty",
-    )
+    @field_validator("temperature")
     @classmethod
-    def _reject_nonfinite_sampling(cls, v):
-        return _reject_nonfinite_float(v)
+    def _check_temperature(cls, v):
+        return _validate_finite_in_range(
+            v, min_value=0.0, max_value=2.0, field_name="temperature"
+        )
+
+    @field_validator("top_p")
+    @classmethod
+    def _check_top_p(cls, v):
+        return _validate_finite_in_range(
+            v,
+            min_value=0.0,
+            max_value=1.0,
+            field_name="top_p",
+            min_inclusive=True,
+        )
+
+    @field_validator("min_p")
+    @classmethod
+    def _check_min_p(cls, v):
+        return _validate_finite_in_range(
+            v, min_value=0.0, max_value=1.0, field_name="min_p"
+        )
+
+    @field_validator("repetition_penalty")
+    @classmethod
+    def _check_repetition_penalty(cls, v):
+        return _validate_finite_in_range(
+            v, min_value=0.0, max_value=2.0, field_name="repetition_penalty"
+        )
+
+    @field_validator("presence_penalty")
+    @classmethod
+    def _check_presence_penalty(cls, v):
+        return _validate_finite_in_range(
+            v, min_value=-2.0, max_value=2.0, field_name="presence_penalty"
+        )
+
+    @field_validator("frequency_penalty")
+    @classmethod
+    def _check_frequency_penalty(cls, v):
+        return _validate_finite_in_range(
+            v, min_value=-2.0, max_value=2.0, field_name="frequency_penalty"
+        )
+
+    @field_validator("top_k")
+    @classmethod
+    def _check_top_k(cls, v):
+        return _validate_nonnegative_int(v, field_name="top_k")
 
 
 class CompletionChoice(BaseModel):

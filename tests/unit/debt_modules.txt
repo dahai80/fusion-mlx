@@ -29,8 +29,57 @@
 
 ## uncollectable (9)
 test_markitdown_integration.py
+# KEEP_QUARANTINED test_per_request_thinking_budget.py (eval round10): collection
+# ImportError — file imports AnthropicOutputConfig + _resolve_reasoning_max_tokens
+# + AnthropicRequest from anthropic_models/anthropic_adapter, none exist in
+# fusion-mlx. This is a REAL feature gap not harness drift: tests assert the
+# Anthropic output_config.effort → reasoning_max_tokens mapping (vLLM #42396 /
+# Anthropic SDK v0.22) with precedence over legacy thinking.budget_tokens.
+# fusion-mlx only has ThinkingConfig(type,budget_tokens) — no output_config.effort.
+# Rescue requires porting the output_config.effort feature (AnthropicOutputConfig
+# model + _resolve_reasoning_max_tokens helper + anthropic_to_openai wiring),
+# which is a feature-port PR not a test-debt cleanup. Leave quarantined until
+# that feature lands; then un-quarantine.
 test_per_request_thinking_budget.py
+# KEEP_QUARANTINED 2026-08-19 round10o: REAL architectural divergence, NOT
+# harness drift. 944L / ~50 tests across 9 classes. Module-level import
+# (L13) pulls 11 names from fusion_mlx.server; only 2 exist there (app,
+# get_max_context_window). Of the 9 missing:
+#   - EngineType: re-pointable to fusion_mlx.pool.model_discovery (Literal).
+#   - get_engine: re-pointable to fusion_mlx.service.helpers:985.
+#   - ServerState: server.py has ONLY private _ServerState (L118) + _server_state
+#     instance (L137); no public ServerState class. Rename gap.
+#   - get_sampling_params / SamplingDefaults / _format_generation_speed_for_log
+#     / _resolve_metric_durations / _reset_boundary_snapshots_for_server
+#     / _reject_diffusion_structured_outputs: ZERO defs anywhere in fusion_mlx.
+# get_sampling_params contract divergence is the load-bearing gap: test
+# TestGetSamplingParams.test_returns_10_tuple expects a PUBLIC function
+# returning a 10-tuple (tok/s sampling bundle), but fusion-mlx sampling lives
+# as PER-ROUTE private _build_sampling_params (openai_routes.py:314,
+# anthropic_routes.py:223, engines/vlm.py:1367) with a dict/Object return —
+# different API shape, not a moved symbol. 23+ tests (TestGetSamplingParams
+# 13, TestGenerationSpeedLog 4, TestDiffusionStructuredOutputGuard 4,
+# TestBoundarySnapshotLifecycle 2) directly require the 6 never-ported
+# symbols. The ~27 remaining (exception handlers, model fallback, engine-type
+# validation, max-context-window, exposed-profile-models) are potentially
+# salvageable via re-point, but rescue = splitting 944L + re-authoring the
+# sampling-param-tuple contract = feature-port, not test-debt cleanup.
+# CANDIDATE ISSUE: server.py public surface (ServerState/SamplingDefaults/
+# get_sampling_params/metric+boundary helpers) never ported from rapid-mlx
+# layered-arch; fusion-mlx kept only private _ServerState + per-route
+# _build_sampling_params. Track until a server-surface unification PR lands.
 test_server.py
+# KEEP_QUARANTINED test_settings.py (eval round10): collection ImportError —
+# file imports ~20 layered settings classes (AuthSettings, CacheSettings,
+# ClaudeCodeSettings, GlobalSettings, HuggingFaceSettings, MCPSettings,
+# MemorySettings, ModelSettings, NetworkSettings, SamplingSettings,
+# SchedulerSettings, ServerSettings, ...) + BURST_DECODE_MODES/
+# DEFAULT_BURST_DECODE_MODE + burst_decode_env from fusion_mlx.settings.
+# fusion-mlx settings.py has only 4 classes (IntegrationSettings, SubKeyEntry,
+# _SettingsAuthView, Settings) — rapid-mlx layered-arch, not ported. burst_decode
+# exists only in admin UI (JS/html/i18n) not Python. Rescue requires porting the
+# rapid-mlx settings architecture or rewriting 20+ class refs — feature-port,
+# not test-debt. Leave quarantined.
 test_settings.py
 
 ## runtime-fail (315)
@@ -41,8 +90,23 @@ test_settings.py
 # xfails strict: harness drift — _drive_stream drives the dead
 # routes_internal.chat.stream_chat_completion stub (if False: yield);
 # real streaming now lives in api/openai_routes._stream_chat.
-test_admin_dashboard_draft_filters.py
-test_admin_update_check.py
+# test_admin_dashboard_draft_filters.py RESCUED 2026-08-19 (2 pass): admin
+# speculative draft-model filters (isSpecPrefillDraftModel / isVlmMtpDraftModel
+# method-body string asserts on dashboard.js). HARNESS drift: _dashboard_js
+# resolved Path(__file__).parents[1]/fusion_mlx/admin/... = tests/fusion_mlx/
+# (wrong, FileNotFoundError) → repointed to installed pkg via
+# fusion_mlx.admin.__file__/static/js/dashboard.js. All signatures + assertion
+# strings present in prod dashboard.js. No real gaps.
+# test_admin_update_check.py RESCUED 2026-08-19 (6 pass + 5 xfail strict):
+# re-pointed fusion_mlx.admin.routes→fusion_mlx.admin.update_check (real home
+# of check_update/asyncio/_update_cache/_fusionmlx_version; routes.py has no
+# asyncio import, all patches AttributeError). Fixed _reset_cache scalar
+# (prod _update_cache=None, _update_cache_time=0.0 NOT dict{}); removed
+# _UPDATE_PREFS_PATH (channel-only). Fixed test_cache_expires scalar
+# reassign (_update_cache_time= not ["stable"]=). 5 channel tests xfail
+# strict: _read_update_channel/update_channel key/per-channel cache never
+# ported (real feature gap). DROPPED unused Path import.
+# test_admin_update_check.py
 # test_alias_hybrid_classification.py RESCUED 2026-08-09 (43 pass): re-pointed
 # guard alias sets at real registry entries. DENSE_QWEN36 dropped the
 # aspirational qwen3.6-27b-ud (no mlx build ships; no -ud convention) and the
@@ -67,37 +131,126 @@ test_admin_update_check.py
 # name (model=model_name), not loaded model; consistent with /v1/chat/completions;
 # aspirational model-name normalization, track separately.
 # test_anthropic_route_auth.py  (RESCUED — commented out = un-quarantined = collected)
-test_anthropic_spec_polish_bundle.py
-test_anthropic_stop_sequences.py
+# test_anthropic_spec_polish_bundle.py  (RESCUED 2026-08-19 round10n: 8 pass.
+#   F7+F12 route-level. F12 (4 tests): route path drift
+#   /v1/messages/count_tokens -> /v1/count_tokens (prod route at L774
+#   @router.post("/count_tokens") under /v1 prefix). F7 (4 tests): REAL prod
+#   bug — tool_choice=none forwarded tools verbatim to engine.chat/stream_chat
+#   (L325/L546) + helpers _inject_tool_use_required_suffix +
+#   inject_ui_tars_sysprompt_for_lane; post-gen enforce_tool_choice only drops
+#   tool_use blocks, not raw "<tool>" marker text. PROD FIX F-014: strip tools
+#   pre-engine when openai_tool_choice=="none" on BOTH non-stream (L302) and
+#   stream (L477) paths. Negative control tool_choice=auto keeps tools.
+#   Leak-check stub asserts marker absent on strip + present without strip.)
+# test_anthropic_stop_sequences.py  (RESCUED 2026-08-19 round10d: 6 pass + 3 xfail strict.
+#   Harness drift fixed: (1) _RecordingEngine passed matched_stop= kwarg to
+#   GenerationOutput which has no such field → TypeError; stored on instance via
+#   setattr instead. (2) _make_client had no auth bypass → 401 (TestClient host
+#   =testclient not loopback); added dep_overrides[verify_api_key_or_x_api_key]
+#   + check_rate_limit_or_x_api_key. (3) test_stop_sequences_none_when_omitted
+#   asserted stop=None but SamplingParams.__post_init__ normalizes None→[] (request.py:68);
+#   relaxed to accept None or [].
+#   3 xfail strict = H-03 stop_sequence wire surfacing (PR #716): scheduler
+#   stop-string matcher landed but engine.base.GenerationOutput has NO
+#   matched_stop field; Anthropic route never reclassifies stop_reason to
+#   'stop_sequence' nor surfaces stop_sequence bytes. REAL unported contract.
+#   NO prod fix — surfacing needs engine output-layer field + route adapter,
+#   track as feature gap. Commented out = un-quarantined = collected.)
+# KEEP_QUARANTINED 2026-08-19 round10n: REAL architectural divergence.
+#   Test imports 4 dead symbols from fusion_mlx.routes_internal.anthropic:
+#   _stream_anthropic_messages (renamed _stream_anthropic_generator, moved to
+#   api/anthropic_routes.py:444), AnthropicRequest + ChatCompletionRequest
+#   (not re-exported there — live in anthropic_models/openai_models), and
+#   server_config singleton (config.py exports ServerConfig class +
+#   get_config()/reset_config(), no instance alias). Streaming Anthropic
+#   path fully rewritten to api/anthropic_routes with different request
+#   models. Not harness-fixable — would need full rewrite of the 5 tests
+#   against the new route surface + engine streaming contract. CANDIDATE
+#   ISSUE: R12 streaming-reasoning regression coverage lost in route rewrite.
 test_anthropic_streaming_reasoning.py
+# KEEP_QUARANTINED 2026-08-19 round10n: REAL functional gap. 18/21 fail.
+#   Test imports _thinking_block_content from anthropic_adapter — symbol
+#   DOES NOT EXIST (0 refs in fusion_mlx/api). R12-M1b per-block thinking
+#   sanitizer + rescue-tail dedupe helper never ported. Prod sanitize_output
+#   strips BOTH IMDb opener AND closer via _FINAL_SANITIZER (utils.py:1070);
+#   test contract says sanitize_output must NOT strip opener (legit Nemotron
+#   prefix), only strip_reasoning_channel_markup should. openai_to_anthropic
+#   emits thinking block carrying raw IMDb markup (no sanitize, no dedupe).
+#   CANDIDATE ISSUE: R12-M1b Mira r12 R-3 SEVERE think-leak fix not landed.
 test_anthropic_think_leak_r12_m1b.py
 # test_anthropic_tool_choice_validation.py RESCUED 2026-08-18 (19 pass):
 # clean pass, no re-point needed — prod enforcer symbols unchanged.
-# KEEP_QUARANTINED 2026-08-18: deep multi-axis drift after the anthropic
-# route rewrite. Import re-point applied
-# (routes_internal.anthropic no longer re-exports the _enforce_required_*
-# family → re-pointed to api._anthropic_helpers; dead
-# _estimate_anthropic_prompt_tokens → service.helpers.compute_prompt_tokens_for_messages)
-# to unblock collection, but 14/31 still fail across 5 axes: (1) prod
-# _synthesize_anthropic_forced_tool_call returns DICT not object (test asserts
-# .function.name); (2) route reads gen.prompt_tokens, test engine doubles
-# don't expose it; (3) _stream_anthropic_messages removed/relocated; (4)
-# _TOOL_USE_REQUIRED_SUFFIX injected text changed; (5) _drive_stream drives
-# dead stream_chat_completion stub. Rescue requires re-authoring the route-
-# level harness against api/openai_routes — deferred.
-test_anthropic_tool_usage_d.py
-# KEEP_QUARANTINED 2026-08-18: 89 pass / 19 fail, two
-# contract-conflict clusters (NOT import drift): (1) 13 tests expect
-# ValidationError on content=None for input roles (user/system/developer)
-# but prod Message intentionally accepts None (lenient); (2) 6 tests
-# (D-MISSING-CONTENT-KEY) assert serialized assistant messages always
-# carry a `content` key (OpenAI spec) but prod omits it for reasoning-only
-# / tool-call-only / empty completions. Resolving = product decision
-# (tighten prod = breaking, or accept tests stale) + real SDK-compat
-# verification. Deferred out of debt-rescue scope.
-test_api_models.py
-test_api_validation_bundle.py
-test_app_bundle_cli_wrapper.py
+# test_anthropic_tool_usage_d.py RESCUED 2026-08-19 (29 pass + 2 xfail strict).
+#   Multi-axis harness drift after the anthropic route rewrite, all fixed
+#   in-place: (1) prod _synthesize_anthropic_forced_tool_call returns DICT
+#   (api/ convention) -> test asserts calls[0]["function"]["name"]; (2)
+#   route reads gen.prompt_tokens directly -> F-016 fix getattr(gen,
+#   "prompt_tokens", 0) in anthropic_routes.py stream loop (crash on chunks
+#   omitting prompt_tokens killed stream before message_delta); (3)
+#   _TOOL_USE_REQUIRED_SUFFIX injected text now "MUST use one of the
+#   provided tools" -> test assertion updated; (4) stub _ToolStreamingEngine
+#   stream_chat never emitted terminal finished=True chunk -> added close-
+#   out chunk carrying prompt/completion/cached/tool_calls (GOTCHA⑱ prod
+#   stream contract). F5 prod fix: message_start.usage.input_tokens was
+#   hard-coded 0 -> route pre-computes via compute_prompt_tokens_for_messages
+#   before message_start (anthropic_routes.py L555). F-015 prod fix: single-
+#   tool forced-any 422 -> _enforce_required_tool_choice_present extended to
+#   read tool name from AnthropicTool top-level .name (pydantic) not just
+#   dict.function. F-017 prod fix: flat tool_call shape (Harmony/qwen3
+#   {"id","name","arguments"}) -> name dropped to "" by
+#   tc.get("function",{}).get("name","") -> flat-shape fallback in both
+#   anthropic_utils.convert + stream route. F-018: forced tool_choice text
+#   buffering. SSE error-event JSON: {value!r} repr single-quotes invalid
+#   JSON -> json.dumps + top-level "type":"error" (GOTCHA⑲/⑳). 2 xfail
+#   strict = the 2 multimodal prepared_images/prepared_videos forwarding
+#   tests import dead _stream_anthropic_messages from
+#   routes_internal.anthropic (renamed _stream_anthropic_generator, moved to
+#   api/anthropic_routes.py) — real unported MLLM plumbing gap, same dead
+#   symbol as test_anthropic_streaming_reasoning.py (KEEP_QUARANTINED above).
+#   NOT harness-fixable without re-authoring against the new route surface;
+#   track as candidate issue.
+# test_anthropic_tool_usage_d.py
+# test_api_models.py (RESCUED 2026-08-19 round10q-batch3: 108/108 pass.
+# Three validator groups implemented in fusion_mlx/api/models.py:
+# (1) F-040 / D-MISSING-CONTENT-KEY — AssistantMessage + ChatCompletionChunkDelta
+#     model_serializer content None->"" so the `content` key survives
+#     exclude_none (OpenAI REQUIRED key; Swift Codable / Rust serde crash on
+#     missing). AssistantMessage fills always (assistant message is a real
+#     payload); ChunkDelta fills only when reasoning_content/tool_calls
+#     present (bare finish-marker delta stays `{}`). R9-CRIT3: removed the
+#     deprecated `reasoning` alias of reasoning_content (R7-H2 root cause of
+#     openai-agents text_delta doubling).
+# (2) F-035 / F-146 — ToolDefinition.function field_validator enforces
+#     ^[a-zA-Z0-9_-]{1,64}$ on function.name (rejects empty/emoji/10k/
+#     shell-metachar/newline/space/dot/slash; accepts 64-char boundary;
+#     rejects missing name). Surfaces field path `function.name` for the
+#     400 error.param envelope.
+# (3) R15 #175 item 3 — Message model_validator rejects content=None for
+#     input roles (user/system/developer) only; assistant/tool keep
+#     content=None (OpenAI spec: assistant content=null w/ tool_calls).
+#     Surfaces role + content in the error for the 400 envelope.
+# Cross-suite verified: test_openai_models + test_d_anthro_validation +
+# test_responses_adapter (104+41 pass) no regression.)
+# test_api_models.py
+# test_api_validation_bundle.py RESCUED round10: 36 pass + 3 xfail strict.
+# Harness drift: routes_internal.completions never ported (ImportError) ->
+# rewired to openai_routes /v1/completions + dependency_overrides bypass
+# verify_api_key/check_rate_limit; embeddings get_embedding_engine isinstance
+# guard bypassed via monkeypatch (MagicMock not EmbeddingEngine). PROD FIX:
+# /v1/completions silently dropped FIM suffix -> now 400 (no MLX FIM engine);
+# also added suffix field to openai_models.CompletionRequest (live class;
+# models.py CompletionRequest is dead/unimported). 3 xfail: top_p=0
+# (Field allows 0, greedy), logit_bias (no field, silently ignored),
+# dimensions>model_dim (only truncates, never rejects over-dim).
+# test_app_bundle_cli_wrapper.py RESCUED 2026-08-19 (1 pass): single test
+# extracts the macOS app-bundle CLI wrapper shell heredoc from build.sh and
+# asserts symlink-invocation resolves PYTHONHOME/PYTHONPATH/ARGS against the
+# app root (not the symlink dir). HARNESS drift: app dir renamed
+# fusion_mlx-mac → fusion-mac; build_script path
+# apps/fusion_mlx-mac/Scripts/build.sh → apps/fusion-mac/Scripts/build.sh.
+# Live wrapper contract unchanged (realpath + APP_ROOT + PYTHONHOME cpython +
+# PYTHONPATH Resources:MLX_SITE + exec python -m fusion_mlx.cli). No real gaps.
+# test_app_bundle_cli_wrapper.py
 # test_audio.py RESCUED 2026-08-18 (21 pass + 3 skip, isolation): re-pointed
 # stale import fusion_mlx.api → fusion_mlx.api.models (AudioTranscriptionRequest
 # line 854, AudioUrl line 48 live in api.models, not re-exported from the
@@ -105,7 +258,26 @@ test_app_bundle_cli_wrapper.py
 # "mlx_audio"; find_spec('mlx_audio') raises ValueError (spec unset) on this
 # venv so the suite is excluded from full-dir collection — runs only when
 # invoked directly. Not a CI regression risk.
-test_audio_alias_registry.py
+# test_audio_alias_registry.py RESCUED 2026-08-19 (126/126 pass). Root cause =
+# conftest L155 injected MagicMock for mlx_audio/mlx_embeddings/dflash_mlx with
+# no __spec__ → find_spec raised ValueError → probe._mlx_audio_spec_present
+# (new guard) returned False → require_audio_or_exit sys.exit(2) before the
+# mocked _serve_audio_mode ran (36 boot-guard-exit fails). Fix: root conftest
+# _inject_mock_pkg gives each a real ModuleSpec so find_spec returns non-None.
+# PROD FIXES: (1) routes_internal/audio.py STT_MODEL_ALIASES/TTS_MODEL_ALIASES
+# now derived from audio.registry (single source of truth) — parakeet /
+# kokoro-82m / chatterbox / vibevoice / voxcpm / dia were unresolvable at the
+# route layer (hardcoded tables had drifted to whisper-* + kokoro-only);
+# DEFAULT_STT_ALIAS whisper-turbo→whisper (whisper-turbo dropped from registry).
+# (2) cli_commands._print_local_alias_table adds "Audio models" section from
+# list_audio_aliases() so audio aliases are discoverable offline. (3) test AST
+# contract _model_name→cfg.model_name, operand model_name→resolved (symbol
+# renamed in server.py:481 refactor; served-name-or-resolved invariant
+# preserved, harness drift not real gap). Also 22 patch.object cli→cli_serve +
+# 3 vllm_mlx→fusion_mlx re-points (CLI extraction drift). Regression check:
+# 6 live audio-adjacent suites 105/105 pass; 4 quarantined suites' fails
+# pre-existing (test_cli_models pins '(82 aliases)' summary line unrelated).
+# test_audio_alias_registry.py
 test_audio_api.py
 # test_audio_extras_lockin.py RESCUED 2026-08-18 (1 pass + 2 skip + 2 xfail,
 # isolation): fixed stale PYPROJECT_PATH (.parent.parent → .parent.parent.parent; tests
@@ -138,7 +310,13 @@ test_audio_upload_size_limit.py
 # real base-class contract (tokenizer always; processor routing is VLM
 # _prepare_vision_inputs, covered by the VLM suite). 5 pass.
 test_batched_engine_output_router.py
-test_batched_engine_tool_call_normalization.py
+# test_batched_engine_tool_call_normalization.py RESCUED 2026-08-19 (6 pass):
+# aliased import fusion_mlx.engine.batched._normalize_tool_call_arguments_for_template
+# → fusion_mlx.utils.chat_template._normalize_assistant_tool_call_arguments (symbol
+# moved/renamed during refactor; behavior 1:1 via _coerce_arguments_to_dict: JSON
+# string→dict, non-mapping→{"value":parsed}, malformed→{"value":raw}, non-assistant
+# untouched, already-mapping left alone, missing tool_calls safe). Test-file-only.
+# test_batched_engine_tool_call_normalization.py
 test_batching.py
 test_bench_vs_ollama.py
 test_benchmark.py
@@ -155,9 +333,49 @@ test_body_receive_timeout.py
 # (protocol unit tests + auth-rejection tests expecting 401) unaffected. No global-state
 # leak (cleanup verified _api_key→"" post-suite; test_admin_auth.py co-run 86 pass 0 fail).
 # test_cache_routes.py  (RESCUED — commented out = un-quarantined = collected)
+# KEEP_QUARANTINED (eval round10f 2026-08-19): 31 tests, full unimplemented
+# C-01 disconnect-attribution + M-01 cancel-metric feature. Pins:
+# (1) Scheduler cancel counters num_requests_cancelled /
+#     num_requests_cancelled_via_disconnect in get_stats (sched_step.py get_stats
+#     has NEITHER key — only num_waiting/running/processed/prompt/completion/
+#     gpu_contention). (2) record_disconnect_abort ledger dedupe
+#     (_cancelled_request_ids / _disconnect_abort_ids lifetime ledgers, reset
+#     semantics) — 0 of this in scheduler/. (3) _resolve_disconnect_abort_recorder
+#     (engine) arg-form + force_abort bumps disconnect subcounter (prod is
+#     no-arg global; _force_abort_request swallows + returns bool, no record call).
+# (4) Route: rapid_mlx_requests_cancelled_total /
+#     rapid_mlx_requests_cancelled_via_disconnect_total Prometheus counters in
+#     /metrics (routes_internal/metrics.py has ZERO cancel refs — series never
+#     rendered, not even graceful-degrade zero). 4 route tests claim "render zero
+#     when keys missing" but assert series PRESENT at 0 — prod omits entirely.
+# Same C-01 cluster as test_disconnect_counter_prod_shape.py + 5 xfail in
+# test_disconnect_guard_aborts_scheduler.py. Real feature gap, NOT harness drift.
+# Would need: scheduler counters + ledger + recorder(engine) seam + route series.
+# Leave quarantined; candidate for C-01 feature port, not inline test-debt rescue.
 test_cancelled_requests_metric.py
 test_casual_chat_auto_disable_thinking.py
-test_chat_image_upload.py
+# test_chat_image_upload.py (RESCUED 2026-08-19 round10q-b4: 13/13 pass.
+# Harness path bug — I18N_DIR was Path(__file__).parent.parent / "fusion_mlx"
+# / "admin" / "i18n" = tests/fusion_mlx/admin/i18n (WRONG, file moved to
+# tests/unit/ needs 3 parents: unit->tests->repo). Fixed to .parent.parent.parent
+# -> fusion_mlx/admin/i18n (9 lang files exist). 5 i18n_image_keys_present
+# params + 8 unrelated image-upload tests now pass. Test-only path constant,
+# no prod change.)
+# test_chat_image_upload.py
+# KEEP_QUARANTINED (eval round10d 2026-08-19): 3/3 fail —
+# "Model 'test-model' does not support chat completions (engine_type=unknown)".
+# Test pins rapid-mlx-era contract: non-stream logprobs request REROUTED to
+# engine.stream_chat to collect per-token channel split. fusion-mlx _run_chat
+# (openai_routes.py:565) calls engine.chat directly — NO logprobs reroute.
+# Channel-split accumulation fix lives ONLY in streaming path
+# (_stream_chat_generator L948+). Mock _ChannelRoutedEngine has stream_chat
+# but no chat → check_chat_capability(engine,"chat") 400. This is REAL
+# architectural divergence not harness drift: fusion-mlx chose engine.chat
+# w/ native logprobs over stream_chat reroute. Non-stream path has NO
+# channel-split logic → channel-routed models (harmony/gemma4) may leak
+# reasoning into content on non-stream logprobs. Verifying needs real harmony
+# model (constraint: 真实加载模型). Leave quarantined; candidate for real-model
+# audit, not inline test-debt rescue.
 test_chat_logprobs_channel_routing.py
 # test_chat_n_must_equal_1.py RESCUED 2026-08-09 (29 pass): restored shared
 # _reject_non_one_n helper + added n field_validator to ChatCompletionRequest
@@ -170,6 +388,19 @@ test_chat_logprobs_channel_routing.py
 # the route no longer passes forced_assistant_prefix as an engine chat
 # kwarg (mechanism replaced by post-parse synthesis; "
 # seed_forced_assistant_prefix has no prod callers). Added import pytest.
+# KEEP_QUARANTINED 2026-08-19 round10q-b4: 12 pass / 30 fail — REAL feature
+# gap #445 (tool_choice enforcement NOT ported to routes_internal/chat.py).
+# 12 pass = helpers (_tool_call_name, _synthesize_forced_tool_call,
+# _engine_supports_channel_routed_tool_calls) + auto/none-noop no-ops.
+# 30 fail = tool_choice normalization absent in prod: "none" must strip
+# request.tools (test_tool_choice_none_strips_tools_from_engine_kwargs
+# FAILS — request.tools passed directly at openai_routes.py:565/574),
+# specific-function filter+400 on unknown name, required enforcement +
+# suffix injection + stream/channel-routed variants. check_tool_choice_support
+# exists (L512/1376) but only REJECTS on opted-out engines, no normalize.
+# Feature-port PR (normalize in _run_chat L517 + _stream_chat_generator L821
+# + _stream_chat L1332 before tools consumption), not inline test-debt.
+# Needs real-model verify (harmony/hybrid channel-routed). File issue first.
 test_chat_route_tool_choice_enforcement.py
 # test_chat_route_vlm_image.py RESCUED 2026-08-18 (3 pass + 2 xfail): PROD
 # FIX — route now maps "exceeds the per-batch cap" ValueError to HTTP 400
@@ -180,7 +411,20 @@ test_chat_route_tool_choice_enforcement.py
 # input_audio rendered as '[audio]' text placeholder at :170, silently
 # dropped, not 400). No supports_audio engine flag exists; needs product
 # decision.
-test_chat_template_kwargs.py
+# test_chat_template_kwargs.py RESCUED 2026-08-19 (19 pass + 4 xfail strict):
+# #387 enable_thinking precedence (cfg.no_thinking → ctk → top-level → None).
+# HARNESS drift: 12 patch targets `vllm_mlx.service.helpers.get_config` stale
+# (get_config is local import at _get_cfg_attr L65, NOT module attr) →
+# AttributeError at patch __enter__. Repointed → `fusion_mlx.config.get_config`
+# (canonical object, _get_cfg_attr re-imports it each call → patch controls
+# return). 4 REAL gaps xfail strict: string-bool coercion ("false"/"TRUE") +
+# garbage-value fall-through (42) in _extract_thinking_from_request NEVER ported
+# to prod (returns raw value). CANDIDATE ISSUE: HTTP clients stringify bools →
+# template gets str not bool. TestRequestModel (3) + 9 Resolve + 5 Extract +
+# 4 Dflash = 19 live.
+# KEEP_QUARANTINED: test_check_gha_pinning.py — orphan test loads
+# scripts/check_gha_pinning.py via importlib; script NEVER committed (no file,
+# no CI ref, no git history). oMLX GHA-pinning security check unported.
 test_check_gha_pinning.py
 test_check_mlx_upstream_calls.py
 # test_clean_error_messages.py RESCUED 2026-08-09 (26 pass): restored F-013 +
@@ -195,9 +439,55 @@ test_check_mlx_upstream_calls.py
 # mode="before" validator scanning dict parts — rejects non-string url
 # (clean 422 "image_url.url must be a string") + bare-string shorthand
 # (was silently dropped by the multimodal preprocessor).
+# KEEP_QUARANTINED (eval round10f 2026-08-19): CLI cluster — 6 suites, all
+# pin Rapid-MLX-era CLI contract NOT fully ported through oq.py→cli_serve/
+# _cli_base extraction. Mix of stale vllm_mlx path refs + real feature gaps:
+# test_cli.py 53 tests (21 pass / 32 fail): _has_cli_overrides helper NEVER
+# ported (0 prod refs, 10 tests ImportError); --version prints "fusion-mlx
+# {_ver}" (cli.py:69,2091 deliberate) but test asserts bare __version__
+# (Rule 7 contract conflict, prod format intentional); serve/launch flag
+# + lifecycle app-bundle/homebrew path divergence. test_cli_argcomplete 16
+# (12/4): stale tests/vllm_mlx/cli.py FileNotFoundError + gemma-4 alias
+# count assert >=5 vs prod 3 + argcomplete handshake marker. test_cli_chat
+# 75 (46/29). test_cli_config_fidelity 6 (0/6). test_cli_embeddings_extra
+# 4 (0/4). test_cli_models 15 (3/12). Would need: port _has_cli_overrides,
+# argcomplete markers, alias catalog expansion, flag parity — NOT inline
+# test-debt rescue (Rule 2/3: don't invent CLI fns/aliases to satisfy
+# tests). Candidate for CLI-port feature work. Note: stale installed pkg
+# metadata 0.8.12 vs source 0.8.21 — importlib.metadata reads dist-info,
+# editable install would fix version tests but contract conflicts remain.
 test_cli.py
-test_cli_argcomplete.py
+# test_cli_argcomplete.py RESCUED 2026-08-19 (14 pass + 2 xfail strict):
+# shell-completion wiring for fusion-mlx CLI. HARNESS drift (CLI migration
+# vllm_mlx→fusion_mlx): _CLI_PATH tests/vllm_mlx/cli.py→fusion_mlx.cli.
+# __file__; 2 monkeypatch "vllm_mlx._completion._ALIASES_PATH"→
+# "fusion_mlx._completion._ALIASES_PATH"; test_cli_lazy_imports_argcomplete
+# vllm_mlx.cli→fusion_mlx.cli (sys.modules pop+import_module repoint);
+# test_autocomplete_handshake COMP_LINE rapid-mlx→fusion-mlx, COMP_POINT
+# 24→25, subprocess `python -m vllm_mlx.cli`→`fusion_mlx.cli`. 2 xfail
+# strict (test_alias_completer_filters_by_prefix +
+# test_alias_csv_completer_appends_to_existing_csv): assert >=5 gemma-4-*
+# aliases incl. 5 QAT entries (rapid-mlx PR #523) — QAT alias family NEVER
+# ported to fusion-mlx aliases.json (prod has 3: gemma-4-{4b,12b,26b}-4bit).
+# CANDIDATE ISSUE: port #523 aliases.json QAT additions. Prefix-filter +
+# csv head-carry contracts covered by other live tests.
 test_cli_chat.py
+# KEEP_QUARANTINED: round10q-b5 — CLI-port feature work, NOT harness drift.
+# (1) test_cli_config_fidelity 6/6 fail: brand-drift paths vllm_mlx/cli.py +
+# vllm_mlx/server.py (REPO_ROOT/vllm_mlx/), MISSING scripts/audit_cli_config_fidelity.py
+# audit script (#400/#405 fidelity audit), prefill_step_size SchedulerConfig kwarg
+# check. Audit script + #400 plumbing both unported feature work.
+# (2) test_cli_embeddings_extra 4/4 fail: H-08 mlx-embeddings install guard stub
+# (fusion_mlx/embedding.py only has require_mlx_embeddings_or_exit sys.exit stub,
+# NO mlx_embeddings_available probe + EMBEDDINGS_EXTRA_INSTALL_HINT). Feature port.
+# (3) test_cli_models 12/15 fail: pins Rapid-MLX rich capability table (Tools/
+# Reasoning/Spec-Decode/Suffix Tier columns, hybrid marker, em-dash). models_command
+# (cli_commands.py:220) DELIBERATELY reverted to released server-query contract
+# (L222-230 comment: Rapid-MLX table crashed on missing suffix_decoding_tier +
+# list_profiles-dict — BOTH now fixed, field exists L63, list_profiles returns dict
+# L283, but rich-table re-render NOT ported). Feature port per Rule 2/3: don't
+# invent CLI rendering to satisfy tests. CANDIDATE ISSUE: port Rapid-MLX alias
+# capability-table + audit_cli_config_fidelity.py + H-08 install guard.
 test_cli_config_fidelity.py
 test_cli_embeddings_extra.py
 test_cli_models.py
@@ -243,6 +533,20 @@ test_community_bench.py
 # correct — pure stale-ref fix.
 # test_context_overflow_400.py RESCUED 2026-08-09 (1 pass, 4 xfail): already
 # green, was stale-debt (the 4 xfailed are intentional expected-fails).
+# KEEP_QUARANTINED: test_context_window.py (13 tests) evaluated 2026-08-19.
+# Pins unported context-window-POLICY feature: validate_context_window(),
+# SamplingDefaults(max_context_window, max_context_window_policy),
+# engine_pool.get_entry().model_context_length native discovery,
+# per-model-override-escapes-policy. Prod server.get_max_context_window
+# (server.py:388) ONLY reads srv.config.max_context_window — no model-id
+# resolution, no policy clamp, no native discovery, no SamplingDefaults class,
+# no validate_context_window fn (0 prod refs). max_context_window_policy exists
+# ONLY in admin UI (dashboard.js/settings.html/i18n), backend never consumes it.
+# Real feature gap, Rule 2/3 (don't invent). CANDIDATE ISSUE: admin UI exposes
+# policy field that backend ignores. SPLIT OUT: 2 count_chat_tokens tests
+# extracted to test_batched_engine_count_chat_tokens.py RESCUED (2 pass) —
+# engines.batched.BatchedEngine.count_chat_tokens live, added _preserve_thinking
+# attr to test harness. This basename stays quarantined.
 test_context_window.py
 # KEEP_QUARANTINED: asserts F-090/F-091 default-deny CORS (env allowlist,
 # method narrowing to POST/GET/OPTIONS, max_age, credentials env, empty-CSV
@@ -252,6 +556,7 @@ test_context_window.py
 # would reverse a closed product decision, not pay debt. Test kwarg
 # (cli_origins->cors_origins) and contract are both divergent.
 test_cors_env_configurable.py
+# KEEP_QUARANTINED: round10q — L-02 _SpecAlignedCORSMiddleware not implemented. Test pins spec-aligned preflight rejection (200 + no ACAO + Vary: Origin + body "OK") replacing stock Starlette 400. server.py:696 uses stock CORSMiddleware, configure_cors_from_env(cors_origins=None) param renamed from cli_origins. Feature gap (CORS hardening), not harness drift. File issue for L-02 port.
 test_cors_lockdown_response_shape.py
 # test_d_anthro_validation.py RESCUED 2026-08-10 (#443): 31/31 pass.
 # Ported D-ANTHRO-VALIDATION F1/F4/F10/F11 to the Pydantic model layer
@@ -272,7 +577,9 @@ test_cors_lockdown_response_shape.py
 # vllm_mlx.* refs were only leftover naming in the lightweight-engine
 # stub constant). No quarantining needed.
 # test_d_anthro_validation.py
+# KEEP_QUARANTINED: round10p — vendored DeepSeek-V4 architecture not ported. _register_vendored_archs (utils/tokenizer.py:294) references ..models.deepseek_v4 but module absent → fail-silent. Needs full model vendoring (HCA attn + sinkhorn + MoE) per upstream mlx-lm#1192. Feature gap, not harness drift. File issue for port.
 test_deepseek_v4_vendored.py
+# KEEP_QUARANTINED: round10q — dense-sampler fast-path + Scheduler sampler-cache interning NOT ported. _install_dense_sampler_fastpath absent (conftest:737 injects no-op lambda stub → 7 "no-op-expected" tests pass, 1 "swap-expected" test fails). Scheduler._get_request_sampler + _sampler_cache + _sampler_cache_max absent (2 cache tests hard-fail AttributeError). Perf feature gap (homogeneous-batch fast path + bounded-LRU sampler interning). File issue for port.
 test_dense_sampler_fastpath.py
 test_dflash_adapter_signature.py
 test_dflash_engine.py
@@ -280,6 +587,18 @@ test_dflash_multimodal_fallback.py
 test_dflash_prefill_memory_guard.py
 test_dflash_spec_decode.py
 test_diffusion_engine.py
+# KEEP_QUARANTINED: pins unimplemented C-01 disconnect-attribution METRICS +
+# deep-path resolver. 8/8 fail. Missing prod: helpers re-export of
+# _resolve_sync_scheduler_for_abort / _resolve_disconnect_abort_recorder(engine) /
+# _record_disconnect_abort_on_scheduler; _unresolved_engine_logged/_unresolved_engine_lock
+# dedupe ledger + WARNING fragments; Scheduler.record_disconnect_abort method;
+# get_stats keys num_requests_cancelled + num_requests_cancelled_via_disconnect;
+# lifetime ledgers _cancelled_request_ids/_disconnect_abort_ids; 2-hop resolver
+# engine._engine.engine.scheduler (current only checks engine.scheduler).
+# _resolve_disconnect_abort_recorder() is no-arg global in prod, test wants (engine).
+# Whole feature is dead code anyway (_disconnect_guard has 0 prod callers, no route
+# passes request_id_holder) so the metrics never tick. Implementing = real prod
+# feature dev, not test-debt rescue. Eval 2026-08-19.
 test_disconnect_counter_prod_shape.py
 # KEEP_QUARANTINED: imports ``_run_with_disconnect_guard`` from
 # fusion_mlx.server — a symbol that exists in NEITHER fusion-mlx nor
@@ -289,34 +608,161 @@ test_disconnect_counter_prod_shape.py
 # Don't fabricate a _run_with_disconnect_guard to satisfy a test whose
 # target symbol never shipped.
 test_disconnect_guard.py
-test_disconnect_guard_aborts_scheduler.py
-test_disk_space_check.py
-test_doctor_env_health.py
-test_doctor_no_model_load.py
+# test_disconnect_guard_aborts_scheduler.py (RESCUED 2026-08-19: 7 pass + 5 xfail
+# strict. Fixes: (1) re-exported _force_abort_request from disconnect_guard via
+# service/helpers.py to match the _disconnect_guard/_wait_with_disconnect sibling
+# re-export convention (test imports it from helpers); (2) fixed stale import
+# path engine.batched -> engines.batched (CLI-extraction drift). 5 xfail pin
+# UNIMPLEMENTED C-01 multi-backend disconnect-abort: _resolve_sync_scheduler_for_abort
+# only checks engine.scheduler (no inner _engine.scheduler walk, no _is_mllm
+# _mllm_scheduler dual-path gating), and stream_generate does not publish into a
+# request_id_holder — _disconnect_guard force-abort is dead code in production
+# (no route passes request_id_holder). Aspirational, not harness drift.)
+# test_disk_space_check.py RESCUED 2026-08-19 (8 pass): re-pointed import
+# fusion_mlx.cli→fusion_mlx.cli_serve (CLI-extraction drift — _check_disk_space
+# lives at cli_serve.py:308, cli.py only imports _add_pflash_args/bench_command/
+# serve_command). Prod logic matches all 8 test paths (local-path short-circuit,
+# cached short-circuit, size=0 skip, HF API fail skip, force=True warn-no-abort,
+# HF_HUB_CACHE ancestor walk). Test-file-only fix.
+# test_disk_space_check.py
+# test_doctor_env_health.py RESCUED 2026-08-19 (38 pass): oMLX rapid-mlx CLI
+# renamed to fusion-mlx in port — 9 stale refs fixed (which lambda name, rc
+# content, argcomplete assertion, "Fusion-MLX Doctor" render header L75,
+# vllm_mlx.doctor public-exports probe→fusion_mlx.doctor). HARNESS drift only.
+# test_doctor_env_health.py
+# test_doctor_no_model_load.py RESCUED 2026-08-19 (8 pass + 1 xfail strict):
+# subprocess probe vllm_mlx.*→fusion_mlx.* (alias not registered in fresh
+# subprocess); mock.patch vllm_mlx.server→fusion_mlx.server. 1 xfail strict
+# (test_doctor_module_does_not_import_engine_or_server): REAL gap —
+# fusion_mlx/__init__.py eagerly imports .engines/.server (pull mlx/mlx_lm/
+# mlx_vlm) at package import, so importing any submodule drags heavy
+# machinery via parent __init__. Aspirational: needs lazy-import refactor
+# of package __init__. CANDIDATE ISSUE.
+# test_doctor_no_model_load.py
 test_download_gate.py
+# KEEP_QUARANTINED (eval round10f-eval2 2026-08-19): embeddings cluster — 3
+# suites pin embedding-extra-guard feature NOT fully ported. fusion_mlx/
+# embedding.py is a 12-line shim w/ ONLY require_mlx_embeddings_or_exit.
+# test_embeddings.py (10 tests, 1 ERROR): imports EmbeddingEngine from
+# fusion_mlx.embedding — class NOT exported (engine lives in engines/
+# embedding.py). Real-model test (importorskip mlx_embeddings) + fixture
+# needs 真实加载模型 — not inline-rescuable. test_embeddings_extra_guard.py
+# (25 tests, 20 fail): ImportError mlx_embeddings_available (probe fn NEVER
+# ported, 0 prod refs); _load_embedding_model_or_exit imported from
+# fusion_mlx.cli but lives in cli_serve.py:233 (CLI-extraction drift, same
+# as test_cli cluster); route guard 503/200 + models-list capability tag
+# + alias resolution _load_embedding_model_or_exit contract — feature
+# gaps. test_embeddings_route.py (3 tests, 3 fail): same route-guard 503
+# contract + pre-tokenized envelope. Would need: mlx_embeddings_available
+# probe port, EmbeddingEngine re-export, route guard, capability tag,
+# alias resolution — NOT inline test-debt rescue (Rule 2/3: don't invent
+# probe/guard fns to satisfy tests). Candidate for embedding-guard feature
+# port. Stale cli->cli_serve import is fixable but bundled w/ real gaps.
 test_embeddings.py
 test_embeddings_extra_guard.py
+# KEEP_QUARANTINED 2026-08-19 round10q-b4: 3/3 fail — harness drift +
+# feature gap. _build_embed_app patches stale module attrs
+# srv._embedding_engine / srv._embedding_model_locked (rapid-mlx-era;
+# fusion_mlx.server has NONE — uses module-global _pool via
+# set_embeddings_context in api/embeddings_routes.py:36) + brand-drift
+# monkeypatch vllm_mlx.server.load_embedding_model. Even if harness
+# repointed to _pool, prod create_embeddings (embeddings_routes.py:90)
+# emits 503 "Server not initialized" (pool None) or 404 "Model not found"
+# — NOT the test-expected no_embedding_model envelope (error.type=
+# invalid_request_error, code=no_embedding_model, msg with
+# --embedding-model + pip install 'rapid-mlx[embeddings]' brand drift).
+# Feature gap: no_embedding_model 503 envelope not ported. File issue first.
 test_embeddings_route.py
 # test_embeddings_timeout_admission.py  # un-quarantined: H22 fixed, H6/C4 xfail(strict=True)
-test_enable_thinking_prompt_accounting.py
-test_enable_thinking_warning_header.py
-test_engine_keepalive.py
+# test_enable_thinking_prompt_accounting.py RESCUED 2026-08-19 (13 pass +
+# 2 xfail strict): #280 enable_thinking prompt-accounting threading. 13
+# helper-level tests green (TestHelperBackwardCompat, TestHelperForwards,
+# TestHelperGateDecision — build_prompt gate forwards resolved value, legacy
+# 2-arg signature fallback, gate flips reject→accept on think-off render).
+# 2 route-level tests xfail strict: chat route imports _resolve_enable_thinking
+# but NEVER calls enforce_context_length_for_messages (build_prompt gate
+# absent); responses route calls repair_messages_fit_context not the
+# enforce build_prompt gate → build_prompt never invoked. Route-level
+# prompt-accounting gate threading NEVER ported to routes_internal.
+# Aspirational — helper coverage pins contract once route wires it.
+# test_enable_thinking_prompt_accounting.py
+# test_enable_thinking_warning_header.py RESCUED 2026-08-19 (16 pass): L-05
+# X-FusionMLX-Warning header surfaces silent enable_thinking drops on
+# non-Qwen parsers. HARNESS drift: oMLX rapid-mlx→fusion-mlx CLI rename —
+# 8 X-RapidMLX-Warning→X-FusionMLX-Warning (header key only; value format
+# `enable_thinking ignored for parser=<name>` matches prod). prod
+# _THINKING_FLAG_HONORING_PARSERS=frozenset({'qwen3'}) matches test. No real
+# gaps. (fn name test_header_name_is_x_rapidmlx_warning→_x_fusionmlx_warning
+# cosmetic).
+# test_enable_thinking_warning_header.py
+# test_engine_keepalive.py RESCUED 2026-08-19 (4 pass): embedding/reranker
+# mx.compile + start/stop lifecycle. HARNESS drift: module-relocation — test
+# imported fusion_mlx.models.embedding / fusion_mlx.engine.embedding /
+# fusion_mlx.engine.reranker (all absent); real paths = fusion_mlx.engines.
+# embedding (MLXEmbeddingModel + EmbeddingEngine) + fusion_mlx.engines.reranker
+# (RerankerEngine + MLXRerankerModel). Repointed 3 imports + 3 patch target
+# strings (models.embedding.mx→engines.embedding.mx, engine.embedding.
+# MLXEmbeddingModel→engines.embedding.MLXEmbeddingModel, engine.reranker.
+# MLXRerankerModel→engines.reranker.MLXRerankerModel). _try_compile + start
+# exist on real classes. No real gaps.
+# test_engine_preflight.py KEEP_QUARANTINED 2026-08-19: 20/25 tests require
+# unported engine-wrapper preflight layer — preflight_chat /
+# preflight_completion / preflight_or_raise / _preflight_or_raise_with_eviction
+# / preflight_eviction_request / _IMAGE_TOKEN_UPPER_BOUND_FALLBACK /
+# EngineCore.add_request cleanup-on-raise. All absent in prod
+# (fusion_mlx.engines.batched / engines.vlm / scheduler / engine_core). Real
+# feature gap, not harness drift. CANDIDATE ISSUE: preflight engine-wrapper
+# layer never ported from rapid-mlx.
+# 5/25 SPLIT-RESCUED → test_preflight_binding_ceiling_message.py (5 pass):
+# TestRejectionMessageNamesBindingCeiling exercises ported
+# _preflight_memory_check + _format_rejection_message. HARNESS drift fixed:
+# monkeypatch scheduler_mod.get_phys_footprint (NOT pkg attr) →
+# sched_query.get_phys_footprint raising=False; removed dead
+# _raise_preflight_eviction_if_available patch (never shipped, not called by
+# _preflight_memory_check).
 test_engine_preflight.py
 test_engine_router_non_stream.py
+# KEEP_QUARANTINED 2026-08-19 round10q-b4: 5 fail / 8 errors — REAL arch
+# divergence. 8 setup errors: fusion_mlx.engine_core has NO Scheduler
+# attr (step-thread scheduler not ported — test patches
+# engine_core.Scheduler executor/lazy/add_request/run_on_step_thread/
+# save_cache/load_cache routing-to-worker). 5 fail = same scheduler
+# contract. Feature port (engine_core.Scheduler step-thread executor),
+# not harness drift. File issue first.
 test_engine_step_thread.py
 # test_envelope_field_extraction.py RESCUED 2026-08-10 (27 pass): already
 # fully green, was stale-debt (envelope field extraction prod code is
 # correct; the quarantine predates a fix).
 # (rescued — left in list by mistake) test_envelope_field_extraction.py
-# KEEP_QUARANTINED: same deep-drift pattern as test_d_anthro_validation —
-# the _build_app fixture injects ``vllm_mlx.engine`` / ``vllm_mlx.routes.*``
-# (old package name, no fusion_mlx shim), so the 21 failing tests hit the
-# injected stub routes instead of fusion-mlx's real exception-handler
-# envelope. The shipped install_exception_handlers (middleware/
-# exception_handlers.py) already covers the live envelope contract; this
-# test's failures are the fixture's vllm_mlx package drift, not a prod gap.
-# Rescue needs a fixture rewrite to fusion_mlx.* (fragile module-injection
-# gymnastics), not a prod change.
+# KEEP_QUARANTINED (eval round10f-eval2 2026-08-19, CORRECTS prior eval):
+# prior note blamed vllm_mlx fixture drift — WRONG. Reproduced in clean app
+# (no fixture, install_exception_handlers + routes_internal.anthropic/
+# responses routers): REAL prod gaps confirmed. 27 tests, ~20 fail:
+# (1) ROUTE PATH BUG: /v1/messages/count_tokens -> 404. Prod registers
+#     count_tokens at /v1/count_tokens (anthropic_routes.py:774
+#     @router.post("/count_tokens"), prefix /v1) — NON-STANDARD. Official
+#     Anthropic API = POST /v1/messages/count_tokens. body_depth.py:32
+#     already references the spec path as known. 12 count_tokens tests +
+#     malformed_json[/v1/messages/count_tokens] all 404. Candidate for
+#     issue + spec-path alias fix.
+# (2) MALFORMED-JSON ENVELOPE: /v1/messages w/ b"not json" returns code=
+#     invalid_request (validation path, exception_handlers.py:437) NOT
+#     code=invalid_json (JSONDecodeError path L399-406). JSONDecodeError
+#     handler (L537) not firing — FastAPI catches malformed JSON as
+#     RequestValidationError BEFORE the JSONDecodeError handler. Handler-
+#     wiring gap, not fixture drift. malformed_json[/v1/messages] fails
+#     assert err["code"]=="invalid_json".
+# (3) F-160/F-167 count_tokens VALIDATION: empty/missing/non-array messages,
+#     unknown model, non-string model, empty-string model — 12 tests pin
+#     Pydantic validation on TokenCountRequest. NOT ported (D-ANTHRO-
+#     VALIDATION #443 did MessagesRequest/ResponsesRequest, NOT
+#     TokenCountRequest).
+# (4) audio_resolve_stt_model + audio_route model-via-query/form-field — 4
+#     tests pin audio alias resolution contract.
+# Only malformed_json[/v1/responses] passes (responses router OK).
+# Real feature port (route alias + handler-wiring + TokenCountRequest
+# validators + audio), not inline test-debt rescue. Candidate for issue
+# (esp. route path — spec violation).
 test_exception_handlers.py
 # test_finalize_harmony_raw_text.py RESCUED 2026-08-10 (46 pass): 2 real prod
 # gaps fixed in service/helpers.py — (1) _parser_accepts_enable_thinking only
@@ -495,15 +941,81 @@ test_memory_monitor_vlm_config.py
 test_metal_cap_enforcement.py
 test_metal_error_recovery.py
 test_metrics_route.py
+# KEEP_QUARANTINED: round10q — scripts/microbench_parsers.py not ported (no git history, FileNotFoundError on load). Test loads threshold-gate + sample-wiring + exit-code logic from that script. Feature gap (parser microbench harness), not harness drift. File issue for port.
 test_microbench_parsers.py
-test_minimax_m3_sparse_attention_patch.py
+# RESCUED 2026-08-19: 6/6 pass. PROD FIX — apply_minimax_m3_sparse_attention_patch()
+# (patches/minimax_m3_sparse_attention.py:164, MiniMax M3 VLM sparse-attention
+# left-padding patch) existed + was idempotent but was NEVER dispatched anywhere
+# in prod — maybe_apply_pre_load_patches (utils/model_loading.py:119) had no
+# minimax_m3_vl branch. Added dispatch: when for_vlm and model_type ==
+# "minimax_m3_vl" → apply_minimax_m3_sparse_attention_patch(), mirroring the
+# qwen3_5_moe VLM block. Regression: test_model_loading.py 15 fails PRE-EXISTING
+# (already quarantined L892 — mocks _patch_mlx_lm_load_config symbol absent from
+# module, unrelated to minimax dispatch).
+# test_minimax_m3_sparse_attention_patch.py
 test_mirror_pull.py
+# KEEP_QUARANTINED: round10q — 3 fail/5 pass. Brand-rename drift + architectural
+# divergence. (1) Test checks `_rapid_mlx_compat_installed` attr but shim sets
+# `_fusion_mlx_compat_installed` (9 refs in test, _mlx_compat.py:57/127) →
+# test_shim_installed_when_scheduler_imports + test_fallback_does_not_engage
+# fail on stale-flag/no-reset. (2) test_every_mlx_lm_consumer_installs_shim
+# audits `vllm_mlx` pkg (conftest:1058 aliases→fusion_mlx) for per-file
+# `_mlx_compat.install()` before every module-load mlx_lm import — finds 26
+# REAL offenders (scheduler/*.py, oq/*.py, speculative/dspark/*.py, etc).
+# fusion_mlx CONVENTION = central boot install (cli_serve.py:1315 serve,
+# :2636 bench; chat spawns serve subprocess) BEFORE first scheduler import
+# (cli_serve.py:1422). Per-file contract contradicts established convention
+# (Rule 11). Rescue = 26-file shim add (large, contradicts convention) OR
+# rewrite test #2 to verify central-boot-install contract. Both non-surgical.
+# File issue first per CLAUDE.md flow for per-file-vs-central contract decision.
 test_mlx_compat.py
 test_mlx_embeddings_compat.py
+# KEEP_QUARANTINED: real version/feature gap, not harness drift. Test 1 imports
+# mlx_vlm.generate.diffusion — mlx_vlm 0.5.0 (installed) has generate.py (module)
+# NOT generate/diffusion.py; _diffusion_soft_embedding_weight absent entirely.
+# fusion_mlx.patches.mlx_vlm_diffusion.apply_mlx_vlm_diffusion_patch gracefully
+# no-ops (try/except returns False) when the submodule is missing. Test 2: prod
+# maybe_apply_pre_load_patches (utils/model_loading.py L168-192) never wires
+# apply_mlx_vlm_diffusion_patch into the for_vlm dispatch — the patch is orphaned
+# dead code awaiting a mlx_vlm version that ships generate.diffusion. Wiring it
+# now would still no-op on 0.5.0. Upstream-gated; file issue if diffusion_gemma
+# support is required. fusion_mlx.patches.mlx_vlm_diffusion + utils.model_loading
+# both exist; gap is the missing upstream diffusion module + dispatch wiring.
 test_mlx_vlm_diffusion_patch.py
+# KEEP_QUARANTINED: round10q — 200 pass/6 fail. Real SSOT feature-wiring gaps,
+# NOT harness drift. 6 failures across 3 feature areas:
+# (1) DeepSeek-V4-Flash aliases absent (3 tests, test_deepseek_v4[Flash-*]):
+#     detect_model_config("mlx-community/DeepSeek-V4-Flash-{8bit,2bit-DQ,4bit}")
+#     resolves via family detection → reasoning_parser=None, but test expects
+#     "deepseek_r1" (V4-Flash chat template emits think blocks). deepseek-v4-27b/
+#     -35b aliases exist with reasoning_parser=null; Flash variants NOT aliased.
+#     Needs Flash alias entries + reasoning_parser wiring.
+# (2) Qwen3.5-27B-8bit supports_dflash absent (test_table_for_dflash_alias_
+#     surfaces_opt_in_flag): test expects cfg.supports_dflash=True (DFlash
+#     flagship per 0.9.0 notes, 1.85x code median) but alias has no
+#     supports_dflash/drafter_hf_path/dflash_draft_model fields. Needs DFlash
+#     drafter wiring (drafter path unverified — z-lab/Qwen3.5-27B-DFlash?).
+# (3) deepseek-r1-8b-4bit alias absent + helper alias resolution
+#     (test_no_warn_on_v3_alias_with_v3_parser, test_warn_on_v3_alias_with
+#     _v31_parser): warn_misbound_deepseek_v3_parser (model_auto_config.py:858)
+#     calls _deepseek_template_family on BARE alias name (no V3 marker) →
+#     returns None → false warning. Test docstring: "helper MUST resolve
+#     aliases before classifying". Helper lacks alias resolution + alias
+#     deepseek-r1-8b-4bit (→ mlx-community/DeepSeek-R1-0528-Qwen3-8B-4bit)
+#     absent from SSOT. Needs helper alias-lookup + SSOT entry.
+# All 6 = real feature/data gaps needing model-config domain decisions
+# (drafter paths, V4-Flash reasoning_parser, alias resolution helper change).
+# File issue first per CLAUDE.md flow. 200 passing tests valuable but
+# quarantine is all-or-nothing via collect_ignore.
 test_model_auto_config.py
 test_model_loading.py
-test_model_profiles_ssot.py
+# test_model_profiles_ssot.py (RESCUED 2026-08-19 round10q: 21/21 pass. Data fix
+# in aliases.json SSOT — 4 alias entries missing explicit profile bool fields:
+# qwen3.6-27b-8bit-dflash (is_hybrid+supports_spec_decode), bge-m3/bge-m3-4bit/
+# bge-m3-8bit (is_hybrid). Added is_hybrid=false + supports_spec_decode=false
+# matching sibling convention (qwen3.6-27b-8bit base; embedding models non-hybrid).
+# Additive 2 bool fields, no field removed. 82 entries load + resolve clean.)
+# test_model_profiles_ssot.py
 test_mtp_inject_and_install.py
 test_mtp_spec_decode.py
 test_mtp_stream_contract.py
@@ -511,7 +1023,7 @@ test_mxfp4_moe_guardrail.py
 test_nested_nstate_serialization.py
 test_no_mllm_flag.py
 test_no_out_of_band_routing.py
-test_openai_tool_choice_validation.py
+# test_openai_tool_choice_validation.py  (RESCUED 2026-08-18 — commented out = un-quarantined = collected; 32 pass. PROD FIX H-16 OpenAI-surface parity: openai_models.ChatCompletionRequest had NO tool_choice validator → malformed tool_choice ({"type":"banana"}, "any", {"foo":"bar"}) silent-degraded to free-form generation on /v1/chat/completions; H-16 was only closed on Anthropic surface (anthropic_models._validate_tool_choice_type). Added _validate_tool_choice_shape field_validator(mode=before) to openai_models.ChatCompletionRequest: string allowed-set {none,auto,required,function}, object requires type in {auto,none,function,required}, missing-type rejected, extra keys preserved, function-without-name passes schema (route owns that check). Harness re-point: test import api.models.ChatCompletionRequest (dead class, no route) → openai_models.ChatCompletionRequest (live route class). Regression-checked: 298 tool_choice-touching tests pass, 3 pre-existing mlx_vlm-surface fails unrelated.)
 test_openwebui.py
 test_packaging_data_files.py
 test_paged_cache_benefits.py
@@ -521,10 +1033,25 @@ test_paired_compat.py
 test_payload_builder_v2_full.py
 test_payload_builder_v2_kwargs.py
 test_pflash.py
-test_pflash_benchmark.py
+# test_pflash_benchmark.py RESCUED 2026-08-19 (3/3 pass). CLI extraction drift:
+# _build_benchmark_context moved from fusion_mlx.cli to fusion_mlx.cli_serve
+# (cli_serve.py:839). Re-pointed test import. Same pattern as test_audio_alias_registry.
+# test_pflash_benchmark.py
 test_pflash_engine.py
 test_pflash_metrics.py
 test_pflash_scheduler.py
+# KEEP_QUARANTINED: missing modules, not harness drift. Test imports
+# fusion_mlx.plugin (is_mlx_available, mlx_platform_plugin, get_mlx_device_info)
+# + fusion_mlx.vllm_platform (MLXPlatform class: device_name/device_type/
+# dispatch_key/dist_backend/is_mlx/is_cuda/is_rocm/get_device_total_memory/
+# supported_dtypes). Neither module exists in fusion-mlx (no git history) —
+# Rapid-MLX vllm-platform layout never ported. Functions scattered elsewhere
+# under different signatures: is_mlx_available→utils/hardware.py:193,
+# get_mlx_device_info→gui_compat/mlx_integration.py:1928. MLXPlatform vllm
+# abstraction absent entirely. Rescuing = either create plugin.py+vllm_platform.py
+# shims + implement MLXPlatform class (new feature) OR rewrite test to import
+# from actual locations + drop MLXPlatform tests (gutting half the suite). Out
+# of debt-rescue scope. Track as missing-module gap.
 test_platform.py
 test_prefill_oom_graceful.py
 test_prefix_boundary_path_parity.py
@@ -538,10 +1065,18 @@ test_r12_h06_repair_context_guard.py
 test_r12_m3_responses_stream_leading_items_order.py
 test_r12_reasoning_sanitizer_required.py
 test_r15_routes_stability_batch.py
+# KEEP_QUARANTINED: round10p — Ready-banner feature removed from main server. lifespan now nested closure in Server._create_app (server.py:671) calling _lifespan() generator (L1039) — NO "Ready: http" print, NO _cfg.ready=True flip, NO module-level server._engine/server.lifespan attrs. Banner only in speculative/dflash/server.py:730. Test pins deleted behavior (server.lifespan + _engine + banner). Architectural gap, not harness drift. config.ready field exists but no main-server consumer.
 test_ready_banner_timing.py
 test_reasoning_content_null_rescue.py
 test_release_check_random.py
 test_request_body_size_limit.py
+# KEEP_QUARANTINED: stub file — all 3 classes are empty `pass` with
+# @pytest.mark.skip (no test methods → "no tests collected"). Skip reasons
+# partly STALE (routes_internal.health NOW exists with cancel_request
+# endpoint /v1/requests/{id}/cancel L119 calling engine.abort_request;
+# BaseEngine exists). But the file tests NOTHING — rescuing means writing
+# real cancel/abort routing tests = new feature work, not harness drift.
+# BatchedEngine genuinely removed (#422 dedup). Track as test-coverage gap.
 test_request_cancellation.py
 test_request_time_alias_resolution.py
 test_responses_591_followups.py
@@ -549,7 +1084,7 @@ test_responses_budget_exhaust_streaming.py
 test_responses_bundle.py
 test_responses_engine_failure_envelope.py
 test_responses_input_default_type.py
-test_responses_param_validation.py
+# test_responses_param_validation.py  (RESCUED 2026-08-18 — commented out = un-quarantined = collected; 11 pass. PROD FIX R6-H8 Responses-surface parity: ResponsesRequest had no top_k cap (Field ge=0 only, no upper bound) and no seed validator → pathological top_k=999_999_999 / negative / bool and negative / bool seed silent-degraded to HTTP 200 on /v1/responses. Added shared validate_top_k (cap _TOP_K_SENTINEL_CAP=1<<20 inclusive, bool/negative reject) + validate_seed (bool/negative reject) to shared_models.py, wired as field_validators on ResponsesRequest. PROD FIX #355 forwarding: routes_internal/responses.py _resolved_sampling_kwargs only threaded temperature/top_p/stop → top_k (and min_p/repetition_penalty/presence_penalty/frequency_penalty) silently dropped before reaching engine.chat; now forwarded when present. Test vllm_mlx stub-shim harness intact. Regression-checked: test_responses_adapter 73 pass, test_responses.py + chat_template_kwargs green; pre-existing 15+6 fails in test_responses_bundle/test_responses_input_default_type unrelated (stay quarantined).)
 test_responses_route.py
 test_responses_sse_event_order.py
 test_routes.py
@@ -557,13 +1092,14 @@ test_routes_models.py
 test_routes_models_effective_parsers.py
 test_rst_mid_sse_zombie_kv.py
 test_runtime_cache_path.py
-test_sampling_param_finite_range.py
-test_sampling_params_passthrough.py
+# test_sampling_param_finite_range.py  (RESCUED 2026-08-19 round10e: 140 pass. H-10 finite-range sweep. Harness fix: rate_limiter singleton disabled in patched_config fixture (140 req burst vs 60/min cap → tail 429). Contract conflict resolved: OpenAI top_p=0.0 VALID (min_inclusive=True) to match committed Field(ge=0.0) + test_sampling_validation L340; Anthropic top_p exclusive-min kept (matches docs, no competing pin). Flipped _check_top_p min_inclusive False→True on 4 OpenAI classes (models.py ChatCompletionRequest+CompletionRequest, openai_models.py x2). Anthropic top_p stays exclusive. Suite7 FLOAT_PARAM_SPEC L201 OpenAI top_p → True, L213 anthropic → False.)
+# test_sampling_params_passthrough.py  (RESCUED 2026-08-18 — commented out = un-quarantined = collected; 12 pass + 2 xfail. Stale-ref to vllm_mlx lineage: re-pointed make_sampler monkeypatch to fusion_mlx.scheduler.sched_token._make_sampler (bound name at import), BatchGenerator patch to sched_token module, fused-sampler fast-path stubbed via sampler_fast_path.get_or_create_fused_sampler, source-read Path vllm_mlx/scheduler.py→fusion_mlx/scheduler/sched_token.py, SimpleNamespace model for _fused_sampler attr. 2 xfail strict: test_sampling_params_ignore_eos_field (field deliberately absent from SamplingParams) + test_scheduler_overrides_openai_penalty_context_size (rapid-mlx #470 context_size override not ported).)
 # test_sampling_validation.py  (RESCUED round 10c — commented out = un-quarantined = collected; 109 pass. PROD FIX F-011: openai_models route classes had no Field bounds/finite validator → NaN/inf/out-of-range sampling params reached engine; added Field(ge/le)+_reject_nonfinite_float to ChatCompletionRequest+CompletionRequest in openai_models.py AND api/models.py. Harness re-point: dead _create_chat_completion_impl→live _run_chat seam; rate_limiter singleton disabled in fixture.)
-test_sanitize_output.py
+# test_sanitize_output.py  (RESCUED 2026-08-19 round10p: 15 pass. PROD FIX: _FINAL_SANITIZER regex missing stray closing-tag pattern → `</im_end>` (slash form, no pipes) leaked into message.content in non-stream path. Added `|</[a-z_]+>` alternation (api/utils.py L1070). Additive — existing `<|im_end|>` open-form + tool_call + think patterns unaffected. Caller: postprocessor/core.py sanitize_output pipeline.)
 test_scheduler_chunked_prefill.py
 test_scheduler_prefill_memory_guard.py
 test_scheduler_stop_decoder_surface.py
+# KEEP_QUARANTINED: round10p — community-benchmarks/ dir + schema.json not ported. Test reads community-benchmarks/schema.json (FileNotFoundError) + submissions/*.json. Feature (community bench aggregator v2 schema) not in repo. Feature gap, not harness drift. File issue for port.
 test_schema_v2_accepts_minimal_v2.py
 test_schema_v2_accepts_v1.py
 test_schema_v2_rejects_partial_harness.py
@@ -575,21 +1111,54 @@ test_serve_host_loopback_default.py
 test_server_api_key_env_fallback.py
 test_server_load_model_order.py
 test_server_prefill_memory_handler.py
-test_server_queue_full_handler.py
+# RESCUED 2026-08-19: 4/4 pass. PROD FIX — SchedulerQueueFullError (raised by
+# scheduler/sched_admission.py admission control) had NO exception handler
+# registered → bubbled to generic handler → 500, no Retry-After. exceptions.py
+# docstring promised "503 + short Retry-After" but code never delivered. Added
+# module-level scheduler_queue_full_handler (middleware/exception_handlers.py):
+# /v1/* → OpenAI {"error":{"message","type":"server_busy","code":
+# "scheduler_queue_full"}}, else → {"detail":...}, status 503, Retry-After:"1",
+# message "Scheduler queue full (depth/cap); retry shortly." Registered in
+# install_exception_handlers + re-exported via middleware/__init__ + server.py
+# (noqa F401, test plucks srv.scheduler_queue_full_handler). `scheduler_queue_full_handler`
+# symbol never existed in fusion-mlx (only rapid-mlx migration commit 31ce9b6).
+# Regression: test_exception_handlers.py 21 fails PRE-EXISTING (already
+# quarantined L696, count_tokens/audio-route debt, NOT queue-full related).
+# test_server_queue_full_handler.py
 test_server_utils.py
 test_silent_drop_rescue_569.py
+# KEEP_QUARANTINED: round10p — upstream mlx-lm API regression. `import mlx_lm.generate` now yields a FUNCTION not module (symbol shadow); _merge_caches/_extend_cache/PromptProcessingBatch removed from public API. Test pins removed functions (_merge_caches identity-merge, _extend_cache batched conversion). scheduler/monkeypatches.py patches BatchGenerator._next/next_generated but NOT _merge_caches. Upstream gap — file issue first per CLAUDE.md flow, then PR.
 test_singleton_cache_passthrough.py
 test_specprefill.py
 test_sse_keepalive.py
-test_status_endpoint.py
+# test_status_endpoint.py  (RESCUED round10: 5 pass + 3 xfail strict. Harness drift — server.app now lazy (app=None until get_app()); ServerState→_ServerState; /api/status route reads self.pool closure not _server_state.engine_pool; require_admin blocks non-loopback when no api_key. Rewrote: Server() instance + server.app + dependency_overrides[require_admin]=True for 200 cases; set_api_key for auth test. 3 xfail: /health flat shape no engine_pool.final_ceiling; /api/status dropped active_requests/waiting_requests; /api/status surfaces only 3 metric fields not full ServerMetrics.)
 test_step3p7_patch.py
-test_stop_string_enforcement.py
+# test_stop_string_enforcement.py  (RESCUED 2026-08-19 round10e2: 12 pass. Harness drift — production stop-string path rewired from _decode_tokens seam to streaming detokenizer (_get_detokenizer → add_token/text/last_segment/finalize); test stubbed obsolete _decode_tokens. Rewrote _run_step: _FakeDetok (text=last_segment=decoded_full after add_token, prev_len=0 so stop scan from 0; finalize sets _finalized flag → last_segment returns "" post-finalize so L256 output.new_text += final_segment does NOT double-append); tokenizer.decode stubbed → decoded_full for finished re-decode path L259. 9 fails (stop-scan+detokenizer path) → 0. 3 prior-pass (empty_stop/empty_string/already-length) unaffected. Pure scheduler unit, no engine.)
 test_streaming_reasoning_split_r8c.py
 test_streaming_tool_filter.py
+# KEEP_QUARANTINED: missing feature, not harness drift. Test imports
+# scripts.stress_test (chat() with stream usage accounting: include_usage,
+# completion_tokens fallback to chunk count). scripts/stress_test.py does NOT
+# exist in fusion-mlx (no git history); scripts/ has only bench_*.py. Rapid-MLX
+# artifact never ported. Rescuing = writing the stress-test script = new
+# feature, out of debt-rescue scope. Track as missing-tooling gap.
 test_stress_test_stream_usage.py
 test_structured_output.py
 test_stt_corrupted_file.py
 test_stt_response_format.py
+# KEEP_QUARANTINED: architecture/policy gap, not harness drift. Test pins a
+# Rapid-MLX contract (failure msg says `rapid-mlx bench --submit`) requiring a
+# root `.gitignore` listing `.claude/`. But commit aa7a876 deliberately DELETED
+# `.gitignore` — rules moved to `.git/info/exclude` (which has only
+# `.claude/plans/`, not `.claude/`). Reversing that = policy decision, not
+# debt-rescue. Worse: test premise (`_git_is_clean` gate in submit_interactive
+# blocked by `.claude/scheduled_tasks.lock` + `.claude/worktrees/*` untracked)
+# is FICTION in fusion-mlx — submit flow (_run_submit_flow / _run_tier_submit_flow
+# cli_serve.py:2335/2164) has NO git ops, NO clean gate, NO commit/push/gh-pr;
+# docstring "consent → write → commit → push → gh pr create" is aspiration not
+# impl. Test guards a regression that cannot occur. Reconciling = either
+# reverse aa7a876 policy OR rewrite test to check `.git/info/exclude` for
+# worktree/lock exclusion (also policy). Out of scope.
 test_submit_gitignore.py
 test_suffix_decoding.py
 test_telemetry_cli.py
@@ -616,10 +1185,34 @@ test_turboquant_ssd.py
 # (commit 5a03046 wired /v1/responses to async engine pool + alias resolve;
 # parser resolver hardened for disk-basename names). All three suites fully
 # green: test_ui_tars_fixes 71, test_ui_tars_lane_parity 70, test_ui_tars_parser 100.
-test_upgrade_cli.py
+# RESCUED 2026-08-19: test_upgrade_cli 4/4. _version_check.py was a 3-fn
+# stub (migration debt commit 31ce9b6) — fusion-mlx upgrade crashed with
+# ImportError on _installed_version/_parse_version/detect_install_method/
+# get_latest_version/InstallInfo. Implemented full backend (fusion-mlx brand,
+# brew tap dahai80/homebrew-fusion-mlx/fusion-mlx, pip fusion-mlx, fail-silent
+# GitHub fetch + ~/.fusion-mlx/version_check.json cache). Rebranded test
+# harness assertions rapid-mlx->fusion-mlx + raullenchai/rapid-mlx/rapid-mlx
+# ->dahai80/homebrew-fusion-mlx/fusion-mlx. Prod crash FIXED.
+# test_upgrade_cli.py
 test_v4_multi_session.py
+# KEEP_QUARANTINED: missing feature, not harness drift. Test loads
+# scripts/validate_release_subject.py (importlib spec_from_file_location) expecting
+# diagnose(subject)->list[str] + main(["--subject",...])->exit-code API for linting
+# `chore: bump version to X.Y.Z` release subjects (rejects PR-suffix `(#NNN)`,
+# wrong prefix, 2-digit ver, whitespace, newline). scripts/validate_release_subject.py
+# does NOT exist in fusion-mlx (no git history); scripts/ has only bench_*.py. No
+# release-subject validator anywhere in repo (.github/, fusion_mlx/, packaging/).
+# Rapid-MLX artifact never ported. Rescuing = writing the validator script = new
+# release-process feature, out of debt-rescue scope. Track as missing-tooling gap.
 test_validate_release_subject.py
-test_version_check.py
+# RESCUED 2026-08-19: test_version_check 44/44. Same _version_check.py stub
+# as test_upgrade_cli — full backend implemented (staleness_warning >=2 patch
+# lag same-minor, _parse_version X.Y.Z tolerant, _disabled env+CI, cache
+# ~/.fusion-mlx/version_check.json, detect_install_method brew/install_sh/pip,
+# prompt_upgrade_if_available fail-silent + PEP440 non-final guard, all
+# network fail-silent). Rebranded harness rapid-mlx->fusion-mlx. Sibling of
+# test_upgrade_cli rescue above.
+# test_version_check.py
 test_vision_extra_install.py
 test_vision_feature_cache.py
 test_vlm_engine.py

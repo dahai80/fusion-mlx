@@ -80,7 +80,7 @@ def test_warns_when_2_or_more_patch_behind(isolated_cache, monkeypatch):
     assert msg is not None
     assert "0.6.14" in msg
     assert "0.6.16" in msg
-    assert "rapid-mlx upgrade" in msg
+    assert "fusion-mlx upgrade" in msg
 
 
 def test_silent_when_only_1_patch_behind(isolated_cache, monkeypatch):
@@ -140,7 +140,7 @@ def test_silent_when_disabled(monkeypatch):
 
 
 def test_silent_when_dev_build_unparseable(isolated_cache, monkeypatch):
-    """``rapid-mlx`` not installed (running from source tree without
+    """``fusion-mlx`` not installed (running from source tree without
     install) → ``pkg_version`` raises and we return None — no warning."""
     monkeypatch.setattr(vc, "_installed_version", lambda: None)
 
@@ -176,23 +176,23 @@ def test_print_helper_swallows_all_exceptions(monkeypatch, capsys):
     assert captured.out == ""
 
 
-# --- staleness warning recommends `rapid-mlx upgrade` ----------------
+# --- staleness warning recommends `fusion-mlx upgrade` ----------------
 
 
 def test_warning_message_recommends_upgrade_subcommand(isolated_cache, monkeypatch):
     """The banner must point users at our own upgrade subcommand.
 
-    Pre-0.6.31 we suggested raw ``brew upgrade rapid-mlx`` — wrong formula
-    path (the tap is ``raullenchai/rapid-mlx/rapid-mlx``) AND it stranded pip /
+    Pre-0.6.31 we suggested raw ``brew upgrade fusion-mlx`` — wrong formula
+    path (the tap is ``dahai80/homebrew-fusion-mlx/fusion-mlx``) AND it stranded pip /
     install.sh users. The new flow centralises the install-method detection
-    in ``rapid-mlx upgrade``, so the warning just needs to point there.
+    in ``fusion-mlx upgrade``, so the warning just needs to point there.
     """
     monkeypatch.setattr(vc, "_installed_version", lambda: "0.6.20")
     _seed_cache(isolated_cache, "0.6.30")
 
     msg = vc.staleness_warning()
     assert msg is not None
-    assert "rapid-mlx upgrade" in msg
+    assert "fusion-mlx upgrade" in msg
 
 
 # --- detect_install_method() -----------------------------------------
@@ -202,11 +202,11 @@ def test_detect_install_method_brew(monkeypatch):
     """A brew install resolves through realpath into ``/opt/homebrew/Cellar/``.
 
     The detector must spot that and return the *tap-qualified* formula path
-    — ``brew upgrade rapid-mlx`` alone doesn't know about external taps and
-    fails with ``Error: rapid-mlx not installed`` for users on the tap.
+    — ``brew upgrade fusion-mlx`` alone doesn't know about external taps and
+    fails with ``Error: fusion-mlx not installed`` for users on the tap.
     """
-    fake_binary = "/opt/homebrew/bin/rapid-mlx"
-    fake_realpath = "/opt/homebrew/Cellar/rapid-mlx/0.6.20/bin/rapid-mlx"
+    fake_binary = "/opt/homebrew/bin/fusion-mlx"
+    fake_realpath = "/opt/homebrew/Cellar/fusion-mlx/0.6.20/bin/fusion-mlx"
     monkeypatch.setattr("shutil.which", lambda _name: fake_binary)
     monkeypatch.setattr(
         "os.path.realpath",
@@ -215,16 +215,20 @@ def test_detect_install_method_brew(monkeypatch):
 
     info = vc.detect_install_method()
     assert info.method == "brew"
-    assert info.upgrade_command == "brew upgrade raullenchai/rapid-mlx/rapid-mlx"
-    assert info.upgrade_argv == ["brew", "upgrade", "raullenchai/rapid-mlx/rapid-mlx"]
+    assert info.upgrade_command == "brew upgrade dahai80/homebrew-fusion-mlx/fusion-mlx"
+    assert info.upgrade_argv == [
+        "brew",
+        "upgrade",
+        "dahai80/homebrew-fusion-mlx/fusion-mlx",
+    ]
     assert info.binary_path == fake_binary
 
 
 def test_detect_install_method_brew_linux(monkeypatch):
     """Linux Homebrew installs to ``/home/linuxbrew/.linuxbrew/`` — must
     detect there too, otherwise Linux-via-brew users get the pip command."""
-    fake_binary = "/home/linuxbrew/.linuxbrew/bin/rapid-mlx"
-    fake_realpath = "/home/linuxbrew/.linuxbrew/Cellar/rapid-mlx/0.6.20/bin/rapid-mlx"
+    fake_binary = "/home/linuxbrew/.linuxbrew/bin/fusion-mlx"
+    fake_realpath = "/home/linuxbrew/.linuxbrew/Cellar/fusion-mlx/0.6.20/bin/fusion-mlx"
     monkeypatch.setattr("shutil.which", lambda _name: fake_binary)
     monkeypatch.setattr(
         "os.path.realpath",
@@ -242,7 +246,7 @@ def test_detect_install_method_install_sh(tmp_path, monkeypatch):
     home = tmp_path / "home"
     local_bin = home / ".local" / "bin"
     local_bin.mkdir(parents=True)
-    fake_binary = str(local_bin / "rapid-mlx")
+    fake_binary = str(local_bin / "fusion-mlx")
     monkeypatch.setattr("pathlib.Path.home", lambda: home)
     monkeypatch.setattr("shutil.which", lambda _name: fake_binary)
     monkeypatch.setattr("os.path.realpath", lambda p: p)
@@ -253,8 +257,8 @@ def test_detect_install_method_install_sh(tmp_path, monkeypatch):
 
 
 def test_detect_install_method_install_sh_via_symlink(tmp_path, monkeypatch):
-    """install.sh actually creates a venv under ``~/.rapid-mlx/`` and
-    symlinks the entry point into ``~/.local/bin/rapid-mlx``. ``realpath``
+    """install.sh actually creates a venv under ``~/.fusion-mlx/`` and
+    symlinks the entry point into ``~/.local/bin/fusion-mlx``. ``realpath``
     resolves through the symlink, so a check that *only* looked at the
     resolved path classified install.sh users as 'pip' and silently
     suggested the wrong upgrade command. Pin the symlink case explicitly.
@@ -262,10 +266,10 @@ def test_detect_install_method_install_sh_via_symlink(tmp_path, monkeypatch):
     home = tmp_path / "home"
     local_bin = home / ".local" / "bin"
     local_bin.mkdir(parents=True)
-    venv_bin = home / ".rapid-mlx" / "bin"
+    venv_bin = home / ".fusion-mlx" / "bin"
     venv_bin.mkdir(parents=True)
-    fake_binary = str(local_bin / "rapid-mlx")
-    fake_realpath = str(venv_bin / "rapid-mlx")
+    fake_binary = str(local_bin / "fusion-mlx")
+    fake_realpath = str(venv_bin / "fusion-mlx")
     monkeypatch.setattr("pathlib.Path.home", lambda: home)
     monkeypatch.setattr("shutil.which", lambda _name: fake_binary)
     monkeypatch.setattr(
@@ -288,13 +292,13 @@ def test_detect_install_method_pip_uses_sys_executable(monkeypatch):
     """
     import sys
 
-    monkeypatch.setattr("shutil.which", lambda _name: "/some/other/path/rapid-mlx")
+    monkeypatch.setattr("shutil.which", lambda _name: "/some/other/path/fusion-mlx")
     monkeypatch.setattr("os.path.realpath", lambda p: p)
 
     info = vc.detect_install_method()
     assert info.method == "pip"
     assert info.upgrade_command.startswith(sys.executable)
-    assert info.upgrade_command.endswith("-m pip install --upgrade rapid-mlx")
+    assert info.upgrade_command.endswith("-m pip install --upgrade fusion-mlx")
     # argv form is shell-safe even if sys.executable contains spaces — that
     # was a P0 in deepseek review (subprocess shell=True path injection).
     assert info.upgrade_argv == [
@@ -303,12 +307,12 @@ def test_detect_install_method_pip_uses_sys_executable(monkeypatch):
         "pip",
         "install",
         "--upgrade",
-        "rapid-mlx",
+        "fusion-mlx",
     ]
 
 
 def test_detect_install_method_no_binary_falls_back_to_pip(monkeypatch):
-    """When ``rapid-mlx`` isn't on PATH (e.g. invoked via
+    """When ``fusion-mlx`` isn't on PATH (e.g. invoked via
     ``python -m vllm_mlx.cli``), default to pip so the upgrade subcommand
     still works."""
     monkeypatch.setattr("shutil.which", lambda _name: None)
@@ -409,8 +413,8 @@ def test_prompt_returns_false_when_upgrade_subprocess_fails(monkeypatch, interac
         "detect_install_method",
         lambda: vc.InstallInfo(
             method="brew",
-            upgrade_command="brew upgrade raullenchai/rapid-mlx/rapid-mlx",
-            upgrade_argv=["brew", "upgrade", "raullenchai/rapid-mlx/rapid-mlx"],
+            upgrade_command="brew upgrade dahai80/homebrew-fusion-mlx/fusion-mlx",
+            upgrade_argv=["brew", "upgrade", "dahai80/homebrew-fusion-mlx/fusion-mlx"],
         ),
     )
     fake_result = MagicMock(returncode=1)
@@ -440,8 +444,8 @@ def test_prompt_returns_false_when_user_declines(monkeypatch, interactive):
         "detect_install_method",
         lambda: vc.InstallInfo(
             method="pip",
-            upgrade_command="pip install -U rapid-mlx",
-            upgrade_argv=["pip", "install", "-U", "rapid-mlx"],
+            upgrade_command="pip install -U fusion-mlx",
+            upgrade_argv=["pip", "install", "-U", "fusion-mlx"],
         ),
     )
     with (
@@ -460,8 +464,8 @@ def test_prompt_returns_true_and_runs_upgrade_on_accept(monkeypatch, interactive
         "detect_install_method",
         lambda: vc.InstallInfo(
             method="brew",
-            upgrade_command="brew upgrade raullenchai/rapid-mlx/rapid-mlx",
-            upgrade_argv=["brew", "upgrade", "raullenchai/rapid-mlx/rapid-mlx"],
+            upgrade_command="brew upgrade dahai80/homebrew-fusion-mlx/fusion-mlx",
+            upgrade_argv=["brew", "upgrade", "dahai80/homebrew-fusion-mlx/fusion-mlx"],
         ),
     )
     fake_result = MagicMock(returncode=0)
@@ -472,7 +476,7 @@ def test_prompt_returns_true_and_runs_upgrade_on_accept(monkeypatch, interactive
     ):
         assert vc.prompt_upgrade_if_available() is True
         run.assert_called_once_with(
-            ["brew", "upgrade", "raullenchai/rapid-mlx/rapid-mlx"], check=False
+            ["brew", "upgrade", "dahai80/homebrew-fusion-mlx/fusion-mlx"], check=False
         )
 
 
