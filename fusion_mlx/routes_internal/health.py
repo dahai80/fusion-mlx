@@ -122,6 +122,116 @@ async def status(_auth: bool = Depends(verify_management_access)):
     }
 
 
+def _mlx_memory_stats() -> dict[str, int | None]:
+    # Reuse the gc._get_mlx_stats pattern: Apple Silicon unified memory
+    # exposes active/cache/peak via mlx.metal. None when MLX/Metal absent
+    # (CPU-only CI runners). Kept read-only — no clear_cache (vs POST /gc).
+    try:
+        import mlx.core as mx
+
+        if mx.metal.is_available():
+            return {
+                "active": mx.get_active_memory(),
+                "cache": mx.get_cache_memory(),
+                "peak": mx.get_peak_memory(),
+            }
+    except Exception:
+        logger.debug("v1/health: mlx memory stats unavailable", exc_info=True)
+    return {"active": None, "cache": None, "peak": None}
+
+
+def _oom_risk(available_ratio: float, mlx_peak_ratio: float | None) -> str:
+    # Deterministic (Rule 5): two-signal classifier. available_ratio =
+    # system free / total; mlx_peak_ratio = MLX peak / total (when known).
+    # Both signals must agree before escalating — a single low-free
+    # reading under a low peak is reclaimable cache, not imminent OOM.
+    if available_ratio < 0.05:
+        return "imminent"
+    if mlx_peak_ratio is not None and mlx_peak_ratio > 0.90:
+        return "imminent"
+    if available_ratio < 0.15 or (mlx_peak_ratio is not None and mlx_peak_ratio > 0.75):
+        return "high"
+    if available_ratio < 0.30 or (mlx_peak_ratio is not None and mlx_peak_ratio > 0.50):
+        return "low"
+    return "none"
+
+
+@router.get("/v1/health")
+async def v1_health(_auth: bool = Depends(verify_management_access)):
+    # #564: read-only memory/OOM status for fusion-code /doctor (P4.2 S4)
+    # proactive OOM detection + MLX OOM auto-recovery (enhance-0819 item 15).
+    # Read-only — distinct from the mutating POST /api/v1/gc. Aligns with
+    # the fusion-code MLXHealthResponse type, adding memory + oom_risk.
+    from .._version import __version__
+    from ..server import _server_state
+    from ..server_metrics import get_server_metrics
+
+    pool = _server_state.get("engine_pool")
+    metrics = get_server_metrics().to_dict()
+
+    mem_total = mem_avail = mem_used = rss_bytes = 0
+    available_ratio = 1.0
+    try:
+        import psutil
+
+        vm = psutil.virtual_memory()
+        mem_total = vm.total
+        mem_avail = vm.available
+        mem_used = vm.used
+        available_ratio = vm.available / vm.total if vm.total else 1.0
+        rss_bytes = psutil.Process().memory_info().rss
+    except Exception:
+        logger.debug("v1/health: psutil unavailable", exc_info=True)
+
+    mlx = _mlx_memory_stats()
+    mlx_peak = mlx["peak"]
+    mlx_peak_ratio = (mlx_peak / mem_total) if (mlx_peak and mem_total) else None
+
+    per_model: list[dict[str, int | str]] = []
+    active_models: list[str] = []
+    if pool is not None:
+        try:
+            for m in pool.get_status().get("models", []):
+                if not m.get("loaded"):
+                    continue
+                mid = m.get("id") or m.get("name") or ""
+                active_models.append(mid)
+                per_model.append(
+                    {"name": mid, "bytes": int(m.get("estimated_size", 0) or 0)}
+                )
+        except Exception:
+            logger.debug("v1/health: pool status failed", exc_info=True)
+
+    risk = _oom_risk(available_ratio, mlx_peak_ratio)
+    status = "oom" if risk == "imminent" else "degraded" if risk == "high" else "ok"
+
+    logger.info(
+        "v1/health: status=%s oom_risk=%s avail=%.1f%% mlx_peak_ratio=%s models=%d",
+        status,
+        risk,
+        available_ratio * 100,
+        f"{mlx_peak_ratio:.2f}" if mlx_peak_ratio is not None else "n/a",
+        len(active_models),
+    )
+    return {
+        "status": status,
+        "version": __version__,
+        "uptime_seconds": int(metrics.get("uptime_seconds", 0.0)),
+        "active_models": active_models,
+        "memory": {
+            "rss_bytes": rss_bytes,
+            "used_bytes": mem_used,
+            "free_bytes": mem_avail,
+            "total_bytes": mem_total,
+            "mlx_active_bytes": mlx["active"],
+            "mlx_cache_bytes": mlx["cache"],
+            "mlx_peak_bytes": mlx["peak"],
+            "per_model": per_model,
+        },
+        "oom_risk": risk,
+    }
+
+
 @router.get("/v1/metrics/json")
 async def metrics_json(_auth: bool = Depends(verify_management_access)):
     # Full JSON inference metrics for downstream consumers (e.g. fusion-model-hub
