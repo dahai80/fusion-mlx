@@ -1425,16 +1425,16 @@ test_probe_fastpath.py
 #    ModelPrivateAttr, broke ``in`` lookup). Regression: response_format/
 #    d_anthro/tool_choice/ui_tars 104p/7xfail.
 # test_r10_scrub_validation_bundle.py
-test_r12_h06_repair_context_guard.py
-# KEEP_QUARANTINED: 2/4 pass after PROD FIX responses.py:692 chat(stream=True)
-# -> stream_chat (chat has no stream param, returned non-iterable GenerationOutput
-# -> TypeError async-for; real streaming-crash bug). Remaining 2 fails = feature
-# gap: handler parses only OpenAI choices[].delta chunks, but BaseEngine.stream_chat
-# yields FLAT GenerationOutput (new_text/channel, no choices). Reasoning-first
-# ordering + completed-output-index-matches-wire invariants unmet. Needs flat-chunk
-# parse branch + empty-reasoning emit logic = feature work. 0 regression
-# (228 responses tests pass). ISSUE #513 FILED.
-# test_r12_m3_responses_stream_leading_items_order.py
+# test_r12_h06_repair_context_guard.py
+# RESCUED #514: strict json_schema postgen validation+repair ported to
+# /v1/chat/completions via shared apply_strict_postgen_validation helper
+# (strict_json_schema.py). 3 chat tests (repair runs / skipped-on-overflow /
+# exact-one-token-overflow) + 2 responses parity + 2 helper tests all green.
+# KEEP_QUARANTINED: test_r12_m3 2 fails = #513 stream-feature gap (handler
+# parses OpenAI choices[].delta, BaseEngine.stream_chat yields FLAT
+# GenerationOutput). #578 (#513/#520) shipped but did NOT un-quarantine
+# this file — stream-feature work still pending. 0 regression.
+test_r12_m3_responses_stream_leading_items_order.py
 # RESCUED b19 r12_reasoning_sanitizer: 80/80 green. Fixes — (1) AssistantMessage
 # + ChatCompletionChunkDelta field validators on openai_models (route-serialized
 # classes, NOT models.py parallels) sanitize content/reasoning at type boundary;
