@@ -607,7 +607,12 @@ class ImageGenEngine(BaseNonStreamingEngine):
                 if img_w < min_w or img_h < min_h:
                     logger.error(
                         "ImageGen raw output collapsed: got %dx%d requested %dx%d variant=%s seed=%d",
-                        img_w, img_h, width, height, self._variant, base_seed + i,
+                        img_w,
+                        img_h,
+                        width,
+                        height,
+                        self._variant,
+                        base_seed + i,
                     )
                     raise RuntimeError(
                         f"ImageGen raw output width/height collapsed: got {img_w}x{img_h} "
