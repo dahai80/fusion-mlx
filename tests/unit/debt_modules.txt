@@ -1562,7 +1562,7 @@ test_tool_parser_coverage.py
 test_tool_parsers.py
 test_tool_result_content_array.py
 test_tools_auto_disable_thinking.py
-# RESCUED b30 2026-08-20 (PR #554). 500L. 5 fails -> 0 fail (17 pass + 1
+# RESCUED b30 2026-08-20 (PR #556). 500L. 5 fails -> 0 fail (17 pass + 1
 # skip xgrammar-not-installed env gate). Two patterns:
 # (1) TEST-TYPO: __version__ assert used "+fusion_mlx-stub" (underscore)
 # but prod uses "+fusion-mlx-stub" (hyphen) at _torch_stub.py L325 build
