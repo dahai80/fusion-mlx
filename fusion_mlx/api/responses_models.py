@@ -24,6 +24,13 @@ from .shared_models import (
 # Request Models
 # =============================================================================
 
+# #524: documented Responses-API message roles. InputItem.role must be one
+# of these (or None for non-message item types). Module-level so Pydantic
+# does not capture it as a ModelPrivateAttr.
+_ALLOWED_RESPONSES_ROLES = frozenset(
+    {"user", "assistant", "system", "tool", "developer"}
+)
+
 
 class InputItem(BaseModel):
     """A single item in the Responses API input array.
@@ -48,6 +55,22 @@ class InputItem(BaseModel):
     status: str | None = None
 
     model_config = {"extra": "allow"}
+
+    # #524: reject unknown message roles at the Pydantic layer so the
+    # RequestValidationError handler returns 400 with a clean field path,
+    # instead of an opaque 500 inside the Jinja chat template. Only
+    # message-type items carry a role; function_call / reasoning / output
+    # items have role=None on the wire, so a non-None role must be one of
+    # the documented Responses-API roles.
+    @field_validator("role")
+    @classmethod
+    def _validate_role(cls, v: str | None) -> str | None:
+        if v is None:
+            return v
+        if v not in _ALLOWED_RESPONSES_ROLES:
+            allowed = ", ".join(sorted(_ALLOWED_RESPONSES_ROLES))
+            raise ValueError(f"Input 'role' must be one of: {allowed} (got {v!r})")
+        return v
 
     @model_validator(mode="before")
     @classmethod

@@ -377,7 +377,7 @@ _VALID_RESPONSE_FORMAT_TYPES = ("text", "json_object", "json_schema")
 # + nested reasoning.effort) so the two surfaces can't drift. "none" is
 # the explicit-disable value (distinct from field-absent None).
 _REASONING_EFFORT_ALLOWED: frozenset[str] = frozenset(
-    {"minimal", "low", "medium", "high", "none"}
+    {"minimal", "low", "medium", "high", "xhigh", "none"}
 )
 
 
