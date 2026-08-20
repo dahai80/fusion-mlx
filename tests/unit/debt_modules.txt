@@ -1672,5 +1672,26 @@ test_streaming_pipeline_integration.py
 # test_mtp_lossless.py
 
 ## timeout (1)
-test_boundary_snapshot_store.py
+# RESCUED b29 2026-08-20 (PR #553). 875L. Two patterns:
+# (1) PROD-BUG: BoundarySnapshotSSDStore.save() called
+# self._get_dynamic_queue_bound() (added 5b8607cf Jun 13) but the method
+# was NEVER defined -> AttributeError caught by outer `except Exception:
+# return False` -> save() silently returned False for ~2 months, breaking
+# cross-restart prefix cache (#257). Fix: inline
+# max_bound = _DEFAULT_MAX_PENDING_WRITES at boundary_snapshot_store.py
+# L262 (honest constant, not a fake "dynamic" method). Restored 14 failing
+# save/load/writer-race tests to green.
+# (2) REDESIGN-DRIFT: 4 tests (L208, L228, L241, L276) pin per-session
+# dir isolation (assert store2._snapshot_dir != store1._snapshot_dir;
+# foreign-session dir preserved across store creation; cleanup only
+# removes current session). Prod NEVER had per-session dirs — single
+# shared _boundary_snapshots dir with rmtree-on-init crash cleanup
+# (dafed936, #257). Re-implementing session isolation = speculative
+# feature (Rule 2). Prod shared-dir design = established contract (Rule 7).
+# Skipped with REDESIGN-DRIFT reason. NOT a prod bug.
+# Also: test L861 iter_in_memory_extracted -> iter_in_memory_values (prod
+# renamed the _BoundarySnapshotProvider method; extract_fn=None default
+# makes the two equivalent for the assert).
+# Result: 22 pass + 4 skip + 0 fail. debt 169 -> 168.
+# test_boundary_snapshot_store.py
 

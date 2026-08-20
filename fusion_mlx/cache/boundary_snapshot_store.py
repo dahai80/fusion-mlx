@@ -259,8 +259,14 @@ class BoundarySnapshotSSDStore:
                     qsize / _DEFAULT_MAX_PENDING_WRITES * 100,
                 )
 
-            # 5. Enqueue for background write (dynamic capacity check).
-            max_bound = self._get_dynamic_queue_bound()
+            # 5. Enqueue for background write (hard capacity check).
+            # TODO: make this bound dynamic on MLX allocator pressure
+            # (see _MIN_PENDING_WRITES / _MAX_PENDING_WRITES_CAP). The
+            # original 5b8607cf refactor referenced a
+            # _get_dynamic_queue_bound method that was never defined,
+            # so every save() raised AttributeError and returned False
+            # — silently breaking cross-restart prefix cache (#257).
+            max_bound = _DEFAULT_MAX_PENDING_WRITES
             if qsize >= max_bound:
                 # Queue at dynamic capacity — drop snapshot to protect memory
                 logger.warning(
