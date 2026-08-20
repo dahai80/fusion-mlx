@@ -1526,6 +1526,32 @@ test_serve_host_loopback_default.py
 # admin.auth.set_api_key). 1 live spawn @pytest.mark.slow->real_model
 # (registered marker, env-gated, needs real model per CLAUDE.md).
 # test_server_api_key_env_fallback.py
+# KEEP_QUARANTINED b35 2026-08-20 — 2 basenames below, scanner blind-spot:
+# b34 RESCUED verdict L1518 above describes test_server_api_key_env_fallback
+# (rescued, commented out), NOT these 2; SchedulerQueueFull RESCUED verdict
+# L1531 below describes test_server_queue_full_handler.py, NOT these.
+# test_server_load_model_order.py: REDESIGN-DRIFT. Pins #225 startup-
+# ordering fix — _detect_native_tool_support() + preserve_native_tool_format
+# + enable_tool_logits_bias ALL removed from prod (grep zero hits).
+# _sync_config (server.py:156) now ONLY sets cfg.api_key; comment L159
+# "#50 — Other fields written directly to ServerConfig by cli_serve, no
+# longer staged through globals". Module globals _enable_tool_logits_bias/
+# _mcp_manager/_tool_parser_instance/_reasoning_parser/_reasoning_parser_name/
+# _enable_auto_tool_choice/_tool_call_parser ALL absent from server.py module
+# level. enable_tool_logits_bias absent from ServerConfig (config.py) entirely
+# (tool_parser_instance L275/reasoning_parser L278/mcp_manager L282/model_registry
+# L321/enable_auto_tool_choice L273/tool_call_parser L274 still exist but no
+# module-global→cfg staging path to test). Prod wins Rule 7/12.
+# test_server_prefill_memory_handler.py: feature gap, NOT harness drift.
+# prefill_memory_exceeded_handler absent (parity gap vs scheduler_queue_full_
+# handler sibling; exception_handlers.py:638 registers ONLY SchedulerQueueFull,
+# install_exception_handlers L563 has no PrefillMemoryExceededError handler).
+# PrefillMemoryExceededError STILL raised (memory_monitor.py:944, engine_core
+# :36) → bubbles to generic Exception handler → 500, no structured 400 body.
+# ALSO _with_json_keepalive/_with_sse_keepalive absent (streaming error-body
+# emitters; same not-ported family as test_sse_keepalive.py ACTIVE).
+# 2/7 tests (TestPostCommitPrefillMemorySurface) pin keepalive feature →
+# can't rescue half file. Prod wins Rule 7/12.
 test_server_load_model_order.py
 test_server_prefill_memory_handler.py
 # RESCUED 2026-08-19: 4/4 pass. PROD FIX — SchedulerQueueFullError (raised by
