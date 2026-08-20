@@ -69,7 +69,11 @@ async def _resolve_pool_model(model_name: str) -> dict | None:
     if entry is None:
         return None
     if getattr(entry, "engine", None) is not None:
-        return {"status": "ok", "model_id": model_name, "message": f"Already loaded: {model_name}"}
+        return {
+            "status": "ok",
+            "model_id": model_name,
+            "message": f"Already loaded: {model_name}",
+        }
     try:
         await srv.pool.get_engine(resolved)
     except Exception as e:
