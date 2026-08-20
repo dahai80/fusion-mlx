@@ -399,6 +399,40 @@ Health check with MLX memory stats.
 }
 ```
 
+### `GET /v1/health`
+
+Read-only memory and OOM-risk status (management-gated). Distinct from the
+liveness probe `GET /health` above — this reports system + MLX memory and a
+deterministic OOM-risk classifier for proactive detection and MLX OOM
+auto-recovery (#564).
+
+**Response:**
+```json
+{
+    "status": "ok",
+    "version": "0.8.27",
+    "uptime_seconds": 3600,
+    "active_models": ["Qwen3-4B-Q4_K_M"],
+    "memory": {
+        "rss_bytes": 5368709120,
+        "used_bytes": 10737418240,
+        "free_bytes": 8589934592,
+        "total_bytes": 19327352832,
+        "mlx_active_bytes": 2684354560,
+        "mlx_cache_bytes": 1288490188,
+        "mlx_peak_bytes": 4294967296,
+        "per_model": [
+            {"name": "Qwen3-4B-Q4_K_M", "bytes": 2147483648}
+        ]
+    },
+    "oom_risk": "low"
+}
+```
+
+`status`: `ok` | `degraded` (high risk) | `oom` (imminent). `oom_risk`:
+`none` | `low` | `high` | `imminent`. MLX memory fields are `null` on
+CPU-only runners (no Metal). Requires management access (API key).
+
 ### `GET /metrics`
 
 Server metrics — request counts, token totals, per-model stats.
