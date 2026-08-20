@@ -135,8 +135,11 @@ async def metrics_json(_auth: bool = Depends(verify_management_access)):
     pool = _server_state.get("engine_pool")
     data = get_server_metrics().to_dict()
     data["loaded_models"] = pool.get_loaded_model_ids() if pool else []
-    logger.info("metrics_json served: total_requests=%s active=%s",
-                data.get("total_requests"), data.get("active_requests"))
+    logger.info(
+        "metrics_json served: total_requests=%s active=%s",
+        data.get("total_requests"),
+        data.get("active_requests"),
+    )
     return data
 
 
