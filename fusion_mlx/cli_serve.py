@@ -892,12 +892,53 @@ def _serve_from_model_dir(args):
 
     app = create_app(config)
 
-    import uvicorn
-
     log_level = getattr(args, "log_level", "INFO")
     if not isinstance(log_level, str):
         log_level = "INFO"
-    uvicorn.run(app, host=host, port=port, log_level=log_level.lower())
+    uvicorn_log_level = log_level.lower()
+
+    # #569: route --model-dir through the same UDS-aware dispatch the
+    # single-model serve path uses (_run_uvicorn → Server.run()), instead
+    # of a bare uvicorn.run that treats ``unix:/path`` as a TCP host and
+    # fails with Errno 8. Mirror the bind-config stamp so the lifespan
+    # "Ready:" banner reports the real listener (uds/host/fd).
+    listen_fd = getattr(args, "listen_fd", None)
+    uds_path = _uds_path_from_host(args.host)
+    host_display = "localhost" if args.host == "0.0.0.0" else args.host
+
+    if uds_path is not None:
+        print(
+            f"  Starting server on unix socket: {uds_path} "
+            "(warming up - this can take a few seconds)"
+        )
+    elif listen_fd is not None:
+        print(
+            f"  Starting server on inherited fd {listen_fd} "
+            "(warming up — this can take a few seconds)"
+        )
+    else:
+        print(
+            f"  Starting server on http://{host_display}:{port} "
+            "(warming up — this can take a few seconds)"
+        )
+
+    from .config import get_config
+
+    _cfg = get_config()
+    _cfg.bind_host = None
+    _cfg.bind_port = None
+    _cfg.bind_listen_fd = None
+    _cfg.bind_uds = None
+    if uds_path is not None:
+        _cfg.bind_uds = uds_path
+    elif listen_fd is None:
+        _cfg.bind_host = host_display
+        _cfg.bind_port = port
+    else:
+        _cfg.bind_listen_fd = listen_fd
+
+    sys.stdout.flush()
+    _run_uvicorn(app, args, uvicorn_log_level)
 
 
 def _boot_guard_checks(args, effective_max_tokens):
