@@ -331,6 +331,89 @@ def _extract_tensor_bytes(arr) -> tuple[bytes, str, list[int]]:
     return raw, dtype_str, shape
 
 
+# Composite nstate element support (DeepSeek-V4-Flash CacheList layers).
+# A top-level ``__nstate__`` marker's element list may hold not just flat
+# ``mx.array`` values but composite sub-states: a 2-tuple of arrays (the
+# rotating sub-state), a nested ``__nstate__`` marker with ``None`` sub-
+# elements (the pooling sub-state), or a bare ``None``. The pre-fix store
+# path assumed every element was a flat array, so ``_extract_tensor_bytes``
+# raised on a tuple/str/None and bled the block save. The helpers below
+# recursively flatten composite elements into the same ``tensors_raw`` /
+# ``file_metadata`` maps the flat path uses, tagged by a ``_kind`` metadata
+# key so the load path can rebuild the exact structure. Flat arrays keep
+# the legacy untagged key (no ``_kind``), so existing v3 caches stay
+# readable and the format version is not bumped.
+
+
+def _store_nstate_element(
+    item,
+    key_prefix: str,
+    tensors_raw: dict,
+    file_metadata: dict,
+) -> None:
+    kind = _nstate_element_kind(item)
+    if kind == "array":
+        tensors_raw[key_prefix] = _extract_tensor_bytes(item)
+        return
+    file_metadata[f"{key_prefix}_kind"] = kind
+    if kind == "none":
+        return
+    if kind == "tuple":
+        subs = list(item)
+        file_metadata[f"{key_prefix}_count"] = str(len(subs))
+        for m, sub in enumerate(subs):
+            _store_nstate_element(
+                sub, f"{key_prefix}_sub_{m}", tensors_raw, file_metadata
+            )
+        return
+    if kind == "nstate":
+        file_metadata[f"{key_prefix}_class"] = str(item[1])
+        subs = list(item[2])
+        file_metadata[f"{key_prefix}_count"] = str(len(subs))
+        for m, sub in enumerate(subs):
+            _store_nstate_element(
+                sub, f"{key_prefix}_sub_{m}", tensors_raw, file_metadata
+            )
+
+
+def _nstate_element_kind(item) -> str:
+    if item is None:
+        return "none"
+    if isinstance(item, tuple) and len(item) >= 3 and item[0] == "__nstate__":
+        return "nstate"
+    if isinstance(item, (tuple, list)):
+        return "tuple"
+    return "array"
+
+
+def _load_nstate_element(
+    key_prefix: str,
+    file_metadata: dict,
+    get_tensor,
+):
+    kind = file_metadata.get(f"{key_prefix}_kind", "array")
+    if kind == "none":
+        return None
+    if kind == "array":
+        raw = get_tensor(key_prefix)
+        return raw
+    if kind == "tuple":
+        count = int(file_metadata.get(f"{key_prefix}_count", 0))
+        return [
+            _load_nstate_element(f"{key_prefix}_sub_{m}", file_metadata, get_tensor)
+            for m in range(count)
+        ]
+    if kind == "nstate":
+        count = int(file_metadata.get(f"{key_prefix}_count", 0))
+        cls = file_metadata.get(f"{key_prefix}_class")
+        subs = [
+            _load_nstate_element(f"{key_prefix}_sub_{m}", file_metadata, get_tensor)
+            for m in range(count)
+        ]
+        return ("__nstate__", cls, subs)
+    return get_tensor(key_prefix)
+
+
 def _has_zero_dim(shape: tuple[int, ...]) -> bool:
     return any(d == 0 for d in shape)
 
@@ -823,7 +906,12 @@ class PagedSSDCacheManager:
             ):
                 elements = list(layer_data[2])
                 for k, item in enumerate(elements):
-                    tensors_raw[f"layer_{i}_state_{k}"] = _extract_tensor_bytes(item)
+                    _store_nstate_element(
+                        item,
+                        f"layer_{i}_state_{k}",
+                        tensors_raw,
+                        file_metadata,
+                    )
                 file_metadata[f"layer_{i}_state_count"] = str(len(elements))
                 file_metadata[f"layer_{i}_nstate_class"] = str(layer_data[1])
                 continue
@@ -1132,16 +1220,25 @@ class PagedSSDCacheManager:
             else:
                 state_count = int(file_metadata.get(f"layer_{i}_state_count", 2))
                 nstate_class = file_metadata.get(f"layer_{i}_nstate_class")
+
+                def _get_tensor_raw(key):
+                    raw = tensors_raw.get(key)
+                    if not raw:
+                        return None
+                    return _restore_tensor_from_bytes(*raw)
+
                 items = []
                 for k in range(state_count):
-                    raw = tensors_raw.get(f"layer_{i}_state_{k}")
-                    if raw:
-                        arr = _restore_tensor_from_bytes(*raw)
-                        if arr is not None:
-                            items.append(arr)
-                        else:
-                            return None
-                if state_count >= 3 and nstate_class:
+                    elem = _load_nstate_element(
+                        f"layer_{i}_state_{k}", file_metadata, _get_tensor_raw
+                    )
+                    if (
+                        elem is None
+                        and file_metadata.get(f"layer_{i}_state_{k}_kind") != "none"
+                    ):
+                        return None
+                    items.append(elem)
+                if nstate_class:
                     layers.append(("__nstate__", nstate_class, items))
                 elif len(items) == 2:
                     layers.append((items[0], items[1]))
@@ -1224,9 +1321,11 @@ class PagedSSDCacheManager:
                 items = []
                 for k in range(state_count):
                     key = f"layer_{i}_state_{k}"
-                    if key in arrays:
-                        items.append(arrays[key])
-                if state_count >= 3 and nstate_class:
+                    elem = _load_nstate_element(key, meta, lambda k2: arrays.get(k2))
+                    if elem is None and meta.get(f"{key}_kind") != "none":
+                        return None
+                    items.append(elem)
+                if nstate_class:
                     layers.append(("__nstate__", nstate_class, items))
                 elif len(items) == 2:
                     layers.append((items[0], items[1]))
