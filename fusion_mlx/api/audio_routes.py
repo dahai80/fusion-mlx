@@ -75,11 +75,20 @@ def _resolve_model(model_id: str) -> str:
     """Resolve a model alias to its real model ID.
 
     Delegates to the same resolve_model_id used by LLM/chat endpoints,
-    ensuring audio endpoints handle aliases consistently.
+    ensuring audio endpoints handle aliases consistently. Then applies
+    the #508 HuggingFace repo-id structural check to the resolved id so
+    malformed slash-bearing ids (``foo/bar/baz``, ``////``, ``.git``
+    suffix, over-length) 404 here instead of reaching the engine loader
+    and surfacing as an opaque 500.
     """
     from fusion_mlx.server import resolve_model_id
 
-    return resolve_model_id(model_id) or model_id
+    resolved = resolve_model_id(model_id) or model_id
+    # Reuse the shared structural validator from the audio route shim so
+    # the live route and the unit-tested resolvers stay in lockstep.
+    from fusion_mlx.routes_internal.audio import _validate_hf_repo_id_or_404
+
+    return _validate_hf_repo_id_or_404(resolved, "audio")
 
 
 def _get_settings_manager():
@@ -442,8 +451,11 @@ async def create_transcription(
     from fusion_mlx.engines.stt import STTEngine
     from fusion_mlx.exceptions import ModelNotFoundError
 
-    pool = _get_engine_pool()
+    # #508: validate/resolve the model BEFORE touching the engine pool so
+    # a malformed model id 404s cleanly even when the server has not
+    # initialized a pool yet (was 503 "Server not initialized").
     resolved_model = _resolve_model(model)
+    pool = _get_engine_pool()
 
     # Load the engine via pool (handles model loading and LRU eviction)
     try:
@@ -544,8 +556,9 @@ async def create_speech(request: AudioSpeechRequest):
 
     audio_bytes = _decode_ref_audio_base64(request)
 
-    pool = _get_engine_pool()
+    # #508: validate/resolve model before pool init (404 on malformed id).
     resolved_model = _resolve_model(request.model)
+    pool = _get_engine_pool()
 
     try:
         engine = await pool.get_engine(resolved_model)
@@ -668,8 +681,9 @@ async def process_audio(
     from fusion_mlx.engines.sts import STSEngine
     from fusion_mlx.exceptions import ModelNotFoundError
 
-    pool = _get_engine_pool()
+    # #508: validate/resolve model before pool init (404 on malformed id).
     resolved_model = _resolve_model(model)
+    pool = _get_engine_pool()
 
     # Load the engine via pool (handles model loading and LRU eviction)
     try:

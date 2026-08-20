@@ -70,7 +70,7 @@ class TestPathShapedRejection:
         ), f"expected 404 for {model_string!r}, got {exc_info.value.status_code}"
         detail = exc_info.value.detail
         assert isinstance(detail, dict)
-        assert detail["error"]["type"] == "model_not_found_error"
+        assert detail["error"]["type"] == "invalid_request_error"
         assert detail["error"]["code"] == "model_not_found"
 
     @pytest.mark.parametrize(
@@ -102,7 +102,7 @@ class TestPathShapedRejection:
         assert exc_info.value.status_code == 404
         detail = exc_info.value.detail
         assert isinstance(detail, dict)
-        assert detail["error"]["type"] == "model_not_found_error"
+        assert detail["error"]["type"] == "invalid_request_error"
 
     @pytest.mark.parametrize(
         "model_string",
@@ -135,7 +135,7 @@ class TestPathShapedRejection:
         ), f"expected 404 for {model_string!r}, got {exc_info.value.status_code}"
         detail = exc_info.value.detail
         assert isinstance(detail, dict)
-        assert detail["error"]["type"] == "model_not_found_error"
+        assert detail["error"]["type"] == "invalid_request_error"
 
     def test_accepts_notebook_ipynb_repo_id(self):
         """codex r3 BLOCKING: ``.ipynb`` is NOT a HF-reserved suffix
@@ -157,7 +157,7 @@ class TestPathShapedRejection:
         assert exc_info.value.status_code == 404
         detail = exc_info.value.detail
         assert isinstance(detail, dict)
-        assert detail["error"]["type"] == "model_not_found_error"
+        assert detail["error"]["type"] == "invalid_request_error"
 
     def test_alias_still_resolves(self):
         """F-165 contract: known aliases continue to map to repos."""
@@ -220,6 +220,6 @@ def test_route_path_shaped_model_returns_404_not_500(_audio_client, model_string
     # {...}}}``. Accept either shape — the contract under test is
     # "404 + ``model_not_found_error`` code".
     err = body.get("error") or body.get("detail", {}).get("error", {})
-    assert err.get("type") == "model_not_found_error", body
+    assert err.get("type") == "invalid_request_error", body
     assert err.get("code") == "model_not_found", body
     assert model_string in err.get("message", ""), body

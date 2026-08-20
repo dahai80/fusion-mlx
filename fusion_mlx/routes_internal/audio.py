@@ -1,6 +1,7 @@
 """Compatibility shim: re-exports from api.audio_routes."""
 
 import logging
+import re as _re
 
 from ..api.audio_routes import *  # noqa: F401,F403
 from ..api.audio_routes import router  # noqa: F401
@@ -30,6 +31,61 @@ _allowed_voices_for = {}
 
 from fastapi import HTTPException
 
+# #508 Gap A: HuggingFace repo-id structural validation. The bare
+# ``"/" in model_id`` passthrough accepted path-shaped (3+ segment),
+# leading/trailing slash, hidden-dir, ``.git`` suffix, ``+`` char and
+# over-length ids — forwarding them to the engine loader which surfaced
+# as an opaque 500 instead of a clean 404. Implemented locally (not via
+# huggingface_hub.utils.validate_repo_id) so the check holds even when
+# the test harness stubs ``huggingface_hub`` out of sys.modules, and to
+# enforce a total-length cap the hub validator does not. Only applied to
+# slash-bearing ids; short aliases resolve via the alias tables above.
+_HF_REPO_ID_MAX_TOTAL = 96
+# ``<org>/<repo>`` or bare ``<repo>``; each component is 1-96 chars of
+# [A-Za-z0-9._-], must not start/end with ``.`` or ``-``. Mirrors the
+# HuggingFace moon-landing name rule. Slash-free ids never reach here.
+_HF_REPO_ID_RE = _re.compile(
+    r"^(?!\.)(?!-)[A-Za-z0-9._-]{1,96}(?<!\.)(?<!-)"
+    r"(?:/(?!\.)(?!-)[A-Za-z0-9._-]{1,96}(?<!\.)(?<!-))?$"
+)
+
+
+def _validate_hf_repo_id_or_404(model_id: str, kind: str) -> str:
+    # Slash-free ids are short aliases handled by the caller; only gate
+    # the HuggingFace ``<org>/<repo>`` pass-through shape.
+    if "/" not in model_id:
+        return model_id
+    reason = None
+    if model_id.count("/") > 1:
+        reason = "must be in the form 'namespace/repo_name'"
+    elif "--" in model_id or ".." in model_id:
+        reason = "cannot contain '--' or '..'"
+    elif model_id.endswith(".git"):
+        reason = "cannot end with '.git'"
+    elif not _HF_REPO_ID_RE.match(model_id):
+        reason = (
+            "must use alphanumeric chars, '-', '_' or '.' "
+            "and not start/end with '-' or '.'"
+        )
+    elif len(model_id) > _HF_REPO_ID_MAX_TOTAL:
+        reason = f"exceeds {_HF_REPO_ID_MAX_TOTAL} chars"
+    if reason is not None:
+        logger.info(
+            "#508: rejecting malformed %s model id %r: %s", kind, model_id, reason
+        )
+        raise HTTPException(
+            status_code=404,
+            detail={
+                "error": {
+                    "type": "invalid_request_error",
+                    "code": "model_not_found",
+                    "message": f"Unknown {kind} model: {model_id} ({reason})",
+                    "param": "model",
+                }
+            },
+        )
+    return model_id
+
 
 def _resolve_stt_model(model_id: str) -> str:
     if not model_id:
@@ -37,6 +93,7 @@ def _resolve_stt_model(model_id: str) -> str:
             status_code=400,
             detail={
                 "error": {
+                    "type": "invalid_request_error",
                     "code": "invalid_request_error",
                     "message": "model is required",
                 }
@@ -46,18 +103,19 @@ def _resolve_stt_model(model_id: str) -> str:
         model_id = DEFAULT_STT_ALIAS
     if model_id in STT_MODEL_ALIASES:
         return STT_MODEL_ALIASES[model_id]
-    if "/" in model_id:
-        return model_id
-    raise HTTPException(
-        status_code=404,
-        detail={
-            "error": {
-                "code": "model_not_found",
-                "message": f"Unknown STT model: {model_id}",
-                "param": "model",
-            }
-        },
-    )
+    if "/" not in model_id:
+        raise HTTPException(
+            status_code=404,
+            detail={
+                "error": {
+                    "type": "invalid_request_error",
+                    "code": "model_not_found",
+                    "message": f"Unknown STT model: {model_id}",
+                    "param": "model",
+                }
+            },
+        )
+    return _validate_hf_repo_id_or_404(model_id, "STT")
 
 
 def _resolve_tts_model(model_id: str) -> str:
@@ -66,6 +124,7 @@ def _resolve_tts_model(model_id: str) -> str:
             status_code=400,
             detail={
                 "error": {
+                    "type": "invalid_request_error",
                     "code": "invalid_request_error",
                     "message": "model is required",
                 }
@@ -73,18 +132,19 @@ def _resolve_tts_model(model_id: str) -> str:
         )
     if model_id in TTS_MODEL_ALIASES:
         return TTS_MODEL_ALIASES[model_id]
-    if "/" in model_id:
-        return model_id
-    raise HTTPException(
-        status_code=404,
-        detail={
-            "error": {
-                "code": "model_not_found",
-                "message": f"Unknown TTS model: {model_id}",
-                "param": "model",
-            }
-        },
-    )
+    if "/" not in model_id:
+        raise HTTPException(
+            status_code=404,
+            detail={
+                "error": {
+                    "type": "invalid_request_error",
+                    "code": "model_not_found",
+                    "message": f"Unknown TTS model: {model_id}",
+                    "param": "model",
+                }
+            },
+        )
+    return _validate_hf_repo_id_or_404(model_id, "TTS")
 
 
 def _resolve_default_voice_literal(model: str, voice: str) -> str:

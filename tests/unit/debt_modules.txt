@@ -360,7 +360,11 @@ test_audio_api.py
 # File issue for: (a) server-fixture rebuild for audio route tests,
 # (b) HF repo-id structural validation in _resolve_stt_model/_resolve_tts_model.
 # Tracked in issue #508 (filed 2026-08-19).
-test_audio_path_shaped_model.py
+# RESCUED #508 Gap A (2026-08-20): HF repo-id structural validation landed in
+# routes_internal/audio.py (_validate_hf_repo_id_or_404) + live route
+# _resolve_model reorder; 33/33 pass. Gap B (server-fixture rebuild for the
+# other 9 audio suites) still pending — those stay quarantined below.
+# test_audio_path_shaped_model.py
 test_audio_probe_consistency.py
 test_audio_r11_b_bundle.py
 test_audio_r7_c_bundle.py
