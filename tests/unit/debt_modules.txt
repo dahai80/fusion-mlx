@@ -176,7 +176,22 @@ test_anthropic_streaming_reasoning.py
 #   test contract says sanitize_output must NOT strip opener (legit Nemotron
 #   prefix), only strip_reasoning_channel_markup should. openai_to_anthropic
 #   emits thinking block carrying raw IMDb markup (no sanitize, no dedupe).
-#   CANDIDATE ISSUE: R12-M1b Mira r12 R-3 SEVERE think-leak fix not landed.
+# KEEP_QUARANTINED: eval b26 2026-08-20 — REDESIGN-DRIFT, NOT missing fix.
+# R12-M1b think-leak fix LANDED (#530, 72d3afbd). Test's 12/33 fails are
+# harness-semantic drift, not prod bug:
+#   - test_sanitize_output_does_not_strip_think_opener (L153) asserts
+#     sanitize_output preserves bare <think> opener. But prod _FINAL_SANITIZER
+#     (utils.py:1065) strips opener — and that strip is LOCKED by
+#     test_sanitize_output.py::test_only_markup_collapses_to_none (markup-only
+#     →None) + this file's own test_max_tokens_1_no_think_leak_in_any_block
+#     (opener MUST be stripped to avoid leak). Rule 7: prod wins, L153 test
+#     holds the LOSING/obsolete contract. Verified: removing opener-strip
+#     → 22 fail (regression), reverted.
+#   - 11 more fails (TestRescueTailNoDuplication/TestThinkingBlockContentHelper/
+#     TestMarkupOnlyDelta/TestSliceBisectsThinkTag) = rescue-tail dedupe +
+#     thinking-block content helper semantics mismatch. Same family.
+# Rescue = rewrite 12 test expectations to match prod strip semantics in 883L
+# file. Exceeds single-cycle budget (Rule 6). DEFER.
 test_anthropic_think_leak_r12_m1b.py
 # test_anthropic_tool_choice_validation.py RESCUED 2026-08-18 (19 pass):
 # clean pass, no re-point needed — prod enforcer symbols unchanged.
