@@ -117,13 +117,28 @@ def _build_model_info(model_id: str) -> SimpleNamespace:
     )
 
 
-def _entry_payload(model_id, tool, reasoning, modality="text", capabilities=None):
+def _entry_payload(
+    model_id,
+    tool,
+    reasoning,
+    modality="text",
+    capabilities=None,
+    loaded=True,
+    state="loaded",
+):
+    # #577: every entry carries a ``loaded`` bool + ``state`` ("loaded" |
+    # "registered") so consumers can distinguish resident-in-memory models
+    # from on-disk-registered-but-not-yet-loaded ones. Without this the
+    # gateway / studio / design checkers saw a non-empty list and assumed
+    # every id was immediately servable — a 502-on-generate "fake green".
     payload = {
         "id": model_id,
         "object": "model",
         "tool_call_parser": tool,
         "reasoning_parser": reasoning,
         "modality": modality,
+        "loaded": loaded,
+        "state": state,
     }
     if capabilities is not None:
         payload["capabilities"] = capabilities
@@ -160,6 +175,63 @@ async def list_models(_auth: bool = Depends(verify_api_key)):
             alias_modality = _resolve_modality(cfg.model_alias)
             data.append(
                 _entry_payload(cfg.model_alias, tool, reasoning, alias_modality, caps)
+            )
+    # H-13: surface the boot-locked embedding model so discovery clients
+    # (langchain / llamaindex / openai-python) find an
+    # ``capabilities=["embedding"]`` card via client.models.list(). In
+    # multi-model pool mode the pool branch below already lists it (the
+    # embed model is preloaded into the pool); this single-model branch
+    # covers single-route mounts + pool-less boots where the embed model
+    # would otherwise be invisible. No-op when no embed model is locked.
+    if cfg.embedding_model_locked:
+        _listed = {entry["id"] for entry in data}
+        if cfg.embedding_model_locked not in _listed:
+            _tool, _reasoning = effective_parsers_for(
+                cfg.embedding_model_locked, None, None
+            )
+            data.append(
+                _entry_payload(
+                    cfg.embedding_model_locked,
+                    _tool,
+                    _reasoning,
+                    _resolve_modality(cfg.embedding_model_locked),
+                    ["embedding"],
+                )
+            )
+    # #577: surface on-disk-registered models that are NOT currently loaded
+    # (resident in memory) so consumers can tell "registered" from "loaded".
+    # The engine pool discovers every model under the configured model dirs;
+    # an entry whose ``engine`` is None is registered-but-not-loaded. We only
+    # append ids absent from ``data`` (loaded entries already listed above)
+    # to avoid duplicates. Skipped when no pool is wired (single-route test
+    # mounts) — those callers see only the served model, unchanged.
+    if _pool is not None:
+        listed_ids = {entry["id"] for entry in data}
+        try:
+            for model_id in _pool.list_models():
+                if model_id in listed_ids:
+                    continue
+                pool_entry = _pool.get_entry(model_id)
+                is_loaded = pool_entry is not None and pool_entry.engine is not None
+                tool, reasoning = effective_parsers_for(model_id, None, None)
+                modality = _resolve_modality(model_id)
+                profile = resolve_profile(model_id)
+                caps = sorted(profile.capabilities) if profile else []
+                data.append(
+                    _entry_payload(
+                        model_id,
+                        tool,
+                        reasoning,
+                        modality,
+                        caps,
+                        loaded=is_loaded,
+                        state="loaded" if is_loaded else "registered",
+                    )
+                )
+                listed_ids.add(model_id)
+        except Exception:
+            logger.warning(
+                "routes_internal.models: pool enumeration failed", exc_info=True
             )
     logger.info("routes_internal.models: /v1/models listed %d entries", len(data))
     return {"object": "list", "data": data}
