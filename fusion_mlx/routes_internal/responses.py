@@ -1,5 +1,4 @@
 # SPDX-License-Identifier: Apache-2.0
-import asyncio
 import json
 import logging
 import time
@@ -15,11 +14,7 @@ from ..api.models import (
     ChatCompletionResponse,
 )
 from ..api.response_format_metrics import (
-    incr_strict_repair_attempt,
-    incr_strict_repair_skipped_context_overflow,
-    incr_strict_repair_success,
     incr_strict_request,
-    incr_strict_violation,
 )
 from ..api.responses_adapter import (
     normalize_responses_tool_types,
@@ -34,11 +29,7 @@ from ..api.responses_models import (
     ResponsesUsage,
 )
 from ..api.strict_json_schema import (
-    build_repair_messages,
-    build_violation_envelope,
-    repair_retry_enabled,
     strict_enforcement_enabled,
-    validate_and_envelope,
 )
 from ..api.thinking import extract_thinking
 from ..api.tool_calling import (
@@ -62,7 +53,6 @@ from ..service.helpers import (
     _validate_model_name,
     _wait_with_disconnect,
     maybe_apply_reasoning_effort,
-    repair_messages_fit_context,
 )
 
 logger = logging.getLogger(__name__)
@@ -293,122 +283,23 @@ async def _apply_responses_postgen_validation(
     *,
     timeout: float = 300.0,
 ):
-    # R12-4 non-guided strict enforcement on /v1/responses: the engine ran
-    # UNCONSTRAINED; now validate the buffered output and - on failure -
-    # attempt ONE repair retry with a system-prompt hint naming the failing
-    # path. Mirrors chat.py:2894-3075 so the 422 envelope shape matches.
-    ok, failure_details = validate_and_envelope(output.text or "", json_schema)
-    attempts = 1
-    if not ok and repair_retry_enabled():
-        repair_messages = build_repair_messages(
-            messages,
-            output.text or "",
-            json_schema,
-            failure_details or {},
-        )
-        repair_kwargs = dict(chat_kwargs)
-        for _k in ("tools", "tool_choice", "logprobs", "top_logprobs"):
-            repair_kwargs.pop(_k, None)
-        _repair_ct = repair_kwargs.get("chat_template_kwargs") or {}
-        _repair_fits = repair_messages_fit_context(
-            engine,
-            repair_messages,
-            tools=None,
-            max_tokens=repair_kwargs.get("max_tokens"),
-            enable_thinking=_repair_ct.get("enable_thinking"),
-        )
-        repair_output = None
-        if not _repair_fits:
-            incr_strict_repair_skipped_context_overflow()
-            logger.warning(
-                "R12-4 strict json_schema repair retry SKIPPED on "
-                "/v1/responses: post-build repair prompt would exceed "
-                "model context window. Surfacing the ORIGINAL 422 "
-                "json_schema_violation envelope instead of attempting a "
-                "retry that would either 502 or truncate."
-            )
-        else:
-            incr_strict_repair_attempt()
-            attempts = 2
-            logger.info(
-                "R12-4 strict json_schema first attempt failed validation "
-                "(%s) on /v1/responses; attempting single repair retry.",
-                failure_details.get("reason") if failure_details else "?",
-            )
-            try:
-                repair_output = await asyncio.wait_for(
-                    engine.chat(messages=repair_messages, **repair_kwargs),
-                    timeout=timeout,
-                )
-            except TimeoutError:
-                raise HTTPException(status_code=504, detail="Generation timed out")
-            except Exception as repair_err:
-                logger.warning(
-                    "R12-4 strict json_schema repair retry raised %s: %s "
-                    "on /v1/responses; surfacing as 502 (server-side "
-                    "generation failure, NOT a schema-validation breach).",
-                    type(repair_err).__name__,
-                    repair_err,
-                )
-                raise HTTPException(
-                    status_code=502,
-                    detail={
-                        "error": {
-                            "message": (
-                                "Strict json_schema repair retry failed: "
-                                "the engine raised "
-                                f"{type(repair_err).__name__} during the "
-                                "second generation attempt. The initial "
-                                "output had also failed schema validation; "
-                                "investigate server logs."
-                            ),
-                            "type": "api_error",
-                            "code": "strict_repair_engine_failure",
-                            "param": "text.format",
-                            "details": {
-                                "initial_failure": failure_details,
-                                "repair_exception": type(repair_err).__name__,
-                            },
-                        }
-                    },
-                ) from repair_err
-        if repair_output is not None:
-            ok2, failure2 = validate_and_envelope(repair_output.text or "", json_schema)
-            if ok2:
-                incr_strict_repair_success()
-                logger.info(
-                    "R12-4 strict json_schema repair retry succeeded on /v1/responses."
-                )
-                from dataclasses import replace as _dc_replace
+    # R12-4 non-guided strict enforcement on /v1/responses: delegate to the
+    # shared apply_strict_postgen_validation helper so the 422 envelope shape
+    # + context guard cannot drift between /v1/chat/completions and
+    # /v1/responses (single bug class to guard against, Rule 7). The
+    # responses surface reports the offending param as "text.format".
+    from ..api.strict_json_schema import apply_strict_postgen_validation
 
-                initial_prompt_tokens = output.prompt_tokens
-                initial_completion_tokens = output.completion_tokens
-                output = _dc_replace(
-                    repair_output,
-                    prompt_tokens=(initial_prompt_tokens + repair_output.prompt_tokens),
-                    completion_tokens=(
-                        initial_completion_tokens + repair_output.completion_tokens
-                    ),
-                )
-                ok = True
-                failure_details = None
-            else:
-                failure_details = failure2
-    if not ok:
-        incr_strict_violation()
-        envelope = build_violation_envelope(
-            failure_details or {"reason": "schema_violation"},
-            param="text.format",
-            attempts=attempts,
-        )
-        logger.warning(
-            "R12-4 strict json_schema validation failed after %d attempt(s) "
-            "on /v1/responses: %s",
-            attempts,
-            (failure_details or {}).get("message"),
-        )
-        raise HTTPException(status_code=422, detail=envelope)
-    return output
+    return await apply_strict_postgen_validation(
+        engine,
+        messages,
+        chat_kwargs,
+        output,
+        json_schema,
+        param="text.format",
+        timeout=timeout,
+        metrics_prefix="responses",
+    )
 
 
 def _sse(event: str, data: dict) -> str:

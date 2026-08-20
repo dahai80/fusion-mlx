@@ -652,3 +652,151 @@ def build_violation_envelope(
             "details": envelope_details,
         }
     }
+
+
+async def apply_strict_postgen_validation(
+    engine,
+    messages,
+    chat_kwargs,
+    output,
+    json_schema,
+    *,
+    param: str = "response_format.json_schema",
+    timeout: float = 300.0,
+    metrics_prefix: str = "chat",
+):
+    # R12-4 non-guided strict enforcement: the engine ran UNCONSTRAINED;
+    # validate the buffered output and - on failure - attempt ONE repair
+    # retry with a system-prompt hint naming the failing path, guarded by
+    # a context-length re-check so a repair that blows context surfaces
+    # a deterministic 422 (NOT 502). Shared by /v1/chat/completions and
+    # /v1/responses so the 422 envelope shape + context guard cannot
+    # drift between surfaces (single bug class to guard against).
+    import asyncio
+    from dataclasses import replace as _dc_replace
+
+    from fastapi import HTTPException
+
+    from ..service.helpers import repair_messages_fit_context
+    from .response_format_metrics import (
+        incr_strict_repair_attempt,
+        incr_strict_repair_skipped_context_overflow,
+        incr_strict_repair_success,
+        incr_strict_violation,
+    )
+
+    ok, failure_details = validate_and_envelope(output.text or "", json_schema)
+    attempts = 1
+    if not ok and repair_retry_enabled():
+        repair_messages = build_repair_messages(
+            messages,
+            output.text or "",
+            json_schema,
+            failure_details or {},
+        )
+        repair_kwargs = dict(chat_kwargs)
+        for _k in ("tools", "tool_choice", "logprobs", "top_logprobs"):
+            repair_kwargs.pop(_k, None)
+        _repair_ct = repair_kwargs.get("chat_template_kwargs") or {}
+        _repair_fits = repair_messages_fit_context(
+            engine,
+            repair_messages,
+            tools=None,
+            max_tokens=repair_kwargs.get("max_tokens"),
+            enable_thinking=_repair_ct.get("enable_thinking"),
+        )
+        repair_output = None
+        if not _repair_fits:
+            incr_strict_repair_skipped_context_overflow()
+            logger.warning(
+                "R12-4 strict json_schema repair retry SKIPPED on "
+                "/v1/%s: post-build repair prompt would exceed model "
+                "context window. Surfacing the ORIGINAL 422 "
+                "json_schema_violation envelope instead of attempting a "
+                "retry that would either 502 or truncate.",
+                metrics_prefix,
+            )
+        else:
+            incr_strict_repair_attempt()
+            attempts = 2
+            logger.info(
+                "R12-4 strict json_schema first attempt failed validation "
+                "(%s) on /v1/%s; attempting single repair retry.",
+                failure_details.get("reason") if failure_details else "?",
+                metrics_prefix,
+            )
+            try:
+                repair_output = await asyncio.wait_for(
+                    engine.chat(messages=repair_messages, **repair_kwargs),
+                    timeout=timeout,
+                )
+            except TimeoutError:
+                raise HTTPException(status_code=504, detail="Generation timed out")
+            except Exception as repair_err:
+                logger.warning(
+                    "R12-4 strict json_schema repair retry raised %s: %s "
+                    "on /v1/%s; surfacing as 502 (server-side generation "
+                    "failure, NOT a schema-validation breach).",
+                    type(repair_err).__name__,
+                    repair_err,
+                    metrics_prefix,
+                )
+                raise HTTPException(
+                    status_code=502,
+                    detail={
+                        "error": {
+                            "message": (
+                                "Strict json_schema repair retry failed: "
+                                "the engine raised "
+                                f"{type(repair_err).__name__} during the "
+                                "second generation attempt. The initial "
+                                "output had also failed schema validation; "
+                                "investigate server logs."
+                            ),
+                            "type": "api_error",
+                            "code": "strict_repair_engine_failure",
+                            "param": param,
+                            "details": {
+                                "initial_failure": failure_details,
+                                "repair_exception": type(repair_err).__name__,
+                            },
+                        }
+                    },
+                ) from repair_err
+        if repair_output is not None:
+            ok2, failure2 = validate_and_envelope(repair_output.text or "", json_schema)
+            if ok2:
+                incr_strict_repair_success()
+                logger.info(
+                    "R12-4 strict json_schema repair retry succeeded on " "/v1/%s.",
+                    metrics_prefix,
+                )
+                initial_prompt_tokens = output.prompt_tokens
+                initial_completion_tokens = output.completion_tokens
+                output = _dc_replace(
+                    repair_output,
+                    prompt_tokens=(initial_prompt_tokens + repair_output.prompt_tokens),
+                    completion_tokens=(
+                        initial_completion_tokens + repair_output.completion_tokens
+                    ),
+                )
+                ok = True
+                failure_details = None
+            else:
+                failure_details = failure2
+    if not ok:
+        incr_strict_violation()
+        envelope = build_violation_envelope(
+            failure_details or {"reason": "schema_violation"},
+            param=param,
+            attempts=attempts,
+        )
+        logger.warning(
+            "R12-4 strict json_schema validation failed after %d attempt(s) "
+            "on /v1/%s: %s",
+            attempts,
+            metrics_prefix,
+            (failure_details or {}).get("message"),
+        )
+        raise HTTPException(status_code=422, detail=envelope)
+    return output

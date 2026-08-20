@@ -351,6 +351,35 @@ def _build_sampling_params(
     )
 
 
+def _extract_strict_json_schema(req: ChatCompletionRequest):
+    # #514: extract the JSON schema dict the post-generate validator
+    # should validate against, but ONLY when the request asked for a
+    # STRICT json_schema (strict=true). Returns None for non-strict /
+    # json_object / absent response_format so the R12-4 postgen path
+    # does not run on loose-schema requests (constrained decoding or
+    # unconstrained generation is the intended behavior there).
+    # Mirrors the schema extraction in _compile_grammar_for_request.
+    from .tool_calling import is_strict_json_schema
+
+    rf = getattr(req, "response_format", None)
+    if rf is None:
+        return None
+    if not is_strict_json_schema(rf):
+        return None
+    if isinstance(rf, dict):
+        schema = rf.get("json_schema", {})
+        if isinstance(schema, dict) and "schema" in schema:
+            return schema["schema"]
+        return schema
+    if hasattr(rf, "type") and rf.type == "json_schema":
+        inner = getattr(rf, "json_schema", None)
+        if inner and hasattr(inner, "schema_"):
+            return inner.schema_
+        if inner and hasattr(inner, "schema"):
+            return inner.schema
+    return None
+
+
 def _compile_grammar_for_request(engine, req: ChatCompletionRequest):
     """Compile grammar from request's structured_outputs / response_format.
 
@@ -581,6 +610,58 @@ async def _run_chat(
             ),
             compiled_grammar=compiled_grammar,
         )
+        # R12-4 (#514): strict json_schema post-generate validation +
+        # single repair retry with a context-length guard. The chat
+        # surface normally enforces strict mode via constrained
+        # decoding (xgrammar/llguidance grammar compiler); but when
+        # the guidance compiler is unavailable (tokenizer missing
+        # eos_token_id, xgrammar fallback miss, test stubs with
+        # supports_guided_generation=False) the model runs
+        # UNCONSTRAINED and strict enforcement silently dropped to
+        # 200-OK-with-violating-output. Re-validate the buffered
+        # output here and - on violation - attempt one repair retry
+        # guarded by repair_messages_fit_context (so a repair that
+        # blows context surfaces a deterministic 422, NOT 502).
+        # Mirrors /v1/responses via the shared
+        # apply_strict_postgen_validation helper so the 422 envelope
+        # + context guard cannot drift between surfaces.
+        _strict_json_schema = _extract_strict_json_schema(request)
+        if _strict_json_schema is not None:
+            from .response_format_metrics import incr_strict_request
+            from .strict_json_schema import (
+                apply_strict_postgen_validation,
+                strict_enforcement_enabled,
+            )
+
+            incr_strict_request()
+            if strict_enforcement_enabled() and compiled_grammar is None:
+                _chat_kwargs = {
+                    "max_tokens": sampling.max_tokens,
+                    "temperature": sampling.temperature,
+                    "top_p": sampling.top_p,
+                    "top_k": sampling.top_k,
+                    "min_p": sampling.min_p,
+                    "repetition_penalty": getattr(sampling, "repetition_penalty", 1.0),
+                    "presence_penalty": sampling.presence_penalty,
+                    "tools": request.tools,
+                    "stop": sampling.stop,
+                    "chat_template_kwargs": ct_kwargs if ct_kwargs else None,
+                    "compiled_grammar": compiled_grammar,
+                }
+                logger.info(
+                    "Strict json_schema mode active on /v1/chat/completions "
+                    "(no guided grammar compiled) - engaging R12-4 "
+                    "post-generate validation + single repair retry."
+                )
+                gen = await apply_strict_postgen_validation(
+                    engine,
+                    messages,
+                    _chat_kwargs,
+                    gen,
+                    _strict_json_schema,
+                    param="response_format.json_schema",
+                    metrics_prefix="chat",
+                )
         # R12: route-level fallback tool-call extraction. Real engines
         # self-parse via _fallback_parse_tool_calls (engines/batched.py),
         # but engines that don't (or test harnesses) leave the hermes

@@ -320,14 +320,16 @@ def test_repair_skipped_when_repair_prompt_exceeds_context():
       * strict_repairs_attempted_total does NOT tick (no retry
         was attempted)
     """
-    # Sizing (4 chars/token stub tokenizer):
-    #   * INITIAL prompt (injected JSON system + user msg) = ~116 tokens.
-    #     With ``max_tokens=64`` → requested_total = 180 ≤ 256 → fits.
-    #   * REPAIR prompt (repair instructions + schema dup + failed
-    #     output quote + user retry) = ~302 tokens. With
-    #     ``max_tokens=64`` → requested_total = 366 > 256 → fails.
-    # 256 is the cleanest "initial passes, repair fails" cap.
-    client, engine = _client(body=_VIOLATING_BODY, max_position_embeddings=256)
+    # Sizing (4 chars/token stub tokenizer), measured against the real
+    # build_repair_messages output for this schema:
+    #   * INITIAL prompt (bare user msg) = 4 tokens. With
+    #     ``max_tokens=64`` → requested_total = 68 → fits any cap >= 68.
+    #   * REPAIR prompt (repair system instructions + failing-path
+    #     detail + user retry) = 189 tokens. With ``max_tokens=64`` →
+    #     requested_total = 253. The gate check is ``<=``, so a cap of
+    #     252 makes the repair one token over -> skip, while the initial
+    #     (68) still fits trivially.
+    client, engine = _client(body=_VIOLATING_BODY, max_position_embeddings=252)
 
     resp = client.post("/v1/chat/completions", json=_payload())
     # Critical: NOT 502.
@@ -388,15 +390,15 @@ def test_repair_skipped_at_exact_one_token_overflow():
     several-hundred-character repair prompt (instructions +
     schema + failed-output quote) at 4 chars/token cannot fit.
     """
-    # Sizing math (4 chars/token stub tokenizer):
-    #   * REPAIR prompt tokens (concat of all repair messages) = 302.
+    # Sizing math (4 chars/token stub tokenizer), measured:
+    #   * REPAIR prompt tokens (concat of all repair messages) = 189.
     #   * ``max_tokens=64`` completion budget.
-    #   * ``requested_total = 302 + 64 = 366``.
+    #   * ``requested_total = 189 + 64 = 253``.
     # The gate's check is ``requested_total <= max_context``. Setting
-    # ``max_position_embeddings=365`` puts the repair exactly one
+    # ``max_position_embeddings=252`` puts the repair exactly one
     # token over the cap — boundary case. The initial prompt
-    # (~116+64=180 tokens) still fits trivially.
-    client, engine = _client(body=_VIOLATING_BODY, max_position_embeddings=365)
+    # (4+64=68 tokens) still fits trivially.
+    client, engine = _client(body=_VIOLATING_BODY, max_position_embeddings=252)
 
     resp = client.post("/v1/chat/completions", json=_payload())
     assert resp.status_code == 422, resp.text
