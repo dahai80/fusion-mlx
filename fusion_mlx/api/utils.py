@@ -506,7 +506,7 @@ def extract_text_content(
                 tool_content = content if content else ""
             # Apply truncation if configured
             if max_tool_result_tokens and tokenizer and tool_content:
-                from ..anthropic_utils import truncate_tool_result
+                from .anthropic_utils import truncate_tool_result
 
                 tool_content = truncate_tool_result(
                     tool_content, max_tool_result_tokens, tokenizer
@@ -694,7 +694,7 @@ def extract_multimodal_content(
             else:
                 tool_content = content if content else ""
             if max_tool_result_tokens and tokenizer and tool_content:
-                from ..anthropic_utils import truncate_tool_result
+                from .anthropic_utils import truncate_tool_result
 
                 tool_content = truncate_tool_result(
                     tool_content, max_tool_result_tokens, tokenizer
@@ -950,7 +950,7 @@ def extract_harmony_messages(
             else:
                 tool_content = content if content else ""
             if max_tool_result_tokens and tokenizer and tool_content:
-                from ..anthropic_utils import truncate_tool_result
+                from .anthropic_utils import truncate_tool_result
 
                 # Parse JSON BEFORE truncation for better line-boundary cuts.
                 # Harmony chat_template applies |tojson to content, so content

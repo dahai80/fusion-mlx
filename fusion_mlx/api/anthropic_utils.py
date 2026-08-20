@@ -488,7 +488,7 @@ def convert_anthropic_to_internal_harmony(
                             if "<truncated " in truncated:
                                 # Truncation broke JSON - wrap in dict for
                                 # Harmony |tojson compatibility
-                                from ..utils import _wrap_truncated_for_harmony
+                                from .utils import _wrap_truncated_for_harmony
 
                                 result_content = _wrap_truncated_for_harmony(truncated)
                             else:
@@ -524,7 +524,7 @@ def convert_anthropic_to_internal_harmony(
                             # Check if pre-truncation content was JSON-like
                             content_part = extracted.split("\n\n<truncated")[0].strip()
                             if content_part and content_part[0] in "{[":
-                                from ..utils import _wrap_truncated_for_harmony
+                                from .utils import _wrap_truncated_for_harmony
 
                                 result_content = _wrap_truncated_for_harmony(extracted)
                             else:
