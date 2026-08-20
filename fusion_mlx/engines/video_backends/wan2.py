@@ -50,6 +50,30 @@ async def _clear_mlx_cache() -> None:
     )
 
 
+def _load_t5_tokenizer(model_dir):
+    from pathlib import Path
+
+    from transformers import AutoTokenizer
+
+    # Prefer a tokenizer/ subdir shipped beside the model weights. Several
+    # Wan checkpoints bundle umt5-xxl tokenizer files locally
+    # (spiece.model / tokenizer.json / tokenizer_config.json). Loading from
+    # the generic HF repo id "google/umt5-xxl" hits the network on every cold
+    # load to validate chat_templates; under hf-mirror that round-trip can
+    # exceed the 120s T5 encode timeout (issue #553) and abort generation
+    # before a single denoise step. Local path = no network.
+    if model_dir:
+        local_tok = Path(model_dir) / "tokenizer"
+        if (local_tok / "tokenizer.json").exists() or (
+            local_tok / "spiece.model"
+        ).exists():
+            logger.info("Wan2: loading T5 tokenizer from local %s", local_tok)
+            return AutoTokenizer.from_pretrained(str(local_tok))
+    # Fallback to the HF hub cache (offline if already cached).
+    logger.info("Wan2: loading T5 tokenizer from HF hub google/umt5-xxl")
+    return AutoTokenizer.from_pretrained("google/umt5-xxl")
+
+
 # Max T5 text-embedding cache entries (LRU eviction when exceeded).
 _T5_EMBED_CACHE_MAX = 16
 # Timeout for T5 encoder preload during start() — large model may take minutes.
@@ -233,12 +257,10 @@ class Wan2Backend(VideoBackend):
                 return result
 
         def _encode_sync():
-            from transformers import AutoTokenizer
-
             from fusion_mlx.video.wan2.utils import encode_text
 
             if self._t5_tokenizer is None:
-                self._t5_tokenizer = AutoTokenizer.from_pretrained("google/umt5-xxl")
+                self._t5_tokenizer = _load_t5_tokenizer(self._model_dir)
 
             logger.info(
                 "Wan2: computing T5 embeds for prompt_len=%d", len(prompt or "")
@@ -370,9 +392,7 @@ class Wan2Backend(VideoBackend):
         if self._t5_encoder is None:
             raise RuntimeError("text_encoder is unloaded; call load_text_encoder().")
         if self._t5_tokenizer is None:
-            from transformers import AutoTokenizer
-
-            self._t5_tokenizer = AutoTokenizer.from_pretrained("google/umt5-xxl")
+            self._t5_tokenizer = _load_t5_tokenizer(self._model_dir)
         config = self._ensure_stage_config()
         t5_encoder = self._t5_encoder
         tokenizer = self._t5_tokenizer
