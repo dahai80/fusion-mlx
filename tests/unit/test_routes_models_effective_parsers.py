@@ -57,9 +57,11 @@ def _mounted(
 ):
     """Mount a TestClient on the models router with the given live state.
 
-    Snapshots + restores every mutated ``ServerConfig`` field AND the
-    server-module globals the bridge fallback reads, so cases never
-    leak state across each other.
+    Snapshots + restores every mutated ``ServerConfig`` field so cases
+    never leak state across each other. (#50 consolidated the old
+    server-module globals ``_tool_call_parser`` / ``_reasoning_parser_name``
+    / ``_embedding_model_locked`` into ``ServerConfig``; the cfg fields
+    below are now the single source of truth the route reads.)
     """
     from fusion_mlx.config import get_config
     from fusion_mlx.routes_internal import models as models_route
@@ -88,24 +90,11 @@ def _mounted(
     cfg.embedding_model_locked = embedding_model_locked
     cfg.api_key = None
 
-    import fusion_mlx.server as srv
-
-    saved_srv = {
-        "_tool_call_parser": srv._tool_call_parser,
-        "_reasoning_parser_name": srv._reasoning_parser_name,
-        "_embedding_model_locked": srv._embedding_model_locked,
-    }
-    srv._tool_call_parser = tool_call_parser
-    srv._reasoning_parser_name = reasoning_parser_name
-    srv._embedding_model_locked = embedding_model_locked
-
     try:
         yield TestClient(app)
     finally:
         for k, v in saved.items():
             setattr(cfg, k, v)
-        for k, v in saved_srv.items():
-            setattr(srv, k, v)
 
 
 def _make_registry(*entries):

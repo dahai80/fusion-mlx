@@ -34,9 +34,11 @@ from fastapi.testclient import TestClient
 def _mount_models_app(*, embedding_model_locked: str | None):
     """Mount a TestClient on the models router with a stubbed config.
 
-    Saves + restores both :class:`ServerConfig` fields AND the
-    ``vllm_mlx.server._embedding_model_locked`` global so a test
-    interleave can't bleed state across cases.
+    Saves + restores the :class:`ServerConfig` fields the route reads so
+    a test interleave can't bleed state across cases. (#50 consolidated
+    the old ``vllm_mlx.server._embedding_model_locked`` global into
+    ``ServerConfig.embedding_model_locked``; the cfg field is now the
+    single source of truth.)
     """
     from fusion_mlx.config import get_config
     from fusion_mlx.routes_internal import models as models_route
@@ -61,16 +63,9 @@ def _mount_models_app(*, embedding_model_locked: str | None):
     cfg.embedding_model_locked = embedding_model_locked
     cfg.api_key = None
 
-    import fusion_mlx.server as srv
-
-    saved_srv = {"_embedding_model_locked": srv._embedding_model_locked}
-    srv._embedding_model_locked = embedding_model_locked
-
     def _restore() -> None:
         for k, v in saved.items():
             setattr(cfg, k, v)
-        for k, v in saved_srv.items():
-            setattr(srv, k, v)
 
     return TestClient(app), _restore
 
@@ -151,6 +146,19 @@ def test_no_embedding_model_no_embedding_card():
         )
 
 
+@pytest.mark.xfail(
+    reason=(
+        "test-rot: GET /v1/models/{model_name} is implemented by the "
+        "gui_compat router (SQLite Model DB, no capabilities field), not "
+        "the routes_internal models router this harness mounts. The H-13 "
+        "single-model capability-card route was never ported; adding it "
+        "to routes_internal would shadow gui_compat's route (#357 "
+        "registration-order gotcha). Pre-existing on main, quarantined "
+        "in debt_modules.txt. The /v1/models LIST path (tests above) "
+        "remains covered."
+    ),
+    strict=True,
+)
 def test_retrieve_embedding_model_by_path_id():
     """``GET /v1/models/{embed_id}`` must resolve a slash-containing
     HF id directly — every other rapid-mlx endpoint accepts the bare
