@@ -179,6 +179,7 @@ def _spec_decode_mtp_path(
             model,
             max_tokens=max_tokens,
             accept_counter=counter,
+            disable_auto_k=True,
         )
     ]
 

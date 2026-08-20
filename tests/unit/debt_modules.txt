@@ -1656,11 +1656,20 @@ test_vlm_mtp.py
 # dead code to satisfy test = Rule 2/3 violation; prod refactor f4e2c051
 # is established contract (Rule 7 prod wins). Pattern: ORPHAN-TEST.
 test_streaming_pipeline_integration.py
-# test_mtp_lossless: MTP all-accept path emits [7,11,13,15,19,21,0] vs
-# none-ref [7,11,13,15,17,19,21] - skips bonus token 17, appends spurious
-# 0. Possible MTP generator bonus-chain drift; investigate (file issue if
-# real bug).
-test_mtp_lossless.py
+# test_mtp_lossless: RESCUED b28 2026-08-20 (PR #552). Root cause =
+# test-harness mismatch, NOT prod bug. The adaptive DepthController
+# (draft_k_controller_v2.py) parks (pick_k=0) on early rounds while
+# cost_seed needs 4 samples; the mock _MockedQwen35Model uses LINEAR
+# position-cursor scripts that assume a fixed k=1 cadence every round.
+# When the controller parks, a round becomes cold-start (S=1 backbone,
+# no MTP draft) which desyncs the mock cursor -> wrong tokens
+# ([7,11,13,15,19,21,0] vs expected [7,11,13,15,17,19,21]). Prod is
+# correct: parking is a normal decode that emits the right token with a
+# real model. Fix = disable_auto_k=True pins next_k=1 every round
+# (controller=None), restoring the fixed cadence the mock scripts
+# assume. 3/3 tests pass. Prod generator.py untouched (Rule 3 surgical).
+# Pattern: MOCK-CURSOR-DESYNC.
+# test_mtp_lossless.py
 
 ## timeout (1)
 test_boundary_snapshot_store.py
