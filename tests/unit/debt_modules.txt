@@ -1641,8 +1641,30 @@ test_tools_auto_disable_thinking.py
 # __getattr__. Dead-code path, no faithful test possible (Rule 9).
 # Result: 17 pass + 1 skip + 0 fail. debt 168 -> 167.
 # test_torch_stub.py
-test_truncate_tool_result.py
-test_truncation_no_synthetic_text.py
+# test_truncate_tool_result.py RESCUED 2026-08-20 b33 (29/29 pass). PROD
+# FIX import-path bug: fusion_mlx/api/utils.py L509/697/953 had
+# `from ..anthropic_utils import truncate_tool_result` — `..` from api/
+# resolves to fusion_mlx.anthropic_utils (top-level, DELETED in module
+# relocation) → ModuleNotFoundError at runtime. fusion_mlx/anthropic_utils.py
+# does NOT exist (ls NotFound); truncate_tool_result def lives at
+# fusion_mlx/api/anthropic_utils.py:662. Fixed `..`→`.` (same api pkg) at
+# all 3 sites. Latent prod crash: tool-result truncation on OpenAI surface
+# never exercised in CI (import inside function body, only fires when
+# max_tool_result_tokens set). Same family: anthropic_utils.py L491/527
+# `from ..utils import _wrap_truncated_for_harmony` → `..utils`=
+# fusion_mlx.utils PACKAGE (has json_depth/tokenizer submodules, NOT
+# _wrap_truncated_for_harmony — def at api/utils.py:854). Fixed `..`→`.
+# ` at both sites. NOT touched: api/models.py:756 `..utils.json_depth` +
+# openai_routes.py:411 `..utils.tokenizer` (CORRECT — fusion_mlx/utils/
+# submodules) + api/adapters/* `..utils`/`..anthropic_utils` (CORRECT —
+# adapters/ is one level deeper, `..`=api pkg). Rule 12 fail-visible:
+# import-path bug crashed truncation path silently.
+# test_truncate_tool_result.py
+# test_truncation_no_synthetic_text.py RESCUED 2026-08-20 b33 (8/8 pass).
+# Same prod import-path fix unblocked this suite (truncation path no
+# longer ImportError). No test edit needed — was green once prod import
+# resolved. 8 tests assert no-synthetic-text-injection on truncation.
+# test_truncation_no_synthetic_text.py
 # KEEP_QUARANTINED turboquant cluster (round10q-b6 2026-08-19): 4 suites,
 # upstream mlx_vlm API drift + integration/real-model, NOT harness drift.
 # test_turboquant 3f/30p: decode-token quantize err 136% + B>1 masked decode
