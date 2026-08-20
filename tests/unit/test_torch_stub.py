@@ -67,7 +67,7 @@ def test_install_returns_true_and_populates_sys_modules(stub_module):
     for k in _TOUCHED:
         assert k in sys.modules, f"{k} not installed in sys.modules"
     torch = sys.modules["torch"]
-    assert torch.__version__.endswith("+fusion_mlx-stub")
+    assert torch.__version__.endswith("+fusion-mlx-stub")
     # The dtype set xgrammar/tvm_ffi look up at import time.
     for dt in (
         "int8",
@@ -177,19 +177,27 @@ def test_stub_tensor_isinstance_check(stub_module):
     assert not isinstance(42, torch.dtype)
 
 
-def test_unsupported_helpers_raise_runtime_error(stub_module):
-    """torch.full / torch.zeros / torch.nn.functional.pad are stubbed to
-    raise RuntimeError so a future caller gets a clear error instead of
-    a cryptic None-attribute traceback."""
+def test_tensor_factories_are_soft_stub_and_nn_ops_raise(stub_module):
+    """torch.full / torch.zeros are soft-stubbed to return _StubTensor
+    (so module-globals like xgrammar.matcher._FULL_MASK survive import),
+    while torch.nn.functional ops that would produce wrong results raise
+    RuntimeError so a future caller gets a clear error instead of a
+    cryptic None-attribute traceback.
+
+    The factory ops were originally _unsupported but were relaxed to
+    soft-stub (_stub_tensor_fn) so ComfyUI's deep torch integration can
+    import without crashing on every tensor factory call; the nn.functional
+    path stays strict because no import-time probe reaches it."""
     for k in _TOUCHED:
         sys.modules.pop(k, None)
     with mock.patch("importlib.util.find_spec", side_effect=lambda name: None):
         stub_module.install()
     torch = sys.modules["torch"]
-    with pytest.raises(RuntimeError, match="torch.full"):
-        torch.full((1,), 0)
-    with pytest.raises(RuntimeError, match="torch.zeros"):
-        torch.zeros((1,))
+    # Soft-stub factories: return a _StubTensor, do NOT raise.
+    assert isinstance(torch.full((1,), 0), torch.Tensor)
+    assert isinstance(torch.zeros((1,)), torch.Tensor)
+    # nn.functional.pad stays strict: it is never reached at import time
+    # and a runtime caller must get a loud error.
     with pytest.raises(RuntimeError, match="nn.functional.pad"):
         torch.nn.functional.pad(None, (0, 1))
 
@@ -282,15 +290,17 @@ def test_install_does_not_touch_env_var_when_real_torch_present(stub_module):
         os.environ.pop("TVM_FFI_DISABLE_TORCH_C_DLPACK", None)
 
 
-def test_missing_top_level_attribute_raises_attributeerror_and_logs(
-    stub_module, caplog
-):
-    """``torch.<unknown>`` must raise ``AttributeError`` (so ``hasattr``
-    consumers behave correctly) AND log a one-shot WARNING that names
-    the missing attribute. The log is the operator-facing diagnostic
-    when a future xgrammar / tvm-ffi release reaches for a torch
-    surface the stub doesn't cover; without it, the AttributeError
-    surfaces only if the caller logs it themselves.
+def test_unknown_top_level_attribute_auto_stubs_and_logs(stub_module, caplog):
+    """``torch.<unknown>`` is auto-stubbed (returns a callable no-op) so
+    ComfyUI's deep torch integration can import without crashing on every
+    missing symbol, AND logs a one-shot WARNING that names the attribute.
+    The log is the operator-facing diagnostic when a future xgrammar /
+    tvm-ffi release reaches for a torch surface the stub doesn't cover.
+
+    Previously this raised AttributeError; the stub was deliberately
+    relaxed to auto-stub (prod _make_top_level_torch_getattr in
+    fusion_mlx/_torch_stub.py) so hasattr returns True and the unknown
+    attr is cached as a no-op callable on first access.
     """
     for k in _TOUCHED:
         sys.modules.pop(k, None)
@@ -298,25 +308,33 @@ def test_missing_top_level_attribute_raises_attributeerror_and_logs(
         stub_module.install()
     torch = sys.modules["torch"]
     with caplog.at_level("WARNING", logger="fusion_mlx._torch_stub"):
-        with pytest.raises(AttributeError, match="torch.compile"):
-            torch.compile  # noqa: B018
-    assert any(
-        "missing attribute: torch.compile" in rec.message for rec in caplog.records
-    ), caplog.records
-    # ``hasattr`` must continue to return False (i.e. the AttributeError
-    # path is reachable) — regression for replacing the raise with a
-    # log-and-return.
-    assert not hasattr(torch, "another_missing_attr")
+        compiled = torch.compile  # noqa: B018
+        assert callable(compiled), "auto-stub must return a callable no-op"
+    assert any("torch.compile" in rec.message for rec in caplog.records), caplog.records
+    # Auto-stub caches the result: hasattr is True (regression for the
+    # old raise path that made hasattr False).
+    assert hasattr(torch, "another_missing_attr")
+    assert callable(torch.another_missing_attr)
 
 
-def test_known_probe_names_log_at_debug_not_warning(stub_module, caplog):
+def test_known_probe_dtypes_are_real_attrs_and_unknown_names_auto_stub(
+    stub_module, caplog
+):
     """xgrammar / tvm_ffi probe a fixed set of dtype names via
-    ``getattr(torch, name)`` for feature detection. They catch the
-    AttributeError and fall back, so a per-probe WARNING is pure noise.
-    Known-probed names log at DEBUG instead.
+    ``getattr(torch, name)`` for feature detection. Those names
+    (uint16/uint32/uint64/float8_*/float4_*) are explicitly set as real
+    _StubDtype attributes in _build_modules, so probing them returns the
+    dtype WITHOUT hitting the top-level __getattr__ (no log, no raise).
 
-    Regression for #1453 review feedback (fry69): 9 WARNING entries per
-    model load flagged as actionable when they aren't.
+    A genuinely-unknown name hits the auto-stub __getattr__: it returns a
+    callable no-op and logs a one-shot WARNING so operators see what
+    surface a future xgrammar / tvm-ffi release reached for.
+
+    Previously both paths raised AttributeError; the stub was relaxed to
+    auto-stub unknown names (prod _make_top_level_torch_getattr). The
+    prod _KNOWN_PROBE_NAMES DEBUG-vs-WARNING branch is now unreachable
+    for dtype probes (all are real attrs), so the DEBUG-level assertion
+    is dropped — see fusion_mlx/_torch_stub.py _KNOWN_PROBE_NAMES.
     """
     for k in _TOUCHED:
         sys.modules.pop(k, None)
@@ -324,26 +342,19 @@ def test_known_probe_names_log_at_debug_not_warning(stub_module, caplog):
         stub_module.install()
     torch = sys.modules["torch"]
 
-    # Probe one known dtype + one genuinely-missing attribute. Capture at
-    # DEBUG so both log calls land in caplog.records and we can compare
-    # their levels.
+    # Known-probe dtype is a real _StubDtype attribute: no raise, no log.
     with caplog.at_level("DEBUG", logger="fusion_mlx._torch_stub"):
-        with pytest.raises(AttributeError):
-            torch.float8_e4m3fn  # noqa: B018
-        with pytest.raises(AttributeError):
-            torch.totally_unknown_attr  # noqa: B018
+        dt = torch.float8_e4m3fn  # noqa: B018
+        assert isinstance(dt, torch.dtype), type(dt)
 
-    dtype_records = [
-        rec for rec in caplog.records if "torch.float8_e4m3fn" in rec.message
-    ]
+    # Genuinely-unknown name auto-stubs: callable, logs WARNING, no raise.
+    with caplog.at_level("WARNING", logger="fusion_mlx._torch_stub"):
+        unknown = torch.totally_unknown_attr  # noqa: B018
+        assert callable(unknown), "unknown attr must auto-stub to a callable"
     unknown_records = [
         rec for rec in caplog.records if "torch.totally_unknown_attr" in rec.message
     ]
-    assert dtype_records, "known-probe name should still log at DEBUG"
-    assert unknown_records, "unknown name should still log"
-    assert all(
-        rec.levelname == "DEBUG" for rec in dtype_records
-    ), f"known probe must log at DEBUG, got {[r.levelname for r in dtype_records]}"
+    assert unknown_records, "unknown name should log a one-shot WARNING"
     assert all(
         rec.levelname == "WARNING" for rec in unknown_records
     ), f"unknown attr must log at WARNING, got {[r.levelname for r in unknown_records]}"
@@ -426,7 +437,7 @@ def test_install_is_thread_safe(stub_module):
     assert all(r is True for r in results)
     # All threads see the same single torch module instance.
     torch = sys.modules["torch"]
-    assert torch.__version__.endswith("+fusion_mlx-stub")
+    assert torch.__version__.endswith("+fusion-mlx-stub")
 
 
 @pytest.mark.skipif(
