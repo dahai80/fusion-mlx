@@ -508,8 +508,12 @@ test_cancelled_requests_metric.py
 #    thinking already, but passes flag nested under chat_template_kwargs= not
 #    flat enable_thinking= kwarg; mock engine asserts flat kwarg -> shape fail.
 # Two paths (A port helper family / B align test to convergence point) in #531.
-# Not a CI blocker (collect_ignore). Leave quarantined pending #531 resolution.
-test_casual_chat_auto_disable_thinking.py
+# RESCUED 2026-08-21 (PATH B, #531): rewritten to assert the real prod
+# convergence point resolve_enable_thinking_default (setdefault on
+# chat_template_kwargs). Dropped stale maybe_auto_disable_thinking_for_casual_chat
+# helper contracts (NO-OP stub in fusion-mlx) + reasoning_max_tokens/effort
+# "keep thinking ON" contracts (chat route does not consult them). 23/23 pass.
+# test_casual_chat_auto_disable_thinking.py
 # test_chat_image_upload.py (RESCUED 2026-08-19 round10q-b4: 13/13 pass.
 # Harness path bug — I18N_DIR was Path(__file__).parent.parent / "fusion_mlx"
 # / "admin" / "i18n" = tests/fusion_mlx/admin/i18n (WRONG, file moved to
@@ -1320,7 +1324,7 @@ test_mtp_stream_contract.py
 # wholesale vllm_mlx->fusion_mlx rename of every import. Exceeds single-cycle
 # token budget (Rule 6). DEFER to next cycle: batch the rename + 8 fix
 # categories. Issue-first flow per CLAUDE.md.
-test_no_mllm_flag.py
+# test_no_mllm_flag.py
 # test_no_out_of_band_routing.py  (RESCUED 2026-08-19 b21 — commented out = un-quarantined = collected; 14/14 pass. Harness-allowlist catch-up, NO prod routing change. 4 test fixes: (1) _field_type_is_str helper bug L410 — get_args traversal false-positive on container GenericAlias tuple[str,...] (spec_methods/spec_constraints) → gate get_args on origin being Union/UnionType only, preserves Union[str,int]=True contract + makes tuple[tuple[str,float],...]|None=False; (2) 5 real str fields added to ALLOWED_STR_FIELDS — name/description/drafter_hf_path/modality/model_family (modality is closed enum _VALID_MODALITIES validated by _coerce like pflash_tier; rest open-ended non-routing); (3) 11 non-routing env vars added to ALLOWED_FUSION_MLX_ENV_VARS (boundary-prefix persist+max-bytes, max-tokens default, cluster-advertise, models search-path, mcp auto-discover, comfyui URL, stt-vad-pretrim, context-scaling, admission-kv-headroom, mtp-dispatch-timeout); (4) no_compile pydantic field added to NON_ROUTING_PYDANTIC_FIELDS_ALLOWLIST (videos_routes.py:71 diffusion mx.compile toggle, not routing flip); (5) _check_env_constant false-positive guard — error-log/doc strings that MENTION an allowed env-var name as substring no longer flagged. Issue #533, PR pending.)
 # test_openai_tool_choice_validation.py  (RESCUED 2026-08-18 — commented out = un-quarantined = collected; 32 pass. PROD FIX H-16 OpenAI-surface parity: openai_models.ChatCompletionRequest had NO tool_choice validator → malformed tool_choice ({"type":"banana"}, "any", {"foo":"bar"}) silent-degraded to free-form generation on /v1/chat/completions; H-16 was only closed on Anthropic surface (anthropic_models._validate_tool_choice_type). Added _validate_tool_choice_shape field_validator(mode=before) to openai_models.ChatCompletionRequest: string allowed-set {none,auto,required,function}, object requires type in {auto,none,function,required}, missing-type rejected, extra keys preserved, function-without-name passes schema (route owns that check). Harness re-point: test import api.models.ChatCompletionRequest (dead class, no route) → openai_models.ChatCompletionRequest (live route class). Regression-checked: 298 tool_choice-touching tests pass, 3 pre-existing mlx_vlm-surface fails unrelated.)
 test_openwebui.py
