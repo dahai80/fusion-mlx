@@ -33,11 +33,6 @@ from .shared_models import (
     _validate_logit_bias_finite,
     _validate_nonnegative_int,
 )
-from .utils import (
-    sanitize_output,
-    sanitize_reasoning_content,
-    sanitize_reasoning_for_stream,
-)
 
 logger = logging.getLogger(__name__)
 
@@ -805,6 +800,8 @@ class AssistantMessage(BaseModel):
         # exclude_none); mixed text keeps the prose, loses only the marker.
         if v is None or not isinstance(v, str):
             return v
+        from .utils import sanitize_output
+
         return sanitize_output(v)
 
     @field_validator("reasoning_content", mode="before")
@@ -818,6 +815,8 @@ class AssistantMessage(BaseModel):
         # sanitize_output) + identity-preserves plain text.
         if v is None or not isinstance(v, str):
             return v
+        from .utils import sanitize_reasoning_content
+
         return sanitize_reasoning_content(v)
 
     def model_post_init(self, __context) -> None:
@@ -1321,6 +1320,8 @@ class ChatCompletionChunkDelta(BaseModel):
         # contract stable across the content/reasoning channels.
         if v is None or not isinstance(v, str):
             return v
+        from .utils import sanitize_reasoning_for_stream
+
         out = sanitize_reasoning_for_stream(v)
         return out or None
 
@@ -1333,6 +1334,8 @@ class ChatCompletionChunkDelta(BaseModel):
         # to "foo bar " not "foobar". Pure markup -> "" -> None.
         if v is None or not isinstance(v, str):
             return v
+        from .utils import sanitize_reasoning_for_stream
+
         out = sanitize_reasoning_for_stream(v)
         return out or None
 
