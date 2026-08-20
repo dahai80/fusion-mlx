@@ -516,12 +516,13 @@ _run_with_watchdog() {
 
         # Prune old crash timestamps outside the window
         local fresh=()
-        for ts in "${crash_timestamps[@]}"; do
+        # set -u 下空数组 "${arr[@]}" 展开报 unbound (issue #560), 用 ${arr[@]+"..."} 安全展开.
+        for ts in ${crash_timestamps[@]+"${crash_timestamps[@]}"}; do
             if (( now - ts < window )); then
                 fresh+=("$ts")
             fi
         done
-        crash_timestamps=("${fresh[@]}")
+        crash_timestamps=(${fresh[@]+"${fresh[@]}"})
         crash_count=${#crash_timestamps[@]}
 
         if (( crash_count >= max_crashes )); then
