@@ -375,7 +375,9 @@ _VALID_RESPONSE_FORMAT_TYPES = ("text", "json_object", "json_schema")
 # OpenAI / Anthropic compatible reasoning_effort closed set. Shared by
 # ChatCompletionRequest (top-level field) and ResponsesRequest (top-level
 # + nested reasoning.effort) so the two surfaces can't drift. "none" is
-# the explicit-disable value (distinct from field-absent None).
+# the explicit-disable value (distinct from field-absent None). "xhigh"
+# is a non-canonical extension some launchers (e.g. Codex-like clients)
+# and models (e.g. Qwen3 family) emit; accepted as pass-through.
 _REASONING_EFFORT_ALLOWED: frozenset[str] = frozenset(
     {"minimal", "low", "medium", "high", "xhigh", "none"}
 )

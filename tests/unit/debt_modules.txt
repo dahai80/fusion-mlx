@@ -1434,7 +1434,7 @@ test_r12_h06_repair_context_guard.py
 # ordering + completed-output-index-matches-wire invariants unmet. Needs flat-chunk
 # parse branch + empty-reasoning emit logic = feature work. 0 regression
 # (228 responses tests pass). ISSUE #513 FILED.
-test_r12_m3_responses_stream_leading_items_order.py
+# test_r12_m3_responses_stream_leading_items_order.py
 # RESCUED b19 r12_reasoning_sanitizer: 80/80 green. Fixes — (1) AssistantMessage
 # + ChatCompletionChunkDelta field validators on openai_models (route-serialized
 # classes, NOT models.py parallels) sanitize content/reasoning at type boundary;
@@ -1512,7 +1512,7 @@ test_request_cancellation.py
 # resolves short alias->HF path. Architecture drift, full route-test rewrite needed
 # (not surgical). ISSUE #515 FILED. No prod change.
 test_request_time_alias_resolution.py
-test_responses_591_followups.py
+# test_responses_591_followups.py
 test_responses_budget_exhaust_streaming.py
 test_responses_bundle.py
 test_responses_engine_failure_envelope.py

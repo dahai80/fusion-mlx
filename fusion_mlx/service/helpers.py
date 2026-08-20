@@ -1106,12 +1106,23 @@ def _validate_model_name(request_model: str) -> None:
         accepted.add(model_alias)
     if model_path:
         accepted.add(model_path)
-    if request_model not in accepted:
-        raise HTTPException(
-            status_code=404,
-            detail=f"The model `{request_model}` does not exist. "
-            f"Available: {model_name}",
+    if request_model in accepted:
+        return
+    # #557: Codex CLI / claude_code launchers send synthetic model names
+    # (gpt-5-codex, claude-*) that the server routes to the actually-
+    # loaded engine regardless of literal name (see launch/claude_code.py).
+    # Accept any ``gpt-*`` / ``claude-*`` prefix as passthrough.
+    if request_model.startswith("gpt-") or request_model.startswith("claude-"):
+        logger.info(
+            "#557: accepting passthrough model name %r (gpt-/claude- bypass)",
+            request_model,
         )
+        return
+    raise HTTPException(
+        status_code=404,
+        detail=f"The model `{request_model}` does not exist. "
+        f"Available: {model_name}",
+    )
 
 
 # ── Tool call parsing ──────────────────────────────────────────────
