@@ -1639,10 +1639,22 @@ test_vision_feature_cache.py
 test_vlm_engine.py
 test_vlm_model_adapter.py
 test_vlm_mtp.py
-# test_streaming_pipeline_integration: SSE content-block count drift -
-# expects 2-4 blocks (thinking+text, thinking+tool_call), prod emits 0-1.
-# StreamingThinkRouter block-split semantics evolved; needs router
-# investigation.
+# KEEP_QUARANTINED (eval b27 2026-08-20): ORPHAN-TEST, NOT missing fix.
+# Collection ImportError: cannot import name '_emit_content_pieces' from
+# fusion_mlx.routes_internal.anthropic. Commit f4e2c051 (2026-07-24)
+# deleted routes_internal/anthropic.py (2984L, "not mounted in server.py"
+# dead code); file regenerated as 26L shim re-exporting from
+# api/_anthropic_helpers + api/anthropic_routes. _emit_content_pieces =
+# DELETED function (0 prod refs); _should_start_in_thinking moved to
+# fusion_mlx/service/helpers.py:332 (re-exported via service/__init__).
+# Anthropic streaming emit path restructured into api/anthropic_routes +
+# api/_anthropic_helpers, covered by NEW passing tests
+# (test_anthropic_streaming_reasoning, test_anthropic_stop_sequences, etc.).
+# StreamingThinkRouter + StreamingToolCallFilter still live in api/utils.py
+# (L1337/L1427) but the _emit_content_pieces helper this suite's
+# TestEmitContentPieces class exercises is gone. Re-implementing deleted
+# dead code to satisfy test = Rule 2/3 violation; prod refactor f4e2c051
+# is established contract (Rule 7 prod wins). Pattern: ORPHAN-TEST.
 test_streaming_pipeline_integration.py
 # test_mtp_lossless: MTP all-accept path emits [7,11,13,15,19,21,0] vs
 # none-ref [7,11,13,15,17,19,21] - skips bonus token 17, appends spurious
