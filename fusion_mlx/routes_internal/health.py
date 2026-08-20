@@ -122,6 +122,24 @@ async def status(_auth: bool = Depends(verify_management_access)):
     }
 
 
+@router.get("/v1/metrics/json")
+async def metrics_json(_auth: bool = Depends(verify_management_access)):
+    # Full JSON inference metrics for downstream consumers (e.g. fusion-model-hub
+    # deployment metrics). /v1/status returns a 4-key subset; /metrics is
+    # Prometheus text. This returns ServerMetrics.to_dict() verbatim so callers
+    # can derive requestsPerSecond/errorRate/activeConnections/tokensPerSecond.
+    # Management-gated like /v1/status (token counts are sensitive).
+    from ..server import _server_state
+    from ..server_metrics import get_server_metrics
+
+    pool = _server_state.get("engine_pool")
+    data = get_server_metrics().to_dict()
+    data["loaded_models"] = pool.get_loaded_model_ids() if pool else []
+    logger.info("metrics_json served: total_requests=%s active=%s",
+                data.get("total_requests"), data.get("active_requests"))
+    return data
+
+
 @admin_router.post("/v1/requests/{request_id}/cancel")
 async def cancel_request(request_id: str):
     # F-151: cancel MUST actually abort the in-flight request (was a no-op

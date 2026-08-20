@@ -396,6 +396,68 @@ class TestHealthRoutes:
         finally:
             self._restore_config(orig)
 
+    # /v1/metrics/json (issue #539): full ServerMetrics.to_dict() for downstream
+    # consumers (fusion-model-hub deployment metrics). /v1/status returns a
+    # 4-key subset; /metrics is Prometheus text. These tests pin the new route
+    # independently of the pre-existing /v1/status auth-test drift (conftest
+    # autouse sets FUSION_ALLOW_ANONYMOUS=true, so the shared
+    # test_management_router_requires_api_key_* parametrization cannot assert
+    # 401 without per-test delenv). Each metrics/json auth case manages its
+    # own anonymous override so it stays self-contained.
+    def test_metrics_json_no_pool_returns_metrics_with_empty_loaded_models(self):
+        """No engine_pool -> 200 with full metrics dict + loaded_models=[]."""
+        from fusion_mlx.server import _server_state
+
+        orig_state = _server_state.get("engine_pool")
+        _server_state["engine_pool"] = None
+        orig = self._patch_config(engine=None, model_name=None)
+        try:
+            app = self._make_app()
+            client = TestClient(app)
+            r = client.get("/v1/metrics/json")
+            assert r.status_code == 200
+            data = r.json()
+            for key in (
+                "total_requests",
+                "successful_requests",
+                "failed_requests",
+                "active_requests",
+                "avg_generation_tps",
+                "avg_prefill_tps",
+                "uptime_seconds",
+            ):
+                assert key in data, f"missing metrics key: {key}"
+            assert data["loaded_models"] == []
+        finally:
+            _server_state["engine_pool"] = orig_state
+            self._restore_config(orig)
+
+    def test_metrics_json_requires_auth_when_anonymous_disabled(self, monkeypatch):
+        """With api_key set + FUSION_ALLOW_ANONYMOUS unset, no creds -> 401."""
+        monkeypatch.delenv("FUSION_ALLOW_ANONYMOUS", raising=False)
+        orig = self._patch_config(api_key="test-secret", engine=None, model_name=None)
+        try:
+            app = self._make_app()
+            client = TestClient(app)
+            r = client.get("/v1/metrics/json")
+            assert r.status_code == 401
+        finally:
+            self._restore_config(orig)
+
+    def test_metrics_json_accepts_valid_bearer(self, monkeypatch):
+        """Valid Bearer token -> 200 (management-gated like /v1/status)."""
+        monkeypatch.delenv("FUSION_ALLOW_ANONYMOUS", raising=False)
+        orig = self._patch_config(api_key="test-secret", engine=None, model_name=None)
+        try:
+            app = self._make_app()
+            client = TestClient(app)
+            r = client.get(
+                "/v1/metrics/json", headers={"Authorization": "Bearer test-secret"}
+            )
+            assert r.status_code == 200
+        finally:
+            self._restore_config(orig)
+
     def test_status_exposes_batch_generator_throughput(self, mock_engine):
         """Status surfaces generation_tps/prompt_tps from batch_generator stats.
 
