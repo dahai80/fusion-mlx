@@ -359,6 +359,33 @@ test_audio_upload_size_limit.py
 # test_uses_processor_when_chat_template_is_present assert retargeted to the
 # real base-class contract (tokenizer always; processor routing is VLM
 # _prepare_vision_inputs, covered by the VLM suite). 5 pass.
+# KEEP_QUARANTINED b31 (2026-08-20): OutputRouter feature REMOVED from prod,
+# test pins deleted contract. NOT harness drift — real feature removal.
+# - Imports fusion_mlx.engine.batched.BatchedEngine: that class deleted in
+#   #422 (engine/batched/ is now a _mtp_dispatch shim package only; no
+#   BatchedEngine symbol). Same dead-import shape as the b-cluster notes
+#   above, but unlike test_batched_engine_tool_call_normalization (pure
+#   import rename) this test pins the WHOLE router contract.
+# - Imports _OUTPUT_ROUTER_ALLOWLIST (L484): symbol GONE from codebase
+#   entirely (grep -rn finds zero prod hits). The allowlist concept was
+#   dropped with the router.
+# - Prod engines/batched.BatchedEngine.stream_chat (L1019-1138) has NO
+#   router integration: yields stream_generate outputs directly, no
+#   _stream_with_output_router / _create_output_router / _make_routed_output
+#   / _routed_finish_sentinel calls. Those methods do not exist on the
+#   class (verified hasattr).
+# - fusion_mlx/output_router.py + output_router_harmony.py are ORPHANS:
+#   zero prod importers (grep -rln 'output_router' in fusion_mlx/ excluding
+#   tests/ returns only those two files themselves). The docstrings still
+#   reference 'BatchedEngine._create_output_router' as stale comments, no
+#   live caller.
+# Test asserts channel-tagged streaming (reasoning/content/tool_call
+# channels), cached_tokens propagation through _make_routed_output, per-token
+# logprobs routing, single-token-flush body preservation for TOOL_CALL
+# aggregate events — all gated on a router that no longer runs. Rewriting
+# to the current stream_chat (no routing) would delete every assertion =
+# the test ceases to test anything. Prod wins Rule 7/12. Same family as
+# b9 bench-cluster KEEP_QUARANTINED (feature removed, not test bug).
 test_batched_engine_output_router.py
 # test_batched_engine_tool_call_normalization.py RESCUED 2026-08-19 (6 pass):
 # aliased import fusion_mlx.engine.batched._normalize_tool_call_arguments_for_template
