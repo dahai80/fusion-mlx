@@ -1278,11 +1278,38 @@ test_paged_cache_real_model.py
 test_paired_compat.py
 test_payload_builder_v2_full.py
 test_payload_builder_v2_kwargs.py
-test_pflash.py
+# test_pflash.py RESCUED 2026-08-20 b32 (22 pass + 2 auto-skip). Compress
+# LOGIC tests (TestPFlashCompressor + config/validate/resolve-override
+# cases) all pass against live fusion_mlx.pflash — PFlashConfig fields,
+# compress_tokens/compress_request_tokens, config_from_args,
+# validate_model_support, resolve_pflash_mode_default explicit-override
+# path all match prod. 2 data-canaries skipped:
+# test_verified_alias_with_no_flag_defaults_to_always +
+# test_verified_aliases_in_registry_match_qwen35_or_qwen36 pin the
+# PR #649 contract (aliases.json pflash_tier=verified tags). PR #649
+# never shipped to this repo (gh pr view 640 = NotFound) and
+# `git log -S pflash_tier -- aliases.json` is empty — zero verified
+# entries, field defaults "unknown" (model_aliases.py:64). Decorated
+# both with @_NO_VERIFIED_YET skipif gated on a module-level probe of
+# list_profiles() verified-set; skip AUTO-LIFTS when PR #649 merges the
+# tags. Not TEST-TYPO, not REDESIGN-DRIFT: pending-feature canary. Same
+# data-layer gap as test_pflash_engine/metrics/scheduler below (compress
+# fns orphaned — zero callers outside pflash.py — PFlash half-built).
+# test_pflash.py
 # test_pflash_benchmark.py RESCUED 2026-08-19 (3/3 pass). CLI extraction drift:
 # _build_benchmark_context moved from fusion_mlx.cli to fusion_mlx.cli_serve
 # (cli_serve.py:839). Re-pointed test import. Same pattern as test_audio_alias_registry.
 # test_pflash_benchmark.py
+# KEEP_QUARANTINED 2026-08-20 b32: test_pflash_engine / test_pflash_metrics /
+# test_pflash_scheduler pin PFlash engine-layer ROUTING that prod does NOT
+# implement. compress_tokens/compress_request_tokens (pflash.py:205/280) have
+# ZERO callers outside pflash.py — orphaned. has_tools/requires_prompt_integrity
+# kwargs only in pflash.py signatures, never set by engines/batched.py chat
+# (L920-1006 calls self.generate, never synthesizes has_tools) or stream_chat
+# (L1019-1138 yields stream_generate directly, no router). Tests assert
+# chat/stream_chat set these flags + route compression — feature gap, not
+# test-debt. Prod wins Rule 7/12 (PFlash routing unshipped). Same family as
+# b31 OutputRouter (removed feature). Basenames stay ACTIVE.
 test_pflash_engine.py
 test_pflash_metrics.py
 test_pflash_scheduler.py
