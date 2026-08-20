@@ -1562,7 +1562,31 @@ test_tool_parser_coverage.py
 test_tool_parsers.py
 test_tool_result_content_array.py
 test_tools_auto_disable_thinking.py
-test_torch_stub.py
+# RESCUED b30 2026-08-20 (PR #554). 500L. 5 fails -> 0 fail (17 pass + 1
+# skip xgrammar-not-installed env gate). Two patterns:
+# (1) TEST-TYPO: __version__ assert used "+fusion_mlx-stub" (underscore)
+# but prod uses "+fusion-mlx-stub" (hyphen) at _torch_stub.py L325 build
+# AND L843 install idempotency check. Underscore form NEVER appeared in
+# prod git history. Two sites (L70 install-returns-true, L429 thread-safe)
+# fixed to hyphen. Pure test typo, prod untouched.
+# (2) REDESIGN-DRIFT (prod wins Rule 7): stub was deliberately relaxed
+# from strict-raise to lenient-auto-stub for ComfyUI deep torch import
+# survival (prod _make_top_level_torch_getattr L266-317 returns
+# _auto_sub callable no-op for ANY unknown attr, caches via setattr;
+# prod L784-788 comment documents the intent). Tests pinned the OLD
+# strict contract (unknown attr raises AttributeError; torch.full/zeros
+# raise RuntimeError). Rewrote 3 tests to assert CURRENT lenient
+# contract: torch.full/zeros return _StubTensor (soft-stub); torch.compile
+# + unknown names auto-stub to callable + log one-shot WARNING + hasattr
+# True. torch.nn.functional.pad STAYS strict (prod L475 _unsupported,
+# never reached at import time) — kept in test_tensor_factories_are_soft
+# _stub_and_nn_ops_raise. Dropped the _KNOWN_PROBE_NAMES DEBUG-vs-WARNING
+# level assertion: that branch (prod L271) is unreachable for dtype probes
+# — all _KNOWN_PROBE_NAMES (uint16/32/64, float8_*, float4_*) are real
+# _StubDtype attrs set in _build_modules L329-333, so they never hit
+# __getattr__. Dead-code path, no faithful test possible (Rule 9).
+# Result: 17 pass + 1 skip + 0 fail. debt 168 -> 167.
+# test_torch_stub.py
 test_truncate_tool_result.py
 test_truncation_no_synthetic_text.py
 # KEEP_QUARANTINED turboquant cluster (round10q-b6 2026-08-19): 4 suites,
