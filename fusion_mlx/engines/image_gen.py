@@ -601,6 +601,24 @@ class ImageGenEngine(BaseNonStreamingEngine):
                             flux.callbacks.in_loop.remove(subscriber)
                         except (ValueError, AttributeError):
                             pass
+                img_w, img_h = gen.image.size
+                min_w = max(8, width // 2)
+                min_h = max(8, height // 2)
+                if img_w < min_w or img_h < min_h:
+                    logger.error(
+                        "ImageGen raw output collapsed: got %dx%d requested %dx%d variant=%s seed=%d",
+                        img_w,
+                        img_h,
+                        width,
+                        height,
+                        self._variant,
+                        base_seed + i,
+                    )
+                    raise RuntimeError(
+                        f"ImageGen raw output width/height collapsed: got {img_w}x{img_h} "
+                        f"requested {width}x{height} (cross-thread lazy eval race suspected; "
+                        f"retry with a fresh seed)"
+                    )
                 if output_format == "raw":
                     import numpy as np
 
