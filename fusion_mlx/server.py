@@ -1677,7 +1677,25 @@ def main():
         "--cloud-router", action="store_true", help="Enable cloud fallback"
     )
     parser.add_argument("--cloud-api-key", default=None, help="Cloud router API key")
+    parser.add_argument(
+        "--api-key",
+        type=str,
+        default=None,
+        help=(
+            "API key for authentication (if not set, falls back to the "
+            "FUSION_MLX_API_KEY env var; if neither, no auth required)"
+        ),
+    )
     args = parser.parse_args()
+
+    # Route both the standalone entry and the shared serve command through
+    # _resolve_api_key so env-only sidecars keep the bearer out of argv/ps.
+    global _api_key
+    _api_key = _resolve_api_key(args.api_key)
+    logger.info(
+        "server entry: api_key resolved (source=%s)",
+        "argv" if args.api_key else "env" if _api_key else "none",
+    )
 
     config = ServerConfig(
         host=args.host,
