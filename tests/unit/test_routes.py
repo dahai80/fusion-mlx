@@ -76,6 +76,46 @@ class TestHealthRoutes:
     # handler's behaviour — not the auth gate — pass this dict via ``headers=``.
     _INTERNAL_HEADERS = {"X-Rapid-MLX-Internal": "true"}
 
+    def _make_pool(self, mock_engine, model_ids=None):
+        # Commit 1d05a34 rewrote /v1/status + /health* to read from
+        # _server_state["engine_pool"] (loaded_model_count /
+        # get_loaded_model_ids / _entries) instead of the legacy
+        # cfg.engine / cfg.ready fields. Build a mock pool that mirrors
+        # the real EnginePool surface the routes touch.
+        pool = MagicMock()
+        ids = list(model_ids or ["test-model"])
+        pool.loaded_model_count = len(ids)
+        pool.get_loaded_model_ids.return_value = ids
+        entry = MagicMock()
+        entry.engine = mock_engine
+        pool._entries = {mid: entry for mid in ids}
+        return pool
+
+    def _set_pool(self, pool):
+        # Stash engine_pool into the server global the routes read.
+        from fusion_mlx.server import _server_state
+
+        orig = _server_state.get("engine_pool")
+        _server_state["engine_pool"] = pool
+        return orig
+
+    def _restore_pool(self, orig):
+        from fusion_mlx.server import _server_state
+
+        _server_state["engine_pool"] = orig
+
+    def _set_preloading(self, value):
+        from fusion_mlx.server import _server_state
+
+        orig = _server_state.get("preloading", False)
+        _server_state["preloading"] = value
+        return orig
+
+    def _restore_preloading(self, orig):
+        from fusion_mlx.server import _server_state
+
+        _server_state["preloading"] = orig
+
     def _patch_config(self, **kwargs):
         """Patch config fields for testing."""
         from fusion_mlx.config import get_config
@@ -113,6 +153,8 @@ class TestHealthRoutes:
         orig = self._patch_config(
             engine=mock_engine, mcp_manager=None, model_name="test-model"
         )
+        orig_pool = self._set_pool(self._make_pool(mock_engine))
+        orig_pre = self._set_preloading(False)
         try:
             app = self._make_app()
             client = TestClient(app)
@@ -120,9 +162,11 @@ class TestHealthRoutes:
             assert r.status_code == 200
             data = r.json()
             assert data["model_loaded"] is True
-            assert data["model_name"] == "test-model"
-            assert data["engine_type"] == "batched"
+            assert data["ready"] is True
+            assert data["loaded_models"] == ["test-model"]
         finally:
+            self._restore_preloading(orig_pre)
+            self._restore_pool(orig_pool)
             self._restore_config(orig)
 
     def test_health_includes_ready_field(self, mock_engine):
@@ -153,10 +197,12 @@ class TestHealthRoutes:
             self._restore_config(orig)
 
     def test_health_ready_returns_200_when_ready(self, mock_engine):
-        """/health/ready flips to 200 once cfg.ready is set."""
+        """/health/ready flips to 200 once a model is loaded and not preloading."""
         orig = self._patch_config(
             engine=mock_engine, mcp_manager=None, model_name="test-model", ready=True
         )
+        orig_pool = self._set_pool(self._make_pool(mock_engine))
+        orig_pre = self._set_preloading(False)
         try:
             app = self._make_app()
             client = TestClient(app)
@@ -164,12 +210,15 @@ class TestHealthRoutes:
             assert r.status_code == 200
             data = r.json()
             assert data["ready"] is True
-            assert data["model"] == "test-model"
         finally:
+            self._restore_preloading(orig_pre)
+            self._restore_pool(orig_pool)
             self._restore_config(orig)
 
     def test_health_with_mcp(self, mock_engine):
-        """Health endpoint includes MCP info."""
+        """Health endpoint no longer surfaces MCP info (commit 1d05a34
+        trimmed /health to status/ready/model_loaded/loaded_models). Pin
+        that the mcp key is absent so a future addition is intentional."""
         mcp = MagicMock()
         server_status = MagicMock()
         server_status.state.value = "connected"
@@ -179,15 +228,18 @@ class TestHealthRoutes:
         orig = self._patch_config(
             engine=mock_engine, mcp_manager=mcp, model_name="test-model"
         )
+        orig_pool = self._set_pool(self._make_pool(mock_engine))
+        orig_pre = self._set_preloading(False)
         try:
             app = self._make_app()
             client = TestClient(app)
             r = client.get("/health")
             data = r.json()
-            assert data["mcp"]["enabled"] is True
-            assert data["mcp"]["servers_connected"] == 1
-            assert data["mcp"]["tools_available"] == 2
+            assert "mcp" not in data
+            assert data["model_loaded"] is True
         finally:
+            self._restore_preloading(orig_pre)
+            self._restore_pool(orig_pool)
             self._restore_config(orig)
 
     def test_get_root_returns_200(self):
@@ -237,11 +289,12 @@ class TestHealthRoutes:
         [
             ("post", "/v1/cache/clear"),
             ("get", "/v1/status"),
-            ("get", "/v1/cache/stats"),
             ("delete", "/v1/cache"),
         ],
     )
-    def test_management_router_requires_api_key_when_configured(self, method, path):
+    def test_management_router_requires_api_key_when_configured(
+        self, method, path, monkeypatch
+    ):
         """Management routes (cache, status) honor API auth.
 
         Probe endpoints (/health, /healthz, /livez, /readyz) are NOT in
@@ -253,7 +306,19 @@ class TestHealthRoutes:
         require ``X-Rapid-MLX-Internal: true`` per F-150 — we pass it here
         so the assertion checks the API-key 401, not the F-150 403. The
         header-only-403 path is exercised in ``test_internal_route_auth.py``.
+
+        ``/v1/cache/stats`` is NOT in this list — that route lives on the
+        cache router (``routes_internal/cache.py``), not the health router
+        assembled by ``_make_app``; its auth is covered by
+        ``test_cache_routes.py``.
+
+        ``FUSION_ALLOW_ANONYMOUS=true`` is set by the conftest autouse
+        fixture and ``verify_management_access`` checks it FIRST (before
+        the configured api_key), so /v1/status would return 200 instead
+        of 401. Drop the dev override here so the 401 path is exercised
+        (same pattern as test_metrics_route.py).
         """
+        monkeypatch.delenv("FUSION_ALLOW_ANONYMOUS", raising=False)
         orig = self._patch_config(api_key="test-secret", ready=True)
         try:
             app = self._make_app()
@@ -262,7 +327,10 @@ class TestHealthRoutes:
             r = getattr(client, method)(path, headers=self._INTERNAL_HEADERS)
 
             assert r.status_code == 401
-            assert r.json()["detail"] == "API key required"
+            # /v1/status uses verify_management_access ("Authentication
+            # required"); cache routes use verify_api_key_or_x_api_key
+            # ("API key required"). Both are 401 — accept either detail.
+            assert r.json()["detail"] in ("API key required", "Authentication required")
         finally:
             self._restore_config(orig)
 
@@ -282,6 +350,8 @@ class TestHealthRoutes:
             model_name="test-model",
             ready=True,
         )
+        orig_pool = self._set_pool(self._make_pool(mock_engine))
+        orig_pre = self._set_preloading(False)
         try:
             app = self._make_app()
             client = TestClient(app)
@@ -293,13 +363,15 @@ class TestHealthRoutes:
                 f"{r.status_code}: {r.text}"
             )
         finally:
+            self._restore_preloading(orig_pre)
+            self._restore_pool(orig_pool)
             self._restore_config(orig)
 
     @pytest.mark.parametrize(
         ("path", "expected_keys"),
         [
             ("/healthz", {"status", "ready", "model_loaded"}),
-            ("/readyz", {"ready", "model"}),
+            ("/readyz", {"ready"}),
             ("/livez", {"status"}),
         ],
     )
@@ -315,6 +387,8 @@ class TestHealthRoutes:
             model_name="test-model",
             ready=True,
         )
+        orig_pool = self._set_pool(self._make_pool(mock_engine))
+        orig_pre = self._set_preloading(False)
         try:
             app = self._make_app()
             client = TestClient(app)
@@ -322,6 +396,8 @@ class TestHealthRoutes:
             assert r.status_code == 200
             assert expected_keys.issubset(r.json().keys())
         finally:
+            self._restore_preloading(orig_pre)
+            self._restore_pool(orig_pool)
             self._restore_config(orig)
 
     @pytest.mark.parametrize(
@@ -378,22 +454,21 @@ class TestHealthRoutes:
             self._restore_config(orig)
 
     def test_status_with_engine(self, mock_engine):
-        """Status returns engine stats."""
+        """Status returns engine-pool stats (commit 1d05a34 shape)."""
         orig = self._patch_config(engine=mock_engine, model_name="test-model")
+        orig_pool = self._set_pool(self._make_pool(mock_engine))
         try:
             app = self._make_app()
             client = TestClient(app)
             r = client.get("/v1/status")
             data = r.json()
-            assert data["status"] == "idle"
-            assert data["model"] == "test-model"
-            assert data["steps_executed"] == 500
-            assert data["metal"]["active_memory_gb"] == 8.5
-            # generation_tps/prompt_tps default to 0 when batch_generator
-            # stats are absent (text-only batched engine path).
-            assert data["generation_tps"] == 0
-            assert data["prompt_tps"] == 0
+            assert data["status"] == "ok"
+            assert data["loaded_models"] == ["test-model"]
+            assert "total_requests" in data
+            assert "total_prompt_tokens" in data
+            assert "total_completion_tokens" in data
         finally:
+            self._restore_pool(orig_pool)
             self._restore_config(orig)
 
     # /v1/metrics/json (issue #539): full ServerMetrics.to_dict() for downstream
@@ -459,82 +534,83 @@ class TestHealthRoutes:
             self._restore_config(orig)
 
     def test_status_exposes_batch_generator_throughput(self, mock_engine):
-        """Status surfaces generation_tps/prompt_tps from batch_generator stats.
+        """Status surfaces throughput via ServerMetrics after commit 1d05a34.
 
-        Regression for the upstream bug where these counters existed in the
-        batch generator but never reached /v1/status because the engine
-        layer didn't forward the 'batch_generator' key.
+        The legacy batch_generator->generation_tps/prompt_tps forwarding was
+        removed; /v1/status now returns total_* counters from
+        ServerMetrics.to_dict(). Throughput averages live in
+        /v1/metrics/json (avg_generation_tps/avg_prefill_tps). Pin that the
+        new shape carries the metrics-derived totals.
         """
-        mock_engine.get_stats.return_value = {
-            **mock_engine.get_stats.return_value,
-            "batch_generator": {
-                "prompt_tps": 142.7,
-                "generation_tps": 38.4,
-            },
-        }
         orig = self._patch_config(engine=mock_engine, model_name="test-model")
+        orig_pool = self._set_pool(self._make_pool(mock_engine))
         try:
             app = self._make_app()
             client = TestClient(app)
             data = client.get("/v1/status").json()
-            assert data["generation_tps"] == 38.4
-            assert data["prompt_tps"] == 142.7
+            assert data["status"] == "ok"
+            assert "total_requests" in data
+            assert "total_prompt_tokens" in data
+            assert "total_completion_tokens" in data
         finally:
+            self._restore_pool(orig_pool)
             self._restore_config(orig)
 
     def test_status_handles_non_dict_batch_generator(self, mock_engine):
-        """Defensive: malformed batch_generator (not a dict) must not 500.
-
-        Codex flagged that `stats.get(...) or {}` only guards the falsy case;
-        a string/list/int would crash on `.get(...)`. Confirm we coerce safely.
-        """
+        """Defensive: /v1/status no longer reads batch_generator, so a
+        malformed value on the engine cannot 500 the route. Pin that the
+        new shape is immune (regression guard for the old crash path)."""
         mock_engine.get_stats.return_value = {
             **mock_engine.get_stats.return_value,
             "batch_generator": "unexpected-string",
         }
         orig = self._patch_config(engine=mock_engine, model_name="test-model")
+        orig_pool = self._set_pool(self._make_pool(mock_engine))
         try:
             data = TestClient(self._make_app()).get("/v1/status").json()
-            assert data["generation_tps"] == 0
-            assert data["prompt_tps"] == 0
+            assert data["status"] == "ok"
+            assert data["loaded_models"] == ["test-model"]
         finally:
+            self._restore_pool(orig_pool)
             self._restore_config(orig)
 
     def test_status_coerces_none_throughput_to_zero(self, mock_engine):
-        """Defensive: explicit-None throughput values must serialize as 0,
-        not null. Monitoring dashboards expect a number."""
+        """Defensive: /v1/status no longer reads throughput fields, so
+        explicit-None values cannot reach the response. Pin the new shape
+        carries numeric totals (never null) from ServerMetrics."""
         mock_engine.get_stats.return_value = {
             **mock_engine.get_stats.return_value,
             "batch_generator": {"prompt_tps": None, "generation_tps": None},
         }
         orig = self._patch_config(engine=mock_engine, model_name="test-model")
+        orig_pool = self._set_pool(self._make_pool(mock_engine))
         try:
             data = TestClient(self._make_app()).get("/v1/status").json()
-            assert data["generation_tps"] == 0
-            assert data["prompt_tps"] == 0
+            assert data["total_requests"] == 0
+            assert data["total_prompt_tokens"] == 0
+            assert data["total_completion_tokens"] == 0
         finally:
+            self._restore_pool(orig_pool)
             self._restore_config(orig)
 
     def test_status_preserves_zero_float_throughput(self, mock_engine):
-        """A genuine 0.0 idle reading must stay a float. `or 0` would
-        collapse it to int 0; downstream schemas that require number-as-
-        float would reject the response."""
+        """/v1/status totals come from ServerMetrics counters (int), not
+        the legacy float throughput fields. Pin that the response carries
+        the metrics-derived totals after commit 1d05a34."""
         mock_engine.get_stats.return_value = {
             **mock_engine.get_stats.return_value,
             "batch_generator": {"prompt_tps": 0.0, "generation_tps": 0.0},
         }
         orig = self._patch_config(engine=mock_engine, model_name="test-model")
+        orig_pool = self._set_pool(self._make_pool(mock_engine))
         try:
-            data = TestClient(self._make_app()).get("/v1/status").json()
-            # JSON round-trip preserves int vs float: 0.0 → 0.0, 0 → 0.
-            # The stricter assertion is that the raw text contains "0.0".
             r = TestClient(self._make_app()).get("/v1/status")
-            assert '"generation_tps":0.0' in r.text.replace(" ", "")
-            assert '"prompt_tps":0.0' in r.text.replace(" ", "")
-            # Sanity: numeric comparison still holds.
-            assert data["generation_tps"] == 0
-            assert data["prompt_tps"] == 0
+            data = r.json()
+            assert data["status"] == "ok"
+            assert data["total_requests"] == 0
+            assert data["total_completion_tokens"] == 0
         finally:
+            self._restore_pool(orig_pool)
             self._restore_config(orig)
 
     def test_cache_clear_no_engine(self):
@@ -557,36 +633,32 @@ class TestHealthRoutes:
         """Cache clear works when no prompt cache exists."""
         mock_engine._model = MagicMock(spec=[])
         orig = self._patch_config(engine=mock_engine)
+        orig_pool = self._set_pool(self._make_pool(mock_engine))
         try:
             app = self._make_app()
             client = TestClient(app, client=("127.0.0.1", 50000))
             r = client.post("/v1/cache/clear", headers=self._INTERNAL_HEADERS)
             assert r.status_code == 200
-            assert "No prompt cache" in r.json()["message"]
+            assert r.json()["status"] == "ok"
+            assert r.json()["cleared"] == 0
         finally:
+            self._restore_pool(orig_pool)
             self._restore_config(orig)
 
-    def test_cache_stats_no_vlm(self):
-        """Cache stats returns fallback when mlx_vlm not available."""
-        app = self._make_app()
-        # ``/v1/cache/stats`` is a READ route (gated by ``verify_api_key``, no
-        # internal-header requirement), so default TestClient host is fine
-        # here — this test only verifies the fallback envelope shape.
-        client = TestClient(app)
-        r = client.get("/v1/cache/stats")
-        assert r.status_code == 200
-        # Either returns stats or fallback message
-        data = r.json()
-        assert "multimodal_kv_cache" in data or "model_type" in data
-
-    def test_cache_delete(self):
+    def test_cache_delete(self, mock_engine):
         """Cache delete endpoint works."""
-        app = self._make_app()
-        # Destructive route — pin loopback so the codex r1 auth check passes
-        # when ``--api-key`` is unset (this test's posture).
-        client = TestClient(app, client=("127.0.0.1", 50000))
-        r = client.delete("/v1/cache", headers=self._INTERNAL_HEADERS)
-        assert r.status_code == 200
+        orig = self._patch_config(engine=mock_engine)
+        orig_pool = self._set_pool(self._make_pool(mock_engine))
+        try:
+            app = self._make_app()
+            # Destructive route — pin loopback so the codex r1 auth check passes
+            # when ``--api-key`` is unset (this test's posture).
+            client = TestClient(app, client=("127.0.0.1", 50000))
+            r = client.delete("/v1/cache", headers=self._INTERNAL_HEADERS)
+            assert r.status_code == 200
+        finally:
+            self._restore_pool(orig_pool)
+            self._restore_config(orig)
 
 
 # ---------------------------------------------------------------------------
