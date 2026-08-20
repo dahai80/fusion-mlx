@@ -49,7 +49,7 @@ def test_api_key_env_only_resolves_to_env_value(monkeypatch):
     from fusion_mlx.server import _resolve_api_key
 
     monkeypatch.setenv("FUSION_MLX_API_KEY", "ENV_SECRET")
-    assert _resolve_api_key(argv_value=None) == "ENV_SECRET"
+    assert _resolve_api_key(argv_api_key=None) == "ENV_SECRET"
 
 
 def test_api_key_argv_only_still_works(monkeypatch):
@@ -57,7 +57,7 @@ def test_api_key_argv_only_still_works(monkeypatch):
     from fusion_mlx.server import _resolve_api_key
 
     monkeypatch.delenv("FUSION_MLX_API_KEY", raising=False)
-    assert _resolve_api_key(argv_value="ARGV_SECRET") == "ARGV_SECRET"
+    assert _resolve_api_key(argv_api_key="ARGV_SECRET") == "ARGV_SECRET"
 
 
 def test_api_key_both_set_argv_wins(monkeypatch):
@@ -65,7 +65,7 @@ def test_api_key_both_set_argv_wins(monkeypatch):
     from fusion_mlx.server import _resolve_api_key
 
     monkeypatch.setenv("FUSION_MLX_API_KEY", "ENV_VALUE")
-    assert _resolve_api_key(argv_value="ARGV_VALUE") == "ARGV_VALUE"
+    assert _resolve_api_key(argv_api_key="ARGV_VALUE") == "ARGV_VALUE"
 
 
 def test_api_key_neither_set_is_none(monkeypatch):
@@ -73,7 +73,7 @@ def test_api_key_neither_set_is_none(monkeypatch):
     from fusion_mlx.server import _resolve_api_key
 
     monkeypatch.delenv("FUSION_MLX_API_KEY", raising=False)
-    assert _resolve_api_key(argv_value=None) is None
+    assert _resolve_api_key(argv_api_key=None) is None
 
 
 def test_api_key_empty_string_argv_falls_back_to_env(monkeypatch):
@@ -83,7 +83,7 @@ def test_api_key_empty_string_argv_falls_back_to_env(monkeypatch):
     from fusion_mlx.server import _resolve_api_key
 
     monkeypatch.setenv("FUSION_MLX_API_KEY", "ENV_FALLBACK")
-    assert _resolve_api_key(argv_value="") == "ENV_FALLBACK"
+    assert _resolve_api_key(argv_api_key="") == "ENV_FALLBACK"
 
 
 # ---------------------------------------------------------------------------
@@ -99,7 +99,7 @@ def test_banner_renders_auth_on_when_only_env_is_set(monkeypatch):
     renderer directly proves the banner path mirrors the enforcement
     path; if the gate regresses to ``args.api_key`` only, this flips
     red because the input ``argv_api_key=None`` produces no feature."""
-    from fusion_mlx.cli import _auth_feature_str
+    from fusion_mlx._cli_base import _auth_feature_str
 
     monkeypatch.setenv("FUSION_MLX_API_KEY", "ENV_SECRET")
     assert _auth_feature_str(argv_api_key=None) == "auth: on"
@@ -107,7 +107,7 @@ def test_banner_renders_auth_on_when_only_env_is_set(monkeypatch):
 
 def test_banner_renders_auth_on_when_only_argv_is_set(monkeypatch):
     """Backwards-compat: inline argv-set path also renders the line."""
-    from fusion_mlx.cli import _auth_feature_str
+    from fusion_mlx._cli_base import _auth_feature_str
 
     monkeypatch.delenv("FUSION_MLX_API_KEY", raising=False)
     assert _auth_feature_str(argv_api_key="ARGV_SECRET") == "auth: on"
@@ -116,7 +116,7 @@ def test_banner_renders_auth_on_when_only_argv_is_set(monkeypatch):
 def test_banner_omits_auth_line_when_neither_is_set(monkeypatch):
     """Dev path: no auth → no banner line. Mirrors the SECURITY
     CONFIGURATION block's ``Authentication: DISABLED`` warning."""
-    from fusion_mlx.cli import _auth_feature_str
+    from fusion_mlx._cli_base import _auth_feature_str
 
     monkeypatch.delenv("FUSION_MLX_API_KEY", raising=False)
     assert _auth_feature_str(argv_api_key=None) is None
@@ -174,7 +174,7 @@ def _http_get(port: int, path: str, bearer: str | None) -> int:
         return e.code
 
 
-@pytest.mark.slow
+@pytest.mark.real_model
 def test_env_only_spawn_keeps_bearer_out_of_ps_and_enforces_auth():
     """End-to-end contract for dogfood-v0.8.2 finding #3:
 
@@ -202,7 +202,7 @@ def test_env_only_spawn_keeps_bearer_out_of_ps_and_enforces_auth():
     cmd = [
         sys.executable,
         "-m",
-        "vllm_mlx.cli",
+        "fusion_mlx.cli",
         "serve",
         model_alias,
         "--port",
@@ -277,7 +277,7 @@ def test_env_only_spawn_keeps_bearer_out_of_ps_and_enforces_auth():
         except subprocess.TimeoutExpired:
             proc.kill()
         subprocess.run(
-            ["pkill", "-f", f"vllm_mlx.cli.*{port}"],
+            ["pkill", "-f", f"fusion_mlx.cli.*{port}"],
             check=False,
             capture_output=True,
         )
@@ -292,7 +292,7 @@ def test_cli_help_advertises_env_fallback():
     """``rapid-mlx serve --help`` must document the env-var so
     downstream wrappers know the safer form exists."""
     result = subprocess.run(  # noqa: S603 — controlled test argv
-        [sys.executable, "-m", "vllm_mlx.cli", "serve", "--help"],
+        [sys.executable, "-m", "fusion_mlx.cli", "serve", "--help"],
         capture_output=True,
         text=True,
         timeout=30,
@@ -310,7 +310,7 @@ def test_server_help_advertises_env_fallback():
     env fallback. Pre-fix only ``vllm_mlx.cli`` did, which is the
     docs/code mismatch that forced the shim to argv-pass the bearer."""
     result = subprocess.run(  # noqa: S603 — controlled test argv
-        [sys.executable, "-m", "vllm_mlx.server", "--help"],
+        [sys.executable, "-m", "fusion_mlx.server", "--help"],
         capture_output=True,
         text=True,
         timeout=30,

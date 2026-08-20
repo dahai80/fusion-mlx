@@ -1515,7 +1515,17 @@ test_serve_host_loopback_default.py
 # test_serve_listen_fd.py + test_serve_port_collision.py rescued (#351):
 # fixed stale cli.->cli_serve/_cli_base stub targets after the serve-code
 # extraction; both now fully green (21 + 9 tests) and re-enter CI.
-test_server_api_key_env_fallback.py
+# test_server_api_key_env_fallback.py RESCUED b34 2026-08-20 (10 pass + 1 real_model-skip):
+# harness + prod parity fix. 5 in-process: kwarg argv_value->argv_api_key
+# (prod server.py:190 renamed). 3 banner: import cli->_cli_base
+# (_auth_feature_str moved). 2 help: subprocess module vllm_mlx->fusion_mlx
+# + 1 live spawn pkill pattern. PROD FIX parity gap: server.py main() had
+# NO --api-key arg (cli.py:760 has it) — env-only sidecar forced bearer onto
+# argv/ps. Added --api-key add_argument + wired _resolve_api_key+global
+# _api_key (existing _sync_config L157-173 propagates to cfg.api_key +
+# admin.auth.set_api_key). 1 live spawn @pytest.mark.slow->real_model
+# (registered marker, env-gated, needs real model per CLAUDE.md).
+# test_server_api_key_env_fallback.py
 test_server_load_model_order.py
 test_server_prefill_memory_handler.py
 # RESCUED 2026-08-19: 4/4 pass. PROD FIX — SchedulerQueueFullError (raised by
