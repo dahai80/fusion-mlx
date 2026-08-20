@@ -280,10 +280,6 @@ class TestResponsesUnknownRole:
     test scope stays minimal (no route wiring, no engine, no auth).
     """
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason="#524 Responses InputItem.role lacks enum validator — unknown role not rejected",
-    )
     def test_unknown_role_rejected_by_validator(self):
         from pydantic import ValidationError
 
@@ -330,10 +326,6 @@ class TestResponsesUnknownRole:
         )
         assert item.role is None
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason="#524 Responses InputItem.role lacks enum validator — unknown role not rejected",
-    )
     def test_unknown_role_400_via_request_layer(self):
         """End-to-end at the ResponsesRequest layer: nested input[0]
         role validator must surface a Pydantic ValidationError with the
