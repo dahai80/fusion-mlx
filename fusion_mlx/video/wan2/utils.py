@@ -19,8 +19,18 @@ def _load_safetensors(path: Path) -> dict[str, mx.array]:
             return weights
     if not path.exists():
         parent = path.parent
-        index = parent / (path.stem + ".safetensors.index.json")
-        if index.exists():
+        # Probe the index for the requested stem (e.g. model.safetensors),
+        # then fall back to the diffusers sharded layout
+        # (diffusion_pytorch_model.safetensors.index.json + -0000X-of-0000Y
+        # shards), which is the standard HF distribution format for 14B Wan
+        # checkpoints.
+        for index_name in (
+            path.stem + ".safetensors.index.json",
+            "diffusion_pytorch_model.safetensors.index.json",
+        ):
+            index = parent / index_name
+            if not index.exists():
+                continue
             import json
 
             with open(index) as f:
