@@ -317,7 +317,29 @@ test_audio_api.py
 # which does not transitively pull them. Real Kokoro /v1/audio/speech
 # crash risk (misaki/espeak.py imports espeakng_loader) — track as a
 # packaging issue, not test drift.
-test_audio_memory.py
+# test_audio_memory.py RESCUED b36 2026-08-20 (13 pass): module-relocation
+# import drift (same family as b33). fusion_mlx/engine_pool.py = 10-line
+# stub (EnginePool.__init__ no-op, zero methods); real class relocated to
+# fusion_mlx/pool/engine_pool.py (2523L). Test imported stub -> every test
+# AttributeError. Fix: repoint import fusion_mlx.engine_pool ->
+# fusion_mlx.pool.engine_pool (10 occurrences, all patch paths incl.
+# STTEngine/TTSEngine/BatchedEngine/get_phys_footprint). 12/13 pass after
+# repoint; 1 fail (test_loading_stt_evicts_llm) = 2 prod-feature gaps the
+# test didn't account for, fixed in-test:
+# (1) #355 KV-headroom: _kv_admission_headroom (engine_pool.py:224) adds
+#     min(max_kv_cache_memory, 2GiB) to admission projection. Test ceiling
+#     2500 bytes << 2GiB -> ModelTooLargeError before eviction path. Fix:
+#     FUSION_MLX_ADMISSION_KV_HEADROOM_GB=0 in tight_audio_pool fixture
+#     (prod honors env, L242-243). Test assumed estimated_size-only admission.
+# (2) safe_evict: eviction path (L1461) prefers await engine.safe_evict()
+#     over stop() (BaseEngine.safe_evict, engines/base.py:303). MagicMock
+#     auto-creates safe_evict attr -> returns non-awaitable MagicMock ->
+#     warning -> stop() never called -> test's stop.assert_called_once
+#     failed. Fix: add mock_llm.safe_evict = AsyncMock + assert on
+#     safe_evict (the actual eviction path), not stop. Test pinned old
+#     stop-only path.
+# No prod change. Verified 13 pass.
+# test_audio_memory.py
 # KEEP_QUARANTINED round10q-b8 (2026-08-19): audio route cluster (11 suites)
 # depends on server-refactor architecture (module-level `app` -> instance
 # Server; fusion_mlx.server.app = None at L141, real app via _create_app

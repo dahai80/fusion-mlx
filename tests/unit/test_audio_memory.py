@@ -18,7 +18,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from fusion_mlx.engine_pool import EnginePool
+from fusion_mlx.pool.engine_pool import EnginePool
 
 
 def _engine_pool_with_ceiling(ceiling=None):
@@ -91,7 +91,9 @@ class TestAudioMemoryTracking:
         mock_engine.stop = AsyncMock()
 
         with patch(
-            "fusion_mlx.engine_pool.STTEngine", return_value=mock_engine, create=True
+            "fusion_mlx.pool.engine_pool.STTEngine",
+            return_value=mock_engine,
+            create=True,
         ):
             await pool.get_engine("whisper-tiny")
 
@@ -107,7 +109,9 @@ class TestAudioMemoryTracking:
         mock_engine.stop = AsyncMock()
 
         with patch(
-            "fusion_mlx.engine_pool.TTSEngine", return_value=mock_engine, create=True
+            "fusion_mlx.pool.engine_pool.TTSEngine",
+            return_value=mock_engine,
+            create=True,
         ):
             await pool.get_engine("kokoro-tts")
 
@@ -123,7 +127,9 @@ class TestAudioMemoryTracking:
         mock_engine.stop = AsyncMock()
 
         with patch(
-            "fusion_mlx.engine_pool.STTEngine", return_value=mock_engine, create=True
+            "fusion_mlx.pool.engine_pool.STTEngine",
+            return_value=mock_engine,
+            create=True,
         ):
             await pool.get_engine("whisper-tiny")
             memory_after_load = pool.current_model_memory
@@ -143,7 +149,9 @@ class TestAudioMemoryTracking:
         mock_engine.stop = AsyncMock()
 
         with patch(
-            "fusion_mlx.engine_pool.STTEngine", return_value=mock_engine, create=True
+            "fusion_mlx.pool.engine_pool.STTEngine",
+            return_value=mock_engine,
+            create=True,
         ):
             await pool.get_engine("whisper-tiny")
             await pool.unload_engine_async("whisper-tiny")
@@ -170,7 +178,9 @@ class TestAudioLastAccess:
         mock_engine.start = AsyncMock()
 
         with patch(
-            "fusion_mlx.engine_pool.STTEngine", return_value=mock_engine, create=True
+            "fusion_mlx.pool.engine_pool.STTEngine",
+            return_value=mock_engine,
+            create=True,
         ):
             with patch("time.time", return_value=1234.0):
                 await pool.get_engine("whisper-tiny")
@@ -186,7 +196,9 @@ class TestAudioLastAccess:
         mock_engine.start = AsyncMock()
 
         with patch(
-            "fusion_mlx.engine_pool.STTEngine", return_value=mock_engine, create=True
+            "fusion_mlx.pool.engine_pool.STTEngine",
+            return_value=mock_engine,
+            create=True,
         ):
             with patch("time.time", return_value=1000.0):
                 await pool.get_engine("whisper-tiny")
@@ -301,8 +313,13 @@ class TestAudioPreLoadEviction:
     """Pre-load eviction works when loading an audio model requires freeing memory."""
 
     @pytest.fixture
-    def tight_audio_pool(self, tmp_path):
+    def tight_audio_pool(self, tmp_path, monkeypatch):
         """Pool tight enough that only one model fits at a time."""
+        # #355: admission adds min(max_kv_cache_memory, 2GiB) KV-headroom on
+        # top of estimated_size. That dwarfs the byte-scale ceiling below and
+        # raises ModelTooLargeError before the eviction path runs. Disable it
+        # so the test exercises pure estimated_size admission (its intent).
+        monkeypatch.setenv("FUSION_MLX_ADMISSION_KV_HEADROOM_GB", "0")
         llm_dir = tmp_path / "llama-3b"
         llm_dir.mkdir()
         (llm_dir / "config.json").write_text(json.dumps({"model_type": "llama"}))
@@ -333,14 +350,17 @@ class TestAudioPreLoadEviction:
         # against the byte-sized synthetic ceiling matches the test's intent
         # (real phys_footprint is ~100 MB and would dominate).
         monkeypatch.setattr(
-            "fusion_mlx.engine_pool.get_phys_footprint",
+            "fusion_mlx.pool.engine_pool.get_phys_footprint",
             lambda: pool._current_model_memory,
         )
-        monkeypatch.setattr("fusion_mlx.engine_pool.mx.get_active_memory", lambda: 0)
+        monkeypatch.setattr(
+            "fusion_mlx.pool.engine_pool.mx.get_active_memory", lambda: 0
+        )
 
         mock_llm = MagicMock()
         mock_llm.start = AsyncMock()
         mock_llm.stop = AsyncMock()
+        mock_llm.safe_evict = AsyncMock()
         mock_llm.has_active_requests.return_value = False
 
         mock_stt = MagicMock()
@@ -348,15 +368,17 @@ class TestAudioPreLoadEviction:
         mock_stt.stop = AsyncMock()
         mock_stt.has_active_requests.return_value = False
 
-        with patch("fusion_mlx.engine_pool.BatchedEngine", return_value=mock_llm):
+        with patch("fusion_mlx.pool.engine_pool.BatchedEngine", return_value=mock_llm):
             await pool.get_engine("llama-3b")
 
         with patch(
-            "fusion_mlx.engine_pool.STTEngine", return_value=mock_stt, create=True
+            "fusion_mlx.pool.engine_pool.STTEngine", return_value=mock_stt, create=True
         ):
             await pool.get_engine("whisper-tiny")
 
-        # llama-3b should have been evicted
-        mock_llm.stop.assert_called_once()
+        # llama-3b should have been evicted. Prod eviction prefers
+        # safe_evict (engines/base.py:303) over stop(); assert on the
+        # actual eviction path the pool uses.
+        mock_llm.safe_evict.assert_called_once()
         assert pool._entries["llama-3b"].engine is None
         assert pool._entries["whisper-tiny"].engine is not None
