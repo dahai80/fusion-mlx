@@ -487,6 +487,24 @@ class AssistantMessage(BaseModel):
     reasoning_content: str | None = None
     tool_calls: list[ToolCall] | None = None
 
+    @field_validator("content", mode="before")
+    @classmethod
+    def _sanitize_content_field(cls, v):
+        if v is None or not isinstance(v, str):
+            return v
+        from .utils import sanitize_output
+
+        return sanitize_output(v)
+
+    @field_validator("reasoning_content", mode="before")
+    @classmethod
+    def _sanitize_reasoning_content_field(cls, v):
+        if v is None or not isinstance(v, str):
+            return v
+        from .utils import sanitize_reasoning_content
+
+        return sanitize_reasoning_content(v)
+
 
 class ChatCompletionChoice(BaseModel):
     """A single choice in chat completion response."""
@@ -749,6 +767,26 @@ class ChatCompletionChunkDelta(BaseModel):
     content: str | None = None
     reasoning_content: str | None = None
     tool_calls: list[dict] | None = None
+
+    @field_validator("content", mode="before")
+    @classmethod
+    def _sanitize_content_delta(cls, v):
+        if v is None or not isinstance(v, str):
+            return v
+        from .utils import sanitize_reasoning_for_stream
+
+        out = sanitize_reasoning_for_stream(v)
+        return out or None
+
+    @field_validator("reasoning_content", mode="before")
+    @classmethod
+    def _sanitize_reasoning_delta(cls, v):
+        if v is None or not isinstance(v, str):
+            return v
+        from .utils import sanitize_reasoning_for_stream
+
+        out = sanitize_reasoning_for_stream(v)
+        return out or None
 
 
 class ChatCompletionChunkChoice(BaseModel):

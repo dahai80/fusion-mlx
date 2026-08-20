@@ -790,6 +790,35 @@ class AssistantMessage(BaseModel):
     )
     tool_calls: list[ToolCall] | None = None
 
+    @field_validator("content", mode="before")
+    @classmethod
+    def _sanitize_content_field(cls, v):
+        # R12-MED-2: strip leaked special-token markers (e.g. <|im_start|>)
+        # at the type boundary so every AssistantMessage call site — chat
+        # route, Responses adapter, Anthropic adapter — funnels through one
+        # sanitizer. Pure-markup content collapses to None (drops under
+        # exclude_none); mixed text keeps the prose, loses only the marker.
+        if v is None or not isinstance(v, str):
+            return v
+        from .utils import sanitize_output
+
+        return sanitize_output(v)
+
+    @field_validator("reasoning_content", mode="before")
+    @classmethod
+    def _sanitize_reasoning_content_field(cls, v):
+        # R12-MED-2: reasoning_content bypassed the content sanitizer on the
+        # tool_choice="required" branch (qwen3 forced-prefix replay dropped a
+        # residual <|im_start|> into reasoning_text). Sanitize here so the
+        # leak cannot survive regardless of which route constructed the msg.
+        # sanitize_reasoning_content None-collapses pure markup (parity with
+        # sanitize_output) + identity-preserves plain text.
+        if v is None or not isinstance(v, str):
+            return v
+        from .utils import sanitize_reasoning_content
+
+        return sanitize_reasoning_content(v)
+
     def model_post_init(self, __context) -> None:
         pass
 
@@ -1279,6 +1308,36 @@ class ChatCompletionChunkDelta(BaseModel):
     content: str | None = None
     reasoning_content: str | None = None
     tool_calls: list[dict] | None = None
+
+    @field_validator("content", mode="before")
+    @classmethod
+    def _sanitize_content_delta(cls, v):
+        # R12-MED-2 streaming sibling: deltas are concatenated verbatim by
+        # clients, so the sanitizer MUST preserve surrounding whitespace
+        # (sanitize_reasoning_for_stream removes ONLY the marker bytes, no
+        # .strip()). Pure-marker delta collapses to "" then None so the
+        # field drops out cleanly; "" -> None keeps the None-vs-empty
+        # contract stable across the content/reasoning channels.
+        if v is None or not isinstance(v, str):
+            return v
+        from .utils import sanitize_reasoning_for_stream
+
+        out = sanitize_reasoning_for_stream(v)
+        return out or None
+
+    @field_validator("reasoning_content", mode="before")
+    @classmethod
+    def _sanitize_reasoning_delta(cls, v):
+        # R12-MED-2: the streaming hot path (_fast_sse_chunk) and the
+        # logprobs pydantic path must agree byte-for-byte. Whitespace-
+        # preserving sanitizer so "foo" + " bar <|im_start|>" concatenates
+        # to "foo bar " not "foobar". Pure markup -> "" -> None.
+        if v is None or not isinstance(v, str):
+            return v
+        from .utils import sanitize_reasoning_for_stream
+
+        out = sanitize_reasoning_for_stream(v)
+        return out or None
 
     @model_serializer(mode="wrap")
     def _serialize(self, handler, info):
