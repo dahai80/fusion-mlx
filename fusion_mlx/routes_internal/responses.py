@@ -67,6 +67,35 @@ from ..service.helpers import (
 
 logger = logging.getLogger(__name__)
 
+
+def _parse_inline_tool_bytes(raw: str, chunk: Any):
+    # #591 item 2: a ``tool_call``-channel chunk may carry the tool
+    # argument JSON as raw ``new_text`` bytes (no structured
+    # ``tool_calls``). Best-effort parse into the structured shape so the
+    # args surface as a function_call item instead of leaking to
+    # ``response.output_text.delta``. Unparseable bytes are dropped
+    # (never emitted as text) — return None and let the structured
+    # branch simply not fire.
+    if not raw:
+        return None
+    try:
+        obj = json.loads(raw)
+    except (json.JSONDecodeError, ValueError):
+        logger.debug("#591: unparseable tool_call-channel bytes dropped: %r", raw)
+        return None
+    if isinstance(obj, dict) and "name" in obj:
+        return [
+            {
+                "id": getattr(chunk, "text", "") or f"call_{uuid.uuid4().hex[:24]}",
+                "function": {
+                    "name": obj.get("name", ""),
+                    "arguments": json.dumps(obj.get("arguments", {})),
+                },
+            }
+        ]
+    return None
+
+
 router = APIRouter()
 
 _pool: Any = None
@@ -655,15 +684,36 @@ async def _stream_responses(
     uses_computer_use = request_uses_computer_use(responses_request)
 
     async def _generate() -> AsyncIterator[str]:
-        output_index = 0
+        # #513/#520: stream handler rewritten to parse the FLAT
+        # ``GenerationOutput`` chunks that ``BaseEngine.stream_chat``
+        # actually yields (new_text / channel / text / tool_calls /
+        # finish_reason / prompt_tokens / completion_tokens), while
+        # keeping the legacy OpenAI-choices dict/obj shapes as fallback.
+        # Ordering invariant (#513 reasoning-first): a ``reasoning`` item
+        # (possibly with empty summary) is emitted BEFORE the message
+        # item; ``output_index`` is a monotonic per-item counter and the
+        # terminal ``response.output[]`` array is built 1:1 with the
+        # wire-added events. ``channel == "tool_call"`` bytes never reach
+        # ``response.output_text.delta`` (#591 item 2 leak guard).
         prompt_tokens = 0
         completion_tokens = 0
         finish_reason = "stop"
         tool_calls_collected = []
         text_parts = []
         reasoning_parts = []
-        in_thinking = False
         tool_filter = StreamingToolCallFilter()
+
+        # Per-item wire state. Each added item consumes the next
+        # ``output_index``; the same index space orders ``output[]``.
+        next_index = 0
+        reasoning_id = None
+        reasoning_idx = None
+        msg_id = None
+        msg_idx = None
+        reasoning_emitted = False
+        msg_emitted = False
+        # Terminal ``output[]`` items, appended in wire order.
+        output_items = []
 
         yield _sse(
             "response.created",
@@ -688,6 +738,53 @@ async def _stream_responses(
             },
         )
 
+        def _ensure_reasoning_item():
+            # Emit the leading ``reasoning`` item once, before any message
+            # / tool item, even when reasoning text is empty (#513).
+            nonlocal reasoning_id, reasoning_idx, reasoning_emitted, next_index
+            if reasoning_emitted:
+                return None
+            reasoning_emitted = True
+            reasoning_idx = next_index
+            next_index += 1
+            reasoning_id = f"rs_{uuid.uuid4().hex[:24]}"
+            return _sse(
+                "response.output_item.added",
+                {
+                    "type": "response.output_item.added",
+                    "output_index": reasoning_idx,
+                    "item": {
+                        "type": "reasoning",
+                        "id": reasoning_id,
+                        "status": "in_progress",
+                        "summary": [],
+                    },
+                },
+            )
+
+        def _ensure_message_item():
+            nonlocal msg_id, msg_idx, msg_emitted, next_index
+            if msg_emitted:
+                return None
+            msg_emitted = True
+            msg_idx = next_index
+            next_index += 1
+            msg_id = f"msg_{uuid.uuid4().hex[:24]}"
+            return _sse(
+                "response.output_item.added",
+                {
+                    "type": "response.output_item.added",
+                    "output_index": msg_idx,
+                    "item": {
+                        "type": "message",
+                        "id": msg_id,
+                        "role": "assistant",
+                        "status": "in_progress",
+                        "content": [],
+                    },
+                },
+            )
+
         try:
             stream = engine.stream_chat(messages=messages, **chat_kwargs)
             async for chunk in stream:
@@ -699,8 +796,36 @@ async def _stream_responses(
                 delta_reasoning = None
                 chunk_tool_calls = None
                 chunk_finish = None
+                chunk_channel = None
 
-                if isinstance(chunk, dict):
+                # Flat GenerationOutput path (#513): engine.stream_chat
+                # yields dataclass-like objects with new_text/channel.
+                if hasattr(chunk, "new_text") and hasattr(chunk, "channel"):
+                    raw_new = getattr(chunk, "new_text", None) or ""
+                    chunk_channel = getattr(chunk, "channel", None)
+                    chunk_finish = getattr(chunk, "finish_reason", None)
+                    chunk_tool_calls = getattr(chunk, "tool_calls", None)
+                    pt = getattr(chunk, "prompt_tokens", 0) or 0
+                    ct = getattr(chunk, "completion_tokens", 0) or 0
+                    if pt:
+                        prompt_tokens = pt
+                    if ct:
+                        completion_tokens = ct
+                    # Routing by channel: reasoning -> reasoning delta;
+                    # tool_call -> structured calls only (NO text leak);
+                    # content/None -> text delta.
+                    if chunk_channel == "reasoning":
+                        delta_reasoning = raw_new
+                    elif chunk_channel == "tool_call":
+                        # #591 item 2: tool_call-channel bytes are JSON
+                        # arguments, never user-facing text. Try to
+                        # surface them as structured tool calls.
+                        delta_text = None
+                        if not chunk_tool_calls:
+                            chunk_tool_calls = _parse_inline_tool_bytes(raw_new, chunk)
+                    else:
+                        delta_text = raw_new
+                elif isinstance(chunk, dict):
                     choices = chunk.get("choices", [])
                     if choices:
                         c = choices[0]
@@ -731,29 +856,16 @@ async def _stream_responses(
                         )
 
                 if delta_reasoning:
-                    if not in_thinking and not reasoning_parts:
-                        in_thinking = True
-                        reasoning_id = f"rs_{uuid.uuid4().hex[:24]}"
-                        yield _sse(
-                            "response.output_item.added",
-                            {
-                                "type": "response.output_item.added",
-                                "output_index": output_index,
-                                "item": {
-                                    "type": "reasoning",
-                                    "id": reasoning_id,
-                                    "status": "in_progress",
-                                    "summary": [],
-                                },
-                            },
-                        )
+                    evt = _ensure_reasoning_item()
+                    if evt is not None:
+                        yield evt
                     reasoning_parts.append(delta_reasoning)
                     yield _sse(
                         "response.reasoning_summary_text.delta",
                         {
                             "type": "response.reasoning_summary_text.delta",
                             "item_id": reasoning_id,
-                            "output_index": output_index,
+                            "output_index": reasoning_idx,
                             "delta": delta_reasoning,
                         },
                     )
@@ -761,30 +873,19 @@ async def _stream_responses(
                 if delta_text:
                     filtered = tool_filter.process(delta_text)
                     if filtered:
-                        if not text_parts:
-                            msg_id = f"msg_{uuid.uuid4().hex[:24]}"
-                            yield _sse(
-                                "response.output_item.added",
-                                {
-                                    "type": "response.output_item.added",
-                                    "output_index": output_index
-                                    + (1 if reasoning_parts else 0),
-                                    "item": {
-                                        "type": "message",
-                                        "id": msg_id,
-                                        "role": "assistant",
-                                        "status": "in_progress",
-                                        "content": [],
-                                    },
-                                },
-                            )
+                        if not reasoning_emitted:
+                            evt = _ensure_reasoning_item()
+                            if evt is not None:
+                                yield evt
+                        added_evt = _ensure_message_item()
+                        if added_evt is not None:
+                            yield added_evt
                         text_parts.append(filtered)
                         yield _sse(
                             "response.output_text.delta",
                             {
                                 "type": "response.output_text.delta",
-                                "output_index": output_index
-                                + (1 if reasoning_parts else 0),
+                                "output_index": msg_idx,
                                 "content_index": 0,
                                 "delta": filtered,
                             },
@@ -808,6 +909,10 @@ async def _stream_responses(
                             and tc_id
                             and tc_id not in [t.get("id") for t in tool_calls_collected]
                         ):
+                            if not reasoning_emitted:
+                                evt = _ensure_reasoning_item()
+                                if evt is not None:
+                                    yield evt
                             tool_calls_collected.append(
                                 {
                                     "id": tc_id,
@@ -815,19 +920,14 @@ async def _stream_responses(
                                     "function": {"name": tc_name, "arguments": tc_args},
                                 }
                             )
-                            tc_output_idx = (
-                                output_index
-                                + (1 if reasoning_parts else 0)
-                                + (1 if text_parts else 0)
-                                + len(tool_calls_collected)
-                                - 1
-                            )
+                            tc_idx = next_index
+                            next_index += 1
                             if uses_computer_use and tc_name == "computer":
                                 yield _sse(
                                     "response.output_item.added",
                                     {
                                         "type": "response.output_item.added",
-                                        "output_index": tc_output_idx,
+                                        "output_index": tc_idx,
                                         "item": {
                                             "type": "computer_call",
                                             "id": f"cu_{uuid.uuid4().hex[:24]}",
@@ -841,7 +941,7 @@ async def _stream_responses(
                                     "response.output_item.added",
                                     {
                                         "type": "response.output_item.added",
-                                        "output_index": tc_output_idx,
+                                        "output_index": tc_idx,
                                         "item": {
                                             "type": "function_call",
                                             "id": f"fc_{uuid.uuid4().hex[:24]}",
@@ -871,27 +971,19 @@ async def _stream_responses(
 
             remaining = tool_filter.flush()
             if remaining and not text_parts:
-                msg_id = f"msg_{uuid.uuid4().hex[:24]}"
-                yield _sse(
-                    "response.output_item.added",
-                    {
-                        "type": "response.output_item.added",
-                        "output_index": output_index + (1 if reasoning_parts else 0),
-                        "item": {
-                            "type": "message",
-                            "id": msg_id,
-                            "role": "assistant",
-                            "status": "in_progress",
-                            "content": [],
-                        },
-                    },
-                )
+                if not reasoning_emitted:
+                    evt = _ensure_reasoning_item()
+                    if evt is not None:
+                        yield evt
+                added_evt = _ensure_message_item()
+                if added_evt is not None:
+                    yield added_evt
                 text_parts.append(remaining)
                 yield _sse(
                     "response.output_text.delta",
                     {
                         "type": "response.output_text.delta",
-                        "output_index": output_index + (1 if reasoning_parts else 0),
+                        "output_index": msg_idx,
                         "content_index": 0,
                         "delta": remaining,
                     },
@@ -902,7 +994,7 @@ async def _stream_responses(
                     "response.output_text.delta",
                     {
                         "type": "response.output_text.delta",
-                        "output_index": output_index + (1 if reasoning_parts else 0),
+                        "output_index": msg_idx,
                         "content_index": 0,
                         "delta": remaining,
                     },
@@ -922,6 +1014,80 @@ async def _stream_responses(
                 },
             )
             return
+
+        # Reasoning-first: if the model produced NO reasoning bytes at
+        # all, still emit an empty ``reasoning`` item before the message
+        # (#513 M-3 root case). Done after the loop so it precedes the
+        # terminal completed event only when nothing was emitted inline.
+        if not reasoning_emitted:
+            evt = _ensure_reasoning_item()
+            if evt is not None:
+                yield evt
+
+        # Build the terminal ``output[]`` array in wire-index order and
+        # emit ``output_item.done`` per item so SDK clients see finalized
+        # shapes (reasoning summary, message content, tool calls).
+        if reasoning_emitted:
+            summary_text = "".join(reasoning_parts)
+            reasoning_item = {
+                "type": "reasoning",
+                "id": reasoning_id,
+                "status": "completed",
+                "summary": (
+                    [{"type": "summary_text", "text": summary_text}]
+                    if summary_text
+                    else []
+                ),
+            }
+            output_items.append(reasoning_item)
+            yield _sse(
+                "response.output_item.done",
+                {
+                    "type": "response.output_item.done",
+                    "output_index": reasoning_idx,
+                    "item": reasoning_item,
+                },
+            )
+        if msg_emitted:
+            message_item = {
+                "type": "message",
+                "id": msg_id,
+                "role": "assistant",
+                "status": "completed",
+                "content": [
+                    {
+                        "type": "output_text",
+                        "text": "".join(text_parts),
+                    }
+                ],
+            }
+            output_items.append(message_item)
+            yield _sse(
+                "response.output_item.done",
+                {
+                    "type": "response.output_item.done",
+                    "output_index": msg_idx,
+                    "item": message_item,
+                },
+            )
+        for tc in tool_calls_collected:
+            tc_item = {
+                "type": "function_call",
+                "id": f"fc_{uuid.uuid4().hex[:24]}",
+                "call_id": tc.get("id", ""),
+                "name": tc.get("function", {}).get("name", ""),
+                "arguments": tc.get("function", {}).get("arguments", ""),
+                "status": "completed",
+            }
+            output_items.append(tc_item)
+            yield _sse(
+                "response.output_item.done",
+                {
+                    "type": "response.output_item.done",
+                    "output_index": next_index,
+                    "item": tc_item,
+                },
+            )
 
         status = "incomplete" if finish_reason == "length" else "completed"
         incomplete_details = (
@@ -944,7 +1110,7 @@ async def _stream_responses(
                     "created_at": created_at,
                     "model": openai_request.model,
                     "status": status,
-                    "output": [],
+                    "output": output_items,
                     "usage": usage.model_dump(exclude_none=True),
                     "incomplete_details": incomplete_details,
                     "parallel_tool_calls": bool(responses_request.parallel_tool_calls),

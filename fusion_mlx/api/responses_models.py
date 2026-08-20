@@ -137,7 +137,7 @@ class TextConfig(BaseModel):
 class ResponsesRequest(BaseModel):
     """Request body for POST /v1/responses."""
 
-    model: str
+    model: str = Field(..., min_length=1)
     input: str | list[InputItem] | None = None
     instructions: str | None = None
     temperature: float | None = Field(None, ge=0.0, le=2.0)
