@@ -1077,9 +1077,7 @@ def _add_more_stubs():
         _TARGET = "fusion_mlx"
 
         def find_spec(self, fullname, path=None, target=None):
-            if fullname != self._PREFIX and not fullname.startswith(
-                self._PREFIX + "."
-            ):
+            if fullname != self._PREFIX and not fullname.startswith(self._PREFIX + "."):
                 return None
             # Honor pre-set entries (test fakes, ``None`` import-fail sentinels)
             # before redirecting — a test that does
@@ -1087,7 +1085,7 @@ def _add_more_stubs():
             # must still get its fake back.
             if fullname in sys.modules:
                 return None
-            real = self._TARGET + fullname[len(self._PREFIX):]
+            real = self._TARGET + fullname[len(self._PREFIX) :]
             try:
                 importlib.import_module(real)
             except Exception:
@@ -1095,7 +1093,7 @@ def _add_more_stubs():
             return importlib.machinery.ModuleSpec(fullname, self)
 
         def create_module(self, spec):
-            real = self._TARGET + spec.name[len(self._PREFIX):]
+            real = self._TARGET + spec.name[len(self._PREFIX) :]
             mod = importlib.import_module(real)
             sys.modules[spec.name] = mod
             return mod

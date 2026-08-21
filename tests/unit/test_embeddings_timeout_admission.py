@@ -128,7 +128,14 @@ class TestEmbeddingInputFourShapes:
             EmbeddingRequest(model="x", input=[True, False])
 
 
-@pytest.mark.xfail(strict=False, reason=_H6_EMBED_TOKENS_XFAIL)
+@pytest.mark.xfail(
+    strict=False,
+    reason=(
+        "strict=False: H6 pre-tokenized embeddings input not ported after the "
+        "engine refactor (api/embeddings_routes uses EmbeddingRequest "
+        "str|list[str] only; EmbeddingEngine has no embed_tokens)."
+    ),
+)
 class TestEmbeddingRouteEmptyTokens:
     """Empty inner token lists were silently passed through pre-fix:
     ``[[]]`` produced a zero-width tensor and ``[[1, 2], []]`` gave

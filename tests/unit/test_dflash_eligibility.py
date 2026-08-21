@@ -169,13 +169,31 @@ def test_report_no_alias_name_renders_cleanly() -> None:
 # =============================================================================
 
 
-def test_qwen3_5_27b_8bit_alias_passes_check() -> None:
+def test_enabled_8bit_dflash_alias_passes_check() -> None:
+    # The registry's DFlash-enabled 8-bit dense alias. Was qwen3.5-27b-8bit
+    # when the bench shipped; the enabled alias moved to qwen3.6-27b-8bit
+    # -dflash (supports_dflash=true + drafter wired). qwen3.5-27b-8bit was
+    # never opted in (supports_dflash=false), so the old name made this a
+    # false-fail after the registry moved. Resolve the live enabled alias
+    # by its capability so this tracks the registry instead of a name.
+    from fusion_mlx.model_aliases import list_profiles
+
+    candidates = sorted(
+        n
+        for n, p in list_profiles().items()
+        if p.supports_dflash
+        and not p.is_moe
+        and not _looks_like_4bit(p.hf_path)
+        and (p.dflash_draft_model or p.drafter_hf_path)
+    )
+    if not candidates:
+        pytest.skip("no DFlash-enabled 8-bit dense alias configured")
+    alias = candidates[0]
     from fusion_mlx.model_aliases import resolve_profile
 
-    profile = resolve_profile("qwen3.5-27b-8bit")
-    if profile is None:
-        pytest.skip("qwen3.5-27b-8bit alias not configured")
-    check(profile, alias="qwen3.5-27b-8bit")
+    profile = resolve_profile(alias)
+    assert profile is not None
+    check(profile, alias=alias)
 
 
 def test_default_qwen3_5_27b_alias_fails_check_with_4bit_reason() -> None:
