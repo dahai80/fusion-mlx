@@ -649,7 +649,9 @@ def _try_spec_decode(
         result = dflash_spec_step(self, output, current_token, request_id)
         if result:
             return result
-    elif method == METHOD_DFLASH2 and getattr(self, "_dflash2_runtime", None) is not None:
+    elif (
+        method == METHOD_DFLASH2 and getattr(self, "_dflash2_runtime", None) is not None
+    ):
         from .spec_decode import dflash2_spec_step
 
         result = dflash2_spec_step(self, output, current_token, request_id)

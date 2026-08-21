@@ -46,13 +46,9 @@ class DFlash2Generator:
             )
         from dflash import model_mlx as _dflash
 
-        logger.info(
-            "[dflash2] loading target=%s via mlx-lm", target_repo
-        )
+        logger.info("[dflash2] loading target=%s via mlx-lm", target_repo)
         self.target, self.tokenizer = _dflash.load(target_repo)
-        logger.info(
-            "[dflash2] loading draft=%s (DFlash2DraftModel)", draft_repo
-        )
+        logger.info("[dflash2] loading draft=%s (DFlash2DraftModel)", draft_repo)
         # dflash.load_draft calls huggingface_hub.snapshot_download, which
         # rejects local directory paths (HFValidationError). Short-circuit
         # it when draft_repo is an existing local dir so the draft loads
