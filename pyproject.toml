@@ -110,6 +110,14 @@ mfa = [
 paroquant = [
     "paroquant==0.1.14; python_version >= '3.11'",
 ]
+# DFlash2 block-diffusion speculative decoding (z-lab official dflash pkg).
+# MLX-native DFlash2DraftModel + CandidateSelector. Pinned 0.1.0; the pkg
+# pins mlx==0.32.0 + mlx-lm==0.31.3 (same family as fusion-mlx core).
+# Apple-Silicon-only (mlx), so platform-marker darwin/arm64. Install via
+# `pip install 'fusion-mlx[dflash2]'`.
+dflash2 = [
+    "dflash==0.1.0; sys_platform == 'darwin' and platform_machine == 'arm64'",
+]
 vision = [
     "opencv-python>=4.8.0",
     "torch>=2.3.0",

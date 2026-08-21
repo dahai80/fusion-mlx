@@ -17,6 +17,7 @@ from ..middleware.auth import verify_api_key
 from ..speculative.auto_router import (
     _SPEC_ROUTING_TABLE,
     METHOD_DFLASH,
+    METHOD_DFLASH2,
     METHOD_DFLY,
     METHOD_DSPARK,
     METHOD_MTP,
@@ -62,6 +63,7 @@ class SpecResolveResponse(BaseModel):
 _METHOD_DESCRIPTIONS = {
     METHOD_NGRAM: "n-gram suffix decoding (zero GPU cost, safe default)",
     METHOD_DFLASH: "DFlash block-diffusion drafter (operator-shipped)",
+    METHOD_DFLASH2: "DFlash2 block-diffusion drafter (z-lab dflash pkg, Qwen3.8)",
     METHOD_MTP: "model-native multi-token prediction (no extra model load)",
     METHOD_DSPARK: "DSpark drafter-based speculative decoding",
     METHOD_DFLY: "DFly block-parallel drafter (Hy3-native, hidden-state correction)",

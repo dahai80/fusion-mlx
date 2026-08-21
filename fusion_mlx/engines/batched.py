@@ -551,6 +551,42 @@ class BatchedEngine(BaseEngine):
                     "DFlash drafter load failed for %s: %s", self._model_name, e
                 )
 
+        # DFlash2 block-diffusion speculative decode (official dflash pip
+        # pkg, z-lab DFlash2DraftModel). Self-contained generator loads its
+        # own target copy + draft, runs propose->verify->rollback internally.
+        dflash2_path = (
+            getattr(self._model_settings, "dflash2_drafter_path", None)
+            if self._model_settings
+            else None
+        ) or getattr(scheduler_config, "dflash2_drafter_path", "")
+        if dflash2_path:
+            try:
+                from ..speculative.dflash2 import load_runtime as load_dflash2_runtime
+
+                target_repo = (
+                    getattr(self._model, "requested_model", None) or self._model_name
+                )
+                block_size = getattr(scheduler_config, "dflash2_block_size", 5) or 5
+                dflash2_rt = await loop.run_in_executor(
+                    get_executor("io"),
+                    lambda: load_dflash2_runtime(
+                        target_repo,
+                        dflash2_path,
+                        block_size=block_size,
+                    ),
+                )
+                self._engine.engine.scheduler._dflash2_runtime = dflash2_rt
+                logger.info(
+                    "DFlash2 spec-decode enabled for %s (draft=%s, block_size=%d)",
+                    self._model_name,
+                    dflash2_path,
+                    block_size,
+                )
+            except Exception as e:
+                logger.error(
+                    "DFlash2 drafter load failed for %s: %s", self._model_name, e
+                )
+
         # DSpark DeepSpec speculative decode
         dspark_path = (
             getattr(self._model_settings, "dspark_drafter_path", None)

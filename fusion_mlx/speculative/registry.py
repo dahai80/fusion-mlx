@@ -69,6 +69,15 @@ register_spec_decoder(
 
 register_spec_decoder(
     SpecDecoderPlugin(
+        method="dflash2",
+        description="DFlash2 block-diffusion speculative decoding (z-lab dflash pkg, Qwen3.8)",
+        config_enabled=True,
+        aliases=("block-diffusion-2",),
+    )
+)
+
+register_spec_decoder(
+    SpecDecoderPlugin(
         method="mtp",
         description="Multi-Token Prediction (chain/tree) via model MTP heads",
         config_enabled=True,

@@ -534,6 +534,7 @@ def _loaded_spec_methods(self) -> dict[str, bool]:
         suffix=self._ngram_spec_state is not None,
         eagle3=eagle3_loaded,
         dflash=self._dflash_runtime is not None,
+        dflash2=getattr(self, "_dflash2_runtime", None) is not None,
         dspark=self._dspark_runtime is not None,
         mtp=bool(getattr(self.model, "_fusion_mlx_mtp_decode_enabled", False)),
     )
@@ -606,6 +607,7 @@ def _try_spec_decode(
     # pure-decode step if not yet decided.
     from ..speculative.auto_router import (
         METHOD_DFLASH,
+        METHOD_DFLASH2,
         METHOD_DSPARK,
         METHOD_EAGLE3,
         METHOD_NGRAM,
@@ -645,6 +647,12 @@ def _try_spec_decode(
         from .spec_decode import dflash_spec_step
 
         result = dflash_spec_step(self, output, current_token, request_id)
+        if result:
+            return result
+    elif method == METHOD_DFLASH2 and getattr(self, "_dflash2_runtime", None) is not None:
+        from .spec_decode import dflash2_spec_step
+
+        result = dflash2_spec_step(self, output, current_token, request_id)
         if result:
             return result
     elif method == METHOD_DSPARK and self._dspark_runtime is not None:

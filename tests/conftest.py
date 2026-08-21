@@ -176,6 +176,7 @@ def _inject_mock_pkg(name: str) -> None:
 _inject_mock_pkg("mlx_embeddings")
 _inject_mock_pkg("mlx_audio")
 _inject_mock_pkg("dflash_mlx")
+_inject_mock_pkg("dflash")
 
 # Mock heavy/optional dependencies
 # transformers: preserve real package if available (mlx_lm depends on it)

@@ -104,6 +104,8 @@ class SchedulerConfig:
     prefix_cache_index: str = "radix"
     spec_decode: str = "none"
     dflash_drafter_path: str = ""
+    dflash2_drafter_path: str = ""
+    dflash2_block_size: int = 5
     dspark_drafter_path: str = ""
     dspark_draft_quant_bits: int = 8
     kv_cache_dtype: str = "bf16"

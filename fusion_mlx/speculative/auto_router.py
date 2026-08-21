@@ -42,11 +42,20 @@ logger = logging.getLogger(__name__)
 METHOD_NGRAM = "suffix"
 METHOD_EAGLE3 = "eagle3"
 METHOD_DFLASH = "ddtree"
+METHOD_DFLASH2 = "dflash2"
 METHOD_MTP = "mtp"
 METHOD_DSPARK = "dspark"
 METHOD_DFLY = "dfly"
 DEFAULT_AVAILABLE: frozenset[str] = frozenset(
-    {METHOD_NGRAM, METHOD_EAGLE3, METHOD_DFLASH, METHOD_MTP, METHOD_DSPARK, METHOD_DFLY}
+    {
+        METHOD_NGRAM,
+        METHOD_EAGLE3,
+        METHOD_DFLASH,
+        METHOD_DFLASH2,
+        METHOD_MTP,
+        METHOD_DSPARK,
+        METHOD_DFLY,
+    }
 )
 
 
@@ -109,6 +118,20 @@ _SPEC_ROUTING_TABLE: list[SpecRouteEntry] = [
     ),
     SpecRouteEntry(
         family="qwen3_5",
+        methods=(METHOD_NGRAM,),
+        constraints=(),
+    ),
+    # DFlash2: block-diffusion speculative decode for Qwen3.8 dense
+    # targets (z-lab DFlash2DraftModel, official dflash pip pkg). MoE
+    # excluded — the draft reads target hidden states through a dense
+    # GroupedDynamicCausalConv that assumes single-expert activation.
+    SpecRouteEntry(
+        family="qwen3_8",
+        methods=(METHOD_DFLASH2,),
+        constraints=("not_moe",),
+    ),
+    SpecRouteEntry(
+        family="qwen3_8",
         methods=(METHOD_NGRAM,),
         constraints=(),
     ),

@@ -908,3 +908,155 @@ def dspark_spec_step(
         logger.warning("dspark_spec: session error: %s", e)
         dspark_state.remove_session(request_id)
         return []
+
+
+DFLASH2_SPEC_LOG_INTERVAL = 50
+
+
+class DFlash2SpecState:
+    """Per-scheduler DFlash2 speculative decode state.
+
+    DFlash2Generator is self-contained (loads its own target + draft via
+    the official dflash pip pkg), so the per-step integration pulls tokens
+    from its internal propose->verify->rollback loop rather than running
+    our own verify. Mirrors DSparkSpecState; dflash.stream_generate owns
+    all hidden-state capture, verify, and cache rollback internally.
+    """
+
+    def __init__(self, runtime):
+        self.runtime = runtime
+        self.total_spec_steps = 0
+        self.total_draft_proposed = 0
+        self.total_draft_accepted = 0
+        self._last_request_id = None
+        self._sessions: dict = {}
+
+    def on_new_request(self, request_id: str):
+        if self._last_request_id != request_id:
+            self._last_request_id = request_id
+            self.total_spec_steps = 0
+
+    def get_session(self, request_id: str):
+        return self._sessions.get(request_id)
+
+    def set_session(self, request_id: str, session):
+        self._sessions[request_id] = session
+
+    def remove_session(self, request_id: str):
+        self._sessions.pop(request_id, None)
+
+    def record_result(self, n_accepted: int, n_total: int):
+        self.total_spec_steps += 1
+        self.total_draft_proposed += n_total
+        self.total_draft_accepted += n_accepted
+        self.runtime.record_accept(n_accepted)
+
+    def get_stats(self) -> dict:
+        rate = (
+            self.total_draft_accepted / self.total_draft_proposed
+            if self.total_draft_proposed > 0
+            else 0.0
+        )
+        return {
+            "spec_steps": self.total_spec_steps,
+            "draft_proposed": self.total_draft_proposed,
+            "draft_accepted": self.total_draft_accepted,
+            "acceptance_rate": rate,
+            "active_sessions": len(self._sessions),
+        }
+
+
+def dflash2_spec_step(
+    scheduler,
+    output,
+    current_token: int,
+    request_id: str,
+) -> list[RequestOutput]:
+    """DFlash2 speculative decode step.
+
+    DFlash2Generator delegates the entire propose->verify->rollback loop to
+    dflash.stream_generate (official z-lab pkg). This step pulls accepted
+    tokens from the generator session and emits them as RequestOutputs.
+    Self-contained — does NOT use the scheduler's model or cache for the
+    propose-verify loop (the generator loads its own target copy).
+    """
+    dflash2_state = getattr(scheduler, "_dflash2_spec_state", None)
+    if dflash2_state is None:
+        dflash2_runtime = scheduler._dflash2_runtime
+        if dflash2_runtime is None:
+            return []
+        dflash2_state = DFlash2SpecState(dflash2_runtime)
+        scheduler._dflash2_spec_state = dflash2_state
+
+    request = scheduler.running.get(request_id)
+    if request is None:
+        return []
+
+    if dflash2_state._last_request_id != request_id:
+        dflash2_state.on_new_request(request_id)
+
+    session = dflash2_state.get_session(request_id)
+    if session is None:
+        prompt_tokens = getattr(request, "prompt_token_ids", None)
+        if not prompt_tokens:
+            return []
+
+        generator = dflash2_state.runtime.generator
+        if generator is None:
+            return []
+
+        try:
+            max_tokens = request.max_tokens or 4096
+            temperature = getattr(request, "temperature", 0.0) or 0.0
+            token_iter = generator.stream_from_tokens(
+                prompt_tokens,
+                max_new_tokens=max_tokens,
+                temperature=temperature,
+            )
+            dflash2_state.set_session(request_id, token_iter)
+            session = token_iter
+            logger.info(
+                "dflash2_spec: started session for request=%s, "
+                "prompt_len=%d, max_tokens=%d, temp=%.2f",
+                request_id[:8],
+                len(prompt_tokens),
+                max_tokens,
+                temperature,
+            )
+        except Exception as e:
+            logger.warning("dflash2_spec: failed to start session: %s", e)
+            return []
+
+    try:
+        accepted_tokens = []
+        block_size = getattr(dflash2_state.runtime, "block_size", 5)
+        for _ in range(block_size):
+            try:
+                tok = next(session)
+                accepted_tokens.append(int(tok))
+            except StopIteration:
+                break
+
+        if not accepted_tokens:
+            dflash2_state.remove_session(request_id)
+            return []
+
+        n_accepted = len(accepted_tokens)
+        dflash2_state.record_result(n_accepted, n_accepted)
+
+        if dflash2_state.total_spec_steps % DFLASH2_SPEC_LOG_INTERVAL == 1:
+            stats = dflash2_state.get_stats()
+            logger.info(
+                "dflash2_spec: step=%d, accepted=%d, rate=%.1f%%, sessions=%d",
+                dflash2_state.total_spec_steps,
+                n_accepted,
+                stats["acceptance_rate"] * 100,
+                stats["active_sessions"],
+            )
+
+        return _emit_spec_tokens(scheduler, request_id, accepted_tokens)
+
+    except Exception as e:
+        logger.warning("dflash2_spec: session error: %s", e)
+        dflash2_state.remove_session(request_id)
+        return []

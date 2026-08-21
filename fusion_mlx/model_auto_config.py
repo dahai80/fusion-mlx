@@ -626,7 +626,8 @@ def detect_model_config(model_path: str) -> ModelConfig | None:
 _FAMILY_FROM_PATH: list[tuple[re.Pattern, str]] = [
     (re.compile(r"hunyuan|hy3", re.IGNORECASE), "hunyuan"),
     (re.compile(r"qwen3\.5|qwen3_5", re.IGNORECASE), "qwen3_5"),
-    (re.compile(r"qwen3(?![._]5|[._]6)", re.IGNORECASE), "qwen3"),
+    (re.compile(r"qwen3\.8|qwen3_8", re.IGNORECASE), "qwen3_8"),
+    (re.compile(r"qwen3(?![._]5|[._]6|[._]8)", re.IGNORECASE), "qwen3"),
     (re.compile(r"deepseek", re.IGNORECASE), "deepseek"),
     (re.compile(r"llama", re.IGNORECASE), "llama3"),
 ]
