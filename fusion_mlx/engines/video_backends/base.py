@@ -85,6 +85,10 @@ class VideoGenParams:
     resolution: str = "768p"
     # H3 本地 prompt 结构化开关（Context-IR 替代，无需联网调 LLM）。
     use_prompt_skill: bool | None = None
+    # Runtime quantize knob (issue #586). MiniMax-H3 33B at quantize="none"
+    # peaks ~144G (OOMs on 137G M5 Max); "dit8_te4" ~61G fits. Other backends
+    # ignore this field. Default "none" preserves existing behavior.
+    quantize: str = "none"
     extra: dict[str, Any] = field(default_factory=dict)
     # Output format: "mp4" (default, returns bytes) or "raw" (returns numpy
     # array of shape [T, H, W, 3] uint8 — skips MP4 encoding entirely).

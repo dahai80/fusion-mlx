@@ -96,6 +96,9 @@ class VideoGenerateRequest(BaseModel):
     reference_images: list[str] | None = None
     # Camera control: camera pose video path for Wan2.1-Fun-Camera models.
     camera_conditions: str | None = None
+    # Runtime quantize knob (issue #586). MiniMax-H3 only: "dit8_te4" (~61G)
+    # vs default "none" (~144G, OOMs on 137G). Other backends ignore it.
+    quantize: str | None = None
 
 
 class VideoOutput(BaseModel):
@@ -327,6 +330,8 @@ async def generate_video(
                     request.camera_conditions, "camera"
                 )
                 gen_kwargs["camera_conditions"] = cam_path
+            if request.quantize is not None:
+                gen_kwargs["quantize"] = request.quantize
 
             video_bytes_list = await engine.generate(**gen_kwargs)
             outputs = [

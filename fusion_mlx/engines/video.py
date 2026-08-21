@@ -91,6 +91,7 @@ class VideoGenEngine(BaseNonStreamingEngine):
             control_mask=kwargs.get("control_mask"),
             reference_images=kwargs.get("reference_images"),
             camera_conditions=kwargs.get("camera_conditions"),
+            quantize=kwargs.get("quantize", "none"),
         )
 
         t0 = time.monotonic()
