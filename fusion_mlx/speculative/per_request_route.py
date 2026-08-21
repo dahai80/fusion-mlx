@@ -19,6 +19,7 @@ import logging
 
 from .auto_router import (
     METHOD_DFLASH,
+    METHOD_DFLASH2,
     METHOD_DSPARK,
     METHOD_EAGLE3,
     METHOD_MTP,
@@ -37,6 +38,7 @@ def loaded_methods(
     suffix: bool = False,
     eagle3: bool = False,
     dflash: bool = False,
+    dflash2: bool = False,
     dspark: bool = False,
     mtp: bool = False,
 ) -> dict[str, bool]:
@@ -44,6 +46,7 @@ def loaded_methods(
         METHOD_NGRAM: suffix,
         METHOD_EAGLE3: eagle3,
         METHOD_DFLASH: dflash,
+        METHOD_DFLASH2: dflash2,
         METHOD_DSPARK: dspark,
         METHOD_MTP: mtp,
     }

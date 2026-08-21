@@ -58,6 +58,7 @@ class AliasProfile:
     supports_mllm: bool = False
     is_audio: bool = False
     supports_dspark: bool = False
+    supports_dflash2: bool = False
     modality: str = "text"
     recommended_sampling: tuple[tuple[str, float], ...] | None = None
     suffix_decoding_tier: str = "unknown"
@@ -76,6 +77,8 @@ class AliasProfile:
         caps = []
         if self.supports_dflash:
             caps.append("dflash")
+        if self.supports_dflash2:
+            caps.append("dflash2")
         if self.supports_dspark:
             caps.append("dspark")
         if self.supports_spec_decode:
@@ -238,6 +241,7 @@ def _coerce(name: str, raw: str | dict) -> AliasProfile:
         supports_spec_decode=supports_spec_decode,
         supports_mllm=raw.get("supports_mllm", False),
         supports_dspark=raw.get("supports_dspark", False),
+        supports_dflash2=raw.get("supports_dflash2", False),
         modality=modality,
         recommended_sampling=recommended_sampling,
         suffix_decoding_tier=raw.get("suffix_decoding_tier", "unknown"),

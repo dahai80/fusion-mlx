@@ -980,6 +980,30 @@ def _boot_guard_checks(args, effective_max_tokens):
             )
             sys.exit(1)
 
+    # [dflash2] extra guard — official z-lab dflash pip pkg (Qwen3.8).
+    _wants_dflash2 = getattr(args, "enable_dflash2", False) or (
+        getattr(args, "spec_decode", "none") == "dflash2"
+    )
+    if _wants_dflash2:
+        from .speculative.dflash2 import have_runtime as _dflash2_have_runtime
+
+        if not _dflash2_have_runtime():
+            print(
+                "\n  Error: --enable-dflash2 (and --spec-decode dflash2) "
+                "requires the official dflash pkg. Install with: "
+                "``pip install 'fusion-mlx[dflash2]'``.\n"
+            )
+            sys.exit(1)
+
+        _dflash2_drafter = getattr(args, "dflash2_drafter_path", "")
+        if not _dflash2_drafter:
+            print(
+                "\n  Error: --enable-dflash2 requires --dflash2-drafter-path "
+                "(HF id or local path of the DFlash2 draft repo, e.g. "
+                "z-lab/Qwen3.8-27B-DFlash2).\n"
+            )
+            sys.exit(1)
+
     # [dspark] early fork
     _wants_dspark = getattr(args, "enable_dspark", False) or (
         getattr(args, "spec_decode", "none") == "dspark"
@@ -1262,6 +1286,8 @@ def _print_startup_banner(args, cors_origins, gc_control, logger):
         features.append(f"cors: {', '.join(cors_origins)}")
     if args.enable_dflash:
         features.append("dflash: single-user")
+    if getattr(args, "enable_dflash2", False):
+        features.append("dflash2: single-user")
     print()
     print("  🐆 Fusion-MLX")
     print("  ─────────")
@@ -1777,6 +1803,10 @@ def serve_command(args):
         # Qwen3.5/3.6 model + a bound DFlash drafter.
         spec_decode=getattr(args, "spec_decode", "none"),
         dflash_drafter_path=getattr(args, "dflash_drafter_path", "") or "",
+        # DFlash2 (block-diffusion spec decode, z-lab dflash pkg, Qwen3.8).
+        # In-place load via BatchedEngine (no forked server, unlike dflash v1).
+        dflash2_drafter_path=getattr(args, "dflash2_drafter_path", "") or "",
+        dflash2_block_size=getattr(args, "dflash2_block_size", 5) or 5,
         # SuffixDecoding
         enable_suffix_decoding=args.suffix_decoding,
         suffix_max_draft=args.suffix_max_draft,
@@ -1868,6 +1898,7 @@ def serve_command(args):
         args.suffix_decoding = False
         args.enable_mtp = False
         args.enable_dflash = False
+        args.enable_dflash2 = False
         args.enable_dspark = False
         apply_resolution(args, _resolution)
         print(f"Spec-decode: auto → {_resolution.cli_target} ({_resolution.reason})")

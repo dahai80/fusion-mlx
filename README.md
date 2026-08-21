@@ -37,6 +37,9 @@ x86+CUDA stack structurally cannot match. These are **landed and running today**
 - **DSpark speculative decode, vendored for MLX (#190)** - 1.47× validated
   end-to-end on real 14B (`serve --enable-dspark`); the speculative win the LLM
   side already has.
+- **DFlash2 block-diffusion spec decode (z-lab `dflash` pkg)** - 2.47× validated
+  on real `Qwen3.8-27B-4bit` (`serve --enable-dflash2`); accept avg 3.56,
+  greedy lossless; reads target hidden states, no forked server.
 - **Speculative denoise (#177) — FALSIFIED, default off**: the diffusion analog of
   speculative decoding was tested on real 14B DiT and honestly **falsified**
   (0% acceptance, 0.42× slower, quality breaks). The machinery remains
@@ -1092,11 +1095,11 @@ The `/v1/models` endpoint now includes a `capabilities` array derived from each 
 ```json
 {
   "id": "qwen3-72b",
-  "capabilities": ["dflash", "dspark", "spec_decode", "moe"]
+  "capabilities": ["dflash", "dflash2", "dspark", "spec_decode", "moe"]
 }
 ```
 
-Derived from: `supports_dflash`, `supports_dspark`, `supports_spec_decode`, `tool_call_parser`, `reasoning_parser`, `supports_mllm` (→`vision`), `is_audio` (→`audio`), `is_moe` (→`moe`), `is_hybrid` (→`hybrid`).
+Derived from: `supports_dflash` (→`dflash`), `supports_dflash2` (→`dflash2`), `supports_dspark`, `supports_spec_decode`, `tool_call_parser`, `reasoning_parser`, `supports_mllm` (→`vision`), `is_audio` (→`audio`), `is_moe` (→`moe`), `is_hybrid` (→`hybrid`).
 
 The CLI `models` command also displays a unified `Capabilities` column instead of the previous 4 separate columns.
 
@@ -1663,6 +1666,48 @@ has been dormant 20+ days, so fusion-mlx evolves it independently.
 > arch-handler statically de-risked. Real-model E2E (convert + load_runtime +
 > generate) is deferred pending download of matching Qwen3-4B/8B/14B targets via
 > hf-mirror.
+
+## DFlash2 Speculative Decoding (z-lab `dflash` pkg, 2026-08-21)
+
+DFlash2 is z-lab's second-generation block-diffusion speculative decoder
+(PyPI `dflash==0.1.0`). A single draft forward predicts a whole **block** of
+candidate tokens; a `CandidateSelector` traces one coherent path, and
+two-tap grouped-dynamic convolutions keep the draft from decaying across the
+block. The draft reads the target's hidden states at fixed `target_layer_ids`,
+so it is quality-matched to the target (not a separate small model).
+
+Unlike DFlash v1 and DSpark, DFlash2 does **not** fork a dedicated server — it
+loads in-place via `BatchedEngine` and participates in normal continuous
+batching as a self-contained generator.
+
+- Bridge: `fusion_mlx/speculative/dflash2/` (`runtime.py`, `eligibility.py`,
+  `engine/generator.py`). The generator delegates the whole propose→verify→
+  rollback loop to `dflash.model_mlx.stream_generate` (handles hidden-state
+  capture/trim/verify/rollback internally) — lossless by construction.
+- Target family: `qwen3_8` **dense** (non-MoE). The auto-router routes
+  `qwen3_8` to `dflash2` first, with a `suffix` (n-gram) fallback.
+- **block_size ≤ 5** for MLX quantized targets (official draft ships 8; larger
+  verify widths are matmul-inefficient on quantized weights). `load_runtime`
+  rejects `block_size > 5`.
+- Install: `pip install 'fusion-mlx[dflash2]'` (pulls `dflash==0.1.0` on
+  `darwin/arm64`; same `mlx`/`mlx-lm` family as fusion-mlx, zero conflict).
+- Draft path: local dir (e.g. `~/.fusion-mlx/models/Qwen3.8-27B-DFlash2`) or
+  HF id. The bridge short-circuits `snapshot_download` for local dirs (no
+  re-download, honors the hf-mirror workflow).
+
+```bash
+fusion-mlx serve --model qwen3.8-27b-4bit \
+  --enable-dflash2 \
+  --dflash2-drafter-path ~/.fusion-mlx/models/Qwen3.8-27B-DFlash2 \
+  --dflash2-block-size 5
+```
+
+> **E2E status (2026-08-21)**: real `Qwen3.8-27B-4bit` + `Qwen3.8-27B-DFlash2`,
+> `block_size=5`, greedy. **52.3 tok/s vs 21.2 tok/s baseline = 2.47× speedup**;
+> accept avg **3.556** (range 1–5, 18 verify steps); **lossless PASS** (tail
+> tokens identical to baseline, content match; only first-token leading-space
+> differs — a dflash detokenizer join-space artifact). 27 dflash2 tests green.
+> See [docs/speculative-decoding.md](docs/speculative-decoding.md#dflash2-block-diffusion-z-lab-dflash-pkg).
 
 ## Examples
 

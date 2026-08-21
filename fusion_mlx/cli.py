@@ -598,7 +598,7 @@ Examples:
     serve_parser.add_argument(
         "--spec-decode",
         dest="spec_decode",
-        choices=["none", "mtp", "dflash", "dspark", "auto"],
+        choices=["none", "mtp", "dflash", "dflash2", "dspark", "auto"],
         default="none",
         help=(
             "R15-P1 model-side speculative decode. "
@@ -608,12 +608,15 @@ Examples:
             "that preserves ``mtp.*`` weights; ``dflash`` enables the "
             "block-diffusion drafter from arxiv 2410.04097 (R15-P1 "
             "#313) for Qwen3.5/3.6 with a bound drafter (default "
-            "block size 16); ``dspark`` enables DeepSeek DeepSpec "
-            "lossless block speculative decode; ``auto`` asks "
-            "SpecAutoRouter to pick at boot from the model's shape "
-            "and drafter flags — MTP-eligible checkpoints get ``mtp``, "
-            "everything else gets n-gram suffix decoding (zero GPU "
-            "cost). Drafter-backed methods (dflash/dspark) stay "
+            "block size 16); ``dflash2`` enables the official z-lab "
+            "DFlash2 pkg (block-diffusion + CandidateSelector) for "
+            "Qwen3.8 dense targets — requires --dflash2-drafter-path; "
+            "``dspark`` enables DeepSeek DeepSpec lossless block "
+            "speculative decode; ``auto`` asks SpecAutoRouter to pick "
+            "at boot from the model's shape and drafter flags — "
+            "MTP-eligible checkpoints get ``mtp``, everything else "
+            "gets n-gram suffix decoding (zero GPU cost). "
+            "Drafter-backed methods (dflash/dflash2/dspark) stay "
             "operator-selected even under ``auto``. Rejects at boot "
             "if the model doesn't qualify so misuse fails loud."
         ),
@@ -633,6 +636,37 @@ Examples:
             "the drafter for the loaded alias. Only consulted when "
             "--spec-decode dflash is set; ignored otherwise."
         ),
+    )
+    # DFlash2 — block-diffusion speculative decoding via the official z-lab
+    # dflash pip pkg (DFlash2DraftModel + CandidateSelector). Self-contained
+    # generator runs the full propose->verify->rollback loop; the scheduler
+    # pulls accepted tokens via dflash2_spec_step. Primary target: Qwen3.8-27B
+    # (15->~70 t/s). Block size capped at 5 for MLX quantized verify. Install
+    # with ``pip install 'fusion-mlx[dflash2]'``.
+    serve_parser.add_argument(
+        "--enable-dflash2",
+        action="store_true",
+        default=False,
+        help="Enable DFlash2 block-diffusion speculative decoding (z-lab dflash "
+        "pkg, single-user serial mode). Requires a Qwen3.8 dense target and a "
+        "DFlash2 draft repo passed via --dflash2-drafter-path. Install with "
+        "``pip install 'fusion-mlx[dflash2]'``.",
+    )
+    serve_parser.add_argument(
+        "--dflash2-drafter-path",
+        dest="dflash2_drafter_path",
+        default="",
+        help="HF id or local path of the DFlash2 draft repo (e.g. "
+        "z-lab/Qwen3.8-27B-DFlash2). Required when --enable-dflash2 is set.",
+    )
+    serve_parser.add_argument(
+        "--dflash2-block-size",
+        dest="dflash2_block_size",
+        type=int,
+        default=5,
+        help="DFlash2 block size — candidates per draft forward (default 5). "
+        "Capped at 5 for MLX quantized targets (larger verify widths are "
+        "matmul-inefficient on quantized weights).",
     )
     # DSpark — DeepSeek DeepSpec lossless block speculative decoder.
     # Self-contained DSparkGenerator loads its own target + converted MLX

@@ -39,6 +39,7 @@ encodes this judgment; manual selection should follow the same logic.
 |---|---|---|---|---|
 | **SuffixDecoding** (`suffix`) | Drafter-free suffix tree over already-generated tokens | None — no draft model | Tool calls, JSON, code edit | ✅ |
 | **DFlash** (`ddtree`) | Block-diffusion drafter (arXiv 2410.04097), bound to a Qwen3.5/3.6 target | One drafter load at boot | Long-document / RAG | 🧪 |
+| **DFlash2** (`dflash2`) | Block-diffusion drafter (z-lab `dflash` pkg, GDN conv + CandidateSelector), bound to a Qwen3.8 dense target; reads target hidden states at `target_layer_ids` | One drafter load at boot | Qwen3.8-27B dense, greedy + sampling | ✅ |
 | **MTP** (`mtp`) | Model-native multi-token-prediction heads (Qwen3.5/3.6, DeepSeek-V4) via mlx-lm PR #990 | None — uses target's own heads | Any eligible model | ✅ |
 | **DSpark** (`dspark`) | DeepSeek DeepSpec lossless block speculative decode, distribution-preserving rejection sampling | One converted draft load at boot | Qwen3 4B/8B/14B bf16 targets | 🧪 |
 | **VLM MTP** (`vlm-mtp`) | MTP drafter for vision-language models (`gemma4_assistant` drafter) | Drafter load | VLM generation | ✅ |
@@ -56,7 +57,7 @@ surfaces; the primary selector and the individual toggles are mutually aware.
 ### Primary selector
 
 ```bash
-fusion-mlx serve --model <model> --spec-decode {none,mtp,dflash,dspark}
+fusion-mlx serve --model <model> --spec-decode {none,mtp,dflash,dflash2,dspark}
 ```
 
 `--spec-decode` picks **one** model-side method. `none` (default) disables all
@@ -70,6 +71,7 @@ misuse never silently falls back.
 --suffix-decoding          # SuffixDecoding (drafter-free)
 --enable-mtp               # native MTP (Qwen3.5/3.6 runtime)
 --enable-dflash            # DFlash block-diffusion drafter
+--enable-dflash2           # DFlash2 block-diffusion drafter (z-lab dflash pkg, Qwen3.8)
 --enable-dspark            # DSpark lossless block spec-decode (serial mode)
 ```
 
@@ -79,6 +81,8 @@ misuse never silently falls back.
 |---|---|---|
 | `--suffix-max-draft` | 8 | Max draft tokens per verify step (SuffixDecoding). Verify cost grows linearly. |
 | `--dflash-drafter-path` | empty | Override the per-alias DFlash drafter HF path; empty = use the registry binding. |
+| `--dflash2-drafter-path` | empty | Path/HF-id to the DFlash2 draft model (e.g. `z-lab/Qwen3.8-27B-DFlash2` or a local dir). Required with `--enable-dflash2` / `--spec-decode dflash2`. |
+| `--dflash2-block-size` | 5 | Block size (draft tokens per verify step). **Must be ≤ 5** for MLX quantized targets — larger verify widths are matmul-inefficient on quantized weights. The official draft config uses 8; we cap at 5. |
 | `--dspark-drafter-path` | — | Path to a converted MLX DSpark draft (from `dspark-metal-convert`). Required with `--enable-dspark`. |
 | `--dspark-draft-quant-bits` | 8 | Draft quantization bits; lower = faster drafter, lower acceptance. |
 | `--vlm-dev` | off | [.dev/experimental] Enable multimodal (image) input on the DSpark server's `/v1/chat/completions`. Only takes effect under `--enable-dspark` with a `qwen3_vl` target; images are dropped (with a warning) otherwise. Also set via `DSPARK_VLM_DEV=1`. |
@@ -123,6 +127,10 @@ Is the workload tool-call / JSON / code-edit (high token repetition)?
 
 Is the target Qwen3 4B/8B/14B bf16 with a converted DSpark draft?
   → DSpark (dspark)      # lossless; serial single-user mode
+
+Is the target Qwen3.8 dense (e.g. Qwen3.8-27B-4bit) with a DFlash2 draft?
+  → DFlash2 (dflash2)    # block-diffusion, reads target hidden states;
+                         #   2.47× speedup, accept avg 3.56 (real 27B-4bit)
 
 Otherwise / free-form chat
   → none                 # spec decode overhead not worth it
@@ -290,11 +298,78 @@ remain usable from the admin panel, tests, and per-model settings.
 
 ---
 
+## DFlash2 (block-diffusion, z-lab `dflash` pkg)
+
+DFlash2 is the second-generation block-diffusion speculative decoder from
+z-lab (PyPI `dflash==0.1.0`). A single draft forward predicts a whole
+**block** of candidate tokens; a lightweight `CandidateSelector` traces one
+coherent path through them, and two-tap grouped-dynamic convolutions
+(`GroupedDynamicCausalConv` / GDN) keep the draft from decaying across the
+block. The draft reads the target model's hidden states at fixed
+`target_layer_ids` (e.g. `[5, 19, 33, 47, 61]` for the 27B draft), so it is
+quality-matched to the target — not a separate small model.
+
+Unlike DFlash v1 and DSpark, DFlash2 does **not** fork a dedicated server. It
+loads in-place via `BatchedEngine`'s load branch and participates in normal
+continuous batching as a self-contained generator.
+
+### Activation
+
+```bash
+fusion-mlx serve --model qwen3.8-27b-4bit \
+  --enable-dflash2 \
+  --dflash2-drafter-path /path/to/Qwen3.8-27B-DFlash2 \
+  --dflash2-block-size 5
+# or
+fusion-mlx serve --model qwen3.8-27b-4bit --spec-decode dflash2 \
+  --dflash2-drafter-path z-lab/Qwen3.8-27B-DFlash2
+```
+
+### Constraints
+
+- **Target family**: `qwen3_8` dense (non-MoE). The auto-router routes the
+  `qwen3_8` family to `dflash2` first, with a `suffix` (n-gram) fallback.
+- **block_size ≤ 5** for MLX quantized targets. The official draft config
+  ships `block_size=8`; larger verify widths are matmul-inefficient on
+  quantized weights, so fusion-mlx caps at 5. `load_runtime` rejects
+  `block_size > 5`.
+- **Drafter path**: a local directory (e.g. `~/.fusion-mlx/models/Qwen3.8-27B-DFlash2`)
+  or an HF repo id. The bridge short-circuits `huggingface_hub.snapshot_download`
+  for local dirs so drafts load from disk (no re-download, honors the
+  hf-mirror workflow). Requires `dflash` extra: `pip install 'fusion-mlx[dflash2]'`.
+
+### Real-model validation (2026-08-21)
+
+Target `Qwen3.8-27B-4bit` + draft `Qwen3.8-27B-DFlash2`, `block_size=5`,
+greedy (`temperature=0`), prompt "The capital of France is", 64 tokens:
+
+| Metric | Value |
+|---|---|
+| Throughput | **52.3 tok/s** (18 verify steps, 1.22s) |
+| Baseline (target greedy, no spec) | 21.2 tok/s (3.02s) |
+| Speedup | **2.47×** |
+| Accept length (avg per verify step) | **3.556** (range 1–5) |
+| Lossless | **PASS** — tail tokens identical to baseline from index 1; decoded content matches (only first-token leading-space differs, a dflash detokenizer join-space artifact) |
+
+Memory: target + draft in-place load (~15 GB target + ~3.7 GB draft); M5 Max
+64 GB OK. No forked server.
+
+### Code map
+
+- `fusion_mlx/speculative/dflash2/` — bridge package (`runtime.py`, `eligibility.py`, `engine/generator.py`)
+- `fusion_mlx/scheduler/spec_decode.py` — `dflash2_spec_step`, `DFlash2SpecState`
+- `fusion_mlx/speculative/auto_router.py` — `METHOD_DFLASH2`, `qwen3_8` routing
+- `fusion_mlx/engines/batched.py` — in-place DFlash2 load branch
+- `tests/unit/test_dflash2_{eligibility,runtime,integration}.py` — 27 tests
+
+---
+
 ## Reference
 
 - `fusion_mlx/speculative/registry.py` — method registry, canonical names and aliases
 - `fusion_mlx/speculative/auto_router.py` — `SpecAutoRouter`, `RouteSignals`, `available_methods`
 - `fusion_mlx/scheduler/spec_decode.py` — adaptive pause/resume hysteresis, `SPEC_MIN_ACCEPT_RATE`, `DraftStats`
 - `tests/unit/test_spec_auto_router.py` — full decision-table coverage
+- `tests/unit/test_dflash2_*.py` — DFlash2 bridge + integration tests
 - `docs/cli-reference.md` — `serve` flags, including all spec-decode toggles
 - `docs/configuration.md` — per-model spec settings
