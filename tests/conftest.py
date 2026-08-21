@@ -154,8 +154,19 @@ except ImportError:
 # Other MLX ecosystem mocks. Give each a real ModuleSpec so
 # importlib.util.find_spec returns non-None (probe.require_audio_or_exit
 # treats a missing/unset spec as "extra not installed" and sys.exit(2)s).
+# Preserve the REAL package when installed (mirrors the mlx_lm/mlx_vlm
+# blocks above): an unconditional empty mock made
+# patch("mlx_embeddings.generate") fail with "module has no attribute
+# 'generate'" in test_embedding.py even though the installed pkg exposes
+# generate. Collateral found during #537 rescue.
 def _inject_mock_pkg(name: str) -> None:
     import importlib.util
+
+    try:
+        __import__(name)
+        return
+    except ImportError:
+        pass
 
     mod = types.ModuleType(name)
     mod.__spec__ = importlib.util.spec_from_loader(name, loader=None)
