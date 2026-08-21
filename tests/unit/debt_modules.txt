@@ -508,8 +508,12 @@ test_cancelled_requests_metric.py
 #    thinking already, but passes flag nested under chat_template_kwargs= not
 #    flat enable_thinking= kwarg; mock engine asserts flat kwarg -> shape fail.
 # Two paths (A port helper family / B align test to convergence point) in #531.
-# Not a CI blocker (collect_ignore). Leave quarantined pending #531 resolution.
-test_casual_chat_auto_disable_thinking.py
+# RESCUED 2026-08-21 (PATH B, #531): rewritten to assert the real prod
+# convergence point resolve_enable_thinking_default (setdefault on
+# chat_template_kwargs). Dropped stale maybe_auto_disable_thinking_for_casual_chat
+# helper contracts (NO-OP stub in fusion-mlx) + reasoning_max_tokens/effort
+# "keep thinking ON" contracts (chat route does not consult them). 23/23 pass.
+# test_casual_chat_auto_disable_thinking.py
 # test_chat_image_upload.py (RESCUED 2026-08-19 round10q-b4: 13/13 pass.
 # Harness path bug — I18N_DIR was Path(__file__).parent.parent / "fusion_mlx"
 # / "admin" / "i18n" = tests/fusion_mlx/admin/i18n (WRONG, file moved to
