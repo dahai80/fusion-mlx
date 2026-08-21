@@ -8,18 +8,21 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import threading
 import time
 import uuid
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import Future, ThreadPoolExecutor
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
 
 from ..admin.auth import require_admin
-from .convert_models import ConvertRequest, QuantizeRequest
+from ..middleware import require_model_hub_source
+from .convert_models import ConvertRequest, MergeAdapterRequest, QuantizeRequest
 
 logger = logging.getLogger(__name__)
 
@@ -173,3 +176,106 @@ async def get_quantize_job(
     _is_admin: bool = Depends(require_admin),
 ) -> dict[str, Any]:
     return _get_job(job_id, "quantize")
+
+
+# --- LoRA/DoRA adapter merge (#584) -------------------------------------
+# Fuses trained adapters into the base model and persists the merged weights,
+# mirroring `mlx_lm.fuse`. Unlike /convert, fusion-mlx's hub client
+# (fusion-model-hub #22 _run_merge) calls this synchronously and expects the
+# output_path in the response body, so we run on the same serialized
+# single-worker _executor (OOM-safe alongside convert/quantize) and await via
+# asyncio.wrap_future rather than spawning an async job. Small LoRA merges are
+# fast; large bases are bounded by the hub's 300s client timeout.
+
+
+def _run_merge_sync(
+    base_model: str,
+    adapter_path: str,
+    output_path: str,
+    dequantize: bool,
+    upload_repo: str | None,
+) -> str:
+    from mlx.utils import tree_flatten, tree_unflatten
+    from mlx_lm.utils import dequantize_model, load, save, upload_to_hub
+
+    logger.info(
+        "merge-adapter: base=%s adapter=%s -> %s (dequantize=%s)",
+        base_model,
+        adapter_path,
+        output_path,
+        dequantize,
+    )
+    model, tokenizer, config = load(
+        base_model, adapter_path=adapter_path, return_config=True
+    )
+
+    fused_linears = [
+        (name, module.fuse(dequantize=dequantize))
+        for name, module in model.named_modules()
+        if hasattr(module, "fuse")
+    ]
+    if fused_linears:
+        model.update_modules(tree_unflatten(fused_linears))
+        logger.info("merge-adapter: fused %d LoRA/DoRA layers", len(fused_linears))
+    else:
+        logger.warning(
+            "merge-adapter: no fuse() layers found in %s (adapter_path mismatch?)",
+            base_model,
+        )
+
+    if dequantize:
+        logger.info("merge-adapter: dequantizing merged model")
+        model = dequantize_model(model)
+        config.pop("quantization", None)
+        config.pop("quantization_config", None)
+
+    save_path = Path(output_path)
+    save(save_path, base_model, model, tokenizer, config, donate_model=False)
+    logger.info("merge-adapter: wrote fused model to %s", save_path)
+
+    if upload_repo is not None:
+        upload_to_hub(str(save_path), upload_repo)
+        logger.info("merge-adapter: uploaded fused model to %s", upload_repo)
+
+    _ = tree_flatten
+    return str(save_path)
+
+
+@router.post("/merge-adapter")
+async def merge_adapter(
+    request: MergeAdapterRequest,
+    _is_admin: bool = Depends(require_admin),
+    _source: bool = Depends(require_model_hub_source),
+) -> dict[str, Any]:
+    if _executor._broken:  # executor was shut down (e.g. during shutdown)
+        raise HTTPException(503, detail="Convert/merge executor unavailable")
+    from ..model_aliases import resolve_model
+
+    base_model = resolve_model(request.model)
+    save_path = request.output_path or f"{Path(request.model).name}-fused"
+    logger.info(
+        "merge-adapter job: model=%s resolved=%s adapter=%s",
+        request.model,
+        base_model,
+        request.adapter_path,
+    )
+    try:
+        future: Future = _executor.submit(
+            _run_merge_sync,
+            base_model,
+            request.adapter_path,
+            save_path,
+            request.dequantize,
+            request.upload_repo,
+        )
+        output_path = await asyncio.wrap_future(future)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.exception("merge-adapter failed: model=%s", request.model)
+        raise HTTPException(500, detail=f"merge-adapter failed: {exc}") from exc
+    return {
+        "status": "ok",
+        "model": request.model,
+        "output_path": output_path,
+    }
