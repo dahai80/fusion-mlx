@@ -1074,10 +1074,19 @@ _FINAL_SANITIZER = re.compile(
 
 _REASONING_CHANNEL_TAG_RE = re.compile(r"</?think>")
 
+# Gemma 4 emits tool calls as <|tool_call>call:name{args}<tool_call|> blocks.
+# Strip the whole block (markup + call body) before the catch-all sanitizer so
+# the inner call:name{...} body does not leak into message.content.
+_GEMMA4_TOOL_CALL_BLOCK_RE = re.compile(r"<\|tool_call>.*?<tool_call\|>", re.DOTALL)
+
 
 def sanitize_output(text: str) -> str | None:
     if not text:
         return text
+    if "<|tool_call>" in text:
+        text = _GEMMA4_TOOL_CALL_BLOCK_RE.sub("", text)
+        if not text.strip():
+            return None
     for ch in text:
         if ch in _SPECIAL_TOKEN_CHARS:
             cleaned = _FINAL_SANITIZER.sub("", text).strip()

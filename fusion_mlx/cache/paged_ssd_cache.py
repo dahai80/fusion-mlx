@@ -1024,6 +1024,7 @@ class PagedSSDCacheManager:
         if hot is not None:
             self._stats["loads"] += 1
             self._stats["hot_cache_hits"] += 1
+            self._stats["hits"] += 1
             return self._restore_from_pending(hot)
 
         with self._state_lock:
