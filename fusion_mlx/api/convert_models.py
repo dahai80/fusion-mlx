@@ -94,3 +94,53 @@ class ConvertRequest(_ConvertBase):
 
 class QuantizeRequest(_ConvertBase):
     pass
+
+
+class MergeAdapterRequest(BaseModel):
+    model: str = Field(
+        ...,
+        description="Base model: HF repo (org/name), model alias, or local model path. "
+        "Sent in the body (not the URL path) so HF repos with a slash are handled "
+        "without URL encoding.",
+    )
+
+    adapter_path: str = Field(
+        ...,
+        description="Local path or HF repo of the trained LoRA/DoRA adapter weights",
+    )
+
+    output_path: str | None = Field(
+        None,
+        description="Output dir for the fused model (default: ./<base>-fused). "
+        "Must be within allowed model directories.",
+    )
+
+    dequantize: bool = Field(
+        False,
+        description="Produce a dequantized (float) fused model instead of keeping "
+        "the base quantization",
+    )
+
+    upload_repo: str | None = Field(
+        None, description="Upload the fused model to this HF repo (org/name)"
+    )
+
+    @field_validator("output_path")
+    @classmethod
+    def _validate_output_path(cls, v):
+        if v is None:
+            return v
+        resolved = Path(v).resolve()
+        for prefix in _get_allowed_output_prefixes():
+            try:
+                if resolved.is_relative_to(prefix.resolve()):
+                    return str(resolved)
+            except Exception:
+                pass
+        logger.warning(
+            "merge-adapter output_path rejected (outside allowed dirs): %s", v
+        )
+        raise ValueError(
+            "output_path must be within allowed model directories "
+            "(~/.fusion-mlx/models, CWD, or HF cache)"
+        )
