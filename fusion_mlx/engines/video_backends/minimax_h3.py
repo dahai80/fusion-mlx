@@ -163,6 +163,7 @@ class MiniMaxH3Backend(VideoBackend):
                                 seed=s,
                                 num_inference_steps=(params.num_inference_steps or 40),
                                 output_path=op,
+                                quantize=params.quantize,
                             ),
                         ),
                         timeout=timeout,
