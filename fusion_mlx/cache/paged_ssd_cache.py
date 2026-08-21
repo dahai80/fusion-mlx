@@ -1016,6 +1016,16 @@ class PagedSSDCacheManager:
         with self._pending_write_hashes_lock:
             pending = self._pending_writes.get(block_hash)
         if pending is not None:
+            # The block is also resident in the hot cache (save_block put it
+            # there before enqueuing the SSD write). A load — even one served
+            # from the pending-write buffer fast path — is an access and must
+            # refresh the hot-cache LRU position, otherwise the block can be
+            # evicted as "stale" right after being touched (issue #583, a
+            # timing flake where load_block hit pending before the writer
+            # thread drained). _hot_cache_get does move_to_end + budget.touch
+            # only (no stat counters), and returns None (no-op) if the block
+            # was already evicted, so this is safe either way.
+            self._hot_cache_get(block_hash)
             self._stats["loads"] += 1
             self._stats["hits"] += 1
             return self._restore_from_pending(pending)
