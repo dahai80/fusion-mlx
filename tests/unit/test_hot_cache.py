@@ -250,8 +250,32 @@ class TestHotCacheLRU:
 
     def test_lru_access_refreshes_order(self, tmp_path):
         """Accessing a block should move it to MRU position."""
-        entry_size = self._entry_size()
-        max_bytes = entry_size * 2 + 100
+        # Probe the real per-entry byte cost the cache will charge
+        # (``_estimated_bytes`` = raw buffer length of each KV tensor,
+        # which depends on MLX's element size for the test dtype — bfloat16
+        # on Apple Silicon, float32 elsewhere). The stale ``_entry_size``
+        # helper assumed float32, so the ``* 2 + 100`` headroom under-fit
+        # on bfloat16 runners and the 3rd save evicted block 0 instead of
+        # block 1 (issue #583, CI-only flake). Measure the real cost and
+        # size the hot cache to exactly two entries with a small cushion.
+        probe = PagedSSDCacheManager(
+            cache_dir=tmp_path / "lru_probe",
+            max_size_bytes=100 * 1024**2,
+            hot_cache_max_bytes=100 * 1024**2,
+        )
+        try:
+            probe.save_block(
+                block_hash=b"probe",
+                cache_data=self._make_cache_data(),
+                token_count=16,
+                model_name="test",
+                layer_cache_types=["KVCache"] * 2,
+            )
+            entry_bytes = probe._hot_cache_total_bytes
+        finally:
+            probe.close()
+        assert entry_bytes > 0
+        max_bytes = entry_bytes * 2 + entry_bytes // 2
 
         mgr = PagedSSDCacheManager(
             cache_dir=tmp_path / "lru_order_test",
