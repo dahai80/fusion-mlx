@@ -27,7 +27,12 @@ _H3_MAX_FRAMES = 361
 
 class MiniMaxH3Backend(VideoBackend):
     name = "minimax_h3"
-    supports_i2v = True
+    # Issue #589: only t2va is implemented. i2va/l2va/fl2va image/last-frame
+    # conditioning is accepted then silently dropped (silent-wrong-video bug).
+    # Declare supports_i2v=False so validate_params rejects image= at the API
+    # (422) until the image-conditioned DiT path lands. generate() re-checks
+    # last_frame_image/reference_audio (not covered by validate_params).
+    supports_i2v = False
 
     def __init__(
         self,
@@ -109,7 +114,7 @@ class MiniMaxH3Backend(VideoBackend):
 
     def constraints(self) -> VideoConstraints:
         return VideoConstraints(
-            supports_i2v=True,
+            supports_i2v=False,
             max_n=_H3_MAX_N,
             dim_divisibility=_H3_DIM_DIV,
             num_frames_validator=lambda nf: 1 <= nf <= _H3_MAX_FRAMES,
@@ -127,6 +132,26 @@ class MiniMaxH3Backend(VideoBackend):
             n=params.n,
             image=params.image,
         )
+        # Issue #589: only t2va implemented. Reject image/last-frame/reference-audio
+        # conditioning loudly so callers don't get silent-wrong t2va video.
+        # validate_params already rejects image= via supports_i2v=False; this is
+        # the backstop for last_frame_image/reference_audio (validate_params
+        # does not check those fields) and for direct non-API callers.
+        if params.image is not None:
+            raise ValueError(
+                "MiniMax-H3 i2va not implemented (issue #589): image conditioning "
+                "is silently dropped by the t2va path. Use a backend with real i2v."
+            )
+        if params.last_frame_image is not None:
+            raise ValueError(
+                "MiniMax-H3 l2va/fl2va not implemented (issue #589): "
+                "last_frame_image conditioning is not supported by the t2va path."
+            )
+        if params.reference_audio is not None:
+            raise ValueError(
+                "MiniMax-H3 ref2va audio not implemented (issue #589): "
+                "reference_audio is not supported by the t2va path."
+            )
         if params.resolution not in _H3_RESOLUTIONS:
             raise ValueError(
                 f"resolution must be one of {_H3_RESOLUTIONS}, got {params.resolution!r}"
