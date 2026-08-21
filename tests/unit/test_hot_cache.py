@@ -833,6 +833,14 @@ class TestHotCacheStatsAccuracy:
             assert len(mgr._hot_cache) == 2
             assert stats.hot_cache_evictions == 0
 
+            # Touch block 1 so it is MRU before the 3rd save — guarantees
+            # the next eviction lands on block 0 (the LRU), leaving block 1
+            # resident for the hot-cache-hit assertion below. Without this
+            # the 2-entry capacity can pick block 1 as the victim on some
+            # interpreters/entry-size rounding, flipping the final load to
+            # an SSD promotion (hot_cache_promotions, not hot_cache_hits).
+            mgr.load_block(b"stats_block_1__")
+
             # Save 3rd block: triggers eviction of block 0
             save(2)
             stats = mgr.get_stats()

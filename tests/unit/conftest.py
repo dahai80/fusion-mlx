@@ -1050,12 +1050,67 @@ def _add_more_stubs():
             },
         )
 
-    # vllm_mlx - alias to fusion_mlx for any remaining references
+    # vllm_mlx - alias to fusion_mlx for any remaining references.
+    # The legacy package was renamed to fusion_mlx, but a handful of test
+    # modules still reference the old ``vllm_mlx.*`` path (e.g. patching
+    # ``sys.modules["vllm_mlx.speculative.dflash"]`` or importing
+    # ``vllm_mlx.audio.stt``). A bare top-level alias
+    # (``sys.modules["vllm_mlx"] = fusion_mlx``) is not enough: importing a
+    # submodule through the alias path (``import vllm_mlx.api``) reloads the
+    # real ``fusion_mlx/api/__init__.py`` under a *second* module object named
+    # ``vllm_mlx.api``. From then on two distinct ``api`` packages coexist, and
+    # a later ``import fusion_mlx.api.openai_routes`` resolves the submodule
+    # off the wrong (aliased) parent, raising
+    # ``ImportError: cannot import name 'openai_routes' from 'vllm_mlx.api'``.
+    # This is order-sensitive (it surfaced on CI 3.11/3.12/3.13 but not on a
+    # local 3.14 run). Fix: install a meta-path finder that reuses the real
+    # ``fusion_mlx.X`` module object for every ``vllm_mlx.X`` import, so the
+    # two namespaces share one object graph instead of shadow-loading. The
+    # finder defers to any pre-set ``sys.modules`` entry (test fakes and the
+    # ``None`` sentinel used to force ImportError both win), matching the
+    # existing monkeypatch.setitem patterns.
+    import importlib.abc
+    import importlib.machinery
+
+    class _VllmMlxAliasFinder(importlib.abc.MetaPathFinder, importlib.abc.Loader):
+        _PREFIX = "vllm_mlx"
+        _TARGET = "fusion_mlx"
+
+        def find_spec(self, fullname, path=None, target=None):
+            if fullname != self._PREFIX and not fullname.startswith(
+                self._PREFIX + "."
+            ):
+                return None
+            # Honor pre-set entries (test fakes, ``None`` import-fail sentinels)
+            # before redirecting — a test that does
+            # ``monkeypatch.setitem(sys.modules, "vllm_mlx.audio.stt", fake)``
+            # must still get its fake back.
+            if fullname in sys.modules:
+                return None
+            real = self._TARGET + fullname[len(self._PREFIX):]
+            try:
+                importlib.import_module(real)
+            except Exception:
+                return None
+            return importlib.machinery.ModuleSpec(fullname, self)
+
+        def create_module(self, spec):
+            real = self._TARGET + spec.name[len(self._PREFIX):]
+            mod = importlib.import_module(real)
+            sys.modules[spec.name] = mod
+            return mod
+
+        def exec_module(self, module):
+            # The module is already fully initialized by create_module above.
+            return None
+
+    _existing = [f for f in sys.meta_path if isinstance(f, _VllmMlxAliasFinder)]
+    if not _existing:
+        sys.meta_path.insert(0, _VllmMlxAliasFinder())
+
     if "vllm_mlx" not in sys.modules:
         try:
-            import fusion_mlx
-
-            sys.modules["vllm_mlx"] = fusion_mlx
+            sys.modules["vllm_mlx"] = importlib.import_module("fusion_mlx")
         except Exception:
             sys.modules["vllm_mlx"] = _make_stub("vllm_mlx")
 

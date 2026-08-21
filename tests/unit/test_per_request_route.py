@@ -4,6 +4,7 @@ from types import SimpleNamespace
 
 from fusion_mlx.speculative.auto_router import (
     METHOD_DFLASH,
+    METHOD_DFLASH2,
     METHOD_DSPARK,
     METHOD_EAGLE3,
     METHOD_MTP,
@@ -144,6 +145,7 @@ class TestLoadedMethods:
             METHOD_NGRAM: False,
             METHOD_EAGLE3: False,
             METHOD_DFLASH: False,
+            METHOD_DFLASH2: False,
             METHOD_DSPARK: False,
             METHOD_MTP: False,
         }
@@ -179,6 +181,7 @@ class TestSchedulerLoadedAssembly:
             METHOD_NGRAM: False,
             METHOD_EAGLE3: False,
             METHOD_DFLASH: False,
+            METHOD_DFLASH2: False,
             METHOD_DSPARK: False,
             METHOD_MTP: False,
         }
