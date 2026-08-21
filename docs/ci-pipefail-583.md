@@ -37,6 +37,23 @@ Production code, not just tests:
   increments both. Fixes `test_hot_cache` (2 fails). Genuine stat-correctness
   fix, not just test hardening.
 
+### `fix(cache): refresh hot-cache LRU on pending-buffer load hit`
+Follow-up production fix (commit `ab4ac9a`), surfaced when PR #596's first CI
+run still failed `test_lru_access_refreshes_order` on 3.12/3.13 (passed on
+3.11/3.14):
+
+- `fusion_mlx/cache/paged_ssd_cache.py` — `load_block` served a block from the
+  `_pending_writes` fast path without touching the hot cache, so a block
+  accessed right after `save_block` (before the background writer drained the
+  pending entry) never moved to MRU and could be evicted as LRU despite just
+  being loaded. The block is resident in the hot cache (`save_block` put it
+  there before enqueuing the SSD write), so the pending hit now also calls
+  `_hot_cache_get` to refresh the LRU position. `_hot_cache_get` does
+  `move_to_end` + `budget.touch` only (no stat counters) and is a no-op if the
+  block was already evicted, so it is safe either way. The timing sensitivity
+  explains the version split: 3.12/3.13 writer-thread scheduling left the
+  pending entry populated at `load_block` time more often than 3.11/3.14.
+
 ### `test: fix 29 CI-masked failures across 3.11/3.12/3.13`
 Test infra + fixtures:
 
@@ -82,9 +99,14 @@ Test infra + fixtures:
   CI (1 fail).
 - `tests/unit/test_modality_models_route.py` — `EntryPayload` all-fields
   expects `loaded: True, state: "loaded"` (1 fail).
-- `tests/unit/test_hot_cache.py` — LRU-refresh load before the 3rd save so
-  the next eviction deterministically lands on the LRU block, leaving the
-  MRU resident for the hot-cache-hit assertion.
+- `fusion_mlx/cache/paged_ssd_cache.py` — `load_block` pending-buffer fast
+  path: a block served from `_pending_writes` did not refresh the hot-cache
+  LRU, so a block accessed right after save (before the writer thread drained)
+  could be evicted as LRU despite just being loaded. This was a timing flake
+  surfacing as `test_lru_access_refreshes_order` on CI 3.12/3.13 (writer
+  scheduling differs from 3.11/3.14). Now calls `_hot_cache_get` on the
+  pending hit too (move_to_end + budget.touch, no-op if already evicted).
+  Genuine cache-correctness fix — the test was right, the code was wrong.
 
 ## Failure inventory (run 32390849022)
 
@@ -100,7 +122,7 @@ Test infra + fixtures:
 | test_ui_tars_lane_parity.py | 1 | 1 | 1 | vllm_mlx finder ✅ |
 | test_modality_models_route.py | 1 | 1 | 1 | loaded/state ✅ |
 | test_mcp_config.py | 1 | 1 | 1 | skip-on-missing-runner ✅ |
-| test_hot_cache.py | 1 | 0 | 1 | hits stat + LRU-refresh ✅ |
+| test_hot_cache.py | 1 | 1 | 1 | hits stat + pending-buffer LRU refresh ✅ |
 | test_embeddings_timeout_admission.py | 1 | 1 | 1 | xfail strict=False ✅ |
 | **total** | **39** | **38** | **39** | |
 
