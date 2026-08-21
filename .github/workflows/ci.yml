@@ -53,6 +53,7 @@ jobs:
             - run: pip install pytest-cov
             - name: Run unit tests with coverage
               run: |
+                  set -eo pipefail
                   pytest tests/unit -v --tb=short --cov=fusion_mlx --cov-report=term-missing --cov-report=xml --cov-fail-under=40 --junitxml=pytest-junit.xml 2>&1 | tee pytest-output.txt
             - name: Guard against excessive skips
               if: always()
