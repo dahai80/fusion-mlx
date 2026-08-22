@@ -871,6 +871,17 @@ class TestHotCacheStatsAccuracy:
             assert len(mgr._hot_cache) == 2
             assert stats.hot_cache_evictions >= 1
 
+            # Drain the background SSD writer so block 1 is no longer in the
+            # _pending_writes fast path. load_block serves pending entries
+            # from _pending_writes (counts as a generic hit, NOT
+            # hot_cache_hits) before ever checking the hot cache. On a fast
+            # writer / slow scheduler the pending entry can still be queued
+            # at this point, so the hot_cache_hits assertion below races the
+            # writer thread. Joining the write queue waits for every queued
+            # block to be persisted and popped from _pending_writes, so the
+            # final load deterministically takes the hot-cache path.
+            mgr._write_queue.join()
+
             # Load block 1 (hot cache hit)
             mgr.load_block(b"stats_block_1__")
             stats = mgr.get_stats()
