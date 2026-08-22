@@ -1382,6 +1382,7 @@ test_pflash_scheduler.py
 # shims + implement MLXPlatform class (new feature) OR rewrite test to import
 # from actual locations + drop MLXPlatform tests (gutting half the suite). Out
 # of debt-rescue scope. Track as missing-module gap.
+# KEEP_QUARANTINED 2026-08-22 (#598): fusion_mlx.plugin module removed; symbols moved to utils/hardware.py + gui_compat/mlx_integration.py under diff names. Dead-symbol.
 test_platform.py
 # KEEP_QUARANTINED: prefill-OOM/eviction/requeue subsystem removed from
 # Scheduler. Test (22 tests, 562L) pins 10 deleted symbols: const attrs
@@ -1399,11 +1400,15 @@ test_platform.py
 # abort-only surface = new feature work. Track as architecture gap. ISSUE
 # #511 FILED.
 test_prefill_oom_graceful.py
+# KEEP_QUARANTINED 2026-08-22 (#598): BatchedEngine._compute_prefix_boundary (PR #435 wiring) removed. Import engine.batched->engines.batched fixed (collects now) but feature gone. 4/4 fail.
 test_prefix_boundary_path_parity.py
 test_prefix_cache_persistence.py
 test_prefix_cache_rotating_tip_strip.py
+# KEEP_QUARANTINED 2026-08-22 (#598): Scheduler._common_prefix_len + _log_prefix_divergence removed (logic moved to sched_admission.py module funcs). Dead-symbol.
 test_prefix_divergence_probe.py
-test_probe_fastpath.py
+# test_probe_fastpath.py RESCUED 2026-08-22 (17 pass): prior round verdictd
+# it rescued (CLI-extraction drift, see above) but never commented out = stayed
+# quarantined. 17/17 pass live now. Un-quarantine.
 # RESCUED b11 2026-08-19: 4/4 pass. CLI-extraction drift: _try_mirror_prefetch
 # + _format_pull_duration live in fusion_mlx/cli_commands.py (pull_command reads
 # _try_mirror_prefetch as its own module global). Test imported cli + patch.object(cli,
@@ -1515,24 +1520,30 @@ test_request_cancellation.py
 # Feature PRESERVED via new design (not regression): /v1/embeddings get_embedding_engine
 # resolves short alias->HF path. Architecture drift, full route-test rewrite needed
 # (not surgical). ISSUE #515 FILED. No prod change.
+# KEEP_QUARANTINED 2026-08-22 (#598): _resolve_request_alias_or_default/_aliases_match signature changed (1 arg, was 2). Deep drift.
 test_request_time_alias_resolution.py
 # test_responses_591_followups.py
 test_responses_budget_exhaust_streaming.py
 test_responses_bundle.py
 test_responses_engine_failure_envelope.py
+# KEEP_QUARANTINED 2026-08-22 (#598): message-conversion feature gap (leading user message lost in Responses conversion). Feature-gap.
 test_responses_input_default_type.py
 # test_responses_param_validation.py  (RESCUED 2026-08-18 — commented out = un-quarantined = collected; 11 pass. PROD FIX R6-H8 Responses-surface parity: ResponsesRequest had no top_k cap (Field ge=0 only, no upper bound) and no seed validator → pathological top_k=999_999_999 / negative / bool and negative / bool seed silent-degraded to HTTP 200 on /v1/responses. Added shared validate_top_k (cap _TOP_K_SENTINEL_CAP=1<<20 inclusive, bool/negative reject) + validate_seed (bool/negative reject) to shared_models.py, wired as field_validators on ResponsesRequest. PROD FIX #355 forwarding: routes_internal/responses.py _resolved_sampling_kwargs only threaded temperature/top_p/stop → top_k (and min_p/repetition_penalty/presence_penalty/frequency_penalty) silently dropped before reaching engine.chat; now forwarded when present. Test vllm_mlx stub-shim harness intact. Regression-checked: test_responses_adapter 73 pass, test_responses.py + chat_template_kwargs green; pre-existing 15+6 fails in test_responses_bundle/test_responses_input_default_type unrelated (stay quarantined).)
 test_responses_route.py
 test_responses_sse_event_order.py
+# KEEP_QUARANTINED 2026-08-22 (#598): 404/401/503 + registry KeyError (is_hybrid/count/context_window) — deep registry-shape drift. Feature-gap.
 test_routes.py
-test_routes_models.py
+# test_routes_models.py RESCUED 2026-08-22 (2 pass + 1 xfail): model-list
+# endpoint contract test. 0 import errors, all live pass. Un-quarantine.
 test_routes_models_effective_parsers.py
 test_rst_mid_sse_zombie_kv.py
+# KEEP_QUARANTINED 2026-08-22 (#598): _Cfg.scheduler attribute gone (config shape changed). Dead-symbol.
 test_runtime_cache_path.py
 # test_sampling_param_finite_range.py  (RESCUED 2026-08-19 round10e: 140 pass. H-10 finite-range sweep. Harness fix: rate_limiter singleton disabled in patched_config fixture (140 req burst vs 60/min cap → tail 429). Contract conflict resolved: OpenAI top_p=0.0 VALID (min_inclusive=True) to match committed Field(ge=0.0) + test_sampling_validation L340; Anthropic top_p exclusive-min kept (matches docs, no competing pin). Flipped _check_top_p min_inclusive False→True on 4 OpenAI classes (models.py ChatCompletionRequest+CompletionRequest, openai_models.py x2). Anthropic top_p stays exclusive. Suite7 FLOAT_PARAM_SPEC L201 OpenAI top_p → True, L213 anthropic → False.)
 # test_sampling_params_passthrough.py  (RESCUED 2026-08-18 — commented out = un-quarantined = collected; 12 pass + 2 xfail. Stale-ref to vllm_mlx lineage: re-pointed make_sampler monkeypatch to fusion_mlx.scheduler.sched_token._make_sampler (bound name at import), BatchGenerator patch to sched_token module, fused-sampler fast-path stubbed via sampler_fast_path.get_or_create_fused_sampler, source-read Path vllm_mlx/scheduler.py→fusion_mlx/scheduler/sched_token.py, SimpleNamespace model for _fused_sampler attr. 2 xfail strict: test_sampling_params_ignore_eos_field (field deliberately absent from SamplingParams) + test_scheduler_overrides_openai_penalty_context_size (rapid-mlx #470 context_size override not ported).)
 # test_sampling_validation.py  (RESCUED round 10c — commented out = un-quarantined = collected; 109 pass. PROD FIX F-011: openai_models route classes had no Field bounds/finite validator → NaN/inf/out-of-range sampling params reached engine; added Field(ge/le)+_reject_nonfinite_float to ChatCompletionRequest+CompletionRequest in openai_models.py AND api/models.py. Harness re-point: dead _create_chat_completion_impl→live _run_chat seam; rate_limiter singleton disabled in fixture.)
 # test_sanitize_output.py  (RESCUED 2026-08-19 round10p: 15 pass. PROD FIX: _FINAL_SANITIZER regex missing stray closing-tag pattern → `</im_end>` (slash form, no pipes) leaked into message.content in non-stream path. Added `|</[a-z_]+>` alternation (api/utils.py L1070). Additive — existing `<|im_end|>` open-form + tool_call + think patterns unaffected. Caller: postprocessor/core.py sanitize_output pipeline.)
+# KEEP_QUARANTINED 2026-08-22 (#598): scheduler exports get_phys_footprint/_PreflightRejection removed; ZeroDivisionError in chunked-prefill path. Feature-gap.
 test_scheduler_chunked_prefill.py
 test_scheduler_prefill_memory_guard.py
 test_scheduler_stop_decoder_surface.py
@@ -1540,6 +1551,7 @@ test_scheduler_stop_decoder_surface.py
 test_schema_v2_accepts_minimal_v2.py
 test_schema_v2_accepts_v1.py
 test_schema_v2_rejects_partial_harness.py
+# KEEP_QUARANTINED 2026-08-22 (#598): Scheduler._get_request_sampler deleted (seeded sampler path refactored). Dead-symbol.
 test_seed_reproducibility.py
 test_serve_host_loopback_default.py
 # test_serve_listen_fd.py + test_serve_port_collision.py rescued (#351):
@@ -1599,6 +1611,7 @@ test_server_prefill_memory_handler.py
 # quarantined L696, count_tokens/audio-route debt, NOT queue-full related).
 # test_server_queue_full_handler.py
 test_server_utils.py
+# KEEP_QUARANTINED 2026-08-22 (#598): rescue-skip logic for response_format json drift; Internal server error. Feature-gap.
 test_silent_drop_rescue_569.py
 # KEEP_QUARANTINED: round10p — upstream mlx-lm API regression. `import mlx_lm.generate` now yields a FUNCTION not module (symbol shadow); _merge_caches/_extend_cache/PromptProcessingBatch removed from public API. Test pins removed functions (_merge_caches identity-merge, _extend_cache batched conversion). scheduler/monkeypatches.py patches BatchGenerator._next/next_generated but NOT _merge_caches. Upstream gap — file issue first per CLAUDE.md flow, then PR.
 test_singleton_cache_passthrough.py
@@ -1632,10 +1645,12 @@ test_stt_response_format.py
 # impl. Test guards a regression that cannot occur. Reconciling = either
 # reverse aa7a876 policy OR rewrite test to check `.git/info/exclude` for
 # worktree/lock exclusion (also policy). Out of scope.
+# KEEP_QUARANTINED 2026-08-22 (#599): repo has no .gitignore; .claude/ untracked. Awaits maintainer .gitignore decision.
 test_submit_gitignore.py
 test_suffix_decoding.py
 test_telemetry_cli.py
 test_tempfile_safe.py
+# KEEP_QUARANTINED 2026-08-22 (#598): 2 minimax-m3 tests fail — extract_thinking has no <mm:think> handling; clean_special_tokens SPECIAL_TOKENS_PATTERN omits MiniMax tokens (known in output_parser.py:148). Feature-gap. 38/40 pass otherwise.
 test_thinking.py
 test_thinking_budget.py
 # KEEP_QUARANTINED tool cluster (round10q-b6 2026-08-19): 9 suites, all
