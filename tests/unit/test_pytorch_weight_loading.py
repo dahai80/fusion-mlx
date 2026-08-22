@@ -9,6 +9,8 @@ from unittest.mock import MagicMock, patch
 import mlx.core as mx
 import pytest
 
+pytest.importorskip("torch")
+
 
 class TestLoadPytorchWeights:
     def test_load_pytorch_weights_converts_tensors(self):

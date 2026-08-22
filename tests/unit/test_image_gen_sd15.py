@@ -109,7 +109,7 @@ class TestSD15EngineImg2ImgForwarding:
         captured = {}
 
         class _StubImage:
-            pass
+            size = (64, 64)
 
         class _StubGen:
             image = _StubImage()

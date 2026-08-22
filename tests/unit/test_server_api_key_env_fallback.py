@@ -48,6 +48,11 @@ def test_api_key_env_only_resolves_to_env_value(monkeypatch):
     production helper drops its env-var branch, this assertion fails."""
     from fusion_mlx.server import _resolve_api_key
 
+    # CI runners load ~/.fusion-mlx/settings.json auth.api_key into the
+    # module-level _api_key global BEFORE pytest collects. That global
+    # sits ahead of env in the resolve order, so without neutralizing it
+    # the env branch is never reached and this test is tautological.
+    monkeypatch.setattr("fusion_mlx.server._api_key", None)
     monkeypatch.setenv("FUSION_MLX_API_KEY", "ENV_SECRET")
     assert _resolve_api_key(argv_api_key=None) == "ENV_SECRET"
 
@@ -72,6 +77,8 @@ def test_api_key_neither_set_is_none(monkeypatch):
     """No-auth dev path stays anonymous-OK."""
     from fusion_mlx.server import _resolve_api_key
 
+    # Neutralize the settings.json-loaded global (see env-only test note).
+    monkeypatch.setattr("fusion_mlx.server._api_key", None)
     monkeypatch.delenv("FUSION_MLX_API_KEY", raising=False)
     assert _resolve_api_key(argv_api_key=None) is None
 
@@ -82,6 +89,8 @@ def test_api_key_empty_string_argv_falls_back_to_env(monkeypatch):
     wins because empty string is falsy."""
     from fusion_mlx.server import _resolve_api_key
 
+    # Neutralize the settings.json-loaded global (see env-only test note).
+    monkeypatch.setattr("fusion_mlx.server._api_key", None)
     monkeypatch.setenv("FUSION_MLX_API_KEY", "ENV_FALLBACK")
     assert _resolve_api_key(argv_api_key="") == "ENV_FALLBACK"
 
@@ -101,6 +110,9 @@ def test_banner_renders_auth_on_when_only_env_is_set(monkeypatch):
     red because the input ``argv_api_key=None`` produces no feature."""
     from fusion_mlx._cli_base import _auth_feature_str
 
+    # Neutralize the settings.json-loaded server._api_key global so the
+    # env-only branch is the one the SSOT reads (see env-only test note).
+    monkeypatch.setattr("fusion_mlx.server._api_key", None)
     monkeypatch.setenv("FUSION_MLX_API_KEY", "ENV_SECRET")
     assert _auth_feature_str(argv_api_key=None) == "auth: on"
 
@@ -118,6 +130,8 @@ def test_banner_omits_auth_line_when_neither_is_set(monkeypatch):
     CONFIGURATION block's ``Authentication: DISABLED`` warning."""
     from fusion_mlx._cli_base import _auth_feature_str
 
+    # Neutralize the settings.json-loaded global (see env-only test note).
+    monkeypatch.setattr("fusion_mlx.server._api_key", None)
     monkeypatch.delenv("FUSION_MLX_API_KEY", raising=False)
     assert _auth_feature_str(argv_api_key=None) is None
 

@@ -147,7 +147,9 @@ class TestImageGenKnobFlow:
             def __init__(self):
                 from types import SimpleNamespace
 
-                self.image = SimpleNamespace(save=lambda buf, format=None: None)
+                self.image = SimpleNamespace(
+                    size=(768, 512), save=lambda buf, format=None: None
+                )
 
         class FakeFlux:
             def __init__(self, *args, **kwargs):

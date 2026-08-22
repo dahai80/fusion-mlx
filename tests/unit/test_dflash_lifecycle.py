@@ -254,7 +254,7 @@ class TestRealDflashIntegration:
             assert (
                 getattr(
                     target_qwen_gdn,
-                    "_fusion_wrapped__install_full_attention_gqa_hook",
+                    "_fusion_mlx_wrapped__install_full_attention_gqa_hook",
                     False,
                 )
                 is True

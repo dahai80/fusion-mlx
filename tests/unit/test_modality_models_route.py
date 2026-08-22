@@ -170,6 +170,8 @@ class TestEntryPayload:
             "tool_call_parser": "hermes",
             "reasoning_parser": "qwen",
             "modality": "image",
+            "loaded": True,
+            "state": "loaded",
         }
 
 

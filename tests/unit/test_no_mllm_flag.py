@@ -159,6 +159,7 @@ NON_ROUTING_FLAGS_ALLOWLIST: frozenset[str] = frozenset(
         # decode (registered pair); these just enable the implementation.
         "--enable-mtp",
         "--enable-dflash",
+        "--enable-dflash2",
         "--enable-dspark",
         # Task #292: ``--enable-audio`` is a route-mounting UX knob, not a
         # binary auto-detection. The audio-mode boot path auto-mounts
