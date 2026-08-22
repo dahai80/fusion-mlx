@@ -1408,7 +1408,19 @@ class PagedSSDCacheManager:
                 except OSError as e:
                     logger.debug("Failed to unlink %s: %s", file_path, e)
             self._hot_cache_remove(block_hash)
-            return True
+        # Drop any in-flight pending-write copy. save_block enqueues an SSD
+        # write AND keeps a resident copy in _pending_writes; load_block
+        # serves that copy on a fast path that bypasses the index check.
+        # Without this drop, a block deleted from the index + disk can still
+        # be read back via the pending buffer until the writer thread drains
+        # it (a delete/load race, surfaced as test_delete_block_clears_pending_buffer
+        # failing intermittently on CI). The writer thread's finally clause
+        # also pops _pending_writes, so this is a no-op once drained.
+        with self._pending_write_hashes_lock:
+            self._pending_write_hashes.discard(block_hash)
+            self._pending_writes.pop(block_hash, None)
+        logger.debug("delete_block purged pending buffer for %s", block_hash.hex()[:16])
+        return True
 
     def evict_block(self, block_hash: bytes) -> bool:
         return self.delete_block(block_hash)
