@@ -67,9 +67,10 @@ class TestGenerateT2va:
         )
         # 至少调用 dit 2 次（每步一次）。
         assert len(dit.calls) >= 2
-        # 第一次调用的 timestep 含 [1.0, t_video]。
+        # 第一次调用：t2va 单一 video_timestep（text 继承 video timestep，#602），
+        # 不再把 text 钉 1.0。4 步 shift=12 → 首步 t=1-sigma[0]，sigma[0]=1.0 → t=0.0。
         first = dit.calls[0]
-        assert first["timestep"][0] == 1.0
+        assert len(first["timestep"]) == 1
         # token_tags 含 text(1) + video(0)。
         assert 1 in first["token_tags"]
         assert 0 in first["token_tags"]
