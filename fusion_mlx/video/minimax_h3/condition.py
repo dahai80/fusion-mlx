@@ -178,14 +178,11 @@ def build_t2va_packed(
     video_indices = mx.arange(n_text, n_text + n_video, dtype=mx.int32)
     audio_indices = mx.zeros((0,), dtype=mx.int32)
 
-    # timestep：两个去重噪声水平 [clean=1.0, video=t]。text→idx0，video→idx1。
-    timestep = mx.array([1.0, float(timestep_video)], dtype=mx.float32)
-    timestep_indices = mx.concatenate(
-        [
-            mx.zeros((n_text,), dtype=mx.int32),
-            mx.ones((n_video,), dtype=mx.int32),
-        ]
-    )
+    # timestep：t2va 无 condition 行，官方 build_row_timesteps 给全序列（含 text）
+    # 赋 video_timestep（before_denoise.py:1195 "text rows inherit the video timestep"）。
+    # 旧实现把 text 钉在 1.0(clean) 致 AdaLN 错位、输出发暗（#602）。单一 video_timestep。
+    timestep = mx.array([float(timestep_video)], dtype=mx.float32)
+    timestep_indices = mx.zeros((seq_len,), dtype=mx.int32)
     token_tags = mx.concatenate(
         [
             mx.full((n_text,), TAG_TEXT, dtype=mx.int32),

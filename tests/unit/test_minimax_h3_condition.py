@@ -85,11 +85,12 @@ class TestBuildPacked:
         # tag：text=1 在前，video=0 在后。
         tags = [int(t) for t in packed["token_tags"]]
         assert tags == [TAG_TEXT] * 5 + [TAG_VIDEO] * 8
-        # timestep_indices：text→0（clean），video→1。
+        # timestep_indices：t2va 无 condition 行，官方 build_row_timesteps 给全序列
+        # 赋 video_timestep（text 继承 video timestep）→ 单一去重水平，全 0（#602）。
         tis = [int(t) for t in packed["timestep_indices"]]
-        assert tis == [0] * 5 + [1] * 8
-        # timestep = [1.0, 0.5]。
-        assert [float(x) for x in packed["timestep"]] == [1.0, 0.5]
+        assert tis == [0] * seq
+        # timestep = [0.5]（仅 video_timestep，text 不再钉 1.0 clean）。
+        assert [float(x) for x in packed["timestep"]] == [0.5]
         # video_indices = [5..12]（text 占 0..4）。
         assert [int(i) for i in packed["video_indices"]] == list(range(5, 13))
         # text position 全 0。
@@ -98,11 +99,12 @@ class TestBuildPacked:
         # latent_shape 透传。
         assert tuple(packed["latent_shape"]) == (1, 24, 2, 4, 4)
 
-    def test_t2va_timestep_distinct(self):
+    def test_t2va_single_timestep(self):
         video = mx.zeros((1, 24, 2, 4, 4))
         text = mx.zeros((1, 3, 5120))
         packed = build_t2va_packed(video, text, timestep_video=0.123)
-        # 两个去重噪声水平。
-        assert packed["timestep"].shape == (2,)
-        assert float(packed["timestep"][0]) == 1.0
-        assert float(packed["timestep"][1]) == pytest.approx(0.123)
+        # t2va 无 condition 行 → 全序列单一 video_timestep（#602）。
+        assert packed["timestep"].shape == (1,)
+        assert float(packed["timestep"][0]) == pytest.approx(0.123)
+        # 全行 timestep_indices=0（指向唯一去重水平）。
+        assert [int(t) for t in packed["timestep_indices"]] == [0] * 11
