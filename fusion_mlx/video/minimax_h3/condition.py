@@ -244,7 +244,9 @@ def build_t2va_packed(
     text_time = mx.arange(n_text, dtype=mx.float32)
     text_zero = mx.zeros((n_text,), dtype=mx.float32)
     text_pos = mx.stack([text_time, text_zero, text_zero], axis=-1)  # (n_text,3)
-    video_pos = video_position_grid(video_latents.shape, patch_size, origin=float(n_text))
+    video_pos = video_position_grid(
+        video_latents.shape, patch_size, origin=float(n_text)
+    )
     position_ids = mx.concatenate([text_pos, video_pos], axis=0)
 
     # audio 空（video-only）。
