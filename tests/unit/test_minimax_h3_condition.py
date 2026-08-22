@@ -41,13 +41,15 @@ class TestPatchify:
 class TestPositionGrid:
     def test_grid_shape_and_order(self):
         # (1, 24, 4, 8, 8) → nt=4 nh=4 nw=4 → 64 rows (t,h,w)。
-        grid = video_position_grid((1, 24, 4, 8, 8), (1, 2, 2))
+        # 空间轴 aspect-normalized [0,32)：sqrt_area=8, ratio=1, linspace(0,1,4)*32=[0,8,16,24]。
+        # 时间轴非均匀 _temporal_position_grid(4, origin=0)=[0, 5/3, 25/3, 15]。
+        grid = video_position_grid((1, 24, 4, 8, 8), (1, 2, 2), origin=0.0)
         assert grid.shape == (64, 3)
-        # 第一行 (0,0,0)，第二行 (0,0,1)（w 内层）。
+        # 第一行 (t0=0, h0=0, w0=0)，第二行 (t0=0, h0=0, w1=8)（w 内层）。
         assert [float(grid[0, i]) for i in range(3)] == [0.0, 0.0, 0.0]
-        assert [float(grid[1, i]) for i in range(3)] == [0.0, 0.0, 1.0]
-        # 第 4 行应跳到 (0,1,0)（h 中层，nw=4）。
-        assert [float(grid[4, i]) for i in range(3)] == [0.0, 1.0, 0.0]
+        assert [float(grid[1, i]) for i in range(3)] == [0.0, 0.0, 8.0]
+        # 第 4 行跳到 (0, h1=8, w0=0)（h 中层，nw=4）。
+        assert [float(grid[4, i]) for i in range(3)] == [0.0, 8.0, 0.0]
 
 
 class TestNormalize:
@@ -93,9 +95,9 @@ class TestBuildPacked:
         assert [float(x) for x in packed["timestep"]] == [0.5]
         # video_indices = [5..12]（text 占 0..4）。
         assert [int(i) for i in packed["video_indices"]] == list(range(5, 13))
-        # text position 全 0。
+        # text position：time=arange(n_text)，h/w=0（对照 before_denoise.py）。
         for i in range(5):
-            assert [float(p) for p in packed["position_ids"][i]] == [0.0, 0.0, 0.0]
+            assert [float(p) for p in packed["position_ids"][i]] == [float(i), 0.0, 0.0]
         # latent_shape 透传。
         assert tuple(packed["latent_shape"]) == (1, 24, 2, 4, 4)
 

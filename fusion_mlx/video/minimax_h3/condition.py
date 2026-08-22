@@ -97,6 +97,47 @@ def denormalize_latents(z):
     return z * std + mean
 
 
+# RoPE position 常量（对照 diffusers before_denoise.py）。
+# 空间轴 aspect-normalized 到固定 [0,32)，分辨率无关。
+# 时间轴非均匀：(5/3)*(1,4,4,4,4) 重复，从 origin=n_text 起算。
+# 旧实现用裸 arange(n) 致空间范围随分辨率线性增长 → DiT 行为分辨率相关
+# → 16x16 latent 解码偏暗(YAVG 9.9) vs 32x32 偏亮(146)，同 seed（#605）。
+_ROPE_SPATIAL_SCALE = 32.0
+_ROPE_FRAME_RESCALE = 5.0 / 3.0
+_ROPE_FRAMES_PER_LATENT = (1, 4, 4, 4, 4)
+
+
+def _spatial_position_grid(dim, patch, sqrt_area):
+    # 单空间轴坐标：aspect-normalized linspace，范围 [0, 32)。
+    # ratio = dim/sqrt_area，正方形 ratio=1 → 均匀 [0,32)；
+    # 矩形短轴 ratio<1 居中收缩，长轴 ratio>1 居中拉伸。
+    n = dim // patch
+    ratio = dim / sqrt_area
+    left = (1.0 - ratio) / 2.0
+    step = ratio / n
+    idx = mx.arange(n, dtype=mx.float32)
+    grid = (left + idx * step) * _ROPE_SPATIAL_SCALE
+    return grid
+
+
+def _temporal_position_grid(num_latent_frames, origin):
+    # 非均匀时间坐标：spans = 5/3*(1,4,4,4,4) 重复，origin + 累积和（首帧 0 span）。
+    n = num_latent_frames
+    spans = mx.array(
+        [_ROPE_FRAME_RESCALE * _ROPE_FRAMES_PER_LATENT[i % 5] for i in range(n)],
+        dtype=mx.float32,
+    )
+    cum = mx.cumsum(spans)
+    # 首帧坐标=origin，后续 = origin + spans[:-1].cumsum()（去掉末尾 span）。
+    grid = mx.zeros((n,), dtype=mx.float32)
+    grid = mx.array([origin], dtype=mx.float32)
+    if n > 1:
+        prev_cum = cum[:-1]
+        rest = origin + prev_cum
+        grid = mx.concatenate([grid, rest])
+    return grid
+
+
 def patchify_video_latents(z, patch_size=(1, 2, 2)):
     # 视频 latent (b, c=24, t, h, w) → token (b, n, c*pt*ph*pw)。
     # patch_size=(pt, ph, pw)。n = (t//pt)*(h//ph)*(w//pw)。
@@ -121,19 +162,25 @@ def unpatchify_video_tokens(tokens, latent_shape, patch_size=(1, 2, 2)):
     return tokens.reshape(b, c, t, h, w)
 
 
-def video_position_grid(latent_shape, patch_size=(1, 2, 2)):
+def video_position_grid(latent_shape, patch_size=(1, 2, 2), origin=0.0):
     # patchify 后 token 的 (t,h,w) 坐标，返回 (n, 3)。
     # 行顺序与 patchify_video_latents 一致（t 外 h 中 w 内）。
+    # 对照官方 before_denoise.py：
+    #   空间 h/w = _spatial_position_grid(dim, patch, sqrt_area)（aspect-normalized [0,32)）。
+    #   时间 t = _temporal_position_grid(nt, origin)（非均匀 5/3*(1,4,4,4,4) 从 origin 起算）。
     pt, ph, pw = patch_size
     _b, _c, t, h, w = latent_shape
     nt, nh, nw = t // pt, h // ph, w // pw
-    # 各轴独立坐标，通过 broadcast 拼到 (nt,nh,nw,3)。
-    t_ids = mx.arange(nt, dtype=mx.float32).reshape(nt, 1, 1)
-    h_ids = mx.arange(nh, dtype=mx.float32).reshape(1, nh, 1)
-    w_ids = mx.arange(nw, dtype=mx.float32).reshape(1, 1, nw)
-    t_b = mx.broadcast_to(t_ids, (nt, nh, nw))
-    h_b = mx.broadcast_to(h_ids, (nt, nh, nw))
-    w_b = mx.broadcast_to(w_ids, (nt, nh, nw))
+    # sqrt_area 用 patch 前的 latent 尺寸（对照 before_denoise.py
+    # _frame_position_grid: sqrt_area=sqrt(latent_height*latent_width)）。
+    sqrt_area = float(h * w) ** 0.5
+    h_grid = _spatial_position_grid(h, ph, sqrt_area)
+    w_grid = _spatial_position_grid(w, pw, sqrt_area)
+    t_grid = _temporal_position_grid(nt, float(origin))
+    # broadcast 拼到 (nt,nh,nw,3)，行顺序 t 外 h 中 w 内。
+    t_b = mx.broadcast_to(t_grid.reshape(nt, 1, 1), (nt, nh, nw))
+    h_b = mx.broadcast_to(h_grid.reshape(1, nh, 1), (nt, nh, nw))
+    w_b = mx.broadcast_to(w_grid.reshape(1, 1, nw), (nt, nh, nw))
     grid = mx.stack([t_b, h_b, w_b], axis=-1)  # (nt,nh,nw,3)
     return grid.reshape(nt * nh * nw, 3)
 
@@ -190,9 +237,14 @@ def build_t2va_packed(
         ]
     )
 
-    # position_ids：text 全 (0,0,0)；video = patch 网格 (t,h,w)。
-    text_pos = mx.zeros((n_text, 3), dtype=mx.float32)
-    video_pos = video_position_grid(video_latents.shape, patch_size)
+    # position_ids（对照 before_denoise.py:318-356）：
+    #   text 行 time = arange(n_text)（非零），h/w = 0。
+    #   video 行 time = _temporal_position_grid(nt, origin=n_text)，
+    #   h/w = aspect-normalized [0,32) 空间网格。
+    text_time = mx.arange(n_text, dtype=mx.float32)
+    text_zero = mx.zeros((n_text,), dtype=mx.float32)
+    text_pos = mx.stack([text_time, text_zero, text_zero], axis=-1)  # (n_text,3)
+    video_pos = video_position_grid(video_latents.shape, patch_size, origin=float(n_text))
     position_ids = mx.concatenate([text_pos, video_pos], axis=0)
 
     # audio 空（video-only）。
