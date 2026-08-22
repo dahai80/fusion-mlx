@@ -19,7 +19,7 @@ boundary handoff, the non-streaming path must do too.
 import asyncio
 from typing import Any
 
-from fusion_mlx.engine.batched import BatchedEngine
+from fusion_mlx.engines.batched import BatchedEngine
 
 _SENTINEL_BOUNDARY = 42
 
