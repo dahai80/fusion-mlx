@@ -187,6 +187,11 @@ DIFFUSERS_PIPELINE_TASKS = {
     "WanPipeline": "text-to-video",
     "WanTextToVideoPipeline": "text-to-video",
     "WanImageToVideoPipeline": "text-to-video",
+    # MiniMax-H3 ships model_index.json with _class_name="MiniMaxH3Pipeline"
+    # and no top-level config.json, so without this entry _is_video_model
+    # returns False and the FL2VA/Ref2VA partitions are never discovered
+    # (#597). Partition (fl2va/ref2va) is resolved by MiniMaxH3Backend.detect.
+    "MiniMaxH3Pipeline": "text-to-video",
 }
 
 # Known embedding architectures

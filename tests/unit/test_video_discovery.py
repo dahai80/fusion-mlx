@@ -42,6 +42,28 @@ def _make_wan2_config_only_model(path, model_type="ti2v"):
     (path / "transformer" / "model.safetensors").write_bytes(b"0" * 1000)
 
 
+def _make_h3_model_index_model(path):
+    # MiniMax-H3 ships a diffusers model_index.json with
+    # _class_name="MiniMaxH3Pipeline" and NO top-level config.json or
+    # configuration.json task manifest. Diffusers subdirs present:
+    # transformer/ + video_vae/ (audio_vae optional). Reproduces #597.
+    path.mkdir(parents=True, exist_ok=True)
+    (path / "model_index.json").write_text(
+        json.dumps(
+            {
+                "_class_name": "MiniMaxH3Pipeline",
+                "_diffusers_version": "0.32.2",
+                "transformer": ["diffusers", "MiniMaxH3DiTModel"],
+                "video_vae": ["diffusers", "MiniMaxH3VideoVAE"],
+                "text_encoder": ["transformers", "MiniMaxH3Qwen3VLHFEncoder"],
+            }
+        )
+    )
+    (path / "transformer").mkdir(exist_ok=True)
+    (path / "video_vae").mkdir(exist_ok=True)
+    (path / "transformer" / "model.safetensors").write_bytes(b"0" * 1000)
+
+
 class TestIsVideoModel:
     def test_text_to_video_manifest_returns_true(self, tmp_path):
         _make_video_model(tmp_path)
@@ -90,6 +112,23 @@ class TestIsVideoModel:
         (tmp_path / "config.json").write_text(json.dumps({"model_type": "ti2v"}))
         assert _is_video_model(tmp_path) is False
 
+    def test_h3_model_index_returns_true(self, tmp_path):
+        # Issue #597: MiniMax-H3 ships model_index.json with
+        # _class_name="MiniMaxH3Pipeline" (no config.json/configuration.json).
+        # With diffusers subdirs present it must be recognized as a video model.
+        _make_h3_model_index_model(tmp_path)
+        assert _is_video_model(tmp_path) is True
+
+    def test_h3_model_index_without_subdirs_returns_false(self, tmp_path):
+        # model_index.json with MiniMaxH3Pipeline but no transformer/video_vae
+        # subdirs -> not a loadable video model (mirrors the stray-manifest
+        # guard). Must not be misclassified.
+        tmp_path.mkdir(parents=True, exist_ok=True)
+        (tmp_path / "model_index.json").write_text(
+            json.dumps({"_class_name": "MiniMaxH3Pipeline"})
+        )
+        assert _is_video_model(tmp_path) is False
+
 
 class TestDetectVideoModelType:
     def test_video_dir_returns_video(self, tmp_path):
@@ -112,6 +151,13 @@ class TestDetectVideoModelType:
         # diffusers subdirs but no task manifest must be detected as "video"
         # (not "llm", which would route to BatchedEngine and fail mlx-lm load).
         _make_wan2_config_only_model(tmp_path, model_type="ti2v")
+        assert detect_model_type(tmp_path) == "video"
+
+    def test_h3_model_index_returns_video(self, tmp_path):
+        # Issue #597: MiniMax-H3 (model_index.json _class_name=
+        # MiniMaxH3Pipeline, no config.json) must be detected as "video", not
+        # "llm" (which would route to BatchedEngine and fail to load the DiT).
+        _make_h3_model_index_model(tmp_path)
         assert detect_model_type(tmp_path) == "video"
 
 
@@ -148,6 +194,16 @@ class TestDiscoverVideoModel:
         _make_wan2_config_only_model(tmp_path / "wan22-ti2v-5b", model_type="ti2v")
         models = discover_models(tmp_path)
         entry = models["wan22-ti2v-5b"]
+        assert entry.model_type == "video"
+        assert entry.engine_type == "video_gen"
+
+    def test_h3_model_index_registered_with_video_gen(self, tmp_path):
+        # Issue #597: MiniMax-H3 (model_index.json, no config.json) must
+        # register with engine_type="video_gen" so /v1/models/<id>/load routes
+        # to VideoGenEngine (minimax_h3 backend), not BatchedEngine (mlx-lm).
+        _make_h3_model_index_model(tmp_path / "minimax-h3-FL2VA")
+        models = discover_models(tmp_path)
+        entry = models["minimax-h3-FL2VA"]
         assert entry.model_type == "video"
         assert entry.engine_type == "video_gen"
 
