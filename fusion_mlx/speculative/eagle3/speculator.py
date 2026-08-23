@@ -38,13 +38,16 @@ ENV_DRAFT_TEMP = "FUSION_EAGLE3_DRAFT_TEMP"
 class Eagle3DraftConfig:
     draft_model_key: str = "llama3.1-8b"
     num_draft: int = 5
-    temperature: float = 0.0
+    # Phase-2 item 4: a small temperature on the draft sampler helps the
+    # draft distribution match the target's, improving acceptance vs
+    # greedy argmax (0.0). Override via FUSION_EAGLE3_DRAFT_TEMP.
+    temperature: float = 0.1
 
     @classmethod
     def from_env(cls) -> "Eagle3DraftConfig":
         key = os.environ.get(ENV_DRAFT_MODEL, "llama3.1-8b")
         num_draft = int(os.environ.get(ENV_DRAFT_TOKENS, "5"))
-        temp = float(os.environ.get(ENV_DRAFT_TEMP, "0.0"))
+        temp = float(os.environ.get(ENV_DRAFT_TEMP, "0.1"))
         if key not in EAGLE3_DRAFT_MODELS:
             logger.warning(
                 "eagle3: unknown draft_model_key=%s, fallback llama3.1-8b", key
@@ -76,6 +79,55 @@ class Eagle3Speculator:
         if info is None:
             return ""
         return info["target_family"]
+
+    # Map a target_family to the substrings that must appear in a
+    # compatible target model name. Eagle3 draft weights are trained
+    # against a specific family; running llama3-trained Eagle3 with a
+    # Qwen target (or vice versa) produces garbage drafts.
+    _FAMILY_MATCHERS = {
+        "llama3": ("llama", "llama3", "llama-3"),
+        "qwen3": ("qwen", "qwen3", "qwen-3"),
+    }
+
+    def is_compatible(self, target_model_name: str) -> bool:
+        """Return True if the loaded target model matches the draft's family.
+
+        Guards against silent garbage when an Eagle3 draft trained for
+        one family is paired with a target from another (e.g. EAGLE3-LLaMA3
+        against a Qwen model). Matching is case-insensitive substring on
+        the family matchers above; the local path basename is checked too
+        so a ``~/.fusion-mlx/models/.../Qwen3-...`` directory still matches.
+        """
+        family = self.target_family
+        matchers = self._FAMILY_MATCHERS.get(family)
+        if not matchers:
+            # Unknown family — no matcher, allow (best-effort) but warn.
+            logger.warning(
+                "eagle3: no family matcher for target_family=%s, "
+                "skipping compatibility guard",
+                family,
+            )
+            return True
+        name = (target_model_name or "").lower()
+        # Also consider the basename of a local model dir.
+        base = os.path.basename(name.rstrip("/"))
+        hay = f"{name} {base}"
+        compatible = any(m in hay for m in matchers)
+        if not compatible:
+            logger.warning(
+                "eagle3: target model %r does not match family %r (expected "
+                "one of %s) — disabling spec decode to avoid garbage drafts",
+                target_model_name,
+                family,
+                matchers,
+            )
+        else:
+            logger.info(
+                "eagle3: target model %r compatible with family %r",
+                target_model_name,
+                family,
+            )
+        return compatible
 
     def load(self) -> bool:
         if self._loaded:

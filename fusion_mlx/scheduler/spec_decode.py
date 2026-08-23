@@ -31,11 +31,22 @@ SPEC_WARMUP_STEPS = int(__import__("os").environ.get("FUSION_SPEC_WARMUP_STEPS",
 SPEC_DRAFT_MODEL_ENABLED = (
     __import__("os").environ.get("FUSION_DRAFT_MODEL_ENABLED", "1") == "1"
 )
+# Phase-2 item 3: lower threshold 0.10 -> 0.05 so a marginal draft model
+# is not permanently disabled; the adaptive pause/resume below re-probes
+# periodically instead of giving up after the first low window.
 SPEC_MIN_ACCEPT_RATE = float(
-    __import__("os").environ.get("FUSION_SPEC_MIN_ACCEPT_RATE", "0.10")
+    __import__("os").environ.get("FUSION_SPEC_MIN_ACCEPT_RATE", "0.05")
 )
 SPEC_ADAPTIVE_WINDOW = int(
     __import__("os").environ.get("FUSION_SPEC_ADAPTIVE_WINDOW", "20")
+)
+# Phase-2 item 3: while paused, re-probe acceptance every N steps so a
+# transient low-acceptance window does not disable spec decode for the
+# rest of the request. Without this the resume branch in record_accepted
+# is dead code — once paused, should_speculate() is always False, so no
+# drafts run, so record_accepted() never fires to un-pause.
+SPEC_RESUME_CHECK_INTERVAL = int(
+    __import__("os").environ.get("FUSION_SPEC_RESUME_CHECK_INTERVAL", "10")
 )
 
 
@@ -52,6 +63,12 @@ class SpecDecodeState:
         self._last_request_id = None
         self._recent_accepted = []
         self._spec_paused = False
+        # Phase-2 item 3: steps elapsed while paused, for periodic re-probe.
+        self._paused_steps = 0
+        # Phase-2 item 3: acceptance records collected only during the
+        # paused re-probe phase, so resume fires on probe recovery rather
+        # than waiting for the full adaptive window to flush stale records.
+        self._probe_records = []
 
     def reset(self):
         if self.draft_model:
@@ -67,6 +84,8 @@ class SpecDecodeState:
             self.steps_since_start = 0
             self._spec_paused = False
             self._recent_accepted.clear()
+            self._paused_steps = 0
+            self._probe_records.clear()
 
     def add_token(self, token: int):
         self.steps_since_start += 1
@@ -75,6 +94,20 @@ class SpecDecodeState:
         if self.steps_since_start < SPEC_WARMUP_STEPS:
             return False
         if self._spec_paused:
+            # Phase-2 item 3: periodic re-probe. Let one spec step through
+            # every SPEC_RESUME_CHECK_INTERVAL steps while paused so
+            # record_accepted() can collect a fresh acceptance sample and
+            # un-pause if the draft model recovered. Without this the
+            # resume branch below is dead code (paused -> never speculates
+            # -> never records -> never resumes).
+            self._paused_steps += 1
+            if self._paused_steps % SPEC_RESUME_CHECK_INTERVAL == 0:
+                logger.debug(
+                    "spec_decode: paused re-probe at step=%d (every %d)",
+                    self._paused_steps,
+                    SPEC_RESUME_CHECK_INTERVAL,
+                )
+                return True
             return False
         return True
 
@@ -90,6 +123,42 @@ class SpecDecodeState:
         if self.draft_model:
             self.draft_model.record_accepted(n_accepted)
 
+        # Phase-2 item 3: while paused, this record comes from a re-probe
+        # step (should_speculate let one through). Accumulate probe samples
+        # and decide resume on a small burst rather than the full adaptive
+        # window — the window still holds the stale low-acceptance records
+        # that triggered the pause, so it cannot drive resume.
+        if self._spec_paused:
+            self._probe_records.append((n_accepted, n_total))
+            probe_a = sum(a for a, t in self._probe_records)
+            probe_t = sum(t for a, t in self._probe_records)
+            probe_rate = probe_a / probe_t if probe_t > 0 else 0
+            # Evaluate after a few probe samples to avoid resuming on a
+            # single lucky draft.
+            if len(self._probe_records) >= 3:
+                probe_count = len(self._probe_records)
+                if probe_rate >= SPEC_MIN_ACCEPT_RATE:
+                    self._spec_paused = False
+                    self._paused_steps = 0
+                    self._probe_records.clear()
+                    self._recent_accepted.clear()
+                    logger.info(
+                        "spec_decode: resuming — probe acceptance %.1f%% "
+                        "recovered over %d probes",
+                        probe_rate * 100,
+                        probe_count,
+                    )
+                else:
+                    logger.info(
+                        "spec_decode: staying paused — probe acceptance "
+                        "%.1f%% still < %.1f%% over %d probes",
+                        probe_rate * 100,
+                        SPEC_MIN_ACCEPT_RATE * 100,
+                        len(self._probe_records),
+                    )
+                    self._probe_records.clear()
+            return
+
         self._recent_accepted.append((n_accepted, n_total))
         if len(self._recent_accepted) > SPEC_ADAPTIVE_WINDOW:
             self._recent_accepted.pop(0)
@@ -100,16 +169,12 @@ class SpecDecodeState:
             recent_rate = total_a / total_t if total_t > 0 else 0
             if recent_rate < SPEC_MIN_ACCEPT_RATE and not self._spec_paused:
                 self._spec_paused = True
+                self._paused_steps = 0
+                self._probe_records.clear()
                 logger.info(
                     "spec_decode: pausing — acceptance %.1f%% < %.1f%%",
                     recent_rate * 100,
                     SPEC_MIN_ACCEPT_RATE * 100,
-                )
-            elif recent_rate >= SPEC_MIN_ACCEPT_RATE and self._spec_paused:
-                self._spec_paused = False
-                logger.info(
-                    "spec_decode: resuming — acceptance %.1f%% recovered",
-                    recent_rate * 100,
                 )
 
     def get_stats(self) -> dict:

@@ -308,6 +308,21 @@ class EngineCore:
 
                 loaded = draft.load()
                 if loaded:
+                    # Safety guard: refuse to spec-decode if the Eagle3
+                    # draft family does not match the loaded target model
+                    # (e.g. EAGLE3-LLaMA3 against a Qwen target). Produces
+                    # garbage drafts silently otherwise.
+                    if (
+                        spec_method == "eagle3"
+                        and hasattr(draft, "is_compatible")
+                        and not draft.is_compatible(self.model_name)
+                    ):
+                        logger.warning(
+                            "Speculative decode: eagle3 draft incompatible with "
+                            "target model %r, disabling spec decode",
+                            self.model_name,
+                        )
+                        return
                     hidden_capture = None
                     if spec_method == "eagle3" and hasattr(model, "model"):
                         target_embed = getattr(model.model, "embed_tokens", None)
