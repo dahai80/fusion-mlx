@@ -5,13 +5,13 @@ audio from text. Unlike cross-attention DiTs, H3 scatters text/video/audio rows
 into **one** packed sequence and runs full self-attention over all of it
 (`is_causal=False`, no mask). This is a pure-MLX port in `fusion_mlx/video/minimax_h3/`.
 
-> **Status: P0–P6 landed, P8 real-model E2E VERIFIED.** Config / VAE / DiT /
-> scheduler / text-encoder / backend+registry are complete, and the **t2va
-> video-only** packed-sequence E2E path is wired **and verified against the real
-> 33B FL2VA weights** (DiT 534/536 params matched, VAE 559/560; 2-step 256×256
-> bf16 smoke produces non-trivial frames: frame0 std=115.7, min=0, max=255).
-> The text_encoder (Qwen3-VL, 67 GB) remains deferred; E2E currently uses a
-> fake text embedding for the DiT.
+> **Status: P0–P10 landed, P10 native-audio E2E VERIFIED on real 33B weights.**
+> Config / VAE / DiT / scheduler / text-encoder / backend+registry are complete,
+> the **t2va video-only** path is verified, and the **joint audio+video** path
+> (#588) is wired and verified: `audio=true` produces an MP4 with a real `aac`
+> audio stream (32 kHz mono, non-silent, content varies by seed) muxed alongside
+> the h264 video. The text_encoder (Qwen3-VL, 67 GB) loads real weights for E2E;
+> the audio branch uses a decode-only MLX port of upstream DAC+BigVGAN.
 
 ## Phase map
 
@@ -27,6 +27,7 @@ into **one** packed sequence and runs full self-attention over all of it
 | P7 | Prompt skill (h3-prompt-writing Context-IR) | deferred |
 | **P8** | **Real-model E2E** | **✅ verified** |
 | **P9** | **Tests (118 pass) + real-model E2E validation** | **✅ verified** |
+| **P10** | **Native audio (#588): joint t2va audio+video denoise + AudioVAE decode + MP4 mux** | **✅ verified** |
 
 ## Packed-sequence contract
 
@@ -170,6 +171,28 @@ both bugs fixed and real-model verified, 130 H3 tests pass.
    uses 243 frames (10s @ 24fps, t=61), which fully normalizes the DC. Use
    the official frame count at 768p; 41f was only a memory shortcut.
 
+## P10 corrections (native audio #588)
+
+Real-model audio E2E found one wiring bug plus the joint denoise path:
+
+1. **Engine dropped the `audio` kwarg** (`engines/video.py`).
+   `VideoGenEngine.generate()` built `VideoGenParams` from `**kwargs` but never
+   forwarded `audio`, so the backend always received the default `False` and ran
+   video-only — the API's `audio=true` was silently discarded at the engine
+   boundary. Fix: `audio=kwargs.get("audio", False)` in the params constructor
+   (False default keeps backward compat).
+2. **Joint denoise + AudioVAE + mux** (`generate.py::generate_t2va_av`).
+   Dual scheduler (video `shift=12.0`, audio `shift=3.0`, shared step count),
+   `build_t2va_av_packed` (audio rows, separate audio timestep, audio position
+   grid), DiT returns `(video_output, audio_output)`, each latent stepped on its
+   own scheduler; then `denormalize → audio_vae.decode → _save_audio (wav) →
+   _mux_av` (ffmpeg `-c:v copy -c:a aac -shortest`). Temp video/wav removed
+   after mux, final MP4 kept.
+3. **AudioVAE decode-only port** (`audio_vae/`). 779 MLX weights from 914
+   decode keys (135 `weight_norm` (g,v) pairs reconstructed to flat weights;
+   kaiser-sinc fixed filters recomputed at init). Decode `(1,162,32) →
+   (1,129600,1)` in 0.2s, finite `[-1,1]`.
+
 ## Files
 
 ```
@@ -181,12 +204,17 @@ fusion_mlx/video/minimax_h3/
 ├── scheduler.py         # MiniMaxH3Scheduler (rectified-flow Euler, data-ward PLUS sign)
 ├── text_encoder.py      # MiniMaxH3TextEncoder (Qwen3-VL layer 49)
 ├── condition.py         # P6: packed-sequence assembly + patchify + normalize
-├── generate.py          # P6: t2va video-only denoise loop + generate_video
+├── generate.py          # P6 t2va video-only + P10 generate_t2va_av joint A/V + generate_video
+├── audio_vae/           # P10 (#588): decode-only DAC+BigVGAN MLX port
+│   ├── __init__.py      # MiniMaxH3AudioVAE: from_pretrained + decode
+│   ├── bigvgan.py amp_block.py activations.py alias_free.py weight_norm.py
+│   └── audio_latents.py # 32-dim latents mean/std normalize/denormalize
 └── quantize.py          # 运行时量化 (in-place, DiT 8-bit / TE 4-bit)
 ```
 
 Backend: `fusion_mlx/engines/video_backends/minimax_h3.py` (`MiniMaxH3Backend`).
-Tests: `tests/unit/test_minimax_h3_{config,vae,transformer,scheduler,text_encoder,condition,generate,quantize,backend}.py`.
+Engine: `fusion_mlx/engines/video.py` forwards `audio` kwarg → `VideoGenParams` (#588).
+Tests: `tests/unit/test_minimax_h3_{config,vae,transformer,scheduler,text_encoder,condition,generate,quantize,backend}.py` + `test_minimax_h3_audio_generate.py` (#588 joint A/V denoise loop).
 
 ## Usage
 
@@ -200,12 +228,39 @@ curl -X POST http://localhost:8000/v1/videos/generate \
 Partitions: `fl2va` (t2va/i2va/l2va/fl2va) and `ref2va` (multi-reference).
 Resolutions: `768p`, `2k`. Max 361 frames (≤15s @24fps), `n=1`.
 
+### Native audio (#588, P10)
+
+`audio=true` runs the **joint t2va audio+video** path instead of video-only:
+the DiT audio branch denoises 32-dim audio latents on a separate scheduler
+(`shift=3.0` vs video `12.0`, shared step count), the decode-only AudioVAE
+(DAC+BigVGAN MLX port, ~605 MB) turns them into a 32 kHz mono waveform, and
+ffmpeg muxes video + audio into one MP4 (`h264` + `aac`, `-shortest`). Default
+`audio=false` preserves the existing video-only behavior.
+
+```bash
+# t2va with native audio (text → video + audio, single muxed MP4)
+curl -X POST http://localhost:8000/v1/videos/generate \
+  -H "Content-Type: application/json" \
+  -d '{"model":"minimax-h3","prompt":"ocean waves crashing on rocks, with sound of water","num_frames":97,"width":768,"height":768,"quantize":"dit8_te4","audio":true}'
+```
+
+Requires `audio_vae/` weights on disk (symlink/extract `FL2VA/audio_vae/` from
+the `MiniMaxAI/MiniMax-H3` repo via hf-mirror.com). Missing weights with
+`audio=true` fails visibly (no silent fallback to video-only). Quantize
+`dit8_te4` keeps the 33B footprint under M5 Max physical RAM for A/V runs.
+
+Verification (real 33B, dit8_te4, 25f 512×512): ffprobe reports 2 streams
+(`h264` video + `aac` 32 kHz mono audio); audio RMS ≈ 0.26 (seed 42) vs 0.40
+(seed 999) — non-silent and seed-dependent, confirming per-run AudioVAE decode
+rather than a static/placeholder track.
+
 ## Weight layout (expected)
 
 ```
 <model_dir>/
 ├── transformer/    # DiT shards (~66 GB, FL2VA partition)
 ├── text_encoder/   # Qwen3-VL (~67 GB)
+├── audio_vae/      # AudioVAE DAC+BigVGAN (~605 MB, #588)
 └── video_vae/      # VAE (~11 GB)
 ```
 

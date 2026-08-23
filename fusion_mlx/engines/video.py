@@ -92,6 +92,10 @@ class VideoGenEngine(BaseNonStreamingEngine):
             reference_images=kwargs.get("reference_images"),
             camera_conditions=kwargs.get("camera_conditions"),
             quantize=kwargs.get("quantize", "none"),
+            # MiniMax-H3 native audio (issue #588)：API 路由把 audio 放入 gen_kwargs，
+            # 但此处未转发到 VideoGenParams → backend 收到默认 False → 永远 video-only，
+            # 音频被静默丢弃。补齐转发，False 保持向后兼容。
+            audio=kwargs.get("audio", False),
         )
 
         t0 = time.monotonic()
