@@ -14,9 +14,16 @@ import logging
 
 import mlx.core as mx
 
+from .audio_vae.audio_latents import (
+    denormalize_audio_latents,
+    normalize_audio_latents,
+)
 from .condition import (
+    audio_latent_steps,
+    build_t2va_av_packed,
     build_t2va_packed,
     denormalize_latents,
+    normalize_latents,
     unpatchify_video_tokens,
 )
 from .scheduler import MiniMaxH3Scheduler
@@ -128,6 +135,133 @@ def generate_t2va_video(
     return frames
 
 
+def generate_t2va_av(
+    *,
+    dit,
+    vae,
+    audio_vae,
+    text_embeds,
+    num_frames,
+    height,
+    width,
+    fps=24,
+    seed=None,
+    num_inference_steps=20,
+    guide_scale=5.0,
+    z_channels=24,
+    vae_ratio=16,
+    vae_ratio_t=4,
+    compute_dtype=mx.bfloat16,
+):
+    # t2va joint audio+video 去噪（UNVERIFIED，上游 pipeline 源码未发布）。
+    #
+    # dit: 已加载 MiniMaxH3DiTModel（audio 分支结构性已接）。
+    # vae: 已加载 MiniMaxH3VideoVAE（video）。
+    # audio_vae: 已加载 MiniMaxH3AudioVAE（audio decode-only）。
+    # text_embeds: (1, n_text, 5120)。
+    # 返回 (frames, waveform)：frames list[(H,W,3) uint8]；waveform (T_out,) float32 [-1,1]。
+    #
+    # 双 scheduler：video shift=12.0，audio shift=3.0，共享步数（独立 sigma 网格）。
+    # 每 step：video_t=scheduler_video.timesteps[i]，audio_t=scheduler_audio.timesteps[i]，
+    # build_t2va_av_packed → dit → (video_output, audio_output) → 各 scheduler.step。
+    # 结束：video denormalize→vae.decode→frames；audio denormalize→audio_vae.decode→waveform。
+    if seed is not None:
+        mx.random.seed(int(seed))
+
+    video_shape = _latents_shape(
+        num_frames, height, width, vae_ratio, vae_ratio_t, z_channels
+    )
+    n_audio = audio_latent_steps(num_frames, fps)
+    audio_shape = (1, n_audio, 32)
+    logger.info(
+        "h3 t2va-av generate: video_shape=%s audio_shape=%s steps=%d seed=%s",
+        video_shape,
+        audio_shape,
+        num_inference_steps,
+        seed,
+    )
+
+    # 噪声初始化：video (b,c,t,h,w)，audio (b,T_audio,32)。
+    video_noise = mx.random.normal(video_shape, dtype=compute_dtype)
+    audio_noise = mx.random.normal(audio_shape, dtype=compute_dtype)
+    video_latents = normalize_latents(video_noise)
+    audio_latents = normalize_audio_latents(audio_noise)
+
+    scheduler_video = MiniMaxH3Scheduler(shift=12.0)
+    scheduler_video.set_timesteps(num_inference_steps)
+    scheduler_audio = MiniMaxH3Scheduler(shift=3.0)
+    scheduler_audio.set_timesteps(num_inference_steps)
+    v_timesteps = scheduler_video.timesteps
+    a_timesteps = scheduler_audio.timesteps
+    n_steps = min(int(v_timesteps.shape[0]), int(a_timesteps.shape[0]))
+    logger.info(
+        "h3 t2va-av generate: v_steps=%d a_steps=%d n=%d",
+        v_timesteps.shape[0],
+        a_timesteps.shape[0],
+        n_steps,
+    )
+
+    for i in range(n_steps):
+        t_video = float(v_timesteps[i])
+        t_audio = float(a_timesteps[i])
+        packed = build_t2va_av_packed(
+            video_latents.astype(compute_dtype),
+            audio_latents.astype(compute_dtype),
+            text_embeds.astype(compute_dtype),
+            t_video,
+            t_audio,
+        )
+        video_output, audio_output = dit(
+            packed["hidden_states"],
+            packed["audio_hidden_states"],
+            packed["encoder_hidden_states"],
+            packed["timestep"],
+            packed["timestep_indices"],
+            packed["token_tags"],
+            packed["position_ids"],
+            packed["video_indices"],
+            packed["audio_indices"],
+            packed["text_indices"],
+        )
+        video_model = unpatchify_video_tokens(
+            video_output, packed["latent_shape"], (1, 2, 2)
+        )
+        audio_model = audio_output  # (b, n_audio, 32) 每步 32 维，无需 unpatchify
+        video_latents = scheduler_video.step(video_model, v_timesteps[i], video_latents)
+        audio_latents = scheduler_audio.step(audio_model, a_timesteps[i], audio_latents)
+        mx.eval(video_latents, audio_latents)
+        if i % 10 == 0 or i == n_steps - 1:
+            logger.info(
+                "h3 t2va-av generate: step %d/%d t_v=%.4f t_a=%.4f",
+                i,
+                n_steps,
+                t_video,
+                t_audio,
+            )
+
+    # video 解码。
+    video_latents = denormalize_latents(video_latents.astype(mx.float32))
+    logger.info(
+        "h3 t2va-av generate: decoding video latents shape=%s", video_latents.shape
+    )
+    decoded = vae.decode(video_latents)
+    frames = _to_frames(decoded)
+
+    # audio 解码。
+    audio_latents = denormalize_audio_latents(audio_latents.astype(mx.float32))
+    logger.info(
+        "h3 t2va-av generate: decoding audio latents shape=%s", audio_latents.shape
+    )
+    audio_out = audio_vae.decode(audio_latents)  # (b, T_out, 1)
+    mx.eval(audio_out)
+    waveform = mx.array(audio_out[0, :, 0])  # (T_out,) mono
+    mx.eval(waveform)
+    logger.info(
+        "h3 t2va-av generate: done frames=%d waveform=%s", len(frames), waveform.shape
+    )
+    return frames, waveform
+
+
 def _to_frames(decoded):
     # decoded (1, 3, t, h, w) float (可能 bfloat16) → list[(H,W,3) uint8]。
     # np.array 对 MLX bfloat16 会失败/极慢，先转 float32 并显式 eval 物化。
@@ -216,11 +350,15 @@ def generate_video(
     num_inference_steps=20,
     output_path=None,
     quantize="none",
+    audio=False,
 ):
-    # H3 t2va video-only 顶层编排（UNVERIFIED，需真实模型校正）。
+    # H3 t2va 顶层编排（UNVERIFIED，需真实模型校正）。
     #
-    # model_path: H3 模型根目录（含 transformer/ text_encoder/ video_vae/ 子目录或单目录）。
+    # model_path: H3 模型根目录（含 transformer/ text_encoder/ video_vae/ audio_vae/ 子目录或单目录）。
     # 加载 DiT + VAE + text_encoder，编码 prompt，去噪，写 mp4。
+    #
+    # audio: True → joint audio+video 去噪（generate_t2va_av），audio_vae 解码音频，
+    #   ffmpeg 合流成单 MP4（A/V）；False → video-only 原路径（向后兼容）。
     #
     # quantize: 运行时量化策略（in-place，不落盘）：
     #   "none"     - 不量化（默认，bf16 原精度）。
@@ -240,7 +378,7 @@ def generate_video(
     do_dit_q = quantize in ("dit8", "dit8_te4")
 
     logger.info(
-        "h3 generate_video: prompt='%s' frames=%d %dx%d fps=%d seed=%s steps=%d quantize=%s",
+        "h3 generate_video: prompt='%s' frames=%d %dx%d fps=%d seed=%s steps=%d quantize=%s audio=%s",
         prompt[:60],
         num_frames,
         width,
@@ -249,6 +387,7 @@ def generate_video(
         seed,
         num_inference_steps,
         quantize,
+        audio,
     )
 
     cfg = H3Config()
@@ -300,25 +439,63 @@ def generate_video(
     vae_path = _resolve_subdir(model_path, "video_vae")
     vae = MiniMaxH3VideoVAE.from_pretrained(vae_path, config=H3VAEConfig())
 
-    frames = generate_t2va_video(
-        dit=dit,
-        vae=vae,
-        text_embeds=text_embeds,
-        num_frames=num_frames,
-        height=height,
-        width=width,
-        seed=seed,
-        num_inference_steps=num_inference_steps,
-        guide_scale=cfg.guide_scale,
-        z_channels=cfg.latents_dim,
-        vae_ratio=H3VAEConfig().vae_ratio,
-        vae_ratio_t=H3VAEConfig().vae_ratio_t,
-    )
-
     if output_path is None:
         tmp = tempfile.mkdtemp(prefix="fusion_h3_")
         output_path = os.path.join(tmp, "h3_output.mp4")
-    _write_mp4(frames, output_path, fps)
+
+    if audio:
+        # joint audio+video：额外加载 AudioVAE，去噪得 (frames, waveform)。
+        from .audio_vae import MiniMaxH3AudioVAE
+
+        audio_vae_path = _resolve_subdir(model_path, "audio_vae")
+        audio_vae = MiniMaxH3AudioVAE.from_pretrained(audio_vae_path)
+
+        frames, waveform = generate_t2va_av(
+            dit=dit,
+            vae=vae,
+            audio_vae=audio_vae,
+            text_embeds=text_embeds,
+            num_frames=num_frames,
+            height=height,
+            width=width,
+            fps=fps,
+            seed=seed,
+            num_inference_steps=num_inference_steps,
+            guide_scale=cfg.guide_scale,
+            z_channels=cfg.latents_dim,
+            vae_ratio=H3VAEConfig().vae_ratio,
+            vae_ratio_t=H3VAEConfig().vae_ratio_t,
+        )
+        # 先写临时 video-only mp4 + wav，再 ffmpeg 合流成最终 MP4。
+        tmp_dir = os.path.dirname(output_path)
+        tmp_video = os.path.join(tmp_dir, "h3_video_only.mp4")
+        tmp_wav = os.path.join(tmp_dir, "h3_audio.wav")
+        _write_mp4(frames, tmp_video, fps)
+        _save_audio(waveform, tmp_wav)
+        _mux_av(tmp_video, tmp_wav, output_path)
+        # 清理过程文件（只留最终 MP4 + 日志）。
+        try:
+            os.remove(tmp_video)
+            os.remove(tmp_wav)
+        except OSError as e:
+            logger.warning("h3: cleanup temp av files failed: %s", e)
+    else:
+        frames = generate_t2va_video(
+            dit=dit,
+            vae=vae,
+            text_embeds=text_embeds,
+            num_frames=num_frames,
+            height=height,
+            width=width,
+            seed=seed,
+            num_inference_steps=num_inference_steps,
+            guide_scale=cfg.guide_scale,
+            z_channels=cfg.latents_dim,
+            vae_ratio=H3VAEConfig().vae_ratio,
+            vae_ratio_t=H3VAEConfig().vae_ratio_t,
+        )
+        _write_mp4(frames, output_path, fps)
+
     logger.info("h3: output saved to %s", output_path)
     return output_path
 
@@ -343,4 +520,52 @@ def _write_mp4(frames, output_path, fps):
     )
 
 
-__all__ = ["generate_t2va_video", "generate_video"]
+def _save_audio(waveform, path, sample_rate=32000):
+    # waveform (T,) float32 [-1,1] → mono PCM wav（与 ltx2 audio.save_audio 同模式）。
+    import wave
+
+    import numpy as np
+
+    audio = np.clip(np.array(waveform), -1.0, 1.0)
+    audio_int16 = (audio * 32767).astype(np.int16)
+    with wave.open(str(path), "wb") as wf:
+        wf.setnchannels(1)
+        wf.setsampwidth(2)
+        wf.setframerate(sample_rate)
+        wf.writeframes(audio_int16.tobytes())
+    logger.info(
+        "h3: wav written %d samples @%dHz -> %s", len(audio_int16), sample_rate, path
+    )
+
+
+def _mux_av(video_path, audio_path, output_path):
+    # ffmpeg 合流 video + audio → 单 MP4（copy video + aac audio，-shortest 截齐）。
+    # 与 ltx2 audio.mux_video_audio 同模式。
+    import subprocess
+
+    cmd = [
+        "ffmpeg",
+        "-y",
+        "-i",
+        str(video_path),
+        "-i",
+        str(audio_path),
+        "-c:v",
+        "copy",
+        "-c:a",
+        "aac",
+        "-shortest",
+        str(output_path),
+    ]
+    try:
+        subprocess.run(cmd, check=True, capture_output=True)
+    except subprocess.CalledProcessError as e:
+        raise RuntimeError(
+            "ffmpeg mux failed: " + (e.stderr.decode() if e.stderr else str(e))
+        ) from e
+    except FileNotFoundError as e:
+        raise RuntimeError("ffmpeg not found, install ffmpeg for audio mux") from e
+    logger.info("h3: av muxed -> %s", output_path)
+
+
+__all__ = ["generate_t2va_video", "generate_t2va_av", "generate_video"]

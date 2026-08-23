@@ -1245,6 +1245,7 @@ to the correct pure-MLX implementation. Supported backends:
 | SVD | `svd` | Stable Video Diffusion XT | ✅ | ✅ #212 |
 | Cosmos | `cosmos` | 7B T2V + Predict2 2B I2V | ✅ (Predict2) | ✅ #213 |
 | HunyuanVideo | `hunyuanvideo` | HunyuanVideo | ✅ | ✅ #214 |
+| MiniMax-H3 | `minimax_h3` | H3 33B (FL2VA/Ref2VA) | — | ✅ #588 native audio |
 | CogVideo | `cogvideo` | CogVideoX | — | stub (no MLX port) |
 
 Aliases: `svd-xt`, `stable-video-diffusion`, `cosmos-1.0`, `predict2`,

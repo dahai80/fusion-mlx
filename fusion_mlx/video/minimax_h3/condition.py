@@ -275,6 +275,101 @@ def build_t2va_packed(
     }
 
 
+def build_t2va_av_packed(
+    video_latents,
+    audio_latents,
+    text_embeds,
+    timestep_video,
+    timestep_audio,
+):
+    # t2va joint audio+video packed-sequence 组装（UNVERIFIED，上游 diffusers 管线源码未发布）。
+    #
+    # video_latents: (b, 24, t, h, w) 已归一化 latent（含噪声）。
+    # audio_latents: (b, T_audio, 32) 已归一化 audio latent（含噪声，通道 last）。
+    # text_embeds: (b, n_text, 5120)。
+    # timestep_video / timestep_audio: 标量 t∈[0,1]，video/audio 各自噪声水平（不同 shift）。
+    #
+    # 序列：text + video + audio（顺序仅由 *_indices 决定）。
+    # timestep = [video_t, audio_t]（2 个去重噪声水平）。
+    #   text/video → idx0，audio → idx1。
+    #   adaln_indices = timestep_indices * 3 + token_tags。
+    # audio 行：无 patchify，n_audio = T_audio，每行 (b, 1, 32)。
+    #   audio patch_proj（32→5376）在 transformer 内，这里喂原始 32 维。
+    # position_ids：
+    #   text time=arange(n_text)，h/w=0。
+    #   video time=_temporal_position_grid(nt, origin=n_text)，h/w 空间网格。
+    #   audio time=arange(T_audio) + (n_text+n_video)，h/w=0（连续时间轴，无空间）。
+    patch_size = (1, 2, 2)
+    b, _c, _t, _h, _w = video_latents.shape
+    video_tokens = patchify_video_latents(video_latents, patch_size)
+    n_video = video_tokens.shape[1]
+    n_text = text_embeds.shape[1]
+    n_audio = audio_latents.shape[1]
+    seq_len = n_text + n_video + n_audio
+
+    text_indices = mx.arange(n_text, dtype=mx.int32)
+    video_indices = mx.arange(n_text, n_text + n_video, dtype=mx.int32)
+    audio_indices = mx.arange(n_text + n_video, seq_len, dtype=mx.int32)
+
+    # timestep：2 水平。text 继承 video_t（同 t2va video-only，#602 fix）。
+    timestep = mx.array(
+        [float(timestep_video), float(timestep_audio)], dtype=mx.float32
+    )
+    timestep_indices = mx.concatenate(
+        [
+            mx.zeros((n_text + n_video,), dtype=mx.int32),  # text+video → idx0
+            mx.ones((n_audio,), dtype=mx.int32),  # audio → idx1
+        ]
+    )
+    token_tags = mx.concatenate(
+        [
+            mx.full((n_text,), TAG_TEXT, dtype=mx.int32),
+            mx.full((n_video,), TAG_VIDEO, dtype=mx.int32),
+            mx.full((n_audio,), TAG_AUDIO, dtype=mx.int32),
+        ]
+    )
+
+    # position_ids。
+    text_time = mx.arange(n_text, dtype=mx.float32)
+    text_zero = mx.zeros((n_text,), dtype=mx.float32)
+    text_pos = mx.stack([text_time, text_zero, text_zero], axis=-1)  # (n_text,3)
+    video_pos = video_position_grid(
+        video_latents.shape, patch_size, origin=float(n_text)
+    )
+    # audio：连续时间轴，从 video 末尾续。无空间（h/w=0）。
+    audio_origin = float(n_text + n_video)
+    audio_time = mx.arange(n_audio, dtype=mx.float32) + audio_origin
+    audio_zero = mx.zeros((n_audio,), dtype=mx.float32)
+    audio_pos = mx.stack([audio_time, audio_zero, audio_zero], axis=-1)  # (n_audio,3)
+    position_ids = mx.concatenate([text_pos, video_pos, audio_pos], axis=0)
+
+    audio_hidden_states = audio_latents.astype(text_embeds.dtype)  # (b, n_audio, 32)
+
+    logger.info(
+        "h3 t2va-av packed: seq=%d (text=%d video=%d audio=%d) t_video=%.4f t_audio=%.4f",
+        seq_len,
+        n_text,
+        n_video,
+        n_audio,
+        float(timestep_video),
+        float(timestep_audio),
+    )
+    return {
+        "hidden_states": video_tokens,
+        "audio_hidden_states": audio_hidden_states,
+        "encoder_hidden_states": text_embeds,
+        "timestep": timestep,
+        "timestep_indices": timestep_indices,
+        "token_tags": token_tags,
+        "position_ids": position_ids,
+        "video_indices": video_indices,
+        "audio_indices": audio_indices,
+        "text_indices": text_indices,
+        "latent_shape": video_latents.shape,
+        "audio_shape": audio_latents.shape,
+    }
+
+
 __all__ = [
     "normalize_latents",
     "denormalize_latents",
@@ -283,7 +378,26 @@ __all__ = [
     "unpatchify_video_tokens",
     "video_position_grid",
     "build_t2va_packed",
+    "build_t2va_av_packed",
+    "audio_latent_steps",
     "TAG_VIDEO",
     "TAG_TEXT",
     "TAG_AUDIO",
 ]
+
+
+# Audio latent 步数 hop_length = prod(encoder_rates) = 2*4*4*5*5 = 800（metadata.json）。
+# T_audio = ceil(num_frames/fps * sample_rate / hop_length)。
+_H3_AUDIO_HOP_LENGTH = 800
+_H3_AUDIO_SAMPLE_RATE = 32000
+
+
+def audio_latent_steps(
+    num_frames, fps, sample_rate=_H3_AUDIO_SAMPLE_RATE, hop_length=_H3_AUDIO_HOP_LENGTH
+):
+    # 视频时长 → audio latent 步数。97f@24fps → 4.04s → 161 步。
+    import math
+
+    duration = num_frames / float(fps)
+    steps = math.ceil(duration * sample_rate / hop_length)
+    return steps

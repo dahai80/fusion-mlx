@@ -99,6 +99,9 @@ class VideoGenerateRequest(BaseModel):
     # Runtime quantize knob (issue #586). MiniMax-H3 only: "dit8_te4" (~61G)
     # vs default "none" (~144G, OOMs on 137G). Other backends ignore it.
     quantize: str | None = None
+    # MiniMax-H3 native audio (issue #588): joint audio+video generation.
+    # True → muxed MP4 (A/V). False → video-only. Other backends ignore it.
+    audio: bool | None = None
 
 
 class VideoOutput(BaseModel):
@@ -332,6 +335,8 @@ async def generate_video(
                 gen_kwargs["camera_conditions"] = cam_path
             if request.quantize is not None:
                 gen_kwargs["quantize"] = request.quantize
+            if request.audio is not None:
+                gen_kwargs["audio"] = request.audio
 
             video_bytes_list = await engine.generate(**gen_kwargs)
             outputs = [

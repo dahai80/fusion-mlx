@@ -89,6 +89,10 @@ class VideoGenParams:
     # peaks ~144G (OOMs on 137G M5 Max); "dit8_te4" ~61G fits. Other backends
     # ignore this field. Default "none" preserves existing behavior.
     quantize: str = "none"
+    # MiniMax-H3 native audio (issue #588): joint audio+video generation.
+    # True → DiT audio branch + AudioVAE decode → muxed MP4 (A/V single file).
+    # False → video-only (backwards compat). Other backends ignore this field.
+    audio: bool = False
     extra: dict[str, Any] = field(default_factory=dict)
     # Output format: "mp4" (default, returns bytes) or "raw" (returns numpy
     # array of shape [T, H, W, 3] uint8 — skips MP4 encoding entirely).
