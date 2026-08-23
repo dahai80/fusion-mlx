@@ -1645,13 +1645,14 @@ test_stt_response_format.py
 # impl. Test guards a regression that cannot occur. Reconciling = either
 # reverse aa7a876 policy OR rewrite test to check `.git/info/exclude` for
 # worktree/lock exclusion (also policy). Out of scope.
-# KEEP_QUARANTINED 2026-08-22 (#599): repo has no .gitignore; .claude/ untracked. Awaits maintainer .gitignore decision.
-test_submit_gitignore.py
+# RESCUED 2026-08-23 (#598): .gitignore now exists at repo root with .claude/
+# rule (PR #608, closes #599). test_submit_gitignore un-quarantined.
 test_suffix_decoding.py
 test_telemetry_cli.py
 test_tempfile_safe.py
-# KEEP_QUARANTINED 2026-08-22 (#598): 2 minimax-m3 tests fail — extract_thinking has no <mm:think> handling; clean_special_tokens SPECIAL_TOKENS_PATTERN omits MiniMax tokens (known in output_parser.py:148). Feature-gap. 38/40 pass otherwise.
-test_thinking.py
+# RESCUED 2026-08-23 (#598): extract_thinking now normalizes <mm:think>
+# to canonical tags (thinking.py); clean_special_tokens SPECIAL_TOKENS_PATTERN
+# now strips MiniMax M3 control tokens (utils.py). 40/40 pass.
 test_thinking_budget.py
 # KEEP_QUARANTINED tool cluster (round10q-b6 2026-08-19): 9 suites, all
 # feature/contract gaps NOT pure harness drift. Verified per-suite fail

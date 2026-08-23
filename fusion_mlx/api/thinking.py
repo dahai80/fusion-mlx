@@ -9,7 +9,19 @@ Used by reasoning models like DeepSeek R1, Qwen3/3.5, MiniMax that wrap
 their chain-of-thought reasoning in <think>...</think> tags.
 """
 
+import logging
 import re
+
+logger = logging.getLogger(__name__)
+
+# Alternative thinking tags normalized to the canonical pair before
+# parsing. MiniMax M3 emits <mm:think>...</mm:think> (see
+# parsers/output_parser.py:177 — the streaming path rewrites these to
+# the canonical tags before ThinkingParser sees them; the non-streaming
+# extract_thinking path must do the same so reasoning is not leaked into
+# the content body for MiniMax models served via the Responses API).
+_ALT_THINK_OPEN = "<mm:think>"
+_ALT_THINK_CLOSE = "</mm:think>"
 
 # Tags used for thinking blocks
 _OPEN_TAG = "<think>"
@@ -52,6 +64,17 @@ def extract_thinking(text: str, finish_reason: str | None = None) -> tuple[str, 
     """
     if not text:
         return ("", "")
+
+    # Normalize alternative thinking tags to the canonical pair so
+    # MiniMax M3 <mm:think> blocks are parsed as reasoning, matching the
+    # streaming rewrite in output_parser.py:177.
+    if _ALT_THINK_OPEN in text:
+        logger.debug(
+            "normalizing %d MiniMax <mm:think> block(s) to canonical tags",
+            text.count(_ALT_THINK_OPEN),
+        )
+        text = text.replace(_ALT_THINK_OPEN, _OPEN_TAG)
+        text = text.replace(_ALT_THINK_CLOSE, _CLOSE_TAG)
 
     thinking_parts = []
     remaining = text
