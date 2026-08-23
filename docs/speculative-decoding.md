@@ -175,20 +175,42 @@ adaptive gate disable it on the hostile minority.
 
 ## Adaptive gating (runtime)
 
-Within the active method, `scheduler/spec_decode.py` already does per-method
+Within the active method, `scheduler/spec_decode.py` does per-request
 **hysteresis** so a method that starts failing doesn't drag throughput down:
 
-- Each method tracks its acceptance rate (`DraftStats.acceptance_rate` =
-  accepted/proposed).
-- If acceptance drops below `SPEC_MIN_ACCEPT_RATE`, the method is **paused**
-  (`_spec_paused`) — subsequent requests decode without spec until the rate
-  recovers, then it **resumes**.
+- Each spec step records its acceptance (`record_accepted(n_accepted, K)`).
+- A sliding window (`SPEC_ADAPTIVE_WINDOW`, default 20, env
+  `FUSION_SPEC_ADAPTIVE_WINDOW`) tracks the recent acceptance rate.
+- If the windowed rate drops below `SPEC_MIN_ACCEPT_RATE` (default 0.05, env
+  `FUSION_SPEC_MIN_ACCEPT_RATE`), the method is **paused** (`_spec_paused`)
+  — subsequent steps decode without spec.
+- **Phase-2 fix: the resume path.** Previously pause was a dead end — once
+  paused, `should_speculate()` always returned False, so no drafts ran and
+  `record_accepted()` never fired again, so the method could never
+  un-pause. The fix adds a periodic **re-probe**: while paused,
+  `should_speculate()` lets one spec step through every
+  `SPEC_RESUME_CHECK_INTERVAL` steps (default 10, env
+  `FUSION_SPEC_RESUME_CHECK_INTERVAL`). The re-probe step produces a fresh
+  acceptance sample; after ≥3 probe samples, if the probe rate has recovered
+  to ≥ `SPEC_MIN_ACCEPT_RATE` the method **resumes**, otherwise it stays
+  paused and clears the probe set to re-sample.
 - This is automatic and free; no flag required.
 
 This gating is what makes SuffixDecoding safe to leave on by default for
 agent workloads: on hostile inputs its D1-match gate and the scheduler's
-pause hysteresis combine to fall back to plain decode, so it never regresses
-below baseline.
+pause/re-probe hysteresis combine to fall back to plain decode, so it never
+regresses below baseline.
+
+### Real-model verification (2026-08-23)
+
+Verified on Eagle3 + Llama-3.1-8B-Instruct-4bit with forced-pause params
+(`FUSION_SPEC_MIN_ACCEPT_RATE=0.5 FUSION_SPEC_ADAPTIVE_WINDOW=10
+FUSION_SPEC_RESUME_CHECK_INTERVAL=3`): `PAUSING` fires at ~step 10 when the
+windowed rate crosses the threshold; `paused re-probe` fires every 3 paused
+steps (the dead-code fix is live); `STAYING PAUSED` repeats correctly while
+the probe rate stays below threshold. At the natural 0.05 threshold with
+~20% acceptance, `paused` never flips — correct, the threshold is never
+crossed.
 
 ---
 
@@ -295,6 +317,64 @@ remain usable from the admin panel, tests, and per-model settings.
 - **DFlash/DSpark draft loads cost memory.** Budget for the draft model in
   addition to the target; on memory-constrained machines prefer
   SuffixDecoding (drafter-free) or MTP (uses the target's own heads).
+
+---
+
+## Eagle3 (`eagle3`)
+
+Eagle3 is a draft-model speculative decoder: a small one-layer drafter
+reads the target model's multi-layer hidden states (captured at fixed
+`capture_layers=[8,16,31]`) projected through `Eagle3Model.fc` (a
+`Linear(3 * target_hidden_size, hidden_size)`), and proposes K draft tokens
+the target verifies in one forward pass. fusion-mlx ships a custom
+MLX-native Eagle3 model (`fusion_mlx/speculative/eagle3/`) instead of
+`mlx_lm.load()`, which fails on Eagle3's non-standard weight keys.
+
+### Activation
+
+```bash
+FUSION_SPEC_METHOD=eagle3 fusion-mlx serve --model mlx-community/Meta-Llama-3.1-8B-Instruct-4bit
+```
+
+Optional env knobs:
+
+| Env | Default | Purpose |
+|---|---|---|
+| `FUSION_SPEC_METHOD` | `draft_model` | Selects `eagle3` vs the legacy draft-model path. |
+| `FUSION_EAGLE3_DRAFT_MODEL` | `llama3.1-8b` | Draft registry key (`llama3.1-8b`, `qwen3-8b`). |
+| `FUSION_EAGLE3_DRAFT_TOKENS` | `5` | K — draft tokens per verify step. |
+| `FUSION_EAGLE3_DRAFT_TEMP` | `0.1` | Draft sampler temperature. A small temp (Phase-2 item 4) helps the draft distribution match the target's, improving acceptance vs greedy argmax (`0.0`). |
+
+### Phase-2 hardening (PR #609)
+
+Four items, all real-model verified on Eagle3 + Llama-3.1-8B-Instruct-4bit:
+
+1. **Multi-layer hidden capture** — `HiddenStateCapture` grabs target
+   hidden states at layers `[8,16,31]`, concatenated and projected via
+   `fc`. Already implemented; verified `hidden_capture installed
+   layers=[8, 16, 31]` in the real-model log.
+2. **Family compatibility guard** — `Eagle3Speculator.is_compatible()` does
+   case-insensitive substring matching on `_FAMILY_MATCHERS` (llama3/qwen3),
+   including the local-path basename, and **disables spec decode** if the
+   loaded target's family doesn't match the draft's (e.g. EAGLE3-LLaMA3
+   against a Qwen target would produce silent garbage drafts). Verified
+   `family=llama3 incompatible_block=False` for the matched Llama3 target.
+3. **Adaptive pause/resume** — see [Adaptive gating](#adaptive-gating-runtime).
+   The resume-path dead-code fix is the core change.
+4. **Draft temperature** — default `0.0`→`0.1` (`FUSION_EAGLE3_DRAFT_TEMP`);
+   surfaced in the "draft model enabled" log line.
+
+### Code map
+
+- `fusion_mlx/speculative/eagle3/speculator.py` — `Eagle3Speculator`,
+  `is_compatible`, `Eagle3DraftConfig`
+- `fusion_mlx/speculative/eagle3/model.py` — `Eagle3Model`, weight loading
+  (`safe_open` keys iteration)
+- `fusion_mlx/speculative/hidden_capture.py` — `HiddenStateCapture`
+- `fusion_mlx/engine_core.py` — spec-init block (`_init_draft`), compat guard
+- `fusion_mlx/scheduler/spec_decode.py` — `SpecDecodeState`, pause/re-probe
+- `tests/unit/test_eagle3_compatibility.py` — 7 family-match tests
+- `tests/unit/test_spec_decode_adaptive.py` — 7 pause/resume tests
 
 ---
 

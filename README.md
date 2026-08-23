@@ -105,7 +105,7 @@ Key optimizations: quant2/quant2_128/quant2_flat ultra-aggressive 2-bit quantiza
 - **9 engine types** - LLM, VLM, Embedding, Reranker, STT, TTS, STS, ImageGen (Flux 2), VideoGen (LTX-2, Wan2, SkyReels-V3)
 - **OpenAI + Anthropic API** - one server, two API flavors, fully compatible
 - **Continuous batching** - vLLM-style scheduler with chunked prefill, preemption, priority queues
-- **Speculative decoding** - SuffixDecoding, DFlash, DSpark, MTP, VLM MTP (2–5× faster generation)
+- **Speculative decoding** - SuffixDecoding, DFlash, DSpark, MTP, VLM MTP, Eagle3 (2–5× faster generation)
 - **TurboQuant KV** - 4-bit KV cache quantization, 4× less memory traffic
 - **40+ quant formats** - GGUF (Q2_K -> Q8_0), Imatrix (IQ1_M -> IQ4_XS), TurboQuant (TQ1_0/TQ2_0), MLX (mxfp4/mxfp8/6bit/4bit/8bit/F16/BF16/F32)
 - **Paged KV cache** - SSD cold layer, block-aware prefix caching with COW sharing
@@ -1708,6 +1708,41 @@ fusion-mlx serve --model qwen3.8-27b-4bit \
 > tokens identical to baseline, content match; only first-token leading-space
 > differs — a dflash detokenizer join-space artifact). 27 dflash2 tests green.
 > See [docs/speculative-decoding.md](docs/speculative-decoding.md#dflash2-block-diffusion-z-lab-dflash-pkg).
+
+## Eagle3 Speculative Decoding (draft-model, 2026-08-23)
+
+Eagle3 is a draft-model speculative decoder: a small one-layer drafter reads
+the target's multi-layer hidden states (captured at `capture_layers=[8,16,31]`,
+projected through `Eagle3Model.fc`) and proposes K draft tokens the target
+verifies in one forward pass. fusion-mlx ships a custom MLX-native Eagle3
+model (`fusion_mlx/speculative/eagle3/`) instead of `mlx_lm.load()`, which
+fails on Eagle3's non-standard weight keys.
+
+```bash
+FUSION_SPEC_METHOD=eagle3 fusion-mlx serve --model mlx-community/Meta-Llama-3.1-8B-Instruct-4bit
+```
+
+Phase-2 hardening (PR #609), all real-model verified on Eagle3 + Llama-3.1-8B:
+
+- **Family compatibility guard** — `is_compatible()` does case-insensitive
+  substring matching (llama3/qwen3) incl. local-path basename, and
+  **disables spec decode** if the target family doesn't match the draft's
+  (prevents silent garbage: EAGLE3-LLaMA3 vs a Qwen target).
+- **Adaptive pause/resume** — fixes a dead-code resume path: once paused,
+  `should_speculate()` now lets a re-probe step through every
+  `SPEC_RESUME_CHECK_INTERVAL` (default 10) so acceptance can recover and
+  un-pause. Tunable via `FUSION_SPEC_MIN_ACCEPT_RATE` / `FUSION_SPEC_ADAPTIVE_WINDOW`
+  / `FUSION_SPEC_RESUME_CHECK_INTERVAL`.
+- **Draft temperature** — default `0.0`→`0.1` (`FUSION_EAGLE3_DRAFT_TEMP`);
+  small temp helps the draft distribution match the target's.
+- **Multi-layer hidden capture** — `HiddenStateCapture` at `[8,16,31]`.
+
+> **E2E status (2026-08-23)**: real Eagle3 + Llama-3.1-8B-Instruct-4bit,
+> `FUSION_SPEC_METHOD=eagle3`. Compat guard `family=llama3 match`, hidden
+> capture `layers=[8,16,31]`, draft `temp=0.1`, and the full pause→re-probe
+> →stay-paused adaptive cycle all verified in the real-model log. 14
+> Phase-2 unit tests green.
+> See [docs/speculative-decoding.md](docs/speculative-decoding.md#eagle3-eagle3).
 
 ## Examples
 
