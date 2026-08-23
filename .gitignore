@@ -1,0 +1,45 @@
+# Claude Code session artifacts — never part of a contributor's diff.
+# Required by test_submit_gitignore: `--submit` refuses dirty trees, and
+# every Claude Code session drops .claude/scheduled_tasks.lock +
+# .claude/worktrees/* as untracked. Keep this rule or that gate blocks
+# community PRs from worktrees (see PR #5 dogfood).
+.claude/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# Virtual envs
+.venv/
+venv/
+env/
+
+# Build / packaging
+build/
+dist/
+*.egg-info/
+*.egg
+.eggs/
+
+# Test / coverage artifacts
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.mypy_cache/
+.ruff_cache/
+
+# OS / editor
+.DS_Store
+*.swp
+*.swo
+*~
+.idea/
+.vscode/
+
+# Type stubs generated locally
+*.pyi
