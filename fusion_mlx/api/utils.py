@@ -62,7 +62,10 @@ def detect_and_strip_partial(messages: list[dict]) -> bool:
 SPECIAL_TOKENS_PATTERN = re.compile(
     r"<\|im_end\|>|<\|im_start\|>|<\|endoftext\|>|"
     r"<\|end\|>|<\|eot_id\|>|<\|start_header_id\|>|<\|end_header_id\|>|"
-    r"</s>|<s>|<pad>|\[PAD\]|\[SEP\]|\[CLS\]"
+    r"</s>|<s>|<pad>|\[PAD\]|\[SEP\]|\[CLS\]|"
+    # MiniMax M3 control tokens (see parsers/output_parser.py:148).
+    # Bracket chars escaped — these are literal tokens, not regex classes.
+    r"\[e~\[|\]~b\]|\]~!b\[|\]!p~\[|\]!d~\["
 )
 
 _HARMONY_CHANNEL_PATTERN = re.compile(
