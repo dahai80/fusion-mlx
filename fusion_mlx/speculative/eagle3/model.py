@@ -213,7 +213,9 @@ def load_eagle3_weights(model_dir: str) -> tuple[dict, dict]:
 
         for sf in safetensor_files:
             with safe_open(sf, framework="numpy") as f:
-                for k in f:
+                # safe_open is NOT iterable (TypeError) despite SIM118's
+                # suggestion; .keys() is the documented iteration API.
+                for k in f.keys():  # noqa: SIM118
                     weights[k] = mx.array(f.get_tensor(k))
 
     remapped = {}

@@ -277,7 +277,7 @@ class Eagle3Speculator:
                 return
             for sf in safetensor_files:
                 with safe_open(sf, framework="numpy") as f:
-                    for k in f:
+                    for k in f.keys():  # noqa: SIM118
                         if k == "model.embed_tokens.weight":
                             arr = f.get_tensor(k)
                             if arr.shape[-1] != self.model.hidden_size:

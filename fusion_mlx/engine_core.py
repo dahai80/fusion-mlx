@@ -290,9 +290,7 @@ class EngineCore:
         if spec_eligible and SPEC_DRAFT_MODEL_ENABLED:
 
             def _init_draft():
-                import os as _os
-
-                spec_method = _os.environ.get(
+                spec_method = os.environ.get(
                     "FUSION_SPEC_METHOD", "draft_model"
                 ).lower()
                 draft = None
@@ -308,6 +306,9 @@ class EngineCore:
 
                 loaded = draft.load()
                 if loaded:
+                    # model_name is an EngineConfig dataclass field, not an
+                    # EngineCore attribute — use self.config.model_name.
+                    target_name = getattr(self.config, "model_name", "") or ""
                     # Safety guard: refuse to spec-decode if the Eagle3
                     # draft family does not match the loaded target model
                     # (e.g. EAGLE3-LLaMA3 against a Qwen target). Produces
@@ -315,12 +316,12 @@ class EngineCore:
                     if (
                         spec_method == "eagle3"
                         and hasattr(draft, "is_compatible")
-                        and not draft.is_compatible(self.model_name)
+                        and not draft.is_compatible(target_name)
                     ):
                         logger.warning(
                             "Speculative decode: eagle3 draft incompatible with "
                             "target model %r, disabling spec decode",
-                            self.model_name,
+                            target_name,
                         )
                         return
                     hidden_capture = None
@@ -345,9 +346,10 @@ class EngineCore:
                         hidden_capture=hidden_capture,
                     )
                     logger.info(
-                        "Speculative decode: draft model enabled (%s, method=%s)",
+                        "Speculative decode: draft model enabled (%s, method=%s, temp=%s)",
                         draft.model_path if hasattr(draft, "model_path") else "?",
                         spec_method,
+                        getattr(draft.config, "temperature", "?"),
                     )
                 else:
                     logger.info(
