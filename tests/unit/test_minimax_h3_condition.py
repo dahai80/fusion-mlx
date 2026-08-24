@@ -176,10 +176,14 @@ class TestBuildFl2vaPacked:
             keyframe_anchors=("last",),
         )
         n_cond = 4
-        expected = 5.0 + (5.0 / 3.0) * (1 + 4) - (5.0 / 3.0)  # n_text + sum(1,4)*resc - resc
+        expected = (
+            5.0 + (5.0 / 3.0) * (1 + 4) - (5.0 / 3.0)
+        )  # n_text + sum(1,4)*resc - resc
         for i in range(n_cond):
             row = 5 + i
-            assert float(packed["position_ids"][row, 0]) == pytest.approx(expected, abs=1e-4)
+            assert float(packed["position_ids"][row, 0]) == pytest.approx(
+                expected, abs=1e-4
+            )
 
     def test_fl2va_condition_timestep_pinned_when_video_cleaner(self):
         # video_timestep < keyframe_noise_aug → 条件行钉 0.999，gen 行用 video_t。
@@ -232,7 +236,9 @@ class TestBuildFl2vaPacked:
         # 第一条件块 'first'→t=5，第二 'last'→t≈11.6667。
         assert float(packed["position_ids"][5, 0]) == pytest.approx(5.0)
         last_expected = 5.0 + (5.0 / 3.0) * 5 - (5.0 / 3.0)
-        assert float(packed["position_ids"][9, 0]) == pytest.approx(last_expected, abs=1e-4)
+        assert float(packed["position_ids"][9, 0]) == pytest.approx(
+            last_expected, abs=1e-4
+        )
 
     def test_fl2va_condition_row_count_mismatch_raises(self):
         # condition 帧数 != len(keyframe_anchors) → shape-mismatch guard（L959）。
