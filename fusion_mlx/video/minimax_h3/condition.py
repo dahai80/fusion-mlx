@@ -1,18 +1,17 @@
 # SPDX-License-Identifier: Apache-2.0
 # MiniMax H3 多模态 packed-sequence 组装（condition）。
 #
-# 上游权威缺失说明（UNVERIFIED，需真实模型校正）：
-#   - diffusers `MiniMaxH3Pipeline` / `MiniMaxH3ModularPipeline`（packed 序列组装源码）
-#     在未发布的 diffusers minimax-h3 分支，HF 仓库只含 VAE 源码 + 权重 + config，
-#     PyPI 无 minimax-h3 包。本组装逻辑从 transformer `forward` 契约
-#     （diffusers main `transformer_minimax_h3.py` docstring + 参数表）+ AR 文档推断。
+# 权威对照：diffusers MiniMaxH3 FL2VA pipeline（before_denoise.py 已发布）。
 #   - transformer docstring 明确：「The caller is responsible for building the
 #     packed layout」。token_tags 0=video/1=text/2=audio，timestep = 去重噪声水平，
 #     timestep_indices 每行指向其在 timestep 数组中的下标，position_ids 每行 (t,h,w)。
-#   - t2va video-only（无音频、无条件帧）：text 行（tag=1，clean t=1）+ 目标 video 行
-#     （tag=0，noisy t=1-sigma）。timestep=[1.0, t_video]：text→idx0，video→idx1。
+#   - t2va：text 行（tag=1）+ 目标 video 行（tag=0，noisy）。
+#   - t2va-av：text + audio + video（build_row_timesteps 三类噪声水平）。
+#   - fl2va：text + keyframe 条件行 + video（i2va/l2va）。条件行 tag=0，
+#     timestep 钉 max(video_t, keyframe_noise_aug)，每步不变（rides through）。
+#     行序 [text | keyframe conditions | (audio) | target video]。
 #
-# 约束（来自 docstring）：
+# 约束（来自 docstring + before_denoise.py）：
 #   - 无 padding，单一 attention document，无 mask。
 #   - text 行 position (0,0,0)；video 行 = patchify 后的 (t,h,w) 网格。
 #   - batch 轴纯复制：结构参数描述一个 layout，每个 batch item 共享。
@@ -370,6 +369,156 @@ def build_t2va_av_packed(
     }
 
 
+_H3_KEYFRAME_NOISE_AUG = 0.999
+
+
+def _last_anchor_time(num_latent_frames, num_text_tokens):
+    # 'last' anchor 的 rotary time：n_text + spans.sum() - _ROPE_FRAME_RESCALE。
+    # spans = 5/3*(1,4,4,4,4) 重复，pairwise sum（对照 before_denoise.py:333-336）。
+    spans = [
+        _ROPE_FRAME_RESCALE * _ROPE_FRAMES_PER_LATENT[i % len(_ROPE_FRAMES_PER_LATENT)]
+        for i in range(num_latent_frames)
+    ]
+    return float(num_text_tokens) + float(sum(spans)) - _ROPE_FRAME_RESCALE
+
+
+def build_fl2va_packed(
+    video_latents,
+    condition_latents,
+    text_embeds,
+    timestep_video,
+    keyframe_anchors,
+    keyframe_noise_aug=_H3_KEYFRAME_NOISE_AUG,
+):
+    # fl2va packed-sequence 组装（i2va/l2va/fl2va 场景连续性）。
+    # 对照 diffusers before_denoise.py:268 build_packed_sequence + L940-964 条件编码。
+    #
+    # video_latents: (b, 24, t, h, w) 已归一化目标 latent（含噪声，生成行）。
+    # condition_latents: (b, 24, k, h, w) 已归一化条件 latent（keyframe_anchors 数量帧），
+    #   调用前已 scale_noise(keyframe_noise_aug) 加噪（generate_fl2va_video 负责）。
+    # text_embeds: (b, n_text, 5120)。
+    # timestep_video: 标量 t∈[0,1]，生成行当前噪声水平。
+    # keyframe_anchors: tuple[str,...]，每条件帧 'first'/'last'，packed 顺序。
+    # keyframe_noise_aug: 条件行钉定噪声水平（官方 0.999）。
+    #
+    # 行序 [text | keyframe conditions | target video]（无音频：fl2va 视频路径）。
+    # 条件行 tag=TAG_VIDEO（0），timestep = max(video_t, keyframe_noise_aug)，
+    # 每步不变（denoise loop 只写生成行，条件行 rides through，L970-1009）。
+    # 条件行 position：'first'→n_text；'last'→n_text+spans.sum()-rescale；空间=target 同 grid。
+    patch_size = (1, 2, 2)
+    pt, ph, pw = patch_size
+    b, _c, nt, h, w = video_latents.shape
+    _, _, k_cond, h_c, w_c = condition_latents.shape
+
+    if k_cond != len(keyframe_anchors):
+        raise ValueError(
+            f"condition_latents has {k_cond} frames but keyframe_anchors has "
+            f"{len(keyframe_anchors)} entries; they must agree."
+        )
+    rows_per_frame = (h // ph) * (w // pw)
+    if (h_c, w_c) != (h, w):
+        raise ValueError(
+            f"condition canvas ({h_c}x{w_c}) disagrees with target ({h}x{w}); "
+            f"encode the keyframe at the target latent size."
+        )
+
+    video_tokens = patchify_video_latents(video_latents, patch_size)  # (b, n_gen, dim)
+    condition_tokens = patchify_video_latents(condition_latents, patch_size)  # (b, n_cond, dim)
+    n_gen = video_tokens.shape[1]
+    n_cond = condition_tokens.shape[1]
+    n_text = text_embeds.shape[1]
+    seq_len = n_text + n_cond + n_gen
+
+    # hidden_states = [condition | generated]（FL2VAPrepareLatentsStep cat 顺序）。
+    hidden_states = mx.concatenate([condition_tokens, video_tokens], axis=1)
+
+    # 行索引：text 0..n_text-1，video(含条件) n_text..seq-1。
+    text_indices = mx.arange(n_text, dtype=mx.int32)
+    video_indices = mx.arange(n_text, seq_len, dtype=mx.int32)
+    audio_indices = mx.zeros((0,), dtype=mx.int32)
+
+    # timestep：生成行 video_t，条件行 max(video_t, keyframe_noise_aug)（钉定）。
+    # 去重：若 video_t == cond_t → 单一水平（生成行 noisier 时）。
+    gen_t = float(timestep_video)
+    cond_t = max(gen_t, float(keyframe_noise_aug))
+    unique_ts = sorted({gen_t, cond_t})
+    timestep = mx.array(unique_ts, dtype=mx.float32)
+    gen_idx = unique_ts.index(gen_t)
+    cond_idx = unique_ts.index(cond_t)
+    # timestep_indices：text → gen_idx（继承 video_t，#602），条件行 → cond_idx，生成行 → gen_idx。
+    timestep_indices = mx.concatenate(
+        [
+            mx.full((n_text,), gen_idx, dtype=mx.int32),
+            mx.full((n_cond,), cond_idx, dtype=mx.int32),
+            mx.full((n_gen,), gen_idx, dtype=mx.int32),
+        ]
+    )
+    # token_tags：text=1，条件+生成 video=0。
+    token_tags = mx.concatenate(
+        [
+            mx.full((n_text,), TAG_TEXT, dtype=mx.int32),
+            mx.full((n_cond + n_gen,), TAG_VIDEO, dtype=mx.int32),
+        ]
+    )
+
+    # position_ids：text time=arange(n_text)，h/w=0。
+    text_time = mx.arange(n_text, dtype=mx.float32)
+    text_zero = mx.zeros((n_text,), dtype=mx.float32)
+    text_pos = mx.stack([text_time, text_zero, text_zero], axis=-1)
+
+    # 条件行 position：每 anchor 块 anchor_time + target 同 frame_grid（空间）。
+    # 单帧空间网格（t=1），time 列覆盖为 anchor_time。
+    single_frame_shape = (b, _c, 1, h, w)
+    frame_spatial = video_position_grid(single_frame_shape, patch_size, origin=0.0)
+    # (rows_per_frame, 3)，time 列全 0，空间 h/w 即 target 同 grid。
+    cond_rows_pos = []
+    for index, anchor in enumerate(keyframe_anchors):
+        if anchor == "first":
+            anchor_time = float(n_text)
+        elif anchor == "last":
+            anchor_time = _last_anchor_time(nt, n_text)
+        else:
+            raise ValueError(
+                f"A keyframe anchor must be 'first' or 'last', got {anchor!r}."
+            )
+        times = mx.full((rows_per_frame,), anchor_time, dtype=mx.float32)
+        block = mx.stack([times, frame_spatial[:, 1], frame_spatial[:, 2]], axis=-1)
+        cond_rows_pos.append(block)
+    cond_pos = mx.concatenate(cond_rows_pos, axis=0)  # (n_cond, 3)
+
+    # 生成行 position：origin=n_text 的时间网格 + 空间网格。
+    gen_pos = video_position_grid(video_latents.shape, patch_size, origin=float(n_text))
+
+    position_ids = mx.concatenate([text_pos, cond_pos, gen_pos], axis=0)
+
+    audio_hidden_states = mx.zeros((b, 0, 32), dtype=text_embeds.dtype)
+
+    logger.info(
+        "h3 fl2va packed: seq=%d (text=%d cond=%d gen=%d) anchors=%s t_video=%.4f cond_t=%.4f",
+        seq_len,
+        n_text,
+        n_cond,
+        n_gen,
+        list(keyframe_anchors),
+        float(timestep_video),
+        cond_t,
+    )
+    return {
+        "hidden_states": hidden_states,
+        "audio_hidden_states": audio_hidden_states,
+        "encoder_hidden_states": text_embeds,
+        "timestep": timestep,
+        "timestep_indices": timestep_indices,
+        "token_tags": token_tags,
+        "position_ids": position_ids,
+        "video_indices": video_indices,
+        "audio_indices": audio_indices,
+        "text_indices": text_indices,
+        "latent_shape": video_latents.shape,
+        "num_condition_rows": n_cond,
+    }
+
+
 __all__ = [
     "normalize_latents",
     "denormalize_latents",
@@ -379,6 +528,7 @@ __all__ = [
     "video_position_grid",
     "build_t2va_packed",
     "build_t2va_av_packed",
+    "build_fl2va_packed",
     "audio_latent_steps",
     "TAG_VIDEO",
     "TAG_TEXT",

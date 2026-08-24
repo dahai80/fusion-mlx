@@ -8,6 +8,7 @@ import pytest
 from fusion_mlx.video.minimax_h3.condition import (
     TAG_TEXT,
     TAG_VIDEO,
+    build_fl2va_packed,
     build_t2va_packed,
     denormalize_latents,
     normalize_latents,
@@ -110,3 +111,152 @@ class TestBuildPacked:
         assert float(packed["timestep"][0]) == pytest.approx(0.123)
         # 全行 timestep_indices=0（指向唯一去重水平）。
         assert [int(t) for t in packed["timestep_indices"]] == [0] * 11
+
+
+class TestBuildFl2vaPacked:
+    # 对照 diffusers before_denoise.py:268 build_packed_sequence。
+    # fl2va = t2va + keyframe 条件帧。i2va = anchors=('first',)，l2va = ('last',)。
+    # 行序 [text | keyframe conditions | target audio | target video]（无音频时 audio 空）。
+    # 条件行 tag=TAG_VIDEO（0），timestep 钉在 max(video_t, keyframe_noise_aug)=0.999，
+    # 每步不变（conditioning rides through，FL2VAPrepareLatentsStep L970-1009）。
+    # 条件行 position：'first'→anchor_time=n_text；'last'→n_text+spans.sum()-rescale；
+    # 空间 = 同 frame_grid。
+
+    def test_fl2va_first_anchor_structure(self):
+        # video (1,24,2,4,4) → 8 target video tokens；condition 1 帧 → 4 tokens；text n=5。
+        video = mx.random.normal((1, 24, 2, 4, 4))
+        cond = mx.random.normal((1, 24, 1, 4, 4))  # 1 条件帧
+        text = mx.random.normal((1, 5, 5120))
+        packed = build_fl2va_packed(
+            video,
+            cond,
+            text,
+            timestep_video=0.5,
+            keyframe_anchors=("first",),
+        )
+        n_text, n_cond, n_gen = 5, 4, 8
+        seq = n_text + n_cond + n_gen  # 17（无音频）
+        assert packed["hidden_states"].shape == (1, n_cond + n_gen, 96)  # cond+gen
+        assert packed["encoder_hidden_states"].shape == (1, 5, 5120)
+        assert packed["audio_hidden_states"].shape == (1, 0, 32)
+        assert packed["token_tags"].shape == (seq,)
+        assert packed["video_indices"].shape == (n_cond + n_gen,)
+        assert packed["text_indices"].shape == (5,)
+        assert packed["audio_indices"].shape == (0,)
+        # tag：text=1 (5)，cond+gen video=0 (12)。
+        tags = [int(t) for t in packed["token_tags"]]
+        assert tags == [TAG_TEXT] * 5 + [TAG_VIDEO] * 12
+        # video_indices = [5..16]（text 占 0..4）。
+        assert [int(i) for i in packed["video_indices"]] == list(range(5, 17))
+        # timestep：video_t=0.5 < keyframe_noise_aug=0.999 → [0.5, 0.999] sorted。
+        ts = [float(x) for x in packed["timestep"]]
+        assert len(ts) == 2
+        assert ts[0] == pytest.approx(0.5, abs=1e-6)
+        assert ts[1] == pytest.approx(0.999, abs=1e-6)
+        # timestep_indices：cond 行 → idx1(0.999)，gen video 行 → idx0(0.5)，text→idx0。
+        tis = [int(t) for t in packed["timestep_indices"]]
+        assert tis == [0] * 5 + [1] * 4 + [0] * 8
+        # 条件行 position：'first' anchor_time = n_text = 5，空间 = target 同 frame_grid。
+        for i in range(n_cond):
+            row = n_text + i
+            assert float(packed["position_ids"][row, 0]) == pytest.approx(5.0)
+
+    def test_fl2va_last_anchor_position(self):
+        # 'last' anchor：anchor_time = n_text + spans.sum() - _ROPE_FRAME_RESCALE。
+        # nt=2 → spans = 5/3*(1,4) → sum = 5/3*5 = 25/3；rescale=5/3。
+        # anchor_time = 5 + 25/3 - 5/3 = 5 + 20/3 ≈ 11.6667。
+        video = mx.random.normal((1, 24, 2, 4, 4))
+        cond = mx.random.normal((1, 24, 1, 4, 4))
+        text = mx.random.normal((1, 5, 5120))
+        packed = build_fl2va_packed(
+            video,
+            cond,
+            text,
+            timestep_video=0.5,
+            keyframe_anchors=("last",),
+        )
+        n_cond = 4
+        expected = 5.0 + (5.0 / 3.0) * (1 + 4) - (5.0 / 3.0)  # n_text + sum(1,4)*resc - resc
+        for i in range(n_cond):
+            row = 5 + i
+            assert float(packed["position_ids"][row, 0]) == pytest.approx(expected, abs=1e-4)
+
+    def test_fl2va_condition_timestep_pinned_when_video_cleaner(self):
+        # video_timestep < keyframe_noise_aug → 条件行钉 0.999，gen 行用 video_t。
+        video = mx.random.normal((1, 24, 2, 4, 4))
+        cond = mx.random.normal((1, 24, 1, 4, 4))
+        text = mx.random.normal((1, 5, 5120))
+        packed = build_fl2va_packed(
+            video,
+            cond,
+            text,
+            timestep_video=0.1,
+            keyframe_anchors=("first",),
+        )
+        ts = [float(x) for x in packed["timestep"]]
+        assert len(ts) == 2
+        assert ts[0] == pytest.approx(0.1, abs=1e-6)
+        assert ts[1] == pytest.approx(0.999, abs=1e-6)
+
+    def test_fl2va_condition_timestep_capped_when_video_noisier(self):
+        # video_timestep > keyframe_noise_aug → max() → 条件行同 video_t（单一水平）。
+        video = mx.random.normal((1, 24, 2, 4, 4))
+        cond = mx.random.normal((1, 24, 1, 4, 4))
+        text = mx.random.normal((1, 5, 5120))
+        packed = build_fl2va_packed(
+            video,
+            cond,
+            text,
+            timestep_video=0.9999,
+            keyframe_anchors=("first",),
+        )
+        # max(0.9999, 0.999) = 0.9999 → 与 gen 相同 → 单一去重水平。
+        assert packed["timestep"].shape == (1,)
+        assert float(packed["timestep"][0]) == pytest.approx(0.9999)
+
+    def test_fl2va_two_keyframes(self):
+        # i2va+l2va 联合：anchors=('first','last') → 2 条件帧。
+        video = mx.random.normal((1, 24, 2, 4, 4))
+        cond = mx.random.normal((1, 24, 2, 4, 4))  # 2 条件帧
+        text = mx.random.normal((1, 5, 5120))
+        packed = build_fl2va_packed(
+            video,
+            cond,
+            text,
+            timestep_video=0.5,
+            keyframe_anchors=("first", "last"),
+        )
+        n_cond = 8  # 2 帧 * 4 tokens
+        # hidden_states = cond(8) + gen(8) = 16。
+        assert packed["hidden_states"].shape == (1, 16, 96)
+        # 第一条件块 'first'→t=5，第二 'last'→t≈11.6667。
+        assert float(packed["position_ids"][5, 0]) == pytest.approx(5.0)
+        last_expected = 5.0 + (5.0 / 3.0) * 5 - (5.0 / 3.0)
+        assert float(packed["position_ids"][9, 0]) == pytest.approx(last_expected, abs=1e-4)
+
+    def test_fl2va_condition_row_count_mismatch_raises(self):
+        # condition 帧数 != len(keyframe_anchors) → shape-mismatch guard（L959）。
+        video = mx.random.normal((1, 24, 2, 4, 4))
+        cond = mx.random.normal((1, 24, 1, 4, 4))  # 1 帧
+        text = mx.random.normal((1, 5, 5120))
+        with pytest.raises(ValueError, match="(?i)condition"):
+            build_fl2va_packed(
+                video,
+                cond,
+                text,
+                timestep_video=0.5,
+                keyframe_anchors=("first", "last"),  # 2 anchors vs 1 帧
+            )
+
+    def test_fl2va_invalid_anchor_raises(self):
+        video = mx.random.normal((1, 24, 2, 4, 4))
+        cond = mx.random.normal((1, 24, 1, 4, 4))
+        text = mx.random.normal((1, 5, 5120))
+        with pytest.raises(ValueError, match="(?i)anchor"):
+            build_fl2va_packed(
+                video,
+                cond,
+                text,
+                timestep_video=0.5,
+                keyframe_anchors=("middle",),
+            )

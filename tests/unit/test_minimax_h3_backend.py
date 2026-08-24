@@ -73,10 +73,10 @@ class TestRegistry:
         assert b2.name == "wan2"
 
     def test_constraints_for(self):
-        # Issue #589: supports_i2v=False until i2va/l2va/fl2va are implemented
-        # (currently only t2va — image conditioning was silently dropped).
+        # i2va/l2va/fl2va now implemented (generate_fl2va_video + keyframe-anchors).
+        # supports_i2v=True → validate_params accepts image= at the API.
         c = constraints_for("/models/MiniMax-H3-FL2VA")
-        assert c.supports_i2v is False
+        assert c.supports_i2v is True
         assert c.max_n == 1
         assert c.dim_divisibility == 16
 
