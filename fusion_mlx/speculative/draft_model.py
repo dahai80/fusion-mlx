@@ -11,6 +11,7 @@ small enough that sequential generation is fast).
 
 import logging
 import time
+from dataclasses import dataclass
 
 import mlx.core as mx
 
@@ -26,6 +27,12 @@ DRAFT_NUM_TOKENS = int(__import__("os").environ.get("FUSION_SPEC_DRAFT_TOKENS", 
 DRAFT_TEMPERATURE = float(__import__("os").environ.get("FUSION_SPEC_DRAFT_TEMP", "0.0"))
 
 
+@dataclass
+class DraftModelConfig:
+    num_draft: int = DRAFT_NUM_TOKENS
+    temperature: float = DRAFT_TEMPERATURE
+
+
 class DraftModelDecoder:
     """Small LM that drafts tokens for speculative decode verification."""
 
@@ -34,6 +41,9 @@ class DraftModelDecoder:
     ):
         self.model_path = model_path
         self.num_draft = num_draft
+        self.config = DraftModelConfig(
+            num_draft=num_draft, temperature=DRAFT_TEMPERATURE
+        )
         self.model = None
         self.tokenizer = None
         self._draft_cache = None
