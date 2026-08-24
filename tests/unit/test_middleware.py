@@ -26,6 +26,10 @@ def _make_app() -> FastAPI:
     async def chat_completions(body: dict):
         return {"ok": True}
 
+    @app.post("/distributed/pipeline_step")
+    async def pipeline_step(body: dict):
+        return {"ok": True}
+
     @app.get("/health")
     async def health():
         return {"status": "ok"}
@@ -62,6 +66,18 @@ class TestBodySizeMiddleware:
         monkeypatch.setenv("FUSION_MLX_MAX_REQUEST_BYTES", "100")
         resp = client.get("/health")
         assert resp.status_code == 200
+
+    def test_distributed_path_is_guarded(self, client, monkeypatch):
+        # #621 hardening: /distributed/ must hit the body-size cap, else a
+        # path-traversal/oversized-activation caller bypasses it.
+        monkeypatch.setenv("FUSION_MLX_MAX_REQUEST_BYTES", "100")
+        payload = {"shard_id": "a" * 200}
+        resp = client.post(
+            "/distributed/pipeline_step",
+            content=json.dumps(payload),
+            headers={"Content-Type": "application/json"},
+        )
+        assert resp.status_code == 413
 
 
 class TestBodyDepthMiddleware:

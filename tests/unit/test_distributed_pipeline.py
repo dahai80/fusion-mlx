@@ -226,3 +226,75 @@ def test_first_shard_requires_input_ids():
     info = mgr.load_shard(_LM_PATH, 0, [0, 4])
     with pytest.raises(ShardError):
         mgr.pipeline_step(info["shard_id"], None, None, None)  # no ids, no hidden
+
+
+# --- security: path-traversal confinement (#621 hardening) ---
+
+
+def test_resolve_model_path_rejects_traversal():
+    """model_id with '..' escaping the allowed roots must be rejected —
+    never reaches mlx_lm.load."""
+    from fusion_mlx.distributed.shard import ShardError, _resolve_model_path
+
+    with pytest.raises(ShardError):
+        _resolve_model_path("../../../etc/passwd")
+    with pytest.raises(ShardError):
+        _resolve_model_path("/etc/passwd")
+    with pytest.raises(ShardError):
+        _resolve_model_path("")
+
+
+def test_resolve_model_path_accepts_allowed_root():
+    """A snapshot path under ~/.fusion-mlx/models is confined and accepted."""
+    from fusion_mlx.distributed.shard import _resolve_model_path
+
+    resolved = _resolve_model_path(_LM_PATH)
+    assert os.path.realpath(_LM_PATH) == resolved
+
+
+def test_load_shard_rejects_traversal_before_load():
+    """load_shard with a traversal model_id raises ShardError without
+    attempting a model load (no spurious cache entry)."""
+    from fusion_mlx.distributed.shard import ShardError, ShardManager
+
+    mgr = ShardManager()
+    with pytest.raises(ShardError):
+        mgr.load_shard("../../../../etc/passwd", 0, [0, 4])
+    assert "../../../../etc/passwd" not in mgr._models
+
+
+# --- security: payload size caps (#621 hardening) ---
+
+
+def test_deserialize_rejects_oversized_activation(monkeypatch):
+    import base64
+
+    from fusion_mlx.distributed import shard as shard_mod
+
+    monkeypatch.setattr(shard_mod, "_MAX_ACTIVATION_BYTES", 8)
+    # 16 bytes of valid base64 -> decodes to 12 bytes > cap 8.
+    payload = base64.b64encode(b"x" * 12).decode("ascii")
+    with pytest.raises(shard_mod.ShardError):
+        shard_mod.deserialize_activation(payload)
+
+
+def test_sync_weights_rejects_oversized(monkeypatch):
+    import base64
+
+    from fusion_mlx.distributed import shard as shard_mod
+
+    monkeypatch.setattr(shard_mod, "_MAX_WEIGHTS_BYTES", 8)
+    mgr = shard_mod.ShardManager()
+    # Register a dummy shard entry so sync_weights gets past the lookup.
+    mgr._shards["shard-x"] = {
+        "shard_id": "shard-x",
+        "model_id": "dummy",
+        "shard_index": 0,
+        "layer_range": [0, 1],
+        "dtype": None,
+        "num_layers": 1,
+    }
+    mgr._models["dummy"] = object()  # placeholder; never reaches load_weights
+    payload = base64.b64encode(b"x" * 64).decode("ascii")
+    with pytest.raises(shard_mod.ShardError):
+        mgr.sync_weights("shard-x", payload, None)

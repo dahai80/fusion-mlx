@@ -45,7 +45,7 @@ class _BodyReceiveTimeoutError(Exception):
         self.timeout = timeout
 
 
-_GUARDED_PREFIXES = ("/v1/", "/internal/", "/anthropic/")
+_GUARDED_PREFIXES = ("/v1/", "/internal/", "/anthropic/", "/distributed/")
 _EXCLUDED_PATHS = frozenset({"/v1/audio/transcriptions"})
 
 

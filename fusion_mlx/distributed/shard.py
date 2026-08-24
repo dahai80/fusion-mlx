@@ -19,6 +19,7 @@ import logging
 import os
 import tempfile
 import uuid
+from pathlib import Path
 
 import mlx.core as mx
 
@@ -26,9 +27,72 @@ logger = logging.getLogger(__name__)
 
 _NPY_SUFFIX = ".npy"
 
+# Defense-in-depth ceilings on decoded payloads (the body-size middleware
+# caps the raw HTTP body; these cap the decoded tensor/weights bytes so a
+# path-traversal / oversized-payload caller can't exhaust disk/memory).
+# Overridable via env. Activations: a 1x8192x8192 bf16 tensor ≈ 128 MiB;
+# weights: a small LoRA is well under 1 GiB.
+_MAX_ACTIVATION_BYTES = int(
+    os.environ.get("FUSION_DIST_MAX_ACTIVATION_BYTES", 0) or 0
+) or (256 * 1024 * 1024)
+_MAX_WEIGHTS_BYTES = int(os.environ.get("FUSION_DIST_MAX_WEIGHTS_BYTES", 0) or 0) or (
+    1024 * 1024 * 1024
+)
+_MAX_INPUT_IDS = int(os.environ.get("FUSION_DIST_MAX_INPUT_IDS", 0) or 0) or 8192
+
 
 class ShardError(Exception):
     """Shard lifecycle / forward error surfaced as HTTP 4xx/5xx."""
+
+
+def _allowed_model_roots() -> list[str]:
+    # Mirrors fusion_mlx.model_aliases._allowed_model_dirs so distributed
+    # load_shard uses the same confinement as the rest of the server.
+    home = os.path.realpath(os.path.expanduser("~"))
+    roots = [
+        os.path.join(home, ".fusion-mlx", "models"),
+        os.path.join(home, ".cache", "huggingface"),
+    ]
+    env_dir = os.environ.get("FUSION_MLX_MODEL_DIR", "").strip()
+    if env_dir:
+        roots.append(os.path.realpath(os.path.expanduser(env_dir)))
+    cwd = os.path.realpath(os.getcwd())
+    if cwd != "/":
+        roots.append(cwd)
+    return roots
+
+
+def _resolve_model_path(model_id: str) -> str:
+    """Resolve a model_id to a filesystem path confined to an allowed root.
+
+    Bare repo ids (no '/', not absolute) resolve against the model dir.
+    Absolute or relative paths are realpath'd and rejected unless they sit
+    under one of the allowed roots — blocks path traversal (``..``) and
+    arbitrary-file loads. Returns the confined path (str)."""
+    if not model_id or not model_id.strip():
+        raise ShardError("model_id is empty")
+    mid = model_id.strip()
+    # Bare repo id (e.g. "mlx-community/Llama-3.2-1B-Instruct-4bit" HAS a '/',
+    # so only truly bare names with no separator qualify as model-dir lookup).
+    if not os.path.isabs(mid) and "/" not in mid:
+        env_dir = os.environ.get("FUSION_MLX_MODEL_DIR", "").strip()
+        if env_dir:
+            candidate = os.path.join(os.path.expanduser(env_dir), mid)
+            if os.path.exists(candidate):
+                resolved = os.path.realpath(candidate)
+                if any(
+                    Path(resolved).is_relative_to(Path(r))
+                    for r in _allowed_model_roots()
+                ):
+                    return resolved
+    # Anything else (HF repo id with '/', or a path) -> resolve + confine.
+    resolved = os.path.realpath(os.path.expanduser(mid))
+    roots = _allowed_model_roots()
+    if not any(Path(resolved).is_relative_to(Path(r)) for r in roots):
+        raise ShardError(
+            f"model_id '{model_id}' resolves outside allowed model directories"
+        )
+    return resolved
 
 
 def serialize_activation(arr: mx.array) -> str:
@@ -56,6 +120,10 @@ def deserialize_activation(b64: str) -> mx.array:
         raise ShardError(f"activation base64 invalid: {exc}") from exc
     if not raw:
         raise ShardError("activation payload empty")
+    if len(raw) > _MAX_ACTIVATION_BYTES:
+        raise ShardError(
+            f"activation payload {len(raw)} bytes exceeds cap {_MAX_ACTIVATION_BYTES}"
+        )
     with tempfile.NamedTemporaryFile(suffix=_NPY_SUFFIX, delete=False) as fh:
         path = fh.name
         fh.write(raw)
@@ -87,15 +155,7 @@ class ShardManager:
             return self._models[model_id]
         import mlx_lm
 
-        # Resolve model_id against the configured model dir if it's a bare
-        # repo id (no path separators and not an absolute path).
-        path = model_id
-        if not os.path.isabs(model_id) and "/" not in model_id:
-            model_dir = os.environ.get("FUSION_MLX_MODEL_DIR", "")
-            if model_dir:
-                candidate = os.path.join(os.path.expanduser(model_dir), model_id)
-                if os.path.exists(candidate):
-                    path = candidate
+        path = _resolve_model_path(model_id)
         logger.info("distributed: loading model %s from %s", model_id, path)
         try:
             model, _tokenizer = mlx_lm.load(path)
@@ -198,6 +258,10 @@ class ShardManager:
         else:
             if not input_ids:
                 raise ShardError("first shard needs input_ids when no hidden_states")
+            if len(input_ids) > _MAX_INPUT_IDS:
+                raise ShardError(
+                    f"input_ids length {len(input_ids)} exceeds cap {_MAX_INPUT_IDS}"
+                )
             ids = mx.array(input_ids, dtype=mx.int32)
             # mlx_lm embed_tokens expects shape (seq,) or (batch, seq).
             if ids.ndim == 1:
@@ -243,6 +307,10 @@ class ShardManager:
             raw = base64.b64decode(weights_b64, validate=True)
         except (ValueError, TypeError) as exc:
             raise ShardError(f"weights base64 invalid: {exc}") from exc
+        if len(raw) > _MAX_WEIGHTS_BYTES:
+            raise ShardError(
+                f"weights payload {len(raw)} bytes exceeds cap {_MAX_WEIGHTS_BYTES}"
+            )
         with tempfile.NamedTemporaryFile(suffix=".npz", delete=False) as fh:
             path = fh.name
             fh.write(raw)
