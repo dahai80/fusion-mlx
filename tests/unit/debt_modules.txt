@@ -431,6 +431,20 @@ test_audio_sts.py
 #   test_transcribe_preserves_iso_language_for_code_backends (prod normalizes
 #   it->italian, test wants ISO passthrough for cohere-style backends).
 test_audio_stt.py
+# RESCUED test_audio_tts 2026-08-24 (eval round16): PARTIAL 18p/1s/38xf.
+#   FIX (harness): repoint import fusion_mlx.engine.tts (singular, MISSING) →
+#   fusion_mlx.engines.tts (plural, TTSEngine BaseNonStreamingEngine). Unblocked
+#   18 unit tests (TestTTSNativeStreamingCapability + TestTTSVoiceClonePassthrough
+#   + TestTTSGenerationParams + 7/10 TestTTSVoiceRouting). 1 Integration skipped
+#   (slow). XFAIL 38: 35 fixture-dependent (server fixture pins REMOVED
+#   _server_state MagicMock arch; prod now dict; server app None — Gap B,
+#   REDESIGN) across TestTTSEndpointBasic/Errors/Streaming/GenParamsEndpoint/
+#   VoiceCloneEndpoint + TestTTSModelAliasResolution. 3 contract xfail (method-
+#   level, NOT class — 7 sibling VoiceRouting tests pass): test_voicedesign_
+#   routes_to_instruct (prod sets both instruct+voice, test wants voice absent),
+#   test_language_routes_to_lang_code (prod uses `language` key not `lang_code`),
+#   test_language_keeps_trailing_position (prod omits `language` from positional
+#   synth_params list). Voice-routing param-name rework — REDESIGN.
 test_audio_tts.py
 # KEEP_QUARANTINED test_audio_upload_size_limit.py (eval round13 2026-08-24): REMOVED/UNSHIPPED.
 # install_audio_body_limit_middleware + MAX_AUDIO_UPLOAD_SIZE only in old rapid-mlx migration
