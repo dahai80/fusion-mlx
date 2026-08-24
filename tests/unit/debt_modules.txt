@@ -515,6 +515,7 @@ test_batching.py
 # default_model_pairs/parse_model_pair/parse_args API. Recreating script =
 # inventing prod logic (Rule 2). REMOVED-FEATURE.
 test_bench_vs_ollama.py
+# KEEP_QUARANTINED test_benchmark.py (eval round16 2026-08-24): 17f/44p WIDE REDESIGN-DRIFT. (1) BenchmarkRequest REMOVED force_lm_engine field (prod benchmark.py:39 has only 4 fields model_id/prompt_lengths/generation_length/batch_sizes; frontend dashboard.js still sends it but pydantic model dropped it) — TestBenchmarkRequest 2 fails. (2) _compute_single_metrics REDESIGNED to 10 simple keys (ttft_ms/tpot_ms/gen_tps/processing_tps/e2e_latency_s/total_throughput/peak_memory/prompt/completion/cached_tokens), REMOVED native_duration/decode_rate/zero-duration-safety — TestComputeMetrics 4 fails. (3) _run_single_test diffusion/canvas/producer-timestamp metrics REMOVED — TestRunSingleTest 4 fails. (4) engine selection vlm_mtp/drafter/diffusion-warmup logic REMOVED — TestBenchmarkEngineSelection 5 fails. (5) experimental-feature detection + upload-skip REDESIGNED — TestExperimentalFeatureDetection 2 + TestUploadToBenchSite 1 fail. 44 pass (validator + basic request + stats counters). 17 fails = test rewrite vs simplified benchmark API, exceeds debt-cleanup scope (Rules 2/3).
 test_benchmark.py
 # RESCUED round10q-b9 (2026-08-19): 14/14 pass. Three drifts fixed:
 # (1) import repoint fusion_mlx.config.server_config -> fusion_mlx.config
