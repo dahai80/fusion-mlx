@@ -407,6 +407,16 @@ test_audio_route_registration_gate.py
 # 10P/12F + collection errors. Same _server_state dict-vs-MagicMock redesign
 # drift. REDESIGN-DRIFT cluster.
 test_audio_routes_bundle.py
+# RESCUED test_audio_sts 2026-08-24 (eval round16): PARTIAL 13p/4s/14xf.
+#   FIX (harness): repoint import fusion_mlx.engine.sts (singular, MISSING) →
+#   fusion_mlx.engines.sts (plural, STSEngine BaseNonStreamingEngine +
+#   _detect_sts_family). Unblocked 13 unit tests (11 TestSTSEngineUnit + 2
+#   TestSTSModelRequest). 4 Integration skipped (slow). XFAIL 14: 13 fixture-
+#   dependent (server fixture pins REMOVED _server_state MagicMock arch; prod
+#   now dict; server app None — Gap B, REDESIGN) across TestSTSEndpointBasic/
+#   Errors + TestSTSModelAliasResolution. 1 contract xfail:
+#   test_start_rejects_generic_family (prod msg reworded 'Unsupported STS
+#   family' vs test 'Unsupported STS model family').
 test_audio_sts.py
 # RESCUED test_audio_stt 2026-08-24 (eval round16): PARTIAL 7p/1s/28xf.
 #   FIX (harness): repoint import fusion_mlx.engine.stt (singular, MISSING) →
