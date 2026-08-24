@@ -408,6 +408,18 @@ test_audio_route_registration_gate.py
 # drift. REDESIGN-DRIFT cluster.
 test_audio_routes_bundle.py
 test_audio_sts.py
+# RESCUED test_audio_stt 2026-08-24 (eval round16): PARTIAL 7p/1s/28xf.
+#   FIX (harness): repoint import fusion_mlx.engine.stt (singular, MISSING) →
+#   fusion_mlx.engines.stt (plural, STTEngine BaseNonStreamingEngine w/
+#   _normalize_stt_generate_language "zh":"chinese" map). 7 refs. Unblocked 7
+#   unit tests (3 TestSTTEngineLanguageForwarding + 4 TestSTTProcessorErrors).
+#   XFAIL 28: 27 fixture-dependent (server_audio_client pins REMOVED
+#   _server_state MagicMock-with-attrs arch — prod now dict; `from
+#   fusion_mlx.server import app` returns None — Gap B server-fixture rebuild,
+#   REDESIGN) across TestSTTEndpointBasic/ResponseFormat/Errors +
+#   TestVideoContainerRemap + TestSTTModelAliasResolution. 1 contract xfail:
+#   test_transcribe_preserves_iso_language_for_code_backends (prod normalizes
+#   it->italian, test wants ISO passthrough for cohere-style backends).
 test_audio_stt.py
 test_audio_tts.py
 # KEEP_QUARANTINED test_audio_upload_size_limit.py (eval round13 2026-08-24): REMOVED/UNSHIPPED.
