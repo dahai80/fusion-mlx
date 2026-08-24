@@ -28,6 +28,13 @@
 # prod contract), not silent.
 
 ## uncollectable (9)
+# KEEP_QUARANTINED test_markitdown_integration.py (eval round11 2026-08-24):
+# collection ImportError — `from fusion_mlx.settings import GlobalSettings`.
+# GlobalSettings REMOVED; prod settings.py now has `Settings` (flat dataclass,
+# _ServerState dict-based). Test uses state.global_settings attr-access (19
+# refs) but prod _server_state is _ServerState(dict) — no .global_settings.
+# REDESIGN-DRIFT cluster (same as audio bundle + test_server). Re-wiring all
+# fixtures to dict-style = rewrite to satisfy redesigned contract (Rule 2).
 test_markitdown_integration.py
 # KEEP_QUARANTINED test_per_request_thinking_budget.py (eval round10): collection
 # ImportError — file imports AnthropicOutputConfig + _resolve_reasoning_max_tokens
@@ -68,6 +75,11 @@ test_per_request_thinking_budget.py
 # get_sampling_params/metric+boundary helpers) never ported from rapid-mlx
 # layered-arch; fusion-mlx kept only private _ServerState + per-route
 # _build_sampling_params. Track until a server-surface unification PR lands.
+# KEEP_QUARANTINED test_server.py (eval round11 2026-08-24): collection
+# ImportError — `from fusion_mlx.settings import DEFAULT_BURST_DECODE_MODE` /
+# BURST_DECODE_MODES. Entire burst-decode feature REMOVED from settings.py.
+# test_settings.py already KEEP_QUARANTINED round10 for the same settings
+# redesign. REDESIGN-DRIFT (removed feature).
 test_server.py
 # KEEP_QUARANTINED test_settings.py (eval round10): collection ImportError —
 # file imports ~20 layered settings classes (AuthSettings, CacheSettings,
@@ -192,6 +204,14 @@ test_anthropic_streaming_reasoning.py
 #     thinking-block content helper semantics mismatch. Same family.
 # Rescue = rewrite 12 test expectations to match prod strip semantics in 883L
 # file. Exceeds single-cycle budget (Rule 6). DEFER.
+# KEEP_QUARANTINED test_anthropic_think_leak_r12_m1b.py (eval round11
+# 2026-08-24): 21P/12F. 12 failures import `_thinking_block_content` from
+# anthropic_adapter — REMOVED. Tests pin PR#802/#875/#858 "H-01 rescue-tail
+# dedup" + "thinking block suppression on duplicate payload" feature.
+# is_rescue_payload/RESCUE_TAIL_LENGTH/strip_reasoning_channel_markup/sanitize
+# exist (21P), but the thinking-block suppression logic was removed.
+# Re-adding _thinking_block_content + suppression = inventing removed prod
+# logic (Rule 2). REDESIGN-DRIFT (removed feature).
 test_anthropic_think_leak_r12_m1b.py
 # test_anthropic_tool_choice_validation.py RESCUED 2026-08-18 (19 pass):
 # clean pass, no re-point needed — prod enforcer symbols unchanged.
@@ -308,6 +328,13 @@ test_anthropic_think_leak_r12_m1b.py
 # (a)+(b) harness drift; (c) feature/dep gap — file issue per CLAUDE.md
 # upstream flow. Bundle suites ALSO have srv._embedding_model_locked
 # AttributeError (server refactor removed attr).
+# KEEP_QUARANTINED test_audio_api.py (eval round11 2026-08-24): all setup
+# errors "NoneType not callable". Fixtures patch fusion_mlx.server._server_state
+# as MagicMock + set ATTRS (.engine_pool, .settings_manager). Prod _server_state
+# is _ServerState(dict) — app uses _server_state.get("settings_manager") not
+# .settings_manager attr. REDESIGN-DRIFT (object→dict). Same cluster as
+# test_audio_probe_consistency/route_registration_gate/routes_bundle. Re-wiring
+# all fixtures to dict-style = rewrite (Rule 2).
 test_audio_api.py
 # test_audio_extras_lockin.py RESCUED 2026-08-18 (1 pass + 2 skip + 2 xfail,
 # isolation): fixed stale PYPROJECT_PATH (.parent.parent → .parent.parent.parent; tests
@@ -365,15 +392,28 @@ test_audio_api.py
 # _resolve_model reorder; 33/33 pass. Gap B (server-fixture rebuild for the
 # other 9 audio suites) still pending — those stay quarantined below.
 # test_audio_path_shaped_model.py
+# KEEP_QUARANTINED test_audio_probe_consistency.py (eval round11 2026-08-24):
+# 5P/8F + collection errors. Same _server_state dict-vs-MagicMock redesign
+# drift as test_audio_api. REDESIGN-DRIFT cluster.
 test_audio_probe_consistency.py
 test_audio_r11_b_bundle.py
 test_audio_r7_c_bundle.py
 test_audio_r8_a_bundle.py
+# KEEP_QUARANTINED test_audio_route_registration_gate.py (eval round11
+# 2026-08-24): 4P/22F + collection errors. Same _server_state dict-vs-MagicMock
+# redesign drift. REDESIGN-DRIFT cluster.
 test_audio_route_registration_gate.py
+# KEEP_QUARANTINED test_audio_routes_bundle.py (eval round11 2026-08-24):
+# 10P/12F + collection errors. Same _server_state dict-vs-MagicMock redesign
+# drift. REDESIGN-DRIFT cluster.
 test_audio_routes_bundle.py
 test_audio_sts.py
 test_audio_stt.py
 test_audio_tts.py
+# KEEP_QUARANTINED test_audio_upload_size_limit.py (eval round13 2026-08-24): REMOVED/UNSHIPPED.
+# install_audio_body_limit_middleware + MAX_AUDIO_UPLOAD_SIZE only in old rapid-mlx migration
+# commit 31ce9b68, never in fusion_mlx. routes_internal/audio.py (176L) has no body-limit/
+# upload-size path. Test pins unshipped feature. KEEP.
 test_audio_upload_size_limit.py
 # test_batched_engine rescued (P1-3): the prior note "BatchedEngine removed
 # in #422" was wrong — #422 only deleted the DUPLICATE class in
@@ -420,6 +460,15 @@ test_batched_engine_output_router.py
 # string→dict, non-mapping→{"value":parsed}, malformed→{"value":raw}, non-assistant
 # untouched, already-mapping left alone, missing tool_calls safe). Test-file-only.
 # test_batched_engine_tool_call_normalization.py
+# KEEP_QUARANTINED test_batching.py (eval round11 2026-08-24): collection
+# ImportError `from fusion_mlx.engine import AsyncEngineCore/EngineConfig/
+# EngineCore` — fusion_mlx/engine is a PACKAGE not module; symbols live in
+# engine_core.py (engine.py NEVER existed). Import-path fix → 17P/11F, but
+# remaining 11 fail: EngineCore.__init__ (engine_core.py:360) now does real
+# spec-decode/n-gram init via _mlx_executor; mock_model_and_tokenizer fixture
+# doesn't satisfy new constructor + `assert 65536==256` default-config drift.
+# Rebuilding mock for redesigned constructor = rewrite (Rule 2).
+# REDESIGN-DRIFT (constructor + config redesign).
 test_batching.py
 # KEEP_QUARANTINED round10q-b9 (2026-08-19): bench cluster, real feature
 # removal/refactor, NOT harness drift.
@@ -437,6 +486,11 @@ test_batching.py
 #   TestExperimentalFeatureDetection/TestUploadToBenchSite — not cleanly
 #   splittable. File issue for benchmark metrics refactor port.
 # Tracked in issue #509 (filed 2026-08-19).
+# KEEP_QUARANTINED test_bench_vs_ollama.py (eval round11 2026-08-24): 0P/63F.
+# All FileNotFoundError — loads scripts/bench_vs_ollama.py (importlib spec).
+# Script REMOVED (not in scripts/). Test pins removed script's
+# default_model_pairs/parse_model_pair/parse_args API. Recreating script =
+# inventing prod logic (Rule 2). REMOVED-FEATURE.
 test_bench_vs_ollama.py
 test_benchmark.py
 # RESCUED round10q-b9 (2026-08-19): 14/14 pass. Three drifts fixed:
@@ -671,7 +725,15 @@ test_cli_chat.py
 # L283, but rich-table re-render NOT ported). Feature port per Rule 2/3: don't
 # invent CLI rendering to satisfy tests. CANDIDATE ISSUE: port Rapid-MLX alias
 # capability-table + audit_cli_config_fidelity.py + H-08 install guard.
+# KEEP_QUARANTINED test_cli_config_fidelity.py (eval round11 2026-08-24): 0P/6F
+# FileNotFoundError. Loads scripts/audit_cli_config_fidelity.py (REMOVED) +
+# references vllm_mlx/cli.py (old pkg, migrated to fusion_mlx; REMOVED).
+# Test pins removed script + old package layout. REMOVED-FEATURE.
 test_cli_config_fidelity.py
+# KEEP_QUARANTINED test_cli_embeddings_extra.py (eval round11 2026-08-24):
+# 0P/4F. import fix cli→cli_serve insufficient. Deeper: fusion_mlx.embedding
+# lost mlx_embeddings_available + EMBEDDINGS_EXTRA_INSTALL_HINT (embedding-
+# extra-guard feature REMOVED). REMOVED-FEATURE.
 test_cli_embeddings_extra.py
 test_cli_models.py
 # test_codex_profile.py RESCUED 2026-08-10 (6/6 pass): the agent-profile
@@ -684,6 +746,9 @@ test_cli_models.py
 # aliases (qwen3.6-35b-4bit->qwen3.6-27b-4bit, qwen3-coder-30b-4bit->-a3b-4bit).
 # Test asserts model_provider="fusion-mlx" + [model_providers.fusion-mlx].
 # test_codex_profile.py
+# KEEP_QUARANTINED test_community_bench.py (eval round11 2026-08-24): 1P/80F. Pins
+# vllm_mlx.community_bench.{hardware,runner,submission} (allowlist guard, helpers,
+# payload builder) — vllm_mlx/ package REMOVED. REMOVED-FEATURE cluster.
 test_community_bench.py
 # test_config_and_middleware.py RESCUED 2026-08-09 (28 pass, was 23/5): the 5
 # failures were stale symbol refs after the middleware extraction, not prod
@@ -868,9 +933,16 @@ test_download_gate.py
 # probe/guard fns to satisfy tests). Candidate for embedding-guard feature
 # port. Stale cli->cli_serve import is fixable but bundled w/ real gaps.
 test_embeddings.py
+# KEEP_QUARANTINED test_embeddings_extra_guard (eval round15 2026-08-24):
+# 22f/3p REMOVED-FEATURE cluster. fusion_mlx/embedding.py gutted to 13-line
+# stub — mlx_embeddings_available REMOVED (2 import tests), require_mlx_
+# embeddings_or_exit always exits(1) not (2) (REDESIGN, 2 exit-code tests),
+# server._embedding_engine REMOVED (route-guard tests). Source-pin tests
+# use parents[1]/"vllm_mlx"/cli.py — double path-drift AND guard moved
+# cli.py→cli_serve.py:273. Guard itself still wired. Rescuing 22 = rewrite
+# to assert embeddings-absent (opposite of test intent) = Rule 2/3 viol.
+# Re-confirm round10q-b4 verdict. Whole-file KEEP.
 test_embeddings_extra_guard.py
-# KEEP_QUARANTINED 2026-08-19 round10q-b4: 3/3 fail — harness drift +
-# feature gap. _build_embed_app patches stale module attrs
 # srv._embedding_engine / srv._embedding_model_locked (rapid-mlx-era;
 # fusion_mlx.server has NONE — uses module-global _pool via
 # set_embeddings_context in api/embeddings_routes.py:36) + brand-drift
@@ -1107,30 +1179,17 @@ test_hf_downloader.py
 # call into BatchedEngine._load_model_sync right after mlx_lm.load() (same
 # thread, #KV-0 same-stream rule). 1364-test engine/load/pool regression clean.
 # test_index_cache.py
-# KEEP_QUARANTINED test_internal_route_auth.py (0 err / 15 fail after prod fix):
-# The test is built on rapid-mlx's REVERTED auth premises (#728/#756 revert):
-# (a) fixture wires cfg.engine (rapid-mlx single-engine arch) but fusion-mlx
-#     routes read _server_state["engine_pool"] (multi-engine pool arch) → 503;
-# (b) cache export/import/info tests expect anonymous-reachable routes (no
-#     admin gate, plain verify_api_key) but fusion-mlx cache_router keeps
-#     require_admin (intentional #349 hardening — TestClient is NOT loopback
-#     so require_admin 401s) → "Admin authentication required";
-# (c) auth-matrix expects x-api-key acceptance via the reverted gate.
-# REAL PROD GAPS THIS SURFACED — ALL FIXED IN PROD (commit below):
-#   - admin_router symbol lost in routes/→routes_internal/ rename (5fd79e0) →
-#     RESTORED in health.py with cancel + DELETE aliases + cache-clear.
-#   - cancel route was a LYING NO-OP (always 200/cancelled=True, never called
-#     abort_request) → REWRITTEN to iterate pool engines, 404 on unknown id
-#     (synchronous scheduler.requests existence check), 500 generic (no HF
-#     path leak), success envelope omits model_name (F-151 hardening).
-#   - DELETE /v1/requests/{id} + DELETE /v1/cache aliases → RESTORED.
-# Test file itself KEEP: rescuing requires reverting the #349 admin gate
-# (product decision) or rewriting the fixture against the pool arch (test
-# rewrite, exceeds debt-cleanup scope). The security leak-shape assertions
-# are valuable but their auth premises conflict with intentional hardening.
-# NOTE: when this file collects it leaks _server_state state polluting
-# test_hot_cache — staying quarantined also prevents that ordering issue.
-test_internal_route_auth.py
+# RESCUED test_internal_route_auth.py (eval round16 2026-08-24): PARTIAL rescue.
+# Fixture rewired to match fusion-mlx multi-engine pool arch — cancel route
+# reads _server_state["engine_pool"] NOT cfg.engine, so fixture now wires a
+# mock pool with scheduler.requests carrying the known ids. 3 cancel leak-shape
+# tests pass (200-envelope / 404-unknown / 500-generic). 8 auth-matrix tests
+# already passed. 12 cache-cluster tests xfailed: prod cache_router keeps
+# Depends(require_admin) (intentional #349 hardening) so TestClient (host=
+# 'testclient', non-loopback) gets 401 before the 501/403/200 stubs — these
+# pin the REVERTED anonymous-admin-access contract (#728/#756 revert), a
+# product decision, not harness drift. fixture restores engine_pool in finally.
+
 # KEEP_QUARANTINED test_langchain.py (0 tests collected): script-style integration
 # test (def _run_tests(), not pytest functions) requiring langchain_core +
 # langchain_openai + a live fusion-mlx server. Read by the rapid-mlx
@@ -1160,7 +1219,20 @@ test_librechat_docker.py
 # only the patch target strings were missed. No prod gap.
 # test_memory_cache.py
 test_memory_monitor_vlm_config.py
+# KEEP_QUARANTINED test_metal_cap_enforcement (eval round15 2026-08-24):
+# 27f/0p REDESIGN-DRIFT. All 27 tests patch.object 3 Scheduler attrs that
+# are MISSING: _resolve_metal_cap_bytes, _current_metal_active_bytes,
+# _metal_cap_warning_logged. Prod REDESIGNED to _memory_metal_cap_bytes
+# (sched_init.py:166) + _memory_component_limit_for_rejection query path
+# (sched_query.py:244). Symbol names + admission structure diverged.
+# Rescuing = rewrite all 27 tests to new symbol names (asserts different
+# contract) OR add prod shims — both violate Rules 2/3. Whole-file KEEP.
 test_metal_cap_enforcement.py
+# RESCUED test_metal_error_recovery 2026-08-24 (eval round15): 1f/2p/3skip
+# →2p/3skip/1xf. 1 fail — test_inference_aborted_error_is_runtime_error:
+# prod InferenceAbortedError REMOVED (replaced _PrefillAbortedError/
+# RequestAbortedError), conftest stub creates (Exception) not RuntimeError.
+# xfail 1. 2 pass (RequestOutput.error field, engine_loop fail-in-flight).
 test_metal_error_recovery.py
 # KEEP_QUARANTINED: feature/arch gap — test pins rapid-mlx metrics arch
 # (issue #701): cfg.engine.get_stats() with num_requests_processed/
@@ -1205,8 +1277,17 @@ test_mirror_pull.py
 # (Rule 11). Rescue = 26-file shim add (large, contradicts convention) OR
 # rewrite test #2 to verify central-boot-install contract. Both non-surgical.
 # File issue first per CLAUDE.md flow for per-file-vs-central contract decision.
+# Round 13 (2026-08-24): issue #617 FILED (28 offenders now, was 26). Also found
+# marker rename _rapid_mlx_compat_installed -> _fusion_mlx_compat_installed rescues
+# 7/8 tests; only test_every_mlx_lm_consumer_installs_shim (the audit) blocked by
+# the #617 gap. KEEP_QUARANTINE until #617 resolved (per-file guard OR test rewrite
+# to central-boot contract).
 test_mlx_compat.py
-test_mlx_embeddings_compat.py
+# RESCUED test_mlx_embeddings_compat 2026-08-24 (eval round15): 2f→2p. ROOT
+#   CAUSE: harness path off-by-one — Path(__file__).resolve().parents[1]
+#   resolved to tests/ not repo root, so module_path = tests/fusion_mlx/models/
+#   mlx_embeddings_compat.py (FileNotFoundError). FIX: parents[1]→parents[2]
+#   (2 occurrences). Prod module EXISTS at fusion_mlx/models/. Pure harness.
 # KEEP_QUARANTINED: real version/feature gap, not harness drift. Test 1 imports
 # mlx_vlm.generate.diffusion — mlx_vlm 0.5.0 (installed) has generate.py (module)
 # NOT generate/diffusion.py; _diffusion_soft_embedding_weight absent entirely.
@@ -1245,7 +1326,7 @@ test_mlx_vlm_diffusion_patch.py
 # File issue first per CLAUDE.md flow. 200 passing tests valuable but
 # quarantine is all-or-nothing via collect_ignore.
 test_model_auto_config.py
-test_model_loading.py
+# test_model_loading.py  (RESCUED 2026-08-24 round15: 13 pass + 14 xfail. PROD FIX: _checkpoint_has_mtp_weights shard-scan fallback used `for k in f` (iterating safetensors handle) which raises TypeError on current safetensors API → silent except masked it → shard scan always returned False. Fixed to `for k in f.keys()`. Test test_returns_true_when_later_shard_has_mtp now passes (pinned real prod bug). 14 xfail REMOVED-FEATURE: paroquant dispatch (maybe_load_custom_quantization is 1-line `return None` stub, 5 tests), llama4 attention pre-load patch + _patch_mlx_lm_load_config (2 parametrized), load_text_model (1), VlmMtp ordered attach/sanitize/runtime seam wiring (6 — _patch_mlx_lm_load_config + set_mtp_attach_enabled separate-seam wiring removed/redesigned).)
 # test_model_profiles_ssot.py (RESCUED 2026-08-19 round10q: 21/21 pass. Data fix
 # in aliases.json SSOT — 4 alias entries missing explicit profile bool fields:
 # qwen3.6-27b-8bit-dflash (is_hybrid+supports_spec_decode), bge-m3/bge-m3-4bit/
@@ -1332,8 +1413,22 @@ test_openwebui.py
 test_paged_cache_benefits.py
 test_paged_cache_real_inference.py
 test_paged_cache_real_model.py
+# KEEP_QUARANTINED test_paired_compat (eval round15 2026-08-24): 7p/3f. 3
+#   fails pin cross-lane text divergence — test_reasoning_extracted_consistently
+#   [True/False]: openai lane strips `深度融合` reasoning prefix to 'Final
+#   answer.' vs anthropic lane keeps '深度融合Final answer.'; test_chunking_
+#   boundaries_dont_drift[False]: 'Hello world!' vs 'Hello, world!' punctuation.
+#   REDESIGN-DRIFT — reasoning-extraction + punctuation-normalization contract
+#   differs across lanes. Rule 2/3: don't rewrite assertions to averaged
+#   contract. 7 passing good but 3 pin divergent cross-lane behavior.
 test_paired_compat.py
+# KEEP_QUARANTINED test_payload_builder_v2_full.py (eval round13 2026-08-24): UNSHIPPED community-bench
+# subsystem. build_submission_payload gone from community_bench/submission.py (only submit_benchmark/
+# submit stubs); tests/community-benchmarks/ dir (schema.json + submissions seed) NEVER in git.
+# Test pins unshipped feature. Cluster with test_payload_builder_v2_kwargs/test_schema_v2_*. KEEP.
 test_payload_builder_v2_full.py
+# KEEP_QUARANTINED test_payload_builder_v2_kwargs.py (eval round13 2026-08-24): same community-bench
+# cluster as test_payload_builder_v2_full — build_submission_payload + schema.json unshipped. KEEP.
 test_payload_builder_v2_kwargs.py
 # test_pflash.py RESCUED 2026-08-20 b32 (22 pass + 2 auto-skip). Compress
 # LOGIC tests (TestPFlashCompressor + config/validate/resolve-override
@@ -1368,7 +1463,15 @@ test_payload_builder_v2_kwargs.py
 # test-debt. Prod wins Rule 7/12 (PFlash routing unshipped). Same family as
 # b31 OutputRouter (removed feature). Basenames stay ACTIVE.
 test_pflash_engine.py
+# KEEP_QUARANTINED test_pflash_metrics.py (eval round13 2026-08-24): REDESIGN-DRIFT. Pins Request
+# attrs pflash_metadata + model_prompt_tokens (both MISSING — model_prompt_tokens renamed
+# num_prompt_tokens) + Request.__init__ kwargs has_tools/requires_prompt_integrity/prefix_boundary
+# (removed) + rapid_mlx_pflash_bypass_total metric name (prod uses fusion_mlx_* namespace, metric
+# gone). test_pflash.py (RESCUED b32) uses different assertions; these 2 pin removed Request surface. KEEP.
 test_pflash_metrics.py
+# KEEP_QUARANTINED test_pflash_scheduler.py (eval round13 2026-08-24): same Request-surface drift
+# as test_pflash_metrics (pflash_metadata MISSING, has_tools/requires_prompt_integrity/prefix_boundary
+# kwargs removed). KEEP.
 test_pflash_scheduler.py
 # KEEP_QUARANTINED: missing modules, not harness drift. Test imports
 # fusion_mlx.plugin (is_mlx_available, mlx_platform_plugin, get_mlx_device_info)
@@ -1524,12 +1627,26 @@ test_request_cancellation.py
 test_request_time_alias_resolution.py
 # test_responses_591_followups.py
 test_responses_budget_exhaust_streaming.py
+# KEEP_QUARANTINED test_responses_bundle.py (eval round13 2026-08-24): REDESIGN-DRIFT. Fixture
+# architecture (_make_client + _install_lightweight_engine_modules) installs vllm_mlx.engine/
+# vllm_mlx.routes.responses sys.modules stubs + _PARENT_ATTRS (vllm_mlx.routes -> responses),
+# expecting prod to import vllm_mlx.routes.responses. But vllm_mlx REMOVED + route namespace
+# restructured routes -> routes_internal (real: fusion_mlx.routes_internal.responses). Tests pin
+# reasoning-item emission / F4 / R10 cross-lane parity against removed namespace. Fix = rework
+# fixture to target routes_internal directly = test harness rewrite (forbidden Rules 2/3).
+# Cluster with test_responses_engine_failure_envelope + test_responses_sse_event_order (same fixture). KEEP.
 test_responses_bundle.py
+# KEEP_QUARANTINED test_responses_engine_failure_envelope.py (eval round13 2026-08-24): same
+# vllm_mlx.routes.responses fixture cluster as test_responses_bundle. Pins status='failed' on
+# engine error (prod returns 'incomplete' for max_output_tokens) + error-envelope contract. KEEP.
 test_responses_engine_failure_envelope.py
 # KEEP_QUARANTINED 2026-08-22 (#598): message-conversion feature gap (leading user message lost in Responses conversion). Feature-gap.
 test_responses_input_default_type.py
 # test_responses_param_validation.py  (RESCUED 2026-08-18 — commented out = un-quarantined = collected; 11 pass. PROD FIX R6-H8 Responses-surface parity: ResponsesRequest had no top_k cap (Field ge=0 only, no upper bound) and no seed validator → pathological top_k=999_999_999 / negative / bool and negative / bool seed silent-degraded to HTTP 200 on /v1/responses. Added shared validate_top_k (cap _TOP_K_SENTINEL_CAP=1<<20 inclusive, bool/negative reject) + validate_seed (bool/negative reject) to shared_models.py, wired as field_validators on ResponsesRequest. PROD FIX #355 forwarding: routes_internal/responses.py _resolved_sampling_kwargs only threaded temperature/top_p/stop → top_k (and min_p/repetition_penalty/presence_penalty/frequency_penalty) silently dropped before reaching engine.chat; now forwarded when present. Test vllm_mlx stub-shim harness intact. Regression-checked: test_responses_adapter 73 pass, test_responses.py + chat_template_kwargs green; pre-existing 15+6 fails in test_responses_bundle/test_responses_input_default_type unrelated (stay quarantined).)
 test_responses_route.py
+# KEEP_QUARANTINED test_responses_sse_event_order.py (eval round13 2026-08-24): same
+# vllm_mlx.routes.responses fixture cluster as test_responses_bundle. Pins response.output_text.done
+# SSE event + 'object' key in event stream (prod event ordering changed). KEEP.
 test_responses_sse_event_order.py
 # KEEP_QUARANTINED 2026-08-22 (#598): 404/401/503 + registry KeyError (is_hybrid/count/context_window) — deep registry-shape drift. Feature-gap.
 test_routes.py
@@ -1545,15 +1662,22 @@ test_runtime_cache_path.py
 # test_sanitize_output.py  (RESCUED 2026-08-19 round10p: 15 pass. PROD FIX: _FINAL_SANITIZER regex missing stray closing-tag pattern → `</im_end>` (slash form, no pipes) leaked into message.content in non-stream path. Added `|</[a-z_]+>` alternation (api/utils.py L1070). Additive — existing `<|im_end|>` open-form + tool_call + think patterns unaffected. Caller: postprocessor/core.py sanitize_output pipeline.)
 # KEEP_QUARANTINED 2026-08-22 (#598): scheduler exports get_phys_footprint/_PreflightRejection removed; ZeroDivisionError in chunked-prefill path. Feature-gap.
 test_scheduler_chunked_prefill.py
-test_scheduler_prefill_memory_guard.py
+# test_scheduler_prefill_memory_guard.py  (RESCUED 2026-08-24 round15: 24 pass + 4 xfail. Patch-target drift: get_phys_footprint/mx.get_active_memory live in fusion_mlx.scheduler.sched_query (bound at import, NOT re-exported by package __init__) → repoint patch("fusion_mlx.scheduler.get_phys_footprint")→sched_query.get_phys_footprint (3 patch strings) + monkeypatch setattr(scheduler_mod,...)→setattr(sched_query_mod,...) (L135-138) + _PreflightRejection import fusion_mlx.scheduler→fusion_mlx.scheduler.types. 4 xfail REDESIGN/REMOVED: preflight_eviction_request MISSING (REMOVED-FEATURE), monitor._num_layers None for nested-dict config (REDESIGN), draft_cache.release_cache never called on rejection (REMOVED specprefill release-on-reject), rejection message lacks "KV+SDPA" (prod REWORDED wording).)
 test_scheduler_stop_decoder_surface.py
 # KEEP_QUARANTINED: round10p — community-benchmarks/ dir + schema.json not ported. Test reads community-benchmarks/schema.json (FileNotFoundError) + submissions/*.json. Feature (community bench aggregator v2 schema) not in repo. Feature gap, not harness drift. File issue for port.
 test_schema_v2_accepts_minimal_v2.py
+# KEEP_QUARANTINED round13 2026-08-24: same community-bench cluster (missing schema.json + submissions
+# seed) as test_schema_v2_accepts_minimal_v2 round10p note above. Unshipped feature. KEEP.
 test_schema_v2_accepts_v1.py
+# KEEP_QUARANTINED round13 2026-08-24: same community-bench cluster — 7 tests all FileNotFoundError
+# on tests/community-benchmarks/schema.json (dir never in git). KEEP.
 test_schema_v2_rejects_partial_harness.py
 # KEEP_QUARANTINED 2026-08-22 (#598): Scheduler._get_request_sampler deleted (seeded sampler path refactored). Dead-symbol.
 test_seed_reproducibility.py
-test_serve_host_loopback_default.py
+# RESCUED round13 2026-08-24: cli-split drift. _wildcard_host_aliases/_port_preflight_or_die/
+# _is_ipv6_host live in _cli_base.py (imported into cli_serve), NOT re-exported by cli facade.
+# Test did cli.<sym> = AttributeError. Fix = module-level rebind cli.<sym> = _cli_base.<sym>
+# (cli.main stays facade). 15/15 pass.
 # test_serve_listen_fd.py + test_serve_port_collision.py rescued (#351):
 # fixed stale cli.->cli_serve/_cli_base stub targets after the serve-code
 # extraction; both now fully green (21 + 9 tests) and re-enter CI.
@@ -1584,16 +1708,19 @@ test_serve_host_loopback_default.py
 # (tool_parser_instance L275/reasoning_parser L278/mcp_manager L282/model_registry
 # L321/enable_auto_tool_choice L273/tool_call_parser L274 still exist but no
 # module-global→cfg staging path to test). Prod wins Rule 7/12.
-# test_server_prefill_memory_handler.py: feature gap, NOT harness drift.
+# KEEP_QUARANTINED 2026-08-24 (eval round15): test_server_prefill_memory_handler 7f/0p REDESIGN/REMOVED.
 # prefill_memory_exceeded_handler absent (parity gap vs scheduler_queue_full_
 # handler sibling; exception_handlers.py:638 registers ONLY SchedulerQueueFull,
 # install_exception_handlers L563 has no PrefillMemoryExceededError handler).
 # PrefillMemoryExceededError STILL raised (memory_monitor.py:944, engine_core
 # :36) → bubbles to generic Exception handler → 500, no structured 400 body.
 # ALSO _with_json_keepalive/_with_sse_keepalive absent (streaming error-body
-# emitters; same not-ported family as test_sse_keepalive.py ACTIVE).
-# 2/7 tests (TestPostCommitPrefillMemorySurface) pin keepalive feature →
-# can't rescue half file. Prod wins Rule 7/12.
+# emitters; same not-ported family as test_sse_keepalive.py ACTIVE). ALSO
+# get_engine_for_model/validate_context_window/verify_api_key removed from
+# server module scope (server.py REDESIGN, symbols moved/removed). Message
+# substrings "Memory Guard to aggressive" + "custom memory guard ceiling"
+# REMOVED from prod (only "KV+SDPA" survives). All 7 tests pin removed
+# handler+keepalive+message-contract wiring. Whole-file KEEP Rule 7/12.
 test_server_load_model_order.py
 test_server_prefill_memory_handler.py
 # RESCUED 2026-08-19: 4/4 pass. PROD FIX — SchedulerQueueFullError (raised by
@@ -1610,17 +1737,42 @@ test_server_prefill_memory_handler.py
 # Regression: test_exception_handlers.py 21 fails PRE-EXISTING (already
 # quarantined L696, count_tokens/audio-route debt, NOT queue-full related).
 # test_server_queue_full_handler.py
+# KEEP_QUARANTINED test_server_utils.py (eval round13 2026-08-24): 79 tests. Blanket alias
+# fusion_mlx.server -> fusion_mlx.service.helpers rescues 65P/14F (resolvers _resolve_temperature/
+# _resolve_top_p/_resolve_top_k/_resolve_min_p/_resolve_repetition_penalty + _FALLBACK_TEMPERATURE/
+# _FALLBACK_TOP_P + get_usage/_inject_json_instruction/_extract_token_logprob/_validate_tool_call_params
+# moved server.py -> service/helpers.py = harness drift, RESCUABLE). BUT 14 remaining = 3 REMOVED/
+# REDESIGN groups, NOT harness drift: (1) TestResolveCascade 8 pins 4-tier alias_recommended_sampling/
+# generation_config_sampling cascade — helpers has 2-tier only (request->default->fallback), overlays
+# REMOVED; (2) TestConfigureLogging 3 pins logger-silencing (httpx->WARNING, all 4 chatty loggers) —
+# real configure_logging delegates logging_config which only sets httpx/httpcore->INFO, ignores
+# urllib3/huggingface_hub, contract changed; (3) TestGenerationOutputFieldOrder 3 pins v0.6.65
+# positional surface — real dataclass redesigned (diffusion_*/prompt_tps/generation_tps inserted
+# mid-list, reasoning_text/matched_stop REMOVED, channel moved pos16, logprobs moved pos18).
+# All 3 would require prod rewrite or test rewrite to assert new contract — forbidden by policy
+# (Rules 2/3/7: surgical, simplicity-first, don't average conflicts). 14/79 removed-contract too
+# large a fraction to xfail cleanly; blanket alias would paper over real prod split. Whole-file KEEP.
 test_server_utils.py
 # KEEP_QUARANTINED 2026-08-22 (#598): rescue-skip logic for response_format json drift; Internal server error. Feature-gap.
 test_silent_drop_rescue_569.py
 # KEEP_QUARANTINED: round10p — upstream mlx-lm API regression. `import mlx_lm.generate` now yields a FUNCTION not module (symbol shadow); _merge_caches/_extend_cache/PromptProcessingBatch removed from public API. Test pins removed functions (_merge_caches identity-merge, _extend_cache batched conversion). scheduler/monkeypatches.py patches BatchGenerator._next/next_generated but NOT _merge_caches. Upstream gap — file issue first per CLAUDE.md flow, then PR.
 test_singleton_cache_passthrough.py
-test_specprefill.py
+# RESCUED round13 2026-08-24: harness drift. TestEngineCorePropagation._make_engine_core uses
+# object.__new__ + manual stub; set _active_requests (old name) but prod add_request (engine_core.py:687)
+# uses _active_contexts (renamed). Stub incomplete after rename. Fix = add core._active_contexts = {}.
+# 34/34 pass.
 test_sse_keepalive.py
 # test_status_endpoint.py  (RESCUED round10: 5 pass + 3 xfail strict. Harness drift — server.app now lazy (app=None until get_app()); ServerState→_ServerState; /api/status route reads self.pool closure not _server_state.engine_pool; require_admin blocks non-loopback when no api_key. Rewrote: Server() instance + server.app + dependency_overrides[require_admin]=True for 200 cases; set_api_key for auth test. 3 xfail: /health flat shape no engine_pool.final_ceiling; /api/status dropped active_requests/waiting_requests; /api/status surfaces only 3 metric fields not full ServerMetrics.)
 test_step3p7_patch.py
 # test_stop_string_enforcement.py  (RESCUED 2026-08-19 round10e2: 12 pass. Harness drift — production stop-string path rewired from _decode_tokens seam to streaming detokenizer (_get_detokenizer → add_token/text/last_segment/finalize); test stubbed obsolete _decode_tokens. Rewrote _run_step: _FakeDetok (text=last_segment=decoded_full after add_token, prev_len=0 so stop scan from 0; finalize sets _finalized flag → last_segment returns "" post-finalize so L256 output.new_text += final_segment does NOT double-append); tokenizer.decode stubbed → decoded_full for finished re-decode path L259. 9 fails (stop-scan+detokenizer path) → 0. 3 prior-pass (empty_stop/empty_string/already-length) unaffected. Pure scheduler unit, no engine.)
 test_streaming_reasoning_split_r8c.py
+# KEEP_QUARANTINED test_streaming_tool_filter.py (eval round11 2026-08-24):
+# 12P/1F. test_qwen_format_suppressed asserts plain `<tool_call>` tag
+# suppressed, but prod _TOOL_CALL_TAGS registers only <minimax:tool_call>,
+# <think></think>, <function=</function>, [TOOL_CALL][/TOOL_CALL],
+# <|tool_call>/<tool_call|> (gemma4), [Calling tool\n] — NOT plain
+# <tool_call>. Test pins tag format prod deliberately doesn't filter.
+# Adding the tag = inventing prod logic (Rule 2). REMOVED/UNSUPPORTED tag.
 test_streaming_tool_filter.py
 # KEEP_QUARANTINED: missing feature, not harness drift. Test imports
 # scripts.stress_test (chat() with stream usage accounting: include_usage,
@@ -1629,7 +1781,12 @@ test_streaming_tool_filter.py
 # artifact never ported. Rescuing = writing the stress-test script = new
 # feature, out of debt-rescue scope. Track as missing-tooling gap.
 test_stress_test_stream_usage.py
-test_structured_output.py
+# RESCUED test_structured_output 2026-08-24 (eval round15): 14f/0p→13p/1xf.
+# Root cause=harness import-drift: _inject_json_instruction MOVED from
+# server.py to service/helpers.py:1285 (conftest stub at server returned
+# None). Fix=repoint import server→service.helpers. 1 xfail — test_inject_
+# with_system_in_middle: prod mutates FIRST system msg in-place (prepend
+# instruction) vs test pins prepend-new+preserve-all. REDESIGN-DRIFT.
 test_stt_corrupted_file.py
 test_stt_response_format.py
 # KEEP_QUARANTINED: architecture/policy gap, not harness drift. Test pins a
@@ -1648,8 +1805,18 @@ test_stt_response_format.py
 # RESCUED 2026-08-23 (#598): .gitignore now exists at repo root with .claude/
 # rule (PR #608, closes #599). test_submit_gitignore un-quarantined.
 test_suffix_decoding.py
-test_telemetry_cli.py
-test_tempfile_safe.py
+# RESCUED test_telemetry_cli 2026-08-24 (eval round15): 12f/0p→12p. Root
+# cause=harness module-name drift: 3 hardcoded `python -m vllm_mlx.cli`
+# subprocess calls (L47 helper + L279/L291 standalone) — package renamed
+# vllm_mlx→fusion_mlx. Fix=repoint all 3 to fusion_mlx.cli. telemetry
+# subcommand (status/enable/disable/preview/reset) EXISTS at cli.py:1732.
+# Pure module-name fix, no prod change.
+# RESCUED 2026-08-24: test_tempfile_safe un-quarantined. cli split moved
+# _ensure_model_downloaded -> cli_serve, _spawn_chat_server/_wait_for_chat_server
+# -> cli_commands, but chat_command (cli_commands.py:1273) resolves them as
+# cli_commands globals NOT cli facade. 2 leak tests patched cli.* = no-op
+# (real download hung -> timeout). Repoint patch targets cli -> cli_commands.
+# 15/15 pass. Same cli-split drift pattern as test_cli_argcomplete.
 # RESCUED 2026-08-23 (#598): extract_thinking now normalizes <mm:think>
 # to canonical tags (thinking.py); clean_special_tokens SPECIAL_TOKENS_PATTERN
 # now strips MiniMax M3 control tokens (utils.py). 40/40 pass.
@@ -1660,31 +1827,54 @@ test_thinking_budget.py
 # test_tool_calling 57f/173p: Gemma4 format ValueError (4 — _parse_gemma4
 #   tool_call strictness), assert None is not None (3 — bare Calling tool:
 #   parse dropped), KeyError description (2). Mixed feature/contract drift.
-# test_tool_choice_enforcement COLLECTION ERR: imports
-#   _contains_structural_tool_wire_leak from routes_internal.chat — guard fn
-#   NEVER ported (0 prod refs). #445 normalization gap (per memory).
-# test_tool_logits_schema_guards 26f/2p: schema-guard fn called on
-#   non-dict (NoneType/list/str/int .get) — contract/signature drift, guard
-#   expects dict but receives raw types.
-# test_tool_param_enforcement 5f/9p: _validate_tool_call_params range
-#   (min/max), length (min/max_length), union-type validation NOT enforced
-#   (DID NOT RAISE HTTPException). JSON-schema enforcement incomplete.
-# test_tool_param_enforcement_f141a 15f/10p: same _validate_tool_call_params
-#   — pattern (regex) + format (email/uri/uuid/date) validation NOT enforced.
-#   F-141a JSON-schema format/pattern feature gap.
-# test_tool_parser_coverage 5f/0p: ModuleNotFoundError audit_tool_parser_
-#   coverage — MISSING scripts/audit_tool_parser_coverage.py (like
-#   test_cli_config_fidelity missing audit script). Tooling gap.
-# test_tool_parsers 3f/153p: parse_tool_calls signature changed — now
-#   (text, tokenizer, tools=None); tests call (text)/(text, request) —
-#   tokenizer required, bare Calling tool: format dropped (prod L223 only
-#   [Calling tool: bracketed). API contract change.
-# test_tool_result_content_array 3f/14p: extract_multimodal_content lost
-#   preserve_native_format kwarg (2 — API drift) + multimodal-msg feature
-#   gap (1 — text-only assertion).
-# test_tools_auto_disable_thinking 13f/17p: _ChatEngine._tokenizer attr
-#   missing (engine attr drift) + assert None is False/True (9 —
-#   auto-disable-thinking flag not propagated).
+# KEEP_QUARANTINED test_tool_choice_enforcement (eval round14 2026-08-24):
+#   COLLECTION ERR — imports _contains_structural_tool_wire_leak from
+#   routes_internal.chat. Guard fn NEVER ported (0 prod refs). REMOVED-FEATURE
+#   (#445 normalization gap). Rule 2/3: don't invent guard to satisfy import.
+# KEEP_QUARANTINED test_tool_logits_schema_guards (eval round14 2026-08-24):
+#   26f/2p. Whole file pins defensive-tolerance contract — _extract_param_
+#   schemas (tool_logits.py:28) + validate_param_value (L406) called on
+#   malformed non-dict shapes (NoneType/list/str/int/bool/float .get/.items)
+#   expect graceful skip, prod crashes. REMOVED-FEATURE (tolerance layer
+#   never impl; prod _validate_tool_call_params helpers.py:1223 has its own
+#   isinstance guards but the extractor/validator fns do not). 2 passing
+#   happy-path tests redundant w/ test_tool_param_enforcement. Rule 2/3.
+# RESCUED test_tool_param_enforcement 2026-08-24 (eval round14): 5f/9p. 5
+#   fails pin JSON-schema constraints prod validate_param_value (tool_logits.
+#   py:406) does NOT enforce — range (min/max), length (minLength/maxLength),
+#   union type:[...]. Prod handles type+enum only. xfail-marked 5 w/ reason;
+#   9 good tests (type+enum) now run in CI.
+# RESCUED test_tool_param_enforcement_f141a 2026-08-24 (eval round14): 15f/
+#   10p. 15 fails pin JSON-schema constraints prod validate_param_value
+#   (tool_logits.py:406) does NOT enforce — pattern (regex), format (email/
+#   uri/uuid/date/date-time), multipleOf, uniqueItems. Prod handles type+enum
+#   only. xfail-marked 15 (incl 5-param test_format_enforced) w/ reason; 10
+#   good tests (valid-passes/advisory-skip/unknown-format-passthrough) run CI.
+# KEEP_QUARANTINED test_tool_parser_coverage (eval round14 2026-08-24): 5f/0p.
+#   ModuleNotFoundError audit_tool_parser_coverage — MISSING scripts/audit_
+#   tool_parser_coverage.py (UNSHIPPED tooling, like test_cli_config_fidelity
+#   missing audit script). Rule 2/3: don't invent script to satisfy tests.
+# RESCUED test_tool_parsers 2026-08-24 (eval round14): 3f/153p. 3 fails in
+#   TestGenericToolCallParsing pin bare Calling tool: format (REMOVED — prod
+#   _parse_bracket_tool_calls L348/L719 recognizes bracketed [Calling tool:]
+#   only) + sig REDESIGN parse_tool_calls(text,request)->(text,tokenizer,tools)
+#   (tokenizer required, request-dict schema coercion removed). xfail-marked
+#   3 tests w/ reason; 153 good tests now run in CI.
+# KEEP_QUARANTINED test_tool_result_content_array (eval round14 2026-08-24):
+#   3f/14p. 2 fails: extract_multimodal_content (utils.py:639) TypeError
+#   preserve_native_format kwarg REMOVED (sig now (messages, max_tool_result_
+#   tokens, tokenizer, native_reasoning_content)). REDESIGN-DRIFT. 1 fail:
+#   test_route_rejects_non_text_part_on_tool asserts "text-only" in detail,
+#   prod detail = "does not support image, video, or audio inputs" (message
+#   reworded, not text-only). 14 passing good but 3 pin removed/reworded
+#   contract. Rule 2/3.
+# KEEP_QUARANTINED test_tools_auto_disable_thinking (eval round14 2026-08-24):
+#   13f/17p. maybe_auto_disable_thinking_for_tools (helpers.py:709) sig
+#   REDESIGN — added enable_thinking param, returns passthrough enable_thinking
+#   (None) when tools empty/tool_choice=none. Tests call old sig (req) w/o
+#   enable_thinking, assert `is False` — prod returns None. Contract divergence
+#   + _ChatEngine._tokenizer attr drift. Rule 2/3: don't rewrite tests to new
+#   contract.
 # CANDIDATE ISSUE: port tool-call param JSON-schema enforcement (range/
 # length/union/pattern/format — F-141a/F-011 cont), _contains_structural_
 # tool_wire_leak guard, audit_tool_parser_coverage.py script. Rule 2/3:
@@ -1692,10 +1882,7 @@ test_thinking_budget.py
 test_tool_calling.py
 test_tool_choice_enforcement.py
 test_tool_logits_schema_guards.py
-test_tool_param_enforcement.py
-test_tool_param_enforcement_f141a.py
 test_tool_parser_coverage.py
-test_tool_parsers.py
 test_tool_result_content_array.py
 test_tools_auto_disable_thinking.py
 # RESCUED b30 2026-08-20 (PR #556). 500L. 5 fails -> 0 fail (17 pass + 1
@@ -1798,7 +1985,18 @@ test_validate_release_subject.py
 # test_upgrade_cli rescue above.
 # test_version_check.py
 test_vision_extra_install.py
-test_vision_feature_cache.py
+# RESCUED test_vision_feature_cache 2026-08-24 (eval round15): 11f/22p→7xf/
+#   26p. ROOT CAUSE 1 (harness): conftest shim (L596-615) created empty stub
+#   type("VLMBatchedEngine",(),{}) for fusion_mlx.engine.vlm (singular, stale
+#   pkg w/ only `import logging`) — but real engine at fusion_mlx.engines.vlm
+#   (plural) HAS _compute_vision_features (engines/vlm.py:673) + _split_vision_
+#   features (L729). FIX: shim re-exports real VLMBatchedEngine from engines.vlm.
+#   Rescued 4 encode_image variants. ROOT CAUSE 2 (REDESIGN/REMOVED, 7 xfail):
+#   real engine call-sig diverged (encode_image kwargs, image_grid_thw), qwen/
+#   llava internal ValueError/TypeError, _split returns None, _image_token_count
+#   + _language_prompt_kwargs attrs MISSING (removed). xfail-marked 7 w/ reason.
+#   26 good tests run CI. Shim verified safe (vlm_mtp fails pre-existing, import
+#   speculative.vlm_mtp not engine.vlm).
 # KEEP_QUARANTINED vlm cluster (round10q-b6 2026-08-19): 3 suites, many
 # unported VLM methods, NOT clean harness drift. Attempted partial rescue
 # (repoint engine.vlm→engines.vlm) unblocked 30 pass but 50 fail remain.
@@ -1819,8 +2017,15 @@ test_vision_feature_cache.py
 # convert_tools_for_template, _iter_diffusion_outputs_sync, preflight_chat) +
 # vlm_mtp _buffer_mtp_target_cache. Rule 2/3: feature-port not inline rescue.
 test_vlm_engine.py
-test_vlm_model_adapter.py
-test_vlm_mtp.py
+# test_vlm_model_adapter.py  (RESCUED 2026-08-24 round15: 26 pass + 4 xfail. No import fix needed — all 4 fails are REDESIGN/REMOVED prod behavior. 4 xfail: _detect_mrope True for minimax_m3_vl (prod split MiniMax mRoPE to separate _detect_minimax_m3, rope-config detector returns False), mrope_decode scalar int offset (prod requires isinstance(offsets, mx.array), scalar falls through), minimax_m3_decode 2d position_ids (fixture clears rope config → _uses_mrope=False, same detector-split), return_hidden preserves LanguageModelOutput (prod __call__ always returns .logits, ignores return_hidden kwarg — REMOVED-FEATURE).)
+# RESCUED test_vlm_mtp 2026-08-24 (eval round15): 5f/14p→5xf/14p. 5 xfail
+# markers — 2 contract-narrowed (GEMMA4_ASSISTANT_MODEL_TYPES reduced to
+# ('gemma4_assistant',) only, gemma4_unified_assistant/qwen3_5_mtp no longer
+# accepted), 2 REMOVED (_buffer_mtp_target_cache gone, run_vlm_mtp_decode
+# dispatch no longer buffers), 1 REMOVED (MoE compat patch MoETextConfig/
+# Qwen3_5MTPConfig __post_init__ override gone, upstream TextConfig needs
+# intermediate_size). 14 keep pass (happy-path drafter, reject dflash,
+# swallow load exc, scalar-array unwrap, mutex, patch-on-import, dense config).
 # KEEP_QUARANTINED (eval b27 2026-08-20): ORPHAN-TEST, NOT missing fix.
 # Collection ImportError: cannot import name '_emit_content_pieces' from
 # fusion_mlx.routes_internal.anthropic. Commit f4e2c051 (2026-07-24)
