@@ -44,7 +44,7 @@ def _run_cli(*args, env_overrides=None, home=None):
     if env_overrides:
         env.update(env_overrides)
     return subprocess.run(
-        [sys.executable, "-m", "vllm_mlx.cli", *args],
+        [sys.executable, "-m", "fusion_mlx.cli", *args],
         capture_output=True,
         text=True,
         env=env,
@@ -276,7 +276,7 @@ def test_help_lists_telemetry_subcommand():
     so users discover it. Regression target: someone refactors the
     subparsers and accidentally drops the registration."""
     r = subprocess.run(
-        [sys.executable, "-m", "vllm_mlx.cli", "--help"],
+        [sys.executable, "-m", "fusion_mlx.cli", "--help"],
         capture_output=True,
         text=True,
         timeout=15,
@@ -288,7 +288,7 @@ def test_help_lists_telemetry_subcommand():
 
 def test_telemetry_help_lists_all_five_actions():
     r = subprocess.run(
-        [sys.executable, "-m", "vllm_mlx.cli", "telemetry", "--help"],
+        [sys.executable, "-m", "fusion_mlx.cli", "telemetry", "--help"],
         capture_output=True,
         text=True,
         timeout=15,

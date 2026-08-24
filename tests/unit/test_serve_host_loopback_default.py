@@ -37,7 +37,11 @@ from unittest.mock import patch
 
 import pytest
 
-from fusion_mlx import cli
+from fusion_mlx import _cli_base, cli
+
+cli._wildcard_host_aliases = _cli_base._wildcard_host_aliases
+cli._port_preflight_or_die = _cli_base._port_preflight_or_die
+cli._is_ipv6_host = _cli_base._is_ipv6_host
 
 # ---------------------------------------------------------------------------
 # Helpers

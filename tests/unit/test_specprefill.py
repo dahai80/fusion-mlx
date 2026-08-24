@@ -556,6 +556,7 @@ class TestEngineCorePropagation:
         core = object.__new__(EngineCore)
         core._output_collectors = {}
         core._active_requests = {}
+        core._active_contexts = {}
         core._stream_states = {}
         core._finished_events = {}
 

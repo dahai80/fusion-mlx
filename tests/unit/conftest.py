@@ -593,9 +593,19 @@ def _add_missing_symbols():
     except Exception:
         pass
 
-    # fusion_mlx.engine.vlm missing
+    # fusion_mlx.engine.vlm missing — real engine lives at fusion_mlx.engines.vlm
+    # (plural). Re-export the real class so tests importing the legacy
+    # fusion_mlx.engine.vlm path get the actual VLMBatchedEngine with its
+    # _compute_vision_features/_split_vision_features methods.
     try:
         from fusion_mlx.engine import vlm
+
+        try:
+            from fusion_mlx.engines.vlm import (
+                VLMBatchedEngine as _RealVlmEngine,
+            )
+        except Exception:
+            _RealVlmEngine = type("VLMBatchedEngine", (), {})
 
         for name in (
             "VLMBatchedEngine",
@@ -603,7 +613,9 @@ def _add_missing_symbols():
             "_AUDIO_CONFIG_KEYS",
         ):
             if not hasattr(vlm, name):
-                if name.startswith("_"):
+                if name == "VLMBatchedEngine":
+                    setattr(vlm, name, _RealVlmEngine)
+                elif name.startswith("_"):
                     setattr(
                         vlm,
                         name,

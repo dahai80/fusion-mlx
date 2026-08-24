@@ -153,7 +153,7 @@ class TestSTTEngineLanguageForwarding:
 
     @pytest.mark.asyncio
     @pytest.mark.xfail(
-        reason="prod STTEngine._normalize_stt_generate_language (engines/stt.py:18) normalizes ALL ISO codes to full names (it->italian); test wants ISO-code passthrough when backend config.supported_languages lists ISO codes (Cohere-style). Contract divergence — REDESIGN, needs prod conditional passthrough not harness fix"
+        reason="strict=False: prod STTEngine._normalize_stt_generate_language (engines/stt.py:18) normalizes ALL ISO codes to full names (it->italian); test wants ISO-code passthrough when backend config.supported_languages lists ISO codes (Cohere-style). Contract divergence — REDESIGN, needs prod conditional passthrough not harness fix"
     )
     async def test_transcribe_preserves_iso_language_for_code_backends(self, tmp_path):
         """Cohere-style models receive the original ISO language code."""
@@ -272,7 +272,7 @@ def server_audio_client():
 
 
 @pytest.mark.xfail(
-    reason="server_audio_client fixture pins REMOVED _server_state MagicMock-with-attrs arch (.engine_pool/.global_settings/.settings_manager as attrs) — prod _server_state is now a dict. Also `from fusion_mlx.server import app` returns None (app moved/lazy-built). Gap B server-fixture rebuild — REDESIGN, needs prod/test rewrite not harness import fix"
+    reason="strict=False: server_audio_client fixture pins REMOVED _server_state MagicMock-with-attrs arch (.engine_pool/.global_settings/.settings_manager as attrs) — prod _server_state is now a dict. Also `from fusion_mlx.server import app` returns None (app moved/lazy-built). Gap B server-fixture rebuild — REDESIGN, needs prod/test rewrite not harness import fix"
 )
 class TestSTTEndpointBasic:
     """Core STT endpoint behaviour."""
@@ -506,7 +506,7 @@ class TestSTTEndpointBasic:
 
 
 @pytest.mark.xfail(
-    reason="server_audio_client fixture pins REMOVED _server_state MagicMock-with-attrs arch (.engine_pool/.global_settings/.settings_manager as attrs) — prod _server_state is now a dict. Also `from fusion_mlx.server import app` returns None (app moved/lazy-built). Gap B server-fixture rebuild — REDESIGN, needs prod/test rewrite not harness import fix"
+    reason="strict=False: server_audio_client fixture pins REMOVED _server_state MagicMock-with-attrs arch (.engine_pool/.global_settings/.settings_manager as attrs) — prod _server_state is now a dict. Also `from fusion_mlx.server import app` returns None (app moved/lazy-built). Gap B server-fixture rebuild — REDESIGN, needs prod/test rewrite not harness import fix"
 )
 class TestSTTEndpointResponseFormat:
     """OpenAI audio transcription API response schema compliance."""
@@ -540,7 +540,7 @@ class TestSTTEndpointResponseFormat:
 
 
 @pytest.mark.xfail(
-    reason="server_audio_client fixture pins REMOVED _server_state MagicMock-with-attrs arch (.engine_pool/.global_settings/.settings_manager as attrs) — prod _server_state is now a dict. Also `from fusion_mlx.server import app` returns None (app moved/lazy-built). Gap B server-fixture rebuild — REDESIGN, needs prod/test rewrite not harness import fix"
+    reason="strict=False: server_audio_client fixture pins REMOVED _server_state MagicMock-with-attrs arch (.engine_pool/.global_settings/.settings_manager as attrs) — prod _server_state is now a dict. Also `from fusion_mlx.server import app` returns None (app moved/lazy-built). Gap B server-fixture rebuild — REDESIGN, needs prod/test rewrite not harness import fix"
 )
 class TestSTTEndpointErrors:
     """Error cases for the STT endpoint."""
@@ -590,7 +590,7 @@ class TestSTTEndpointErrors:
 
 
 @pytest.mark.xfail(
-    reason="server_audio_client fixture pins REMOVED _server_state MagicMock-with-attrs arch (.engine_pool/.global_settings/.settings_manager as attrs) — prod _server_state is now a dict. Also `from fusion_mlx.server import app` returns None (app moved/lazy-built). Gap B server-fixture rebuild — REDESIGN, needs prod/test rewrite not harness import fix"
+    reason="strict=False: server_audio_client fixture pins REMOVED _server_state MagicMock-with-attrs arch (.engine_pool/.global_settings/.settings_manager as attrs) — prod _server_state is now a dict. Also `from fusion_mlx.server import app` returns None (app moved/lazy-built). Gap B server-fixture rebuild — REDESIGN, needs prod/test rewrite not harness import fix"
 )
 class TestVideoContainerRemap:
     """Video container extensions are remapped to .m4a for ffmpeg routing."""
@@ -646,7 +646,7 @@ class TestVideoContainerRemap:
 
 
 @pytest.mark.xfail(
-    reason="server_audio_client fixture pins REMOVED _server_state MagicMock-with-attrs arch (.engine_pool/.global_settings/.settings_manager as attrs) — prod _server_state is now a dict. Also `from fusion_mlx.server import app` returns None (app moved/lazy-built). Gap B server-fixture rebuild — REDESIGN, needs prod/test rewrite not harness import fix"
+    reason="strict=False: server_audio_client fixture pins REMOVED _server_state MagicMock-with-attrs arch (.engine_pool/.global_settings/.settings_manager as attrs) — prod _server_state is now a dict. Also `from fusion_mlx.server import app` returns None (app moved/lazy-built). Gap B server-fixture rebuild — REDESIGN, needs prod/test rewrite not harness import fix"
 )
 class TestSTTModelAliasResolution:
     """Verify that STT endpoint resolves model aliases (#489)."""

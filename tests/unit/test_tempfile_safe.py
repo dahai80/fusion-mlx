@@ -479,7 +479,7 @@ def test_chat_command_does_not_leak_tempfile_on_keyboard_interrupt(tmp_path):
         import sys
         sys.path.insert(0, {str(Path(__file__).resolve().parent.parent)!r})
         from unittest.mock import patch
-        from fusion_mlx import cli
+        from fusion_mlx import cli, cli_commands
 
         import builtins
         real_print = builtins.print
@@ -489,7 +489,7 @@ def test_chat_command_does_not_leak_tempfile_on_keyboard_interrupt(tmp_path):
                 raise KeyboardInterrupt("simulated")
             return real_print(*args, **kwargs)
 
-        with patch.object(cli, "_ensure_model_downloaded"), \\
+        with patch.object(cli_commands, "_ensure_model_downloaded"), \\
              patch("builtins.print", killing_print):
             ns = type("Args", (), {{}})()
             ns.base_url = None
@@ -544,7 +544,7 @@ def test_chat_command_does_not_leak_tempfile_on_spawn_readiness_failure(tmp_path
         import sys
         sys.path.insert(0, {str(Path(__file__).resolve().parent.parent)!r})
         from unittest.mock import patch, MagicMock
-        from fusion_mlx import cli
+        from fusion_mlx import cli, cli_commands
 
         fake_proc = MagicMock()
         fake_proc.poll.return_value = None
@@ -578,9 +578,9 @@ def test_chat_command_does_not_leak_tempfile_on_spawn_readiness_failure(tmp_path
         def fake_wait(base_url, proc, timeout_s=600):
             raise RuntimeError("simulated readiness fail")
 
-        with patch.object(cli, "_ensure_model_downloaded"), \\
-             patch.object(cli, "_spawn_chat_server", side_effect=fake_spawn), \\
-             patch.object(cli, "_wait_for_chat_server", side_effect=fake_wait):
+        with patch.object(cli_commands, "_ensure_model_downloaded"), \\
+             patch.object(cli_commands, "_spawn_chat_server", side_effect=fake_spawn), \\
+             patch.object(cli_commands, "_wait_for_chat_server", side_effect=fake_wait):
             ns = type("Args", (), {{}})()
             ns.base_url = None
             ns.port = None

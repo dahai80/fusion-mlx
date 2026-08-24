@@ -112,7 +112,7 @@ def server_tts_client():
 
 
 @pytest.mark.xfail(
-    reason="server fixture pins REMOVED _server_state MagicMock-with-attrs arch (.engine_pool/.global_settings/.settings_manager as attrs) — prod _server_state is now a dict. Also `from fusion_mlx.server import app` returns None (app moved/lazy-built). Gap B server-fixture rebuild — REDESIGN, needs prod/test rewrite not harness import fix"
+    reason="strict=False: server fixture pins REMOVED _server_state MagicMock-with-attrs arch (.engine_pool/.global_settings/.settings_manager as attrs) — prod _server_state is now a dict. Also `from fusion_mlx.server import app` returns None (app moved/lazy-built). Gap B server-fixture rebuild — REDESIGN, needs prod/test rewrite not harness import fix"
 )
 class TestTTSEndpointBasic:
     """Core TTS endpoint behaviour."""
@@ -205,7 +205,7 @@ class TestTTSEndpointBasic:
 
 
 @pytest.mark.xfail(
-    reason="server fixture pins REMOVED _server_state MagicMock-with-attrs arch (.engine_pool/.global_settings/.settings_manager as attrs) — prod _server_state is now a dict. Also `from fusion_mlx.server import app` returns None (app moved/lazy-built). Gap B server-fixture rebuild — REDESIGN, needs prod/test rewrite not harness import fix"
+    reason="strict=False: server fixture pins REMOVED _server_state MagicMock-with-attrs arch (.engine_pool/.global_settings/.settings_manager as attrs) — prod _server_state is now a dict. Also `from fusion_mlx.server import app` returns None (app moved/lazy-built). Gap B server-fixture rebuild — REDESIGN, needs prod/test rewrite not harness import fix"
 )
 class TestTTSEndpointErrors:
     """Error cases for the TTS endpoint."""
@@ -282,7 +282,7 @@ class TestTTSEndpointErrors:
 
 
 @pytest.mark.xfail(
-    reason="server fixture pins REMOVED _server_state MagicMock-with-attrs arch (.engine_pool/.global_settings/.settings_manager as attrs) — prod _server_state is now a dict. Also `from fusion_mlx.server import app` returns None (app moved/lazy-built). Gap B server-fixture rebuild — REDESIGN, needs prod/test rewrite not harness import fix"
+    reason="strict=False: server fixture pins REMOVED _server_state MagicMock-with-attrs arch (.engine_pool/.global_settings/.settings_manager as attrs) — prod _server_state is now a dict. Also `from fusion_mlx.server import app` returns None (app moved/lazy-built). Gap B server-fixture rebuild — REDESIGN, needs prod/test rewrite not harness import fix"
 )
 class TestTTSStreaming:
     """Streaming-specific TTS endpoint behaviour."""
@@ -540,7 +540,7 @@ class TestTTSStreaming:
 
 
 @pytest.mark.xfail(
-    reason="server fixture pins REMOVED _server_state MagicMock-with-attrs arch (.engine_pool/.global_settings/.settings_manager as attrs) — prod _server_state is now a dict. Also `from fusion_mlx.server import app` returns None (app moved/lazy-built). Gap B server-fixture rebuild — REDESIGN, needs prod/test rewrite not harness import fix"
+    reason="strict=False: server fixture pins REMOVED _server_state MagicMock-with-attrs arch (.engine_pool/.global_settings/.settings_manager as attrs) — prod _server_state is now a dict. Also `from fusion_mlx.server import app` returns None (app moved/lazy-built). Gap B server-fixture rebuild — REDESIGN, needs prod/test rewrite not harness import fix"
 )
 class TestTTSModelAliasResolution:
     """Verify that audio endpoints resolve model aliases (#489)."""
@@ -739,7 +739,7 @@ class TestTTSVoiceRouting:
         assert "instruct" not in kwargs
 
     @pytest.mark.xfail(
-        reason="voice-routing contract divergence: test wants `instruct` set + `voice` absent, prod sets BOTH to same value. REDESIGN — needs prod/test alignment not harness fix"
+        reason="strict=False: voice-routing contract divergence: test wants `instruct` set + `voice` absent, prod sets BOTH to same value. REDESIGN — needs prod/test alignment not harness fix"
     )
     def test_voicedesign_routes_to_instruct(self, _run_synthesize):
         """Model with only 'instruct' param: value goes to instruct."""
@@ -783,7 +783,7 @@ class TestTTSVoiceRouting:
         assert kwargs.get("instruct") == "female, calm, slow"
 
     @pytest.mark.xfail(
-        reason="voice-routing contract divergence: test wants `lang_code` key, prod uses `language` key. REDESIGN — needs prod/test alignment not harness fix"
+        reason="strict=False: voice-routing contract divergence: test wants `lang_code` key, prod uses `language` key. REDESIGN — needs prod/test alignment not harness fix"
     )
     def test_language_routes_to_lang_code(self, _run_synthesize):
         """language should be routed to lang_code when the backend accepts it."""
@@ -845,7 +845,7 @@ class TestTTSVoiceRouting:
         assert "lang_code" not in kwargs
 
     @pytest.mark.xfail(
-        reason="voice-routing contract divergence: test wants `language` in synth_params list (trailing after max_tokens), prod omits `language` from positional list. REDESIGN — needs prod/test alignment not harness fix"
+        reason="strict=False: voice-routing contract divergence: test wants `language` in synth_params list (trailing after max_tokens), prod omits `language` from positional list. REDESIGN — needs prod/test alignment not harness fix"
     )
     def test_language_keeps_trailing_position_in_engine_signatures(self):
         """language stays after existing positional parameters."""
@@ -959,7 +959,7 @@ class TestTTSVoiceClonePassthrough:
 
 
 @pytest.mark.xfail(
-    reason="server fixture pins REMOVED _server_state MagicMock-with-attrs arch (.engine_pool/.global_settings/.settings_manager as attrs) — prod _server_state is now a dict. Also `from fusion_mlx.server import app` returns None (app moved/lazy-built). Gap B server-fixture rebuild — REDESIGN, needs prod/test rewrite not harness import fix"
+    reason="strict=False: server fixture pins REMOVED _server_state MagicMock-with-attrs arch (.engine_pool/.global_settings/.settings_manager as attrs) — prod _server_state is now a dict. Also `from fusion_mlx.server import app` returns None (app moved/lazy-built). Gap B server-fixture rebuild — REDESIGN, needs prod/test rewrite not harness import fix"
 )
 class TestTTSVoiceCloneEndpoint:
     """POST /v1/audio/speech with ref_audio base64."""
@@ -1214,7 +1214,7 @@ class TestTTSGenerationParams:
 
 
 @pytest.mark.xfail(
-    reason="server fixture pins REMOVED _server_state MagicMock-with-attrs arch (.engine_pool/.global_settings/.settings_manager as attrs) — prod _server_state is now a dict. Also `from fusion_mlx.server import app` returns None (app moved/lazy-built). Gap B server-fixture rebuild — REDESIGN, needs prod/test rewrite not harness import fix"
+    reason="strict=False: server fixture pins REMOVED _server_state MagicMock-with-attrs arch (.engine_pool/.global_settings/.settings_manager as attrs) — prod _server_state is now a dict. Also `from fusion_mlx.server import app` returns None (app moved/lazy-built). Gap B server-fixture rebuild — REDESIGN, needs prod/test rewrite not harness import fix"
 )
 class TestTTSGenParamsEndpoint:
     """Verify generation params are accepted and forwarded by the endpoint."""
