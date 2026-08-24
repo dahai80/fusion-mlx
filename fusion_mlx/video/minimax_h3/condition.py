@@ -423,7 +423,9 @@ def build_fl2va_packed(
         )
 
     video_tokens = patchify_video_latents(video_latents, patch_size)  # (b, n_gen, dim)
-    condition_tokens = patchify_video_latents(condition_latents, patch_size)  # (b, n_cond, dim)
+    condition_tokens = patchify_video_latents(
+        condition_latents, patch_size
+    )  # (b, n_cond, dim)
     n_gen = video_tokens.shape[1]
     n_cond = condition_tokens.shape[1]
     n_text = text_embeds.shape[1]

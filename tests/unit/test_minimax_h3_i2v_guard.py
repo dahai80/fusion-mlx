@@ -51,7 +51,9 @@ class TestGenerateAcceptsConditioning:
             raised = e
         if isinstance(raised, ValueError):
             assert "i2va" not in str(raised)
-            assert "not implemented" not in str(raised).lower() or "ref2va" in str(raised)
+            assert "not implemented" not in str(raised).lower() or "ref2va" in str(
+                raised
+            )
 
     async def test_generate_accepts_last_frame_image_no_guard(self):
         # last_frame_image= (l2va 末帧) 不再被 guard 拒绝。

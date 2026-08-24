@@ -276,7 +276,10 @@ def _load_image_to_latent(image_path, vae, target_h, target_w, vae_ratio, z_chan
     from PIL import Image
 
     logger.info(
-        "h3 fl2va: loading condition image %s -> %dx%d latent", image_path, target_h, target_w
+        "h3 fl2va: loading condition image %s -> %dx%d latent",
+        image_path,
+        target_h,
+        target_w,
     )
     img = Image.open(image_path).convert("RGB")
     if img.size != (target_w, target_h):
@@ -364,7 +367,11 @@ def generate_fl2va_video(
     cond_latents_noised = scheduler_for_noise.scale_noise(
         cond_latents, _H3_KEYFRAME_NOISE_AUG, cond_noise
     )
-    logger.info("h3 fl2va: condition noised to t=%.3f shape=%s", _H3_KEYFRAME_NOISE_AUG, cond_latents_noised.shape)
+    logger.info(
+        "h3 fl2va: condition noised to t=%.3f shape=%s",
+        _H3_KEYFRAME_NOISE_AUG,
+        cond_latents_noised.shape,
+    )
 
     # 生成行噪声初始化。
     noise = mx.random.normal(latent_shape, dtype=compute_dtype)
@@ -642,9 +649,7 @@ def generate_video(
                 anchors.append("last")
                 paths.append(last_frame_image)
             anchors = tuple(anchors)
-        logger.info(
-            "h3 generate_video: fl2va mode anchors=%s paths=%s", anchors, paths
-        )
+        logger.info("h3 generate_video: fl2va mode anchors=%s paths=%s", anchors, paths)
         frames = generate_fl2va_video(
             dit=dit,
             vae=vae,
@@ -787,4 +792,9 @@ def _mux_av(video_path, audio_path, output_path):
     logger.info("h3: av muxed -> %s", output_path)
 
 
-__all__ = ["generate_fl2va_video", "generate_t2va_video", "generate_t2va_av", "generate_video"]
+__all__ = [
+    "generate_fl2va_video",
+    "generate_t2va_video",
+    "generate_t2va_av",
+    "generate_video",
+]
