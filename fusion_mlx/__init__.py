@@ -12,6 +12,10 @@ Key features:
 - Speculative decoding (SuffixDecoding, DFlash, MTP, VLM-MTP)
 - OpenAI/Anthropic/Responses API compatibility
 - Claude Code, OpenClaw, ComfyUI integrations
+
+Public API: 下游推荐用 `from fusion_mlx.public_api import X`（稳定承诺）。
+直接 import 子模块路径（fusion_mlx.engines.* / .model_registry / .config /
+.video.*.pipeline）属内部 API，不保证稳定。详见 `public_api.py`。
 """
 
 from ._version import __version__
@@ -29,6 +33,7 @@ from .engines import (
     STSEngine,
     STTEngine,
     TTSEngine,
+    VideoGenEngine,
     VLMBatchedEngine,
 )
 from .pool import EnginePool, MemoryProfile, ModelDiscovery, ProcessMemoryEnforcer
@@ -70,6 +75,7 @@ __all__ = [
     "TTSEngine",
     "STSEngine",
     "ImageGenEngine",
+    "VideoGenEngine",
     # Pool
     "EnginePool",
     "ProcessMemoryEnforcer",
