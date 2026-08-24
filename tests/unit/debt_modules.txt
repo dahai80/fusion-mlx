@@ -759,6 +759,7 @@ test_cli_config_fidelity.py
 # lost mlx_embeddings_available + EMBEDDINGS_EXTRA_INSTALL_HINT (embedding-
 # extra-guard feature REMOVED). REMOVED-FEATURE.
 test_cli_embeddings_extra.py
+# KEEP_QUARANTINED test_cli_models.py (eval round16 2026-08-24): 12f/3p REDESIGN-DRIFT. prod models_command (cli_commands.py:220) REDESIGNED — restored released 1.0/2.0/3.0 contract (server /v1/models query + local alias fallback) after Rapid-MLX migration format REMOVED. Test pins REMOVED Rapid-MLX format: (N aliases) count summary, capability columns, hybrid marker for qwen35-moe, parser columns for hermes3-8b, em-dash for unset parsers, chat/pull/serve tip, --cached alias-for-known-repo view. Plus _format_bytes REMOVED from fusion_mlx.cli (AttributeError). 3 pass (list_profiles exists). 12 fails = test rewrite vs restored released contract, exceeds debt-cleanup scope (Rules 2/3).
 test_cli_models.py
 # test_codex_profile.py RESCUED 2026-08-10 (6/6 pass): the agent-profile
 # subsystem was ported from Rapid-MLX in issue #442 — base.py (AgentProfile
