@@ -1855,6 +1855,19 @@ test_suffix_decoding.py
 # RESCUED 2026-08-23 (#598): extract_thinking now normalizes <mm:think>
 # to canonical tags (thinking.py); clean_special_tokens SPECIAL_TOKENS_PATTERN
 # now strips MiniMax M3 control tokens (utils.py). 40/40 pass.
+# KEEP_QUARANTINED 2026-08-24 (eval round16): 31f/10p. WIDE REDESIGN-DRIFT
+# across 6 test classes. (1) _resolve_thinking_budget REMOVED from
+# fusion_mlx.server (ImportError) — TestResolveThinkingBudget (3 tests) pin
+# removed server resolver. (2) thinking_budget field moved: exists on
+# ChatCompletionRequest (openai_models.py:332) NOT CompletionRequest (L559);
+# TestCompletionsThinkingBudget (7 tests) assert CompletionRequest.thinking_budget
+# — pins removed field-on-completion contract. (3) Scheduler._get_output_
+# parser_thinking_end_text REMOVED (grep 0) — TestParserBackedThinkingBudgetWiring
+# (4 tests) + TestThinkingBudgetProcessor (4 tests) pin removed parser-wiring
+# seam. (4) TestCompletionsStreamThinkPrefixParity (9 tests) pin refactored
+# prefix-strip/detection path. 10 ThinkingBudgetProcessor unit tests pass
+# (processor logic, no removed seams). 31 fails = test rewrite vs new
+# thinking-budget/completion/parser APIs, exceeds debt-cleanup scope (Rules 2/3).
 test_thinking_budget.py
 # KEEP_QUARANTINED tool cluster (round10q-b6 2026-08-19): 9 suites, all
 # feature/contract gaps NOT pure harness drift. Verified per-suite fail
