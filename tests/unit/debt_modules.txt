@@ -1663,6 +1663,19 @@ test_runtime_cache_path.py
 # KEEP_QUARANTINED 2026-08-22 (#598): scheduler exports get_phys_footprint/_PreflightRejection removed; ZeroDivisionError in chunked-prefill path. Feature-gap.
 test_scheduler_chunked_prefill.py
 # test_scheduler_prefill_memory_guard.py  (RESCUED 2026-08-24 round15: 24 pass + 4 xfail. Patch-target drift: get_phys_footprint/mx.get_active_memory live in fusion_mlx.scheduler.sched_query (bound at import, NOT re-exported by package __init__) → repoint patch("fusion_mlx.scheduler.get_phys_footprint")→sched_query.get_phys_footprint (3 patch strings) + monkeypatch setattr(scheduler_mod,...)→setattr(sched_query_mod,...) (L135-138) + _PreflightRejection import fusion_mlx.scheduler→fusion_mlx.scheduler.types. 4 xfail REDESIGN/REMOVED: preflight_eviction_request MISSING (REMOVED-FEATURE), monitor._num_layers None for nested-dict config (REDESIGN), draft_cache.release_cache never called on rejection (REMOVED specprefill release-on-reject), rejection message lacks "KV+SDPA" (prod REWORDED wording).)
+# KEEP_QUARANTINED 2026-08-24 (eval round16): 3f/0p. REDESIGN-DRIFT.
+# Prod stop-check (sched_response.py:150-180) switched to per-request
+# detokenizer registry: self._get_detokenizer(request_id) -> detokenizer.
+# add_token(response.token) / detokenizer.last_segment / detokenizer.text.
+# Test pins REMOVED seams: req._decoder (MagicMock), decoder.get_full_text(),
+# decoder.add_token return value, decoder.prev_text, scheduler._decode_tokens
+# override. NONE of _decoder/get_full_text/prev_text exist in prod scheduler
+# (grep 0 hits). TypeError at L171 (MagicMock.find() < 0) because
+# _get_detokenizer returns a Mock whose .text/.last_segment are Mocks.
+# Rescue requires rewriting tests against the new detokenizer interface —
+# test rewrite, exceeds debt-cleanup scope (Rules 2/3). The stop-string-surface
+# contract the tests pin (decoder surface authoritative over tokenizer.decode)
+# is preserved in prod via detokenizer.text; the test harness is stale.
 test_scheduler_stop_decoder_surface.py
 # KEEP_QUARANTINED: round10p — community-benchmarks/ dir + schema.json not ported. Test reads community-benchmarks/schema.json (FileNotFoundError) + submissions/*.json. Feature (community bench aggregator v2 schema) not in repo. Feature gap, not harness drift. File issue for port.
 test_schema_v2_accepts_minimal_v2.py
@@ -1761,6 +1774,19 @@ test_singleton_cache_passthrough.py
 # object.__new__ + manual stub; set _active_requests (old name) but prod add_request (engine_core.py:687)
 # uses _active_contexts (renamed). Stub incomplete after rename. Fix = add core._active_contexts = {}.
 # 34/34 pass.
+# KEEP_QUARANTINED 2026-08-24 (eval round16): 13f/0p. REDESIGN-DRIFT.
+# Prod keepalive REWRITTEN: fusion_mlx/server.py symbols _with_sse_keepalive,
+# _KEEPALIVE_CHAT_CHUNK, _KEEPALIVE_COMPLETION_CHUNK, _KEEPALIVE_ANTHROPIC_PING,
+# _KEEPALIVE_COMMENT, _chat_keepalive_chunk, _resolve_keepalive ALL REMOVED
+# (grep 0 hits in server.py). Replaced by class SSEKeepalive in api/utils.py:1565
+# — stateful interval-based emitter (reset()/maybe_ping()), SSE-comment-only
+# (": keepalive\n\n"), no protocol-aware chunks, no error-catching wrapper,
+# no _resolve_keepalive/sse_keepalive_mode setting dispatch. Tests pin the
+# ENTIRE removed wrapper+protocol-chunk+error-to-SSE+stream-id-reuse arch.
+# _server_state.global_settings (object with .server.sse_keepalive_mode) also
+# REMOVED (_server_state is a dict now). Rescue = full rewrite vs new class API,
+# exceeds debt-cleanup scope (Rules 2/3). The idle-ping contract is preserved
+# in prod via SSEKeepalive.maybe_ping(); test harness is stale.
 test_sse_keepalive.py
 # test_status_endpoint.py  (RESCUED round10: 5 pass + 3 xfail strict. Harness drift — server.app now lazy (app=None until get_app()); ServerState→_ServerState; /api/status route reads self.pool closure not _server_state.engine_pool; require_admin blocks non-loopback when no api_key. Rewrote: Server() instance + server.app + dependency_overrides[require_admin]=True for 200 cases; set_api_key for auth test. 3 xfail: /health flat shape no engine_pool.final_ceiling; /api/status dropped active_requests/waiting_requests; /api/status surfaces only 3 metric fields not full ServerMetrics.)
 test_step3p7_patch.py
@@ -1804,6 +1830,15 @@ test_stt_response_format.py
 # worktree/lock exclusion (also policy). Out of scope.
 # RESCUED 2026-08-23 (#598): .gitignore now exists at repo root with .claude/
 # rule (PR #608, closes #599). test_submit_gitignore un-quarantined.
+# RESCUED test_suffix_decoding.py (eval round16 2026-08-24): PARTIAL — 14p/6xf.
+# 14 drafter unit tests (TestDrafterBasics/HistoryTrimming/Stats/Validation/
+# RealisticAgentWorkload) import from fusion_mlx.speculative.suffix_decoding
+# (correct prod path) — all pass. 6 TestInstallSuffixDecoding tests xfailed:
+# import _install_suffix_decoding from fusion_mlx.scheduler (REMOVED —
+# ImportError). Suffix-decoding moved to speculative/suffix_decoding.py with
+# different architecture (no GenerationBatch monkey-patch installer, no profile
+# allowlist gate, no _step/.next replacement, no _suffix_stats telemetry).
+# Class-level xfail on TestInstallSuffixDecoding. Pin REMOVED install-hook wiring.
 test_suffix_decoding.py
 # RESCUED test_telemetry_cli 2026-08-24 (eval round15): 12f/0p→12p. Root
 # cause=harness module-name drift: 3 hardcoded `python -m vllm_mlx.cli`
