@@ -10,7 +10,7 @@ this script via:
     Fusion_DEV_SERVER_SCRIPT=$(pwd)/apps/fusion-mac/Scripts/dev_server.py \\
     apps/fusion-mac/build/Build/Products/Debug/FusionMLX.app/Contents/MacOS/FusionMLX
 
-Then `curl http://127.0.0.1:8080/health` should return 200 with
+Then `curl http://127.0.0.1:11434/health` should return 200 with
 `{"status":"ok","stub":true}`.
 """
 
@@ -44,7 +44,7 @@ class StubHandler(BaseHTTPRequestHandler):
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--host", default="127.0.0.1")
-    parser.add_argument("--port", type=int, default=8080)
+    parser.add_argument("--port", type=int, default=11434)
     args = parser.parse_args()
 
     server = HTTPServer((args.host, args.port), StubHandler)
