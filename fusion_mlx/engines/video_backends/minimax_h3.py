@@ -27,12 +27,11 @@ _H3_MAX_FRAMES = 361
 
 class MiniMaxH3Backend(VideoBackend):
     name = "minimax_h3"
-    # Issue #589: only t2va is implemented. i2va/l2va/fl2va image/last-frame
-    # conditioning is accepted then silently dropped (silent-wrong-video bug).
-    # Declare supports_i2v=False so validate_params rejects image= at the API
-    # (422) until the image-conditioned DiT path lands. generate() re-checks
-    # last_frame_image/reference_audio (not covered by validate_params).
-    supports_i2v = False
+    # i2va/l2va/fl2va image + last-frame conditioning now implemented
+    # (generate_fl2va_video, keyframe-anchors). supports_i2v=True lets
+    # validate_params accept image= at the API. ref2va reference_audio
+    # still unimplemented (separate partition, not this PR).
+    supports_i2v = True
 
     def __init__(
         self,
@@ -114,7 +113,7 @@ class MiniMaxH3Backend(VideoBackend):
 
     def constraints(self) -> VideoConstraints:
         return VideoConstraints(
-            supports_i2v=False,
+            supports_i2v=True,
             max_n=_H3_MAX_N,
             dim_divisibility=_H3_DIM_DIV,
             num_frames_validator=lambda nf: 1 <= nf <= _H3_MAX_FRAMES,
@@ -132,25 +131,11 @@ class MiniMaxH3Backend(VideoBackend):
             n=params.n,
             image=params.image,
         )
-        # Issue #589: only t2va implemented. Reject image/last-frame/reference-audio
-        # conditioning loudly so callers don't get silent-wrong t2va video.
-        # validate_params already rejects image= via supports_i2v=False; this is
-        # the backstop for last_frame_image/reference_audio (validate_params
-        # does not check those fields) and for direct non-API callers.
-        if params.image is not None:
-            raise ValueError(
-                "MiniMax-H3 i2va not implemented (issue #589): image conditioning "
-                "is silently dropped by the t2va path. Use a backend with real i2v."
-            )
-        if params.last_frame_image is not None:
-            raise ValueError(
-                "MiniMax-H3 l2va/fl2va not implemented (issue #589): "
-                "last_frame_image conditioning is not supported by the t2va path."
-            )
+        # ref2va reference_audio still unimplemented (separate partition, issue #589).
         if params.reference_audio is not None:
             raise ValueError(
                 "MiniMax-H3 ref2va audio not implemented (issue #589): "
-                "reference_audio is not supported by the t2va path."
+                "reference_audio is not supported."
             )
         if params.resolution not in _H3_RESOLUTIONS:
             raise ValueError(
@@ -163,6 +148,14 @@ class MiniMaxH3Backend(VideoBackend):
                 )
         if not self._loaded:
             await self.start()
+
+        # 条件帧路径安全校验（i2va/l2va）。绝对路径需在允许目录内。
+        cond_image = params.image
+        cond_last = params.last_frame_image
+        for p in (cond_image, cond_last):
+            if p is not None and (p.startswith(("/", "~")) or ".." in p):
+                if not is_safe_local_path(p):
+                    raise ValueError(f"condition image outside allowed dirs: {p}")
 
         from fusion_mlx.video.minimax_h3.generate import generate_video
 
@@ -190,6 +183,8 @@ class MiniMaxH3Backend(VideoBackend):
                                 output_path=op,
                                 quantize=params.quantize,
                                 audio=params.audio,
+                                image=cond_image,
+                                last_frame_image=cond_last,
                             ),
                         ),
                         timeout=timeout,

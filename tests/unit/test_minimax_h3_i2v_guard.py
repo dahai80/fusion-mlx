@@ -1,58 +1,62 @@
 # SPDX-License-Identifier: Apache-2.0
-# Issue #589: MiniMax-H3 only implements t2va. i2va/l2va/fl2va image and
-# last-frame conditioning are accepted then silently dropped (silent-wrong-video
-# bug). Guard: declare supports_i2v=False so validate_params rejects image= at
-# the API (422), and raise in generate() for image/last_frame_image/reference_audio
-# (validate_params does not check last_frame_image, so generate() is the backstop).
+# i2va/l2va/fl2va image + last-frame conditioning now implemented
+# (generate_fl2va_video, keyframe-anchors). supports_i2v=True → validate_params
+# accepts image=. ref2va reference_audio still unimplemented (separate partition).
 import pytest
 
 from fusion_mlx.engines.video_backends import MiniMaxH3Backend, constraints_for
 from fusion_mlx.engines.video_backends.base import VideoGenParams, validate_params
 
 
-class TestSupportsI2vFalse:
-    def test_class_supports_i2v_false(self):
-        assert MiniMaxH3Backend.supports_i2v is False
+class TestSupportsI2vTrue:
+    def test_class_supports_i2v_true(self):
+        assert MiniMaxH3Backend.supports_i2v is True
 
-    def test_constraints_supports_i2v_false(self):
+    def test_constraints_supports_i2v_true(self):
         b = MiniMaxH3Backend("/models/h3-fl2va")
         c = b.constraints()
-        assert c.supports_i2v is False
+        assert c.supports_i2v is True
 
-    def test_constraints_for_helper_supports_i2v_false(self):
+    def test_constraints_for_helper_supports_i2v_true(self):
         c = constraints_for("/models/MiniMax-H3-FL2VA")
-        assert c.supports_i2v is False
+        assert c.supports_i2v is True
 
-    def test_validate_params_rejects_image(self):
-        # validate_params must reject image= for H3 (backend does not implement i2v).
+    def test_validate_params_accepts_image(self):
+        # image= (i2va 首帧) 通过 validate_params（supports_i2v=True）。
         c = MiniMaxH3Backend("/models/h3-fl2va").constraints()
-        with pytest.raises(ValueError):
-            validate_params(
-                c, num_frames=97, width=768, height=768, n=1, image="/img/a.png"
-            )
+        validate_params(
+            c, num_frames=97, width=768, height=768, n=1, image="/img/a.png"
+        )
 
 
-class TestGenerateRejectsConditioning:
+class TestGenerateAcceptsConditioning:
     def _backend(self):
         b = MiniMaxH3Backend("/nonexistent/h3-model")
         b._loaded = True
         return b
 
-    async def test_generate_rejects_image(self):
-        # Even if an image slips past validation (direct call), generate() must
-        # fail loudly rather than silently run t2va and discard the image.
-        # validate_params (supports_i2v=False) raises first with "I2V"; the
-        # generate() guard raises with "i2va". Match case-insensitive "i2v".
+    async def test_generate_accepts_image_no_guard(self):
+        # image= 不再被 guard 拒绝；路径安全校验通过后进入 generate_video
+        # （模型加载失败属非 guard 错误）。断言不抛 i2va ValueError。
         b = self._backend()
         p = VideoGenParams(
             prompt="test", num_frames=97, width=768, height=768, n=1, image="/i.png"
         )
-        with pytest.raises(ValueError, match="(?i)i2v"):
+        raised = None
+        try:
             await b.generate(p)
+        except ValueError as e:
+            raised = e
+        except Exception as e:
+            raised = e
+        if isinstance(raised, ValueError):
+            assert "i2va" not in str(raised)
+            assert "not implemented" not in str(raised).lower() or "ref2va" in str(
+                raised
+            )
 
-    async def test_generate_rejects_last_frame_image(self):
-        # last_frame_image is l2va/fl2va conditioning, not checked by
-        # validate_params; generate() is the only backstop, so it must raise.
+    async def test_generate_accepts_last_frame_image_no_guard(self):
+        # last_frame_image= (l2va 末帧) 不再被 guard 拒绝。
         b = self._backend()
         p = VideoGenParams(
             prompt="test",
@@ -62,10 +66,18 @@ class TestGenerateRejectsConditioning:
             n=1,
             last_frame_image="/last.png",
         )
-        with pytest.raises(ValueError, match="l2va"):
+        raised = None
+        try:
             await b.generate(p)
+        except ValueError as e:
+            raised = e
+        except Exception as e:
+            raised = e
+        if isinstance(raised, ValueError):
+            assert "l2va" not in str(raised) or "ref2va" in str(raised)
 
     async def test_generate_rejects_reference_audio(self):
+        # ref2va reference_audio 仍未实现（独立 partition，非本 PR）。
         b = self._backend()
         p = VideoGenParams(
             prompt="test",
@@ -78,10 +90,22 @@ class TestGenerateRejectsConditioning:
         with pytest.raises(ValueError, match="reference_audio"):
             await b.generate(p)
 
+    async def test_generate_rejects_unsafe_image_path(self):
+        # 条件帧绝对路径须在允许目录内（路径安全校验）。
+        b = self._backend()
+        p = VideoGenParams(
+            prompt="test",
+            num_frames=97,
+            width=768,
+            height=768,
+            n=1,
+            image="/etc/passwd",
+        )
+        with pytest.raises(ValueError, match="(?i)outside allowed|condition image"):
+            await b.generate(p)
+
     async def test_generate_allows_plain_t2va(self):
-        # The guard must NOT reject plain t2va (no conditioning) — that path
-        # stays open. Expect a non-guard failure (model load / NotImplementedError),
-        # but NOT the i2va/l2va ValueError.
+        # 无条件帧路径保持开放（t2va），不抛 guard ValueError。
         b = self._backend()
         p = VideoGenParams(prompt="test", num_frames=97, width=768, height=768, n=1)
         raised = None
@@ -91,8 +115,6 @@ class TestGenerateRejectsConditioning:
             raised = e
         except Exception as e:
             raised = e
-        # If a ValueError fired, it must be the conditioning guard only — and
-        # plain t2va has no conditioning, so no ValueError guard should fire.
         if isinstance(raised, ValueError):
             assert "i2va" not in str(raised)
             assert "l2va" not in str(raised)

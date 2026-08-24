@@ -1,16 +1,17 @@
 # SPDX-License-Identifier: Apache-2.0
-# MiniMax H3 t2va video-only 推理循环（generate）。
+# MiniMax H3 t2va/fl2va 视频推理循环（generate）。
 #
-# 上游权威缺失说明（UNVERIFIED，需真实模型校正）：
-#   - 与 condition.py 同源：diffusers pipeline 源码未发布，本循环从
-#     transformer `forward` 契约 + scheduler 契约推断。
-#   - video-only：无音频 latent、无音频 scheduler、无条件帧。仅 video scheduler
-#     （shift=12.0）去噪。text 行始终 clean（timestep=1.0，idx0）。
+# 权威对照：diffusers MiniMaxH3 FL2VA pipeline（before_denoise.py 已发布）。
+#   - t2va：text→video。build_t2va_packed → transformer → unpatchify → step。
+#   - t2va-av：text→audio+video（joint）。双 scheduler（video shift=12 / audio shift=3）。
+#   - fl2va：text→keyframe 条件 + video（i2va/l2va 场景连续性）。
+#     build_fl2va_packed → transformer → 拆生成行 → step（条件行 rides through）。
 #
 # 流程：text_encoder(prompt)→(b,n_t,5120)；noise→normalize→patchify→packed；
-# 每 step：build_t2va_packed(latents, text, t_video)→transformer→video_output；
+# 每 step：build_*_packed(latents, text, t_video)→transformer→video_output；
 # unpatchify→step；循环结束 denormalize→vae.decode→[0,1]→frames。
 import logging
+import os
 
 import mlx.core as mx
 
@@ -20,6 +21,7 @@ from .audio_vae.audio_latents import (
 )
 from .condition import (
     audio_latent_steps,
+    build_fl2va_packed,
     build_t2va_av_packed,
     build_t2va_packed,
     denormalize_latents,
@@ -262,6 +264,170 @@ def generate_t2va_av(
     return frames, waveform
 
 
+_H3_KEYFRAME_NOISE_AUG = 0.999
+
+
+def _load_image_to_latent(image_path, vae, target_h, target_w, vae_ratio, z_channels):
+    # 条件帧 → VAE encode → latent (1, z, 1, h, w)。
+    # 对照 diffusers before_denoise.py:949-954：image VisualVAE encode → moments →
+    # DiagonalGaussianDistribution.sample() → latent z，patchify 前加噪。
+    # process_image=True：单图 (H,W,3) → (1,3,1,H,W)（5D）直接 encode。
+    import numpy as np
+    from PIL import Image
+
+    logger.info(
+        "h3 fl2va: loading condition image %s -> %dx%d latent",
+        image_path,
+        target_h,
+        target_w,
+    )
+    img = Image.open(image_path).convert("RGB")
+    if img.size != (target_w, target_h):
+        img = img.resize((target_w, target_h), Image.BILINEAR)
+        logger.info("h3 fl2va: condition image resized to %dx%d", target_w, target_h)
+    arr = np.array(img, dtype=np.float32) / 255.0  # (H,W,3) [0,1]
+    arr = np.transpose(arr, (2, 0, 1))  # (3,H,W)
+    x = mx.array(arr).reshape(1, 3, 1, target_h, target_w)  # (1,3,1,H,W)
+    z = vae.encode_base(x, process_image=True)  # (1, z, 1, h, w) latent
+    return z
+
+
+def _encode_keyframe_latents(image_paths, vae, height, width, vae_ratio, z_channels):
+    # 多锚点条件帧编码：每图 encode_base → (1,z,1,h,w) → 沿时间轴拼接 (1,z,k,h,w)。
+    # 对照 before_denoise.py:940-964：每锚点一帧图，patchify 后沿行拼接。
+    zs = [
+        _load_image_to_latent(p, vae, height, width, vae_ratio, z_channels)
+        for p in image_paths
+    ]
+    if len(zs) == 1:
+        return zs[0]
+    return mx.concatenate(zs, axis=2)  # (1, z, k, h, w)
+
+
+def generate_fl2va_video(
+    *,
+    dit,
+    vae,
+    text_embeds,
+    condition_image_paths,
+    num_frames,
+    height,
+    width,
+    seed=None,
+    num_inference_steps=20,
+    guide_scale=5.0,
+    z_channels=24,
+    vae_ratio=16,
+    vae_ratio_t=4,
+    compute_dtype=mx.bfloat16,
+    keyframe_anchors=("first",),
+):
+    # fl2va 去噪（i2va/l2va 场景连续性）。
+    # 对照 diffusers before_denoise.py:268 build_packed_sequence + L940-1009 条件编码 +
+    # FL2VAPrepareLatentsStep（条件行 rides through，denoise loop 只写生成行）。
+    #
+    # condition_image_paths: 每锚点一帧图路径，与 keyframe_anchors 顺序对齐。
+    #   i2va：paths=[img], anchors=('first',)。
+    #   l2va：paths=[img], anchors=('last',)。
+    #   fl2va 联合：paths=[first_img, last_img], anchors=('first','last')。
+    # 条件帧编码：VAE encode_base → latent → normalize → scale_noise(0.999) → patchify。
+    # 每 step：build_fl2va_packed(gen_latents, cond_latents, text, t_video, anchors)
+    #   → dit → video_output → 拆出生成行（跳过前 n_cond 条件行）→ unpatchify → step。
+    # 条件行每步不变（不参与 scheduler.step，只作注意力上下文）。
+    if isinstance(condition_image_paths, (str, os.PathLike)):
+        condition_image_paths = [condition_image_paths]
+    if len(condition_image_paths) != len(keyframe_anchors):
+        raise ValueError(
+            f"condition_image_paths ({len(condition_image_paths)}) must match "
+            f"keyframe_anchors ({len(keyframe_anchors)})"
+        )
+
+    if seed is not None:
+        mx.random.seed(int(seed))
+
+    latent_shape = _latents_shape(
+        num_frames, height, width, vae_ratio, vae_ratio_t, z_channels
+    )
+    logger.info(
+        "h3 fl2va generate: latent_shape=%s steps=%d anchors=%s seed=%s",
+        latent_shape,
+        num_inference_steps,
+        keyframe_anchors,
+        seed,
+    )
+
+    # 条件帧：每锚点一图 → encode → normalize → 加噪钉 0.999（每步不变）。
+    cond_z = _encode_keyframe_latents(
+        condition_image_paths, vae, height, width, vae_ratio, z_channels
+    )
+    cond_latents = normalize_latents(cond_z.astype(mx.float32))  # (1,z,k,h,w)
+    # 加噪到 keyframe_noise_aug=0.999。
+    cond_noise = mx.random.normal(cond_latents.shape, dtype=mx.float32)
+    scheduler_for_noise = MiniMaxH3Scheduler(shift=12.0)
+    cond_latents_noised = scheduler_for_noise.scale_noise(
+        cond_latents, _H3_KEYFRAME_NOISE_AUG, cond_noise
+    )
+    logger.info(
+        "h3 fl2va: condition noised to t=%.3f shape=%s",
+        _H3_KEYFRAME_NOISE_AUG,
+        cond_latents_noised.shape,
+    )
+
+    # 生成行噪声初始化。
+    noise = mx.random.normal(latent_shape, dtype=compute_dtype)
+    gen_latents = noise
+
+    scheduler = MiniMaxH3Scheduler(shift=12.0)
+    scheduler.set_timesteps(num_inference_steps)
+    timesteps = scheduler.timesteps
+    logger.info("h3 fl2va generate: timesteps=%s", [float(t) for t in timesteps])
+
+    patch_size = (1, 2, 2)
+
+    for i, t in enumerate(timesteps):
+        t_video = float(t)
+        packed = build_fl2va_packed(
+            gen_latents.astype(compute_dtype),
+            cond_latents_noised.astype(compute_dtype),
+            text_embeds.astype(compute_dtype),
+            t_video,
+            keyframe_anchors=keyframe_anchors,
+            keyframe_noise_aug=_H3_KEYFRAME_NOISE_AUG,
+        )
+        video_output, _audio_output = dit(
+            packed["hidden_states"],
+            packed["audio_hidden_states"],
+            packed["encoder_hidden_states"],
+            packed["timestep"],
+            packed["timestep_indices"],
+            packed["token_tags"],
+            packed["position_ids"],
+            packed["video_indices"],
+            packed["audio_indices"],
+            packed["text_indices"],
+        )
+        # video_output (1, n_cond+n_gen, dim)：拆出生成行（跳过前 n_cond）。
+        n_cond = packed["num_condition_rows"]
+        gen_output = video_output[:, n_cond:, :]
+        model_output = unpatchify_video_tokens(
+            gen_output, packed["latent_shape"], patch_size
+        )
+        gen_latents = scheduler.step(model_output, t, gen_latents)
+        mx.eval(gen_latents)
+        if i % 10 == 0 or i == len(timesteps) - 1:
+            logger.info(
+                "h3 fl2va generate: step %d/%d t=%.4f", i, len(timesteps), t_video
+            )
+
+    # 生成行去噪结束 → 反归一化 → VAE 解码。
+    gen_latents = denormalize_latents(gen_latents.astype(mx.float32))
+    logger.info("h3 fl2va generate: decoding latents shape=%s", gen_latents.shape)
+    decoded = vae.decode(gen_latents)
+    frames = _to_frames(decoded)
+    logger.info("h3 fl2va generate: done frames=%d", len(frames))
+    return frames
+
+
 def _to_frames(decoded):
     # decoded (1, 3, t, h, w) float (可能 bfloat16) → list[(H,W,3) uint8]。
     # np.array 对 MLX bfloat16 会失败/极慢，先转 float32 并显式 eval 物化。
@@ -351,11 +517,19 @@ def generate_video(
     output_path=None,
     quantize="none",
     audio=False,
+    image=None,
+    last_frame_image=None,
+    keyframe_anchors=None,
 ):
-    # H3 t2va 顶层编排（UNVERIFIED，需真实模型校正）。
+    # H3 t2va/fl2va 顶层编排。
     #
     # model_path: H3 模型根目录（含 transformer/ text_encoder/ video_vae/ audio_vae/ 子目录或单目录）。
     # 加载 DiT + VAE + text_encoder，编码 prompt，去噪，写 mp4。
+    #
+    # image: 条件帧图路径（i2va/l2va 场景连续性）。非 None → fl2va 去噪。
+    #   keyframe_anchors 默认 ('first',)（i2va 首帧锚定）；传 ('last',) → l2va 末帧锚定。
+    # audio: True → joint audio+video（t2va-av），audio_vae 解码音频 + ffmpeg 合流。
+    #   fl2va 当前 video-only（音频连续性非本 PR 范围，audio 与 image 互斥）。
     #
     # audio: True → joint audio+video 去噪（generate_t2va_av），audio_vae 解码音频，
     #   ffmpeg 合流成单 MP4（A/V）；False → video-only 原路径（向后兼容）。
@@ -443,7 +617,57 @@ def generate_video(
         tmp = tempfile.mkdtemp(prefix="fusion_h3_")
         output_path = os.path.join(tmp, "h3_output.mp4")
 
-    if audio:
+    if image is not None and audio:
+        raise ValueError(
+            "fl2va (image-conditioned) 与 joint audio 当前互斥；"
+            "音频连续性非本 PR 范围。请二选一。"
+        )
+
+    if image is not None or last_frame_image is not None:
+        # fl2va：keyframe 条件帧去噪（i2va/l2va 场景连续性）。
+        # 锚点与路径推导（遵循 base.py 约定：image=首帧 'first'，
+        # last_frame_image=末帧 'last'）。显式 keyframe_anchors 覆盖时用它。
+        if keyframe_anchors is not None:
+            anchors = tuple(keyframe_anchors)
+            paths = []
+            if "first" in anchors and image is not None:
+                paths.append(image)
+            if "last" in anchors and last_frame_image is not None:
+                paths.append(last_frame_image)
+            if len(paths) != len(anchors):
+                raise ValueError(
+                    f"keyframe_anchors={anchors} 但缺失对应条件图 "
+                    f"(image={image}, last_frame_image={last_frame_image})"
+                )
+        else:
+            anchors = []
+            paths = []
+            if image is not None:
+                anchors.append("first")
+                paths.append(image)
+            if last_frame_image is not None:
+                anchors.append("last")
+                paths.append(last_frame_image)
+            anchors = tuple(anchors)
+        logger.info("h3 generate_video: fl2va mode anchors=%s paths=%s", anchors, paths)
+        frames = generate_fl2va_video(
+            dit=dit,
+            vae=vae,
+            text_embeds=text_embeds,
+            condition_image_paths=paths,
+            num_frames=num_frames,
+            height=height,
+            width=width,
+            seed=seed,
+            num_inference_steps=num_inference_steps,
+            guide_scale=cfg.guide_scale,
+            z_channels=cfg.latents_dim,
+            vae_ratio=H3VAEConfig().vae_ratio,
+            vae_ratio_t=H3VAEConfig().vae_ratio_t,
+            keyframe_anchors=tuple(anchors),
+        )
+        _write_mp4(frames, output_path, fps)
+    elif audio:
         # joint audio+video：额外加载 AudioVAE，去噪得 (frames, waveform)。
         from .audio_vae import MiniMaxH3AudioVAE
 
@@ -568,4 +792,9 @@ def _mux_av(video_path, audio_path, output_path):
     logger.info("h3: av muxed -> %s", output_path)
 
 
-__all__ = ["generate_t2va_video", "generate_t2va_av", "generate_video"]
+__all__ = [
+    "generate_fl2va_video",
+    "generate_t2va_video",
+    "generate_t2va_av",
+    "generate_video",
+]

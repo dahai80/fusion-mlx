@@ -55,6 +55,10 @@ class VideoGenerateRequest(BaseModel):
     # Image-to-video input: local path, data URI, or http(s) URL. Only backends
     # with supports_i2v (e.g. Wan2) accept this; others return 422.
     image: str | None = None
+    # Last-frame conditioning (MiniMax-H3 l2va/fl2va): the END frame image.
+    # image= first-frame (i2va), last_frame_image= last-frame (l2va),
+    # both set = fl2va joint (first+last keyframes). Backend-side only.
+    last_frame_image: str | None = None
     # Optional backend-specific generation knobs (forwarded only when set)
     negative_prompt: str | None = None
     num_inference_steps: int | None = Field(default=None, ge=1, le=200)
@@ -233,6 +237,8 @@ async def generate_video(
         # Resolve I2V image to a local path (400 on resolve failure).
         image_path: str | None = None
         image_is_temp = False
+        last_frame_path: str | None = None
+        last_frame_is_temp = False
         ip_path: str | None = None
         ip_is_temp = False
         cn_path: str | None = None
@@ -252,6 +258,15 @@ async def generate_video(
                 raise
             except Exception as exc:
                 raise HTTPException(400, "failed to resolve image input")
+        if request.last_frame_image:
+            try:
+                last_frame_path, last_frame_is_temp = _resolve_image_to_path(
+                    request.last_frame_image
+                )
+            except HTTPException:
+                raise
+            except Exception as exc:
+                raise HTTPException(400, "failed to resolve last_frame_image input")
 
         try:
             try:
@@ -276,6 +291,8 @@ async def generate_video(
             }
             if image_path is not None:
                 gen_kwargs["image"] = image_path
+            if last_frame_path is not None:
+                gen_kwargs["last_frame_image"] = last_frame_path
             if request.negative_prompt is not None:
                 gen_kwargs["negative_prompt"] = request.negative_prompt
             if request.num_inference_steps is not None:
@@ -350,6 +367,13 @@ async def generate_video(
                     os.unlink(image_path)
                 except OSError:
                     logger.warning("failed to unlink temp image: %s", image_path)
+            if last_frame_is_temp and last_frame_path:
+                try:
+                    os.unlink(last_frame_path)
+                except OSError:
+                    logger.warning(
+                        "failed to unlink temp last_frame image: %s", last_frame_path
+                    )
             if ip_is_temp and ip_path:
                 try:
                     os.unlink(ip_path)

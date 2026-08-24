@@ -45,6 +45,7 @@ _VALID_GENERATE_KWARGS = {
     "seed",
     "n",
     "image",
+    "last_frame_image",
     "negative_prompt",
     "num_inference_steps",
     "scheduler",
@@ -314,6 +315,45 @@ class TestVideoGenerateI2V:
         assert resp.status_code == 200
         _, kwargs = engine.generate.call_args
         assert kwargs["image"] == "/tmp/clip.png"
+
+    def test_last_frame_image_forwarded(self):
+        # MiniMax-H3 l2va/fl2va: last_frame_image reaches backend as
+        # params.last_frame_image (last-frame keyframe conditioning).
+        engine = _make_video_engine([b"M"])
+        pool = MagicMock()
+        pool.get_engine = AsyncMock(return_value=engine)
+        client = _make_app(pool)
+        resp = client.post(
+            "/v1/videos/generate",
+            json={
+                "prompt": "p",
+                "model": "minimax-h3",
+                "last_frame_image": "/tmp/last.png",
+            },
+        )
+        assert resp.status_code == 200
+        _, kwargs = engine.generate.call_args
+        assert kwargs["last_frame_image"] == "/tmp/last.png"
+
+    def test_image_and_last_frame_both_forwarded(self):
+        # fl2va joint: image (first-frame) + last_frame_image (last-frame).
+        engine = _make_video_engine([b"M"])
+        pool = MagicMock()
+        pool.get_engine = AsyncMock(return_value=engine)
+        client = _make_app(pool)
+        resp = client.post(
+            "/v1/videos/generate",
+            json={
+                "prompt": "p",
+                "model": "minimax-h3",
+                "image": "/tmp/first.png",
+                "last_frame_image": "/tmp/last.png",
+            },
+        )
+        assert resp.status_code == 200
+        _, kwargs = engine.generate.call_args
+        assert kwargs["image"] == "/tmp/first.png"
+        assert kwargs["last_frame_image"] == "/tmp/last.png"
 
     def test_wan_image_data_uri_resolved_to_temp(self):
         engine = _make_video_engine([b"M"])
