@@ -259,7 +259,9 @@ _EXPECTED_NOT_IMPLEMENTED_ENVELOPE = {
 }
 
 
-@pytest.mark.xfail(reason="prod routes_internal/cache router (cache.py:45) now depends on BOTH verify_api_key AND require_admin; TestClient host='testclient' is non-loopback so require_admin (admin/auth.py:159) rejects anonymous 401 before the 501 stub. Test pins removed anonymous-admin-access contract — REDESIGN, needs prod change not harness fix")
+@pytest.mark.xfail(
+    reason="prod routes_internal/cache router (cache.py:45) now depends on BOTH verify_api_key AND require_admin; TestClient host='testclient' is non-loopback so require_admin (admin/auth.py:159) rejects anonymous 401 before the 501 stub. Test pins removed anonymous-admin-access contract — REDESIGN, needs prod change not harness fix"
+)
 def test_cache_export_501_envelope_does_not_leak_operator_path(client_factory):
     """``POST /v1/cache/export`` 501 stub must not echo the resolved sandbox
     destination — that expands to ``/Users/<USERNAME>/.cache/rapid-mlx/
@@ -292,7 +294,9 @@ _EXPECTED_SANDBOX_ESCAPE_ENVELOPE = {
 }
 
 
-@pytest.mark.xfail(reason="prod routes_internal/cache router (cache.py:45) depends on require_admin; TestClient host='testclient' non-loopback -> 401 before the 403 sandbox-escape stub fires. Test pins removed anonymous-admin-access contract — REDESIGN, needs prod change not harness fix")
+@pytest.mark.xfail(
+    reason="prod routes_internal/cache router (cache.py:45) depends on require_admin; TestClient host='testclient' non-loopback -> 401 before the 403 sandbox-escape stub fires. Test pins removed anonymous-admin-access contract — REDESIGN, needs prod change not harness fix"
+)
 @pytest.mark.parametrize(
     "destination",
     [
@@ -339,7 +343,9 @@ def test_cache_export_403_sandbox_escape_does_not_leak_operator_path(
     assert body.get("detail") == _EXPECTED_SANDBOX_ESCAPE_ENVELOPE, body
 
 
-@pytest.mark.xfail(reason="prod routes_internal/cache router (cache.py:45) depends on require_admin; TestClient host='testclient' non-loopback -> 401 before the 501 import stub fires. Test pins removed anonymous-admin-access contract — REDESIGN, needs prod change not harness fix")
+@pytest.mark.xfail(
+    reason="prod routes_internal/cache router (cache.py:45) depends on require_admin; TestClient host='testclient' non-loopback -> 401 before the 501 import stub fires. Test pins removed anonymous-admin-access contract — REDESIGN, needs prod change not harness fix"
+)
 def test_cache_import_501_envelope_does_not_leak_operator_path(
     client_factory, tmp_path, monkeypatch
 ):
@@ -386,7 +392,9 @@ def test_cache_import_501_envelope_does_not_leak_operator_path(
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(reason="prod routes_internal/cache router (cache.py:45) depends on require_admin; TestClient host='testclient' non-loopback -> 401 before /v1/cache/info 200 body is built. Test pins removed anonymous-admin-access contract — REDESIGN, needs prod change not harness fix")
+@pytest.mark.xfail(
+    reason="prod routes_internal/cache router (cache.py:45) depends on require_admin; TestClient host='testclient' non-loopback -> 401 before /v1/cache/info 200 body is built. Test pins removed anonymous-admin-access contract — REDESIGN, needs prod change not harness fix"
+)
 @pytest.mark.parametrize(
     "needle",
     [
@@ -447,7 +455,9 @@ def test_cache_info_does_not_leak_operator_path(
     ), f"{needle!r} leaked into /v1/cache/info 200 body: {r.text!r}"
 
 
-@pytest.mark.xfail(reason="prod routes_internal/cache router (cache.py:45) depends on require_admin; TestClient host='testclient' non-loopback -> 401 before /v1/cache/info 200 canonical-shape body. Test pins removed anonymous-admin-access contract — REDESIGN, needs prod change not harness fix")
+@pytest.mark.xfail(
+    reason="prod routes_internal/cache router (cache.py:45) depends on require_admin; TestClient host='testclient' non-loopback -> 401 before /v1/cache/info 200 canonical-shape body. Test pins removed anonymous-admin-access contract — REDESIGN, needs prod change not harness fix"
+)
 def test_cache_info_returns_canonical_shape_without_path_field(
     client_factory, tmp_path, monkeypatch
 ):

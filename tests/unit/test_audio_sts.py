@@ -130,7 +130,9 @@ def audio_sts_client():
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(reason="server fixture pins REMOVED _server_state MagicMock-with-attrs arch (.engine_pool/.global_settings/.settings_manager as attrs) — prod _server_state is now a dict. Also `from fusion_mlx.server import app` returns None (app moved/lazy-built). Gap B server-fixture rebuild — REDESIGN, needs prod/test rewrite not harness import fix")
+@pytest.mark.xfail(
+    reason="server fixture pins REMOVED _server_state MagicMock-with-attrs arch (.engine_pool/.global_settings/.settings_manager as attrs) — prod _server_state is now a dict. Also `from fusion_mlx.server import app` returns None (app moved/lazy-built). Gap B server-fixture rebuild — REDESIGN, needs prod/test rewrite not harness import fix"
+)
 class TestSTSEndpointBasic:
     """Core STS endpoint behaviour."""
 
@@ -215,7 +217,9 @@ class TestSTSEndpointBasic:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(reason="server fixture pins REMOVED _server_state MagicMock-with-attrs arch (.engine_pool/.global_settings/.settings_manager as attrs) — prod _server_state is now a dict. Also `from fusion_mlx.server import app` returns None (app moved/lazy-built). Gap B server-fixture rebuild — REDESIGN, needs prod/test rewrite not harness import fix")
+@pytest.mark.xfail(
+    reason="server fixture pins REMOVED _server_state MagicMock-with-attrs arch (.engine_pool/.global_settings/.settings_manager as attrs) — prod _server_state is now a dict. Also `from fusion_mlx.server import app` returns None (app moved/lazy-built). Gap B server-fixture rebuild — REDESIGN, needs prod/test rewrite not harness import fix"
+)
 class TestSTSEndpointErrors:
     """Error cases for the STS endpoint."""
 
@@ -272,7 +276,9 @@ class TestSTSEndpointErrors:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(reason="server fixture pins REMOVED _server_state MagicMock-with-attrs arch (.engine_pool/.global_settings/.settings_manager as attrs) — prod _server_state is now a dict. Also `from fusion_mlx.server import app` returns None (app moved/lazy-built). Gap B server-fixture rebuild — REDESIGN, needs prod/test rewrite not harness import fix")
+@pytest.mark.xfail(
+    reason="server fixture pins REMOVED _server_state MagicMock-with-attrs arch (.engine_pool/.global_settings/.settings_manager as attrs) — prod _server_state is now a dict. Also `from fusion_mlx.server import app` returns None (app moved/lazy-built). Gap B server-fixture rebuild — REDESIGN, needs prod/test rewrite not harness import fix"
+)
 class TestSTSModelAliasResolution:
     """Verify that STS endpoint resolves model aliases (#489)."""
 
@@ -422,7 +428,9 @@ class TestSTSEngineUnit:
         assert "family" in stats
         assert stats["family"] == "sam_audio"
 
-    @pytest.mark.xfail(reason="prod ValueError message reworded: 'Unsupported STS family: \\'generic\\'. Supported: [...]' (engines/sts.py) — test matches 'Unsupported STS model family'. Message text divergence — REDESIGN detail, not harness fix")
+    @pytest.mark.xfail(
+        reason="prod ValueError message reworded: 'Unsupported STS family: \\'generic\\'. Supported: [...]' (engines/sts.py) — test matches 'Unsupported STS model family'. Message text divergence — REDESIGN detail, not harness fix"
+    )
     def test_start_rejects_generic_family(self):
         """start() raises ValueError for unsupported 'generic' family."""
         import asyncio
