@@ -68,7 +68,7 @@ def _checkpoint_has_mtp_weights(model_path: str | Path) -> bool:
     for shard in shards:
         try:
             with safetensors.safe_open(str(shard), framework="numpy") as f:
-                for k in f:
+                for k in f.keys():  # noqa: SIM118
                     if k.startswith(_MTP_WEIGHT_PREFIXES):
                         return True
         except Exception as e:
