@@ -7,16 +7,16 @@ services:
       context: .
       dockerfile: Dockerfile
     ports:
-      - "${PORT:-8000}:8000"
+      - "${PORT:-8897}:8897"
     volumes:
       - ${MODEL_DIR:-~/.fusion-mlx/models}:/home/fusion/.fusion-mlx/models:ro
     environment:
       - HOST=0.0.0.0
-      - PORT=8000
+      - PORT=8897
       - LOG_LEVEL=${LOG_LEVEL:-info}
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/healthz"]
+      test: ["CMD", "curl", "-f", "http://localhost:8897/healthz"]
       interval: 30s
       timeout: 5s
       retries: 3

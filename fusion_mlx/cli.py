@@ -1442,7 +1442,7 @@ Examples:
         "model", help="Heavy model to serve (HF repo, e.g. Qwen/Qwen2.5-72B-Instruct)"
     )
     cuda_node_parser.add_argument("--host", default="0.0.0.0", help="Bind host")
-    cuda_node_parser.add_argument("--port", type=int, default=8000, help="Bind port")
+    cuda_node_parser.add_argument("--port", type=int, default=11434, help="Bind port")
     cuda_node_parser.add_argument(
         "--tensor-parallel-size", "-tp", type=int, default=1, help="vLLM TP size"
     )
@@ -1614,7 +1614,7 @@ Examples:
         "--base-url",
         type=str,
         default=None,
-        help="Connect to existing server URL (e.g. http://host:8000) "
+        help="Connect to existing server URL (e.g. http://host:11434) "
         "instead of spawning. Overrides --port.",
     )
     chat_parser.add_argument(
