@@ -1,5 +1,27 @@
 # Changelog
 
+## [0.8.38] - 2026-08-25
+
+Patch release — HTTP auth infrastructure fix.
+
+- API key priority CLI/env over settings.json (#632, PR #632):
+  `Server.__init__` unconditionally ran
+  `if self.settings.api_key: set_api_key(self.settings.api_key)`,
+  overwriting the CLI/env-resolved key with the `settings.json` key and
+  leaving `self.settings.api_key` (read by the `/v1` middleware via
+  `global_settings_getter`) as the `settings.json` value. An operator
+  launching behind a gateway with `--api-key <X>` (or
+  `FUSION_MLX_API_KEY`) while `settings.json` held a different
+  `auth.api_key` got 401 "Invalid API key" on every `/v1/*` request
+  because the middleware enforced the `settings.json` key, not the
+  operator's key. Fix: resolve the effective key once at startup with
+  the documented priority `--api-key` > `FUSION_MLX_API_KEY` env >
+  `settings.json auth.api_key` (new `_resolve_effective_api_key`
+  helper) and sync it to all three read paths (`self.settings.api_key`,
+  `set_api_key()`, `cfg.api_key`). Verified live: operator key 200
+  (was 401), settings.json key now 401. 5 new unit tests + 1
+  `@real_model` live-server test; 444 auth tests pass, 0 regressions.
+
 ## [0.8.14] - 2026-08-11
 
 Patch release — Wan2.1-Fun-Camera control_adapter fixes: Conv2d weight
