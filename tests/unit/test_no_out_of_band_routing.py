@@ -415,6 +415,13 @@ ALLOWED_FUSION_MLX_ENV_VARS: frozenset[str] = frozenset(
         "FUSION_DIST_MAX_ACTIVATION_BYTES",
         "FUSION_DIST_MAX_WEIGHTS_BYTES",
         "FUSION_DIST_MAX_INPUT_IDS",
+        # Issue #633: operator-extensible read-directory allow-list consumed by
+        # ``api/_url_safety.py::get_allowed_read_dirs`` to append extra dirs to
+        # ``is_safe_local_path``'s base allow-list. Pure filesystem-sandbox
+        # knob — decides WHICH local paths the SSRF guard admits for reading,
+        # never which model alias loads, which parser fires, or which tier
+        # engages. Mirrors the existing ``FUSION_MLX_MODEL_DIR`` sandbox knob.
+        "FUSION_MLX_ALLOWED_READ_DIRS",
     }
 )
 
