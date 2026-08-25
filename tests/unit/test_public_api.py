@@ -53,3 +53,21 @@ class TestPublicApiStable:
         from fusion_mlx.engines import VideoGenEngine
 
         assert fusion_mlx.VideoGenEngine is VideoGenEngine
+
+    def test_downstream_symbols_exposed(self):
+        from fusion_mlx.engines.vlm import VLMBatchedEngine
+        from fusion_mlx.model_registry import list_available_models
+        from fusion_mlx.pool.engine_pool import EnginePool
+        from fusion_mlx.video.musetalk_mlx import MuseTalkPipeline
+
+        assert public_api.EnginePool is EnginePool
+        assert public_api.list_available_models is list_available_models
+        assert public_api.MuseTalkPipeline is MuseTalkPipeline
+        assert public_api.VLMBatchedEngine is VLMBatchedEngine
+        for name in (
+            "EnginePool",
+            "list_available_models",
+            "MuseTalkPipeline",
+            "VLMBatchedEngine",
+        ):
+            assert name in public_api.__all__

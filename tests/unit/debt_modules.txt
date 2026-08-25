@@ -1299,26 +1299,20 @@ test_microbench_parsers.py
 # module, unrelated to minimax dispatch).
 # test_minimax_m3_sparse_attention_patch.py
 test_mirror_pull.py
-# KEEP_QUARANTINED: round10q — 3 fail/5 pass. Brand-rename drift + architectural
-# divergence. (1) Test checks `_rapid_mlx_compat_installed` attr but shim sets
-# `_fusion_mlx_compat_installed` (9 refs in test, _mlx_compat.py:57/127) →
-# test_shim_installed_when_scheduler_imports + test_fallback_does_not_engage
-# fail on stale-flag/no-reset. (2) test_every_mlx_lm_consumer_installs_shim
-# audits `vllm_mlx` pkg (conftest:1058 aliases→fusion_mlx) for per-file
-# `_mlx_compat.install()` before every module-load mlx_lm import — finds 26
-# REAL offenders (scheduler/*.py, oq/*.py, speculative/dspark/*.py, etc).
-# fusion_mlx CONVENTION = central boot install (cli_serve.py:1315 serve,
-# :2636 bench; chat spawns serve subprocess) BEFORE first scheduler import
-# (cli_serve.py:1422). Per-file contract contradicts established convention
-# (Rule 11). Rescue = 26-file shim add (large, contradicts convention) OR
-# rewrite test #2 to verify central-boot-install contract. Both non-surgical.
-# File issue first per CLAUDE.md flow for per-file-vs-central contract decision.
-# Round 13 (2026-08-24): issue #617 FILED (28 offenders now, was 26). Also found
-# marker rename _rapid_mlx_compat_installed -> _fusion_mlx_compat_installed rescues
-# 7/8 tests; only test_every_mlx_lm_consumer_installs_shim (the audit) blocked by
-# the #617 gap. KEEP_QUARANTINE until #617 resolved (per-file guard OR test rewrite
-# to central-boot contract).
-test_mlx_compat.py
+# RESCUED test_mlx_compat 2026-08-24 (round17, #617 fix): un-quarantined.
+#   ROOT CAUSE: (1) stale-flag drift — test checked `_rapid_mlx_compat_installed`
+#   (9 refs) but shim sets `_fusion_mlx_compat_installed` → repointed all 9.
+#   (2) brand-rename drift — test audited `vllm_mlx` pkg (conftest alias) →
+#   repointed 12 refs to `fusion_mlx`, func renamed
+#   test_fusion_mlx_init_does_not_install_shim_or_import_mlx.
+#   (3) #617 contract gap — audit test `test_every_mlx_lm_consumer_installs_shim`
+#   enforced PER-FILE `_mlx_compat.install()` guard (flagged 28 real modules)
+#   which CONTRADICTS fusion_mlx central-boot-install convention. FIX (#617):
+#   install shim at top of scheduler/__init__.py (covers ALL entry paths since
+#   __init__ imports .scheduler) + rewrote audit to verify central gate
+#   (scheduler/__init__.py calls _mlx_compat.install() at module level before
+#   any module-load mlx_lm import) instead of per-file offenders scan.
+#   8/8 pass.
 # RESCUED test_mlx_embeddings_compat 2026-08-24 (eval round15): 2f→2p. ROOT
 #   CAUSE: harness path off-by-one — Path(__file__).resolve().parents[1]
 #   resolved to tests/ not repo root, so module_path = tests/fusion_mlx/models/

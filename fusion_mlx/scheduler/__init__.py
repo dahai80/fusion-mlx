@@ -3,6 +3,17 @@
 
 import mlx.core as mx  # noqa: F401  (backward-compat: tests patch scheduler.mx)
 
+# Install the M5 single-stream compat shim (#404/#617) before any submodule
+# that transitively imports mlx_lm at module load — mlx_lm/__init__.py
+# captures mx.new_thread_local_stream at import time and the shim must wrap
+# it first. Central-boot install here covers every entry path through
+# fusion_mlx (the package __init__ imports .scheduler), so library callers
+# like `import fusion_mlx.oq` are guarded too. Idempotent; no-op on Linux
+# CI and on mlx builds lacking new_thread_local_stream (#408).
+from .. import _mlx_compat
+
+_mlx_compat.install()
+
 from ..cache.paged_ssd_cache import PagedSSDCacheManager  # noqa: F401
 from ..speculative.vlm_mtp import run_vlm_mtp_decode  # noqa: F401
 from . import monkeypatches  # noqa: F401

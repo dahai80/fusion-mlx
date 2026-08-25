@@ -1,0 +1,37 @@
+# fusion_mlx public-API boundary whitelist (#615/#613).
+#
+# Each line: ``module:Symbol`` (module = full dotted fusion_mlx.<sub> path;
+# Symbol = the imported name; ``*`` wildcards the symbol). These are the
+# EXISTING downstream (fusion-comfyui) imports grandfathered through the
+# migration window: they reach internal submodules directly instead of going
+# through `from fusion_mlx.public_api import X`. The guard warns on any
+# internal-module import NOT listed here, so a NEW piercing is caught at CI
+# even though old ones pass.
+#
+# MIGRATION GOAL: downstream should migrate each of these to
+# `from fusion_mlx.public_api import <Symbol>`. Once a symbol is reachable
+# via public_api, remove its whitelist line — the import path should change,
+# not stay grandfathered. Symbols already in public_api.__all__:
+#   EnginePool, ImageGenEngine, VideoGenEngine, TTSEngine, VLMBatchedEngine,
+#   get_registry, list_available_models, LipsyncPipelineMLX, MuseTalkPipeline,
+#   PuLIDPipeline, get_config
+# are ready to migrate today. _torch_stub.install is an internal infra
+# detail (no public_api surface) — stays whitelisted until a public hook
+# exists, or is removed from downstream if comfyui no longer needs it.
+#
+# Source: dahai80/fusion-comfyui @main, 2026-08-24
+# (fusion_comfyui/core/engine_wrapper.py + fusion_comfyui_plugin/**).
+fusion_mlx._torch_stub:install
+fusion_mlx.config:get_config
+fusion_mlx.engines.image_gen:ImageGenEngine
+fusion_mlx.engines.tts:TTSEngine
+fusion_mlx.engines.video:VideoGenEngine
+fusion_mlx.engines.vlm:VLMBatchedEngine
+fusion_mlx.model_registry:get_registry
+fusion_mlx.model_registry:list_available_models
+fusion_mlx.pool.engine_pool:EnginePool
+fusion_mlx.video.latentsync_mlx:LipsyncPipelineMLX
+fusion_mlx.video.latentsync_mlx.pipeline:LipsyncPipelineMLX
+fusion_mlx.video.musetalk_mlx:MuseTalkPipeline
+fusion_mlx.video.pulid_mlx:PuLIDPipeline
+fusion_mlx.video.pulid_mlx.pipeline:PuLIDPipeline

@@ -20,7 +20,7 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 _GUARDED_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
-_GUARDED_PREFIXES = ("/v1/", "/internal/", "/anthropic/")
+_GUARDED_PREFIXES = ("/v1/", "/internal/", "/anthropic/", "/distributed/")
 _EXCLUDED_PATHS = frozenset({"/v1/audio/transcriptions"})
 
 _JSON_CONTENT_TYPE_OPTIONAL_PATHS = frozenset(

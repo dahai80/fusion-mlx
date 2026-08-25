@@ -38,6 +38,27 @@ jobs:
                   pip install bandit
                   bandit -r fusion_mlx/ -ll -ii 2>&1 || true
 
+    public-api-boundary:
+        # #615/#613: warn when downstream (fusion-comfyui) reaches into
+        # fusion_mlx internal submodules instead of the stable public_api
+        # layer. Warn-only during the migration window (no --fail-on-warn):
+        # existing 13 grandfathered imports pass via the whitelist, a NEW
+        # internal-module import surfaces as a warning for review.
+        runs-on: ubuntu-latest
+        steps:
+            - uses: actions/checkout@v7
+            - uses: actions/setup-python@v7
+              with:
+                  python-version: "3.13"
+            - name: Shallow-clone fusion-comfyui downstream
+              run: |
+                  git clone --depth 1 https://github.com/dahai80/fusion-comfyui.git /tmp/fusion-comfyui
+            - name: Scan downstream for internal-module imports
+              run: |
+                  python scripts/check_public_api_boundary.py \
+                      --downstream /tmp/fusion-comfyui \
+                      --whitelist scripts/public_api_whitelist.txt
+
     test:
         strategy:
             fail-fast: false

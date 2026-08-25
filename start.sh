@@ -343,6 +343,7 @@ show_status() {
     printf "${BLUE}━━━ Fusion-MLX Status ━━━${NC}\n"
     echo ""
 
+    local rc=0
     if is_running; then
         local pid
         pid=$(get_pid)
@@ -371,6 +372,7 @@ show_status() {
         printf "  Models:\n%s\n" "${models}"
     else
         printf "${RED}● Stopped${NC}\n"
+        rc=1
     fi
 
     # Disk usage
@@ -380,6 +382,7 @@ show_status() {
     log_size=$(du -sh "${LOG_DIR}" 2>/dev/null | awk '{print $1}' || echo "N/A")
     printf "\n  Cache: %s  Logs: %s\n" "${cache_size}" "${log_size}"
     echo ""
+    return "${rc}"
 }
 
 # ── log ─────────────────────────────────────────────────────────────
