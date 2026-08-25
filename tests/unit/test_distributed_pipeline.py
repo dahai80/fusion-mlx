@@ -299,3 +299,136 @@ def test_sync_weights_rejects_oversized(monkeypatch):
     payload = base64.b64encode(b"x" * 64).decode("ascii")
     with pytest.raises(shard_mod.ShardError):
         mgr.sync_weights("shard-x", payload, None)
+
+
+# --- #630: /distributed/decode — final norm + lm_head over the last shard ---
+
+
+@skip_no_model
+def test_decode_matches_unsplit_lm_head_forward():
+    """The #630 acceptance test: pipeline_step (layer loop) over two shards,
+    then decode (norm + lm_head) on the last shard's hidden states reproduces
+    the un-split full forward's argmax token ids bit-exactly. Greedy
+    (temperature=0) so the comparison is deterministic."""
+    import mlx.core as mx
+    import mlx_lm
+
+    from fusion_mlx.distributed.shard import ShardManager
+
+    mgr = ShardManager()
+    model_id = _LM_PATH
+    model, _tok = mlx_lm.load(model_id)
+    inner = model.model
+    total = len(inner.layers)
+    split = total // 2
+
+    info_a = mgr.load_shard(model_id, 0, [0, split])
+    info_b = mgr.load_shard(model_id, 1, [split, total])
+
+    input_ids = [10, 20, 30, 40, 50]
+    out_a = mgr.pipeline_step(info_a["shard_id"], None, input_ids, None)
+    out_b = mgr.pipeline_step(info_b["shard_id"], out_a["hidden_states"], None, None)
+    dec = mgr.decode(info_b["shard_id"], out_b["hidden_states"], temperature=0.0)
+
+    assert dec["shape"][0] == 1  # batch
+    assert dec["shape"][1] == len(input_ids)  # seq
+    assert len(dec["token_ids"]) == len(input_ids)
+
+    # Reference: un-split full forward through norm + (tied) lm_head + argmax.
+    ids = mx.array(input_ids, dtype=mx.int32)
+    h = inner.embed_tokens(ids[None, :])
+    for i in range(total):
+        h = inner.layers[i](h)
+    h = inner.norm(h)
+    if bool(getattr(model.args, "tie_word_embeddings", False)):
+        logits = inner.embed_tokens.as_linear(h)
+    else:
+        logits = model.lm_head(h)
+    mx.eval(logits)
+    ref_tok = mx.argmax(logits, axis=-1)
+    mx.eval(ref_tok)
+    ref_ids = [int(t) for t in ref_tok.reshape(-1).tolist()]
+
+    assert (
+        dec["token_ids"] == ref_ids
+    ), f"decode token_ids {dec['token_ids']} != un-split argmax {ref_ids}"
+
+
+@skip_no_model
+def test_decode_greedy_is_deterministic():
+    """Greedy decode (temperature=0) over the same hidden states must return
+    identical token ids across calls — no sampling randomness leaks in."""
+    import mlx_lm
+
+    from fusion_mlx.distributed.shard import ShardManager
+
+    mgr = ShardManager()
+    model_id = _LM_PATH
+    _model, _tok = mlx_lm.load(model_id)
+    total = len(_model.model.layers)
+    split = total // 2
+    info_a = mgr.load_shard(model_id, 0, [0, split])
+    info_b = mgr.load_shard(model_id, 1, [split, total])
+
+    input_ids = [1, 2, 3, 4, 5, 6, 7]
+    out_a = mgr.pipeline_step(info_a["shard_id"], None, input_ids, None)
+    out_b = mgr.pipeline_step(info_b["shard_id"], out_a["hidden_states"], None, None)
+
+    first = mgr.decode(info_b["shard_id"], out_b["hidden_states"], temperature=0.0)
+    second = mgr.decode(info_b["shard_id"], out_b["hidden_states"], temperature=0.0)
+    assert first["token_ids"] == second["token_ids"]
+
+
+@skip_no_model
+def test_decode_return_logits_round_trips():
+    """return_logits=True includes base64 .npy logits that deserialize back to
+    the full (batch, seq, vocab) tensor with a valid dtype."""
+    import mlx_lm
+
+    from fusion_mlx.distributed.shard import (
+        ShardManager,
+        deserialize_activation,
+    )
+
+    mgr = ShardManager()
+    model_id = _LM_PATH
+    model, _tok = mlx_lm.load(model_id)
+    total = len(model.model.layers)
+    split = total // 2
+    info_a = mgr.load_shard(model_id, 0, [0, split])
+    info_b = mgr.load_shard(model_id, 1, [split, total])
+
+    input_ids = [1, 2, 3]
+    out_a = mgr.pipeline_step(info_a["shard_id"], None, input_ids, None)
+    out_b = mgr.pipeline_step(info_b["shard_id"], out_a["hidden_states"], None, None)
+    dec = mgr.decode(
+        info_b["shard_id"], out_b["hidden_states"], temperature=0.0, return_logits=True
+    )
+
+    assert dec["logits"] is not None
+    assert dec["logits_shape"] == [1, len(input_ids), model.model.vocab_size]
+    logits = deserialize_activation(dec["logits"])
+    assert list(logits.shape) == dec["logits_shape"]
+    assert str(logits.dtype) == dec["logits_dtype"]
+
+
+@skip_no_model
+def test_decode_rejects_missing_hidden_states():
+    """decode without hidden_states raises ShardError (the last shard must
+    hand off its post-layer-loop hidden states)."""
+
+    from fusion_mlx.distributed.shard import ShardError, ShardManager
+
+    mgr = ShardManager()
+    info = mgr.load_shard(_LM_PATH, 0, [0, 4])
+    with pytest.raises(ShardError):
+        mgr.decode(info["shard_id"], None)
+
+
+@skip_no_model
+def test_decode_unknown_shard_errors():
+    from fusion_mlx.distributed.shard import ShardError, ShardManager
+
+    mgr = ShardManager()
+    with pytest.raises(ShardError):
+        mgr.decode("shard-does-not-exist", "AAAA")  # any non-empty b64 payload
