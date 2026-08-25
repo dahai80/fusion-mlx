@@ -627,7 +627,7 @@ def generate_video(
         # Load tokenizer
         from transformers import AutoTokenizer
 
-        tokenizer = AutoTokenizer.from_pretrained("google/umt5-xxl")
+        tokenizer = AutoTokenizer.from_pretrained("google/umt5-xxl", local_files_only=True)
 
         # Encode prompts
         print(f"{Colors.BLUE}Encoding text...{Colors.RESET}")
