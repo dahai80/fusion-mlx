@@ -1120,6 +1120,25 @@ fusion-mlx is the link endpoint in a 3-tier chain: App -> Gateway -> MLX. By def
 | `FUSION_ROUTE_TOKEN` | _(unset)_ | #352. Optional shared secret for cross-host gateway→MLX auth. When set, `X-Fusion-Route`'s value must equal this token (constant-time compare); missing/mismatched → `403 invalid_route_token`. When unset, `X-Fusion-Route` keeps its provenance-only presence check (#343). The token is enforced even under `FUSION_ROUTE_WARN_ONLY=true` (stricter wins). |
 | `FUSION_MLX_ALLOWED_READ_DIRS` | _(unset)_ | #633. Colon-separated list of extra directories appended to the path-traversal read allow-list (`~/.fusion-mlx/models`, `~/.fusion-mlx/cache`, `/tmp`, `/var/tmp`). Lets scene-continuity condition images (i2va first-frame, l2va last-frame) from custom output dirs (e.g. fusion-comfyui) pass `is_safe_local_path` without writing to `/tmp`. |
 
+### API key precedence (#632 / #636)
+
+The effective API key is resolved once at startup with a fixed priority, and synced to every read path (the `verify_api_key` middleware, the admin auth, and the config singleton) so they agree:
+
+**CLI `--api-key`  >  `FUSION_MLX_API_KEY` env  >  `settings.json` `auth.api_key`**
+
+- `--api-key <X>` on the command line wins over both env and `settings.json`.
+- `FUSION_MLX_API_KEY` wins over `settings.json`.
+- `settings.json` `auth.api_key` is the fallback for bare `serve` launches.
+- If none are set, anonymous access is governed by `FUSION_ALLOW_ANONYMOUS` (rejected by default).
+
+This applies to **every serve path**: single-model (`serve <model>`), audio (`serve kokoro`), and `serve --model-dir <dir>` / `serve --base-path <dir>`. #636 fixed the `--model-dir` / `--base-path` path, which previously dropped `--api-key` and fell back to `settings.json`, so `/v1/*` rejected the CLI key with `401 Invalid API key` while enforcing the `settings.json` key.
+
+`start.sh` resolves the key from `FUSION_MLX_API_KEY` (env) then `settings.json`, passes it as `--api-key`, and exports `FUSION_MLX_API_KEY` into the server process — so the env path also catches it for `--model-dir` launches.
+
+### Rate limiting (#635)
+
+`--rate-limit N` caps requests per minute per client (default `0` = disabled). `--rate-limit 0` explicitly disables the limiter; a positive value enables it. #635 fixed `--rate-limit 0` leaving the limiter active at its 60 rpm default on the `serve <model>` and `serve --model-dir` paths.
+
 ### Access policy
 
 - **Route guard (#343):** routed requests should carry `X-Fusion-Route: gateway` so the server knows they came through the gateway. Exempt paths: `/`, `/health`, `/healthz`, `/readyz`, `/livez`, `/openapi.json`, `/docs`, `/redoc`, `/favicon.ico`, and `OPTIONS` preflight. Enforce is the default since v0.7.0 (#349): un-routed traffic is rejected with `403`. Set `FUSION_ROUTE_WARN_ONLY=true` to restore warn-only behavior for standalone use. The header is routing provenance only - it does **not** authenticate a caller (any client can set it). For cross-host deployments where the gateway is on a different machine, set `FUSION_ROUTE_TOKEN` (#352) to upgrade `X-Fusion-Route` from spoofable provenance to a shared-secret credential: its value must equal the token, else `403 invalid_route_token`.
