@@ -321,7 +321,19 @@ Request → verify_api_key (Depends) → Route handler
                 └── API key configured, credentials provided → secrets.compare_digest()
 ```
 
-- **API key**: Set via `FUSION_MLX_API_KEY` env var or `api_key` in config. Uses constant-time comparison (`secrets.compare_digest`).
+- **API key**: Resolved at startup with a fixed priority so all read paths
+  (the `/v1` middleware, admin auth, and the `ServerConfig` singleton) agree on
+  one value:
+  1. `--api-key` CLI flag (highest)
+  2. `FUSION_MLX_API_KEY` environment variable
+  3. `auth.api_key` in `~/.fusion-mlx/settings.json` (fallback)
+
+  This matches `_resolve_api_key`'s documented order. The env path keeps the
+  bearer out of `argv`/`ps` (resolved into a module global before the server
+  binds). Uses constant-time comparison (`secrets.compare_digest`). If none of
+  the three sources is set, the server runs anonymous-OK in dev mode
+  (loopback; see `FUSION_ALLOW_ANONYMOUS`).
+
 - **Admin auth**: `require_admin` dependency validates session cookie or Bearer token for admin endpoints.
 - **Rate limiting**: `check_rate_limit` dependency applies per-IP rate limits.
 

@@ -199,6 +199,29 @@ def _resolve_api_key(argv_api_key: str | None = None) -> str | None:
     return os.environ.get("FUSION_MLX_API_KEY")
 
 
+def _resolve_effective_api_key(
+    argv_key: str | None = None,
+    settings_key: str | None = None,
+) -> tuple[str | None, str]:
+    # Single source of truth for the startup key priority:
+    #   CLI --api-key  >  FUSION_MLX_API_KEY env  >  settings.json auth.api_key
+    # ``_resolve_api_key`` folds CLI+env into the module global before
+    # ``Server.__init__`` runs, so callers may pass that global as
+    # ``argv_key`` (the operator-provided key). Returns ``(key, source)``
+    # where source is one of ``"cli"`` / ``"env"`` / ``"settings"`` /
+    # ``"none"`` for the startup log line.
+    import os
+
+    if argv_key:
+        return argv_key, "cli"
+    env_key = os.environ.get("FUSION_MLX_API_KEY")
+    if env_key:
+        return env_key, "env"
+    if settings_key:
+        return settings_key, "settings"
+    return None, "none"
+
+
 _cors_origins: list[str] | None = None
 
 
@@ -660,8 +683,33 @@ class Server:
 
         from .admin.auth import set_api_key
 
-        if self.settings.api_key:
-            set_api_key(self.settings.api_key)
+        # Resolve the effective API key ONCE and sync to every read path
+        # so the middleware and admin auth agree. Pre-fix this block ran
+        # ``if self.settings.api_key: set_api_key(self.settings.api_key)``
+        # which OVERWROTE the CLI/env key with the settings.json key AND
+        # left ``self.settings.api_key`` (read by _get_configured_api_key
+        # via global_settings_getter) as the settings.json value, so an
+        # operator passing ``--api-key <X>`` still got 401 "Invalid API
+        # key" because the /v1 middleware enforced the settings.json key.
+        # Priority: CLI --api-key > FUSION_MLX_API_KEY env > settings.json.
+        effective_key, key_source = _resolve_effective_api_key(
+            argv_key=_api_key,
+            settings_key=self.settings.api_key,
+        )
+        if effective_key:
+            self.settings.api_key = effective_key
+            set_api_key(effective_key)
+            try:
+                from .config import get_config
+
+                get_config().api_key = effective_key
+            except Exception:
+                logger.debug("effective api_key sync to config failed", exc_info=True)
+        logger.info(
+            "auth: effective api_key source=%s configured=%s",
+            key_source,
+            bool(effective_key),
+        )
 
         self.app = self._create_app()
 
