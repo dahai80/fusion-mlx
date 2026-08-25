@@ -77,3 +77,43 @@ class TestIsSafeLocalPath:
             [str(tmp_path)],
         )
         assert is_safe_local_path(str(tmp_path / "does_not_exist.bin"))
+
+
+class TestAllowedReadDirsEnv:
+    # Issue #633: FUSION_MLX_ALLOWED_READ_DIRS extends the allow-list.
+
+    def test_env_extends_allowed_dirs(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(_us, "_ALLOWED_READ_DIRS", [])
+        monkeypatch.setenv("FUSION_MLX_ALLOWED_READ_DIRS", str(tmp_path))
+        target = tmp_path / "scene_1_last.png"
+        target.write_text("frame")
+        assert is_safe_local_path(str(target))
+
+    def test_env_colon_separated_multiple(self, tmp_path, monkeypatch):
+        d1 = tmp_path / "out1"
+        d2 = tmp_path / "out2"
+        d1.mkdir()
+        d2.mkdir()
+        monkeypatch.setattr(_us, "_ALLOWED_READ_DIRS", [])
+        monkeypatch.setenv("FUSION_MLX_ALLOWED_READ_DIRS", f"{d1}:{d2}")
+        assert is_safe_local_path(str(d1 / "a.png"))
+        assert is_safe_local_path(str(d2 / "b.png"))
+
+    def test_env_empty_keeps_base_dirs(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(_us, "_ALLOWED_READ_DIRS", [str(tmp_path)])
+        monkeypatch.delenv("FUSION_MLX_ALLOWED_READ_DIRS", raising=False)
+        assert is_safe_local_path(str(tmp_path / "x.bin"))
+
+    def test_env_path_outside_blocked(self, tmp_path, monkeypatch):
+        allowed = tmp_path / "allowed"
+        allowed.mkdir()
+        monkeypatch.setattr(_us, "_ALLOWED_READ_DIRS", [])
+        monkeypatch.setenv("FUSION_MLX_ALLOWED_READ_DIRS", str(allowed))
+        assert not is_safe_local_path("/etc/passwd")
+
+    def test_get_allowed_read_dirs_no_dup(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(_us, "_ALLOWED_READ_DIRS", [str(tmp_path)])
+        monkeypatch.setenv("FUSION_MLX_ALLOWED_READ_DIRS", f"{tmp_path}:/other")
+        dirs = _us.get_allowed_read_dirs()
+        assert dirs.count(str(tmp_path)) == 1
+        assert "/other" in dirs

@@ -105,10 +105,27 @@ _ALLOWED_READ_DIRS: list[str] = [
     "/var/tmp",
 ]
 
+# Issue #633: operator-extensible read dirs. FUSION_MLX_ALLOWED_READ_DIRS is a
+# colon-separated list (like PATH) of extra directories appended to the base
+# allow-list, so scene-continuity condition images from custom output dirs
+# (e.g. fusion-comfyui) are accepted without writing to /tmp.
+_EXTRA_READ_DIRS_ENV = "FUSION_MLX_ALLOWED_READ_DIRS"
+
+
+def get_allowed_read_dirs() -> list[str]:
+    base = list(_ALLOWED_READ_DIRS)
+    extra_raw = os.environ.get(_EXTRA_READ_DIRS_ENV, "")
+    if extra_raw:
+        for part in extra_raw.split(":"):
+            part = part.strip()
+            if part and part not in base:
+                base.append(part)
+    return base
+
 
 def _resolve_and_check(path_str: str) -> Path:
     resolved = Path(path_str).resolve()
-    for allowed in _ALLOWED_READ_DIRS:
+    for allowed in get_allowed_read_dirs():
         allowed_resolved = Path(allowed).resolve()
         try:
             resolved.relative_to(allowed_resolved)

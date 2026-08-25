@@ -82,6 +82,38 @@ async def _resolve_pool_model(model_name: str) -> dict | None:
     return {"status": "ok", "model_id": model_name, "message": f"Loaded {model_name}"}
 
 
+async def _unload_pool_model(model_name: str) -> bool | None:
+    # Issue #631: pool fallback for unload, symmetric with _resolve_pool_model.
+    # The gui_compat unload route shadows the main pool handler (registered
+    # earlier), so a model loaded into the engine pool but absent from the gui
+    # database would 404 here and leak in the pool. Resolve via the pool and
+    # unload there. Returns True (unloaded) / False (found but not loaded) /
+    # None (not in pool either -> caller keeps the original 404).
+    srv = None
+    try:
+        from fusion_mlx.server import get_server, resolve_model_id
+
+        srv = get_server()
+    except Exception as e:
+        logger.debug("pool fallback unload unavailable: %s", e)
+        return None
+    if srv is None or getattr(srv, "pool", None) is None:
+        return None
+    resolved = resolve_model_id(model_name)
+    entry = srv.pool.get_entry(resolved)
+    if entry is None:
+        return None
+    if getattr(entry, "engine", None) is None:
+        return False
+    try:
+        await srv.pool.unload_engine_async(resolved)
+    except Exception as e:
+        logger.error("pool fallback unload failed for %s: %s", model_name, e)
+        return None
+    logger.info("pool fallback unloaded %s", model_name)
+    return True
+
+
 # ── Pydantic models ──
 
 
@@ -487,6 +519,20 @@ def get_gui_compat_router() -> APIRouter:
     ):
         mr = db.query(Model).filter(Model.name == model_name).first()
         if not mr:
+            # Issue #631: model loaded into the engine pool but not tracked in
+            # the gui database (e.g. loaded via the main /v1/.../load handler).
+            # Unload from the pool so it does not leak across load/unload cycles.
+            pool_result = await _unload_pool_model(model_name)
+            if pool_result is True:
+                return {
+                    "message": f"Model '{model_name}' unloaded",
+                    "status": "unloaded",
+                }
+            if pool_result is False:
+                return {
+                    "message": f"Model '{model_name}' was not loaded",
+                    "status": "not_loaded",
+                }
             raise HTTPException(
                 status_code=404, detail=f"Model '{model_name}' not found"
             )
