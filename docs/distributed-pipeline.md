@@ -147,8 +147,61 @@ Response:
 }
 ```
 
-The returned `hidden_states` feeds the next shard's `pipeline_step`, or the
-scheduler applies the final lm_head.
+The returned `hidden_states` feeds the next shard's `pipeline_step`, or — for
+the last shard — `decode` (below) applies the final norm + lm_head.
+
+### `POST /distributed/decode` (#630)
+
+Apply the final `norm` + `lm_head` to the **last** shard's hidden states and
+return sampled token ids. This closes the gap left by `pipeline_step`, which
+runs only the layer loop and returns the **un-normed** post-layer hidden states
+— so distributed PIPELINE mode could slice layers but never produced a token.
+
+`decode` is a single forward pass over one position batch; it returns one
+sampled token id per position (the last is the next token for autoregressive
+generation). The scheduler loops `pipeline_step`+`decode` across nodes for
+multi-token output; KV-cache threading is a future streaming-scheduler concern.
+
+Request:
+```json
+{
+  "shard_id": "shard-...",
+  "hidden_states": "<base64 .npy of the last shard's hidden states>",
+  "temperature": null,
+  "top_p": null,
+  "return_logits": false
+}
+```
+
+- `hidden_states` — required; the base64 `.npy` from the last shard's
+  `pipeline_step`. Missing → 400.
+- `temperature` — sampling temperature. `0` / `null` = greedy `argmax`
+  (deterministic, matches a direct `mlx_lm` forward). `>0` routes through
+  `make_sampler` with `top_p`.
+- `top_p` — nucleus sampling mass (used only with `temperature > 0`).
+- `return_logits` — include base64 `.npy` logits in the response. Off by
+  default (a `(batch, seq, vocab)` tensor is bandwidth-heavy).
+
+Output projection: tied-embedding models (`args.tie_word_embeddings`) reuse
+`inner.embed_tokens.as_linear` (handles quantized matmul); otherwise the
+dedicated `model.lm_head` is used. A model with no `lm_head` and
+`tie_word_embeddings=False` → 400.
+
+Response:
+```json
+{
+  "token_ids": [128001, 306, 4990, 912],
+  "shape": [1, 4],
+  "dtype": "mlx.core.int32",
+  "logits": null,
+  "logits_shape": null,
+  "logits_dtype": null
+}
+```
+
+`token_ids` holds one sampled id per position. With `return_logits=true`, the
+three `logits*` fields are populated (base64 `.npy` + shape + dtype of the
+`(batch, seq, vocab)` logits tensor).
 
 ### `POST /distributed/sync_weights`
 
@@ -205,15 +258,28 @@ Response:
 | `failed to load model`      | 502         |
 | everything else             | 400         |
 
-## Single-machine round-trip test
+## Single-machine round-trip tests
 
 `tests/unit/test_distributed_pipeline.py::test_pipeline_split_matches_unsplit_forward`
-is the acceptance test:
+is the activation acceptance test:
 
 1. Load `Llama-3.2-1B-Instruct-4bit`.
 2. Reference: un-split forward `embed → layers[0:16]`.
 3. Split: `embed → layers[0:8] → serialize → deserialize → layers[8:16]`.
 4. Assert `mx.array_equal(split, reference)` — bit-exact.
+
+`test_decode_matches_unsplit_lm_head_forward` is the #630 decode acceptance
+test:
+
+1. Two shards over the model (`pipeline_step` on each).
+2. `decode` (norm + tied `lm_head` + `argmax`) on the last shard's hidden.
+3. Reference: un-split `embed → layers[0:16] → norm → embed_tokens.as_linear
+   → argmax`.
+4. Assert `decode token_ids == reference argmax` — bit-exact.
+
+Plus: greedy determinism (`test_decode_greedy_is_deterministic`),
+`return_logits` round-trip (`test_decode_return_logits_round_trips`), and error
+paths (missing hidden / unknown shard).
 
 Skipped when the model is absent or mlx unavailable, so CI on non-Metal runners
 passes without a model download.
@@ -231,14 +297,23 @@ from fusion_mlx.distributed import (
 )
 
 mgr = ShardManager()
-info = mgr.load_shard(model_path, 0, [0, 8])
-out = mgr.pipeline_step(info["shard_id"], None, [1, 2, 3], None)
-hidden = deserialize_activation(out["hidden_states"])
+a = mgr.load_shard(model_path, 0, [0, 8])
+b = mgr.load_shard(model_path, 1, [8, 16])
+
+# shard A embeds + runs layers [0,8)
+out_a = mgr.pipeline_step(a["shard_id"], None, [1, 2, 3], None)
+# shard B runs layers [8,16)
+out_b = mgr.pipeline_step(b["shard_id"], out_a["hidden_states"], None, None)
+# decode: norm + lm_head + argmax over B's hidden -> token ids
+dec = mgr.decode(b["shard_id"], out_b["hidden_states"], temperature=0.0)
+print(dec["token_ids"])  # one id per position, greedy = deterministic
 ```
 
 ## Out of scope (first version)
 
 - KV-cache / attention-mask threading across shards (streaming scheduler).
+- Multi-token autoregressive loop inside `decode` — the scheduler composes
+  `pipeline_step`+`decode` across nodes; `decode` is a single forward pass.
 - `manifest` URL pull (scheduler inlines weights for now).
 - Cross-process coordination / failure recovery (scheduler layer).
 - Compression / encryption of activation tensors (transport layer).

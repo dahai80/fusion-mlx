@@ -6,6 +6,8 @@ First-version surface for fusion-multi-node Pipeline Parallelism:
   POST /distributed/load_shard      — load model, register a layer-range shard
   POST /distributed/pipeline_step   — run forward over the shard's layers,
                                        receive/send activation tensors
+  POST /distributed/decode          — apply final norm + lm_head to the last
+                                       shard's hidden states, return token ids
   POST /distributed/sync_weights    — hot-update shard weights
   GET  /distributed/shards          — list registered shards (ops/debug)
   DELETE /distributed/shards/{id}   — drop a shard
@@ -64,6 +66,33 @@ class PipelineStepResponse(BaseModel):
     hidden_states: str = Field(..., description="base64 .npy of outgoing hidden states")
     shape: list[int]
     dtype: str
+
+
+class DecodeRequest(BaseModel):
+    shard_id: str
+    hidden_states: str = Field(
+        ..., description="base64 .npy of the last shard's hidden states"
+    )
+    temperature: float | None = Field(
+        None, description="sampling temperature; 0/None = greedy argmax"
+    )
+    top_p: float | None = Field(
+        None, description="nucleus sampling top_p (with temp>0)"
+    )
+    return_logits: bool = Field(
+        False, description="include base64 .npy logits in the response (bandwidth cost)"
+    )
+
+
+class DecodeResponse(BaseModel):
+    token_ids: list[int] = Field(..., description="sampled token id per position")
+    shape: list[int]
+    dtype: str
+    logits: str | None = Field(
+        None, description="base64 .npy logits (if return_logits)"
+    )
+    logits_shape: list[int] | None = None
+    logits_dtype: str | None = None
 
 
 class SyncWeightsRequest(BaseModel):
@@ -140,6 +169,24 @@ async def pipeline_step(
     except ShardError as exc:
         _shard_error_response(exc)
     return PipelineStepResponse(**out)
+
+
+@router.post("/decode", response_model=DecodeResponse)
+async def decode(
+    req: DecodeRequest,
+    _auth: bool = Depends(verify_api_key),
+) -> DecodeResponse:
+    try:
+        out = get_manager().decode(
+            req.shard_id,
+            req.hidden_states,
+            req.temperature,
+            req.top_p,
+            req.return_logits,
+        )
+    except ShardError as exc:
+        _shard_error_response(exc)
+    return DecodeResponse(**out)
 
 
 @router.post("/sync_weights", response_model=SyncWeightsResponse)
