@@ -244,6 +244,7 @@ def test_resolve_model_path_rejects_traversal():
         _resolve_model_path("")
 
 
+@skip_no_model
 def test_resolve_model_path_accepts_allowed_root():
     """A snapshot path under ~/.fusion-mlx/models is confined and accepted."""
     from fusion_mlx.distributed.shard import _resolve_model_path

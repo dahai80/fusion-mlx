@@ -397,6 +397,24 @@ ALLOWED_FUSION_MLX_ENV_VARS: frozenset[str] = frozenset(
         # single-token. Pure latency knob — never selects model / parser
         # / tier.
         "FUSION_MLX_MTP_DISPATCH_TIMEOUT_SEC",
+        # Distributed pipeline-parallelism (#621): model-directory override
+        # consumed by ``distributed/shard.py::_allowed_model_roots`` to
+        # confine ``load_shard`` model_id resolution the same way the rest
+        # of the server confines model loads. Pure filesystem-sandbox /
+        # lookup-path knob — selects WHERE shards find weights on disk,
+        # never which model alias loads, which parser fires, or which tier
+        # engages. Mirrors the existing ``FUSION_MLX_MODELS`` /
+        # ``FUSION_MLX_CACHE_EXPORT_DIR`` sandbox knobs.
+        "FUSION_MLX_MODEL_DIR",
+        # Distributed pipeline-parallelism (#621) defense-in-depth payload
+        # caps. Bound the decoded activation-tensor / weights-blob /
+        # input-id length so a path-traversal or oversized-payload caller
+        # can't exhaust disk/memory through the /distributed/ endpoints.
+        # Pure wire-level capacity gates — never selects model / parser /
+        # tier; they only decide whether a payload is admitted.
+        "FUSION_DIST_MAX_ACTIVATION_BYTES",
+        "FUSION_DIST_MAX_WEIGHTS_BYTES",
+        "FUSION_DIST_MAX_INPUT_IDS",
     }
 )
 
