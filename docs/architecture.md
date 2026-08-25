@@ -341,7 +341,7 @@ Request → verify_api_key (Depends) → Route handler
 
 All file-path and URL parameters in API routes are validated:
 
-- **Local paths**: `is_safe_local_path()` resolves the path and checks it's within `_ALLOWED_READ_DIRS` (`~/.fusion-mlx/models`, `~/.fusion-mlx/cache`, `/tmp`, `/var/tmp`).
+- **Local paths**: `is_safe_local_path()` resolves the path and checks it's within the read allow-list (`~/.fusion-mlx/models`, `~/.fusion-mlx/cache`, `/tmp`, `/var/tmp`), extended by the `FUSION_MLX_ALLOWED_READ_DIRS` env var (#633, colon-separated) for custom condition-image output dirs.
 - **URLs**: `is_safe_url_with_dns()` blocks SSRF by rejecting private/internal IPs (10.0.0.0/8, 192.168.0.0/16, 127.0.0.0/8, etc.) and DNS-rebinding attacks.
 - **Applied to**: `image`, `ip_adapter_image`, `controlnet_image`, `control_video`, `control_mask`, `reference_images`, `camera_conditions` parameters.
 
