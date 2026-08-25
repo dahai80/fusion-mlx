@@ -30,6 +30,7 @@ def _make_args(**overrides):
         port=None,
         log_level="INFO",
         listen_fd=None,
+        api_key=None,
     )
     ns.__dict__.update(overrides)
     return ns
@@ -185,3 +186,62 @@ def test_model_dir_uds_clears_stale_host_port(stub_model_dir_deps, monkeypatch):
     assert cfg.bind_host is None
     assert cfg.bind_port is None
     assert cfg.bind_uds == "/tmp/fusion-test-569b.sock"
+
+
+def test_model_dir_stages_cli_api_key(stub_model_dir_deps, monkeypatch):
+    """Issue #636: ``serve --model-dir <dir> --api-key <CLI>`` MUST stage
+    the CLI key into the ``server._api_key`` module global before
+    ``create_app`` constructs ``Server()``, whose ``__init__`` auth-sync
+    reads that global. The text/audio paths stage it (cli_serve.py:102 /
+    1154); the model-dir path previously imported only ``create_app`` and
+    skipped the staging, so ``--api-key X`` was dropped and /v1/* rejected
+    X with 401 while enforcing the settings.json key."""
+    monkeypatch_fixture, sentinel_app = stub_model_dir_deps
+    from fusion_mlx import server as server_mod
+
+    monkeypatch_fixture.setattr(server_mod, "_api_key", None)
+    monkeypatch_fixture.delenv("FUSION_MLX_API_KEY", raising=False)
+    called = _patch_dispatch(monkeypatch_fixture)
+
+    cli_serve_mod._serve_from_model_dir(_make_args(api_key="CLI_KEY_636"))
+
+    assert called["run_uvicorn"] is True
+    assert server_mod._api_key == "CLI_KEY_636", (
+        "model-dir path must stage --api-key into server._api_key so "
+        "Server.__init__ auth-sync honors the CLI key over settings.json (#636)"
+    )
+
+
+def test_model_dir_no_api_key_leaves_global_unset(stub_model_dir_deps, monkeypatch):
+    """Without ``--api-key`` (and no env), the model-dir path leaves
+    ``server._api_key`` unset so auth falls back to settings.json —
+    the anonymous-dev / persisted-key contract (priority CLI > env >
+    settings). Pins that the #636 staging is not over-eager."""
+    monkeypatch_fixture, sentinel_app = stub_model_dir_deps
+    from fusion_mlx import server as server_mod
+
+    monkeypatch_fixture.setattr(server_mod, "_api_key", None)
+    monkeypatch_fixture.delenv("FUSION_MLX_API_KEY", raising=False)
+    called = _patch_dispatch(monkeypatch_fixture)
+
+    cli_serve_mod._serve_from_model_dir(_make_args(api_key=None))
+
+    assert called["run_uvicorn"] is True
+    assert server_mod._api_key is None
+
+
+def test_model_dir_cli_key_beats_env(stub_model_dir_deps, monkeypatch):
+    """``--api-key <CLI>`` on the model-dir path must win over a set
+    ``FUSION_MLX_API_KEY`` env, matching ``_resolve_api_key``'s CLI >
+    env order."""
+    monkeypatch_fixture, sentinel_app = stub_model_dir_deps
+    from fusion_mlx import server as server_mod
+
+    monkeypatch_fixture.setattr(server_mod, "_api_key", None)
+    monkeypatch_fixture.setenv("FUSION_MLX_API_KEY", "ENV_KEY_636")
+    called = _patch_dispatch(monkeypatch_fixture)
+
+    cli_serve_mod._serve_from_model_dir(_make_args(api_key="CLI_KEY_636"))
+
+    assert called["run_uvicorn"] is True
+    assert server_mod._api_key == "CLI_KEY_636"

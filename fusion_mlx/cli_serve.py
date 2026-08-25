@@ -118,8 +118,10 @@ def _serve_audio_mode(args, entry) -> None:
 
     # CORS — same friendly default the text path uses.
     server.configure_cors_from_env(args.cors_origins)
-    if args.rate_limit > 0:
-        configure_rate_limiter(args.rate_limit, enabled=True)
+    # Issue #635: --rate-limit 0 must disable the limiter. The module-level
+    # RateLimiter defaults to enabled=True @ 60rpm, so configure unconditionally
+    # and gate on the flag value (0 = disabled, matching the documented semantics).
+    configure_rate_limiter(args.rate_limit, enabled=args.rate_limit > 0)
 
     # CRITICAL: copy the just-set server globals into the
     # ServerConfig singleton the middleware actually reads.
@@ -870,8 +872,18 @@ def _serve_from_model_dir(args):
 
     logger = logging.getLogger(__name__)
 
+    from . import server
     from .config import ServerConfig
-    from .server import create_app
+
+    # Issue #636: stage the CLI --api-key into the server module global
+    # BEFORE create_app constructs Server(), whose __init__ auth-sync reads
+    # the bare ``_api_key`` global (server.py:696). The text/audio paths
+    # stage it via ``server._api_key = server._resolve_api_key(args.api_key)``
+    # (cli_serve.py:102/1154); this model-dir path previously imported only
+    # ``create_app`` and skipped the staging, so ``--api-key X`` was dropped
+    # and auth fell through to settings.json — /v1/* rejected X with 401.
+    server._api_key = server._resolve_api_key(args.api_key)
+    create_app = server.create_app
 
     host = getattr(args, "host", "0.0.0.0") or "0.0.0.0"
     # Honor an explicit --port 0 (OS-assigned ephemeral port, valid for
@@ -1193,8 +1205,8 @@ def _stage_server_config(args, server, logger):
     # Rate limit
     from .middleware.auth import configure_rate_limiter
 
-    if args.rate_limit > 0:
-        configure_rate_limiter(args.rate_limit, enabled=True)
+    # Issue #635: configure unconditionally so 0 disables the limiter.
+    configure_rate_limiter(args.rate_limit, enabled=args.rate_limit > 0)
 
     # GC control
     gc_control = args.gc_control and not args.no_gc_control
