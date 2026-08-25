@@ -124,6 +124,29 @@ class FineTuneConfig:
 
         return types.SimpleNamespace(**args_dict)
 
+    _VALID_FINE_TUNE_TYPES = ("lora", "dora", "full", "qlora")
+
+    def validate(self):
+        # Pure config validation (no I/O, no model load). Called early in
+        # _execute_training so invalid configs fail fast before the expensive
+        # model+dataset load. Single source of truth for the #402/#425 guards
+        # so tests exercise real production code instead of replicating it.
+        # #425: mxfp8 is staged but mlx-lm 0.31.3 has no fp8 training path.
+        # Fail loudly instead of silently ignoring the switch (Rule 12).
+        if self.mxfp8:
+            raise ValueError(
+                "mxfp8 mixed-precision training is not yet supported "
+                "(mlx-lm 0.31.3 has no fp8 training path). Use qlora for "
+                "memory savings; mxfp8 will be landed in a later phase."
+            )
+        # #402: QLoRA / quantize_base needs 4- or 8-bit base.
+        if (self.fine_tune_type == "qlora" or self.quantize_base) and (
+            self.quant_bits not in (4, 8)
+        ):
+            raise ValueError(f"quant_bits must be 4 or 8, got {self.quant_bits}")
+        if self.fine_tune_type not in self._VALID_FINE_TUNE_TYPES:
+            raise ValueError(f"Unknown fine_tune_type: {self.fine_tune_type}")
+
 
 @dataclass
 class FineTuneProgress:
@@ -423,6 +446,11 @@ class FineTuneService:
         dataset_path = job.dataset
         cfg = job.config
 
+        # Fail fast on invalid config before the expensive model+dataset load.
+        # #425/#402: validate() is the single source of truth for the
+        # mxfp8 / quant_bits / fine_tune_type guards.
+        cfg.validate()
+
         model_path = self._resolve_model_path(model_id)
         if model_path is None:
             raise ValueError(f"Model not found: {model_id}")
@@ -458,23 +486,13 @@ class FineTuneService:
         mx.random.seed(cfg.seed)
         model.freeze()
 
-        # #402: MXFP8 training is not supported by mlx-lm 0.31.3 — fail loudly
-        # instead of silently ignoring the switch (Rule 12: fail visibly).
-        if cfg.mxfp8:
-            raise ValueError(
-                "mxfp8 mixed-precision training is not yet supported "
-                "(mlx-lm 0.31.3 has no fp8 training path). Use qlora for "
-                "memory savings; mxfp8 will be landed in a later phase."
-            )
-
         # #402: QLoRA — quantize the frozen base to 4/8-bit before attaching
         # LoRA. If the base is already a quantized MLX model, quantize_base is
         # a no-op (LoRALinear.from_base wraps QuantizedLinear as-is). For an
         # unquantized base, nn.quantize() converts Linears in place.
+        # quant_bits range already enforced by cfg.validate() above.
         is_qlora = cfg.fine_tune_type == "qlora"
         if is_qlora or cfg.quantize_base:
-            if cfg.quant_bits not in (4, 8):
-                raise ValueError(f"quant_bits must be 4 or 8, got {cfg.quant_bits}")
             already_quant = any(
                 hasattr(l, "to_quantized") and getattr(l, "bits", None)
                 for l in model.layers

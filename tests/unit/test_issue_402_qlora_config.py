@@ -44,26 +44,44 @@ class TestFineTuneConfig402Fields:
 
 
 class TestExecuteTraining402Validation:
-    # Validate the in-loop guards without running a real training (which
-    # needs a loaded mlx model). We exercise the two loud-failure guards
-    # by replicating the exact checks from _execute_training.
+    # Exercise the REAL production guard via FineTuneConfig.validate() — the
+    # single source of truth that _execute_training calls before model load.
+    # #402/#425: these tests must fail if the production raise is deleted or
+    # its message drifts, unlike the old inline-replicated tests which passed
+    # regardless (Rule 9: a test passing for the wrong reason is worse than
+    # no test).
 
     def test_mxfp8_raises_loudly(self):
-        # #402: mxfp8 is staged; setting True must fail visibly, not silently.
+        # #425: mxfp8 is staged but upstream-blocked; setting True must fail
+        # visibly with the real message (not silently ignored).
         cfg = FineTuneConfig(mxfp8=True)
-        with pytest.raises(ValueError, match="mxfp8"):
-            if cfg.mxfp8:
-                raise ValueError("mxfp8 mixed-precision training is not yet supported")
+        with pytest.raises(ValueError, match="mxfp8") as exc:
+            cfg.validate()
+        assert "mlx-lm 0.31.3" in str(exc.value)
 
     def test_bad_quant_bits_raises(self):
         cfg = FineTuneConfig(fine_tune_type="qlora", quant_bits=3)
         with pytest.raises(ValueError, match="quant_bits"):
-            if cfg.quant_bits not in (4, 8):
-                raise ValueError(f"quant_bits must be 4 or 8, got {cfg.quant_bits}")
+            cfg.validate()
 
     def test_unknown_fine_tune_type_raises(self):
         cfg = FineTuneConfig(fine_tune_type="bogus")
-        valid = ("lora", "dora", "full", "qlora")
         with pytest.raises(ValueError, match="Unknown fine_tune_type"):
-            if cfg.fine_tune_type not in valid:
-                raise ValueError(f"Unknown fine_tune_type: {cfg.fine_tune_type}")
+            cfg.validate()
+
+    def test_valid_configs_pass_validate(self):
+        # Sanity: the happy paths must NOT raise — guards only fire on bad input.
+        for ft in ("lora", "dora", "full"):
+            FineTuneConfig(fine_tune_type=ft).validate()
+        FineTuneConfig(
+            fine_tune_type="qlora", quantize_base=True, quant_bits=4
+        ).validate()
+        FineTuneConfig(
+            fine_tune_type="qlora", quantize_base=True, quant_bits=8
+        ).validate()
+
+    def test_quant_bits_ignored_without_qlora_or_base(self):
+        # quant_bits only matters when quantize_base or qlora is set; a stray
+        # quant_bits=3 with plain lora is not a training error (no quantization
+        # runs), so validate() must not raise.
+        FineTuneConfig(fine_tune_type="lora", quant_bits=3).validate()
