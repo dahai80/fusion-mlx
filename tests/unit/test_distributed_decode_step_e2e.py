@@ -2,9 +2,9 @@
 """Real-model integration tests for /distributed/decode_step (#630).
 
 Bit-exact vs mlx_lm.generate_step is the headline correctness gate: threading
-the KVCache through decode_step must reproduce un-split generation. Follows
-the test_distributed_pipeline.py convention (@skip_no_model, real LM from the
-model dir)."""
+the KVCache through decode_step must reproduce un-split generation. Gated to
+the real-model group (@pytest.mark.real_model + FUSION_MLX_REAL_MODEL_TESTS),
+matching the test_logprob.py / test_grpo.py convention."""
 
 from __future__ import annotations
 
@@ -33,9 +33,24 @@ def _find_small_lm() -> str | None:
 
 
 _LM_PATH = _find_small_lm()
-skip_no_model = pytest.mark.skipif(
-    _LM_PATH is None, reason="no small LM with safetensors found in model dir"
-)
+
+
+# These tests load real MLX weights and run generate_step, so they follow the
+# codebase's real-model convention (test_logprob.py / test_grpo.py): the
+# @pytest.mark.real_model marker + an inline FUSION_MLX_REAL_MODEL_TESTS guard
+# keep them out of the default `pytest tests/unit` suite (which stays
+# weight-free per CLAUDE.md). Running them un-gated in the full suite
+# interleaves them with other MLX tests, where stale thread-local Stream
+# handles from earlier tests make generate_step's mx.eval raise
+# "There is no Stream(gpu, N) in current thread" — a test-ordering artifact,
+# not a production bug. Gating to the real-model group avoids it.
+def _skip_unless_real_model():
+    if not os.environ.get("FUSION_MLX_REAL_MODEL_TESTS"):
+        pytest.skip(
+            "set FUSION_MLX_REAL_MODEL_TESTS=1 to run real-model decode_step e2e"
+        )
+    if _LM_PATH is None:
+        pytest.skip("no small LM with safetensors found in model dir")
 
 
 def _ref_tokens(model, tok, prompt, n):
@@ -55,11 +70,12 @@ def _ref_tokens(model, tok, prompt, n):
     return [int(token) for (token, _lp), _ in zip(gen, range(n))]
 
 
-@skip_no_model
+@pytest.mark.real_model
 def test_single_shard_decode_step_matches_generate_step():
     """One shard = whole model [0, total). Prefill via decode_step
     (input_ids, is_last_shard=True) -> token #1; loop single-token decode_step
     for the rest. Bit-exact vs generate_step (greedy)."""
+    _skip_unless_real_model()
     import mlx_lm
 
     from fusion_mlx.distributed.shard import ShardManager
@@ -94,12 +110,13 @@ def test_single_shard_decode_step_matches_generate_step():
     assert out["kv_offset"] == len(prompt_ids) + n - 1
 
 
-@skip_no_model
+@pytest.mark.real_model
 def test_two_shard_decode_step_matches_generate_step():
     """Split at the midpoint. Prefill: shard A (input_ids, not last) -> shard
     B (hidden_states, last) -> token #1. Decode loop: A -> B per token.
     Bit-exact vs generate_step (greedy). Pins the boundary activation crossing
     is correct WITH cache."""
+    _skip_unless_real_model()
     import mlx_lm
 
     from fusion_mlx.distributed.shard import ShardManager
@@ -144,10 +161,11 @@ def test_two_shard_decode_step_matches_generate_step():
     assert out_b["kv_offset"] == len(prompt_ids) + n - 1
 
 
-@skip_no_model
+@pytest.mark.real_model
 def test_reset_then_reuse_different_prompt():
     """generate, reset_cache on the shard, generate a DIFFERENT prompt ->
     correct (cache did not bleed across generations)."""
+    _skip_unless_real_model()
     import mlx_lm
 
     from fusion_mlx.distributed.shard import ShardManager
@@ -191,7 +209,7 @@ def test_reset_then_reuse_different_prompt():
     assert gen1 != gen2
 
 
-@skip_no_model
+@pytest.mark.real_model
 def test_no_auto_reset_appends_wrongly_documented():
     """Pins the contract: the server does NOT auto-reset between generations.
     Two prefills WITHOUT reset on the same shard append into one cache ->
@@ -199,6 +217,7 @@ def test_no_auto_reset_appends_wrongly_documented():
     output distribution (logits) than a clean run (not a crash). This
     documents the 'reset is the caller's responsibility' contract; it is NOT
     a correctness assertion that the sampled token is right."""
+    _skip_unless_real_model()
     import mlx.core as mx
     import mlx_lm
 
