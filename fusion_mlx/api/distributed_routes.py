@@ -95,6 +95,53 @@ class DecodeResponse(BaseModel):
     logits_dtype: str | None = None
 
 
+class DecodeStepRequest(BaseModel):
+    shard_id: str
+    hidden_states: str | None = Field(
+        None,
+        description="base64 .npy of incoming hidden ([P,hidden] prefill or [1,hidden] decode)",
+    )
+    input_ids: list[int] | None = Field(
+        None,
+        description="token ids for the first shard (exactly one of this / hidden_states)",
+    )
+    is_last_shard: bool = Field(
+        ..., description="true on the shard owning the final layers (samples)"
+    )
+    temperature: float | None = Field(
+        None, description="sampling temp; 0/None = greedy"
+    )
+    top_p: float | None = Field(None, description="nucleus top_p (with temp>0)")
+    return_logits: bool = Field(False, description="include base64 .npy logits")
+
+
+class DecodeStepResponse(BaseModel):
+    hidden_states: str | None = Field(
+        None, description="base64 .npy outgoing activation (intermediate shard)"
+    )
+    shape: list[int]
+    dtype: str
+    token_ids: list[int] | None = Field(
+        None, description="sampled token (last shard); null on intermediate"
+    )
+    logits: str | None = Field(
+        None, description="base64 .npy logits (if return_logits)"
+    )
+    logits_shape: list[int] | None = None
+    logits_dtype: str | None = None
+    kv_offset: int = Field(..., description="shard cache length after this step")
+
+
+class ResetCacheRequest(BaseModel):
+    shard_id: str
+
+
+class ResetCacheResponse(BaseModel):
+    shard_id: str
+    kv_cleared: bool
+    prev_offset: int
+
+
 class SyncWeightsRequest(BaseModel):
     shard_id: str
     weights: str | None = Field(None, description="base64 .npz of {param_path: array}")
@@ -188,6 +235,38 @@ async def decode(
     except ShardError as exc:
         _shard_error_response(exc)
     return DecodeResponse(**out)
+
+
+@router.post("/decode_step", response_model=DecodeStepResponse)
+async def decode_step(
+    req: DecodeStepRequest,
+    _auth: bool = Depends(verify_api_key),
+) -> DecodeStepResponse:
+    try:
+        out = get_manager().decode_step(
+            req.shard_id,
+            req.hidden_states,
+            req.input_ids,
+            req.is_last_shard,
+            req.temperature,
+            req.top_p,
+            req.return_logits,
+        )
+    except ShardError as exc:
+        _shard_error_response(exc)
+    return DecodeStepResponse(**out)
+
+
+@router.post("/reset_cache", response_model=ResetCacheResponse)
+async def reset_cache(
+    req: ResetCacheRequest,
+    _auth: bool = Depends(verify_api_key),
+) -> ResetCacheResponse:
+    try:
+        out = get_manager().reset_cache(req.shard_id)
+    except ShardError as exc:
+        _shard_error_response(exc)
+    return ResetCacheResponse(**out)
 
 
 @router.post("/sync_weights", response_model=SyncWeightsResponse)

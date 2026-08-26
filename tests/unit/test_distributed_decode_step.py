@@ -151,3 +151,80 @@ def test_sync_weights_clears_kv_cache():
     out = mgr.sync_weights(sid, payload, None)
     assert out["params_updated"] == 1
     assert mgr._shards[sid]["kv_cache"] is None, "sync_weights must clear KV"
+
+
+def _client_with_manager(mgr, monkeypatch):
+    """Build a TestClient whose app uses the given ShardManager singleton.
+
+    Two wiring points:
+      1. ``shard_mod._manager = mgr`` — the routes call ``get_manager()``,
+         which returns the module-global singleton. Override it so the
+         router resolves OUR manager (with the dummy shard registered).
+      2. ``monkeypatch`` the auth dependency to a no-op. ``verify_api_key``
+         does NOT exempt loopback (#350 closed that bypass) and TestClient
+         uses host ``"testclient"`` (not loopback), so without the override
+         every route 401s before reaching the manager. This is the
+         established pattern: ``tests/unit/test_audio_path_shaped_model.py``
+         monkeypatches ``verify_api_key`` to ``lambda: None`` for route
+         unit tests (no API key needed). Override on the FastAPI app's
+         dependency container, not the module — cleaner and scoped."""
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    import fusion_mlx.distributed.shard as shard_mod
+    from fusion_mlx.api import distributed_routes as dr
+    from fusion_mlx.middleware.auth import verify_api_key
+
+    shard_mod._manager = mgr
+    app = FastAPI()
+    app.include_router(dr.router)
+    app.dependency_overrides[verify_api_key] = lambda: None
+    return TestClient(app)
+
+
+def test_decode_step_route_rejects_both_modes_400(monkeypatch):
+    from fusion_mlx.distributed.shard import ShardManager
+
+    mgr = ShardManager()
+    sid = _dummy_shard(mgr)
+    client = _client_with_manager(mgr, monkeypatch)
+    r = client.post(
+        "/distributed/decode_step",
+        json={
+            "shard_id": sid,
+            "hidden_states": "AAAA",
+            "input_ids": [1],
+            "is_last_shard": False,
+        },
+    )
+    assert r.status_code == 400
+
+
+def test_decode_step_route_unknown_shard_404(monkeypatch):
+    from fusion_mlx.distributed.shard import ShardManager
+
+    mgr = ShardManager()
+    client = _client_with_manager(mgr, monkeypatch)
+    r = client.post(
+        "/distributed/decode_step",
+        json={
+            "shard_id": "shard-nope",
+            "input_ids": [1, 2, 3],
+            "is_last_shard": False,
+        },
+    )
+    assert r.status_code == 404
+
+
+def test_reset_cache_route_idempotent_200(monkeypatch):
+    from fusion_mlx.distributed.shard import ShardManager
+
+    mgr = ShardManager()
+    sid = _dummy_shard(mgr)
+    client = _client_with_manager(mgr, monkeypatch)
+    r = client.post("/distributed/reset_cache", json={"shard_id": sid})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["kv_cleared"] is True
+    assert body["prev_offset"] == 0
+    assert body["shard_id"] == sid
