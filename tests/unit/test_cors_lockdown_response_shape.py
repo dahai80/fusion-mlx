@@ -24,7 +24,6 @@ still 405s (no allowed verb on the route) and is covered separately by
 
 from __future__ import annotations
 
-import importlib
 from collections.abc import Iterator
 
 import pytest
@@ -34,12 +33,20 @@ from fastapi.testclient import TestClient
 
 @pytest.fixture
 def fresh_app(monkeypatch: pytest.MonkeyPatch) -> Iterator[FastAPI]:
-    """Yield a fresh ``FastAPI`` app with ``vllm_mlx.server.app`` monkey-
+    """Yield a fresh ``FastAPI`` app with ``fusion_mlx.server.app`` monkey-
     patched to point at it, so the CORS resolver mounts middleware on
-    the test app rather than the production singleton."""
-    import fusion_mlx.server as server_mod
+    the test app rather than the production singleton.
 
-    importlib.reload(server_mod)
+    No ``importlib.reload``: reloading ``fusion_mlx.server`` re-executes
+    the ``class Server`` definition, recreating the class object while
+    ``fusion_mlx.public_api`` and ``fusion_mlx.__init__`` keep the
+    original bound at first import. That breaks the
+    ``public_api.Server is Server`` contract for every later test (notably
+    ``test_public_api_reexports_match_internal``). Reset the CORS-mount
+    globals via monkeypatch instead — same fresh state, no class
+    recreation.
+    """
+    import fusion_mlx.server as server_mod
 
     app = FastAPI()
 
@@ -48,6 +55,11 @@ def fresh_app(monkeypatch: pytest.MonkeyPatch) -> Iterator[FastAPI]:
         return {"ok": "true"}
 
     monkeypatch.setattr(server_mod, "app", app)
+    # Reset the CORS-mount globals the reload used to clear. The
+    # idempotent guard + resolved origins must start fresh so each test
+    # mounts its own allowlist onto this fixture app.
+    monkeypatch.setattr(server_mod, "_cors_mounted", False)
+    monkeypatch.setattr(server_mod, "_cors_origins", None)
 
     for var in (
         "FUSION_MLX_CORS_ALLOW_ORIGINS",
