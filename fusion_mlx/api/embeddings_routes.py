@@ -40,9 +40,25 @@ def set_embeddings_context(pool: Any, server_state: Any) -> None:
 
 
 async def get_embedding_engine(model_id: str) -> Any:
-    """Resolve, load, and type-check an embedding engine."""
+    """Resolve, load, and type-check an embedding engine.
+
+    Errors carry the OpenAI ``{"error":{type,code,message}}`` envelope
+    (dict-detail passes through the central HTTPException handler) so SDKs
+    that key on ``error.code`` (langchain / llamaindex / openai-python) get a
+    machine-readable signal instead of substring-matching the message.
+    """
     if _pool is None:
-        raise HTTPException(status_code=503, detail="Server not initialized")
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "error": {
+                    "message": "Server not initialized; embeddings pool unavailable.",
+                    "type": "server_busy",
+                    "code": "server_not_initialized",
+                    "param": None,
+                }
+            },
+        )
     from ..model_aliases import resolve_model
 
     resolved_id = resolve_model(model_id)
@@ -50,13 +66,35 @@ async def get_embedding_engine(model_id: str) -> Any:
         logger.info("Embedding alias: %s -> %s", model_id, resolved_id)
     engine = await _pool.get_engine(resolved_id)
     if engine is None:
-        raise HTTPException(status_code=404, detail=f"Model not found: {model_id}")
+        raise HTTPException(
+            status_code=404,
+            detail={
+                "error": {
+                    "message": f"Model not found: {model_id}",
+                    "type": "not_found_error",
+                    "code": "model_not_found",
+                    "param": "model",
+                }
+            },
+        )
     from ..engines.embedding import EmbeddingEngine
 
     if not isinstance(engine, EmbeddingEngine):
         raise HTTPException(
             status_code=400,
-            detail=f"Model '{model_id}' is not an embedding model",
+            detail={
+                "error": {
+                    "message": (
+                        f"No embedding model loaded for '{model_id}' "
+                        "(requested model is not an embedding model). "
+                        "Boot with --embedding-model <id> "
+                        "and install deps via: pip install 'fusion-mlx[embeddings]'"
+                    ),
+                    "type": "invalid_request_error",
+                    "code": "no_embedding_model",
+                    "param": "model",
+                }
+            },
         )
     return engine
 

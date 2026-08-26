@@ -841,8 +841,20 @@ test_context_window.py
 # would reverse a closed product decision, not pay debt. Test kwarg
 # (cli_origins->cors_origins) and contract are both divergent.
 test_cors_env_configurable.py
-# KEEP_QUARANTINED: round10q — L-02 _SpecAlignedCORSMiddleware not implemented. Test pins spec-aligned preflight rejection (200 + no ACAO + Vary: Origin + body "OK") replacing stock Starlette 400. server.py:696 uses stock CORSMiddleware, configure_cors_from_env(cors_origins=None) param renamed from cli_origins. Feature gap (CORS hardening), not harness drift. Tracked in #641 (port vs retire).
-test_cors_lockdown_response_shape.py
+# RESCUED 2026-08-26 (#641): 6/6 pass. L-02 spec-aligned preflight rejection
+# ported. _SpecAlignedCORSMiddleware(CORSMiddleware) subclass added
+# (server.py) overrides preflight_response → 200 OK + no ACAO + Vary: Origin
+# + body "OK" for disallowed-origin AND disallowed-method preflights (was stock
+# Starlette 400 "Disallowed CORS origin"). configure_cors_from_env gained
+# cli_origins legacy alias + mounts middleware onto module-global app
+# (idempotent _cors_mounted guard). _resolve_cors_origins now fail-closed:
+# whitespace-only CSV → [] (no middleware → 405, #758 3da8230) vs unset → None
+# (wildcard *). Default methods narrowed POST/GET/OPTIONS (reverses #52
+# wide-open-methods for the reject-echo contract; FUSION_MLX_CORS_ALLOW_METHODS
+# env override added). Active test_cors_configure.py updated: issubclass check
+# for the subclass, _reset_server_singleton clears _cors_mounted, whitespace-
+# only env now [] (fail-closed). Wide-open ORIGINS default stance (#52) kept.
+# test_cors_lockdown_response_shape.py
 # test_d_anthro_validation.py RESCUED 2026-08-10 (#443): 31/31 pass.
 # Ported D-ANTHRO-VALIDATION F1/F4/F10/F11 to the Pydantic model layer
 # (anthropic_models.py + openai_models.py + responses_models.py):
@@ -980,17 +992,24 @@ test_embeddings.py
 # to assert embeddings-absent (opposite of test intent) = Rule 2/3 viol.
 # Re-confirm round10q-b4 verdict. Whole-file KEEP.
 test_embeddings_extra_guard.py
-# srv._embedding_engine / srv._embedding_model_locked (rapid-mlx-era;
-# fusion_mlx.server has NONE — uses module-global _pool via
-# set_embeddings_context in api/embeddings_routes.py:36) + brand-drift
-# monkeypatch vllm_mlx.server.load_embedding_model. Even if harness
-# repointed to _pool, prod create_embeddings (embeddings_routes.py:90)
-# emits 503 "Server not initialized" (pool None) or 404 "Model not found"
-# — NOT the test-expected no_embedding_model envelope (error.type=
-# invalid_request_error, code=no_embedding_model, msg with
-# --embedding-model + pip install 'rapid-mlx[embeddings]' brand drift).
-# Feature gap: no_embedding_model 503 envelope not ported. File issue first.
-# Tracked in #643 (port eager 503 guard vs retire — 404/400 lazy resolution likely intended).
+# RETIRED 2026-08-26 (#643): hybrid fix — kept the lazy 404/400/503
+# resolution (no eager boot-flag guard), enriched the 3 raises in
+# get_embedding_engine (embeddings_routes.py:42-87) to carry the OpenAI
+# {error:{type,code,message}} envelope with machine-readable codes:
+# pool None -> 503 code=server_not_initialized (type=server_busy);
+# engine None -> 404 code=model_not_found (type=not_found_error);
+# not EmbeddingEngine -> 400 code=no_embedding_model (type=invalid_request_error)
+# + --embedding-model + pip install 'fusion-mlx[embeddings]' hint. H-09
+# silent-wrong (chat model -> 200 garbage vector) was ALREADY closed by the
+# isinstance check; this adds the actionable envelope SDKs key on. Test
+# STAYS QUARANTINED (not un-quarantined): it pins the EAGER 503 fired
+# pre-resolution keyed off an absent boot flag (srv._embedding_model_locked,
+# rapid-mlx-era) + absent brand-drift symbols (srv._embedding_engine,
+# vllm_mlx.server.load_embedding_model) + 'rapid-mlx[embeddings]' brand
+# string. Hybrid chose no eager guard (lazy is more precise: eager can lie
+# when flag set but requested model is chat); test's eager-timing contract
+# can't pass without the removed architecture. Real gap (envelope) shipped.
+# RETIRED = closed won't-fix on the eager-guard shape; envelope shipped.
 test_embeddings_route.py
 # test_embeddings_timeout_admission.py  # un-quarantined: H22 fixed, H6/C4 xfail(strict=True)
 # test_enable_thinking_prompt_accounting.py RESCUED 2026-08-19 (13 pass +
@@ -1793,20 +1812,26 @@ test_seed_reproducibility.py
 # (tool_parser_instance L275/reasoning_parser L278/mcp_manager L282/model_registry
 # L321/enable_auto_tool_choice L273/tool_call_parser L274 still exist but no
 # module-global→cfg staging path to test). Prod wins Rule 7/12.
-# KEEP_QUARANTINED 2026-08-24 (eval round15): test_server_prefill_memory_handler 7f/0p REDESIGN/REMOVED.
-# prefill_memory_exceeded_handler absent (parity gap vs scheduler_queue_full_
-# handler sibling; exception_handlers.py:638 registers ONLY SchedulerQueueFull,
-# install_exception_handlers L563 has no PrefillMemoryExceededError handler).
-# PrefillMemoryExceededError STILL raised (memory_monitor.py:944, engine_core
-# :36) → bubbles to generic Exception handler → 500, no structured 400 body.
-# Tracked in #642 (register handler → 413/507 envelope vs retire to generic 500).
-# ALSO _with_json_keepalive/_with_sse_keepalive absent (streaming error-body
-# emitters; same not-ported family as test_sse_keepalive.py ACTIVE). ALSO
-# get_engine_for_model/validate_context_window/verify_api_key removed from
-# server module scope (server.py REDESIGN, symbols moved/removed). Message
-# substrings "Memory Guard to aggressive" + "custom memory guard ceiling"
-# REMOVED from prod (only "KV+SDPA" survives). All 7 tests pin removed
-# handler+keepalive+message-contract wiring. Whole-file KEEP Rule 7/12.
+# KEEP_QUARANTINED 2026-08-26 (re-eval): test_server_prefill_memory_handler 7f/0p REDESIGN/REMOVED.
+# REAL GAP FIXED 2026-08-26 (issue #642, branch fix/issue-port-cluster-641-644):
+# prefill_memory_exceeded_handler now registered (middleware/exception_handlers.py
+# after SchedulerQueueFullError handler) + wired into install_exception_handlers
+# dedicated @app.exception_handler(PrefillMemoryExceededError) AND generic-handler
+# isinstance chain. PrefillMemoryExceededError (raised memory_monitor.py:944,
+# engine_core.py:36) now returns HTTP 413 with OpenAI envelope on /v1/* paths:
+#   {"error":{"message":..., "type":"invalid_request_error",
+#    "code":"prefill_memory_exceeded","param":"messages"}}
+# else {"detail":...}. 500→413 gap closed. End-to-end verified via TestClient.
+# TEST STAYS QUARANTINED (pins removed-arch, NOT the real gap): wants status 400
+# (not 413); imports handler from fusion_mlx.server (now in middleware); pins
+# _with_json_keepalive/_with_sse_keepalive (REMOVED, replaced by class SSEKeepalive
+# api/utils.py:1565); pins get_engine_for_model/validate_context_window/verify_api_key
+# (REMOVED from server scope, server.py REDESIGN); pins message substrings
+# "Memory Guard to aggressive" + "custom memory guard ceiling" (REOVED, only
+# "KV+SDPA" survives); body["type"]/body["fusion_code"]/body["error"][
+# "estimated_bytes"] contract. All 7 tests pin removed handler+keepalive+
+# server-scope+message-contract wiring. Rollback would undo shipped SSEKeepalive
+# + server.py REDESIGN. Whole-file KEEP Rule 7/12. Tracked in #642.
 test_server_load_model_order.py
 test_server_prefill_memory_handler.py
 # RESCUED 2026-08-19: 4/4 pass. PROD FIX — SchedulerQueueFullError (raised by
@@ -1948,11 +1973,31 @@ test_thinking_budget.py
 # test_tool_calling 57f/173p: Gemma4 format ValueError (4 — _parse_gemma4
 #   tool_call strictness), assert None is not None (3 — bare Calling tool:
 #   parse dropped), KeyError description (2). Mixed feature/contract drift.
-# KEEP_QUARANTINED test_tool_choice_enforcement (eval round14 2026-08-24):
-#   COLLECTION ERR — imports _contains_structural_tool_wire_leak from
-#   routes_internal.chat. Guard fn NEVER ported (0 prod refs). REMOVED-FEATURE
-#   Tracked in #644 (restore scrubbing family vs retire — leak-source fix likely intended).
-#   (#445 normalization gap). Rule 2/3: don't invent guard to satisfy import.
+# RETIRED #644 2026-08-26 (eval round14 2026-08-24 -> resolved):
+#   COLLECTION ERR — imports 7 symbols from routes_internal.chat: 4 scrub fns
+#   (_scrub_tool_wire_literals, _scrub_visible_tool_wire_leaks,
+#   _contains_structural_tool_wire_leak, _contains_tool_wire_literal) have ZERO
+#   prod refs — never ported. 3 forced-tool-call fns (_forced_tool_call_prefix,
+#   _synthesize_forced_tool_call, _recover_partial_tool_args) ARE defined in
+#   chat.py but DEAD CODE — zero callers (forced-tool-call synthesis path never
+#   wired into the chat route).
+#   ARCH RESOLUTION: fork REPLACED forced-prefix synthesis + wire-leak scrub
+#   with a postprocessor-driven forced-tool_choice filter —
+#   _apply_forced_tool_choice_filter (parsers.py:447) + _forced_tool_choice_
+#   arguments_violate_object_root (parsers.py:91). It covers the SAME genuine
+#   invariants the T2/T3 tests pin (no malformed/non-object args reach the
+#   wire, drop scratch anchors + fragment continuations, single-call cap) via a
+#   SUPERIOR shipped mechanism. Porting the removed scrub/synthesis arch would
+#   RE-INTRODUCE a replaced design (Rule 2/3/7: no rollback of shipped arch).
+#   T1 suffix tests: _TOOL_USE_SYSTEM_SUFFIX (auto-mode) is NEVER injected
+#   anywhere (dead string); _TOOL_USE_REQUIRED_SUFFIX used anthropic-only
+#   (_anthropic_helpers.py:245). test_t1_auto_suffix_is_injected_for_auto_mode
+#   pins OpenAI-route auto-mode suffix injection that does not exist — the
+#   OpenAI path (openai_routes.py:549) forwards tools to engine.chat and relies
+#   on the chat template, no suffix injection. Pins removed/non-existent arch.
+#   Test STAYS QUARANTINED — pins removed forced-prefix-synthesis + scrub arch
+#   (T2/T3/codex) and non-existent OpenAI auto-suffix injection (T1). Genuine
+#   invariants covered by shipped postprocessor filter. No production port.
 # KEEP_QUARANTINED test_tool_logits_schema_guards (eval round14 2026-08-24):
 #   26f/2p. Whole file pins defensive-tolerance contract — _extract_param_
 #   schemas (tool_logits.py:28) + validate_param_value (L406) called on
