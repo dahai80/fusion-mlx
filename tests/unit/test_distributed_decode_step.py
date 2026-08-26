@@ -90,3 +90,64 @@ def test_decode_step_unknown_shard_404():
         mgr.decode_step(
             "shard-nope", hidden_states_b64=None, input_ids=[1, 2], is_last_shard=False
         )
+
+
+def test_reset_cache_idempotent_on_empty():
+    """reset_cache on kv_cache=None is a no-op: prev_offset=0, no error."""
+    from fusion_mlx.distributed.shard import ShardManager
+
+    mgr = ShardManager()
+    sid = _dummy_shard(mgr)
+    out = mgr.reset_cache(sid)
+    assert out == {"shard_id": sid, "kv_cleared": True, "prev_offset": 0}
+    # idempotent
+    out2 = mgr.reset_cache(sid)
+    assert out2 == {"shard_id": sid, "kv_cleared": True, "prev_offset": 0}
+
+
+def test_reset_cache_unknown_shard_404():
+    from fusion_mlx.distributed.shard import ShardError, ShardManager
+
+    mgr = ShardManager()
+    with pytest.raises(ShardError):
+        mgr.reset_cache("shard-nope")
+
+
+def test_sync_weights_clears_kv_cache():
+    """A weight swap invalidates cached K/V. sync_weights sets kv_cache=None
+    (logged) even though its response is unchanged."""
+    import base64
+
+    from fusion_mlx.distributed import shard as shard_mod
+
+    mgr = shard_mod.ShardManager()
+    sid = _dummy_shard(mgr)
+    # Simulate a populated cache (don't need a real model; just set the field).
+    fake_cache = [type("C", (), {"offset": 5})() for _ in range(4)]
+    mgr._shards[sid]["kv_cache"] = fake_cache
+    # Build a minimal valid weights payload so sync_weights succeeds.
+    import os
+    import tempfile
+
+    import mlx.core as mx
+
+    with tempfile.NamedTemporaryFile(suffix=".npz", delete=False) as fh:
+        path = fh.name
+    mx.savez(path, **{"model.layers.0.weight": mx.array([1.0])})
+    try:
+        with open(path, "rb") as fh:
+            payload = base64.b64encode(fh.read()).decode("ascii")
+    finally:
+        os.unlink(path)
+
+    # Need a real-ish model object whose load_weights won't crash on dummy.
+    class _DummyModel:
+        args = type("A", (), {"tie_word_embeddings": False})()
+
+        def load_weights(self, items, strict=False):
+            return None
+
+    mgr._models["dummy"] = _DummyModel()
+    out = mgr.sync_weights(sid, payload, None)
+    assert out["params_updated"] == 1
+    assert mgr._shards[sid]["kv_cache"] is None, "sync_weights must clear KV"

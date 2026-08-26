@@ -495,6 +495,25 @@ class ShardManager:
         )
         return out
 
+    def reset_cache(self, shard_id: str) -> dict:
+        # Clear a shard's KV-cache so a new generation can prefill from
+        # scratch without dropping/reloading the shard (weights stay on
+        # GPU). Idempotent on kv_cache=None (prev_offset=0). The cache
+        # list is full-model-length; read cache[start].offset, NOT
+        # cache[0] — cache[0] is an unused empty cache for a shard whose
+        # range starts >0.
+        shard = self._get_shard(shard_id)
+        start = shard["layer_range"][0]
+        cache = shard["kv_cache"]
+        prev = int(cache[start].offset) if cache is not None else 0
+        shard["kv_cache"] = None
+        logger.info(
+            "distributed: reset KV cache shard %s (was offset %d)",
+            shard_id,
+            prev,
+        )
+        return {"shard_id": shard_id, "kv_cleared": True, "prev_offset": prev}
+
     def sync_weights(
         self, shard_id: str, weights_b64: str | None, manifest: dict | None
     ) -> dict:
@@ -537,6 +556,11 @@ class ShardManager:
         updated = len(tree)
         logger.info(
             "distributed: synced %d weight params into shard %s", updated, shard_id
+        )
+        shard["kv_cache"] = None
+        logger.info(
+            "distributed: cleared KV cache on shard %s after weight sync",
+            shard_id,
         )
         return {"shard_id": shard_id, "params_updated": updated}
 
