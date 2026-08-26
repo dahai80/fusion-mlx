@@ -203,6 +203,157 @@ Response:
 three `logits*` fields are populated (base64 `.npy` + shape + dtype of the
 `(batch, seq, vocab)` logits tensor).
 
+### `POST /distributed/decode_step` (#630)
+
+Cache-aware forward + optional sample. The successor to the cache-less
+`pipeline_step`+`decode` pair above: each shard holds its OWN in-process KV
+cache, so only activation tensors cross the wire — KV is never serialized.
+Prefill sends multi-token `input_ids` to the first shard; intermediate shards
+receive `hidden_states` and forward; the last shard samples. The caller drives
+the autoregressive loop, feeding single-token `input_ids`/`hidden_states` per
+decode iteration. `decode_step` does not switch on a mode flag — it serves
+prefill or decode by input length and `is_last_shard`.
+
+Request (first shard, prefill — embeds multi-token):
+```json
+{
+  "shard_id": "shard-a1b2c3d4e5f6",
+  "hidden_states": null,
+  "input_ids": [1, 2, 3, 4],
+  "is_last_shard": false,
+  "temperature": null,
+  "top_p": null,
+  "return_logits": false
+}
+```
+
+Request (intermediate shard — receives hidden, forwards):
+```json
+{
+  "shard_id": "shard-...",
+  "hidden_states": "<base64 .npy>",
+  "input_ids": null,
+  "is_last_shard": false,
+  "temperature": null,
+  "top_p": null,
+  "return_logits": false
+}
+```
+
+Request (last shard — samples):
+```json
+{
+  "shard_id": "shard-...",
+  "hidden_states": "<base64 .npy>",
+  "input_ids": null,
+  "is_last_shard": true,
+  "temperature": 0.0,
+  "top_p": null,
+  "return_logits": false
+}
+```
+
+- Exactly one of `hidden_states` / `input_ids` must be present. The first
+  shard needs `input_ids`; later shards need `hidden_states`.
+- `is_last_shard` — true on the shard owning the final layers, which samples.
+  `false` → the shard runs its layer range and returns serialized
+  `hidden_states` (+ `shape`/`dtype` + `kv_offset`, `token_ids=null`). `true`
+  → the shard runs its layers, takes the last-position hidden
+  (`hidden[:, -1:, :]`), applies norm + lm_head, samples a token, returns
+  `token_ids` (+ `logits` if requested, `hidden_states=null`).
+- Prefill vs decode by length: `input_ids` of length >1 = prefill (multi-token,
+  builds KV over the whole sequence). Length 1 = decode step (single-token
+  autoregressive). The caller drives this; `decode_step` distinguishes only by
+  which input is present and `is_last_shard`, not by a mode flag. A
+  single-token `input_ids` on an empty cache raises `ShardError` (400) —
+  prefill first.
+- `temperature` — `0` / `null` = greedy `argmax` (deterministic). `>0` routes
+  through `make_sampler` with `top_p`. Used only on the last shard.
+- `top_p` — nucleus mass (with `temperature > 0`), last shard only.
+- `return_logits` — include base64 `.npy` logits in the response (last shard
+  only). Off by default — a `(batch, seq, vocab)` tensor is bandwidth-heavy.
+
+Response (intermediate shard):
+```json
+{
+  "hidden_states": "<base64 .npy>",
+  "shape": [1, 4, 2048],
+  "dtype": "mlx.core.bfloat16",
+  "token_ids": null,
+  "logits": null,
+  "logits_shape": null,
+  "logits_dtype": null,
+  "kv_offset": 4
+}
+```
+
+Response (last shard):
+```json
+{
+  "hidden_states": null,
+  "shape": [1, 1, 2048],
+  "dtype": "mlx.core.bfloat16",
+  "token_ids": [306],
+  "logits": null,
+  "logits_shape": null,
+  "logits_dtype": null,
+  "kv_offset": 4
+}
+```
+
+- `kv_offset` — the shard's cache length after this step (reads
+  `cache[start].offset`, where `start` is the shard's first layer). Grows by
+  the number of positions processed each call.
+- `token_ids` — one sampled id on the last shard; `null` on intermediate
+  shards. With `return_logits=true`, the three `logits*` fields are populated.
+
+Output projection on the last shard: tied-embedding models
+(`args.tie_word_embeddings`) reuse `inner.embed_tokens.as_linear` (handles
+quantized matmul); otherwise the dedicated `model.lm_head` is used. A model
+with no `lm_head` and `tie_word_embeddings=False` → 400.
+
+### `POST /distributed/reset_cache` (#630)
+
+Clear a shard's KV cache so a new generation can prefill from scratch without
+dropping/reloading the shard (weights stay on GPU). Idempotent: a shard with
+no cache returns `prev_offset=0`.
+
+Request:
+```json
+{
+  "shard_id": "shard-..."
+}
+```
+
+Response:
+```json
+{
+  "shard_id": "shard-...",
+  "kv_cleared": true,
+  "prev_offset": 4
+}
+```
+
+- `prev_offset` — the cache length BEFORE clearing (reads `cache[start].offset`
+  for the shard's first layer; `0` when no cache was allocated).
+
+**KV lifecycle.** Lazy-init on the first `decode_step` call to a shard —
+creates `[KVCache() for _ in range(len(layers))]` (full-model-length list, one
+entry per decoder layer; only the shard's `[start, end)` slice is used). Grows
+per call as positions are processed. `reset_cache` clears it (sets
+`kv_cache=None`, returns the previous offset). `sync_weights` clears it after a
+weight swap, so stale KV never follows new weights. `drop_shard` frees it with
+the shard registration. KV is per-shard, in-process, never serialized — only
+activations cross the wire.
+
+**Concurrency.** One generation per shard at a time. KV is per-shard
+process-singleton state — a second generation on the same shard without
+`reset_cache` APPENDS into the existing cache, producing semantically wrong
+output. Reset is the CALLER's responsibility, not automatic. The cache list is
+full-model-length; `kv_offset` reads `cache[start].offset` (the shard's first
+layer), NOT `cache[0]` — for a shard whose range starts >0, `cache[0]` is an
+unused empty cache.
+
 ### `POST /distributed/sync_weights`
 
 Hot-update a shard's weights (LoRA swap, adapter, weight sync).
@@ -311,9 +462,19 @@ print(dec["token_ids"])  # one id per position, greedy = deterministic
 
 ## Out of scope (first version)
 
-- KV-cache / attention-mask threading across shards (streaming scheduler).
-- Multi-token autoregressive loop inside `decode` — the scheduler composes
-  `pipeline_step`+`decode` across nodes; `decode` is a single forward pass.
+- ~~KV-cache / attention-mask threading across shards (streaming scheduler).~~
+  **LANDED via `decode_step` (#630)** — each shard holds its own in-process KV
+  cache; `create_attention_mask(hidden, cache[start])` threads the mask inside
+  the shard's layer range. KV is never transported; only activations cross the
+  wire. See `POST /distributed/decode_step` above and the plan
+  (`docs/superpowers/plans/2026-08-26-distributed-multitoken-decode.md`) /
+  spec (`docs/superpowers/specs/2026-08-26-distributed-multitoken-decode-design.md`).
+- ~~Multi-token autoregressive loop inside `decode` — the scheduler composes
+  `pipeline_step`+`decode` across nodes; `decode` is a single forward pass.~~
+  **LANDED via `decode_step` (#630)** — the caller drives the autoregressive
+  loop; `decode_step` is one cache-aware step (prefill or decode). The
+  cache-less `pipeline_step`+`decode` pair above remains as the first-version
+  surface. See plan / spec links above.
 - `manifest` URL pull (scheduler inlines weights for now).
 - Cross-process coordination / failure recovery (scheduler layer).
 - Compression / encryption of activation tensors (transport layer).
